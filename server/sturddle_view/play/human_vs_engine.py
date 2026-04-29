@@ -82,6 +82,10 @@ class HumanVsEngine:
         # Wall-clock timestamp when the side to move started thinking.
         # Used to compute remaining time on each tick.
         self._turn_started_at: float | None = None
+        # Per-ply snapshot of (white_time, black_time) BEFORE the move at that
+        # ply was played. Used to restore clocks on take-back.
+        # Index = ply number (length of move_stack).
+        self._clock_history: list[tuple[float, float]] = []
         self._think_task: asyncio.Task | None = None
         self._tick_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
@@ -108,6 +112,7 @@ class HumanVsEngine:
             self._white_time = tc.initial_seconds
             self._black_time = tc.initial_seconds
             self._turn_started_at = time.monotonic()
+            self._clock_history = []
             self._game_id = uuid.uuid4().hex[:12]
             await self._publish_board()
             await self._publish_clock()
@@ -128,6 +133,9 @@ class HumanVsEngine:
                 raise RuntimeError(f"invalid uci: {uci}") from e
             if move not in self._board.legal_moves:
                 raise RuntimeError(f"illegal move: {uci}")
+            # Snapshot clocks BEFORE consuming, so take-back restores the state
+            # at the start of this turn.
+            self._clock_history.append((self._white_time, self._black_time))
             self._consume_turn_time()
             self._board.push(move)
             await self._publish_board()
@@ -158,13 +166,17 @@ class HumanVsEngine:
                 if len(self._board.move_stack) < 2:
                     raise RuntimeError("nothing to take back")
                 self._board.pop()
+                self._clock_history.pop()
                 self._board.pop()
+                wt, bt = self._clock_history.pop()
             else:
                 # Engine was thinking; pop the human's last move.
                 if len(self._board.move_stack) < 1:
                     raise RuntimeError("nothing to take back")
                 self._board.pop()
-            # Reset turn timer so the human gets a fresh tick on the restored turn.
+                wt, bt = self._clock_history.pop()
+            self._white_time = wt
+            self._black_time = bt
             self._turn_started_at = time.monotonic()
             await self._publish_board()
             await self._publish_clock()
@@ -325,6 +337,7 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id != game_id:
                 return
+            self._clock_history.append((self._white_time, self._black_time))
             self._consume_turn_time()
             self._board.push(best)
             await self._publish_board()
