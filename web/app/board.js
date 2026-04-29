@@ -34,6 +34,7 @@ export function mountBoard({ element, onMove }) {
   }
 
   function enableInput(yes) {
+    if (yes === inputEnabled) return;
     inputEnabled = yes;
     if (yes) {
       board.enableMoveInput((event) => {

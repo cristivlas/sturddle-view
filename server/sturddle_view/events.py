@@ -15,6 +15,7 @@ EventKind = Literal[
     "engine_info",
     "board_update",
     "clock_tick",
+    "clock_update",
     "game_result",
     "tournament_update",
     "sprt_update",

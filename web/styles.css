@@ -106,7 +106,71 @@ main { padding: 16px; }
   grid-template-columns: minmax(320px, 1fr) 360px;
   gap: 16px;
 }
-#play-perspective .play-board-area { display: flex; flex-direction: column; }
+#play-perspective .play-board-area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.clock-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: var(--panel);
+  border: 1px solid #333;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  transition: border-color 0.15s, background 0.15s;
+}
+.clock-row.active {
+  border-color: var(--accent);
+  background: #2a3a3a;
+}
+.clock-row .clock-name {
+  font-size: 13px;
+  color: var(--muted);
+  font-family: var(--wa-font-family-body);
+}
+.clock-row .clock-time {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+#board-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+#board-controls .grow { flex: 1; }
+.debug-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.move-list {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 6px 10px;
+  height: 240px;
+  overflow-y: auto;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.move-row {
+  display: grid;
+  grid-template-columns: 36px 1fr 1fr;
+  gap: 8px;
+}
+.move-row .move-num { color: var(--muted); }
+.move-row .move-cell { color: var(--fg); }
 
 #observe-perspective.placeholder {
   display: flex;
@@ -190,8 +254,10 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
 .engine-add wa-input.engine-name { flex: 1 1 140px; }
 .engine-add wa-button { flex: 0 0 auto; }
 
-.settings-row { margin-top: 12px; }
+.settings-row { margin-top: 12px; max-width: 360px; }
 .settings-row label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.settings-row wa-input,
+.settings-row wa-select { width: 100%; }
 
 /* Settings dialog must never scroll horizontally. */
 wa-dialog::part(body) { overflow-x: hidden !important; }

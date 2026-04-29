@@ -41,17 +41,28 @@ def _resolve_engine_path(request: Request) -> str | None:
 
 @router.post("/new")
 async def new_game(payload: dict, request: Request) -> dict:
+    import random
+
     hve = await _get_hve(request)
-    human_white = bool(payload.get("human_white", True))
+    s = request.app.state.settings
+
+    side = payload.get("human_side", s.human_side)
+    if side == "random":
+        human_white = random.random() < 0.5
+    elif side == "black":
+        human_white = False
+    else:
+        human_white = True
+
     tc = TimeControl(
-        initial_seconds=float(payload.get("initial_seconds", 300.0)),
-        increment_seconds=float(payload.get("increment_seconds", 0.0)),
+        initial_seconds=float(payload.get("initial_seconds", s.tc_initial_seconds)),
+        increment_seconds=float(payload.get("increment_seconds", s.tc_increment_seconds)),
     )
     try:
         game_id = await hve.new_game(human_white=human_white, tc=tc)
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=f"engine not found: {e}") from e
-    return {"game_id": game_id}
+    return {"game_id": game_id, "human_white": human_white}
 
 
 @router.post("/move")
@@ -75,8 +86,16 @@ async def resign(request: Request) -> dict:
 
 
 @router.post("/takeback")
-def takeback() -> dict:
-    raise HTTPException(status_code=501, detail="not implemented")
+async def takeback(request: Request) -> dict:
+    s = request.app.state.settings
+    if not getattr(s, "allow_takeback", True):
+        raise HTTPException(status_code=403, detail="take-back is disabled in settings")
+    hve = await _get_hve(request)
+    try:
+        await hve.takeback()
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True}
 
 
 @router.post("/tournament/start")

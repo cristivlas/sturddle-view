@@ -28,3 +28,11 @@ class Settings(BaseSettings):
     pgn_dir: Path = REPO_ROOT / "pgn"
     engine_path: Path | None = None
     auth_disabled: bool = False
+
+    # Default time control for new human-vs-engine games (Settings dialog).
+    tc_initial_seconds: float = 300.0
+    tc_increment_seconds: float = 0.0
+    # Side the human plays: "white", "black", or "random".
+    human_side: str = "white"
+    # Whether take-back is allowed during human-vs-engine play.
+    allow_takeback: bool = True
