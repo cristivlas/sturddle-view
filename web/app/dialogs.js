@@ -37,7 +37,11 @@ export function showDialog({ label, body, defaultValue = null, width }) {
 
     body(resolve, dialog);
 
-    dialog.addEventListener("wa-after-hide", () => {
+    dialog.addEventListener("wa-after-hide", (ev) => {
+      // Other Web Awesome overlays (selects, popovers, dropdowns) bubble
+      // their own wa-after-hide through the dialog. Only the dialog's own
+      // close should resolve us.
+      if (ev.target !== dialog) return;
       dialog.remove();
       resolveOuter(resolved ? resolvedValue : defaultValue);
     });

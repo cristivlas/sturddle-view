@@ -18,7 +18,9 @@ export function mountBoard({ element, onMove }) {
   let inputEnabled = false;
 
   function setSide(side) {
-    myColor = side === "black" ? COLOR.black : COLOR.white;
+    const next = side === "black" ? COLOR.black : COLOR.white;
+    if (next === myColor) return;
+    myColor = next;
     board.setOrientation(myColor);
   }
 
