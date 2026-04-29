@@ -1,18 +1,25 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="wa-dark">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>sturddle-view</title>
+  <title>Sturddle View</title>
   <link rel="stylesheet" href="./vendor/cm-chessboard/assets/chessboard.css" />
   <link rel="stylesheet" href="./vendor/cm-chessboard/assets/extensions/markers/markers.css" />
+  <link rel="stylesheet" href="./vendor/webawesome/styles/webawesome.css" />
+  <link rel="stylesheet" href="./vendor/winbox/dist/css/winbox.min.css" />
+  <script type="module" src="./app/wa-bootstrap.js"></script>
+  <script src="./vendor/winbox/dist/js/winbox.min.js"></script>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
   <header>
-    <h1>sturddle-view</h1>
+    <h1>Sturddle View</h1>
     <nav id="perspective-nav"></nav>
-    <span id="conn-status" class="conn">disconnected</span>
+    <span id="conn-status" class="conn" aria-label="connection status"></span>
+    <button id="settings-btn" class="icon-btn" aria-label="Settings" title="Settings">
+      <wa-icon name="gear"></wa-icon>
+    </button>
   </header>
 
   <main id="perspective-root"></main>

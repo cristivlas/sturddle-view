@@ -29,11 +29,11 @@ async def _get_hve(request: Request) -> HumanVsEngine:
 
 def _resolve_engine_path(request: Request) -> str | None:
     s = request.app.state
-    if s.selected_engine_id:
+    if s.engines.selected_id:
         try:
-            return s.engines.get(s.selected_engine_id).path
+            return s.engines.get(s.engines.selected_id).path
         except KeyError:
-            s.selected_engine_id = None
+            pass
     if s.settings.engine_path:
         return str(s.settings.engine_path)
     return None

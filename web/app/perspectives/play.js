@@ -2,7 +2,6 @@
 // Owns its own DOM: the board, the controls bar, and a fixed side rail.
 
 import { mountBoard } from "../board.js";
-import { mountEngines } from "../engines.js";
 
 export const playPerspective = {
   id: "play",
@@ -14,30 +13,21 @@ export const playPerspective = {
         <div class="play-board-area">
           <div id="board" aria-label="chess board"></div>
           <div id="board-controls">
-            <button id="new-game">New game</button>
-            <label>side
-              <select id="human-side">
-                <option value="white" selected>White</option>
-                <option value="black">Black</option>
-              </select>
-            </label>
-            <label>time (s)
-              <input id="initial-seconds" type="number" min="1" value="300" />
-            </label>
-            <label>inc (s)
-              <input id="increment-seconds" type="number" min="0" value="0" />
-            </label>
-            <button id="resign">Resign</button>
+            <wa-button id="new-game" size="small" variant="brand">New game</wa-button>
+            <wa-select id="human-side" size="small" value="white">
+              <wa-option value="white">White</wa-option>
+              <wa-option value="black">Black</wa-option>
+            </wa-select>
+            <wa-input id="initial-seconds" size="small" type="number" min="1" value="300">
+              <span slot="hint">time (s)</span>
+            </wa-input>
+            <wa-input id="increment-seconds" size="small" type="number" min="0" value="0">
+              <span slot="hint">inc (s)</span>
+            </wa-input>
+            <wa-button id="resign" size="small" variant="danger" appearance="outlined">Resign</wa-button>
           </div>
         </div>
         <aside id="info-panel">
-          <h2>Engines</h2>
-          <ul id="engines-list"></ul>
-          <form id="engine-add">
-            <input id="engine-name" type="text" placeholder="name" required />
-            <input id="engine-path" type="text" placeholder="/path/to/engine" required />
-            <button type="submit">Add</button>
-          </form>
           <h2>Engine info</h2>
           <pre id="engine-info"></pre>
           <h2>Event log</h2>
@@ -112,11 +102,6 @@ export const playPerspective = {
 
     newGameBtn.addEventListener("click", onNewGame);
     resignBtn.addEventListener("click", onResign);
-
-    mountEngines({
-      api: ctx.api,
-      onError: (msg) => append(eventLog, msg),
-    });
 
     return {
       unmount() {

@@ -45,15 +45,32 @@ class EngineRegistry:
     def __init__(self, path: Path | None = None) -> None:
         self._path = path or default_registry_path()
         self._engines: dict[str, Engine] = {}
+        self._selected_id: str | None = None
         self._loaded = False
 
     @property
     def path(self) -> Path:
         return self._path
 
+    @property
+    def selected_id(self) -> str | None:
+        self._ensure_loaded()
+        # Stale id (engine removed externally) -> clear it.
+        if self._selected_id and self._selected_id not in self._engines:
+            self._selected_id = None
+        return self._selected_id
+
+    def select(self, engine_id: str | None) -> None:
+        self._ensure_loaded()
+        if engine_id is not None and engine_id not in self._engines:
+            raise EngineNotFoundError(engine_id)
+        self._selected_id = engine_id
+        self._save()
+
     def load(self) -> None:
         if not self._path.exists():
             self._engines = {}
+            self._selected_id = None
             self._loaded = True
             return
         with self._path.open("r", encoding="utf-8") as f:
@@ -68,11 +85,17 @@ class EngineRegistry:
             )
             engines[e.id] = e
         self._engines = engines
+        self._selected_id = data.get("selected_id")
+        if self._selected_id and self._selected_id not in self._engines:
+            self._selected_id = None
         self._loaded = True
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"engines": [asdict(e) for e in self._engines.values()]}
+        payload = {
+            "engines": [asdict(e) for e in self._engines.values()],
+            "selected_id": self._selected_id,
+        }
         # Atomic write: tmp file in same dir, then replace.
         fd, tmp = tempfile.mkstemp(dir=self._path.parent, prefix=".engines.", suffix=".json")
         try:
@@ -134,6 +157,8 @@ class EngineRegistry:
         if engine_id not in self._engines:
             raise EngineNotFoundError(engine_id)
         del self._engines[engine_id]
+        if self._selected_id == engine_id:
+            self._selected_id = None
         self._save()
 
     def _ensure_loaded(self) -> None:

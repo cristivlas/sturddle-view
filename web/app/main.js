@@ -2,6 +2,7 @@ import { connect } from "./ws.js";
 import { PerspectiveRouter } from "./perspectives.js";
 import { playPerspective } from "./perspectives/play.js";
 import { observePerspective } from "./perspectives/observe.js";
+import { openSettingsDialog } from "./settings-dialog.js";
 
 const params = new URLSearchParams(location.search);
 const token = params.get("token") || "";
@@ -72,14 +73,18 @@ function renderNav() {
 connect({
   token,
   onOpen: () => {
-    conn.textContent = "connected";
     conn.classList.add("connected");
+    conn.title = "connected";
   },
   onClose: () => {
-    conn.textContent = "reconnecting…";
     conn.classList.remove("connected");
+    conn.title = "disconnected";
   },
   onEvent: (evt) => events.emit(evt),
+});
+
+document.getElementById("settings-btn").addEventListener("click", () => {
+  openSettingsDialog({ api });
 });
 
 await router.activateInitial();

@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .api import agent as agent_api
 from .api import engines as engines_api
+from .api import fs as fs_api
 from .api import game as game_api
 from .api import settings as settings_api
 from .api import ws as ws_api
@@ -46,10 +47,10 @@ def create_app(
     app.state.hve = None  # lazy: HumanVsEngine, created on first /game/new
     app.state.ws_tasks = set()
     app.state.engines = engine_registry or EngineRegistry()
-    app.state.selected_engine_id = None
 
     app.include_router(settings_api.router)
     app.include_router(engines_api.router)
+    app.include_router(fs_api.router)
     app.include_router(game_api.router)
     app.include_router(agent_api.router)
     app.include_router(ws_api.router)

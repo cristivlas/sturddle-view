@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, Request
 
 from ..auth import require_token
@@ -23,4 +25,6 @@ def update_settings(payload: dict, request: Request) -> dict:
     s = request.app.state.settings
     if "pgn_autosave" in payload:
         s.pgn_autosave = bool(payload["pgn_autosave"])
+    if "pgn_dir" in payload and payload["pgn_dir"]:
+        s.pgn_dir = Path(payload["pgn_dir"])
     return get_settings(request)

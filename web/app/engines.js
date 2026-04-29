@@ -1,10 +1,41 @@
 // Engines panel: list / add / remove / select.
+// Mounts into a container element, builds its own DOM. Caller is responsible
+// for placement (a sidebar, a settings tab, etc).
 
-export function mountEngines({ api, onError }) {
-  const list = document.getElementById("engines-list");
-  const form = document.getElementById("engine-add");
-  const nameInput = document.getElementById("engine-name");
-  const pathInput = document.getElementById("engine-path");
+import { confirm, pickFile, toast } from "./dialogs.js";
+
+export function mountEngines({ container, api, onError }) {
+  container.innerHTML = `
+    <ul class="engines-list"></ul>
+    <form class="engine-add">
+      <wa-input class="engine-name" size="small" placeholder="Engine name"></wa-input>
+      <wa-input class="engine-path" size="small" placeholder="/path/to/engine"></wa-input>
+      <wa-button type="button" class="engine-browse" size="small" variant="neutral">Browse…</wa-button>
+      <wa-button type="submit" size="small" variant="brand">Add</wa-button>
+    </form>
+  `;
+
+  const list = container.querySelector(".engines-list");
+  const form = container.querySelector(".engine-add");
+  const nameInput = container.querySelector(".engine-name");
+  const pathInput = container.querySelector(".engine-path");
+  const browseBtn = container.querySelector(".engine-browse");
+
+  browseBtn.addEventListener("click", async () => {
+    const picked = await pickFile({
+      api,
+      title: "Pick engine binary",
+      mode: "executable",
+      startPath: (pathInput.value || "").trim() || null,
+    });
+    if (picked) {
+      pathInput.value = picked;
+      if (!(nameInput.value || "").trim()) {
+        // Default the name to the binary's filename if empty.
+        nameInput.value = picked.split(/[\\/]/).pop();
+      }
+    }
+  });
 
   async function refresh() {
     try {
@@ -19,8 +50,8 @@ export function mountEngines({ api, onError }) {
     list.innerHTML = "";
     if (engines.length === 0) {
       const li = document.createElement("li");
+      li.className = "empty";
       li.textContent = "(none registered)";
-      li.style.color = "var(--muted)";
       list.appendChild(li);
       return;
     }
@@ -37,8 +68,11 @@ export function mountEngines({ api, onError }) {
       path.title = e.path;
       path.textContent = e.path;
 
-      const selectBtn = document.createElement("button");
-      selectBtn.textContent = e.id === selectedId ? "✓" : "use";
+      const selectBtn = document.createElement("wa-button");
+      selectBtn.size = "small";
+      selectBtn.variant = e.id === selectedId ? "success" : "neutral";
+      selectBtn.appearance = "outlined";
+      selectBtn.textContent = e.id === selectedId ? "Active" : "Use";
       selectBtn.disabled = e.id === selectedId;
       selectBtn.addEventListener("click", async () => {
         try {
@@ -49,13 +83,22 @@ export function mountEngines({ api, onError }) {
         }
       });
 
-      const removeBtn = document.createElement("button");
-      removeBtn.textContent = "×";
-      removeBtn.title = "remove";
+      const removeBtn = document.createElement("wa-button");
+      removeBtn.size = "small";
+      removeBtn.variant = "danger";
+      removeBtn.appearance = "outlined";
+      removeBtn.textContent = "Remove";
       removeBtn.addEventListener("click", async () => {
-        if (!confirm(`Remove ${e.name}?`)) return;
+        const ok = await confirm({
+          title: "Remove engine",
+          message: `Remove ${e.name}?`,
+          okLabel: "Remove",
+          destructive: true,
+        });
+        if (!ok) return;
         try {
           await api("DELETE", `/engines/${e.id}`);
+          toast(`Removed ${e.name}`, { variant: "success" });
           refresh();
         } catch (err) {
           onError?.(`remove: ${err.message}`);
@@ -69,8 +112,8 @@ export function mountEngines({ api, onError }) {
 
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
-    const name = nameInput.value.trim();
-    const path = pathInput.value.trim();
+    const name = (nameInput.value || "").trim();
+    const path = (pathInput.value || "").trim();
     if (!name || !path) return;
     try {
       await api("POST", "/engines", { name, path });

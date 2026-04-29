@@ -87,6 +87,39 @@ def test_atomic_write_no_partial_file_on_error(tmp_path, monkeypatch):
     assert leaked == []
 
 
+def test_select_persists(registry):
+    a = registry.add(name="A", path="/p/a")
+    registry.select(a.id)
+    assert registry.selected_id == a.id
+
+    fresh = EngineRegistry(path=registry.path)
+    assert fresh.selected_id == a.id
+
+
+def test_select_unknown_raises(registry):
+    with pytest.raises(EngineNotFoundError):
+        registry.select("nope")
+
+
+def test_remove_clears_selection(registry):
+    a = registry.add(name="A", path="/p/a")
+    registry.select(a.id)
+    registry.remove(a.id)
+    assert registry.selected_id is None
+
+    fresh = EngineRegistry(path=registry.path)
+    assert fresh.selected_id is None
+
+
+def test_stale_selection_in_file_is_ignored(tmp_path):
+    path = tmp_path / "engines.json"
+    path.write_text(
+        json.dumps({"engines": [], "selected_id": "ghost-id"})
+    )
+    reg = EngineRegistry(path=path)
+    assert reg.selected_id is None
+
+
 def test_load_ignores_unknown_fields(tmp_path):
     path = tmp_path / "engines.json"
     path.write_text(
