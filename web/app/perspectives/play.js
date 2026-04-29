@@ -1,0 +1,129 @@
+// Play perspective: human vs engine.
+// Owns its own DOM: the board, the controls bar, and a fixed side rail.
+
+import { mountBoard } from "../board.js";
+import { mountEngines } from "../engines.js";
+
+export const playPerspective = {
+  id: "play",
+  label: "Play",
+
+  async mount(root, ctx) {
+    root.innerHTML = `
+      <section id="play-perspective">
+        <div class="play-board-area">
+          <div id="board" aria-label="chess board"></div>
+          <div id="board-controls">
+            <button id="new-game">New game</button>
+            <label>side
+              <select id="human-side">
+                <option value="white" selected>White</option>
+                <option value="black">Black</option>
+              </select>
+            </label>
+            <label>time (s)
+              <input id="initial-seconds" type="number" min="1" value="300" />
+            </label>
+            <label>inc (s)
+              <input id="increment-seconds" type="number" min="0" value="0" />
+            </label>
+            <button id="resign">Resign</button>
+          </div>
+        </div>
+        <aside id="info-panel">
+          <h2>Engines</h2>
+          <ul id="engines-list"></ul>
+          <form id="engine-add">
+            <input id="engine-name" type="text" placeholder="name" required />
+            <input id="engine-path" type="text" placeholder="/path/to/engine" required />
+            <button type="submit">Add</button>
+          </form>
+          <h2>Engine info</h2>
+          <pre id="engine-info"></pre>
+          <h2>Event log</h2>
+          <pre id="event-log"></pre>
+        </aside>
+      </section>
+    `;
+
+    const engineInfo = root.querySelector("#engine-info");
+    const eventLog = root.querySelector("#event-log");
+
+    function append(el, text, max = 200) {
+      el.textContent = (el.textContent + text + "\n").split("\n").slice(-max).join("\n");
+    }
+
+    const board = mountBoard({
+      element: root.querySelector("#board"),
+      onMove: async (uci) => {
+        try {
+          await ctx.api("POST", "/game/move", { uci });
+        } catch (e) {
+          append(eventLog, `move rejected: ${e.message}`);
+        }
+      },
+    });
+
+    const offEvent = ctx.events.on((evt) => {
+      switch (evt.kind) {
+        case "engine_info":
+          append(engineInfo, JSON.stringify(evt.payload));
+          break;
+        case "board_update":
+          board.setPosition(evt.payload.fen, evt.payload.last_move);
+          board.enableInput(true);
+          break;
+        case "game_result":
+          append(eventLog, `result: ${JSON.stringify(evt.payload)}`);
+          board.enableInput(false);
+          break;
+        default:
+          append(eventLog, `${evt.kind}: ${JSON.stringify(evt.payload)}`);
+      }
+    });
+
+    const newGameBtn = root.querySelector("#new-game");
+    const resignBtn = root.querySelector("#resign");
+
+    const onNewGame = async () => {
+      const side = root.querySelector("#human-side").value;
+      const initial = parseFloat(root.querySelector("#initial-seconds").value);
+      const inc = parseFloat(root.querySelector("#increment-seconds").value);
+      board.setSide(side);
+      try {
+        const r = await ctx.api("POST", "/game/new", {
+          human_white: side === "white",
+          initial_seconds: initial,
+          increment_seconds: inc,
+        });
+        append(eventLog, `new game: ${r.game_id}`);
+      } catch (e) {
+        append(eventLog, `new-game failed: ${e.message}`);
+      }
+    };
+
+    const onResign = async () => {
+      try {
+        await ctx.api("POST", "/game/resign", {});
+      } catch (e) {
+        append(eventLog, `resign failed: ${e.message}`);
+      }
+    };
+
+    newGameBtn.addEventListener("click", onNewGame);
+    resignBtn.addEventListener("click", onResign);
+
+    mountEngines({
+      api: ctx.api,
+      onError: (msg) => append(eventLog, msg),
+    });
+
+    return {
+      unmount() {
+        offEvent();
+        newGameBtn.removeEventListener("click", onNewGame);
+        resignBtn.removeEventListener("click", onResign);
+      },
+    };
+  },
+};

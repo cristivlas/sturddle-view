@@ -1,21 +1,19 @@
 import { connect } from "./ws.js";
-import { mountBoard } from "./board.js";
-import { mountEngines } from "./engines.js";
+import { PerspectiveRouter } from "./perspectives.js";
+import { playPerspective } from "./perspectives/play.js";
+import { observePerspective } from "./perspectives/observe.js";
 
 const params = new URLSearchParams(location.search);
 const token = params.get("token") || "";
 
 const conn = document.getElementById("conn-status");
-const engineInfo = document.getElementById("engine-info");
-const eventLog = document.getElementById("event-log");
-const agentPanel = document.getElementById("agent-panel");
-
-function append(el, text, max = 200) {
-  el.textContent = (el.textContent + text + "\n").split("\n").slice(-max).join("\n");
-}
+const nav = document.getElementById("perspective-nav");
+const root = document.getElementById("perspective-root");
 
 async function api(method, path, body) {
-  const r = await fetch(`${path}?token=${encodeURIComponent(token)}`, {
+  const sep = path.includes("?") ? "&" : "?";
+  const url = token ? `${path}${sep}token=${encodeURIComponent(token)}` : path;
+  const r = await fetch(url, {
     method,
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
@@ -28,75 +26,48 @@ async function api(method, path, body) {
   return r.json();
 }
 
-const board = mountBoard({
-  element: document.getElementById("board"),
-  onMove: async (uci) => {
-    try {
-      await api("POST", "/game/move", { uci });
-    } catch (e) {
-      append(eventLog, `move rejected: ${e.message}`);
-    }
-  },
-});
-
-let activeGameId = null;
-
-function handleEvent(evt) {
-  switch (evt.kind) {
-    case "engine_info":
-      append(engineInfo, JSON.stringify(evt.payload));
-      break;
-    case "agent_annotation": {
-      const div = document.createElement("div");
-      div.textContent = evt.payload.text || JSON.stringify(evt.payload);
-      agentPanel.prepend(div);
-      break;
-    }
-    case "board_update":
-      board.setPosition(evt.payload.fen, evt.payload.last_move);
-      // Enable input only when it's the human's turn. The server's `human_white`
-      // matches the side selected at /game/new; we just compare against board orientation.
-      board.enableInput(true);
-      break;
-    case "game_result":
-      append(eventLog, `result: ${JSON.stringify(evt.payload)}`);
-      board.enableInput(false);
-      break;
-    default:
-      append(eventLog, `${evt.kind}: ${JSON.stringify(evt.payload)}`);
-  }
+// Tiny synchronous event bus. Perspectives subscribe on mount, return
+// the unsubscribe function for cleanup.
+function makeBus() {
+  const subs = new Set();
+  return {
+    on(fn) {
+      subs.add(fn);
+      return () => subs.delete(fn);
+    },
+    emit(evt) {
+      for (const fn of subs) {
+        try {
+          fn(evt);
+        } catch (e) {
+          console.error("event handler threw", e);
+        }
+      }
+    },
+  };
 }
 
-document.getElementById("new-game").addEventListener("click", async () => {
-  const side = document.getElementById("human-side").value;
-  const initial = parseFloat(document.getElementById("initial-seconds").value);
-  const inc = parseFloat(document.getElementById("increment-seconds").value);
-  board.setSide(side);
-  try {
-    const r = await api("POST", "/game/new", {
-      human_white: side === "white",
-      initial_seconds: initial,
-      increment_seconds: inc,
+const events = makeBus();
+const ctx = { api, events, token };
+
+const router = new PerspectiveRouter({ root, ctx });
+router.register(playPerspective);
+router.register(observePerspective);
+
+function renderNav() {
+  nav.innerHTML = "";
+  for (const p of router.list()) {
+    const btn = document.createElement("button");
+    btn.dataset.perspective = p.id;
+    btn.textContent = p.label;
+    btn.addEventListener("click", async () => {
+      await router.activate(p.id);
+      renderNav();
     });
-    activeGameId = r.game_id;
-    append(eventLog, `new game: ${activeGameId}`);
-  } catch (e) {
-    append(eventLog, `new-game failed: ${e.message}`);
+    if (p.id === router.activeId()) btn.classList.add("active");
+    nav.appendChild(btn);
   }
-});
-
-document.getElementById("resign").addEventListener("click", async () => {
-  try {
-    await api("POST", "/game/resign", {});
-  } catch (e) {
-    append(eventLog, `resign failed: ${e.message}`);
-  }
-});
-
-mountEngines({
-  api,
-  onError: (msg) => append(eventLog, msg),
-});
+}
 
 connect({
   token,
@@ -108,5 +79,8 @@ connect({
     conn.textContent = "reconnecting…";
     conn.classList.remove("connected");
   },
-  onEvent: handleEvent,
+  onEvent: (evt) => events.emit(evt),
 });
+
+await router.activateInitial();
+renderNav();

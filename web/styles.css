@@ -31,15 +31,29 @@ nav button {
   cursor: pointer;
 }
 nav button:hover { border-color: var(--accent); }
+nav button.active { border-color: var(--accent); color: var(--accent); }
 .conn { margin-left: auto; color: var(--muted); }
 .conn.connected { color: var(--accent); }
 
-main {
+main { padding: 16px; }
+
+#play-perspective {
   display: grid;
   grid-template-columns: minmax(320px, 1fr) 360px;
   gap: 16px;
-  padding: 16px;
 }
+#play-perspective .play-board-area { display: flex; flex-direction: column; }
+
+#observe-perspective.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  color: var(--muted);
+}
+#observe-perspective.placeholder p { margin: 4px 0; }
+#observe-perspective.placeholder .muted { font-size: 12px; }
 
 #board {
   aspect-ratio: 1 / 1;

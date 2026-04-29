@@ -11,49 +11,11 @@
 <body>
   <header>
     <h1>sturddle-view</h1>
-    <nav>
-      <button data-view="play">Play</button>
-      <button data-view="tournament">Tournament</button>
-    </nav>
+    <nav id="perspective-nav"></nav>
     <span id="conn-status" class="conn">disconnected</span>
   </header>
 
-  <main>
-    <section id="board-container">
-      <div id="board" aria-label="chess board"></div>
-      <div id="board-controls">
-        <button id="new-game">New game</button>
-        <label>side
-          <select id="human-side">
-            <option value="white" selected>White</option>
-            <option value="black">Black</option>
-          </select>
-        </label>
-        <label>time (s)
-          <input id="initial-seconds" type="number" min="1" value="300" />
-        </label>
-        <label>inc (s)
-          <input id="increment-seconds" type="number" min="0" value="0" />
-        </label>
-        <button id="resign">Resign</button>
-      </div>
-    </section>
-    <aside id="info-panel">
-      <h2>Engines</h2>
-      <ul id="engines-list"></ul>
-      <form id="engine-add">
-        <input id="engine-name" type="text" placeholder="name" required />
-        <input id="engine-path" type="text" placeholder="/path/to/engine" required />
-        <button type="submit">Add</button>
-      </form>
-      <h2>Engine info</h2>
-      <pre id="engine-info"></pre>
-      <h2>Agent</h2>
-      <div id="agent-panel"></div>
-      <h2>Event log</h2>
-      <pre id="event-log"></pre>
-    </aside>
-  </main>
+  <main id="perspective-root"></main>
 
   <script type="module" src="./app/main.js"></script>
 </body>
