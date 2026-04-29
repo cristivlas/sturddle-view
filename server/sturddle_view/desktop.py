@@ -1,0 +1,43 @@
+"""PyWebView wrapper. Runs uvicorn in a background thread, then opens a native window."""
+from __future__ import annotations
+
+import threading
+import time
+
+import uvicorn
+
+from .config import Settings
+
+
+def run_desktop(host: str, port: int) -> None:
+    try:
+        import webview  # type: ignore[import-untyped]
+    except ImportError as exc:
+        raise SystemExit("PyWebView is not installed. Install with: pip install '.[desktop]'") from exc
+
+    settings = Settings(host=host, port=port)
+
+    config = uvicorn.Config(
+        "sturddle_view.app:create_app",
+        host=host,
+        port=port,
+        factory=True,
+        log_level="info",
+    )
+    server = uvicorn.Server(config)
+
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    # Wait briefly for the server to come up before opening the window.
+    for _ in range(50):
+        if server.started:
+            break
+        time.sleep(0.05)
+
+    url = f"http://{host}:{port}/?token={settings.token}"
+    webview.create_window("sturddle-view", url)
+    webview.start()
+
+    server.should_exit = True
+    thread.join(timeout=5)

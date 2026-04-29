@@ -1,0 +1,3 @@
+[submodule "web/vendor/cm-chessboard"]
+	path = web/vendor/cm-chessboard
+	url = https://github.com/shaack/cm-chessboard.git
