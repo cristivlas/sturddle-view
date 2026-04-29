@@ -14,6 +14,8 @@ def _settings(request: Request) -> Settings:
 def require_token(request: Request, token: str | None = Query(default=None)) -> None:
     """Single shared-secret token, accepted via ?token= or Authorization: Bearer."""
     settings = _settings(request)
+    if settings.auth_disabled:
+        return
     presented = token
     if presented is None:
         auth = request.headers.get("authorization", "")

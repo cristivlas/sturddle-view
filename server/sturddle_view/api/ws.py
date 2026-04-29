@@ -20,7 +20,7 @@ def _event_to_json(event: Event) -> dict:
 @router.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket, token: str = Query(default="")) -> None:
     settings = websocket.app.state.settings
-    if not hmac.compare_digest(token, settings.token):
+    if not settings.auth_disabled and not hmac.compare_digest(token, settings.token):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 

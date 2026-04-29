@@ -27,3 +27,4 @@ class Settings(BaseSettings):
     pgn_autosave: bool = True
     pgn_dir: Path = REPO_ROOT / "pgn"
     engine_path: Path | None = None
+    auth_disabled: bool = False

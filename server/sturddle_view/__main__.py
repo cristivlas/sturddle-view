@@ -15,6 +15,11 @@ def main() -> None:
     parser.add_argument("--desktop", action="store_true", help="Open in PyWebView native window")
     parser.add_argument("--reload", action="store_true", help="Dev mode: auto-reload on changes")
     parser.add_argument("--engine", default=None, help="Path to UCI engine binary")
+    parser.add_argument(
+        "--no-auth",
+        action="store_true",
+        help="Disable token auth (dev convenience; do not use on untrusted networks)",
+    )
     args = parser.parse_args()
 
     # Push CLI overrides into env so the worker process's Settings() picks them up.
@@ -24,6 +29,8 @@ def main() -> None:
         os.environ["STURDDLE_HOST"] = args.host
     if args.port:
         os.environ["STURDDLE_PORT"] = str(args.port)
+    if args.no_auth:
+        os.environ["STURDDLE_AUTH_DISABLED"] = "1"
 
     settings = Settings()
     host = settings.host

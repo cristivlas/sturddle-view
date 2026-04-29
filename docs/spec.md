@@ -170,6 +170,94 @@ Agents are first-class participants, not bolts-on:
 
 ---
 
+## UI / Frontend
+
+Aesthetics and UX are first-class concerns; the GUI is not just a thin debug surface for the backend. Visual polish, consistent theming, and predictable interactions matter as much as functional correctness.
+
+### Hard constraints
+
+- **No build step.** No TypeScript files served, no rollup/vite/webpack/tsc in the dev or run loop. Browser-loadable ES modules and CSS only.
+- **No CDN at runtime.** Every asset (JS, CSS, fonts, icons, sprites) must resolve from the local server. Vendored libraries ship as files in `web/vendor/`.
+- **Same code in browser and PyWebView.** No mode-specific DOM forks.
+- **Cross-platform aesthetics.** Layout and typography must look correct on Linux/macOS/Windows 11. No platform-specific font assumptions.
+- **Responsive.** Desktop-first, but small-window and tablet-portrait usable. No fixed-pixel layouts that break under resize.
+- **Offline-first.** No assumption of internet reachability — the GUI is operational on an air-gapped LAN.
+
+### Component vocabulary
+
+The UI composes from a fixed set of primitives. Adding a new ad-hoc widget should be rare; if a screen needs something not in this list, the list itself is what gets extended.
+
+- **Toast / notification** — transient, non-blocking. Used for success confirmations, soft warnings, agent-emitted info that doesn't demand attention.
+- **Message box (alert)** — modal, single dismiss button. Errors and acknowledgements that block until the user reads them.
+- **Confirmation dialog** — modal, two or more buttons. "Are you sure?" gates before destructive actions.
+- **Form dialog** — modal, contains inputs and validation. Used for "edit engine," "configure tournament," etc.
+- **Floating panel (window)** — non-modal, draggable, resizable, optionally minimizable. Multiple panels can coexist on screen. Used for live engine info per game, agent commentary, tournament observer per-game views.
+- **Docked panel** — non-modal, attached to a screen edge or a region of the layout. Used for primary navigation, the active board, persistent status.
+- **File browser dialog** — modal, lets the user pick a path on the **server's** filesystem (engine binary, PGN save dir, opening book, tablebase root). Backed by a server endpoint that enumerates directories — the browser cannot read the server's filesystem directly.
+- **Inline form controls** — buttons, inputs, selects, switches, checkboxes, tabs, accordions, tooltips. Themed consistently.
+
+### Interaction model
+
+- **Action chaining via Promises.** All dialog primitives return Promises that resolve to the user's choice (or `null` for cancel). Application code chains naturally: `await confirm(...)` → `await api(...)` → `toast(...)`. This is the "monadic" pattern — Promises are the substrate, no custom monad is needed.
+- **One blocking modal at a time.** Floating panels are unrestricted; modal dialogs are stacked one-deep. New modal requested while one is open: queue or replace, never overlap.
+- **Keyboard-first wherever practical.** Esc closes modals. Enter confirms default action. Tab cycles within a modal's focus trap. Drag handles are mouse/touch only — keyboard users get an alternate "open in dialog" view.
+- **Persisted layout.** Floating-panel positions, sizes, and open/closed state survive reload (localStorage, scoped per perspective).
+- **No silent failures.** Every API error surfaces as either a toast (recoverable) or a message box (blocking). The event log is a debug aid, not a substitute for explicit feedback.
+
+### Perspectives
+
+The app is organized into **perspectives** — distinct top-level layouts tuned to different activities. Top-bar nav switches between them. A perspective owns its own root layout container; switching perspectives swaps the root content but leaves dialogs, toasts, and global state untouched.
+
+Two perspectives ship in Phase 1:
+
+#### Play perspective (focused, fixed layout)
+
+For human vs engine play. Calm, distraction-free.
+
+- Centered board, large but bounded (max ~85vh).
+- Fixed side rail (right on wide screens, below on narrow): clock, move list, engine info during search.
+- Top of side rail: compact game-control bar — New Game, Resign, Take-back.
+- No floating windows. The board is the focus; nothing should float over it during play.
+- One docked panel toggle: an optional "agent" tab in the side rail (Phase 2).
+
+#### Observe perspective (workspace canvas)
+
+For tournament and headless-peek viewing.
+
+- Empty workspace as the default; user opens windows for what they care about.
+- Each running game is a window (board + small info strip).
+- Standings, SPRT progress, event log, schedule, etc., are each their own window.
+- WinBox-driven: drag, resize, minimize, maximize, close. Multiple windows visible at once.
+- Right-click on the workspace background or a "+" dropdown spawns new windows.
+- Layouts are persisted per tournament — switching tournaments restores the user's last layout for that tournament.
+- Perspective is read-only with respect to game play — no input goes back to engines from here.
+
+Future perspectives (not Phase 1): Analysis, Library/PGN browser, History.
+
+### Phasing
+
+- **Phase 1**: Play perspective fully working with engine management, settings dialog, file picker dialog, message/confirm/toast primitives. Observe perspective with at least one live tournament displayed in WinBox windows. No agents.
+- **Phase 2**: Agent integration (Play side-rail tab + Observe windows), voice control, analysis perspective, eval graphs.
+
+### Library strategy
+
+Vendor two libraries, both MIT, both available as plain pre-built ES modules:
+
+- **Web Awesome** (`@awesome.me/webawesome`, formerly Shoelace): dialogs, form controls, toasts, tabs, dropdowns, popovers, icons (Font Awesome Free). Theming via CSS custom properties.
+- **WinBox**: floating draggable/resizable windows. Web Awesome does not cover this; WinBox is a single-purpose dep.
+
+Both are vendored from their published npm `dist/` artifacts, **not** as git submodules of the source repos (those require build steps). Procedure: `npm pack` once, extract, commit `web/vendor/<lib>/`. No npm at runtime, no CDN, no TypeScript served.
+
+A thin app-level wrapper (`web/app/dialogs.js`) exposes `confirm()`, `alert()`, `prompt()`, `pickFile()`, `toast()` as Promise-returning helpers. Application code never touches Web Awesome's event API directly — it goes through this wrapper, which keeps swap-out cost low if we ever change UI libraries.
+
+### What does *not* belong in the UI library
+
+- **Chess board** — already handled by cm-chessboard.
+- **Markdown rendering / prose styling for agent output** — if needed later, a small dedicated dep (e.g. `marked`); not Web Awesome's job.
+- **Charting / eval graphs** — separate concern, separate dep when the time comes.
+
+---
+
 ## Resilience (Implementation Best Practices)
 
 - **Engine crash (human vs engine)**: python-chess detects, GUI shows clear error state

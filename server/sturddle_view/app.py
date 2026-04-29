@@ -60,7 +60,8 @@ def create_app(
 
     @app.get("/", include_in_schema=False)
     def root() -> RedirectResponse:
-        return RedirectResponse(url=f"/ui/?token={settings.token}")
+        target = "/ui/" if settings.auth_disabled else f"/ui/?token={settings.token}"
+        return RedirectResponse(url=target)
 
     if settings.web_dir.is_dir():
         app.mount("/ui", StaticFiles(directory=settings.web_dir, html=True), name="ui")
@@ -99,7 +100,10 @@ def _reachable_hosts(bind: str) -> list[str]:
 def _print_banner(settings: Settings) -> None:
     hosts = _reachable_hosts(settings.host)
     print(f"sturddle-view: bound on {settings.host}:{settings.port}", file=sys.stderr)
+    if settings.auth_disabled:
+        print("auth: DISABLED (--no-auth)", file=sys.stderr)
     print("open one of:", file=sys.stderr)
     for h in hosts:
-        print(f"  http://{h}:{settings.port}/?token={settings.token}", file=sys.stderr)
+        suffix = "" if settings.auth_disabled else f"?token={settings.token}"
+        print(f"  http://{h}:{settings.port}/{suffix}", file=sys.stderr)
     sys.stderr.flush()
