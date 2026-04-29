@@ -286,6 +286,31 @@ export function pickFile({
   });
 }
 
+/**
+ * Report an error: short toast + full detail to the app log.
+ * `action` is a verb phrase ("Move rejected", "New game failed").
+ * `error` is the caught Error or anything with a `.message`.
+ * `ctx` must expose a `log(line)` function (same as the perspective ctx).
+ */
+export function reportError(ctx, action, error) {
+  const message = (error && error.message) || String(error);
+  // Try to peel off the API URL prefix our api() helper adds:
+  //   "POST /game/move -> 400 detail-here"
+  // The toast wants only the human-readable trailing detail.
+  let short = message;
+  const m = message.match(/^[A-Z]+\s+\/\S+\s+->\s+\d+\s+(.*)$/s);
+  if (m) {
+    try {
+      const parsed = JSON.parse(m[1]);
+      short = parsed.detail || m[1];
+    } catch {
+      short = m[1];
+    }
+  }
+  toast(`${action}: ${short}`, { variant: "danger" });
+  ctx?.log?.(`${action}: ${message}`);
+}
+
 /** Transient toast. Returns undefined; non-blocking. */
 export function toast(message, { variant = "neutral", duration = 4000 } = {}) {
   // Simple toast implementation; Web Awesome's callout supports more styling.

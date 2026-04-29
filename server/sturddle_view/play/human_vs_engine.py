@@ -147,6 +147,14 @@ class HumanVsEngine:
         else:
             await self._engine_to_move()
 
+    async def republish_state(self) -> None:
+        """Re-emit the current board + clock so a stale client can resync."""
+        async with self._lock:
+            if self._board is None or self._game_id is None:
+                return
+            await self._publish_board()
+            await self._publish_clock()
+
     async def takeback(self) -> None:
         """Undo back to the human's turn. Cancels any in-flight engine search.
 

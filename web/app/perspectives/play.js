@@ -3,7 +3,7 @@
 // Engine debug + event log are gated behind a "Show debug" toggle.
 
 import { mountBoard } from "../board.js";
-import { toast } from "../dialogs.js";
+import { reportError, toast } from "../dialogs.js";
 
 function fmtClock(seconds) {
   if (!Number.isFinite(seconds)) return "—";
@@ -155,7 +155,7 @@ export const playPerspective = {
         try {
           await ctx.api("POST", "/game/move", { uci });
         } catch (e) {
-          toast(`Move rejected: ${e.message}`, { variant: "danger" });
+          reportError(ctx, "Move rejected", e);
         }
       },
     });
@@ -173,7 +173,6 @@ export const playPerspective = {
           board.setPosition(evt.payload.fen, evt.payload.last_move);
           renderMoveList(moveListEl, evt.payload.moves_san || []);
           board.enableInput(true);
-          // Take-back is only meaningful once at least one ply has been played.
           {
             const dis =
               !allowTakeback || (evt.payload.moves_san?.length ?? 0) === 0;
@@ -185,15 +184,25 @@ export const playPerspective = {
           setClock(evt.payload);
           break;
         case "game_result":
-          append(eventLogEl, `result: ${JSON.stringify(evt.payload)}`);
+          ctx.log(`game_result: ${JSON.stringify(evt.payload)}`);
           board.enableInput(false);
           resignBtn.setAttribute("disabled", "");
           toast(`Game over: ${evt.payload.result}`, { variant: "neutral" });
           break;
+        case "system":
+          ctx.log(`system: ${JSON.stringify(evt.payload)}`);
+          break;
         default:
-          append(eventLogEl, `${evt.kind}: ${JSON.stringify(evt.payload)}`);
+          ctx.log(`${evt.kind}: ${JSON.stringify(evt.payload)}`);
       }
     });
+
+    // Render existing log lines on mount, then keep up via the custom event.
+    eventLogEl.textContent = ctx.getLogSnapshot().join("\n");
+    const onLog = (e) => {
+      append(eventLogEl, e.detail);
+    };
+    window.addEventListener("sturddle:log", onLog);
 
     const onNewGame = async () => {
       try {
@@ -205,7 +214,7 @@ export const playPerspective = {
         moveListEl.innerHTML = "";
         engineInfoEl.textContent = "";
       } catch (e) {
-        toast(`New game failed: ${e.message}`, { variant: "danger" });
+        reportError(ctx, "New game failed", e);
       }
     };
 
@@ -213,7 +222,7 @@ export const playPerspective = {
       try {
         await ctx.api("POST", "/game/resign", {});
       } catch (e) {
-        toast(`Resign failed: ${e.message}`, { variant: "danger" });
+        reportError(ctx, "Resign failed", e);
       }
     };
 
@@ -221,7 +230,7 @@ export const playPerspective = {
       try {
         await ctx.api("POST", "/game/takeback", {});
       } catch (e) {
-        toast(`Take-back failed: ${e.message}`, { variant: "danger" });
+        reportError(ctx, "Take-back failed", e);
       }
     };
 
@@ -232,6 +241,7 @@ export const playPerspective = {
     return {
       unmount() {
         offEvent();
+        window.removeEventListener("sturddle:log", onLog);
         window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
         newGameBtn.removeEventListener("click", onNewGame);
         resignBtn.removeEventListener("click", onResign);

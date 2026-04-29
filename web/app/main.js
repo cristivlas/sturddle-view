@@ -49,7 +49,26 @@ function makeBus() {
 }
 
 const events = makeBus();
-const ctx = { api, events, token };
+
+// Application-wide log: keeps a bounded buffer of strings, dispatches a
+// "sturddle:log" custom event when a new line arrives. Perspectives subscribe
+// to render it in their debug panel.
+const LOG_LIMIT = 500;
+const logBuffer = [];
+
+function log(line) {
+  const ts = new Date().toISOString().substring(11, 19);
+  const formatted = `${ts} ${line}`;
+  logBuffer.push(formatted);
+  if (logBuffer.length > LOG_LIMIT) logBuffer.shift();
+  window.dispatchEvent(new CustomEvent("sturddle:log", { detail: formatted }));
+}
+
+function getLogSnapshot() {
+  return logBuffer.slice();
+}
+
+const ctx = { api, events, token, log, getLogSnapshot };
 
 const router = new PerspectiveRouter({ root, ctx });
 router.register(playPerspective);

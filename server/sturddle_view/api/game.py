@@ -74,6 +74,11 @@ async def submit_move(payload: dict, request: Request) -> dict:
     try:
         await hve.submit_move(uci)
     except RuntimeError as e:
+        # Republish so a client whose UI moved optimistically can snap back.
+        try:
+            await hve.republish_state()
+        except Exception:
+            pass
         raise HTTPException(status_code=400, detail=str(e)) from e
     return {"ok": True}
 
