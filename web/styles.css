@@ -81,3 +81,55 @@ main {
 #info-panel h2 { font-size: 12px; text-transform: uppercase; color: var(--muted); margin: 12px 0 4px; }
 #info-panel h2:first-child { margin-top: 0; }
 pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-size: 12px; }
+
+#engines-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+#engines-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px solid #333;
+  margin-bottom: 4px;
+  background: #1f1f1f;
+}
+#engines-list li.selected { border-color: var(--accent); }
+#engines-list .name { font-weight: 600; }
+#engines-list .path { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#engines-list button {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid #444;
+  padding: 1px 6px;
+  cursor: pointer;
+  font-size: 11px;
+}
+#engines-list button:hover { border-color: var(--accent); }
+
+#engine-add {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+#engine-add input {
+  background: #2a2a2a;
+  color: var(--fg);
+  border: 1px solid #444;
+  padding: 2px 6px;
+  font-size: 12px;
+  flex: 1;
+  min-width: 0;
+}
+#engine-add button {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid #444;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+#engine-add button:hover { border-color: var(--accent); }

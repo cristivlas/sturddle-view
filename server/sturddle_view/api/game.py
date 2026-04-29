@@ -8,21 +8,40 @@ from ..play.human_vs_engine import HumanVsEngine, TimeControl
 router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_token)])
 
 
-def _get_hve(request: Request) -> HumanVsEngine:
+async def _get_hve(request: Request) -> HumanVsEngine:
     s = request.app.state
+    path = _resolve_engine_path(request)
+    if path is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "no engine configured; register one via POST /engines and "
+                "POST /engines/{id}/select, or start with --engine <path>"
+            ),
+        )
+    if s.hve is not None and s.hve.engine_path != path:
+        await s.hve.shutdown()
+        s.hve = None
     if s.hve is None:
-        if s.settings.engine_path is None:
-            raise HTTPException(
-                status_code=400,
-                detail="no engine configured; start server with --engine <path> or set STURDDLE_ENGINE_PATH",
-            )
-        s.hve = HumanVsEngine(str(s.settings.engine_path), s.event_bus)
+        s.hve = HumanVsEngine(path, s.event_bus)
     return s.hve
+
+
+def _resolve_engine_path(request: Request) -> str | None:
+    s = request.app.state
+    if s.selected_engine_id:
+        try:
+            return s.engines.get(s.selected_engine_id).path
+        except KeyError:
+            s.selected_engine_id = None
+    if s.settings.engine_path:
+        return str(s.settings.engine_path)
+    return None
 
 
 @router.post("/new")
 async def new_game(payload: dict, request: Request) -> dict:
-    hve = _get_hve(request)
+    hve = await _get_hve(request)
     human_white = bool(payload.get("human_white", True))
     tc = TimeControl(
         initial_seconds=float(payload.get("initial_seconds", 300.0)),
@@ -37,7 +56,7 @@ async def new_game(payload: dict, request: Request) -> dict:
 
 @router.post("/move")
 async def submit_move(payload: dict, request: Request) -> dict:
-    hve = _get_hve(request)
+    hve = await _get_hve(request)
     uci = payload.get("uci")
     if not isinstance(uci, str) or not uci:
         raise HTTPException(status_code=400, detail="missing 'uci'")
@@ -50,7 +69,7 @@ async def submit_move(payload: dict, request: Request) -> dict:
 
 @router.post("/resign")
 async def resign(request: Request) -> dict:
-    hve = _get_hve(request)
+    hve = await _get_hve(request)
     await hve.resign()
     return {"ok": True}
 

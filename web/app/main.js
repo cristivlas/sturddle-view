@@ -1,5 +1,6 @@
 import { connect } from "./ws.js";
 import { mountBoard } from "./board.js";
+import { mountEngines } from "./engines.js";
 
 const params = new URLSearchParams(location.search);
 const token = params.get("token") || "";
@@ -23,6 +24,7 @@ async function api(method, path, body) {
     const detail = await r.text();
     throw new Error(`${method} ${path} -> ${r.status} ${detail}`);
   }
+  if (r.status === 204) return null;
   return r.json();
 }
 
@@ -89,6 +91,11 @@ document.getElementById("resign").addEventListener("click", async () => {
   } catch (e) {
     append(eventLog, `resign failed: ${e.message}`);
   }
+});
+
+mountEngines({
+  api,
+  onError: (msg) => append(eventLog, msg),
 });
 
 connect({

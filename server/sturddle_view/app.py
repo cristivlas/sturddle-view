@@ -11,10 +11,12 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import agent as agent_api
+from .api import engines as engines_api
 from .api import game as game_api
 from .api import settings as settings_api
 from .api import ws as ws_api
 from .config import Settings
+from .engines import EngineRegistry
 from .events import EventBus
 
 log = logging.getLogger(__name__)
@@ -31,7 +33,11 @@ async def _lifespan(app: FastAPI):
         await app.state.hve.shutdown()
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    engine_registry: EngineRegistry | None = None,
+) -> FastAPI:
     settings = settings or Settings()
     app = FastAPI(title="sturddle-view", version="0.0.1", lifespan=_lifespan)
 
@@ -39,8 +45,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.event_bus = EventBus()
     app.state.hve = None  # lazy: HumanVsEngine, created on first /game/new
     app.state.ws_tasks = set()
+    app.state.engines = engine_registry or EngineRegistry()
+    app.state.selected_engine_id = None
 
     app.include_router(settings_api.router)
+    app.include_router(engines_api.router)
     app.include_router(game_api.router)
     app.include_router(agent_api.router)
     app.include_router(ws_api.router)

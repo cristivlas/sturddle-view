@@ -66,6 +66,10 @@ class HumanVsEngine:
         self._think_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
+    @property
+    def engine_path(self) -> str:
+        return self._engine_path
+
     async def _ensure_engine(self) -> chess.engine.UciProtocol:
         if self._engine is None:
             _transport, engine = await chess.engine.popen_uci(self._engine_path)
