@@ -286,6 +286,27 @@ async def test_runner_clean_exit_emits_done(tmp_path, patched_runner):
     assert "out 2" in log_text
 
 
+async def test_runner_emits_runner_log_per_stdout_line(tmp_path, patched_runner):
+    """Slice 9a: fastchess stdout is forwarded to the event bus as
+    ``runner_log`` events so the workspace's Event log window can show
+    each line."""
+    spec = _make_spec(tmp_path, {}, [{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}])
+    rec = _Recorder()
+    runner = patched_runner(["--print", "3", "--print-err", "1", "--exit", "0"])
+
+    await runner.start(spec, rec)
+    await asyncio.wait_for(rec.done.wait(), timeout=5.0)
+
+    log_events = [(k, p) for (k, p) in rec.events if k == "runner_log"]
+    out_lines = [p["line"] for (_, p) in log_events if p.get("stream") == "out"]
+    err_lines = [p["line"] for (_, p) in log_events if p.get("stream") == "err"]
+
+    assert "out 0" in out_lines
+    assert "out 1" in out_lines
+    assert "out 2" in out_lines
+    assert "err 0" in err_lines
+
+
 async def test_runner_nonzero_exit_emits_runner_crash(tmp_path, patched_runner):
     spec = _make_spec(tmp_path, {}, [{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}])
     rec = _Recorder()

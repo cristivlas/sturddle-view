@@ -792,3 +792,5 @@ wa-dialog::part(body) {
 }
 .wb-log-ts { color: var(--muted); flex: 0 0 60px; }
 .wb-log-kind { color: var(--accent); }
+.wb-log-runner { color: var(--fg); flex: 1; min-width: 0; word-break: break-word; }
+.wb-log-runner.err { color: var(--wa-color-danger-on-loud); }

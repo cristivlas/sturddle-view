@@ -281,8 +281,9 @@ class FastchessRunner:
         log_file: Any,
         tag: str,
     ) -> None:
-        """Forward each line of ``stream`` to the log file. Tolerates
-        the stream closing or being None."""
+        """Forward each line of ``stream`` to the log file AND emit a
+        ``runner_log`` event so the workspace's Event log window can
+        show it. Tolerates the stream closing or being None."""
         if stream is None:
             return
         try:
@@ -290,12 +291,22 @@ class FastchessRunner:
                 line = await stream.readline()
                 if not line:
                     return
+                decoded = line.decode("utf-8", errors="replace")
                 try:
-                    log_file.write(line.decode("utf-8", errors="replace"))
+                    log_file.write(decoded)
                     log_file.flush()
                 except (ValueError, OSError):
                     # log file closed by supervisor — drop the line.
                     return
+                # Forward to the event bus too. fastchess's stdout is
+                # low-volume status output ("Started game N", "Finished
+                # game N: ...", score lines) — fine to publish per-line
+                # without batching. Per-engine UCI chatter does NOT
+                # flow through here; that's the proxy's job (Slice 9b).
+                await self._emit("runner_log", {
+                    "stream": tag,
+                    "line": decoded.rstrip("\n"),
+                })
         except asyncio.CancelledError:
             raise
         except Exception:

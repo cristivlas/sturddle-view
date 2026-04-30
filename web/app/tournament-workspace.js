@@ -199,6 +199,13 @@ export function openTournamentWorkspace({ api, events, log, tournament }) {
     list.innerHTML = eventLog.map((e) => {
       const ts = e.ts || "";
       const k = e.payload?.kind || e.kind || "event";
+      // runner_log carries fastchess's own stdout/stderr output;
+      // surface the actual line, not just the kind.
+      if (k === "runner_log" && e.payload?.line) {
+        const stream = e.payload.stream === "err" ? " err" : "";
+        return `<li><span class="wb-log-ts">${ts}</span>` +
+          `<span class="wb-log-runner${stream}">${escape(e.payload.line)}</span></li>`;
+      }
       return `<li><span class="wb-log-ts">${ts}</span> <span class="wb-log-kind">${escape(k)}</span></li>`;
     }).join("");
     list.scrollTop = list.scrollHeight;
