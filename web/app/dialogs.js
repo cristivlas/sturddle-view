@@ -20,12 +20,13 @@ function ensureContainer() {
  * `body(resolve, dialog)` builds the dialog content and wires up handlers
  * that eventually call `resolve(value)` to close.
  */
-export function showDialog({ label, body, defaultValue = null, width }) {
+export function showDialog({ label, body, defaultValue = null, width, height }) {
   return new Promise((resolveOuter) => {
     const host = ensureContainer();
     const dialog = document.createElement("wa-dialog");
     dialog.label = label ?? "";
     if (width) dialog.style.setProperty("--width", width);
+    if (height) dialog.style.setProperty("--dialog-height", height);
     let resolved = false;
     let resolvedValue = defaultValue;
 
@@ -54,14 +55,17 @@ export function showDialog({ label, body, defaultValue = null, width }) {
 }
 
 /** Modal alert. Resolves to undefined when dismissed. */
-export function alert({ message, title = "Notice", okLabel = "OK" } = {}) {
+export function alert({ message, okLabel = "OK" } = {}) {
   return showDialog({
-    label: title,
+    label: "",
     body: (resolve, dialog) => {
+      dialog.setAttribute("no-header", "");
       const p = document.createElement("p");
+      p.className = "confirm-message";
       p.textContent = message ?? "";
       const ok = document.createElement("wa-button");
       ok.variant = "brand";
+      ok.size = "small";
       ok.slot = "footer";
       ok.textContent = okLabel;
       ok.addEventListener("click", () => resolve());
@@ -70,28 +74,34 @@ export function alert({ message, title = "Notice", okLabel = "OK" } = {}) {
   });
 }
 
-/** Modal confirm. Resolves true on confirm, false otherwise. */
+/** Modal confirm. Resolves true on confirm, false otherwise.
+ *  No title by design — the message itself carries the question, the
+ *  destructive button label is the verb. (iOS-style.) */
 export function confirm({
   message,
-  title = "Confirm",
   okLabel = "OK",
   cancelLabel = "Cancel",
   destructive = false,
 } = {}) {
   return showDialog({
-    label: title,
+    label: "",
     defaultValue: false,
     body: (resolve, dialog) => {
+      dialog.setAttribute("no-header", "");
+
       const p = document.createElement("p");
+      p.className = "confirm-message";
       p.textContent = message ?? "";
 
       const cancel = document.createElement("wa-button");
       cancel.slot = "footer";
+      cancel.size = "small";
       cancel.textContent = cancelLabel;
       cancel.addEventListener("click", () => resolve(false));
 
       const ok = document.createElement("wa-button");
       ok.slot = "footer";
+      ok.size = "small";
       ok.variant = destructive ? "danger" : "brand";
       ok.textContent = okLabel;
       ok.addEventListener("click", () => resolve(true));

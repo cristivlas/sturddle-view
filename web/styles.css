@@ -172,16 +172,23 @@ main { padding: 16px; }
 .move-row .move-num { color: var(--muted); }
 .move-row .move-cell { color: var(--fg); }
 
-#observe-perspective.placeholder {
+#engines-perspective {
+  display: flex;
+  flex-direction: column;
+  min-height: 60vh;
+}
+#engines-perspective wa-tab-panel { padding: 16px 0; }
+#engines-perspective .placeholder {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 60vh;
+  min-height: 40vh;
   color: var(--muted);
 }
-#observe-perspective.placeholder p { margin: 4px 0; }
-#observe-perspective.placeholder .muted { font-size: 12px; }
+#engines-perspective .placeholder p { margin: 4px 0; }
+#engines-perspective .placeholder .muted { font-size: 12px; }
+.engines-roster-host { width: 100%; }
 
 #board {
   aspect-ratio: 1 / 1;
@@ -204,66 +211,139 @@ main { padding: 16px; }
 #info-panel h2:first-child { margin-top: 0; }
 pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-size: 12px; }
 
-.engines-list {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 12px;
-  font-size: 13px;
+/* ---------- Engines tab: stacked ---------- */
+.engines-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   min-width: 0;
 }
-.engines-list li {
+.engines-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+.engines-header-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.engines-header-info.empty { visibility: hidden; }
+.engines-header-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.engines-detail-name {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.engines-search { width: 100%; }
+
+.engines-list {
+  list-style: none;
+  padding: 4px;
+  margin: 0;
+  border: 1px solid #333;
+  border-radius: 4px;
+  background: #1a1a1a;
+  min-height: 200px;
+  max-height: 360px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+.engines-list-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
-  border: 1px solid #333;
-  margin-bottom: 4px;
-  background: #1f1f1f;
-  border-radius: 4px;
+  padding: 6px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  user-select: none;
   min-width: 0;
-  flex-wrap: wrap;
 }
-.engines-list li.selected { border-color: var(--accent); }
-.engines-list li.empty { color: var(--muted); justify-content: center; }
-.engines-list .name { font-weight: 600; min-width: 90px; }
-.engines-list .path {
-  color: var(--muted);
-  flex: 1 1 0;
+.engines-list-item:hover { background: #2a2a2a; }
+.engines-list-item.focused { background: #2c3a3a; }
+.engines-list-item.active .engines-list-name { font-weight: 600; }
+.engines-list-name {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.engines-list-active-badge {
+  flex: 0 0 auto;
+  color: var(--accent);
   font-size: 12px;
 }
-.engines-list wa-button { flex: 0 0 auto; }
-.engines-list wa-button + wa-button { margin-left: 4px; }
-
-.engine-add {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-  width: 100%;
-  min-width: 0;
+.engines-list-empty {
+  list-style: none;
+  padding: 12px;
+  text-align: center;
+  font-size: 12px;
 }
-.engine-add wa-input {
-  flex: 1 1 200px;
-  min-width: 0;
-}
-.engine-add wa-input.engine-name { flex: 1 1 140px; }
-.engine-add wa-button { flex: 0 0 auto; }
 
-.settings-row { margin-top: 12px; max-width: 360px; }
-.settings-row label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
-.settings-row wa-input,
-.settings-row wa-select { width: 100%; }
+.muted { color: var(--muted); }
 
-/* Settings dialog must never scroll horizontally. */
+/* ---------- Dialog content system ----------
+ * Unified spacing for tab panels: every row gets the same vertical rhythm
+ * and the same horizontal padding so nothing kisses the dialog edges.
+ */
 wa-dialog::part(body) { overflow-x: hidden !important; }
-wa-dialog wa-tab-panel { min-width: 0; overflow-x: hidden; }
+/* Header actions: spacing between buttons. */
+wa-dialog::part(header-actions) { gap: 6px; }
+
+/* Headerless confirm/alert dialogs: the message is the heading. */
+.confirm-message {
+  margin: 4px 0 0;
+  font-size: 15px;
+  line-height: 1.5;
+}
 wa-dialog wa-tab-group { min-width: 0; }
-.engines-host { min-width: 0; overflow-x: hidden; }
+/* Inherit Web Awesome's default tab-panel padding for the Settings dialog;
+   Settings is now form-shaped only, so default WA spacing fits naturally. */
+/* Allow popovers/dropdowns inside dialogs to escape clipping ancestors. */
+wa-dialog::part(body) { overflow: visible !important; }
+wa-dialog::part(dialog) {
+  overflow: visible !important;
+  /* Optional fixed height: callers set --dialog-height on the host. */
+  height: var(--dialog-height, auto);
+}
+
+/* The select uses an internal popup with distance=0; override via attribute
+   in JS where it matters. */
+wa-dialog wa-tab-panel > * + * { margin-top: 14px; }
+
+/* Form-style rows (label + input) inside a panel. */
+.settings-row { max-width: 360px; }
+.settings-row label {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.settings-row wa-input,
+.settings-row wa-select {
+  width: 100%;
+}
+
+/* Engines panel host — sits inside a tab panel and uses the same rhythm. */
+.engines-host {
+  min-width: 0;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 
 .fs-picker { display: flex; flex-direction: column; gap: 8px; }
 .fs-picker-pathbar { display: flex; gap: 8px; align-items: center; }

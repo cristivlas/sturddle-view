@@ -1,124 +1,202 @@
-// Engines panel: list / add / remove / select.
-// Mounts into a container element, builds its own DOM. Caller is responsible
-// for placement (a sidebar, a settings tab, etc).
+// Engines panel: stacked layout (header above list).
+// Top row: name + path on the left, actions on the right.
+// `+` Add is always present; star / sliders / trash appear only when a
+// selected engine is highlighted.
+// Below: search box + scrollable list.
 
 import { confirm, pickFile, toast } from "./dialogs.js";
 
 export function mountEngines({ container, api, onError }) {
   container.innerHTML = `
-    <ul class="engines-list"></ul>
-    <form class="engine-add">
-      <wa-input class="engine-name" size="small" placeholder="Engine name"></wa-input>
-      <wa-input class="engine-path" size="small" placeholder="/path/to/engine"></wa-input>
-      <wa-button type="button" class="engine-browse" size="small" variant="neutral">Browse…</wa-button>
-      <wa-button type="submit" size="small" variant="brand">Add</wa-button>
-    </form>
+    <div class="engines-panel">
+      <header class="engines-header">
+        <div class="engines-header-info">
+          <h3 class="engines-detail-name"></h3>
+        </div>
+        <div class="engines-header-actions">
+          <wa-button class="engines-detail-use icon-only" size="small" variant="brand"
+                     aria-label="Use as active engine" hidden>
+            <wa-icon name="star"></wa-icon>
+          </wa-button>
+          <wa-button class="engines-detail-options icon-only" size="small" appearance="outlined"
+                     aria-label="UCI options" hidden>
+            <wa-icon name="sliders"></wa-icon>
+          </wa-button>
+          <wa-button class="engines-detail-remove icon-only" size="small" variant="danger" appearance="outlined"
+                     aria-label="Remove engine" hidden>
+            <wa-icon name="trash"></wa-icon>
+          </wa-button>
+          <wa-button class="engines-add icon-only" size="small" variant="brand"
+                     aria-label="Add engine">
+            <wa-icon name="plus"></wa-icon>
+          </wa-button>
+        </div>
+      </header>
+
+      <wa-input class="engines-search" size="small" placeholder="Search engines…" clearable>
+        <wa-icon slot="start" name="magnifying-glass"></wa-icon>
+      </wa-input>
+
+      <ul class="engines-list" role="listbox" tabindex="0"></ul>
+    </div>
   `;
 
+  const headerInfo = container.querySelector(".engines-header-info");
+  const detailName = container.querySelector(".engines-detail-name");
+  const detailUseBtn = container.querySelector(".engines-detail-use");
+  const detailRemoveBtn = container.querySelector(".engines-detail-remove");
+  const detailOptionsBtn = container.querySelector(".engines-detail-options");
+  const addBtn = container.querySelector(".engines-add");
+  const searchInput = container.querySelector(".engines-search");
   const list = container.querySelector(".engines-list");
-  const form = container.querySelector(".engine-add");
-  const nameInput = container.querySelector(".engine-name");
-  const pathInput = container.querySelector(".engine-path");
-  const browseBtn = container.querySelector(".engine-browse");
 
-  browseBtn.addEventListener("click", async () => {
-    const picked = await pickFile({
-      api,
-      title: "Pick engine binary",
-      mode: "executable",
-      startPath: (pathInput.value || "").trim() || null,
-    });
-    if (picked) {
-      pathInput.value = picked;
-      if (!(nameInput.value || "").trim()) {
-        // Default the name to the binary's filename if empty.
-        nameInput.value = picked.split(/[\\/]/).pop();
-      }
-    }
-  });
+  let engines = [];
+  let selectedDetailId = null;
+  let activeId = null;
+  let filterText = "";
 
   async function refresh() {
     try {
-      const { engines, selected_id } = await api("GET", "/engines");
-      render(engines, selected_id);
+      const body = await api("GET", "/engines");
+      engines = body.engines;
+      activeId = body.selected_id;
+      if (selectedDetailId && !engines.some((e) => e.id === selectedDetailId)) {
+        selectedDetailId = null;
+      }
+      if (selectedDetailId === null) {
+        selectedDetailId = activeId || (engines[0]?.id ?? null);
+      }
+      renderAll();
     } catch (e) {
       onError?.(`engines: ${e.message}`);
     }
   }
 
-  function render(engines, selectedId) {
+  function renderAll() {
+    renderList();
+    renderHeader();
+  }
+
+  function renderList() {
     list.innerHTML = "";
+    const needle = filterText.trim().toLowerCase();
+    const visible = needle
+      ? engines.filter((e) => e.name.toLowerCase().includes(needle))
+      : engines;
+
     if (engines.length === 0) {
       const li = document.createElement("li");
-      li.className = "empty";
-      li.textContent = "(none registered)";
+      li.className = "engines-list-empty muted";
+      li.textContent = "No engines yet — click + to add one.";
       list.appendChild(li);
       return;
     }
-    for (const e of engines) {
+    if (visible.length === 0) {
       const li = document.createElement("li");
-      if (e.id === selectedId) li.classList.add("selected");
+      li.className = "engines-list-empty muted";
+      li.textContent = "No engines match.";
+      list.appendChild(li);
+      return;
+    }
+
+    for (const e of visible) {
+      const li = document.createElement("li");
+      li.className = "engines-list-item";
+      li.dataset.engineId = e.id;
+      if (e.id === selectedDetailId) li.classList.add("focused");
+      if (e.id === activeId) li.classList.add("active");
 
       const name = document.createElement("span");
-      name.className = "name";
+      name.className = "engines-list-name";
       name.textContent = e.name;
+      li.appendChild(name);
 
-      const path = document.createElement("span");
-      path.className = "path";
-      path.title = e.path;
-      path.textContent = e.path;
+      if (e.id === activeId) {
+        const badge = document.createElement("wa-icon");
+        badge.name = "star";
+        badge.className = "engines-list-active-badge";
+        li.appendChild(badge);
+      }
 
-      const selectBtn = document.createElement("wa-button");
-      selectBtn.size = "small";
-      selectBtn.variant = e.id === selectedId ? "success" : "neutral";
-      selectBtn.appearance = "outlined";
-      selectBtn.textContent = e.id === selectedId ? "Active" : "Use";
-      selectBtn.disabled = e.id === selectedId;
-      selectBtn.addEventListener("click", async () => {
-        try {
-          await api("POST", `/engines/${e.id}/select`);
-          refresh();
-        } catch (err) {
-          onError?.(`select: ${err.message}`);
-        }
+      li.addEventListener("click", () => {
+        selectedDetailId = e.id;
+        renderAll();
       });
 
-      const removeBtn = document.createElement("wa-button");
-      removeBtn.size = "small";
-      removeBtn.variant = "danger";
-      removeBtn.appearance = "outlined";
-      removeBtn.textContent = "Remove";
-      removeBtn.addEventListener("click", async () => {
-        const ok = await confirm({
-          title: "Remove engine",
-          message: `Remove ${e.name}?`,
-          okLabel: "Remove",
-          destructive: true,
-        });
-        if (!ok) return;
-        try {
-          await api("DELETE", `/engines/${e.id}`);
-          toast(`Removed ${e.name}`, { variant: "success" });
-          refresh();
-        } catch (err) {
-          onError?.(`remove: ${err.message}`);
-        }
-      });
-
-      li.append(name, path, selectBtn, removeBtn);
       list.appendChild(li);
     }
   }
 
-  form.addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const name = (nameInput.value || "").trim();
-    const path = (pathInput.value || "").trim();
-    if (!name || !path) return;
+  function renderHeader() {
+    const e = engines.find((x) => x.id === selectedDetailId);
+    const has = !!e;
+
+    headerInfo.classList.toggle("empty", !has);
+
+    detailName.textContent = has ? e.name : "";
+
+    // Detail-only actions: hidden when no engine is selected.
+    for (const btn of [detailUseBtn, detailOptionsBtn, detailRemoveBtn]) {
+      btn.hidden = !has;
+    }
+    if (has) {
+      if (e.id === activeId) detailUseBtn.setAttribute("disabled", "");
+      else detailUseBtn.removeAttribute("disabled");
+    }
+  }
+
+  searchInput.addEventListener("input", () => {
+    filterText = searchInput.value || "";
+    renderList();
+  });
+
+  detailUseBtn.addEventListener("click", async () => {
+    if (!selectedDetailId) return;
     try {
-      await api("POST", "/engines", { name, path });
-      nameInput.value = "";
-      pathInput.value = "";
+      await api("POST", `/engines/${selectedDetailId}/select`);
+      refresh();
+    } catch (err) {
+      onError?.(`select: ${err.message}`);
+    }
+  });
+
+  detailRemoveBtn.addEventListener("click", async () => {
+    if (!selectedDetailId) return;
+    const e = engines.find((x) => x.id === selectedDetailId);
+    if (!e) return;
+    const ok = await confirm({
+      title: "Remove engine",
+      message: `Remove ${e.name}?`,
+      okLabel: "Remove",
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await api("DELETE", `/engines/${selectedDetailId}`);
+      toast(`Removed ${e.name}`, { variant: "success" });
+      selectedDetailId = null;
+      refresh();
+    } catch (err) {
+      onError?.(`remove: ${err.message}`);
+    }
+  });
+
+  detailOptionsBtn.addEventListener("click", () => {
+    toast("UCI options dialog: coming soon", { variant: "neutral" });
+  });
+
+  addBtn.addEventListener("click", async () => {
+    const path = await pickFile({
+      api,
+      title: "Pick engine binary",
+      mode: "executable",
+    });
+    if (!path) return;
+    const name = path.split(/[\\/]/).pop();
+    try {
+      const created = await api("POST", "/engines", { name, path });
+      toast(`Added ${name}`, { variant: "success" });
+      selectedDetailId = created.id;
       refresh();
     } catch (e) {
       onError?.(`add: ${e.message}`);

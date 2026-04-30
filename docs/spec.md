@@ -220,17 +220,17 @@ For human vs engine play. Calm, distraction-free.
 - No floating windows. The board is the focus; nothing should float over it during play.
 - One docked panel toggle: an optional "agent" tab in the side rail (Phase 2).
 
-#### Observe perspective (workspace canvas)
+#### Engines perspective (workspace + management)
 
-For tournament and headless-peek viewing.
+A single perspective subsumes everything engine-related — registry management, tournament configuration, and live observation of running games. They share the same primary nouns (engines, games, tournaments) and benefit from the same screen real estate.
 
-- Empty workspace as the default; user opens windows for what they care about.
-- Each running game is a window (board + small info strip).
-- Standings, SPRT progress, event log, schedule, etc., are each their own window.
-- WinBox-driven: drag, resize, minimize, maximize, close. Multiple windows visible at once.
-- Right-click on the workspace background or a "+" dropdown spawns new windows.
-- Layouts are persisted per tournament — switching tournaments restores the user's last layout for that tournament.
-- Perspective is read-only with respect to game play — no input goes back to engines from here.
+Internal layout uses an inner nav (tabs or rail) within the perspective:
+
+- **Roster** — manage registered engines: list (search/filter, supports many), add, remove, configure per-engine UCI options. A persistent default UCI options section applies across engines.
+- **Tournaments** — create, save, edit, and start tournament configurations (engine pairings, time controls, rounds, concurrency, SPRT parameters). Browse historical tournaments and drill into past games.
+- **Observe** — workspace canvas for live tournaments and headless-peek attachment. WinBox-driven: each running game is a window; standings, SPRT progress, schedule, event log are their own windows. Layouts persist per tournament. Read-only with respect to game play — no input goes back to engines.
+
+Engines management is **not** a settings dialog tab. It is a first-class screen with full width, vertical room, and real master-detail interactions. Settings dialog stays small and is reserved for toggles, time-control defaults, paths, and similar form-shaped concerns.
 
 Future perspectives (not Phase 1): Analysis, Library/PGN browser, History.
 

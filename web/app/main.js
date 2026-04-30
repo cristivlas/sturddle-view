@@ -1,7 +1,7 @@
 import { connect } from "./ws.js";
 import { PerspectiveRouter } from "./perspectives.js";
 import { playPerspective } from "./perspectives/play.js";
-import { observePerspective } from "./perspectives/observe.js";
+import { enginesPerspective } from "./perspectives/engines.js";
 import { openSettingsDialog } from "./settings-dialog.js";
 
 const params = new URLSearchParams(location.search);
@@ -72,7 +72,7 @@ const ctx = { api, events, token, log, getLogSnapshot };
 
 const router = new PerspectiveRouter({ root, ctx });
 router.register(playPerspective);
-router.register(observePerspective);
+router.register(enginesPerspective);
 
 function renderNav() {
   nav.innerHTML = "";
