@@ -199,6 +199,73 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
                 assert row_info["status"].strip() == "idle"
                 assert row_info["actions"] == ["Start", "Stop", "Open workspace", "Remove"]
                 assert row_info["new_button_disabled"] is False
+
+                # ---- Slice 7: Inspect dialog renders frozen template ----
+                # Click the row to open the read-only inspect view.
+                await page.click(".tournament-row .tournament-row-main")
+                # Dialog mounts; the form's TC field should show the frozen value.
+                await page.wait_for_function(
+                    """() => {
+                        const inputs = document.querySelectorAll('wa-dialog wa-input[data-key]');
+                        return inputs.length > 0;
+                    }""",
+                    timeout=5000,
+                )
+                tc_value = await page.evaluate(
+                    """() => document.querySelector('wa-dialog wa-input[data-key="tc"]').value"""
+                )
+                assert tc_value == "10+0.1"
+                # Inspect form is read-only.
+                tc_readonly = await page.evaluate(
+                    """() => document.querySelector('wa-dialog wa-input[data-key="tc"]').hasAttribute('readonly')"""
+                )
+                assert tc_readonly is True
+                # Close inspect dialog.
+                await page.click('wa-dialog wa-button[slot="footer"]')
+                await page.wait_for_function(
+                    "() => !document.querySelector('wa-dialog')",
+                    timeout=2000,
+                )
+
+                # ---- Slice 7: Defaults editor saves and round-trips ----
+                await page.click(".settings-edit-defaults")
+                await page.wait_for_function(
+                    """() => document.querySelector('wa-dialog wa-input[data-key="tc"]')""",
+                    timeout=5000,
+                )
+                # Set new defaults: tc=60+0.6, rounds=42, games_in_parallel=4
+                await page.evaluate(
+                    """() => {
+                        document.querySelector('wa-dialog wa-input[data-key="tc"]').value = "60+0.6";
+                        document.querySelector('wa-dialog wa-input[data-key="rounds"]').value = "42";
+                        document.querySelector('wa-dialog wa-input[data-key="games_in_parallel"]').value = "4";
+                    }"""
+                )
+                # Click "Save" — the brand button in the dialog footer.
+                await page.evaluate(
+                    """() => {
+                        const btns = document.querySelectorAll('wa-dialog wa-button[slot="footer"]');
+                        for (const b of btns) {
+                            if (b.textContent.trim() === 'Save') b.click();
+                        }
+                    }"""
+                )
+                # Dialog closes.
+                await page.wait_for_function(
+                    "() => !document.querySelector('wa-dialog')",
+                    timeout=2000,
+                )
+                # Confirm via API that the defaults persisted.
+                persisted = await page.evaluate(
+                    """async () => {
+                        const r = await fetch('/api/tournament-settings');
+                        return (await r.json()).default_template;
+                    }"""
+                )
+                assert persisted["tc"] == "60+0.6"
+                assert persisted["rounds"] == 42
+                assert persisted["games_in_parallel"] == 4
+
                 assert page_errors == [], "JS errors during test:\n" + "\n".join(page_errors)
             finally:
                 await browser.close()

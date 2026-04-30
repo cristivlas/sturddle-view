@@ -7,7 +7,8 @@
 // badges. Slice 7 replaces the inline create form with the reusable
 // template-form component. Slice 8 wires Open workspace to WinBox.
 
-import { confirm, pickFile, reportError, toast } from "./dialogs.js";
+import { confirm, pickFile, reportError, showDialog, toast } from "./dialogs.js";
+import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 
 export function mountTournaments({ container, api, events, log }) {
   container.innerHTML = `
@@ -22,6 +23,11 @@ export function mountTournaments({ container, api, events, log }) {
           <label>tournaments root</label>
           <span class="path-display path-root muted">(default)</span>
           <wa-button class="settings-pick-root" size="small">Browse…</wa-button>
+        </div>
+        <div class="settings-row settings-defaults-row">
+          <label>defaults</label>
+          <span class="defaults-summary muted">used as the template for new tournaments</span>
+          <wa-button class="settings-edit-defaults" size="small">Edit…</wa-button>
         </div>
       </div>
 
@@ -43,6 +49,7 @@ export function mountTournaments({ container, api, events, log }) {
   const rootPath = container.querySelector(".path-root");
   const fastchessBtn = container.querySelector(".settings-pick-fastchess");
   const rootBtn = container.querySelector(".settings-pick-root");
+  const editDefaultsBtn = container.querySelector(".settings-edit-defaults");
   const newBtn = container.querySelector(".tournament-new");
   const listEl = container.querySelector(".tournaments-list");
   const emptyEl = container.querySelector(".tournaments-empty");
@@ -168,10 +175,12 @@ export function mountTournaments({ container, api, events, log }) {
     stopBtn.disabled = !isActive;
     removeBtn.disabled = isActive;
 
-    startBtn.addEventListener("click", () => startOne(t));
-    stopBtn.addEventListener("click", () => stopOne(t));
-    removeBtn.addEventListener("click", () => removeOne(t));
-    workspaceBtn.addEventListener("click", () => openWorkspace(t));
+    startBtn.addEventListener("click", (ev) => { ev.stopPropagation(); startOne(t); });
+    stopBtn.addEventListener("click", (ev) => { ev.stopPropagation(); stopOne(t); });
+    removeBtn.addEventListener("click", (ev) => { ev.stopPropagation(); removeOne(t); });
+    workspaceBtn.addEventListener("click", (ev) => { ev.stopPropagation(); openWorkspace(t); });
+
+    li.addEventListener("click", () => openInspect(t));
 
     return li;
   }
@@ -220,6 +229,47 @@ export function mountTournaments({ container, api, events, log }) {
     toast(`Workspace for "${t.name}" — coming soon`, { variant: "neutral" });
   }
 
+  async function openInspect(t) {
+    // Read-only render of the frozen template. The template object on the
+    // list row may be stale; the GET endpoint is authoritative and also
+    // returns standings/SPRT once games exist.
+    let detail;
+    try {
+      detail = await api("GET", `/api/tournaments/${t.id}`);
+    } catch (e) {
+      reportError({ log }, `Loading "${t.name}" failed`, e);
+      return;
+    }
+    await showDialog({
+      label: `${t.name} (${detail.status})`,
+      width: "min(560px, 92vw)",
+      body: (resolve, dialog) => {
+        const wrap = document.createElement("div");
+        wrap.className = "inspect-form";
+        const meta = document.createElement("div");
+        meta.className = "inspect-meta muted";
+        const eng = (detail.engines || []).map((e) => e.name).join(" vs ");
+        meta.textContent = `engines: ${eng || "—"}`;
+        wrap.appendChild(meta);
+
+        const formHost = document.createElement("div");
+        mountTournamentTemplateForm({
+          container: formHost,
+          initialValues: detail.template || {},
+          readOnly: true,
+        });
+        wrap.appendChild(formHost);
+
+        const close = document.createElement("wa-button");
+        close.slot = "footer";
+        close.size = "small";
+        close.textContent = "Close";
+        close.addEventListener("click", () => resolve());
+        dialog.append(wrap, close);
+      },
+    });
+  }
+
   // ---- Settings actions ---------------------------------------------------
 
   fastchessBtn.addEventListener("click", async () => {
@@ -231,6 +281,47 @@ export function mountTournaments({ container, api, events, log }) {
     const path = await pickFile({ api, mode: "directory", title: "Pick tournaments root" });
     if (path) await saveSettings({ tournaments_root: path });
   });
+
+  editDefaultsBtn.addEventListener("click", () => openDefaultsDialog());
+
+  async function openDefaultsDialog() {
+    const initial = (settings && settings.default_template) || {};
+    const result = await showDialog({
+      label: "Tournament defaults",
+      width: "min(560px, 92vw)",
+      defaultValue: null,
+      body: (resolve, dialog) => {
+        const formHost = document.createElement("div");
+        const ctl = mountTournamentTemplateForm({
+          container: formHost,
+          initialValues: initial,
+        });
+
+        const cancel = document.createElement("wa-button");
+        cancel.slot = "footer";
+        cancel.size = "small";
+        cancel.textContent = "Cancel";
+        cancel.addEventListener("click", () => resolve(null));
+
+        const save = document.createElement("wa-button");
+        save.slot = "footer";
+        save.size = "small";
+        save.variant = "brand";
+        save.textContent = "Save";
+        save.addEventListener("click", () => {
+          try {
+            resolve(ctl.getValues());
+          } catch (e) {
+            toast(e.message, { variant: "danger" });
+          }
+        });
+        dialog.append(formHost, cancel, save);
+      },
+    });
+    if (!result) return;
+    await saveSettings({ default_template: result });
+    toast("Defaults saved", { variant: "neutral" });
+  }
 
   // ---- New Tournament dialog ---------------------------------------------
 
@@ -252,27 +343,24 @@ export function mountTournaments({ container, api, events, log }) {
       return;
     }
 
-    const { showDialog } = await import("./dialogs.js");
+    const defaults = (settings && settings.default_template) || { tc: "10+0.1", rounds: 10, games_in_parallel: 1 };
+
     const result = await showDialog({
       label: "New Tournament",
-      width: "min(540px, 92vw)",
+      width: "min(560px, 92vw)",
       defaultValue: null,
       body: (resolve, dialog) => {
         const wrap = document.createElement("div");
         wrap.className = "new-tournament-form";
         wrap.innerHTML = `
-          <wa-input class="nt-name" label="Name" placeholder="my tournament" required></wa-input>
+          <wa-input class="nt-name" label="Name" size="small" placeholder="my tournament" required></wa-input>
 
           <div class="nt-section">
             <label>Engines (pick 2 or more)</label>
             <ul class="nt-engines"></ul>
           </div>
 
-          <div class="nt-section">
-            <wa-input class="nt-tc" label="Time control" placeholder="10+0.1" value="10+0.1"></wa-input>
-            <wa-input class="nt-rounds" label="Rounds" type="number" min="1" value="10"></wa-input>
-            <wa-input class="nt-parallel" label="Games in parallel" type="number" min="1" value="1"></wa-input>
-          </div>
+          <div class="nt-template-host"></div>
         `;
 
         const enginesList = wrap.querySelector(".nt-engines");
@@ -285,10 +373,13 @@ export function mountTournaments({ container, api, events, log }) {
           enginesList.appendChild(li);
         }
 
+        const formHost = wrap.querySelector(".nt-template-host");
+        const tplCtl = mountTournamentTemplateForm({
+          container: formHost,
+          initialValues: defaults,
+        });
+
         const nameInput = wrap.querySelector(".nt-name");
-        const tcInput = wrap.querySelector(".nt-tc");
-        const roundsInput = wrap.querySelector(".nt-rounds");
-        const parallelInput = wrap.querySelector(".nt-parallel");
 
         const cancel = document.createElement("wa-button");
         cancel.slot = "footer";
@@ -311,13 +402,16 @@ export function mountTournaments({ container, api, events, log }) {
             toast("Pick at least 2 engines.", { variant: "danger" });
             return;
           }
+          let template;
+          try {
+            template = tplCtl.getValues();
+          } catch (e) {
+            toast(e.message, { variant: "danger" });
+            return;
+          }
           resolve({
             name: (nameInput.value || "").trim() || "tournament",
-            template: {
-              tc: tcInput.value || "10+0.1",
-              rounds: Number(roundsInput.value) || 10,
-              games_in_parallel: Number(parallelInput.value) || 1,
-            },
+            template,
             engines: picked,
           });
         });
