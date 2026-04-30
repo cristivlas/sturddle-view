@@ -272,3 +272,106 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
     finally:
         s.should_exit = True
         thread.join(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch):
+    """Slice 8: clicking 'Open workspace' on a tournament row spawns
+    three WinBox windows (Standings / Schedule / Event log)."""
+    monkeypatch.setattr(
+        FastchessRunner, "detect_binary",
+        staticmethod(lambda configured: configured),
+    )
+
+    import uvicorn
+
+    settings = Settings(token="test-token", auth_disabled=True)
+    settings.pgn_dir = tmp_path / "pgn"
+    settings.tournament_root = str(tmp_path / "tournaments")
+    settings.tournament_fastchess_path = sys.executable
+    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry.add(name="engine-A", path=sys.executable)
+    registry.add(name="engine-B", path=sys.executable)
+    app = create_app(settings=settings, engine_registry=registry)
+    app.state.tournament_store.create(
+        name="ws-smoke",
+        template={"tc": "10+0.1"},
+        engines=[{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
+    )
+
+    port = _free_port()
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    s = uvicorn.Server(config)
+    thread = threading.Thread(target=s.run, daemon=True)
+    thread.start()
+    deadline = time.time() + 10
+    while time.time() < deadline and not s.started:
+        time.sleep(0.05)
+
+    try:
+        async with async_playwright() as p:
+            try:
+                browser = await p.chromium.launch()
+            except Exception as e:
+                pytest.skip(f"chromium not installed: {e}")
+            ctx = await browser.new_context()
+            page = await ctx.new_page()
+            page_errors: list[str] = []
+            page.on("pageerror", lambda exc: page_errors.append(str(exc)))
+            page.on("console", lambda msg: page_errors.append(
+                f"console.{msg.type}: {msg.text}"
+            ) if msg.type == "error" else None)
+            try:
+                await page.goto(f"http://127.0.0.1:{port}/")
+                await page.wait_for_selector("#play-perspective", timeout=5000)
+                await page.click('button[data-perspective="engines"]')
+                await page.click('#engines-perspective wa-tab[panel="tournaments"]')
+                await page.wait_for_selector(".tournament-row", timeout=5000)
+
+                # Click the Open-workspace button on the row.
+                await page.click('.tournament-row .row-workspace')
+
+                # All three WinBox windows should appear.
+                await page.wait_for_function(
+                    "() => document.querySelectorAll('.winbox.sturddle-wb').length === 3",
+                    timeout=5000,
+                )
+                titles = await page.evaluate(
+                    """() => [...document.querySelectorAll('.winbox.sturddle-wb .wb-title')]
+                                .map(t => t.textContent)"""
+                )
+                assert any("Standings" in t for t in titles)
+                assert any("Schedule"  in t for t in titles)
+                assert any("Event log" in t for t in titles)
+
+                # Standings shows the empty state (no games played yet).
+                empty_text = await page.evaluate(
+                    """() => document.querySelector('.wb-standings .wb-empty')?.textContent || ''"""
+                )
+                assert "No games" in empty_text
+
+                # Closing the workspace's last window should clean up.
+                # Quick check: clicking 'Open workspace' a second time
+                # should still result in exactly three windows (not six).
+                # Close them all first via the X.
+                await page.evaluate(
+                    """() => document.querySelectorAll('.winbox.sturddle-wb .wb-close')
+                                .forEach(b => b.click())"""
+                )
+                await page.wait_for_function(
+                    "() => document.querySelectorAll('.winbox.sturddle-wb').length === 0",
+                    timeout=3000,
+                )
+                # Re-open: should still produce exactly 3.
+                await page.click('.tournament-row .row-workspace')
+                await page.wait_for_function(
+                    "() => document.querySelectorAll('.winbox.sturddle-wb').length === 3",
+                    timeout=5000,
+                )
+
+                assert page_errors == [], "JS errors during test:\n" + "\n".join(page_errors)
+            finally:
+                await browser.close()
+    finally:
+        s.should_exit = True
+        thread.join(timeout=5)

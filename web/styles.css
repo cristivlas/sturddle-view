@@ -688,3 +688,29 @@ wa-dialog wa-tab-panel > * + * { margin-top: 14px; }
 .inspect-form { display: flex; flex-direction: column; gap: 10px; }
 .inspect-meta { font-size: 12px; }
 .tournaments-settings .defaults-summary { font-size: 12px; }
+
+/* Tournament workspace windows (Slice 8) */
+.winbox.sturddle-wb { background: var(--panel); color: var(--fg); border: 1px solid #2e3138; }
+.winbox.sturddle-wb .wb-body { padding: 8px 12px; overflow: auto; }
+.wb-empty { color: var(--muted); padding: 12px; text-align: center; }
+.wb-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.wb-table th, .wb-table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid #2e3138; }
+.wb-table th { color: var(--muted); font-weight: normal; font-size: 11px; text-transform: uppercase; }
+.wb-table .wb-eng-name { font-weight: 500; }
+.wb-sprt {
+  background: var(--bg); border: 1px solid #2e3138; border-radius: 4px;
+  padding: 6px 8px; margin-bottom: 8px; font-size: 12px;
+  font-family: var(--wa-font-family-code);
+}
+.wb-sched-list, .wb-eventlog-list { list-style: none; padding: 0; margin: 0; }
+.wb-sched-list li { padding: 3px 0; font-size: 13px; border-bottom: 1px solid #2e3138; }
+.wb-sched-icon { display: inline-block; width: 18px; color: var(--accent); }
+.wb-sched-result {
+  font-family: var(--wa-font-family-code); color: var(--muted); margin-left: 8px;
+}
+.wb-eventlog-list li {
+  font-family: var(--wa-font-family-code); font-size: 12px; padding: 1px 0;
+  display: flex; gap: 8px;
+}
+.wb-log-ts { color: var(--muted); flex: 0 0 60px; }
+.wb-log-kind { color: var(--accent); }

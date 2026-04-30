@@ -9,6 +9,7 @@
 
 import { confirm, pickFile, reportError, showDialog, toast } from "./dialogs.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
+import { closeActiveWorkspace, openTournamentWorkspace } from "./tournament-workspace.js";
 
 export function mountTournaments({ container, api, events, log }) {
   container.innerHTML = `
@@ -225,8 +226,7 @@ export function mountTournaments({ container, api, events, log }) {
   }
 
   function openWorkspace(t) {
-    // Slice 8 wires WinBox windows here.
-    toast(`Workspace for "${t.name}" — coming soon`, { variant: "neutral" });
+    openTournamentWorkspace({ api, events, log, tournament: t });
   }
 
   async function openInspect(t) {
@@ -453,6 +453,7 @@ export function mountTournaments({ container, api, events, log }) {
   return {
     unmount() {
       offEvents();
+      closeActiveWorkspace();
     },
   };
 }
