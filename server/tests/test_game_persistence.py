@@ -237,6 +237,39 @@ def test_restore_from_replays_moves_and_clocks(tmp_path):
     assert hve._board.turn == chess.BLACK
     # Engine subprocess is not spawned by restore.
     assert hve._engine is None
+    # Tick is deferred until first client subscribes.
+    assert hve._tick_task is None
+    assert hve._turn_started_at is None
+
+
+async def test_republish_starts_tick_after_restore(tmp_path):
+    """First republish_state on a restored unpaused game starts the tick."""
+    hve, _store = _make_hve(tmp_path)
+    hve.restore_from(GameState(
+        game_id="r", human_white=True, tc_initial_seconds=60.0,
+        tc_increment_seconds=0.0, white_time=58.0, black_time=60.0, paused=False,
+        moves_uci=[], clock_history=[],
+    ))
+    assert hve._turn_started_at is None
+    await hve.republish_state()
+    assert hve._turn_started_at is not None
+    assert hve._tick_task is not None
+    await hve._cancel_tick()  # housekeeping
+
+
+async def test_republish_kicks_engine_when_engine_to_move(tmp_path):
+    """If a restored game has the engine to move, republish triggers the search."""
+    hve, _store = _make_hve(tmp_path)
+    # Human is black, so white (engine) is to move on the empty board.
+    hve.restore_from(GameState(
+        game_id="r", human_white=False, tc_initial_seconds=60.0,
+        tc_increment_seconds=0.0, white_time=60.0, black_time=60.0, paused=False,
+        moves_uci=[], clock_history=[],
+    ))
+    hve._engine_to_move = AsyncMock()
+    await hve.republish_state()
+    hve._engine_to_move.assert_awaited_once()
+    await hve._cancel_tick()
 
 
 # -------- App startup: lifespan restores from disk --------

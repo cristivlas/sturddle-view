@@ -231,12 +231,30 @@ class HumanVsEngine:
             await self._engine_to_move()
 
     async def republish_state(self) -> None:
-        """Re-emit the current board + clock so a stale client can resync."""
+        """Re-emit the current board + clock so a stale client can resync.
+
+        Also kicks off the tick loop (and the engine, if it's its turn) on
+        the first call after a restored game (see `restore_from`): the
+        side-to-move's clock starts ticking now, not at server-boot time.
+        """
+        kick_engine = False
         async with self._lock:
             if self._board is None or self._game_id is None:
                 return
+            if (
+                self._turn_started_at is None
+                and not self._paused
+                and not self._board.is_game_over()
+            ):
+                self._turn_started_at = time.monotonic()
+                self._start_tick()
+                engine_color = chess.BLACK if self._human_white else chess.WHITE
+                if self._board.turn == engine_color and self._think_task is None:
+                    kick_engine = True
             await self._publish_board()
             await self._publish_clock()
+        if kick_engine:
+            await self._engine_to_move()
 
     def snapshot_events(self) -> list[Event]:
         if self._board is None or self._game_id is None:
@@ -385,6 +403,13 @@ class HumanVsEngine:
     def restore_from(self, state: GameState) -> None:
         """Rehydrate from a saved snapshot. Engine process is NOT spawned;
         it'll spawn lazily on the first call that needs it (`_ensure_engine`).
+
+        The tick loop is intentionally NOT started here: a server that boots
+        into a near-zero clock with no client connected would otherwise time-flag
+        before anyone could see the position. The first `republish_state()`
+        call (i.e. a client subscribed) starts ticking and resets
+        `turn_started_at` so the side-to-move's clock isn't charged for the
+        gap between boot and connect.
         """
         self._board = chess.Board()
         for uci in state.moves_uci:
@@ -399,12 +424,8 @@ class HumanVsEngine:
         self._black_time = state.black_time
         self._paused = state.paused
         self._clock_history = [(w, b) for (w, b) in state.clock_history]
-        # Don't credit wall-clock time elapsed during the outage to whoever
-        # was thinking; reset turn_started_at to "now" if unpaused.
-        self._turn_started_at = None if state.paused else time.monotonic()
-        # Tick loop starts once the engine is needed (or on resume).
-        if not state.paused and not self._board.is_game_over():
-            self._start_tick()
+        # Marker: turn hasn't started ticking yet. republish_state() sets it.
+        self._turn_started_at = None
 
     # ----- internals -----
 
