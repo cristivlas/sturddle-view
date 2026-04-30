@@ -10,7 +10,7 @@ the UI is built on top of an already-tested server.
 
 ---
 
-## Slice 0 — Decompose the existing stub (½ day)
+## Slice 0 — Decompose the existing stub (XS)
 
 No new behavior. Just the file split agreed in the spec.
 
@@ -32,7 +32,7 @@ Trivial PR, easy review.
 
 ---
 
-## Slice 1 — Store + on-disk layout (1 day)
+## Slice 1 — Store + on-disk layout (S)
 
 - `TournamentStore`: `create / get / list / remove / update_status /
   active`. No subprocess concept.
@@ -48,7 +48,7 @@ Ships nothing user-visible. Foundation for everything else.
 
 ---
 
-## Slice 2 — PGN stats (1 day)
+## Slice 2 — PGN stats (M)
 
 - `pgn_stats.py`: `compute_standings(pgn_path) -> Standings`,
   `compute_sprt(pgn_path, params) -> SprtResult`.
@@ -63,7 +63,7 @@ front.
 
 ---
 
-## Slice 3 — FastchessRunner (1–2 days)
+## Slice 3 — FastchessRunner (L)
 
 - `runner.py`: `Runner` Protocol — `start(tournament, on_event) /
   stop() / is_running()`.
@@ -85,7 +85,7 @@ front.
 
 ---
 
-## Slice 4 — Orchestrator (½ day)
+## Slice 4 — Orchestrator (S)
 
 - Composes `Store` + `Runner`.
 - `start(id)`: rejects if `store.active()` is non-None or
@@ -103,7 +103,7 @@ yet.
 
 ---
 
-## Slice 5 — REST + WS surface (1 day)
+## Slice 5 — REST + WS surface (M)
 
 Server-side wiring only. Endpoints under `/api/tournaments` to match
 the existing `api/` convention:
@@ -129,7 +129,7 @@ UI can be built independently from here.
 
 ---
 
-## Slice 6 — Tournaments perspective UI: list view + settings sub-tab (1 day)
+## Slice 6 — Tournaments perspective UI: list view + settings sub-tab (M)
 
 - Remove the **Observe** sub-tab from
   `web/app/perspectives/engines.js`.
@@ -148,7 +148,7 @@ remove tournaments, but Open workspace is a stub.
 
 ---
 
-## Slice 7 — Reusable template form component (½ day)
+## Slice 7 — Reusable template form component (S)
 
 - Single component used in 3 contexts (Settings tab, New Tournament
   dialog, read-only inspect). Mounting context decides editable vs
@@ -162,7 +162,7 @@ second use case in front of you is cheaper than guessing.
 
 ---
 
-## Slice 8 — Workspace: Standings + Schedule + Event log (1 day)
+## Slice 8 — Workspace: Standings + Schedule + Event log (M)
 
 - WinBox already vendored. Three windows, default layout from spec.
 - Subscribes to the WS for the open tournament; populates Standings
@@ -175,7 +175,7 @@ second use case in front of you is cheaper than guessing.
 
 ---
 
-## Slice 9 — Workspace: Live game windows (1–2 days)
+## Slice 9 — Workspace: Live game windows (L)
 
 - Subscribes to per-game UCI info from the proxy stream.
 - N windows, opened on `game_started`, closed on `game_finished`.
@@ -215,10 +215,11 @@ End of Slice 9: feature-complete per the spec.
 
 ---
 
-## Total estimate
+## Sizing
 
-~9–11 days of focused work. Each slice small enough to land in one
-sitting and be reviewed without a marathon PR.
+T-shirt sizes (XS / S / M / L) reflect relative effort and review
+surface, not calendar time. Each slice is sized to land in one sitting
+with a focused PR.
 
 ---
 
