@@ -434,9 +434,9 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
   list-style: none;
   padding: 4px;
   margin: 0;
-  border: 1px solid #333;
+  border: 1px solid #34373d;
   border-radius: 4px;
-  background: #1a1a1a;
+  background: #15171b;
   min-height: 200px;
   max-height: 360px;
   overflow-y: auto;
@@ -452,8 +452,8 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
   user-select: none;
   min-width: 0;
 }
-.engines-list-item:hover { background: #2a2a2a; }
-.engines-list-item.focused { background: #2c3a3a; }
+.engines-list-item:hover { background: var(--nav-btn-bg); }
+.engines-list-item.focused { background: var(--nav-btn-bg-active); }
 .engines-list-item.active .engines-list-name { font-weight: 600; }
 .engines-list-name {
   flex: 1 1 auto;
@@ -551,9 +551,9 @@ wa-dialog wa-tab-panel > * + * { margin-top: 14px; }
   list-style: none;
   margin: 0;
   padding: 4px;
-  border: 1px solid #333;
+  border: 1px solid #34373d;
   border-radius: 4px;
-  background: #1a1a1a;
+  background: #15171b;
   height: 50vh;
   max-height: 480px;
   overflow: auto;
@@ -569,7 +569,7 @@ wa-dialog wa-tab-panel > * + * { margin-top: 14px; }
   cursor: pointer;
   user-select: none;
 }
-.fs-entry:hover { background: #2a2a2a; }
+.fs-entry:hover { background: var(--nav-btn-bg); }
 .fs-entry.selected { background: var(--accent); color: #000; }
 .fs-entry.dim { color: var(--muted); }
 .fs-entry wa-icon { font-size: 14px; flex: 0 0 auto; }
