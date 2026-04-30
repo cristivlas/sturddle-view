@@ -30,6 +30,14 @@ async def ws_endpoint(websocket: WebSocket, token: str = Query(default="")) -> N
     task = asyncio.current_task()
     websocket.app.state.ws_tasks.add(task)
 
+    hve = websocket.app.state.hve
+    if hve is not None:
+        try:
+            for event in hve.snapshot_events():
+                await websocket.send_json(_event_to_json(event))
+        except Exception:
+            log.exception("failed to send state snapshot on ws connect")
+
     async def _drain_recv() -> None:
         # We don't expect client->server messages yet, but we MUST be reading from
         # the socket so that disconnects propagate as WebSocketDisconnect rather

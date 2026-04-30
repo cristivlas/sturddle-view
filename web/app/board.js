@@ -60,7 +60,15 @@ export function mountBoard({ element, onMove }) {
   }
 
   function forceResize() {
-    try { board.view?.handleResize?.(); } catch {}
+    // cm-chessboard has no public resize API; fall back to its private view.
+    // Defensive: tolerate any future structural changes in the library.
+    try {
+      const v = board.view;
+      if (v && typeof v.handleResize === "function") v.handleResize();
+    } catch {
+      // ignore — worst case the board stays at the previous size until the
+      // next genuine container resize.
+    }
   }
 
   return { setSide, setPosition, enableInput, forceResize };

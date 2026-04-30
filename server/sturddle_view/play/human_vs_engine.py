@@ -168,6 +168,11 @@ class HumanVsEngine:
             await self._publish_board()
             await self._publish_clock()
 
+    def snapshot_events(self) -> list[Event]:
+        if self._board is None or self._game_id is None:
+            return []
+        return [self._board_event(), self._clock_event()]
+
     async def takeback(self) -> None:
         """Undo back to the human's turn. Cancels any in-flight engine search.
 
@@ -393,7 +398,7 @@ class HumanVsEngine:
             await self._cancel_tick()
             await self._publish_result()
 
-    async def _publish_board(self) -> None:
+    def _board_event(self) -> Event:
         assert self._board is not None and self._game_id is not None
         opening_payload = None
         if self._openings is not None and self._board.move_stack:
@@ -401,38 +406,41 @@ class HumanVsEngine:
             hit = self._openings.lookup(ucis)
             if hit is not None:
                 opening_payload = {"eco": hit.eco, "name": hit.name}
-        await self._bus.publish(
-            Event(
-                kind="board_update",
-                game_id=self._game_id,
-                payload={
-                    "fen": self._board.fen(),
-                    "turn": "white" if self._board.turn else "black",
-                    "ply": self._board.ply(),
-                    "moves_san": _moves_san(self._board),
-                    "last_move": self._board.peek().uci() if self._board.move_stack else None,
-                    "human_white": self._human_white,
-                    "opening": opening_payload,
-                    "tablebase": None,  # placeholder for future TB integration
-                },
-            )
+        return Event(
+            kind="board_update",
+            game_id=self._game_id,
+            payload={
+                "fen": self._board.fen(),
+                "turn": "white" if self._board.turn else "black",
+                "ply": self._board.ply(),
+                "moves_san": _moves_san(self._board),
+                "last_move": self._board.peek().uci() if self._board.move_stack else None,
+                "human_white": self._human_white,
+                "opening": opening_payload,
+                "tablebase": None,
+            },
         )
+
+    def _clock_event(self) -> Event:
+        assert self._board is not None and self._game_id is not None
+        return Event(
+            kind="clock_tick",
+            game_id=self._game_id,
+            payload={
+                "white_time": self._remaining(chess.WHITE),
+                "black_time": self._remaining(chess.BLACK),
+                "turn": "white" if self._board.turn else "black",
+                "running": not self._board.is_game_over(),
+            },
+        )
+
+    async def _publish_board(self) -> None:
+        await self._bus.publish(self._board_event())
 
     async def _publish_clock(self) -> None:
         if self._game_id is None or self._board is None:
             return
-        await self._bus.publish(
-            Event(
-                kind="clock_tick",
-                game_id=self._game_id,
-                payload={
-                    "white_time": self._remaining(chess.WHITE),
-                    "black_time": self._remaining(chess.BLACK),
-                    "turn": "white" if self._board.turn else "black",
-                    "running": not self._board.is_game_over(),
-                },
-            )
-        )
+        await self._bus.publish(self._clock_event())
 
     async def _publish_result(self) -> None:
         assert self._board is not None and self._game_id is not None

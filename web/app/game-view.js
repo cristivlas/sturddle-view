@@ -72,60 +72,69 @@ export function mountGameView(container, opts = {}) {
     onMove,
     show = {},
     interactive = false,
+    sideContainer = null, // optional: separate host for the side rail
   } = opts;
   const showClocks = show.clocks !== false;
   const showMoves = show.moves !== false;
   const showEngineInfo = show.engineInfo !== false;
 
+  // The board area always lives in `container`. The side rail goes into
+  // `sideContainer` if provided, else inline below the board.
   container.innerHTML = `
-    <div class="game-view">
-      <div class="game-view-board">
-        ${showClocks ? `
-        <div class="clock-row clock-top">
-          <span class="clock-name" data-side="top">—</span>
-          <span class="clock-time" data-time="top">—</span>
-        </div>` : ""}
+    <div class="game-view-board">
+      ${showClocks ? `
+      <div class="clock-row clock-top">
+        <span class="clock-name" data-side="top">—</span>
+        <span class="clock-time" data-time="top">—</span>
+      </div>` : ""}
 
-        <div class="board" aria-label="chess board"></div>
+      <div class="board" aria-label="chess board"></div>
 
-        <div class="game-view-meta">
-          <div class="opening-line" hidden>
-            <span class="opening-eco"></span>
-            <span class="opening-name"></span>
-          </div>
-          <div class="tablebase-line" hidden>
-            <span class="tb-label">TB</span>
-            <span class="tb-result"></span>
-          </div>
+      <div class="game-view-meta">
+        <div class="opening-line" hidden>
+          <span class="opening-eco"></span>
+          <span class="opening-name"></span>
         </div>
-
-        ${showClocks ? `
-        <div class="clock-row clock-bottom">
-          <span class="clock-name" data-side="bottom">—</span>
-          <span class="clock-time" data-time="bottom">—</span>
-        </div>` : ""}
+        <div class="tablebase-line" hidden>
+          <span class="tb-label">TB</span>
+          <span class="tb-result"></span>
+        </div>
       </div>
 
-      <aside class="game-view-side">
-        ${showMoves ? `
-        <section class="game-view-moves">
-          <h2>Moves</h2>
-          <div class="move-list"></div>
-        </section>` : ""}
-
-        ${showEngineInfo ? `
-        <section class="game-view-engine">
-          <h2>Engine</h2>
-          <div class="engine-summary">
-            <span class="engine-depth">—</span>
-            <span class="engine-score">—</span>
-            <span class="engine-nps">—</span>
-          </div>
-          <div class="engine-pv"></div>
-        </section>` : ""}
-      </aside>
+      ${showClocks ? `
+      <div class="clock-row clock-bottom">
+        <span class="clock-name" data-side="bottom">—</span>
+        <span class="clock-time" data-time="bottom">—</span>
+      </div>` : ""}
     </div>
   `;
+
+  const sideHost = sideContainer ?? container;
+  const sideHTML = `
+    <aside class="game-view-side">
+      ${showEngineInfo ? `
+      <section class="game-view-engine">
+        <h2>Engine</h2>
+        <div class="engine-summary">
+          <span class="engine-depth">—</span>
+          <span class="engine-score">—</span>
+          <span class="engine-nps">—</span>
+        </div>
+        <div class="engine-pv"></div>
+      </section>` : ""}
+
+      ${showMoves ? `
+      <section class="game-view-moves">
+        <h2>Moves</h2>
+        <div class="move-list"></div>
+      </section>` : ""}
+    </aside>
+  `;
+  if (sideContainer) {
+    sideContainer.innerHTML = sideHTML;
+  } else {
+    container.insertAdjacentHTML("beforeend", sideHTML);
+  }
 
   const boardEl = container.querySelector(".board");
   const clockTopName = container.querySelector('[data-side="top"]');
@@ -134,11 +143,11 @@ export function mountGameView(container, opts = {}) {
   const clockBottomTime = container.querySelector('[data-time="bottom"]');
   const clockTopRow = container.querySelector(".clock-top");
   const clockBottomRow = container.querySelector(".clock-bottom");
-  const moveListEl = container.querySelector(".move-list");
-  const engineDepth = container.querySelector(".engine-depth");
-  const engineScore = container.querySelector(".engine-score");
-  const engineNps = container.querySelector(".engine-nps");
-  const enginePv = container.querySelector(".engine-pv");
+  const moveListEl = sideHost.querySelector(".move-list");
+  const engineDepth = sideHost.querySelector(".engine-depth");
+  const engineScore = sideHost.querySelector(".engine-score");
+  const engineNps = sideHost.querySelector(".engine-nps");
+  const enginePv = sideHost.querySelector(".engine-pv");
   const openingLine = container.querySelector(".opening-line");
   const openingEco = container.querySelector(".opening-eco");
   const openingName = container.querySelector(".opening-name");
@@ -181,49 +190,63 @@ export function mountGameView(container, opts = {}) {
   // cm-chessboard sizes its SVG off boardEl.clientWidth (squared), ignoring
   // height. We compute a square that fits the column width AND the viewport
   // height, then drive cm-chessboard's measurement.
-  const boardCol = container.querySelector(".game-view-board");
+  const boardCol = container.querySelector(".game-view-board") || container;
 
-  function sumSiblingsAfter(node, gap) {
+  function sumSiblingsBelow(node, gap) {
+    // Only count siblings that are visually below `node` (greater top).
+    // Grid layouts can place siblings beside, not below.
+    const nodeRect = node.getBoundingClientRect();
+    const nodeBottom = nodeRect.top + nodeRect.height;
     let total = 0;
-    let after = false;
     for (const sib of node.parentElement?.children ?? []) {
-      if (sib === node) { after = true; continue; }
-      if (!after) continue;
+      if (sib === node) continue;
       if (sib.offsetParent === null) continue;
-      total += sib.getBoundingClientRect().height + gap;
+      const r = sib.getBoundingClientRect();
+      if (r.top + 1 < nodeBottom) continue; // beside, not below
+      total += r.height + gap;
     }
     return total;
   }
 
-  function recomputeBoardSize() {
+  function _readMainPaddingBottom() {
+    const main = document.querySelector("main");
+    if (!main) return 16;
+    const v = parseFloat(getComputedStyle(main).paddingBottom);
+    return Number.isFinite(v) ? v : 16;
+  }
+
+  function _recomputeNow() {
     if (!boardCol) return;
-    // Reset board to 0 so the column reports its intrinsic width.
     boardEl.style.width = "0";
     const colRect = boardCol.getBoundingClientRect();
 
-    let belowBoardInCol = 0;
-    let pastBoard = false;
+    let siblingsInCol = 0;
     for (const child of boardCol.children) {
-      if (child === boardEl) { pastBoard = true; continue; }
-      if (!pastBoard) continue;
-      belowBoardInCol += child.getBoundingClientRect().height + 8;
+      if (child === boardEl) continue;
+      if (child.offsetParent === null) continue;
+      siblingsInCol += child.getBoundingClientRect().height + 8;
     }
 
     let belowGameView = 0;
-    let node = container.querySelector(".game-view") || container;
+    let node = boardCol;
     while (node?.parentElement && node !== document.body) {
-      belowGameView += sumSiblingsAfter(node, 12);
+      belowGameView += sumSiblingsBelow(node, 12);
       const parent = node.parentElement;
       if (parent.id === "play-perspective" || parent.tagName === "MAIN") break;
       node = parent;
     }
 
-    const bottomMargin = 64;
+    const bottomMargin = _readMainPaddingBottom() + 24;
     const availH = Math.max(
       0,
-      window.innerHeight - colRect.top - belowBoardInCol - belowGameView - bottomMargin
+      window.innerHeight - colRect.top - siblingsInCol - belowGameView - bottomMargin
     );
-    const max = Math.max(160, Math.floor(Math.min(colRect.width, availH)));
+    // On narrow viewports, prefer full column width over fitting in viewport
+    // height — page becomes scrollable, board stays usable.
+    const NARROW = 800;
+    const max = window.innerWidth <= NARROW
+      ? Math.max(160, Math.floor(colRect.width))
+      : Math.max(160, Math.floor(Math.min(colRect.width, availH)));
 
     boardEl.style.width = `${max}px`;
     const inner = boardEl.firstElementChild;
@@ -232,6 +255,18 @@ export function mountGameView(container, opts = {}) {
       inner.style.height = `${max}px`;
     }
     board.forceResize();
+  }
+
+  let recomputeRaf = 0;
+  function recomputeBoardSize() {
+    if (recomputeRaf) return;
+    recomputeRaf = requestAnimationFrame(() => {
+      recomputeRaf = 0;
+      _recomputeNow();
+      // Run again after the next paint so secondary measurements reflect
+      // the new layout (e.g. controls/clocks settled into final positions).
+      requestAnimationFrame(_recomputeNow);
+    });
   }
   const ro = new ResizeObserver(recomputeBoardSize);
   ro.observe(boardCol);
@@ -352,6 +387,7 @@ export function mountGameView(container, opts = {}) {
       try { ro.disconnect(); } catch {}
       window.removeEventListener("resize", recomputeBoardSize);
       window.removeEventListener("sturddle:layout-changed", recomputeBoardSize);
+      if (recomputeRaf) cancelAnimationFrame(recomputeRaf);
     },
   };
 }

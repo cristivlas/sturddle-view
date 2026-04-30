@@ -12,7 +12,7 @@ export const playPerspective = {
   async mount(root, ctx) {
     root.innerHTML = `
       <section id="play-perspective">
-        <div class="play-game-host"></div>
+        <div class="play-board-host"></div>
 
         <div id="board-controls">
           <wa-button id="new-game" size="small" variant="brand">New game</wa-button>
@@ -25,6 +25,8 @@ export const playPerspective = {
           </label>
         </div>
 
+        <div class="play-side-host"></div>
+
         <div class="debug-only" hidden>
           <h2>Event log</h2>
           <pre id="event-log"></pre>
@@ -32,7 +34,8 @@ export const playPerspective = {
       </section>
     `;
 
-    const gameHost = root.querySelector(".play-game-host");
+    const boardHost = root.querySelector(".play-board-host");
+    const sideHost = root.querySelector(".play-side-host");
     const eventLogEl = root.querySelector("#event-log");
     const debugRoot = root.querySelector(".debug-only");
     const showDebug = root.querySelector("#show-debug");
@@ -49,10 +52,11 @@ export const playPerspective = {
       el.textContent = (el.textContent + text + "\n").split("\n").slice(-max).join("\n");
     }
 
-    // --- GameView (the visual): board, clocks, move list, engine info. ---
-    const view = mountGameView(gameHost, {
+    // --- GameView: board host on top, side host (moves+engine) below. ---
+    const view = mountGameView(boardHost, {
       events: ctx.events,
       interactive: true,
+      sideContainer: sideHost,
       onMove: async (uci) => {
         try {
           await ctx.api("POST", "/game/move", { uci });
