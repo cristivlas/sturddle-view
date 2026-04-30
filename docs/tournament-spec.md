@@ -446,3 +446,9 @@ UI/UX section is complete and we move to implementation.
 - **Chunk-size knob for future Resume**: not relevant in Phase 1
   (single fastchess invocation, no chunking). If Resume is added later,
   decide whether to expose a chunk-size knob then.
+- **Workspace on mobile**: WinBox's floating-window model is unusable
+  on narrow viewports. Acceptable for Phase 1 since tournament
+  observation is a desktop-class use case. If mobile matters later,
+  options: (1) at `max-width: 600px`, replace "Open workspace" with a
+  single full-screen Standings-only view, or (2) force WinBox into a
+  tabs/accordion layout on narrow viewports.
