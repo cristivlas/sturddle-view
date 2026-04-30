@@ -89,6 +89,10 @@ class HumanVsEngine:
         # to override (e.g. with the registry name). Otherwise _ensure_engine
         # fills it from the engine's UCI `id name`, falling back to basename.
         self._engine_name: str | None = None
+        # User-overridden UCI options applied at engine launch via setoption.
+        # Updated by the API layer on every fetch from the registry; takes
+        # effect on the next launch (existing process keeps its options).
+        self._engine_options: dict = {}
         self._board: chess.Board | None = None
         self._game_id: str | None = None
         self._human_white: bool = True
@@ -119,6 +123,15 @@ class HumanVsEngine:
     def is_paused(self) -> bool:
         return self._paused
 
+    def set_engine_options(self, options: dict | None) -> None:
+        """Set the UCI options to apply on the next engine launch.
+
+        Updates take effect when the engine is (re)spawned. The API layer
+        calls this on every fetch from the registry so registry edits
+        propagate to the next game.
+        """
+        self._engine_options = dict(options or {})
+
     def set_engine_name(self, name: str | None) -> None:
         """Override the display name shown to the user.
 
@@ -142,6 +155,24 @@ class HumanVsEngine:
             self._engine = engine
             if not self._engine_name:
                 self._engine_name = engine.id.get("name") or Path(self._engine_path).name
+            if self._engine_options:
+                # Apply user-saved UCI options. Skip unknown/managed options
+                # rather than fail — the schema may have drifted since save
+                # (e.g. binary upgraded). Log so the user can refresh-schema.
+                accepted = {}
+                for k, v in self._engine_options.items():
+                    if k in engine.options and not engine.options[k].is_managed():
+                        accepted[k] = v
+                    else:
+                        log.warning(
+                            "engine %s: skipping unknown/managed option %s",
+                            self._engine_path, k,
+                        )
+                if accepted:
+                    try:
+                        await engine.configure(accepted)
+                    except chess.engine.EngineError:
+                        log.exception("engine refused options %s", accepted)
         return self._engine
 
     async def new_game(self, human_white: bool, tc: TimeControl) -> str:

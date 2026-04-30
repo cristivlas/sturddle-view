@@ -140,6 +140,18 @@ Client-side (localStorage, server-agnostic):
   executable on POSIX)
 - Persisted to `engines.json` in the same user-config directory; selection
   survives restart
+- Each registry entry stores:
+  - `id`, `name`, `path` (existing fields)
+  - `options` — flat `{name: value}` map of user-overridden UCI options
+    (only keys whose value differs from the engine's advertised default
+    are stored; lets us round-trip "use defaults")
+  - `option_schema` — cached UCI option list captured at engine
+    registration time, indexed by option name. Each entry: `{type, default,
+    min?, max?, vars?}` where `type` ∈ `spin | combo | check | string | button`.
+    Used to render the per-engine dialog without re-spawning the engine
+    every time.
+- `POST /engines/{id}/refresh-schema` — re-spawn the engine briefly to
+  re-capture its UCI option list (e.g. after the user upgrades the binary).
 
 #### `/fs` — REST
 - Directory listing for the file picker dialog (engine binary, PGN dir, etc.)
@@ -335,11 +347,62 @@ A single perspective subsumes everything engine-related — registry management,
 
 Internal layout uses an inner nav (tabs or rail) within the perspective:
 
-- **Roster** — manage registered engines: list (search/filter, supports many), add, remove, configure per-engine UCI options. A persistent default UCI options section applies across engines.
+- **Roster** — manage registered engines: list (search/filter, supports many), add, remove, configure per-engine UCI options (see "Per-engine UCI options" below). A persistent default UCI options section applies across engines.
 - **Tournaments** — create, save, edit, and start tournament configurations (engine pairings, time controls, rounds, concurrency, SPRT parameters). Browse historical tournaments and drill into past games.
 - **Observe** — workspace canvas for live tournaments and headless-peek attachment. WinBox-driven: each running game is a window; standings, SPRT progress, schedule, event log are their own windows. Layouts persist per tournament. Read-only with respect to game play — no input goes back to engines.
 
 Engines management is **not** a settings dialog tab. It is a first-class screen with full width, vertical room, and real master-detail interactions. Settings dialog stays small and is reserved for toggles, time-control defaults, paths, and similar form-shaped concerns.
+
+##### Per-engine UCI options
+
+A modal dialog opened from the Roster's per-engine "options" (sliders) icon.
+Title: the engine's display name. Lets the user view and override every UCI
+option the engine advertises.
+
+- **Source of truth.** The dialog renders from the cached `option_schema`
+  on the registry entry (captured at engine registration). No engine spawn
+  on dialog open — fast, works offline, no race with live games. A small
+  "refresh schema" affordance is available for the case of an upgraded
+  binary (`POST /engines/{id}/refresh-schema`).
+- **Show all advertised options.** No curation. Listing them all minimizes
+  the number of dialogs and keeps engine-specific surface (SyzygyPath,
+  EvalFile, ContemptFactor, …) reachable in one place.
+- **Control mapping by UCI type:**
+  - `spin` (int range) → number input (with `min`/`max` honored).
+  - `combo` (enum) → select.
+  - `check` (bool) → switch.
+  - `string` → plain text input by default. If the option's *name* matches
+    `*Path | *File | *Dir` (case-insensitive), use the file/directory
+    picker dialog instead. Name-pattern based, not value-sniffed: works
+    even when the default is empty.
+  - `button` → action button (POSTs the option name to the server, which
+    sends the UCI `setoption` to the engine on next session — buttons are
+    stateless by definition).
+- **Persistence.** On Save, the dialog PUTs the changed-from-default
+  options to `/engines/{id}` (`{options: {...}}`). The registry stores
+  only diffs from the engine's advertised defaults so "Defaults" can be
+  meaningful.
+- **Apply policy** (mirrors the global settings rule, see below):
+  - Idle / no game in progress → applies immediately to the selected
+    engine for any next session.
+  - Human-vs-engine game in progress → toast "applies on next game"; the
+    in-progress game keeps the options it started with.
+  - Tournament in progress with this engine → toast "applies on next
+    tournament"; the running tournament is not disturbed mid-flight.
+- **"Defaults" button** at the bottom of the dialog. Resets every field
+  to the engine's advertised UCI default (re-renders from `option_schema`,
+  ignoring the persisted overrides). Save still required to commit.
+- **Cancel** discards uncommitted edits; the persisted options stay as
+  they were.
+
+Settings-during-game/tournament policy (relevant beyond the per-engine
+dialog): for any settings change that cannot apply mid-flight (side
+choice, time control, per-engine UCI options), the rule is
+**accept-and-notify**: persist the change, surface a toast describing
+when it takes effect ("applies on next game" / "applies on next
+tournament"). Never block the edit. The current game / tournament keeps
+the values it was started with. See the "Logging" section for the
+related TODO on tournament-running settings policy.
 
 Future perspectives (not Phase 1): Analysis, Library/PGN browser, History.
 

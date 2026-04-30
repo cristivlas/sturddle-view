@@ -7,18 +7,61 @@ The registry is in-memory once loaded; mutations are written back atomically.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import tempfile
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+import chess.engine
 from platformdirs import user_config_dir
+
+log = logging.getLogger(__name__)
 
 
 def default_registry_path() -> Path:
     return Path(user_config_dir("sturddle-view")) / "engines.json"
+
+
+# UCI options the engine manages itself; rendering them in our dialog is
+# either pointless or actively harmful. Lower-case for case-insensitive match.
+_HIDDEN_OPTIONS = {"multipv", "ponder", "uci_chess960", "uci_variant", "uci_analysemode"}
+
+
+async def capture_option_schema(engine_path: str) -> dict[str, dict]:
+    """Briefly spawn the engine and capture its UCI option list.
+
+    Returns a {name: {type, default, min?, max?, vars?}} dict. Skips
+    engine-managed options (multipv, ponder, etc.). Best-effort: on any
+    failure logs and returns {} so the engine can still be registered.
+    """
+    try:
+        _transport, engine = await chess.engine.popen_uci(engine_path)
+    except Exception:
+        log.exception("could not spawn %s for option capture", engine_path)
+        return {}
+    try:
+        schema: dict[str, dict] = {}
+        for name, opt in engine.options.items():
+            if name.lower() in _HIDDEN_OPTIONS:
+                continue
+            entry: dict = {"type": opt.type, "default": opt.default}
+            if opt.min is not None:
+                entry["min"] = opt.min
+            if opt.max is not None:
+                entry["max"] = opt.max
+            if opt.var:
+                entry["vars"] = list(opt.var)
+            schema[name] = entry
+        return schema
+    finally:
+        try:
+            await engine.quit()
+        except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
+            pass
 
 
 @dataclass
@@ -26,11 +69,29 @@ class Engine:
     id: str
     name: str
     path: str
+    # User-overridden UCI options. Only entries that differ from the engine's
+    # advertised default are stored, so the per-engine dialog's "Defaults"
+    # button can be honored unambiguously.
     options: dict[str, str | int | bool] = field(default_factory=dict)
+    # Cached UCI option list captured at registration. Schema entries:
+    #   {name: {type, default, min?, max?, vars?}}
+    # type ∈ "spin" | "combo" | "check" | "string" | "button"
+    option_schema: dict[str, dict] = field(default_factory=dict)
 
     @staticmethod
-    def new(name: str, path: str, options: dict | None = None) -> "Engine":
-        return Engine(id=uuid.uuid4().hex[:12], name=name, path=path, options=options or {})
+    def new(
+        name: str,
+        path: str,
+        options: dict | None = None,
+        option_schema: dict | None = None,
+    ) -> "Engine":
+        return Engine(
+            id=uuid.uuid4().hex[:12],
+            name=name,
+            path=path,
+            options=options or {},
+            option_schema=option_schema or {},
+        )
 
 
 class EngineNotFoundError(KeyError):
@@ -82,6 +143,7 @@ class EngineRegistry:
                 name=entry["name"],
                 path=entry["path"],
                 options=entry.get("options", {}),
+                option_schema=entry.get("option_schema", {}),
             )
             engines[e.id] = e
         self._engines = engines
@@ -120,7 +182,13 @@ class EngineRegistry:
         except KeyError as e:
             raise EngineNotFoundError(engine_id) from e
 
-    def add(self, name: str, path: str, options: dict | None = None) -> Engine:
+    def add(
+        self,
+        name: str,
+        path: str,
+        options: dict | None = None,
+        option_schema: dict | None = None,
+    ) -> Engine:
         self._ensure_loaded()
         # Treat (name, path) pair as the uniqueness key. Same binary at the same
         # path with the same display name is a duplicate; same binary with two
@@ -128,7 +196,9 @@ class EngineRegistry:
         for e in self._engines.values():
             if e.name == name and e.path == path:
                 raise DuplicateEngineError(f"engine already registered: {name} ({path})")
-        engine = Engine.new(name=name, path=path, options=options)
+        engine = Engine.new(
+            name=name, path=path, options=options, option_schema=option_schema
+        )
         self._engines[engine.id] = engine
         self._save()
         return engine
@@ -140,6 +210,7 @@ class EngineRegistry:
         name: str | None = None,
         path: str | None = None,
         options: dict | None = None,
+        option_schema: dict | None = None,
     ) -> Engine:
         self._ensure_loaded()
         engine = self.get(engine_id)
@@ -149,6 +220,8 @@ class EngineRegistry:
             engine.path = path
         if options is not None:
             engine.options = options
+        if option_schema is not None:
+            engine.option_schema = option_schema
         self._save()
         return engine
 

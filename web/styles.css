@@ -425,6 +425,30 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
 }
 .engines-search { width: 100%; }
 
+.engine-opt-form {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  gap: 8px 16px;
+  align-items: center;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.engine-opt-row { display: contents; }
+.engine-opt-label {
+  font-size: 13px;
+  color: var(--muted);
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.engine-opt-input { min-width: 0; }
+.engine-opt-path {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.engine-opt-path wa-input { flex: 1 1 auto; min-width: 0; }
+
 .engines-list {
   list-style: none;
   padding: 4px;

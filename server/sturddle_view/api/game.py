@@ -10,7 +10,8 @@ router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_
 
 async def _get_hve(request: Request) -> HumanVsEngine:
     s = request.app.state
-    path, name = _resolve_engine(request)
+    resolved = _resolve_engine(request)
+    path, name, options = resolved
     if path is None:
         raise HTTPException(
             status_code=400,
@@ -29,31 +30,33 @@ async def _get_hve(request: Request) -> HumanVsEngine:
             openings=getattr(s, "openings", None),
             settings=s.settings,
         )
-    # Refresh display name on every fetch so registry renames take effect
-    # without restarting the engine subprocess.
+    # Refresh display name + UCI options on every fetch so registry edits
+    # take effect on the next engine launch without restarting the server.
     s.hve.set_engine_name(name)
+    s.hve.set_engine_options(options)
     return s.hve
 
 
-def _resolve_engine(request: Request) -> tuple[str | None, str | None]:
-    """Return (path, display_name) for the selected engine, if any.
+def _resolve_engine(request: Request) -> tuple[str | None, str | None, dict | None]:
+    """Return (path, display_name, options) for the selected engine, if any.
 
-    The display name comes from the engines registry so the label matches
-    what the Engines perspective shows. None when no registry entry is
-    selected; HumanVsEngine then derives a name from the UCI handshake on
-    first launch, and `set_engine_name(None)` calls are no-ops so a name
-    once resolved is not wiped by a later fallback fetch.
+    The display name and options come from the engines registry so the
+    clock label matches the Engines list and per-engine UCI settings are
+    honored. None for name/options when no registry entry is selected;
+    HumanVsEngine then derives a name from the UCI handshake on first
+    launch, and `set_engine_name(None)` calls are no-ops so a name once
+    resolved is not wiped by a later fallback fetch.
     """
     s = request.app.state
     if s.engines.selected_id:
         try:
             e = s.engines.get(s.engines.selected_id)
-            return e.path, e.name
+            return e.path, e.name, dict(e.options or {})
         except KeyError:
             pass
     if s.settings.engine_path:
-        return str(s.settings.engine_path), None
-    return None, None
+        return str(s.settings.engine_path), None, None
+    return None, None, None
 
 
 @router.post("/new")

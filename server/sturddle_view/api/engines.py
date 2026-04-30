@@ -15,6 +15,7 @@ from ..engines import (
     Engine,
     EngineNotFoundError,
     EngineRegistry,
+    capture_option_schema,
 )
 
 
@@ -63,21 +64,51 @@ def _serialize(e: Engine) -> dict:
     return asdict(e)
 
 
+async def _ensure_schema(reg: EngineRegistry, e: Engine) -> Engine:
+    """Lazily capture the option schema if missing.
+
+    Engines registered before schema capture was added have an empty
+    `option_schema`. We capture and persist on first encounter so the
+    UI never has to show "no options" for an engine that actually has
+    them. Best-effort: a failed capture leaves the schema empty and is
+    retried next call.
+    """
+    if e.option_schema:
+        return e
+    schema = await capture_option_schema(e.path)
+    if not schema:
+        return e
+    try:
+        return reg.update(e.id, option_schema=schema)
+    except EngineNotFoundError:
+        return e
+
+
 @router.get("")
-def list_engines(request: Request) -> dict:
+async def list_engines(request: Request) -> dict:
     reg = _registry(request)
+    out = []
+    for e in reg.list():
+        e = await _ensure_schema(reg, e)
+        out.append(_serialize(e))
     return {
-        "engines": [_serialize(e) for e in reg.list()],
+        "engines": out,
         "selected_id": reg.selected_id,
     }
 
 
 @router.post("", status_code=201)
-def add_engine(payload: EngineCreate, request: Request) -> dict:
+async def add_engine(payload: EngineCreate, request: Request) -> dict:
     reg = _registry(request)
     resolved_path = _validate_engine_path(payload.path)
+    schema = await capture_option_schema(resolved_path)
     try:
-        e = reg.add(name=payload.name, path=resolved_path, options=payload.options)
+        e = reg.add(
+            name=payload.name,
+            path=resolved_path,
+            options=payload.options,
+            option_schema=schema,
+        )
     except DuplicateEngineError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _serialize(e)
@@ -113,3 +144,27 @@ def select_engine(engine_id: str, request: Request) -> dict:
     except EngineNotFoundError as exc:
         raise HTTPException(status_code=404, detail="engine not found") from exc
     return {"selected_id": engine_id}
+
+
+@router.post("/{engine_id}/refresh-schema")
+async def refresh_engine_schema(engine_id: str, request: Request) -> dict:
+    """Re-spawn the engine to re-capture its UCI option list.
+
+    Useful after an engine binary upgrade — option set, ranges, or
+    defaults may have changed.
+    """
+    reg = _registry(request)
+    try:
+        e = reg.get(engine_id)
+    except EngineNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="engine not found") from exc
+    schema = await capture_option_schema(e.path)
+    if not schema:
+        raise HTTPException(
+            status_code=502, detail="could not capture options from engine"
+        )
+    try:
+        e = reg.update(engine_id, option_schema=schema)
+    except EngineNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="engine not found") from exc
+    return _serialize(e)

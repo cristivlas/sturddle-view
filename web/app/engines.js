@@ -5,6 +5,7 @@
 // Below: search box + scrollable list.
 
 import { confirm, pickFile, toast } from "./dialogs.js";
+import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 
 export function mountEngines({ container, api, onError }) {
   container.innerHTML = `
@@ -181,8 +182,19 @@ export function mountEngines({ container, api, onError }) {
     }
   });
 
-  detailOptionsBtn.addEventListener("click", () => {
-    toast("UCI options dialog: coming soon", { variant: "neutral" });
+  detailOptionsBtn.addEventListener("click", async () => {
+    if (!selectedDetailId) return;
+    let engine = engines.find((x) => x.id === selectedDetailId);
+    while (engine) {
+      const result = await showEngineOptionsDialog({ engine, api });
+      if (result === null) break; // dismissed without saving
+      if (result?.__refresh || result?.__reopen) {
+        engine = result.engine;
+        continue;
+      }
+      refresh();
+      break;
+    }
   });
 
   addBtn.addEventListener("click", async () => {
