@@ -391,7 +391,7 @@ function mountEngineBuilder({ host, available, initial = [] }) {
         </wa-button>
       </div>
       <div class="ne-pane ne-pane-picked">
-        <div class="ne-pane-title">In tournament <span class="ne-order-hint muted">(order matters for gauntlet)</span></div>
+        <div class="ne-pane-title">Selected</div>
         <ul class="ne-list ne-picked-list" role="listbox" tabindex="0"></ul>
         <div class="ne-reorder">
           <wa-button class="ne-up icon-only" size="small" aria-label="Move up" title="Move up">

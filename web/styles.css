@@ -745,8 +745,27 @@ wa-dialog::part(body) {
 .inspect-meta { font-size: 12px; }
 
 /* Tournament workspace windows (Slice 8) */
-.winbox.sturddle-wb { background: var(--panel); color: var(--fg); border: 1px solid #2e3138; }
-.winbox.sturddle-wb .wb-body { padding: 8px 12px; overflow: auto; }
+/* opacity: WinBox's fade-in keyframe ends at 0.85 with no closing 100%
+   stop, leaving every window permanently faded; force full opacity. */
+.winbox.sturddle-wb {
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid #2e3138;
+  opacity: 1 !important;
+}
+/* Title bar matches the panel; default WinBox blue is jarring against
+   our dark theme. */
+.winbox.sturddle-wb .wb-header {
+  background: var(--nav-btn-bg);
+  color: var(--fg);
+  border-bottom: 1px solid #2e3138;
+}
+.winbox.sturddle-wb .wb-body {
+  background: var(--panel);
+  color: var(--fg);
+  padding: 8px 12px;
+  overflow: auto;
+}
 .wb-empty { color: var(--muted); padding: 12px; text-align: center; }
 .wb-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .wb-table th, .wb-table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid #2e3138; }
