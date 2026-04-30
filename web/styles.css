@@ -485,14 +485,15 @@ wa-dialog::part(body) { overflow-x: hidden !important; }
 wa-dialog::part(header-actions) { gap: 6px; }
 
 /* Headerless confirm/alert dialogs: the message is the heading. */
-/* Negative top margin compensates for WA's headerless body padding so the
-   message sits closer to the top of the dialog. Symmetric horizontal
-   margins keep the centered text from drifting toward the X close button. */
 .confirm-message {
-  margin: -30px 24px 0 24px;
+  margin: 0 24px 24px 24px;
   font-size: 15px;
   line-height: 1.5;
   text-align: center;
+}
+wa-dialog[no-header] {
+  --spacing: var(--wa-space-s);
+  --width: fit-content;
 }
 .confirm-message.game-over-message {
   margin: 0;
