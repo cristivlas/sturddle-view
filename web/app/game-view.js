@@ -240,26 +240,34 @@ export function mountGameView(container, opts = {}) {
       window.innerHeight - colRect.top - siblingsInCol - belowGameView - bottomMargin
     );
 
-    // Width budget: the viewport minus the side rail (when present) and
-    // outer page padding. Reading colRect.width here would create a feedback
-    // loop because the column width is now driven by --board-col-px below.
-    // Magic numbers live as --rail-w / --grid-gap on .play-grid in CSS.
+    // Layout (wide viewports): [left-filler][board][rail], where the rail
+    // and the left filler are the same width, so the board sits dead-center
+    // horizontally. Rail width is viewport-driven (not board-driven) to
+    // avoid a feedback loop with the board sizing below.
     const NARROW = 800;
     const MIN_BOARD = 320;
+    const RAIL_MIN = 180;
+    const RAIL_MAX = 320;
     const grid = boardCol.closest(".play-grid") || boardCol.closest("#play-perspective");
+    const gridStyle = grid ? getComputedStyle(grid) : null;
+    const gapW = gridStyle
+      ? parseFloat(gridStyle.getPropertyValue("--grid-gap")) || 16
+      : 16;
+    const main = document.querySelector("main");
+    const mainStyle = main ? getComputedStyle(main) : null;
+    const sidePad = mainStyle
+      ? parseFloat(mainStyle.paddingLeft) + parseFloat(mainStyle.paddingRight)
+      : 32;
+
+    let railW;
     let availW;
     if (window.innerWidth <= NARROW || !grid) {
+      railW = 0;
       availW = Math.max(160, Math.floor(colRect.width));
     } else {
-      const gridStyle = getComputedStyle(grid);
-      const railW = parseFloat(gridStyle.getPropertyValue("--rail-w")) || 360;
-      const gapW = parseFloat(gridStyle.getPropertyValue("--grid-gap")) || 16;
-      const main = document.querySelector("main");
-      const mainStyle = main ? getComputedStyle(main) : null;
-      const sidePad = mainStyle
-        ? parseFloat(mainStyle.paddingLeft) + parseFloat(mainStyle.paddingRight)
-        : 32;
-      availW = Math.max(160, Math.floor(window.innerWidth - railW - gapW - sidePad));
+      const usable = window.innerWidth - sidePad;
+      railW = Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.floor(usable * 0.18)));
+      availW = Math.max(160, Math.floor(usable - 2 * railW - 2 * gapW));
     }
 
     const max = window.innerWidth <= NARROW
@@ -284,8 +292,10 @@ export function mountGameView(container, opts = {}) {
       // grid collapses to a vertical flex layout (see CSS).
       if (window.innerWidth > NARROW) {
         grid.style.setProperty("--board-col-px", `${max}px`);
+        grid.style.setProperty("--rail-w", `${railW}px`);
       } else {
         grid.style.removeProperty("--board-col-px");
+        grid.style.removeProperty("--rail-w");
       }
       // Cap the side rail so the moves panel doesn't extend below the
       // board's bottom edge. Compute rail height = board bottom - rail top.
