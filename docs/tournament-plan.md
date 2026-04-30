@@ -301,7 +301,7 @@ Update as slices land.
 | 6 — Tournaments UI v0 | done | 4c4a654, 3eef665 | Observe sub-tab removed; list+settings+new dialog; 2 Playwright e2e tests |
 | 7 — Reusable template form | done | 6f13b52 | core fields + Advanced JSON; mounted in 3 contexts; e2e tested |
 | 8 — Workspace (3 windows) | done | 2d9f14b | Standings/Schedule/Event log; layout persisted in localStorage; 1 e2e test |
-| 9a — Forward fastchess stdout to Event log | not started | — | XS; standalone, ships immediately |
+| 9a — Forward fastchess stdout to Event log | done | d48d88f | runner_log event; rendered as actual line in Event log window |
 | 9b — Proxy broadcast tap + pairing | not started | — | M; needs real fastchess |
 | 9c — Live game window | not started | — | M; depends on 9b |
 | 10 — Polish | optional | — | post-Phase-1 |
