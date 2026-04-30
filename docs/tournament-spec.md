@@ -46,8 +46,9 @@ Out of scope for Phase 1:
   facade speculating on capabilities of unknown future runners.
 - Per-runner detection: if the configured binary is missing or invalid,
   the Tournaments perspective surfaces a single empty-state message
-  ("fastchess not found — set the path in Settings"). No silently
-  disabled controls.
+  ("fastchess not configured — open Settings → Tournament to set the
+  binary path") and disables the **+ New Tournament** button. No
+  silently disabled controls.
 - The runner kind is **inferred from the configured path/binary name**.
   No separate `kind` setting is exposed today; revisit only if/when a
   second runner is added.
@@ -145,8 +146,8 @@ lines, plus tests against known fixtures.
 - **`state.json`** is updated atomically using the existing
   `_atomic.atomic_write_json` helper.
 - **`<tournaments-root>` default**: `platformdirs.user_data_dir(
-  "sturddle-view") / "tournaments"`. User can override in the
-  Tournaments tab settings (see "Settings surface" below).
+  "sturddle-view") / "tournaments"`. User can override under
+  Settings → Tournament (see "Settings surface" below).
 - **Auto-create on first use**: if the configured root does not exist,
   it is created the first time the user creates a tournament. A toast
   confirms creation; no silent surprises.
@@ -182,25 +183,38 @@ constructed; they can be inspected (read-only).
 
 ### Template fields
 
+Fields the form renders today (Phase 1):
+
 - **Time control** (single TC for the whole tournament).
-- **Ponder** on/off (think on opponent's time).
 - **Hash** size in MB (per engine).
-- **Threads** (per engine; the UCI `Threads` option).
+- **Threads** (per engine; the UCI `Threads` option). Default 1.
 - **Games in parallel** (fastchess `-concurrency`; how many *games*
-  run in parallel — independent from `Threads`). The label is "games
-  in parallel" in the UI; the code/CLI flag retains the fastchess
-  name.
-- **Opening book** path (fastchess `-openings file=…`; tournament-level
-  starting positions for both engines, **not** a per-engine UCI option).
-- **Tablebase** path (per-engine `SyzygyPath` UCI option; engines that
-  don't advertise it ignore it silently).
-- **Tournament type**: round-robin | gauntlet (and `-seeds N` for
-  gauntlet).
+  run in parallel — independent from `Threads`). Default 1. The label
+  is "games in parallel" in the UI; the code/CLI flag retains the
+  fastchess name.
 - **Rounds** count.
-- **Games per round** (default 2; values >2 do not improve statistics).
-- **SPRT parameters** (optional): `elo0`, `elo1`, `alpha`, `beta`,
-  `model`.
-- **Adjudication** (draw / resign thresholds).
+- **Tournament type**: round-robin | gauntlet (with **Seeds** field
+  shown only when type = gauntlet).
+- **Ponder** on/off (think on opponent's time).
+- **Adjudication — Resign** with on/off switch. Inputs prefilled with
+  the customary fastchess values (3 moves at score 700 cp); the switch
+  controls whether the values are emitted on save.
+- **Adjudication — Draw** with on/off switch. Inputs prefilled with
+  the customary fastchess values (from move 40, for 8 moves, with
+  `|score| ≤ 10` cp); the switch controls whether the values are
+  emitted on save.
+
+Spec'd but **not** in the v0 form (added in their own slices later):
+
+- **Opening book** path (fastchess `-openings file=…`; tournament-level
+  starting positions for both engines).
+- **Tablebase** path (per-engine `SyzygyPath` UCI option).
+- **Games per round** (>2 does not improve statistics; we currently
+  rely on fastchess's default of 2).
+- **SPRT parameters** (`elo0`, `elo1`, `alpha`, `beta`, `model`) —
+  deferred to **Phase 2**. The server-side computation is implemented
+  (`pgn_stats.compute_sprt`) and the API consumes a `template.sprt`
+  sub-object if present, but the UI does not currently expose it.
 
 ### Override semantics
 
@@ -215,14 +229,17 @@ constructed; they can be inspected (read-only).
 
 ### Reusable form component
 
-The same form component renders in three contexts:
+The same form component (`mountTournamentTemplateForm` in
+`web/app/tournament-template-form.js`) renders in three contexts:
 
-1. **Settings → Tournament defaults**: editable; persists as the
-   default template for new tournaments.
+1. **Global Settings dialog → Tournament tab**: editable; auto-saves
+   on input (debounced) and persists as the default template for new
+   tournaments.
 2. **New Tournament dialog**: editable; pre-filled from the saved
    defaults; per-tournament overrides allowed.
-3. **Inspect existing tournament**: read-only; renders the frozen
-   template values from `state.json`.
+3. **Inspect existing tournament** (click a tournament row in the
+   Tournaments perspective): read-only; renders the frozen template
+   values from `state.json`.
 
 This mirrors the per-engine UCI options dialog pattern already
 established in the codebase.
@@ -231,22 +248,28 @@ established in the codebase.
 
 ## Settings surface
 
-Tournament-related settings live in the **Tournaments perspective's
-settings sub-area** (one inner tab on the Tournaments perspective),
-**not** in the global Settings dialog. Rationale: these settings only
-apply in the tournament context; co-locating them with the feature
-they configure is more discoverable.
+Tournament-related settings live in a dedicated **"Tournament" tab in
+the global Settings dialog** (alongside the existing General and Play
+tabs). Rationale: these settings only apply when a tournament is being
+configured or run; the Tournaments perspective stays focused on the
+list of saved tournaments and the **+ New Tournament** verb. Putting
+the path/defaults configuration in the global Settings dialog keeps
+the perspective uncluttered and gives the user a single, predictable
+place to find install-time configuration.
 
-The settings sub-area contains:
+The Tournament settings tab contains:
 
-- `fastchess.path` — binary location. Empty by default. Empty value
-  triggers the "fastchess not found" empty state on the Tournaments
-  list.
-- `tournaments.root` — storage location for `<id>/` dirs. Defaults to
+- `fastchess_path` — binary location. Empty by default. Empty value
+  triggers the "fastchess not configured — open Settings → Tournament"
+  empty state on the Tournaments perspective and disables the
+  **+ New Tournament** button.
+- `tournaments_root` — storage location for `<id>/` dirs. Defaults to
   `platformdirs.user_data_dir("sturddle-view") / "tournaments"`.
 - The **tournament defaults template** (all fields listed under
   "Template fields" above), serving as the pre-fill for new
-  tournaments.
+  tournaments. Edited inline using the same reusable form component
+  that the New Tournament dialog mounts; auto-saved on input (matching
+  the rest of the Settings dialog's apply-on-change semantics).
 
 Settings changes never affect a running tournament; templates are
 frozen at creation time. This is consistent with the existing
@@ -271,8 +294,22 @@ of saved tournaments. Per-row verbs:
   in any state: live windows when running, frozen view when stopped /
   done.
 
-Plus a top-level action: **+ New Tournament** (opens the form
-component).
+Plus a top-level action: **+ New Tournament**, which opens a dialog
+containing:
+
+- A **Name** field.
+- An **engine-list builder**: two panes (Available ↔ In tournament)
+  with Add / Remove arrow buttons, plus Up / Down reorder buttons on
+  the In-tournament pane (order matters for gauntlet seeding).
+- The shared template form (see "Reusable form component" above),
+  pre-filled from the saved defaults; per-tournament overrides are
+  applied on top.
+
+The dialog's primary action (**Create**) is enabled only when the
+name is non-empty and at least two engines are picked. There is no
+Cancel button — the dialog's X handles dismissal — and no
+"required *" decoration on fields (see the project memory note on
+modern app-style dialogs).
 
 The detailed window inventory for "Open workspace" is specified in
 "Workspace" below.
