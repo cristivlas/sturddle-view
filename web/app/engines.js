@@ -204,10 +204,9 @@ export function mountEngines({ container, api, onError }) {
       mode: "executable",
     });
     if (!path) return;
-    const name = path.split(/[\\/]/).pop();
     try {
-      const created = await api("POST", "/engines", { name, path });
-      toast(`Added ${name}`, { variant: "success" });
+      const created = await api("POST", "/engines", { path });
+      toast(`Added ${created.name}`, { variant: "success" });
       selectedDetailId = created.id;
       refresh();
     } catch (e) {

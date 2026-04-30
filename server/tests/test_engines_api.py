@@ -19,6 +19,24 @@ def _make_exec(path):
     return str(path)
 
 
+def _make_fake_uci(path, id_name):
+    """Minimal UCI responder: announces `id name <id_name>` then quits cleanly."""
+    script = (
+        "#!/bin/sh\n"
+        "while IFS= read -r line; do\n"
+        "  case \"$line\" in\n"
+        f"    uci) printf 'id name {id_name}\\nuciok\\n' ;;\n"
+        "    isready) printf 'readyok\\n' ;;\n"
+        "    quit) exit 0 ;;\n"
+        "  esac\n"
+        "done\n"
+    )
+    path.write_text(script)
+    if not sys.platform.startswith("win"):
+        path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return str(path)
+
+
 @pytest.fixture
 def client(tmp_path):
     settings = Settings(token="test-token")
@@ -120,6 +138,42 @@ def test_remove_clears_selection(client, exe_a):
     client.post(f"/engines/{eid}/select")
     client.delete(f"/engines/{eid}")
     assert client.get("/engines").json()["selected_id"] is None
+
+
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX shell engine stub")
+def test_add_defaults_name_to_uci_id(client, tmp_path):
+    """When no name is given, the server uses the engine's UCI `id name`."""
+    exe = _make_fake_uci(tmp_path / "weird-binary-name", "FakeEngine 1.2")
+    r = client.post("/engines", json={"path": exe})
+    assert r.status_code == 201
+    assert r.json()["name"] == "FakeEngine 1.2"
+
+
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX shell engine stub")
+def test_add_falls_back_to_basename_when_probe_fails(client, exe_a):
+    """A non-UCI binary still registers; name falls back to the basename."""
+    r = client.post("/engines", json={"path": exe_a})
+    assert r.status_code == 201
+    # exe_a fixture creates the file at tmp_path / "a"
+    assert r.json()["name"] == "a"
+
+
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX shell engine stub")
+def test_explicit_name_overrides_uci_id(client, tmp_path):
+    """An explicit name in the payload wins over the engine's UCI announcement."""
+    exe = _make_fake_uci(tmp_path / "engine", "FakeEngine 1.2")
+    r = client.post("/engines", json={"name": "My Custom Name", "path": exe})
+    assert r.status_code == 201
+    assert r.json()["name"] == "My Custom Name"
+
+
+def test_first_add_auto_selects(client, exe_a, exe_b):
+    """The first engine registered becomes the active one automatically."""
+    eid_a = client.post("/engines", json={"name": "A", "path": exe_a}).json()["id"]
+    assert client.get("/engines").json()["selected_id"] == eid_a
+    # Subsequent adds must NOT steal the selection.
+    client.post("/engines", json={"name": "B", "path": exe_b})
+    assert client.get("/engines").json()["selected_id"] == eid_a
 
 
 def test_auth_required(tmp_path):

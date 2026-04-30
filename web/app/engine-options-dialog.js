@@ -154,6 +154,26 @@ export function showEngineOptionsDialog({ engine, api }) {
       const form = document.createElement("div");
       form.className = "engine-opt-form";
 
+      // Display name — defaults to what the engine announced via UCI id name
+      // (or the binary basename if the probe failed). Editable; this is the
+      // label shown in clocks, PGN headers, and tournaments.
+      const startName = engine.name || "";
+      let currentName = startName;
+      const nameRow = document.createElement("div");
+      nameRow.className = "engine-opt-row";
+      const nameLabel = document.createElement("label");
+      nameLabel.className = "engine-opt-label";
+      nameLabel.textContent = "Name";
+      const nameInput = document.createElement("wa-input");
+      nameInput.size = "small";
+      nameInput.classList.add("engine-opt-input");
+      nameInput.value = startName;
+      nameInput.addEventListener("input", () => {
+        currentName = nameInput.value;
+      });
+      nameRow.append(nameLabel, nameInput);
+      form.appendChild(nameRow);
+
       const fields = new Map();
       const names = Object.keys(schema).sort((a, b) => a.localeCompare(b));
       if (names.length === 0) {
@@ -206,10 +226,13 @@ export function showEngineOptionsDialog({ engine, api }) {
       save.textContent = "Save";
       save.addEventListener("click", async () => {
         const diff = diffFromDefaults(ctx.values, schema);
+        const trimmed = (currentName || "").trim();
+        const body = { options: diff };
+        if (trimmed && trimmed !== startName) {
+          body.name = trimmed;
+        }
         try {
-          const updated = await api("PATCH", `/engines/${engine.id}`, {
-            options: diff,
-          });
+          const updated = await api("PATCH", `/engines/${engine.id}`, body);
           resolve(updated);
         } catch (e) {
           reportError(null,"Save failed", e);

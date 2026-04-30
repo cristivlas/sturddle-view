@@ -15,7 +15,7 @@ from ..engines import (
     Engine,
     EngineNotFoundError,
     EngineRegistry,
-    capture_option_schema,
+    probe_engine,
 )
 
 
@@ -45,7 +45,10 @@ router = APIRouter(prefix="/engines", tags=["engines"], dependencies=[Depends(re
 
 
 class EngineCreate(BaseModel):
-    name: str
+    # Optional: when omitted/blank, the server defaults to the engine's UCI
+    # `id name`, falling back to the binary basename if the engine doesn't
+    # respond. The user can rename later via PATCH.
+    name: str | None = None
     path: str
     options: dict[str, Any] = {}
 
@@ -75,7 +78,7 @@ async def _ensure_schema(reg: EngineRegistry, e: Engine) -> Engine:
     """
     if e.option_schema:
         return e
-    schema = await capture_option_schema(e.path)
+    _uci_name, schema = await probe_engine(e.path)
     if not schema:
         return e
     try:
@@ -101,16 +104,22 @@ async def list_engines(request: Request) -> dict:
 async def add_engine(payload: EngineCreate, request: Request) -> dict:
     reg = _registry(request)
     resolved_path = _validate_engine_path(payload.path)
-    schema = await capture_option_schema(resolved_path)
+    uci_name, schema = await probe_engine(resolved_path)
+    name = (payload.name or "").strip() or uci_name or Path(resolved_path).name
     try:
         e = reg.add(
-            name=payload.name,
+            name=name,
             path=resolved_path,
             options=payload.options,
             option_schema=schema,
         )
     except DuplicateEngineError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # First engine added with nothing selected -> auto-select it. Saves the
+    # user a redundant click; any subsequent add leaves the active engine
+    # alone.
+    if reg.selected_id is None:
+        reg.select(e.id)
     return _serialize(e)
 
 
@@ -158,7 +167,7 @@ async def refresh_engine_schema(engine_id: str, request: Request) -> dict:
         e = reg.get(engine_id)
     except EngineNotFoundError as exc:
         raise HTTPException(status_code=404, detail="engine not found") from exc
-    schema = await capture_option_schema(e.path)
+    _uci_name, schema = await probe_engine(e.path)
     if not schema:
         raise HTTPException(
             status_code=502, detail="could not capture options from engine"

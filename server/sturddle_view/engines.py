@@ -31,19 +31,22 @@ def default_registry_path() -> Path:
 _HIDDEN_OPTIONS = {"multipv", "ponder", "uci_chess960", "uci_variant", "uci_analysemode"}
 
 
-async def capture_option_schema(engine_path: str) -> dict[str, dict]:
-    """Briefly spawn the engine and capture its UCI option list.
+async def probe_engine(engine_path: str) -> tuple[str | None, dict[str, dict]]:
+    """Briefly spawn the engine; return (uci_id_name, option_schema).
 
-    Returns a {name: {type, default, min?, max?, vars?}} dict. Skips
-    engine-managed options (multipv, ponder, etc.). Best-effort: on any
-    failure logs and returns {} so the engine can still be registered.
+    `option_schema` is a {name: {type, default, min?, max?, vars?}} dict,
+    skipping engine-managed options (multipv, ponder, etc.). `uci_id_name`
+    is what the engine announces via UCI `id name`, or None if unavailable.
+    Best-effort: on any failure logs and returns (None, {}) so the engine
+    can still be registered.
     """
     try:
         _transport, engine = await chess.engine.popen_uci(engine_path)
     except Exception:
-        log.exception("could not spawn %s for option capture", engine_path)
-        return {}
+        log.exception("could not spawn %s for probe", engine_path)
+        return None, {}
     try:
+        uci_name = engine.id.get("name") or None
         schema: dict[str, dict] = {}
         for name, opt in engine.options.items():
             if name.lower() in _HIDDEN_OPTIONS:
@@ -56,7 +59,7 @@ async def capture_option_schema(engine_path: str) -> dict[str, dict]:
             if opt.var:
                 entry["vars"] = list(opt.var)
             schema[name] = entry
-        return schema
+        return uci_name, schema
     finally:
         try:
             await engine.quit()
