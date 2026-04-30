@@ -30,18 +30,11 @@ def test_remaining_stubs_raise_not_implemented():
 
     from sturddle_view.tournament.fastchess import FastchessRunner
     from sturddle_view.tournament.orchestrator import Orchestrator
-    from sturddle_view.tournament.pgn_stats import compute_sprt, compute_standings
     from sturddle_view.tournament.store import TournamentStore
 
     store = TournamentStore(Path("/tmp/nonexistent"))
     runner = FastchessRunner("/usr/bin/false")
     orch = Orchestrator(store, runner)
-
-    # pgn_stats: Slice 2
-    with pytest.raises(NotImplementedError):
-        compute_standings(Path("/dev/null"))
-    with pytest.raises(NotImplementedError):
-        compute_sprt(Path("/dev/null"), {})
 
     # orchestrator: Slice 4
     with pytest.raises(NotImplementedError):
