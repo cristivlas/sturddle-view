@@ -5,13 +5,14 @@ import {
   FEN,
 } from "../vendor/cm-chessboard/src/Chessboard.js";
 import { MARKER_TYPE, Markers } from "../vendor/cm-chessboard/src/extensions/markers/Markers.js";
+import { ARROW_TYPE, Arrows } from "../vendor/cm-chessboard/src/extensions/arrows/Arrows.js";
 
 export function mountBoard({ element, onMove }) {
   const board = new Chessboard(element, {
     position: FEN.start,
     assetsUrl: "./vendor/cm-chessboard/assets/",
     style: { cssClass: "default", showCoordinates: true, pieces: { file: "pieces/standard.svg" } },
-    extensions: [{ class: Markers }],
+    extensions: [{ class: Markers }, { class: Arrows }],
   });
 
   let myColor = COLOR.white;
@@ -22,7 +23,6 @@ export function mountBoard({ element, onMove }) {
     if (next === myColor) return;
     myColor = next;
     board.setOrientation(myColor);
-    // Re-bind move input so cm-chessboard accepts moves for the new color.
     if (inputEnabled) {
       board.disableMoveInput();
       inputEnabled = false;
@@ -59,6 +59,18 @@ export function mountBoard({ element, onMove }) {
     }
   }
 
+  function setArrow(fromUci, toUci) {
+    if (typeof board.removeArrows === "function") board.removeArrows();
+    if (!fromUci || !toUci) return;
+    if (typeof board.addArrow === "function") {
+      board.addArrow(ARROW_TYPE.default, fromUci, toUci);
+    }
+  }
+
+  function clearArrows() {
+    if (typeof board.removeArrows === "function") board.removeArrows();
+  }
+
   function forceResize() {
     // cm-chessboard has no public resize API; fall back to its private view.
     // Defensive: tolerate any future structural changes in the library.
@@ -71,5 +83,5 @@ export function mountBoard({ element, onMove }) {
     }
   }
 
-  return { setSide, setPosition, enableInput, forceResize };
+  return { setSide, setPosition, enableInput, forceResize, setArrow, clearArrows };
 }

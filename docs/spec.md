@@ -384,6 +384,9 @@ A thin app-level wrapper (`web/app/dialogs.js`) exposes `confirm()`, `alert()`, 
 - Eval graph over full game history
 - Agent implementations (analysis, teacher, etc.)
 - Linux WebKitGTK consistency across distros
+- Theme integration for board annotations: when themes (dark/light) are
+  wired up, the engine "considered move" arrow color must derive from the
+  active theme rather than the cm-chessboard default green.
 
 ### Server-side persistence — to be revisited
 

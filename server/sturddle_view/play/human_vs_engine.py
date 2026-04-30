@@ -54,6 +54,7 @@ def _serialize_info(info: chess.engine.InfoDict, board: chess.Board) -> dict:
             out["pv"] = [board.variation_san(pv)]
         except (ValueError, AssertionError):
             out["pv"] = [m.uci() for m in pv]
+        out["pv_uci"] = [m.uci() for m in pv]
     return out
 
 

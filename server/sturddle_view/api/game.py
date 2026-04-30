@@ -95,6 +95,19 @@ async def resign(request: Request) -> dict:
     return {"ok": True}
 
 
+@router.post("/sync")
+async def sync(request: Request) -> dict:
+    """Re-emit the current state (board + clock) so a freshly-mounted client
+    can resync without server-side mutation."""
+    s = request.app.state
+    if s.hve is not None:
+        try:
+            await s.hve.republish_state()
+        except Exception:
+            pass
+    return {"ok": True}
+
+
 @router.post("/takeback")
 async def takeback(request: Request) -> dict:
     s = request.app.state.settings

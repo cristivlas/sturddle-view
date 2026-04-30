@@ -323,6 +323,7 @@ export function mountGameView(container, opts = {}) {
           board.setSide(humanWhite ? "white" : "black");
         }
         board.setPosition(evt.payload.fen, evt.payload.last_move);
+        board.clearArrows();
         if (showMoves && moveListEl) {
           renderMoveList(moveListEl, evt.payload.moves_san || []);
         }
@@ -347,6 +348,12 @@ export function mountGameView(container, opts = {}) {
         }
         if (enginePv && evt.payload.pv && evt.payload.pv.length > 0) {
           enginePv.textContent = evt.payload.pv[0];
+        }
+        if (evt.payload.pv_uci && evt.payload.pv_uci.length > 0) {
+          const m = evt.payload.pv_uci[0];
+          if (m && m.length >= 4) {
+            board.setArrow(m.slice(0, 2), m.slice(2, 4));
+          }
         }
         break;
       case "game_result":

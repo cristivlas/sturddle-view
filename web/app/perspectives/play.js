@@ -80,6 +80,13 @@ export const playPerspective = {
     const onSettingsChanged = () => { refreshSettings(); };
     window.addEventListener("sturddle:settings-changed", onSettingsChanged);
 
+    // Ask server to re-emit current state so the freshly-mounted view syncs.
+    // Delay slightly so the GameView's first recompute and board mount have
+    // settled before we apply the snapshot.
+    setTimeout(() => {
+      ctx.api("POST", "/game/sync", {}).catch(() => {});
+    }, 200);
+
     // --- Hook events for control-bar state changes (board state changes
     //     are GameView's responsibility). ---
     const offEvent = ctx.events.on((evt) => {

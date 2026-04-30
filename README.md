@@ -17,6 +17,7 @@ docs/                   Design notes
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
+playwright install chromium  # one-time, for end-to-end tests
 sturddle-view --reload
 ```
 
