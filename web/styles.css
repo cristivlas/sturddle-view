@@ -590,19 +590,29 @@ wa-dialog wa-tab-panel > * + * { margin-top: 14px; }
   background: var(--panel);
   border: 1px solid #2e3138;
   border-radius: 6px;
-  padding: 8px 12px;
+  padding: 6px 10px;
 }
 .tournaments-settings .settings-row {
-  display: flex; align-items: center; gap: 8px; padding: 4px 0;
+  display: flex; align-items: center; gap: 10px; padding: 2px 0;
+  max-width: none;
 }
 .tournaments-settings .settings-row label {
-  flex: 0 0 130px; color: var(--muted); font-size: 12px;
+  flex: 0 0 auto; color: var(--muted); font-size: 12px;
 }
 .tournaments-settings .path-display {
-  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-family: var(--wa-font-family-code); font-size: 12px;
+  direction: rtl; text-align: left;
+}
+.tournaments-settings .path-display.error,
+.tournaments-settings .path-display.muted {
+  direction: ltr;
 }
 .tournaments-settings .path-display.error { color: var(--wa-color-danger-on-loud); }
+.tournaments-settings .settings-row wa-button::part(base) {
+  padding-inline: 8px;
+}
 .tournaments-toolbar { display: flex; gap: 8px; }
 .tournaments-empty {
   display: flex; align-items: center; justify-content: center;
