@@ -46,9 +46,13 @@ export const playPerspective = {
 
           <div id="board-controls">
             <wa-button id="new-game" size="small">New game</wa-button>
-            <wa-button id="takeback" size="small" disabled>Take back</wa-button>
-            <wa-button id="pause" class="icon-only" size="small" disabled aria-label="Pause">
-              <wa-icon name="pause"></wa-icon>
+            <wa-button id="takeback" size="small" disabled>
+              <wa-icon slot="start" name="rotate-left"></wa-icon>
+              Take back
+            </wa-button>
+            <wa-button id="pause" size="small" disabled aria-label="Pause">
+              <wa-icon slot="start" name="pause"></wa-icon>
+              <span class="pause-label">Pause</span>
             </wa-button>
             <wa-button id="resign" size="small" variant="danger" disabled>Resign</wa-button>
           </div>
@@ -143,6 +147,17 @@ export const playPerspective = {
     let paused = false;
 
     const pauseIcon = pauseBtn.querySelector("wa-icon");
+    const pauseLabel = pauseBtn.querySelector(".pause-label");
+    // Pin the pause button width to fit the wider "Resume" label so toggling
+    // Pause<->Resume doesn't reflow the controls bar. Measured after the
+    // button has had a frame to render at its natural "Pause" width.
+    requestAnimationFrame(() => {
+      const original = pauseLabel.textContent;
+      pauseLabel.textContent = "Resume";
+      const w = pauseBtn.getBoundingClientRect().width;
+      pauseLabel.textContent = original;
+      if (w > 0) pauseBtn.style.minWidth = `${Math.ceil(w)}px`;
+    });
     // Resign is enabled whenever there is an active game; cleared on
     // game_result. We track it explicitly so paused-state can additionally
     // gate it without losing the "active game" signal.
@@ -155,6 +170,7 @@ export const playPerspective = {
       const humanToMove = humanWhite ? turn === "white" : turn === "black";
       setDisabled(pauseBtn, gameOver || !humanToMove);
       pauseIcon.setAttribute("name", paused ? "play" : "pause");
+      pauseLabel.textContent = paused ? "Resume" : "Pause";
       pauseBtn.setAttribute("aria-label", paused ? "Resume" : "Pause");
       setDisabled(
         takebackBtn,
