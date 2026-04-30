@@ -24,7 +24,10 @@ import { mountBoard } from "./board.js";
 
 function fmtClock(seconds) {
   if (!Number.isFinite(seconds)) return "—";
-  const s = Math.max(0, Math.floor(seconds));
+  const t = Math.max(0, seconds);
+  // Sub-10s: show tenths so bullet/sub-second-increment games are readable.
+  if (t < 10) return t.toFixed(1);
+  const s = Math.floor(t);
   const m = Math.floor(s / 60);
   const ss = s % 60;
   return `${m}:${ss.toString().padStart(2, "0")}`;

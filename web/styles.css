@@ -534,6 +534,15 @@ wa-dialog wa-tab-panel > * + * { margin-top: 14px; }
 .settings-row wa-select {
   width: 100%;
 }
+/* Value + unit pair (e.g. time control). Total width matches the other
+   single-control rows (max-width: 360px from .settings-row). */
+.settings-duration {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.settings-duration wa-input { flex: 1 1 auto; min-width: 0; width: auto; }
+.settings-duration wa-select { flex: 0 0 7em; width: auto; }
 
 /* Engines panel host — sits inside a tab panel and uses the same rhythm. */
 .engines-host {

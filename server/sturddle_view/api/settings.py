@@ -41,8 +41,9 @@ def update_settings(payload: dict, request: Request) -> dict:
             v = float(payload["tc_initial_seconds"])
         except (TypeError, ValueError) as e:
             raise HTTPException(status_code=400, detail="tc_initial_seconds must be a number") from e
-        if v < 1:
-            raise HTTPException(status_code=400, detail="tc_initial_seconds must be >= 1")
+        # 100ms floor — UCI wire is integer ms, and anything shorter is unplayable.
+        if v < 0.1:
+            raise HTTPException(status_code=400, detail="tc_initial_seconds must be >= 0.1")
         s.tc_initial_seconds = v
 
     if "tc_increment_seconds" in payload:

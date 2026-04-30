@@ -4,6 +4,81 @@
 
 import { showDialog, toast } from "./dialogs.js";
 
+// Persisted unit is always seconds (float). The UI picks the most natural
+// display unit on load (largest unit with no fractional remainder) and
+// converts back to seconds on save. UCI/cutechess/fastchess all support
+// sub-second values; the wire protocol resolution is 1ms.
+const DURATION_UNITS = [
+  { id: "min", label: "min", toSeconds: 60 },
+  { id: "sec", label: "sec", toSeconds: 1 },
+  { id: "ms",  label: "ms",  toSeconds: 0.001 },
+];
+
+function pickDurationUnit(seconds) {
+  if (seconds === 0) return "sec";
+  // Whole minutes -> minutes (300 -> "5 min").
+  if (seconds >= 60 && seconds % 60 === 0) return "min";
+  // Tenth-of-a-second resolution fits "sec" (0.1, 0.5, 60.5 all stay readable).
+  // Round to 1 decimal place to absorb float jitter.
+  if (Math.round(seconds * 10) === seconds * 10) return "sec";
+  // Otherwise ms — sub-100ms or multi-decimal values.
+  return "ms";
+}
+
+function makeDurationRow({ label, seconds, minSeconds, onChange }) {
+  const row = document.createElement("div");
+  row.className = "settings-row";
+
+  const lbl = document.createElement("label");
+  lbl.textContent = label;
+
+  const initialUnit = pickDurationUnit(seconds);
+  let unitId = initialUnit;
+  const unitDef = () => DURATION_UNITS.find((u) => u.id === unitId);
+
+  const input = document.createElement("wa-input");
+  input.size = "small";
+  input.type = "number";
+  input.value = String(seconds / unitDef().toSeconds);
+  input.min = String(minSeconds / unitDef().toSeconds);
+
+  const unit = document.createElement("wa-select");
+  unit.size = "small";
+  unit.value = unitId;
+  for (const u of DURATION_UNITS) {
+    const opt = document.createElement("wa-option");
+    opt.value = u.id;
+    opt.textContent = u.label;
+    unit.appendChild(opt);
+  }
+
+  function commit() {
+    const raw = parseFloat(input.value);
+    if (!Number.isFinite(raw) || raw < 0) return;
+    const sec = Math.round(raw * unitDef().toSeconds * 1000) / 1000;  // 1ms resolution
+    if (sec < minSeconds) return;
+    onChange(sec);
+  }
+
+  input.addEventListener("input", commit);
+  unit.addEventListener("change", () => {
+    // Display-only: convert the shown value into the new unit so the
+    // underlying seconds stays the same. No commit() — the value didn't
+    // change; only its presentation did.
+    const oldDef = DURATION_UNITS.find((u) => u.id === unitId);
+    const sec = (parseFloat(input.value) || 0) * oldDef.toSeconds;
+    unitId = unit.value;
+    input.value = String(sec / unitDef().toSeconds);
+    input.min = String(minSeconds / unitDef().toSeconds);
+  });
+
+  const inputs = document.createElement("div");
+  inputs.className = "settings-duration";
+  inputs.append(input, unit);
+  row.append(lbl, inputs);
+  return row;
+}
+
 function debounce(fn, ms) {
   let t = null;
   return (...args) => {
@@ -81,39 +156,18 @@ export async function openSettingsDialog({ api }) {
       const playPanel = document.createElement("wa-tab-panel");
       playPanel.name = "play";
 
-      const tcInitial = document.createElement("wa-input");
-      tcInitial.size = "small";
-      tcInitial.type = "number";
-      tcInitial.min = "1";
-      tcInitial.value = String(initial.tc_initial_seconds ?? 300);
-      tcInitial.addEventListener("input", () => {
-        const v = parseFloat(tcInitial.value);
-        if (Number.isFinite(v) && v >= 1) {
-          putSettingsDebounced({ tc_initial_seconds: v });
-        }
+      const tcInitialRow = makeDurationRow({
+        label: "Initial time",
+        seconds: initial.tc_initial_seconds ?? 300,
+        minSeconds: 0.1,
+        onChange: (sec) => putSettingsDebounced({ tc_initial_seconds: sec }),
       });
-      const tcInitialRow = document.createElement("div");
-      tcInitialRow.className = "settings-row";
-      const tcInitialLabel = document.createElement("label");
-      tcInitialLabel.textContent = "Initial time (seconds)";
-      tcInitialRow.append(tcInitialLabel, tcInitial);
-
-      const tcIncrement = document.createElement("wa-input");
-      tcIncrement.size = "small";
-      tcIncrement.type = "number";
-      tcIncrement.min = "0";
-      tcIncrement.value = String(initial.tc_increment_seconds ?? 0);
-      tcIncrement.addEventListener("input", () => {
-        const v = parseFloat(tcIncrement.value);
-        if (Number.isFinite(v) && v >= 0) {
-          putSettingsDebounced({ tc_increment_seconds: v });
-        }
+      const tcIncrementRow = makeDurationRow({
+        label: "Increment per move",
+        seconds: initial.tc_increment_seconds ?? 0,
+        minSeconds: 0,
+        onChange: (sec) => putSettingsDebounced({ tc_increment_seconds: sec }),
       });
-      const tcIncrementRow = document.createElement("div");
-      tcIncrementRow.className = "settings-row";
-      const tcIncrementLabel = document.createElement("label");
-      tcIncrementLabel.textContent = "Increment per move (seconds)";
-      tcIncrementRow.append(tcIncrementLabel, tcIncrement);
 
       const humanSide = document.createElement("wa-select");
       humanSide.size = "small";
