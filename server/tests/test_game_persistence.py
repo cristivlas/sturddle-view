@@ -119,6 +119,27 @@ async def test_persist_on_pause_resume(tmp_path):
     assert store.load().paused is False
 
 
+async def test_persist_on_takeback(tmp_path):
+    """Take-back must rewrite the snapshot so a restart resumes the rolled-back position."""
+    hve, store = _make_hve(tmp_path)
+    await hve.new_game(human_white=True, tc=TimeControl(60.0, 0.0))
+    # Same simulated-engine-reply pattern as test_persist_after_engine_move.
+    async def _fake_engine_reply():
+        async with hve._lock:
+            hve._clock_history.append((hve._white_time, hve._black_time))
+            hve._board.push(chess.Move.from_uci("e7e5"))
+            hve._persist()
+    hve._engine_to_move = _fake_engine_reply
+    await hve.submit_move("e2e4")
+    assert store.load().moves_uci == ["e2e4", "e7e5"]
+    await hve.takeback()
+    saved = store.load()
+    assert saved is not None
+    assert saved.moves_uci == []
+    assert saved.clock_history == []
+    assert saved.paused is False
+
+
 async def test_clear_on_resign(tmp_path):
     hve, store = _make_hve(tmp_path)
     await hve.new_game(human_white=True, tc=TimeControl(60.0, 0.0))
@@ -146,6 +167,28 @@ async def test_clear_on_natural_game_over(tmp_path):
     # Now run _publish_result manually to exercise the clear path.
     await hve._publish_result()
     assert store.load() is None
+
+
+async def test_restart_mid_engine_think_resumes_with_engine_to_move(tmp_path):
+    """Crash while the engine was searching: restored state shows the human's
+    last move applied with the engine still to move (no orphan in-flight info).
+    """
+    hve, store = _make_hve(tmp_path)
+    await hve.new_game(human_white=True, tc=TimeControl(60.0, 0.0))
+    # Engine "starts thinking" but never replies — simulating a crash mid-search.
+    hve._engine_to_move = AsyncMock()
+    await hve.submit_move("e2e4")
+    saved = store.load()
+    assert saved is not None
+    assert saved.moves_uci == ["e2e4"]
+
+    # Fresh HVE, fresh restore — like a server restart.
+    fresh, _store2 = _make_hve(tmp_path)
+    fresh.restore_from(saved)
+    assert [m.uci() for m in fresh._board.move_stack] == ["e2e4"]
+    assert fresh._board.turn == chess.BLACK  # engine's turn
+    assert fresh._engine is None  # engine subprocess not spawned by restore
+    assert fresh._think_task is None  # no orphan think task
 
 
 async def test_persist_after_engine_move(tmp_path):

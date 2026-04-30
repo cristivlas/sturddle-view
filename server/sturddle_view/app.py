@@ -16,7 +16,7 @@ from .api import game as game_api
 from .api import settings as settings_api
 from .api import ws as ws_api
 from .config import Settings
-from .engines import EngineRegistry
+from .engines import EngineRegistry, resolve_selected
 from .events import EventBus
 from .openings import OpeningBook
 from .play.game_store import GameStore
@@ -49,20 +49,7 @@ def _maybe_restore_game(app: FastAPI) -> None:
     state = s.game_store.load()
     if state is None:
         return
-    engine_path: str | None = None
-    engine_name: str | None = None
-    engine_options: dict | None = None
-    sel = s.engines.selected_id
-    if sel:
-        try:
-            entry = s.engines.get(sel)
-            engine_path = entry.path
-            engine_name = entry.name
-            engine_options = dict(entry.options or {})
-        except KeyError:
-            engine_path = None
-    if engine_path is None and s.settings.engine_path:
-        engine_path = str(s.settings.engine_path)
+    engine_path, engine_name, engine_options = resolve_selected(s.engines, s.settings)
     if engine_path is None:
         log.warning(
             "saved game found but no engine is configured; "

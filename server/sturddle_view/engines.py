@@ -240,3 +240,25 @@ class EngineRegistry:
     def _ensure_loaded(self) -> None:
         if not self._loaded:
             self.load()
+
+
+def resolve_selected(
+    registry: EngineRegistry, settings,
+) -> tuple[str | None, str | None, dict | None]:
+    """(path, display_name, options) for the active engine.
+
+    Tries the registry's selected entry first; falls back to
+    `settings.engine_path` (the legacy --engine flag). Returns
+    (None, None, None) when nothing is configured. The name/options are
+    None for the fallback path so HumanVsEngine derives a name from the
+    UCI handshake on first launch.
+    """
+    if registry.selected_id:
+        try:
+            e = registry.get(registry.selected_id)
+            return e.path, e.name, dict(e.options or {})
+        except EngineNotFoundError:
+            pass
+    if settings.engine_path:
+        return str(settings.engine_path), None, None
+    return None, None, None
