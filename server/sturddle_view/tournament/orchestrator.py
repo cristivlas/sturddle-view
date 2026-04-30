@@ -1,44 +1,37 @@
-"""Unified facade over fastchess / cutechess-cli.
+"""Tournament orchestrator — composes ``TournamentStore`` and a ``Runner``.
 
-Responsibilities:
-  - Rewrite engine paths in tournament configs to point at stdio proxies.
-  - Launch the tournament manager as a subprocess (or attach to a running one).
-  - On attach: reconstruct state from existing PGN/log, then switch to live proxy stream.
-  - Detect tournament-manager crashes and surface them on the event bus.
+Owns:
+  - The single-active-tournament invariant (the store can't tell stale
+    ``running`` on disk from a real running process; the orchestrator
+    can, because it owns the runner).
+  - Startup reconciliation: any tournament whose persisted status is
+    ``running`` is marked ``stopped`` on server boot (Phase 1: no
+    Resume).
+  - Wiring runner events back to the store and to the broadcast tap.
 
-This module is intentionally a stub; concrete adapters land in `fastchess.py`
-and `cutechess.py` once the proxy contract stabilizes.
+Public surface is web-agnostic (takes ids and a broadcast callback) so
+the same orchestrator drives the Phase 1.5 CLI wrapper without HTTP
+coupling.
+
+Stub for Slice 0 of the tournament implementation plan; concrete
+implementation lands in Slice 4.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum
-from pathlib import Path
-
-
-class Manager(str, Enum):
-    FASTCHESS = "fastchess"
-    CUTECHESS = "cutechess"
-
-
-@dataclass
-class TournamentConfig:
-    manager: Manager
-    config_path: Path
-    rounds: int = 1
-    concurrency: int = 1
-    sprt: dict | None = None
+from .runner import Runner
+from .store import TournamentStore
 
 
 class Orchestrator:
-    def __init__(self) -> None:
-        self._proc = None  # asyncio.subprocess.Process when implemented
+    def __init__(self, store: TournamentStore, runner: Runner) -> None:
+        self._store = store
+        self._runner = runner
 
-    async def start(self, config: TournamentConfig) -> None:
+    async def start(self, tournament_id: str) -> None:
         raise NotImplementedError
 
-    async def attach(self, pid: int) -> None:
+    async def stop(self, tournament_id: str) -> None:
         raise NotImplementedError
 
-    async def stop(self) -> None:
+    def reconcile_on_startup(self) -> None:
         raise NotImplementedError
