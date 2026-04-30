@@ -40,6 +40,7 @@ export const enginesPerspective = {
       api: ctx.api,
       events: ctx.events,
       log: ctx.log,
+      token: ctx.token,
     });
 
     return {

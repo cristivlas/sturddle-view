@@ -279,9 +279,15 @@ async def proxy_subscribe(
 ) -> None:
     """WS endpoint that streams one proxy's UCI lines to a subscriber.
 
-    Each frame is JSON: ``{"proxy_id": "...", "line": "..."}`` or a
-    final ``{"proxy_id": "...", "ended": true}`` when the proxy session
-    has ended.
+    Each frame is JSON. Recognized line types are enriched with a
+    ``parsed`` dict (see ``uci_parse.py``):
+
+      ``{"proxy_id": ..., "line": ..., "parsed": {kind: "position",
+         fen, moves, last_move, ply, side_to_move}}``
+
+    Or for ended sessions:
+
+      ``{"proxy_id": ..., "ended": true}``
     """
     settings = websocket.app.state.settings
     if not settings.auth_disabled:
@@ -294,9 +300,9 @@ async def proxy_subscribe(
     orch: Orchestrator = websocket.app.state.tournament_orch
     queue = orch.subscribe_to_proxy(proxy_id)
 
+    from ..tournament.uci_parse import parse_uci_line
+
     async def _drain_recv() -> None:
-        # We don't expect client→server messages; reading keeps us
-        # alive to disconnects.
         while True:
             await websocket.receive()
 
@@ -311,9 +317,16 @@ async def proxy_subscribe(
                 get_task.cancel()
                 break
             payload = get_task.result()
-            await websocket.send_json(payload)
             if payload.get("ended"):
+                await websocket.send_json(payload)
                 break
+            # Enrich with parsed fields where possible. ``line`` is
+            # always present in non-ended payloads.
+            line = payload.get("line", "")
+            parsed = parse_uci_line(line)
+            if parsed is not None:
+                payload = {**payload, "parsed": parsed}
+            await websocket.send_json(payload)
     except WebSocketDisconnect:
         pass
     except asyncio.CancelledError:

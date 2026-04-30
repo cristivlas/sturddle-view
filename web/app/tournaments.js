@@ -11,7 +11,7 @@ import { confirm, reportError, showDialog, toast } from "./dialogs.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { closeActiveWorkspace, openTournamentWorkspace } from "./tournament-workspace.js";
 
-export function mountTournaments({ container, api, events, log }) {
+export function mountTournaments({ container, api, events, log, token }) {
   container.innerHTML = `
     <div class="tournaments-panel">
       <div class="tournaments-toolbar">
@@ -183,7 +183,7 @@ export function mountTournaments({ container, api, events, log }) {
   }
 
   function openWorkspace(t) {
-    openTournamentWorkspace({ api, events, log, tournament: t });
+    openTournamentWorkspace({ api, events, log, token, tournament: t });
   }
 
   async function openInspect(t) {

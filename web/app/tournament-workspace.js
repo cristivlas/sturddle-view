@@ -1,5 +1,9 @@
 // Tournament workspace: three WinBox windows (Standings, Schedule, Event log).
-// Slice 8 — Live game windows land in Slice 9.
+// Slice 9c adds the on-demand Live Game window: clicking an in-progress
+// row in the Schedule subscribes to one engine's proxy stream and
+// renders the position from that engine's POV.
+
+import { closeAllLiveGames, openLiveGameWindow } from "./tournament-live-game.js";
 //
 // State model:
 //   - One workspace open at a time per tab. Opening a workspace for a
@@ -54,7 +58,7 @@ function saveLayout(layout) {
 let activeWorkspace = null;
 
 
-export function openTournamentWorkspace({ api, events, log, tournament }) {
+export function openTournamentWorkspace({ api, events, log, token, tournament }) {
   // Close any prior workspace (single-active model).
   if (activeWorkspace) {
     activeWorkspace.close();
@@ -66,6 +70,8 @@ export function openTournamentWorkspace({ api, events, log, tournament }) {
   const eventLog = [];
   let pollTimer = null;
   let unsubscribe = null;
+  // game_id -> {proxies: [pA, pB], engineNames: [...?]}
+  const activeGames = new Map();
 
   // ---- Window construction ----------------------------------------------
 
@@ -170,27 +176,55 @@ export function openTournamentWorkspace({ api, events, log, tournament }) {
 
   function renderSchedule() {
     // Completed games: PGN-derived (authoritative once fastchess flushes
-    // each finished game). The proxy broadcast tap (Slice 9) will later
-    // add an "in progress" row per active game; for now we only show
-    // completed.
+    // each finished game). In-progress games: from `game_paired`
+    // events (Slice 9b) — each becomes a row whose proxies the user
+    // can click on to attach a Live Game window.
     const finished = (detail && detail.games) || [];
-    const running  = eventLog.filter((e) => e.payload?.kind === "game_started");
-    if (finished.length === 0 && running.length === 0) {
+    const inProgress = [...activeGames.entries()];
+    if (finished.length === 0 && inProgress.length === 0) {
       scheduleBody.innerHTML = `<div class="wb-empty">No games yet.</div>`;
       return;
     }
-    const finishedItems = finished.map((g) => {
-      const tag = `${escape(g.white)} – ${escape(g.black)}`;
-      const result = `<span class="wb-sched-result">${escape(g.result)}</span>`;
-      return `<li><span class="wb-sched-icon">✓</span> ${tag} ${result}</li>`;
-    });
-    const runningItems = running.map((e) => {
-      const p = e.payload || {};
-      const tag = p.white && p.black ? `${escape(p.white)} – ${escape(p.black)}` : "(game)";
-      return `<li><span class="wb-sched-icon">▶</span> ${tag}</li>`;
-    });
-    const items = [...finishedItems, ...runningItems].join("");
-    scheduleBody.innerHTML = `<ul class="wb-sched-list">${items}</ul>`;
+    scheduleBody.innerHTML = `<ul class="wb-sched-list"></ul>`;
+    const list = scheduleBody.querySelector(".wb-sched-list");
+
+    // Completed first (top), then in-progress.
+    for (const g of finished) {
+      const li = document.createElement("li");
+      li.innerHTML = `
+        <span class="wb-sched-icon">✓</span>
+        ${escape(g.white)} – ${escape(g.black)}
+        <span class="wb-sched-result">${escape(g.result)}</span>
+      `;
+      list.appendChild(li);
+    }
+    for (const [gid, g] of inProgress) {
+      const li = document.createElement("li");
+      li.className = "wb-sched-live";
+      li.innerHTML = `
+        <span class="wb-sched-icon">▶</span>
+        <span class="wb-sched-game">game ${escape(gid)}</span>
+        <span class="wb-sched-attach muted">attach:</span>
+      `;
+      const attachWrap = document.createElement("span");
+      attachWrap.className = "wb-sched-attach-buttons";
+      g.proxies.forEach((pid, i) => {
+        const btn = document.createElement("button");
+        btn.className = "wb-sched-attach-btn";
+        btn.textContent = `engine ${i + 1}`;
+        btn.title = pid;
+        btn.addEventListener("click", () => {
+          openLiveGameWindow({
+            proxyId: pid,
+            label: `${tournament.name} — game ${gid} · engine ${i + 1}`,
+            token,
+          });
+        });
+        attachWrap.appendChild(btn);
+      });
+      li.appendChild(attachWrap);
+      list.appendChild(li);
+    }
   }
 
   function renderEventLog() {
@@ -241,6 +275,29 @@ export function openTournamentWorkspace({ api, events, log, tournament }) {
     const ts = new Date().toISOString().substring(11, 19);
     eventLog.push({ ts, kind: evt.kind, payload: evt.payload });
     if (eventLog.length > EVENT_LOG_LIMIT) eventLog.shift();
+
+    // Slice 9c: track active games for the Schedule "in progress" rows.
+    const inner = evt.payload?.kind;
+    if (inner === "game_paired") {
+      const gid = evt.payload.game_id;
+      const proxies = evt.payload.proxies || [];
+      if (gid && proxies.length === 2) {
+        activeGames.set(gid, { proxies });
+      }
+    } else if (inner === "proxy_ended") {
+      const ended = evt.payload.proxy_id;
+      // Drop any active game whose proxies include the ended one.
+      for (const [gid, g] of activeGames) {
+        if (g.proxies.includes(ended)) activeGames.delete(gid);
+      }
+    } else if (
+      evt.kind === "tournament_status" ||
+      inner === "done" || inner === "stopped"
+    ) {
+      // Tournament ended; clear in-progress.
+      activeGames.clear();
+    }
+
     renderEventLog();
     renderSchedule();
 
@@ -248,9 +305,9 @@ export function openTournamentWorkspace({ api, events, log, tournament }) {
     // standings authoritatively.
     if (
       evt.kind === "tournament_status" ||
-      evt.payload?.kind === "game_finished" ||
-      evt.payload?.kind === "done" ||
-      evt.payload?.kind === "stopped"
+      inner === "game_finished" ||
+      inner === "done" ||
+      inner === "stopped"
     ) {
       refresh();
     }
@@ -278,6 +335,7 @@ export function openTournamentWorkspace({ api, events, log, tournament }) {
       unsubscribe();
       unsubscribe = null;
     }
+    closeAllLiveGames();
     if (activeWorkspace === workspace) activeWorkspace = null;
   }
 
