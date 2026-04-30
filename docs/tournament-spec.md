@@ -329,23 +329,145 @@ absent in the latter case.
   Elo ± error. If SPRT is configured, a row at the top showing LLR,
   bounds, and decision status (H0 / H1 / inconclusive). Source: PGN
   parsed by `pgn_stats`, refreshed as games complete.
-- **Live game** (N windows; live-only). One per parallel game (the
-  template's "games in parallel" value, N). Contains: small board, both engine names, current
-  eval / depth / PV from the proxy stream, move list, clock. Closes
-  when its game ends; a new window opens for the next pairing in that
-  slot.
-- **Schedule / pairings** (1 window). List of all pairings; status icon
-  per row (done / running / pending); result for completed games.
-  Clicking a completed row previews the game PGN.
-- **Event log** (1 window). Chronological text feed: game start/finish,
-  engine crashes, runner restarts, etc. Backed by the server-side
-  ring buffer and persisted to `logs/wrapper.log`.
+- **Schedule** (1 window). List of completed games (PGN-derived) plus
+  any in-progress games the server is tracking (proxy-derived once the
+  pipeline is wired). Clicking a row attaches a Live game window —
+  see below.
+- **Event log** (1 window). Chronological text feed driven by the
+  existing `EventBus`. Phase 1 surface is sparse (`tournament_status`
+  and lifecycle: started / done / stopped / runner_crash) plus a
+  forward of fastchess's own stdout (`Started game N (A vs B)`,
+  `Finished game N: result`). Per-game UCI traffic is **not** sent
+  to the event log; it flows through a separate per-engine
+  subscription (see "Live observation pipeline" below). Persisted to
+  `logs/wrapper.log` and `logs/fastchess.log`.
+- **Live game** (0..N windows; opt-in). User attaches by clicking a
+  row in Schedule. The window subscribes to **one engine's** proxy
+  stream and renders the position from the engine's POV. See "Live
+  observation pipeline" below for what's shown and where each piece
+  comes from. Closes when its game ends or the user dismisses it.
 
-Total live window count: `N + 3`.
+Static window count = 3 (Standings, Schedule, Event log). Live game
+windows are opened on demand; the user attaches as many as they want
+to follow.
 
-Explicitly not in Phase 1: per-engine info as separate windows (lives
-inside each Live game window), a standalone PGN browser (Schedule's
+Explicitly not in Phase 1: standalone PGN browser (Schedule's
 row-click suffices), eval graphs (Phase 2).
+
+---
+
+### Live observation pipeline
+
+This section captures the design for live game viewing — the part of
+the workspace that was deferred when Slice 8 shipped. Implementing it
+involves three independently-shippable pieces (see
+`docs/tournament-plan.md` for the slice breakdown).
+
+#### Two pieces, well-bounded
+
+1. **Wrapper around fastchess** — the high-level manager
+   (`FastchessRunner` + `Orchestrator`). Already shipped.
+2. **Stdio proxy** — a thin pipe that sits between fastchess and each
+   engine binary. Forwards stdin/stdout transparently and broadcasts
+   a copy of every line to the GUI server. The proxy stays a **dumb
+   pipe**: no chess knowledge, no UCI parsing, no game state.
+
+Splitting these responsibilities cleanly is what keeps the design
+manageable.
+
+#### Attach-to-engine, not attach-to-game
+
+The Live game window subscribes to **one engine's proxy stream** —
+not to a "game" abstraction. The user picks the engine they want to
+follow; the window renders the board from that engine's POV.
+
+This trades one feature ("see both engines' eval/PV in one window")
+for a major simplification: there's no need to correlate two engine
+streams into a "game" before showing anything. Each proxy is its own
+unit; the user does the correlation by clicking. To see the other
+engine's POV, attach a second window to the other proxy.
+
+Everything needed to render the board is already in the engine's UCI
+stream:
+
+- `position startpos moves e2e4 e7e5 ...` — fastchess sends the full
+  move list every turn. Reconstruct the board with python-chess in
+  one line; opponent's move comes for free.
+- `go wtime ... btime ...` — both clocks.
+- `info depth N score cp ... pv ...` — this engine's eval, depth, PV.
+- `bestmove ...` — the move this engine just played.
+
+What you give up: the **opponent engine's** internal eval/PV/depth.
+That's available from the opponent's proxy if the user attaches a
+second window to it.
+
+#### Game pairing (server-side, optional)
+
+For the Schedule window's "in-progress games" rows, we want to know
+which two proxies are playing each other. Done server-side by hashing
+the move list:
+
+- Per-game key: `(move_list, half_move_number)`.
+- The two engines in a paired game see **the same move list** at
+  alternating ply numbers. After every full move both engines have
+  observed the same `position startpos moves ...`.
+- `pair_index: dict[move_list, list[(proxy_id, ply)]]`. On each
+  `position` line from any proxy, update the entry. When two entries
+  share the same move list at adjacent ply (one is at ply N, the
+  other at N+1 or N-1), they're paired.
+- O(1) per-line update. No linear search. Bounded memory:
+  `concurrency × 2` proxies max.
+
+Color and ply guard against false matches when two games happen to
+share an opening sequence: as soon as the move lists diverge (move 1
+in the worst case), the index self-corrects. Pairing may take
+~1 second to lock in for a fresh game, which is acceptable — the
+Schedule row simply appears a moment after the first move.
+
+If pairing fails (unlikely but possible at very high concurrency),
+the only consequence is a slightly wonky Schedule listing. The Live
+game window itself still works because it subscribes per-proxy, not
+per-pair.
+
+#### Volume & high-concurrency considerations
+
+UCI engines emit `info` lines continuously while searching. At
+N=8–48 parallel games on a multi-core box, raw line-by-line POSTs
+from each proxy to the server would peak in the thousands of
+requests per second range.
+
+Mitigations baked into the design:
+
+- **Batch at the proxy.** Each proxy buffers and POSTs every ~50ms
+  or every ~32 lines, whichever first. Drops request rate ~50× with
+  no perceptible loss in liveness (50ms is below the human flicker
+  threshold).
+- **Selective parsing on the server.** Only fully parse the streams
+  that have at least one subscriber (= at least one Live game window
+  attached). Other proxies' data is kept only as the latest
+  `position` line (for the pairing index) and discarded.
+- **Throttle DOM updates.** Schedule re-renders at ≤4 Hz even if
+  the underlying state ticks faster.
+
+If profiling at very high concurrency (the user's 48-core box) ever
+shows the Python proxy is itself the bottleneck, the proxy can be
+rewritten in C++ — it's a self-contained process with a
+language-agnostic protocol. Out of scope for now; documented as an
+escape hatch.
+
+#### What end-of-game looks like
+
+The proxy doesn't classify; the consumer infers from the stream:
+
+- **Start of a new game** on this engine: `ucinewgame`.
+- **End of a game** on this engine: the next `ucinewgame` (the next
+  game starts) or proxy disconnect (engine quit / fastchess closed
+  the connection).
+- **Result label** (`1-0` / `0-1` / `1/2-1/2`): comes from PGN, not
+  from the proxy. fastchess writes the result on adjudication. The
+  Schedule window already polls PGN; results overlay on a slight
+  delay (≤5s today; instant once fastchess's stdout `Finished game N`
+  line is forwarded into the event bus).
 
 ### Stopped / done view
 

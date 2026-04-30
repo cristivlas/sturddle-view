@@ -175,16 +175,77 @@ second use case in front of you is cheaper than guessing.
 
 ---
 
-## Slice 9 — Workspace: Live game windows (L)
+## Slice 9 — Live observation pipeline
 
-- Subscribes to per-game UCI info from the proxy stream.
-- N windows, opened on `game_started`, closed on `game_finished`.
-- Reuses the existing `web/app/board.js` for the small live board.
-- Depends on the proxy broadcast tap actually working — currently a
-  TODO in `server/sturddle_view/tournament/proxy.py:48-50`. Wiring
-  that tap is part of this slice.
+After Slice 8 user-testing the original "Slice 9 = live games window"
+was split into three independent slices. The design is in the
+"Live observation pipeline" section of `docs/tournament-spec.md`.
 
-End of Slice 9: feature-complete per the spec.
+### Slice 9a — Forward fastchess stdout to event bus (XS)
+
+The Event log window is currently sparse (lifecycle events only).
+fastchess prints "Started game N (A vs B): ..." and "Finished game
+N: result" to its own stdout, which we already drain to
+`logs/fastchess.log`. This slice **also** forwards each captured line
+to the event bus so the Event log window populates in real time.
+
+No proxy involved. No correlation logic. ~30 minutes of work,
+mostly a tap added to the existing drain task in `fastchess.py` plus
+a new `tournament_runner_log` event kind.
+
+This is shippable on its own; it makes the Event log immediately
+useful and doesn't block 9b/9c.
+
+### Slice 9b — Wire the proxy broadcast tap (M)
+
+Replace the TODO in `tournament/proxy.py:48-50` with HTTP POSTs to a
+new `/internal/proxy` server endpoint. Add per-proxy WS subscription
+on the server: a Live game window opens by subscribing to a
+`proxy_id`, and the server forwards that proxy's UCI lines to the
+subscriber.
+
+Server-side game pairing: per the spec's "Game pairing" section, the
+server maintains a `pair_index` keyed on `(move_list, ply)` and
+infers which two proxies are playing each other. Schedule window's
+"in-progress" rows come from this. ~50 lines server-side.
+
+Orchestrator change: when building the fastchess command, replace
+each engine's `cmd=` with a wrapper that runs the proxy script
+(`<sys.executable> -m sturddle_view.tournament.proxy ...`).
+
+Volume mitigations baked in from the start (per spec):
+
+- Proxy batches lines (50ms / 32 lines) before POSTing.
+- Server only fully parses streams that have at least one subscriber;
+  others contribute only their latest `position` line to the
+  `pair_index` and are otherwise discarded.
+
+End of 9b: proxy traffic flows; Schedule shows in-progress games;
+no live boards yet.
+
+### Slice 9c — Live game window (M)
+
+The Live game window subscribes to one proxy's stream and renders:
+
+- Board reconstructed from the latest `position startpos moves ...`
+  via python-chess (one line of code).
+- Both clocks from `go wtime ... btime ...`.
+- This engine's eval / depth / PV from `info` lines.
+- Bestmove highlight on each `bestmove`.
+
+User opens the window by clicking a Schedule row.
+Reuses the existing `web/app/board.js`.
+
+End of 9c: feature-complete per the spec.
+
+### Notes on Phase 1 vs later
+
+- The "attach to engine, not to game" model means the user sees one
+  engine's POV per window; opening a second window for the opponent
+  shows the other side's eval/PV.
+- Eval graphs are still Phase 2.
+- C++ proxy rewrite is documented as an escape hatch in the spec;
+  not in scope.
 
 ---
 
@@ -198,20 +259,22 @@ End of Slice 9: feature-complete per the spec.
 
 ## Dependencies and risks
 
-- **Cross-platform process control** (Slices 3, 9): cribbed from
+- **Cross-platform process control** (Slices 3, 9b): cribbed from
   `~/Projects/sturddle-2/tools/tuneup/spsa/worker.py`. Lowest-risk
   part — working reference exists.
-- **Proxy broadcast tap** (Slice 9): currently a TODO. Decision
-  needed: tap-via-HTTP-POST (worker.py-style; simple, slightly chatty)
-  vs tap-via-localhost-socket (faster, more code). Lean HTTP-POST
-  initially, optimize only if profiling demands. Not a blocker for
-  Slices 0–8.
+- **Proxy broadcast transport** (Slice 9b): HTTP POST with batching
+  (50ms / 32 lines) decided in the spec. Localhost Unix socket is the
+  fallback if profiling demands it; not a blocker.
 - **SPRT formula correctness** (Slice 2): standard but easy to subtly
   mis-implement. Fixture-driven tests are the mitigation.
-- **WS event volume** (Slice 9): with N=8 parallel games each emitting
-  `info` lines at 1+ kHz, naive WS forwarding could overwhelm the
-  browser. Mitigation: server-side throttle to ~10 Hz per game
-  (standard practice). Plan to do this from the start in Slice 9.
+- **WS event volume / DOM throttling** (Slices 9b–9c): handled by
+  server-side selective parsing (only subscribed proxies fully parsed)
+  + DOM render throttling on the Schedule window (≤4 Hz). See spec
+  "Volume & high-concurrency considerations".
+- **Real fastchess testing** (Slices 9b–9c): unlike Slices 0–8, the
+  proxy slices need a real fastchess + real engine to validate the
+  end-to-end argv path. Local fastchess at `~/Projects/fastchess/`
+  per the project memory.
 
 ---
 
@@ -238,5 +301,7 @@ Update as slices land.
 | 6 — Tournaments UI v0 | done | 4c4a654, 3eef665 | Observe sub-tab removed; list+settings+new dialog; 2 Playwright e2e tests |
 | 7 — Reusable template form | done | 6f13b52 | core fields + Advanced JSON; mounted in 3 contexts; e2e tested |
 | 8 — Workspace (3 windows) | done | 2d9f14b | Standings/Schedule/Event log; layout persisted in localStorage; 1 e2e test |
-| 9 — Workspace (live games) | postponed | — | UI/UX direction needs alignment first; revisit after critique pass |
+| 9a — Forward fastchess stdout to Event log | not started | — | XS; standalone, ships immediately |
+| 9b — Proxy broadcast tap + pairing | not started | — | M; needs real fastchess |
+| 9c — Live game window | not started | — | M; depends on 9b |
 | 10 — Polish | optional | — | post-Phase-1 |
