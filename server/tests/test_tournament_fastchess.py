@@ -203,6 +203,46 @@ def test_build_command_resign_and_draw(tmp_path):
     assert "movenumber=40" in d and "movecount=8" in d and "score=10" in d
 
 
+def test_build_command_wraps_engines_in_proxy_when_configured(tmp_path):
+    """Slice 9b: when proxy_broadcast_url + proxy_secret are set on the
+    spec, each engine's cmd= becomes the python proxy invocation with
+    the real engine binary as an argument."""
+    import sys as _sys
+
+    spec = _make_spec(
+        tmp_path,
+        template={"tc": "10+0.1"},
+        engines=[
+            {"name": "A", "cmd": "/bin/engineA"},
+            {"name": "B", "cmd": "/bin/engineB"},
+        ],
+    )
+    spec.proxy_broadcast_url = "http://127.0.0.1:8765/internal/proxy"
+    spec.proxy_secret = "test-secret"
+
+    cmd = build_command(spec)
+
+    # Each engine block now uses python (sys.executable) as cmd= and
+    # passes the proxy invocation via args=.
+    cmd_eq = [c for c in cmd if c.startswith("cmd=")]
+    assert len(cmd_eq) == 2
+    for ceq in cmd_eq:
+        assert ceq == f"cmd={_sys.executable}"
+
+    args_eq = [c for c in cmd if c.startswith("args=")]
+    assert len(args_eq) == 2
+    for aeq in args_eq:
+        assert "sturddle_view.tournament.proxy" in aeq
+        assert "--broadcast-url http://127.0.0.1:8765/internal/proxy" in aeq
+        assert "--secret test-secret" in aeq
+        assert "--proxy-id" in aeq
+
+    # Engine names + tc still appear after the wrap.
+    assert "name=A" in cmd
+    assert "name=B" in cmd
+    assert "tc=10+0.1" in cmd
+
+
 def test_build_command_engine_missing_cmd_raises(tmp_path):
     spec = _make_spec(
         tmp_path,

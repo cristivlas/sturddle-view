@@ -18,12 +18,30 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import shutil
 import subprocess
 import sys
 from typing import Any
 
 from .runner import EventCallback, RunSpec
+
+
+def _quote_arg(arg: str) -> str:
+    """Quote an argument for fastchess's ``args=`` field.
+
+    fastchess parses ``args="A B C"`` by stripping the outer quotes and
+    splitting on whitespace. To pass an argument that itself contains
+    whitespace (e.g. an engine name like ``"Sturddle 2.5.0"``), wrap it
+    in double quotes. Internal quotes get backslash-escaped — same
+    convention as POSIX shells.
+    """
+    if not arg:
+        return '""'
+    if " " in arg or "\t" in arg or '"' in arg:
+        escaped = arg.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return arg
 
 
 log = logging.getLogger(__name__)
@@ -58,13 +76,45 @@ def build_command(spec: RunSpec) -> list[str]:
 
     cmd: list[str] = [spec.binary_path]
 
+    # Slice 9b: when proxy broadcast is configured, wrap each engine's
+    # cmd= so fastchess spawns the proxy script with the real engine as
+    # an argument. The proxy forwards stdio transparently and POSTs a
+    # copy to the GUI server.
+    proxy_url = spec.proxy_broadcast_url
+    proxy_secret = spec.proxy_secret
+    proxy_enabled = bool(proxy_url and proxy_secret)
+
     # Per-engine: -engine cmd=... name=... [args=...] [dir=...]
-    for eng in engines:
+    for idx, eng in enumerate(engines):
         if "cmd" not in eng:
             raise ValueError(f"engine missing 'cmd': {eng!r}")
-        e: list[str] = ["-engine", f"cmd={eng['cmd']}", f"name={eng.get('name', eng['cmd'])}"]
-        if eng.get("args"):
-            e.append(f"args={eng['args']}")
+        engine_name = eng.get("name", eng["cmd"])
+        e: list[str] = ["-engine"]
+        if proxy_enabled:
+            # cmd = python; args = the proxy invocation + the real engine.
+            # Each engine instance gets a fresh proxy_id (deterministic
+            # per-position, so re-runs of build_command produce the same
+            # ids — fine, since fastchess uses each spec once per
+            # session).
+            proxy_id = f"p-{idx}-{secrets.token_hex(4)}"
+            proxy_args = " ".join([
+                "-m", "sturddle_view.tournament.proxy",
+                "--broadcast-url", proxy_url,
+                "--proxy-id", proxy_id,
+                "--secret", proxy_secret,
+                "--engine-name", _quote_arg(engine_name),
+                "--",
+                _quote_arg(eng["cmd"]),
+            ])
+            if eng.get("args"):
+                proxy_args = f"{proxy_args} {eng['args']}"
+            e.append(f"cmd={sys.executable}")
+            e.append(f"args={proxy_args}")
+        else:
+            e.append(f"cmd={eng['cmd']}")
+            if eng.get("args"):
+                e.append(f"args={eng['args']}")
+        e.append(f"name={engine_name}")
         if eng.get("dir"):
             e.append(f"dir={eng['dir']}")
         if "tc" in t:

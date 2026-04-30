@@ -11,16 +11,30 @@ Endpoints (see ``docs/tournament-spec.md``):
   GET    /api/tournament-settings
   PUT    /api/tournament-settings
 
+  POST   /internal/proxy                   (Slice 9b: proxy → server tap)
+  WS     /ws/tournament/proxy/{proxy_id}   (Slice 9b: subscribe to a proxy)
+
 Live events flow through the existing ``EventBus`` /ws channel (kinds
-``tournament_status`` and ``tournament_update``).
+``tournament_status`` and ``tournament_update``); per-proxy line streams
+flow through the dedicated ``/ws/tournament/proxy/...`` channel.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from pydantic import BaseModel, Field
 
 from ..auth import require_token
@@ -38,6 +52,10 @@ log = logging.getLogger(__name__)
 
 
 router = APIRouter(tags=["tournaments"], dependencies=[Depends(require_token)])
+
+# Internal router: no user-token auth. Authenticated via per-tournament
+# secret (proxy posts) or via the standard token (?token=) for the WS.
+internal_router = APIRouter(tags=["tournaments-internal"])
 
 
 class EngineRef(BaseModel):
@@ -215,3 +233,97 @@ def update_tournament_settings(payload: TournamentSettingsUpdate, request: Reque
     except OSError:
         pass
     return _serialize_settings(s)
+
+
+# ---------------------------------------------------------------------------
+# Slice 9b: proxy ingest + per-proxy WS subscription
+# ---------------------------------------------------------------------------
+
+
+class ProxyBatch(BaseModel):
+    """Batched UCI lines from one proxy. Posted by the proxy script
+    every ~50ms or every ~32 lines (whichever first)."""
+    proxy_id: str
+    secret: str
+    engine_name: str | None = None
+    lines: list[str] = Field(default_factory=list)
+    # When the proxy is shutting down, set ``ended=True`` (with empty
+    # ``lines``) to release subscribers.
+    ended: bool = False
+
+
+@internal_router.post("/internal/proxy", status_code=204)
+async def ingest_proxy(payload: ProxyBatch, request: Request) -> None:
+    orch: Orchestrator = _orch(request)
+    if not orch.verify_proxy_secret(payload.secret):
+        # Stale or unknown proxy posting after tournament ended, or
+        # someone unauthorized. Quietly reject.
+        raise HTTPException(status_code=401, detail="invalid proxy secret")
+
+    if payload.engine_name and payload.lines == []:
+        # First post from a proxy: register it.
+        orch.proxy_session_started(payload.proxy_id, payload.engine_name)
+
+    if payload.lines:
+        await orch.ingest_proxy_lines(payload.proxy_id, payload.lines)
+
+    if payload.ended:
+        await orch.proxy_session_ended(payload.proxy_id)
+
+
+@internal_router.websocket("/ws/tournament/proxy/{proxy_id}")
+async def proxy_subscribe(
+    websocket: WebSocket,
+    proxy_id: str,
+    token: str = Query(default=""),
+) -> None:
+    """WS endpoint that streams one proxy's UCI lines to a subscriber.
+
+    Each frame is JSON: ``{"proxy_id": "...", "line": "..."}`` or a
+    final ``{"proxy_id": "...", "ended": true}`` when the proxy session
+    has ended.
+    """
+    settings = websocket.app.state.settings
+    if not settings.auth_disabled:
+        import hmac
+        if not hmac.compare_digest(token, settings.token):
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+    await websocket.accept()
+    orch: Orchestrator = websocket.app.state.tournament_orch
+    queue = orch.subscribe_to_proxy(proxy_id)
+
+    async def _drain_recv() -> None:
+        # We don't expect client→server messages; reading keeps us
+        # alive to disconnects.
+        while True:
+            await websocket.receive()
+
+    recv_task = asyncio.create_task(_drain_recv())
+    try:
+        while True:
+            get_task = asyncio.create_task(queue.get())
+            done, _ = await asyncio.wait(
+                {get_task, recv_task}, return_when=asyncio.FIRST_COMPLETED,
+            )
+            if recv_task in done:
+                get_task.cancel()
+                break
+            payload = get_task.result()
+            await websocket.send_json(payload)
+            if payload.get("ended"):
+                break
+    except WebSocketDisconnect:
+        pass
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        log.exception("proxy WS handler error")
+    finally:
+        recv_task.cancel()
+        orch.unsubscribe_from_proxy(proxy_id, queue)
+        try:
+            await websocket.close()
+        except Exception:
+            pass

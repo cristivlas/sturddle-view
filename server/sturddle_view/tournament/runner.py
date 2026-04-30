@@ -41,6 +41,12 @@ class RunSpec:
     config_path: Path  # work_dir / "config.json"
     log_path: Path  # work_dir / "logs" / "fastchess.log"
 
+    # Slice 9b: when set, the runner wraps each engine in the proxy
+    # script so its UCI traffic is broadcast to the GUI server. ``None``
+    # disables the wrap (used by tests that want raw fastchess argv).
+    proxy_broadcast_url: str | None = None
+    proxy_secret: str | None = None
+
 
 class Runner(Protocol):
     async def start(self, spec: RunSpec, on_event: EventCallback) -> None: ...

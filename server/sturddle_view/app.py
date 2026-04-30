@@ -140,12 +140,18 @@ def create_app(
 
     app.state.tournament_orch.set_broadcast(_tournament_broadcast)
 
+    # Slice 9b: tell the orchestrator where the proxy should POST.
+    # The proxy runs as a subprocess on this same host; loopback only.
+    proxy_url = f"http://127.0.0.1:{settings.port}/internal/proxy"
+    app.state.tournament_orch.set_proxy_broadcast_url(proxy_url)
+
     app.include_router(settings_api.router)
     app.include_router(engines_api.router)
     app.include_router(fs_api.router)
     app.include_router(game_api.router)
     app.include_router(agent_api.router)
     app.include_router(tournaments_api.router)
+    app.include_router(tournaments_api.internal_router)
     app.include_router(ws_api.router)
 
     @app.get("/healthz", include_in_schema=False)
