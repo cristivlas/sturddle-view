@@ -276,22 +276,31 @@ Agents are first-class participants, not bolts-on:
 
 Aesthetics and UX are first-class concerns; the GUI is not just a thin debug surface for the backend. Visual polish, consistent theming, and predictable interactions matter as much as functional correctness.
 
-TODO: color-palette tightening pass. Several follow-ups deferred from
-the current "minimum-customization" baseline:
-1. Resign-button hover regression — `--wa-color-danger-fill-loud` is
-   muted, but hover/active/focus states pull from non-overridden tokens
-   and flash back to bright orange. Either override the hover/active
-   tokens or accept the flash.
-2. File-picker dialog Up button (`web/app/dialogs.js:195`) is the lone
-   `appearance="outlined"` button left after the filled-by-default
-   sweep. Either drop the override for parity, or keep and document why.
-3. Brand button (`variant="brand"`) is too loud at default WA blue.
-   Consider a paler blue or teal swap (likely via `--wa-color-brand-*`
-   overrides analogous to the danger ones).
-4. Top nav (Play / Engines tabs) uses a teal outline + glow that reads
-   inconsistent with the rest of the now-quiet palette. Investigate
-   what's setting the active-tab style and quiet it down — the project
-   tenet is minimal use of color.
+### Palette and component styling
+
+Cool-toned dark theme. Page background `#1d1f24`, panel `#25272d`. Web
+Awesome's `--wa-color-danger-*` is overridden with `wa-danger-orange`
+plus a muted terracotta `--wa-color-danger-fill-loud: #8a5a3c` (with
+cream `--wa-color-danger-on-loud`). Default neutral filled buttons use
+`--wa-color-neutral-fill-loud: #3a3d44` so unstyled `<wa-button>`
+renders dark instead of WA's near-white default.
+
+Buttons are filled by default (no `appearance="outlined"` per-call
+overrides). Only the Add-engine `+` keeps `variant="brand"` so it stands
+out as the single prominent affordance per screen; New game, Use, and
+similar role buttons render neutral. Destructive verbs use
+`variant="danger"`. Icon-only buttons get `aria-label` plus a recognized
+font-awesome glyph; we never rely on tooltips for primary meaning.
+
+Top nav and list rows share a token family — `--nav-btn-bg`,
+`--nav-btn-bg-hover`, `--nav-btn-bg-active` — so "selected/hovered"
+reads consistently across the app. Recessed list panels use a slightly
+darker `#15171b` well with `#34373d` border.
+
+Confirm/alert dialogs are headerless (the message is the heading), have
+`--width: fit-content` to size to content, and use
+`--spacing: var(--wa-space-s)` for tighter outer padding while keeping
+breathing room between the message and the footer buttons.
 
 ### Hard constraints
 
