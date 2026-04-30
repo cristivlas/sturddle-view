@@ -234,7 +234,7 @@ Update as slices land.
 | 2 — PGN stats | done | 80fa026 | 21 tests; pentanomial SPRT, normalized model only |
 | 3 — FastchessRunner | done | 524731f | 18 tests; fake-fastchess via inline Python; cross-platform process group |
 | 4 — Orchestrator | done | 1e3fab2 | 17 tests; 2 real-runner integration tests; rollback on start failure |
-| 5 — REST + WS | not started | — | |
+| 5 — REST + WS | done | 74be9bb | 21 tests; events flow via existing EventBus → /ws |
 | 6 — Tournaments UI v0 | not started | — | |
 | 7 — Reusable template form | not started | — | |
 | 8 — Workspace (3 windows) | not started | — | |
