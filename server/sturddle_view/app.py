@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 from contextlib import asynccontextmanager
 
 import psutil
@@ -104,11 +103,8 @@ def _reachable_hosts(bind: str) -> list[str]:
 
 def _print_banner(settings: Settings) -> None:
     hosts = _reachable_hosts(settings.host)
-    print(f"sturddle-view: bound on {settings.host}:{settings.port}", file=sys.stderr)
-    if settings.auth_disabled:
-        print("auth: DISABLED (--no-auth)", file=sys.stderr)
-    print("open one of:", file=sys.stderr)
+    log.info("bound on %s:%d%s", settings.host, settings.port,
+             " (auth DISABLED)" if settings.auth_disabled else "")
     for h in hosts:
         suffix = "" if settings.auth_disabled else f"?token={settings.token}"
-        print(f"  http://{h}:{settings.port}/{suffix}", file=sys.stderr)
-    sys.stderr.flush()
+        log.info("  open: http://%s:%d/%s", h, settings.port, suffix)

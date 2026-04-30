@@ -7,13 +7,16 @@ tournament path uses.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import time
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 
 import chess
 import chess.engine
+import chess.pgn
 
 from ..events import Event, EventBus
 
@@ -69,10 +72,11 @@ def _moves_san(board: chess.Board) -> list[str]:
 class HumanVsEngine:
     """Single-game driver. Holds one active game at a time."""
 
-    def __init__(self, engine_path: str, bus: EventBus, openings=None) -> None:
+    def __init__(self, engine_path: str, bus: EventBus, openings=None, settings=None) -> None:
         self._engine_path = engine_path
         self._bus = bus
         self._openings = openings  # Optional[OpeningBook]
+        self._settings = settings  # Optional[Settings]
         self._engine: chess.engine.UciProtocol | None = None
         self._board: chess.Board | None = None
         self._game_id: str | None = None
@@ -100,6 +104,12 @@ class HumanVsEngine:
     async def _ensure_engine(self) -> chess.engine.UciProtocol:
         if self._engine is None:
             _transport, engine = await chess.engine.popen_uci(self._engine_path)
+            # Pre-attach a swallow on the returncode future so an unexpected
+            # death (e.g. when we hard-kill the transport) doesn't surface
+            # as "Future exception was never retrieved".
+            rc_future = getattr(engine, "returncode", None)
+            if rc_future is not None:
+                rc_future.add_done_callback(lambda f: f.exception())
             self._engine = engine
         return self._engine
 
@@ -198,6 +208,9 @@ class HumanVsEngine:
             await self._cancel_tick()
             if self._game_id is None:
                 return
+            # Result from human's perspective: human resigned -> engine wins.
+            result = "0-1" if self._human_white else "1-0"
+            self._maybe_save_pgn(result=result, termination="resignation")
             await self._bus.publish(
                 Event(
                     kind="game_result",
@@ -257,7 +270,7 @@ class HumanVsEngine:
                 if t is not None:
                     t.close()
             except Exception:
-                pass
+                log.exception("error tearing down engine")
             self._engine = None
         if self._think_task and not self._think_task.done():
             self._think_task.cancel()
@@ -315,11 +328,17 @@ class HumanVsEngine:
         self._think_task = asyncio.create_task(self._think_and_play())
 
     async def _think_and_play(self) -> None:
-        assert self._engine is not None and self._board is not None and self._game_id is not None
-        game_id = self._game_id
-        board = self._board
-        engine = self._engine
-        gen = self._think_gen
+        async with self._lock:
+            if self._board is None or self._game_id is None:
+                return
+            game_id = self._game_id
+            board = self._board
+            gen = self._think_gen
+            try:
+                engine = await self._ensure_engine()
+            except Exception:
+                log.exception("could not start engine for search")
+                return
         # Use the live remaining time, not the snapshot at turn start.
         white_clock = self._remaining(chess.WHITE)
         black_clock = self._remaining(chess.BLACK)
@@ -418,10 +437,53 @@ class HumanVsEngine:
     async def _publish_result(self) -> None:
         assert self._board is not None and self._game_id is not None
         outcome = self._board.outcome()
-        payload = {
-            "result": outcome.result() if outcome else "*",
-            "termination": outcome.termination.name.lower() if outcome else "unknown",
-        }
+        result = outcome.result() if outcome else "*"
+        termination = outcome.termination.name.lower() if outcome else "unknown"
+        self._maybe_save_pgn(result=result, termination=termination)
+        payload = {"result": result, "termination": termination}
         await self._bus.publish(
             Event(kind="game_result", game_id=self._game_id, payload=payload)
         )
+
+    def _maybe_save_pgn(self, *, result: str, termination: str) -> Path | None:
+        if self._board is None or self._game_id is None:
+            return None
+        if self._settings is None or not getattr(self._settings, "pgn_autosave", False):
+            return None
+        if not self._board.move_stack:
+            return None  # nothing worth saving
+
+        pgn_dir = Path(getattr(self._settings, "pgn_dir", "")).expanduser()
+        if not str(pgn_dir):
+            return None
+        try:
+            pgn_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            log.exception("could not create PGN dir %s", pgn_dir)
+            return None
+
+        game = chess.pgn.Game.from_board(self._board)
+        white = "Human" if self._human_white else Path(self._engine_path).name
+        black = Path(self._engine_path).name if self._human_white else "Human"
+        game.headers["Event"] = "Sturddle View — Human vs Engine"
+        game.headers["Site"] = "Sturddle View"
+        game.headers["Date"] = datetime.date.today().strftime("%Y.%m.%d")
+        game.headers["White"] = white
+        game.headers["Black"] = black
+        game.headers["Result"] = result
+        game.headers["Termination"] = termination
+        if self._tc.initial_seconds:
+            game.headers["TimeControl"] = (
+                f"{int(self._tc.initial_seconds)}+{int(self._tc.increment_seconds)}"
+            )
+
+        ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = pgn_dir / f"{ts}-{self._game_id}.pgn"
+        try:
+            with path.open("w", encoding="utf-8") as f:
+                print(game, file=f, end="\n\n")
+        except OSError:
+            log.exception("could not write PGN to %s", path)
+            return None
+        log.info("saved PGN to %s", path)
+        return path

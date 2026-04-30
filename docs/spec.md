@@ -305,6 +305,30 @@ A thin app-level wrapper (`web/app/dialogs.js`) exposes `confirm()`, `alert()`, 
 - Agent implementations (analysis, teacher, etc.)
 - Linux WebKitGTK consistency across distros
 
+### Server-side persistence — to be revisited
+
+Current state (Phase 1, as implemented): only `settings.json` and `engines.json` are
+persisted (under the OS user-config dir via `platformdirs`). Games and logs are
+**in-memory only** — they evaporate on server restart. The `pgn_autosave` /
+`pgn_dir` settings are wired through the API but have no writer behind them yet.
+
+Decisions deferred:
+
+- **Game persistence**: where PGNs land (per-game file vs append to a session
+  archive), retention, and how history is exposed in the UI (Library/History
+  perspective). Tournament PGNs likely follow a different path (per-tournament
+  directory) than human-vs-engine PGNs.
+- **Log management**: today logs go to stdout/stderr only. Once the server runs
+  detached or under PyWebView for long sessions, we will need rotating file
+  logs (size- or time-based), a configurable log dir, retention policy, and a
+  way to surface recent server logs in the GUI for debugging. Engine stdio
+  traffic captured by the proxy is a separate, higher-volume stream — it should
+  not share the application log file. Cross-platform: file paths via
+  `platformdirs.user_log_dir()`, no syslog/journald assumptions.
+- **Tournament history storage**: PGN-on-disk is enough for browsing, but
+  standings, SPRT state, and schedule reconstruction may want a small index
+  (sqlite) — flagged for the tournament-history milestone, not Phase 1.
+
 ---
 
 ## Tech Stack Summary

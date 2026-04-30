@@ -53,7 +53,7 @@ export async function openSettingsDialog({ api }) {
       const pgnAutosave = document.createElement("wa-switch");
       pgnAutosave.size = "small";
       pgnAutosave.checked = !!initial.pgn_autosave;
-      pgnAutosave.textContent = "Auto-save games as PGN";
+      pgnAutosave.textContent = "Save games as PGN";
       pgnAutosave.addEventListener("change", () => {
         putSettings({ pgn_autosave: pgnAutosave.checked });
       });

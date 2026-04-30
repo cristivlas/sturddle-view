@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 
 import uvicorn
 
 from .config import Settings
+from .logging_setup import configure_logging
 
 
 def main() -> None:
@@ -20,7 +22,11 @@ def main() -> None:
         action="store_true",
         help="Disable token auth (dev convenience; do not use on untrusted networks)",
     )
+    parser.add_argument("--debug", action="store_true", help="Verbose (DEBUG) logging")
     args = parser.parse_args()
+
+    log_file = configure_logging(level=logging.DEBUG if args.debug else logging.INFO)
+    logging.getLogger(__name__).info("logging to %s", log_file)
 
     # Push CLI overrides into env so the worker process's Settings() picks them up.
     if args.engine:
