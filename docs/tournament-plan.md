@@ -237,6 +237,6 @@ Update as slices land.
 | 5 — REST + WS | done | 74be9bb | 21 tests; events flow via existing EventBus → /ws |
 | 6 — Tournaments UI v0 | done | 4c4a654, 3eef665 | Observe sub-tab removed; list+settings+new dialog; 2 Playwright e2e tests |
 | 7 — Reusable template form | done | 6f13b52 | core fields + Advanced JSON; mounted in 3 contexts; e2e tested |
-| 8 — Workspace (3 windows) | not started | — | |
+| 8 — Workspace (3 windows) | done | 2d9f14b | Standings/Schedule/Event log; layout persisted in localStorage; 1 e2e test |
 | 9 — Workspace (live games) | not started | — | |
 | 10 — Polish | optional | — | post-Phase-1 |
