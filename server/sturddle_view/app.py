@@ -19,6 +19,7 @@ from .api import ws as ws_api
 from .config import Settings
 from .engines import EngineRegistry
 from .events import EventBus
+from .openings import OpeningBook
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +48,8 @@ def create_app(
     app.state.hve = None  # lazy: HumanVsEngine, created on first /game/new
     app.state.ws_tasks = set()
     app.state.engines = engine_registry or EngineRegistry()
+    app.state.openings = OpeningBook.load()
+    log.info("loaded %d opening lines", len(app.state.openings))
 
     app.include_router(settings_api.router)
     app.include_router(engines_api.router)

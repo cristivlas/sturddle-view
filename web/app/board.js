@@ -22,6 +22,12 @@ export function mountBoard({ element, onMove }) {
     if (next === myColor) return;
     myColor = next;
     board.setOrientation(myColor);
+    // Re-bind move input so cm-chessboard accepts moves for the new color.
+    if (inputEnabled) {
+      board.disableMoveInput();
+      inputEnabled = false;
+      enableInput(true);
+    }
   }
 
   function setPosition(fen, lastMoveUci) {

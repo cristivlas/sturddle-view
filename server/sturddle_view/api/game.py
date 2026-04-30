@@ -23,7 +23,7 @@ async def _get_hve(request: Request) -> HumanVsEngine:
         await s.hve.shutdown()
         s.hve = None
     if s.hve is None:
-        s.hve = HumanVsEngine(path, s.event_bus)
+        s.hve = HumanVsEngine(path, s.event_bus, openings=getattr(s, "openings", None))
     return s.hve
 
 

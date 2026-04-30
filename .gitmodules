@@ -1,3 +1,6 @@
 [submodule "web/vendor/cm-chessboard"]
 	path = web/vendor/cm-chessboard
 	url = https://github.com/shaack/cm-chessboard.git
+[submodule "web/vendor/chess-openings"]
+	path = web/vendor/chess-openings
+	url = https://github.com/lichess-org/chess-openings.git

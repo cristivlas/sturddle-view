@@ -102,15 +102,84 @@ svg.cm-chessboard {
 main { padding: 16px; }
 
 #play-perspective {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* GameView layout: board on the left, side rail on the right.
+   Used in Play perspective and (later) inside WinBox windows. */
+.game-view {
   display: grid;
   grid-template-columns: minmax(320px, 1fr) 360px;
   gap: 16px;
 }
-#play-perspective .play-board-area {
+.game-view-board {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
+.game-view-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.game-view-side h2,
+.debug-only h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 6px;
+  letter-spacing: 0.5px;
+}
+.game-view .board {
+  aspect-ratio: 1 / 1;
+  background: #2a2a2a;
+  border: 1px solid #333;
+}
+.game-view-engine .engine-summary {
+  display: flex;
+  gap: 12px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 13px;
+}
+.game-view-engine .engine-pv {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+  word-break: break-all;
+}
+
+.game-view-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+.opening-line {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.opening-eco {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: var(--muted);
+  font-size: 11px;
+}
+.opening-name { color: var(--fg); }
+.tablebase-line {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--muted);
+}
+.tablebase-line .tb-label {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.tablebase-line .tb-result { color: var(--fg); }
 
 .clock-row {
   display: flex;
@@ -190,25 +259,6 @@ main { padding: 16px; }
 #engines-perspective .placeholder .muted { font-size: 12px; }
 .engines-roster-host { width: 100%; }
 
-#board {
-  aspect-ratio: 1 / 1;
-  background: #2a2a2a;
-  border: 1px solid #333;
-}
-#board-controls {
-  display: flex;
-  gap: 12px;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  margin-top: 12px;
-}
-#board-controls #human-side { width: 110px; }
-#board-controls #initial-seconds,
-#board-controls #increment-seconds { width: 90px; }
-
-#info-panel { background: var(--panel); padding: 12px; border: 1px solid #333; }
-#info-panel h2 { font-size: 12px; text-transform: uppercase; color: var(--muted); margin: 12px 0 4px; }
-#info-panel h2:first-child { margin-top: 0; }
 pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-size: 12px; }
 
 /* ---------- Engines tab: stacked ---------- */

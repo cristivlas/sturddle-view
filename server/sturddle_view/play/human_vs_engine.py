@@ -69,9 +69,10 @@ def _moves_san(board: chess.Board) -> list[str]:
 class HumanVsEngine:
     """Single-game driver. Holds one active game at a time."""
 
-    def __init__(self, engine_path: str, bus: EventBus) -> None:
+    def __init__(self, engine_path: str, bus: EventBus, openings=None) -> None:
         self._engine_path = engine_path
         self._bus = bus
+        self._openings = openings  # Optional[OpeningBook]
         self._engine: chess.engine.UciProtocol | None = None
         self._board: chess.Board | None = None
         self._game_id: str | None = None
@@ -87,6 +88,8 @@ class HumanVsEngine:
         # Index = ply number (length of move_stack).
         self._clock_history: list[tuple[float, float]] = []
         self._think_task: asyncio.Task | None = None
+        self._analysis = None  # active chess.engine.AnalysisResult, if any
+        self._think_gen: int = 0  # search generation; bumped on cancel
         self._tick_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
@@ -247,13 +250,19 @@ class HumanVsEngine:
         return base
 
     async def _cancel_think(self) -> None:
+        self._think_gen += 1
+        if self._engine is not None:
+            try:
+                t = getattr(self._engine, "transport", None)
+                if t is not None:
+                    t.close()
+            except Exception:
+                pass
+            self._engine = None
         if self._think_task and not self._think_task.done():
             self._think_task.cancel()
-            try:
-                await self._think_task
-            except (asyncio.CancelledError, Exception):
-                pass
         self._think_task = None
+        self._analysis = None
 
     async def _cancel_tick(self) -> None:
         if self._tick_task and not self._tick_task.done():
@@ -310,6 +319,7 @@ class HumanVsEngine:
         game_id = self._game_id
         board = self._board
         engine = self._engine
+        gen = self._think_gen
         # Use the live remaining time, not the snapshot at turn start.
         white_clock = self._remaining(chess.WHITE)
         black_clock = self._remaining(chess.BLACK)
@@ -321,6 +331,7 @@ class HumanVsEngine:
         )
         try:
             with await engine.analysis(board, limit=limit) as analysis:
+                self._analysis = analysis
                 async for info in analysis:
                     if "pv" in info or "depth" in info or "score" in info:
                         await self._bus.publish(
@@ -331,19 +342,27 @@ class HumanVsEngine:
                             )
                         )
                 result = analysis.wait()  # returns BestMove
-                best = (await result).move
+                best_move = await result
+                best = best_move.move
+                if best is None:
+                    return
         except chess.engine.EngineTerminatedError:
             log.exception("engine terminated mid-search")
             await self._bus.publish(
                 Event(kind="system", game_id=game_id, payload={"error": "engine_terminated"})
             )
             return
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, RuntimeError, BrokenPipeError):
             return
-        if best is None:
-            return
+        finally:
+            self._analysis = None
         async with self._lock:
-            if self._board is None or self._game_id != game_id:
+            if (
+                self._board is None
+                or self._game_id != game_id
+                or self._think_gen != gen
+            ):
+                # Search was cancelled; ignore its bestmove.
                 return
             self._clock_history.append((self._white_time, self._black_time))
             self._consume_turn_time()
@@ -357,6 +376,12 @@ class HumanVsEngine:
 
     async def _publish_board(self) -> None:
         assert self._board is not None and self._game_id is not None
+        opening_payload = None
+        if self._openings is not None and self._board.move_stack:
+            ucis = [m.uci() for m in self._board.move_stack]
+            hit = self._openings.lookup(ucis)
+            if hit is not None:
+                opening_payload = {"eco": hit.eco, "name": hit.name}
         await self._bus.publish(
             Event(
                 kind="board_update",
@@ -368,6 +393,8 @@ class HumanVsEngine:
                     "moves_san": _moves_san(self._board),
                     "last_move": self._board.peek().uci() if self._board.move_stack else None,
                     "human_white": self._human_white,
+                    "opening": opening_payload,
+                    "tablebase": None,  # placeholder for future TB integration
                 },
             )
         )
