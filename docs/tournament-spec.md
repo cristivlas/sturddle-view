@@ -581,3 +581,10 @@ UI/UX section is complete and we move to implementation.
   later renames. The HVE side is not by design — re-resolving from
   the registry on each new game would fix it; left as-is until
   someone cares.
+- **Duplicate tournament names**: nothing in the create flow prevents
+  two tournaments from sharing the same name. On-disk directories
+  don't collide (each `<id>/` is a UUID), but the Tournaments list
+  shows ambiguous rows. Likely fix: server-side uniqueness check on
+  `POST /api/tournaments`, returning a 409 with a suggestion. Or
+  client-side validation that disables Create when the name is
+  already taken. Not a data-corruption risk; a UX clarity one.
