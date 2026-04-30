@@ -128,7 +128,7 @@ async def test_persist_on_takeback(tmp_path):
         async with hve._lock:
             hve._clock_history.append((hve._white_time, hve._black_time))
             hve._board.push(chess.Move.from_uci("e7e5"))
-            hve._persist()
+            await hve._persist()
     hve._engine_to_move = _fake_engine_reply
     await hve.submit_move("e2e4")
     assert store.load().moves_uci == ["e2e4", "e7e5"]
@@ -201,7 +201,7 @@ async def test_persist_after_engine_move(tmp_path):
         async with hve._lock:
             hve._clock_history.append((hve._white_time, hve._black_time))
             hve._board.push(chess.Move.from_uci("e7e5"))
-            hve._persist()
+            await hve._persist()
     hve._engine_to_move = _fake_engine_reply
     await hve.submit_move("e2e4")
     saved = store.load()

@@ -193,7 +193,7 @@ class HumanVsEngine:
             self._clock_history = []
             self._paused = False
             self._game_id = uuid.uuid4().hex[:12]
-            self._persist()
+            await self._persist()
             await self._publish_board()
             await self._publish_clock()
         self._start_tick()
@@ -220,7 +220,7 @@ class HumanVsEngine:
             self._clock_history.append((self._white_time, self._black_time))
             self._consume_turn_time()
             self._board.push(move)
-            self._persist()
+            await self._persist()
             await self._publish_board()
             await self._publish_clock()
             ended = self._board.is_game_over()
@@ -293,7 +293,7 @@ class HumanVsEngine:
             self._black_time = bt
             self._turn_started_at = time.monotonic()
             self._paused = False
-            self._persist()
+            await self._persist()
             await self._publish_board()
             await self._publish_clock()
 
@@ -342,7 +342,7 @@ class HumanVsEngine:
                     self._black_time = max(0.0, self._black_time - elapsed)
             self._turn_started_at = None
             self._paused = True
-            self._persist()
+            await self._persist()
             await self._cancel_tick()
             await self._publish_clock()
 
@@ -354,7 +354,7 @@ class HumanVsEngine:
                 return
             self._paused = False
             self._turn_started_at = time.monotonic()
-            self._persist()
+            await self._persist()
             # Start the tick under the lock so a racing pause() cannot land
             # between unlock and _start_tick (which would leave the loop
             # running with _paused=True flapping).
@@ -374,8 +374,14 @@ class HumanVsEngine:
 
     # ----- persistence -----
 
-    def _persist(self) -> None:
-        """Snapshot the active game to disk. Call under self._lock."""
+    async def _persist(self) -> None:
+        """Snapshot the active game to disk. Call under self._lock.
+
+        The state object is built synchronously (so it captures the values
+        at lock-held time), but the disk write happens off the event loop
+        via asyncio.to_thread — keeping the WS broadcast loop responsive
+        on slow filesystems (network FS, encrypted volumes).
+        """
         if self._store is None or self._board is None or self._game_id is None:
             return
         state = GameState(
@@ -390,7 +396,7 @@ class HumanVsEngine:
             clock_history=[[w, b] for (w, b) in self._clock_history],
         )
         try:
-            self._store.save(state)
+            await asyncio.to_thread(self._store.save, state)
         except Exception:
             # Persistence is best-effort: never let a save failure (disk full,
             # serialization quirk, permissions) abort the move that triggered it.
@@ -583,7 +589,7 @@ class HumanVsEngine:
             self._clock_history.append((self._white_time, self._black_time))
             self._consume_turn_time()
             self._board.push(best)
-            self._persist()
+            await self._persist()
             await self._publish_board()
             await self._publish_clock()
             ended = self._board.is_game_over()
