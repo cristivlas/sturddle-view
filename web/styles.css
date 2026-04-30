@@ -649,7 +649,11 @@ wa-dialog::part(body) {
   padding: 8px 12px;
 }
 .tournament-row-main { grid-row: 1; grid-column: 1; display: flex; align-items: center; gap: 8px; }
-.tournament-row-meta { grid-row: 2; grid-column: 1; font-size: 12px; }
+.tournament-row-meta {
+  grid-row: 2; grid-column: 1; font-size: 12px;
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .tournament-row-actions { grid-row: 1 / span 2; grid-column: 2; display: flex; gap: 4px; align-items: center; }
 .tournament-name { font-weight: 500; }
 .tournament-status {
