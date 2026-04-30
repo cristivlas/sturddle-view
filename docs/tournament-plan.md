@@ -232,7 +232,7 @@ Update as slices land.
 | 0 — Decompose stub | done | 608b87c | smoke tests in test_tournament_imports.py |
 | 1 — Store | done | c3f253a | 23 tests; microsecond timestamps for deterministic sort |
 | 2 — PGN stats | done | 80fa026 | 21 tests; pentanomial SPRT, normalized model only |
-| 3 — FastchessRunner | not started | — | |
+| 3 — FastchessRunner | done | 524731f | 18 tests; fake-fastchess via inline Python; cross-platform process group |
 | 4 — Orchestrator | not started | — | |
 | 5 — REST + WS | not started | — | |
 | 6 — Tournaments UI v0 | not started | — | |
