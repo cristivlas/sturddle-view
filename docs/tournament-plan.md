@@ -235,7 +235,7 @@ Update as slices land.
 | 3 — FastchessRunner | done | 524731f | 18 tests; fake-fastchess via inline Python; cross-platform process group |
 | 4 — Orchestrator | done | 1e3fab2 | 17 tests; 2 real-runner integration tests; rollback on start failure |
 | 5 — REST + WS | done | 74be9bb | 21 tests; events flow via existing EventBus → /ws |
-| 6 — Tournaments UI v0 | done (untested in browser) | 4c4a654 | Observe sub-tab removed; list+settings+new dialog wired; needs UI smoke test |
+| 6 — Tournaments UI v0 | done | 4c4a654, 3eef665 | Observe sub-tab removed; list+settings+new dialog; 2 Playwright e2e tests |
 | 7 — Reusable template form | not started | — | |
 | 8 — Workspace (3 windows) | not started | — | |
 | 9 — Workspace (live games) | not started | — | |
