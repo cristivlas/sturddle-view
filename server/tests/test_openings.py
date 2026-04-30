@@ -7,6 +7,18 @@ import pytest
 from sturddle_view.openings import OpeningBook
 
 
+@pytest.fixture(autouse=True)
+def _isolate_openings_cache():
+    """OpeningBook._cache is module-global. Snapshot/restore around each test
+    so loads against tmp/synthetic dirs don't pollute later tests."""
+    saved = dict(OpeningBook._cache)
+    try:
+        yield
+    finally:
+        OpeningBook._cache.clear()
+        OpeningBook._cache.update(saved)
+
+
 def test_load_default_book_has_lines():
     book = OpeningBook.load()
     # The dataset has thousands of lines; we just verify it loaded > 0.
@@ -44,3 +56,10 @@ def test_lookup_longest_prefix_wins():
 def test_load_missing_dir_returns_empty():
     book = OpeningBook.load(Path("/nonexistent/openings/dir"))
     assert len(book) == 0
+
+
+def test_load_is_process_cached():
+    """Repeat calls return the same instance — parsing TSVs is expensive."""
+    a = OpeningBook.load()
+    b = OpeningBook.load()
+    assert a is b

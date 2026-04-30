@@ -73,12 +73,22 @@ def _moves_san(board: chess.Board) -> list[str]:
 class HumanVsEngine:
     """Single-game driver. Holds one active game at a time."""
 
-    def __init__(self, engine_path: str, bus: EventBus, openings=None, settings=None) -> None:
+    def __init__(
+        self,
+        engine_path: str,
+        bus: EventBus,
+        openings=None,
+        settings=None,
+    ) -> None:
         self._engine_path = engine_path
         self._bus = bus
         self._openings = openings  # Optional[OpeningBook]
         self._settings = settings  # Optional[Settings]
         self._engine: chess.engine.UciProtocol | None = None
+        # Display name shown to the user. Caller may set via set_engine_name()
+        # to override (e.g. with the registry name). Otherwise _ensure_engine
+        # fills it from the engine's UCI `id name`, falling back to basename.
+        self._engine_name: str | None = None
         self._board: chess.Board | None = None
         self._game_id: str | None = None
         self._human_white: bool = True
@@ -96,11 +106,29 @@ class HumanVsEngine:
         self._analysis = None  # active chess.engine.AnalysisResult, if any
         self._think_gen: int = 0  # search generation; bumped on cancel
         self._tick_task: asyncio.Task | None = None
+        # Pause is only allowed on the human's turn (engine is idle then).
+        # While paused, the tick loop is stopped and submit_move is rejected.
+        self._paused: bool = False
         self._lock = asyncio.Lock()
 
     @property
     def engine_path(self) -> str:
         return self._engine_path
+
+    @property
+    def is_paused(self) -> bool:
+        return self._paused
+
+    def set_engine_name(self, name: str | None) -> None:
+        """Override the display name shown to the user.
+
+        Called by the API layer with the engine-registry name so the clock
+        label matches the Engines list. A None/empty value is ignored — it
+        does not clear a previously-resolved name (otherwise a fallback
+        fetch after the registry entry is removed would wipe the label).
+        """
+        if name:
+            self._engine_name = name
 
     async def _ensure_engine(self) -> chess.engine.UciProtocol:
         if self._engine is None:
@@ -112,6 +140,8 @@ class HumanVsEngine:
             if rc_future is not None:
                 rc_future.add_done_callback(lambda f: f.exception())
             self._engine = engine
+            if not self._engine_name:
+                self._engine_name = engine.id.get("name") or Path(self._engine_path).name
         return self._engine
 
     async def new_game(self, human_white: bool, tc: TimeControl) -> str:
@@ -127,6 +157,7 @@ class HumanVsEngine:
             self._black_time = tc.initial_seconds
             self._turn_started_at = time.monotonic()
             self._clock_history = []
+            self._paused = False
             self._game_id = uuid.uuid4().hex[:12]
             await self._publish_board()
             await self._publish_clock()
@@ -139,6 +170,8 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
+            if self._paused:
+                raise RuntimeError("game is paused")
             if self._board.turn != (chess.WHITE if self._human_white else chess.BLACK):
                 raise RuntimeError("not human's turn")
             try:
@@ -205,6 +238,7 @@ class HumanVsEngine:
             self._white_time = wt
             self._black_time = bt
             self._turn_started_at = time.monotonic()
+            self._paused = False
             await self._publish_board()
             await self._publish_clock()
 
@@ -226,6 +260,48 @@ class HumanVsEngine:
             )
             self._game_id = None
             self._board = None
+
+    async def pause(self) -> None:
+        """Pause the clock. Only valid on the human's turn.
+
+        Bakes elapsed think time into the side-to-move's stored clock
+        (without crediting the increment — that fires only on a completed
+        move), stops the tick loop, and rejects subsequent submit_move
+        calls until resume().
+        """
+        async with self._lock:
+            if self._board is None or self._game_id is None:
+                raise RuntimeError("no active game")
+            if self._board.is_game_over():
+                raise RuntimeError("game is over")
+            if self._board.turn != (chess.WHITE if self._human_white else chess.BLACK):
+                raise RuntimeError("can only pause on your turn")
+            if self._paused:
+                return
+            if self._turn_started_at is not None:
+                elapsed = time.monotonic() - self._turn_started_at
+                if self._board.turn == chess.WHITE:
+                    self._white_time = max(0.0, self._white_time - elapsed)
+                else:
+                    self._black_time = max(0.0, self._black_time - elapsed)
+            self._turn_started_at = None
+            self._paused = True
+            await self._cancel_tick()
+            await self._publish_clock()
+
+    async def resume(self) -> None:
+        async with self._lock:
+            if self._board is None or self._game_id is None:
+                raise RuntimeError("no active game")
+            if not self._paused:
+                return
+            self._paused = False
+            self._turn_started_at = time.monotonic()
+            # Start the tick under the lock so a racing pause() cannot land
+            # between unlock and _start_tick (which would leave the loop
+            # running with _paused=True flapping).
+            self._start_tick()
+            await self._publish_clock()
 
     async def shutdown(self) -> None:
         async with self._lock:
@@ -262,6 +338,7 @@ class HumanVsEngine:
         if (
             self._board is not None
             and not self._board.is_game_over()
+            and not self._paused
             and self._board.turn == side
             and self._turn_started_at is not None
         ):
@@ -417,6 +494,7 @@ class HumanVsEngine:
                 "moves_san": _moves_san(self._board),
                 "last_move": self._board.peek().uci() if self._board.move_stack else None,
                 "human_white": self._human_white,
+                "engine_name": self._engine_name,
                 "opening": opening_payload,
                 "tablebase": None,
             },
@@ -431,7 +509,8 @@ class HumanVsEngine:
                 "white_time": self._remaining(chess.WHITE),
                 "black_time": self._remaining(chess.BLACK),
                 "turn": "white" if self._board.turn else "black",
-                "running": not self._board.is_game_over(),
+                "running": not self._board.is_game_over() and not self._paused,
+                "paused": self._paused,
             },
         )
 
@@ -472,8 +551,9 @@ class HumanVsEngine:
             return None
 
         game = chess.pgn.Game.from_board(self._board)
-        white = "Human" if self._human_white else Path(self._engine_path).name
-        black = Path(self._engine_path).name if self._human_white else "Human"
+        engine_label = self._engine_name or Path(self._engine_path).name
+        white = "Human" if self._human_white else engine_label
+        black = engine_label if self._human_white else "Human"
         game.headers["Event"] = "Sturddle View — Human vs Engine"
         game.headers["Site"] = "Sturddle View"
         game.headers["Date"] = datetime.date.today().strftime("%Y.%m.%d")

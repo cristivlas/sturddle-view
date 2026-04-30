@@ -10,7 +10,7 @@ router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_
 
 async def _get_hve(request: Request) -> HumanVsEngine:
     s = request.app.state
-    path = _resolve_engine_path(request)
+    path, name = _resolve_engine(request)
     if path is None:
         raise HTTPException(
             status_code=400,
@@ -29,19 +29,31 @@ async def _get_hve(request: Request) -> HumanVsEngine:
             openings=getattr(s, "openings", None),
             settings=s.settings,
         )
+    # Refresh display name on every fetch so registry renames take effect
+    # without restarting the engine subprocess.
+    s.hve.set_engine_name(name)
     return s.hve
 
 
-def _resolve_engine_path(request: Request) -> str | None:
+def _resolve_engine(request: Request) -> tuple[str | None, str | None]:
+    """Return (path, display_name) for the selected engine, if any.
+
+    The display name comes from the engines registry so the label matches
+    what the Engines perspective shows. None when no registry entry is
+    selected; HumanVsEngine then derives a name from the UCI handshake on
+    first launch, and `set_engine_name(None)` calls are no-ops so a name
+    once resolved is not wiped by a later fallback fetch.
+    """
     s = request.app.state
     if s.engines.selected_id:
         try:
-            return s.engines.get(s.engines.selected_id).path
+            e = s.engines.get(s.engines.selected_id)
+            return e.path, e.name
         except KeyError:
             pass
     if s.settings.engine_path:
-        return str(s.settings.engine_path)
-    return None
+        return str(s.settings.engine_path), None
+    return None, None
 
 
 @router.post("/new")
@@ -105,6 +117,26 @@ async def sync(request: Request) -> dict:
             await s.hve.republish_state()
         except Exception:
             pass
+    return {"ok": True}
+
+
+@router.post("/pause")
+async def pause(request: Request) -> dict:
+    hve = await _get_hve(request)
+    try:
+        await hve.pause()
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True}
+
+
+@router.post("/resume")
+async def resume(request: Request) -> dict:
+    hve = await _get_hve(request)
+    try:
+        await hve.resume()
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     return {"ok": True}
 
 

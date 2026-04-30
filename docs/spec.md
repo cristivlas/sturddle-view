@@ -185,9 +185,12 @@ last-known state inspection.
 - Centralized logger config; rotating file handler under
   `platformdirs.user_log_dir("sturddle-view")/sturddle-view.log` (5 × 2 MB).
 - `--debug` CLI flag flips stderr level to DEBUG; file always at DEBUG.
-- Server modules use `logging.getLogger(__name__)`. Clients use the in-app
-  log buffer (visible via the Play perspective's Debug toggle) plus `console`
+- Server modules use `logging.getLogger(__name__)`. Clients use `console`
   for in-browser inspection.
+- TODO: surface the rotating server log in the GUI (e.g. a Settings panel
+  that fetches the tail of `sturddle-view.log` on demand). Replaces the
+  earlier client-side "Debug event log" in the Play perspective, which was
+  removed for being low-value.
 
 ---
 
@@ -199,7 +202,7 @@ last-known state inspection.
   Bulk import to other tools is `cat *.pgn > all.pgn` away.
 - Headers: Event (Sturddle View — Human vs Engine), Site, Date, White, Black,
   Result, Termination, TimeControl. White/Black are "Human" and the engine's
-  binary filename, side-correct.
+  UCI-advertised name (falling back to its binary filename), side-correct.
 - Resign produces a result + `Termination=resignation`; flag fall produces
   `Termination=timeout`.
 - Empty games (no moves) are not saved.
@@ -283,7 +286,9 @@ For human vs engine play. Calm, distraction-free.
 
 - Centered board, large but bounded (max ~85vh).
 - Fixed side rail (right on wide screens, below on narrow): clock, move list, engine info during search.
-- Top of side rail: compact game-control bar — New Game, Resign, Take-back.
+- Top of side rail: compact game-control bar — New Game, Take-back, Pause, Resign.
+  - Pause is enabled only on the human's turn (engine is idle then); it
+    stops the clock and rejects moves until resumed.
 - No floating windows. The board is the focus; nothing should float over it during play.
 - One docked panel toggle: an optional "agent" tab in the side rail (Phase 2).
 
@@ -300,6 +305,14 @@ Internal layout uses an inner nav (tabs or rail) within the perspective:
 Engines management is **not** a settings dialog tab. It is a first-class screen with full width, vertical room, and real master-detail interactions. Settings dialog stays small and is reserved for toggles, time-control defaults, paths, and similar form-shaped concerns.
 
 Future perspectives (not Phase 1): Analysis, Library/PGN browser, History.
+
+TODO: Play/Analyze from a FEN. Two pieces:
+- A "Load FEN" entry point (likely a small dialog) that validates and sets
+  the position before play resumes.
+- An Analyze mode (separate from Play): no clock, no enforced sides — engine
+  runs continuously and streams PV/eval; user can play moves for either
+  side; New Game semantics do not apply. Probably a top-level Play/Analyze
+  toggle within the Play perspective, or a sibling perspective.
 
 ### Phasing
 

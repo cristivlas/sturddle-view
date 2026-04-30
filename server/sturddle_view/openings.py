@@ -65,11 +65,22 @@ class OpeningBook:
                 return hit
         return None
 
+    # Process-wide cache: parsing the TSVs takes ~3s and the data is static.
+    # The cache is keyed by directory path only and is NOT invalidated on
+    # file changes — callers that mutate the openings directory at runtime
+    # must clear `_cache` themselves. (Production data ships read-only with
+    # the app; tests use the same default dir.)
+    _cache: dict[Path, "OpeningBook"] = {}
+
     @classmethod
     def load(cls, dir_path: Path | None = None) -> "OpeningBook":
+        d = (dir_path or DEFAULT_OPENINGS_DIR).resolve()
+        cached = cls._cache.get(d)
+        if cached is not None:
+            return cached
         book = cls()
-        d = dir_path or DEFAULT_OPENINGS_DIR
         if not d.is_dir():
+            cls._cache[d] = book
             return book
         for tsv in sorted(d.glob("*.tsv")):
             with tsv.open("r", encoding="utf-8") as f:
@@ -81,4 +92,5 @@ class OpeningBook:
                     if not eco or not name or not pgn:
                         continue
                     book.add(eco, name, pgn)
+        cls._cache[d] = book
         return book

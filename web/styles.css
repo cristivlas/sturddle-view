@@ -121,11 +121,10 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 #play-perspective {
   display: grid;
   grid-template-columns: minmax(320px, 1fr) 360px;
-  grid-template-rows: 1fr auto auto;
+  grid-template-rows: 1fr auto;
   grid-template-areas:
     "board side"
-    "controls side"
-    "debug debug";
+    "controls side";
   gap: 12px 16px;
   height: 100%;
   min-height: 0;
@@ -143,14 +142,18 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   display: flex;
   flex-direction: column;
 }
-.debug-only { grid-area: debug; }
-
 /* The board area inside the host gets all available height. */
 .play-board-host .game-view-board {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+/* No game yet: board is shown but not interactive. */
+.play-board-host.board-idle .board {
+  opacity: 0.45;
+  pointer-events: none;
+  filter: grayscale(0.4);
 }
 
 @media (max-width: 800px) {
@@ -193,8 +196,7 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   height: auto;
   max-height: none;
 }
-.game-view-side h2,
-.debug-only h2 {
+.game-view-side h2 {
   font-size: 12px;
   text-transform: uppercase;
   color: var(--muted);
@@ -296,18 +298,6 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   align-items: center;
   flex-wrap: wrap;
 }
-#board-controls .grow { flex: 1 1 auto; min-width: 0; }
-@media (max-width: 800px) {
-  #board-controls .grow { flex-basis: 100%; }
-}
-.debug-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
 .move-list {
   background: #1a1a1a;
   border: 1px solid #333;
@@ -451,8 +441,12 @@ wa-dialog wa-tab-group { min-width: 0; }
 wa-dialog::part(body) { overflow: visible !important; }
 wa-dialog::part(dialog) {
   overflow: visible !important;
-  /* Optional fixed height: callers set --dialog-height on the host. */
-  height: var(--dialog-height, auto);
+}
+/* Optional fixed height: callers set --dialog-height on the host (e.g. the
+   Settings dialog, which wants a stable size). When unset, leave height
+   alone so the panel sizes to its content. */
+wa-dialog[style*="--dialog-height"]::part(dialog) {
+  height: var(--dialog-height);
 }
 
 /* The select uses an internal popup with distance=0; override via attribute

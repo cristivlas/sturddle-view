@@ -277,6 +277,7 @@ export function mountGameView(container, opts = {}) {
 
   let humanWhite = true;
   let gameId = null;
+  let engineName = "Engine";
   let names = { top: "—", bottom: "—" };
 
   function setNames({ top, bottom } = {}) {
@@ -294,7 +295,7 @@ export function mountGameView(container, opts = {}) {
     humanWhite = !!value;
     board.setSide(humanWhite ? "white" : "black");
     // In interactive (Play) mode, bottom = human, top = engine.
-    if (interactive) setNames({ bottom: "Human", top: "Engine" });
+    if (interactive) setNames({ bottom: "Human", top: engineName });
   }
   setHumanWhite(humanWhite);
 
@@ -318,9 +319,14 @@ export function mountGameView(container, opts = {}) {
     if (gameId !== null && evt.game_id && evt.game_id !== gameId) return;
     switch (evt.kind) {
       case "board_update":
+        if (evt.payload.engine_name) {
+          engineName = evt.payload.engine_name;
+          if (interactive) setNames({ top: engineName });
+        }
         if (typeof evt.payload.human_white === "boolean") {
           humanWhite = evt.payload.human_white;
           board.setSide(humanWhite ? "white" : "black");
+          if (interactive) setNames({ bottom: "Human", top: engineName });
         }
         board.setPosition(evt.payload.fen, evt.payload.last_move);
         board.clearArrows();
