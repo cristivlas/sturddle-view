@@ -264,6 +264,23 @@ Agents are first-class participants, not bolts-on:
 
 Aesthetics and UX are first-class concerns; the GUI is not just a thin debug surface for the backend. Visual polish, consistent theming, and predictable interactions matter as much as functional correctness.
 
+TODO: color-palette tightening pass. Several follow-ups deferred from
+the current "minimum-customization" baseline:
+1. Resign-button hover regression — `--wa-color-danger-fill-loud` is
+   muted, but hover/active/focus states pull from non-overridden tokens
+   and flash back to bright orange. Either override the hover/active
+   tokens or accept the flash.
+2. File-picker dialog Up button (`web/app/dialogs.js:195`) is the lone
+   `appearance="outlined"` button left after the filled-by-default
+   sweep. Either drop the override for parity, or keep and document why.
+3. Brand button (`variant="brand"`) is too loud at default WA blue.
+   Consider a paler blue or teal swap (likely via `--wa-color-brand-*`
+   overrides analogous to the danger ones).
+4. Top nav (Play / Engines tabs) uses a teal outline + glow that reads
+   inconsistent with the rest of the now-quiet palette. Investigate
+   what's setting the active-tab style and quiet it down — the project
+   tenet is minimal use of color.
+
 ### Hard constraints
 
 - **No build step.** No TypeScript files served, no rollup/vite/webpack/tsc in the dev or run loop. Browser-loadable ES modules and CSS only.

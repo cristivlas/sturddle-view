@@ -5,9 +5,13 @@
   --accent: #6cc;
   --panel: #252525;
 
+
   --wa-font-family-body: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --wa-font-family-heading: var(--wa-font-family-body);
   --wa-font-family-code: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, monospace;
+
+  --wa-color-danger-fill-loud: #8a5a3c;
+  --wa-color-danger-on-loud: #f4e4d2;
 }
 
 html { font-size: 16px; }

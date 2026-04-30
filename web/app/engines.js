@@ -18,11 +18,11 @@ export function mountEngines({ container, api, onError }) {
                      aria-label="Use as active engine" hidden>
             <wa-icon name="star"></wa-icon>
           </wa-button>
-          <wa-button class="engines-detail-options icon-only" size="small" appearance="outlined"
+          <wa-button class="engines-detail-options icon-only" size="small"
                      aria-label="UCI options" hidden>
             <wa-icon name="sliders"></wa-icon>
           </wa-button>
-          <wa-button class="engines-detail-remove icon-only" size="small" variant="danger" appearance="outlined"
+          <wa-button class="engines-detail-remove icon-only" size="small"
                      aria-label="Remove engine" hidden>
             <wa-icon name="trash"></wa-icon>
           </wa-button>
