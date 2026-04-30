@@ -1,0 +1,384 @@
+"""Slice 4: Orchestrator — composes Store + Runner.
+
+Two layers of tests:
+
+  1. Unit tests with a fake Runner — exercise the orchestrator's logic
+     (single-active invariant, status persistence, reconciliation).
+  2. One integration test that drives the orchestrator end-to-end with
+     the real ``FastchessRunner`` + fake-fastchess script, proving the
+     wiring works.
+"""
+from __future__ import annotations
+
+import asyncio
+import sys
+from pathlib import Path
+
+import pytest
+
+from sturddle_view.tournament.fastchess import FastchessRunner
+from sturddle_view.tournament.orchestrator import (
+    Orchestrator,
+    TournamentBusyError,
+)
+from sturddle_view.tournament.runner import RunSpec
+from sturddle_view.tournament.store import (
+    STATUS_DONE,
+    STATUS_RUNNING,
+    STATUS_STOPPED,
+    TournamentNotFoundError,
+    TournamentStore,
+)
+
+
+# ---------------------------------------------------------------------------
+# Fake Runner — pure unit testing
+# ---------------------------------------------------------------------------
+
+
+class _FakeRunner:
+    """Manually controllable Runner. Captures start args; exit is driven
+    by tests calling ``finish(kind, payload)``."""
+
+    def __init__(self) -> None:
+        self.binary_path = "/fake/fastchess"
+        self.started: list[RunSpec] = []
+        self._on_event = None
+        self._running = False
+
+    async def start(self, spec, on_event):
+        if self._running:
+            raise RuntimeError("already running")
+        self.started.append(spec)
+        self._on_event = on_event
+        self._running = True
+
+    async def stop(self):
+        if not self._running:
+            return
+        self._running = False
+        await self._on_event("stopped", {"rc": -9})
+
+    def is_running(self):
+        return self._running
+
+    # Test helper: drive a terminal event from outside.
+    async def finish(self, kind: str, payload: dict | None = None):
+        assert self._running, "finish() called when not running"
+        self._running = False
+        await self._on_event(kind, payload or {"rc": 0})
+
+
+@pytest.fixture
+def store(tmp_path):
+    return TournamentStore(tmp_path / "tournaments")
+
+
+@pytest.fixture
+def runner():
+    return _FakeRunner()
+
+
+@pytest.fixture
+def orch(store, runner):
+    return Orchestrator(store, runner)
+
+
+def _create(store, **kw) -> str:
+    t = store.create(
+        name=kw.get("name", "t"),
+        template=kw.get("template", {}),
+        engines=kw.get("engines", [{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}]),
+    )
+    return t.id
+
+
+# ---------------------------------------------------------------------------
+# start
+# ---------------------------------------------------------------------------
+
+
+async def test_start_marks_running_and_sets_active_id(store, runner, orch):
+    tid = _create(store)
+    assert orch.active_id() is None
+
+    t = await orch.start(tid)
+    assert t.status == STATUS_RUNNING
+    assert t.started_at is not None
+    assert orch.active_id() == tid
+    assert runner.is_running()
+    # store agrees
+    assert store.get(tid).status == STATUS_RUNNING
+
+
+async def test_start_unknown_id_raises(orch):
+    with pytest.raises(TournamentNotFoundError):
+        await orch.start("does-not-exist")
+
+
+async def test_start_rejects_second_when_active(store, runner, orch):
+    a = _create(store, name="a")
+    b = _create(store, name="b")
+    await orch.start(a)
+    with pytest.raises(TournamentBusyError):
+        await orch.start(b)
+    # b unchanged on disk
+    assert store.get(b).status == "idle"
+
+
+async def test_start_rolls_back_on_runner_failure(store, monkeypatch):
+    bad = _FakeRunner()
+
+    async def boom(spec, on_event):
+        raise RuntimeError("simulated fastchess explosion")
+
+    bad.start = boom  # type: ignore[assignment]
+    orch = Orchestrator(store, bad)
+    tid = _create(store)
+
+    with pytest.raises(RuntimeError, match="simulated"):
+        await orch.start(tid)
+
+    # active cleared, status rolled back to STOPPED so user sees the failure
+    assert orch.active_id() is None
+    final = store.get(tid)
+    assert final.status == STATUS_STOPPED
+    assert final.stopped_at is not None
+
+
+async def test_start_passes_correct_runspec(store, runner, orch):
+    tid = _create(store, template={"tc": "10+0.1"})
+    await orch.start(tid)
+    spec = runner.started[0]
+    assert spec.tournament.id == tid
+    assert spec.work_dir == store.root / tid
+    assert spec.pgn_path == store.pgn_path(tid)
+    assert spec.config_path == store.config_path(tid)
+    assert spec.log_path.name == "fastchess.log"
+    assert spec.log_path.parent.name == "logs"
+
+
+# ---------------------------------------------------------------------------
+# stop + terminal events
+# ---------------------------------------------------------------------------
+
+
+async def test_stop_active_marks_stopped_and_clears_active(store, runner, orch):
+    tid = _create(store)
+    await orch.start(tid)
+    await orch.stop(tid)
+
+    assert orch.active_id() is None
+    final = store.get(tid)
+    assert final.status == STATUS_STOPPED
+    assert final.stopped_at is not None
+    assert final.started_at is not None
+
+
+async def test_clean_exit_marks_done(store, runner, orch):
+    tid = _create(store)
+    await orch.start(tid)
+    await runner.finish("done")
+
+    assert orch.active_id() is None
+    assert store.get(tid).status == STATUS_DONE
+
+
+async def test_runner_crash_marks_stopped_no_resume(store, runner, orch):
+    """Phase 1 has no Resume — runner_crash collapses to 'stopped'."""
+    tid = _create(store)
+    await orch.start(tid)
+    await runner.finish("runner_crash", {"rc": 137})
+
+    assert orch.active_id() is None
+    final = store.get(tid)
+    assert final.status == STATUS_STOPPED
+
+
+async def test_stop_when_not_active_is_noop(store, runner, orch):
+    tid = _create(store)
+    # never started
+    result = await orch.stop(tid)
+    assert result.status == "idle"
+    assert orch.active_id() is None
+
+
+async def test_stop_idempotent(store, runner, orch):
+    tid = _create(store)
+    await orch.start(tid)
+    await orch.stop(tid)
+    await orch.stop(tid)  # second call must not raise
+    assert store.get(tid).status == STATUS_STOPPED
+
+
+async def test_can_start_again_after_stop(store, runner, orch):
+    a = _create(store, name="a")
+    b = _create(store, name="b")
+    await orch.start(a)
+    await orch.stop(a)
+    # Now a different one can start
+    await orch.start(b)
+    assert orch.active_id() == b
+    await orch.stop(b)
+
+
+# ---------------------------------------------------------------------------
+# reconciliation
+# ---------------------------------------------------------------------------
+
+
+def test_reconcile_marks_stale_running_as_stopped(store, runner, orch):
+    a = _create(store, name="a")
+    b = _create(store, name="b")
+    c = _create(store, name="c")
+    # Simulate a server crash mid-tournament: state.json says running
+    # but no process exists.
+    store.update_status(a, STATUS_RUNNING, started_at="x")
+    store.update_status(c, STATUS_RUNNING, started_at="x")
+
+    reconciled = orch.reconcile_on_startup()
+    assert {t.id for t in reconciled} == {a, c}
+    assert store.get(a).status == STATUS_STOPPED
+    assert store.get(b).status == "idle"
+    assert store.get(c).status == STATUS_STOPPED
+
+
+def test_reconcile_noop_when_nothing_running(store, runner, orch):
+    _create(store)
+    assert orch.reconcile_on_startup() == []
+
+
+# ---------------------------------------------------------------------------
+# broadcast wiring
+# ---------------------------------------------------------------------------
+
+
+async def test_broadcast_receives_status_change_and_runner_events(store, runner, orch):
+    events: list[tuple[str, dict]] = []
+
+    async def cb(kind, payload):
+        events.append((kind, payload))
+
+    orch.set_broadcast(cb)
+    tid = _create(store)
+    await orch.start(tid)
+    await runner.finish("done")
+
+    kinds = [k for k, _ in events]
+    # status_change emitted at least twice: when start() flips to running,
+    # and when terminal event flips to done.
+    assert kinds.count("status_change") >= 2
+    assert "started" not in kinds  # we don't emit synthetic 'started';
+    # the runner emits its own 'started' which is forwarded:
+    # so it might appear because we forward all runner events.
+    assert "done" in kinds
+
+
+async def test_broadcast_failure_does_not_break_orchestrator(store, runner, orch):
+    async def bad(kind, payload):
+        raise RuntimeError("downstream crashed")
+
+    orch.set_broadcast(bad)
+    tid = _create(store)
+    # Should not propagate
+    await orch.start(tid)
+    await runner.finish("done")
+    assert store.get(tid).status == STATUS_DONE
+
+
+# ---------------------------------------------------------------------------
+# Integration: real FastchessRunner + fake fastchess
+# ---------------------------------------------------------------------------
+
+
+FAKE_FASTCHESS = r"""
+import sys, time
+i = 1
+rc = 0
+while i < len(sys.argv):
+    a = sys.argv[i]
+    if a == "--print":
+        n = int(sys.argv[i+1]); i += 2
+        for k in range(n):
+            print(f"out {k}", flush=True)
+    elif a == "--sleep":
+        time.sleep(float(sys.argv[i+1])); i += 2
+    elif a == "--exit":
+        rc = int(sys.argv[i+1]); i += 2
+    else:
+        i += 1
+sys.exit(rc)
+"""
+
+
+async def test_integration_real_runner_clean_exit(tmp_path, monkeypatch):
+    """End-to-end: orchestrator → FastchessRunner → fake fastchess process →
+    store reflects DONE on natural exit."""
+    store = TournamentStore(tmp_path / "tournaments")
+    runner = FastchessRunner(binary_path=sys.executable)
+    monkeypatch.setattr(
+        FastchessRunner, "detect_binary",
+        staticmethod(lambda configured: configured),
+    )
+    from sturddle_view.tournament import fastchess as fc_mod
+    monkeypatch.setattr(
+        fc_mod, "build_command",
+        lambda spec: [sys.executable, "-c", FAKE_FASTCHESS, "--print", "5", "--exit", "0"],
+    )
+
+    orch = Orchestrator(store, runner)
+    done_evt = asyncio.Event()
+    captured: list[tuple[str, dict]] = []
+
+    async def cb(kind, payload):
+        captured.append((kind, payload))
+        if kind == "status_change" and payload.get("status") == STATUS_DONE:
+            done_evt.set()
+
+    orch.set_broadcast(cb)
+
+    t = store.create(name="int", template={}, engines=[
+        {"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}
+    ])
+    await orch.start(t.id)
+    await asyncio.wait_for(done_evt.wait(), timeout=5.0)
+
+    assert orch.active_id() is None
+    assert store.get(t.id).status == STATUS_DONE
+    log_text = (store.root / t.id / "logs" / "fastchess.log").read_text()
+    assert "out 0" in log_text
+    assert "out 4" in log_text
+
+
+async def test_integration_real_runner_stop(tmp_path, monkeypatch):
+    """End-to-end: orchestrator.stop() → FastchessRunner kills process →
+    store reflects STOPPED."""
+    store = TournamentStore(tmp_path / "tournaments")
+    runner = FastchessRunner(binary_path=sys.executable)
+    monkeypatch.setattr(
+        FastchessRunner, "detect_binary",
+        staticmethod(lambda configured: configured),
+    )
+    from sturddle_view.tournament import fastchess as fc_mod
+    monkeypatch.setattr(
+        fc_mod, "build_command",
+        lambda spec: [sys.executable, "-c", FAKE_FASTCHESS, "--sleep", "30"],
+    )
+
+    orch = Orchestrator(store, runner)
+    stop_evt = asyncio.Event()
+
+    async def cb(kind, payload):
+        if kind == "status_change" and payload.get("status") == STATUS_STOPPED:
+            stop_evt.set()
+
+    orch.set_broadcast(cb)
+
+    t = store.create(name="int", template={}, engines=[
+        {"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}
+    ])
+    await orch.start(t.id)
+    await orch.stop(t.id)
+    await asyncio.wait_for(stop_evt.wait(), timeout=5.0)
+
+    assert store.get(t.id).status == STATUS_STOPPED
