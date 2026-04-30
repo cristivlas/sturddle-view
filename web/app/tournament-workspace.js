@@ -169,24 +169,27 @@ export function openTournamentWorkspace({ api, events, log, tournament }) {
   }
 
   function renderSchedule() {
-    // Slice-8 v0: derive completed pairings + results from the event log.
-    // Slice 9 will add a richer schedule once we capture per-game
-    // start/finish events from the proxy.
-    const finished = eventLog.filter((e) => e.payload?.kind === "game_finished");
+    // Completed games: PGN-derived (authoritative once fastchess flushes
+    // each finished game). The proxy broadcast tap (Slice 9) will later
+    // add an "in progress" row per active game; for now we only show
+    // completed.
+    const finished = (detail && detail.games) || [];
     const running  = eventLog.filter((e) => e.payload?.kind === "game_started");
     if (finished.length === 0 && running.length === 0) {
       scheduleBody.innerHTML = `<div class="wb-empty">No games yet.</div>`;
       return;
     }
-    const items = [...finished, ...running]
-      .map((e) => {
-        const p = e.payload || {};
-        const what = p.kind === "game_finished" ? "✓" : "▶";
-        const tag = p.white && p.black ? `${escape(p.white)} – ${escape(p.black)}` : "(game)";
-        const result = p.result ? ` <span class="wb-sched-result">${escape(p.result)}</span>` : "";
-        return `<li><span class="wb-sched-icon">${what}</span> ${tag}${result}</li>`;
-      })
-      .join("");
+    const finishedItems = finished.map((g) => {
+      const tag = `${escape(g.white)} – ${escape(g.black)}`;
+      const result = `<span class="wb-sched-result">${escape(g.result)}</span>`;
+      return `<li><span class="wb-sched-icon">✓</span> ${tag} ${result}</li>`;
+    });
+    const runningItems = running.map((e) => {
+      const p = e.payload || {};
+      const tag = p.white && p.black ? `${escape(p.white)} – ${escape(p.black)}` : "(game)";
+      return `<li><span class="wb-sched-icon">▶</span> ${tag}</li>`;
+    });
+    const items = [...finishedItems, ...runningItems].join("");
     scheduleBody.innerHTML = `<ul class="wb-sched-list">${items}</ul>`;
   }
 

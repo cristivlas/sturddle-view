@@ -124,6 +124,19 @@ def _iter_games(pgn_path: Path):
                 yield white, black, result
 
 
+def compute_games_list(pgn_path: Path) -> list[dict]:
+    """Return one dict per completed game in PGN order.
+
+    Used by the workspace's Schedule window when no live event stream
+    is available. Phase 1 has no proxy broadcast, so this PGN-driven
+    list is the only source of "what games has fastchess finished."
+    """
+    return [
+        {"white": w, "black": b, "result": r}
+        for (w, b, r) in _iter_games(pgn_path)
+    ]
+
+
 def elo_from_score(score: float) -> float | None:
     """Convert a 0..1 score to logistic Elo difference.
 

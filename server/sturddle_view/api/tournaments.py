@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from ..auth import require_token
 from ..tournament.fastchess import FastchessRunner
 from ..tournament.orchestrator import Orchestrator, TournamentBusyError
-from ..tournament.pgn_stats import compute_sprt, compute_standings
+from ..tournament.pgn_stats import compute_games_list, compute_sprt, compute_standings
 from ..tournament.store import (
     CorruptStateError,
     TournamentNotFoundError,
@@ -75,6 +75,10 @@ def _serialize(t, *, with_stats: bool = False, store: TournamentStore | None = N
         except FileNotFoundError:
             standings = {"games": 0, "engines": []}
         out["standings"] = standings
+        try:
+            out["games"] = compute_games_list(store.pgn_path(t.id))
+        except FileNotFoundError:
+            out["games"] = []
         sprt_params = (t.template or {}).get("sprt")
         if sprt_params:
             try:
