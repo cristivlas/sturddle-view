@@ -241,18 +241,67 @@ export function mountGameView(container, opts = {}) {
       0,
       window.innerHeight - colRect.top - siblingsInCol - belowGameView - bottomMargin
     );
-    // On narrow viewports, prefer full column width over fitting in viewport
-    // height — page becomes scrollable, board stays usable.
+
+    // Width budget: the viewport minus the side rail (when present) and
+    // outer page padding. Reading colRect.width here would create a feedback
+    // loop because the column width is now driven by --board-col-px below.
+    // Magic numbers live as --rail-w / --grid-gap on .play-grid in CSS.
     const NARROW = 800;
+    const MIN_BOARD = 320;
+    const grid = boardCol.closest(".play-grid") || boardCol.closest("#play-perspective");
+    let availW;
+    if (window.innerWidth <= NARROW || !grid) {
+      availW = Math.max(160, Math.floor(colRect.width));
+    } else {
+      const gridStyle = getComputedStyle(grid);
+      const railW = parseFloat(gridStyle.getPropertyValue("--rail-w")) || 360;
+      const gapW = parseFloat(gridStyle.getPropertyValue("--grid-gap")) || 16;
+      const main = document.querySelector("main");
+      const mainStyle = main ? getComputedStyle(main) : null;
+      const sidePad = mainStyle
+        ? parseFloat(mainStyle.paddingLeft) + parseFloat(mainStyle.paddingRight)
+        : 32;
+      availW = Math.max(160, Math.floor(window.innerWidth - railW - gapW - sidePad));
+    }
+
     const max = window.innerWidth <= NARROW
-      ? Math.max(160, Math.floor(colRect.width))
-      : Math.max(160, Math.floor(Math.min(colRect.width, availH)));
+      ? availW
+      // Honor the CSS minmax(320px, …) floor so the board doesn't go
+      // below MIN_BOARD on awkward width-bound viewports (~800–900px).
+      : Math.max(MIN_BOARD, Math.floor(Math.min(availW, availH)));
 
     boardEl.style.width = `${max}px`;
     const inner = boardEl.firstElementChild;
     if (inner) {
       inner.style.width = `${max}px`;
       inner.style.height = `${max}px`;
+    }
+    // Publish the computed board width so siblings (clocks, opening line,
+    // controls bar) can clamp to the same width — and so the grid's
+    // board column shrinks to that width, gluing the side rail next to it.
+    boardCol.style.setProperty("--board-max-px", `${max}px`);
+    if (grid) {
+      grid.style.setProperty("--board-max-px", `${max}px`);
+      // Only drive the column width on wide viewports; on narrow, the
+      // grid collapses to a vertical flex layout (see CSS).
+      if (window.innerWidth > NARROW) {
+        grid.style.setProperty("--board-col-px", `${max}px`);
+      } else {
+        grid.style.removeProperty("--board-col-px");
+      }
+      // Cap the side rail so the moves panel doesn't extend below the
+      // board's bottom edge. Compute rail height = board bottom - rail top.
+      const sideHost = grid.querySelector(".play-side-host");
+      if (sideHost) {
+        if (window.innerWidth > NARROW) {
+          const boardRect = boardEl.getBoundingClientRect();
+          const sideRect = sideHost.getBoundingClientRect();
+          const target = Math.max(160, Math.floor(boardRect.bottom - sideRect.top));
+          sideHost.style.setProperty("max-height", `${target}px`);
+        } else {
+          sideHost.style.removeProperty("max-height");
+        }
+      }
     }
     board.forceResize();
   }

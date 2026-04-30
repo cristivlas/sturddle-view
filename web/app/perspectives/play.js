@@ -41,18 +41,20 @@ export const playPerspective = {
   async mount(root, ctx) {
     root.innerHTML = `
       <section id="play-perspective">
-        <div class="play-board-host"></div>
+        <div class="play-grid">
+          <div class="play-board-host"></div>
 
-        <div id="board-controls">
-          <wa-button id="new-game" size="small" variant="brand">New game</wa-button>
-          <wa-button id="takeback" size="small" appearance="outlined" disabled>Take back</wa-button>
-          <wa-button id="pause" class="icon-only" size="small" appearance="outlined" disabled aria-label="Pause">
-            <wa-icon name="pause"></wa-icon>
-          </wa-button>
-          <wa-button id="resign" size="small" variant="danger" appearance="outlined" disabled>Resign</wa-button>
+          <div id="board-controls">
+            <wa-button id="new-game" size="small" variant="brand">New game</wa-button>
+            <wa-button id="takeback" size="small" appearance="outlined" disabled>Take back</wa-button>
+            <wa-button id="pause" class="icon-only" size="small" appearance="outlined" disabled aria-label="Pause">
+              <wa-icon name="pause"></wa-icon>
+            </wa-button>
+            <wa-button id="resign" size="small" variant="danger" appearance="outlined" disabled>Resign</wa-button>
+          </div>
+
+          <div class="play-side-host"></div>
         </div>
-
-        <div class="play-side-host"></div>
       </section>
     `;
 

@@ -118,16 +118,34 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   main { overflow-y: auto; }
 }
 
+/* Outer wrapper: center the board + rail group horizontally when there's
+   slack; pin to the left if the grid would overflow (`safe center`). */
 #play-perspective {
+  display: flex;
+  justify-content: safe center;
+  height: 100%;
+  min-height: 0;
+}
+.play-grid {
+  /* Single source of truth for layout magic numbers; JS reads these via
+     getComputedStyle so the board-width budget stays in sync with the
+     CSS column definitions. */
+  --rail-w: 360px;
+  --grid-gap: 16px;
   display: grid;
-  grid-template-columns: minmax(320px, 1fr) 360px;
+  /* Board column width is driven by JS (--board-col-px) so it sizes to
+     the square that fits the viewport — the column shouldn't depend on
+     its own content (which would create a feedback loop). The side rail
+     spans only the board row so the moves panel doesn't extend below
+     the board's bottom edge. */
+  grid-template-columns: var(--board-col-px, minmax(320px, 1fr)) var(--rail-w);
   grid-template-rows: 1fr auto;
   grid-template-areas:
     "board side"
-    "controls side";
-  gap: 12px 16px;
-  height: 100%;
+    "controls .";
+  gap: 12px var(--grid-gap);
   min-height: 0;
+  height: 100%;
 }
 .play-board-host {
   grid-area: board;
@@ -135,7 +153,12 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   display: flex;
   flex-direction: column;
 }
-#board-controls { grid-area: controls; }
+#board-controls {
+  grid-area: controls;
+  /* Match the board's computed width so buttons align with board's left edge. */
+  width: var(--board-max-px, auto);
+  max-width: 100%;
+}
 .play-side-host {
   grid-area: side;
   min-height: 0;
@@ -157,7 +180,8 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 }
 
 @media (max-width: 800px) {
-  #play-perspective {
+  #play-perspective { display: block; }
+  .play-grid {
     display: flex;
     flex-direction: column;
     gap: 12px;
