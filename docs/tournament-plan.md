@@ -302,6 +302,6 @@ Update as slices land.
 | 7 — Reusable template form | done | 6f13b52 | core fields + Advanced JSON; mounted in 3 contexts; e2e tested |
 | 8 — Workspace (3 windows) | done | 2d9f14b | Standings/Schedule/Event log; layout persisted in localStorage; 1 e2e test |
 | 9a — Forward fastchess stdout to Event log | done | d48d88f | runner_log event; rendered as actual line in Event log window |
-| 9b — Proxy broadcast tap + pairing | not started | — | M; needs real fastchess |
+| 9b — Proxy broadcast tap + pairing | done | b2b5887, 46b87c5 | pair_index + endpoint + WS + real-fastchess smoke test |
 | 9c — Live game window | not started | — | M; depends on 9b |
 | 10 — Polish | optional | — | post-Phase-1 |
