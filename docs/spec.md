@@ -90,37 +90,71 @@ in a native window via PyWebView.
 Python-based server, three API areas:
 
 #### `/settings` — REST CRUD
-Server-side (persisted, backend behavior):
-- PGN auto-save toggle and save path
-- Time controls
-- Opening book paths and usage mode
-- Engine paths and UCI options
-- Tournament config (rounds, concurrency, SPRT parameters)
+Server-side, persisted to a JSON file under the OS user-config directory
+(`platformdirs.user_config_dir("sturddle-view")/settings.json`). Apply-on-change
+semantics: every PUT writes to disk immediately and broadcasts a
+`sturddle:settings-changed` event to clients.
+
+Persisted fields:
+- `pgn_autosave` (toggle), `pgn_dir` (path) — save games as PGN
+- `tc_initial_seconds`, `tc_increment_seconds` — default time control
+- `human_side` — `"white" | "black" | "random"`
+- `allow_takeback`
+- `engine_path` — fallback engine when no engine selected from registry
+
+Excluded from persistence: `token`, `host`, `port`, `auth_disabled`, `web_dir`.
+These come from CLI flags / env vars.
+
+Future fields (per spec, not yet implemented): opening book paths, tournament
+config defaults.
 
 Client-side (localStorage, server-agnostic):
-- Theme, piece set, board colors
-- UI layout preferences
-- Sound on/off
+- Active perspective, per-perspective layout (window positions, sizes)
+- Theme (deferred), piece set, board colors (deferred)
+- Sound on/off (deferred)
+
+#### `/engines` — REST CRUD
+- List, add, update, remove registered engines
+- `POST /engines/{id}/select` — set the active engine
+- Engine path validation on add (must exist, must be a regular file, must be
+  executable on POSIX)
+- Persisted to `engines.json` in the same user-config directory; selection
+  survives restart
+
+#### `/fs` — REST
+- Directory listing for the file picker dialog (engine binary, PGN dir, etc.)
+- Cross-platform (Windows drives, POSIX paths) via stdlib `pathlib`
+- Token-gated; permissions are whatever the server process has — no allowlist
 
 #### `/game` — REST
-- Submit human move
+- Submit human move (snap-back on illegal: server publishes current state so
+  client UI re-syncs)
 - New game, resign, take-back
-- Tournament control: start, stop, pause, attach
+- Tournament control: start, stop, pause, attach (Phase 2)
 
 #### `/ws` — WebSocket
-- All live events: engine info lines (depth, eval, PV, nodes, NPS), board state updates, clock ticks, tournament standings, game results
+- All live events: engine info (depth, score, PV, nodes, NPS), board state,
+  clock ticks, tournament standings, game results, opening identification,
+  tablebase results, agent annotations, system errors.
 - Events are **structured and typed** (not ad-hoc strings) — required for agent consumption
 - On client reconnect: server rebroadcasts current state
 - Client implements exponential backoff reconnect
 
 ### 5. Browser Client
 
-- cm-chessboard vendored as git submodule (offline, pinned, no CDN dependency)
-- Two primary views:
-  - **Tournament observer**: all running games, standings, SPRT status, eval bar per game, focus a single game for full engine info
-  - **Human vs engine**: interactive board, eval bar, PV display, move list, take-back
-- Agent/analysis panels: designated UI areas agents can populate
-- Client-side settings persisted in localStorage
+- Vendored libraries (offline, pinned, no CDN at runtime):
+  - `cm-chessboard` — chess board rendering and move input
+  - Web Awesome — UI components (dialogs, inputs, tabs, switches, icons)
+  - WinBox — draggable/resizable windows (used by Observe sub-view)
+  - Font Awesome Free SVGs — icon library used by Web Awesome
+  - `chess-openings` (Lichess) — opening identification dataset
+- **Reusable `GameView` component**: composes board + clocks + move list +
+  engine info + opening line + tablebase result. Used by Play perspective and
+  (Phase 2) inside Observe windows. Each aspect can be hidden/shown
+  independently.
+- Two perspectives in Phase 1: Play, Engines. (See "Perspectives" below.)
+- Agent/analysis panels: designated UI areas agents can populate (Phase 2).
+- Per-perspective layout state persisted in localStorage.
 
 ---
 
@@ -136,6 +170,39 @@ http://hostname:port/ui?token=<secret>
 - No user accounts or session management
 - Local same-machine PyWebView mode: token auto-filled, effectively transparent
 - Share URL+token to allow remote peek access
+- `--no-auth` CLI flag disables token check entirely (trusted-LAN dev convenience).
+  Banner makes this explicit at startup. **Never use on untrusted networks.**
+
+When the WebSocket disconnects, the client visibly disables the Settings gear
+and the Engines perspective nav button. If the user is on Engines when the
+connection drops, they are auto-routed back to Play. Play remains usable for
+last-known state inspection.
+
+---
+
+## Logging
+
+- Centralized logger config; rotating file handler under
+  `platformdirs.user_log_dir("sturddle-view")/sturddle-view.log` (5 × 2 MB).
+- `--debug` CLI flag flips stderr level to DEBUG; file always at DEBUG.
+- Server modules use `logging.getLogger(__name__)`. Clients use the in-app
+  log buffer (visible via the Play perspective's Debug toggle) plus `console`
+  for in-browser inspection.
+
+---
+
+## PGN Storage
+
+- Each game is saved as its own file when `pgn_autosave` is enabled.
+- Filename: `YYYYMMDD-HHMMSS-{game_id}.pgn` under `pgn_dir`.
+- One game per file (not appended) — easier to delete/share individually.
+  Bulk import to other tools is `cat *.pgn > all.pgn` away.
+- Headers: Event (Sturddle View — Human vs Engine), Site, Date, White, Black,
+  Result, Termination, TimeControl. White/Black are "Human" and the engine's
+  binary filename, side-correct.
+- Resign produces a result + `Termination=resignation`; flag fall produces
+  `Termination=timeout`.
+- Empty games (no moves) are not saved.
 
 ---
 
@@ -260,11 +327,19 @@ A thin app-level wrapper (`web/app/dialogs.js`) exposes `confirm()`, `alert()`, 
 
 ## Resilience (Implementation Best Practices)
 
-- **Engine crash (human vs engine)**: python-chess detects, GUI shows clear error state
+- **Engine search cancel (take-back / new-game / resign mid-think)**: the engine
+  subprocess is killed and a fresh one is spawned on the next move. UCI engines
+  are stateless across `ucinewgame`, so re-spawn cost is acceptable and avoids
+  fighting the protocol's stop-then-bestmove handshake.
+- **Engine crash (human vs engine)**: python-chess detects via `EngineTerminatedError`,
+  server publishes a `system` event with `error: engine_terminated`; UI surfaces it.
 - **Tournament manager crash**: orchestrator detects, cleans up orphaned proxies, GUI shows lost connection
 - **Proxy crash**: wrapper restarts proxy transparently; game continues unaffected, brief observability gap
 - **Network drop (peek client)**: WebSocket client reconnects with exponential backoff; server rebroadcasts state on reconnect
 - **Attach to mid-run tournament**: catch-up from PGN/log to reconstruct state, then switch to live stream
+- **Illegal move from human**: server rejects with 400 and immediately re-publishes
+  the canonical board state so the client UI snaps back. (Phase 2: optional
+  "strict" mode auto-resigns on illegal moves.)
 - All failure states are surfaced explicitly in the UI — no silent stalls
 
 ---
@@ -280,10 +355,15 @@ A thin app-level wrapper (`web/app/dialogs.js`) exposes `confirm()`, `alert()`, 
 
 ## Opening Identification
 
-- Use Niklas Fiekas's [chess-openings](https://github.com/lichess-org/chess-openings) dataset (git submodule)
-- Server-side lookup: given a position or move sequence, return ECO code, opening name, variation
-- Displayed in board UI as moves are played — both human vs engine and tournament observer
-- Fully offline, no external API dependency
+- Implemented for human-vs-engine. Tournament observer reuses the same
+  lookup once Observe ships.
+- Lichess [chess-openings](https://github.com/lichess-org/chess-openings)
+  dataset, vendored as a git submodule under `web/vendor/chess-openings/`.
+- Server loads all `*.tsv` files at startup, parses PGN move sequences into
+  UCI tuples, builds a dict for prefix lookup. Longest matching prefix wins.
+- Result is published in the `board_update` event payload as
+  `opening: { eco, name }` and rendered by GameView under the board.
+- Fully offline, no external API dependency.
 
 ---
 
