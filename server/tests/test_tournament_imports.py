@@ -23,7 +23,9 @@ def test_classes_importable():
     assert all(c is not None for c in (FastchessRunner, Orchestrator, Runner, TournamentStore))
 
 
-def test_stubs_raise_not_implemented():
+def test_remaining_stubs_raise_not_implemented():
+    """As later slices land, methods drop from this list. Keep the test
+    honest by removing the assertion when the corresponding slice ships."""
     from pathlib import Path
 
     from sturddle_view.tournament.fastchess import FastchessRunner
@@ -35,12 +37,15 @@ def test_stubs_raise_not_implemented():
     runner = FastchessRunner("/usr/bin/false")
     orch = Orchestrator(store, runner)
 
-    with pytest.raises(NotImplementedError):
-        store.list()
+    # pgn_stats: Slice 2
     with pytest.raises(NotImplementedError):
         compute_standings(Path("/dev/null"))
     with pytest.raises(NotImplementedError):
         compute_sprt(Path("/dev/null"), {})
+
+    # orchestrator: Slice 4
     with pytest.raises(NotImplementedError):
         orch.reconcile_on_startup()
+
+    # runner: Slice 3
     assert runner.is_running() is False
