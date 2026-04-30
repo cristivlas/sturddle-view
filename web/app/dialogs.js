@@ -54,14 +54,17 @@ export function showDialog({ label, body, defaultValue = null, width, height }) 
   });
 }
 
-/** Modal alert. Resolves to undefined when dismissed. */
-export function alert({ message, okLabel = "OK" } = {}) {
+/** Modal alert. Resolves to undefined when dismissed.
+ *
+ * `messageClass` lets callers opt into a different message style (e.g.
+ * "game-over-message" for a large, centered headline). */
+export function alert({ message, okLabel = "OK", messageClass } = {}) {
   return showDialog({
     label: "",
     body: (resolve, dialog) => {
       dialog.setAttribute("no-header", "");
       const p = document.createElement("p");
-      p.className = "confirm-message";
+      p.className = messageClass ? `confirm-message ${messageClass}` : "confirm-message";
       p.textContent = message ?? "";
       const ok = document.createElement("wa-button");
       ok.variant = "brand";

@@ -434,6 +434,14 @@ wa-dialog::part(header-actions) { gap: 6px; }
   font-size: 15px;
   line-height: 1.5;
 }
+/* Game-over headline: prominent but not oversized. */
+.confirm-message.game-over-message {
+  font-size: 20px;
+  font-weight: 600;
+  text-align: center;
+  padding: 12px 8px;
+  letter-spacing: 0.2px;
+}
 wa-dialog wa-tab-group { min-width: 0; }
 /* Inherit Web Awesome's default tab-panel padding for the Settings dialog;
    Settings is now form-shaped only, so default WA spacing fits naturally. */
