@@ -65,4 +65,9 @@ def update_settings(payload: dict, request: Request) -> dict:
     if "allow_takeback" in payload:
         s.allow_takeback = bool(payload["allow_takeback"])
 
+    try:
+        s.save_persisted()
+    except OSError:
+        pass
+
     return _serialize(s)

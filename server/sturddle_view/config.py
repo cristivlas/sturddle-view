@@ -1,14 +1,35 @@
 from __future__ import annotations
 
+import json
+import os
 import secrets
+import tempfile
 from pathlib import Path
 
+from platformdirs import user_config_dir
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = REPO_ROOT / "web"
+
+
+def default_settings_file() -> Path:
+    return Path(user_config_dir("sturddle-view")) / "settings.json"
+
+
+# Fields persisted to disk. Excludes secrets (token), bind config (host/port),
+# auth_disabled (CLI flag), and web_dir (deployment).
+PERSISTED_FIELDS = (
+    "pgn_autosave",
+    "pgn_dir",
+    "engine_path",
+    "tc_initial_seconds",
+    "tc_increment_seconds",
+    "human_side",
+    "allow_takeback",
+)
 
 
 class Settings(BaseSettings):
@@ -29,10 +50,41 @@ class Settings(BaseSettings):
     engine_path: Path | None = None
     auth_disabled: bool = False
 
-    # Default time control for new human-vs-engine games (Settings dialog).
     tc_initial_seconds: float = 300.0
     tc_increment_seconds: float = 0.0
-    # Side the human plays: "white", "black", or "random".
     human_side: str = "white"
-    # Whether take-back is allowed during human-vs-engine play.
     allow_takeback: bool = True
+
+    def apply_persisted(self, path: Path | None = None) -> None:
+        path = path or default_settings_file()
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        for k in PERSISTED_FIELDS:
+            if k in data and data[k] is not None:
+                try:
+                    setattr(self, k, data[k])
+                except Exception:
+                    pass
+
+    def save_persisted(self, path: Path | None = None) -> None:
+        path = path or default_settings_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {}
+        for k in PERSISTED_FIELDS:
+            v = getattr(self, k, None)
+            payload[k] = str(v) if isinstance(v, Path) else v
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".settings.", suffix=".json")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+            os.replace(tmp, path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise

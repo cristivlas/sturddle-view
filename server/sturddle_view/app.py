@@ -41,6 +41,7 @@ def create_app(
     engine_registry: EngineRegistry | None = None,
 ) -> FastAPI:
     settings = settings or Settings()
+    settings.apply_persisted()
     app = FastAPI(title="sturddle-view", version="0.0.1", lifespan=_lifespan)
 
     app.state.settings = settings

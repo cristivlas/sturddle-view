@@ -66,6 +66,15 @@ nav button.active { border-color: var(--accent); color: var(--accent); }
 .icon-btn:hover { color: var(--accent); border-color: #444; }
 .icon-btn wa-icon { font-size: 18px; }
 
+/* When disconnected: visually disable Settings gear and the Engines nav button.
+   Play stays usable for last-known state inspection. */
+body.disconnected #settings-btn,
+body.disconnected nav#perspective-nav button[data-perspective="engines"] {
+  opacity: 0.4;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+
 /* Web Awesome's reset turns svg into width:100%; height:auto, which destroys
    the cm-chessboard piece SVGs. Restore native sizing for the chessboard only. */
 svg.cm-chessboard {

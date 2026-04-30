@@ -89,21 +89,32 @@ function renderNav() {
   }
 }
 
+function setConnected(yes) {
+  conn.classList.toggle("connected", yes);
+  conn.title = yes ? "connected" : "disconnected";
+  document.body.classList.toggle("disconnected", !yes);
+  window.dispatchEvent(
+    new CustomEvent("sturddle:connection", { detail: { connected: yes } })
+  );
+}
+
 connect({
   token,
-  onOpen: () => {
-    conn.classList.add("connected");
-    conn.title = "connected";
-  },
-  onClose: () => {
-    conn.classList.remove("connected");
-    conn.title = "disconnected";
-  },
+  onOpen: () => setConnected(true),
+  onClose: () => setConnected(false),
   onEvent: (evt) => events.emit(evt),
 });
 
 document.getElementById("settings-btn").addEventListener("click", () => {
   openSettingsDialog({ api });
+});
+
+window.addEventListener("sturddle:connection", async (e) => {
+  if (e.detail.connected) return;
+  if (router.activeId() === "engines") {
+    await router.activate("play");
+    renderNav();
+  }
 });
 
 await router.activateInitial();
