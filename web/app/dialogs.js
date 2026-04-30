@@ -155,6 +155,25 @@ export function prompt({
   });
 }
 
+const LAST_DIR_KEY_PREFIX = "fs-picker:last:";
+
+function recallLastDir(mode) {
+  try {
+    return localStorage.getItem(LAST_DIR_KEY_PREFIX + mode) || null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberLastDir(mode, dir) {
+  if (!dir) return;
+  try {
+    localStorage.setItem(LAST_DIR_KEY_PREFIX + mode, dir);
+  } catch {
+    // localStorage may be unavailable (private mode quotas, disabled). Best-effort.
+  }
+}
+
 /**
  * Modal file/directory picker. Browses the server's filesystem via /fs.
  * Resolves to the selected path string, or null on cancel.
@@ -175,6 +194,9 @@ export function pickFile({
 
   const wantsExec = mode === "executable";
   const wantsDir = mode === "directory";
+  // Per-mode recall: an executable pick in ~/bin shouldn't bias the next
+  // PGN open. Explicit startPath always wins.
+  const initialPath = startPath ?? recallLastDir(mode);
 
   return showDialog({
     label: title,
@@ -292,6 +314,7 @@ export function pickFile({
             if (entry.is_dir) {
               navigate(entry.path);
             } else if (eligible(entry)) {
+              rememberLastDir(mode, pathInput.value);
               resolve(entry.path);
             }
           });
@@ -325,12 +348,30 @@ export function pickFile({
       });
 
       selectBtn.addEventListener("click", () => {
-        if (currentSelection) resolve(currentSelection);
+        if (currentSelection) {
+          // For file/exec mode, pathInput.value is the containing dir; for
+          // directory mode, currentSelection IS a dir. Either is valid recall.
+          rememberLastDir(mode, wantsDir ? currentSelection : pathInput.value);
+          resolve(currentSelection);
+        }
       });
 
       wrap.append(pathBar, listing);
       dialog.append(wrap, cancel, selectBtn);
-      navigate(startPath);
+      // Open at the recalled dir; if it's gone (deleted/renamed since the
+      // last pick), silently fall back to home rather than show a toast.
+      (async () => {
+        if (initialPath) {
+          try {
+            await api("GET", `/fs?path=${encodeURIComponent(initialPath)}`);
+            navigate(initialPath);
+            return;
+          } catch {
+            // fall through to default
+          }
+        }
+        navigate(null);
+      })();
     },
   });
 }
