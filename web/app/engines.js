@@ -15,9 +15,9 @@ export function mountEngines({ container, api, onError }) {
           <h3 class="engines-detail-name"></h3>
         </div>
         <div class="engines-header-actions">
-          <wa-button class="engines-detail-use icon-only" size="small" variant="brand"
+          <wa-button class="engines-detail-use icon-only" size="small"
                      aria-label="Use as active engine" hidden>
-            <wa-icon name="star"></wa-icon>
+            <wa-icon name="check"></wa-icon>
           </wa-button>
           <wa-button class="engines-detail-options icon-only" size="small"
                      aria-label="UCI options" hidden>
@@ -114,7 +114,7 @@ export function mountEngines({ container, api, onError }) {
 
       if (e.id === activeId) {
         const badge = document.createElement("wa-icon");
-        badge.name = "star";
+        badge.name = "check";
         badge.className = "engines-list-active-badge";
         li.appendChild(badge);
       }
@@ -200,7 +200,7 @@ export function mountEngines({ container, api, onError }) {
   addBtn.addEventListener("click", async () => {
     const path = await pickFile({
       api,
-      title: "Pick engine binary",
+      title: "Add engine",
       mode: "executable",
     });
     if (!path) return;

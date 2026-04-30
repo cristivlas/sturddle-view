@@ -190,11 +190,25 @@ export function pickFile({
       const pathInput = document.createElement("wa-input");
       pathInput.size = "small";
       pathInput.className = "fs-picker-path";
+
+      const backBtn = document.createElement("wa-button");
+      backBtn.size = "small";
+      backBtn.className = "icon-only";
+      backBtn.setAttribute("aria-label", "Back to previous directory");
+      const backIcon = document.createElement("wa-icon");
+      backIcon.setAttribute("name", "reply");
+      backBtn.appendChild(backIcon);
+      backBtn.disabled = true;
+
       const upBtn = document.createElement("wa-button");
       upBtn.size = "small";
-      upBtn.appearance = "outlined";
-      upBtn.textContent = "Up";
-      pathBar.append(upBtn, pathInput);
+      upBtn.className = "icon-only";
+      upBtn.setAttribute("aria-label", "Up to parent directory");
+      const upIcon = document.createElement("wa-icon");
+      upIcon.setAttribute("name", "arrow-up");
+      upBtn.appendChild(upIcon);
+
+      pathBar.append(backBtn, upBtn, pathInput);
 
       const listing = document.createElement("ul");
       listing.className = "fs-picker-list";
@@ -213,6 +227,9 @@ export function pickFile({
       selectBtn.disabled = true;
 
       let currentSelection = null;
+      // Browser-style history: stack of visited paths. The current dir
+      // sits at the top; Back pops one and re-navigates without pushing.
+      const history = [];
 
       function eligible(entry) {
         if (entry.error) return false;
@@ -221,19 +238,23 @@ export function pickFile({
         return entry.is_file;
       }
 
-      async function navigate(path) {
+      async function navigate(path, { push = true } = {}) {
         let body;
         try {
           const url = path ? `/fs?path=${encodeURIComponent(path)}` : "/fs";
           body = await api("GET", url);
         } catch (e) {
           toast(`Cannot list ${path}: ${e.message}`, { variant: "danger" });
-          return;
+          return false;
         }
         pathInput.value = body.path;
         currentSelection = wantsDir ? body.path : null;
         selectBtn.disabled = !wantsDir;
         upBtn.disabled = !body.parent;
+        if (push && history[history.length - 1] !== body.path) {
+          history.push(body.path);
+        }
+        backBtn.disabled = history.length < 2;
         listing.innerHTML = "";
 
         for (const entry of body.entries) {
@@ -277,15 +298,26 @@ export function pickFile({
 
           listing.append(li);
         }
+        return true;
       }
 
       upBtn.addEventListener("click", () => {
         if (pathInput.value) {
-          // Walk one level up using the API's parent.
           api("GET", `/fs?path=${encodeURIComponent(pathInput.value)}`).then((b) => {
             if (b.parent) navigate(b.parent);
           });
         }
+      });
+
+      backBtn.addEventListener("click", async () => {
+        if (history.length < 2) return;
+        const popped = history.pop(); // current
+        const prev = history[history.length - 1];
+        const ok = await navigate(prev, { push: false });
+        // Restore the popped entry if the navigation failed; otherwise
+        // we'd shorten history without actually moving back.
+        if (!ok) history.push(popped);
+        backBtn.disabled = history.length < 2;
       });
 
       pathInput.addEventListener("keydown", (ev) => {

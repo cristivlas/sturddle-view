@@ -45,7 +45,7 @@ export const playPerspective = {
           <div class="play-board-host"></div>
 
           <div id="board-controls">
-            <wa-button id="new-game" size="small" variant="brand">New game</wa-button>
+            <wa-button id="new-game" size="small">New game</wa-button>
             <wa-button id="takeback" size="small" disabled>Take back</wa-button>
             <wa-button id="pause" class="icon-only" size="small" disabled aria-label="Pause">
               <wa-icon name="pause"></wa-icon>

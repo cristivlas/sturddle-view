@@ -1,9 +1,12 @@
 :root {
-  --bg: #1c1c1c;
+  --bg: #1d1f24;
   --fg: #e8e8e8;
   --muted: #888;
   --accent: #6cc;
-  --panel: #252525;
+  --panel: #25272d;
+  --nav-btn-bg: #2a2d33;
+  --nav-btn-bg-hover: #32353c;
+  --nav-btn-bg-active: #3a3d44;
 
 
   --wa-font-family-body: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -12,6 +15,8 @@
 
   --wa-color-danger-fill-loud: #8a5a3c;
   --wa-color-danger-on-loud: #f4e4d2;
+  --wa-color-neutral-fill-loud: #3a3d44;
+  --wa-color-neutral-on-loud: #e8e8e8;
 }
 
 html { font-size: 16px; }
@@ -47,18 +52,19 @@ header {
   gap: 16px;
   padding: 8px 16px;
   background: var(--panel);
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid #2e3138;
 }
 header h1 { margin: 0; font-size: 16px; }
 nav button {
-  background: transparent;
+  background: var(--nav-btn-bg);
   color: var(--fg);
-  border: 1px solid #444;
+  border: 1px solid transparent;
+  border-radius: 4px;
   padding: 4px 12px;
   cursor: pointer;
 }
-nav button:hover { border-color: var(--accent); }
-nav button.active { border-color: var(--accent); color: var(--accent); }
+nav button:hover { background: var(--nav-btn-bg-hover); }
+nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
 .conn {
   margin-left: auto;
   width: 10px;
@@ -479,13 +485,17 @@ wa-dialog::part(body) { overflow-x: hidden !important; }
 wa-dialog::part(header-actions) { gap: 6px; }
 
 /* Headerless confirm/alert dialogs: the message is the heading. */
+/* Negative top margin compensates for WA's headerless body padding so the
+   message sits closer to the top of the dialog. Symmetric horizontal
+   margins keep the centered text from drifting toward the X close button. */
 .confirm-message {
-  margin: 4px 0 0;
+  margin: -30px 24px 0 24px;
   font-size: 15px;
   line-height: 1.5;
+  text-align: center;
 }
-/* Game-over headline: prominent but not oversized. */
 .confirm-message.game-over-message {
+  margin: 0;
   font-size: 20px;
   font-weight: 600;
   text-align: center;
