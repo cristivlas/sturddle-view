@@ -51,16 +51,47 @@ export const playPerspective = {
 
     // Settings cache (refreshed on settings-changed).
     let allowTakeback = true;
-    async function refreshSettings() {
+    // Snapshot of TC fields used at the start of the current game; lets
+    // us tell the user "applies on next game" if they edit TC mid-play.
+    let gameTcInitial = null;
+    let gameTcIncrement = null;
+    async function refreshSettings({ notifyOnDrift = false } = {}) {
       try {
         const s = await ctx.api("GET", "/settings");
         allowTakeback = s.allow_takeback !== false;
+        if (notifyOnDrift && !gameOver && resignAvailable) {
+          const drift = [];
+          // Side: settings.human_side is "white"|"black"|"random". Only
+          // compare deterministic choices; "random" never conflicts.
+          if (s.human_side === "white" && humanWhite === false) drift.push("side");
+          else if (s.human_side === "black" && humanWhite === true) drift.push("side");
+          // TC: compare against the snapshot taken at game start.
+          if (
+            gameTcInitial !== null &&
+            (Number(s.tc_initial_seconds) !== gameTcInitial ||
+              Number(s.tc_increment_seconds) !== gameTcIncrement)
+          ) {
+            drift.push("time control");
+          }
+          if (drift.length > 0) {
+            toast(
+              `New ${drift.join(" and ")} will apply on the next game.`,
+              { variant: "neutral" },
+            );
+          }
+        }
+        // Always refresh the snapshot from current settings when there is
+        // no active game (so the "next game" comparison is accurate).
+        if (!resignAvailable) {
+          gameTcInitial = Number(s.tc_initial_seconds);
+          gameTcIncrement = Number(s.tc_increment_seconds);
+        }
       } catch {
         // ignore
       }
     }
     await refreshSettings();
-    const onSettingsChanged = () => { refreshSettings(); };
+    const onSettingsChanged = () => { refreshSettings({ notifyOnDrift: true }); };
     window.addEventListener("sturddle:settings-changed", onSettingsChanged);
 
     // Ask server to re-emit current state so the freshly-mounted view syncs.
@@ -81,13 +112,24 @@ export const playPerspective = {
     let paused = false;
 
     const pauseIcon = pauseBtn.querySelector("wa-icon");
-    function refreshPauseBtn() {
+    // Resign is enabled whenever there is an active game; cleared on
+    // game_result. We track it explicitly so paused-state can additionally
+    // gate it without losing the "active game" signal.
+    let resignAvailable = false;
+    function setDisabled(btn, disabled) {
+      if (disabled) btn.setAttribute("disabled", "");
+      else btn.removeAttribute("disabled");
+    }
+    function refreshButtons() {
       const humanToMove = humanWhite ? turn === "white" : turn === "black";
-      const enable = !gameOver && humanToMove;
-      if (enable) pauseBtn.removeAttribute("disabled");
-      else pauseBtn.setAttribute("disabled", "");
+      setDisabled(pauseBtn, gameOver || !humanToMove);
       pauseIcon.setAttribute("name", paused ? "play" : "pause");
       pauseBtn.setAttribute("aria-label", paused ? "Resume" : "Pause");
+      setDisabled(
+        takebackBtn,
+        paused || gameOver || !allowTakeback || movesPlayed === 0,
+      );
+      setDisabled(resignBtn, paused || gameOver || !resignAvailable);
     }
 
     // --- Hook events for control-bar state changes (board state changes
@@ -97,38 +139,35 @@ export const playPerspective = {
         case "board_update": {
           movesPlayed = evt.payload.moves_san?.length ?? 0;
           gameOver = false;
+          resignAvailable = true;
           if (typeof evt.payload.human_white === "boolean") {
             humanWhite = evt.payload.human_white;
           }
           if (evt.payload.turn) turn = evt.payload.turn;
-          refreshPauseBtn();
           boardHost.classList.remove("board-idle");
-          const tbDis = !allowTakeback || movesPlayed === 0;
-          if (tbDis) takebackBtn.setAttribute("disabled", "");
-          else takebackBtn.removeAttribute("disabled");
           // Disable New Game only when human-as-white is at startpos and
           // can simply make their first move to start play. Black-to-play
           // humans need the button to trigger the engine's first move.
           const idleAsWhite =
             movesPlayed === 0 && evt.payload.human_white === true;
-          if (idleAsWhite) newGameBtn.setAttribute("disabled", "");
-          else newGameBtn.removeAttribute("disabled");
+          setDisabled(newGameBtn, idleAsWhite);
+          refreshButtons();
           break;
         }
         case "game_result":
           gameOver = true;
           paused = false;
-          resignBtn.setAttribute("disabled", "");
-          newGameBtn.removeAttribute("disabled");
+          resignAvailable = false;
+          setDisabled(newGameBtn, false);
           boardHost.classList.add("board-idle");
-          refreshPauseBtn();
+          refreshButtons();
           toast(`Game over: ${evt.payload.result}`, { variant: "neutral" });
           break;
         case "clock_tick":
           if (typeof evt.payload.paused === "boolean" && evt.payload.paused !== paused) {
             paused = evt.payload.paused;
             view.setEnabled(!paused);
-            refreshPauseBtn();
+            refreshButtons();
           }
           break;
       }
@@ -149,13 +188,30 @@ export const playPerspective = {
         view.setGameId(r.game_id);
         view.setHumanWhite(!!r.human_white);
         view.reset();
-        resignBtn.removeAttribute("disabled");
+        resignAvailable = true;
+        // Snapshot the TC settings used for THIS game so a later mid-game
+        // edit can detect drift.
+        try {
+          const s = await ctx.api("GET", "/settings");
+          gameTcInitial = Number(s.tc_initial_seconds);
+          gameTcIncrement = Number(s.tc_increment_seconds);
+        } catch {
+          // ignore — drift detection just won't trigger for TC.
+        }
+        refreshButtons();
       } catch (e) {
         reportError(ctx, "New game failed", e);
       }
     };
 
     const onResign = async () => {
+      const ok = await confirm({
+        message: "Resign the current game?",
+        okLabel: "Resign",
+        cancelLabel: "Keep playing",
+        destructive: true,
+      });
+      if (!ok) return;
       try {
         await ctx.api("POST", "/game/resign", {});
       } catch (e) {

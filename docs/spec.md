@@ -95,6 +95,17 @@ Server-side, persisted to a JSON file under the OS user-config directory
 semantics: every PUT writes to disk immediately and broadcasts a
 `sturddle:settings-changed` event to clients.
 
+Settings that can't be applied to an in-progress game (currently:
+`human_side`, `tc_initial_seconds`, `tc_increment_seconds`) are accepted
+and persisted, and the Play perspective surfaces a "will apply on next
+game" toast on drift. The current game is unaffected.
+
+TODO (when tournaments land): decide policy for settings that conflict
+with a running tournament — block the change, queue it, or freeze the
+relevant subset of settings while the tournament is in progress. The
+current "accept and notify" policy is fine for the single-game case but
+may not suffice once a tournament owns the engine for hours.
+
 Persisted fields:
 - `pgn_autosave` (toggle), `pgn_dir` (path) — save games as PGN
 - `tc_initial_seconds`, `tc_increment_seconds` — default time control
