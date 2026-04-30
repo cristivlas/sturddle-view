@@ -18,6 +18,7 @@ EventKind = Literal[
     "clock_update",
     "game_result",
     "tournament_update",
+    "tournament_status",
     "sprt_update",
     "agent_annotation",
     "system",

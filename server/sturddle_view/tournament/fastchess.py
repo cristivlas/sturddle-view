@@ -171,6 +171,14 @@ class FastchessRunner:
     def binary_path(self) -> str | None:
         return self._binary_path
 
+    def set_binary_path(self, path: str | None) -> None:
+        """Update the configured fastchess binary path.
+
+        Takes effect on the next ``start()``; a currently-running
+        subprocess is unaffected (its argv is frozen at spawn time).
+        """
+        self._binary_path = path
+
     def is_running(self) -> bool:
         return self._proc is not None and self._proc.returncode is None
 

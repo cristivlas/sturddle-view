@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import psutil
 from fastapi import FastAPI
@@ -14,13 +15,17 @@ from .api import engines as engines_api
 from .api import fs as fs_api
 from .api import game as game_api
 from .api import settings as settings_api
+from .api import tournaments as tournaments_api
 from .api import ws as ws_api
 from .config import Settings
 from .engines import EngineRegistry, resolve_selected
-from .events import EventBus
+from .events import Event, EventBus
 from .openings import OpeningBook
 from .play.game_store import GameStore
 from .play.human_vs_engine import HumanVsEngine
+from .tournament.fastchess import FastchessRunner
+from .tournament.orchestrator import Orchestrator
+from .tournament.store import TournamentStore, default_root
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +33,22 @@ log = logging.getLogger(__name__)
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     _maybe_restore_game(app)
+    # Tournament reconciliation: any 'running' rows on disk are stale.
+    # Phase 1 has no Resume — mark them stopped.
+    try:
+        reconciled = app.state.tournament_orch.reconcile_on_startup()
+        for t in reconciled:
+            log.info("reconciled stale running tournament: %s (%s)", t.id, t.name)
+    except Exception:
+        log.exception("tournament reconcile failed")
     yield
+    # Best-effort: stop any active tournament on shutdown.
+    try:
+        active = app.state.tournament_orch.active_id()
+        if active is not None:
+            await app.state.tournament_orch.stop(active)
+    except Exception:
+        log.exception("tournament shutdown stop failed")
     for task in list(app.state.ws_tasks):
         task.cancel()
     if app.state.ws_tasks:
@@ -92,11 +112,40 @@ def create_app(
     app.state.openings = OpeningBook.load()
     log.info("loaded %d opening lines", len(app.state.openings))
 
+    # Tournament subsystem: store + runner + orchestrator. Wired even
+    # when fastchess isn't installed; the Tournaments UI surfaces an
+    # empty-state until a binary is configured.
+    t_root = settings.tournament_root or str(default_root())
+    app.state.tournament_store = TournamentStore(Path(t_root))
+    app.state.tournament_runner = FastchessRunner(
+        binary_path=settings.tournament_fastchess_path
+    )
+    app.state.tournament_orch = Orchestrator(
+        app.state.tournament_store, app.state.tournament_runner
+    )
+
+    async def _tournament_broadcast(kind: str, payload: dict) -> None:
+        # Map orchestrator events onto the existing EventBus. Two kinds
+        # are surfaced to clients: status_change → tournament_status,
+        # everything else → tournament_update with the kind preserved
+        # in payload.kind.
+        if kind == "status_change":
+            await app.state.event_bus.publish(
+                Event(kind="tournament_status", payload=payload)
+            )
+        else:
+            await app.state.event_bus.publish(
+                Event(kind="tournament_update", payload={"kind": kind, **payload})
+            )
+
+    app.state.tournament_orch.set_broadcast(_tournament_broadcast)
+
     app.include_router(settings_api.router)
     app.include_router(engines_api.router)
     app.include_router(fs_api.router)
     app.include_router(game_api.router)
     app.include_router(agent_api.router)
+    app.include_router(tournaments_api.router)
     app.include_router(ws_api.router)
 
     @app.get("/healthz", include_in_schema=False)

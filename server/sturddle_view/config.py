@@ -29,6 +29,9 @@ PERSISTED_FIELDS = (
     "tc_increment_seconds",
     "human_side",
     "allow_takeback",
+    "tournament_fastchess_path",
+    "tournament_root",
+    "tournament_default_template",
 )
 
 
@@ -54,6 +57,11 @@ class Settings(BaseSettings):
     tc_increment_seconds: float = 0.0
     human_side: str = "white"
     allow_takeback: bool = True
+
+    # Tournament subsystem settings. None = use platform default / not configured.
+    tournament_fastchess_path: str | None = None
+    tournament_root: str | None = None
+    tournament_default_template: dict = Field(default_factory=dict)
 
     def apply_persisted(self, path: Path | None = None) -> None:
         path = path or default_settings_file()

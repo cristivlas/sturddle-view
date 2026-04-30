@@ -100,11 +100,21 @@ class TournamentStore:
     def root(self) -> Path:
         return self._root
 
+    def set_root(self, root: Path) -> None:
+        """Repoint the store at a different root. Affects future
+        operations only; existing on-disk tournaments under the old
+        root are not migrated."""
+        self._root = Path(root)
+
     def _ensure_root(self) -> None:
         self._root.mkdir(parents=True, exist_ok=True)
 
-    def _dir(self, tournament_id: str) -> Path:
+    def dir_for(self, tournament_id: str) -> Path:
+        """Path to the tournament's directory (may not exist yet)."""
         return self._root / tournament_id
+
+    # Backwards-compat alias used by the orchestrator and tests.
+    _dir = dir_for
 
     def _state_path(self, tournament_id: str) -> Path:
         return self._dir(tournament_id) / "state.json"
