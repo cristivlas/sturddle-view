@@ -19,12 +19,15 @@ from .config import Settings
 from .engines import EngineRegistry
 from .events import EventBus
 from .openings import OpeningBook
+from .play.game_store import GameStore
+from .play.human_vs_engine import HumanVsEngine
 
 log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    _maybe_restore_game(app)
     yield
     for task in list(app.state.ws_tasks):
         task.cancel()
@@ -34,10 +37,60 @@ async def _lifespan(app: FastAPI):
         await app.state.hve.shutdown()
 
 
+def _maybe_restore_game(app: FastAPI) -> None:
+    """Rehydrate the saved game (if any) into app.state.hve.
+
+    Skipped when no engine is resolvable (registry has no selection AND
+    no fallback --engine path), because HumanVsEngine needs a path to
+    eventually spawn the engine on the next move. The saved file is left
+    in place so a later engine selection still picks it up.
+    """
+    s = app.state
+    state = s.game_store.load()
+    if state is None:
+        return
+    engine_path: str | None = None
+    engine_name: str | None = None
+    engine_options: dict | None = None
+    sel = s.engines.selected_id
+    if sel:
+        try:
+            entry = s.engines.get(sel)
+            engine_path = entry.path
+            engine_name = entry.name
+            engine_options = dict(entry.options or {})
+        except KeyError:
+            engine_path = None
+    if engine_path is None and s.settings.engine_path:
+        engine_path = str(s.settings.engine_path)
+    if engine_path is None:
+        log.warning(
+            "saved game found but no engine is configured; "
+            "register and select one to resume"
+        )
+        return
+    hve = HumanVsEngine(
+        engine_path,
+        s.event_bus,
+        openings=s.openings,
+        settings=s.settings,
+        store=s.game_store,
+    )
+    hve.restore_from(state)
+    # Seed name + UCI options from the registry so a client reconnecting
+    # before any move sees the same label, and the engine spawns with the
+    # user's saved options on its first invocation.
+    hve.set_engine_name(engine_name)
+    hve.set_engine_options(engine_options)
+    s.hve = hve
+    log.info("restored saved game (%d plies)", len(state.moves_uci))
+
+
 def create_app(
     settings: Settings | None = None,
     *,
     engine_registry: EngineRegistry | None = None,
+    game_store: GameStore | None = None,
 ) -> FastAPI:
     settings = settings or Settings()
     settings.apply_persisted()
@@ -48,6 +101,7 @@ def create_app(
     app.state.hve = None  # lazy: HumanVsEngine, created on first /game/new
     app.state.ws_tasks = set()
     app.state.engines = engine_registry or EngineRegistry()
+    app.state.game_store = game_store or GameStore()
     app.state.openings = OpeningBook.load()
     log.info("loaded %d opening lines", len(app.state.openings))
 

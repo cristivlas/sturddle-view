@@ -19,6 +19,7 @@ import chess.engine
 import chess.pgn
 
 from ..events import Event, EventBus
+from .game_store import GameState, GameStore
 
 log = logging.getLogger(__name__)
 
@@ -79,11 +80,13 @@ class HumanVsEngine:
         bus: EventBus,
         openings=None,
         settings=None,
+        store: GameStore | None = None,
     ) -> None:
         self._engine_path = engine_path
         self._bus = bus
         self._openings = openings  # Optional[OpeningBook]
         self._settings = settings  # Optional[Settings]
+        self._store = store
         self._engine: chess.engine.UciProtocol | None = None
         # Display name shown to the user. Caller may set via set_engine_name()
         # to override (e.g. with the registry name). Otherwise _ensure_engine
@@ -190,6 +193,7 @@ class HumanVsEngine:
             self._clock_history = []
             self._paused = False
             self._game_id = uuid.uuid4().hex[:12]
+            self._persist()
             await self._publish_board()
             await self._publish_clock()
         self._start_tick()
@@ -216,6 +220,7 @@ class HumanVsEngine:
             self._clock_history.append((self._white_time, self._black_time))
             self._consume_turn_time()
             self._board.push(move)
+            self._persist()
             await self._publish_board()
             await self._publish_clock()
             ended = self._board.is_game_over()
@@ -270,6 +275,7 @@ class HumanVsEngine:
             self._black_time = bt
             self._turn_started_at = time.monotonic()
             self._paused = False
+            self._persist()
             await self._publish_board()
             await self._publish_clock()
 
@@ -291,6 +297,7 @@ class HumanVsEngine:
             )
             self._game_id = None
             self._board = None
+            self._clear_store()
 
     async def pause(self) -> None:
         """Pause the clock. Only valid on the human's turn.
@@ -317,6 +324,7 @@ class HumanVsEngine:
                     self._black_time = max(0.0, self._black_time - elapsed)
             self._turn_started_at = None
             self._paused = True
+            self._persist()
             await self._cancel_tick()
             await self._publish_clock()
 
@@ -328,6 +336,7 @@ class HumanVsEngine:
                 return
             self._paused = False
             self._turn_started_at = time.monotonic()
+            self._persist()
             # Start the tick under the lock so a racing pause() cannot land
             # between unlock and _start_tick (which would leave the loop
             # running with _paused=True flapping).
@@ -344,6 +353,58 @@ class HumanVsEngine:
                 except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
                     pass
                 self._engine = None
+
+    # ----- persistence -----
+
+    def _persist(self) -> None:
+        """Snapshot the active game to disk. Call under self._lock."""
+        if self._store is None or self._board is None or self._game_id is None:
+            return
+        state = GameState(
+            game_id=self._game_id,
+            human_white=self._human_white,
+            tc_initial_seconds=self._tc.initial_seconds,
+            tc_increment_seconds=self._tc.increment_seconds,
+            white_time=self._white_time,
+            black_time=self._black_time,
+            paused=self._paused,
+            moves_uci=[m.uci() for m in self._board.move_stack],
+            clock_history=[[w, b] for (w, b) in self._clock_history],
+        )
+        try:
+            self._store.save(state)
+        except Exception:
+            # Persistence is best-effort: never let a save failure (disk full,
+            # serialization quirk, permissions) abort the move that triggered it.
+            log.exception("could not persist game state")
+
+    def _clear_store(self) -> None:
+        if self._store is not None:
+            self._store.clear()
+
+    def restore_from(self, state: GameState) -> None:
+        """Rehydrate from a saved snapshot. Engine process is NOT spawned;
+        it'll spawn lazily on the first call that needs it (`_ensure_engine`).
+        """
+        self._board = chess.Board()
+        for uci in state.moves_uci:
+            self._board.push(chess.Move.from_uci(uci))
+        self._game_id = state.game_id
+        self._human_white = state.human_white
+        self._tc = TimeControl(
+            initial_seconds=state.tc_initial_seconds,
+            increment_seconds=state.tc_increment_seconds,
+        )
+        self._white_time = state.white_time
+        self._black_time = state.black_time
+        self._paused = state.paused
+        self._clock_history = [(w, b) for (w, b) in state.clock_history]
+        # Don't credit wall-clock time elapsed during the outage to whoever
+        # was thinking; reset turn_started_at to "now" if unpaused.
+        self._turn_started_at = None if state.paused else time.monotonic()
+        # Tick loop starts once the engine is needed (or on resume).
+        if not state.paused and not self._board.is_game_over():
+            self._start_tick()
 
     # ----- internals -----
 
@@ -437,6 +498,7 @@ class HumanVsEngine:
         async with self._lock:
             self._game_id = None
             self._board = None
+            self._clear_store()
 
     async def _engine_to_move(self) -> None:
         self._think_task = asyncio.create_task(self._think_and_play())
@@ -500,6 +562,7 @@ class HumanVsEngine:
             self._clock_history.append((self._white_time, self._black_time))
             self._consume_turn_time()
             self._board.push(best)
+            self._persist()
             await self._publish_board()
             await self._publish_clock()
             ended = self._board.is_game_over()
@@ -559,6 +622,7 @@ class HumanVsEngine:
         result = outcome.result() if outcome else "*"
         termination = outcome.termination.name.lower() if outcome else "unknown"
         self._maybe_save_pgn(result=result, termination=termination)
+        self._clear_store()
         payload = {"result": result, "termination": termination}
         await self._bus.publish(
             Event(kind="game_result", game_id=self._game_id, payload=payload)

@@ -36,12 +36,7 @@ def _install_active_game(app, *, engine_path: str, human_white: bool = True) -> 
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
-    # Isolate from the user's persisted settings file (which would otherwise
-    # overwrite engine_path inside create_app -> apply_persisted).
-    import sturddle_view.config as cfg
-    monkeypatch.setattr(cfg, "default_settings_file", lambda: tmp_path / "no_settings.json")
-
+def client(tmp_path):
     # _resolve_engine reads settings.engine_path (a Path) when no registry
     # entry is selected. The path does not need to exist — _get_hve only
     # passes it as a string into HumanVsEngine.engine_path comparison.
