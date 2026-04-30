@@ -10,14 +10,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
-import tempfile
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import chess.engine
 from platformdirs import user_config_dir
+
+from ._atomic import atomic_write_json
 
 log = logging.getLogger(__name__)
 
@@ -156,23 +156,11 @@ class EngineRegistry:
         self._loaded = True
 
     def _save(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "engines": [asdict(e) for e in self._engines.values()],
             "selected_id": self._selected_id,
         }
-        # Atomic write: tmp file in same dir, then replace.
-        fd, tmp = tempfile.mkstemp(dir=self._path.parent, prefix=".engines.", suffix=".json")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2)
-            os.replace(tmp, self._path)
-        except Exception:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+        atomic_write_json(self._path, payload, indent=2)
 
     def list(self) -> list[Engine]:
         self._ensure_loaded()

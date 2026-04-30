@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import json
-import os
 import secrets
-import tempfile
 from pathlib import Path
 
 from platformdirs import user_config_dir
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from ._atomic import atomic_write_json
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -72,19 +72,8 @@ class Settings(BaseSettings):
 
     def save_persisted(self, path: Path | None = None) -> None:
         path = path or default_settings_file()
-        path.parent.mkdir(parents=True, exist_ok=True)
         payload = {}
         for k in PERSISTED_FIELDS:
             v = getattr(self, k, None)
             payload[k] = str(v) if isinstance(v, Path) else v
-        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".settings.", suffix=".json")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2)
-            os.replace(tmp, path)
-        except Exception:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+        atomic_write_json(path, payload, indent=2)

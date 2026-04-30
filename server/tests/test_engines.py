@@ -73,12 +73,12 @@ def test_atomic_write_no_partial_file_on_error(tmp_path, monkeypatch):
 
     # Force os.replace to fail; the original file must remain intact and no
     # tmp file should leak in the directory.
-    import sturddle_view.engines as mod
+    import sturddle_view._atomic as atomic
 
     def boom(*_args, **_kwargs):
         raise OSError("simulated failure")
 
-    monkeypatch.setattr(mod.os, "replace", boom)
+    monkeypatch.setattr(atomic.os, "replace", boom)
     with pytest.raises(OSError):
         reg.add(name="B", path="/p/b")
 
