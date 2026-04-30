@@ -148,12 +148,13 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   --grid-gap: 16px;
   display: grid;
   grid-template-columns: var(--rail-w) var(--board-col-px, minmax(320px, 1fr)) var(--rail-w);
-  grid-template-rows: 1fr auto;
+  grid-template-rows: auto auto;
   grid-template-areas:
     ".    board side"
     ".    controls .";
   gap: 12px var(--grid-gap);
   justify-content: center;
+  align-content: start;
   min-height: 0;
   height: 100%;
 }
