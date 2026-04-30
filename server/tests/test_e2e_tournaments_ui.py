@@ -7,7 +7,7 @@ What this test verifies (without a running fastchess):
   - Engines perspective shows exactly two sub-tabs: Roster, Tournaments
     (the Observe sub-tab was removed in Slice 6).
   - Switching to Tournaments shows the empty state since no fastchess
-    is configured: "fastchess not found …".
+    is configured: "fastchess not configured …".
   - Setting fastchess_path via the API flips the empty state to
     "no tournaments yet".
   - Creating a tournament via the API surfaces a row in the list with
@@ -110,7 +110,7 @@ async def test_tournaments_perspective_smoke(server):
             await page.wait_for_function(
                 """() => {
                     const e = document.querySelector('.tournaments-empty .empty-message');
-                    return e && /fastchess not found/i.test(e.textContent);
+                    return e && /fastchess not configured/i.test(e.textContent);
                 }""",
                 timeout=5000,
             )
@@ -227,44 +227,44 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
                     timeout=2000,
                 )
 
-                # ---- Slice 7: Defaults editor saves and round-trips ----
-                await page.click(".settings-edit-defaults")
+                # ---- Slice 7 rework: Defaults live in Settings → Tournament tab ----
+                # Open the global Settings dialog via the gear button.
+                await page.click("#settings-btn")
                 await page.wait_for_function(
-                    """() => document.querySelector('wa-dialog wa-input[data-key="tc"]')""",
+                    """() => document.querySelector('wa-dialog wa-tab[panel="tournament"]')""",
                     timeout=5000,
                 )
-                # Set new defaults: tc=60+0.6, rounds=42, games_in_parallel=4
-                await page.evaluate(
-                    """() => {
-                        document.querySelector('wa-dialog wa-input[data-key="tc"]').value = "60+0.6";
-                        document.querySelector('wa-dialog wa-input[data-key="rounds"]').value = "42";
-                        document.querySelector('wa-dialog wa-input[data-key="games_in_parallel"]').value = "4";
-                    }"""
-                )
-                # Click "Save" — the brand button in the dialog footer.
-                await page.evaluate(
-                    """() => {
-                        const btns = document.querySelectorAll('wa-dialog wa-button[slot="footer"]');
-                        for (const b of btns) {
-                            if (b.textContent.trim() === 'Save') b.click();
-                        }
-                    }"""
-                )
-                # Dialog closes.
+                await page.click('wa-dialog wa-tab[panel="tournament"]')
+                # Wait for the template form inside the Tournament tab.
                 await page.wait_for_function(
-                    "() => !document.querySelector('wa-dialog')",
-                    timeout=2000,
+                    """() => document.querySelector('wa-dialog wa-tab-panel[name="tournament"] wa-input[data-key="tc"]')""",
+                    timeout=5000,
                 )
-                # Confirm via API that the defaults persisted.
-                persisted = await page.evaluate(
+                # Set new defaults: tc=60+0.6, rounds=42, games_in_parallel=4. Auto-saves
+                # on input (debounced 400ms).
+                await page.evaluate(
+                    """() => {
+                        const setVal = (k, v) => {
+                            const el = document.querySelector(
+                                `wa-dialog wa-tab-panel[name="tournament"] wa-input[data-key="${k}"]`
+                            );
+                            el.value = v;
+                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                        };
+                        setVal('tc', '60+0.6');
+                        setVal('rounds', '42');
+                        setVal('games_in_parallel', '4');
+                    }"""
+                )
+                # Wait for the debounced save to land server-side.
+                await page.wait_for_function(
                     """async () => {
                         const r = await fetch('/api/tournament-settings');
-                        return (await r.json()).default_template;
-                    }"""
+                        const tpl = (await r.json()).default_template || {};
+                        return tpl.tc === '60+0.6' && tpl.rounds === 42 && tpl.games_in_parallel === 4;
+                    }""",
+                    timeout=5000,
                 )
-                assert persisted["tc"] == "60+0.6"
-                assert persisted["rounds"] == 42
-                assert persisted["games_in_parallel"] == 4
 
                 assert page_errors == [], "JS errors during test:\n" + "\n".join(page_errors)
             finally:

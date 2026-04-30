@@ -2,7 +2,8 @@
 // every toggle / input commits to the server immediately (debounced for
 // text fields). No Save button. The X just closes.
 
-import { showDialog, toast } from "./dialogs.js";
+import { pickFile, showDialog, toast } from "./dialogs.js";
+import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 
 // Persisted unit is always seconds (float). The UI picks the most natural
 // display unit on load (largest unit with no fractional remainder) and
@@ -92,8 +93,10 @@ function debounce(fn, ms) {
 
 export async function openSettingsDialog({ api }) {
   let initial;
+  let tournamentInitial;
   try {
     initial = await api("GET", "/settings");
+    tournamentInitial = await api("GET", "/api/tournament-settings");
   } catch (e) {
     toast(`Couldn't load settings: ${e.message}`, { variant: "danger" });
     return;
@@ -101,8 +104,8 @@ export async function openSettingsDialog({ api }) {
 
   return showDialog({
     label: "Settings",
-    width: "min(560px, 90vw)",
-    height: "min(440px, 80vh)",
+    width: "min(760px, 94vw)",
+    height: "min(720px, 92vh)",
     body: (resolve, dialog) => {
       // ---- helper: PUT a partial settings update; toast on failure. ----
       const putSettings = async (patch) => {
@@ -114,6 +117,15 @@ export async function openSettingsDialog({ api }) {
         }
       };
       const putSettingsDebounced = debounce(putSettings, 400);
+
+      const putTournamentSettings = async (patch) => {
+        try {
+          tournamentInitial = await api("PUT", "/api/tournament-settings", patch);
+          window.dispatchEvent(new CustomEvent("sturddle:settings-changed"));
+        } catch (e) {
+          toast(`Save failed: ${e.message}`, { variant: "danger" });
+        }
+      };
 
       const tabs = document.createElement("wa-tab-group");
       tabs.placement = "start";
@@ -201,7 +213,90 @@ export async function openSettingsDialog({ api }) {
 
       playPanel.append(tcInitialRow, tcIncrementRow, humanSideRow, takebackRow);
 
-      tabs.append(generalTab, playTab, generalPanel, playPanel);
+      // --- Tournament tab ---
+      const tournamentTab = document.createElement("wa-tab");
+      tournamentTab.panel = "tournament";
+      tournamentTab.textContent = "Tournament";
+      const tournamentPanel = document.createElement("wa-tab-panel");
+      tournamentPanel.name = "tournament";
+
+      // Path rows: fastchess binary + tournaments root.
+      // Layout: label on top, [path][Browse] on a single row underneath.
+      // Both Browse buttons end up right-aligned at the same X.
+      function pathRow(labelText, value, mode, pickerTitle, onPick) {
+        const row = document.createElement("div");
+        row.className = "settings-tournament-path-row";
+        const lbl = document.createElement("div");
+        lbl.className = "settings-tournament-path-label";
+        lbl.textContent = labelText;
+        const inner = document.createElement("div");
+        inner.className = "settings-tournament-path-inner";
+        const display = document.createElement("span");
+        display.className = "path-display";
+        display.textContent = value || "(not set)";
+        if (!value) display.classList.add("muted");
+        const browse = document.createElement("wa-button");
+        browse.size = "small";
+        browse.textContent = "Browse…";
+        browse.addEventListener("click", async () => {
+          const path = await pickFile({ api, mode, title: pickerTitle });
+          if (path) {
+            display.textContent = path;
+            display.classList.remove("muted");
+            onPick(path);
+          }
+        });
+        inner.append(display, browse);
+        row.append(lbl, inner);
+        return row;
+      }
+
+      tournamentPanel.append(
+        pathRow(
+          "Fastchess binary",
+          tournamentInitial.fastchess_path || tournamentInitial.fastchess_detected || "",
+          "executable",
+          "Pick fastchess binary",
+          (p) => putTournamentSettings({ fastchess_path: p }),
+        ),
+        pathRow(
+          "Tournaments root",
+          tournamentInitial.tournaments_root || "",
+          "directory",
+          "Pick tournaments root",
+          (p) => putTournamentSettings({ tournaments_root: p }),
+        ),
+      );
+
+      // Defaults heading + the shared template form.
+      const defaultsHeading = document.createElement("div");
+      defaultsHeading.className = "settings-section-heading";
+      defaultsHeading.textContent = "Defaults";
+      defaultsHeading.title = "Pre-fill values for new tournaments";
+      tournamentPanel.appendChild(defaultsHeading);
+
+      const tplHost = document.createElement("div");
+      const tplCtl = mountTournamentTemplateForm({
+        container: tplHost,
+        initialValues: tournamentInitial.default_template || {},
+      });
+      tournamentPanel.appendChild(tplHost);
+
+      // Auto-save the template on input changes (debounced).
+      const persistTemplate = debounce(() => {
+        let template;
+        try {
+          template = tplCtl.getValues();
+        } catch (e) {
+          toast(e.message, { variant: "danger" });
+          return;
+        }
+        putTournamentSettings({ default_template: template });
+      }, 400);
+      tplHost.addEventListener("input", persistTemplate);
+      tplHost.addEventListener("change", persistTemplate);
+
+      tabs.append(generalTab, playTab, tournamentTab, generalPanel, playPanel, tournamentPanel);
 
       dialog.append(tabs);
     },

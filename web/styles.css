@@ -586,34 +586,40 @@ wa-dialog wa-tab-panel > * + * { margin-top: 14px; }
 
 /* ---------- Tournaments tab ---------- */
 .tournaments-panel { display: flex; flex-direction: column; gap: 12px; min-height: 50vh; }
-.tournaments-settings {
-  background: var(--panel);
-  border: 1px solid #2e3138;
-  border-radius: 6px;
-  padding: 6px 10px;
+.tournaments-toolbar { display: flex; gap: 8px; }
+
+/* Settings dialog: Tournament tab */
+.settings-tournament-path-row {
+  display: flex; flex-direction: column; gap: 4px;
+  max-width: none; margin-bottom: 8px;
 }
-.tournaments-settings .settings-row {
-  display: flex; align-items: center; gap: 10px; padding: 2px 0;
-  max-width: none;
+.settings-tournament-path-label {
+  font-size: 12px;
 }
-.tournaments-settings .settings-row label {
-  flex: 0 0 auto; color: var(--muted); font-size: 12px;
+.settings-tournament-path-inner {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
 }
-.tournaments-settings .path-display {
+.settings-tournament-path-inner .path-display {
   flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-family: var(--wa-font-family-code); font-size: 12px;
   direction: rtl; text-align: left;
 }
-.tournaments-settings .path-display.error,
-.tournaments-settings .path-display.muted {
-  direction: ltr;
+.settings-tournament-path-inner .path-display.muted { direction: ltr; }
+.settings-section-heading {
+  font-size: 12px; color: var(--muted); margin: 12px 0 4px 0;
+  text-transform: uppercase; letter-spacing: 0.05em;
 }
-.tournaments-settings .path-display.error { color: var(--wa-color-danger-on-loud); }
-.tournaments-settings .settings-row wa-button::part(base) {
-  padding-inline: 8px;
+
+/* Settings dialog: long tab panels scroll within the dialog instead of
+   pushing the dialog past the viewport. The earlier `overflow: visible`
+   rules above are needed to let select/popover overlays escape; they also
+   disable scroll. We restore vertical scroll only on the dialog body
+   (X stays visible so wa-select popups still escape). */
+wa-dialog::part(body) {
+  overflow-y: auto !important;
+  max-height: calc(var(--dialog-height, 80vh) - 64px);
 }
-.tournaments-toolbar { display: flex; gap: 8px; }
 .tournaments-empty {
   display: flex; align-items: center; justify-content: center;
   min-height: 30vh; color: var(--muted);
@@ -649,17 +655,48 @@ wa-dialog wa-tab-panel > * + * { margin-top: 14px; }
 /* New Tournament dialog */
 .new-tournament-form { display: flex; flex-direction: column; gap: 12px; }
 .new-tournament-form .nt-section { display: flex; flex-direction: column; gap: 6px; }
-.new-tournament-form .nt-section label {
+.new-tournament-form .nt-section-label {
   color: var(--muted); font-size: 12px;
-}
-.new-tournament-form .nt-engines {
-  list-style: none; padding: 6px 8px; margin: 0;
-  background: var(--bg); border: 1px solid #2e3138; border-radius: 4px;
-  max-height: 200px; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 4px;
+  text-transform: uppercase; letter-spacing: 0.05em;
 }
 
-/* Tournament template form (Slice 7 — reusable component) */
+/* Two-pane engine builder */
+.ne-panes {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 10px;
+  align-items: stretch;
+}
+.ne-pane {
+  background: var(--bg);
+  border: 1px solid #2e3138; border-radius: 4px;
+  display: flex; flex-direction: column; min-height: 180px;
+}
+.ne-pane-title {
+  padding: 6px 10px; font-size: 11px; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.05em;
+  border-bottom: 1px solid #2e3138;
+}
+.ne-order-hint { text-transform: none; letter-spacing: 0; font-size: 11px; }
+.ne-list {
+  list-style: none; margin: 0; padding: 4px;
+  flex: 1; overflow-y: auto; min-height: 0;
+}
+.ne-item {
+  padding: 4px 8px; cursor: pointer; border-radius: 3px;
+}
+.ne-item:hover { background: var(--nav-btn-bg); }
+.ne-item.selected { background: var(--accent); color: #000; }
+.ne-controls, .ne-reorder {
+  display: flex; flex-direction: column; gap: 4px;
+  align-items: center; justify-content: center;
+}
+.ne-reorder {
+  flex-direction: row; padding: 4px;
+  border-top: 1px solid #2e3138;
+}
+
+/* Tournament template form (reusable component) */
 .tournament-template-form { display: flex; flex-direction: column; gap: 10px; }
 .tournament-template-form .ttf-grid {
   display: grid;
@@ -667,27 +704,33 @@ wa-dialog wa-tab-panel > * + * { margin-top: 14px; }
   gap: 8px;
 }
 .tournament-template-form .ttf-ponder-row { padding: 4px 0; }
-.tournament-template-form details.ttf-advanced {
-  background: var(--bg);
-  border: 1px solid #2e3138;
-  border-radius: 4px;
-  padding: 6px 10px;
+.tournament-template-form .ttf-adjudication {
+  display: flex; flex-direction: column; gap: 10px;
 }
-.tournament-template-form details.ttf-advanced > summary {
-  cursor: pointer;
+.tournament-template-form .ttf-adj-group {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.tournament-template-form .ttf-adj-header {
   font-size: 12px;
-  color: var(--muted);
 }
-.tournament-template-form .ttf-advanced-hint {
-  font-size: 11px; color: var(--muted); margin: 4px 0 6px 0;
+.tournament-template-form .ttf-adj-fields {
+  display: grid; gap: 6px;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  transition: opacity 0.15s;
 }
-.tournament-template-form details.ttf-advanced[open] wa-textarea {
-  display: block; margin-top: 4px;
+.tournament-template-form .ttf-adj-fields.disabled {
+  opacity: 0.45;
+}
+@media (max-width: 600px) {
+  .tournament-template-form .ttf-adj-fields {
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
+  }
 }
 
 .inspect-form { display: flex; flex-direction: column; gap: 10px; }
 .inspect-meta { font-size: 12px; }
-.tournaments-settings .defaults-summary { font-size: 12px; }
 
 /* Tournament workspace windows (Slice 8) */
 .winbox.sturddle-wb { background: var(--panel); color: var(--fg); border: 1px solid #2e3138; }

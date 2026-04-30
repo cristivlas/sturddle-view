@@ -1,26 +1,15 @@
 // Reusable tournament-template form. Mounted in three contexts:
-//   1. Settings sub-area  → editable; persists as the default for new tournaments.
+//   1. Global Settings dialog → "Tournament" tab (defaults for new tournaments).
 //   2. New Tournament dialog → editable; pre-filled from defaults; save = create.
 //   3. Inspect existing tournament → read-only; renders frozen template values.
 //
-// Phase 1 ships the "core" field set (TC, hash, threads, games_in_parallel,
-// rounds, tournament type / seeds) plus an Advanced JSON pass-through for
-// anything else (SPRT, adjudication, book, tablebase). The advanced field
-// keeps the spec's full template surface reachable today; individual UI
-// sections for those subsystems can replace it slice-by-slice later.
+// Native fields cover everything Phase 1 needs: time control, hash, threads,
+// games-in-parallel, rounds, tournament type / seeds, ponder, resign, draw.
+// SPRT is Phase 2 work.
 
 const TOURNAMENT_TYPES = [
   { value: "roundrobin", label: "Round robin" },
   { value: "gauntlet",   label: "Gauntlet" },
-];
-
-const FIELD_DEFS = [
-  // [key, label, type, attrs, isCore]
-  ["tc",                "Time control",      "text",   { placeholder: "10+0.1" }],
-  ["hash",              "Hash (MB)",          "number", { min: 1 }],
-  ["threads",           "Threads",            "number", { min: 1 }],
-  ["games_in_parallel", "Games in parallel",  "number", { min: 1 }],
-  ["rounds",            "Rounds",             "number", { min: 1 }],
 ];
 
 
@@ -32,26 +21,36 @@ export function mountTournamentTemplateForm({
   container.innerHTML = "";
   container.classList.add("tournament-template-form");
 
+  // ---- Core grid ---------------------------------------------------------
+
   const grid = document.createElement("div");
   grid.className = "ttf-grid";
 
   const inputs = {};
 
-  for (const [key, label, type, attrs] of FIELD_DEFS) {
+  function addInput(key, label, { type = "text", min, placeholder, defaultValue } = {}) {
     const input = document.createElement("wa-input");
     input.label = label;
     input.size = "small";
     input.type = type;
     input.dataset.key = key;
-    for (const [k, v] of Object.entries(attrs || {})) input.setAttribute(k, v);
-    if (key in initialValues && initialValues[key] != null) input.value = String(initialValues[key]);
+    if (min != null) input.setAttribute("min", String(min));
+    if (placeholder) input.placeholder = placeholder;
+    const v = initialValues[key] != null ? initialValues[key] : defaultValue;
+    if (v != null) input.value = String(v);
     if (readOnly) input.setAttribute("readonly", "");
     inputs[key] = input;
-    grid.appendChild(input);
+    return input;
   }
 
-  // Tournament type: select + optional seeds. Seeds is only meaningful
-  // for gauntlet, so we hide it for round-robin.
+  grid.append(
+    addInput("tc",                "Time control",     { placeholder: "10+0.1" }),
+    addInput("hash",              "Hash (MB)",        { type: "number", min: 1 }),
+    addInput("threads",           "Threads",          { type: "number", min: 1, defaultValue: 1 }),
+    addInput("games_in_parallel", "Games in parallel",{ type: "number", min: 1, defaultValue: 1 }),
+    addInput("rounds",            "Rounds",           { type: "number", min: 1 }),
+  );
+
   const typeSelect = document.createElement("wa-select");
   typeSelect.label = "Tournament type";
   typeSelect.size = "small";
@@ -67,15 +66,7 @@ export function mountTournamentTemplateForm({
   inputs.tournament_type = typeSelect;
   grid.appendChild(typeSelect);
 
-  const seedsInput = document.createElement("wa-input");
-  seedsInput.label = "Seeds";
-  seedsInput.size = "small";
-  seedsInput.type = "number";
-  seedsInput.setAttribute("min", "1");
-  seedsInput.dataset.key = "seeds";
-  if (initialValues.seeds != null) seedsInput.value = String(initialValues.seeds);
-  if (readOnly) seedsInput.setAttribute("readonly", "");
-  inputs.seeds = seedsInput;
+  const seedsInput = addInput("seeds", "Seeds", { type: "number", min: 1 });
   grid.appendChild(seedsInput);
 
   function syncSeedsVisibility() {
@@ -84,7 +75,8 @@ export function mountTournamentTemplateForm({
   syncSeedsVisibility();
   typeSelect.addEventListener("wa-change", syncSeedsVisibility);
 
-  // Ponder switch — keep it on its own row so the toggle is visually clear.
+  // ---- Ponder ------------------------------------------------------------
+
   const ponderRow = document.createElement("div");
   ponderRow.className = "ttf-ponder-row";
   const ponderSwitch = document.createElement("wa-switch");
@@ -96,79 +88,157 @@ export function mountTournamentTemplateForm({
   inputs.ponder = ponderSwitch;
   ponderRow.appendChild(ponderSwitch);
 
-  // Advanced (JSON) textarea — escape hatch for SPRT, adjudication, book,
-  // tablebase, etc. until each gets its own UI section. Pre-filled with any
-  // initial keys we don't render natively.
-  const knownKeys = new Set([
-    ...FIELD_DEFS.map(([k]) => k),
-    "tournament_type",
-    "seeds",
-    "ponder",
-  ]);
-  const advancedObj = {};
-  for (const [k, v] of Object.entries(initialValues)) {
-    if (!knownKeys.has(k)) advancedObj[k] = v;
-  }
-  const advancedDetails = document.createElement("details");
-  advancedDetails.className = "ttf-advanced";
-  if (Object.keys(advancedObj).length > 0) advancedDetails.open = true;
-  advancedDetails.innerHTML = `
-    <summary>Advanced (JSON)</summary>
-    <p class="ttf-advanced-hint">SPRT, adjudication, opening book, tablebase. Merged into the template at save time. Phase 2 replaces this with per-feature sections.</p>
-  `;
-  const advancedTextarea = document.createElement("wa-textarea");
-  advancedTextarea.size = "small";
-  advancedTextarea.rows = 6;
-  advancedTextarea.value = JSON.stringify(advancedObj, null, 2);
-  if (readOnly) advancedTextarea.setAttribute("readonly", "");
-  advancedDetails.appendChild(advancedTextarea);
+  // ---- Adjudication: Resign + Draw --------------------------------------
 
-  container.append(grid, ponderRow, advancedDetails);
+  // Customary fastchess adjudication defaults — used to prefill the inputs
+  // when the user hasn't set anything. The on/off switch starts off; flipping
+  // it on adopts these values, which the user can then override.
+  const RESIGN_DEFAULTS = { movecount: 3, score: 700 };
+  const DRAW_DEFAULTS   = { movenumber: 40, movecount: 8, score: 10 };
+
+  const resign = initialValues.resign || {};
+  const draw   = initialValues.draw   || {};
+
+  const adjSection = document.createElement("div");
+  adjSection.className = "ttf-adjudication";
+
+  // Each adjudication group has its own row + an on/off switch that
+  // enables/disables its inputs. The switch state is what determines
+  // whether the group is included in getValues() output.
+  function makeAdjGroup(label, enabled) {
+    const group = document.createElement("div");
+    group.className = "ttf-adj-group";
+    const header = document.createElement("div");
+    header.className = "ttf-adj-header";
+    const sw = document.createElement("wa-switch");
+    sw.size = "small";
+    if (enabled) sw.setAttribute("checked", "");
+    if (readOnly) sw.setAttribute("disabled", "");
+    sw.textContent = label;
+    header.appendChild(sw);
+    const fields = document.createElement("div");
+    fields.className = "ttf-adj-fields";
+    group.append(header, fields);
+    return { group, sw, fields };
+  }
+
+  function adjInput(label, key, { min } = {}) {
+    const i = document.createElement("wa-input");
+    i.label = label;
+    i.size = "small";
+    i.type = "number";
+    if (min != null) i.setAttribute("min", String(min));
+    i.dataset.key = key;
+    if (readOnly) i.setAttribute("readonly", "");
+    inputs[key] = i;
+    return i;
+  }
+
+  // Resign row
+  const resignEnabled = !!(resign.movecount != null && resign.score != null);
+  const resignBlock = makeAdjGroup("Resign after", resignEnabled);
+  const resignMoves = adjInput("Moves", "resign.movecount", { min: 1 });
+  const resignScore = adjInput("Score (cp)", "resign.score");
+  resignMoves.value = String(resign.movecount ?? RESIGN_DEFAULTS.movecount);
+  resignScore.value = String(resign.score ?? RESIGN_DEFAULTS.score);
+  resignBlock.fields.append(resignMoves, resignScore);
+
+  // Draw row
+  const drawEnabled = !!(draw.movenumber != null && draw.movecount != null && draw.score != null);
+  const drawBlock = makeAdjGroup("Draw after", drawEnabled);
+  const drawStart = adjInput("From move", "draw.movenumber", { min: 1 });
+  const drawMoves = adjInput("For moves", "draw.movecount", { min: 1 });
+  const drawScore = adjInput("|Score| ≤ (cp)", "draw.score", { min: 0 });
+  drawStart.value = String(draw.movenumber ?? DRAW_DEFAULTS.movenumber);
+  drawMoves.value = String(draw.movecount ?? DRAW_DEFAULTS.movecount);
+  drawScore.value = String(draw.score ?? DRAW_DEFAULTS.score);
+  drawBlock.fields.append(drawStart, drawMoves, drawScore);
+
+  adjSection.append(resignBlock.group, drawBlock.group);
+
+  // Wire the on/off switches to enable/disable their inputs.
+  function syncEnabled(block, fieldList) {
+    const on = block.sw.checked;
+    for (const f of fieldList) {
+      if (on && !readOnly) {
+        f.removeAttribute("disabled");
+      } else {
+        f.setAttribute("disabled", "");
+      }
+    }
+    block.fields.classList.toggle("disabled", !on);
+  }
+  const resignFields = [resignMoves, resignScore];
+  const drawFields = [drawStart, drawMoves, drawScore];
+  syncEnabled(resignBlock, resignFields);
+  syncEnabled(drawBlock, drawFields);
+  resignBlock.sw.addEventListener("change", () => syncEnabled(resignBlock, resignFields));
+  drawBlock.sw.addEventListener("change", () => syncEnabled(drawBlock, drawFields));
+
+  container.append(grid, ponderRow, adjSection);
+
+  // ---- Public API --------------------------------------------------------
 
   function getValues() {
     const out = {};
-    for (const [key, , type] of FIELD_DEFS) {
-      const raw = inputs[key].value;
+
+    // Core scalar fields.
+    const scalars = ["tc", "hash", "threads", "games_in_parallel", "rounds"];
+    for (const k of scalars) {
+      const raw = inputs[k].value;
       if (raw === "" || raw == null) continue;
-      out[key] = type === "number" ? Number(raw) : raw;
+      out[k] = inputs[k].type === "number" ? Number(raw) : raw;
     }
+
     out.tournament_type = typeSelect.value;
     if (typeSelect.value === "gauntlet" && seedsInput.value) {
       out.seeds = Number(seedsInput.value);
     }
     if (ponderSwitch.checked) out.ponder = true;
 
-    // Merge advanced JSON. Invalid JSON throws — caller should toast.
-    const advRaw = (advancedTextarea.value || "").trim();
-    if (advRaw) {
-      let parsed;
-      try {
-        parsed = JSON.parse(advRaw);
-      } catch (e) {
-        throw new Error(`Advanced JSON is invalid: ${e.message}`);
-      }
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        Object.assign(out, parsed);
-      } else {
-        throw new Error("Advanced JSON must be an object.");
-      }
+    // Adjudication: only emit a sub-object when the switch is on AND
+    // the required fields are present.
+    if (resignBlock.sw.checked && resignMoves.value && resignScore.value) {
+      out.resign = {
+        movecount: Number(resignMoves.value),
+        score:     Number(resignScore.value),
+      };
+    }
+    if (
+      drawBlock.sw.checked &&
+      drawStart.value && drawMoves.value && drawScore.value !== ""
+    ) {
+      out.draw = {
+        movenumber: Number(drawStart.value),
+        movecount:  Number(drawMoves.value),
+        score:      Number(drawScore.value),
+      };
     }
     return out;
   }
 
   function setValues(values) {
-    for (const [key] of FIELD_DEFS) {
-      inputs[key].value = values[key] != null ? String(values[key]) : "";
+    const scalars = ["tc", "hash", "threads", "games_in_parallel", "rounds"];
+    for (const k of scalars) {
+      inputs[k].value = values[k] != null ? String(values[k]) : "";
     }
     typeSelect.value = values.tournament_type || "roundrobin";
     seedsInput.value = values.seeds != null ? String(values.seeds) : "";
     syncSeedsVisibility();
     ponderSwitch.checked = !!values.ponder;
-    const adv = {};
-    for (const [k, v] of Object.entries(values)) {
-      if (!knownKeys.has(k)) adv[k] = v;
-    }
-    advancedTextarea.value = JSON.stringify(adv, null, 2);
+
+    const r = values.resign || {};
+    resignMoves.value = String(r.movecount ?? RESIGN_DEFAULTS.movecount);
+    resignScore.value = String(r.score ?? RESIGN_DEFAULTS.score);
+    resignBlock.sw.checked = !!(r.movecount != null && r.score != null);
+    syncEnabled(resignBlock, resignFields);
+
+    const d = values.draw || {};
+    drawStart.value  = String(d.movenumber ?? DRAW_DEFAULTS.movenumber);
+    drawMoves.value  = String(d.movecount ?? DRAW_DEFAULTS.movecount);
+    drawScore.value  = String(d.score ?? DRAW_DEFAULTS.score);
+    drawBlock.sw.checked = !!(d.movenumber != null && d.movecount != null && d.score != null);
+    syncEnabled(drawBlock, drawFields);
   }
 
   return { getValues, setValues };
