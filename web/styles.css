@@ -14,6 +14,22 @@ html { font-size: 16px; }
 :root { --wa-font-size-scale: 1; }
 
 * { box-sizing: border-box; }
+
+/* Thin, macOS-style scrollbars everywhere. Firefox honors scrollbar-width;
+   WebKit/Chromium honors the ::-webkit-scrollbar pseudo-elements. The
+   thumb is muted by default and brightens on hover. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.32); }
+*::-webkit-scrollbar-corner { background: transparent; }
 body {
   margin: 0;
   font: 14px/1.4 system-ui, -apple-system, Segoe UI, sans-serif;
@@ -130,7 +146,8 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   /* Single source of truth for layout magic numbers; JS reads these via
      getComputedStyle so the board-width budget stays in sync with the
      CSS column definitions. */
-  --rail-w: 360px;
+  --rail-w: 240px;
+  --rail-content-w: 200px;
   --grid-gap: 16px;
   display: grid;
   /* Board column width is driven by JS (--board-col-px) so it sizes to
@@ -186,6 +203,9 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
     flex-direction: column;
     gap: 12px;
     height: auto;
+    /* On phones the rail spans the full width, so don't squeeze the
+       PV/move list into a narrow centered strip. */
+    --rail-content-w: 100%;
   }
   .play-board-host { display: block; }
 }
@@ -207,25 +227,30 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   flex: 0 0 120px;
   height: 120px;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 .game-view-moves {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  align-items: center;
 }
 .game-view-moves .move-list {
   flex: 1 1 auto;
   min-height: 0;
   height: auto;
   max-height: none;
+  /* Match the PV's content width so both blocks visually align. */
+  width: 100%;
+  max-width: var(--rail-content-w, 200px);
 }
-.game-view-side h2 {
-  font-size: 12px;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin: 0 0 6px;
-  letter-spacing: 0.5px;
+.game-view-engine .engine-summary,
+.game-view-engine .engine-pv {
+  width: 100%;
+  max-width: var(--rail-content-w, 200px);
 }
 .clock-row {
   flex: 0 0 auto;
@@ -323,15 +348,13 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   flex-wrap: wrap;
 }
 .move-list {
-  background: #1a1a1a;
-  border: 1px solid #333;
-  border-radius: 4px;
-  padding: 6px 10px;
+  background: transparent;
+  padding: 0;
   height: 240px;
   overflow-y: auto;
   font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 14px;
+  line-height: 1.5;
 }
 .move-row {
   display: grid;

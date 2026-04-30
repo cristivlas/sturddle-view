@@ -114,7 +114,6 @@ export function mountGameView(container, opts = {}) {
     <aside class="game-view-side">
       ${showEngineInfo ? `
       <section class="game-view-engine">
-        <h2>Engine</h2>
         <div class="engine-summary">
           <span class="engine-depth">—</span>
           <span class="engine-score">—</span>
@@ -125,7 +124,6 @@ export function mountGameView(container, opts = {}) {
 
       ${showMoves ? `
       <section class="game-view-moves">
-        <h2>Moves</h2>
         <div class="move-list"></div>
       </section>` : ""}
     </aside>

@@ -85,6 +85,15 @@ in a native window via PyWebView.
 - Feeds the same GUI backend event bus as the tournament path
 - Supports: new game, resign, take-back (linear history to start; variation tree left open)
 
+TODO: surface "engine answered from book" in the engine info panel.
+When an engine plays from its opening book it returns `bestmove` with no
+preceding `info` lines — the panel currently shows stale/empty values
+with no explanation. Naive detection ("no info_emitted before bestmove")
+is unreliable: very fast searches at low depth could in principle do the
+same. Need to investigate how fastchess / cutechess-cli identify book
+moves (likely: external book the GUI manages itself, or a UCI extension)
+before implementing. Postponed until we know the right way.
+
 ### 4. GUI Backend Server
 
 Python-based server, three API areas:
