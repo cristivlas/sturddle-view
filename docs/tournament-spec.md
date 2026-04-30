@@ -452,3 +452,10 @@ UI/UX section is complete and we move to implementation.
   options: (1) at `max-width: 600px`, replace "Open workspace" with a
   single full-screen Standings-only view, or (2) force WinBox into a
   tabs/accordion layout on narrow viewports.
+- **Engine renames don't propagate to live HVE display**: editing an
+  engine's display name in the Roster does not update the Play
+  perspective's side-panel label until the next page load. Tournaments
+  intentionally freeze engine names at creation (by spec) and ignore
+  later renames. The HVE side is not by design — re-resolving from
+  the registry on each new game would fix it; left as-is until
+  someone cares.
