@@ -108,30 +108,49 @@ svg.cm-chessboard {
 .toast-danger { border-color: #c66; }
 .toast-hide { opacity: 0; transform: translateY(8px); }
 
-main { padding: 16px; }
+/* The page is a flex column that fills the viewport. <main> takes the
+   remaining vertical space so perspectives can size their content to fit
+   without page-level scrolling. */
+html, body { height: 100%; }
+body { display: flex; flex-direction: column; }
+main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 
 #play-perspective {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  height: 100%;
+  min-height: 0;
 }
 
-/* GameView layout: board on the left, side rail on the right.
-   Used in Play perspective and (later) inside WinBox windows. */
+/* GameView fills its container. Board area on the left auto-sizes its
+   board-square to the smaller of available width/height; side rail on the
+   right scrolls if it overflows. */
 .game-view {
   display: grid;
   grid-template-columns: minmax(320px, 1fr) 360px;
   gap: 16px;
+  flex: 0 0 auto;
+  min-height: 0;
+}
+@media (max-width: 800px) {
+  .game-view {
+    grid-template-columns: 1fr;
+  }
 }
 .game-view-board {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-height: 0;
+  align-items: center;
 }
 .game-view-side {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-height: 0;
+  overflow: auto;
 }
 .game-view-side h2,
 .debug-only h2 {
@@ -141,10 +160,24 @@ main { padding: 16px; }
   margin: 0 0 6px;
   letter-spacing: 0.5px;
 }
+.clock-row {
+  flex: 0 0 auto;
+  width: var(--board-max-px, 100%);
+  align-self: center;
+}
+.game-view-meta {
+  width: var(--board-max-px, 100%);
+  align-self: center;
+}
 .game-view .board {
-  aspect-ratio: 1 / 1;
   background: #2a2a2a;
   border: 1px solid #333;
+  width: var(--board-max-px, 100%);
+  height: auto;
+  align-self: center;
+  flex: 0 0 auto;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .game-view-engine .engine-summary {
   display: flex;

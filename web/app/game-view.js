@@ -178,6 +178,68 @@ export function mountGameView(container, opts = {}) {
     },
   });
 
+  // cm-chessboard sizes its SVG off boardEl.clientWidth (squared), ignoring
+  // height. We compute a square that fits the column width AND the viewport
+  // height, then drive cm-chessboard's measurement.
+  const boardCol = container.querySelector(".game-view-board");
+
+  function sumSiblingsAfter(node, gap) {
+    let total = 0;
+    let after = false;
+    for (const sib of node.parentElement?.children ?? []) {
+      if (sib === node) { after = true; continue; }
+      if (!after) continue;
+      if (sib.offsetParent === null) continue;
+      total += sib.getBoundingClientRect().height + gap;
+    }
+    return total;
+  }
+
+  function recomputeBoardSize() {
+    if (!boardCol) return;
+    // Reset board to 0 so the column reports its intrinsic width.
+    boardEl.style.width = "0";
+    const colRect = boardCol.getBoundingClientRect();
+
+    let belowBoardInCol = 0;
+    let pastBoard = false;
+    for (const child of boardCol.children) {
+      if (child === boardEl) { pastBoard = true; continue; }
+      if (!pastBoard) continue;
+      belowBoardInCol += child.getBoundingClientRect().height + 8;
+    }
+
+    let belowGameView = 0;
+    let node = container.querySelector(".game-view") || container;
+    while (node?.parentElement && node !== document.body) {
+      belowGameView += sumSiblingsAfter(node, 12);
+      const parent = node.parentElement;
+      if (parent.id === "play-perspective" || parent.tagName === "MAIN") break;
+      node = parent;
+    }
+
+    const bottomMargin = 64;
+    const availH = Math.max(
+      0,
+      window.innerHeight - colRect.top - belowBoardInCol - belowGameView - bottomMargin
+    );
+    const max = Math.max(160, Math.floor(Math.min(colRect.width, availH)));
+
+    boardEl.style.width = `${max}px`;
+    const inner = boardEl.firstElementChild;
+    if (inner) {
+      inner.style.width = `${max}px`;
+      inner.style.height = `${max}px`;
+    }
+    board.forceResize();
+  }
+  const ro = new ResizeObserver(recomputeBoardSize);
+  ro.observe(boardCol);
+  ro.observe(document.body);
+  window.addEventListener("resize", recomputeBoardSize);
+  window.addEventListener("sturddle:layout-changed", recomputeBoardSize);
+  requestAnimationFrame(recomputeBoardSize);
+
   let humanWhite = true;
   let gameId = null;
   let names = { top: "—", bottom: "—" };
@@ -287,6 +349,9 @@ export function mountGameView(container, opts = {}) {
     },
     unmount() {
       off?.();
+      try { ro.disconnect(); } catch {}
+      window.removeEventListener("resize", recomputeBoardSize);
+      window.removeEventListener("sturddle:layout-changed", recomputeBoardSize);
     },
   };
 }

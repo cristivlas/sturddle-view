@@ -42,6 +42,7 @@ export const playPerspective = {
 
     showDebug.addEventListener("change", () => {
       debugRoot.hidden = !showDebug.checked;
+      window.dispatchEvent(new Event("sturddle:layout-changed"));
     });
 
     function append(el, text, max = 200) {

@@ -59,5 +59,9 @@ export function mountBoard({ element, onMove }) {
     }
   }
 
-  return { setSide, setPosition, enableInput };
+  function forceResize() {
+    try { board.view?.handleResize?.(); } catch {}
+  }
+
+  return { setSide, setPosition, enableInput, forceResize };
 }
