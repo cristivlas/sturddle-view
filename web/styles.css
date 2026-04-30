@@ -17,6 +17,7 @@
   --wa-color-danger-on-loud: #f4e4d2;
   --wa-color-neutral-fill-loud: #3a3d44;
   --wa-color-neutral-on-loud: #e8e8e8;
+  --wa-color-overlay-modal: rgb(0 0 0 / 0.45);
 }
 
 html { font-size: 16px; }
@@ -275,7 +276,14 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   flex-direction: column;
   gap: 2px;
   font-size: 12px;
+  /* Reserve space for opening + tablebase lines so the page doesn't
+     reflow when they appear. */
+  min-height: calc(2 * 1.4em + 2px);
 }
+.opening-line,
+.tablebase-line { min-height: 1.4em; }
+.opening-line.is-empty,
+.tablebase-line.is-empty { visibility: hidden; }
 .opening-line {
   display: flex;
   gap: 8px;
@@ -494,6 +502,10 @@ wa-dialog::part(header-actions) { gap: 6px; }
 wa-dialog[no-header] {
   --spacing: var(--wa-space-s);
   --width: fit-content;
+}
+wa-dialog[no-header]::part(dialog) {
+  min-width: 16rem;
+  background-color: #2c2f36;
 }
 .confirm-message.game-over-message {
   margin: 0;

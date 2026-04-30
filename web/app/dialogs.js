@@ -67,7 +67,6 @@ export function alert({ message, okLabel = "OK", messageClass } = {}) {
       p.className = messageClass ? `confirm-message ${messageClass}` : "confirm-message";
       p.textContent = message ?? "";
       const ok = document.createElement("wa-button");
-      ok.variant = "brand";
       ok.size = "small";
       ok.slot = "footer";
       ok.textContent = okLabel;

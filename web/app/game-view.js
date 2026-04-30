@@ -94,11 +94,11 @@ export function mountGameView(container, opts = {}) {
       <div class="board" aria-label="chess board"></div>
 
       <div class="game-view-meta">
-        <div class="opening-line" hidden>
+        <div class="opening-line is-empty">
           <span class="opening-eco"></span>
           <span class="opening-name"></span>
         </div>
-        <div class="tablebase-line" hidden>
+        <div class="tablebase-line is-empty">
           <span class="tb-label">TB</span>
           <span class="tb-result"></span>
         </div>
@@ -158,18 +158,18 @@ export function mountGameView(container, opts = {}) {
   function setOpening(opening) {
     if (!openingLine) return;
     if (!opening || (!opening.eco && !opening.name)) {
-      openingLine.hidden = true;
+      openingLine.classList.add("is-empty");
       return;
     }
     openingEco.textContent = opening.eco ?? "";
     openingName.textContent = opening.name ?? "";
-    openingLine.hidden = false;
+    openingLine.classList.remove("is-empty");
   }
 
   function setTablebase(tb) {
     if (!tbLine) return;
     if (!tb || tb.wdl === undefined || tb.wdl === null) {
-      tbLine.hidden = true;
+      tbLine.classList.add("is-empty");
       return;
     }
     const wdl = ({ 2: "Win", 1: "Cursed win", 0: "Draw", "-1": "Blessed loss", "-2": "Loss" })[tb.wdl] ?? "—";
@@ -178,7 +178,7 @@ export function mountGameView(container, opts = {}) {
     if (Number.isFinite(tb.dtm)) s += ` · DTM ${tb.dtm}`;
     if (tb.best) s += ` · ${tb.best}`;
     tbResult.textContent = s;
-    tbLine.hidden = false;
+    tbLine.classList.remove("is-empty");
   }
 
   const board = mountBoard({
