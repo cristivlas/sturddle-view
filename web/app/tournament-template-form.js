@@ -1,7 +1,6 @@
-// Reusable tournament-template form. Mounted in three contexts:
+// Reusable tournament-template form. Mounted in two contexts:
 //   1. Global Settings dialog → "Tournament" tab (defaults for new tournaments).
 //   2. New Tournament dialog → editable; pre-filled from defaults; save = create.
-//   3. Inspect existing tournament → read-only; renders frozen template values.
 //
 // Native fields cover everything Phase 1 needs: time control,
 // games-in-parallel, rounds, tournament type / seeds, ponder, resign, draw.
@@ -18,7 +17,6 @@ const TOURNAMENT_TYPES = [
 export function mountTournamentTemplateForm({
   container,
   initialValues = {},
-  readOnly = false,
 }) {
   container.innerHTML = "";
   container.classList.add("tournament-template-form");
@@ -42,7 +40,6 @@ export function mountTournamentTemplateForm({
     if (placeholder) input.placeholder = placeholder;
     const v = initialValues[key] != null ? initialValues[key] : defaultValue;
     if (v != null) input.value = String(v);
-    if (readOnly) input.setAttribute("readonly", "");
     inputs[key] = input;
     return input;
   }
@@ -64,7 +61,6 @@ export function mountTournamentTemplateForm({
     typeSelect.appendChild(o);
   }
   typeSelect.value = initialValues.tournament_type || "roundrobin";
-  if (readOnly) typeSelect.setAttribute("disabled", "");
   inputs.tournament_type = typeSelect;
   grid.appendChild(typeSelect);
 
@@ -83,7 +79,6 @@ export function mountTournamentTemplateForm({
   ponderSwitch.size = "small";
   ponderSwitch.dataset.key = "ponder";
   if (initialValues.ponder) ponderSwitch.setAttribute("checked", "");
-  if (readOnly) ponderSwitch.setAttribute("disabled", "");
   ponderSwitch.textContent = "Ponder (think on opponent's time)";
   inputs.ponder = ponderSwitch;
 
@@ -112,7 +107,6 @@ export function mountTournamentTemplateForm({
     const sw = document.createElement("wa-switch");
     sw.size = "small";
     if (enabled) sw.setAttribute("checked", "");
-    if (readOnly) sw.setAttribute("disabled", "");
     sw.textContent = label;
     header.appendChild(sw);
     const fields = document.createElement("div");
@@ -129,7 +123,6 @@ export function mountTournamentTemplateForm({
     i.setAttribute("autocomplete", "off");
     if (min != null) i.setAttribute("min", String(min));
     i.dataset.key = key;
-    if (readOnly) i.setAttribute("readonly", "");
     inputs[key] = i;
     return i;
   }
@@ -160,11 +153,8 @@ export function mountTournamentTemplateForm({
   function syncEnabled(block, fieldList) {
     const on = block.sw.checked;
     for (const f of fieldList) {
-      if (on && !readOnly) {
-        f.removeAttribute("disabled");
-      } else {
-        f.setAttribute("disabled", "");
-      }
+      if (on) f.removeAttribute("disabled");
+      else f.setAttribute("disabled", "");
     }
     block.fields.classList.toggle("disabled", !on);
   }

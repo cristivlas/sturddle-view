@@ -315,7 +315,8 @@ export async function openSettingsDialog({ api }) {
         row.className = "settings-tournament-path-row";
         const lbl = document.createElement("div");
         lbl.className = "settings-tournament-path-label";
-        lbl.textContent = labelText;
+        if (labelText instanceof Node) lbl.appendChild(labelText);
+        else lbl.textContent = labelText;
         if (hint) {
           const h = document.createElement("span");
           h.className = "muted settings-row-hint";
@@ -495,9 +496,17 @@ export async function openSettingsDialog({ api }) {
       const tournamentPanel = document.createElement("wa-tab-panel");
       tournamentPanel.name = "tournament";
 
+      const fastchessLabel = document.createDocumentFragment();
+      const fastchessLink = document.createElement("a");
+      fastchessLink.href = "https://github.com/Disservin/fastchess";
+      fastchessLink.target = "_blank";
+      fastchessLink.rel = "noopener noreferrer";
+      fastchessLink.textContent = "Fastchess";
+      fastchessLabel.append(fastchessLink, document.createTextNode(" binary"));
+
       tournamentPanel.append(
         pathRow(
-          "Fastchess binary",
+          fastchessLabel,
           tournamentInitial.fastchess_path || tournamentInitial.fastchess_detected || "",
           "executable",
           "Pick fastchess binary",
