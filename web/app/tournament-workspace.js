@@ -70,8 +70,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   const eventLog = [];
   let pollTimer = null;
   let unsubscribe = null;
-  // game_id -> {proxies: [pA, pB], engineNames: [...?]}
-  const activeGames = new Map();
+  // proxy_id -> { engineName }
+  const activeProxies = new Map();
 
   // ---- Window construction ----------------------------------------------
 
@@ -178,11 +178,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   function renderSchedule() {
     // Completed games: PGN-derived (authoritative once fastchess flushes
-    // each finished game). In-progress games: from `game_paired`
-    // events (Slice 9b) — each becomes a row whose proxies the user
-    // can click on to attach a Live Game window.
+    // each finished game). In-progress: one row per active proxy
+    // (engine process), labeled with its engine name. Click "watch" to
+    // open a live window subscribed to that engine's stream.
     const finished = (detail && detail.games) || [];
-    const inProgress = [...activeGames.entries()];
+    const inProgress = [...activeProxies.entries()];
     if (finished.length === 0 && inProgress.length === 0) {
       scheduleBody.innerHTML = `<div class="wb-empty">No games yet.</div>`;
       return;
@@ -190,7 +190,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     scheduleBody.innerHTML = `<ul class="wb-sched-list"></ul>`;
     const list = scheduleBody.querySelector(".wb-sched-list");
 
-    // Completed first (top), then in-progress.
     for (const g of finished) {
       const li = document.createElement("li");
       li.innerHTML = `
@@ -200,32 +199,27 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       `;
       list.appendChild(li);
     }
-    for (const [gid, g] of inProgress) {
+    for (const [pid, p] of inProgress) {
       const li = document.createElement("li");
       li.className = "wb-sched-live";
+      const engineLabel = p.engineName || pid;
       li.innerHTML = `
         <span class="wb-sched-icon">▶</span>
-        <span class="wb-sched-game">game ${escape(gid)}</span>
-        <span class="wb-sched-attach muted">attach:</span>
+        <span class="wb-sched-game">${escape(engineLabel)}</span>
       `;
-      const attachWrap = document.createElement("span");
-      attachWrap.className = "wb-sched-attach-buttons";
-      g.proxies.forEach((pid, i) => {
-        const btn = document.createElement("button");
-        btn.className = "wb-sched-attach-btn";
-        btn.textContent = `engine ${i + 1}`;
-        btn.title = pid;
-        btn.addEventListener("click", () => {
-          openLiveGameWindow({
-            proxyId: pid,
-            label: `${tournament.name} — game ${gid} · engine ${i + 1}`,
-            token,
-            top,
-          });
+      const btn = document.createElement("button");
+      btn.className = "wb-sched-attach-btn";
+      btn.textContent = "watch";
+      btn.title = pid;
+      btn.addEventListener("click", () => {
+        openLiveGameWindow({
+          proxyId: pid,
+          label: `${tournament.name} — ${engineLabel}`,
+          token,
+          top,
         });
-        attachWrap.appendChild(btn);
       });
-      li.appendChild(attachWrap);
+      li.appendChild(btn);
       list.appendChild(li);
     }
   }
@@ -263,23 +257,15 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       log?.(`workspace refresh failed: ${e.message}`);
       return;
     }
-    // Seed in-progress games from server-side pair_index snapshot. This
-    // catches the case where the workspace mounts after a `game_paired`
-    // event already fired (single-shot, not replayed). Once seeded, the
-    // forward-going WS events keep activeGames in sync.
-    const seeded = detail.games_in_progress || [];
-    for (const g of seeded) {
-      if (g.game_id && Array.isArray(g.proxies) && g.proxies.length === 2) {
-        if (!activeGames.has(g.game_id)) {
-          activeGames.set(g.game_id, { proxies: g.proxies });
-        }
+    // Seed active proxies from server snapshot — authoritative; replace
+    // wholesale so we drop any rows for proxies the server no longer
+    // tracks (e.g. ended sessions whose proxy_ended event we missed).
+    const seeded = detail.proxies_active || [];
+    activeProxies.clear();
+    for (const p of seeded) {
+      if (p.proxy_id) {
+        activeProxies.set(p.proxy_id, { engineName: p.engine_name || null });
       }
-    }
-    // Drop any active game ids the server no longer tracks (e.g.
-    // ended games whose `proxy_ended` event we missed).
-    const seededIds = new Set(seeded.map((g) => g.game_id));
-    for (const gid of [...activeGames.keys()]) {
-      if (!seededIds.has(gid)) activeGames.delete(gid);
     }
     renderStandings();
     renderSchedule();
@@ -297,26 +283,23 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     eventLog.push({ ts, kind: evt.kind, payload: evt.payload });
     if (eventLog.length > EVENT_LOG_LIMIT) eventLog.shift();
 
-    // Slice 9c: track active games for the Schedule "in progress" rows.
+    // Track active proxies for Schedule rows.
     const inner = evt.payload?.kind;
-    if (inner === "game_paired") {
-      const gid = evt.payload.game_id;
-      const proxies = evt.payload.proxies || [];
-      if (gid && proxies.length === 2) {
-        activeGames.set(gid, { proxies });
+    if (inner === "proxy_started") {
+      const pid = evt.payload.proxy_id;
+      if (pid) {
+        activeProxies.set(pid, {
+          engineName: evt.payload.engine_name || null,
+        });
       }
     } else if (inner === "proxy_ended") {
-      const ended = evt.payload.proxy_id;
-      // Drop any active game whose proxies include the ended one.
-      for (const [gid, g] of activeGames) {
-        if (g.proxies.includes(ended)) activeGames.delete(gid);
-      }
+      const pid = evt.payload.proxy_id;
+      if (pid) activeProxies.delete(pid);
     } else if (
       evt.kind === "tournament_status" ||
       inner === "done" || inner === "stopped"
     ) {
-      // Tournament ended; clear in-progress.
-      activeGames.clear();
+      activeProxies.clear();
     }
 
     renderEventLog();

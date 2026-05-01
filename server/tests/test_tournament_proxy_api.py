@@ -85,29 +85,56 @@ def test_internal_proxy_accepts_valid_secret(running_app):
     assert r.status_code == 204
 
 
-def test_internal_proxy_pairing_via_ingest(running_app):
+def test_internal_proxy_session_started_records_engine_name(running_app):
     client, app = running_app
     secret = app.state.tournament_orch.proxy_secret()
 
-    # Two proxies post position lines; the orchestrator's pair_index
-    # should pair them.
-    client.post("/internal/proxy", json={
-        "proxy_id": "white",
+    # First post (engine_name + empty lines) registers the session.
+    r = client.post("/internal/proxy", json={
+        "proxy_id": "p1",
         "secret": secret,
-        "lines": ["position startpos"],
+        "engine_name": "EngineX",
+        "lines": [],
     })
-    client.post("/internal/proxy", json={
-        "proxy_id": "black",
-        "secret": secret,
-        "lines": ["position startpos moves e2e4"],
-    })
-
+    assert r.status_code == 204
     orch = app.state.tournament_orch
-    # game_id assigned to both proxies, same id.
-    gid_w = orch._pair_index.game_id_for("white")
-    gid_b = orch._pair_index.game_id_for("black")
-    assert gid_w is not None
-    assert gid_w == gid_b
+    assert orch.engine_name_for("p1") == "EngineX"
+    active = orch.active_proxies()
+    assert {"proxy_id": "p1", "engine_name": "EngineX"} in active
+
+
+def test_snapshot_replayed_on_late_subscribe(running_app):
+    """A subscriber that connects after lines were ingested should
+    receive the latest position/go/info as an instant snapshot — the
+    fix for engines under long time control where the next live event
+    can be ≥10s away."""
+    client, app = running_app
+    secret = app.state.tournament_orch.proxy_secret()
+
+    # Ingest before subscribing.
+    r = client.post("/internal/proxy", json={
+        "proxy_id": "late",
+        "secret": secret,
+        "lines": [
+            "position startpos moves e2e4 c7c5",
+            "go wtime 100000 btime 100000",
+            "info depth 12 score cp 25 pv g1f3 b8c6",
+        ],
+    })
+    assert r.status_code == 204
+
+    # Now connect: the snapshot should arrive on the very first
+    # messages without any new lines being posted.
+    with client.websocket_connect("/ws/tournament/proxy/late?token=") as ws:
+        seen: list[str] = []
+        for _ in range(3):
+            msg = ws.receive_json(mode="text")
+            seen.append(msg["line"])
+        assert seen[0].startswith("position ")
+        assert seen[1].startswith("go ")
+        assert seen[2].startswith("info ")
+        # The snapshot reflects the LATEST lines, not the entire history.
+        assert "moves e2e4 c7c5" in seen[0]
 
 
 def test_proxy_ws_subscriber_receives_lines(running_app):

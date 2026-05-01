@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import secrets
 import shutil
 import subprocess
 import sys
@@ -85,22 +84,22 @@ def build_command(spec: RunSpec) -> list[str]:
     proxy_enabled = bool(proxy_url and proxy_secret)
 
     # Per-engine: -engine cmd=... name=... [args=...] [dir=...]
-    for idx, eng in enumerate(engines):
+    for eng in engines:
         if "cmd" not in eng:
             raise ValueError(f"engine missing 'cmd': {eng!r}")
         engine_name = eng.get("name", eng["cmd"])
         e: list[str] = ["-engine"]
         if proxy_enabled:
-            # cmd = python; args = the proxy invocation + the real engine.
-            # Each engine instance gets a fresh proxy_id (deterministic
-            # per-position, so re-runs of build_command produce the same
-            # ids — fine, since fastchess uses each spec once per
-            # session).
-            proxy_id = f"p-{idx}-{secrets.token_hex(4)}"
+            # cmd = python; args = the proxy invocation + the real
+            # engine. The proxy_id is generated per-process by the
+            # proxy script itself (not baked into argv). fastchess
+            # reuses one engine spec across multiple concurrent
+            # game-slots when ``-concurrency > 1``; each spawned slot
+            # process must get a distinct proxy_id, which only the
+            # proxy itself can mint at startup.
             proxy_args = " ".join([
                 "-m", "sturddle_view.tournament.proxy",
                 "--broadcast-url", proxy_url,
-                "--proxy-id", proxy_id,
                 "--secret", proxy_secret,
                 "--engine-name", _quote_arg(engine_name),
                 "--",

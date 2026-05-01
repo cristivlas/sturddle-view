@@ -13,10 +13,14 @@ each engine for fastchess)::
 
     python -m sturddle_view.tournament.proxy \\
         --broadcast-url http://127.0.0.1:8765/internal/proxy \\
-        --proxy-id <uuid> \\
         --secret <per-tournament-secret> \\
         --engine-name "Sturddle 2.5.0" \\
         -- <engine_binary> [engine_args...]
+
+The proxy generates its own ``proxy_id`` at startup (one per process)
+so concurrent fastchess game-slots running the same engine spec each
+get a distinct id. fastchess reuses argv across slot processes, so
+the id cannot come from the orchestrator's pre-built argv.
 
 The broadcast tap is **batched** (see ``BATCH_INTERVAL_S`` and
 ``BATCH_MAX_LINES``) so that engines emitting hundreds of ``info`` lines
@@ -27,10 +31,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
+import queue
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 
 
 # Batching defaults — see spec "Volume & high-concurrency considerations".
@@ -43,6 +51,11 @@ class Broadcaster:
     ``/internal/proxy`` endpoint. Failures are logged to stderr and
     swallowed — the proxy must never block the engine pipe on
     broadcast trouble.
+
+    Posts run in a background worker thread so the asyncio loop that
+    pumps engine stdio is never blocked by HTTP latency. ``urllib`` is
+    synchronous; calling it directly from the loop stalls the engine
+    pipe and produces multi-second observable lag.
     """
 
     def __init__(
@@ -59,8 +72,25 @@ class Broadcaster:
         self._buf: list[str] = []
         self._last_flush = time.monotonic()
         self._announced = False
+        # Background poster: a single worker thread drains a queue of
+        # payloads and POSTs them in order. add_line / flush are
+        # non-blocking from the loop's perspective.
+        self._post_q: queue.Queue = queue.Queue()
+        self._post_stopped = threading.Event()
+        self._post_thread = threading.Thread(
+            target=self._post_worker, daemon=True
+        )
+        self._post_thread.start()
 
-    def _post(self, payload: dict) -> None:
+    def _post_worker(self) -> None:
+        while True:
+            payload = self._post_q.get()
+            if payload is None:
+                self._post_stopped.set()
+                return
+            self._post_blocking(payload)
+
+    def _post_blocking(self, payload: dict) -> None:
         body = json.dumps(payload).encode()
         req = urllib.request.Request(
             self._url,
@@ -75,13 +105,15 @@ class Broadcaster:
             # Don't crash the engine because the GUI server is down.
             print(f"proxy broadcast failed: {e}", file=sys.stderr, flush=True)
 
+    def _post(self, payload: dict) -> None:
+        self._post_q.put(payload)
+
     def announce(self) -> None:
         """First post: register the proxy session with the server."""
         if self._announced:
             return
         self._announced = True
-        await_safe = self._post  # synchronous; called from sync context
-        await_safe({
+        self._post({
             "proxy_id": self._proxy_id,
             "secret": self._secret,
             "engine_name": self._engine_name,
@@ -112,7 +144,7 @@ class Broadcaster:
         })
 
     def end(self) -> None:
-        # Final flush + ended sentinel.
+        # Final flush + ended sentinel + drain the worker.
         self.flush()
         self._post({
             "proxy_id": self._proxy_id,
@@ -121,6 +153,9 @@ class Broadcaster:
             "lines": [],
             "ended": True,
         })
+        self._post_q.put(None)
+        # Bounded wait — don't hold up shutdown if the server is slow.
+        self._post_stopped.wait(timeout=2)
 
 
 async def _pump(
@@ -212,7 +247,11 @@ async def _run(
 def main() -> None:
     parser = argparse.ArgumentParser(description="sturddle-view stdio proxy")
     parser.add_argument("--broadcast-url", default=None)
-    parser.add_argument("--proxy-id", required=True)
+    parser.add_argument("--proxy-id", default=None,
+                        help="optional explicit proxy id (tests). When "
+                             "omitted, a per-process uuid is generated so "
+                             "concurrent fastchess game-slots running the "
+                             "same engine spec get distinct ids.")
     parser.add_argument("--secret", default=None,
                         help="per-tournament secret for the broadcast endpoint")
     parser.add_argument("--engine-name", default=None,
@@ -221,11 +260,13 @@ def main() -> None:
     parser.add_argument("engine_args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
 
+    proxy_id = args.proxy_id or f"p-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+
     engine_argv = [args.engine, *args.engine_args]
     rc = asyncio.run(_run(
         engine_argv,
         args.broadcast_url,
-        args.proxy_id,
+        proxy_id,
         args.secret,
         args.engine_name,
     ))

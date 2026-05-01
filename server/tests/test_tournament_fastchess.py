@@ -235,7 +235,9 @@ def test_build_command_wraps_engines_in_proxy_when_configured(tmp_path):
         assert "sturddle_view.tournament.proxy" in aeq
         assert "--broadcast-url http://127.0.0.1:8765/internal/proxy" in aeq
         assert "--secret test-secret" in aeq
-        assert "--proxy-id" in aeq
+        # The proxy_id is generated per-process by the proxy script
+        # itself; not baked into argv.
+        assert "--proxy-id" not in aeq
 
     # Engine names + tc still appear after the wrap.
     assert "name=A" in cmd

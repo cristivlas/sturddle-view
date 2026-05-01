@@ -103,17 +103,14 @@ def _serialize(
             out["games"] = compute_games_list(store.pgn_path(t.id))
         except FileNotFoundError:
             out["games"] = []
-        # Slice 9c: surface the orchestrator's current pair-index so the
-        # workspace's Schedule can seed its "in progress" rows on mount,
-        # not just from forward-going `game_paired` events. Only
-        # meaningful when this tournament is the running one.
+        # Surface the orchestrator's currently-active proxies so the
+        # workspace's Schedule can seed its rows on mount, not just from
+        # forward-going `proxy_started` events. Only meaningful when this
+        # tournament is the running one.
         if orch is not None and orch.active_id() == t.id:
-            out["games_in_progress"] = [
-                {"game_id": gid, "proxies": list(proxies)}
-                for gid, proxies in orch.pair_index_snapshot().items()
-            ]
+            out["proxies_active"] = orch.active_proxies()
         else:
-            out["games_in_progress"] = []
+            out["proxies_active"] = []
         sprt_params = (t.template or {}).get("sprt")
         if sprt_params:
             try:
@@ -279,7 +276,7 @@ async def ingest_proxy(payload: ProxyBatch, request: Request) -> None:
 
     if payload.engine_name and payload.lines == []:
         # First post from a proxy: register it.
-        orch.proxy_session_started(payload.proxy_id, payload.engine_name)
+        await orch.proxy_session_started(payload.proxy_id, payload.engine_name)
 
     if payload.lines:
         await orch.ingest_proxy_lines(payload.proxy_id, payload.lines)

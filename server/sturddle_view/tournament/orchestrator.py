@@ -9,8 +9,11 @@ Owns:
     ``running`` is marked ``stopped`` on server boot (Phase 1: no
     Resume — see ``docs/tournament-spec.md``).
   - Wiring runner events back to the store and to the broadcast tap.
-  - The per-tournament ``PairIndex`` and proxy-secret/subscribers state
-    (Slice 9b).
+  - Per-tournament proxy bookkeeping (engine names, subscribers,
+    broadcast secret) used by the live-observation pipeline (Slice 9b).
+    Single-side observation only — automatic pair detection was tried
+    and removed; deterministic pairing is deferred to a future phase
+    (likely with a vendored fastchess fork).
 
 Public surface is web-agnostic (takes ids and a broadcast callback) so
 the same orchestrator drives the Phase 1.5 CLI wrapper without HTTP
@@ -25,7 +28,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
-from .pair_index import PairIndex
 from .runner import EventCallback, RunSpec, Runner
 from .store import (
     STATUS_DONE,
@@ -70,12 +72,20 @@ class Orchestrator:
         self._active_id: str | None = None
         self._broadcast: BroadcastCallback | None = None
 
-        # Slice 9b: live observation pipeline.
-        # The ``PairIndex`` tracks which proxies are playing each other
-        # by watching UCI ``position`` lines. Subscribers are WS clients
-        # listening for one specific proxy's stream.
-        self._pair_index: PairIndex = PairIndex()
+        # Slice 9b: live observation pipeline. WS subscribers attach
+        # per-proxy and receive that engine's UCI line stream.
         self._proxy_subscribers: dict[str, set[asyncio.Queue]] = {}
+        # Display name reported by each proxy on session start. Used to
+        # label rows / buttons in the workspace UI. Cleared on session
+        # end and on tournament teardown.
+        self._proxy_engine_names: dict[str, str] = {}
+        # Per-proxy snapshot of the most-recent stateful UCI lines:
+        # ``position`` (current board), ``go`` (current clocks), and
+        # ``info`` (current eval/depth/PV). Replayed to a subscriber on
+        # connect so a window opened mid-game gets an instant snapshot
+        # of the engine's state instead of waiting for the next event
+        # (which under long time controls can be ≥10s away).
+        self._proxy_snapshot: dict[str, dict[str, str]] = {}
         # Per-tournament secret embedded in the proxy --broadcast-url so
         # only proxies belonging to the active tournament can post.
         # Cleared on tournament termination.
@@ -119,9 +129,7 @@ class Orchestrator:
         # Mark active *before* spawning so a concurrent ``start`` call
         # racing against this one is rejected by the busy check above.
         self._active_id = t.id
-        # Fresh proxy secret + pair index per tournament run.
         self._proxy_secret = secrets.token_urlsafe(24)
-        self._pair_index.reset()
 
         spec = RunSpec(
             tournament=t,
@@ -144,7 +152,8 @@ class Orchestrator:
             # out the next attempt.
             self._active_id = None
             self._proxy_secret = None
-            self._pair_index.reset()
+            self._proxy_engine_names.clear()
+            self._proxy_snapshot.clear()
             self._store.update_status(t.id, STATUS_STOPPED, stopped_at=_now())
             raise
 
@@ -211,7 +220,8 @@ class Orchestrator:
                     # can't post and any open WS subscribers get a clean
                     # "ended" signal.
                     self._proxy_secret = None
-                    self._pair_index.reset()
+                    self._proxy_engine_names.clear()
+                    self._proxy_snapshot.clear()
                     self._close_all_proxy_subscribers()
 
         # Always forward the runner event upstream — UI consumers want
@@ -241,13 +251,23 @@ class Orchestrator:
         ``None`` when no tournament is running."""
         return self._proxy_secret
 
-    def pair_index_snapshot(self) -> dict[str, tuple[str, str]]:
-        """Read-only view of the current proxy-pair mappings.
+    def active_proxies(self) -> list[dict]:
+        """Snapshot of currently-active proxies (engine processes wrapped
+        by the broadcast tap). Used by the API ``GET /api/tournaments/{id}``
+        so a workspace opening mid-tournament can seed its Schedule rows
+        even if it missed the forward-going ``proxy_started`` events.
 
-        Used by the API ``GET /api/tournaments/{id}`` so a workspace
-        opening mid-tournament can seed its in-progress rows even if it
-        missed the forward-going ``game_paired`` events."""
-        return self._pair_index.all_games()
+        Each entry: ``{"proxy_id": str, "engine_name": str | None}``.
+        Sorted by ``proxy_id`` for stable ordering across calls."""
+        return [
+            {"proxy_id": pid, "engine_name": name}
+            for pid, name in sorted(self._proxy_engine_names.items())
+        ]
+
+    def engine_name_for(self, proxy_id: str) -> str | None:
+        """Display name reported by a proxy on its session start, or
+        ``None`` if the proxy never announced (or has ended)."""
+        return self._proxy_engine_names.get(proxy_id)
 
     def verify_proxy_secret(self, presented: str | None) -> bool:
         if self._proxy_secret is None or presented is None:
@@ -258,73 +278,62 @@ class Orchestrator:
 
     async def ingest_proxy_lines(
         self, proxy_id: str, lines: list[str]
-    ) -> list[str]:
+    ) -> None:
         """Called by the ``/internal/proxy`` endpoint with a batch of
-        UCI lines from one proxy. Updates the pair index, fans out to
-        any subscribed WS clients, and returns the list of newly-paired
-        game ids (to be broadcast as ``game_paired`` events).
+        UCI lines from one proxy. Updates the per-proxy snapshot
+        (always — independent of subscribers) and fans out to any
+        subscribed WS clients.
         """
-        # Diagnostic: log only position lines (very low volume) so we
-        # can see what the pair_index is being asked to match without
-        # spamming the log with info chatter.
-        position_lines = [line for line in lines if line.lstrip().startswith("position ")]
-        if position_lines:
-            log.debug(
-                "proxy %s position lines: %r", proxy_id, position_lines
-            )
-        new_games: list[str] = []
+        snap = self._proxy_snapshot.setdefault(proxy_id, {})
         for line in lines:
-            gid = self._pair_index.observe(proxy_id, line)
-            if gid is not None:
-                new_games.append(gid)
-                log.info(
-                    "pair_index locked game %s = (%s, %s)",
-                    gid, proxy_id, self._pair_index.proxies_for(gid),
-                )
+            stripped = line.lstrip()
+            if stripped.startswith("position "):
+                snap["position"] = line
+                # New position ⇒ stale eval; clear so the replay
+                # doesn't show last move's eval against a new board.
+                snap.pop("info", None)
+            elif stripped.startswith("go "):
+                snap["go"] = line
+            elif stripped.startswith("info "):
+                if " score " in stripped or " pv " in stripped:
+                    snap["info"] = line
 
-        # Fan out to subscribers (if any).
         subs = self._proxy_subscribers.get(proxy_id)
-        if subs:
-            for line in lines:
-                payload = {"proxy_id": proxy_id, "line": line}
-                for q in list(subs):
+        if not subs:
+            return
+        for line in lines:
+            payload = {"proxy_id": proxy_id, "line": line}
+            for q in list(subs):
+                try:
+                    q.put_nowait(payload)
+                except asyncio.QueueFull:
+                    # Slow consumer: drop oldest, keep newest.
+                    try:
+                        q.get_nowait()
+                    except asyncio.QueueEmpty:
+                        pass
                     try:
                         q.put_nowait(payload)
                     except asyncio.QueueFull:
-                        # Slow consumer: drop oldest, keep newest.
-                        try:
-                            q.get_nowait()
-                        except asyncio.QueueEmpty:
-                            pass
-                        try:
-                            q.put_nowait(payload)
-                        except asyncio.QueueFull:
-                            pass
+                        pass
 
-        # Surface newly paired games on the broadcast bus so the
-        # Schedule window can show "in progress" rows.
-        for gid in new_games:
-            pair = self._pair_index.proxies_for(gid)
-            await self._emit("game_paired", {
-                "tournament_id": self._active_id,
-                "game_id": gid,
-                "proxies": list(pair) if pair else [],
-            })
-        return new_games
-
-    def proxy_session_started(self, proxy_id: str, engine_name: str) -> None:
-        """Called when a proxy reports it has started up. Useful for
-        Schedule's "engines that have spawned" indicator."""
-        # No bookkeeping needed yet — kept as an API hook so the proxy
-        # can announce itself before any UCI traffic flows.
+    async def proxy_session_started(self, proxy_id: str, engine_name: str) -> None:
+        """Called when a proxy reports it has started up. Records the
+        engine's display name and broadcasts a ``proxy_started`` event
+        so the workspace's Schedule can add a row for it."""
+        self._proxy_engine_names[proxy_id] = engine_name
         log.debug("proxy session started: %s (%s)", proxy_id, engine_name)
+        await self._emit("proxy_started", {
+            "tournament_id": self._active_id,
+            "proxy_id": proxy_id,
+            "engine_name": engine_name,
+        })
 
     async def proxy_session_ended(self, proxy_id: str) -> None:
         """Called when a proxy session has exited (clean or otherwise).
-
-        Closes any subscribers, drops pair-index entries.
-        """
-        self._pair_index.forget_proxy(proxy_id)
+        Closes any subscribers and drops bookkeeping for this proxy."""
+        self._proxy_engine_names.pop(proxy_id, None)
+        self._proxy_snapshot.pop(proxy_id, None)
         subs = self._proxy_subscribers.pop(proxy_id, None)
         if subs:
             for q in subs:
@@ -341,9 +350,24 @@ class Orchestrator:
     def subscribe_to_proxy(self, proxy_id: str) -> asyncio.Queue:
         """WS handler calls this; returns a bounded queue that receives
         per-line dicts ``{proxy_id, line}`` and a final
-        ``{proxy_id, ended: True}`` when the proxy session ends."""
+        ``{proxy_id, ended: True}`` when the proxy session ends.
+
+        Replays the proxy's current snapshot (latest ``position`` /
+        ``go`` / ``info``) onto the queue so a window opened mid-game
+        gets an instant render of the engine's state instead of having
+        to wait for the engine's next event (≥10s under long TC)."""
         q: asyncio.Queue = asyncio.Queue(maxsize=512)
         self._proxy_subscribers.setdefault(proxy_id, set()).add(q)
+        snap = self._proxy_snapshot.get(proxy_id)
+        if snap:
+            for kind in ("position", "go", "info"):
+                line = snap.get(kind)
+                if line is None:
+                    continue
+                try:
+                    q.put_nowait({"proxy_id": proxy_id, "line": line})
+                except asyncio.QueueFull:
+                    pass
         return q
 
     def unsubscribe_from_proxy(self, proxy_id: str, queue: asyncio.Queue) -> None:

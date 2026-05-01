@@ -88,10 +88,10 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, brows
         )
         await app.state.tournament_orch.start(t.id)
 
-        # Inject two proxy sessions via the HTTP endpoint so the pair_index
-        # creates a paired game. Running through HTTP ensures the calls happen
-        # in uvicorn's event loop (not the test's), so the queues the WS
-        # subscribers drain are correctly populated.
+        # Inject a proxy session announcement so the workspace's
+        # Schedule has a row to click. Running through HTTP ensures the
+        # call happens in uvicorn's event loop (not the test's), so the
+        # WS subscriber queue is correctly populated for later lines.
         orch = app.state.tournament_orch
         deadline = time.time() + 5
         secret = None
@@ -107,24 +107,17 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, brows
                 "proxy_id": "proxy-white",
                 "secret": secret,
                 "engine_name": "Engine A",
-                "lines": ["position startpos"],
-            })
-            assert r.status_code == 204
-            r = await http.post("/internal/proxy", json={
-                "proxy_id": "proxy-black",
-                "secret": secret,
-                "engine_name": "Engine B",
-                "lines": ["position startpos moves e2e4"],
+                "lines": [],
             })
             assert r.status_code == 204
 
-        # Confirm pairing happened before touching the browser.
+        # Confirm the proxy is now active before touching the browser.
         deadline = time.time() + 2
         while time.time() < deadline:
-            if orch._pair_index.game_id_for("proxy-white") is not None:
+            if orch.engine_name_for("proxy-white") == "Engine A":
                 break
             time.sleep(0.02)
-        assert orch._pair_index.game_id_for("proxy-white") is not None
+        assert orch.engine_name_for("proxy-white") == "Engine A"
 
         if browser is None:
             pytest.skip("chromium not installed")
@@ -150,14 +143,15 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, brows
                     timeout=5000,
                 )
 
-                # The workspace seeds from `games_in_progress` on its initial
-                # refresh — the paired game should appear immediately.
+                # The workspace seeds from `proxies_active` on its
+                # initial refresh — the active proxy should appear
+                # immediately as a Schedule row.
                 await page.wait_for_selector(
                     ".wb-sched-list .wb-sched-live .wb-sched-attach-btn",
                     timeout=5000,
                 )
 
-                # Click the first attach button → live game window opens.
+                # Click the watch button → live game window opens.
                 await page.click(
                     ".wb-sched-list .wb-sched-live .wb-sched-attach-btn"
                 )
@@ -172,20 +166,20 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, brows
                     timeout=5000,
                 )
 
-                # Determine which proxy the browser subscribed to by reading
-                # the button's title attribute (= proxy_id).
-                proxy_id_for_ws = await page.evaluate(
-                    "() => document.querySelector('.wb-sched-attach-btn')?.title"
-                )
-                assert proxy_id_for_ws, "could not determine proxy_id from button"
-
-                # Push an info line with an eval score via HTTP so it runs
-                # in uvicorn's loop and reaches the WS subscriber's queue.
+                # Drive the proxy stream:
+                #   1. position → engine learns it's playing Black (FEN
+                #      side-to-move = "b").
+                #   2. go → triggers orientation flip + clock display.
+                #   3. info → eval score renders.
                 async with AsyncClient(base_url=base) as http:
                     r = await http.post("/internal/proxy", json={
-                        "proxy_id": proxy_id_for_ws,
+                        "proxy_id": "proxy-white",
                         "secret": secret,
-                        "lines": ["info depth 12 score cp 35 pv e2e4 e7e5"],
+                        "lines": [
+                            "position startpos moves e2e4",
+                            "go wtime 300000 btime 300000",
+                            "info depth 12 score cp 35 pv e7e5",
+                        ],
                     })
                     assert r.status_code == 204, f"proxy post failed: {r.text}"
 
@@ -195,6 +189,30 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, brows
                         return e && e.textContent !== '—' && e.textContent !== '';
                     }""",
                     timeout=5000,
+                )
+
+                # Bug 4 regression check: when the engine plays Black,
+                # the board must orient with Black at the bottom.
+                # cm-chessboard's setOrientation goes through an async
+                # animation queue, so wait for it to settle before
+                # reading the rendered coord labels.
+                top_rank_label = await page.wait_for_function(
+                    """() => {
+                        const root = document.querySelector('.wb-livegame .lg-board');
+                        if (!root) return null;
+                        const ranks = [...root.querySelectorAll('text.coordinate.rank')];
+                        if (!ranks.length) return null;
+                        ranks.sort((a, b) => parseFloat(a.getAttribute('y')) - parseFloat(b.getAttribute('y')));
+                        const top = ranks[0].textContent.trim();
+                        // Black-at-bottom ⇒ topmost rank label is "1".
+                        return top === "1" ? top : false;
+                    }""",
+                    timeout=3000,
+                )
+                top_rank_label = await top_rank_label.json_value()
+                assert top_rank_label == "1", (
+                    f"Bug 4 regression: expected top rank label '1' "
+                    f"(black-at-bottom), got {top_rank_label!r}"
                 )
 
                 assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)

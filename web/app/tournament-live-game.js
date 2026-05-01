@@ -128,14 +128,22 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
     handleParsed(parsed);
   });
 
-  let lastFen = null;
   let orientationSet = false;
 
   function handleParsed(p) {
     switch (p.kind) {
       case "position":
         if (p.fen) {
-          lastFen = p.fen;
+          // Set orientation from the first position line. fastchess
+          // sends `position ... moves ...` with side-to-move = the
+          // engine receiving the line — so its color in the game.
+          // (Waiting for `go` would delay orientation by one full
+          // opponent think-time when the user attaches mid-game.)
+          if (!orientationSet) {
+            const turn = p.fen.split(" ")[1];
+            board.setSide(turn === "b" ? "black" : "white");
+            orientationSet = true;
+          }
           board.setPosition(p.fen, p.last_move || null);
         }
         break;
@@ -143,11 +151,6 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
         renderEval(p);
         break;
       case "go":
-        if (!orientationSet && lastFen) {
-          const turn = lastFen.split(" ")[1];
-          board.setSide(turn === "b" ? "black" : "white");
-          orientationSet = true;
-        }
         if (p.wtime != null) whiteClockEl.textContent = formatMs(p.wtime);
         if (p.btime != null) blackClockEl.textContent = formatMs(p.btime);
         break;
