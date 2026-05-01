@@ -16,6 +16,15 @@ export function mountTournaments({ container, api, events, log, token }) {
     <div class="tournaments-panel">
       <menu class="tournaments-menubar">
         <li><button class="tmb-item tournament-new">New</button></li>
+        <li class="tmb-menu tmb-sort-menu">
+          <button class="tmb-item tmb-sort-btn">Sort</button>
+          <ul class="tmb-dropdown">
+            <li><button class="tmb-dd-item tmb-sort-opt" data-sort="name">Name</button></li>
+            <li><button class="tmb-dd-item tmb-sort-opt" data-sort="status">Status</button></li>
+            <li><button class="tmb-dd-item tmb-sort-opt" data-sort="created_at">Created</button></li>
+            <li><button class="tmb-dd-item tmb-sort-opt" data-sort="started_at">Started</button></li>
+          </ul>
+        </li>
         <li class="tmb-menu tmb-window-menu">
           <button class="tmb-item tmb-window-btn">Window</button>
           <ul class="tmb-dropdown">
@@ -38,9 +47,16 @@ export function mountTournaments({ container, api, events, log, token }) {
   const newBtn = container.querySelector(".tournament-new");
   const windowMenu = container.querySelector(".tmb-window-menu");
   const windowMenuBtn = container.querySelector(".tmb-window-btn");
+  const sortMenu = container.querySelector(".tmb-sort-menu");
+  const sortMenuBtn = container.querySelector(".tmb-sort-btn");
   const listEl = container.querySelector(".tournaments-list");
   const emptyEl = container.querySelector(".tournaments-empty");
   const emptyMsg = emptyEl.querySelector(".empty-message");
+
+  const SORT_KEY_LS = "sturddle.tournaments.sortBy";
+  const VALID_SORTS = new Set(["name", "status", "created_at", "started_at"]);
+  let sortBy = VALID_SORTS.has(localStorage.getItem(SORT_KEY_LS))
+    ? localStorage.getItem(SORT_KEY_LS) : "created_at";
 
   let tournaments = [];
   let activeId = null;
@@ -92,9 +108,24 @@ export function mountTournaments({ container, api, events, log, token }) {
     }
     emptyEl.classList.add("hidden");
 
-    for (const t of tournaments) {
+    for (const t of sortedTournaments()) {
       listEl.appendChild(renderRow(t));
     }
+  }
+
+  function sortedTournaments() {
+    const arr = tournaments.slice();
+    const cmp = (a, b) => {
+      const av = a[sortBy] ?? "";
+      const bv = b[sortBy] ?? "";
+      if (av === bv) return a.created_at.localeCompare(b.created_at);
+      // Empty values sink to the bottom for time-based sorts.
+      if (av === "") return 1;
+      if (bv === "") return -1;
+      if (sortBy === "name") return av.localeCompare(bv, undefined, { sensitivity: "base" });
+      return av < bv ? -1 : 1;
+    };
+    return arr.sort(cmp);
   }
 
   function renderRow(t) {
@@ -113,11 +144,11 @@ export function mountTournaments({ container, api, events, log, token }) {
         <span class="tournament-engines muted"></span>
       </div>
       <div class="tournament-row-actions">
-        <wa-button class="row-start icon-only" size="small" aria-label="Start" title="Start">
-          <wa-icon name="play"></wa-icon>
+        <wa-button class="row-start icon-only" size="small">
+          <wa-icon class="row-start-icon" name="play"></wa-icon>
         </wa-button>
-        <wa-button class="row-stop icon-only" size="small" aria-label="Stop" title="Stop">
-          <wa-icon name="stop"></wa-icon>
+        <wa-button class="row-stop icon-only" size="small" aria-label="Pause" title="Pause">
+          <wa-icon name="pause"></wa-icon>
         </wa-button>
         <wa-button class="row-workspace icon-only" size="small" aria-label="Open workspace" title="Open workspace">
           <wa-icon name="window-restore"></wa-icon>
@@ -142,6 +173,13 @@ export function mountTournaments({ container, api, events, log, token }) {
     startBtn.disabled = isActive || anotherRunning || status === "running" || status === "done";
     stopBtn.disabled = !isActive;
     removeBtn.disabled = isActive;
+
+    const isResume = status === "stopped";
+    const startIcon = li.querySelector(".row-start-icon");
+    startIcon.setAttribute("name", isResume ? "forward-step" : "play");
+    const startLabel = isResume ? "Resume" : "Start";
+    startBtn.setAttribute("aria-label", startLabel);
+    startBtn.setAttribute("title", startLabel);
 
     startBtn.addEventListener("click", (ev) => { ev.stopPropagation(); startOne(t); });
     stopBtn.addEventListener("click", async (ev) => {
@@ -217,6 +255,32 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   function closeMenus() {
     container.querySelectorAll(".tmb-menu.open").forEach(m => m.classList.remove("open"));
+  }
+
+  function syncSortMenu() {
+    for (const opt of container.querySelectorAll(".tmb-sort-opt")) {
+      opt.classList.toggle("is-active", opt.dataset.sort === sortBy);
+    }
+  }
+  syncSortMenu();
+
+  sortMenuBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isOpen = sortMenu.classList.contains("open");
+    closeMenus();
+    if (!isOpen) sortMenu.classList.add("open");
+  });
+  for (const opt of container.querySelectorAll(".tmb-sort-opt")) {
+    opt.addEventListener("click", () => {
+      const next = opt.dataset.sort;
+      if (VALID_SORTS.has(next)) {
+        sortBy = next;
+        localStorage.setItem(SORT_KEY_LS, sortBy);
+        syncSortMenu();
+        renderList();
+      }
+      closeMenus();
+    });
   }
 
   windowMenuBtn.addEventListener("click", (e) => {
