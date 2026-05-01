@@ -302,7 +302,19 @@ class FastchessRunner:
         spec.work_dir.mkdir(parents=True, exist_ok=True)
         spec.log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        log.info("starting fastchess: %s", " ".join(str(c) for c in cmd))
+        # Resume-relevant facts up front so logs make a Stop/Start cycle
+        # legible without grepping the full argv.
+        seed = spec.tournament.template.get("seed")
+        is_resume = spec.config_path.exists()
+        log.info(
+            "starting fastchess: tournament=%s resume=%s cfg_exists=%s seed=%s pgn=%s",
+            spec.tournament.id,
+            is_resume,
+            is_resume,
+            seed if seed is not None else "<unset>",
+            spec.pgn_path,
+        )
+        log.info("fastchess argv: %s", " ".join(str(c) for c in cmd))
 
         # Pass the proxy secret via env (inherited by fastchess and the
         # engine slots it spawns) rather than argv, so it isn't visible
@@ -345,17 +357,55 @@ class FastchessRunner:
             self._supervise(log_file), name="fastchess-supervisor"
         )
 
+    # How long to wait between SIGTERM and SIGKILL on Stop. Long enough
+    # for fastchess to flush a final saveJson() (post-game bookkeeping is
+    # microseconds, but the in-flight game's engines may need to drain
+    # UCI traffic). Short enough that the UI doesn't hang on a runaway
+    # subprocess.
+    _STOP_GRACE_SECONDS = 2.0
+
     async def stop(self) -> None:
-        """Hard-kill the subprocess. Idempotent."""
+        """Stop the subprocess.
+
+        Sends SIGTERM (POSIX) or terminate() (Windows; equivalent to a
+        hard kill there) and waits up to ``_STOP_GRACE_SECONDS`` for a
+        clean exit. Falls back to SIGKILL on timeout. Idempotent.
+
+        The graceful path lets fastchess's ``~BaseTournament`` run, which
+        flushes a final ``saveJson()`` for resume durability — see
+        Resume after Stop in docs/tournament-spec.md.
+        """
         if self._proc is None:
+            log.info("stop: no process to stop")
             return
         if self._proc.returncode is not None:
-            return  # already exited
+            log.info("stop: process already exited rc=%d", self._proc.returncode)
+            return
         self._stop_requested = True
+        pid = self._proc.pid
+        log.info("stop: sending SIGTERM/terminate to pid=%d", pid)
         try:
-            self._proc.kill()
+            self._proc.terminate()
         except ProcessLookupError:
-            pass
+            log.info("stop: process pid=%d already gone before terminate", pid)
+        else:
+            try:
+                await asyncio.wait_for(
+                    self._proc.wait(), timeout=self._STOP_GRACE_SECONDS
+                )
+                log.info(
+                    "stop: pid=%d exited gracefully after SIGTERM (rc=%s)",
+                    pid, self._proc.returncode,
+                )
+            except asyncio.TimeoutError:
+                log.warning(
+                    "stop: pid=%d did not exit within %.1fs of SIGTERM; sending SIGKILL",
+                    pid, self._STOP_GRACE_SECONDS,
+                )
+                try:
+                    self._proc.kill()
+                except ProcessLookupError:
+                    log.info("stop: process pid=%d gone before SIGKILL", pid)
         # supervisor will observe the exit and emit "stopped"
         if self._supervisor is not None:
             try:

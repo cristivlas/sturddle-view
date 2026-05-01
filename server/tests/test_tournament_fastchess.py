@@ -507,6 +507,44 @@ async def test_runner_stop_emits_stopped_not_crash(tmp_path, patched_runner):
     assert not runner.is_running()
 
 
+async def test_runner_stop_falls_back_to_sigkill_when_sigterm_ignored(
+    tmp_path, patched_runner, monkeypatch
+):
+    # Spawn a fake fastchess that ignores SIGTERM (like a misbehaving
+    # real one would). Verify Stop still terminates the process via the
+    # SIGKILL fallback. Skip on Windows because terminate()/kill() are
+    # both TerminateProcess (no graceful path to test).
+    if sys.platform == "win32":
+        pytest.skip("graceful stop is POSIX-only")
+    spec = _make_spec(tmp_path, {}, [{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}])
+    rec = _Recorder()
+    runner = patched_runner([])
+    # Replace the fake-fastchess argv with one that ignores SIGTERM.
+    sigterm_ignoring = (
+        "import signal, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "time.sleep(60)\n"
+    )
+    from sturddle_view.tournament import fastchess as fc_mod
+    monkeypatch.setattr(
+        fc_mod, "build_command",
+        lambda spec: [sys.executable, "-c", sigterm_ignoring],
+    )
+    # Tighten the grace window so the test stays fast.
+    monkeypatch.setattr(FastchessRunner, "_STOP_GRACE_SECONDS", 0.5)
+
+    await runner.start(spec, rec)
+    assert runner.is_running()
+    # Give the child a moment to install its SIGTERM handler before we send.
+    await asyncio.sleep(0.2)
+    await runner.stop()
+    await asyncio.wait_for(rec.done.wait(), timeout=5.0)
+
+    kinds = [k for k, _ in rec.events]
+    assert "stopped" in kinds
+    assert not runner.is_running()
+
+
 async def test_runner_stop_idempotent(tmp_path, patched_runner):
     spec = _make_spec(tmp_path, {}, [{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}])
     rec = _Recorder()
