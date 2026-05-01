@@ -186,6 +186,16 @@ def test_build_command_gauntlet_with_seeds(tmp_path):
     assert cmd[cmd.index("-seeds") + 1] == "1"
 
 
+def test_build_command_sets_autosaveinterval_to_one(tmp_path):
+    spec = _make_spec(
+        tmp_path,
+        template={},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    cmd = build_command(spec)
+    assert cmd[cmd.index("-autosaveinterval") + 1] == "1"
+
+
 def test_build_command_pins_seed_when_in_template(tmp_path):
     spec = _make_spec(
         tmp_path,

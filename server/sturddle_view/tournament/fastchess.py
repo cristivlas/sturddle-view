@@ -161,6 +161,10 @@ def build_command(spec: RunSpec) -> list[str]:
     if "seed" in t:
         cmd.extend(["-srand", str(t["seed"])])
 
+    # Save cfg.json after every game so a Stop loses at most one
+    # in-flight game's worth of resume progress (default is 20).
+    cmd.extend(["-autosaveinterval", "1"])
+
     # Opening book — global default from settings; legacy template
     # ``book``/``book_format`` fields are ignored. Format inferred from
     # the file extension (.epd → epd, anything else → pgn) since the
