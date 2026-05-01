@@ -823,19 +823,10 @@ wa-dialog::part(body) {
   display: flex; flex-direction: column; gap: 6px;
   height: 100%; min-height: 0;
 }
-.wb-livegame .lg-clocks {
-  display: flex; justify-content: space-between; gap: 8px;
-  font-family: var(--wa-font-family-code);
-}
-.wb-livegame .lg-clock {
-  display: flex; flex-direction: column; align-items: center;
-  background: var(--bg); border: 1px solid #2e3138;
-  border-radius: 4px; padding: 4px 8px; min-width: 80px;
-}
-.wb-livegame .lg-clock-label {
-  font-size: 10px; color: var(--muted); text-transform: uppercase;
-}
-.wb-livegame .lg-clock-value { font-size: 14px; }
+.wb-livegame .clock-row { padding: 5px 10px; }
+.wb-livegame .clock-row .clock-time { font-size: 16px; }
+.wb-livegame.lg-compact .lg-pv,
+.wb-livegame.lg-compact .lg-status { display: none; }
 .wb-livegame .lg-board {
   flex: 1 1 auto; min-height: 0;
   display: flex; align-items: center; justify-content: center;

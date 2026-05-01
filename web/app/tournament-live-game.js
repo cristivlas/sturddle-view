@@ -30,11 +30,15 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
   const body = document.createElement("div");
   body.className = "wb-livegame";
   body.innerHTML = `
-    <div class="lg-clocks">
-      <div class="lg-clock lg-clock-white"><span class="lg-clock-label">White</span><span class="lg-clock-value">—</span></div>
-      <div class="lg-clock lg-clock-black"><span class="lg-clock-label">Black</span><span class="lg-clock-value">—</span></div>
+    <div class="clock-row lg-clock-top">
+      <span class="clock-name lg-top-name">—</span>
+      <span class="clock-time lg-top-time">—</span>
     </div>
     <div class="lg-board"></div>
+    <div class="clock-row lg-clock-bottom">
+      <span class="clock-name lg-bottom-name">—</span>
+      <span class="clock-time lg-bottom-time">—</span>
+    </div>
     <div class="lg-eval">
       <span class="lg-eval-score">—</span>
       <span class="lg-eval-depth muted"></span>
@@ -52,8 +56,12 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
   const evalScoreEl = body.querySelector(".lg-eval-score");
   const evalDepthEl = body.querySelector(".lg-eval-depth");
   const pvEl = body.querySelector(".lg-pv");
-  const whiteClockEl = body.querySelector(".lg-clock-white .lg-clock-value");
-  const blackClockEl = body.querySelector(".lg-clock-black .lg-clock-value");
+  const clockTopEl = body.querySelector(".lg-clock-top");
+  const clockBottomEl = body.querySelector(".lg-clock-bottom");
+  const topNameEl = body.querySelector(".lg-top-name");
+  const bottomNameEl = body.querySelector(".lg-bottom-name");
+  const topTimeEl = body.querySelector(".lg-top-time");
+  const bottomTimeEl = body.querySelector(".lg-bottom-time");
   const statusEl = body.querySelector(".lg-status");
 
   // Default WinBox layout for live windows. Cascade by index so multiple
@@ -73,11 +81,21 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
   liveWindows.set(proxyId, wb);
 
   // Keep the board square and fitting the WinBox window on every resize.
+  // Constrain clock rows to the same width so they align with board edges.
   function constrainAndResize() {
-    boardHost.style.width = "";
+    for (const el of [clockTopEl, boardHost, clockBottomEl]) {
+      el.style.width = "";
+      el.style.margin = "";
+    }
+    body.classList.toggle("lg-compact", body.clientHeight < 280);
     const h = boardHost.clientHeight;
     const w = boardHost.clientWidth;
-    if (h > 0 && h < w) boardHost.style.width = `${h}px`;
+    if (h > 0 && h < w) {
+      for (const el of [clockTopEl, boardHost, clockBottomEl]) {
+        el.style.width = `${h}px`;
+        el.style.margin = "0 auto";
+      }
+    }
     board.forceResize();
   }
   const ro = new ResizeObserver(constrainAndResize);
@@ -87,6 +105,7 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
   // ws on connect — set up after construction to avoid TDZ.
   let ws = null;
   wb.onclose = () => {
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
     if (ws) try { ws.close(); } catch { /* */ }
     ro.disconnect();
     liveWindows.delete(proxyId);
@@ -129,34 +148,59 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
   });
 
   let orientationSet = false;
+  let engineColor = null; // fixed on first position line
+  let timerInterval = null;
+  let activeMs = 0;
+
+  function setEngineColor(color) {
+    engineColor = color;
+    const opp = color === "white" ? "Black" : "White";
+    bottomNameEl.textContent = color === "white" ? "White" : "Black";
+    topNameEl.textContent = opp;
+  }
+
+  function updateClocks(wtime, btime) {
+    if (!engineColor || wtime == null || btime == null) return;
+    bottomTimeEl.textContent = formatMs(engineColor === "white" ? wtime : btime);
+    topTimeEl.textContent = formatMs(engineColor === "white" ? btime : wtime);
+  }
 
   function handleParsed(p) {
     switch (p.kind) {
       case "position":
         if (p.fen) {
-          // Set orientation from the first position line. fastchess
-          // sends `position ... moves ...` with side-to-move = the
-          // engine receiving the line — so its color in the game.
-          // (Waiting for `go` would delay orientation by one full
-          // opponent think-time when the user attaches mid-game.)
+          const turn = p.fen.split(" ")[1];
+          const color = turn === "b" ? "black" : "white";
           if (!orientationSet) {
-            const turn = p.fen.split(" ")[1];
-            board.setSide(turn === "b" ? "black" : "white");
+            setEngineColor(color);
+            board.setSide(color);
             orientationSet = true;
           }
           board.setPosition(p.fen, p.last_move || null);
+          board.clearArrows();
         }
         break;
       case "info":
         renderEval(p);
         break;
       case "go":
-        if (p.wtime != null) whiteClockEl.textContent = formatMs(p.wtime);
-        if (p.btime != null) blackClockEl.textContent = formatMs(p.btime);
+        updateClocks(p.wtime, p.btime);
+        clockTopEl.classList.remove("active");
+        clockBottomEl.classList.toggle("active", !!engineColor);
+        if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+        if (engineColor && p.wtime != null && p.btime != null) {
+          activeMs = engineColor === "white" ? p.wtime : p.btime;
+          timerInterval = setInterval(() => {
+            activeMs = Math.max(0, activeMs - 100);
+            bottomTimeEl.textContent = formatMs(activeMs);
+            if (activeMs === 0) { clearInterval(timerInterval); timerInterval = null; }
+          }, 100);
+        }
         break;
       case "bestmove":
-        // Could highlight the move; the next position line will
-        // propagate through setPosition anyway.
+        if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+        clockBottomEl.classList.remove("active");
+        clockTopEl.classList.toggle("active", !!engineColor);
         break;
     }
   }
@@ -173,6 +217,8 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
     evalDepthEl.textContent = p.depth != null ? `d${p.depth}` : "";
     if (p.pv && p.pv.length) {
       pvEl.textContent = p.pv.slice(0, 12).join(" ");
+      const m = p.pv[0];
+      if (m && m.length >= 4) board.setArrow(m.slice(0, 2), m.slice(2, 4));
     }
   }
 
