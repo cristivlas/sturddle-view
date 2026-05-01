@@ -22,8 +22,7 @@ import time
 
 import pytest
 
-playwright = pytest.importorskip("playwright.async_api")
-from playwright.async_api import async_playwright  # noqa: E402
+pytest.importorskip("playwright.async_api")
 
 from sturddle_view.app import create_app  # noqa: E402
 from sturddle_view.config import Settings  # noqa: E402
@@ -73,62 +72,53 @@ def server(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_tournaments_perspective_smoke(server):
+async def test_tournaments_perspective_smoke(server, browser):
+    if browser is None:
+        pytest.skip("chromium not installed")
     base, app = server
 
-    async with async_playwright() as p:
-        try:
-            browser = await p.chromium.launch()
-        except Exception as e:
-            pytest.skip(f"chromium not installed: {e}")
-        ctx = await browser.new_context()
-        page = await ctx.new_page()
-        # Surface JS errors as test failures.
-        page_errors: list[str] = []
-        page.on("pageerror", lambda exc: page_errors.append(str(exc)))
-        page.on("console", lambda msg: page_errors.append(f"console.{msg.type}: {msg.text}")
-                if msg.type == "error" else None)
-        try:
-            await page.goto(base + "/")
-            await page.wait_for_selector("#play-perspective", timeout=5000)
+    ctx = await browser.new_context()
+    page = await ctx.new_page()
+    page_errors: list[str] = []
+    page.on("pageerror", lambda exc: page_errors.append(str(exc)))
+    page.on("console", lambda msg: page_errors.append(f"console.{msg.type}: {msg.text}")
+            if msg.type == "error" else None)
+    try:
+        await page.goto(base + "/")
+        await page.wait_for_selector("#play-perspective", timeout=5000)
 
-            # Switch to Engines perspective.
-            await page.click('button[data-perspective="engines"]')
-            await page.wait_for_selector("#engines-perspective", timeout=5000)
+        await page.click('button[data-perspective="engines"]')
+        await page.wait_for_selector("#engines-perspective", timeout=5000)
 
-            # Sub-tabs: only Roster + Tournaments (no Observe).
-            tab_panels = await page.evaluate(
-                """() => [...document.querySelectorAll('#engines-perspective wa-tab')]
-                          .map(t => t.getAttribute('panel'))"""
-            )
-            assert tab_panels == ["roster", "tournaments"], tab_panels
+        tab_panels = await page.evaluate(
+            """() => [...document.querySelectorAll('#engines-perspective wa-tab')]
+                      .map(t => t.getAttribute('panel'))"""
+        )
+        assert tab_panels == ["roster", "tournaments"], tab_panels
 
-            # Click Tournaments sub-tab.
-            await page.click('#engines-perspective wa-tab[panel="tournaments"]')
-            await page.wait_for_selector(".tournaments-panel", timeout=5000)
+        await page.click('#engines-perspective wa-tab[panel="tournaments"]')
+        await page.wait_for_selector(".tournaments-panel", timeout=5000)
 
-            # Empty state: fastchess not configured.
-            await page.wait_for_function(
-                """() => {
-                    const e = document.querySelector('.tournaments-empty .empty-message');
-                    return e && /fastchess not configured/i.test(e.textContent);
-                }""",
-                timeout=5000,
-            )
+        await page.wait_for_function(
+            """() => {
+                const e = document.querySelector('.tournaments-empty .empty-message');
+                return e && /fastchess not configured/i.test(e.textContent);
+            }""",
+            timeout=5000,
+        )
 
-            # New Tournament button is disabled.
-            disabled = await page.evaluate(
-                "() => document.querySelector('.tournament-new').disabled"
-            )
-            assert disabled is True
+        disabled = await page.evaluate(
+            "() => document.querySelector('.tournament-new').disabled"
+        )
+        assert disabled is True
 
-            assert page_errors == [], "JS errors during test:\n" + "\n".join(page_errors)
-        finally:
-            await browser.close()
+        assert page_errors == [], "JS errors during test:\n" + "\n".join(page_errors)
+    finally:
+        await ctx.close()
 
 
 @pytest.mark.asyncio
-async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkeypatch):
+async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkeypatch, browser):
     """Boot the server with fastchess configured AND a tournament already
     on disk. The Tournaments tab should render the row with the four
     expected verbs and an 'idle' status badge."""
@@ -164,112 +154,98 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
     while time.time() < deadline and not s.started:
         time.sleep(0.05)
 
+    if browser is None:
+        pytest.skip("chromium not installed")
     try:
-        async with async_playwright() as p:
-            try:
-                browser = await p.chromium.launch()
-            except Exception as e:
-                pytest.skip(f"chromium not installed: {e}")
-            ctx = await browser.new_context()
-            page = await ctx.new_page()
-            page_errors: list[str] = []
-            page.on("pageerror", lambda exc: page_errors.append(str(exc)))
-            page.on("console", lambda msg: page_errors.append(
-                f"console.{msg.type}: {msg.text}"
-            ) if msg.type == "error" else None)
-            try:
-                await page.goto(f"http://127.0.0.1:{port}/")
-                await page.wait_for_selector("#play-perspective", timeout=5000)
-                await page.click('button[data-perspective="engines"]')
-                await page.click('#engines-perspective wa-tab[panel="tournaments"]')
-                await page.wait_for_selector(".tournament-row", timeout=5000)
+        ctx = await browser.new_context()
+        page = await ctx.new_page()
+        page_errors: list[str] = []
+        page.on("pageerror", lambda exc: page_errors.append(str(exc)))
+        page.on("console", lambda msg: page_errors.append(
+            f"console.{msg.type}: {msg.text}"
+        ) if msg.type == "error" else None)
+        try:
+            await page.goto(f"http://127.0.0.1:{port}/")
+            await page.wait_for_selector("#play-perspective", timeout=5000)
+            await page.click('button[data-perspective="engines"]')
+            await page.click('#engines-perspective wa-tab[panel="tournaments"]')
+            await page.wait_for_selector(".tournament-row", timeout=5000)
 
-                row_info = await page.evaluate(
-                    """() => {
-                        const row = document.querySelector('.tournament-row');
-                        return {
-                            name: row.querySelector('.tournament-name').textContent,
-                            status: row.querySelector('.tournament-status').textContent,
-                            actions: [...row.querySelectorAll('.tournament-row-actions wa-button')]
-                                        .map(b => b.getAttribute('aria-label')),
-                            new_button_disabled: document.querySelector('.tournament-new').disabled,
-                        };
-                    }"""
-                )
-                assert row_info["name"] == "smoke"
-                assert row_info["status"].strip() == "idle"
-                assert row_info["actions"] == ["Start", "Stop", "Open workspace", "Remove"]
-                assert row_info["new_button_disabled"] is False
+            row_info = await page.evaluate(
+                """() => {
+                    const row = document.querySelector('.tournament-row');
+                    return {
+                        name: row.querySelector('.tournament-name').textContent,
+                        status: row.querySelector('.tournament-status').textContent,
+                        actions: [...row.querySelectorAll('.tournament-row-actions wa-button')]
+                                    .map(b => b.getAttribute('aria-label')),
+                        new_button_disabled: document.querySelector('.tournament-new').disabled,
+                    };
+                }"""
+            )
+            assert row_info["name"] == "smoke"
+            assert row_info["status"].strip() == "idle"
+            assert row_info["actions"] == ["Start", "Stop", "Open workspace", "Remove"]
+            assert row_info["new_button_disabled"] is False
 
-                # ---- Slice 7: Inspect dialog renders frozen template ----
-                # Click the row to open the read-only inspect view.
-                await page.click(".tournament-row .tournament-row-main")
-                # Dialog mounts; the form's TC field should show the frozen value.
-                await page.wait_for_function(
-                    """() => {
-                        const inputs = document.querySelectorAll('wa-dialog wa-input[data-key]');
-                        return inputs.length > 0;
-                    }""",
-                    timeout=5000,
-                )
-                tc_value = await page.evaluate(
-                    """() => document.querySelector('wa-dialog wa-input[data-key="tc"]').value"""
-                )
-                assert tc_value == "10+0.1"
-                # Inspect form is read-only.
-                tc_readonly = await page.evaluate(
-                    """() => document.querySelector('wa-dialog wa-input[data-key="tc"]').hasAttribute('readonly')"""
-                )
-                assert tc_readonly is True
-                # Close inspect dialog.
-                await page.click('wa-dialog wa-button[slot="footer"]')
-                await page.wait_for_function(
-                    "() => !document.querySelector('wa-dialog')",
-                    timeout=2000,
-                )
+            await page.click(".tournament-row .tournament-row-main")
+            await page.wait_for_function(
+                """() => {
+                    const inputs = document.querySelectorAll('wa-dialog wa-input[data-key]');
+                    return inputs.length > 0;
+                }""",
+                timeout=5000,
+            )
+            tc_value = await page.evaluate(
+                """() => document.querySelector('wa-dialog wa-input[data-key="tc"]').value"""
+            )
+            assert tc_value == "10+0.1"
+            tc_readonly = await page.evaluate(
+                """() => document.querySelector('wa-dialog wa-input[data-key="tc"]').hasAttribute('readonly')"""
+            )
+            assert tc_readonly is True
+            await page.click('wa-dialog wa-button[slot="footer"]')
+            await page.wait_for_function(
+                "() => !document.querySelector('wa-dialog')",
+                timeout=2000,
+            )
 
-                # ---- Slice 7 rework: Defaults live in Settings → Tournament tab ----
-                # Open the global Settings dialog via the gear button.
-                await page.click("#settings-btn")
-                await page.wait_for_function(
-                    """() => document.querySelector('wa-dialog wa-tab[panel="tournament"]')""",
-                    timeout=5000,
-                )
-                await page.click('wa-dialog wa-tab[panel="tournament"]')
-                # Wait for the template form inside the Tournament tab.
-                await page.wait_for_function(
-                    """() => document.querySelector('wa-dialog wa-tab-panel[name="tournament"] wa-input[data-key="tc"]')""",
-                    timeout=5000,
-                )
-                # Set new defaults: tc=60+0.6, rounds=42, games_in_parallel=4. Auto-saves
-                # on input (debounced 400ms).
-                await page.evaluate(
-                    """() => {
-                        const setVal = (k, v) => {
-                            const el = document.querySelector(
-                                `wa-dialog wa-tab-panel[name="tournament"] wa-input[data-key="${k}"]`
-                            );
-                            el.value = v;
-                            el.dispatchEvent(new Event('input', { bubbles: true }));
-                        };
-                        setVal('tc', '60+0.6');
-                        setVal('rounds', '42');
-                        setVal('games_in_parallel', '4');
-                    }"""
-                )
-                # Wait for the debounced save to land server-side.
-                await page.wait_for_function(
-                    """async () => {
-                        const r = await fetch('/api/tournament-settings');
-                        const tpl = (await r.json()).default_template || {};
-                        return tpl.tc === '60+0.6' && tpl.rounds === 42 && tpl.games_in_parallel === 4;
-                    }""",
-                    timeout=5000,
-                )
+            await page.click("#settings-btn")
+            await page.wait_for_function(
+                """() => document.querySelector('wa-dialog wa-tab[panel="tournament"]')""",
+                timeout=5000,
+            )
+            await page.click('wa-dialog wa-tab[panel="tournament"]')
+            await page.wait_for_function(
+                """() => document.querySelector('wa-dialog wa-tab-panel[name="tournament"] wa-input[data-key="tc"]')""",
+                timeout=5000,
+            )
+            await page.evaluate(
+                """() => {
+                    const setVal = (k, v) => {
+                        const el = document.querySelector(
+                            `wa-dialog wa-tab-panel[name="tournament"] wa-input[data-key="${k}"]`
+                        );
+                        el.value = v;
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                    };
+                    setVal('tc', '60+0.6');
+                    setVal('rounds', '42');
+                    setVal('games_in_parallel', '4');
+                }"""
+            )
+            await page.wait_for_function(
+                """async () => {
+                    const r = await fetch('/api/tournament-settings');
+                    const tpl = (await r.json()).default_template || {};
+                    return tpl.tc === '60+0.6' && tpl.rounds === 42 && tpl.games_in_parallel === 4;
+                }""",
+                timeout=5000,
+            )
 
-                assert page_errors == [], "JS errors during test:\n" + "\n".join(page_errors)
-            finally:
-                await browser.close()
+            assert page_errors == [], "JS errors during test:\n" + "\n".join(page_errors)
+        finally:
+            await ctx.close()
     finally:
         s.should_exit = True
         s.force_exit = True
@@ -277,7 +253,7 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
 
 
 @pytest.mark.asyncio
-async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch):
+async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, browser):
     """Slice 8: clicking 'Open workspace' on a tournament row spawns
     three WinBox windows (Standings / Schedule / Event log)."""
     monkeypatch.setattr(
@@ -310,70 +286,59 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch):
     while time.time() < deadline and not s.started:
         time.sleep(0.05)
 
+    if browser is None:
+        pytest.skip("chromium not installed")
     try:
-        async with async_playwright() as p:
-            try:
-                browser = await p.chromium.launch()
-            except Exception as e:
-                pytest.skip(f"chromium not installed: {e}")
-            ctx = await browser.new_context()
-            page = await ctx.new_page()
-            page_errors: list[str] = []
-            page.on("pageerror", lambda exc: page_errors.append(str(exc)))
-            page.on("console", lambda msg: page_errors.append(
-                f"console.{msg.type}: {msg.text}"
-            ) if msg.type == "error" else None)
-            try:
-                await page.goto(f"http://127.0.0.1:{port}/")
-                await page.wait_for_selector("#play-perspective", timeout=5000)
-                await page.click('button[data-perspective="engines"]')
-                await page.click('#engines-perspective wa-tab[panel="tournaments"]')
-                await page.wait_for_selector(".tournament-row", timeout=5000)
+        ctx = await browser.new_context()
+        page = await ctx.new_page()
+        page_errors: list[str] = []
+        page.on("pageerror", lambda exc: page_errors.append(str(exc)))
+        page.on("console", lambda msg: page_errors.append(
+            f"console.{msg.type}: {msg.text}"
+        ) if msg.type == "error" else None)
+        try:
+            await page.goto(f"http://127.0.0.1:{port}/")
+            await page.wait_for_selector("#play-perspective", timeout=5000)
+            await page.click('button[data-perspective="engines"]')
+            await page.click('#engines-perspective wa-tab[panel="tournaments"]')
+            await page.wait_for_selector(".tournament-row", timeout=5000)
 
-                # Click the Open-workspace button on the row.
-                await page.click('.tournament-row .row-workspace')
+            await page.click('.tournament-row .row-workspace')
 
-                # All three WinBox windows should appear.
-                await page.wait_for_function(
-                    "() => document.querySelectorAll('.winbox.sturddle-wb').length === 3",
-                    timeout=5000,
-                )
-                titles = await page.evaluate(
-                    """() => [...document.querySelectorAll('.winbox.sturddle-wb .wb-title')]
-                                .map(t => t.textContent)"""
-                )
-                assert any("Standings" in t for t in titles)
-                assert any("Schedule"  in t for t in titles)
-                assert any("Event log" in t for t in titles)
+            await page.wait_for_function(
+                "() => document.querySelectorAll('.winbox.sturddle-wb').length === 3",
+                timeout=5000,
+            )
+            titles = await page.evaluate(
+                """() => [...document.querySelectorAll('.winbox.sturddle-wb .wb-title')]
+                            .map(t => t.textContent)"""
+            )
+            assert any("Standings" in t for t in titles)
+            assert any("Schedule"  in t for t in titles)
+            assert any("Event log" in t for t in titles)
 
-                # Standings shows the empty state (no games played yet).
-                empty_text = await page.evaluate(
-                    """() => document.querySelector('.wb-standings .wb-empty')?.textContent || ''"""
-                )
-                assert "No games" in empty_text
+            empty_text = await page.evaluate(
+                """() => document.querySelector('.wb-standings .wb-empty')?.textContent || ''"""
+            )
+            assert "No games" in empty_text
 
-                # Closing the workspace's last window should clean up.
-                # Quick check: clicking 'Open workspace' a second time
-                # should still result in exactly three windows (not six).
-                # Close them all first via the X.
-                await page.evaluate(
-                    """() => document.querySelectorAll('.winbox.sturddle-wb .wb-close')
-                                .forEach(b => b.click())"""
-                )
-                await page.wait_for_function(
-                    "() => document.querySelectorAll('.winbox.sturddle-wb').length === 0",
-                    timeout=3000,
-                )
-                # Re-open: should still produce exactly 3.
-                await page.click('.tournament-row .row-workspace')
-                await page.wait_for_function(
-                    "() => document.querySelectorAll('.winbox.sturddle-wb').length === 3",
-                    timeout=5000,
-                )
+            await page.evaluate(
+                """() => document.querySelectorAll('.winbox.sturddle-wb .wb-close')
+                            .forEach(b => b.click())"""
+            )
+            await page.wait_for_function(
+                "() => document.querySelectorAll('.winbox.sturddle-wb').length === 0",
+                timeout=3000,
+            )
+            await page.click('.tournament-row .row-workspace')
+            await page.wait_for_function(
+                "() => document.querySelectorAll('.winbox.sturddle-wb').length === 3",
+                timeout=5000,
+            )
 
-                assert page_errors == [], "JS errors during test:\n" + "\n".join(page_errors)
-            finally:
-                await browser.close()
+            assert page_errors == [], "JS errors during test:\n" + "\n".join(page_errors)
+        finally:
+            await ctx.close()
     finally:
         s.should_exit = True
         s.force_exit = True

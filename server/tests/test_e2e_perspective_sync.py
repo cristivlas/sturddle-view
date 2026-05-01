@@ -12,8 +12,7 @@ import time
 
 import pytest
 
-playwright = pytest.importorskip("playwright.async_api")
-from playwright.async_api import async_playwright  # noqa: E402
+pytest.importorskip("playwright.async_api")
 
 from sturddle_view.app import create_app  # noqa: E402
 from sturddle_view.config import Settings  # noqa: E402
@@ -51,10 +50,12 @@ def server(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_play_perspective_remount_resyncs_state(server):
+async def test_play_perspective_remount_resyncs_state(server, browser):
     """Inject a synthetic active game on the server, switch perspectives,
     and verify the remounted Play view receives a board_update with the
     correct FEN."""
+    if browser is None:
+        pytest.skip("chromium not installed")
     base, app = server
 
     # Build a non-trivial game state directly on the HVE so the test is
@@ -82,61 +83,51 @@ async def test_play_perspective_remount_resyncs_state(server):
 
     expected_fen = hve._board.fen()
 
-    async with async_playwright() as p:
-        try:
-            browser = await p.chromium.launch()
-        except Exception as e:
-            pytest.skip(f"chromium not installed: {e}")
-        ctx = await browser.new_context()
-        page = await ctx.new_page()
-        try:
-            await page.goto(base + "/")
-            await page.wait_for_selector("#play-perspective", timeout=5000)
-            await page.wait_for_timeout(500)
+    ctx = await browser.new_context()
+    page = await ctx.new_page()
+    try:
+        await page.goto(base + "/")
+        await page.wait_for_selector("#play-perspective", timeout=5000)
+        await page.wait_for_timeout(500)
 
-            # Capture WS frames *received after* we switch back.
-            await page.evaluate(
-                """() => {
-                    window.__msgs = [];
-                    const orig = WebSocket.prototype.send;
-                    // Hook the existing socket via the framereceived isn't possible
-                    // from page-side; instead, drain into __msgs by patching the
-                    // event handler the app already installed.
-                }"""
-            )
+        await page.evaluate(
+            """() => {
+                window.__msgs = [];
+                const orig = WebSocket.prototype.send;
+            }"""
+        )
 
-            # Switch to Engines perspective.
-            await page.click('button[data-perspective="engines"]')
-            await page.wait_for_timeout(300)
-            # Switch back; perspective mount calls /game/sync after 200ms.
-            await page.click('button[data-perspective="play"]')
-            await page.wait_for_timeout(1500)
+        # Switch to Engines perspective.
+        await page.click('button[data-perspective="engines"]')
+        await page.wait_for_timeout(300)
+        # Switch back; perspective mount calls /game/sync after 200ms.
+        await page.click('button[data-perspective="play"]')
+        await page.wait_for_timeout(1500)
 
-            # Verify the rendered board matches the expected FEN.
-            info = await page.evaluate(
-                """() => {
-                    const svg = document.querySelector('.game-view-board .board svg.cm-chessboard');
-                    if (!svg) return {missing: true};
-                    const pieces = [...svg.querySelectorAll('[data-piece]')]
-                      .map(p => p.getAttribute('data-piece') + '@' + p.getAttribute('data-square'))
-                      .sort();
-                    return { pieces };
-                }"""
-            )
-            assert not info.get("missing"), "board not mounted after switch back"
-            # Build expected piece map from FEN.
-            expected_board = chess.Board(expected_fen)
-            expected_pieces = sorted(
-                f"{('w' if expected_board.color_at(sq) == chess.WHITE else 'b')}"
-                f"{chess.piece_symbol(expected_board.piece_at(sq).piece_type)}"
-                f"@{chess.square_name(sq)}"
-                for sq in chess.SQUARES
-                if expected_board.piece_at(sq) is not None
-            )
-            assert info["pieces"] == expected_pieces, (
-                f"board state after remount diverges from server.\n"
-                f"  expected: {expected_pieces}\n"
-                f"  actual:   {info['pieces']}"
-            )
-        finally:
-            await browser.close()
+        # Verify the rendered board matches the expected FEN.
+        info = await page.evaluate(
+            """() => {
+                const svg = document.querySelector('.game-view-board .board svg.cm-chessboard');
+                if (!svg) return {missing: true};
+                const pieces = [...svg.querySelectorAll('[data-piece]')]
+                  .map(p => p.getAttribute('data-piece') + '@' + p.getAttribute('data-square'))
+                  .sort();
+                return { pieces };
+            }"""
+        )
+        assert not info.get("missing"), "board not mounted after switch back"
+        expected_board = chess.Board(expected_fen)
+        expected_pieces = sorted(
+            f"{('w' if expected_board.color_at(sq) == chess.WHITE else 'b')}"
+            f"{chess.piece_symbol(expected_board.piece_at(sq).piece_type)}"
+            f"@{chess.square_name(sq)}"
+            for sq in chess.SQUARES
+            if expected_board.piece_at(sq) is not None
+        )
+        assert info["pieces"] == expected_pieces, (
+            f"board state after remount diverges from server.\n"
+            f"  expected: {expected_pieces}\n"
+            f"  actual:   {info['pieces']}"
+        )
+    finally:
+        await ctx.close()

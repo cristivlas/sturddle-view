@@ -14,8 +14,7 @@ import time
 
 import pytest
 
-playwright = pytest.importorskip("playwright.async_api")
-from playwright.async_api import async_playwright  # noqa: E402
+pytest.importorskip("playwright.async_api")
 
 from sturddle_view.app import create_app  # noqa: E402
 from sturddle_view.config import Settings  # noqa: E402
@@ -43,7 +42,7 @@ def _free_port() -> int:
 
 
 @pytest.mark.asyncio
-async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch):
+async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, browser):
     import uvicorn
     from httpx import AsyncClient
 
@@ -127,20 +126,17 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch):
             time.sleep(0.02)
         assert orch._pair_index.game_id_for("proxy-white") is not None
 
-        async with async_playwright() as p:
-            try:
-                browser = await p.chromium.launch()
-            except Exception as e:
-                pytest.skip(f"chromium not installed: {e}")
-            ctx = await browser.new_context()
-            page = await ctx.new_page()
-            page_errors: list[str] = []
-            page.on("pageerror", lambda exc: page_errors.append(str(exc)))
-            page.on("console", lambda msg: page_errors.append(
-                f"console.{msg.type}: {msg.text}"
-            ) if msg.type == "error" else None)
+        if browser is None:
+            pytest.skip("chromium not installed")
+        ctx = await browser.new_context()
+        page = await ctx.new_page()
+        page_errors: list[str] = []
+        page.on("pageerror", lambda exc: page_errors.append(str(exc)))
+        page.on("console", lambda msg: page_errors.append(
+            f"console.{msg.type}: {msg.text}"
+        ) if msg.type == "error" else None)
 
-            try:
+        try:
                 await page.goto(f"{base}/")
                 await page.wait_for_selector("#play-perspective", timeout=5000)
                 await page.click('button[data-perspective="engines"]')
@@ -202,8 +198,8 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch):
                 )
 
                 assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
-            finally:
-                await browser.close()
+        finally:
+            await ctx.close()
     finally:
         try:
             await app.state.tournament_orch.stop(t.id)

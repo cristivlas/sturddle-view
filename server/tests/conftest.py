@@ -2,6 +2,31 @@
 from __future__ import annotations
 
 import pytest
+import pytest_asyncio
+
+
+@pytest_asyncio.fixture(scope="session")
+async def browser():
+    """One Chromium instance shared across the whole test session.
+
+    Each test must call ``browser.new_context()`` for isolation; closing
+    the context (not the browser) is the test's responsibility.
+    Yields None when Playwright/Chromium is not installed — each e2e
+    test calls pytest.skip() on None.
+    """
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        yield None
+        return
+    async with async_playwright() as pw:
+        try:
+            b = await pw.chromium.launch()
+        except Exception:
+            yield None
+            return
+        yield b
+        await b.close()
 
 
 @pytest.fixture(autouse=True)
