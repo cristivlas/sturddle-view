@@ -89,7 +89,7 @@ Windows (TerminateProcess is hard-kill anyway). If a Resume verb is
 later requested, fastchess's `-config file=…` mechanism makes it
 trivially addable without changing the existing state machine — Resume
 becomes "Start with `-config` pointing at the prior tournament's
-artifacts."
+artifacts." See **Resume after Stop** below for the concrete plan.
 
 ### Cross-platform process control
 
@@ -630,6 +630,131 @@ Rules enforced for every test shipped with this subsystem:
 
 ---
 
+## Resume after Stop (planned, not yet implemented)
+
+Today's behavior: clicking **Start** on a `stopped` tournament launches
+a fresh fastchess run with the frozen template. Because `games.pgn` is
+opened with `append=true`, completed games persist — but fastchess
+itself has no record of them and replays the schedule from the
+beginning, producing duplicate games (same openings, same engine
+pairs, same colors). SPRT pair-counting and standings will
+double-count those games. The Start-after-Stop path is a UX bug, not
+a feature.
+
+The fix uses fastchess's native resume mechanism (`-config`). Research
+findings (verified against fastchess source at
+`~/Projects/fastchess/app/src/`):
+
+- Fastchess maintains state in a JSON file (default `config.json`,
+  written by `BaseTournament::saveJson()`). The file contains the
+  tournament config, engine list, and a `stats` map (W/L/D + penta per
+  engine pair).
+- **Save cadence is governed by `-autosaveinterval N`**, which defaults
+  to **20 games**. With the default, killing fastchess after fewer than
+  20 completed games loses *all* progress for resume purposes (the
+  cfg.json was never written). Pass `-autosaveinterval 1` so every
+  game is durable.
+- On startup with `-config file=<path>`, fastchess loads that file via
+  `loadJson()` (`app/src/cli/cli.cpp:433`), seeds the scoreboard via
+  `setResults()` (`tournament.cpp:331`), and computes
+  `initial_matchcount_` as the sum of W+L+D across pairs
+  (`tournament.cpp:33`).
+- The opening book auto-rotates by that count
+  (`opening_book.cpp:23`: `offset_ = start - 1 + initial_matchcount /
+  games`), so fastchess fast-forwards through the schedule to the
+  exact next pair to play.
+- The CLI splits read and write paths: `-config file=<path>` is the
+  *read* (load on resume), `-config outname=<path>` is the *write*
+  (where fastchess saves snapshots). Initial run passes only
+  `outname=`; resume runs pass both `file=` and `outname=` (same
+  path, so the snapshot is overwritten in place). Passing `file=` to a
+  non-existent file is a fatal error, so the orchestrator must check
+  before adding the flag.
+- **Fastchess does not read `games.pgn` on resume.** Stats come from
+  `config.json` only. A truncated or `*`-result trailing game in the
+  PGN is invisible to fastchess; it will simply replay any pair that
+  hadn't yet been recorded in `config.json`.
+- **Resume produces at most one duplicate game.** Even with
+  `-autosaveinterval 1`, the save fires after the *post-game*
+  bookkeeping inside fastchess; if SIGKILL lands between the PGN
+  append for game N and the cfg.json write for game N, the resumed
+  run replays the pair that produced game N, leaving two PGN entries
+  for the same `(round, white, black)`. Verified empirically: see the
+  smoke test in `/tmp/fc-smoke/` (a planned 8-game match interrupted
+  after 3 PGN games but only 2 saved produced 9 total PGN entries on
+  completion).
+- **Resume is statistically valid but NOT byte-deterministic.**
+  `-srand` only seeds fastchess's pairing/opening-shuffle PRNG; it
+  does not seed the engines. With ultra-fast TC the same pair on the
+  same opening produces a different game across runs because engine
+  search depends on wall-clock timing. SPRT/Elo correctness is
+  unaffected (pairs remain independent samples), but anyone expecting
+  bit-identical replay will be disappointed.
+
+Concrete implementation plan:
+
+1. **Pin a seed at tournament-creation time.** Add a `seed` field
+   (uint64) to the frozen template; generate at create-time with
+   `secrets.randbits(64)`. Pass `-srand <seed>` on every Start. This
+   does NOT make games reproducible (engines are not seeded); it only
+   makes the *opening order* stable across runs when the book is
+   shuffled. Schema change is acceptable (early dev, no production
+   data).
+2. **Pass `-autosaveinterval 1`** on every Start. Default is 20,
+   which would lose up to 19 games of resume progress on Stop.
+3. **On Start, conditionally pass `-config`:**
+   - First run (`<state.json>` does not exist):
+     `-config outname=<state.json>`.
+   - Resume run (`<state.json>` exists):
+     `-config file=<state.json> outname=<state.json>`.
+   The orchestrator checks file existence before composing the flag.
+   `<state.json>` lives in the tournament dir alongside `games.pgn`.
+4. **Do not delete `<state.json>` on stop.** Just leave the working
+   dir intact.
+5. **Dedup PGN games on parse.** In `compute_standings()` and
+   `compute_sprt()` (see
+   `server/sturddle_view/tournament/pgn_stats.py`), key games by
+   `(Round, White, Black)` and keep only the last occurrence per
+   key. This handles the at-most-one duplicate game produced by
+   resume after a kill that lands between PGN-append and
+   cfg.json-write. Same pass should also drop games without a
+   definitive `[Result]` (handles the rare `*`-tail case from a
+   killed in-flight game). Independent of resume — ship anytime.
+6. **Disable Start when `status === "done"`** in the Tournaments list
+   row UI (already disabled for `running`; extend to `done`).
+7. **Graceful stop**: send SIGTERM, wait ~2 s for fastchess's
+   `~BaseTournament` to flush state (and ideally fire a final
+   `saveJson()`) and join the engine pool, fall back to SIGKILL only
+   on timeout. Reduces — but does not eliminate — duplicate-game
+   risk on resume, since SIGTERM lets fastchess finish any
+   in-flight save. PGN truncation risk (an unterminated tail game)
+   also drops to near-zero. Step 5's dedup/filter is the
+   correctness backstop; this step is a quality-of-life
+   improvement.
+
+Considered and rejected:
+
+- **Counting completed games ourselves** (parse PGN, pass
+  `-openings start=N+1` and reduced `-rounds`): more code, opaque
+  semantics for gauntlet/random-order, and we re-derive what
+  fastchess already tracks. Use `-config` instead.
+- **Defensive `try/except` around python-chess parsing** of the last
+  PGN game to handle SIGKILL truncation: low value given the `[Result]`
+  filter already handles the "no result" case, and graceful stop
+  handles the truncation case. Not worth the complexity or per-parse
+  cost.
+
+Future work (not part of the resume effort):
+
+- **Engine binary fingerprinting**: SHA-256 the engine binaries at
+  tournament-creation time, store in the frozen template, warn (do
+  not block) on Start if a binary's current hash differs. Prevents
+  silent mixing of two engine versions into one Elo number.
+- **Display Elo error/σ** in Standings: SPRT computation already
+  yields variance (`pgn_stats.py:322`); surface as `Elo ± σ`.
+
+---
+
 ## Open items
 
 - **UI/UX**: workspace window inventory and default layout (live
@@ -637,9 +762,6 @@ Rules enforced for every test shipped with this subsystem:
   follow-up discussion.
 - **Implementation plan**: server modules' public APIs, REST/WS event
   shapes, phased landing order. To be drafted after UI/UX is settled.
-- **Chunk-size knob for future Resume**: not relevant in Phase 1
-  (single fastchess invocation, no chunking). If Resume is added later,
-  decide whether to expose a chunk-size knob then.
 - **Workspace on mobile**: WinBox's floating-window model is unusable
   on narrow viewports. Acceptable for Phase 1 since tournament
   observation is a desktop-class use case. If mobile matters later,
