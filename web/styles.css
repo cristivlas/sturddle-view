@@ -597,8 +597,36 @@ wa-dialog wa-tab-panel > * + * { margin-top: 14px; }
 .fs-entry .fs-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- Tournaments tab ---------- */
+#engines-perspective wa-tab-panel:has(.tournaments-panel) { padding-top: 0; }
 .tournaments-panel { display: flex; flex-direction: column; gap: 12px; min-height: 50vh; }
-.tournaments-toolbar { display: flex; gap: 8px; }
+
+.tournaments-menubar {
+  display: flex; list-style: none; margin: 0; padding: 0;
+  background: var(--wa-color-surface-sunken, #1a1a1a);
+  border-bottom: 1px solid var(--wa-color-border-loud, #333);
+  user-select: none;
+}
+.tmb-menu { position: relative; }
+.tmb-item {
+  background: none; border: none; color: inherit;
+  padding: 3px 10px; font-size: 0.8rem; cursor: pointer;
+}
+.tmb-item:hover:not(:disabled), .tmb-menu.open > .tmb-item { background: var(--wa-color-brand-fill-loud, #1a6aff); color: #fff; }
+.tmb-item:disabled { opacity: 0.4; cursor: default; }
+.tmb-dropdown {
+  display: none; position: absolute; top: 100%; left: 0; z-index: 100;
+  list-style: none; margin: 0; padding: 2px 0; min-width: 130px;
+  background: var(--wa-color-surface-raised, #2a2a2a);
+  border: 1px solid var(--wa-color-border-loud, #333);
+  box-shadow: 0 4px 12px rgba(0,0,0,.4);
+}
+.tmb-menu.open .tmb-dropdown { display: block; }
+.tmb-dd-item {
+  display: block; width: 100%; background: none; border: none;
+  color: inherit; text-align: left; padding: 4px 16px; font-size: 0.8rem; cursor: pointer;
+}
+.tmb-dd-item:hover { background: var(--wa-color-brand-fill-loud, #1a6aff); color: #fff; }
+.tmb-separator { border-top: 1px solid var(--wa-color-border-loud, #333); margin: 2px 0; }
 
 /* Settings dialog: Tournament tab */
 .settings-tournament-path-row {

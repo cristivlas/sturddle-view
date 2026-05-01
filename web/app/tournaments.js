@@ -9,16 +9,23 @@
 
 import { confirm, reportError, showDialog, toast } from "./dialogs.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
-import { closeActiveWorkspace, openTournamentWorkspace } from "./tournament-workspace.js";
+import { closeActiveWorkspace, getActiveWorkspace, openTournamentWorkspace } from "./tournament-workspace.js";
 
 export function mountTournaments({ container, api, events, log, token }) {
   container.innerHTML = `
     <div class="tournaments-panel">
-      <div class="tournaments-toolbar">
-        <wa-button class="tournament-new" size="small" variant="brand">
-          <wa-icon name="plus" slot="prefix"></wa-icon> New Tournament
-        </wa-button>
-      </div>
+      <menu class="tournaments-menubar">
+        <li><button class="tmb-item tournament-new">New</button></li>
+        <li class="tmb-menu tmb-window-menu">
+          <button class="tmb-item tmb-window-btn">Window</button>
+          <ul class="tmb-dropdown">
+            <li><button class="tmb-dd-item tmb-tile">Tile</button></li>
+            <li><button class="tmb-dd-item tmb-cascade">Cascade</button></li>
+            <li class="tmb-separator"></li>
+            <li><button class="tmb-dd-item tmb-closeall">Close All</button></li>
+          </ul>
+        </li>
+      </menu>
 
       <div class="tournaments-empty hidden">
         <p class="empty-message"></p>
@@ -29,6 +36,8 @@ export function mountTournaments({ container, api, events, log, token }) {
   `;
 
   const newBtn = container.querySelector(".tournament-new");
+  const windowMenu = container.querySelector(".tmb-window-menu");
+  const windowMenuBtn = container.querySelector(".tmb-window-btn");
   const listEl = container.querySelector(".tournaments-list");
   const emptyEl = container.querySelector(".tournaments-empty");
   const emptyMsg = emptyEl.querySelector(".empty-message");
@@ -189,7 +198,10 @@ export function mountTournaments({ container, api, events, log, token }) {
   }
 
   function openWorkspace(t) {
-    openTournamentWorkspace({ api, events, log, token, tournament: t });
+    const menubar = container.querySelector(".tournaments-menubar");
+    const top = Math.round(menubar.getBoundingClientRect().bottom);
+    openTournamentWorkspace({ api, events, log, token, tournament: t, top });
+    syncWindowMenu();
   }
 
   async function openInspect(t) {
@@ -233,6 +245,40 @@ export function mountTournaments({ container, api, events, log, token }) {
   // ---- New Tournament dialog ---------------------------------------------
 
   newBtn.addEventListener("click", () => openNewTournamentDialog());
+
+  // ---- Window menu --------------------------------------------------------
+
+  function syncWindowMenu() {
+    windowMenuBtn.disabled = !getActiveWorkspace();
+  }
+
+  function closeMenus() {
+    container.querySelectorAll(".tmb-menu.open").forEach(m => m.classList.remove("open"));
+  }
+
+  windowMenuBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (windowMenuBtn.disabled) return;
+    const isOpen = windowMenu.classList.contains("open");
+    closeMenus();
+    if (!isOpen) windowMenu.classList.add("open");
+  });
+
+  container.querySelector(".tmb-tile").addEventListener("click", () => {
+    closeMenus();
+    getActiveWorkspace()?.tile();
+  });
+  container.querySelector(".tmb-cascade").addEventListener("click", () => {
+    closeMenus();
+    getActiveWorkspace()?.cascade();
+  });
+  container.querySelector(".tmb-closeall").addEventListener("click", () => {
+    closeMenus();
+    getActiveWorkspace()?.closeAll();
+    syncWindowMenu();
+  });
+
+  document.addEventListener("click", closeMenus);
 
   async function openNewTournamentDialog() {
     let registry;
@@ -352,6 +398,8 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   // ---- Initial load -------------------------------------------------------
 
+  syncWindowMenu();
+
   (async () => {
     await loadSettings();
     await loadList();
@@ -361,6 +409,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     unmount() {
       offEvents();
       window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
+      document.removeEventListener("click", closeMenus);
       closeActiveWorkspace();
     },
   };

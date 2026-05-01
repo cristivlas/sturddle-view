@@ -58,7 +58,7 @@ function saveLayout(layout) {
 let activeWorkspace = null;
 
 
-export function openTournamentWorkspace({ api, events, log, token, tournament }) {
+export function openTournamentWorkspace({ api, events, log, token, tournament, top = 0 }) {
   // Close any prior workspace (single-active model).
   if (activeWorkspace) {
     activeWorkspace.close();
@@ -95,6 +95,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament })
       y: cfg.y,
       width: cfg.width,
       height: cfg.height,
+      top,
       mount: body,
       class: "sturddle-wb",
     });
@@ -367,7 +368,39 @@ export function openTournamentWorkspace({ api, events, log, token, tournament })
     tearDown();
   }
 
-  const workspace = { close, tournamentId: tournament.id };
+  function openWindows() {
+    return Object.values(windows).filter(Boolean);
+  }
+
+  function tile() {
+    const wbs = openWindows();
+    if (!wbs.length) return;
+    const vw = window.innerWidth;
+    const availH = window.innerHeight - top;
+    const cols = Math.ceil(Math.sqrt(wbs.length));
+    const rows = Math.ceil(wbs.length / cols);
+    const w = Math.floor(vw / cols);
+    const h = Math.floor(availH / rows);
+    wbs.forEach((wb, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      wb.resize(w, h).move(col * w, top + row * h);
+    });
+  }
+
+  function cascade() {
+    const wbs = openWindows();
+    const offset = 30;
+    wbs.forEach((wb, i) => {
+      wb.move(i * offset, top + i * offset);
+    });
+  }
+
+  function closeAll() {
+    close();
+  }
+
+  const workspace = { close, tile, cascade, closeAll, tournamentId: tournament.id };
   activeWorkspace = workspace;
   return workspace;
 }
@@ -378,4 +411,8 @@ export function closeActiveWorkspace() {
     activeWorkspace.close();
     activeWorkspace = null;
   }
+}
+
+export function getActiveWorkspace() {
+  return activeWorkspace;
 }
