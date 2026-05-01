@@ -341,6 +341,11 @@ export function mountGameView(container, opts = {}) {
   let gameId = null;
   let engineName = "Engine";
   let names = { top: "—", bottom: "—" };
+  // Side to move from the latest board_update. Used to suppress engine PV
+  // arrows that arrive on an engine_info AFTER the engine has already played
+  // (the engine streams a final info line after bestmove, which would
+  // otherwise paint a misleading "still thinking" arrow on the human's turn).
+  let turn = "white";
 
   function setNames({ top, bottom } = {}) {
     if (top !== undefined) {
@@ -390,6 +395,7 @@ export function mountGameView(container, opts = {}) {
           board.setSide(humanWhite ? "white" : "black");
           if (interactive) setNames({ bottom: "Human", top: engineName });
         }
+        if (evt.payload.turn) turn = evt.payload.turn;
         board.setPosition(evt.payload.fen, evt.payload.last_move);
         board.clearArrows();
         if (showMoves && moveListEl) {
@@ -421,8 +427,11 @@ export function mountGameView(container, opts = {}) {
           enginePv.textContent = evt.payload.pv[0];
         }
         if (evt.payload.pv_uci && evt.payload.pv_uci.length > 0) {
+          const engineToMove = interactive
+            ? (humanWhite ? turn === "black" : turn === "white")
+            : true;
           const m = evt.payload.pv_uci[0];
-          if (m && m.length >= 4) {
+          if (engineToMove && m && m.length >= 4) {
             board.setArrow(m.slice(0, 2), m.slice(2, 4));
           }
         }
