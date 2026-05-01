@@ -305,7 +305,10 @@ export const playPerspective = {
         const r = await ctx.api("POST", "/game/import", result);
         view.setGameId(r.game_id);
         view.setHumanWhite(!!r.human_white);
-        view.reset();
+        // No reset() — that would blast the board to startpos, hiding the
+        // imported position until the engine's first move arrives. Ask the
+        // server to republish the imported board state instead.
+        ctx.api("POST", "/game/sync", {}).catch(() => {});
         resignAvailable = true;
         try {
           const s = await ctx.api("GET", "/settings");
