@@ -679,6 +679,7 @@ wa-dialog::part(body) {
 .tournament-row-actions { grid-column: 2; display: flex; gap: 4px; align-items: center; }
 .tournament-engines { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tournament-name { font-weight: 500; }
+.tournament-id { font-family: var(--wa-font-family-code); font-size: 11px; }
 .tournament-status {
   font-size: 11px;
   text-transform: uppercase;

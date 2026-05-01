@@ -102,8 +102,12 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
   ro.observe(body);
   requestAnimationFrame(constrainAndResize);
 
-  // ws on connect — set up after construction to avoid TDZ.
   let ws = null;
+  let orientationSet = false;
+  let engineColor = null;
+  let timerInterval = null;
+  let activeDeadline = 0;
+
   wb.onclose = () => {
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
     if (ws) try { ws.close(); } catch { /* */ }
@@ -147,11 +151,6 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
     handleParsed(parsed);
   });
 
-  let orientationSet = false;
-  let engineColor = null; // fixed on first position line
-  let timerInterval = null;
-  let activeMs = 0;
-
   function setEngineColor(color) {
     engineColor = color;
     const opp = color === "white" ? "Black" : "White";
@@ -189,12 +188,18 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
         clockBottomEl.classList.toggle("active", !!engineColor);
         if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
         if (engineColor && p.wtime != null && p.btime != null) {
-          activeMs = engineColor === "white" ? p.wtime : p.btime;
-          timerInterval = setInterval(() => {
-            activeMs = Math.max(0, activeMs - 100);
-            bottomTimeEl.textContent = formatMs(activeMs);
-            if (activeMs === 0) { clearInterval(timerInterval); timerInterval = null; }
-          }, 100);
+          const startMs = engineColor === "white" ? p.wtime : p.btime;
+          activeDeadline = Date.now() + startMs;
+          const tick = () => {
+            const remaining = Math.max(0, activeDeadline - Date.now());
+            bottomTimeEl.textContent = formatMs(remaining);
+            if (remaining === 0 && timerInterval) {
+              clearInterval(timerInterval);
+              timerInterval = null;
+            }
+          };
+          tick();
+          timerInterval = setInterval(tick, 100);
         }
         break;
       case "bestmove":

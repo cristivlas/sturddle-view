@@ -129,7 +129,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     `;
 
     li.querySelector(".tournament-name").textContent = t.name;
-    li.querySelector(".tournament-id").textContent = t.id.slice(0, 7);
+    li.querySelector(".tournament-id").textContent = `#${t.id.slice(0, 7)}`;
     const engineNames = (t.engines || []).map((e) => e.name).join(", ");
     li.querySelector(".tournament-engines").textContent = engineNames;
 
