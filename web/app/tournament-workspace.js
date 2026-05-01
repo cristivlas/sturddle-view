@@ -3,7 +3,7 @@
 // row in the Schedule subscribes to one engine's proxy stream and
 // renders the position from that engine's POV.
 
-import { closeAllLiveGames, openLiveGameWindow } from "./tournament-live-game.js";
+import { closeAllLiveGames, getLiveWindows, openLiveGameWindow } from "./tournament-live-game.js";
 //
 // State model:
 //   - One workspace open at a time per tab. Opening a workspace for a
@@ -220,6 +220,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
             proxyId: pid,
             label: `${tournament.name} — game ${gid} · engine ${i + 1}`,
             token,
+            top,
           });
         });
         attachWrap.appendChild(btn);
@@ -370,7 +371,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   function openWindows() {
-    return Object.values(windows).filter(Boolean);
+    return [...Object.values(windows).filter(Boolean), ...getLiveWindows()];
   }
 
   function tile() {

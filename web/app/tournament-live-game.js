@@ -18,7 +18,7 @@ import { mountBoard } from "./board.js";
 const liveWindows = new Map(); // proxy_id -> WinBox instance
 
 
-export function openLiveGameWindow({ proxyId, label, token }) {
+export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
   // If a window for this proxy is already open, focus it instead of
   // opening a duplicate.
   const existing = liveWindows.get(proxyId);
@@ -65,9 +65,11 @@ export function openLiveGameWindow({ proxyId, label, token }) {
     height: "55%",
     x: `${20 + (idx * 4)}%`,
     y: `${5 + (idx * 4)}%`,
+    top,
     mount: body,
     class: "sturddle-wb sturddle-wb-live",
   });
+  if (top > 0 && wb.y < top) wb.move(wb.x, top);
   liveWindows.set(proxyId, wb);
 
   // Keep the board square and fitting the WinBox window on every resize.
@@ -189,6 +191,10 @@ export function openLiveGameWindow({ proxyId, label, token }) {
   };
 }
 
+
+export function getLiveWindows() {
+  return [...liveWindows.values()];
+}
 
 export function closeAllLiveGames() {
   for (const wb of liveWindows.values()) {
