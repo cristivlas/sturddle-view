@@ -42,6 +42,7 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
     <div class="lg-eval">
       <span class="lg-eval-score">—</span>
       <span class="lg-eval-depth muted"></span>
+      <span class="lg-eval-tbhits muted"></span>
     </div>
     <div class="lg-pv muted"></div>
     <div class="lg-status muted">connecting…</div>
@@ -55,6 +56,7 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
 
   const evalScoreEl = body.querySelector(".lg-eval-score");
   const evalDepthEl = body.querySelector(".lg-eval-depth");
+  const evalTbhitsEl = body.querySelector(".lg-eval-tbhits");
   const pvEl = body.querySelector(".lg-pv");
   const clockTopEl = body.querySelector(".lg-clock-top");
   const clockBottomEl = body.querySelector(".lg-clock-bottom");
@@ -221,6 +223,7 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
     }
     evalScoreEl.textContent = scoreText;
     evalDepthEl.textContent = p.depth != null ? `d${p.depth}` : "";
+    evalTbhitsEl.textContent = p.tbhits ? `tb ${p.tbhits}` : "";
     if (p.pv && p.pv.length) {
       pvEl.textContent = p.pv.slice(0, 12).join(" ");
       const m = p.pv[0];

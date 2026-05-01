@@ -40,6 +40,8 @@ def _serialize_info(info: chess.engine.InfoDict, board: chess.Board) -> dict:
         out["nodes"] = info["nodes"]
     if "nps" in info:
         out["nps"] = info["nps"]
+    if "tbhits" in info:
+        out["tbhits"] = info["tbhits"]
     if "time" in info:
         out["time"] = info["time"]
     score = info.get("score")

@@ -121,6 +121,7 @@ export function mountGameView(container, opts = {}) {
           <span class="engine-depth">—</span>
           <span class="engine-score">—</span>
           <span class="engine-nps">—</span>
+          <span class="engine-tbhits"></span>
         </div>
         <div class="engine-pv"></div>
       </section>` : ""}
@@ -148,6 +149,7 @@ export function mountGameView(container, opts = {}) {
   const engineDepth = sideHost.querySelector(".engine-depth");
   const engineScore = sideHost.querySelector(".engine-score");
   const engineNps = sideHost.querySelector(".engine-nps");
+  const engineTbhits = sideHost.querySelector(".engine-tbhits");
   const enginePv = sideHost.querySelector(".engine-pv");
   const openingLine = container.querySelector(".opening-line");
   const openingEco = container.querySelector(".opening-eco");
@@ -412,6 +414,9 @@ export function mountGameView(container, opts = {}) {
           const k = evt.payload.nps / 1000;
           engineNps.textContent = `${k >= 100 ? Math.round(k) : k.toFixed(1)} kn/s`;
         }
+        if (engineTbhits) {
+          engineTbhits.textContent = evt.payload.tbhits ? `tb ${evt.payload.tbhits}` : "";
+        }
         if (enginePv && evt.payload.pv && evt.payload.pv.length > 0) {
           enginePv.textContent = evt.payload.pv[0];
         }
@@ -451,6 +456,7 @@ export function mountGameView(container, opts = {}) {
       if (engineDepth) engineDepth.textContent = "—";
       if (engineScore) engineScore.textContent = "—";
       if (engineNps) engineNps.textContent = "—";
+      if (engineTbhits) engineTbhits.textContent = "";
       if (enginePv) enginePv.textContent = "";
       setOpening(null);
       setTablebase(null);
