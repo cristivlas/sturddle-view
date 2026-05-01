@@ -109,19 +109,47 @@ def _iter_games(pgn_path: Path):
 
     Skips games with a missing or non-decisive result tag (`*` etc).
     Tolerates an empty/missing file (yields nothing).
+
+    Dedup: when two games share the same ``(Round, White, Black)`` key,
+    only the *last* one is yielded. This handles the at-most-one
+    duplicate game produced by fastchess's resume mechanism when SIGKILL
+    lands between PGN-append and cfg.json-save (see Resume design in
+    docs/tournament-spec.md). Games without a ``[Round]`` header bypass
+    dedup (no key to collide on) — fastchess always emits Round, so the
+    fallback only matters for hand-crafted PGNs.
     """
     if not pgn_path.exists():
         return
+    # Two-pass to dedup: first collect all (key_or_None, value), then yield
+    # in encounter order with the *last* value for each non-None key.
+    entries: list[tuple[tuple[str, str, str] | None, tuple[str, str, str]]] = []
     with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
         while True:
             game = chess.pgn.read_game(f)
             if game is None:
-                return
+                break
             result = game.headers.get("Result", "*")
-            if result == _WHITE_WIN or result == _BLACK_WIN or result in _DRAW_VALUES:
-                white = game.headers.get("White", "?")
-                black = game.headers.get("Black", "?")
-                yield white, black, result
+            if not (result == _WHITE_WIN or result == _BLACK_WIN or result in _DRAW_VALUES):
+                continue
+            white = game.headers.get("White", "?")
+            black = game.headers.get("Black", "?")
+            round_tag = game.headers.get("Round", "")
+            value = (white, black, result)
+            # python-chess fills missing Seven-Tag Roster headers with "?";
+            # treat that as "no round" so dedup only fires on real round tags.
+            has_round = round_tag and round_tag != "?"
+            key = (round_tag, white, black) if has_round else None
+            entries.append((key, value))
+    last_value: dict[tuple[str, str, str], tuple[str, str, str]] = {
+        k: v for k, v in entries if k is not None
+    }
+    emitted: set[tuple[str, str, str]] = set()
+    for key, value in entries:
+        if key is None:
+            yield value
+        elif key not in emitted:
+            emitted.add(key)
+            yield last_value[key]
 
 
 def compute_games_list(pgn_path: Path) -> list[dict]:

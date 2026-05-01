@@ -32,6 +32,13 @@ def _game(white: str, black: str, result: str) -> str:
     )
 
 
+def _game_round(round_tag: str, white: str, black: str, result: str) -> str:
+    return (
+        f'[Event "x"]\n[Round "{round_tag}"]\n[White "{white}"]\n'
+        f'[Black "{black}"]\n[Result "{result}"]\n\n1. e4 e5 {result}\n\n'
+    )
+
+
 # ---------------------------------------------------------------------------
 # Standings
 # ---------------------------------------------------------------------------
@@ -81,6 +88,35 @@ def test_standings_skips_unfinished_games(tmp_path):
     p = _write_pgn(tmp_path, body)
     s = compute_standings(p)
     assert s.games == 2  # the * game was skipped
+
+
+def test_standings_dedups_resume_duplicate_keeps_last(tmp_path):
+    # Simulates a resume duplicate: round 2 (A vs B) appears twice — the
+    # first entry was the killed-mid-pair game whose result fastchess never
+    # recorded in cfg.json, so it replayed it on resume. Standings must
+    # count the *last* one only.
+    body = (
+        _game_round("1", "A", "B", "1-0")
+        + _game_round("2", "A", "B", "1-0")  # killed; result superseded
+        + _game_round("2", "A", "B", "0-1")  # resume replay; this counts
+        + _game_round("2", "B", "A", "1/2-1/2")  # other side of pair
+    )
+    p = _write_pgn(tmp_path, body)
+    s = compute_standings(p)
+    assert s.games == 3
+    by = {e.name: e for e in s.engines}
+    # A: 1 win (R1) + 1 loss (R2) + 1 draw (R2 reverse) = W1 L1 D1
+    assert (by["A"].wins, by["A"].losses, by["A"].draws) == (1, 1, 1)
+    assert (by["B"].wins, by["B"].losses, by["B"].draws) == (1, 1, 1)
+
+
+def test_standings_no_dedup_when_round_absent(tmp_path):
+    # python-chess fills missing Round with "?"; we must NOT collapse those,
+    # otherwise hand-crafted PGNs (and the rest of this test file) break.
+    body = _game("A", "B", "1-0") + _game("A", "B", "1-0")
+    p = _write_pgn(tmp_path, body)
+    s = compute_standings(p)
+    assert s.games == 2
 
 
 def test_standings_round_robin_three_engines(tmp_path):
