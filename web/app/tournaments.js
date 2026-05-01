@@ -270,7 +270,6 @@ export function mountTournaments({ container, api, events, log, token }) {
           <wa-input class="nt-name" label="Name" size="small" placeholder="my tournament"></wa-input>
 
           <div class="nt-section">
-            <label class="nt-section-label">Engines</label>
             <div class="nt-engine-builder"></div>
           </div>
 
@@ -396,7 +395,7 @@ function mountEngineBuilder({ host, available, initial = [] }) {
   host.innerHTML = `
     <div class="ne-panes">
       <div class="ne-pane ne-pane-available">
-        <div class="ne-pane-title">Available</div>
+        <div class="ne-pane-title">Engines</div>
         <ul class="ne-list ne-available-list" role="listbox" tabindex="0"></ul>
       </div>
       <div class="ne-controls">

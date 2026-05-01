@@ -636,6 +636,7 @@ wa-dialog wa-tab-panel > * + * { margin-top: 10px; }
 }
 .settings-tournament-path-label {
   font-size: 12px;
+  color: var(--muted);
 }
 .settings-tournament-path-inner {
   display: flex; align-items: center; gap: 8px; min-width: 0;
@@ -693,10 +694,6 @@ wa-dialog::part(body) {
 /* New Tournament dialog */
 .new-tournament-form { display: flex; flex-direction: column; gap: 12px; }
 .new-tournament-form .nt-section { display: flex; flex-direction: column; gap: 6px; }
-.new-tournament-form .nt-section-label {
-  color: var(--muted); font-size: 12px;
-  text-transform: uppercase; letter-spacing: 0.05em;
-}
 
 /* Two-pane engine builder */
 .ne-panes {
@@ -736,6 +733,19 @@ wa-dialog::part(body) {
 
 /* Tournament template form (reusable component) */
 .tournament-template-form { display: flex; flex-direction: column; gap: 16px; }
+/* Match settings dialog label rhythm: 12px, muted, normal weight. */
+.tournament-template-form wa-input::part(form-control-label),
+.tournament-template-form wa-select::part(form-control-label) {
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--muted);
+}
+/* Switch labels (Ponder, Resign after, Draw after) — same rhythm. */
+.tournament-template-form > wa-switch,
+.tournament-template-form .ttf-adj-header > wa-switch {
+  font-size: 12px;
+  color: var(--muted);
+}
 .tournament-template-form .ttf-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
