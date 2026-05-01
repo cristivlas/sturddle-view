@@ -380,6 +380,10 @@ class FastchessRunner:
             log_file.close()
         except OSError:
             pass
+        # Python 3.12+ exposes Process.close(); use it when available so the
+        # underlying transport is released immediately rather than waiting for GC.
+        if hasattr(self._proc, "close"):
+            self._proc.close()
 
         if self._stop_requested:
             kind, payload = "stopped", {"rc": rc}
