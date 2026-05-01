@@ -37,6 +37,7 @@ PERSISTED_FIELDS = (
     "engine_default_syzygy_path",
     "engine_default_book_path",
     "engine_default_book_plies",
+    "engine_default_book_order",
 )
 
 
@@ -77,6 +78,8 @@ class Settings(BaseSettings):
     engine_default_syzygy_path: str | None = None
     engine_default_book_path: str | None = None
     engine_default_book_plies: int | None = None
+    # "sequential" | "random". None = fastchess default (sequential).
+    engine_default_book_order: str | None = None
 
     def apply_persisted(self, path: Path | None = None) -> None:
         path = path or default_settings_file()

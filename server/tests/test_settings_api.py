@@ -62,13 +62,14 @@ def test_zero_increment_accepted(client):
 
 
 def test_engine_defaults_round_trip(client):
-    """All five fields PUT then GET intact."""
+    """All six fields PUT then GET intact."""
     payload = {
         "engine_default_threads": 4,
         "engine_default_hash_mb": 1024,
         "engine_default_syzygy_path": "/srv/syzygy",
         "engine_default_book_path": "/srv/book.epd",
         "engine_default_book_plies": 8,
+        "engine_default_book_order": "random",
     }
     r = client.put("/settings", json=payload)
     assert r.status_code == 200
@@ -102,3 +103,15 @@ def test_engine_defaults_negative_threads_rejected(client):
 def test_engine_defaults_non_numeric_rejected(client):
     r = client.put("/settings", json={"engine_default_hash_mb": "lots"})
     assert r.status_code == 400
+
+
+def test_engine_default_book_order_validates_value(client):
+    r = client.put("/settings", json={"engine_default_book_order": "shuffle"})
+    assert r.status_code == 400
+
+
+def test_engine_default_book_order_blank_clears(client):
+    client.put("/settings", json={"engine_default_book_order": "random"})
+    assert client.get("/settings").json()["engine_default_book_order"] == "random"
+    r = client.put("/settings", json={"engine_default_book_order": ""})
+    assert r.json()["engine_default_book_order"] is None

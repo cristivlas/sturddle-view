@@ -335,12 +335,55 @@ export async function openSettingsDialog({ api }) {
           (p) => putSettings({ engine_default_book_path: p }),
           { hint: "(tournaments only)" },
         ),
-        makeNumRow(
-          "Book ply depth",
-          "engine_default_book_plies",
-          { hint: "(tournaments only)" },
-        ),
+        bookPliesAndOrderRow(),
       );
+
+      function bookPliesAndOrderRow() {
+        const row = document.createElement("div");
+        row.className = "settings-row";
+        const lbl = document.createElement("label");
+        lbl.textContent = "Book ply depth";
+        const hint = document.createElement("span");
+        hint.className = "muted settings-row-hint";
+        hint.textContent = " (tournaments only)";
+        lbl.appendChild(hint);
+
+        const plies = document.createElement("wa-input");
+        plies.size = "small";
+        plies.type = "number";
+        plies.setAttribute("min", "1");
+        plies.setAttribute("autocomplete", "off");
+        plies.placeholder = "engine default";
+        const curPlies = initial.engine_default_book_plies;
+        if (curPlies != null) plies.value = String(curPlies);
+        plies.addEventListener("input", () => {
+          const raw = (plies.value || "").trim();
+          if (raw === "") return putSettingsDebounced({ engine_default_book_plies: null });
+          const n = Number(raw);
+          if (Number.isFinite(n)) putSettingsDebounced({ engine_default_book_plies: n });
+        });
+
+        const order = document.createElement("wa-select");
+        order.size = "small";
+        order.setAttribute("distance", "4");
+        order.value = initial.engine_default_book_order ?? "sequential";
+        for (const [val, label] of [["sequential", "Sequential"], ["random", "Random"]]) {
+          const opt = document.createElement("wa-option");
+          opt.value = val;
+          opt.textContent = label;
+          order.append(opt);
+        }
+        order.addEventListener("change", () => {
+          putSettings({ engine_default_book_order: order.value });
+        });
+
+        const controls = document.createElement("div");
+        controls.className = "settings-row-pair";
+        controls.append(plies, order);
+
+        row.append(lbl, controls);
+        return row;
+      }
 
       // --- Tournament tab ---
       const tournamentTab = document.createElement("wa-tab");

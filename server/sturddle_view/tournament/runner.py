@@ -56,6 +56,7 @@ class RunSpec:
     engine_default_syzygy_path: str | None = None
     engine_default_book_path: str | None = None
     engine_default_book_plies: int | None = None
+    engine_default_book_order: str | None = None  # "sequential" | "random" | None
 
 
 class Runner(Protocol):

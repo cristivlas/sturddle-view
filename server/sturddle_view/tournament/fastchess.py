@@ -175,6 +175,8 @@ def build_command(spec: RunSpec) -> list[str]:
         opening = ["-openings", f"file={path}", f"format={fmt}"]
         if spec.engine_default_book_plies is not None:
             opening.append(f"plies={spec.engine_default_book_plies}")
+        if spec.engine_default_book_order:
+            opening.append(f"order={spec.engine_default_book_order}")
         cmd.extend(opening)
 
     # SPRT

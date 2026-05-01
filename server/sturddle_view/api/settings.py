@@ -24,6 +24,7 @@ def _serialize(s) -> dict:
         "engine_default_syzygy_path": s.engine_default_syzygy_path,
         "engine_default_book_path": s.engine_default_book_path,
         "engine_default_book_plies": s.engine_default_book_plies,
+        "engine_default_book_order": s.engine_default_book_order,
     }
 
 
@@ -120,6 +121,17 @@ def update_settings(payload: dict, request: Request) -> dict:
         v = _coerce_optional_str(payload, key)
         if v is not _SENTINEL:
             setattr(s, key, v)
+    if "engine_default_book_order" in payload:
+        raw = payload["engine_default_book_order"]
+        if raw is None or raw == "":
+            s.engine_default_book_order = None
+        elif raw in ("sequential", "random"):
+            s.engine_default_book_order = raw
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="engine_default_book_order must be 'sequential' or 'random'",
+            )
 
     try:
         s.save_persisted()

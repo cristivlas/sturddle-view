@@ -271,6 +271,31 @@ def test_build_command_book(tmp_path):
     assert cmd[idx + 3] == "plies=8"
 
 
+def test_build_command_book_includes_order_when_set(tmp_path):
+    spec = _make_spec(
+        tmp_path,
+        template={},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+        engine_default_book_path="/books/8moves.pgn",
+        engine_default_book_order="random",
+    )
+    cmd = build_command(spec)
+    idx = cmd.index("-openings")
+    assert "order=random" in cmd[idx : idx + 5]
+
+
+def test_build_command_book_omits_order_when_unset(tmp_path):
+    spec = _make_spec(
+        tmp_path,
+        template={},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+        engine_default_book_path="/books/8moves.pgn",
+    )
+    cmd = build_command(spec)
+    idx = cmd.index("-openings")
+    assert all(not s.startswith("order=") for s in cmd[idx : idx + 5])
+
+
 def test_build_command_book_pgn_extension(tmp_path):
     spec = _make_spec(
         tmp_path,

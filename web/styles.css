@@ -598,6 +598,10 @@ wa-dialog wa-tab-panel > * + * { margin-top: 10px; }
 .settings-duration wa-input { flex: 1 1 auto; min-width: 0; width: auto; }
 .settings-duration wa-select { flex: 0 0 7em; width: auto; }
 
+.settings-row-pair { display: flex; gap: 6px; align-items: center; }
+.settings-row-pair > wa-input { flex: 0 0 5em; width: auto; }
+.settings-row-pair > wa-select { flex: 1 1 auto; min-width: 0; width: auto; }
+
 /* Engines panel host — sits inside a tab panel and uses the same rhythm. */
 .engines-host {
   min-width: 0;
@@ -789,10 +793,12 @@ wa-dialog::part(body) {
 }
 .tournament-template-form .ttf-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  /* TC + numeric inputs are narrow; tournament type (and seeds) get the slack. */
+  grid-template-columns: 7em 8em 6em minmax(10em, 1fr) minmax(0, auto);
   gap: 8px;
   align-items: end;
 }
+.tournament-template-form .ttf-grid > * { min-width: 0; }
 .tournament-template-form .ttf-adjudication {
   display: flex; flex-direction: column; gap: 16px;
 }

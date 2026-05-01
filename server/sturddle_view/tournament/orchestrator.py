@@ -190,6 +190,7 @@ class Orchestrator:
             engine_default_syzygy_path=getattr(s, "engine_default_syzygy_path", None),
             engine_default_book_path=getattr(s, "engine_default_book_path", None),
             engine_default_book_plies=getattr(s, "engine_default_book_plies", None),
+            engine_default_book_order=getattr(s, "engine_default_book_order", None),
         )
         try:
             updated = self._store.update_status(

@@ -49,7 +49,7 @@ export function mountTournamentTemplateForm({
 
   grid.append(
     addInput("tc",                "Time control",     { placeholder: "10+0.1" }),
-    addInput("games_in_parallel", "Games in parallel",{ type: "number", min: 1, defaultValue: 1 }),
+    addInput("games_in_parallel", "Parallel games",   { type: "number", min: 1, defaultValue: 1 }),
     addInput("rounds",            "Rounds",           { type: "number", min: 1 }),
   );
 
