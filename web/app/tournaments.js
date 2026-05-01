@@ -134,7 +134,12 @@ export function mountTournaments({ container, api, events, log, token }) {
     removeBtn.disabled = isActive;
 
     startBtn.addEventListener("click", (ev) => { ev.stopPropagation(); startOne(t); });
-    stopBtn.addEventListener("click", (ev) => { ev.stopPropagation(); stopOne(t); });
+    stopBtn.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      stopBtn.disabled = true;
+      stopBtn.innerHTML = "<wa-spinner></wa-spinner>";
+      await stopOne(t);
+    });
     removeBtn.addEventListener("click", (ev) => { ev.stopPropagation(); removeOne(t); });
     workspaceBtn.addEventListener("click", (ev) => { ev.stopPropagation(); openWorkspace(t); });
 
@@ -160,6 +165,7 @@ export function mountTournaments({ container, api, events, log, token }) {
       await api("POST", `/api/tournaments/${t.id}/stop`);
     } catch (e) {
       reportError({ log }, `Stopping "${t.name}" failed`, e);
+      await loadList();
       return;
     }
     await loadList();
