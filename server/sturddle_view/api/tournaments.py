@@ -85,7 +85,13 @@ def _orch(request: Request) -> Orchestrator:
     return request.app.state.tournament_orch
 
 
-def _serialize(t, *, with_stats: bool = False, store: TournamentStore | None = None) -> dict:
+def _serialize(
+    t,
+    *,
+    with_stats: bool = False,
+    store: TournamentStore | None = None,
+    orch: Orchestrator | None = None,
+) -> dict:
     out = t.to_dict()
     if with_stats and store is not None:
         try:
@@ -97,6 +103,17 @@ def _serialize(t, *, with_stats: bool = False, store: TournamentStore | None = N
             out["games"] = compute_games_list(store.pgn_path(t.id))
         except FileNotFoundError:
             out["games"] = []
+        # Slice 9c: surface the orchestrator's current pair-index so the
+        # workspace's Schedule can seed its "in progress" rows on mount,
+        # not just from forward-going `game_paired` events. Only
+        # meaningful when this tournament is the running one.
+        if orch is not None and orch.active_id() == t.id:
+            out["games_in_progress"] = [
+                {"game_id": gid, "proxies": list(proxies)}
+                for gid, proxies in orch.pair_index_snapshot().items()
+            ]
+        else:
+            out["games_in_progress"] = []
         sprt_params = (t.template or {}).get("sprt")
         if sprt_params:
             try:
@@ -144,7 +161,7 @@ def get_tournament(tournament_id: str, request: Request) -> dict:
         raise HTTPException(status_code=404, detail="tournament not found") from e
     except CorruptStateError as e:
         raise HTTPException(status_code=500, detail=f"corrupt state: {e}") from e
-    return _serialize(t, with_stats=True, store=s)
+    return _serialize(t, with_stats=True, store=s, orch=_orch(request))
 
 
 @router.delete("/api/tournaments/{tournament_id}", status_code=204)

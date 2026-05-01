@@ -260,6 +260,24 @@ export function openTournamentWorkspace({ api, events, log, token, tournament })
       log?.(`workspace refresh failed: ${e.message}`);
       return;
     }
+    // Seed in-progress games from server-side pair_index snapshot. This
+    // catches the case where the workspace mounts after a `game_paired`
+    // event already fired (single-shot, not replayed). Once seeded, the
+    // forward-going WS events keep activeGames in sync.
+    const seeded = detail.games_in_progress || [];
+    for (const g of seeded) {
+      if (g.game_id && Array.isArray(g.proxies) && g.proxies.length === 2) {
+        if (!activeGames.has(g.game_id)) {
+          activeGames.set(g.game_id, { proxies: g.proxies });
+        }
+      }
+    }
+    // Drop any active game ids the server no longer tracks (e.g.
+    // ended games whose `proxy_ended` event we missed).
+    const seededIds = new Set(seeded.map((g) => g.game_id));
+    for (const gid of [...activeGames.keys()]) {
+      if (!seededIds.has(gid)) activeGames.delete(gid);
+    }
     renderStandings();
     renderSchedule();
   }

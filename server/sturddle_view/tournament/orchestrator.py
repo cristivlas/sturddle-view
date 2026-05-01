@@ -241,6 +241,14 @@ class Orchestrator:
         ``None`` when no tournament is running."""
         return self._proxy_secret
 
+    def pair_index_snapshot(self) -> dict[str, tuple[str, str]]:
+        """Read-only view of the current proxy-pair mappings.
+
+        Used by the API ``GET /api/tournaments/{id}`` so a workspace
+        opening mid-tournament can seed its in-progress rows even if it
+        missed the forward-going ``game_paired`` events."""
+        return self._pair_index.all_games()
+
     def verify_proxy_secret(self, presented: str | None) -> bool:
         if self._proxy_secret is None or presented is None:
             return False
