@@ -141,8 +141,11 @@ def create_tournament(payload: TournamentCreate, request: Request) -> dict:
         raise HTTPException(status_code=400, detail="at least one engine required")
     if len(payload.engines) < 2:
         raise HTTPException(status_code=400, detail="at least two engines required")
+    name = payload.name.strip() or "tournament"
+    if any(t.name == name for t in s.list()):
+        raise HTTPException(status_code=409, detail="tournament name already exists")
     t = s.create(
-        name=payload.name.strip() or "tournament",
+        name=name,
         template=payload.template,
         engines=[e.model_dump(exclude_none=True) for e in payload.engines],
     )

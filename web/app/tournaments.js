@@ -108,6 +108,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     li.innerHTML = `
       <div class="tournament-row-main">
         <span class="tournament-name"></span>
+        <span class="tournament-id muted"></span>
         <span class="tournament-status status-${status}">${status}</span>
         <span class="tournament-engines muted"></span>
       </div>
@@ -128,6 +129,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     `;
 
     li.querySelector(".tournament-name").textContent = t.name;
+    li.querySelector(".tournament-id").textContent = t.id.slice(0, 7);
     const engineNames = (t.engines || []).map((e) => e.name).join(", ");
     li.querySelector(".tournament-engines").textContent = engineNames;
 
