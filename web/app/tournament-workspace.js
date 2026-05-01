@@ -113,6 +113,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     };
     wb.onresize = () => persistLayout(key, wb);
     wb.onmove = () => persistLayout(key, wb);
+    if (top > 0 && wb.y < top) wb.move(wb.x, top);
     return wb;
   }
 
