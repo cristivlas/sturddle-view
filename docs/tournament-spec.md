@@ -341,11 +341,14 @@ absent in the latter case.
   to the event log; it flows through a separate per-engine
   subscription (see "Live observation pipeline" below). Persisted to
   `logs/wrapper.log` and `logs/fastchess.log`.
-- **Live game** (0..N windows; opt-in). User attaches by clicking a
-  row in Schedule. The window subscribes to **one engine's** proxy
-  stream and renders the position from the engine's POV. See "Live
-  observation pipeline" below for what's shown and where each piece
-  comes from. Closes when its game ends or the user dismisses it.
+- **Live game** (0..N windows; opt-in). Each Schedule row in the
+  "in-progress" group corresponds to **one engine process** (proxy)
+  and exposes a *watch* button. The window subscribes to that one
+  engine's UCI stream and renders the position from its POV (board
+  oriented to the engine's color, that engine's eval/depth/PV, both
+  clocks). See "Live observation pipeline" below for the data flow
+  and the "Schedule rows = proxies" subsection for why this is
+  single-side rather than per-game.
 
 Static window count = 3 (Standings, Schedule, Event log). Live game
 windows are opened on demand; the user attaches as many as they want
@@ -401,33 +404,45 @@ What you give up: the **opponent engine's** internal eval/PV/depth.
 That's available from the opponent's proxy if the user attaches a
 second window to it.
 
-#### Game pairing (server-side, optional)
+#### Schedule rows = proxies (single-side; pairing deferred)
 
-For the Schedule window's "in-progress games" rows, we want to know
-which two proxies are playing each other. Done server-side by hashing
-the move list:
+Originally specified as automatic pair detection on the server (a
+`pair_index` matching proxies by shared move list). **Tried and
+removed.** What we shipped: one Schedule row per active proxy
+(engine process), labeled with its engine name, with a "watch"
+button that opens a single-engine live window.
 
-- Per-game key: `(move_list, half_move_number)`.
-- The two engines in a paired game see **the same move list** at
-  alternating ply numbers. After every full move both engines have
-  observed the same `position startpos moves ...`.
-- `pair_index: dict[move_list, list[(proxy_id, ply)]]`. On each
-  `position` line from any proxy, update the entry. When two entries
-  share the same move list at adjacent ply (one is at ply N, the
-  other at N+1 or N-1), they're paired.
-- O(1) per-line update. No linear search. Bounded memory:
-  `concurrency × 2` proxies max.
+Why pairing turned out untenable in Phase 1:
 
-Color and ply guard against false matches when two games happen to
-share an opening sequence: as soon as the move lists diverge (move 1
-in the worst case), the index self-corrects. Pairing may take
-~1 second to lock in for a fresh game, which is acceptable — the
-Schedule row simply appears a moment after the first move.
+- **Same-opening overlap under concurrency.** With `-concurrency > 1`
+  fastchess runs the same opening line in parallel game-slots
+  (book-driven, intentionally; SPRT pairs play each opening twice
+  with colors swapped). All four proxies briefly hold the same
+  `(move_list, ply)` state. Strict same-key matching produces
+  ambiguity; prefix-relaxed matching produces phantom cross-pairs
+  (e.g. two processes of the *same engine* from different slots
+  paired with each other).
+- **No end-of-game UCI signal.** Engine processes are reused across
+  rounds (UCI has no `endgame`; just `ucinewgame` for the next).
+  A locked pair stays locked even after fastchess re-pairs the
+  engines for the next round; the index silently keeps stale
+  partnerships.
+- **Strict ply-difference checks flap.** Forcing `|ply_a - ply_b| ≤ 1`
+  to guarantee opposite side-to-move yields constant
+  observe / dissolve flapping under normal batching, because one
+  side often races ahead by several plies before the other catches up.
 
-If pairing fails (unlikely but possible at very high concurrency),
-the only consequence is a slightly wonky Schedule listing. The Live
-game window itself still works because it subscribes per-proxy, not
-per-pair.
+We tried strict pairing, prefix pairing, and uniqueness-disambiguated
+pairing. All three failed in different ways. The path forward
+(documented; not in scope for Phase 1) is **deterministic** pairing:
+vendor a fastchess fork, emit an `extended UCI` announcement at
+game-start (`sturddle game-start slot=N white=X black=Y`), have the
+proxy intercept and forward to the orchestrator. With authoritative
+pairings, the dual-PV window described in the original "Attach to
+engine, not to game" trade-off becomes trivial.
+
+Until then we ship the simple model: one row per proxy, one window
+per click. To see both sides of a game the user opens two windows.
 
 #### Volume & high-concurrency considerations
 
@@ -442,10 +457,25 @@ Mitigations baked into the design:
   or every ~32 lines, whichever first. Drops request rate ~50× with
   no perceptible loss in liveness (50ms is below the human flicker
   threshold).
-- **Selective parsing on the server.** Only fully parse the streams
-  that have at least one subscriber (= at least one Live game window
-  attached). Other proxies' data is kept only as the latest
-  `position` line (for the pairing index) and discarded.
+- **Posts run in a background worker thread.** The proxy's asyncio
+  loop pumps engine stdio and *must not* block on HTTP. We initially
+  called `urllib.request.urlopen` directly from the loop and
+  observed multi-second stalls under `-concurrency > 1` because
+  blocking the loop also stalled the stdin/stdout pipes between
+  fastchess and the engine. Each proxy now drains a queue from a
+  daemon worker thread; `add_line` / `flush` are non-blocking.
+- **Per-proxy snapshot replay on subscribe.** The orchestrator keeps
+  the latest `position` / `go` / `info` line per proxy and replays
+  them when a WS subscriber connects. Without this, a window opened
+  mid-game would render empty until the engine's next event — which
+  under long time controls (TC=720+8) can be ≥10s away. The "info"
+  snapshot is cleared on each new "position" so a stale eval doesn't
+  paint against a fresh board.
+- **Per-process proxy_id.** The proxy script mints its own uuid at
+  startup (`p-<pid>-<uuid8>`) rather than receiving it via argv.
+  fastchess reuses argv across slot processes when `-concurrency > 1`,
+  so an argv-baked id would be shared between slots and silently
+  collapse multiple distinct streams into one.
 - **Throttle DOM updates.** Schedule re-renders at ≤4 Hz even if
   the underlying state ticks faster.
 
@@ -454,6 +484,20 @@ shows the Python proxy is itself the bottleneck, the proxy can be
 rewritten in C++ — it's a self-contained process with a
 language-agnostic protocol. Out of scope for now; documented as an
 escape hatch.
+
+##### Operational footnotes
+
+- WS subscriber queues are bounded (`maxsize=512`) with drop-oldest
+  on `QueueFull`. Sized for observed bursts of ~17–22 `info` lines/s
+  per engine; if a slow consumer (e.g. a backgrounded browser tab)
+  ever falls badly behind, lines get coalesced silently rather than
+  blocking the producer. Acceptable for live observation.
+- The snapshot only retains `info` lines that carry `score` or `pv`,
+  filtering out `info string …` debug noise and `info nodes/nps`-only
+  lines some engines emit between depth iterations. Sturddle's
+  meaningful info lines always carry score+pv, so snapshot accuracy
+  is fine for the engines this project targets; engines with sparser
+  output may need a more permissive filter.
 
 #### What end-of-game looks like
 
@@ -527,7 +571,8 @@ server/sturddle_view/tournament/
                        owns the single-active invariant and startup
                        reconciliation. The public API called by REST/WS
                        handlers and the future CLI wrapper.
-  proxy.py           ← (existing) stdio proxy, broadcast tap to be wired
+  proxy.py           ← stdio proxy + HTTP broadcast tap (per-process worker
+                       thread for non-blocking POSTs); per-process proxy_id
 ```
 
 ### Single-active invariant lives in the orchestrator

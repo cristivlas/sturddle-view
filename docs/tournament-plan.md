@@ -198,51 +198,67 @@ useful and doesn't block 9b/9c.
 
 ### Slice 9b — Wire the proxy broadcast tap (M)
 
-Replace the TODO in `tournament/proxy.py:48-50` with HTTP POSTs to a
-new `/internal/proxy` server endpoint. Add per-proxy WS subscription
-on the server: a Live game window opens by subscribing to a
-`proxy_id`, and the server forwards that proxy's UCI lines to the
-subscriber.
+Replace the TODO in `tournament/proxy.py` with HTTP POSTs to a new
+`/internal/proxy` server endpoint. Add per-proxy WS subscription on
+the server: a Live game window opens by subscribing to a `proxy_id`,
+and the server forwards that proxy's UCI lines to the subscriber.
 
-Server-side game pairing: per the spec's "Game pairing" section, the
-server maintains a `pair_index` keyed on `(move_list, ply)` and
-infers which two proxies are playing each other. Schedule window's
-"in-progress" rows come from this. ~50 lines server-side.
+Schedule "in-progress" rows are seeded from the orchestrator's
+**active-proxies snapshot** (`GET /api/tournaments/{id}` →
+`proxies_active: [{proxy_id, engine_name}]`) and kept in sync via
+`proxy_started` / `proxy_ended` broadcast events. One row per active
+engine process.
 
 Orchestrator change: when building the fastchess command, replace
 each engine's `cmd=` with a wrapper that runs the proxy script
 (`<sys.executable> -m sturddle_view.tournament.proxy ...`).
 
-Volume mitigations baked in from the start (per spec):
+Volume / latency mitigations in the proxy and orchestrator (see spec
+"Volume & high-concurrency considerations" for the rationale and the
+bugs each guards against):
 
 - Proxy batches lines (50ms / 32 lines) before POSTing.
-- Server only fully parses streams that have at least one subscriber;
-  others contribute only their latest `position` line to the
-  `pair_index` and are otherwise discarded.
+- Proxy POSTs run on a daemon worker thread, not on the asyncio loop
+  that pumps engine stdio.
+- Proxy mints its own `proxy_id` at startup (per-process uuid), so
+  fastchess's argv-reuse under `-concurrency > 1` doesn't collapse
+  multiple slot processes onto one id.
+- Orchestrator keeps a per-proxy `position` / `go` / `info` snapshot
+  and replays it onto a WS subscriber's queue on connect, so a
+  window opened mid-game doesn't sit blank waiting for the engine's
+  next event.
 
-End of 9b: proxy traffic flows; Schedule shows in-progress games;
-no live boards yet.
+**Pairing was tried and abandoned** during Slice 9b/9c development —
+see `docs/tournament-spec.md` "Schedule rows = proxies" for what
+broke and the deterministic path forward.
+
+End of 9b: proxy traffic flows; Schedule shows one row per active
+proxy; no live boards yet.
 
 ### Slice 9c — Live game window (M)
 
 The Live game window subscribes to one proxy's stream and renders:
 
 - Board reconstructed from the latest `position startpos moves ...`
-  via python-chess (one line of code).
+  via python-chess (one line of code). Orientation set on the first
+  `position` line from the FEN's side-to-move (which is the watched
+  engine's color in the game).
 - Both clocks from `go wtime ... btime ...`.
 - This engine's eval / depth / PV from `info` lines.
 - Bestmove highlight on each `bestmove`.
 
-User opens the window by clicking a Schedule row.
+User opens the window by clicking a Schedule row's *watch* button.
 Reuses the existing `web/app/board.js`.
 
-End of 9c: feature-complete per the spec.
+End of 9c: feature-complete per the (post-revision) spec.
 
 ### Notes on Phase 1 vs later
 
-- The "attach to engine, not to game" model means the user sees one
-  engine's POV per window; opening a second window for the opponent
-  shows the other side's eval/PV.
+- **Single-side observation** is the shipped model: one engine per
+  live window. To see both sides of a game, open two windows.
+  Dual-PV ("see both engines in one window") was attempted but
+  removed; it requires deterministic pairing which in turn requires
+  vendoring fastchess. Deferred to Phase 1.5 / Phase 2.
 - Eval graphs are still Phase 2.
 - C++ proxy rewrite is documented as an escape hatch in the spec;
   not in scope.
@@ -302,6 +318,6 @@ Update as slices land.
 | 7 — Reusable template form | done | 6f13b52 | core fields + Advanced JSON; mounted in 3 contexts; e2e tested |
 | 8 — Workspace (3 windows) | done | 2d9f14b | Standings/Schedule/Event log; layout persisted in localStorage; 1 e2e test |
 | 9a — Forward fastchess stdout to Event log | done | d48d88f | runner_log event; rendered as actual line in Event log window |
-| 9b — Proxy broadcast tap + pairing | done | b2b5887, 46b87c5 | pair_index + endpoint + WS + real-fastchess smoke test |
-| 9c — Live game window | done | 62fccba | UCI parser, attach buttons in Schedule, real-fastchess+browser e2e |
+| 9b — Proxy broadcast tap (single-side) | done | b2b5887, 46b87c5, 4c250d1 | endpoint + WS + per-proxy snapshot replay; pair_index attempted in 9b/9c then removed (see spec) |
+| 9c — Live game window | done | 62fccba, 4c250d1 | UCI parser, watch button per proxy, real-fastchess+browser e2e |
 | 10 — Polish | optional | — | post-Phase-1 |
