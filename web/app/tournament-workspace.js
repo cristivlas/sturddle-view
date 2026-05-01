@@ -430,6 +430,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     return [...Object.values(windows).filter(Boolean), ...getLiveWindows()];
   }
 
+  function unminimize(wb) {
+    // resize/move on a minimized or maximized WinBox leaves it stuck in
+    // that state — restore first so the new geometry actually takes.
+    if (wb.min || wb.max) wb.restore();
+  }
+
   function tile() {
     const wbs = openWindows();
     if (!wbs.length) return;
@@ -440,6 +446,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const w = Math.floor(vw / cols);
     const h = Math.floor(availH / rows);
     wbs.forEach((wb, i) => {
+      unminimize(wb);
       const col = i % cols;
       const row = Math.floor(i / cols);
       wb.resize(w, h).move(col * w, top + row * h);
@@ -450,6 +457,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const wbs = openWindows();
     const offset = 30;
     wbs.forEach((wb, i) => {
+      unminimize(wb);
       wb.move(i * offset, top + i * offset);
     });
   }
