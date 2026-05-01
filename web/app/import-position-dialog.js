@@ -5,6 +5,15 @@
 
 import { apiErrorDetail, showDialog } from "./dialogs.js";
 
+const PLACEHOLDERS = {
+  fen: "Paste FEN, e.g.\nrnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+  pgn: 'Paste PGN, e.g.\n[Event "?"]\n[White "..."]\n[Black "..."]\n\n1. e4 e5 2. Nf3 Nc6 ...',
+};
+const EMPTY_PROMPT = {
+  fen: "Paste a FEN to begin.",
+  pgn: "Paste a PGN to begin.",
+};
+
 /**
  * @param {object} args
  * @param {Function} args.api - api(method, path, body?) -> Promise.
@@ -17,7 +26,7 @@ export function showImportPositionDialog({ api }) {
     width: "560px",
     body: (resolve, dialog) => {
       let format = "fen";
-      let lastValid = null; // { start_fen, moves_uci, summary, side_to_move, ... }
+      let lastValid = null;
       let validateSeq = 0;
       let validateTimer = null;
       function cancelPendingValidate() {
@@ -29,7 +38,6 @@ export function showImportPositionDialog({ api }) {
       const wrap = document.createElement("div");
       wrap.className = "import-pos-form";
 
-      // Format tabs.
       const tabs = document.createElement("wa-tab-group");
       tabs.placement = "top";
       tabs.innerHTML = `
@@ -40,29 +48,31 @@ export function showImportPositionDialog({ api }) {
       `;
       wrap.appendChild(tabs);
 
-      // Single textarea reused across both tabs (their contents differ in
-      // size / placeholder, but state is per-format).
-      const textByFormat = { fen: "", pgn: "" };
-      const textarea = document.createElement("wa-textarea");
-      textarea.size = "small";
-      textarea.resize = "vertical";
-      textarea.rows = 4;
-      textarea.placeholder =
-        "Paste FEN, e.g.\nrnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-      textarea.style.fontFamily = "var(--mono-font, monospace)";
-      textarea.style.width = "100%";
-      // Mount the textarea inside the active panel.
-      const fenPanel = tabs.querySelector('wa-tab-panel[name="fen"]');
-      const pgnPanel = tabs.querySelector('wa-tab-panel[name="pgn"]');
-      fenPanel.appendChild(textarea);
+      // One textarea per panel — re-parenting a single textarea on tab
+      // switch breaks rendering inside wa-tab-panel.
+      const textareas = {};
+      for (const name of ["fen", "pgn"]) {
+        const ta = document.createElement("wa-textarea");
+        ta.size = "small";
+        ta.resize = "vertical";
+        ta.rows = name === "fen" ? 3 : 8;
+        ta.placeholder = PLACEHOLDERS[name];
+        ta.style.fontFamily = "var(--mono-font, monospace)";
+        ta.style.width = "100%";
+        ta.addEventListener("input", () => {
+          if (format !== name) return;
+          clearTimeout(validateTimer);
+          validateTimer = setTimeout(validate, 200);
+        });
+        tabs.querySelector(`wa-tab-panel[name="${name}"]`).appendChild(ta);
+        textareas[name] = ta;
+      }
 
-      // Status line: green summary or red error.
       const status = document.createElement("div");
       status.className = "import-pos-status muted";
-      status.textContent = "Paste a FEN to begin.";
+      status.textContent = EMPTY_PROMPT.fen;
       wrap.appendChild(status);
 
-      // "Play as" radio (wired but only relevant after a valid parse).
       const playAsRow = document.createElement("div");
       playAsRow.className = "import-pos-playas";
       playAsRow.innerHTML = `
@@ -77,16 +87,8 @@ export function showImportPositionDialog({ api }) {
 
       dialog.appendChild(wrap);
 
-      // Footer.
-      const cancel = document.createElement("wa-button");
-      cancel.slot = "footer";
-      cancel.size = "small";
-      cancel.textContent = "Cancel";
-      cancel.addEventListener("click", () => {
-        cancelPendingValidate();
-        resolve(null);
-      });
-
+      // Footer: Start only — wa-dialog provides its own X close button,
+      // and showDialog treats a close-without-resolve as cancel.
       const start = document.createElement("wa-button");
       start.slot = "footer";
       start.size = "small";
@@ -99,15 +101,11 @@ export function showImportPositionDialog({ api }) {
         const playAs = playAsRow.querySelector("wa-radio-group").value;
         resolve({
           format,
-          text: textByFormat[format],
+          text: textareas[format].value || "",
           human_side: playAs,
         });
       });
-
-      dialog.appendChild(cancel);
       dialog.appendChild(start);
-
-      // ----- behavior -----
 
       function setStatus(msg, kind) {
         status.textContent = msg;
@@ -117,19 +115,16 @@ export function showImportPositionDialog({ api }) {
 
       async function validate() {
         const seq = ++validateSeq;
-        const text = textByFormat[format];
+        const text = textareas[format].value || "";
         if (!text.trim()) {
           lastValid = null;
           start.setAttribute("disabled", "");
-          setStatus(
-            format === "fen" ? "Paste a FEN to begin." : "Paste a PGN to begin.",
-            "muted",
-          );
+          setStatus(EMPTY_PROMPT[format], "muted");
           return;
         }
         try {
           const r = await api("POST", "/game/import/validate", { format, text });
-          if (seq !== validateSeq) return; // a newer keystroke superseded us
+          if (seq !== validateSeq) return;
           lastValid = r;
           start.removeAttribute("disabled");
           setStatus(r.summary, "ok");
@@ -141,24 +136,11 @@ export function showImportPositionDialog({ api }) {
         }
       }
 
-      textarea.addEventListener("input", (ev) => {
-        textByFormat[format] = ev.target.value || "";
-        clearTimeout(validateTimer);
-        validateTimer = setTimeout(validate, 200);
-      });
-
       tabs.addEventListener("wa-tab-show", (ev) => {
         const name = ev.detail?.name;
         if (name !== "fen" && name !== "pgn") return;
         cancelPendingValidate();
         format = name;
-        (name === "fen" ? fenPanel : pgnPanel).appendChild(textarea);
-        textarea.value = textByFormat[name];
-        textarea.placeholder =
-          name === "fen"
-            ? "Paste FEN, e.g.\nrnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-            : 'Paste PGN, e.g.\n[Event "?"]\n[White "..."]\n[Black "..."]\n\n1. e4 e5 2. Nf3 Nc6 ...';
-        textarea.rows = name === "fen" ? 3 : 8;
         validate();
       });
     },
