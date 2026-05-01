@@ -109,8 +109,8 @@ export function mountTournaments({ container, api, events, log, token }) {
       <div class="tournament-row-main">
         <span class="tournament-name"></span>
         <span class="tournament-status status-${status}">${status}</span>
+        <span class="tournament-engines muted"></span>
       </div>
-      <div class="tournament-row-meta muted"></div>
       <div class="tournament-row-actions">
         <wa-button class="row-start icon-only" size="small" aria-label="Start" title="Start">
           <wa-icon name="play"></wa-icon>
@@ -128,9 +128,8 @@ export function mountTournaments({ container, api, events, log, token }) {
     `;
 
     li.querySelector(".tournament-name").textContent = t.name;
-    const meta = li.querySelector(".tournament-row-meta");
     const engineNames = (t.engines || []).map((e) => e.name).join(", ");
-    meta.textContent = engineNames ? `engines: ${engineNames}` : "";
+    li.querySelector(".tournament-engines").textContent = engineNames;
 
     const startBtn = li.querySelector(".row-start");
     const stopBtn = li.querySelector(".row-stop");
