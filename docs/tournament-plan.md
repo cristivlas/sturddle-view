@@ -270,6 +270,14 @@ End of 9c: feature-complete per the (post-revision) spec.
 - Engine-options dialog label/input alignment fix.
 - `python -m sturddle_view.tournament.cli` thin wrapper (Phase 1.5).
 - Tweak default workspace layout based on actual use.
+- Migrate `tournament-live-game.js` to use `mountGameView`. Today it
+  rolls its own clocks/board/eval/PV markup driven by parsed UCI lines
+  from the per-engine WS. Migrating gets the FEN row + copy button
+  for free (and inherits future GameView improvements like move list,
+  opening lookup). Requires GameView to either accept tournament-shaped
+  events or for the live window to adapt them to `board_update` /
+  `clock_tick` / `engine_info` shape, plus a `show.status` opt for the
+  connecting/live/ended line.
 
 ---
 

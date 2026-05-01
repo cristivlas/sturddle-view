@@ -287,14 +287,43 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   flex-direction: column;
   gap: 2px;
   font-size: 12px;
-  /* Reserve space for opening + tablebase lines so the page doesn't
+  /* Reserve space for FEN + opening + tablebase lines so the page doesn't
      reflow when they appear. */
-  min-height: calc(2 * 1.4em + 2px);
+  min-height: calc(3 * 1.4em + 4px);
 }
+.fen-line,
 .opening-line,
 .tablebase-line { min-height: 1.4em; }
 .opening-line.is-empty,
 .tablebase-line.is-empty { visibility: hidden; }
+.fen-line {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+.fen-copy {
+  background: transparent;
+  border: 0;
+  padding: 0 2px;
+  cursor: pointer;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+}
+.fen-copy:hover { color: var(--fg); }
+.fen-text {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.fen-text:hover { color: var(--fg); }
 .opening-line {
   display: flex;
   gap: 8px;

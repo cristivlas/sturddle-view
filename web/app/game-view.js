@@ -21,6 +21,7 @@
 //   view.unmount()
 
 import { mountBoard } from "./board.js";
+import { toast } from "./dialogs.js";
 
 function fmtClock(seconds) {
   if (!Number.isFinite(seconds)) return "—";
@@ -94,6 +95,12 @@ export function mountGameView(container, opts = {}) {
       <div class="board" aria-label="chess board"></div>
 
       <div class="game-view-meta">
+        <div class="fen-line">
+          <button type="button" class="fen-copy" aria-label="Copy FEN">
+            <wa-icon name="copy"></wa-icon>
+          </button>
+          <span class="fen-text" title="Click to copy"></span>
+        </div>
         <div class="opening-line is-empty">
           <span class="opening-eco"></span>
           <span class="opening-name"></span>
@@ -156,6 +163,40 @@ export function mountGameView(container, opts = {}) {
   const openingName = container.querySelector(".opening-name");
   const tbLine = container.querySelector(".tablebase-line");
   const tbResult = container.querySelector(".tb-result");
+  const fenText = container.querySelector(".fen-text");
+  const fenCopyBtn = container.querySelector(".fen-copy");
+
+  let currentFen = "";
+  function setFen(fen) {
+    currentFen = fen || "";
+    if (fenText) fenText.textContent = currentFen;
+  }
+  async function copyFen() {
+    if (!currentFen) return;
+    // Prefer the async Clipboard API (works on https + localhost). Fall
+    // back to the legacy execCommand path for plain-http hosts where the
+    // async API is blocked.
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(currentFen);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = currentFen;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand("copy");
+        ta.remove();
+        if (!ok) throw new Error("execCommand failed");
+      }
+      toast("FEN copied", { variant: "success", duration: 1500 });
+    } catch {
+      toast("Could not copy FEN", { variant: "danger" });
+    }
+  }
+  fenCopyBtn?.addEventListener("click", copyFen);
+  fenText?.addEventListener("click", copyFen);
 
   function setOpening(opening) {
     if (!openingLine) return;
@@ -391,6 +432,7 @@ export function mountGameView(container, opts = {}) {
           if (interactive) setNames({ bottom: "Human", top: engineName });
         }
         board.setPosition(evt.payload.fen, evt.payload.last_move);
+        setFen(evt.payload.fen);
         board.clearArrows();
         if (showMoves && moveListEl) {
           renderMoveList(moveListEl, evt.payload.moves_san || []);
@@ -460,6 +502,7 @@ export function mountGameView(container, opts = {}) {
       if (enginePv) enginePv.textContent = "";
       setOpening(null);
       setTablebase(null);
+      setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
     },
     unmount() {
       off?.();
