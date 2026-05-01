@@ -256,11 +256,23 @@ class Orchestrator:
         any subscribed WS clients, and returns the list of newly-paired
         game ids (to be broadcast as ``game_paired`` events).
         """
+        # Diagnostic: log only position lines (very low volume) so we
+        # can see what the pair_index is being asked to match without
+        # spamming the log with info chatter.
+        position_lines = [line for line in lines if line.lstrip().startswith("position ")]
+        if position_lines:
+            log.debug(
+                "proxy %s position lines: %r", proxy_id, position_lines
+            )
         new_games: list[str] = []
         for line in lines:
             gid = self._pair_index.observe(proxy_id, line)
             if gid is not None:
                 new_games.append(gid)
+                log.info(
+                    "pair_index locked game %s = (%s, %s)",
+                    gid, proxy_id, self._pair_index.proxies_for(gid),
+                )
 
         # Fan out to subscribers (if any).
         subs = self._proxy_subscribers.get(proxy_id)
