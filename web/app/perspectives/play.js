@@ -50,6 +50,10 @@ export const playPerspective = {
               <wa-icon slot="start" name="rotate-left"></wa-icon>
               Take back
             </wa-button>
+            <wa-button id="switch-sides" size="small" disabled>
+              <wa-icon slot="start" name="arrows-up-down"></wa-icon>
+              Switch sides
+            </wa-button>
             <wa-button id="pause" size="small" disabled aria-label="Pause">
               <wa-icon slot="start" name="pause"></wa-icon>
               <span class="pause-label">Pause</span>
@@ -68,6 +72,7 @@ export const playPerspective = {
     const newGameBtn = root.querySelector("#new-game");
     const resignBtn = root.querySelector("#resign");
     const takebackBtn = root.querySelector("#takeback");
+    const switchSidesBtn = root.querySelector("#switch-sides");
     const pauseBtn = root.querySelector("#pause");
 
     // --- GameView: board host on top, side host (moves+engine) below. ---
@@ -176,6 +181,7 @@ export const playPerspective = {
         takebackBtn,
         paused || gameOver || !allowTakeback || movesPlayed === 0,
       );
+      setDisabled(switchSidesBtn, paused || gameOver || !resignAvailable);
       setDisabled(resignBtn, paused || gameOver || !resignAvailable);
     }
 
@@ -277,6 +283,14 @@ export const playPerspective = {
       }
     };
 
+    const onSwitchSides = async () => {
+      try {
+        await ctx.api("POST", "/game/switch-sides", {});
+      } catch (e) {
+        reportError(ctx, "Switch sides failed", e);
+      }
+    };
+
     const onPause = async () => {
       try {
         await ctx.api("POST", paused ? "/game/resume" : "/game/pause", {});
@@ -288,6 +302,7 @@ export const playPerspective = {
     newGameBtn.addEventListener("click", onNewGame);
     resignBtn.addEventListener("click", onResign);
     takebackBtn.addEventListener("click", onTakeback);
+    switchSidesBtn.addEventListener("click", onSwitchSides);
     pauseBtn.addEventListener("click", onPause);
 
     return {
@@ -298,6 +313,7 @@ export const playPerspective = {
         newGameBtn.removeEventListener("click", onNewGame);
         resignBtn.removeEventListener("click", onResign);
         takebackBtn.removeEventListener("click", onTakeback);
+        switchSidesBtn.removeEventListener("click", onSwitchSides);
         pauseBtn.removeEventListener("click", onPause);
       },
     };

@@ -320,6 +320,45 @@ class HumanVsEngine:
             await self._publish_board()
             await self._publish_clock()
 
+    async def switch_sides(self) -> None:
+        """Swap which color the human plays; engine takes the other side.
+
+        Cancels any in-flight engine search, snaps the side-to-move's
+        clock so the human isn't charged for the engine's upcoming think
+        (and vice versa), then kicks the engine if it's now its turn.
+
+        Rejected when paused or when the game is over. At any ply,
+        including ply 0 (start position).
+        """
+        kick_engine = False
+        async with self._lock:
+            if self._board is None or self._game_id is None:
+                raise RuntimeError("no active game")
+            if self._board.is_game_over():
+                raise RuntimeError("game is over")
+            if self._paused:
+                raise RuntimeError("cannot switch sides while paused")
+            await self._cancel_think()
+            # Bake elapsed think time into the side-to-move's clock without
+            # crediting the increment (no move was completed). Then restart
+            # the timer so the new thinker's clock starts fresh from now.
+            if self._turn_started_at is not None:
+                elapsed = time.monotonic() - self._turn_started_at
+                if self._board.turn == chess.WHITE:
+                    self._white_time = max(0.0, self._white_time - elapsed)
+                else:
+                    self._black_time = max(0.0, self._black_time - elapsed)
+            self._turn_started_at = time.monotonic()
+            self._human_white = not self._human_white
+            await self._persist()
+            await self._publish_board()
+            await self._publish_clock()
+            engine_color = chess.BLACK if self._human_white else chess.WHITE
+            if self._board.turn == engine_color:
+                kick_engine = True
+        if kick_engine:
+            await self._engine_to_move()
+
     async def resign(self) -> None:
         async with self._lock:
             await self._cancel_think()

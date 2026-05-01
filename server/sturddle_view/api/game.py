@@ -122,6 +122,16 @@ async def resume(request: Request) -> dict:
     return {"ok": True}
 
 
+@router.post("/switch-sides")
+async def switch_sides(request: Request) -> dict:
+    hve = await _get_hve(request)
+    try:
+        await hve.switch_sides()
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True}
+
+
 @router.post("/takeback")
 async def takeback(request: Request) -> dict:
     s = request.app.state.settings
