@@ -396,6 +396,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     loadSettings();
   }
   window.addEventListener("sturddle:settings-changed", onSettingsChanged);
+  window.addEventListener("sturddle:workspace-closed", syncWindowMenu);
 
   // ---- Initial load -------------------------------------------------------
 
@@ -410,6 +411,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     unmount() {
       offEvents();
       window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
+      window.removeEventListener("sturddle:workspace-closed", syncWindowMenu);
       document.removeEventListener("click", closeMenus);
       closeActiveWorkspace();
     },

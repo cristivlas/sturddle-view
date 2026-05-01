@@ -59,8 +59,15 @@ let activeWorkspace = null;
 
 
 export function openTournamentWorkspace({ api, events, log, token, tournament, top = 0 }) {
-  // Close any prior workspace (single-active model).
+  // Single-active model. Re-clicking the workspace icon for the
+  // already-open tournament is a no-op (just focus its windows) so
+  // attached engine windows survive — closing here would tear them
+  // down via tearDown's closeAllLiveGames().
   if (activeWorkspace) {
+    if (activeWorkspace.tournamentId === tournament.id) {
+      activeWorkspace.focus();
+      return activeWorkspace;
+    }
     activeWorkspace.close();
     activeWorkspace = null;
   }
@@ -378,6 +385,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
     closeAllLiveGames();
     if (activeWorkspace === workspace) activeWorkspace = null;
+    // Notify the perspective so the Window menu re-syncs even when
+    // the user closed the last standard window via its X button
+    // (rather than the Close-all menu item).
+    window.dispatchEvent(new CustomEvent("sturddle:workspace-closed"));
   }
 
   function close() {
@@ -422,7 +433,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     close();
   }
 
-  const workspace = { close, tile, cascade, closeAll, tournamentId: tournament.id };
+  function focus() {
+    for (const wb of openWindows()) {
+      try { wb.focus(); } catch { /* */ }
+    }
+  }
+
+  const workspace = { close, tile, cascade, closeAll, focus, tournamentId: tournament.id };
   activeWorkspace = workspace;
   return workspace;
 }
