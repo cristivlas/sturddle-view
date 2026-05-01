@@ -5,6 +5,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import chess.engine
 import psutil
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
@@ -30,8 +31,28 @@ from .tournament.store import TournamentStore, default_root
 log = logging.getLogger(__name__)
 
 
+def _install_engine_sigkill_filter() -> None:
+    # Drop "Future exception was never retrieved" warnings caused by our own
+    # SIGKILL of an unresponsive engine on Undo. Real crashes (SEGV=-11, etc.)
+    # still surface.
+    loop = asyncio.get_running_loop()
+    prev = loop.get_exception_handler()
+
+    def handler(loop_, ctx):
+        exc = ctx.get("exception")
+        if isinstance(exc, chess.engine.EngineTerminatedError) and "exit code: -9" in str(exc):
+            return
+        if prev is not None:
+            prev(loop_, ctx)
+        else:
+            loop_.default_exception_handler(ctx)
+
+    loop.set_exception_handler(handler)
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    _install_engine_sigkill_filter()
     _maybe_restore_game(app)
     # Tournament reconciliation: any 'running' rows on disk are stale.
     # Phase 1 has no Resume — mark them stopped.
