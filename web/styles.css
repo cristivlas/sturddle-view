@@ -288,10 +288,11 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   gap: 2px;
   font-size: 12px;
   /* Reserve space for FEN + opening + tablebase lines so the page doesn't
-     reflow when they appear. */
-  min-height: calc(3 * 1.4em + 4px);
+     reflow when they appear. FEN is rendered slightly larger than the
+     other meta lines, so account for that explicitly. */
+  min-height: calc(2 * 1.4em + 13px * 1.4 + 4px);
 }
-.fen-line,
+.fen-line { min-height: calc(13px * 1.4); }
 .opening-line,
 .tablebase-line { min-height: 1.4em; }
 .opening-line.is-empty,
@@ -314,7 +315,7 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .fen-copy:hover { color: var(--fg); }
 .fen-text {
   font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
