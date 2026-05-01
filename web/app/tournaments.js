@@ -317,6 +317,18 @@ export function mountTournaments({ container, api, events, log, token }) {
     row("Ponder", tpl.ponder ? "On" : "Off");
     row("Resign", formatResign(tpl.resign));
     row("Draw adjudication", formatDraw(tpl.draw));
+    const ed = t.engine_defaults || {};
+    row("Threads", ed.threads);
+    row("Hash (MB)", ed.hash_mb);
+    row("Syzygy", ed.syzygy_path);
+    if (ed.book_path) {
+      const span = document.createElement("span");
+      span.textContent = basename(ed.book_path);
+      span.title = ed.book_path;
+      row("Opening book", span);
+    }
+    row("Book plies", ed.book_plies);
+    row("Book order", ed.book_order);
     row("Created", formatTime(t.created_at));
     row("Started", formatTime(t.started_at));
     row("Stopped", formatTime(t.stopped_at));
@@ -331,6 +343,11 @@ export function mountTournaments({ container, api, events, log, token }) {
     if (enginesList.children.length) row("Engines", enginesList);
 
     return dl;
+  }
+
+  function basename(p) {
+    if (!p) return p;
+    return p.split(/[\\/]/).pop() || p;
   }
 
   function formatType(v) {

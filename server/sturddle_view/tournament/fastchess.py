@@ -64,8 +64,8 @@ def build_command(spec: RunSpec) -> list[str]:
 
     Legacy template fields (``hash``, ``threads``, ``tablebase``,
     ``book``, ``book_format``) are tolerated on read but ignored —
-    Hash/Threads/SyzygyPath/book come from ``Settings`` via the
-    ``engine_default_*`` fields on ``RunSpec``.
+    Hash/Threads/SyzygyPath/book come from the tournament's frozen
+    ``engine_defaults`` snapshot, propagated via ``RunSpec``.
 
     Engines come from ``spec.tournament.engines`` — each entry is a
     dict with at minimum ``name`` and ``cmd`` (engine binary path).

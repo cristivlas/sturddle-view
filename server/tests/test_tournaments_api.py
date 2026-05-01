@@ -401,3 +401,43 @@ def test_ws_receives_tournament_status_change(client, monkeypatch):
                 break
 
     assert "tournament_status" in seen_kinds
+
+
+# ---------------------------------------------------------------------------
+# engine_defaults snapshot at create time
+# ---------------------------------------------------------------------------
+
+
+def test_create_snapshots_engine_defaults_from_settings(client, settings):
+    settings.engine_default_threads = 4
+    settings.engine_default_hash_mb = 256
+    settings.engine_default_syzygy_path = "/tb/syzygy"
+    settings.engine_default_book_path = "/books/8moves.pgn"
+    settings.engine_default_book_plies = 12
+    settings.engine_default_book_order = "random"
+
+    body = client.post("/api/tournaments", json={
+        "name": "snap", "engines": _engines_payload(),
+    }).json()
+
+    ed = body["engine_defaults"]
+    assert ed == {
+        "threads": 4,
+        "hash_mb": 256,
+        "syzygy_path": "/tb/syzygy",
+        "book_path": "/books/8moves.pgn",
+        "book_plies": 12,
+        "book_order": "random",
+    }
+
+
+def test_create_freezes_unset_engine_defaults_as_none(client, settings):
+    # Settings has nothing set → snapshot still records every field
+    # (with None values) so later Settings changes can't leak in.
+    body = client.post("/api/tournaments", json={
+        "name": "bare", "engines": _engines_payload(),
+    }).json()
+    assert body["engine_defaults"] == {
+        "threads": None, "hash_mb": None, "syzygy_path": None,
+        "book_path": None, "book_plies": None, "book_order": None,
+    }

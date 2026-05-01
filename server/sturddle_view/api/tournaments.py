@@ -143,11 +143,20 @@ def create_tournament(payload: TournamentCreate, request: Request) -> dict:
     if len(payload.engines) < 2:
         raise HTTPException(status_code=400, detail="at least two engines required")
     name = payload.name.strip() or "tournament"
+    # Freeze ALL engine_default_* fields at create time — including Nones —
+    # so a tournament's behavior cannot drift if Settings change later.
+    settings = request.app.state.settings
+    engine_defaults = {
+        k: getattr(settings, f"engine_default_{k}", None)
+        for k in ("threads", "hash_mb", "syzygy_path",
+                  "book_path", "book_plies", "book_order")
+    }
     try:
         t = s.create(
             name=name,
             template=payload.template,
             engines=[e.model_dump(exclude_none=True) for e in payload.engines],
+            engine_defaults=engine_defaults,
         )
     except DuplicateNameError:
         raise HTTPException(status_code=409, detail="tournament name already exists")

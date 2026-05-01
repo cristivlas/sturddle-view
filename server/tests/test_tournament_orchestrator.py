@@ -89,6 +89,7 @@ def _create(store, **kw) -> str:
         name=kw.get("name", "t"),
         template=kw.get("template", {}),
         engines=kw.get("engines", [{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}]),
+        engine_defaults=kw.get("engine_defaults"),
     )
     return t.id
 
@@ -156,6 +157,81 @@ async def test_start_passes_correct_runspec(store, runner, orch):
     assert spec.config_path == store.config_path(tid)
     assert spec.log_path.name == "fastchess.log"
     assert spec.log_path.parent.name == "logs"
+
+
+async def test_start_uses_frozen_engine_defaults_not_live_settings(store, runner, orch):
+    # Tournament was created with one set of engine defaults; live settings
+    # later differ — start() must use the frozen snapshot.
+    tid = _create(store, engine_defaults={
+        "threads": 2,
+        "hash_mb": 128,
+        "syzygy_path": "/frozen/tb",
+        "book_path": "/frozen/book.pgn",
+        "book_plies": 8,
+        "book_order": "sequential",
+    })
+
+    class _LiveSettings:
+        engine_default_threads = 99
+        engine_default_hash_mb = 9999
+        engine_default_syzygy_path = "/live/tb"
+        engine_default_book_path = "/live/book.pgn"
+        engine_default_book_plies = 99
+        engine_default_book_order = "random"
+    orch.set_settings(_LiveSettings())
+
+    await orch.start(tid)
+    spec = runner.started[0]
+    assert spec.engine_default_threads == 2
+    assert spec.engine_default_hash_mb == 128
+    assert spec.engine_default_syzygy_path == "/frozen/tb"
+    assert spec.engine_default_book_path == "/frozen/book.pgn"
+    assert spec.engine_default_book_plies == 8
+    assert spec.engine_default_book_order == "sequential"
+
+
+async def test_start_frozen_none_overrides_live_settings(store, runner, orch):
+    # Tournament was created when Settings was empty — every key snapshotted
+    # as None. Later Settings changes must not leak in: explicit None wins
+    # over live Settings, just like any other frozen value.
+    tid = _create(store, engine_defaults={
+        "threads": None, "hash_mb": None, "syzygy_path": None,
+        "book_path": None, "book_plies": None, "book_order": None,
+    })
+
+    class _LiveSettings:
+        engine_default_threads = 99
+        engine_default_hash_mb = 9999
+        engine_default_book_path = "/live/book.pgn"
+        engine_default_book_plies = 99
+        engine_default_book_order = "random"
+        engine_default_syzygy_path = "/live/tb"
+    orch.set_settings(_LiveSettings())
+
+    await orch.start(tid)
+    spec = runner.started[0]
+    assert spec.engine_default_threads is None
+    assert spec.engine_default_hash_mb is None
+    assert spec.engine_default_book_path is None
+
+
+async def test_start_falls_back_to_live_settings_for_legacy_tournaments(store, runner, orch):
+    # No engine_defaults snapshot (pre-snapshot tournament) → live Settings used.
+    tid = _create(store)  # engine_defaults defaults to {}
+
+    class _LiveSettings:
+        engine_default_threads = 7
+        engine_default_hash_mb = 512
+        engine_default_syzygy_path = None
+        engine_default_book_path = None
+        engine_default_book_plies = None
+        engine_default_book_order = None
+    orch.set_settings(_LiveSettings())
+
+    await orch.start(tid)
+    spec = runner.started[0]
+    assert spec.engine_default_threads == 7
+    assert spec.engine_default_hash_mb == 512
 
 
 # ---------------------------------------------------------------------------

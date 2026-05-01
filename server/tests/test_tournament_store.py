@@ -156,6 +156,26 @@ def test_get_state_missing_required_field_raises(store):
         store.get(t.id)
 
 
+def test_get_state_without_engine_defaults_loads(store):
+    # Tournaments created before the snapshot field existed have no
+    # engine_defaults key in state.json — they must still load.
+    t = store.create(name="x", template={}, engines=[])
+    raw = json.loads((store.root / t.id / "state.json").read_text())
+    raw.pop("engine_defaults", None)
+    (store.root / t.id / "state.json").write_text(json.dumps(raw))
+    loaded = store.get(t.id)
+    assert loaded.engine_defaults == {}
+
+
+def test_create_persists_engine_defaults(store):
+    ed = {"threads": 4, "hash_mb": 256, "book_path": "/b.pgn"}
+    t = store.create(name="x", template={}, engines=[], engine_defaults=ed)
+    assert t.engine_defaults == ed
+    raw = json.loads((store.root / t.id / "state.json").read_text())
+    assert raw["engine_defaults"] == ed
+    assert store.get(t.id).engine_defaults == ed
+
+
 def test_update_status_persists(store):
     t = store.create(name="x", template={}, engines=[])
     updated = store.update_status(t.id, STATUS_RUNNING, started_at="2026-04-30T12:00:00+00:00")

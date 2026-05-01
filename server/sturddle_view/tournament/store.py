@@ -68,6 +68,9 @@ class Tournament:
     stopped_at: str | None = None
     template: dict = field(default_factory=dict)
     engines: list = field(default_factory=list)
+    # Snapshot of global engine_default_* settings at creation time.
+    # Frozen so Stop/Resume can't drift if Settings change mid-run.
+    engine_defaults: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -135,7 +138,7 @@ class TournamentStore:
     def logs_dir(self, tournament_id: str) -> Path:
         return self._dir(tournament_id) / "logs"
 
-    def create(self, name: str, template: dict, engines: list) -> Tournament:
+    def create(self, name: str, template: dict, engines: list, engine_defaults: dict | None = None) -> Tournament:
         """Create a new tournament directory and persist its initial state.json.
 
         Raises ``DuplicateNameError`` if another tournament already has
@@ -166,6 +169,7 @@ class TournamentStore:
                 created_at=_now(),
                 template=frozen_template,
                 engines=list(engines),
+                engine_defaults=dict(engine_defaults or {}),
             )
             atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
             return t

@@ -139,9 +139,9 @@ class Orchestrator:
         self._proxy_broadcast_url = url
 
     def set_settings(self, settings: Settings | None) -> None:
-        """Provide the live ``Settings`` instance so ``start()`` can
-        snapshot ``engine_default_*`` fields into the ``RunSpec``.
-        Optional — without it, no global engine defaults are applied."""
+        """Provide the live ``Settings`` instance. Used only as a fallback
+        for tournaments created before ``engine_defaults`` was snapshotted
+        into ``state.json``; new tournaments use their frozen snapshot."""
         self._settings = settings
 
     # ---- public surface ----------------------------------------------------
@@ -175,7 +175,15 @@ class Orchestrator:
         self._active_id = t.id
         self._proxy_secret = secrets.token_urlsafe(24)
 
+        # Prefer the tournament's frozen snapshot; for tournaments created
+        # before snapshotting was introduced, fall back to live Settings so
+        # existing dirs still launch.
         s = self._settings
+        ed = t.engine_defaults or {}
+        def _ed(key: str):
+            if key in ed:
+                return ed[key]
+            return getattr(s, f"engine_default_{key}", None)
         spec = RunSpec(
             tournament=t,
             binary_path=getattr(self._runner, "binary_path", "") or "",
@@ -185,12 +193,12 @@ class Orchestrator:
             log_path=self._store.logs_dir(t.id) / "fastchess.log",
             proxy_broadcast_url=self._proxy_broadcast_url,
             proxy_secret=self._proxy_secret,
-            engine_default_threads=getattr(s, "engine_default_threads", None),
-            engine_default_hash_mb=getattr(s, "engine_default_hash_mb", None),
-            engine_default_syzygy_path=getattr(s, "engine_default_syzygy_path", None),
-            engine_default_book_path=getattr(s, "engine_default_book_path", None),
-            engine_default_book_plies=getattr(s, "engine_default_book_plies", None),
-            engine_default_book_order=getattr(s, "engine_default_book_order", None),
+            engine_default_threads=_ed("threads"),
+            engine_default_hash_mb=_ed("hash_mb"),
+            engine_default_syzygy_path=_ed("syzygy_path"),
+            engine_default_book_path=_ed("book_path"),
+            engine_default_book_plies=_ed("book_plies"),
+            engine_default_book_order=_ed("book_order"),
         )
         try:
             updated = self._store.update_status(
