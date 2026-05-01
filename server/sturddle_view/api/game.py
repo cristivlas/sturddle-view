@@ -5,6 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ..auth import require_token
 from ..engines import resolve_selected
 from ..play.human_vs_engine import HumanVsEngine, TimeControl
+from ..play.import_position import (
+    ImportError as PositionImportError,
+    parse_fen,
+    parse_pgn,
+)
 
 router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_token)])
 
@@ -61,6 +66,68 @@ async def new_game(payload: dict, request: Request) -> dict:
         game_id = await hve.new_game(human_white=human_white, tc=tc)
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=f"engine not found: {e}") from e
+    return {"game_id": game_id, "human_white": human_white}
+
+
+def _parse_import_payload(payload: dict) -> dict:
+    fmt = payload.get("format")
+    text = payload.get("text", "")
+    if fmt not in ("fen", "pgn"):
+        raise HTTPException(status_code=400, detail="format must be 'fen' or 'pgn'")
+    if not isinstance(text, str):
+        raise HTTPException(status_code=400, detail="missing 'text'")
+    try:
+        parsed = parse_fen(text) if fmt == "fen" else parse_pgn(text)
+    except PositionImportError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {
+        "start_fen": parsed.start_fen,
+        "moves_uci": parsed.moves_uci,
+        "final_fen": parsed.final_fen,
+        "side_to_move": parsed.side_to_move,
+        "ply": parsed.ply,
+        "summary": parsed.summary,
+        "headers": parsed.headers,
+    }
+
+
+@router.post("/import/validate")
+async def import_validate(payload: dict) -> dict:
+    """Parse a FEN/PGN payload and report the resulting position. Read-only."""
+    return _parse_import_payload(payload)
+
+
+@router.post("/import")
+async def import_game(payload: dict, request: Request) -> dict:
+    """Start a new game from a FEN or PGN. Same shape as /game/new."""
+    parsed = _parse_import_payload(payload)
+    hve = await _get_hve(request)
+    s = request.app.state.settings
+
+    # Side selection: "white"|"black"|"side_to_move" (default).
+    side = payload.get("human_side", "side_to_move")
+    if side == "white":
+        human_white = True
+    elif side == "black":
+        human_white = False
+    else:
+        human_white = parsed["side_to_move"] == "white"
+
+    tc = TimeControl(
+        initial_seconds=float(payload.get("initial_seconds", s.tc_initial_seconds)),
+        increment_seconds=float(payload.get("increment_seconds", s.tc_increment_seconds)),
+    )
+    try:
+        game_id = await hve.new_game(
+            human_white=human_white,
+            tc=tc,
+            start_fen=parsed["start_fen"],
+            start_moves_uci=parsed["moves_uci"],
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=400, detail=f"engine not found: {e}") from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     return {"game_id": game_id, "human_white": human_white}
 
 

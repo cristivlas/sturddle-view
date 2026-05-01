@@ -201,13 +201,41 @@ class HumanVsEngine:
             out["SyzygyPath"] = sp
         return out
 
-    async def new_game(self, human_white: bool, tc: TimeControl) -> str:
+    async def new_game(
+        self,
+        human_white: bool,
+        tc: TimeControl,
+        start_fen: str | None = None,
+        start_moves_uci: list[str] | None = None,
+    ) -> str:
+        """Start a fresh game.
+
+        Optional `start_fen` seeds the board (after replaying any
+        `start_moves_uci`). Clocks always start fresh at the configured
+        TC — imported PGN clock comments are ignored. The clock_history
+        is left empty: take-back can only undo plies played in this
+        session, not seeded ones.
+        """
         async with self._lock:
             await self._cancel_think()
             await self._cancel_tick()
             engine = await self._ensure_engine()
             engine.send_line("ucinewgame")
-            self._board = chess.Board()
+            try:
+                board = chess.Board(start_fen) if start_fen else chess.Board()
+            except ValueError as e:
+                raise RuntimeError(f"invalid FEN: {e}") from e
+            for uci in start_moves_uci or []:
+                try:
+                    move = chess.Move.from_uci(uci)
+                except ValueError as e:
+                    raise RuntimeError(f"invalid UCI in seed moves: {uci}") from e
+                if move not in board.legal_moves:
+                    raise RuntimeError(f"illegal seed move: {uci}")
+                board.push(move)
+            if board.is_game_over():
+                raise RuntimeError("seeded position is already over")
+            self._board = board
             self._human_white = human_white
             self._tc = tc
             self._white_time = tc.initial_seconds
@@ -220,7 +248,8 @@ class HumanVsEngine:
             await self._publish_board()
             await self._publish_clock()
         self._start_tick()
-        if not human_white:
+        engine_color = chess.BLACK if human_white else chess.WHITE
+        if self._board.turn == engine_color:
             await self._engine_to_move()
         return self._game_id
 

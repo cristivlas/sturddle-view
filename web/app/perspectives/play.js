@@ -4,6 +4,7 @@
 
 import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, reportError, toast } from "../dialogs.js";
+import { showImportPositionDialog } from "../import-position-dialog.js";
 
 function formatGameOver(payload, humanWhite) {
   const { result, termination, by, loser } = payload;
@@ -46,6 +47,10 @@ export const playPerspective = {
 
           <div id="board-controls">
             <wa-button id="new-game" size="small">New game</wa-button>
+            <wa-button id="import-pos" size="small" class="desktop-only" aria-label="Open position from FEN or PGN">
+              <wa-icon slot="start" name="folder-open"></wa-icon>
+              Open position
+            </wa-button>
             <wa-button id="takeback" size="small" disabled>
               <wa-icon slot="start" name="rotate-left"></wa-icon>
               Take back
@@ -70,6 +75,7 @@ export const playPerspective = {
     const sideHost = root.querySelector(".play-side-host");
     boardHost.classList.add("board-idle");
     const newGameBtn = root.querySelector("#new-game");
+    const importBtn = root.querySelector("#import-pos");
     const resignBtn = root.querySelector("#resign");
     const takebackBtn = root.querySelector("#takeback");
     const switchSidesBtn = root.querySelector("#switch-sides");
@@ -283,6 +289,37 @@ export const playPerspective = {
       }
     };
 
+    const onImport = async () => {
+      if (movesPlayed > 0 && !gameOver) {
+        const ok = await confirm({
+          message: "Cancel the game in progress and import a new position?",
+          okLabel: "Import",
+          cancelLabel: "Keep playing",
+          destructive: true,
+        });
+        if (!ok) return;
+      }
+      const result = await showImportPositionDialog({ api: ctx.api });
+      if (!result) return;
+      try {
+        const r = await ctx.api("POST", "/game/import", result);
+        view.setGameId(r.game_id);
+        view.setHumanWhite(!!r.human_white);
+        view.reset();
+        resignAvailable = true;
+        try {
+          const s = await ctx.api("GET", "/settings");
+          gameTcInitial = Number(s.tc_initial_seconds);
+          gameTcIncrement = Number(s.tc_increment_seconds);
+        } catch {
+          // ignore — drift detection just won't trigger for TC.
+        }
+        refreshButtons();
+      } catch (e) {
+        reportError(ctx, "Import failed", e);
+      }
+    };
+
     const onSwitchSides = async () => {
       try {
         await ctx.api("POST", "/game/switch-sides", {});
@@ -300,6 +337,7 @@ export const playPerspective = {
     };
 
     newGameBtn.addEventListener("click", onNewGame);
+    importBtn.addEventListener("click", onImport);
     resignBtn.addEventListener("click", onResign);
     takebackBtn.addEventListener("click", onTakeback);
     switchSidesBtn.addEventListener("click", onSwitchSides);
@@ -311,6 +349,7 @@ export const playPerspective = {
         view.unmount();
         window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
         newGameBtn.removeEventListener("click", onNewGame);
+        importBtn.removeEventListener("click", onImport);
         resignBtn.removeEventListener("click", onResign);
         takebackBtn.removeEventListener("click", onTakeback);
         switchSidesBtn.removeEventListener("click", onSwitchSides);
