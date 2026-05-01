@@ -104,6 +104,13 @@ def test_create_rejects_single_engine(client):
     assert r.status_code == 400
 
 
+def test_create_rejects_duplicate_name(client):
+    payload = {"name": "dup", "engines": _engines_payload()}
+    assert client.post("/api/tournaments", json=payload).status_code == 201
+    r = client.post("/api/tournaments", json=payload)
+    assert r.status_code == 409
+
+
 def test_get_unknown_returns_404(client):
     r = client.get("/api/tournaments/does-not-exist")
     assert r.status_code == 404

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -49,6 +50,10 @@ class CorruptStateError(StoreError):
 
 class TournamentNotFoundError(StoreError):
     """No tournament with the given id under the configured root."""
+
+
+class DuplicateNameError(StoreError):
+    """A tournament with the requested name already exists."""
 
 
 @dataclass
@@ -95,6 +100,7 @@ class TournamentStore:
 
     def __init__(self, root: Path) -> None:
         self._root = Path(root)
+        self._create_lock = threading.Lock()
 
     @property
     def root(self) -> Path:
@@ -129,23 +135,32 @@ class TournamentStore:
         return self._dir(tournament_id) / "logs"
 
     def create(self, name: str, template: dict, engines: list) -> Tournament:
-        """Create a new tournament directory and persist its initial state.json."""
-        self._ensure_root()
-        tournament_id = uuid.uuid4().hex
-        d = self._dir(tournament_id)
-        d.mkdir(parents=True, exist_ok=False)
-        (d / "logs").mkdir(parents=True, exist_ok=True)
+        """Create a new tournament directory and persist its initial state.json.
 
-        t = Tournament(
-            id=tournament_id,
-            name=name,
-            status=STATUS_IDLE,
-            created_at=_now(),
-            template=dict(template),
-            engines=list(engines),
-        )
-        atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
-        return t
+        Raises ``DuplicateNameError`` if another tournament already has
+        the same name. The duplicate check and the directory creation
+        run under a single lock so concurrent callers cannot both
+        succeed with the same name.
+        """
+        self._ensure_root()
+        with self._create_lock:
+            if any(t.name == name for t in self.list()):
+                raise DuplicateNameError(name)
+            tournament_id = uuid.uuid4().hex
+            d = self._dir(tournament_id)
+            d.mkdir(parents=True, exist_ok=False)
+            (d / "logs").mkdir(parents=True, exist_ok=True)
+
+            t = Tournament(
+                id=tournament_id,
+                name=name,
+                status=STATUS_IDLE,
+                created_at=_now(),
+                template=dict(template),
+                engines=list(engines),
+            )
+            atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
+            return t
 
     def get(self, tournament_id: str) -> Tournament:
         path = self._state_path(tournament_id)

@@ -43,6 +43,7 @@ from ..tournament.orchestrator import Orchestrator, TournamentBusyError
 from ..tournament.pgn_stats import compute_games_list, compute_sprt, compute_standings
 from ..tournament.store import (
     CorruptStateError,
+    DuplicateNameError,
     TournamentNotFoundError,
     TournamentStore,
 )
@@ -142,13 +143,14 @@ def create_tournament(payload: TournamentCreate, request: Request) -> dict:
     if len(payload.engines) < 2:
         raise HTTPException(status_code=400, detail="at least two engines required")
     name = payload.name.strip() or "tournament"
-    if any(t.name == name for t in s.list()):
+    try:
+        t = s.create(
+            name=name,
+            template=payload.template,
+            engines=[e.model_dump(exclude_none=True) for e in payload.engines],
+        )
+    except DuplicateNameError:
         raise HTTPException(status_code=409, detail="tournament name already exists")
-    t = s.create(
-        name=name,
-        template=payload.template,
-        engines=[e.model_dump(exclude_none=True) for e in payload.engines],
-    )
     return _serialize(t)
 
 

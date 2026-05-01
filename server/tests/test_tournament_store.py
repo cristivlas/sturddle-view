@@ -12,6 +12,7 @@ from sturddle_view.tournament.store import (
     STATUS_RUNNING,
     STATUS_STOPPED,
     CorruptStateError,
+    DuplicateNameError,
     Tournament,
     TournamentNotFoundError,
     TournamentStore,
@@ -45,6 +46,12 @@ def test_create_round_trip(store):
     fetched = store.get(t.id)
     assert fetched.id == t.id
     assert fetched.name == t.name
+
+
+def test_create_rejects_duplicate_name(store):
+    store.create(name="dup", template={}, engines=[])
+    with pytest.raises(DuplicateNameError):
+        store.create(name="dup", template={}, engines=[])
 
 
 def test_create_makes_directory_with_logs_subdir(store):
