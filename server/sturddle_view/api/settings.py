@@ -19,7 +19,49 @@ def _serialize(s) -> dict:
         "tc_increment_seconds": s.tc_increment_seconds,
         "human_side": s.human_side,
         "allow_takeback": s.allow_takeback,
+        "engine_default_threads": s.engine_default_threads,
+        "engine_default_hash_mb": s.engine_default_hash_mb,
+        "engine_default_syzygy_path": s.engine_default_syzygy_path,
+        "engine_default_book_path": s.engine_default_book_path,
+        "engine_default_book_plies": s.engine_default_book_plies,
     }
+
+
+# Distinguishes "field absent from payload" (don't touch) from "field
+# present with cleared value" (set to None). Returned by the coercion
+# helpers below; call sites compare with `is _SENTINEL`.
+_SENTINEL: object = object()
+
+
+def _coerce_optional_int(
+    payload: dict, key: str, *, min_value: int | None = None,
+) -> int | None | object:
+    """Treat missing/blank/zero as cleared (None). UI sends "" or 0 to
+    mean "no override"; either is normalized to None for storage."""
+    if key not in payload:
+        return _SENTINEL
+    raw = payload[key]
+    if raw is None or raw == "":
+        return None
+    try:
+        v = int(raw)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"{key} must be an integer") from e
+    if v == 0:
+        return None
+    if min_value is not None and v < min_value:
+        raise HTTPException(status_code=400, detail=f"{key} must be >= {min_value}")
+    return v
+
+
+def _coerce_optional_str(payload: dict, key: str) -> str | None | object:
+    if key not in payload:
+        return _SENTINEL
+    raw = payload[key]
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    return s or None
 
 
 @router.get("")
@@ -65,6 +107,19 @@ def update_settings(payload: dict, request: Request) -> dict:
 
     if "allow_takeback" in payload:
         s.allow_takeback = bool(payload["allow_takeback"])
+
+    for key, min_v in (
+        ("engine_default_threads", 1),
+        ("engine_default_hash_mb", 1),
+        ("engine_default_book_plies", 1),
+    ):
+        v = _coerce_optional_int(payload, key, min_value=min_v)
+        if v is not _SENTINEL:
+            setattr(s, key, v)
+    for key in ("engine_default_syzygy_path", "engine_default_book_path"):
+        v = _coerce_optional_str(payload, key)
+        if v is not _SENTINEL:
+            setattr(s, key, v)
 
     try:
         s.save_persisted()

@@ -158,25 +158,46 @@ class HumanVsEngine:
             self._engine = engine
             if not self._engine_name:
                 self._engine_name = engine.id.get("name") or Path(self._engine_path).name
-            if self._engine_options:
-                # Apply user-saved UCI options. Skip unknown/managed options
-                # rather than fail — the schema may have drifted since save
-                # (e.g. binary upgraded). Log so the user can refresh-schema.
-                accepted = {}
-                for k, v in self._engine_options.items():
-                    if k in engine.options and not engine.options[k].is_managed():
-                        accepted[k] = v
-                    else:
-                        log.warning(
-                            "engine %s: skipping unknown/managed option %s",
-                            self._engine_path, k,
-                        )
-                if accepted:
-                    try:
-                        await engine.configure(accepted)
-                    except chess.engine.EngineError:
-                        log.exception("engine refused options %s", accepted)
+            # Per-engine UCI options first; global engine defaults from
+            # settings layer on top. Both skip unknown/managed options
+            # rather than fail — the engine's schema may have drifted
+            # since save (binary upgrade). Log so the user can refresh.
+            accepted: dict = {}
+            for k, v in (self._engine_options or {}).items():
+                if k in engine.options and not engine.options[k].is_managed():
+                    accepted[k] = v
+                else:
+                    log.warning(
+                        "engine %s: skipping unknown/managed option %s",
+                        self._engine_path, k,
+                    )
+            for k, v in self._global_engine_defaults().items():
+                if k in engine.options and not engine.options[k].is_managed():
+                    accepted[k] = v
+            if accepted:
+                try:
+                    await engine.configure(accepted)
+                except chess.engine.EngineError:
+                    log.exception("engine refused options %s", accepted)
         return self._engine
+
+    def _global_engine_defaults(self) -> dict:
+        """UCI-option subset of the global engine defaults from settings.
+        Blank/None entries are dropped so callers can iterate without
+        another guard. Book file + plies are fastchess-only and
+        excluded — see project_hve_book_followup memory."""
+        s = self._settings
+        if s is None:
+            return {}
+        out: dict = {}
+        if getattr(s, "engine_default_threads", None):
+            out["Threads"] = s.engine_default_threads
+        if getattr(s, "engine_default_hash_mb", None):
+            out["Hash"] = s.engine_default_hash_mb
+        sp = getattr(s, "engine_default_syzygy_path", None)
+        if sp:
+            out["SyzygyPath"] = sp
+        return out
 
     async def new_game(self, human_white: bool, tc: TimeControl) -> str:
         async with self._lock:

@@ -27,9 +27,12 @@ import secrets
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Awaitable, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from .runner import EventCallback, RunSpec, Runner
+
+if TYPE_CHECKING:
+    from ..config import Settings
 from .store import (
     STATUS_DONE,
     STATUS_RUNNING,
@@ -115,6 +118,10 @@ class Orchestrator:
         # Broadcast URL the proxy POSTs to. Set by the FastAPI app on
         # construction; ``None`` means "no proxy wrapping" (tests, CLI).
         self._proxy_broadcast_url: str | None = None
+        # Optional reference to the live Settings instance. Read at
+        # ``start()`` time so per-tournament runs see the current values
+        # (user may have edited the Defaults tab between starts).
+        self._settings: Settings | None = None
         # Per-tournament ring buffer of recent events. Replayed by the
         # REST endpoint to a workspace opened after restart so the user
         # sees the fastchess startup chatter instead of an empty log.
@@ -130,6 +137,12 @@ class Orchestrator:
         this into the ``RunSpec`` when starting fastchess so each
         engine is wrapped in the proxy script."""
         self._proxy_broadcast_url = url
+
+    def set_settings(self, settings: Settings | None) -> None:
+        """Provide the live ``Settings`` instance so ``start()`` can
+        snapshot ``engine_default_*`` fields into the ``RunSpec``.
+        Optional — without it, no global engine defaults are applied."""
+        self._settings = settings
 
     # ---- public surface ----------------------------------------------------
 
@@ -162,6 +175,7 @@ class Orchestrator:
         self._active_id = t.id
         self._proxy_secret = secrets.token_urlsafe(24)
 
+        s = self._settings
         spec = RunSpec(
             tournament=t,
             binary_path=getattr(self._runner, "binary_path", "") or "",
@@ -171,6 +185,11 @@ class Orchestrator:
             log_path=self._store.logs_dir(t.id) / "fastchess.log",
             proxy_broadcast_url=self._proxy_broadcast_url,
             proxy_secret=self._proxy_secret,
+            engine_default_threads=getattr(s, "engine_default_threads", None),
+            engine_default_hash_mb=getattr(s, "engine_default_hash_mb", None),
+            engine_default_syzygy_path=getattr(s, "engine_default_syzygy_path", None),
+            engine_default_book_path=getattr(s, "engine_default_book_path", None),
+            engine_default_book_plies=getattr(s, "engine_default_book_plies", None),
         )
         try:
             updated = self._store.update_status(

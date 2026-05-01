@@ -32,6 +32,11 @@ PERSISTED_FIELDS = (
     "tournament_fastchess_path",
     "tournament_root",
     "tournament_default_template",
+    "engine_default_threads",
+    "engine_default_hash_mb",
+    "engine_default_syzygy_path",
+    "engine_default_book_path",
+    "engine_default_book_plies",
 )
 
 
@@ -62,6 +67,16 @@ class Settings(BaseSettings):
     tournament_fastchess_path: str | None = None
     tournament_root: str | None = None
     tournament_default_template: dict = Field(default_factory=dict)
+
+    # Global engine defaults. Layered on top of per-engine UCI options at
+    # launch time (HVE + tournament). Blank/None = no override.
+    # Threads / Hash / SyzygyPath are UCI setoptions; book_path + book_plies
+    # are fastchess CLI args (tournament only — see HVE follow-up note).
+    engine_default_threads: int | None = None
+    engine_default_hash_mb: int | None = None
+    engine_default_syzygy_path: str | None = None
+    engine_default_book_path: str | None = None
+    engine_default_book_plies: int | None = None
 
     def apply_persisted(self, path: Path | None = None) -> None:
         path = path or default_settings_file()

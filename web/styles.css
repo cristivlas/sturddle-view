@@ -530,9 +530,10 @@ wa-dialog[style*="--dialog-height"]::part(dialog) {
   height: var(--dialog-height);
 }
 
-/* The select uses an internal popup with distance=0; override via attribute
-   in JS where it matters. */
-wa-dialog wa-tab-panel > * + * { margin-top: 14px; }
+/* Consistent vertical breathing room between any two adjacent
+   top-level children of a settings tab panel — no need for per-row
+   margin rules on each component type. */
+wa-dialog wa-tab-panel > * + * { margin-top: 10px; }
 
 /* Form-style rows (label + input) inside a panel. */
 .settings-row { max-width: 360px; }
@@ -639,13 +640,10 @@ wa-dialog wa-tab-panel > * + * { margin-top: 14px; }
 .settings-tournament-path-inner {
   display: flex; align-items: center; gap: 8px; min-width: 0;
 }
-.settings-tournament-path-inner .path-display {
-  flex: 1; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: var(--wa-font-family-code); font-size: 12px;
-  direction: rtl; text-align: left;
-}
-.settings-tournament-path-inner .path-display.muted { direction: ltr; }
+.settings-tournament-path-inner .path-field { flex: 1; min-width: 0; }
+wa-dialog wa-tab-panel > .settings-tournament-tpl-mount { margin-top: 24px; }
+.settings-row-actions { display: flex; gap: 4px; }
+.settings-row-hint { font-size: 11px; }
 .settings-section-heading {
   font-size: 12px; color: var(--muted); margin: 12px 0 4px 0;
   text-transform: uppercase; letter-spacing: 0.05em;
@@ -737,15 +735,15 @@ wa-dialog::part(body) {
 }
 
 /* Tournament template form (reusable component) */
-.tournament-template-form { display: flex; flex-direction: column; gap: 10px; }
+.tournament-template-form { display: flex; flex-direction: column; gap: 16px; }
 .tournament-template-form .ttf-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 8px;
+  align-items: end;
 }
-.tournament-template-form .ttf-ponder-row { padding: 4px 0; }
 .tournament-template-form .ttf-adjudication {
-  display: flex; flex-direction: column; gap: 10px;
+  display: flex; flex-direction: column; gap: 16px;
 }
 .tournament-template-form .ttf-adj-group {
   display: flex; flex-direction: column; gap: 6px;

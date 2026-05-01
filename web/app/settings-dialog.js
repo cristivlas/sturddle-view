@@ -40,6 +40,7 @@ function makeDurationRow({ label, seconds, minSeconds, onChange }) {
   const input = document.createElement("wa-input");
   input.size = "small";
   input.type = "number";
+  input.setAttribute("autocomplete", "off");
   input.value = String(seconds / unitDef().toSeconds);
   input.min = String(minSeconds / unitDef().toSeconds);
 
@@ -105,7 +106,7 @@ export async function openSettingsDialog({ api }) {
   return showDialog({
     label: "Settings",
     width: "min(760px, 94vw)",
-    height: "min(720px, 92vh)",
+    height: "min(620px, 92vh)",
     body: (resolve, dialog) => {
       // ---- helper: PUT a partial settings update; toast on failure. ----
       const putSettings = async (patch) => {
@@ -130,10 +131,10 @@ export async function openSettingsDialog({ api }) {
       const tabs = document.createElement("wa-tab-group");
       tabs.placement = "start";
 
-      // --- General tab ---
+      // --- Common tab (PGN + global engine defaults) ---
       const generalTab = document.createElement("wa-tab");
       generalTab.panel = "general";
-      generalTab.textContent = "General";
+      generalTab.textContent = "Common";
       const generalPanel = document.createElement("wa-tab-panel");
       generalPanel.name = "general";
 
@@ -145,21 +146,7 @@ export async function openSettingsDialog({ api }) {
         putSettings({ pgn_autosave: pgnAutosave.checked });
       });
 
-      const pgnDirRow = document.createElement("div");
-      pgnDirRow.className = "settings-row";
-      const pgnDirLabel = document.createElement("label");
-      pgnDirLabel.textContent = "PGN directory";
-      const pgnDir = document.createElement("wa-input");
-      pgnDir.size = "small";
-      pgnDir.value = initial.pgn_dir ?? "";
-      pgnDir.placeholder = "/path/to/pgn";
-      pgnDir.addEventListener("input", () => {
-        const v = (pgnDir.value || "").trim();
-        if (v) putSettingsDebounced({ pgn_dir: v });
-      });
-      pgnDirRow.append(pgnDirLabel, pgnDir);
-
-      generalPanel.append(pgnAutosave, pgnDirRow);
+      generalPanel.append(pgnAutosave);
 
       // --- Play tab ---
       const playTab = document.createElement("wa-tab");
@@ -213,43 +200,154 @@ export async function openSettingsDialog({ api }) {
 
       playPanel.append(tcInitialRow, tcIncrementRow, humanSideRow, takebackRow);
 
+      // Path-row helper used by Common + Tournament tabs.
+      // Layout: label on top, [path-field][Browse][Clear] on a row underneath.
+      // The field is always a wa-input — editable for PGN dir, readonly
+      // for paths picked via Browse only. Using a real input means long
+      // values clip naturally inside the field instead of expanding the
+      // row and pushing the action buttons out of column alignment.
+      function pathRow(labelText, value, mode, pickerTitle, onPick, opts = {}) {
+        const { hint, editable = false, placeholder } = opts;
+        const row = document.createElement("div");
+        row.className = "settings-tournament-path-row";
+        const lbl = document.createElement("div");
+        lbl.className = "settings-tournament-path-label";
+        lbl.textContent = labelText;
+        if (hint) {
+          const h = document.createElement("span");
+          h.className = "muted settings-row-hint";
+          h.textContent = ` ${hint}`;
+          lbl.appendChild(h);
+        }
+        const inner = document.createElement("div");
+        inner.className = "settings-tournament-path-inner";
+
+        const field = document.createElement("wa-input");
+        field.size = "small";
+        field.setAttribute("autocomplete", "off");
+        field.classList.add("path-field");
+        field.value = value || "";
+        if (editable) {
+          if (placeholder) field.placeholder = placeholder;
+          field.addEventListener("input", () => {
+            const v = (field.value || "").trim();
+            if (v) onPick(v, { typing: true });
+          });
+        } else {
+          field.setAttribute("readonly", "");
+          field.placeholder = "(not set)";
+        }
+
+        const inner_actions = document.createElement("div");
+        inner_actions.className = "settings-row-actions";
+        const browse = document.createElement("wa-button");
+        browse.size = "small";
+        browse.textContent = "Browse…";
+        browse.addEventListener("click", async () => {
+          const path = await pickFile({ api, mode, title: pickerTitle });
+          if (!path) return;
+          field.value = path;
+          onPick(path);
+        });
+        const clear = document.createElement("wa-button");
+        clear.size = "small";
+        clear.textContent = "Clear";
+        if (editable) {
+          // Reserve the slot so Browse aligns with the read-only rows;
+          // PGN dir has a server default, so a Clear action would be a no-op.
+          clear.style.visibility = "hidden";
+          clear.setAttribute("aria-hidden", "true");
+          clear.tabIndex = -1;
+        } else {
+          clear.addEventListener("click", () => {
+            field.value = "";
+            onPick("");
+          });
+        }
+        inner_actions.append(browse, clear);
+        inner.append(field, inner_actions);
+        row.append(lbl, inner);
+        return row;
+      }
+
+      // --- Engine defaults (UCI overrides + tournament book) ---
+      // Lives in the Common panel so users see one place for global,
+      // non-Play, non-Tournament settings.
+      function makeNumRow(labelText, key, { hint } = {}) {
+        const row = document.createElement("div");
+        row.className = "settings-row";
+        const lbl = document.createElement("label");
+        lbl.textContent = labelText;
+        if (hint) {
+          const h = document.createElement("span");
+          h.className = "muted settings-row-hint";
+          h.textContent = ` ${hint}`;
+          lbl.appendChild(h);
+        }
+        const input = document.createElement("wa-input");
+        input.size = "small";
+        input.type = "number";
+        input.setAttribute("min", "1");
+        input.setAttribute("autocomplete", "off");
+        input.placeholder = "engine default";
+        const cur = initial[key];
+        if (cur != null) input.value = String(cur);
+        input.addEventListener("input", () => {
+          // Blank/0 = clear override; the API normalises both to None.
+          // Non-numeric (NaN) is dropped on the floor — leave the field
+          // showing what the user typed instead of silently clearing.
+          const raw = (input.value || "").trim();
+          if (raw === "") return putSettingsDebounced({ [key]: null });
+          const n = Number(raw);
+          if (Number.isFinite(n)) putSettingsDebounced({ [key]: n });
+        });
+        row.append(lbl, input);
+        return row;
+      }
+
+      generalPanel.append(
+        pathRow(
+          "PGN directory",
+          initial.pgn_dir ?? "",
+          "directory",
+          "Pick PGN directory",
+          (p, ctx) => {
+            // Typing → debounce; Browse → commit immediately.
+            if (ctx?.typing) putSettingsDebounced({ pgn_dir: p });
+            else putSettings({ pgn_dir: p });
+          },
+          { editable: true, placeholder: "/path/to/pgn" },
+        ),
+        makeNumRow("Threads", "engine_default_threads"),
+        makeNumRow("Hash (MB)", "engine_default_hash_mb"),
+        pathRow(
+          "SyzygyPath",
+          initial.engine_default_syzygy_path || "",
+          "directory",
+          "Pick Syzygy tablebase directory",
+          (p) => putSettings({ engine_default_syzygy_path: p }),
+        ),
+        pathRow(
+          "Opening book",
+          initial.engine_default_book_path || "",
+          "file",
+          "Pick opening book (.epd / .pgn)",
+          (p) => putSettings({ engine_default_book_path: p }),
+          { hint: "(tournaments only)" },
+        ),
+        makeNumRow(
+          "Book ply depth",
+          "engine_default_book_plies",
+          { hint: "(tournaments only)" },
+        ),
+      );
+
       // --- Tournament tab ---
       const tournamentTab = document.createElement("wa-tab");
       tournamentTab.panel = "tournament";
       tournamentTab.textContent = "Tournament";
       const tournamentPanel = document.createElement("wa-tab-panel");
       tournamentPanel.name = "tournament";
-
-      // Path rows: fastchess binary + tournaments root.
-      // Layout: label on top, [path][Browse] on a single row underneath.
-      // Both Browse buttons end up right-aligned at the same X.
-      function pathRow(labelText, value, mode, pickerTitle, onPick) {
-        const row = document.createElement("div");
-        row.className = "settings-tournament-path-row";
-        const lbl = document.createElement("div");
-        lbl.className = "settings-tournament-path-label";
-        lbl.textContent = labelText;
-        const inner = document.createElement("div");
-        inner.className = "settings-tournament-path-inner";
-        const display = document.createElement("span");
-        display.className = "path-display";
-        display.textContent = value || "(not set)";
-        if (!value) display.classList.add("muted");
-        const browse = document.createElement("wa-button");
-        browse.size = "small";
-        browse.textContent = "Browse…";
-        browse.addEventListener("click", async () => {
-          const path = await pickFile({ api, mode, title: pickerTitle });
-          if (path) {
-            display.textContent = path;
-            display.classList.remove("muted");
-            onPick(path);
-          }
-        });
-        inner.append(display, browse);
-        row.append(lbl, inner);
-        return row;
-      }
 
       tournamentPanel.append(
         pathRow(
@@ -268,14 +366,8 @@ export async function openSettingsDialog({ api }) {
         ),
       );
 
-      // Defaults heading + the shared template form.
-      const defaultsHeading = document.createElement("div");
-      defaultsHeading.className = "settings-section-heading";
-      defaultsHeading.textContent = "Defaults";
-      defaultsHeading.title = "Pre-fill values for new tournaments";
-      tournamentPanel.appendChild(defaultsHeading);
-
       const tplHost = document.createElement("div");
+      tplHost.className = "settings-tournament-tpl-mount";
       const tplCtl = mountTournamentTemplateForm({
         container: tplHost,
         initialValues: tournamentInitial.default_template || {},
@@ -296,7 +388,10 @@ export async function openSettingsDialog({ api }) {
       tplHost.addEventListener("input", persistTemplate);
       tplHost.addEventListener("change", persistTemplate);
 
-      tabs.append(generalTab, playTab, tournamentTab, generalPanel, playPanel, tournamentPanel);
+      tabs.append(
+        generalTab, playTab, tournamentTab,
+        generalPanel, playPanel, tournamentPanel,
+      );
 
       dialog.append(tabs);
     },

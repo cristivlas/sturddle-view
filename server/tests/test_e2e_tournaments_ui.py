@@ -188,28 +188,6 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
             assert row_info["actions"] == ["Start", "Stop", "Open workspace", "Remove"]
             assert row_info["new_button_disabled"] is False
 
-            await page.click(".tournament-row .tournament-row-main")
-            await page.wait_for_function(
-                """() => {
-                    const inputs = document.querySelectorAll('wa-dialog wa-input[data-key]');
-                    return inputs.length > 0;
-                }""",
-                timeout=5000,
-            )
-            tc_value = await page.evaluate(
-                """() => document.querySelector('wa-dialog wa-input[data-key="tc"]').value"""
-            )
-            assert tc_value == "10+0.1"
-            tc_readonly = await page.evaluate(
-                """() => document.querySelector('wa-dialog wa-input[data-key="tc"]').hasAttribute('readonly')"""
-            )
-            assert tc_readonly is True
-            await page.click('wa-dialog wa-button[slot="footer"]')
-            await page.wait_for_function(
-                "() => !document.querySelector('wa-dialog')",
-                timeout=2000,
-            )
-
             await page.click("#settings-btn")
             await page.wait_for_function(
                 """() => document.querySelector('wa-dialog wa-tab[panel="tournament"]')""",

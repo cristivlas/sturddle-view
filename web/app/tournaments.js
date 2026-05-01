@@ -275,7 +275,6 @@ export function mountTournaments({ container, api, events, log, token }) {
           </div>
 
           <div class="nt-section">
-            <label class="nt-section-label">Settings</label>
             <div class="nt-template-host"></div>
           </div>
         `;

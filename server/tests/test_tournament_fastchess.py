@@ -27,7 +27,13 @@ from sturddle_view.tournament.store import (
 # ---------------------------------------------------------------------------
 
 
-def _make_spec(tmp_path: Path, template: dict, engines: list, binary: str = "fastchess") -> RunSpec:
+def _make_spec(
+    tmp_path: Path,
+    template: dict,
+    engines: list,
+    binary: str = "fastchess",
+    **spec_overrides,
+) -> RunSpec:
     store = TournamentStore(tmp_path / "tournaments")
     t = store.create(name="t", template=template, engines=engines)
     work = store.root / t.id
@@ -38,6 +44,7 @@ def _make_spec(tmp_path: Path, template: dict, engines: list, binary: str = "fas
         pgn_path=work / "games.pgn",
         config_path=work / "config.json",
         log_path=work / "logs" / "fastchess.log",
+        **spec_overrides,
     )
 
 
@@ -121,10 +128,16 @@ def test_build_command_minimal(tmp_path):
 
 
 def test_build_command_each_options(tmp_path):
+    # Hash/Threads/SyzygyPath now come from settings via the
+    # engine_default_* fields on RunSpec; ponder still lives in the
+    # tournament template.
     spec = _make_spec(
         tmp_path,
-        template={"hash": 256, "threads": 1, "ponder": False, "tablebase": "/tb"},
+        template={"ponder": False},
         engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+        engine_default_hash_mb=256,
+        engine_default_threads=1,
+        engine_default_syzygy_path="/tb",
     )
     cmd = build_command(spec)
     each_idx = cmd.index("-each")
@@ -133,6 +146,21 @@ def test_build_command_each_options(tmp_path):
     assert "option.Threads=1" in each
     assert "option.Ponder=false" in each
     assert "option.SyzygyPath=/tb" in each
+
+
+def test_build_command_legacy_template_hash_threads_ignored(tmp_path):
+    """Old tournaments saved before the Defaults tab still load with
+    hash/threads/tablebase in their template — those values must NOT
+    leak into the fastchess argv (settings is now authoritative)."""
+    spec = _make_spec(
+        tmp_path,
+        template={"hash": 999, "threads": 999, "tablebase": "/old/tb"},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    cmd = build_command(spec)
+    assert not any("Hash=999" in s for s in cmd)
+    assert not any("Threads=999" in s for s in cmd)
+    assert not any("/old/tb" in s for s in cmd)
 
 
 def test_build_command_concurrency_rounds_games(tmp_path):
@@ -159,15 +187,46 @@ def test_build_command_gauntlet_with_seeds(tmp_path):
 
 
 def test_build_command_book(tmp_path):
+    # Book file + plies now come from settings; format is inferred from
+    # the file extension.
     spec = _make_spec(
         tmp_path,
-        template={"book": "/books/8moves.epd", "book_format": "epd"},
+        template={},
         engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+        engine_default_book_path="/books/8moves.epd",
+        engine_default_book_plies=8,
     )
     cmd = build_command(spec)
     idx = cmd.index("-openings")
     assert cmd[idx + 1] == "file=/books/8moves.epd"
     assert cmd[idx + 2] == "format=epd"
+    assert cmd[idx + 3] == "plies=8"
+
+
+def test_build_command_book_pgn_extension(tmp_path):
+    spec = _make_spec(
+        tmp_path,
+        template={},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+        engine_default_book_path="/books/lichess.pgn",
+    )
+    cmd = build_command(spec)
+    idx = cmd.index("-openings")
+    assert cmd[idx + 2] == "format=pgn"
+    # plies omitted when not configured
+    assert all(not s.startswith("plies=") for s in cmd[idx : idx + 4])
+
+
+def test_build_command_legacy_book_template_ignored(tmp_path):
+    """Old tournaments with book/book_format in the template must not
+    emit -openings — the settings book is the only authoritative source."""
+    spec = _make_spec(
+        tmp_path,
+        template={"book": "/old/book.epd", "book_format": "epd"},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    cmd = build_command(spec)
+    assert "-openings" not in cmd
 
 
 def test_build_command_sprt(tmp_path):

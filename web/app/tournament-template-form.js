@@ -3,8 +3,10 @@
 //   2. New Tournament dialog → editable; pre-filled from defaults; save = create.
 //   3. Inspect existing tournament → read-only; renders frozen template values.
 //
-// Native fields cover everything Phase 1 needs: time control, hash, threads,
+// Native fields cover everything Phase 1 needs: time control,
 // games-in-parallel, rounds, tournament type / seeds, ponder, resign, draw.
+// Hash / Threads / SyzygyPath / opening book live in the global Settings
+// "Defaults" tab — applied uniformly to all engines at launch time.
 // SPRT is Phase 2 work.
 
 const TOURNAMENT_TYPES = [
@@ -34,6 +36,8 @@ export function mountTournamentTemplateForm({
     input.size = "small";
     input.type = type;
     input.dataset.key = key;
+    // Suppress browser autocomplete suggestions from unrelated history.
+    input.setAttribute("autocomplete", "off");
     if (min != null) input.setAttribute("min", String(min));
     if (placeholder) input.placeholder = placeholder;
     const v = initialValues[key] != null ? initialValues[key] : defaultValue;
@@ -45,8 +49,6 @@ export function mountTournamentTemplateForm({
 
   grid.append(
     addInput("tc",                "Time control",     { placeholder: "10+0.1" }),
-    addInput("hash",              "Hash (MB)",        { type: "number", min: 1 }),
-    addInput("threads",           "Threads",          { type: "number", min: 1, defaultValue: 1 }),
     addInput("games_in_parallel", "Games in parallel",{ type: "number", min: 1, defaultValue: 1 }),
     addInput("rounds",            "Rounds",           { type: "number", min: 1 }),
   );
@@ -77,16 +79,13 @@ export function mountTournamentTemplateForm({
 
   // ---- Ponder ------------------------------------------------------------
 
-  const ponderRow = document.createElement("div");
-  ponderRow.className = "ttf-ponder-row";
   const ponderSwitch = document.createElement("wa-switch");
   ponderSwitch.size = "small";
   ponderSwitch.dataset.key = "ponder";
   if (initialValues.ponder) ponderSwitch.setAttribute("checked", "");
   if (readOnly) ponderSwitch.setAttribute("disabled", "");
-  ponderSwitch.textContent = "Ponder (think on opponent's time)";
+  ponderSwitch.textContent = "Ponder";
   inputs.ponder = ponderSwitch;
-  ponderRow.appendChild(ponderSwitch);
 
   // ---- Adjudication: Resign + Draw --------------------------------------
 
@@ -127,6 +126,7 @@ export function mountTournamentTemplateForm({
     i.label = label;
     i.size = "small";
     i.type = "number";
+    i.setAttribute("autocomplete", "off");
     if (min != null) i.setAttribute("min", String(min));
     i.dataset.key = key;
     if (readOnly) i.setAttribute("readonly", "");
@@ -175,7 +175,7 @@ export function mountTournamentTemplateForm({
   resignBlock.sw.addEventListener("change", () => syncEnabled(resignBlock, resignFields));
   drawBlock.sw.addEventListener("change", () => syncEnabled(drawBlock, drawFields));
 
-  container.append(grid, ponderRow, adjSection);
+  container.append(grid, ponderSwitch, adjSection);
 
   // ---- Public API --------------------------------------------------------
 
@@ -183,7 +183,7 @@ export function mountTournamentTemplateForm({
     const out = {};
 
     // Core scalar fields.
-    const scalars = ["tc", "hash", "threads", "games_in_parallel", "rounds"];
+    const scalars = ["tc", "games_in_parallel", "rounds"];
     for (const k of scalars) {
       const raw = inputs[k].value;
       if (raw === "" || raw == null) continue;
@@ -218,7 +218,7 @@ export function mountTournamentTemplateForm({
   }
 
   function setValues(values) {
-    const scalars = ["tc", "hash", "threads", "games_in_parallel", "rounds"];
+    const scalars = ["tc", "games_in_parallel", "rounds"];
     for (const k of scalars) {
       inputs[k].value = values[k] != null ? String(values[k]) : "";
     }

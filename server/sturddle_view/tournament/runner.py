@@ -47,6 +47,16 @@ class RunSpec:
     proxy_broadcast_url: str | None = None
     proxy_secret: str | None = None
 
+    # Global engine defaults from settings, snapshot at start time.
+    # Each None = no override; the runner skips the corresponding
+    # fastchess flag. Replaces the legacy hash/threads/tablebase/book
+    # fields the template used to carry.
+    engine_default_threads: int | None = None
+    engine_default_hash_mb: int | None = None
+    engine_default_syzygy_path: str | None = None
+    engine_default_book_path: str | None = None
+    engine_default_book_plies: int | None = None
+
 
 class Runner(Protocol):
     async def start(self, spec: RunSpec, on_event: EventCallback) -> None: ...

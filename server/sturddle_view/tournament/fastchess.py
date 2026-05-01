@@ -51,13 +51,8 @@ def build_command(spec: RunSpec) -> list[str]:
 
     Template fields recognized (see ``docs/tournament-spec.md``):
       - tc                : str, fastchess tc= format ("10+0.1", "40/60", ...)
-      - hash              : int (MB)
-      - threads           : int
       - ponder            : bool
       - games_in_parallel : int  (fastchess -concurrency)
-      - book              : str  path to opening book (epd or pgn)
-      - book_format       : "epd" | "pgn"  (default "epd")
-      - tablebase         : str  Syzygy path (per-engine SyzygyPath)
       - tournament_type   : "roundrobin" | "gauntlet"
       - seeds             : int  (gauntlet)
       - rounds            : int
@@ -65,6 +60,11 @@ def build_command(spec: RunSpec) -> list[str]:
       - sprt              : dict {elo0, elo1, alpha, beta, model}
       - resign            : dict {movecount, score}
       - draw              : dict {movenumber, movecount, score}
+
+    Legacy template fields (``hash``, ``threads``, ``tablebase``,
+    ``book``, ``book_format``) are tolerated on read but ignored —
+    Hash/Threads/SyzygyPath/book come from ``Settings`` via the
+    ``engine_default_*`` fields on ``RunSpec``.
 
     Engines come from ``spec.tournament.engines`` — each entry is a
     dict with at minimum ``name`` and ``cmd`` (engine binary path).
@@ -120,16 +120,20 @@ def build_command(spec: RunSpec) -> list[str]:
             e.append(f"tc={t['tc']}")
         cmd.extend(e)
 
-    # -each: tournament-template options applied to all engines.
+    # -each: options applied to all engines. UCI knobs (Hash/Threads/
+    # SyzygyPath) come from the global engine defaults snapshotted on
+    # the RunSpec — the legacy template fields with the same names are
+    # ignored on purpose (kept readable for old saved templates but no
+    # longer authoritative).
     each: list[str] = []
-    if "hash" in t:
-        each.append(f"option.Hash={t['hash']}")
-    if "threads" in t:
-        each.append(f"option.Threads={t['threads']}")
+    if spec.engine_default_hash_mb is not None:
+        each.append(f"option.Hash={spec.engine_default_hash_mb}")
+    if spec.engine_default_threads is not None:
+        each.append(f"option.Threads={spec.engine_default_threads}")
     if "ponder" in t:
         each.append(f"option.Ponder={'true' if t['ponder'] else 'false'}")
-    if "tablebase" in t:
-        each.append(f"option.SyzygyPath={t['tablebase']}")
+    if spec.engine_default_syzygy_path:
+        each.append(f"option.SyzygyPath={spec.engine_default_syzygy_path}")
     if each:
         cmd.append("-each")
         cmd.extend(each)
@@ -148,10 +152,17 @@ def build_command(spec: RunSpec) -> list[str]:
     elif t.get("tournament_type") == "roundrobin":
         cmd.extend(["-tournament", "roundrobin"])
 
-    # Opening book
-    if "book" in t:
-        fmt = t.get("book_format", "epd")
-        cmd.extend(["-openings", f"file={t['book']}", f"format={fmt}"])
+    # Opening book — global default from settings; legacy template
+    # ``book``/``book_format`` fields are ignored. Format inferred from
+    # the file extension (.epd → epd, anything else → pgn) since the
+    # settings tab exposes only the path + plies.
+    if spec.engine_default_book_path:
+        path = spec.engine_default_book_path
+        fmt = "epd" if path.lower().endswith(".epd") else "pgn"
+        opening = ["-openings", f"file={path}", f"format={fmt}"]
+        if spec.engine_default_book_plies is not None:
+            opening.append(f"plies={spec.engine_default_book_plies}")
+        cmd.extend(opening)
 
     # SPRT
     if "sprt" in t and t["sprt"]:

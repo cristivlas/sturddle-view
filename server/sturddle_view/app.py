@@ -139,6 +139,9 @@ def create_app(
     # The proxy runs as a subprocess on this same host; loopback only.
     proxy_url = f"http://127.0.0.1:{settings.port}/internal/proxy"
     app.state.tournament_orch.set_proxy_broadcast_url(proxy_url)
+    # Live settings reference so each tournament start picks up the
+    # current Defaults-tab values without needing a restart.
+    app.state.tournament_orch.set_settings(settings)
 
     app.include_router(settings_api.router)
     app.include_router(engines_api.router)
