@@ -558,6 +558,33 @@ UI/UX section is complete and we move to implementation.
 
 ---
 
+## Testing policy
+
+Rules enforced for every test shipped with this subsystem:
+
+1. **No real fastchess or live engine binaries.** Tests must not spawn,
+   call, or depend on `fastchess` or any UCI engine. Fake fastchess
+   (an inline sleeping Python script) is injected via monkeypatch;
+   proxy lines are driven through the HTTP `/internal/proxy` endpoint
+   using `httpx.AsyncClient` so they reach the server's uvicorn event
+   loop correctly.
+
+2. **No warning suppression.** `pytest.ini` / `pyproject.toml` filters,
+   `warnings.filterwarnings("ignore", ...)` calls, and `-W ignore` flags
+   are prohibited. All tests must be clean with the default `pytest`
+   warning settings.
+
+3. **30-second wall-clock limit per test.** Tests that must wait for
+   async state changes (e.g. pairing, WS subscription) do so with tight
+   `deadline = time.time() + N` loops (N ≤ 5 s) or Playwright
+   `wait_for_selector`/`wait_for_function` timeouts (≤ 5 s).
+
+4. **WebSocket transport: `wsproto`.** All uvicorn test servers must pass
+   `ws="wsproto"` to avoid import-order warnings from the `websockets`
+   library.
+
+---
+
 ## Open items
 
 - **UI/UX**: workspace window inventory and default layout (live

@@ -41,7 +41,7 @@ async def probe_engine(engine_path: str) -> tuple[str | None, dict[str, dict]]:
     can still be registered.
     """
     try:
-        _transport, engine = await chess.engine.popen_uci(engine_path)
+        transport, engine = await chess.engine.popen_uci(engine_path)
     except Exception:
         log.exception("could not spawn %s for probe", engine_path)
         return None, {}
@@ -65,6 +65,7 @@ async def probe_engine(engine_path: str) -> tuple[str | None, dict[str, dict]]:
             await engine.quit()
         except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
             pass
+        transport.close()
 
 
 @dataclass

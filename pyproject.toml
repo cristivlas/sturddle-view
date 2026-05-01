@@ -13,6 +13,7 @@ authors = [{ name = "Cristian Vlasceanu" }]
 dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
+    "wsproto>=1.0",
     "python-chess>=1.999",
     "pydantic>=2.6",
     "pydantic-settings>=2.2",

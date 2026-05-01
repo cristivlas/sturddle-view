@@ -36,7 +36,7 @@ def server(tmp_path):
     registry = EngineRegistry(path=tmp_path / "engines.json")
     app = create_app(settings=settings, engine_registry=registry)
     port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto")
     s = uvicorn.Server(config)
 
     thread = threading.Thread(target=s.run, daemon=True)

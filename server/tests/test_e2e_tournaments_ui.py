@@ -58,7 +58,7 @@ def server(tmp_path, monkeypatch):
     registry.add(name="engine-B", path=sys.executable)
     app = create_app(settings=settings, engine_registry=registry)
     port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto")
     s = uvicorn.Server(config)
 
     thread = threading.Thread(target=s.run, daemon=True)
@@ -155,7 +155,7 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
     )
 
     port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto")
     s = uvicorn.Server(config)
     thread = threading.Thread(target=s.run, daemon=True)
     thread.start()
@@ -300,7 +300,7 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch):
     )
 
     port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto")
     s = uvicorn.Server(config)
     thread = threading.Thread(target=s.run, daemon=True)
     thread.start()

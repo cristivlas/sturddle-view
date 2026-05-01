@@ -1,17 +1,16 @@
 """Slice 9c e2e: clicking an in-progress row in Schedule opens a live
 game window that subscribes to a proxy and renders the board.
 
-Heavyweight test — runs real fastchess + real engines + real browser.
-Skipped if either is missing.
+Uses a fake fastchess (a sleeping Python script) and injects proxy
+lines directly via the internal HTTP endpoint, so no real engine
+binaries are required.
 """
 from __future__ import annotations
 
-import os
 import socket
 import sys
 import threading
 import time
-from pathlib import Path
 
 import pytest
 
@@ -21,25 +20,20 @@ from playwright.async_api import async_playwright  # noqa: E402
 from sturddle_view.app import create_app  # noqa: E402
 from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
+from sturddle_view.tournament import fastchess as fc_mod  # noqa: E402
+from sturddle_view.tournament.fastchess import FastchessRunner  # noqa: E402
 
 
-FASTCHESS_PATH = Path.home() / "Projects" / "fastchess" / "fastchess"
-ENGINE_CANDIDATES = [
-    Path.home() / "Projects" / "sturddle-2" / "dist" / "sturddle-2.5.0-Linux-x86_64",
-    Path.home() / "Projects" / "sturddle-2" / "dist" / "sturddle-2.4.0-Linux-x86_64",
-]
-
-
-def _have_real_setup() -> bool:
-    if not FASTCHESS_PATH.is_file() or not os.access(FASTCHESS_PATH, os.X_OK):
-        return False
-    return all(p.is_file() and os.access(p, os.X_OK) for p in ENGINE_CANDIDATES)
-
-
-pytestmark = pytest.mark.skipif(
-    not _have_real_setup(),
-    reason="real fastchess + sturddle not available on this machine",
-)
+# Minimal fake fastchess: stays alive so the tournament stays "running".
+_FAKE_FASTCHESS = r"""
+import sys, time
+i = 1
+while i < len(sys.argv):
+    if sys.argv[i] == "--sleep":
+        time.sleep(float(sys.argv[i + 1])); i += 2
+    else:
+        i += 1
+"""
 
 
 def _free_port() -> int:
@@ -49,19 +43,29 @@ def _free_port() -> int:
 
 
 @pytest.mark.asyncio
-async def test_live_game_window_attaches_during_run(tmp_path):
+async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch):
     import uvicorn
+    from httpx import AsyncClient
+
+    monkeypatch.setattr(
+        FastchessRunner, "detect_binary",
+        staticmethod(lambda configured: configured),
+    )
+    monkeypatch.setattr(
+        fc_mod, "build_command",
+        lambda spec: [sys.executable, "-c", _FAKE_FASTCHESS, "--sleep", "60"],
+    )
 
     port = _free_port()
     s = Settings(token="test", auth_disabled=True, port=port)
     s.tournament_root = str(tmp_path / "tournaments")
-    s.tournament_fastchess_path = str(FASTCHESS_PATH)
+    s.tournament_fastchess_path = sys.executable
     registry = EngineRegistry(path=tmp_path / "engines.json")
-    registry.add(name="Sturddle 2.5.0", path=str(ENGINE_CANDIDATES[0]))
-    registry.add(name="Sturddle 2.4.0", path=str(ENGINE_CANDIDATES[1]))
+    registry.add(name="Engine A", path=sys.executable)
+    registry.add(name="Engine B", path=sys.executable)
     app = create_app(settings=s, engine_registry=registry)
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -70,25 +74,58 @@ async def test_live_game_window_attaches_during_run(tmp_path):
         time.sleep(0.05)
     assert server.started
 
+    base = f"http://127.0.0.1:{port}"
+
     try:
-        # Pre-create + start a tournament with a slow TC so we have
-        # plenty of time to see in-progress games in the browser.
+        # Create and start a tournament.
         store = app.state.tournament_store
         t = store.create(
             name="live-e2e",
-            template={
-                "tc": "5+0.1",
-                "rounds": 1,
-                "games_in_parallel": 1,
-                "hash": 16,
-                "threads": 1,
-            },
+            template={"tc": "5+0.1", "rounds": 1, "games_in_parallel": 1},
             engines=[
-                {"name": "Sturddle 2.5.0", "cmd": str(ENGINE_CANDIDATES[0])},
-                {"name": "Sturddle 2.4.0", "cmd": str(ENGINE_CANDIDATES[1])},
+                {"name": "Engine A", "cmd": sys.executable},
+                {"name": "Engine B", "cmd": sys.executable},
             ],
         )
         await app.state.tournament_orch.start(t.id)
+
+        # Inject two proxy sessions via the HTTP endpoint so the pair_index
+        # creates a paired game. Running through HTTP ensures the calls happen
+        # in uvicorn's event loop (not the test's), so the queues the WS
+        # subscribers drain are correctly populated.
+        orch = app.state.tournament_orch
+        deadline = time.time() + 5
+        secret = None
+        while time.time() < deadline:
+            secret = orch.proxy_secret()
+            if secret:
+                break
+            time.sleep(0.05)
+        assert secret, "orchestrator must have a secret while running"
+
+        async with AsyncClient(base_url=base) as http:
+            r = await http.post("/internal/proxy", json={
+                "proxy_id": "proxy-white",
+                "secret": secret,
+                "engine_name": "Engine A",
+                "lines": ["position startpos"],
+            })
+            assert r.status_code == 204
+            r = await http.post("/internal/proxy", json={
+                "proxy_id": "proxy-black",
+                "secret": secret,
+                "engine_name": "Engine B",
+                "lines": ["position startpos moves e2e4"],
+            })
+            assert r.status_code == 204
+
+        # Confirm pairing happened before touching the browser.
+        deadline = time.time() + 2
+        while time.time() < deadline:
+            if orch._pair_index.game_id_for("proxy-white") is not None:
+                break
+            time.sleep(0.02)
+        assert orch._pair_index.game_id_for("proxy-white") is not None
 
         async with async_playwright() as p:
             try:
@@ -104,11 +141,12 @@ async def test_live_game_window_attaches_during_run(tmp_path):
             ) if msg.type == "error" else None)
 
             try:
-                await page.goto(f"http://127.0.0.1:{port}/")
+                await page.goto(f"{base}/")
                 await page.wait_for_selector("#play-perspective", timeout=5000)
                 await page.click('button[data-perspective="engines"]')
                 await page.click('#engines-perspective wa-tab[panel="tournaments"]')
                 await page.wait_for_selector(".tournament-row", timeout=5000)
+
                 # Open workspace.
                 await page.click(".tournament-row .row-workspace")
                 await page.wait_for_function(
@@ -116,19 +154,20 @@ async def test_live_game_window_attaches_during_run(tmp_path):
                     timeout=5000,
                 )
 
-                # Wait for the game_paired event → an in-progress row to
-                # appear in the Schedule.
+                # The workspace seeds from `games_in_progress` on its initial
+                # refresh — the paired game should appear immediately.
                 await page.wait_for_selector(
                     ".wb-sched-list .wb-sched-live .wb-sched-attach-btn",
-                    timeout=30000,
+                    timeout=5000,
                 )
 
-                # Click the first attach button → a live game window opens.
+                # Click the first attach button → live game window opens.
                 await page.click(
                     ".wb-sched-list .wb-sched-live .wb-sched-attach-btn"
                 )
                 await page.wait_for_selector(".wb-livegame .lg-board", timeout=5000)
-                # The status pill should report "live" once WS opens.
+
+                # WS connects → status becomes "live".
                 await page.wait_for_function(
                     """() => {
                         const e = document.querySelector('.wb-livegame .lg-status');
@@ -137,23 +176,35 @@ async def test_live_game_window_attaches_during_run(tmp_path):
                     timeout=5000,
                 )
 
-                # Wait a few seconds for moves to arrive — the board should
-                # render at least one piece beyond the starting position.
-                # Cheap proof: an `info` line lands and we set the eval.
+                # Determine which proxy the browser subscribed to by reading
+                # the button's title attribute (= proxy_id).
+                proxy_id_for_ws = await page.evaluate(
+                    "() => document.querySelector('.wb-sched-attach-btn')?.title"
+                )
+                assert proxy_id_for_ws, "could not determine proxy_id from button"
+
+                # Push an info line with an eval score via HTTP so it runs
+                # in uvicorn's loop and reaches the WS subscriber's queue.
+                async with AsyncClient(base_url=base) as http:
+                    r = await http.post("/internal/proxy", json={
+                        "proxy_id": proxy_id_for_ws,
+                        "secret": secret,
+                        "lines": ["info depth 12 score cp 35 pv e2e4 e7e5"],
+                    })
+                    assert r.status_code == 204, f"proxy post failed: {r.text}"
+
                 await page.wait_for_function(
                     """() => {
                         const e = document.querySelector('.wb-livegame .lg-eval-score');
                         return e && e.textContent !== '—' && e.textContent !== '';
                     }""",
-                    timeout=20000,
+                    timeout=5000,
                 )
 
-                # No JS errors during the run.
                 assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
             finally:
                 await browser.close()
     finally:
-        # Clean shutdown of the tournament.
         try:
             await app.state.tournament_orch.stop(t.id)
         except Exception:
