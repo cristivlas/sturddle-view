@@ -156,22 +156,23 @@ export function prompt({
 
 const LAST_DIR_KEY_PREFIX = "fs-picker:last:";
 
-function recallLastDir(mode) {
+function recallLastDir(key) {
   try {
-    return localStorage.getItem(LAST_DIR_KEY_PREFIX + mode) || null;
+    return localStorage.getItem(LAST_DIR_KEY_PREFIX + key) || null;
   } catch {
     return null;
   }
 }
 
-function rememberLastDir(mode, dir) {
+function rememberLastDir(key, dir) {
   if (!dir) return;
   try {
-    localStorage.setItem(LAST_DIR_KEY_PREFIX + mode, dir);
+    localStorage.setItem(LAST_DIR_KEY_PREFIX + key, dir);
   } catch {
     // localStorage may be unavailable (private mode quotas, disabled). Best-effort.
   }
 }
+
 
 /**
  * Modal file/directory picker. Browses the server's filesystem via /fs.
@@ -193,9 +194,11 @@ export function pickFile({
 
   const wantsExec = mode === "executable";
   const wantsDir = mode === "directory";
-  // Per-mode recall: an executable pick in ~/bin shouldn't bias the next
-  // PGN open. Explicit startPath always wins.
-  const initialPath = startPath ?? recallLastDir(mode);
+  // Per-context recall, keyed by dialog title: each call site passes a
+  // distinct title (e.g. "Pick fastchess binary" vs "Add engine"), so two
+  // executable pickers don't bleed into each other. Explicit startPath wins.
+  const recallKey = title;
+  const initialPath = startPath ?? recallLastDir(recallKey);
 
   return showDialog({
     label: title,
@@ -234,12 +237,6 @@ export function pickFile({
       const listing = document.createElement("ul");
       listing.className = "fs-picker-list";
 
-      const cancel = document.createElement("wa-button");
-      cancel.slot = "footer";
-      cancel.size = "small";
-      cancel.textContent = "Cancel";
-      cancel.addEventListener("click", () => resolve(null));
-
       const selectBtn = document.createElement("wa-button");
       selectBtn.slot = "footer";
       selectBtn.size = "small";
@@ -262,7 +259,9 @@ export function pickFile({
       async function navigate(path, { push = true } = {}) {
         let body;
         try {
-          const url = path ? `/fs?path=${encodeURIComponent(path)}` : "/fs";
+          const params = new URLSearchParams({ show_hidden: "true" });
+          if (path) params.set("path", path);
+          const url = `/fs?${params.toString()}`;
           body = await api("GET", url);
         } catch (e) {
           toast(`Cannot list ${path}: ${e.message}`, { variant: "danger" });
@@ -313,7 +312,7 @@ export function pickFile({
             if (entry.is_dir) {
               navigate(entry.path);
             } else if (eligible(entry)) {
-              rememberLastDir(mode, pathInput.value);
+              rememberLastDir(recallKey, pathInput.value);
               resolve(entry.path);
             }
           });
@@ -350,13 +349,13 @@ export function pickFile({
         if (currentSelection) {
           // For file/exec mode, pathInput.value is the containing dir; for
           // directory mode, currentSelection IS a dir. Either is valid recall.
-          rememberLastDir(mode, wantsDir ? currentSelection : pathInput.value);
+          rememberLastDir(recallKey, wantsDir ? currentSelection : pathInput.value);
           resolve(currentSelection);
         }
       });
 
       wrap.append(pathBar, listing);
-      dialog.append(wrap, cancel, selectBtn);
+      dialog.append(wrap, selectBtn);
       // Open at the recalled dir; if it's gone (deleted/renamed since the
       // last pick), silently fall back to home rather than show a toast.
       (async () => {
