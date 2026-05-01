@@ -720,8 +720,10 @@ Concrete implementation plan:
    cfg.json-write. Same pass should also drop games without a
    definitive `[Result]` (handles the rare `*`-tail case from a
    killed in-flight game). Independent of resume — ship anytime.
-6. **Disable Start when `status === "done"`** in the Tournaments list
-   row UI (already disabled for `running`; extend to `done`).
+6. **Disable Start when `status === "done"`** — already in place
+   (web/app/tournaments.js:142 gates on
+   `running` and `done`). Listed for completeness only; no change
+   needed.
 7. **Graceful stop**: send SIGTERM, wait ~2 s for fastchess's
    `~BaseTournament` to flush state (and ideally fire a final
    `saveJson()`) and join the engine pool, fall back to SIGKILL only
