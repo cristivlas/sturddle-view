@@ -68,17 +68,28 @@ export function openLiveGameWindow({ proxyId, label, token }) {
     mount: body,
     class: "sturddle-wb sturddle-wb-live",
   });
+  liveWindows.set(proxyId, wb);
+
+  // Keep the board square and fitting the WinBox window on every resize.
+  function constrainAndResize() {
+    boardHost.style.width = "";
+    const h = boardHost.clientHeight;
+    const w = boardHost.clientWidth;
+    if (h > 0 && h < w) boardHost.style.width = `${h}px`;
+    board.forceResize();
+  }
+  const ro = new ResizeObserver(constrainAndResize);
+  ro.observe(body);
+  requestAnimationFrame(constrainAndResize);
+
   // ws on connect — set up after construction to avoid TDZ.
   let ws = null;
   wb.onclose = () => {
     if (ws) try { ws.close(); } catch { /* */ }
+    ro.disconnect();
     liveWindows.delete(proxyId);
     return false;
   };
-  liveWindows.set(proxyId, wb);
-
-  // Force the cm-chessboard to size after the window has been laid out.
-  requestAnimationFrame(() => board.forceResize());
 
   // Open WS subscription.
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -115,15 +126,26 @@ export function openLiveGameWindow({ proxyId, label, token }) {
     handleParsed(parsed);
   });
 
+  let lastFen = null;
+  let orientationSet = false;
+
   function handleParsed(p) {
     switch (p.kind) {
       case "position":
-        if (p.fen) board.setPosition(p.fen, p.last_move || null);
+        if (p.fen) {
+          lastFen = p.fen;
+          board.setPosition(p.fen, p.last_move || null);
+        }
         break;
       case "info":
         renderEval(p);
         break;
       case "go":
+        if (!orientationSet && lastFen) {
+          const turn = lastFen.split(" ")[1];
+          board.setSide(turn === "b" ? "black" : "white");
+          orientationSet = true;
+        }
         if (p.wtime != null) whiteClockEl.textContent = formatMs(p.wtime);
         if (p.btime != null) blackClockEl.textContent = formatMs(p.btime);
         break;
