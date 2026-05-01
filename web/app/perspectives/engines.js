@@ -5,6 +5,9 @@
 
 import { mountEngines } from "../engines.js";
 import { mountTournaments } from "../tournaments.js";
+import { getActiveWorkspace } from "../tournament-workspace.js";
+
+const SUBTAB_STORAGE_KEY = "sturddle-view:engines-subtab";
 
 export const enginesPerspective = {
   id: "engines",
@@ -43,8 +46,32 @@ export const enginesPerspective = {
       token: ctx.token,
     });
 
+    // Tab-driven workspace visibility: Tournament boards stay hidden
+    // unless the Tournaments sub-tab is active.
+    const tabGroup = root.querySelector(".engines-subnav");
+    const applyVisibility = (panelName) => {
+      if (panelName === "tournaments") getActiveWorkspace()?.show();
+      else getActiveWorkspace()?.hide();
+    };
+    const onTabShow = (e) => {
+      const name = e.detail?.name;
+      try { localStorage.setItem(SUBTAB_STORAGE_KEY, name); } catch { /* */ }
+      applyVisibility(name);
+    };
+    tabGroup.addEventListener("wa-tab-show", onTabShow);
+    // Restore last-used sub-tab and apply visibility. wa-tab-show may
+    // not fire for the default tab, so we set it manually after the
+    // custom element is defined.
+    customElements.whenDefined("wa-tab-group").then(() => {
+      let saved = null;
+      try { saved = localStorage.getItem(SUBTAB_STORAGE_KEY); } catch { /* */ }
+      if (saved && saved !== tabGroup.active) tabGroup.active = saved;
+      applyVisibility(tabGroup.active || tabGroup.activeTab?.panel);
+    });
+
     return {
       unmount() {
+        tabGroup.removeEventListener("wa-tab-show", onTabShow);
         tournamentsCtl?.unmount?.();
       },
     };

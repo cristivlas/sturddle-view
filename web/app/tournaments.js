@@ -9,7 +9,7 @@
 
 import { confirm, reportError, showDialog, toast } from "./dialogs.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
-import { closeActiveWorkspace, getActiveWorkspace, openTournamentWorkspace } from "./tournament-workspace.js";
+import { getActiveWorkspace, openTournamentWorkspace } from "./tournament-workspace.js";
 
 export function mountTournaments({ container, api, events, log, token }) {
   container.innerHTML = `
@@ -359,6 +359,8 @@ export function mountTournaments({ container, api, events, log, token }) {
   // ---- Initial load -------------------------------------------------------
 
   syncWindowMenu();
+  // Visibility is driven by the Engines tab group (see engines.js):
+  // the workspace stays hidden unless the Tournaments sub-tab is active.
 
   (async () => {
     await loadSettings();
@@ -371,7 +373,9 @@ export function mountTournaments({ container, api, events, log, token }) {
       window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
       window.removeEventListener("sturddle:workspace-closed", syncWindowMenu);
       document.removeEventListener("click", closeMenus);
-      closeActiveWorkspace();
+      // Hide (don't close) so the workspace survives perspective
+      // navigation; it'll be re-shown when the user returns.
+      getActiveWorkspace()?.hide();
     },
   };
 }

@@ -472,17 +472,21 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
   }
 
-  const workspace = { close, tile, cascade, closeAll, focus, tournamentId: tournament.id };
+  function hide() {
+    for (const wb of openWindows()) {
+      try { wb.hide(); } catch { /* */ }
+    }
+  }
+
+  function show() {
+    for (const wb of openWindows()) {
+      try { wb.show(); } catch { /* */ }
+    }
+  }
+
+  const workspace = { close, tile, cascade, closeAll, focus, hide, show, tournamentId: tournament.id };
   activeWorkspace = workspace;
   return workspace;
-}
-
-
-export function closeActiveWorkspace() {
-  if (activeWorkspace) {
-    activeWorkspace.close();
-    activeWorkspace = null;
-  }
 }
 
 export function getActiveWorkspace() {
