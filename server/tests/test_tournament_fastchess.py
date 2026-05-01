@@ -293,7 +293,10 @@ def test_build_command_wraps_engines_in_proxy_when_configured(tmp_path):
     for aeq in args_eq:
         assert "sturddle_view.tournament.proxy" in aeq
         assert "--broadcast-url http://127.0.0.1:8765/internal/proxy" in aeq
-        assert "--secret test-secret" in aeq
+        # Secret is passed via SV_PROXY_SECRET env (see FastchessRunner),
+        # not argv — so it's not visible to `ps` / /proc/<pid>/cmdline.
+        assert "--secret" not in aeq
+        assert "test-secret" not in aeq
         # The proxy_id is generated per-process by the proxy script
         # itself; not baked into argv.
         assert "--proxy-id" not in aeq

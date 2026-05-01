@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -97,10 +98,12 @@ def build_command(spec: RunSpec) -> list[str]:
             # game-slots when ``-concurrency > 1``; each spawned slot
             # process must get a distinct proxy_id, which only the
             # proxy itself can mint at startup.
+            # Secret is passed via SV_PROXY_SECRET in the environment
+            # (see FastchessRunner._spawn). Keeping it out of argv hides
+            # it from `ps` / `/proc/<pid>/cmdline`.
             proxy_args = " ".join([
                 "-m", "sturddle_view.tournament.proxy",
                 "--broadcast-url", proxy_url,
-                "--secret", proxy_secret,
                 "--engine-name", _quote_arg(engine_name),
                 "--",
                 _quote_arg(eng["cmd"]),
@@ -282,11 +285,19 @@ class FastchessRunner:
 
         log.info("starting fastchess: %s", " ".join(str(c) for c in cmd))
 
+        # Pass the proxy secret via env (inherited by fastchess and the
+        # engine slots it spawns) rather than argv, so it isn't visible
+        # via `ps` / `/proc/<pid>/cmdline` to other local users.
+        env = os.environ.copy()
+        if spec.proxy_secret:
+            env["SV_PROXY_SECRET"] = spec.proxy_secret
+
         self._proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(spec.work_dir),
+            env=env,
             **_popen_kwargs(),
         )
 

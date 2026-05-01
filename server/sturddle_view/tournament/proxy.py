@@ -11,11 +11,16 @@ engine.
 Invoked as a script (the orchestrator builds the argv when wrapping
 each engine for fastchess)::
 
+    SV_PROXY_SECRET=<per-tournament-secret> \\
     python -m sturddle_view.tournament.proxy \\
         --broadcast-url http://127.0.0.1:8765/internal/proxy \\
-        --secret <per-tournament-secret> \\
         --engine-name "Sturddle 2.5.0" \\
         -- <engine_binary> [engine_args...]
+
+The secret is read from the ``SV_PROXY_SECRET`` env var rather than
+argv so it is not visible via ``ps``/``/proc/<pid>/cmdline`` to other
+local users. fastchess inherits the env from its parent and passes it
+through to each spawned engine slot.
 
 The proxy generates its own ``proxy_id`` at startup (one per process)
 so concurrent fastchess game-slots running the same engine spec each
@@ -252,8 +257,6 @@ def main() -> None:
                              "omitted, a per-process uuid is generated so "
                              "concurrent fastchess game-slots running the "
                              "same engine spec get distinct ids.")
-    parser.add_argument("--secret", default=None,
-                        help="per-tournament secret for the broadcast endpoint")
     parser.add_argument("--engine-name", default=None,
                         help="display name reported on session start")
     parser.add_argument("engine", help="Engine binary path")
@@ -261,13 +264,16 @@ def main() -> None:
     args = parser.parse_args()
 
     proxy_id = args.proxy_id or f"p-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    # Pop (don't get) so the engine subprocess we spawn below doesn't
+    # inherit the secret in its environment.
+    secret = os.environ.pop("SV_PROXY_SECRET", None)
 
     engine_argv = [args.engine, *args.engine_args]
     rc = asyncio.run(_run(
         engine_argv,
         args.broadcast_url,
         proxy_id,
-        args.secret,
+        secret,
         args.engine_name,
     ))
     sys.exit(rc)
