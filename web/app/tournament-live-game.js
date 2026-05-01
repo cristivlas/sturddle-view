@@ -75,7 +75,7 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
     y: `${5 + (idx * 4)}%`,
     top,
     mount: body,
-    class: "sturddle-wb sturddle-wb-live",
+    class: "sturddle-wb sturddle-wb-live no-full",
   });
   if (top > 0 && wb.y < top) wb.move(wb.x, top);
   liveWindows.set(proxyId, wb);
@@ -113,6 +113,7 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
     if (ws) try { ws.close(); } catch { /* */ }
     ro.disconnect();
     liveWindows.delete(proxyId);
+    window.dispatchEvent(new CustomEvent("sturddle:livegame-closed"));
     return false;
   };
 

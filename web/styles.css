@@ -615,7 +615,7 @@ wa-dialog wa-tab-panel > * + * { margin-top: 10px; }
 .tmb-item:hover:not(:disabled), .tmb-menu.open > .tmb-item { background: var(--wa-color-brand-fill-loud, #1a6aff); color: #fff; }
 .tmb-item:disabled { opacity: 0.4; cursor: default; }
 .tmb-dropdown {
-  display: none; position: absolute; top: 100%; left: 0; z-index: 100;
+  display: none; position: absolute; top: 100%; left: 0; z-index: 9000;
   list-style: none; margin: 0; padding: 2px 0; min-width: 130px;
   background: var(--wa-color-surface-raised, #2a2a2a);
   border: 1px solid var(--wa-color-border-loud, #333);

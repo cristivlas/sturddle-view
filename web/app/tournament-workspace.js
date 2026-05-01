@@ -108,7 +108,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       height: cfg.height,
       top,
       mount: body,
-      class: "sturddle-wb",
+      class: "sturddle-wb no-full",
     });
     // Wire callbacks after construction so they can refer to `wb` itself
     // (avoids a TDZ "cannot access wb before initialization" error from
@@ -374,6 +374,25 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   // ---- Tear-down --------------------------------------------------------
 
+  let liveWatcherAttached = false;
+
+  function onLiveGameClosed() {
+    const allStandardClosed = Object.values(windows).every((w) => w === null);
+    if (allStandardClosed && getLiveWindows().length === 0) finalize();
+  }
+
+  function finalize() {
+    if (liveWatcherAttached) {
+      window.removeEventListener("sturddle:livegame-closed", onLiveGameClosed);
+      liveWatcherAttached = false;
+    }
+    if (activeWorkspace === workspace) activeWorkspace = null;
+    // Notify the perspective so the Window menu re-syncs even when
+    // the user closed the last standard window via its X button
+    // (rather than the Close-all menu item).
+    window.dispatchEvent(new CustomEvent("sturddle:workspace-closed"));
+  }
+
   function tearDown() {
     if (pollTimer != null) {
       window.clearInterval(pollTimer);
@@ -383,12 +402,17 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       unsubscribe();
       unsubscribe = null;
     }
-    closeAllLiveGames();
-    if (activeWorkspace === workspace) activeWorkspace = null;
-    // Notify the perspective so the Window menu re-syncs even when
-    // the user closed the last standard window via its X button
-    // (rather than the Close-all menu item).
-    window.dispatchEvent(new CustomEvent("sturddle:workspace-closed"));
+    // While watch windows are still open, keep this workspace "active"
+    // so the Window menu's Tile/Cascade/Close All can still operate on
+    // them. Defer finalization until the last live window closes.
+    if (getLiveWindows().length > 0) {
+      if (!liveWatcherAttached) {
+        window.addEventListener("sturddle:livegame-closed", onLiveGameClosed);
+        liveWatcherAttached = true;
+      }
+      return;
+    }
+    finalize();
   }
 
   function close() {
@@ -398,6 +422,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         windows[k] = null;
       }
     }
+    closeAllLiveGames();
     tearDown();
   }
 
