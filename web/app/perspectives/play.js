@@ -46,18 +46,18 @@ export const playPerspective = {
           <div class="play-board-host"></div>
 
           <div id="board-controls">
-            <wa-button id="new-game" size="small">New game</wa-button>
+            <wa-button id="new-game" size="small">New</wa-button>
             <wa-button id="import-pos" size="small" class="desktop-only" aria-label="Open position from FEN or PGN">
               <wa-icon slot="start" name="folder-open"></wa-icon>
-              Open position
+              Open
             </wa-button>
-            <wa-button id="takeback" size="small" disabled>
+            <wa-button id="takeback" size="small" disabled aria-label="Take back">
               <wa-icon slot="start" name="rotate-left"></wa-icon>
-              Take back
+              Undo
             </wa-button>
-            <wa-button id="switch-sides" size="small" disabled>
-              <wa-icon slot="start" name="arrows-up-down"></wa-icon>
-              Switch sides
+            <wa-button id="switch-sides" size="small" disabled aria-label="Switch sides">
+              <wa-icon slot="start" name="arrow-right-arrow-left"></wa-icon>
+              Flip
             </wa-button>
             <wa-button id="pause" size="small" disabled aria-label="Pause">
               <wa-icon slot="start" name="pause"></wa-icon>
