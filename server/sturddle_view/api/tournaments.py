@@ -39,7 +39,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import require_token
 from ..tournament.fastchess import FastchessRunner
-from ..tournament.orchestrator import Orchestrator, TournamentBusyError
+from ..tournament.orchestrator import Orchestrator, TournamentBusyError, wrap_event_for_bus
 from ..tournament.pgn_stats import compute_games_list, compute_sprt, compute_standings
 from ..tournament.store import (
     CorruptStateError,
@@ -177,6 +177,27 @@ def delete_tournament(tournament_id: str, request: Request) -> None:
         _store(request).remove(tournament_id)
     except TournamentNotFoundError as e:
         raise HTTPException(status_code=404, detail="tournament not found") from e
+    orch.clear_event_history(tournament_id)
+
+
+@router.get("/api/tournaments/{tournament_id}/events")
+def get_tournament_events(tournament_id: str, request: Request) -> dict:
+    """Recent emitted events for this tournament, oldest first.
+
+    Workspace clients call this on open to backfill the event log so
+    a workspace opened after a restart still sees the fastchess
+    startup chatter that fired before the subscriber attached. The
+    items use the same shape the WS bus delivers; payload carries
+    ``_seq`` (for dedup against the live stream) and ``_ts`` (for
+    display).
+    """
+    orch = _orch(request)
+    return {
+        "events": [
+            wrap_event_for_bus(e["kind"], e["payload"])
+            for e in orch.event_history(tournament_id)
+        ]
+    }
 
 
 @router.post("/api/tournaments/{tournament_id}/start")

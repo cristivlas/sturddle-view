@@ -68,6 +68,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   const layout = loadLayout();
   let detail = null;
   const eventLog = [];
+  // Server-stamped sequence numbers we've already added to eventLog.
+  // Lets us run the WS subscription in parallel with the REST backfill
+  // without showing duplicates around workspace open.
+  const seenSeqs = new Set();
   let pollTimer = null;
   let unsubscribe = null;
   // proxy_id -> { engineName }
@@ -271,6 +275,24 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     renderSchedule();
   }
 
+  function addLogEntry(evt) {
+    const seq = evt.payload?._seq;
+    if (seq != null) {
+      if (seenSeqs.has(seq)) return false;
+      seenSeqs.add(seq);
+    }
+    const tsRaw = evt.payload?._ts;
+    const ts = tsRaw
+      ? tsRaw.substring(11, 19)
+      : new Date().toISOString().substring(11, 19);
+    eventLog.push({ ts, kind: evt.kind, payload: evt.payload, _seq: seq });
+    // Keep ordered by seq so backfill items slot in before any live
+    // events that arrived during the REST round-trip.
+    eventLog.sort((a, b) => (a._seq ?? 0) - (b._seq ?? 0));
+    while (eventLog.length > EVENT_LOG_LIMIT) eventLog.shift();
+    return true;
+  }
+
   function pushEvent(evt) {
     if (!evt) return;
     if (!evt.kind?.startsWith("tournament_")) return;
@@ -279,9 +301,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const tid = evt.payload?.tournament_id;
     if (tid && tid !== tournament.id) return;
 
-    const ts = new Date().toISOString().substring(11, 19);
-    eventLog.push({ ts, kind: evt.kind, payload: evt.payload });
-    if (eventLog.length > EVENT_LOG_LIMIT) eventLog.shift();
+    const added = addLogEntry(evt);
 
     // Track active proxies for Schedule rows.
     const inner = evt.payload?.kind;
@@ -302,7 +322,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       activeProxies.clear();
     }
 
-    renderEventLog();
+    if (added) renderEventLog();
     renderSchedule();
 
     // Status changes and game finishes are good triggers to refresh
@@ -317,7 +337,24 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
   }
 
+  // Subscribe before backfill so any events firing during the REST
+  // round-trip are captured (deduped against backfill via _seq).
   unsubscribe = events.on(pushEvent);
+
+  async function backfillEvents() {
+    try {
+      const res = await api("GET", `/api/tournaments/${tournament.id}/events`);
+      let added = false;
+      for (const e of (res.events || [])) {
+        if (!e.kind?.startsWith("tournament_")) continue;
+        if (addLogEntry(e)) added = true;
+      }
+      if (added) renderEventLog();
+    } catch (e) {
+      log?.(`event backfill failed: ${e.message}`);
+    }
+  }
+  backfillEvents();
 
   // Periodic poll: events should drive most updates, but a poll catches
   // server-restart catch-up windows and PGN-only changes (e.g. the

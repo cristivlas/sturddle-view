@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
@@ -45,6 +46,27 @@ log = logging.getLogger(__name__)
 # event vocabulary plus a ``status_change`` event the WebSocket layer
 # uses to refresh the per-row status badge.
 BroadcastCallback = Callable[[str, dict], Awaitable[None]]
+
+
+# Per-tournament event history depth. Big enough to cover all the
+# fastchess startup chatter (engine init, opening probes) plus a few
+# completed games, so a workspace opened mid-tournament still gets
+# a useful tail.
+_EVENT_HISTORY_MAX = 200
+
+
+def wrap_event_for_bus(kind: str, payload: dict) -> dict:
+    """Map an orchestrator raw event to its EventBus / WS shape.
+
+    Used by both the live broadcast path (in ``app.py``) and the
+    history-replay REST endpoint so the two stay in lock-step. The
+    workspace consumes both in a single shape: ``tournament_status``
+    or ``tournament_update`` with ``payload.kind`` carrying the
+    runner's original event kind.
+    """
+    if kind == "status_change":
+        return {"kind": "tournament_status", "payload": payload}
+    return {"kind": "tournament_update", "payload": {"kind": kind, **payload}}
 
 
 class TournamentBusyError(Exception):
@@ -93,6 +115,15 @@ class Orchestrator:
         # Broadcast URL the proxy POSTs to. Set by the FastAPI app on
         # construction; ``None`` means "no proxy wrapping" (tests, CLI).
         self._proxy_broadcast_url: str | None = None
+        # Per-tournament ring buffer of recent events. Replayed by the
+        # REST endpoint to a workspace opened after restart so the user
+        # sees the fastchess startup chatter instead of an empty log.
+        # Capture happens in ``_emit`` regardless of subscribers.
+        self._event_history: dict[str, deque[dict]] = {}
+        # Monotonic per-orchestrator sequence stamped on every emitted
+        # event. Lets the workspace dedupe between REST backfill and the
+        # WS firehose when both deliver the same event around open time.
+        self._event_seq: int = 0
 
     def set_proxy_broadcast_url(self, url: str | None) -> None:
         """Configure the URL proxies POST to. The orchestrator passes
@@ -237,12 +268,39 @@ class Orchestrator:
         })
 
     async def _emit(self, kind: str, payload: dict) -> None:
+        # Stamp + record before broadcasting so the history captures
+        # events even when no WS subscriber is attached at the moment
+        # of emit (workspace opened late, restart race, etc.).
+        # ``_seq`` lets the workspace dedupe between live + backfill;
+        # ``_ts`` is the server-side emission time used for display.
+        self._event_seq += 1
+        payload = {**payload, "_seq": self._event_seq, "_ts": _now()}
+        tid = payload.get("tournament_id")
+        if tid:
+            hist = self._event_history.setdefault(
+                tid, deque(maxlen=_EVENT_HISTORY_MAX)
+            )
+            hist.append({"kind": kind, "payload": payload})
         if self._broadcast is None:
             return
         try:
             await self._broadcast(kind, payload)
         except Exception:
             log.exception("broadcast callback raised for %s", kind)
+
+    def event_history(self, tournament_id: str) -> list[dict]:
+        """Recent emitted events for a tournament, oldest first.
+
+        Each item: ``{"kind": str, "payload": dict}`` where ``kind`` is
+        the raw runner kind (``runner_log``, ``status_change``, …) and
+        ``payload`` carries ``_seq`` + ``_ts`` stamps.
+        """
+        return list(self._event_history.get(tournament_id, []))
+
+    def clear_event_history(self, tournament_id: str) -> None:
+        """Drop the buffered history for a tournament. Called by the
+        DELETE endpoint so torn-down tournaments don't leak history."""
+        self._event_history.pop(tournament_id, None)
 
     # ---- Slice 9b: live-observation pipeline -------------------------------
 

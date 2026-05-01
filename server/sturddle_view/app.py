@@ -24,7 +24,7 @@ from .openings import OpeningBook
 from .play.game_store import GameStore
 from .play.human_vs_engine import HumanVsEngine
 from .tournament.fastchess import FastchessRunner
-from .tournament.orchestrator import Orchestrator
+from .tournament.orchestrator import Orchestrator, wrap_event_for_bus
 from .tournament.store import TournamentStore, default_root
 
 log = logging.getLogger(__name__)
@@ -125,18 +125,13 @@ def create_app(
     )
 
     async def _tournament_broadcast(kind: str, payload: dict) -> None:
-        # Map orchestrator events onto the existing EventBus. Two kinds
-        # are surfaced to clients: status_change → tournament_status,
-        # everything else → tournament_update with the kind preserved
-        # in payload.kind.
-        if kind == "status_change":
-            await app.state.event_bus.publish(
-                Event(kind="tournament_status", payload=payload)
-            )
-        else:
-            await app.state.event_bus.publish(
-                Event(kind="tournament_update", payload={"kind": kind, **payload})
-            )
+        # Map orchestrator events onto the existing EventBus. The wrap
+        # helper is shared with the history-replay REST endpoint so
+        # both sources deliver the same shape to the client.
+        wrapped = wrap_event_for_bus(kind, payload)
+        await app.state.event_bus.publish(
+            Event(kind=wrapped["kind"], payload=wrapped["payload"])
+        )
 
     app.state.tournament_orch.set_broadcast(_tournament_broadcast)
 
