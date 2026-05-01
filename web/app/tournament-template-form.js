@@ -84,7 +84,7 @@ export function mountTournamentTemplateForm({
   ponderSwitch.dataset.key = "ponder";
   if (initialValues.ponder) ponderSwitch.setAttribute("checked", "");
   if (readOnly) ponderSwitch.setAttribute("disabled", "");
-  ponderSwitch.textContent = "Ponder";
+  ponderSwitch.textContent = "Ponder (think on opponent's time)";
   inputs.ponder = ponderSwitch;
 
   // ---- Adjudication: Resign + Draw --------------------------------------

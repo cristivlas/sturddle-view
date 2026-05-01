@@ -785,10 +785,14 @@ wa-dialog::part(body) {
   font-weight: normal;
   color: var(--muted);
 }
-/* Switch labels (Ponder, Resign after, Draw after) — same rhythm. */
-.tournament-template-form > wa-switch,
-.tournament-template-form .ttf-adj-header > wa-switch {
+/* Switch labels (Ponder, Resign after, Draw after) — same rhythm.
+   wa-switch renders its label as a slot inside a shadow root; inherited
+   font-size doesn't reliably reach it (the slotted label can pick up the
+   ancestor's larger size before the host's). Style the label part
+   directly so all switches in the form match exactly. */
+.tournament-template-form wa-switch::part(label) {
   font-size: 12px;
+  font-weight: normal;
   color: var(--muted);
 }
 .tournament-template-form .ttf-grid {
