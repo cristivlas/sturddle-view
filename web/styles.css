@@ -818,9 +818,12 @@ wa-dialog::part(body) {
 .tournament-template-form .ttf-grid {
   display: grid;
   /* TC + numeric inputs are narrow; tournament type (and seeds) get the slack. */
-  grid-template-columns: 7em 8em 6em minmax(10em, 1fr) minmax(0, auto);
+  grid-template-columns: 7em 8em 6em minmax(14em, 2fr) minmax(0, 1fr);
   gap: 8px;
   align-items: end;
+}
+.tournament-template-form .ttf-grid.ttf-grid--no-seeds {
+  grid-template-columns: 7em 8em 6em minmax(14em, 1fr);
 }
 .tournament-template-form .ttf-grid > * { min-width: 0; }
 .tournament-template-form .ttf-adjudication {

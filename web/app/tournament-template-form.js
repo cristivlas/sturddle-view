@@ -68,7 +68,9 @@ export function mountTournamentTemplateForm({
   grid.appendChild(seedsInput);
 
   function syncSeedsVisibility() {
-    seedsInput.style.display = typeSelect.value === "gauntlet" ? "" : "none";
+    const isGauntlet = typeSelect.value === "gauntlet";
+    seedsInput.style.display = isGauntlet ? "" : "none";
+    grid.classList.toggle("ttf-grid--no-seeds", !isGauntlet);
   }
   syncSeedsVisibility();
   typeSelect.addEventListener("wa-change", syncSeedsVisibility);
