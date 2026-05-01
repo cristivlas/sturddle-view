@@ -741,6 +741,17 @@ wa-dialog::part(body) {
   color: var(--muted);
 }
 .tournament-status.status-idle { background: #2a3550; color: #c8d4ee; }
+
+.tournament-info-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 0;
+}
+.tournament-info-grid dt { color: var(--muted); font-size: 12px; align-self: start; }
+.tournament-info-grid dd { margin: 0; font-size: 13px; word-break: break-word; }
+.tournament-info-engines { margin: 0; padding: 0; list-style: none; }
+.tournament-info-engines li { margin: 0; padding: 1px 0; }
 .tournament-status.status-running { background: var(--accent); color: #000; }
 .tournament-status.status-stopped { background: var(--wa-color-danger-fill-loud); color: var(--wa-color-danger-on-loud); }
 .tournament-status.status-done { background: #2d5a2d; color: #d6f5d6; }

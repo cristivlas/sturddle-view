@@ -2,10 +2,9 @@
 // Path/defaults configuration lives in the global Settings dialog under
 // the "Tournament" tab — not here.
 //
-// Per-row verbs: Start / Stop / Open workspace / Remove. Click a row's
-// main area to inspect its frozen template (read-only). Clicking + New
-// Tournament opens a dialog with engine-list builder and template form
-// pre-filled from the saved defaults.
+// Per-row verbs: Info / Start (or Resume) / Pause / Open workspace / Remove.
+// Clicking + New Tournament opens a dialog with engine-list builder and
+// template form pre-filled from the saved defaults.
 
 import { confirm, reportError, showDialog, toast } from "./dialogs.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
@@ -153,6 +152,9 @@ export function mountTournaments({ container, api, events, log, token }) {
         <wa-button class="row-workspace icon-only" size="small" aria-label="Open workspace" title="Open workspace">
           <wa-icon name="window-restore"></wa-icon>
         </wa-button>
+        <wa-button class="row-info icon-only" size="small" aria-label="Info" title="Info">
+          <wa-icon name="circle-info"></wa-icon>
+        </wa-button>
         <wa-button class="row-remove icon-only" size="small" aria-label="Remove" title="Remove">
           <wa-icon name="trash"></wa-icon>
         </wa-button>
@@ -164,6 +166,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     const engineNames = (t.engines || []).map((e) => e.name).join(", ");
     li.querySelector(".tournament-engines").textContent = engineNames;
 
+    const infoBtn = li.querySelector(".row-info");
     const startBtn = li.querySelector(".row-start");
     const stopBtn = li.querySelector(".row-stop");
     const removeBtn = li.querySelector(".row-remove");
@@ -181,6 +184,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     startBtn.setAttribute("aria-label", startLabel);
     startBtn.setAttribute("title", startLabel);
 
+    infoBtn.addEventListener("click", (ev) => { ev.stopPropagation(); openInfoDialog(t); });
     startBtn.addEventListener("click", (ev) => { ev.stopPropagation(); startOne(t); });
     stopBtn.addEventListener("click", async (ev) => {
       ev.stopPropagation();
@@ -241,6 +245,111 @@ export function mountTournaments({ container, api, events, log, token }) {
     const left = Math.round(rect.left);
     openTournamentWorkspace({ api, events, log, token, tournament: t, top, left });
     syncWindowMenu();
+  }
+
+  // ---- Info dialog -------------------------------------------------------
+
+  async function openInfoDialog(t) {
+    let detailed = t;
+    try {
+      detailed = await api("GET", `/api/tournaments/${t.id}`);
+    } catch (e) {
+      log?.("Loading tournament details failed:", e);
+    }
+    showDialog({
+      label: detailed.name,
+      width: "520px",
+      body: (resolve, dialog) => {
+        const wrap = document.createElement("div");
+        wrap.className = "tournament-info";
+        wrap.appendChild(buildInfoContent(detailed));
+        dialog.appendChild(wrap);
+      },
+    });
+  }
+
+  function totalGames(t) {
+    const tpl = t.template || {};
+    const n = (t.engines || []).length;
+    const rounds = Number(tpl.rounds);
+    const gpr = Number(tpl.games_per_round ?? 2);
+    if (!n || !rounds || !gpr) return null;
+    if (tpl.tournament_type === "gauntlet") {
+      const seeds = Number(tpl.seeds);
+      if (!seeds || seeds >= n) return null;
+      return seeds * (n - seeds) * rounds * gpr;
+    }
+    const pairings = (n * (n - 1)) / 2;
+    return pairings * rounds * gpr;
+  }
+
+  function formatGames(t) {
+    const played = t.standings?.games;
+    const total = totalGames(t);
+    if (played == null && total == null) return null;
+    if (total == null) return String(played ?? 0);
+    return `${played ?? 0} of ${total}`;
+  }
+
+  function buildInfoContent(t) {
+    const tpl = t.template || {};
+    const dl = document.createElement("dl");
+    dl.className = "tournament-info-grid";
+
+    const row = (label, value) => {
+      if (value == null || value === "") return;
+      const dt = document.createElement("dt");
+      dt.textContent = label;
+      const dd = document.createElement("dd");
+      if (value instanceof Node) dd.appendChild(value);
+      else dd.textContent = String(value);
+      dl.append(dt, dd);
+    };
+
+    row("ID", t.id);
+    row("Status", t.status === "stopped" ? "paused" : t.status);
+    row("Type", formatType(tpl.tournament_type));
+    row("Time control", tpl.tc);
+    row("Rounds", tpl.rounds);
+    row("Parallel games", tpl.games_in_parallel);
+    row("Games", formatGames(t));
+    if (tpl.tournament_type === "gauntlet") row("Seeds", tpl.seeds);
+    row("Ponder", tpl.ponder ? "On" : "Off");
+    row("Resign", formatResign(tpl.resign));
+    row("Draw adjudication", formatDraw(tpl.draw));
+    row("Created", formatTime(t.created_at));
+    row("Started", formatTime(t.started_at));
+    row("Stopped", formatTime(t.stopped_at));
+
+    const enginesList = document.createElement("ul");
+    enginesList.className = "tournament-info-engines";
+    for (const e of t.engines || []) {
+      const li = document.createElement("li");
+      li.textContent = e.name + (e.version ? ` (${e.version})` : "");
+      enginesList.appendChild(li);
+    }
+    if (enginesList.children.length) row("Engines", enginesList);
+
+    return dl;
+  }
+
+  function formatType(v) {
+    if (!v) return null;
+    return v === "roundrobin" ? "Round-robin" : v.charAt(0).toUpperCase() + v.slice(1);
+  }
+  function formatResign(r) {
+    if (!r || r.movecount == null || r.score == null) return "Off";
+    return `after ${r.movecount} moves at ±${r.score} cp`;
+  }
+  function formatDraw(d) {
+    if (!d || d.movenumber == null) return "Off";
+    return `from move ${d.movenumber}, ${d.movecount} moves within ±${d.score} cp`;
+  }
+  function formatTime(iso) {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString();
   }
 
   // ---- New Tournament dialog ---------------------------------------------
