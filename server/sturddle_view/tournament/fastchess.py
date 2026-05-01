@@ -212,6 +212,15 @@ def build_command(spec: RunSpec) -> list[str]:
     ])
     cmd.extend(["-output", "format=fastchess"])
 
+    # -config drives Resume after Stop. Always pass outname= so fastchess
+    # writes its scoreboard snapshot. Only pass file= when the snapshot
+    # already exists, since fastchess errors out if file= points at a
+    # missing path (cli.cpp:439 throws fastchess_exception).
+    cfg = ["-config", f"outname={spec.config_path}"]
+    if spec.config_path.exists():
+        cfg.insert(1, f"file={spec.config_path}")
+    cmd.extend(cfg)
+
     return cmd
 
 

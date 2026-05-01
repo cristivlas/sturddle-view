@@ -186,6 +186,35 @@ def test_build_command_gauntlet_with_seeds(tmp_path):
     assert cmd[cmd.index("-seeds") + 1] == "1"
 
 
+def test_build_command_config_outname_only_when_snapshot_absent(tmp_path):
+    spec = _make_spec(
+        tmp_path,
+        template={},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    cmd = build_command(spec)
+    assert not spec.config_path.exists()  # precondition
+    cfg_idx = cmd.index("-config")
+    cfg_args = cmd[cfg_idx + 1 :]
+    # Only outname= until the next flag (or end of argv).
+    assert cfg_args[0] == f"outname={spec.config_path}"
+    assert not any(a.startswith("file=") for a in cfg_args[:1])
+
+
+def test_build_command_config_includes_file_when_snapshot_exists(tmp_path):
+    spec = _make_spec(
+        tmp_path,
+        template={},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    spec.config_path.write_text('{"stats":{}}')
+    cmd = build_command(spec)
+    cfg_idx = cmd.index("-config")
+    # Both file= and outname= follow, in that order.
+    assert cmd[cfg_idx + 1] == f"file={spec.config_path}"
+    assert cmd[cfg_idx + 2] == f"outname={spec.config_path}"
+
+
 def test_build_command_sets_autosaveinterval_to_one(tmp_path):
     spec = _make_spec(
         tmp_path,
