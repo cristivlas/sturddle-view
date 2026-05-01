@@ -18,7 +18,7 @@ import { mountBoard } from "./board.js";
 const liveWindows = new Map(); // proxy_id -> WinBox instance
 
 
-export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
+export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0 }) {
   // If a window for this proxy is already open, focus it instead of
   // opening a duplicate.
   const existing = liveWindows.get(proxyId);
@@ -76,6 +76,7 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0 }) {
     x: `${20 + (idx * 4)}%`,
     y: `${5 + (idx * 4)}%`,
     top,
+    left,
     mount: body,
     class: "sturddle-wb sturddle-wb-live no-full",
   });

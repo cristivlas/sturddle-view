@@ -198,8 +198,10 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   function openWorkspace(t) {
     const menubar = container.querySelector(".tournaments-menubar");
-    const top = Math.round(menubar.getBoundingClientRect().bottom);
-    openTournamentWorkspace({ api, events, log, token, tournament: t, top });
+    const rect = menubar.getBoundingClientRect();
+    const top = Math.round(rect.bottom);
+    const left = Math.round(rect.left);
+    openTournamentWorkspace({ api, events, log, token, tournament: t, top, left });
     syncWindowMenu();
   }
 

@@ -58,7 +58,7 @@ function saveLayout(layout) {
 let activeWorkspace = null;
 
 
-export function openTournamentWorkspace({ api, events, log, token, tournament, top = 0 }) {
+export function openTournamentWorkspace({ api, events, log, token, tournament, top = 0, left = 0 }) {
   // Single-active model. Re-clicking the workspace icon for the
   // already-open tournament is a no-op (just focus its windows) so
   // attached engine windows survive — closing here would tear them
@@ -107,6 +107,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       width: cfg.width,
       height: cfg.height,
       top,
+      left,
       mount: body,
       class: "sturddle-wb no-full",
     });
@@ -228,6 +229,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           label: `${tournament.name} — ${engineLabel}`,
           token,
           top,
+          left,
         });
       });
       li.appendChild(btn);
@@ -439,17 +441,17 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   function tile() {
     const wbs = openWindows();
     if (!wbs.length) return;
-    const vw = window.innerWidth;
+    const availW = window.innerWidth - left;
     const availH = window.innerHeight - top;
     const cols = Math.ceil(Math.sqrt(wbs.length));
     const rows = Math.ceil(wbs.length / cols);
-    const w = Math.floor(vw / cols);
+    const w = Math.floor(availW / cols);
     const h = Math.floor(availH / rows);
     wbs.forEach((wb, i) => {
       unminimize(wb);
       const col = i % cols;
       const row = Math.floor(i / cols);
-      wb.resize(w, h).move(col * w, top + row * h);
+      wb.resize(w, h).move(left + col * w, top + row * h);
     });
   }
 
@@ -458,7 +460,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const offset = 30;
     wbs.forEach((wb, i) => {
       unminimize(wb);
-      wb.move(i * offset, top + i * offset);
+      wb.move(left + i * offset, top + i * offset);
     });
   }
 
