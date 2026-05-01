@@ -186,6 +186,35 @@ def test_build_command_gauntlet_with_seeds(tmp_path):
     assert cmd[cmd.index("-seeds") + 1] == "1"
 
 
+def test_build_command_pins_seed_when_in_template(tmp_path):
+    spec = _make_spec(
+        tmp_path,
+        template={"seed": 1234567890},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    cmd = build_command(spec)
+    assert cmd[cmd.index("-srand") + 1] == "1234567890"
+
+
+def test_build_command_omits_srand_when_no_seed_in_template():
+    # Cover the build_command branch directly (the store always auto-injects
+    # a seed, so we bypass it by hand-constructing a Tournament).
+    from sturddle_view.tournament.store import STATUS_IDLE, Tournament
+
+    t = Tournament(
+        id="x", name="x", status=STATUS_IDLE, created_at="2024-01-01T00:00:00Z",
+        template={"tc": "10+0.1"},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    spec = RunSpec(
+        tournament=t, binary_path="fastchess",
+        work_dir=Path("/tmp"), pgn_path=Path("/tmp/g.pgn"),
+        config_path=Path("/tmp/c.json"), log_path=Path("/tmp/f.log"),
+    )
+    cmd = build_command(spec)
+    assert "-srand" not in cmd
+
+
 def test_build_command_book(tmp_path):
     # Book file + plies now come from settings; format is inferred from
     # the file extension.

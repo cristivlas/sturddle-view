@@ -87,7 +87,8 @@ def test_create_returns_id_and_status_idle(client):
     body = r.json()
     assert body["name"] == "first"
     assert body["status"] == "idle"
-    assert body["template"] == {"tc": "10+0.1"}
+    assert body["template"]["tc"] == "10+0.1"
+    assert "seed" in body["template"]
     assert body["id"]
 
 

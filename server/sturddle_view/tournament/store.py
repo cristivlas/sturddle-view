@@ -20,6 +20,7 @@ Layout per tournament (see ``docs/tournament-spec.md``):
 from __future__ import annotations
 
 import json
+import secrets
 import shutil
 import threading
 import uuid
@@ -151,12 +152,19 @@ class TournamentStore:
             d.mkdir(parents=True, exist_ok=False)
             (d / "logs").mkdir(parents=True, exist_ok=True)
 
+            # Pin a seed for fastchess so opening-book shuffle (and
+            # anything else fastchess seeds from -srand) is stable
+            # across Stop/Resume cycles. Caller-supplied seed wins so
+            # tests/fixtures can be deterministic.
+            frozen_template = dict(template)
+            frozen_template.setdefault("seed", secrets.randbits(63))
+
             t = Tournament(
                 id=tournament_id,
                 name=name,
                 status=STATUS_IDLE,
                 created_at=_now(),
-                template=dict(template),
+                template=frozen_template,
                 engines=list(engines),
             )
             atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)

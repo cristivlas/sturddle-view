@@ -70,10 +70,22 @@ def test_state_json_is_valid_json_with_expected_fields(store):
     payload = json.loads((store.root / t.id / "state.json").read_text())
     assert payload["id"] == t.id
     assert payload["status"] == STATUS_IDLE
-    assert payload["template"] == {"k": "v"}
+    assert payload["template"]["k"] == "v"
     assert payload["created_at"]
     assert payload["started_at"] is None
     assert payload["stopped_at"] is None
+
+
+def test_create_pins_seed_when_template_omits_it(store):
+    t = store.create(name="x", template={}, engines=[])
+    assert "seed" in t.template
+    assert isinstance(t.template["seed"], int)
+    assert t.template["seed"] >= 0
+
+
+def test_create_preserves_caller_supplied_seed(store):
+    t = store.create(name="x", template={"seed": 42}, engines=[])
+    assert t.template["seed"] == 42
 
 
 def test_path_helpers(store):

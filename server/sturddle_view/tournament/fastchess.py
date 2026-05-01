@@ -155,6 +155,12 @@ def build_command(spec: RunSpec) -> list[str]:
     elif t.get("tournament_type") == "roundrobin":
         cmd.extend(["-tournament", "roundrobin"])
 
+    # Pinned seed for fastchess's PRNG (opening shuffle, etc). Stable
+    # across Stop/Resume cycles — see Resume after Stop in
+    # docs/tournament-spec.md.
+    if "seed" in t:
+        cmd.extend(["-srand", str(t["seed"])])
+
     # Opening book — global default from settings; legacy template
     # ``book``/``book_format`` fields are ignored. Format inferred from
     # the file extension (.epd → epd, anything else → pgn) since the
