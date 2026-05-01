@@ -153,8 +153,6 @@ export function mountTournaments({ container, api, events, log, token }) {
     removeBtn.addEventListener("click", (ev) => { ev.stopPropagation(); removeOne(t); });
     workspaceBtn.addEventListener("click", (ev) => { ev.stopPropagation(); openWorkspace(t); });
 
-    li.addEventListener("click", () => openInspect(t));
-
     return li;
   }
 
@@ -203,44 +201,6 @@ export function mountTournaments({ container, api, events, log, token }) {
     const top = Math.round(menubar.getBoundingClientRect().bottom);
     openTournamentWorkspace({ api, events, log, token, tournament: t, top });
     syncWindowMenu();
-  }
-
-  async function openInspect(t) {
-    let detail;
-    try {
-      detail = await api("GET", `/api/tournaments/${t.id}`);
-    } catch (e) {
-      reportError({ log }, `Loading "${t.name}" failed`, e);
-      return;
-    }
-    await showDialog({
-      label: `${t.name} (${detail.status})`,
-      width: "min(640px, 92vw)",
-      body: (resolve, dialog) => {
-        const wrap = document.createElement("div");
-        wrap.className = "inspect-form";
-        const meta = document.createElement("div");
-        meta.className = "inspect-meta muted";
-        const eng = (detail.engines || []).map((e) => e.name).join(" vs ");
-        meta.textContent = `engines: ${eng || "—"}`;
-        wrap.appendChild(meta);
-
-        const formHost = document.createElement("div");
-        mountTournamentTemplateForm({
-          container: formHost,
-          initialValues: detail.template || {},
-          readOnly: true,
-        });
-        wrap.appendChild(formHost);
-
-        const close = document.createElement("wa-button");
-        close.slot = "footer";
-        close.size = "small";
-        close.textContent = "Close";
-        close.addEventListener("click", () => resolve());
-        dialog.append(wrap, close);
-      },
-    });
   }
 
   // ---- New Tournament dialog ---------------------------------------------
