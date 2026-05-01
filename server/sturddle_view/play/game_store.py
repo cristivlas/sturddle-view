@@ -42,6 +42,10 @@ class GameState:
     # that ply. Mirrors HumanVsEngine._clock_history so take-back still
     # restores prior clocks after a server restart.
     clock_history: list[list[float]] = field(default_factory=list)
+    # FEN of the board BEFORE any moves_uci were played. None means the
+    # game began at the standard starting position. Required so restore_from
+    # can rebuild a board imported from a non-startpos FEN/PGN.
+    start_fen: str | None = None
     version: int = SCHEMA_VERSION
 
 
@@ -81,6 +85,7 @@ class GameStore:
                 paused=bool(data.get("paused", False)),
                 moves_uci=list(data.get("moves_uci", [])),
                 clock_history=[list(p) for p in data.get("clock_history", [])],
+                start_fen=data.get("start_fen"),
             )
         except (KeyError, TypeError, ValueError):
             log.exception("malformed saved game in %s; ignoring", self._path)

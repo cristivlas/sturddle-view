@@ -99,6 +99,10 @@ class HumanVsEngine:
         # effect on the next launch (existing process keeps its options).
         self._engine_options: dict = {}
         self._board: chess.Board | None = None
+        # FEN of the board *before* any moves on _board.move_stack — None for
+        # games that began at startpos. Persisted so restore_from can rebuild
+        # an imported game whose move_stack isn't replayable from startpos.
+        self._start_fen: str | None = None
         self._game_id: str | None = None
         self._human_white: bool = True
         self._tc: TimeControl = TimeControl(300.0, 0.0)
@@ -236,6 +240,7 @@ class HumanVsEngine:
             if board.is_game_over():
                 raise RuntimeError("seeded position is already over")
             self._board = board
+            self._start_fen = start_fen  # None for startpos games
             self._human_white = human_white
             self._tc = tc
             self._white_time = tc.initial_seconds
@@ -485,6 +490,7 @@ class HumanVsEngine:
             paused=self._paused,
             moves_uci=[m.uci() for m in self._board.move_stack],
             clock_history=[[w, b] for (w, b) in self._clock_history],
+            start_fen=self._start_fen,
         )
         try:
             await asyncio.to_thread(self._store.save, state)
@@ -508,7 +514,8 @@ class HumanVsEngine:
         `turn_started_at` so the side-to-move's clock isn't charged for the
         gap between boot and connect.
         """
-        self._board = chess.Board()
+        self._board = chess.Board(state.start_fen) if state.start_fen else chess.Board()
+        self._start_fen = state.start_fen
         for uci in state.moves_uci:
             self._board.push(chess.Move.from_uci(uci))
         self._game_id = state.game_id

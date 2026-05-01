@@ -242,6 +242,37 @@ def test_restore_from_replays_moves_and_clocks(tmp_path):
     assert hve._turn_started_at is None
 
 
+def test_restore_from_imported_position_with_start_fen(tmp_path):
+    """Imported games store their start FEN; restore must replay onto it,
+    not onto the standard starting position (which would crash because the
+    moves aren't legal from startpos)."""
+    hve, _store = _make_hve(tmp_path)
+    # FEN with Black to move; engine reply Qd6→d1+ is only legal from this
+    # position, not from startpos.
+    start_fen = "1k1r4/pp1b1R2/3q2pp/4p3/2B5/4Q3/PPP2B2/2K5 b - - 0 1"
+    state = GameState(
+        game_id="imported",
+        human_white=True,
+        tc_initial_seconds=30.0,
+        tc_increment_seconds=1.0,
+        white_time=30.0,
+        black_time=29.5,
+        paused=False,
+        moves_uci=["d6d1"],
+        clock_history=[[30.0, 30.0]],
+        start_fen=start_fen,
+    )
+    hve.restore_from(state)
+    # Board reconstructed and engine's move applied.
+    assert hve._board.move_stack[-1].uci() == "d6d1"
+    assert hve._board.turn == chess.WHITE  # human's turn after Qd1+
+    # Save round-trips the start_fen.
+    import asyncio
+    asyncio.get_event_loop().run_until_complete(hve._persist())
+    saved = _store.load()
+    assert saved.start_fen == start_fen
+
+
 async def test_republish_starts_tick_after_restore(tmp_path):
     """First republish_state on a restored unpaused game starts the tick."""
     hve, _store = _make_hve(tmp_path)
