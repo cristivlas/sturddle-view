@@ -4,6 +4,7 @@
 
 import { pickFile, showDialog, toast } from "./dialogs.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
+import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
 
 // Persisted unit is always seconds (float). The UI picks the most natural
 // display unit on load (largest unit with no fractional remainder) and
@@ -103,7 +104,15 @@ export async function openSettingsDialog({ api }) {
     return;
   }
 
-  return showDialog({
+  // If board_style is changed during this dialog session, reload after
+  // close so the new style takes effect on the live board. Game state
+  // lives server-side and is restored via /game/sync on remount.
+  const initialStyle = initial.board_style || DEFAULT_BOARD_STYLE;
+  let boardStyleDirty = false;
+  let boardStylePending = null;
+  let boardStyleFinal = initialStyle;
+
+  await showDialog({
     label: "Settings",
     width: "min(760px, 94vw)",
     height: "min(620px, 92vh)",
@@ -190,7 +199,7 @@ export async function openSettingsDialog({ api }) {
       const allowTakeback = document.createElement("wa-switch");
       allowTakeback.size = "small";
       allowTakeback.checked = initial.allow_takeback !== false;
-      allowTakeback.textContent = "Allow take-back";
+      allowTakeback.textContent = "Allow Undo (take back)";
       allowTakeback.addEventListener("change", () => {
         putSettings({ allow_takeback: allowTakeback.checked });
       });
@@ -198,7 +207,101 @@ export async function openSettingsDialog({ api }) {
       takebackRow.className = "settings-row";
       takebackRow.append(allowTakeback);
 
-      playPanel.append(tcInitialRow, tcIncrementRow, humanSideRow, takebackRow);
+      // Board style: single preset picker + live preview swatch reusing
+      // cm-chessboard's CSS class + sprite so the preview matches the
+      // real board exactly.
+      const boardStyleRow = document.createElement("div");
+      boardStyleRow.className = "settings-row";
+      const boardStyleLabel = document.createElement("label");
+      boardStyleLabel.textContent = "Board style";
+      const boardStyleSelect = document.createElement("wa-select");
+      boardStyleSelect.size = "small";
+      boardStyleSelect.setAttribute("distance", "4");
+      boardStyleSelect.value = initial.board_style || DEFAULT_BOARD_STYLE;
+      for (const [id, def] of Object.entries(BOARD_STYLES)) {
+        const opt = document.createElement("wa-option");
+        opt.value = id;
+        opt.textContent = def.label;
+        boardStyleSelect.append(opt);
+      }
+
+      // Preview block sits below the dropdown with breathing room. Square
+      // ~half the dropdown's width. The global
+      // `svg.cm-chessboard { width: 100% !important }` rule (see styles.css)
+      // forces full width on any SVG carrying that class, so the
+      // `cm-chessboard <theme>` class goes on a fixed-size wrapper DIV
+      // with the SVG nested inside.
+      const previewWrap = document.createElement("div");
+      previewWrap.style.marginTop = "16px";
+      const previewLabel = document.createElement("label");
+      previewLabel.textContent = "Board preview";
+      const previewSize = 180;
+      const preview = document.createElement("div");
+      preview.style.width = `${previewSize}px`;
+      preview.style.height = `${previewSize}px`;
+      preview.style.borderRadius = "3px";
+      preview.style.overflow = "hidden";
+      previewWrap.append(previewLabel, preview);
+      function renderPreview(styleId) {
+        const def = resolveBoardStyle(styleId);
+        preview.className = `cm-chessboard ${def.cssClass}`;
+        preview.innerHTML = "";
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 40 40");
+        svg.setAttribute("width", String(previewSize));
+        svg.setAttribute("height", String(previewSize));
+        svg.style.display = "block";
+        const board = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        board.setAttribute("class", "board");
+        const tile = 10;
+        for (let r = 0; r < 4; r++) {
+          for (let c = 0; c < 4; c++) {
+            const sq = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            sq.setAttribute("class", `square ${(r + c) % 2 === 0 ? "white" : "black"}`);
+            sq.setAttribute("x", c * tile);
+            sq.setAttribute("y", r * tile);
+            sq.setAttribute("width", tile);
+            sq.setAttribute("height", tile);
+            board.append(sq);
+          }
+        }
+        // Sprinkle a few pieces of each color across the mini-board so
+        // theme contrast and piece-set silhouettes are both visible.
+        // Each sprite piece group sits inside a 40x40 viewBox; nest a
+        // sub-svg per piece with that viewBox to map it into one cell.
+        const placements = [
+          { piece: "bn", col: 0, row: 0 },
+          { piece: "bk", col: 3, row: 1 },
+          { piece: "wq", col: 1, row: 2 },
+          { piece: "wp", col: 2, row: 3 },
+        ];
+        for (const { piece, col, row } of placements) {
+          const pieceSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+          pieceSvg.setAttribute("viewBox", "0 0 40 40");
+          pieceSvg.setAttribute("x", String(col * tile));
+          pieceSvg.setAttribute("y", String(row * tile));
+          pieceSvg.setAttribute("width", String(tile));
+          pieceSvg.setAttribute("height", String(tile));
+          const u = document.createElementNS("http://www.w3.org/2000/svg", "use");
+          u.setAttribute("href", `./vendor/cm-chessboard/assets/${def.piecesFile}#${piece}`);
+          pieceSvg.append(u);
+          board.append(pieceSvg);
+        }
+        svg.append(board);
+        preview.append(svg);
+      }
+      renderPreview(initialStyle);
+      boardStyleSelect.addEventListener("change", () => {
+        renderPreview(boardStyleSelect.value);
+        boardStyleFinal = boardStyleSelect.value;
+        boardStyleDirty = boardStyleFinal !== initialStyle;
+        // Track the in-flight save so we can await it before reloading on
+        // close — fire-and-forget would race location.reload().
+        boardStylePending = putSettings({ board_style: boardStyleFinal });
+      });
+      boardStyleRow.append(boardStyleLabel, boardStyleSelect, previewWrap);
+
+      playPanel.append(tcInitialRow, tcIncrementRow, humanSideRow, takebackRow, boardStyleRow);
 
       // Path-row helper used by Common + Tournament tabs.
       // Layout: label on top, [path-field][Browse][Clear] on a row underneath.
@@ -439,4 +542,13 @@ export async function openSettingsDialog({ api }) {
       dialog.append(tabs);
     },
   });
+
+  if (boardStyleDirty) {
+    try { await boardStylePending; } catch {}
+    // Idempotent re-PUT to guarantee the latest value is on disk before
+    // reload — the change-handler PUT is fire-and-forget and could race
+    // a fast dialog close.
+    try { await api("PUT", "/settings", { board_style: boardStyleFinal }); } catch {}
+    location.reload();
+  }
 }

@@ -9,6 +9,12 @@ from ..auth import require_token
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_token)])
 
 _VALID_SIDES = {"white", "black", "random"}
+_VALID_BOARD_STYLES = {
+    "classic", "classic-staunty",
+    "green", "green-staunty",
+    "blue", "chess-club",
+    "black-and-white", "high-contrast",
+}
 
 
 def _serialize(s) -> dict:
@@ -19,6 +25,7 @@ def _serialize(s) -> dict:
         "tc_increment_seconds": s.tc_increment_seconds,
         "human_side": s.human_side,
         "allow_takeback": s.allow_takeback,
+        "board_style": s.board_style,
         "engine_default_threads": s.engine_default_threads,
         "engine_default_hash_mb": s.engine_default_hash_mb,
         "engine_default_syzygy_path": s.engine_default_syzygy_path,
@@ -108,6 +115,15 @@ def update_settings(payload: dict, request: Request) -> dict:
 
     if "allow_takeback" in payload:
         s.allow_takeback = bool(payload["allow_takeback"])
+
+    if "board_style" in payload:
+        style = payload["board_style"]
+        if style not in _VALID_BOARD_STYLES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"board_style must be one of {sorted(_VALID_BOARD_STYLES)}",
+            )
+        s.board_style = style
 
     for key, min_v in (
         ("engine_default_threads", 1),

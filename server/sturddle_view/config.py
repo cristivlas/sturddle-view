@@ -29,6 +29,7 @@ PERSISTED_FIELDS = (
     "tc_increment_seconds",
     "human_side",
     "allow_takeback",
+    "board_style",
     "tournament_fastchess_path",
     "tournament_root",
     "tournament_default_template",
@@ -63,6 +64,7 @@ class Settings(BaseSettings):
     tc_increment_seconds: float = 0.0
     human_side: str = "white"
     allow_takeback: bool = True
+    board_style: str = "classic"
 
     # Tournament subsystem settings. None = use platform default / not configured.
     tournament_fastchess_path: str | None = None

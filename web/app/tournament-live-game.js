@@ -18,7 +18,7 @@ import { mountBoard } from "./board.js";
 const liveWindows = new Map(); // proxy_id -> WinBox instance
 
 
-export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0 }) {
+export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, boardStyle = null }) {
   // If a window for this proxy is already open, focus it instead of
   // opening a duplicate.
   const existing = liveWindows.get(proxyId);
@@ -51,6 +51,7 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0 })
   const boardHost = body.querySelector(".lg-board");
   const board = mountBoard({
     element: boardHost,
+    styleId: boardStyle,
     onMove: () => {}, // read-only — moves come from the server.
   });
 

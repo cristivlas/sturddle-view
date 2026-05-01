@@ -81,11 +81,21 @@ export const playPerspective = {
     const switchSidesBtn = root.querySelector("#switch-sides");
     const pauseBtn = root.querySelector("#pause");
 
+    // Fetch settings before mount so the board picks up the saved style.
+    let initialBoardStyle = null;
+    try {
+      const s0 = await ctx.api("GET", "/settings");
+      initialBoardStyle = s0.board_style || null;
+    } catch {
+      // ignore — fall back to default style
+    }
+
     // --- GameView: board host on top, side host (moves+engine) below. ---
     const view = mountGameView(boardHost, {
       events: ctx.events,
       interactive: true,
       sideContainer: sideHost,
+      boardStyle: initialBoardStyle,
       onMove: async (uci) => {
         try {
           await ctx.api("POST", "/game/move", { uci });
@@ -137,7 +147,9 @@ export const playPerspective = {
       }
     }
     await refreshSettings();
-    const onSettingsChanged = () => { refreshSettings({ notifyOnDrift: true }); };
+    const onSettingsChanged = () => {
+      refreshSettings({ notifyOnDrift: true }).then(() => refreshButtons());
+    };
     window.addEventListener("sturddle:settings-changed", onSettingsChanged);
 
     // Ask server to re-emit current state so the freshly-mounted view syncs.

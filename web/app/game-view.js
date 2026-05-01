@@ -77,6 +77,7 @@ export function mountGameView(container, opts = {}) {
     show = {},
     interactive = false,
     sideContainer = null, // optional: separate host for the side rail
+    boardStyle = null,    // preset id from settings; null = library default
   } = opts;
   const showClocks = show.clocks !== false;
   const showMoves = show.moves !== false;
@@ -226,6 +227,7 @@ export function mountGameView(container, opts = {}) {
 
   const board = mountBoard({
     element: boardEl,
+    styleId: boardStyle,
     onMove: (uci) => {
       if (interactive) onMove?.(uci);
     },

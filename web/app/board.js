@@ -6,12 +6,14 @@ import {
 } from "../vendor/cm-chessboard/src/Chessboard.js";
 import { MARKER_TYPE, Markers } from "../vendor/cm-chessboard/src/extensions/markers/Markers.js";
 import { ARROW_TYPE, Arrows } from "../vendor/cm-chessboard/src/extensions/arrows/Arrows.js";
+import { resolveBoardStyle } from "./board-styles.js";
 
-export function mountBoard({ element, onMove }) {
+export function mountBoard({ element, onMove, styleId }) {
+  const s = resolveBoardStyle(styleId);
   const board = new Chessboard(element, {
     position: FEN.start,
     assetsUrl: "./vendor/cm-chessboard/assets/",
-    style: { cssClass: "default", showCoordinates: true, pieces: { file: "pieces/standard.svg" } },
+    style: { cssClass: s.cssClass, showCoordinates: true, pieces: { file: s.piecesFile } },
     extensions: [{ class: Markers }, { class: Arrows }],
   });
 

@@ -223,13 +223,21 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       btn.className = "wb-sched-attach-btn";
       btn.textContent = "watch";
       btn.title = pid;
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", async () => {
+        let boardStyle = null;
+        try {
+          const s = await api("GET", "/settings");
+          boardStyle = s.board_style || null;
+        } catch {
+          // ignore — fall back to default style
+        }
         openLiveGameWindow({
           proxyId: pid,
           label: `${tournament.name} — ${engineLabel}`,
           token,
           top,
           left,
+          boardStyle,
         });
       });
       li.appendChild(btn);
