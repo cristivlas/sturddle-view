@@ -210,4 +210,5 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch):
         except Exception:
             pass
         server.should_exit = True
-        thread.join(timeout=10)
+        server.force_exit = True
+        thread.join(timeout=2)

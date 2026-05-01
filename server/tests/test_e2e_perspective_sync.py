@@ -46,7 +46,8 @@ def server(tmp_path):
         time.sleep(0.05)
     yield f"http://127.0.0.1:{port}", app
     s.should_exit = True
-    thread.join(timeout=5)
+    s.force_exit = True
+    thread.join(timeout=2)
 
 
 @pytest.mark.asyncio

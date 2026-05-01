@@ -68,7 +68,8 @@ def server(tmp_path, monkeypatch):
         time.sleep(0.05)
     yield f"http://127.0.0.1:{port}", app
     s.should_exit = True
-    thread.join(timeout=5)
+    s.force_exit = True
+    thread.join(timeout=2)
 
 
 @pytest.mark.asyncio
@@ -271,7 +272,8 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
                 await browser.close()
     finally:
         s.should_exit = True
-        thread.join(timeout=5)
+        s.force_exit = True
+        thread.join(timeout=2)
 
 
 @pytest.mark.asyncio
@@ -374,4 +376,5 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch):
                 await browser.close()
     finally:
         s.should_exit = True
-        thread.join(timeout=5)
+        s.force_exit = True
+        thread.join(timeout=2)
