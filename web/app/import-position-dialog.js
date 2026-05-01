@@ -3,7 +3,7 @@
 // disabled until a parse succeeds (no `*` markers, no native `required`,
 // per the modern-dialog convention used elsewhere).
 
-import { showDialog } from "./dialogs.js";
+import { apiErrorDetail, showDialog } from "./dialogs.js";
 
 /**
  * @param {object} args
@@ -19,6 +19,12 @@ export function showImportPositionDialog({ api }) {
       let format = "fen";
       let lastValid = null; // { start_fen, moves_uci, summary, side_to_move, ... }
       let validateSeq = 0;
+      let validateTimer = null;
+      function cancelPendingValidate() {
+        clearTimeout(validateTimer);
+        validateTimer = null;
+        validateSeq++; // also drop any in-flight response
+      }
 
       const wrap = document.createElement("div");
       wrap.className = "import-pos-form";
@@ -76,7 +82,10 @@ export function showImportPositionDialog({ api }) {
       cancel.slot = "footer";
       cancel.size = "small";
       cancel.textContent = "Cancel";
-      cancel.addEventListener("click", () => resolve(null));
+      cancel.addEventListener("click", () => {
+        cancelPendingValidate();
+        resolve(null);
+      });
 
       const start = document.createElement("wa-button");
       start.slot = "footer";
@@ -86,6 +95,7 @@ export function showImportPositionDialog({ api }) {
       start.setAttribute("disabled", "");
       start.addEventListener("click", () => {
         if (!lastValid) return;
+        cancelPendingValidate();
         const playAs = playAsRow.querySelector("wa-radio-group").value;
         resolve({
           format,
@@ -127,22 +137,10 @@ export function showImportPositionDialog({ api }) {
           if (seq !== validateSeq) return;
           lastValid = null;
           start.setAttribute("disabled", "");
-          // api() throws "METHOD PATH -> STATUS <body>" where body is JSON
-          // like {"detail":"..."}. Surface only the detail.
-          let msg = String(e?.message || e);
-          const match = msg.match(/->\s*\d+\s*(.*)$/);
-          if (match) msg = match[1];
-          try {
-            const parsed = JSON.parse(msg);
-            if (parsed && typeof parsed.detail === "string") msg = parsed.detail;
-          } catch {
-            // not JSON — keep as-is
-          }
-          setStatus(msg, "err");
+          setStatus(apiErrorDetail(e), "err");
         }
       }
 
-      let validateTimer = null;
       textarea.addEventListener("input", (ev) => {
         textByFormat[format] = ev.target.value || "";
         clearTimeout(validateTimer);
@@ -152,8 +150,8 @@ export function showImportPositionDialog({ api }) {
       tabs.addEventListener("wa-tab-show", (ev) => {
         const name = ev.detail?.name;
         if (name !== "fen" && name !== "pgn") return;
+        cancelPendingValidate();
         format = name;
-        // Move textarea into the active panel + restore that format's text.
         (name === "fen" ? fenPanel : pgnPanel).appendChild(textarea);
         textarea.value = textByFormat[name];
         textarea.placeholder =

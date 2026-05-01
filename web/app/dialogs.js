@@ -381,22 +381,23 @@ export function pickFile({
  * `error` is the caught Error or anything with a `.message`.
  * `ctx` must expose a `log(line)` function (same as the perspective ctx).
  */
+/** Strip the "METHOD /path -> STATUS " prefix and unwrap a JSON `detail`
+ *  field from the kind of Error our api() helper throws. */
+export function apiErrorDetail(error) {
+  const message = (error && error.message) || String(error);
+  const m = message.match(/^[A-Z]+\s+\/\S+\s+->\s+\d+\s+(.*)$/s);
+  if (!m) return message;
+  try {
+    const parsed = JSON.parse(m[1]);
+    return parsed.detail || m[1];
+  } catch {
+    return m[1];
+  }
+}
+
 export function reportError(ctx, action, error) {
   const message = (error && error.message) || String(error);
-  // Try to peel off the API URL prefix our api() helper adds:
-  //   "POST /game/move -> 400 detail-here"
-  // The toast wants only the human-readable trailing detail.
-  let short = message;
-  const m = message.match(/^[A-Z]+\s+\/\S+\s+->\s+\d+\s+(.*)$/s);
-  if (m) {
-    try {
-      const parsed = JSON.parse(m[1]);
-      short = parsed.detail || m[1];
-    } catch {
-      short = m[1];
-    }
-  }
-  toast(`${action}: ${short}`, { variant: "danger" });
+  toast(`${action}: ${apiErrorDetail(error)}`, { variant: "danger" });
   ctx?.log?.(`${action}: ${message}`);
 }
 

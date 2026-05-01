@@ -5,11 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ..auth import require_token
 from ..engines import resolve_selected
 from ..play.human_vs_engine import HumanVsEngine, TimeControl
-from ..play.import_position import (
-    ImportError as PositionImportError,
-    parse_fen,
-    parse_pgn,
-)
+from ..play.import_position import PositionImportError, parse_fen, parse_pgn
 
 router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_token)])
 
