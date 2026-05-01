@@ -77,6 +77,11 @@ def parse_pgn(text: str) -> ImportedPosition:
         board.push(move)
     if board.is_game_over():
         raise PositionImportError("PGN ends in a finished position")
+    # python-chess's PGN parser is lenient: arbitrary text yields a valid
+    # game with no moves and a startpos board. Reject that — an "import"
+    # that just gets you to startpos is the New Game button.
+    if not moves_uci and not start_fen_header:
+        raise PositionImportError("PGN contains no moves")
     side = "white" if board.turn == chess.WHITE else "black"
     white = headers.get("White", "?")
     black = headers.get("Black", "?")

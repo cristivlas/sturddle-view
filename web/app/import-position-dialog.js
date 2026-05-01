@@ -13,6 +13,39 @@ const EMPTY_PROMPT = {
   fen: "Paste a FEN to begin.",
   pgn: "Paste a PGN to begin.",
 };
+const TEXTAREA_ROWS = 8; // same on both tabs so the dialog doesn't resize
+
+const RECENTS_KEY = "sturddle.import.recent";
+const RECENTS_MAX = 5;
+
+function loadRecents() {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENTS_KEY) || "[]");
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRecent(entry) {
+  // entry: { format, text, summary, ts }
+  const cur = loadRecents().filter(
+    (e) => !(e.format === entry.format && e.text === entry.text),
+  );
+  cur.unshift(entry);
+  try {
+    localStorage.setItem(RECENTS_KEY, JSON.stringify(cur.slice(0, RECENTS_MAX)));
+  } catch {
+    // localStorage may be disabled — silently skip
+  }
+}
+
+function detectFormatFromName(name) {
+  const n = (name || "").toLowerCase();
+  if (n.endsWith(".pgn")) return "pgn";
+  if (n.endsWith(".fen") || n.endsWith(".epd")) return "fen";
+  return null;
+}
 
 /**
  * @param {object} args
@@ -32,7 +65,7 @@ export function showImportPositionDialog({ api }) {
       function cancelPendingValidate() {
         clearTimeout(validateTimer);
         validateTimer = null;
-        validateSeq++; // also drop any in-flight response
+        validateSeq++;
       }
 
       const wrap = document.createElement("div");
@@ -48,14 +81,12 @@ export function showImportPositionDialog({ api }) {
       `;
       wrap.appendChild(tabs);
 
-      // One textarea per panel — re-parenting a single textarea on tab
-      // switch breaks rendering inside wa-tab-panel.
       const textareas = {};
       for (const name of ["fen", "pgn"]) {
         const ta = document.createElement("wa-textarea");
         ta.size = "small";
         ta.resize = "vertical";
-        ta.rows = name === "fen" ? 3 : 8;
+        ta.rows = TEXTAREA_ROWS;
         ta.placeholder = PLACEHOLDERS[name];
         ta.style.fontFamily = "var(--mono-font, monospace)";
         ta.style.width = "100%";
@@ -67,6 +98,54 @@ export function showImportPositionDialog({ api }) {
         tabs.querySelector(`wa-tab-panel[name="${name}"]`).appendChild(ta);
         textareas[name] = ta;
       }
+
+      // Toolbar row: From file… + Recent dropdown.
+      const toolbar = document.createElement("div");
+      toolbar.className = "import-pos-toolbar";
+
+      const fileBtn = document.createElement("wa-button");
+      fileBtn.size = "small";
+      fileBtn.innerHTML = `<wa-icon slot="start" name="upload"></wa-icon>From file…`;
+      const fileInput = document.createElement("input");
+      fileInput.type = "file";
+      fileInput.accept = ".fen,.pgn,.epd,text/plain";
+      fileInput.style.display = "none";
+      fileBtn.addEventListener("click", () => fileInput.click());
+      fileInput.addEventListener("change", async () => {
+        const f = fileInput.files?.[0];
+        if (!f) return;
+        await ingestFile(f);
+        fileInput.value = "";
+      });
+      toolbar.append(fileBtn, fileInput);
+
+      const recentSel = document.createElement("wa-select");
+      recentSel.size = "small";
+      recentSel.placeholder = "Recent…";
+      recentSel.style.minWidth = "180px";
+      let recentsCache = loadRecents();
+      function refreshRecents() {
+        recentsCache = loadRecents();
+        recentSel.innerHTML = recentsCache
+          .map((e, i) => {
+            const label = (e.summary || e.text.slice(0, 40)).replace(/"/g, "&quot;");
+            return `<wa-option value="${i}">${e.format.toUpperCase()} — ${label}</wa-option>`;
+          })
+          .join("");
+        recentSel.style.visibility = recentsCache.length ? "" : "hidden";
+      }
+      recentSel.addEventListener("change", () => {
+        const entry = recentsCache[Number(recentSel.value)];
+        if (!entry) return;
+        if (entry.format !== format) selectTab(entry.format);
+        textareas[entry.format].value = entry.text;
+        recentSel.value = "";
+        validate();
+      });
+      refreshRecents();
+      toolbar.appendChild(recentSel);
+
+      wrap.appendChild(toolbar);
 
       const status = document.createElement("div");
       status.className = "import-pos-status muted";
@@ -87,8 +166,6 @@ export function showImportPositionDialog({ api }) {
 
       dialog.appendChild(wrap);
 
-      // Footer: Start only — wa-dialog provides its own X close button,
-      // and showDialog treats a close-without-resolve as cancel.
       const start = document.createElement("wa-button");
       start.slot = "footer";
       start.size = "small";
@@ -99,11 +176,14 @@ export function showImportPositionDialog({ api }) {
         if (!lastValid) return;
         cancelPendingValidate();
         const playAs = playAsRow.querySelector("wa-radio-group").value;
-        resolve({
+        const text = textareas[format].value || "";
+        saveRecent({
           format,
-          text: textareas[format].value || "",
-          human_side: playAs,
+          text,
+          summary: lastValid.summary,
+          ts: Date.now(),
         });
+        resolve({ format, text, human_side: playAs });
       });
       dialog.appendChild(start);
 
@@ -111,6 +191,35 @@ export function showImportPositionDialog({ api }) {
         status.textContent = msg;
         status.classList.remove("muted", "ok", "err");
         status.classList.add(kind || "muted");
+      }
+
+      function selectTab(name) {
+        if (typeof tabs.show === "function") tabs.show(name);
+        format = name;
+      }
+
+      // Read a File, ask the server to auto-detect its format, switch to
+      // that tab and load the text. Falls back to the filename hint and
+      // finally to the currently-active tab if everything fails to parse.
+      async function ingestFile(f) {
+        const text = await f.text();
+        const hint = detectFormatFromName(f.name);
+        let target = hint ?? format;
+        try {
+          const r = await api("POST", "/game/import/validate", {
+            format: hint ?? "auto",
+            text,
+          });
+          if (r.detected_format === "fen" || r.detected_format === "pgn") {
+            target = r.detected_format;
+          }
+        } catch {
+          // server rejected — drop into the hinted/active tab and let the
+          // normal validate() show the error.
+        }
+        if (target !== format) selectTab(target);
+        textareas[target].value = text;
+        validate();
       }
 
       async function validate() {
@@ -142,6 +251,22 @@ export function showImportPositionDialog({ api }) {
         cancelPendingValidate();
         format = name;
         validate();
+      });
+
+      // Drag-and-drop a .fen / .pgn file anywhere on the dialog body.
+      wrap.addEventListener("dragover", (ev) => {
+        if (ev.dataTransfer?.types?.includes("Files")) {
+          ev.preventDefault();
+          wrap.classList.add("drag-over");
+        }
+      });
+      wrap.addEventListener("dragleave", () => wrap.classList.remove("drag-over"));
+      wrap.addEventListener("drop", async (ev) => {
+        wrap.classList.remove("drag-over");
+        const f = ev.dataTransfer?.files?.[0];
+        if (!f) return;
+        ev.preventDefault();
+        await ingestFile(f);
       });
     },
   });

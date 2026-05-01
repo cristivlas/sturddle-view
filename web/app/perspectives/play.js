@@ -339,6 +339,20 @@ export const playPerspective = {
       }
     };
 
+    // Cmd/Ctrl+O opens the import dialog. Skip when typing in an input or
+    // when a dialog is already open, so it doesn't clobber an in-progress
+    // form.
+    const onKeydown = (ev) => {
+      if (!(ev.key === "o" || ev.key === "O")) return;
+      if (!(ev.metaKey || ev.ctrlKey)) return;
+      const t = ev.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (document.querySelector("wa-dialog[open]")) return;
+      ev.preventDefault();
+      onImport();
+    };
+    window.addEventListener("keydown", onKeydown);
+
     newGameBtn.addEventListener("click", onNewGame);
     importBtn.addEventListener("click", onImport);
     resignBtn.addEventListener("click", onResign);
@@ -351,6 +365,7 @@ export const playPerspective = {
         offEvent();
         view.unmount();
         window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
+        window.removeEventListener("keydown", onKeydown);
         newGameBtn.removeEventListener("click", onNewGame);
         importBtn.removeEventListener("click", onImport);
         resignBtn.removeEventListener("click", onResign);

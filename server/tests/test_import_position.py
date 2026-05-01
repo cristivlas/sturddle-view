@@ -194,6 +194,46 @@ def test_validate_endpoint_unknown_format(client):
     assert r.status_code == 400
 
 
+def test_validate_endpoint_auto_detects_fen(client):
+    c, _app, _ = client
+    r = c.post("/game/import/validate", json={
+        "format": "auto",
+        "text": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["detected_format"] == "fen"
+    assert body["moves_uci"] == []
+
+
+def test_validate_endpoint_auto_detects_pgn(client):
+    c, _app, _ = client
+    r = c.post("/game/import/validate", json={
+        "format": "auto",
+        "text": "1. e4 e5 2. Nf3 *",
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["detected_format"] == "pgn"
+    assert body["moves_uci"] == ["e2e4", "e7e5", "g1f3"]
+
+
+def test_validate_endpoint_auto_returns_helpful_error_when_neither(client):
+    c, _app, _ = client
+    r = c.post("/game/import/validate", json={"format": "auto", "text": "xyzzy"})
+    assert r.status_code == 400
+    assert "FEN" in r.json()["detail"] or "PGN" in r.json()["detail"]
+
+
+def test_validate_endpoint_default_format_is_auto(client):
+    c, _app, _ = client
+    r = c.post("/game/import/validate", json={
+        "text": "1. e4 e5 *",
+    })
+    assert r.status_code == 200
+    assert r.json()["detected_format"] == "pgn"
+
+
 def test_import_endpoint_starts_game_human_as_side_to_move(client):
     c, app, engine_path = client
     hve = _patch_hve(app, engine_path)

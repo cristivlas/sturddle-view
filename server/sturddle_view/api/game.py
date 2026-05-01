@@ -66,16 +66,49 @@ async def new_game(payload: dict, request: Request) -> dict:
 
 
 def _parse_import_payload(payload: dict) -> dict:
-    fmt = payload.get("format")
+    """Parse a FEN/PGN payload. `format` may be 'fen', 'pgn', or 'auto'
+    (the default) — under 'auto' we try FEN first, then PGN, and report
+    which one succeeded via `detected_format` so the UI can highlight
+    the matching tab."""
+    fmt = payload.get("format", "auto")
     text = payload.get("text", "")
-    if fmt not in ("fen", "pgn"):
-        raise HTTPException(status_code=400, detail="format must be 'fen' or 'pgn'")
+    if fmt not in ("fen", "pgn", "auto"):
+        raise HTTPException(
+            status_code=400, detail="format must be 'fen', 'pgn', or 'auto'",
+        )
     if not isinstance(text, str):
         raise HTTPException(status_code=400, detail="missing 'text'")
-    try:
-        parsed = parse_fen(text) if fmt == "fen" else parse_pgn(text)
-    except PositionImportError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+    parsed = None
+    detected = fmt
+    if fmt == "fen":
+        try:
+            parsed = parse_fen(text)
+        except PositionImportError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+    elif fmt == "pgn":
+        try:
+            parsed = parse_pgn(text)
+        except PositionImportError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+    else:  # auto
+        fen_err = pgn_err = None
+        try:
+            parsed = parse_fen(text)
+            detected = "fen"
+        except PositionImportError as e:
+            fen_err = e
+        if parsed is None:
+            try:
+                parsed = parse_pgn(text)
+                detected = "pgn"
+            except PositionImportError as e:
+                pgn_err = e
+        if parsed is None:
+            # Surface the more informative error. PGN parser tends to be
+            # noisier; FEN's "expected 8 rows" is a clearer first message
+            # for the common case of someone pasting a half-FEN.
+            detail = str(fen_err) if fen_err else str(pgn_err)
+            raise HTTPException(status_code=400, detail=detail)
     return {
         "start_fen": parsed.start_fen,
         "moves_uci": parsed.moves_uci,
@@ -84,6 +117,7 @@ def _parse_import_payload(payload: dict) -> dict:
         "ply": parsed.ply,
         "summary": parsed.summary,
         "headers": parsed.headers,
+        "detected_format": detected,
     }
 
 
