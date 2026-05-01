@@ -252,6 +252,31 @@ def test_import_endpoint_rejects_finished_position(client):
     assert r.status_code == 400
 
 
+def test_imported_game_publishes_board_event_after_engine_move(client):
+    """Regression: _moves_san used to replay on a fresh chess.Board() and
+    asserted out for any imported (non-startpos) game once the engine moved.
+    The crash silently aborted the publish, leaving the client frozen."""
+    c, app, engine_path = client
+    hve = _patch_hve(app, engine_path)
+    # Black to move; human picks Black (so it's still Black to move and we
+    # can simulate an engine reply by directly invoking _board_event after
+    # pushing a move that's only legal in this position).
+    r = c.post("/game/import", json={
+        "format": "fen",
+        "text": "1k1r4/pp1b1R2/3q2pp/4p3/2B5/4Q3/PPP2B2/2K5 b - -",
+        "human_side": "white",  # so engine is on the move (Black)
+    })
+    assert r.status_code == 200, r.text
+    # Simulate the engine's bestmove being pushed (the part of
+    # _think_and_play that runs after the search returns).
+    hve._board.push(chess.Move.from_uci("d6d1"))
+    # _board_event must not raise.
+    evt = hve._board_event()
+    assert evt.payload["fen"].startswith("1k1r")
+    # moves_san reflects the imported-then-engine-played sequence.
+    assert evt.payload["moves_san"] == ["Qd1+"]
+
+
 def test_import_endpoint_seed_clocks_use_configured_tc(client):
     """Imported positions start fresh at the configured TC (no PGN clock
     comments honored). Verifies the settings/payload override path."""

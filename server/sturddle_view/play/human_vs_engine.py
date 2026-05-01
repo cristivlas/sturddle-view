@@ -61,11 +61,12 @@ def _serialize_info(info: chess.engine.InfoDict, board: chess.Board) -> dict:
     return out
 
 
-def _moves_san(board: chess.Board) -> list[str]:
-    """Return the current move stack as SAN strings."""
+def _moves_san(board: chess.Board, start_fen: str | None = None) -> list[str]:
+    """Return the current move stack as SAN strings, replayed from start_fen
+    (or the standard starting position when None)."""
     if not board.move_stack:
         return []
-    replay = chess.Board()
+    replay = chess.Board(start_fen) if start_fen else chess.Board()
     out = []
     for m in board.move_stack:
         out.append(replay.san(m))
@@ -698,7 +699,13 @@ class HumanVsEngine:
     def _board_event(self) -> Event:
         assert self._board is not None and self._game_id is not None
         opening_payload = None
-        if self._openings is not None and self._board.move_stack:
+        # Opening book lookup keys on UCI moves from the standard starting
+        # position; an imported (non-startpos) game can't be classified.
+        if (
+            self._openings is not None
+            and self._board.move_stack
+            and self._start_fen is None
+        ):
             ucis = [m.uci() for m in self._board.move_stack]
             hit = self._openings.lookup(ucis)
             if hit is not None:
@@ -710,7 +717,7 @@ class HumanVsEngine:
                 "fen": self._board.fen(),
                 "turn": "white" if self._board.turn else "black",
                 "ply": self._board.ply(),
-                "moves_san": _moves_san(self._board),
+                "moves_san": _moves_san(self._board, self._start_fen),
                 "last_move": self._board.peek().uci() if self._board.move_stack else None,
                 "human_white": self._human_white,
                 "engine_name": self._engine_name,
