@@ -192,7 +192,7 @@ export const playPerspective = {
       // always allowed so a game paused on the engine's turn — e.g. after
       // exiting Analysis — can be unpaused.
       setDisabled(pauseBtn, gameOver || analyzing || (!paused && !humanToMove));
-      pauseIcon.setAttribute("name", paused ? "play" : "pause");
+      pauseIcon.setAttribute("name", paused ? "forward-step" : "pause");
       pauseBtn.setAttribute("aria-label", paused ? "Resume" : "Pause");
       pauseBtn.setAttribute("title", paused ? "Resume" : "Pause");
       setDisabled(
