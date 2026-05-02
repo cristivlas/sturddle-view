@@ -36,6 +36,7 @@ function fmtClock(seconds) {
 
 function renderMoveList(el, sanList) {
   el.innerHTML = "";
+  const lastIdx = sanList.length - 1;
   for (let i = 0; i < sanList.length; i += 2) {
     const row = document.createElement("div");
     row.className = "move-row";
@@ -48,11 +49,13 @@ function renderMoveList(el, sanList) {
     const white = document.createElement("span");
     white.className = "move-cell";
     white.textContent = sanList[i] ?? "";
+    if (i === lastIdx) white.classList.add("is-current");
     row.append(white);
 
     const black = document.createElement("span");
     black.className = "move-cell";
     black.textContent = sanList[i + 1] ?? "";
+    if (i + 1 === lastIdx) black.classList.add("is-current");
     row.append(black);
 
     el.append(row);

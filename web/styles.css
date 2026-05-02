@@ -464,15 +464,26 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   overflow-y: auto;
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.4;
 }
 .move-row {
   display: grid;
-  grid-template-columns: 36px 1fr 1fr;
+  grid-template-columns: 32px 1fr 1fr;
   gap: 8px;
+  padding: 1px 6px;
+  border-radius: 3px;
 }
-.move-row .move-num { color: var(--muted); }
+.move-row:hover { background: var(--nav-btn-bg); }
+.move-row .move-num {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+}
 .move-row .move-cell { color: var(--fg); }
+.move-row .move-cell.is-current {
+  color: var(--accent);
+  font-weight: 600;
+}
 
 #engines-perspective {
   display: flex;
