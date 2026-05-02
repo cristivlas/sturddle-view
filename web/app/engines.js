@@ -13,19 +13,21 @@ export function mountEngines({ container, api, onError }) {
         <button class="ribbon-btn engines-add" aria-label="Add engine" title="Add engine">
           <wa-icon name="plus"></wa-icon>
         </button>
-        <span class="ribbon-sep" aria-hidden="true"></span>
-        <button class="ribbon-btn engines-sort-asc" aria-label="Sort A→Z" title="Sort A→Z">
-          <wa-icon name="arrow-down-a-z"></wa-icon>
-        </button>
-        <button class="ribbon-btn engines-sort-desc" aria-label="Sort Z→A" title="Sort Z→A">
-          <wa-icon name="arrow-down-z-a"></wa-icon>
-        </button>
-        <span class="ribbon-sep" aria-hidden="true"></span>
         <button class="ribbon-btn engines-detail-use" disabled aria-label="Use as active engine" title="Use as active engine">
           <wa-icon name="check"></wa-icon>
         </button>
         <button class="ribbon-btn engines-detail-options" disabled aria-label="UCI options" title="UCI options">
           <wa-icon name="sliders"></wa-icon>
+        </button>
+        <span class="ribbon-sep" aria-hidden="true"></span>
+        <button class="ribbon-btn engines-search-btn" aria-label="Search engines" title="Search engines">
+          <wa-icon name="magnifying-glass"></wa-icon>
+        </button>
+        <button class="ribbon-btn engines-sort-asc" aria-label="Sort A→Z" title="Sort A→Z">
+          <wa-icon name="arrow-down-a-z"></wa-icon>
+        </button>
+        <button class="ribbon-btn engines-sort-desc" aria-label="Sort Z→A" title="Sort Z→A">
+          <wa-icon name="arrow-down-z-a"></wa-icon>
         </button>
         <span class="ribbon-sep" aria-hidden="true"></span>
         <button class="ribbon-btn ribbon-btn--danger engines-detail-remove" disabled aria-label="Remove engine" title="Remove engine">
@@ -35,9 +37,9 @@ export function mountEngines({ container, api, onError }) {
 
       <div class="engines-body-main">
         <div class="engines-body-content">
-          <wa-input class="engines-search" size="small" placeholder="Search engines…" clearable>
-            <wa-icon slot="start" name="magnifying-glass"></wa-icon>
-          </wa-input>
+          <div class="engines-search-wrap">
+            <wa-input class="engines-search" size="small" placeholder="Search engines…" clearable autocomplete="off"></wa-input>
+          </div>
 
           <div class="engines-table-wrap">
             <table class="engines-table">
@@ -67,6 +69,8 @@ export function mountEngines({ container, api, onError }) {
   const addBtn = container.querySelector(".engines-add");
   const sortAscBtn = container.querySelector(".engines-sort-asc");
   const sortDescBtn = container.querySelector(".engines-sort-desc");
+  const searchBtn = container.querySelector(".engines-search-btn");
+  const searchWrap = container.querySelector(".engines-search-wrap");
   const searchInput = container.querySelector(".engines-search");
   const list = container.querySelector(".engines-list");
 
@@ -172,7 +176,44 @@ export function mountEngines({ container, api, onError }) {
 
   searchInput.addEventListener("input", () => {
     filterText = searchInput.value || "";
+    searchBtn.classList.toggle("is-active", !!filterText);
     renderList();
+  });
+
+  function closeSearch() {
+    searchWrap.classList.remove("open");
+    searchBtn.classList.remove("is-active");
+    searchInput.value = "";
+    filterText = "";
+    renderList();
+    document.removeEventListener("pointerdown", onOutsideClick);
+    document.removeEventListener("keydown", onSearchKey);
+  }
+
+  function onOutsideClick(e) {
+    if (!searchWrap.contains(e.target) && e.target !== searchBtn) closeSearch();
+  }
+
+  function onSearchKey(e) {
+    if (e.key === "Escape") { closeSearch(); e.preventDefault(); }
+  }
+
+  searchBtn.addEventListener("click", () => {
+    const opening = !searchWrap.classList.contains("open");
+    if (opening) {
+      const btnRect = searchBtn.getBoundingClientRect();
+      const ribbonRect = searchBtn.closest(".engines-ribbon").getBoundingClientRect();
+      searchWrap.style.left = ribbonRect.right + "px";
+      searchWrap.style.top = (btnRect.top + btnRect.height / 2) + "px";
+      searchWrap.style.transform = "translateY(-50%)";
+      searchWrap.classList.add("open");
+      searchBtn.classList.add("is-active");
+      searchInput.focus();
+      document.addEventListener("pointerdown", onOutsideClick);
+      document.addEventListener("keydown", onSearchKey);
+    } else {
+      closeSearch();
+    }
   });
 
   function syncSortButtons() {
