@@ -162,6 +162,11 @@ export function mountEngines({ container, api, onError }) {
         selectedDetailId = e.id;
         renderAll();
       });
+      tr.addEventListener("dblclick", () => {
+        selectedDetailId = e.id;
+        renderAll();
+        openOptionsForSelected();
+      });
       list.appendChild(tr);
     }
   }
@@ -230,14 +235,23 @@ export function mountEngines({ container, api, onError }) {
   sortDescBtn.addEventListener("click", () => setSort("desc"));
   syncSortButtons();
 
-  detailUseBtn.addEventListener("click", async () => {
+  async function activateSelected() {
     if (!selectedDetailId) return;
+    const e = engines.find((x) => x.id === selectedDetailId);
+    if (!e || e.id === activeId) return;
     try {
       await api("POST", `/engines/${selectedDetailId}/select`);
       refresh();
     } catch (err) {
       onError?.(`select: ${err.message}`);
     }
+  }
+  detailUseBtn.addEventListener("click", activateSelected);
+
+  list.addEventListener("keydown", (ev) => {
+    if (ev.key !== " ") return;
+    ev.preventDefault();
+    activateSelected();
   });
 
   detailRemoveBtn.addEventListener("click", async () => {
@@ -261,7 +275,7 @@ export function mountEngines({ container, api, onError }) {
     }
   });
 
-  detailOptionsBtn.addEventListener("click", async () => {
+  async function openOptionsForSelected() {
     if (!selectedDetailId) return;
     let engine = engines.find((x) => x.id === selectedDetailId);
     while (engine) {
@@ -274,7 +288,8 @@ export function mountEngines({ container, api, onError }) {
       refresh();
       break;
     }
-  });
+  }
+  detailOptionsBtn.addEventListener("click", openOptionsForSelected);
 
   addBtn.addEventListener("click", async () => {
     const path = await pickFile({

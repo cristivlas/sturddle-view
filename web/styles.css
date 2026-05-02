@@ -663,7 +663,6 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
   overflow-y: auto;
   font-size: 13px;
 }
-.engines-table-wrap:focus-within { border-color: rgba(255, 255, 255, 0.45); }
 .engines-list:focus { outline: none; }
 .engines-table {
   table-layout: fixed;
@@ -675,7 +674,7 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #1f232c;
+  background: var(--bg);
   padding: 6px 10px;
   text-align: left;
   font-size: 12px;
@@ -683,7 +682,7 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  border-bottom: 1px solid #34373d;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.45);
   overflow: hidden;
   white-space: nowrap;
   user-select: none;
