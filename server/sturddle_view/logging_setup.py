@@ -52,6 +52,22 @@ def configure_logging(level: int = logging.INFO, log_dir: Path | None = None) ->
 
     # Quiet down noisy uvicorn access logs at INFO; let DEBUG see them.
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    # WS lifecycle ("connection open/closed", "[accepted]") is INFO in
+    # uvicorn.error — too chatty. Demote those records to DEBUG so they
+    # only land in the file handler, not the console.
+    logging.getLogger("uvicorn.error").addFilter(_demote_ws_lifecycle)
 
     _configured = True
     return log_file
+
+
+_WS_LIFECYCLE_MARKERS = ("connection open", "connection closed", "WebSocket ")
+
+
+def _demote_ws_lifecycle(record: logging.LogRecord) -> bool:
+    if record.levelno == logging.INFO:
+        msg = record.getMessage()
+        if any(m in msg for m in _WS_LIFECYCLE_MARKERS):
+            record.levelno = logging.DEBUG
+            record.levelname = "DEBUG"
+    return True
