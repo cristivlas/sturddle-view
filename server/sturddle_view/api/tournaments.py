@@ -90,16 +90,18 @@ def _serialize(
     t,
     *,
     with_stats: bool = False,
+    with_standings: bool = False,
     store: TournamentStore | None = None,
     orch: Orchestrator | None = None,
 ) -> dict:
     out = t.to_dict()
-    if with_stats and store is not None:
+    if (with_stats or with_standings) and store is not None:
         try:
             standings = compute_standings(store.pgn_path(t.id)).to_dict()
         except FileNotFoundError:
             standings = {"games": 0, "engines": []}
         out["standings"] = standings
+    if with_stats and store is not None:
         try:
             out["games"] = compute_games_list(store.pgn_path(t.id))
         except FileNotFoundError:
@@ -131,7 +133,7 @@ def list_tournaments(request: Request) -> dict:
     s = _store(request)
     return {
         "active_id": _orch(request).active_id(),
-        "tournaments": [_serialize(t) for t in s.list()],
+        "tournaments": [_serialize(t, with_standings=True, store=s) for t in s.list()],
     }
 
 

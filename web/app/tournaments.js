@@ -15,6 +15,7 @@ export function mountTournaments({ container, api, events, log, token }) {
   container.innerHTML = `
     <div class="tournaments-panel">
       <menu class="tournaments-menubar">
+        <div class="tournaments-menubar-progress" aria-hidden="true"></div>
         <li class="tmb-menu tmb-sort-menu">
           <button class="tmb-item tmb-sort-btn">Sort</button>
           <ul class="tmb-dropdown">
@@ -154,7 +155,22 @@ export function mountTournaments({ container, api, events, log, token }) {
     for (const t of sorted) {
       listEl.appendChild(renderRow(t));
     }
+    syncMenubarProgress(sorted);
     syncRibbon();
+  }
+
+  function syncMenubarProgress(sorted) {
+    const strip = container.querySelector(".tournaments-menubar-progress");
+    if (!strip) return;
+    const running = sorted.find((t) => t.status === "running");
+    if (!running) {
+      strip.style.width = "0%";
+      return;
+    }
+    const played = running.standings?.games ?? 0;
+    const total = totalGames(running);
+    const pct = total ? Math.min(100, (played / total) * 100) : 0;
+    strip.style.width = pct + "%";
   }
 
   function sortedTournaments() {
@@ -178,20 +194,37 @@ export function mountTournaments({ container, api, events, log, token }) {
     li.dataset.id = t.id;
 
     const status = t.status;
+    const isRunning = status === "running";
+    const played = t.standings?.games ?? 0;
+    const total = totalGames(t);
+    const pct = total ? Math.min(100, Math.round((played / total) * 100)) : 0;
+
+    let trailing = "";
+    if (isRunning && total) {
+      trailing = `
+        <div class="tournament-progress" role="progressbar"
+             aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${played}">
+          <div class="tournament-progress-fill" style="width: ${pct}%"></div>
+          <span class="tournament-progress-label">${played} / ${total} · ${pct}%</span>
+        </div>
+      `;
+    } else {
+      trailing = `<span class="tournament-engines muted"></span>`;
+    }
 
     li.innerHTML = `
       <div class="tournament-row-main">
-        <span class="tournament-name"></span>
-        <span class="tournament-id muted"></span>
         <span class="tournament-status status-${status}">${status}</span>
-        <span class="tournament-engines muted"></span>
+        <span class="tournament-name"></span>
+        ${trailing}
       </div>
     `;
 
     li.querySelector(".tournament-name").textContent = t.name;
-    li.querySelector(".tournament-id").textContent = `#${t.id.slice(0, 7)}`;
-    const engineNames = (t.engines || []).map((e) => e.name).join(", ");
-    li.querySelector(".tournament-engines").textContent = engineNames;
+    if (!isRunning || !total) {
+      const engineNames = (t.engines || []).map((e) => e.name).join(", ");
+      li.querySelector(".tournament-engines").textContent = engineNames;
+    }
 
     li.addEventListener("click", () => {
       listEl.focus({ preventScroll: true });
@@ -240,8 +273,10 @@ export function mountTournaments({ container, api, events, log, token }) {
     const startLabel = isResume ? "Resume" : "Start";
     ribbonStartBtn.setAttribute("aria-label", startLabel);
     ribbonStartBtn.setAttribute("title", startLabel);
-    // Restore stop icon (may have been swapped to spinner during a stop op).
-    if (!ribbonStopBtn.querySelector("wa-icon")) {
+    // Restore stop icon only once the tournament has actually transitioned
+    // away from running — otherwise mid-flight games-count refreshes would
+    // clear the spinner before the row visually reflects the paused state.
+    if (!ribbonStopBtn.querySelector("wa-icon") && status !== "running") {
       ribbonStopBtn.innerHTML = '<wa-icon name="pause"></wa-icon>';
     }
   }
