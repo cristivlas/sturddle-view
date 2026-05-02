@@ -889,7 +889,7 @@ wa-dialog wa-tab-panel > * + * { margin-top: 10px; }
 .tournaments-menubar {
   position: relative;
   display: flex; list-style: none; margin: 0; padding: 0;
-  background: var(--wa-color-surface-sunken, #1a1a1a);
+  background: #1f232c;
   border-bottom: 1px solid var(--wa-color-border-loud, #333);
   user-select: none;
 }
@@ -914,23 +914,28 @@ wa-dialog wa-tab-panel > * + * { margin-top: 10px; }
 .tmb-item:disabled { opacity: 0.4; cursor: default; }
 .tmb-dropdown {
   display: none; position: absolute; top: 100%; left: 0; z-index: 9000;
-  list-style: none; margin: 0; padding: 4px 0; min-width: 160px;
+  list-style: none; margin: 0; padding: 6px 0; min-width: 160px;
   background: var(--wa-color-surface-raised, #2a2a2a);
-  border: 1px solid var(--wa-color-border-loud, #333);
-  border-radius: 0;
-  box-shadow: 0 4px 12px rgba(0,0,0,.4);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
   font-family: var(--wa-font-family-body);
   font-size: 13px;
 }
 .tmb-menu.open .tmb-dropdown { display: block; }
+.tmb-dropdown > li { margin: 0; padding: 0; list-style: none; }
 .tmb-dd-item {
   display: block; width: 100%; background: none; border: none; border-radius: 0;
   color: inherit; text-align: left;
-  padding: 4px 12px 4px 24px;
+  padding: 6px 12px 6px 24px;
   font-size: 13px; line-height: 1.5; cursor: pointer;
   position: relative;
 }
-.tmb-dd-item:hover { background: var(--nav-btn-bg-hover); }
+.tmb-dd-item:hover {
+  background: var(--nav-btn-bg-hover);
+  box-shadow: inset 3px 0 0 var(--accent-line);
+}
 .tmb-separator {
   border-top: 1px solid var(--wa-color-border-loud, #333);
   margin: 4px 0;
