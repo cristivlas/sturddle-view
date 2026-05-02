@@ -36,7 +36,11 @@ sturddle-view --desktop
 scripts/init-submodules.sh
 ```
 
-## Status
+## Features
 
-Skeleton only. Most endpoints return 501. See [docs/spec.md](docs/spec.md) for the
-target shape.
+- Human-vs-engine play with a stockfish-style move list, engine eval/PV, and adjustable time control.
+- Engine roster: register UCI engines, edit per-engine options, set defaults (Hash, Threads, SyzygyPath, opening book).
+- Tournaments: round-robin or gauntlet via [fastchess](https://github.com/Disservin/fastchess); per-row Info, Start/Pause/Resume, sortable list, live game observation in floating windows.
+- Tournament settings (engine defaults, opening book) are snapshotted into the tournament's `state.json` at create time so Stop/Resume can't drift.
+
+See [docs/spec.md](docs/spec.md) and [docs/tournament-spec.md](docs/tournament-spec.md) for design details.

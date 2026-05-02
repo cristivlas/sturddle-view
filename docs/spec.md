@@ -344,7 +344,7 @@ For human vs engine play. Calm, distraction-free.
 
 - Centered board, large but bounded (max ~85vh).
 - Fixed side rail (right on wide screens, below on narrow): clock, move list, engine info during search.
-- Top of side rail: compact game-control bar — New Game, Take-back, Pause, Resign.
+- Vertical icon ribbon snapped to the viewport's left edge (mobile: horizontal strip below the board) — New, Open, Take-back, Flip, Pause, Resign.
   - Pause is enabled only on the human's turn (engine is idle then); it
     stops the clock and rejects moves until resumed.
 - No floating windows. The board is the focus; nothing should float over it during play.

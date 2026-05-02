@@ -1,6 +1,6 @@
 # Tournament Subsystem — Design Specification
 
-Status: design agreed; UI/UX details pending. Phase 1.
+Status: shipped (Phase 1).
 
 This document specifies the tournament-management subsystem of SturddleView.
 It supersedes the brief tournament references in `docs/spec.md` and is the
@@ -24,10 +24,13 @@ window layout) are deferred and will be appended in a follow-up section.
 
 Out of scope for Phase 1:
 
-- Pause / Resume of a running tournament.
 - Queue / scheduling of tournaments (Phase 2).
 - Attaching to a tournament started outside the GUI ("peek" / headless
   attach). The orchestrator is factored so this can be added later.
+
+Pause/Resume is implemented: stopping a running tournament transitions
+it to ``stopped``; starting it again resumes from where it left off
+(per-tournament state survives across runs).
 - Connecting to remote machines running tournaments.
 - Multiple tournaments running concurrently on the same server (enforced
   single-active; see "Concurrency policy" below).
@@ -286,13 +289,23 @@ tournament row.
 The Engines perspective's **Tournaments** sub-tab becomes a master list
 of saved tournaments. Per-row verbs:
 
-- **Start** — only enabled when no tournament is currently running.
-- **Stop** — only enabled when this row is the running tournament.
-- **Remove** — delete the saved tournament directory. Disabled while
-  the tournament is running.
+- **Start / Resume** — only enabled when no tournament is currently
+  running. The icon switches between *play* (idle) and *forward-step*
+  (resume from a previously stopped tournament).
+- **Pause** — only enabled when this row is the running tournament.
+  Stops fastchess; the next Start resumes from the same state.
 - **Open workspace** — opens the workspace view (WinBox-driven). Valid
   in any state: live windows when running, frozen view when stopped /
   done.
+- **Info** — opens a human-readable dialog summarizing the tournament
+  (engines list, time control, rounds, parallel games, games played
+  vs total, ponder/resign/draw, opening book, created/started/stopped
+  timestamps). Opening book displays as basename; full path on hover.
+- **Remove** — delete the saved tournament directory. Disabled while
+  the tournament is running.
+
+The list itself has a **Sort** menu (Name / Status / Created /
+Started); the chosen sort persists across reloads via localStorage.
 
 Plus a top-level action: **+ New Tournament**, which opens a dialog
 containing:
@@ -630,16 +643,10 @@ Rules enforced for every test shipped with this subsystem:
 
 ---
 
-## Resume after Stop (planned, not yet implemented)
+## Resume after Stop (shipped)
 
-Today's behavior: clicking **Start** on a `stopped` tournament launches
-a fresh fastchess run with the frozen template. Because `games.pgn` is
-opened with `append=true`, completed games persist — but fastchess
-itself has no record of them and replays the schedule from the
-beginning, producing duplicate games (same openings, same engine
-pairs, same colors). SPRT pair-counting and standings will
-double-count those games. The Start-after-Stop path is a UX bug, not
-a feature.
+Clicking **Start** on a `stopped` tournament resumes from where it
+left off using fastchess's native `-config` mechanism. Background:
 
 The fix uses fastchess's native resume mechanism (`-config`). Research
 findings (verified against fastchess source at
@@ -691,7 +698,7 @@ findings (verified against fastchess source at
   unaffected (pairs remain independent samples), but anyone expecting
   bit-identical replay will be disappointed.
 
-Concrete implementation plan:
+Implementation (shipped):
 
 1. **Pin a seed at tournament-creation time.** Add a `seed` field
    (uint64) to the frozen template; generate at create-time with
