@@ -46,6 +46,7 @@ function buildField(name, entry, current, ctx) {
       input = document.createElement("wa-input");
       input.type = "number";
       input.size = "small";
+      input.autocomplete = "off";
       input.value = String(current ?? 0);
       if (entry.min != null) input.min = String(entry.min);
       if (entry.max != null) input.max = String(entry.max);
