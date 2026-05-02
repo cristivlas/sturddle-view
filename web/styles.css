@@ -166,10 +166,8 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   --grid-gap: 16px;
   display: grid;
   grid-template-columns: var(--rail-w) var(--board-col-px, minmax(320px, 1fr)) var(--rail-w);
-  grid-template-rows: auto auto;
-  grid-template-areas:
-    ".    board side"
-    ".    controls .";
+  grid-template-rows: auto;
+  grid-template-areas: ". board side";
   gap: 12px var(--grid-gap);
   justify-content: center;
   align-content: start;
@@ -182,11 +180,50 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   display: flex;
   flex-direction: column;
 }
-#board-controls {
-  grid-area: controls;
-  /* Match the board's computed width so buttons align with board's left edge. */
-  width: var(--board-max-px, auto);
-  max-width: 100%;
+.board-ribbon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+  position: fixed;
+  left: 0; top: 50%; transform: translateY(-50%);
+  z-index: 10;
+  border-right: 1px solid var(--wa-color-border-loud, #353841);
+}
+.ribbon-btn {
+  width: 36px; height: 36px;
+  padding: 0; box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: 0;
+  color: var(--fg, #e6e6e6); cursor: pointer;
+  position: relative;
+  transition: color 0.12s;
+}
+.ribbon-btn::before {
+  content: ""; position: absolute;
+  right: -1px; top: 6px; bottom: 6px; width: 2px;
+  background: transparent;
+  transition: background 0.12s;
+}
+.ribbon-btn:hover:not(:disabled) {
+  color: var(--wa-color-brand-fill-loud, #1a6aff);
+}
+.ribbon-btn:hover:not(:disabled)::before {
+  background: var(--wa-color-brand-fill-loud, #1a6aff);
+}
+.ribbon-btn:disabled { opacity: 0.3; cursor: default; }
+.ribbon-btn wa-icon { font-size: 16px; }
+.ribbon-btn--danger:hover:not(:disabled) {
+  color: var(--wa-color-danger-fill-loud, #d65a5a);
+}
+.ribbon-btn--danger:hover:not(:disabled)::before {
+  background: var(--wa-color-danger-fill-loud, #d65a5a);
+}
+.ribbon-sep {
+  width: 22px; height: 1px;
+  background: var(--wa-color-border-loud, #353841);
+  margin: 2px 0;
 }
 .play-side-host {
   grid-area: side;
@@ -217,6 +254,27 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
     height: auto;
   }
   .play-board-host { display: block; }
+  .board-ribbon {
+    position: static;
+    transform: none;
+    flex-direction: row;
+    justify-content: center;
+    padding: 6px 0;
+  }
+  .ribbon-btn { width: 44px; height: 44px; }
+  .ribbon-btn wa-icon { font-size: 18px; }
+  .ribbon-btn::before {
+    left: 6px; right: 6px; top: 0; bottom: auto;
+    width: auto; height: 2px;
+  }
+  .ribbon-sep {
+    width: 1px; height: 18px;
+    margin: 0 4px;
+  }
+  /* Display order: board first, then ribbon below. */
+  .play-board-host { order: 1; }
+  #board-controls { order: 2; }
+  .play-side-host { order: 3; }
 }
 .game-view-board {
   display: flex;

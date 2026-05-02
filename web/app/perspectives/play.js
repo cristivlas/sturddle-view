@@ -45,25 +45,27 @@ export const playPerspective = {
         <div class="play-grid">
           <div class="play-board-host"></div>
 
-          <div id="board-controls">
-            <wa-button id="new-game" size="small">New</wa-button>
-            <wa-button id="import-pos" size="small" class="desktop-only" aria-label="Open position from FEN or PGN">
-              <wa-icon slot="start" name="folder-open"></wa-icon>
-              Open
-            </wa-button>
-            <wa-button id="takeback" size="small" disabled aria-label="Take back">
-              <wa-icon slot="start" name="rotate-left"></wa-icon>
-              Undo
-            </wa-button>
-            <wa-button id="switch-sides" size="small" disabled aria-label="Switch sides">
-              <wa-icon slot="start" name="arrow-right-arrow-left"></wa-icon>
-              Flip
-            </wa-button>
-            <wa-button id="pause" size="small" disabled aria-label="Pause">
-              <wa-icon slot="start" name="pause"></wa-icon>
-              <span class="pause-label">Pause</span>
-            </wa-button>
-            <wa-button id="resign" size="small" variant="danger" disabled>Resign</wa-button>
+          <div id="board-controls" class="board-ribbon">
+            <button id="new-game" class="ribbon-btn" aria-label="New game" title="New game">
+              <wa-icon name="plus"></wa-icon>
+            </button>
+            <button id="import-pos" class="ribbon-btn desktop-only" aria-label="Open position from FEN or PGN" title="Open">
+              <wa-icon name="folder-open"></wa-icon>
+            </button>
+            <span class="ribbon-sep" aria-hidden="true"></span>
+            <button id="takeback" class="ribbon-btn" disabled aria-label="Take back" title="Take back">
+              <wa-icon name="rotate-left"></wa-icon>
+            </button>
+            <button id="switch-sides" class="ribbon-btn" disabled aria-label="Switch sides" title="Flip board">
+              <wa-icon name="arrow-right-arrow-left"></wa-icon>
+            </button>
+            <span class="ribbon-sep" aria-hidden="true"></span>
+            <button id="pause" class="ribbon-btn" disabled aria-label="Pause" title="Pause">
+              <wa-icon name="pause"></wa-icon>
+            </button>
+            <button id="resign" class="ribbon-btn ribbon-btn--danger" disabled aria-label="Resign" title="Resign">
+              <wa-icon name="flag"></wa-icon>
+            </button>
           </div>
 
           <div class="play-side-host"></div>
@@ -170,17 +172,6 @@ export const playPerspective = {
     let paused = false;
 
     const pauseIcon = pauseBtn.querySelector("wa-icon");
-    const pauseLabel = pauseBtn.querySelector(".pause-label");
-    // Pin the pause button width to fit the wider "Resume" label so toggling
-    // Pause<->Resume doesn't reflow the controls bar. Measured after the
-    // button has had a frame to render at its natural "Pause" width.
-    requestAnimationFrame(() => {
-      const original = pauseLabel.textContent;
-      pauseLabel.textContent = "Resume";
-      const w = pauseBtn.getBoundingClientRect().width;
-      pauseLabel.textContent = original;
-      if (w > 0) pauseBtn.style.minWidth = `${Math.ceil(w)}px`;
-    });
     // Resign is enabled whenever there is an active game; cleared on
     // game_result. We track it explicitly so paused-state can additionally
     // gate it without losing the "active game" signal.
@@ -193,8 +184,8 @@ export const playPerspective = {
       const humanToMove = humanWhite ? turn === "white" : turn === "black";
       setDisabled(pauseBtn, gameOver || !humanToMove);
       pauseIcon.setAttribute("name", paused ? "play" : "pause");
-      pauseLabel.textContent = paused ? "Resume" : "Pause";
       pauseBtn.setAttribute("aria-label", paused ? "Resume" : "Pause");
+      pauseBtn.setAttribute("title", paused ? "Resume" : "Pause");
       setDisabled(
         takebackBtn,
         paused || gameOver || !allowTakeback || movesPlayed === 0,
