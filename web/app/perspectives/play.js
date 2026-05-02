@@ -63,6 +63,9 @@ export const playPerspective = {
             <button id="pause" class="ribbon-btn" disabled aria-label="Pause" title="Pause">
               <wa-icon name="pause"></wa-icon>
             </button>
+            <button id="analyze" class="ribbon-btn" disabled aria-label="Analysis mode" title="Analysis mode">
+              <wa-icon name="magnifying-glass"></wa-icon>
+            </button>
             <button id="resign" class="ribbon-btn ribbon-btn--danger" disabled aria-label="Resign" title="Resign">
               <wa-icon name="flag"></wa-icon>
             </button>
@@ -82,6 +85,7 @@ export const playPerspective = {
     const takebackBtn = root.querySelector("#takeback");
     const switchSidesBtn = root.querySelector("#switch-sides");
     const pauseBtn = root.querySelector("#pause");
+    const analyzeBtn = root.querySelector("#analyze");
 
     // Fetch settings before mount so the board picks up the saved style.
     let initialBoardStyle = null;
@@ -170,6 +174,8 @@ export const playPerspective = {
     let humanWhite = true;
     let turn = "white";
     let paused = false;
+    let analyzing = false;
+    let dismissAnalysisToast = null;
 
     const pauseIcon = pauseBtn.querySelector("wa-icon");
     // Resign is enabled whenever there is an active game; cleared on
@@ -182,16 +188,34 @@ export const playPerspective = {
     }
     function refreshButtons() {
       const humanToMove = humanWhite ? turn === "white" : turn === "black";
-      setDisabled(pauseBtn, gameOver || !humanToMove);
+      // Pause is restricted to the human's turn; Resume (paused=true) is
+      // always allowed so a game paused on the engine's turn — e.g. after
+      // exiting Analysis — can be unpaused.
+      setDisabled(pauseBtn, gameOver || analyzing || (!paused && !humanToMove));
       pauseIcon.setAttribute("name", paused ? "play" : "pause");
       pauseBtn.setAttribute("aria-label", paused ? "Resume" : "Pause");
       pauseBtn.setAttribute("title", paused ? "Resume" : "Pause");
       setDisabled(
         takebackBtn,
-        paused || gameOver || !allowTakeback || movesPlayed === 0,
+        paused || analyzing || gameOver || !allowTakeback || movesPlayed === 0,
       );
-      setDisabled(switchSidesBtn, paused || gameOver || !resignAvailable);
-      setDisabled(resignBtn, paused || gameOver || !resignAvailable);
+      setDisabled(switchSidesBtn, analyzing || gameOver || !resignAvailable);
+      setDisabled(resignBtn, paused || analyzing || gameOver || !resignAvailable);
+      // Analysis is reachable only from a paused game (and to stop, while
+      // analyzing). Eliminates the "pause + enter analysis" combined step.
+      setDisabled(
+        analyzeBtn,
+        gameOver || !resignAvailable || (!analyzing && !paused),
+      );
+      analyzeBtn.classList.toggle("is-active", analyzing);
+      analyzeBtn.setAttribute(
+        "aria-label",
+        analyzing ? "Stop analysis" : "Analysis mode",
+      );
+      analyzeBtn.setAttribute(
+        "title",
+        analyzing ? "Stop analysis" : "Analysis mode",
+      );
     }
 
     // --- Hook events for control-bar state changes (board state changes
@@ -206,6 +230,14 @@ export const playPerspective = {
             humanWhite = evt.payload.human_white;
           }
           if (evt.payload.turn) turn = evt.payload.turn;
+          if (typeof evt.payload.analyzing === "boolean") {
+            analyzing = evt.payload.analyzing;
+            view.setEnabled(!analyzing && !paused);
+            if (!analyzing) {
+              dismissAnalysisToast?.();
+              dismissAnalysisToast = null;
+            }
+          }
           boardHost.classList.remove("board-idle");
           // Disable New Game only when human-as-white is at startpos and
           // can simply make their first move to start play. Black-to-play
@@ -219,6 +251,9 @@ export const playPerspective = {
         case "game_result":
           gameOver = true;
           paused = false;
+          analyzing = false;
+          dismissAnalysisToast?.();
+          dismissAnalysisToast = null;
           resignAvailable = false;
           setDisabled(newGameBtn, false);
           boardHost.classList.add("board-idle");
@@ -342,6 +377,41 @@ export const playPerspective = {
       }
     };
 
+    const onAnalyze = async () => {
+      const wasAnalyzing = analyzing;
+      try {
+        await ctx.api(
+          "POST",
+          wasAnalyzing ? "/game/analysis/stop" : "/game/analysis/start",
+          {},
+        );
+        if (wasAnalyzing) {
+          dismissAnalysisToast?.();
+          dismissAnalysisToast = null;
+        } else {
+          dismissAnalysisToast?.();
+          const msg = document.createElement("span");
+          msg.style.display = "inline-flex";
+          msg.style.alignItems = "center";
+          msg.style.gap = "6px";
+          msg.append("Analysis mode on — click ");
+          const ic = document.createElement("wa-icon");
+          ic.setAttribute("name", "magnifying-glass");
+          msg.append(ic, " again to stop.");
+          dismissAnalysisToast = toast(msg, {
+            variant: "neutral",
+            duration: 0,
+          });
+        }
+      } catch (e) {
+        reportError(
+          ctx,
+          wasAnalyzing ? "Stop analysis failed" : "Start analysis failed",
+          e,
+        );
+      }
+    };
+
     // Cmd/Ctrl+O opens the import dialog. Skip when typing in an input or
     // when a dialog is already open, so it doesn't clobber an in-progress
     // form.
@@ -362,9 +432,12 @@ export const playPerspective = {
     takebackBtn.addEventListener("click", onTakeback);
     switchSidesBtn.addEventListener("click", onSwitchSides);
     pauseBtn.addEventListener("click", onPause);
+    analyzeBtn.addEventListener("click", onAnalyze);
 
     return {
       unmount() {
+        dismissAnalysisToast?.();
+        dismissAnalysisToast = null;
         offEvent();
         view.unmount();
         window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
@@ -375,6 +448,7 @@ export const playPerspective = {
         takebackBtn.removeEventListener("click", onTakeback);
         switchSidesBtn.removeEventListener("click", onSwitchSides);
         pauseBtn.removeEventListener("click", onPause);
+        analyzeBtn.removeEventListener("click", onAnalyze);
       },
     };
   },

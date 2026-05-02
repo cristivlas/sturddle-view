@@ -16,6 +16,7 @@ from ..engines import (
     EngineNotFoundError,
     EngineRegistry,
     probe_engine,
+    resolve_selected,
 )
 
 
@@ -146,12 +147,21 @@ def remove_engine(engine_id: str, request: Request) -> None:
 
 
 @router.post("/{engine_id}/select")
-def select_engine(engine_id: str, request: Request) -> dict:
+async def select_engine(engine_id: str, request: Request) -> dict:
     reg = _registry(request)
     try:
         reg.select(engine_id)
     except EngineNotFoundError as exc:
         raise HTTPException(status_code=404, detail="engine not found") from exc
+    # Eager swap so mid-analysis (no /game/* call follows) takes effect now.
+    s = request.app.state
+    hve = getattr(s, "hve", None)
+    if hve is not None:
+        path, name, options = resolve_selected(s.engines, s.settings)
+        if path is not None and hve.engine_path != path:
+            await hve.swap_engine(path)
+            hve.set_engine_name(name)
+            hve.set_engine_options(options)
     return {"selected_id": engine_id}
 
 

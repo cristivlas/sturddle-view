@@ -400,7 +400,8 @@ export function reportError(ctx, action, error) {
   ctx?.log?.(`${action}: ${message}`);
 }
 
-/** Transient toast. Returns undefined; non-blocking. */
+/** Transient toast. Pass duration: 0 (or Infinity) to keep it open until the
+ *  caller invokes the returned dismiss function. */
 export function toast(message, { variant = "neutral", duration = 4000 } = {}) {
   // Simple toast implementation; Web Awesome's callout supports more styling.
   const host = ensureContainer();
@@ -412,10 +413,21 @@ export function toast(message, { variant = "neutral", duration = 4000 } = {}) {
   }
   const t = document.createElement("div");
   t.className = `toast toast-${variant}`;
-  t.textContent = message;
+  if (message instanceof Node) {
+    t.appendChild(message);
+  } else {
+    t.textContent = message;
+  }
   stack.appendChild(t);
-  setTimeout(() => {
+  let dismissed = false;
+  const dismiss = () => {
+    if (dismissed) return;
+    dismissed = true;
     t.classList.add("toast-hide");
     setTimeout(() => t.remove(), 200);
-  }, duration);
+  };
+  if (duration && Number.isFinite(duration)) {
+    setTimeout(dismiss, duration);
+  }
+  return dismiss;
 }

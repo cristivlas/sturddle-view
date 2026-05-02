@@ -22,8 +22,8 @@ async def _get_hve(request: Request) -> HumanVsEngine:
             ),
         )
     if s.hve is not None and s.hve.engine_path != path:
-        await s.hve.shutdown()
-        s.hve = None
+        # Swap in-place to preserve the active game across engine changes.
+        await s.hve.swap_engine(path)
     if s.hve is None:
         s.hve = HumanVsEngine(
             path,
@@ -214,6 +214,26 @@ async def resume(request: Request) -> dict:
     hve = await _get_hve(request)
     try:
         await hve.resume()
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True}
+
+
+@router.post("/analysis/start")
+async def analysis_start(request: Request) -> dict:
+    hve = await _get_hve(request)
+    try:
+        await hve.start_analysis()
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True}
+
+
+@router.post("/analysis/stop")
+async def analysis_stop(request: Request) -> dict:
+    hve = await _get_hve(request)
+    try:
+        await hve.stop_analysis()
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return {"ok": True}

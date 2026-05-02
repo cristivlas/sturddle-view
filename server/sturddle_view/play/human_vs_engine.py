@@ -125,6 +125,11 @@ class HumanVsEngine:
         # Pause is only allowed on the human's turn (engine is idle then).
         # While paused, the tick loop is stopped and submit_move is rejected.
         self._paused: bool = False
+        # Analysis mode (UCI go infinite): clocks frozen, board read-only,
+        # engine streams info on the current position. Mutually exclusive
+        # with normal play; toggled via start_analysis/stop_analysis.
+        self._analysis_mode: bool = False
+        self._analysis_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
     @property
@@ -134,6 +139,10 @@ class HumanVsEngine:
     @property
     def is_paused(self) -> bool:
         return self._paused
+
+    @property
+    def is_analyzing(self) -> bool:
+        return self._analysis_mode
 
     def set_engine_options(self, options: dict | None) -> None:
         """Set the UCI options to apply on the next engine launch.
@@ -224,6 +233,8 @@ class HumanVsEngine:
         session, not seeded ones.
         """
         async with self._lock:
+            await self._cancel_analysis()
+            self._analysis_mode = False
             await self._cancel_think()
             await self._cancel_tick()
             engine = await self._ensure_engine()
@@ -267,6 +278,8 @@ class HumanVsEngine:
                 raise RuntimeError("no active game")
             if self._paused:
                 raise RuntimeError("game is paused")
+            if self._analysis_mode:
+                raise RuntimeError("analysis mode is on")
             if self._board.turn != (chess.WHITE if self._human_white else chess.BLACK):
                 raise RuntimeError("not human's turn")
             try:
@@ -333,6 +346,8 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
+            if self._analysis_mode:
+                raise RuntimeError("analysis mode is on")
             await self._cancel_think()
             human_color = chess.WHITE if self._human_white else chess.BLACK
             if self._board.turn == human_color:
@@ -373,31 +388,36 @@ class HumanVsEngine:
                 raise RuntimeError("no active game")
             if self._board.is_game_over():
                 raise RuntimeError("game is over")
-            if self._paused:
-                raise RuntimeError("cannot switch sides while paused")
+            if self._analysis_mode:
+                raise RuntimeError("cannot switch sides during analysis")
             await self._cancel_think()
             # Bake elapsed think time into the side-to-move's clock without
             # crediting the increment (no move was completed). Then restart
             # the timer so the new thinker's clock starts fresh from now.
+            # While paused, the clock isn't running so neither step applies.
             if self._turn_started_at is not None:
                 elapsed = time.monotonic() - self._turn_started_at
                 if self._board.turn == chess.WHITE:
                     self._white_time = max(0.0, self._white_time - elapsed)
                 else:
                     self._black_time = max(0.0, self._black_time - elapsed)
-            self._turn_started_at = time.monotonic()
+                self._turn_started_at = time.monotonic()
             self._human_white = not self._human_white
             await self._persist()
             await self._publish_board()
             await self._publish_clock()
-            engine_color = chess.BLACK if self._human_white else chess.WHITE
-            if self._board.turn == engine_color:
-                kick_engine = True
+            # Don't kick the engine while paused — resume() handles that.
+            if not self._paused:
+                engine_color = chess.BLACK if self._human_white else chess.WHITE
+                if self._board.turn == engine_color:
+                    kick_engine = True
         if kick_engine:
             await self._engine_to_move()
 
     async def resign(self) -> None:
         async with self._lock:
+            await self._cancel_analysis()
+            self._analysis_mode = False
             await self._cancel_think()
             await self._cancel_tick()
             if self._game_id is None:
@@ -429,6 +449,8 @@ class HumanVsEngine:
                 raise RuntimeError("no active game")
             if self._board.is_game_over():
                 raise RuntimeError("game is over")
+            if self._analysis_mode:
+                raise RuntimeError("cannot pause during analysis")
             if self._board.turn != (chess.WHITE if self._human_white else chess.BLACK):
                 raise RuntimeError("can only pause on your turn")
             if self._paused:
@@ -446,6 +468,7 @@ class HumanVsEngine:
             await self._publish_clock()
 
     async def resume(self) -> None:
+        kick_engine = False
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
@@ -459,9 +482,80 @@ class HumanVsEngine:
             # running with _paused=True flapping).
             self._start_tick()
             await self._publish_clock()
+            if not self._board.is_game_over():
+                engine_color = chess.BLACK if self._human_white else chess.WHITE
+                if (
+                    self._board.turn == engine_color
+                    and self._think_task is None
+                ):
+                    kick_engine = True
+        if kick_engine:
+            await self._engine_to_move()
+
+    async def start_analysis(self) -> None:
+        """Enter UCI go-infinite mode on the current position.
+
+        Only valid from a paused game — that guarantees no engine search
+        is in flight and the clock is already frozen.
+        """
+        async with self._lock:
+            if self._board is None or self._game_id is None:
+                raise RuntimeError("no active game")
+            if self._board.is_game_over():
+                raise RuntimeError("game is over")
+            if self._analysis_mode:
+                return
+            if not self._paused:
+                raise RuntimeError("pause the game before entering analysis")
+            self._analysis_mode = True
+            # Snapshot game_id + board under the lock so the task doesn't
+            # need to re-acquire it for setup (avoids a deadlock window
+            # against operations that hold the lock while cancelling us).
+            game_id = self._game_id
+            board = self._board.copy()
+            await self._publish_board()
+            await self._publish_clock()
+        self._analysis_task = asyncio.create_task(self._run_analysis(game_id, board))
+
+    async def stop_analysis(self) -> None:
+        """Leave analysis mode. Game stays paused until the user resumes;
+        on resume, the engine kicks off if it's its turn."""
+        async with self._lock:
+            if not self._analysis_mode:
+                return
+            self._analysis_mode = False
+        await self._cancel_analysis()
+        async with self._lock:
+            if self._board is None or self._game_id is None:
+                return
+            self._paused = True
+            self._turn_started_at = None
+            await self._persist()
+            await self._publish_board()
+            await self._publish_clock()
+
+    async def swap_engine(self, path: str) -> None:
+        """Replace the engine binary; preserves the active game."""
+        kick_engine = False
+        async with self._lock:
+            await self._cancel_analysis()
+            self._analysis_mode = False
+            await self._cancel_think()
+            self._engine_path = path
+            self._engine_name = None
+            if self._board is not None and self._game_id is not None:
+                await self._publish_board()
+                if not self._board.is_game_over() and not self._paused:
+                    engine_color = chess.BLACK if self._human_white else chess.WHITE
+                    if self._board.turn == engine_color:
+                        kick_engine = True
+        if kick_engine:
+            await self._engine_to_move()
 
     async def shutdown(self) -> None:
         async with self._lock:
+            await self._cancel_analysis()
+            self._analysis_mode = False
             await self._cancel_think()
             await self._cancel_tick()
             if self._engine is not None:
@@ -578,6 +672,33 @@ class HumanVsEngine:
         if self._think_task and not self._think_task.done():
             self._think_task.cancel()
         self._think_task = None
+        self._analysis = None
+
+    async def _cancel_analysis(self) -> None:
+        """Stop the infinite-analysis loop gracefully.
+
+        Sends UCI `stop` via AnalysisResult.stop(), then awaits the task
+        briefly. Falls back to task cancellation if the engine doesn't
+        wind down within the grace period — keeps the engine process
+        alive across analysis toggles (avoids re-warming hash/NN).
+        """
+        if self._analysis is not None:
+            try:
+                self._analysis.stop()
+            except Exception:
+                pass
+        if self._analysis_task and not self._analysis_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(self._analysis_task), timeout=2.0)
+            except asyncio.TimeoutError:
+                self._analysis_task.cancel()
+                try:
+                    await self._analysis_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._analysis_task = None
         self._analysis = None
 
     async def _cancel_tick(self) -> None:
@@ -698,6 +819,34 @@ class HumanVsEngine:
             await self._cancel_tick()
             await self._publish_result()
 
+    async def _run_analysis(self, game_id: str, board: chess.Board) -> None:
+        try:
+            engine = await self._ensure_engine()
+        except Exception:
+            log.exception("could not start engine for analysis")
+            return
+        try:
+            with await engine.analysis(board) as analysis:
+                self._analysis = analysis
+                async for info in analysis:
+                    if "pv" in info or "depth" in info or "score" in info:
+                        await self._bus.publish(
+                            Event(
+                                kind="engine_info",
+                                game_id=game_id,
+                                payload=_serialize_info(info, board),
+                            )
+                        )
+        except chess.engine.EngineTerminatedError:
+            log.exception("engine terminated mid-analysis")
+            await self._bus.publish(
+                Event(kind="system", game_id=game_id, payload={"error": "engine_terminated"})
+            )
+        except (asyncio.CancelledError, RuntimeError, BrokenPipeError):
+            return
+        finally:
+            self._analysis = None
+
     def _board_event(self) -> Event:
         assert self._board is not None and self._game_id is not None
         opening_payload = None
@@ -725,6 +874,7 @@ class HumanVsEngine:
                 "engine_name": self._engine_name,
                 "opening": opening_payload,
                 "tablebase": None,
+                "analyzing": self._analysis_mode,
             },
         )
 
@@ -737,8 +887,11 @@ class HumanVsEngine:
                 "white_time": self._remaining(chess.WHITE),
                 "black_time": self._remaining(chess.BLACK),
                 "turn": "white" if self._board.turn else "black",
-                "running": not self._board.is_game_over() and not self._paused,
+                "running": not self._board.is_game_over()
+                and not self._paused
+                and not self._analysis_mode,
                 "paused": self._paused,
+                "analyzing": self._analysis_mode,
             },
         )
 
