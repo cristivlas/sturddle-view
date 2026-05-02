@@ -233,7 +233,9 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
       scoreText = `M${p.score_mate}`;
     }
     evalScoreEl.textContent = scoreText;
-    evalDepthEl.textContent = p.depth != null ? `d${p.depth}` : "";
+    evalDepthEl.textContent = p.depth != null
+      ? (p.seldepth != null ? `d${p.depth}/${p.seldepth}` : `d${p.depth}`)
+      : "";
     evalTbhitsEl.textContent = p.tbhits ? `tb ${p.tbhits}` : "";
     if (p.pv && p.pv.length) {
       pvEl.textContent = p.pv.slice(0, 12).join(" ");

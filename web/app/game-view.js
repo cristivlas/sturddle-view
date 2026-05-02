@@ -452,7 +452,10 @@ export function mountGameView(container, opts = {}) {
       case "engine_info":
         if (!showEngineInfo) break;
         if (engineDepth && evt.payload.depth != null) {
-          engineDepth.textContent = `d${evt.payload.depth}`;
+          const sd = evt.payload.seldepth;
+          engineDepth.textContent = sd != null
+            ? `d${evt.payload.depth}/${sd}`
+            : `d${evt.payload.depth}`;
         }
         if (engineScore && evt.payload.score) {
           engineScore.textContent = fmtScore(evt.payload.score);

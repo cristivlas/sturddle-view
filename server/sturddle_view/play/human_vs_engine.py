@@ -36,6 +36,8 @@ def _serialize_info(info: chess.engine.InfoDict, board: chess.Board) -> dict:
     out: dict = {}
     if "depth" in info:
         out["depth"] = info["depth"]
+    if "seldepth" in info:
+        out["seldepth"] = info["seldepth"]
     if "nodes" in info:
         out["nodes"] = info["nodes"]
     if "nps" in info:
