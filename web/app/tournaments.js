@@ -2,9 +2,10 @@
 // Path/defaults configuration lives in the global Settings dialog under
 // the "Tournament" tab — not here.
 //
-// Per-row verbs: Info / Start (or Resume) / Pause / Open workspace / Remove.
-// Clicking + New Tournament opens a dialog with engine-list builder and
-// template form pre-filled from the saved defaults.
+// Row-targeted verbs (Start/Resume, Pause, Open workspace, Info, Remove)
+// live in a left-side vertical ribbon that mirrors the Play perspective's
+// look and feel. Clicking a row selects it; ribbon actions target the
+// selected tournament. New / Sort / Window remain in the top menubar.
 
 import { confirm, reportError, showDialog, toast } from "./dialogs.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
@@ -35,11 +36,35 @@ export function mountTournaments({ container, api, events, log, token }) {
         </li>
       </menu>
 
-      <div class="tournaments-empty hidden">
-        <p class="empty-message"></p>
-      </div>
+      <div class="tournaments-body">
+        <div class="tournaments-ribbon" role="toolbar" aria-label="Tournament actions">
+          <button class="ribbon-btn t-start" disabled aria-label="Start" title="Start">
+            <wa-icon class="t-start-icon" name="play"></wa-icon>
+          </button>
+          <button class="ribbon-btn t-stop" disabled aria-label="Pause" title="Pause">
+            <wa-icon name="pause"></wa-icon>
+          </button>
+          <span class="ribbon-sep" aria-hidden="true"></span>
+          <button class="ribbon-btn t-workspace" disabled aria-label="Open workspace" title="Open workspace">
+            <wa-icon name="window-restore"></wa-icon>
+          </button>
+          <button class="ribbon-btn t-info" disabled aria-label="Info" title="Info">
+            <wa-icon name="circle-info"></wa-icon>
+          </button>
+          <span class="ribbon-sep" aria-hidden="true"></span>
+          <button class="ribbon-btn ribbon-btn--danger t-remove" disabled aria-label="Remove" title="Remove">
+            <wa-icon name="trash"></wa-icon>
+          </button>
+        </div>
 
-      <ul class="tournaments-list" role="list"></ul>
+        <div class="tournaments-body-main">
+          <div class="tournaments-empty hidden">
+            <p class="empty-message"></p>
+          </div>
+
+          <ul class="tournaments-list" role="listbox" tabindex="0"></ul>
+        </div>
+      </div>
     </div>
   `;
 
@@ -52,6 +77,13 @@ export function mountTournaments({ container, api, events, log, token }) {
   const emptyEl = container.querySelector(".tournaments-empty");
   const emptyMsg = emptyEl.querySelector(".empty-message");
 
+  const ribbonStartBtn = container.querySelector(".t-start");
+  const ribbonStartIcon = container.querySelector(".t-start-icon");
+  const ribbonStopBtn = container.querySelector(".t-stop");
+  const ribbonWorkspaceBtn = container.querySelector(".t-workspace");
+  const ribbonInfoBtn = container.querySelector(".t-info");
+  const ribbonRemoveBtn = container.querySelector(".t-remove");
+
   const SORT_KEY_LS = "sturddle.tournaments.sortBy";
   const VALID_SORTS = new Set(["name", "status", "created_at", "started_at"]);
   let sortBy = VALID_SORTS.has(localStorage.getItem(SORT_KEY_LS))
@@ -59,6 +91,7 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   let tournaments = [];
   let activeId = null;
+  let selectedId = null;
   let settings = null; // { fastchess_path, tournaments_root, default_template, fastchess_detected }
 
   // ---- API helpers --------------------------------------------------------
@@ -96,6 +129,8 @@ export function mountTournaments({ container, api, events, log, token }) {
       emptyMsg.textContent =
         "fastchess not configured — open Settings → Tournament to set the binary path.";
       newBtn.disabled = true;
+      selectedId = null;
+      syncRibbon();
       return;
     }
     newBtn.disabled = false;
@@ -103,13 +138,20 @@ export function mountTournaments({ container, api, events, log, token }) {
     if (noTournaments) {
       emptyEl.classList.remove("hidden");
       emptyMsg.textContent = "No tournaments yet — click + New Tournament to create one.";
+      selectedId = null;
+      syncRibbon();
       return;
     }
     emptyEl.classList.add("hidden");
 
-    for (const t of sortedTournaments()) {
+    const sorted = sortedTournaments();
+    if (!selectedId || !sorted.some((t) => t.id === selectedId)) {
+      selectedId = (activeId && sorted.some((t) => t.id === activeId)) ? activeId : sorted[0].id;
+    }
+    for (const t of sorted) {
       listEl.appendChild(renderRow(t));
     }
+    syncRibbon();
   }
 
   function sortedTournaments() {
@@ -129,10 +171,9 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   function renderRow(t) {
     const li = document.createElement("li");
-    li.className = "tournament-row";
+    li.className = "tournament-row" + (t.id === selectedId ? " selected" : "");
     li.dataset.id = t.id;
 
-    const isActive = t.id === activeId;
     const status = t.status;
 
     li.innerHTML = `
@@ -142,23 +183,6 @@ export function mountTournaments({ container, api, events, log, token }) {
         <span class="tournament-status status-${status}">${status}</span>
         <span class="tournament-engines muted"></span>
       </div>
-      <div class="tournament-row-actions">
-        <wa-button class="row-start icon-only" size="small">
-          <wa-icon class="row-start-icon" name="play"></wa-icon>
-        </wa-button>
-        <wa-button class="row-stop icon-only" size="small" aria-label="Pause" title="Pause">
-          <wa-icon name="pause"></wa-icon>
-        </wa-button>
-        <wa-button class="row-workspace icon-only" size="small" aria-label="Open workspace" title="Open workspace">
-          <wa-icon name="window-restore"></wa-icon>
-        </wa-button>
-        <wa-button class="row-info icon-only" size="small" aria-label="Info" title="Info">
-          <wa-icon name="circle-info"></wa-icon>
-        </wa-button>
-        <wa-button class="row-remove icon-only" size="small" aria-label="Remove" title="Remove">
-          <wa-icon name="trash"></wa-icon>
-        </wa-button>
-      </div>
     `;
 
     li.querySelector(".tournament-name").textContent = t.name;
@@ -166,37 +190,104 @@ export function mountTournaments({ container, api, events, log, token }) {
     const engineNames = (t.engines || []).map((e) => e.name).join(", ");
     li.querySelector(".tournament-engines").textContent = engineNames;
 
-    const infoBtn = li.querySelector(".row-info");
-    const startBtn = li.querySelector(".row-start");
-    const stopBtn = li.querySelector(".row-stop");
-    const removeBtn = li.querySelector(".row-remove");
-    const workspaceBtn = li.querySelector(".row-workspace");
-
-    const anotherRunning = activeId !== null && !isActive;
-    startBtn.disabled = isActive || anotherRunning || status === "running" || status === "done";
-    stopBtn.disabled = !isActive;
-    removeBtn.disabled = isActive;
-
-    const isResume = status === "stopped";
-    const startIcon = li.querySelector(".row-start-icon");
-    startIcon.setAttribute("name", isResume ? "forward-step" : "play");
-    const startLabel = isResume ? "Resume" : "Start";
-    startBtn.setAttribute("aria-label", startLabel);
-    startBtn.setAttribute("title", startLabel);
-
-    infoBtn.addEventListener("click", (ev) => { ev.stopPropagation(); openInfoDialog(t); });
-    startBtn.addEventListener("click", (ev) => { ev.stopPropagation(); startOne(t); });
-    stopBtn.addEventListener("click", async (ev) => {
-      ev.stopPropagation();
-      stopBtn.disabled = true;
-      stopBtn.innerHTML = '<wa-spinner class="spinner-accent"></wa-spinner>';
-      await stopOne(t);
+    li.addEventListener("click", () => {
+      listEl.focus({ preventScroll: true });
+      if (selectedId === t.id) return;
+      selectedId = t.id;
+      for (const el of listEl.querySelectorAll(".tournament-row.selected")) {
+        el.classList.remove("selected");
+      }
+      li.classList.add("selected");
+      syncRibbon();
     });
-    removeBtn.addEventListener("click", (ev) => { ev.stopPropagation(); removeOne(t); });
-    workspaceBtn.addEventListener("click", (ev) => { ev.stopPropagation(); openWorkspace(t); });
+    li.addEventListener("dblclick", () => openInfoDialog(t));
 
     return li;
   }
+
+  function selectedTournament() {
+    return tournaments.find((t) => t.id === selectedId) || null;
+  }
+
+  function syncRibbon() {
+    const t = selectedTournament();
+    if (!t) {
+      ribbonStartBtn.disabled = true;
+      ribbonStopBtn.disabled = true;
+      ribbonWorkspaceBtn.disabled = true;
+      ribbonInfoBtn.disabled = true;
+      ribbonRemoveBtn.disabled = true;
+      ribbonStartIcon.setAttribute("name", "play");
+      ribbonStartBtn.setAttribute("aria-label", "Start");
+      ribbonStartBtn.setAttribute("title", "Start");
+      return;
+    }
+    const isActive = t.id === activeId;
+    const anotherRunning = activeId !== null && !isActive;
+    const status = t.status;
+    const isResume = status === "stopped";
+
+    ribbonStartBtn.disabled = isActive || anotherRunning || status === "running" || status === "done";
+    ribbonStopBtn.disabled = !isActive;
+    ribbonRemoveBtn.disabled = isActive;
+    ribbonWorkspaceBtn.disabled = false;
+    ribbonInfoBtn.disabled = false;
+
+    ribbonStartIcon.setAttribute("name", isResume ? "forward-step" : "play");
+    const startLabel = isResume ? "Resume" : "Start";
+    ribbonStartBtn.setAttribute("aria-label", startLabel);
+    ribbonStartBtn.setAttribute("title", startLabel);
+    // Restore stop icon (may have been swapped to spinner during a stop op).
+    if (!ribbonStopBtn.querySelector("wa-icon")) {
+      ribbonStopBtn.innerHTML = '<wa-icon name="pause"></wa-icon>';
+    }
+  }
+
+  listEl.addEventListener("keydown", (ev) => {
+    if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp" && ev.key !== "Home" && ev.key !== "End") return;
+    const sorted = sortedTournaments();
+    if (sorted.length === 0) return;
+    const cur = sorted.findIndex((t) => t.id === selectedId);
+    let next = cur;
+    if (ev.key === "ArrowDown") next = cur < 0 ? 0 : Math.min(cur + 1, sorted.length - 1);
+    else if (ev.key === "ArrowUp") next = cur < 0 ? sorted.length - 1 : Math.max(cur - 1, 0);
+    else if (ev.key === "Home") next = 0;
+    else if (ev.key === "End") next = sorted.length - 1;
+    if (next === cur) { ev.preventDefault(); return; }
+    ev.preventDefault();
+    selectedId = sorted[next].id;
+    for (const el of listEl.querySelectorAll(".tournament-row.selected")) el.classList.remove("selected");
+    const li = listEl.querySelector(`.tournament-row[data-id="${selectedId}"]`);
+    if (li) {
+      li.classList.add("selected");
+      li.scrollIntoView({ block: "nearest" });
+    }
+    syncRibbon();
+  });
+
+  ribbonStartBtn.addEventListener("click", () => {
+    const t = selectedTournament();
+    if (t && !ribbonStartBtn.disabled) startOne(t);
+  });
+  ribbonStopBtn.addEventListener("click", async () => {
+    const t = selectedTournament();
+    if (!t || ribbonStopBtn.disabled) return;
+    ribbonStopBtn.disabled = true;
+    ribbonStopBtn.innerHTML = '<wa-spinner class="spinner-accent"></wa-spinner>';
+    await stopOne(t);
+  });
+  ribbonWorkspaceBtn.addEventListener("click", () => {
+    const t = selectedTournament();
+    if (t) openWorkspace(t);
+  });
+  ribbonInfoBtn.addEventListener("click", () => {
+    const t = selectedTournament();
+    if (t) openInfoDialog(t);
+  });
+  ribbonRemoveBtn.addEventListener("click", () => {
+    const t = selectedTournament();
+    if (t && !ribbonRemoveBtn.disabled) removeOne(t);
+  });
 
   // ---- Verbs --------------------------------------------------------------
 
@@ -240,9 +331,11 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   function openWorkspace(t) {
     const menubar = container.querySelector(".tournaments-menubar");
+    const ribbon = container.querySelector(".tournaments-ribbon");
     const rect = menubar.getBoundingClientRect();
+    const ribbonRight = ribbon ? Math.round(ribbon.getBoundingClientRect().right) : 0;
     const top = Math.round(rect.bottom);
-    const left = Math.round(rect.left);
+    const left = Math.max(Math.round(rect.left), ribbonRight);
     openTournamentWorkspace({ api, events, log, token, tournament: t, top, left });
     syncWindowMenu();
   }

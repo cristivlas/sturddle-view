@@ -82,6 +82,7 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
     class: "sturddle-wb sturddle-wb-live no-full",
   });
   if (top > 0 && wb.y < top) wb.move(wb.x, top);
+  if (left > 0 && wb.x < left) wb.move(left, wb.y);
   liveWindows.set(proxyId, wb);
 
   // Keep the board square and fitting the WinBox window on every resize.
