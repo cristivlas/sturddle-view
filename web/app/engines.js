@@ -191,7 +191,7 @@ export function mountEngines({ container, api, onError }) {
   }
 
   function onOutsideClick(e) {
-    if (!searchWrap.contains(e.target) && e.target !== searchBtn) closeSearch();
+    if (!searchWrap.contains(e.target) && !searchBtn.contains(e.target)) closeSearch();
   }
 
   function onSearchKey(e) {

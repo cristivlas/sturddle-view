@@ -595,14 +595,20 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
   border: 1px solid var(--wa-color-border-loud, #353841);
   border-left: none;
   border-radius: 0 4px 4px 0;
-  transition: width 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94),
-              padding 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  visibility: hidden;
   pointer-events: none;
+  transition: width 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+              padding 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+              visibility 0s 0.45s;
 }
 .engines-search-wrap.open {
   width: 480px;
   padding: 6px 10px;
   pointer-events: auto;
+  visibility: visible;
+  transition: width 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+              padding 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+              visibility 0s;
 }
 @media (max-width: 800px), (max-height: 600px) {
   .engines-search-btn { display: none !important; }
