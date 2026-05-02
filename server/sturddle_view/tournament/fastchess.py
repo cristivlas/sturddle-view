@@ -455,7 +455,7 @@ class FastchessRunner:
                 # flow through here; that's the proxy's job (Slice 9b).
                 await self._emit("runner_log", {
                     "stream": tag,
-                    "line": decoded.rstrip("\n"),
+                    "line": decoded.rstrip("\r\n"),
                 })
         except asyncio.CancelledError:
             raise

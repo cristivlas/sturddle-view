@@ -132,9 +132,11 @@ function buildField(name, entry, current, ctx) {
  * @param {object} args
  * @param {object} args.engine - Engine registry entry (must have option_schema).
  * @param {Function} args.api - api(method, path, body?) -> Promise.
+ * @param {string} [args.probeError] - If the most recent UCI probe failed,
+ *   the message to display in place of the generic "no options" note.
  * @returns {Promise<object|null>} the saved engine on commit, or null on cancel.
  */
-export function showEngineOptionsDialog({ engine, api }) {
+export function showEngineOptionsDialog({ engine, api, probeError = null }) {
   const schema = engine.option_schema || {};
   const startValues = {};
   for (const [name, entry] of Object.entries(schema)) {
@@ -180,8 +182,9 @@ export function showEngineOptionsDialog({ engine, api }) {
       if (names.length === 0) {
         const note = document.createElement("p");
         note.className = "muted";
-        note.textContent =
-          "This engine reported no UCI options. (Click Refresh to re-query.)";
+        note.textContent = probeError
+          ? `UCI probe failed: ${probeError} (Click Refresh to retry.)`
+          : "This engine reported no UCI options. (Click Refresh to re-query.)";
         form.appendChild(note);
       }
       for (const name of names) {

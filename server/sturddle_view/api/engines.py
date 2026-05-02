@@ -79,7 +79,7 @@ async def _ensure_schema(reg: EngineRegistry, e: Engine) -> Engine:
     """
     if e.option_schema:
         return e
-    _uci_name, schema = await probe_engine(e.path)
+    _uci_name, schema, _err = await probe_engine(e.path)
     if not schema:
         return e
     try:
@@ -105,7 +105,7 @@ async def list_engines(request: Request) -> dict:
 async def add_engine(payload: EngineCreate, request: Request) -> dict:
     reg = _registry(request)
     resolved_path = _validate_engine_path(payload.path)
-    uci_name, schema = await probe_engine(resolved_path)
+    uci_name, schema, probe_error = await probe_engine(resolved_path)
     name = (payload.name or "").strip() or uci_name or Path(resolved_path).name
     try:
         e = reg.add(
@@ -121,7 +121,13 @@ async def add_engine(payload: EngineCreate, request: Request) -> dict:
     # alone.
     if reg.selected_id is None:
         reg.select(e.id)
-    return _serialize(e)
+    body = _serialize(e)
+    if probe_error:
+        # Surface the probe failure so the UI can warn the user. The engine
+        # is still registered (best-effort), but with no UCI options known —
+        # without this, the per-engine dialog would silently look "empty".
+        body["probe_error"] = probe_error
+    return body
 
 
 @router.patch("/{engine_id}")
@@ -177,11 +183,12 @@ async def refresh_engine_schema(engine_id: str, request: Request) -> dict:
         e = reg.get(engine_id)
     except EngineNotFoundError as exc:
         raise HTTPException(status_code=404, detail="engine not found") from exc
-    _uci_name, schema = await probe_engine(e.path)
+    _uci_name, schema, probe_error = await probe_engine(e.path)
     if not schema:
-        raise HTTPException(
-            status_code=502, detail="could not capture options from engine"
-        )
+        detail = "could not capture options from engine"
+        if probe_error:
+            detail = f"{detail}: {probe_error}"
+        raise HTTPException(status_code=502, detail=detail)
     try:
         e = reg.update(engine_id, option_schema=schema)
     except EngineNotFoundError as exc:

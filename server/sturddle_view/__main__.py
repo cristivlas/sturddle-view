@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import os
+import sys
 
 import uvicorn
 
@@ -48,11 +50,19 @@ def main() -> None:
         run_desktop(host=host, port=port)
         return
 
+    # On Windows, uvicorn's reload mode forces SelectorEventLoop in the worker,
+    # which cannot spawn subprocesses (asyncio raises NotImplementedError from
+    # _make_subprocess_transport). We need ProactorEventLoop to launch UCI engines.
+    loop: object = "auto"
+    if sys.platform == "win32" and args.reload:
+        loop = asyncio.ProactorEventLoop
+
     uvicorn.run(
         "sturddle_view.app:create_app",
         host=host,
         port=port,
         reload=args.reload,
+        loop=loop,
         factory=True,
         # Use the project's logging config (configure_logging above), not
         # uvicorn's default — which would otherwise overwrite our settings

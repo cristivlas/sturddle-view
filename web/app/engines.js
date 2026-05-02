@@ -6,6 +6,23 @@
 import { confirm, pickFile, toast } from "./dialogs.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 
+// The shared api() wrapper packs failures as "METHOD path -> NNN <body>".
+// Pull the inner FastAPI {"detail": "..."} string out so toasts and inline
+// messages don't show the URL envelope.
+function extractErrorDetail(err) {
+  const msg = err?.message || String(err);
+  const bodyStart = msg.indexOf("{");
+  if (bodyStart >= 0) {
+    try {
+      const parsed = JSON.parse(msg.slice(bodyStart));
+      if (parsed?.detail) return String(parsed.detail);
+    } catch {
+      /* fall through */
+    }
+  }
+  return msg;
+}
+
 export function mountEngines({ container, api, onError }) {
   container.innerHTML = `
     <div class="engines-panel">
@@ -278,11 +295,24 @@ export function mountEngines({ container, api, onError }) {
   async function openOptionsForSelected() {
     if (!selectedDetailId) return;
     let engine = engines.find((x) => x.id === selectedDetailId);
+    // If we have no cached UCI options, try one auto re-probe before
+    // opening — heals the case where the original add-time probe failed
+    // (e.g. transient spawn error) so the user doesn't see an empty dialog
+    // and have to click Refresh themselves.
+    let probeError = null;
+    if (engine && !Object.keys(engine.option_schema || {}).length) {
+      try {
+        engine = await api("POST", `/engines/${engine.id}/refresh-schema`, {});
+      } catch (e) {
+        probeError = extractErrorDetail(e);
+      }
+    }
     while (engine) {
-      const result = await showEngineOptionsDialog({ engine, api });
+      const result = await showEngineOptionsDialog({ engine, api, probeError });
       if (result === null) break; // dismissed without saving
       if (result?.__refresh || result?.__reopen) {
         engine = result.engine;
+        probeError = null;
         continue;
       }
       refresh();
@@ -300,7 +330,16 @@ export function mountEngines({ container, api, onError }) {
     if (!path) return;
     try {
       const created = await api("POST", "/engines", { path });
-      toast(`Added ${created.name}`, { variant: "success" });
+      if (created.probe_error) {
+        // Engine row was created but the UCI probe failed — warn so the
+        // user knows why the per-engine options dialog will be empty.
+        toast(
+          `Added ${created.name}, but UCI probe failed: ${created.probe_error}`,
+          { variant: "warning" },
+        );
+      } else {
+        toast(`Added ${created.name}`, { variant: "success" });
+      }
       selectedDetailId = created.id;
       refresh();
     } catch (e) {

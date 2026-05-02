@@ -176,6 +176,66 @@ def test_first_add_auto_selects(client, exe_a, exe_b):
     assert client.get("/engines").json()["selected_id"] == eid_a
 
 
+async def test_probe_engine_returns_error_when_spawn_fails(monkeypatch, exe_a):
+    """probe_engine surfaces the spawn failure as a string instead of swallowing it."""
+    import chess.engine
+
+    from sturddle_view.engines import probe_engine
+
+    async def boom(*_a, **_kw):
+        raise NotImplementedError("nope")
+
+    monkeypatch.setattr(chess.engine, "popen_uci", boom)
+    uci_name, schema, error = await probe_engine(exe_a)
+    assert uci_name is None
+    assert schema == {}
+    assert error and "NotImplementedError" in error and "nope" in error
+
+
+def test_add_includes_probe_error_when_probe_fails(client, monkeypatch, exe_a):
+    """A failing probe still registers the engine, but tags the response so the UI can warn."""
+    async def fake_probe(_path):
+        return None, {}, "NotImplementedError: spawn unsupported"
+
+    monkeypatch.setattr("sturddle_view.api.engines.probe_engine", fake_probe)
+    r = client.post("/engines", json={"path": exe_a})
+    assert r.status_code == 201
+    body = r.json()
+    assert body["probe_error"] == "NotImplementedError: spawn unsupported"
+    assert body["option_schema"] == {}
+    # Engine is in the registry and was auto-selected as the first add.
+    listed = client.get("/engines").json()
+    assert [e["id"] for e in listed["engines"]] == [body["id"]]
+    assert listed["selected_id"] == body["id"]
+
+
+def test_add_omits_probe_error_on_success(client, monkeypatch, exe_a):
+    """The success response shape stays unchanged — no `probe_error` key when the probe worked."""
+    async def fake_probe(_path):
+        return "FakeEngine", {"Hash": {"type": "spin", "default": 16}}, None
+
+    monkeypatch.setattr("sturddle_view.api.engines.probe_engine", fake_probe)
+    r = client.post("/engines", json={"path": exe_a})
+    assert r.status_code == 201
+    body = r.json()
+    assert "probe_error" not in body
+    assert body["option_schema"] == {"Hash": {"type": "spin", "default": 16}}
+
+
+def test_refresh_schema_502_includes_probe_error_in_detail(client, monkeypatch, exe_a):
+    """The dialog's Refresh button needs the underlying reason, not just a generic 502."""
+    # First add succeeds (real probe, may yield empty schema — that's fine).
+    eid = client.post("/engines", json={"path": exe_a}).json()["id"]
+
+    async def fake_probe(_path):
+        return None, {}, "NotImplementedError: spawn unsupported"
+
+    monkeypatch.setattr("sturddle_view.api.engines.probe_engine", fake_probe)
+    r = client.post(f"/engines/{eid}/refresh-schema")
+    assert r.status_code == 502
+    assert "NotImplementedError: spawn unsupported" in r.json()["detail"]
+
+
 def test_auth_required(tmp_path):
     settings = Settings(token="test-token")
     registry = EngineRegistry(path=tmp_path / "engines.json")

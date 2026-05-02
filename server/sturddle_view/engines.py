@@ -31,20 +31,25 @@ def default_registry_path() -> Path:
 _HIDDEN_OPTIONS = {"multipv", "ponder", "uci_chess960", "uci_variant", "uci_analysemode"}
 
 
-async def probe_engine(engine_path: str) -> tuple[str | None, dict[str, dict]]:
-    """Briefly spawn the engine; return (uci_id_name, option_schema).
+async def probe_engine(
+    engine_path: str,
+) -> tuple[str | None, dict[str, dict], str | None]:
+    """Briefly spawn the engine; return (uci_id_name, option_schema, error).
 
     `option_schema` is a {name: {type, default, min?, max?, vars?}} dict,
     skipping engine-managed options (multipv, ponder, etc.). `uci_id_name`
     is what the engine announces via UCI `id name`, or None if unavailable.
-    Best-effort: on any failure logs and returns (None, {}) so the engine
-    can still be registered.
+    `error` is None on success, or a short human-readable failure reason —
+    callers can surface it to the UI so a half-broken registry entry is
+    not silently presented as "engine reported no options".
+    Best-effort: on any failure logs and returns (None, {}, error) so the
+    engine can still be registered.
     """
     try:
         transport, engine = await chess.engine.popen_uci(engine_path)
-    except Exception:
+    except Exception as e:
         log.exception("could not spawn %s for probe", engine_path)
-        return None, {}
+        return None, {}, f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
     try:
         uci_name = engine.id.get("name") or None
         schema: dict[str, dict] = {}
@@ -59,7 +64,7 @@ async def probe_engine(engine_path: str) -> tuple[str | None, dict[str, dict]]:
             if opt.var:
                 entry["vars"] = list(opt.var)
             schema[name] = entry
-        return uci_name, schema
+        return uci_name, schema, None
     finally:
         try:
             await engine.quit()
