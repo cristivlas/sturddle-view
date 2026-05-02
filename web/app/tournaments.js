@@ -336,7 +336,8 @@ export function mountTournaments({ container, api, events, log, token }) {
     const menubar = container.querySelector(".tournaments-menubar");
     const ribbon = container.querySelector(".tournaments-ribbon");
     const rect = menubar.getBoundingClientRect();
-    const ribbonRight = ribbon ? Math.round(ribbon.getBoundingClientRect().right) : 0;
+    const ribbonRect = ribbon ? ribbon.getBoundingClientRect() : null;
+    const ribbonRight = (ribbonRect && ribbonRect.left < 8) ? Math.round(ribbonRect.right) : 0;
     const top = Math.round(rect.bottom);
     const left = Math.max(Math.round(rect.left), ribbonRight);
     openTournamentWorkspace({ api, events, log, token, tournament: t, top, left });
