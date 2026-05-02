@@ -3,6 +3,7 @@
   --fg: #e8e8e8;
   --muted: #888;
   --accent: #f59e0b;
+  --accent-rgb: 245, 158, 11;
   /* TODO: revisit unifying --accent and --accent-line into a single token. */
   --accent-line: rgba(224, 155, 58, 0.75);
   --panel: #25272d;
@@ -15,8 +16,29 @@
   --wa-font-family-heading: var(--wa-font-family-body);
   --wa-font-family-code: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, monospace;
 
-  --wa-color-danger-fill-loud: #8a5a3c;
-  --wa-color-danger-on-loud: #f4e4d2;
+  /* Brand mapped to a deep, desaturated amber so primary actions live in the
+     same warm family as --accent without competing for "active state" reads.
+     --accent stays bright (state); brand is darker (primary chrome).
+     Web Awesome 2 uses a 5..95 tonal scale; brand-50 is the canonical mid
+     shade and other tokens (fill-loud, focus ring, border-loud) derive from
+     it. Mapping the full scale prevents blue from leaking through any
+     unmapped derived token. */
+  --wa-color-brand-5:  #1c0c02;
+  --wa-color-brand-10: #431407;
+  --wa-color-brand-20: #7c2d12;
+  --wa-color-brand-30: #9a3412;
+  --wa-color-brand-40: #92400e;
+  --wa-color-brand-50: #a16207;
+  --wa-color-brand-60: #c2620a;
+  --wa-color-brand-70: #d97706;
+  --wa-color-brand-80: #ea580c;
+  --wa-color-brand-90: #fb923c;
+  --wa-color-brand-95: #fdba74;
+
+  /* TODO: revisit danger tone — between wine (#7f1d1d) and burgundy (#722f37);
+     may want a touch more saturation once the warm palette settles. */
+  --wa-color-danger-fill-loud: #7a2a2a;
+  --wa-color-danger-on-loud: #fee2e2;
   --wa-color-neutral-fill-loud: #3a3d44;
   --wa-color-neutral-on-loud: #e8e8e8;
   --wa-color-overlay-modal: rgb(0 0 0 / 0.45);
@@ -24,6 +46,10 @@
 
 html { font-size: 16px; }
 :root { --wa-font-size-scale: 1; }
+
+a { color: var(--wa-color-brand-70); }
+::selection { background: var(--wa-color-brand-fill-loud); color: #fff; }
+:focus-visible { outline-color: var(--wa-color-focus, var(--wa-color-brand-60)); }
 
 * { box-sizing: border-box; }
 
@@ -65,6 +91,7 @@ header {
   border-bottom: 2px solid var(--accent-line);
 }
 header h1 { margin: 0; font-size: 16px; color: #b8b8b8; font-weight: 500; }
+nav { display: flex; gap: 6px; }
 nav button {
   background: transparent;
   color: var(--fg);
@@ -75,6 +102,10 @@ nav button {
   cursor: pointer;
 }
 nav button:hover { border-bottom-color: rgba(224, 155, 58, 0.75); }
+nav button:focus-visible {
+  outline: 2px solid var(--wa-color-focus, var(--wa-color-brand-60));
+  outline-offset: 0;
+}
 nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
 .conn {
   margin-left: auto;
@@ -94,8 +125,8 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   letter-spacing: 1.2px;
   text-transform: uppercase;
   color: var(--accent);
-  background: rgba(245, 158, 11, 0.12);
-  border: 1px solid rgba(245, 158, 11, 0.4);
+  background: rgba(var(--accent-rgb), 0.12);
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
   border-radius: 10px;
 }
 .paused-badge.hidden { display: none; }
@@ -194,7 +225,7 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 }
 
 .import-pos-form { display: flex; flex-direction: column; gap: 12px; }
-.import-pos-form.drag-over { outline: 2px dashed var(--wa-color-brand-500, #5b7fff); outline-offset: -4px; }
+.import-pos-form.drag-over { outline: 2px dashed var(--wa-color-brand-50); outline-offset: -4px; }
 .import-pos-toolbar { display: flex; align-items: center; gap: 8px; }
 .import-pos-toolbar wa-select { margin-left: auto; }
 .import-pos-status { font-size: 0.9rem; min-height: 1.2em; }
@@ -254,12 +285,16 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   transition: background 0.12s;
 }
 .ribbon-btn:hover:not(:disabled) {
-  color: var(--wa-color-brand-fill-loud, #1a6aff);
+  color: var(--wa-color-brand-fill-loud, #b45309);
 }
 .ribbon-btn:hover:not(:disabled)::before {
-  background: var(--wa-color-brand-fill-loud, #1a6aff);
+  background: var(--wa-color-brand-fill-loud, #b45309);
 }
 .ribbon-btn:disabled { opacity: 0.3; cursor: default; }
+.ribbon-btn:focus-visible {
+  outline: 2px solid var(--wa-color-focus, var(--wa-color-brand-60));
+  outline-offset: -2px;
+}
 .ribbon-btn.is-active { color: var(--accent); }
 .ribbon-btn.is-active::before { background: var(--accent); }
 .ribbon-btn wa-icon { font-size: 16px; }
@@ -678,7 +713,7 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
   align-items: center;
   max-height: 60vh;
   overflow-y: auto;
-  padding: 4px 0;
+  padding: 4px 4px 4px 0;
 }
 .engine-opt-row { display: contents; }
 .engine-opt-label {
@@ -1103,12 +1138,17 @@ wa-dialog::part(body) {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.4px;
-  padding: 2px 0;
+  padding: 1px 0;
+  border: 1px solid transparent;
   border-radius: 8px;
   background: #2e3138;
   color: #c8ccd6;
 }
-.tournament-status.status-idle { background: #2a3550; color: #c8d4ee; }
+.tournament-status.status-idle {
+  background: #2a3550;
+  border-color: #3d4d6e;
+  color: #c8d4ee;
+}
 .tournament-progress {
   position: relative;
   flex: 1 1 auto;
@@ -1137,8 +1177,8 @@ wa-dialog::part(body) {
   letter-spacing: 0.3px;
 }
 @keyframes tournament-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.55); }
-  50%      { box-shadow: 0 0 0 5px rgba(245, 158, 11, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.55); }
+  50%      { box-shadow: 0 0 0 5px rgba(var(--accent-rgb), 0); }
 }
 
 .tournament-info-grid {
@@ -1153,15 +1193,18 @@ wa-dialog::part(body) {
 .tournament-info-engines li { margin: 0; padding: 1px 0; }
 .tournament-status.status-running {
   background: var(--accent);
+  border-color: #b45309;
   color: #1a1a1a;
   animation: tournament-pulse 1.6s ease-out infinite;
 }
 .tournament-status.status-stopped {
-  background: var(--wa-color-danger-fill-loud);
-  color: var(--wa-color-danger-on-loud);
+  background: var(--accent);
+  border-color: #5d7a8c;
+  color: #1a1a1a;
 }
 .tournament-status.status-done {
   background: #2d5a2d;
+  border-color: #3f7a3f;
   color: #d6f5d6;
 }
 
