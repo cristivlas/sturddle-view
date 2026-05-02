@@ -121,7 +121,7 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, brows
 
         if browser is None:
             pytest.skip("chromium not installed")
-        ctx = await browser.new_context()
+        ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
         page = await ctx.new_page()
         page_errors: list[str] = []
         page.on("pageerror", lambda exc: page_errors.append(str(exc)))
@@ -137,7 +137,8 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, brows
                 await page.wait_for_selector(".tournament-row", timeout=5000)
 
                 # Open workspace.
-                await page.click(".tournament-row .row-workspace")
+                await page.click(".tournament-row")
+                await page.click(".tournaments-ribbon .t-workspace")
                 await page.wait_for_function(
                     "() => document.querySelectorAll('.winbox.sturddle-wb').length === 3",
                     timeout=5000,

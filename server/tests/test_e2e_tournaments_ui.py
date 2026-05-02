@@ -77,7 +77,7 @@ async def test_tournaments_perspective_smoke(server, browser):
         pytest.skip("chromium not installed")
     base, app = server
 
-    ctx = await browser.new_context()
+    ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
     page = await ctx.new_page()
     page_errors: list[str] = []
     page.on("pageerror", lambda exc: page_errors.append(str(exc)))
@@ -108,7 +108,7 @@ async def test_tournaments_perspective_smoke(server, browser):
         )
 
         disabled = await page.evaluate(
-            "() => document.querySelector('.tournament-new').disabled"
+            "() => document.querySelector('.t-new').disabled"
         )
         assert disabled is True
 
@@ -157,7 +157,7 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
     if browser is None:
         pytest.skip("chromium not installed")
     try:
-        ctx = await browser.new_context()
+        ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
         page = await ctx.new_page()
         page_errors: list[str] = []
         page.on("pageerror", lambda exc: page_errors.append(str(exc)))
@@ -171,21 +171,36 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
             await page.click('#engines-perspective wa-tab[panel="tournaments"]')
             await page.wait_for_selector(".tournament-row", timeout=5000)
 
+            # Select the row so ribbon verbs reflect that tournament.
+            await page.click('.tournament-row')
             row_info = await page.evaluate(
                 """() => {
                     const row = document.querySelector('.tournament-row');
+                    const ribbon = document.querySelector('.tournaments-ribbon');
+                    const labelOf = (sel) => ribbon.querySelector(sel)?.getAttribute('aria-label');
                     return {
                         name: row.querySelector('.tournament-name').textContent,
                         status: row.querySelector('.tournament-status').textContent,
-                        actions: [...row.querySelectorAll('.tournament-row-actions wa-button')]
-                                    .map(b => b.getAttribute('aria-label')),
-                        new_button_disabled: document.querySelector('.tournament-new').disabled,
+                        ribbon_labels: {
+                            start: labelOf('.t-start'),
+                            stop: labelOf('.t-stop'),
+                            workspace: labelOf('.t-workspace'),
+                            info: labelOf('.t-info'),
+                            remove: labelOf('.t-remove'),
+                        },
+                        new_button_disabled: document.querySelector('.t-new').disabled,
                     };
                 }"""
             )
             assert row_info["name"] == "smoke"
             assert row_info["status"].strip() == "idle"
-            assert row_info["actions"] == ["Start", "Stop", "Open workspace", "Remove"]
+            assert row_info["ribbon_labels"] == {
+                "start": "Start",
+                "stop": "Pause",
+                "workspace": "Open workspace",
+                "info": "Info",
+                "remove": "Remove",
+            }
             assert row_info["new_button_disabled"] is False
 
             await page.click("#settings-btn")
@@ -267,7 +282,7 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, b
     if browser is None:
         pytest.skip("chromium not installed")
     try:
-        ctx = await browser.new_context()
+        ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
         page = await ctx.new_page()
         page_errors: list[str] = []
         page.on("pageerror", lambda exc: page_errors.append(str(exc)))
@@ -281,7 +296,8 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, b
             await page.click('#engines-perspective wa-tab[panel="tournaments"]')
             await page.wait_for_selector(".tournament-row", timeout=5000)
 
-            await page.click('.tournament-row .row-workspace')
+            await page.click('.tournament-row')
+            await page.click('.tournaments-ribbon .t-workspace')
 
             await page.wait_for_function(
                 "() => document.querySelectorAll('.winbox.sturddle-wb').length === 3",
@@ -308,7 +324,8 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, b
                 "() => document.querySelectorAll('.winbox.sturddle-wb').length === 0",
                 timeout=3000,
             )
-            await page.click('.tournament-row .row-workspace')
+            await page.click('.tournament-row')
+            await page.click('.tournaments-ribbon .t-workspace')
             await page.wait_for_function(
                 "() => document.querySelectorAll('.winbox.sturddle-wb').length === 3",
                 timeout=5000,
