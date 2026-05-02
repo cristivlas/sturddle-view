@@ -542,6 +542,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     close();
   }
 
+  function minimizeAll() {
+    for (const wb of openWindows()) {
+      try { wb.minimize(); } catch { /* */ }
+    }
+  }
+
   function focus() {
     for (const wb of openWindows()) {
       try { wb.focus(); } catch { /* */ }
@@ -560,7 +566,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
   }
 
-  const workspace = { close, tile, cascade, closeAll, focus, hide, show, ensureWindows, tournamentId: tournament.id };
+  const workspace = { close, tile, cascade, closeAll, minimizeAll, focus, hide, show, ensureWindows, tournamentId: tournament.id };
   activeWorkspace = workspace;
   return workspace;
 }

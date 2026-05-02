@@ -30,6 +30,7 @@ export function mountTournaments({ container, api, events, log, token }) {
           <ul class="tmb-dropdown">
             <li><button class="tmb-dd-item tmb-tile">Tile</button></li>
             <li><button class="tmb-dd-item tmb-cascade">Cascade</button></li>
+            <li><button class="tmb-dd-item tmb-minall">Minimize All</button></li>
             <li class="tmb-separator"></li>
             <li><button class="tmb-dd-item tmb-closeall">Close All</button></li>
           </ul>
@@ -531,11 +532,12 @@ export function mountTournaments({ container, api, events, log, token }) {
   for (const opt of container.querySelectorAll(".tmb-sort-opt")) {
     opt.addEventListener("click", () => {
       const next = opt.dataset.sort;
-      if (VALID_SORTS.has(next)) {
+      if (VALID_SORTS.has(next) && next !== sortBy) {
         sortBy = next;
         localStorage.setItem(SORT_KEY_LS, sortBy);
         syncSortMenu();
         renderList();
+        toast(`Tournaments sorted by ${opt.textContent.trim()}`);
       }
       closeMenus();
     });
@@ -556,6 +558,10 @@ export function mountTournaments({ container, api, events, log, token }) {
   container.querySelector(".tmb-cascade").addEventListener("click", () => {
     closeMenus();
     getActiveWorkspace()?.cascade();
+  });
+  container.querySelector(".tmb-minall").addEventListener("click", () => {
+    closeMenus();
+    getActiveWorkspace()?.minimizeAll();
   });
   container.querySelector(".tmb-closeall").addEventListener("click", () => {
     closeMenus();
