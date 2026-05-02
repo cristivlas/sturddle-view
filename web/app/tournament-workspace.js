@@ -189,6 +189,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   };
 
   function ensureWindows() {
+    let recreated = false;
     for (const key of Object.keys(windowSpecs)) {
       if (windows[key]) continue;
       const spec = windowSpecs[key];
@@ -196,6 +197,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       spec.setBody(body);
       windows[key] = makeBox(key, spec.title, body);
       spec.render();
+      recreated = true;
+    }
+    // If subscriptions were torn down while only live-game windows were
+    // keeping the workspace alive, re-arm them so the new boxes update.
+    if (recreated) {
+      armSubscriptions();
+      refresh();
     }
   }
 
@@ -398,6 +406,17 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       inner === "stopped"
     ) {
       refresh();
+    }
+  }
+
+  function armSubscriptions() {
+    if (unsubscribe == null) {
+      unsubscribe = events.on(pushEvent);
+    }
+    if (pollTimer == null) {
+      pollTimer = window.setInterval(() => {
+        if (detail?.status === "running") refresh();
+      }, POLL_INTERVAL_MS);
     }
   }
 
