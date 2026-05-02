@@ -748,25 +748,36 @@ wa-dialog wa-tab-panel > * + * { margin-top: 10px; }
 }
 .tmb-menu { position: relative; }
 .tmb-item {
-  background: none; border: none; color: inherit;
+  background: none; border: none; border-radius: 0; color: inherit;
   padding: 3px 10px; font-size: 0.8rem; cursor: pointer;
+  outline: none;
 }
-.tmb-item:hover:not(:disabled), .tmb-menu.open > .tmb-item { background: var(--wa-color-brand-fill-loud, #1a6aff); color: #fff; }
+.tmb-item:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.tmb-item:hover:not(:disabled), .tmb-menu.open > .tmb-item { background: var(--nav-btn-bg-hover); }
 .tmb-item:disabled { opacity: 0.4; cursor: default; }
 .tmb-dropdown {
   display: none; position: absolute; top: 100%; left: 0; z-index: 9000;
-  list-style: none; margin: 0; padding: 2px 0; min-width: 130px;
+  list-style: none; margin: 0; padding: 4px 0; min-width: 160px;
   background: var(--wa-color-surface-raised, #2a2a2a);
   border: 1px solid var(--wa-color-border-loud, #333);
+  border-radius: 0;
   box-shadow: 0 4px 12px rgba(0,0,0,.4);
+  font-family: var(--wa-font-family-body);
+  font-size: 13px;
 }
 .tmb-menu.open .tmb-dropdown { display: block; }
 .tmb-dd-item {
-  display: block; width: 100%; background: none; border: none;
-  color: inherit; text-align: left; padding: 4px 16px; font-size: 0.8rem; cursor: pointer;
+  display: block; width: 100%; background: none; border: none; border-radius: 0;
+  color: inherit; text-align: left;
+  padding: 4px 12px 4px 24px;
+  font-size: 13px; line-height: 1.5; cursor: pointer;
+  position: relative;
 }
-.tmb-dd-item:hover { background: var(--wa-color-brand-fill-loud, #1a6aff); color: #fff; }
-.tmb-separator { border-top: 1px solid var(--wa-color-border-loud, #333); margin: 2px 0; }
+.tmb-dd-item:hover { background: var(--nav-btn-bg-hover); }
+.tmb-separator {
+  border-top: 1px solid var(--wa-color-border-loud, #333);
+  margin: 4px 0;
+}
 
 /* Settings dialog: Tournament tab */
 .settings-tournament-path-row {
@@ -809,9 +820,11 @@ wa-dialog::part(body) {
   max-height: calc(100vh - 240px); overflow-y: auto;
   padding-right: 4px;
 }
-.tmb-sort-opt.is-active { font-weight: 600; }
-.tmb-sort-opt.is-active::before { content: "✓ "; }
-.tmb-sort-opt:not(.is-active)::before { content: "  "; white-space: pre; }
+.tmb-sort-opt.is-active::before {
+  content: "✓"; position: absolute;
+  left: 8px; top: 50%; transform: translateY(-50%);
+  font-size: 11px; color: var(--accent);
+}
 .tournament-row {
   display: grid;
   grid-template-columns: 1fr auto;
