@@ -552,7 +552,7 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
 .engines-body-main {
   flex: 1; min-width: 0;
   display: grid;
-  grid-template-columns: minmax(8px, 1fr) minmax(0, var(--engines-content-w, 1200px)) minmax(8px, 1fr);
+  grid-template-columns: minmax(8px, 1fr) minmax(0, var(--engines-content-w, 860px)) minmax(8px, 1fr);
   padding-left: 50px;
   padding-right: 50px;
 }
@@ -657,30 +657,32 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
 .engines-table-wrap {
   position: relative;
   border: 1px solid #34373d;
-  border-radius: 4px;
-  background: #15171b;
+  border-radius: 6px;
   height: calc(100vh - 268px);
   min-height: 200px;
   overflow-y: auto;
   font-size: 13px;
 }
+.engines-table-wrap:focus-within { border-color: rgba(255, 255, 255, 0.45); }
+.engines-list:focus { outline: none; }
 .engines-table {
   table-layout: fixed;
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0 6px;
 }
 .engines-table thead th {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #1e2026;
-  padding: 5px 10px;
+  background: #1f232c;
+  padding: 6px 10px;
   text-align: left;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.6px;
   border-bottom: 1px solid #34373d;
   overflow: hidden;
   white-space: nowrap;
@@ -692,13 +694,23 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
 }
 .engines-list-item { cursor: pointer; user-select: none; }
 .engines-list-item td {
-  padding: 6px 10px;
+  padding: 10px 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  background: var(--panel);
+  border-top: 1px solid #2e3138;
+  border-bottom: 1px solid #2e3138;
+}
+.engines-list-item td:last-child {
+  border-right: 1px solid #2e3138;
+  border-radius: 0 6px 6px 0;
 }
 .engines-list-item:hover td { background: var(--nav-btn-bg); }
-.engines-list-item.focused td { background: var(--nav-btn-bg-active); }
+.engines-list-item.focused td { background: var(--nav-btn-bg); }
+.engines-list-item.focused td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent-line);
+}
 .engines-list-item.active .engines-list-name { font-weight: 600; }
 .engines-list-name-text {
   overflow: hidden;
