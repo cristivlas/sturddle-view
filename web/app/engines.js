@@ -39,7 +39,23 @@ export function mountEngines({ container, api, onError }) {
             <wa-icon slot="start" name="magnifying-glass"></wa-icon>
           </wa-input>
 
-          <ul class="engines-list" role="listbox" tabindex="0"></ul>
+          <div class="engines-table-wrap">
+            <table class="engines-table">
+              <colgroup>
+                <col class="engines-col-name">
+                <col class="engines-col-active">
+                <col class="engines-col-path">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>Name<span class="th-grip"></span></th>
+                  <th class="engines-col-active-hdr">Active<span class="th-grip"></span></th>
+                  <th>Path</th>
+                </tr>
+              </thead>
+              <tbody class="engines-list" role="listbox" tabindex="0"></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -95,46 +111,54 @@ export function mountEngines({ container, api, onError }) {
       visible.sort((a, b) => dir * a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
     }
 
-    if (engines.length === 0) {
-      const li = document.createElement("li");
-      li.className = "engines-list-empty muted";
-      li.textContent = "No engines yet — click + to add one.";
-      list.appendChild(li);
-      return;
+    function emptyRow(text) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 2;
+      td.className = "engines-list-empty muted";
+      td.textContent = text;
+      tr.appendChild(td);
+      list.appendChild(tr);
     }
-    if (visible.length === 0) {
-      const li = document.createElement("li");
-      li.className = "engines-list-empty muted";
-      li.textContent = "No engines match.";
-      list.appendChild(li);
-      return;
-    }
+
+    if (engines.length === 0) { emptyRow("No engines yet — click + to add one."); return; }
+    if (visible.length === 0) { emptyRow("No engines match."); return; }
 
     for (const e of visible) {
-      const li = document.createElement("li");
-      li.className = "engines-list-item";
-      li.dataset.engineId = e.id;
-      if (e.id === selectedDetailId) li.classList.add("focused");
-      if (e.id === activeId) li.classList.add("active");
+      const tr = document.createElement("tr");
+      tr.className = "engines-list-item";
+      tr.dataset.engineId = e.id;
+      if (e.id === selectedDetailId) tr.classList.add("focused");
+      if (e.id === activeId) tr.classList.add("active");
 
-      const name = document.createElement("span");
-      name.className = "engines-list-name";
-      name.textContent = e.name;
-      li.appendChild(name);
+      const nameTd = document.createElement("td");
+      nameTd.className = "engines-list-name";
+      const nameText = document.createElement("span");
+      nameText.className = "engines-list-name-text";
+      nameText.textContent = e.name;
+      nameTd.appendChild(nameText);
 
+      const activeTd = document.createElement("td");
+      activeTd.className = "engines-list-active-cell";
       if (e.id === activeId) {
         const badge = document.createElement("wa-icon");
         badge.name = "check";
         badge.className = "engines-list-active-badge";
-        li.appendChild(badge);
+        activeTd.appendChild(badge);
       }
 
-      li.addEventListener("click", () => {
+      const pathTd = document.createElement("td");
+      pathTd.className = "engines-list-path";
+      pathTd.textContent = e.path || "";
+
+      tr.appendChild(nameTd);
+      tr.appendChild(activeTd);
+      tr.appendChild(pathTd);
+      tr.addEventListener("click", () => {
         selectedDetailId = e.id;
         renderAll();
       });
-
-      list.appendChild(li);
+      list.appendChild(tr);
     }
   }
 
@@ -226,6 +250,75 @@ export function mountEngines({ container, api, onError }) {
     } catch (e) {
       onError?.(`add: ${e.message}`);
     }
+  });
+
+  // Column resize (same pattern as dashboard)
+  const COL_PCTS_KEY = "sturddle.engines.colPcts3";
+  const colEls = Array.from(container.querySelectorAll(".engines-table col"));
+  const DEFAULT_PCTS = [20, 8, 72];
+  let colPcts = DEFAULT_PCTS.slice();
+
+  function applyColPcts() {
+    colEls.forEach((c, i) => { c.style.width = colPcts[i] + "%"; });
+  }
+  try {
+    const saved = JSON.parse(localStorage.getItem(COL_PCTS_KEY));
+    if (Array.isArray(saved) && saved.length === 3) colPcts = saved;
+  } catch (e) { /* use defaults */ }
+  applyColPcts();
+
+  const wrapEl = container.querySelector(".engines-table-wrap");
+  const tableEl = container.querySelector(".engines-table");
+  const minPct = 5;
+
+  container.querySelectorAll(".engines-table .th-grip").forEach((grip, gripIdx) => {
+    grip.addEventListener("pointerdown", (eDown) => {
+      if (eDown.button !== 0) return;
+      eDown.preventDefault();
+      grip.setPointerCapture(eDown.pointerId);
+      grip.classList.add("dragging");
+      const startX = eDown.clientX;
+      const startA = colPcts[gripIdx], startB = colPcts[gripIdx + 1];
+      const tableW = tableEl.getBoundingClientRect().width || 1;
+
+      const rightLine = document.createElement("div");
+      const leftLine = document.createElement("div");
+      rightLine.className = leftLine.className = "col-drag-line";
+      rightLine.style.top = leftLine.style.top = "0";
+      wrapEl.appendChild(rightLine);
+      wrapEl.appendChild(leftLine);
+
+      function placeLines(clientX) {
+        const wrapLeft = wrapEl.getBoundingClientRect().left;
+        const thLeft = tableEl.querySelectorAll("thead th")[gripIdx].getBoundingClientRect().left;
+        rightLine.style.left = (clientX - wrapLeft) + "px";
+        rightLine.style.height = leftLine.style.height = wrapEl.scrollHeight + "px";
+        leftLine.style.left = (thLeft - wrapLeft) + "px";
+      }
+      placeLines(eDown.clientX);
+
+      function onMove(e) {
+        const dPct = ((e.clientX - startX) / tableW) * 100;
+        let a = startA + dPct, b = startB - dPct;
+        if (a < minPct) { b -= minPct - a; a = minPct; }
+        if (b < minPct) { a -= minPct - b; b = minPct; }
+        colPcts[gripIdx] = a; colPcts[gripIdx + 1] = b;
+        applyColPcts();
+        placeLines(e.clientX);
+      }
+      function onUp() {
+        grip.classList.remove("dragging");
+        rightLine.remove();
+        leftLine.remove();
+        localStorage.setItem(COL_PCTS_KEY, JSON.stringify(colPcts));
+        grip.removeEventListener("pointermove", onMove);
+        grip.removeEventListener("pointerup", onUp);
+        grip.removeEventListener("pointercancel", onUp);
+      }
+      grip.addEventListener("pointermove", onMove);
+      grip.addEventListener("pointerup", onUp);
+      grip.addEventListener("pointercancel", onUp);
+    });
   });
 
   refresh();
