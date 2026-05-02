@@ -422,6 +422,10 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   border-color: var(--accent);
   background: #2a3a3a;
 }
+
+/* Engine "thinking" arrow: brand-blue. */
+.cm-chessboard .arrow-success .arrow-head { fill: var(--wa-color-brand-fill-loud); }
+.cm-chessboard .arrow-success .arrow-line { stroke: var(--wa-color-brand-fill-loud); opacity: 0.55; }
 .clock-row .clock-name {
   font-size: 13px;
   color: var(--muted);
