@@ -189,7 +189,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     stopBtn.addEventListener("click", async (ev) => {
       ev.stopPropagation();
       stopBtn.disabled = true;
-      stopBtn.innerHTML = "<wa-spinner></wa-spinner>";
+      stopBtn.innerHTML = '<wa-spinner class="spinner-accent"></wa-spinner>';
       await stopOne(t);
     });
     removeBtn.addEventListener("click", (ev) => { ev.stopPropagation(); removeOne(t); });

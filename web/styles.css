@@ -46,6 +46,11 @@ body {
   background: var(--bg);
   color: var(--fg);
 }
+wa-spinner.spinner-accent {
+  --indicator-color: var(--accent);
+  --track-color: rgba(245, 158, 11, 0.15);
+  color: var(--accent);
+}
 
 header {
   display: flex;

@@ -131,12 +131,20 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
     statusEl.textContent = "live";
   });
 
+  function stopTimer() {
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    clockTopEl.classList.remove("active");
+    clockBottomEl.classList.remove("active");
+  }
+
   ws.addEventListener("close", () => {
     statusEl.textContent = "ended";
+    stopTimer();
   });
 
   ws.addEventListener("error", () => {
     statusEl.textContent = "connection error";
+    stopTimer();
   });
 
   ws.addEventListener("message", (ev) => {
@@ -148,6 +156,7 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
     }
     if (msg.ended) {
       statusEl.textContent = "ended";
+      stopTimer();
       try { ws.close(); } catch { /* */ }
       return;
     }
