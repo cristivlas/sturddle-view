@@ -872,7 +872,7 @@ wa-dialog::part(body) {
 }
 .tournament-row-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 
-@media (max-width: 800px), (max-height: 600px) {
+@media (max-width: 800px), (max-height: 740px) {
   .tournaments-body { flex-direction: column; }
   .tournaments-ribbon {
     position: static; transform: none;

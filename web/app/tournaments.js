@@ -15,7 +15,6 @@ export function mountTournaments({ container, api, events, log, token }) {
   container.innerHTML = `
     <div class="tournaments-panel">
       <menu class="tournaments-menubar">
-        <li><button class="tmb-item tournament-new">New</button></li>
         <li class="tmb-menu tmb-sort-menu">
           <button class="tmb-item tmb-sort-btn">Sort</button>
           <ul class="tmb-dropdown">
@@ -38,6 +37,10 @@ export function mountTournaments({ container, api, events, log, token }) {
 
       <div class="tournaments-body">
         <div class="tournaments-ribbon" role="toolbar" aria-label="Tournament actions">
+          <button class="ribbon-btn t-new" aria-label="New tournament" title="New tournament">
+            <wa-icon name="plus"></wa-icon>
+          </button>
+          <span class="ribbon-sep" aria-hidden="true"></span>
           <button class="ribbon-btn t-start" disabled aria-label="Start" title="Start">
             <wa-icon class="t-start-icon" name="play"></wa-icon>
           </button>
@@ -68,7 +71,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     </div>
   `;
 
-  const newBtn = container.querySelector(".tournament-new");
+  const newBtn = container.querySelector(".t-new");
   const windowMenu = container.querySelector(".tmb-window-menu");
   const windowMenuBtn = container.querySelector(".tmb-window-btn");
   const sortMenu = container.querySelector(".tmb-sort-menu");
