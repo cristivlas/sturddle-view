@@ -6,6 +6,10 @@ import {
 } from "../vendor/cm-chessboard/src/Chessboard.js";
 import { MARKER_TYPE, Markers } from "../vendor/cm-chessboard/src/extensions/markers/Markers.js";
 import { ARROW_TYPE, Arrows } from "../vendor/cm-chessboard/src/extensions/arrows/Arrows.js";
+import {
+  PROMOTION_DIALOG_RESULT_TYPE,
+  PromotionDialog,
+} from "../vendor/cm-chessboard/src/extensions/promotion-dialog/PromotionDialog.js";
 import { resolveBoardStyle } from "./board-styles.js";
 
 export function mountBoard({ element, onMove, styleId }) {
@@ -14,7 +18,7 @@ export function mountBoard({ element, onMove, styleId }) {
     position: FEN.start,
     assetsUrl: "./vendor/cm-chessboard/assets/",
     style: { cssClass: s.cssClass, showCoordinates: true, pieces: { file: s.piecesFile } },
-    extensions: [{ class: Markers }, { class: Arrows }],
+    extensions: [{ class: Markers }, { class: Arrows }, { class: PromotionDialog }],
   });
 
   let myColor = COLOR.white;
@@ -49,7 +53,31 @@ export function mountBoard({ element, onMove, styleId }) {
     if (yes) {
       board.enableMoveInput((event) => {
         if (event.type === INPUT_EVENT_TYPE.validateMoveInput) {
-          const uci = event.squareFrom + event.squareTo + (event.promotion || "");
+          const piece = event.piece || "";
+          const toRank = event.squareTo.charAt(1);
+          const isPromotion =
+            piece.charAt(1) === "p" &&
+            ((piece.charAt(0) === "w" && toRank === "8") ||
+             (piece.charAt(0) === "b" && toRank === "1"));
+          if (isPromotion) {
+            // cm-chessboard's PromotionDialog uses a "*" event delegate that
+            // fires the callback once per ancestor of the click target, so
+            // guard against duplicate sends.
+            let resolved = false;
+            board.showPromotionDialog(event.squareTo, piece.charAt(0), (result) => {
+              if (resolved) return;
+              resolved = true;
+              if (result && result.type === PROMOTION_DIALOG_RESULT_TYPE.pieceSelected) {
+                const promo = result.piece.charAt(1);
+                onMove(event.squareFrom + event.squareTo + promo);
+              }
+            });
+            // Don't optimistically accept — server broadcasts the final position.
+            // Returning true would leave the pawn on the last rank under the dialog,
+            // and the trailing mousedown re-hit-tests onto it, re-arming move input.
+            return false;
+          }
+          const uci = event.squareFrom + event.squareTo;
           // Optimistic acceptance — server validates and rebroadcasts position.
           onMove(uci);
           return true;
