@@ -1,8 +1,7 @@
-// Engines panel: stacked layout (header above list).
-// Top row: name + path on the left, actions on the right.
-// `+` Add is always present; star / sliders / trash appear only when a
-// selected engine is highlighted.
-// Below: search box + scrollable list.
+// Engines panel: search + scrollable list with a left-side vertical
+// ribbon mirroring the Play and Tournaments perspectives. Ribbon
+// holds Add, sort A→Z / Z→A, and the row-targeted Use / Options /
+// Remove actions (which act on the focused list row).
 
 import { confirm, pickFile, toast } from "./dialogs.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
@@ -10,51 +9,58 @@ import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 export function mountEngines({ container, api, onError }) {
   container.innerHTML = `
     <div class="engines-panel">
-      <header class="engines-header">
-        <div class="engines-header-info">
-          <h3 class="engines-detail-name"></h3>
-        </div>
-        <div class="engines-header-actions">
-          <wa-button class="engines-detail-use icon-only" size="small"
-                     aria-label="Use as active engine" hidden>
-            <wa-icon name="check"></wa-icon>
-          </wa-button>
-          <wa-button class="engines-detail-options icon-only" size="small"
-                     aria-label="UCI options" hidden>
-            <wa-icon name="sliders"></wa-icon>
-          </wa-button>
-          <wa-button class="engines-detail-remove icon-only" size="small"
-                     aria-label="Remove engine" hidden>
-            <wa-icon name="trash"></wa-icon>
-          </wa-button>
-          <wa-button class="engines-add icon-only" size="small" variant="brand"
-                     aria-label="Add engine">
-            <wa-icon name="plus"></wa-icon>
-          </wa-button>
-        </div>
-      </header>
+      <div class="engines-ribbon" role="toolbar" aria-label="Engine actions">
+        <button class="ribbon-btn engines-add" aria-label="Add engine" title="Add engine">
+          <wa-icon name="plus"></wa-icon>
+        </button>
+        <span class="ribbon-sep" aria-hidden="true"></span>
+        <button class="ribbon-btn engines-sort-asc" aria-label="Sort A→Z" title="Sort A→Z">
+          <wa-icon name="arrow-down-a-z"></wa-icon>
+        </button>
+        <button class="ribbon-btn engines-sort-desc" aria-label="Sort Z→A" title="Sort Z→A">
+          <wa-icon name="arrow-down-z-a"></wa-icon>
+        </button>
+        <span class="ribbon-sep" aria-hidden="true"></span>
+        <button class="ribbon-btn engines-detail-use" disabled aria-label="Use as active engine" title="Use as active engine">
+          <wa-icon name="check"></wa-icon>
+        </button>
+        <button class="ribbon-btn engines-detail-options" disabled aria-label="UCI options" title="UCI options">
+          <wa-icon name="sliders"></wa-icon>
+        </button>
+        <span class="ribbon-sep" aria-hidden="true"></span>
+        <button class="ribbon-btn ribbon-btn--danger engines-detail-remove" disabled aria-label="Remove engine" title="Remove engine">
+          <wa-icon name="trash"></wa-icon>
+        </button>
+      </div>
 
-      <wa-input class="engines-search" size="small" placeholder="Search engines…" clearable>
-        <wa-icon slot="start" name="magnifying-glass"></wa-icon>
-      </wa-input>
+      <div class="engines-body-main">
+        <div class="engines-body-content">
+          <wa-input class="engines-search" size="small" placeholder="Search engines…" clearable>
+            <wa-icon slot="start" name="magnifying-glass"></wa-icon>
+          </wa-input>
 
-      <ul class="engines-list" role="listbox" tabindex="0"></ul>
+          <ul class="engines-list" role="listbox" tabindex="0"></ul>
+        </div>
+      </div>
     </div>
   `;
 
-  const headerInfo = container.querySelector(".engines-header-info");
-  const detailName = container.querySelector(".engines-detail-name");
   const detailUseBtn = container.querySelector(".engines-detail-use");
   const detailRemoveBtn = container.querySelector(".engines-detail-remove");
   const detailOptionsBtn = container.querySelector(".engines-detail-options");
   const addBtn = container.querySelector(".engines-add");
+  const sortAscBtn = container.querySelector(".engines-sort-asc");
+  const sortDescBtn = container.querySelector(".engines-sort-desc");
   const searchInput = container.querySelector(".engines-search");
   const list = container.querySelector(".engines-list");
 
+  const SORT_KEY_LS = "sturddle.engines.sortOrder";
   let engines = [];
   let selectedDetailId = null;
   let activeId = null;
   let filterText = "";
+  let sortOrder = ["asc", "desc", "none"].includes(localStorage.getItem(SORT_KEY_LS))
+    ? localStorage.getItem(SORT_KEY_LS) : "none";
 
   async function refresh() {
     try {
@@ -75,15 +81,19 @@ export function mountEngines({ container, api, onError }) {
 
   function renderAll() {
     renderList();
-    renderHeader();
+    syncDetailButtons();
   }
 
   function renderList() {
     list.innerHTML = "";
     const needle = filterText.trim().toLowerCase();
-    const visible = needle
+    let visible = needle
       ? engines.filter((e) => e.name.toLowerCase().includes(needle))
-      : engines;
+      : engines.slice();
+    if (sortOrder === "asc" || sortOrder === "desc") {
+      const dir = sortOrder === "asc" ? 1 : -1;
+      visible.sort((a, b) => dir * a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    }
 
     if (engines.length === 0) {
       const li = document.createElement("li");
@@ -128,28 +138,32 @@ export function mountEngines({ container, api, onError }) {
     }
   }
 
-  function renderHeader() {
+  function syncDetailButtons() {
     const e = engines.find((x) => x.id === selectedDetailId);
     const has = !!e;
-
-    headerInfo.classList.toggle("empty", !has);
-
-    detailName.textContent = has ? e.name : "";
-
-    // Detail-only actions: hidden when no engine is selected.
-    for (const btn of [detailUseBtn, detailOptionsBtn, detailRemoveBtn]) {
-      btn.hidden = !has;
-    }
-    if (has) {
-      if (e.id === activeId) detailUseBtn.setAttribute("disabled", "");
-      else detailUseBtn.removeAttribute("disabled");
-    }
+    detailOptionsBtn.disabled = !has;
+    detailRemoveBtn.disabled = !has;
+    detailUseBtn.disabled = !has || (e && e.id === activeId);
   }
 
   searchInput.addEventListener("input", () => {
     filterText = searchInput.value || "";
     renderList();
   });
+
+  function syncSortButtons() {
+    sortAscBtn.classList.toggle("is-active", sortOrder === "asc");
+    sortDescBtn.classList.toggle("is-active", sortOrder === "desc");
+  }
+  function setSort(next) {
+    sortOrder = sortOrder === next ? "none" : next;
+    localStorage.setItem(SORT_KEY_LS, sortOrder);
+    syncSortButtons();
+    renderList();
+  }
+  sortAscBtn.addEventListener("click", () => setSort("asc"));
+  sortDescBtn.addEventListener("click", () => setSort("desc"));
+  syncSortButtons();
 
   detailUseBtn.addEventListener("click", async () => {
     if (!selectedDetailId) return;

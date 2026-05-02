@@ -223,6 +223,8 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   background: var(--wa-color-brand-fill-loud, #1a6aff);
 }
 .ribbon-btn:disabled { opacity: 0.3; cursor: default; }
+.ribbon-btn.is-active { color: var(--accent); }
+.ribbon-btn.is-active::before { background: var(--accent); }
 .ribbon-btn wa-icon { font-size: 16px; }
 .ribbon-btn--danger:hover:not(:disabled) {
   color: var(--wa-color-danger-fill-loud, #d65a5a);
@@ -515,40 +517,49 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 
 pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-size: 12px; }
 
-/* ---------- Engines tab: stacked ---------- */
+/* ---------- Engines tab: ribbon + stacked body ---------- */
 .engines-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: flex; gap: 12px;
+  min-width: 0;
+  flex: 1; min-height: 0;
+}
+.engines-body-main {
+  flex: 1; min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(8px, 1fr) minmax(0, var(--engines-content-w, 1200px)) minmax(8px, 1fr);
+  padding-left: 50px;
+  padding-right: 50px;
+}
+.engines-body-content {
+  grid-column: 2;
+  display: flex; flex-direction: column; gap: 8px;
   min-width: 0;
 }
-.engines-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  min-width: 0;
+.engines-ribbon {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 4px; padding: 4px 0;
+  border-right: 1px solid var(--wa-color-border-loud, #353841);
+  position: fixed;
+  left: 0; top: 50%; transform: translateY(-50%);
+  z-index: 10;
 }
-.engines-header-info {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.engines-header-info.empty { visibility: hidden; }
-.engines-header-actions {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.engines-detail-name {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+@media (max-width: 800px), (max-height: 600px) {
+  .engines-panel { flex-direction: column; }
+  .engines-ribbon {
+    position: static; transform: none;
+    flex-direction: row; justify-content: center;
+    border-right: 0; border-bottom: 1px solid var(--wa-color-border-loud, #353841);
+    padding: 6px 0;
+  }
+  .engines-ribbon .ribbon-sep {
+    width: 1px; height: 18px;
+    margin: 0 4px;
+  }
+  .engines-body-main { padding-left: 0; padding-right: 0; }
+  .engines-ribbon .ribbon-btn::before {
+    left: 6px; right: 6px; top: auto; bottom: 0;
+    width: auto; height: 2px;
+  }
 }
 .engines-search { width: 100%; }
 
@@ -583,8 +594,8 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
   border: 1px solid #34373d;
   border-radius: 4px;
   background: #15171b;
+  height: calc(100vh - 260px);
   min-height: 200px;
-  max-height: 360px;
   overflow-y: auto;
   font-size: 13px;
 }
@@ -874,6 +885,10 @@ wa-dialog::part(body) {
     margin: 0 4px;
   }
   .tournaments-body-main { padding-left: 0; }
+  .tournaments-ribbon .ribbon-btn::before {
+    left: 6px; right: 6px; top: auto; bottom: 0;
+    width: auto; height: 2px;
+  }
 }
 .tournament-engines { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tournament-name { font-weight: 500; }

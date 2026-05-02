@@ -7,9 +7,10 @@ from pathlib import Path
 
 import chess.engine
 import psutil
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from .api import agent as agent_api
 from .api import engines as engines_api
@@ -29,6 +30,19 @@ from .tournament.orchestrator import Orchestrator, wrap_event_for_bus
 from .tournament.store import TournamentStore, default_root
 
 log = logging.getLogger(__name__)
+
+
+class _NoCacheUIMiddleware(BaseHTTPMiddleware):
+    # Stamp /ui/* and / responses with cache-busting headers so browsers
+    # don't serve stale HTML/JS/CSS after an upgrade.
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path == "/" or path.startswith("/ui"):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
 
 
 def _install_engine_sigkill_filter() -> None:
@@ -186,6 +200,8 @@ def create_app(
         app.mount("/ui", StaticFiles(directory=settings.web_dir, html=True), name="ui")
     else:
         log.warning("web_dir %s does not exist; UI will not be served", settings.web_dir)
+
+    app.add_middleware(_NoCacheUIMiddleware)
 
     _print_banner(settings)
     return app
