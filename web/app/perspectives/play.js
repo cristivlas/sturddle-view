@@ -175,6 +175,12 @@ export const playPerspective = {
     let turn = "white";
     let paused = false;
     let analyzing = false;
+    const pausedBadge = document.getElementById("paused-badge");
+    function syncPausedUi() {
+      const show = paused && !analyzing;
+      boardHost.classList.toggle("board-paused", show);
+      pausedBadge?.classList.toggle("hidden", !show);
+    }
     let dismissAnalysisToast = null;
 
     const pauseIcon = pauseBtn.querySelector("wa-icon");
@@ -233,6 +239,7 @@ export const playPerspective = {
           if (typeof evt.payload.analyzing === "boolean") {
             analyzing = evt.payload.analyzing;
             view.setEnabled(!analyzing && !paused);
+            syncPausedUi();
             if (!analyzing) {
               dismissAnalysisToast?.();
               dismissAnalysisToast = null;
@@ -257,6 +264,7 @@ export const playPerspective = {
           resignAvailable = false;
           setDisabled(newGameBtn, false);
           boardHost.classList.add("board-idle");
+          syncPausedUi();
           refreshButtons();
           showAlert({
             message: formatGameOver(evt.payload, humanWhite),
@@ -267,6 +275,7 @@ export const playPerspective = {
           if (typeof evt.payload.paused === "boolean" && evt.payload.paused !== paused) {
             paused = evt.payload.paused;
             view.setEnabled(!paused);
+            syncPausedUi();
             refreshButtons();
           }
           break;
@@ -394,10 +403,17 @@ export const playPerspective = {
           msg.style.display = "inline-flex";
           msg.style.alignItems = "center";
           msg.style.gap = "6px";
-          msg.append("Analysis mode on — click ");
+          msg.append("Analysis mode on — ");
+          const stopBtn = document.createElement("button");
+          stopBtn.type = "button";
+          stopBtn.className = "toast-icon-btn";
+          stopBtn.setAttribute("aria-label", "Stop analysis");
+          stopBtn.setAttribute("title", "Stop analysis");
           const ic = document.createElement("wa-icon");
           ic.setAttribute("name", "magnifying-glass");
-          msg.append(ic, " again to stop.");
+          stopBtn.appendChild(ic);
+          stopBtn.addEventListener("click", onAnalyze);
+          msg.append(stopBtn, " to stop.");
           dismissAnalysisToast = toast(msg, {
             variant: "neutral",
             duration: 0,
@@ -438,6 +454,7 @@ export const playPerspective = {
       unmount() {
         dismissAnalysisToast?.();
         dismissAnalysisToast = null;
+        pausedBadge?.classList.add("hidden");
         offEvent();
         view.unmount();
         window.removeEventListener("sturddle:settings-changed", onSettingsChanged);

@@ -84,6 +84,40 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   background: #c66;
   box-shadow: 0 0 4px rgba(204, 102, 102, 0.5);
 }
+.paused-badge {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  border-radius: 10px;
+}
+.paused-badge.hidden { display: none; }
+.toast-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.toast-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+/* When the badge is visible, it claims the auto-margin so .conn stops
+   pushing right; collapse .conn's auto-margin to a normal gap. */
+.paused-badge:not(.hidden) ~ .conn { margin-left: 0; }
 .conn.connected {
   background: #6c6;
   box-shadow: 0 0 4px rgba(102, 204, 102, 0.5);
@@ -257,6 +291,12 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   opacity: 0.45;
   pointer-events: none;
   filter: grayscale(0.4);
+}
+/* Game paused (not analyzing): dim board to reinforce the header badge. */
+.play-board-host.board-paused .board {
+  opacity: 0.6;
+  pointer-events: none;
+  filter: grayscale(0.5) brightness(0.85);
 }
 
 @media (max-width: 800px), (max-height: 700px) {
