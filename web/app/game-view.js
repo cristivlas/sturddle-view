@@ -63,6 +63,12 @@ function renderMoveList(el, sanList) {
   el.scrollTop = el.scrollHeight;
 }
 
+function fmtCount(n) {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `${Math.round(n / 1e3)}K`;
+  return String(n);
+}
+
 function fmtScore(score) {
   if (!score) return "";
   if ("mate" in score) return `#${score.mate}`;
@@ -129,9 +135,10 @@ export function mountGameView(container, opts = {}) {
       ${showEngineInfo ? `
       <section class="game-view-engine">
         <div class="engine-summary">
-          <span class="engine-score"></span>
-          <span class="engine-depth"></span>
-          <span class="engine-nps"></span>
+          <div class="engine-stat" data-label="Score"><span class="engine-score"></span></div>
+          <div class="engine-stat" data-label="Depth"><span class="engine-depth"></span></div>
+          <div class="engine-stat" data-label="Nodes"><span class="engine-nodes"></span></div>
+          <div class="engine-stat" data-label="Nps"><span class="engine-nps"></span></div>
           <span class="engine-tbhits"></span>
         </div>
         <div class="engine-pv" title=""></div>
@@ -159,6 +166,7 @@ export function mountGameView(container, opts = {}) {
   const moveListEl = sideHost.querySelector(".move-list");
   const engineDepth = sideHost.querySelector(".engine-depth");
   const engineScore = sideHost.querySelector(".engine-score");
+  const engineNodes = sideHost.querySelector(".engine-nodes");
   const engineNps = sideHost.querySelector(".engine-nps");
   const engineTbhits = sideHost.querySelector(".engine-tbhits");
   const enginePv = sideHost.querySelector(".engine-pv");
@@ -452,17 +460,16 @@ export function mountGameView(container, opts = {}) {
       case "engine_info":
         if (!showEngineInfo) break;
         if (engineDepth && evt.payload.depth != null) {
-          const sd = evt.payload.seldepth;
-          engineDepth.textContent = sd != null
-            ? `d${evt.payload.depth}/${sd}`
-            : `d${evt.payload.depth}`;
+          engineDepth.textContent = evt.payload.depth;
         }
         if (engineScore && evt.payload.score) {
           engineScore.textContent = fmtScore(evt.payload.score);
         }
+        if (engineNodes && evt.payload.nodes != null) {
+          engineNodes.textContent = fmtCount(evt.payload.nodes);
+        }
         if (engineNps && evt.payload.nps != null) {
-          const k = evt.payload.nps / 1000;
-          engineNps.textContent = `${k >= 100 ? Math.round(k) : k.toFixed(1)} kn/s`;
+          engineNps.textContent = fmtCount(evt.payload.nps);
         }
         if (engineTbhits) {
           engineTbhits.textContent = evt.payload.tbhits ? `tb ${evt.payload.tbhits}` : "";
@@ -507,6 +514,7 @@ export function mountGameView(container, opts = {}) {
       if (moveListEl) moveListEl.innerHTML = "";
       if (engineDepth) engineDepth.textContent = "—";
       if (engineScore) engineScore.textContent = "—";
+      if (engineNodes) engineNodes.textContent = "—";
       if (engineNps) engineNps.textContent = "—";
       if (engineTbhits) engineTbhits.textContent = "";
       if (enginePv) enginePv.textContent = "";
