@@ -8,6 +8,7 @@ export function connect({ token, onOpen, onClose, onEvent }) {
   const maxBackoff = 15000;
   let ws;
   let stopped = false;
+  let reconnectTimer = null;
 
   function open() {
     ws = new WebSocket(url);
@@ -25,7 +26,7 @@ export function connect({ token, onOpen, onClose, onEvent }) {
     ws.addEventListener("close", () => {
       onClose?.();
       if (stopped) return;
-      setTimeout(open, backoff);
+      reconnectTimer = setTimeout(() => { reconnectTimer = null; open(); }, backoff);
       backoff = Math.min(maxBackoff, Math.round(backoff * 1.7));
     });
     ws.addEventListener("error", () => ws.close());
@@ -35,6 +36,7 @@ export function connect({ token, onOpen, onClose, onEvent }) {
   return {
     close() {
       stopped = true;
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
       ws?.close();
     },
   };
