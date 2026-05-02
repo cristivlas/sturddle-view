@@ -246,12 +246,7 @@ export const playPerspective = {
             }
           }
           boardHost.classList.remove("board-idle");
-          // Disable New Game only when human-as-white is at startpos and
-          // can simply make their first move to start play. Black-to-play
-          // humans need the button to trigger the engine's first move.
-          const idleAsWhite =
-            movesPlayed === 0 && evt.payload.human_white === true;
-          setDisabled(newGameBtn, idleAsWhite);
+          setDisabled(newGameBtn, false);
           refreshButtons();
           break;
         }
