@@ -699,8 +699,9 @@ wa-dialog wa-tab-panel > * + * { margin-top: 10px; }
   user-select: none;
 }
 .fs-entry:hover { background: var(--nav-btn-bg); }
-.fs-entry.selected { background: var(--accent); color: #000; }
 .fs-entry.dim { color: var(--muted); }
+.fs-entry.selected { background: var(--wa-color-brand-fill-loud); color: #fff; }
+.fs-entry.dim.selected { color: #fff; }
 .fs-entry wa-icon { font-size: 14px; flex: 0 0 auto; }
 .fs-entry .fs-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -848,7 +849,7 @@ wa-dialog::part(body) {
   padding: 4px 8px; cursor: pointer; border-radius: 3px;
 }
 .ne-item:hover { background: var(--nav-btn-bg); }
-.ne-item.selected { background: var(--accent); color: #000; }
+.ne-item.selected { background: var(--wa-color-brand-fill-loud); color: #fff; }
 .ne-controls, .ne-reorder {
   display: flex; flex-direction: column; gap: 4px;
   align-items: center; justify-content: center;
