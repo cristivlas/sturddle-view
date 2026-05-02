@@ -20,21 +20,39 @@ def _make_exec(path):
 
 
 def _make_fake_uci(path, id_name):
-    """Minimal UCI responder: announces `id name <id_name>` then quits cleanly."""
-    script = (
-        "#!/bin/sh\n"
-        "while IFS= read -r line; do\n"
-        "  case \"$line\" in\n"
-        f"    uci) printf 'id name {id_name}\\nuciok\\n' ;;\n"
-        "    isready) printf 'readyok\\n' ;;\n"
-        "    quit) exit 0 ;;\n"
-        "  esac\n"
-        "done\n"
+    """Minimal UCI responder: announces `id name <id_name>` then quits cleanly.
+
+    Implementation is a Python script for portability. On POSIX we rely on
+    the ``#!`` shebang + exec bit; on Windows we drop a tiny ``.cmd``
+    wrapper next to it and return the wrapper's path so it looks like a
+    single-binary engine to ``_validate_engine_path`` and ``popen_uci``.
+    """
+    py = path.with_suffix(".py")
+    py.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        # Use readline() rather than `for line in sys.stdin`: the iterator
+        # form has read-ahead buffering that can deadlock a UCI handshake
+        # when the engine should reply line-by-line.
+        "while True:\n"
+        "    line = sys.stdin.readline()\n"
+        "    if not line:\n"
+        "        break\n"
+        "    line = line.strip()\n"
+        "    if line == 'uci':\n"
+        f"        sys.stdout.write('id name {id_name}\\nuciok\\n')\n"
+        "        sys.stdout.flush()\n"
+        "    elif line == 'isready':\n"
+        "        sys.stdout.write('readyok\\n'); sys.stdout.flush()\n"
+        "    elif line == 'quit':\n"
+        "        break\n"
     )
-    path.write_text(script)
-    if not sys.platform.startswith("win"):
-        path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    return str(path)
+    if sys.platform.startswith("win"):
+        cmd = path.with_suffix(".cmd")
+        cmd.write_text(f'@"{sys.executable}" "{py}" %*\r\n')
+        return str(cmd)
+    py.chmod(py.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return str(py)
 
 
 @pytest.fixture
@@ -140,7 +158,6 @@ def test_remove_clears_selection(client, exe_a):
     assert client.get("/engines").json()["selected_id"] is None
 
 
-@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX shell engine stub")
 def test_add_defaults_name_to_uci_id(client, tmp_path):
     """When no name is given, the server uses the engine's UCI `id name`."""
     exe = _make_fake_uci(tmp_path / "weird-binary-name", "FakeEngine 1.2")
@@ -149,7 +166,6 @@ def test_add_defaults_name_to_uci_id(client, tmp_path):
     assert r.json()["name"] == "FakeEngine 1.2"
 
 
-@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX shell engine stub")
 def test_add_falls_back_to_basename_when_probe_fails(client, exe_a):
     """A non-UCI binary still registers; name falls back to the basename."""
     r = client.post("/engines", json={"path": exe_a})
@@ -158,7 +174,6 @@ def test_add_falls_back_to_basename_when_probe_fails(client, exe_a):
     assert r.json()["name"] == "a"
 
 
-@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX shell engine stub")
 def test_explicit_name_overrides_uci_id(client, tmp_path):
     """An explicit name in the payload wins over the engine's UCI announcement."""
     exe = _make_fake_uci(tmp_path / "engine", "FakeEngine 1.2")
