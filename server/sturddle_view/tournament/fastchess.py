@@ -405,7 +405,15 @@ class FastchessRunner:
                     pid, self._STOP_GRACE_SECONDS,
                 )
                 try:
-                    self._proc.kill()
+                    if sys.platform == "win32":
+                        self._proc.kill()
+                    else:
+                        # POSIX: SIGKILL the whole process group so any
+                        # engine subprocesses fastchess failed to reap
+                        # don't outlive it as orphans. start_new_session
+                        # scopes the pgid to fastchess + its descendants.
+                        import signal
+                        os.killpg(os.getpgid(pid), signal.SIGKILL)
                 except ProcessLookupError:
                     log.info("stop: process pid=%d gone before SIGKILL", pid)
         # supervisor will observe the exit and emit "stopped"
