@@ -909,6 +909,7 @@ wa-dialog::part(body) {
     left: 6px; right: 6px; top: auto; bottom: 0;
     width: auto; height: 2px;
   }
+  .t-workspace, .tmb-window-menu { display: none; }
 }
 .tournament-engines { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tournament-name { font-weight: 500; }
