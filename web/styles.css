@@ -2,7 +2,7 @@
   --bg: #1d1f24;
   --fg: #e8e8e8;
   --muted: #888;
-  --accent: #6cc;
+  --accent: rgba(224, 155, 58, 0.75);
   --panel: #25272d;
   --nav-btn-bg: #2a2d33;
   --nav-btn-bg-hover: #32353c;
@@ -53,7 +53,7 @@ header {
   gap: 16px;
   padding: 8px 16px;
   background: var(--panel);
-  border-bottom: 1px solid #2e3138;
+  border-bottom: 2px solid rgba(224, 155, 58, 0.75);
 }
 header h1 { margin: 0; font-size: 16px; }
 nav button {
