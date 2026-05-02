@@ -65,6 +65,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // down via tearDown's closeAllLiveGames().
   if (activeWorkspace) {
     if (activeWorkspace.tournamentId === tournament.id) {
+      activeWorkspace.ensureWindows();
       activeWorkspace.focus();
       return activeWorkspace;
     }
@@ -86,17 +87,30 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   // ---- Window construction ----------------------------------------------
 
-  const standingsBody = document.createElement("div");
-  standingsBody.className = "wb-standings";
-  standingsBody.innerHTML = `<div class="wb-empty">Loading…</div>`;
+  function makeStandingsBody() {
+    const el = document.createElement("div");
+    el.className = "wb-standings";
+    el.innerHTML = `<div class="wb-empty">Loading…</div>`;
+    return el;
+  }
+  function makeScheduleBody() {
+    const el = document.createElement("div");
+    el.className = "wb-schedule";
+    el.innerHTML = `<div class="wb-empty">Loading…</div>`;
+    return el;
+  }
+  function makeLogBody() {
+    const el = document.createElement("div");
+    el.className = "wb-eventlog";
+    el.innerHTML = `<ul class="wb-eventlog-list"></ul>`;
+    return el;
+  }
 
-  const scheduleBody = document.createElement("div");
-  scheduleBody.className = "wb-schedule";
-  scheduleBody.innerHTML = `<div class="wb-empty">Loading…</div>`;
-
-  const logBody = document.createElement("div");
-  logBody.className = "wb-eventlog";
-  logBody.innerHTML = `<ul class="wb-eventlog-list"></ul>`;
+  // Renderers read these via the closure; reassigned when a window is
+  // re-opened after the user closed it (so renderers target the new body).
+  let standingsBody = makeStandingsBody();
+  let scheduleBody = makeScheduleBody();
+  let logBody = makeLogBody();
 
   function makeBox(key, title, body) {
     const cfg = layout[key];
@@ -147,11 +161,43 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     saveLayout(layout);
   }
 
-  const windows = {
-    standings: makeBox("standings", `${tournament.name} — Standings`, standingsBody),
-    schedule:  makeBox("schedule",  `${tournament.name} — Schedule`,  scheduleBody),
-    log:       makeBox("log",       `${tournament.name} — Event log`, logBody),
+  const windowSpecs = {
+    standings: {
+      title: `${tournament.name} — Standings`,
+      makeBody: makeStandingsBody,
+      setBody: (b) => { standingsBody = b; },
+      render: () => renderStandings(),
+    },
+    schedule: {
+      title: `${tournament.name} — Schedule`,
+      makeBody: makeScheduleBody,
+      setBody: (b) => { scheduleBody = b; },
+      render: () => renderSchedule(),
+    },
+    log: {
+      title: `${tournament.name} — Event log`,
+      makeBody: makeLogBody,
+      setBody: (b) => { logBody = b; },
+      render: () => renderEventLog(),
+    },
   };
+
+  const windows = {
+    standings: makeBox("standings", windowSpecs.standings.title, standingsBody),
+    schedule:  makeBox("schedule",  windowSpecs.schedule.title,  scheduleBody),
+    log:       makeBox("log",       windowSpecs.log.title,       logBody),
+  };
+
+  function ensureWindows() {
+    for (const key of Object.keys(windowSpecs)) {
+      if (windows[key]) continue;
+      const spec = windowSpecs[key];
+      const body = spec.makeBody();
+      spec.setBody(body);
+      windows[key] = makeBox(key, spec.title, body);
+      spec.render();
+    }
+  }
 
   // ---- Rendering --------------------------------------------------------
 
@@ -495,7 +541,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
   }
 
-  const workspace = { close, tile, cascade, closeAll, focus, hide, show, tournamentId: tournament.id };
+  const workspace = { close, tile, cascade, closeAll, focus, hide, show, ensureWindows, tournamentId: tournament.id };
   activeWorkspace = workspace;
   return workspace;
 }
