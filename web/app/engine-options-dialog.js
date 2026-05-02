@@ -87,7 +87,7 @@ function buildField(name, entry, current, ctx) {
           const picked = await pickFile({
             api: ctx.api,
             title: `Pick ${name}`,
-            mode: name.toLowerCase().endsWith("dir") ? "directory" : "any",
+            mode: /(path|dir)$/i.test(name) ? "directory" : "file",
           });
           if (picked) {
             text.value = picked;

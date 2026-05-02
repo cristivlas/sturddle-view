@@ -304,10 +304,13 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 }
 .game-view-engine {
   flex: 0 0 auto;
+  min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
 }
+.game-view-engine.is-empty { visibility: hidden; }
 @media (min-width: 801px) and (min-height: 701px) {
-  .game-view-engine { min-height: 160px; }
+  .game-view-engine { min-height: 220px; }
 }
 .engine-stat {
   display: flex;
@@ -355,11 +358,14 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   box-sizing: border-box;
 }
 .game-view-engine .engine-summary {
-  display: flex;
-  align-items: flex-end;
-  gap: 16px;
+  display: grid;
+  grid-template-columns: repeat(4, 8ch);
+  align-items: start;
+  gap: 6px 16px;
   font-family: ui-monospace, SFMono-Regular, monospace;
+  justify-content: start;
 }
+.game-view-engine .engine-stat { align-items: flex-start; }
 .game-view-engine .engine-score {
   font-size: 14px;
   font-weight: 500;
@@ -368,14 +374,12 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .game-view-engine .engine-score:empty { display: none; }
 .game-view-engine .engine-depth,
 .game-view-engine .engine-nodes,
-.game-view-engine .engine-nps {
+.game-view-engine .engine-nps,
+.game-view-engine .engine-tbhits,
+.game-view-engine .engine-hashfull {
   font-size: 14px;
   font-weight: 500;
   color: var(--fg);
-}
-.game-view-engine .engine-tbhits {
-  font-size: 12px;
-  color: var(--muted);
 }
 .game-view-engine .engine-pv {
   font-family: ui-monospace, SFMono-Regular, monospace;

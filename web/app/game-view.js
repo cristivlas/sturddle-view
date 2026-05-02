@@ -133,13 +133,14 @@ export function mountGameView(container, opts = {}) {
   const sideHTML = `
     <aside class="game-view-side">
       ${showEngineInfo ? `
-      <section class="game-view-engine">
+      <section class="game-view-engine is-empty">
         <div class="engine-summary">
           <div class="engine-stat" data-label="Score"><span class="engine-score"></span></div>
           <div class="engine-stat" data-label="Depth"><span class="engine-depth"></span></div>
           <div class="engine-stat" data-label="Nodes"><span class="engine-nodes"></span></div>
           <div class="engine-stat" data-label="Nps"><span class="engine-nps"></span></div>
-          <span class="engine-tbhits"></span>
+          <div class="engine-stat" data-label="TB"><span class="engine-tbhits"></span></div>
+          <div class="engine-stat" data-label="Hash"><span class="engine-hashfull"></span></div>
         </div>
         <div class="engine-pv" title=""></div>
       </section>` : ""}
@@ -169,6 +170,8 @@ export function mountGameView(container, opts = {}) {
   const engineNodes = sideHost.querySelector(".engine-nodes");
   const engineNps = sideHost.querySelector(".engine-nps");
   const engineTbhits = sideHost.querySelector(".engine-tbhits");
+  const engineHashfull = sideHost.querySelector(".engine-hashfull");
+  const engineSection = sideHost.querySelector(".game-view-engine");
   const enginePv = sideHost.querySelector(".engine-pv");
   const openingLine = container.querySelector(".opening-line");
   const openingEco = container.querySelector(".opening-eco");
@@ -459,6 +462,7 @@ export function mountGameView(container, opts = {}) {
         break;
       case "engine_info":
         if (!showEngineInfo) break;
+        engineSection?.classList.remove("is-empty");
         if (engineDepth && evt.payload.depth != null) {
           engineDepth.textContent = evt.payload.depth;
         }
@@ -472,7 +476,10 @@ export function mountGameView(container, opts = {}) {
           engineNps.textContent = fmtCount(evt.payload.nps);
         }
         if (engineTbhits) {
-          engineTbhits.textContent = evt.payload.tbhits ? `tb ${evt.payload.tbhits}` : "";
+          engineTbhits.textContent = evt.payload.tbhits ? fmtCount(evt.payload.tbhits) : "";
+        }
+        if (engineHashfull && evt.payload.hashfull != null) {
+          engineHashfull.textContent = `${(evt.payload.hashfull / 10).toFixed(0)}%`;
         }
         if (enginePv && evt.payload.pv && evt.payload.pv.length > 0) {
           const full = evt.payload.pv.join(" ");
@@ -512,12 +519,14 @@ export function mountGameView(container, opts = {}) {
       // from the server will set the new starting position.
       board.setPosition("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", null);
       if (moveListEl) moveListEl.innerHTML = "";
-      if (engineDepth) engineDepth.textContent = "—";
-      if (engineScore) engineScore.textContent = "—";
-      if (engineNodes) engineNodes.textContent = "—";
-      if (engineNps) engineNps.textContent = "—";
+      if (engineDepth) engineDepth.textContent = "";
+      if (engineScore) engineScore.textContent = "";
+      if (engineNodes) engineNodes.textContent = "";
+      if (engineNps) engineNps.textContent = "";
       if (engineTbhits) engineTbhits.textContent = "";
+      if (engineHashfull) engineHashfull.textContent = "";
       if (enginePv) enginePv.textContent = "";
+      engineSection?.classList.add("is-empty");
       setOpening(null);
       setTablebase(null);
       setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
