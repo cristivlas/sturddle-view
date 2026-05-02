@@ -126,12 +126,12 @@ export function mountGameView(container, opts = {}) {
       ${showEngineInfo ? `
       <section class="game-view-engine">
         <div class="engine-summary">
-          <span class="engine-depth">—</span>
-          <span class="engine-score">—</span>
-          <span class="engine-nps">—</span>
+          <span class="engine-score"></span>
+          <span class="engine-depth"></span>
+          <span class="engine-nps"></span>
           <span class="engine-tbhits"></span>
         </div>
-        <div class="engine-pv"></div>
+        <div class="engine-pv" title=""></div>
       </section>` : ""}
 
       ${showMoves ? `
@@ -462,7 +462,9 @@ export function mountGameView(container, opts = {}) {
           engineTbhits.textContent = evt.payload.tbhits ? `tb ${evt.payload.tbhits}` : "";
         }
         if (enginePv && evt.payload.pv && evt.payload.pv.length > 0) {
-          enginePv.textContent = evt.payload.pv[0];
+          const full = evt.payload.pv.join(" ");
+          enginePv.textContent = full;
+          enginePv.setAttribute("title", full);
         }
         if (evt.payload.pv_uci && evt.payload.pv_uci.length > 0) {
           const m = evt.payload.pv_uci[0];

@@ -328,16 +328,30 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 }
 .game-view-engine .engine-summary {
   display: flex;
+  align-items: baseline;
   gap: 12px;
   font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 13px;
+}
+.game-view-engine .engine-score {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.game-view-engine .engine-score:empty { display: none; }
+.game-view-engine .engine-depth,
+.game-view-engine .engine-nps,
+.game-view-engine .engine-tbhits {
+  font-size: 12px;
+  color: var(--muted);
 }
 .game-view-engine .engine-pv {
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 12px;
   color: var(--muted);
-  margin-top: 4px;
-  word-break: break-all;
+  margin-top: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .game-view-meta {
@@ -420,12 +434,12 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 }
 .clock-row.active {
   border-color: var(--accent);
-  background: #2a3a3a;
+  background: rgba(26, 106, 255, 0.10);
 }
 
-/* Engine "thinking" arrow: brand-blue. */
-.cm-chessboard .arrow-success .arrow-head { fill: var(--wa-color-brand-fill-loud); }
-.cm-chessboard .arrow-success .arrow-line { stroke: var(--wa-color-brand-fill-loud); opacity: 0.55; }
+/* Engine "thinking" arrow: navy. */
+.cm-chessboard .arrow-success .arrow-head { fill: #1e3a8a; }
+.cm-chessboard .arrow-success .arrow-line { stroke: #1e3a8a; opacity: 0.55; }
 .clock-row .clock-name {
   font-size: 13px;
   color: var(--muted);
