@@ -32,6 +32,7 @@ export function mountTournaments({ container, api, events, log, token }) {
             <li><button class="tmb-dd-item tmb-tile">Tile</button></li>
             <li><button class="tmb-dd-item tmb-cascade">Cascade</button></li>
             <li><button class="tmb-dd-item tmb-minall">Minimize All</button></li>
+            <li><button class="tmb-dd-item tmb-hideall">Hide All</button></li>
             <li class="tmb-separator"></li>
             <li><button class="tmb-dd-item tmb-closeall">Close All</button></li>
           </ul>
@@ -571,12 +572,18 @@ export function mountTournaments({ container, api, events, log, token }) {
     });
   }
 
+  const hideAllBtn = container.querySelector(".tmb-hideall");
+
   windowMenuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     if (windowMenuBtn.disabled) return;
     const isOpen = windowMenu.classList.contains("open");
     closeMenus();
-    if (!isOpen) windowMenu.classList.add("open");
+    if (!isOpen) {
+      const ws = getActiveWorkspace();
+      hideAllBtn.textContent = ws?.isHidden() ? "Show All" : "Hide All";
+      windowMenu.classList.add("open");
+    }
   });
 
   container.querySelector(".tmb-tile").addEventListener("click", () => {
@@ -590,6 +597,12 @@ export function mountTournaments({ container, api, events, log, token }) {
   container.querySelector(".tmb-minall").addEventListener("click", () => {
     closeMenus();
     getActiveWorkspace()?.minimizeAll();
+  });
+  hideAllBtn.addEventListener("click", () => {
+    closeMenus();
+    const ws = getActiveWorkspace();
+    if (!ws) return;
+    ws.isHidden() ? ws.show() : ws.hide();
   });
   container.querySelector(".tmb-closeall").addEventListener("click", () => {
     closeMenus();

@@ -579,7 +579,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
   }
 
-  const workspace = { close, tile, cascade, closeAll, minimizeAll, focus, hide, show, ensureWindows, tournamentId: tournament.id };
+  function isHidden() {
+    const wbs = openWindows();
+    return wbs.length > 0 && wbs.every(wb => wb.hidden);
+  }
+
+  const workspace = { close, tile, cascade, closeAll, minimizeAll, focus, hide, show, isHidden, ensureWindows, tournamentId: tournament.id };
   activeWorkspace = workspace;
   return workspace;
 }

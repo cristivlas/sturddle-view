@@ -1426,11 +1426,11 @@ wa-dialog::part(body) {
 }
 .wb-eventlog-list li {
   font-family: var(--wa-font-family-code); font-size: 12px; padding: 1px 0;
-  display: flex; gap: 8px;
+  display: flex; gap: 8px; white-space: nowrap;
 }
 .wb-log-ts { color: var(--muted); flex: 0 0 60px; }
 .wb-log-kind { color: var(--accent); }
-.wb-log-runner { color: var(--fg); flex: 1; min-width: 0; word-break: break-word; }
+.wb-log-runner { color: var(--fg); }
 .wb-log-runner.err { color: var(--wa-color-danger-on-loud); }
 .wb-error-banner {
   margin-bottom: 8px; padding: 8px 10px;
