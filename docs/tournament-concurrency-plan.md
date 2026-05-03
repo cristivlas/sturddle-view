@@ -22,58 +22,81 @@ Status: draft. Update as slices land.
 - Tooltip: "Recommended for SPRT runs."
 - Smoke test on Windows before shipping — verify `SetProcessAffinityMask` actually pins engine threads as expected (vs. just the parent).
 
-## Slice 3 — Sanity checks (preflight)
-Two independent categories, surfaced at create-time AND start-time.
+## Slice 3 — Sanity checks
 
-### 3a. Resource preflight ("don't kill the machine")
+Resource check (`server/sturddle_view/tournament/rescheck.py`) lives in
+its own module — no dependency on orchestrator state, callable from the
+create-time endpoint and from `Orchestrator.start()` alike.
 
-Worst-case CPU load formula:
+### Architecture
+
+Client owns the **resolution** of per-engine settings (it has the engine
+registry's `option_schema`); server owns the **comparison** against
+local CPU / RAM (it knows the host).
+
+Resolution (client, in `tournament-template-form.js`):
 
 ```
-load = parallel * (2 if ponder else 1) * max_threads_setting
+max_threads = template.engine_default_threads
+              ?? max(resolved_threads(e) for e in selected_engines)
+              ?? 1
+
+max_hash_mb = template.engine_default_hash_mb
+              ?? max(resolved_hash(e) for e in selected_engines)
+              ?? 16
+
+resolved_threads(e) = e.options.Threads ?? e.option_schema.Threads.default ?? 1
+resolved_hash(e)    = e.options.Hash    ?? e.option_schema.Hash.default    ?? 16
 ```
 
-where `max_threads_setting` is the largest Threads value any single engine
-uses during a game:
+These resolved values are folded into the template at create time so
+the server can re-check at start without needing the registry. The
+client also calls `POST /api/tournaments/preflight` with the same
+values *before* hitting `POST /api/tournaments` — failure blocks the
+create. `Orchestrator.start()` re-runs the same check against the
+stored template (covers stale tournaments started after machine specs
+changed, and direct-API misuse).
+
+### Formula
+
+CPU:
 
 ```
-max_threads_setting =
-    engine_default_threads                              # if set globally
-    else max(engine.uci_threads_default for engine in engines)
+load = parallel * (2 if ponder else 1) * max_threads
 ```
 
-Rationale: with ponder off, one engine searches per slot → `1 * max_threads`
-CPUs busy. With ponder on, both engines search at once → `2 * max_threads`
-busy. `max_threads_setting` defends against asymmetric per-engine defaults
-when no global override is in place.
+RAM:
 
-Errors (block start):
-- `load > logical_cores` AND `allow_oversubscribe=false` (matches fastchess'
-  own `-concurrency > nproc` rejection — see Empirical finding above).
-- `pin_affinity=true` AND `load > physical_cores` (affinity needs slot ≤
-  physical core; hyperthreading siblings won't satisfy it).
+```
+ram_load_mb = parallel * 2 * (max_hash_mb + ENGINE_OVERHEAD_MB)
+```
 
-Warnings (informational):
-- `parallel * 2 * hash_mb > 0.7 * system_ram` → paging risk (2 engines/slot,
-  hash counted per-engine).
-- TB on slow disk + high concurrency (stretch).
+`ENGINE_OVERHEAD_MB` = symbolic constant (initial guess ≈ 256 MB; covers
+binary + NNUE weights + PV stacks for typical modern engines). Revisit
+once we have telemetry.
 
-### 3b. Fairness preflight ("engines start on level ground")
-Per-engine UCI options should not differ silently across the tournament
-slate. When the global `engine_default_*` is set via `-each`, all engines
-are forced equal → fair. When unset, the fall-back is each engine's
-stored UCI defaults (already captured at registry add).
+### Block conditions
 
-Warnings:
-- `engine_default_threads is None` AND any two engines have differing
-  Threads defaults → asymmetric compute.
-- Same for `Hash`.
-- `template.ponder=true` AND some engines don't advertise the `Ponder`
-  UCI option → asymmetric (only ponder-aware engines benefit).
-- `sprt` set AND any fairness warning fires → strongly recommend fixing
-  before trusting the result.
+When `allow_oversubscribe = false`:
+- `load > logical_cores`            → reason `"oversubscribed"`
+- `ram_load_mb > 0.75 * total_ram`  → reason `"insufficient_ram"`
 
-### Cross-cutting noise warnings
+When `pin_affinity = true` (regardless of `allow_oversubscribe`):
+- `load > physical_cores`           → reason `"affinity_exceeds_physical"`
+  (affinity needs one physical core per slot — hyperthreading siblings
+  won't satisfy it; flag wouldn't make this work even if user wanted)
+
+When `allow_oversubscribe = true`: the CPU and RAM blocks become logged
+warnings only. No hard ceiling — full user trust. Affinity check still
+hard-blocks (it's a correctness gate, not a "this'll be slow" gate).
+
+### Fairness (deferred — UI-only, not part of rescheck)
+Per-engine UCI option asymmetry (Threads/Hash/Ponder differing across
+the slate when no global override is in place) is a separate concern;
+the client has all the data it needs. Surface as a soft warning in the
+template form, not a block. Out of scope for rescheck.
+
+### Cross-cutting noise warnings (deferred)
 - `sprt` set AND `parallel > 1` AND `pin_affinity=false` → measurement
   noisier than necessary.
 
