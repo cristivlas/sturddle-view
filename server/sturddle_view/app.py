@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -45,16 +46,75 @@ class _NoCacheUIMiddleware(BaseHTTPMiddleware):
         return response
 
 
+# WinError codes asyncio-on-Windows mishandles on the listener socket
+# when a Job-killed proxy aborts mid-AcceptEx. Stock cpython closes the
+# listener — we re-arm instead and silence the orphan-task trace.
+_TRANSIENT_ACCEPT_WINERR = {64, 1236, 10054}  # NETNAME_DELETED, ABORTED, RST
+
+
+def _install_proactor_accept_resilience() -> None:
+    """Re-arm Windows AcceptEx on transient OSErrors instead of dropping
+    the listener (stock cpython closes the socket on any accept OSError)."""
+    if sys.platform != "win32":
+        return
+    from asyncio import proactor_events
+    from asyncio import trsock
+
+    def _start_serving(self, protocol_factory, sock,
+                       sslcontext=None, server=None, backlog=100,
+                       ssl_handshake_timeout=None,
+                       ssl_shutdown_timeout=None):
+        def accept_loop(f=None):
+            try:
+                if f is not None:
+                    conn, addr = f.result()
+                    protocol = protocol_factory()
+                    self._make_socket_transport(conn, protocol,
+                                                waiter=None, server=server)
+                f = self._proactor.accept(sock)
+            except OSError as exc:
+                winerr = getattr(exc, "winerror", None)
+                if sock.fileno() != -1 and winerr in _TRANSIENT_ACCEPT_WINERR:
+                    log.debug("transient AcceptEx WinError %s; re-arming", winerr)
+                    self.call_soon(accept_loop)
+                    return
+                if sock.fileno() != -1:
+                    self.call_exception_handler({
+                        "message": "Accept failed on a socket",
+                        "exception": exc,
+                        "socket": trsock.TransportSocket(sock),
+                    })
+                    sock.close()
+            except (SystemExit, KeyboardInterrupt):
+                raise
+            except BaseException as exc:
+                if sock.fileno() != -1:
+                    self.call_exception_handler({
+                        "message": "Accept failed on a socket",
+                        "exception": exc,
+                        "socket": trsock.TransportSocket(sock),
+                    })
+                    sock.close()
+            else:
+                f.add_done_callback(accept_loop)
+
+        self.call_soon(accept_loop)
+
+    proactor_events.BaseProactorEventLoop._start_serving = _start_serving
+
+
 def _install_engine_sigkill_filter() -> None:
-    # Drop "Future exception was never retrieved" warnings caused by our own
-    # SIGKILL of an unresponsive engine on Undo. Real crashes (SEGV=-11, etc.)
-    # still surface.
+    # Drop "Future exception was never retrieved" from our SIGKILL of a
+    # hung engine on Undo, plus orphan accept_coro tasks from transient
+    # AcceptEx WinErrors (see _install_proactor_accept_resilience).
     loop = asyncio.get_running_loop()
     prev = loop.get_exception_handler()
 
     def handler(loop_, ctx):
         exc = ctx.get("exception")
         if isinstance(exc, chess.engine.EngineTerminatedError) and "exit code: -9" in str(exc):
+            return
+        if isinstance(exc, OSError) and getattr(exc, "winerror", None) in _TRANSIENT_ACCEPT_WINERR:
             return
         if prev is not None:
             prev(loop_, ctx)
@@ -66,6 +126,7 @@ def _install_engine_sigkill_filter() -> None:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    _install_proactor_accept_resilience()
     _install_engine_sigkill_filter()
     _maybe_restore_game(app)
     # Tournament reconciliation: any 'running' rows on disk are stale.
