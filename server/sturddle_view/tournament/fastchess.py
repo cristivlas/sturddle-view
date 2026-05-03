@@ -20,6 +20,7 @@ import asyncio
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import sys
 from collections import deque
@@ -422,25 +423,26 @@ class FastchessRunner:
             # SIGTERM the whole process group (set via start_new_session in
             # _popen_kwargs) so engines + proxies get the chance to clean
             # up too — proc.terminate() would only signal fastchess.
-            import signal
             try:
                 pgid = os.getpgid(pid)
             except ProcessLookupError:
-                pgid = pid
-            log.info("stop: SIGTERM pgid=%d (leader=%d)", pgid, pid)
-            try:
-                os.killpg(pgid, signal.SIGTERM)
-            except ProcessLookupError:
-                log.info("stop: pgid=%d already gone before SIGTERM", pgid)
+                log.info("stop: pid=%d already gone before SIGTERM", pid)
+                pgid = None
+            if pgid is not None:
+                log.info("stop: SIGTERM pgid=%d (leader=%d)", pgid, pid)
+                try:
+                    os.killpg(pgid, signal.SIGTERM)
+                except ProcessLookupError:
+                    log.info("stop: pgid=%d already gone before SIGTERM", pgid)
             try:
                 await asyncio.wait_for(
                     asyncio.shield(self._supervisor),
                     timeout=self._STOP_GRACE_SECONDS,
                 )
-                log.info("stop: pgid=%d exited gracefully", pgid)
+                log.info("stop: pgid=%s exited gracefully", pgid)
                 return
             except asyncio.TimeoutError:
-                log.warning("stop: pgid=%d ignored SIGTERM; SIGKILL", pgid)
+                log.warning("stop: pgid=%d ignored SIGTERM; SIGKILL pgrp", pgid)
                 try:
                     os.killpg(pgid, signal.SIGKILL)
                 except ProcessLookupError:
