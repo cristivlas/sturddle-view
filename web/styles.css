@@ -247,7 +247,8 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   --rail-w: 240px;
   --grid-gap: 16px;
   display: grid;
-  grid-template-columns: var(--rail-w) var(--board-col-px, minmax(320px, 1fr)) var(--rail-w);
+  --ribbon-w: 36px;
+  grid-template-columns: calc(var(--rail-w) - var(--ribbon-w)) var(--board-col-px, minmax(320px, 1fr)) var(--rail-w);
   grid-template-rows: auto;
   grid-template-areas: ". board side";
   gap: 12px var(--grid-gap);
@@ -664,7 +665,8 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
   z-index: 10;
 }
 @media (max-width: 800px), (max-height: 600px) {
-  .engines-panel { flex-direction: column; }
+  #engines-perspective wa-tab-panel { padding: 0; }
+  .engines-panel { flex-direction: column; gap: 0; }
   .engines-ribbon {
     position: static; transform: none;
     flex-direction: row; justify-content: center;
@@ -713,6 +715,7 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
 @media (max-width: 800px), (max-height: 600px) {
   .engines-search-btn { display: none !important; }
   .engines-search-wrap {
+    display: none !important;
     position: static !important;
     clip-path: none !important;
     transition: none !important;
@@ -1093,11 +1096,14 @@ wa-dialog::part(body) {
   font-size: 11px; color: var(--accent);
 }
 .tournaments-body {
-  display: flex; gap: 12px; flex: 1; min-height: 0;
+  --ribbon-w: 36px;
+  display: grid;
+  grid-template-columns: var(--ribbon-w) 1fr var(--ribbon-w);
+  flex: 1; min-height: 0;
 }
 .tournaments-body-main {
+  grid-column: 2;
   flex: 1; min-width: 0; display: flex; flex-direction: column;
-  padding-left: 50px;
 }
 .tournaments-ribbon {
   display: flex; flex-direction: column; align-items: center;
@@ -1124,7 +1130,8 @@ wa-dialog::part(body) {
 .tournament-row-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 
 @media (max-width: 800px), (max-height: 740px) {
-  .tournaments-body { flex-direction: column; }
+  .tournaments-panel { gap: 0; }
+  .tournaments-body { display: flex; flex-direction: column; }
   .tournaments-ribbon {
     position: static; transform: none;
     flex-direction: row; justify-content: center;
