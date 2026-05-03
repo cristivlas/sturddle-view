@@ -93,7 +93,7 @@ function debounce(fn, ms) {
   };
 }
 
-export async function openSettingsDialog({ api }) {
+export async function openSettingsDialog({ api, initialTab }) {
   let initial;
   let tournamentInitial;
   try {
@@ -542,6 +542,10 @@ export async function openSettingsDialog({ api }) {
       }, 400);
       tplHost.addEventListener("input", persistTemplate);
       tplHost.addEventListener("change", persistTemplate);
+
+      const tabByName = { general: generalTab, play: playTab, tournament: tournamentTab };
+      const startTab = tabByName[initialTab] || generalTab;
+      startTab.setAttribute("active", "");
 
       tabs.append(
         generalTab, playTab, tournamentTab,

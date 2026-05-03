@@ -8,6 +8,7 @@
 // selected tournament. New / Sort / Window remain in the top menubar.
 
 import { confirm, reportError, showDialog, toast } from "./dialogs.js";
+import { openSettingsDialog } from "./settings-dialog.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { getActiveWorkspace, openTournamentWorkspace } from "./tournament-workspace.js";
 
@@ -131,8 +132,17 @@ export function mountTournaments({ container, api, events, log, token }) {
 
     if (noFastchess) {
       emptyEl.classList.remove("hidden");
-      emptyMsg.textContent =
-        "fastchess not configured — open Settings → Tournament to set the binary path.";
+      emptyMsg.replaceChildren();
+      emptyMsg.append("fastchess not configured — open ");
+      const link = document.createElement("a");
+      link.href = "#";
+      link.className = "settings-deeplink";
+      link.textContent = "Settings → Tournament";
+      link.addEventListener("click", (e) => {
+        e.preventDefault();
+        openSettingsDialog({ api, initialTab: "tournament" });
+      });
+      emptyMsg.append(link, " to set the binary path.");
       newBtn.disabled = true;
       selectedId = null;
       syncRibbon();

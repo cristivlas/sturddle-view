@@ -234,8 +234,52 @@ export function pickFile({
 
       pathBar.append(backBtn, upBtn, pathInput);
 
+      const filterBar = document.createElement("div");
+      filterBar.className = "fs-picker-filterbar";
+      const filterInput = document.createElement("wa-input");
+      filterInput.size = "small";
+      filterInput.className = "fs-picker-filter";
+      filterInput.setAttribute("placeholder", "Filter…");
+      filterInput.setAttribute("clearable", "");
+      filterInput.setAttribute("autocomplete", "off");
+      filterInput.setAttribute("autocorrect", "off");
+      filterInput.setAttribute("autocapitalize", "off");
+      filterInput.setAttribute("spellcheck", "false");
+      const filterIcon = document.createElement("wa-icon");
+      filterIcon.setAttribute("name", "magnifying-glass");
+      filterIcon.setAttribute("slot", "start");
+      filterInput.appendChild(filterIcon);
+      filterBar.append(filterInput);
+
       const listing = document.createElement("ul");
       listing.className = "fs-picker-list";
+
+      function firstVisibleEntry() {
+        return listing.querySelector(".fs-entry:not(.fs-hidden)");
+      }
+
+      function applyFilter() {
+        const q = (filterInput.value || "").trim().toLowerCase();
+        let anyVisible = false;
+        for (const li of listing.querySelectorAll(".fs-entry")) {
+          const name = li.querySelector(".fs-name")?.textContent?.toLowerCase() || "";
+          const hide = q && !name.includes(q);
+          li.classList.toggle("fs-hidden", hide);
+          if (!hide) anyVisible = true;
+        }
+        listing.classList.toggle("fs-empty", !anyVisible);
+        // Auto-highlight the first visible match so Enter on the filter
+        // (or Tab → Select) acts on something predictable.
+        if (q && anyVisible) firstVisibleEntry().click();
+      }
+      filterInput.addEventListener("input", applyFilter);
+      filterInput.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Enter") return;
+        const li = firstVisibleEntry();
+        if (!li) return;
+        ev.preventDefault();
+        li.dispatchEvent(new MouseEvent("dblclick"));
+      });
 
       const selectBtn = document.createElement("wa-button");
       selectBtn.slot = "footer";
@@ -276,6 +320,8 @@ export function pickFile({
         }
         backBtn.disabled = history.length < 2;
         listing.innerHTML = "";
+        filterInput.value = "";
+        listing.classList.remove("fs-empty");
 
         for (const entry of body.entries) {
           const li = document.createElement("li");
@@ -354,7 +400,7 @@ export function pickFile({
         }
       });
 
-      wrap.append(pathBar, listing);
+      wrap.append(pathBar, filterBar, listing);
       dialog.append(wrap, selectBtn);
       // Open at the recalled dir; if it's gone (deleted/renamed since the
       // last pick), silently fall back to home rather than show a toast.

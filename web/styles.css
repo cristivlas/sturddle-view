@@ -928,6 +928,13 @@ wa-dialog wa-tab-panel > * + * { margin-top: 10px; }
 .fs-picker { display: flex; flex-direction: column; gap: 8px; }
 .fs-picker-pathbar { display: flex; gap: 8px; align-items: center; }
 .fs-picker-pathbar wa-input { flex: 1; }
+.fs-picker-filterbar { display: flex; }
+.fs-picker-filter { flex: 1; }
+.fs-entry.fs-hidden { display: none; }
+.fs-picker-list.fs-empty::after {
+  content: "No matches";
+  display: block; padding: 12px; color: var(--muted); text-align: center;
+}
 .fs-picker-list {
   list-style: none;
   margin: 0;
@@ -1051,6 +1058,10 @@ wa-dialog::part(body) {
   min-height: 30vh; color: var(--muted);
 }
 .tournaments-empty.hidden { display: none; }
+.settings-deeplink {
+  color: inherit; text-decoration: underline; cursor: pointer;
+}
+.settings-deeplink:hover { color: var(--accent, #4a9eff); }
 .tournaments-list {
   list-style: none; padding: 0; margin: 0;
   display: flex; flex-direction: column; gap: 8px;
