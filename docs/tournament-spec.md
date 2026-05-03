@@ -71,6 +71,59 @@ it to ``stopped``; starting it again resumes from where it left off
 
 ---
 
+## Resource sanity checks (rescheck)
+
+Block clearly-unsafe configurations before they reach fastchess. Lives
+in `server/sturddle_view/tournament/rescheck.py` — pure (no orchestrator
+state), called by both the create-time endpoint and the start-time
+recheck.
+
+**Architecture.** Client owns *resolution* (it has the engine registry's
+`option_schema`); server owns *comparison* (it knows the host CPU/RAM):
+
+- Client (in `tournament-template-form.js`): for the picked engines,
+  resolves `max_threads` and `max_hash_mb`. Global `engine_default_*`
+  overrides win; otherwise the max across each engine's
+  `options.<key>` then `option_schema.<key>.default` then a fallback
+  (1 thread / 16 MB). Calls `POST /api/tournaments/rescheck` with the
+  resolved values; on 400, blocks Create.
+- Resolved values are folded into the template at create time, so
+  `Orchestrator.start()` can re-run the same check against the stored
+  template without consulting the registry. This catches direct-API
+  misuse and stale tournaments started after host specs changed.
+
+**Formula.**
+
+```
+cpu_load    = parallel * (2 if ponder else 1) * max_threads
+ram_load_mb = parallel * 2 * (max_hash_mb + ENGINE_OVERHEAD_MB)
+```
+
+`ENGINE_OVERHEAD_MB` = 256 (symbolic; covers binary + NNUE weights + PV
+stacks). Revisit when telemetry justifies it.
+
+**Block conditions.**
+
+- `cpu_load > logical_cores` → `oversubscribed`
+- `ram_load_mb > 0.75 * total_ram` → `insufficient_ram`
+- `pin_affinity AND cpu_load > physical_cores` →
+  `affinity_exceeds_physical`
+
+`allow_oversubscribe = true` downgrades `oversubscribed` and
+`insufficient_ram` to warnings (toast at create time, no block). The
+affinity check is a correctness gate (hyperthreading siblings can't
+satisfy CPU pinning) and is **never** silenced by the flag.
+
+A start-time rescheck failure surfaces the same way as a runner crash:
+status flips to `failed`, `last_error.stderr_tail` carries the message,
+and `last_error.rescheck` carries the structured detail
+(`{reason, cpu_load, ram_load_mb, ...}`).
+
+See [docs/tournament-concurrency-plan.md](tournament-concurrency-plan.md)
+for the working notes (deferred slices, empirical findings).
+
+---
+
 ## Lifecycle and state machine
 
 States: `idle` → `running` → (`stopped` | `done`).
@@ -199,6 +252,19 @@ Fields the form renders today (Phase 1):
 - **Tournament type**: round-robin | gauntlet (with **Seeds** field
   shown only when type = gauntlet).
 - **Ponder** on/off (think on opponent's time).
+- **CPU Affinity** on/off (`pin_affinity`). Emits fastchess `-affinity`
+  so each game-slot is bound to a fixed pair of cores. Recommended for
+  SPRT / rating-list runs.
+- **Oversubscribe** on/off (`allow_oversubscribe`). Permits CPU/RAM use
+  to exceed host capacity; rescheck blockers (see "Resource sanity
+  checks" below) downgrade to warnings. Also passes
+  `-force-concurrency` to fastchess so it doesn't reject `-concurrency
+  > nproc`. Don't use for SPRT.
+- **Auto-folded** at create time by the client and stored in the
+  template: `max_threads` and `max_hash_mb` (worst-case across the
+  selected engines, or the global override if set). Persisted so the
+  server can re-run the rescheck at start time without consulting the
+  engine registry.
 - **Adjudication — Resign** with on/off switch. Inputs prefilled with
   the customary fastchess values (3 moves at score 700 cp); the switch
   controls whether the values are emitted on save.
@@ -778,13 +844,6 @@ Future work (not part of the resume effort):
   later renames. The HVE side is not by design — re-resolving from
   the registry on each new game would fix it; left as-is until
   someone cares.
-- **CPU affinity (`-affinity`)**: pin each game-slot to a fixed
-  pair of cores to reduce scheduler-migration variance — material for
-  SPRT / rating-list runs. Likely template bool `pin_affinity`
-  (default off; recommended for SPRT). Requires
-  `parallel * threads ≤ physical_cores`. See
-  [docs/tournament-concurrency-plan.md](tournament-concurrency-plan.md)
-  Slice 2 for the working notes.
 - **Clone-and-edit tournament**: open the New Tournament dialog
   pre-filled from an existing tournament's frozen template + engines,
   with the name field cleared (or `"<name> (copy)"`). Saves the
