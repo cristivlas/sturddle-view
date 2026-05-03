@@ -202,6 +202,30 @@ async def _periodic_flush(broadcaster: Broadcaster, stop_event: asyncio.Event) -
         broadcaster.flush()
 
 
+async def _make_stdin_reader(loop: asyncio.AbstractEventLoop) -> asyncio.StreamReader:
+    """Hook sys.stdin into a StreamReader. Windows ProactorEventLoop
+    can't connect_read_pipe() on the inherited (non-overlapped) stdin
+    handle, so use a daemon thread + feed_data on that platform."""
+    reader = asyncio.StreamReader(loop=loop)
+    if sys.platform == "win32":
+        def _pump() -> None:
+            try:
+                while True:
+                    line = sys.stdin.buffer.readline()
+                    if not line:
+                        loop.call_soon_threadsafe(reader.feed_eof)
+                        return
+                    loop.call_soon_threadsafe(reader.feed_data, line)
+            except Exception:
+                loop.call_soon_threadsafe(reader.feed_eof)
+        threading.Thread(target=_pump, name="proxy-stdin", daemon=True).start()
+    else:
+        await loop.connect_read_pipe(
+            lambda: asyncio.StreamReaderProtocol(reader), sys.stdin
+        )
+    return reader
+
+
 async def _run(
     engine_argv: list[str],
     broadcast_url: str | None,
@@ -227,10 +251,7 @@ async def _run(
 
     # tournament_manager stdin -> engine stdin
     loop = asyncio.get_running_loop()
-    stdin_reader = asyncio.StreamReader()
-    await loop.connect_read_pipe(
-        lambda: asyncio.StreamReaderProtocol(stdin_reader), sys.stdin
-    )
+    stdin_reader = await _make_stdin_reader(loop)
 
     upstream = asyncio.create_task(_pump(stdin_reader, proc.stdin, broadcaster, "in"))
     downstream = asyncio.create_task(_pump(proc.stdout, sys.stdout.buffer, broadcaster, "out"))
