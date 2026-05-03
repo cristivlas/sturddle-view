@@ -1,0 +1,80 @@
+# Tournament Concurrency Improvements — Rough Plan
+
+Status: draft. Update as slices land.
+
+## Goals
+- Let users opt into oversubscription (parallel > physical cores) safely.
+- Optional CPU affinity for measurement-quality runs (SPRT).
+- Preflight sanity checks + graceful crash handling for misconfigs.
+
+## Slice 1 — Oversubscribe opt-in + crash handling
+- Template field: `allow_oversubscribe: bool` (default false).
+- `build_command` (fastchess.py): pass `-force-concurrency` (verify exact flag name) when true.
+- UI: checkbox in tournament-template-form.js next to `games_in_parallel`.
+- Preflight (orchestrator, before `runner.start`): error if `parallel > physical_cores` and flag off.
+- Crash handling: enrich `runner_crash` payload with last N stderr lines. Currently `{rc}` only — supervisor in fastchess.py:493 should attach captured stderr tail.
+- Test: e2e — set `parallel = cores+1` w/o override → tournament reaches crashed state with stderr snippet visible.
+
+## Slice 2 — CPU affinity
+- Template field: `pin_affinity: bool` (default false). Explicit, no auto-magic.
+- `build_command`: pass fastchess `-affinity` flag when true.
+- Preflight: if affinity on AND `parallel * threads > physical_cores` → error (affinity needs slot ≤ core).
+- Tooltip: "Recommended for SPRT runs."
+- Smoke test on Windows before shipping — verify `SetProcessAffinityMask` actually pins engine threads as expected (vs. just the parent).
+
+## Slice 3 — Sanity checks (preflight)
+Server-side, in orchestrator at start time. Returns warnings/errors surfaced to UI.
+
+Errors (block start):
+- `parallel * threads > physical_cores` AND `allow_oversubscribe=false`.
+- `pin_affinity=true` AND `parallel * threads > physical_cores`.
+
+Warnings (informational, non-blocking):
+- `engine_default_threads is None` AND `parallel > 1` → engines may use own thread counts; oversubscription possible.
+- `parallel * 2 * hash_mb > 0.7 * system_ram` → paging risk.
+- `sprt` set AND `parallel > 1` AND `pin_affinity=false` → noisier results expected.
+
+TODO / stretch:
+- TB on slow disk warn at high concurrency.
+- UCI-probe each engine's default `Threads` on add; store on engine record; use for accurate preflight when global threads unset.
+
+## Open questions
+- Exact fastchess flag names — verify against current fastchess version (`-force-concurrency` vs `--force-concurrency` vs other).
+- Where to surface warnings in UI — start dialog confirmation? workspace banner?
+- Cross-platform physical-core detection: `psutil.cpu_count(logical=False)` is the obvious pick; confirm available in deps.
+
+## Findings & open bugs (live)
+
+### Empirical: fastchess gates at LOGICAL cpu count (Windows; Linux TBD)
+- Earlier "doesn't gate" conclusion was wrong — proxy bug was masking the real failure mode.
+- Real behavior on Win box (8 physical / 16 logical): `parallel <= 16` accepted, `parallel = 17` refused with
+  `Concurrency exceeds number of CPUs. Use -force-concurrency to override.`
+- So default permits SMT oversubscription up to logical core count.
+- Slice 1 priority drops: overriding past logical CPU count is niche. Implement only if a user actually wants it.
+- TODO: repro on Linux to confirm same threshold (some fastchess builds may differ).
+
+### RESOLVED — uciok timeout was the proxy on Windows (commit `8bceac3`)
+- Symptom: `Fatal; ... uciok after startup` reproducibly even at parallel=1.
+- Root cause: `proxy.py` used `loop.connect_read_pipe(sys.stdin)`. On Windows + ProactorEventLoop, the inherited stdin handle is non-overlapped, so the reader silently never delivers data — proxy never forwards `uci`, engine never replies `uciok`.
+- Fix: Windows-only daemon thread doing blocking `sys.stdin.buffer.readline()` + `loop.call_soon_threadsafe(reader.feed_data, line)`.
+
+### RESOLVED — orphan engines + wedged proc.wait on Stop (commit `37edcc4`)
+- Symptom: clicking Stop, fastchess died (verified via `Get-CimInstance`), but `proc.wait()` in supervisor never returned. State stuck on `running`. 16+ engine + proxy processes orphaned each run.
+- Root cause: ProactorEventLoop's process-exit detection wedges when child descendants hold inherited stdio pipe handles (engines + proxies survived fastchess's death since fastchess died via TerminateProcess without reaping them).
+- Fix: per-tournament Windows Job Object (`_win_job.create_job` + `assign_to_job` + `close_job`). Stop closes the Job handle → `KILL_ON_JOB_CLOSE` synchronously kills fastchess + every descendant → asyncio's wait resolves cleanly. Supervisor closes the Job on natural termination too.
+- Also obsoletes the brief `_force_terminal_event` workaround we tried.
+
+### Stale-running reconciliation (still open)
+- On server boot, `STATUS_RUNNING` rows currently get reconciled to `STATUS_STOPPED`. Should be `STATUS_FAILED` with synthetic `last_error = {"reason": "server crashed/killed mid-tournament"}`.
+
+### Watch-window silence (resolved by proxy fix above)
+- Proxy now actually forwards UCI lines on Windows; live windows should populate.
+
+### Slice 5 — Reframe oversubscription gate (was Slice 1's premise)
+- fastchess accepts oversubscription silently → gate is no longer "block hard error".
+- New purpose: warn user that high concurrency degrades Elo measurement (SMT contention + startup races).
+- UI shape: probably a soft warning at create time when `parallel > physical_cores`, not a hard block.
+
+### TODO: atomic spawn-into-Job (lower priority polish)
+- Today: assign-after-spawn has a tiny race where a child fastchess spawns BEFORE we call `AssignProcessToJobObject` escapes the Job. fastchess does ms of setup before forking engines, so observable race ≈ 0.
+- Proper fix: `PROC_THREAD_ATTRIBUTE_JOB_LIST` (Windows 10+) via ctypes `CreateProcess`. Requires bypassing `asyncio.create_subprocess_exec` for fastchess.
