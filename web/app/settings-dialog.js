@@ -361,7 +361,7 @@ export async function openSettingsDialog({ api, initialTab }) {
       // --- Engine defaults (UCI overrides + tournament book) ---
       // Lives in the Common panel so users see one place for global,
       // non-Play, non-Tournament settings.
-      function makeNumRow(labelText, key, { hint } = {}) {
+      function makeNumRow(labelText, key, { hint, max } = {}) {
         const row = document.createElement("div");
         row.className = "settings-row";
         const lbl = document.createElement("label");
@@ -375,8 +375,9 @@ export async function openSettingsDialog({ api, initialTab }) {
         const input = document.createElement("wa-input");
         input.size = "small";
         input.type = "number";
-        input.setAttribute("min", "1");
-        input.setAttribute("autocomplete", "off");
+        input.min = "1";
+        if (max != null) input.max = String(max);
+        input.autocomplete = "off";
         input.placeholder = "engine default";
         const cur = initial[key];
         if (cur != null) input.value = String(cur);
@@ -407,7 +408,12 @@ export async function openSettingsDialog({ api, initialTab }) {
           },
           { editable: true, placeholder: "/path/to/pgn (empty = no autosave)" },
         ),
-        makeNumRow("Threads", "engine_default_threads"),
+        makeNumRow("Analysis Threads", "engine_default_analysis_threads", {
+          max: initial.host?.logical_cores,
+        }),
+        makeNumRow("Threads", "engine_default_threads", {
+          max: initial.host?.logical_cores,
+        }),
         makeNumRow("Hash (MB)", "engine_default_hash_mb"),
         pathRow(
           "SyzygyPath",

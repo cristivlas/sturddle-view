@@ -168,38 +168,48 @@ class HumanVsEngine:
 
     async def _ensure_engine(self) -> chess.engine.UciProtocol:
         if self._engine is None:
-            _transport, engine = await chess.engine.popen_uci(self._engine_path)
-            # Pre-attach a swallow on the returncode future so an unexpected
-            # death (e.g. when we hard-kill the transport) doesn't surface
-            # as "Future exception was never retrieved".
-            rc_future = getattr(engine, "returncode", None)
-            if rc_future is not None:
-                rc_future.add_done_callback(lambda f: f.exception())
-            self._engine = engine
+            self._engine = await self._spawn_engine()
             if not self._engine_name:
-                self._engine_name = engine.id.get("name") or Path(self._engine_path).name
-            # Per-engine UCI options first; global engine defaults from
-            # settings layer on top. Both skip unknown/managed options
-            # rather than fail — the engine's schema may have drifted
-            # since save (binary upgrade). Log so the user can refresh.
-            accepted: dict = {}
-            for k, v in (self._engine_options or {}).items():
-                if k in engine.options and not engine.options[k].is_managed():
-                    accepted[k] = v
-                else:
-                    log.warning(
-                        "engine %s: skipping unknown/managed option %s",
-                        self._engine_path, k,
-                    )
-            for k, v in self._global_engine_defaults().items():
-                if k in engine.options and not engine.options[k].is_managed():
-                    accepted[k] = v
-            if accepted:
-                try:
-                    await engine.configure(accepted)
-                except chess.engine.EngineError:
-                    log.exception("engine refused options %s", accepted)
+                self._engine_name = (
+                    self._engine.id.get("name") or Path(self._engine_path).name
+                )
         return self._engine
+
+    async def _spawn_engine(
+        self, overrides: dict | None = None,
+    ) -> chess.engine.UciProtocol:
+        """Launch a fresh engine process and apply per-engine + global options.
+
+        `overrides` win over both per-engine options and global defaults —
+        used by analysis mode to bump Threads on its own throwaway instance.
+        Skips unknown/managed options instead of failing (engine schema may
+        have drifted since save).
+        """
+        _transport, engine = await chess.engine.popen_uci(self._engine_path)
+        rc_future = getattr(engine, "returncode", None)
+        if rc_future is not None:
+            rc_future.add_done_callback(lambda f: f.exception())
+        accepted: dict = {}
+        for k, v in (self._engine_options or {}).items():
+            if k in engine.options and not engine.options[k].is_managed():
+                accepted[k] = v
+            else:
+                log.warning(
+                    "engine %s: skipping unknown/managed option %s",
+                    self._engine_path, k,
+                )
+        for k, v in self._global_engine_defaults().items():
+            if k in engine.options and not engine.options[k].is_managed():
+                accepted[k] = v
+        for k, v in (overrides or {}).items():
+            if k in engine.options and not engine.options[k].is_managed():
+                accepted[k] = v
+        if accepted:
+            try:
+                await engine.configure(accepted)
+            except chess.engine.EngineError:
+                log.exception("engine refused options %s", accepted)
+        return engine
 
     def _global_engine_defaults(self) -> dict:
         """UCI-option subset of the global engine defaults from settings.
@@ -822,8 +832,18 @@ class HumanVsEngine:
             await self._publish_result()
 
     async def _run_analysis(self, game_id: str, board: chess.Board) -> None:
+        """Drive analysis on a dedicated engine instance.
+
+        A throwaway process avoids re-configuring + reverting Threads on the
+        play engine (and any state bleed it could cause). Killed on exit.
+        """
+        overrides: dict = {}
+        s = self._settings
+        n = getattr(s, "engine_default_analysis_threads", None) if s else None
+        if n:
+            overrides["Threads"] = n
         try:
-            engine = await self._ensure_engine()
+            engine = await self._spawn_engine(overrides=overrides)
         except Exception:
             log.exception("could not start engine for analysis")
             return
@@ -848,6 +868,10 @@ class HumanVsEngine:
             return
         finally:
             self._analysis = None
+            try:
+                await engine.quit()
+            except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
+                pass
 
     def _board_event(self) -> Event:
         assert self._board is not None and self._game_id is not None

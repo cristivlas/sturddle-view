@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import psutil
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..auth import require_token
@@ -18,6 +19,11 @@ _VALID_BOARD_STYLES = {
 
 
 def _serialize(s) -> dict:
+    # Host info bundled here so the settings dialog can cap thread inputs
+    # without trusting navigator.hardwareConcurrency (which has been seen
+    # lying in WebView2 / privacy-throttling browsers).
+    logical = psutil.cpu_count(logical=True) or 1
+    physical = psutil.cpu_count(logical=False) or logical
     return {
         "pgn_autosave": s.pgn_autosave,
         "pgn_dir": str(s.pgn_dir) if s.pgn_dir else "",
@@ -27,11 +33,13 @@ def _serialize(s) -> dict:
         "allow_takeback": s.allow_takeback,
         "board_style": s.board_style,
         "engine_default_threads": s.engine_default_threads,
+        "engine_default_analysis_threads": s.engine_default_analysis_threads,
         "engine_default_hash_mb": s.engine_default_hash_mb,
         "engine_default_syzygy_path": s.engine_default_syzygy_path,
         "engine_default_book_path": s.engine_default_book_path,
         "engine_default_book_plies": s.engine_default_book_plies,
         "engine_default_book_order": s.engine_default_book_order,
+        "host": {"logical_cores": logical, "physical_cores": physical},
     }
 
 
@@ -128,6 +136,7 @@ def update_settings(payload: dict, request: Request) -> dict:
 
     for key, min_v in (
         ("engine_default_threads", 1),
+        ("engine_default_analysis_threads", 1),
         ("engine_default_hash_mb", 1),
         ("engine_default_book_plies", 1),
     ):

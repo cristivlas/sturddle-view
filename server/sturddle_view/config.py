@@ -34,6 +34,7 @@ PERSISTED_FIELDS = (
     "tournament_root",
     "tournament_default_template",
     "engine_default_threads",
+    "engine_default_analysis_threads",
     "engine_default_hash_mb",
     "engine_default_syzygy_path",
     "engine_default_book_path",
@@ -76,6 +77,10 @@ class Settings(BaseSettings):
     # Threads / Hash / SyzygyPath are UCI setoptions; book_path + book_plies
     # are fastchess CLI args (tournament only — see HVE follow-up note).
     engine_default_threads: int | None = None
+    # Override Threads while in analysis (UCI go-infinite). None = use the
+    # play-time Threads value. Applied to a dedicated analysis engine
+    # process spawned for the duration of the search and quit on exit.
+    engine_default_analysis_threads: int | None = None
     engine_default_hash_mb: int | None = None
     engine_default_syzygy_path: str | None = None
     engine_default_book_path: str | None = None
