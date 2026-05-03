@@ -228,6 +228,7 @@ export function mountEngines({ container, api, onError }) {
       searchWrap.style.left = ribbonRect.right + "px";
       searchWrap.style.top = (btnRect.top + btnRect.height / 2) + "px";
       searchWrap.style.transform = "translateY(-50%)";
+      searchWrap.offsetWidth; // force reflow so position is committed before transition starts
       searchWrap.classList.add("open");
       searchBtn.classList.add("is-active");
       searchInput.focus();
