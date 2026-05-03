@@ -26,7 +26,7 @@ import sys
 from collections import deque
 from typing import Any
 
-from .._win_job import assign_to_job, close_job, create_job
+from .._win_job import assign_to_job, close_job, create_job, spawn_in_job
 from .runner import EventCallback, RunSpec
 
 
@@ -341,28 +341,34 @@ class FastchessRunner:
         if spec.proxy_secret:
             env["SV_PROXY_SECRET"] = spec.proxy_secret
 
-        # Create the per-tournament Job BEFORE spawn so we can assign
-        # immediately after CreateProcess returns (small race ok).
+        # Create the per-tournament Job BEFORE spawn so the process can
+        # be created already inside it (atomic via spawn_in_job).
         if sys.platform == "win32":
             try:
                 self._job_handle = create_job()
             except OSError:
                 log.exception("Job Object creation failed")
 
-        self._proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(spec.work_dir),
-            env=env,
-            **_popen_kwargs(),
-        )
+        with spawn_in_job(self._job_handle):
+            self._proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(spec.work_dir),
+                env=env,
+                **_popen_kwargs(),
+            )
 
+        # Belt-and-suspenders: if the atomic path silently no-op'd
+        # (e.g. interception bypass), make sure fastchess is in the Job.
         if self._job_handle is not None:
             try:
                 assign_to_job(self._job_handle, self._proc.pid)
-            except OSError:
-                log.exception("assign_to_job failed for pid=%d", self._proc.pid)
+            except OSError as e:
+                # ERROR_ACCESS_DENIED (5) = already in this Job. Expected
+                # in the atomic path. Anything else is real.
+                if getattr(e, "winerror", None) != 5:
+                    log.exception("assign_to_job failed for pid=%d", self._proc.pid)
 
         # Pipe drains: stream stdout/stderr → log file (open in append mode).
         log_file = spec.log_path.open("a", encoding="utf-8", errors="replace")

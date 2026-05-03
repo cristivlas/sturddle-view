@@ -319,7 +319,7 @@ def test_settings_persist_across_restart(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_reconcile_marks_stale_running_as_stopped(tmp_path, monkeypatch):
+def test_reconcile_marks_stale_running_as_failed(tmp_path, monkeypatch):
     monkeypatch.setattr(
         FastchessRunner, "detect_binary",
         staticmethod(lambda configured: configured),
@@ -327,7 +327,7 @@ def test_reconcile_marks_stale_running_as_stopped(tmp_path, monkeypatch):
 
     # Boot an app, create+start a long-running tournament, then drop the
     # app without stopping (simulating a server crash). The next app
-    # construction must reconcile the on-disk 'running' to 'stopped'.
+    # construction must reconcile the on-disk 'running' to 'failed'.
     s = Settings(auth_disabled=True)
     s.tournament_root = str(tmp_path / "tournaments")
     s.tournament_fastchess_path = sys.executable
@@ -365,11 +365,14 @@ def test_reconcile_marks_stale_running_as_stopped(tmp_path, monkeypatch):
     state["status"] = "running"
     state_path.write_text(_json.dumps(state))
 
-    # Boot a fresh app -- reconcile should flip it back to stopped
+    # Boot a fresh app -- reconcile should flip it to failed with a
+    # synthetic last_error so the UI surfaces *why*.
     app2 = create_app(settings=s)
     with TestClient(app2) as c2:
         body = c2.get(f"/api/tournaments/{t['id']}").json()
-        assert body["status"] == "stopped"
+        assert body["status"] == "failed"
+        assert body["last_error"] is not None
+        assert "Server was killed" in body["last_error"]["stderr_tail"][0]
 
 
 # ---------------------------------------------------------------------------
