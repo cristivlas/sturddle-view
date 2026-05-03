@@ -311,10 +311,12 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, b
             assert any("Schedule"  in t for t in titles)
             assert any("Event log" in t for t in titles)
 
-            empty_text = await page.evaluate(
-                """() => document.querySelector('.wb-standings .wb-empty')?.textContent || ''"""
+            await page.wait_for_function(
+                """() => /No games/.test(
+                    document.querySelector('.wb-standings .wb-empty')?.textContent || ''
+                )""",
+                timeout=5000,
             )
-            assert "No games" in empty_text
 
             await page.evaluate(
                 """() => document.querySelectorAll('.winbox.sturddle-wb .wb-close')
