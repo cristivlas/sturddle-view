@@ -17,6 +17,7 @@ from pathlib import Path
 
 from platformdirs import user_config_dir
 
+from .. import APP_NAME
 from .._atomic import atomic_write_json
 
 log = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ SCHEMA_VERSION = 1
 
 
 def default_state_path() -> Path:
-    return Path(user_config_dir("sturddle-view")) / "current_game.json"
+    return Path(user_config_dir(APP_NAME, appauthor=False)) / "current_game.json"
 
 
 @dataclass

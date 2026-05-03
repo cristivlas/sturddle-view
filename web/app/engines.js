@@ -59,6 +59,9 @@ export function mountEngines({ container, api, onError }) {
           </div>
 
           <div class="engines-table-wrap">
+            <div class="engines-empty hidden">
+              <p class="empty-message"></p>
+            </div>
             <table class="engines-table">
               <colgroup>
                 <col class="engines-col-name">
@@ -90,6 +93,8 @@ export function mountEngines({ container, api, onError }) {
   const searchWrap = container.querySelector(".engines-search-wrap");
   const searchInput = container.querySelector(".engines-search");
   const list = container.querySelector(".engines-list");
+  const emptyEl = container.querySelector(".engines-empty");
+  const emptyMsg = emptyEl.querySelector(".empty-message");
 
   const SORT_KEY_LS = "sturddle.engines.sortOrder";
   let engines = [];
@@ -142,7 +147,22 @@ export function mountEngines({ container, api, onError }) {
       list.appendChild(tr);
     }
 
-    if (engines.length === 0) { emptyRow("No engines yet — click + to add one."); return; }
+    if (engines.length === 0) {
+      emptyEl.classList.remove("hidden");
+      emptyMsg.replaceChildren();
+      const addLink = document.createElement("button");
+      addLink.type = "button";
+      addLink.className = "toast-icon-btn";
+      addLink.setAttribute("aria-label", "Add engine");
+      addLink.setAttribute("title", "Add engine");
+      const addIc = document.createElement("wa-icon");
+      addIc.setAttribute("name", "plus");
+      addLink.appendChild(addIc);
+      addLink.addEventListener("click", () => addBtn.click());
+      emptyMsg.append("No engines yet — click ", addLink, " to add one.");
+      return;
+    }
+    emptyEl.classList.add("hidden");
     if (visible.length === 0) { emptyRow("No engines match."); return; }
 
     for (const e of visible) {

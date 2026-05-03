@@ -17,13 +17,14 @@ from pathlib import Path
 import chess.engine
 from platformdirs import user_config_dir
 
+from . import APP_NAME
 from ._atomic import atomic_write_json
 
 log = logging.getLogger(__name__)
 
 
 def default_registry_path() -> Path:
-    return Path(user_config_dir("sturddle-view")) / "engines.json"
+    return Path(user_config_dir(APP_NAME, appauthor=False)) / "engines.json"
 
 
 # UCI options the engine manages itself; rendering them in our dialog is

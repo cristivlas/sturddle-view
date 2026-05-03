@@ -24,7 +24,6 @@ import signal
 import subprocess
 import sys
 from collections import deque
-from typing import Any
 
 from .._win_job import assign_to_job, close_job, create_job, spawn_in_job
 from .runner import EventCallback, RunSpec
@@ -157,7 +156,7 @@ def build_command(spec: RunSpec) -> list[str]:
     if t.get("allow_oversubscribe"):
         cmd.append("-force-concurrency")
     if t.get("pin_affinity"):
-        cmd.append("-affinity")
+        cmd.append("-use-affinity")
     if "rounds" in t:
         cmd.extend(["-rounds", str(t["rounds"])])
     if "games_per_round" in t:
@@ -227,6 +226,12 @@ def build_command(spec: RunSpec) -> list[str]:
         "append=true",
     ])
     cmd.extend(["-output", "format=fastchess"])
+
+    # FASTCHESS_LOG_LEVEL (trace|info|warn|err|fatal); default info.
+    # fastchess writes directly to log_path; Python drain handles events only.
+    _fc_log_level = os.environ.get("FASTCHESS_LOG_LEVEL", "info").strip().lower()
+    if _fc_log_level in {"trace", "info", "warn", "err", "fatal"}:
+        cmd.extend(["-log", f"file={spec.log_path}", f"level={_fc_log_level}", "append=true"])
 
     # -config drives Resume after Stop. Always pass outname= so fastchess
     # writes its scoreboard snapshot. Only pass file= when the snapshot
@@ -377,19 +382,14 @@ class FastchessRunner:
                 if getattr(e, "winerror", None) != 5:
                     log.exception("assign_to_job failed for pid=%d", self._proc.pid)
 
-        # Pipe drains: stream stdout/stderr → log file (open in append mode).
-        log_file = spec.log_path.open("a", encoding="utf-8", errors="replace")
-        log_file.write(
-            f"\n=== fastchess run for tournament {spec.tournament.id} ===\n"
-        )
-        log_file.flush()
+        # Pipe drains: emit runner_log events; fastchess writes the log file.
         self._drain_tasks = [
             asyncio.create_task(
-                self._drain(self._proc.stdout, log_file, "out"),
+                self._drain(self._proc.stdout, "out"),
                 name="fastchess-stdout",
             ),
             asyncio.create_task(
-                self._drain(self._proc.stderr, log_file, "err"),
+                self._drain(self._proc.stderr, "err"),
                 name="fastchess-stderr",
             ),
         ]
@@ -399,7 +399,7 @@ class FastchessRunner:
         # Supervisor task watches for exit and emits the terminal event.
         # Detached: callers don't await it; ``stop()`` cancels it cleanly.
         self._supervisor = asyncio.create_task(
-            self._supervise(log_file), name="fastchess-supervisor"
+            self._supervise(), name="fastchess-supervisor"
         )
 
     # How long to wait between SIGTERM and SIGKILL on Stop. Long enough
@@ -471,15 +471,8 @@ class FastchessRunner:
 
     # ----- internals --------------------------------------------------------
 
-    async def _drain(
-        self,
-        stream: asyncio.StreamReader | None,
-        log_file: Any,
-        tag: str,
-    ) -> None:
-        """Forward each line of ``stream`` to the log file AND emit a
-        ``runner_log`` event so the workspace's Event log window can
-        show it. Tolerates the stream closing or being None."""
+    async def _drain(self, stream: asyncio.StreamReader | None, tag: str) -> None:
+        """Emit runner_log events from stdout/stderr; fastchess owns the log file."""
         if stream is None:
             return
         try:
@@ -487,32 +480,17 @@ class FastchessRunner:
                 line = await stream.readline()
                 if not line:
                     return
-                decoded = line.decode("utf-8", errors="replace")
-                stripped = decoded.rstrip("\r\n")
+                stripped = line.decode("utf-8", errors="replace").rstrip("\r\n")
                 if stripped:
                     tail = self._stderr_tail if tag == "err" else self._stdout_tail
                     tail.append(stripped)
-                try:
-                    log_file.write(decoded)
-                    log_file.flush()
-                except (ValueError, OSError):
-                    # log file closed by supervisor — drop the line.
-                    return
-                # Forward to the event bus too. fastchess's stdout is
-                # low-volume status output ("Started game N", "Finished
-                # game N: ...", score lines) — fine to publish per-line
-                # without batching. Per-engine UCI chatter does NOT
-                # flow through here; that's the proxy's job (Slice 9b).
-                await self._emit("runner_log", {
-                    "stream": tag,
-                    "line": stripped,
-                })
+                    await self._emit("runner_log", {"stream": tag, "line": stripped})
         except asyncio.CancelledError:
             raise
         except Exception:
             log.exception("drain task (%s) crashed", tag)
 
-    async def _supervise(self, log_file: Any) -> None:
+    async def _supervise(self) -> None:
         assert self._proc is not None
         pid = self._proc.pid
         try:
@@ -528,10 +506,6 @@ class FastchessRunner:
                 t.cancel()
             except asyncio.CancelledError:
                 pass
-        try:
-            log_file.close()
-        except OSError:
-            pass
         # Python 3.12+ exposes Process.close(); use it when available so the
         # underlying transport is released immediately rather than waiting for GC.
         if hasattr(self._proc, "close"):

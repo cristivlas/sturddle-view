@@ -8,6 +8,7 @@ from platformdirs import user_config_dir
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from . import APP_NAME
 from ._atomic import atomic_write_json
 
 
@@ -16,7 +17,7 @@ WEB_DIR = REPO_ROOT / "web"
 
 
 def default_settings_file() -> Path:
-    return Path(user_config_dir("sturddle-view")) / "settings.json"
+    return Path(user_config_dir(APP_NAME, appauthor=False)) / "settings.json"
 
 
 # Fields persisted to disk. Excludes secrets (token), bind config (host/port),

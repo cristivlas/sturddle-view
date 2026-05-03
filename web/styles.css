@@ -1089,6 +1089,14 @@ wa-dialog::part(body) {
   min-height: 30vh; color: var(--muted);
 }
 .tournaments-empty.hidden { display: none; }
+.engines-empty {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted);
+  pointer-events: none;
+}
+.engines-empty .empty-message { pointer-events: auto; }
+.engines-empty.hidden { display: none; }
 .settings-deeplink {
   color: inherit; text-decoration: underline; cursor: pointer;
 }
