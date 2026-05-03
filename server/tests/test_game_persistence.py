@@ -149,7 +149,8 @@ async def test_clear_on_resign(tmp_path):
 
 
 async def test_clear_on_natural_game_over(tmp_path):
-    """A mate (or any outcome reaching `_publish_result`) must clear the store."""
+    """A mate (or any outcome reaching `_finalize_game_locked`) must clear
+    both the disk snapshot AND in-memory state."""
     hve, store = _make_hve(tmp_path)
     await hve.new_game(human_white=True, tc=TimeControl(60.0, 0.0))
     # Drive the board into Fool's Mate, with the engine reply mocked out so
@@ -164,9 +165,11 @@ async def test_clear_on_natural_game_over(tmp_path):
     # White just played g2g4 — black to move with mate-in-1 available.
     hve._board.push(chess.Move.from_uci("d8h4"))
     assert hve._board.is_checkmate()
-    # Now run _publish_result manually to exercise the clear path.
-    await hve._publish_result()
+    async with hve._lock:
+        hve._finalize_game_locked()
     assert store.load() is None
+    assert hve._board is None
+    assert hve._game_id is None
 
 
 async def test_restart_mid_engine_think_resumes_with_engine_to_move(tmp_path):

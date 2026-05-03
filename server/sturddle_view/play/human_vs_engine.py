@@ -309,9 +309,13 @@ class HumanVsEngine:
             await self._publish_board()
             await self._publish_clock()
             ended = self._board.is_game_over()
+            if ended:
+                end_game_id, end_payload = self._finalize_game_locked()
         if ended:
             await self._cancel_tick()
-            await self._publish_result()
+            await self._bus.publish(
+                Event(kind="game_result", game_id=end_game_id, payload=end_payload)
+            )
         else:
             await self._engine_to_move()
 
@@ -827,9 +831,13 @@ class HumanVsEngine:
             await self._publish_board()
             await self._publish_clock()
             ended = self._board.is_game_over()
+            if ended:
+                end_game_id, end_payload = self._finalize_game_locked()
         if ended:
             await self._cancel_tick()
-            await self._publish_result()
+            await self._bus.publish(
+                Event(kind="game_result", game_id=end_game_id, payload=end_payload)
+            )
 
     async def _run_analysis(self, game_id: str, board: chess.Board) -> None:
         """Drive analysis on a dedicated engine instance.
@@ -929,17 +937,21 @@ class HumanVsEngine:
             return
         await self._bus.publish(self._clock_event())
 
-    async def _publish_result(self) -> None:
+    def _finalize_game_locked(self) -> tuple[str, dict]:
+        """Caller MUST hold self._lock — clearing in the same critical
+        section as the game-over detection prevents /game/sync from
+        republishing the just-ended board as if the game were live."""
+        assert self._lock.locked(), "_finalize_game_locked called without lock"
         assert self._board is not None and self._game_id is not None
         outcome = self._board.outcome()
         result = outcome.result() if outcome else "*"
         termination = outcome.termination.name.lower() if outcome else "unknown"
         self._maybe_save_pgn(result=result, termination=termination)
         self._clear_store()
-        payload = {"result": result, "termination": termination}
-        await self._bus.publish(
-            Event(kind="game_result", game_id=self._game_id, payload=payload)
-        )
+        game_id = self._game_id
+        self._game_id = None
+        self._board = None
+        return game_id, {"result": result, "termination": termination}
 
     def _maybe_save_pgn(self, *, result: str, termination: str) -> Path | None:
         if self._board is None or self._game_id is None:
