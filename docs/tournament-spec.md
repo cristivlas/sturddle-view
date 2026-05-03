@@ -771,12 +771,6 @@ Future work (not part of the resume effort):
   follow-up discussion.
 - **Implementation plan**: server modules' public APIs, REST/WS event
   shapes, phased landing order. To be drafted after UI/UX is settled.
-- **Workspace on mobile**: WinBox's floating-window model is unusable
-  on narrow viewports. Acceptable for Phase 1 since tournament
-  observation is a desktop-class use case. If mobile matters later,
-  options: (1) at `max-width: 600px`, replace "Open workspace" with a
-  single full-screen Standings-only view, or (2) force WinBox into a
-  tabs/accordion layout on narrow viewports.
 - **Engine renames don't propagate to live HVE display**: editing an
   engine's display name in the Roster does not update the Play
   perspective's side-panel label until the next page load. Tournaments
@@ -784,13 +778,6 @@ Future work (not part of the resume effort):
   later renames. The HVE side is not by design — re-resolving from
   the registry on each new game would fix it; left as-is until
   someone cares.
-- **Duplicate tournament names**: nothing in the create flow prevents
-  two tournaments from sharing the same name. On-disk directories
-  don't collide (each `<id>/` is a UUID), but the Tournaments list
-  shows ambiguous rows. Likely fix: server-side uniqueness check on
-  `POST /api/tournaments`, returning a 409 with a suggestion. Or
-  client-side validation that disables Create when the name is
-  already taken. Not a data-corruption risk; a UX clarity one.
 - **CPU affinity (`-affinity`)**: pin each game-slot to a fixed
   pair of cores to reduce scheduler-migration variance — material for
   SPRT / rating-list runs. Likely template bool `pin_affinity`
