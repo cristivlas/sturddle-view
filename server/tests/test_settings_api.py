@@ -115,3 +115,13 @@ def test_engine_default_book_order_blank_clears(client):
     assert client.get("/settings").json()["engine_default_book_order"] == "random"
     r = client.put("/settings", json={"engine_default_book_order": ""})
     assert r.json()["engine_default_book_order"] is None
+
+
+def test_pgn_dir_blank_clears(client, tmp_path):
+    """UI's Clear button sends ''; server must drop the path (and surface
+    it as '' on GET) instead of silently ignoring the payload."""
+    r = client.put("/settings", json={"pgn_dir": str(tmp_path)})
+    assert r.json()["pgn_dir"] == str(tmp_path)
+    r = client.put("/settings", json={"pgn_dir": ""})
+    assert r.json()["pgn_dir"] == ""
+    assert client.get("/settings").json()["pgn_dir"] == ""

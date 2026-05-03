@@ -925,9 +925,10 @@ class HumanVsEngine:
         if not self._board.move_stack:
             return None  # nothing worth saving
 
-        pgn_dir = Path(getattr(self._settings, "pgn_dir", "")).expanduser()
-        if not str(pgn_dir):
+        raw = getattr(self._settings, "pgn_dir", None)
+        if not raw:
             return None
+        pgn_dir = Path(raw).expanduser()
         try:
             pgn_dir.mkdir(parents=True, exist_ok=True)
         except OSError:

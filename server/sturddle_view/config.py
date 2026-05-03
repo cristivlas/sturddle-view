@@ -55,8 +55,8 @@ class Settings(BaseSettings):
     port: int = 8765
     token: str = Field(default_factory=lambda: secrets.token_urlsafe(24))
     web_dir: Path = WEB_DIR
-    pgn_autosave: bool = True
-    pgn_dir: Path = REPO_ROOT / "pgn"
+    pgn_autosave: bool = False
+    pgn_dir: Path | None = None
     engine_path: Path | None = None
     auth_disabled: bool = False
 

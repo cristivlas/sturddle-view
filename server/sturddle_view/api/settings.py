@@ -20,7 +20,7 @@ _VALID_BOARD_STYLES = {
 def _serialize(s) -> dict:
     return {
         "pgn_autosave": s.pgn_autosave,
-        "pgn_dir": str(s.pgn_dir),
+        "pgn_dir": str(s.pgn_dir) if s.pgn_dir else "",
         "tc_initial_seconds": s.tc_initial_seconds,
         "tc_increment_seconds": s.tc_increment_seconds,
         "human_side": s.human_side,
@@ -83,8 +83,9 @@ def update_settings(payload: dict, request: Request) -> dict:
 
     if "pgn_autosave" in payload:
         s.pgn_autosave = bool(payload["pgn_autosave"])
-    if "pgn_dir" in payload and payload["pgn_dir"]:
-        s.pgn_dir = Path(payload["pgn_dir"])
+    if "pgn_dir" in payload:
+        raw = payload["pgn_dir"]
+        s.pgn_dir = Path(raw) if raw else None
 
     if "tc_initial_seconds" in payload:
         try:

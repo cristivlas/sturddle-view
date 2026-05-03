@@ -141,21 +141,14 @@ export async function openSettingsDialog({ api, initialTab }) {
       tabs.placement = "start";
 
       // --- Common tab (PGN + global engine defaults) ---
+      // PGN autosave is implicit: a non-empty pgn_dir enables it; Clear
+      // disables it. The server still has a separate pgn_autosave field,
+      // but the UI keeps the two in lockstep.
       const generalTab = document.createElement("wa-tab");
       generalTab.panel = "general";
       generalTab.textContent = "Common";
       const generalPanel = document.createElement("wa-tab-panel");
       generalPanel.name = "general";
-
-      const pgnAutosave = document.createElement("wa-switch");
-      pgnAutosave.size = "small";
-      pgnAutosave.checked = !!initial.pgn_autosave;
-      pgnAutosave.textContent = "Save games as PGN";
-      pgnAutosave.addEventListener("change", () => {
-        putSettings({ pgn_autosave: pgnAutosave.checked });
-      });
-
-      generalPanel.append(pgnAutosave);
 
       // --- Play tab ---
       const playTab = document.createElement("wa-tab");
@@ -334,8 +327,7 @@ export async function openSettingsDialog({ api, initialTab }) {
         if (editable) {
           if (placeholder) field.placeholder = placeholder;
           field.addEventListener("input", () => {
-            const v = (field.value || "").trim();
-            if (v) onPick(v, { typing: true });
+            onPick((field.value || "").trim(), { typing: true });
           });
         } else {
           field.setAttribute("readonly", "");
@@ -356,18 +348,10 @@ export async function openSettingsDialog({ api, initialTab }) {
         const clear = document.createElement("wa-button");
         clear.size = "small";
         clear.textContent = "Clear";
-        if (editable) {
-          // Reserve the slot so Browse aligns with the read-only rows;
-          // PGN dir has a server default, so a Clear action would be a no-op.
-          clear.style.visibility = "hidden";
-          clear.setAttribute("aria-hidden", "true");
-          clear.tabIndex = -1;
-        } else {
-          clear.addEventListener("click", () => {
-            field.value = "";
-            onPick("");
-          });
-        }
+        clear.addEventListener("click", () => {
+          field.value = "";
+          onPick("");
+        });
         inner_actions.append(browse, clear);
         inner.append(field, inner_actions);
         row.append(lbl, inner);
@@ -416,11 +400,12 @@ export async function openSettingsDialog({ api, initialTab }) {
           "directory",
           "Pick PGN directory",
           (p, ctx) => {
-            // Typing → debounce; Browse → commit immediately.
-            if (ctx?.typing) putSettingsDebounced({ pgn_dir: p });
-            else putSettings({ pgn_dir: p });
+            // Non-empty path implicitly enables autosave; Clear ("" path) disables it.
+            const payload = { pgn_dir: p, pgn_autosave: !!p };
+            if (ctx?.typing) putSettingsDebounced(payload);
+            else putSettings(payload);
           },
-          { editable: true, placeholder: "/path/to/pgn" },
+          { editable: true, placeholder: "/path/to/pgn (empty = no autosave)" },
         ),
         makeNumRow("Threads", "engine_default_threads"),
         makeNumRow("Hash (MB)", "engine_default_hash_mb"),
