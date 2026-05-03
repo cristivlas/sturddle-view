@@ -322,7 +322,7 @@ async def test_can_start_again_after_stop(store, runner, orch):
 # ---------------------------------------------------------------------------
 
 
-def test_reconcile_marks_stale_running_as_stopped(store, runner, orch):
+def test_reconcile_marks_stale_running_as_failed_with_diagnostic(store, runner, orch):
     a = _create(store, name="a")
     b = _create(store, name="b")
     c = _create(store, name="c")
@@ -333,9 +333,15 @@ def test_reconcile_marks_stale_running_as_stopped(store, runner, orch):
 
     reconciled = orch.reconcile_on_startup()
     assert {t.id for t in reconciled} == {a, c}
-    assert store.get(a).status == STATUS_STOPPED
+    assert store.get(a).status == STATUS_FAILED
     assert store.get(b).status == "idle"
-    assert store.get(c).status == STATUS_STOPPED
+    assert store.get(c).status == STATUS_FAILED
+    # Synthetic last_error so the UI surfaces *why* it's failed.
+    err = store.get(a).last_error
+    assert err is not None
+    assert err["rc"] is None
+    assert err["stderr_tail"]
+    assert "Server was killed" in err["stderr_tail"][0]
 
 
 def test_reconcile_noop_when_nothing_running(store, runner, orch):

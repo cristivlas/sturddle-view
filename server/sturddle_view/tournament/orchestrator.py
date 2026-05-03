@@ -231,20 +231,25 @@ class Orchestrator:
         return self._store.get(tournament_id)
 
     def reconcile_on_startup(self) -> list[Tournament]:
-        """Mark any persisted ``running`` rows as ``stopped``.
-
-        Phase 1 has no Resume; surviving the server crash is a
-        reconciliation, not a recovery. Returns the list of tournaments
-        whose status was changed (callers may want to log / surface
-        them)."""
+        """Mark persisted ``running`` rows as ``failed`` with a synthetic
+        last_error — server died mid-tournament; can't claim a clean
+        stop. Resume via Start (config.json still on disk)."""
         stale = self._store.find_by_status(STATUS_RUNNING)
         out: list[Tournament] = []
         for t in stale:
+            last_error = {
+                "rc": None,
+                "stderr_tail": [
+                    "Server was killed or crashed while this tournament was running. "
+                    "fastchess and any engine processes have been reaped; press Start to resume."
+                ],
+                "at": _now(),
+            }
             updated = self._store.update_status(
-                t.id, STATUS_STOPPED, stopped_at=_now()
+                t.id, STATUS_FAILED, stopped_at=_now(), last_error=last_error,
             )
             log.info(
-                "reconcile: tournament %s was 'running' on disk; marking 'stopped'",
+                "reconcile: tournament %s was 'running' on disk; marking 'failed'",
                 t.id,
             )
             out.append(updated)
