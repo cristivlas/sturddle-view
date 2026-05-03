@@ -419,28 +419,32 @@ class FastchessRunner:
             close_job(self._job_handle)
             self._job_handle = None
         else:
-            log.info("stop: SIGTERM pid=%d", pid)
+            # SIGTERM the whole process group (set via start_new_session in
+            # _popen_kwargs) so engines + proxies get the chance to clean
+            # up too — proc.terminate() would only signal fastchess.
+            import signal
             try:
-                self._proc.terminate()
+                pgid = os.getpgid(pid)
             except ProcessLookupError:
-                log.info("stop: pid=%d already gone before terminate", pid)
-            else:
+                pgid = pid
+            log.info("stop: SIGTERM pgid=%d (leader=%d)", pgid, pid)
+            try:
+                os.killpg(pgid, signal.SIGTERM)
+            except ProcessLookupError:
+                log.info("stop: pgid=%d already gone before SIGTERM", pgid)
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(self._supervisor),
+                    timeout=self._STOP_GRACE_SECONDS,
+                )
+                log.info("stop: pgid=%d exited gracefully", pgid)
+                return
+            except asyncio.TimeoutError:
+                log.warning("stop: pgid=%d ignored SIGTERM; SIGKILL", pgid)
                 try:
-                    await asyncio.wait_for(
-                        asyncio.shield(self._supervisor),
-                        timeout=self._STOP_GRACE_SECONDS,
-                    )
-                    log.info("stop: pid=%d exited gracefully", pid)
-                    return
-                except asyncio.TimeoutError:
-                    log.warning(
-                        "stop: pid=%d ignored SIGTERM; SIGKILL pgrp", pid,
-                    )
-                    try:
-                        import signal
-                        os.killpg(os.getpgid(pid), signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
+                    os.killpg(pgid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
         try:
             await asyncio.wait_for(asyncio.shield(self._supervisor), timeout=10.0)

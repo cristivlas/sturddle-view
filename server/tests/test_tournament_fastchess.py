@@ -53,9 +53,12 @@ def _make_spec(
 #   --print-err N       : print N lines of stderr
 #   --sleep S           : sleep S seconds
 #   --exit RC           : exit with code RC
+#   --spawn-child PATH  : fork a long-sleeping child python; write its
+#                         pid to PATH (POSIX-only test helper for the
+#                         pgid-SIGTERM test).
 # Order matters; the script does each in argv order.
 FAKE_FASTCHESS = r"""
-import sys, time
+import os, subprocess, sys, time
 i = 1
 rc = 0
 while i < len(sys.argv):
@@ -72,6 +75,10 @@ while i < len(sys.argv):
         time.sleep(float(sys.argv[i+1])); i += 2
     elif a == "--exit":
         rc = int(sys.argv[i+1]); i += 2
+    elif a == "--spawn-child":
+        path = sys.argv[i+1]; i += 2
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        with open(path, "w") as f: f.write(str(child.pid))
     else:
         i += 1
 sys.exit(rc)
@@ -602,6 +609,41 @@ async def test_runner_stop_falls_back_to_sigkill_when_sigterm_ignored(
     kinds = [k for k, _ in rec.events]
     assert "stopped" in kinds
     assert not runner.is_running()
+
+
+async def test_runner_stop_signals_whole_process_group_posix(tmp_path, patched_runner):
+    """POSIX: stop() must SIGTERM the whole process group so children
+    fastchess spawned (engines + proxies) get cleaned up too — not just
+    the leader. Regression for orphaned proxies on Linux Ctrl+C."""
+    if sys.platform == "win32":
+        pytest.skip("POSIX-only: pgid behavior")
+    spec = _make_spec(tmp_path, {}, [{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}])
+    rec = _Recorder()
+    child_pid_path = tmp_path / "child.pid"
+    runner = patched_runner(["--spawn-child", str(child_pid_path), "--sleep", "60"])
+
+    await runner.start(spec, rec)
+    # Wait until the fake fastchess has spawned the child.
+    deadline = asyncio.get_event_loop().time() + 5.0
+    while not child_pid_path.exists() and asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(0.05)
+    assert child_pid_path.exists(), "fake fastchess never spawned its child"
+    child_pid = int(child_pid_path.read_text().strip())
+    # Child must be alive at this point.
+    os.kill(child_pid, 0)
+
+    await runner.stop()
+    await asyncio.wait_for(rec.done.wait(), timeout=5.0)
+
+    # Allow a brief moment for the OS to reap the child after SIGTERM.
+    for _ in range(50):
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        await asyncio.sleep(0.05)
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pid, 0)
 
 
 async def test_runner_stop_idempotent(tmp_path, patched_runner):
