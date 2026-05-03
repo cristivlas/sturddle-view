@@ -119,7 +119,7 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   background: #c66;
   box-shadow: 0 0 4px rgba(204, 102, 102, 0.5);
 }
-.paused-badge {
+.status-badge {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
@@ -128,12 +128,20 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   font-weight: 700;
   letter-spacing: 1.2px;
   text-transform: uppercase;
-  color: var(--accent);
-  background: rgba(var(--accent-rgb), 0.12);
-  border: 1px solid rgba(var(--accent-rgb), 0.4);
+  border: 1px solid;
   border-radius: 10px;
 }
-.paused-badge.hidden { display: none; }
+.status-badge.hidden { display: none; }
+.status-badge--paused {
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+  border-color: rgba(var(--accent-rgb), 0.4);
+}
+.status-badge--finished {
+  color: var(--text, #ddd);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.22);
+}
 .toast-icon-btn {
   display: inline-flex;
   align-items: center;
@@ -150,9 +158,12 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   background: rgba(255, 255, 255, 0.18);
   border-color: rgba(255, 255, 255, 0.4);
 }
-/* When the badge is visible, it claims the auto-margin so .conn stops
+/* When a status badge is visible, it claims the auto-margin so .conn stops
    pushing right; collapse .conn's auto-margin to a normal gap. */
-.paused-badge:not(.hidden) ~ .conn { margin-left: 0; }
+.status-badge:not(.hidden) ~ .conn { margin-left: 0; }
+/* Two badges should never be visible together (paused vs finished are
+   mutually exclusive), but if they are, only the first claims auto-margin. */
+.status-badge:not(.hidden) ~ .status-badge { margin-left: 8px; }
 .conn.connected {
   background: #6c6;
   box-shadow: 0 0 4px rgba(102, 204, 102, 0.5);

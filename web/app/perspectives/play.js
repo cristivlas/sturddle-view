@@ -6,6 +6,24 @@ import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog } from "../import-position-dialog.js";
 
+// Reduce a game_result payload to the canonical chess result string for
+// the header badge. resign/timeout don't carry "1-0"/"0-1" in the payload
+// so we derive it from who lost (only human can resign today).
+function formatResult(payload, humanWhite) {
+  const { result, by, loser } = payload;
+  if (result === "1-0" || result === "0-1") return result;
+  if (result === "1/2-1/2") return "½-½";
+  if (result === "resign") {
+    const humanLost = by === "human";
+    const whiteWins = humanLost ? !humanWhite : humanWhite;
+    return whiteWins ? "1-0" : "0-1";
+  }
+  if (result === "timeout") {
+    return loser === "white" ? "0-1" : "1-0";
+  }
+  return "";
+}
+
 function formatGameOver(payload, humanWhite) {
   const { result, termination, by, loser } = payload;
   if (result === "resign") {
@@ -176,10 +194,16 @@ export const playPerspective = {
     let paused = false;
     let analyzing = false;
     const pausedBadge = document.getElementById("paused-badge");
+    const finishedBadge = document.getElementById("finished-badge");
     function syncPausedUi() {
       const show = paused && !analyzing;
       boardHost.classList.toggle("board-paused", show);
       pausedBadge?.classList.toggle("hidden", !show);
+    }
+    function showFinishedBadge(text) {
+      if (!finishedBadge) return;
+      finishedBadge.textContent = text;
+      finishedBadge.classList.toggle("hidden", !text);
     }
     let dismissAnalysisToast = null;
 
@@ -231,6 +255,7 @@ export const playPerspective = {
         case "board_update": {
           movesPlayed = evt.payload.moves_san?.length ?? 0;
           gameOver = false;
+          showFinishedBadge("");
           resignAvailable = true;
           if (typeof evt.payload.human_white === "boolean") {
             humanWhite = evt.payload.human_white;
@@ -260,6 +285,7 @@ export const playPerspective = {
           setDisabled(newGameBtn, false);
           boardHost.classList.add("board-idle");
           syncPausedUi();
+          showFinishedBadge(formatResult(evt.payload, humanWhite));
           refreshButtons();
           showAlert({
             message: formatGameOver(evt.payload, humanWhite),
@@ -450,6 +476,7 @@ export const playPerspective = {
         dismissAnalysisToast?.();
         dismissAnalysisToast = null;
         pausedBadge?.classList.add("hidden");
+        showFinishedBadge("");
         offEvent();
         view.unmount();
         window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
