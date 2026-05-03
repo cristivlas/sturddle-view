@@ -417,6 +417,11 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   padding-top: 10px;
   border-top: 1px solid var(--border, rgba(127, 127, 127, 0.25));
 }
+.game-view-moves:has(.move-list:empty) {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
 .game-view-moves .move-list {
   flex: 1 1 auto;
   min-height: 0;
