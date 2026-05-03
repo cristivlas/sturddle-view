@@ -139,8 +139,8 @@ export function mountGameView(container, opts = {}) {
           <div class="engine-stat" data-label="Depth"><span class="engine-depth"></span></div>
           <div class="engine-stat" data-label="Nodes"><span class="engine-nodes"></span></div>
           <div class="engine-stat" data-label="Nps"><span class="engine-nps"></span></div>
-          <div class="engine-stat" data-label="TB"><span class="engine-tbhits"></span></div>
           <div class="engine-stat" data-label="Hash"><span class="engine-hashfull"></span></div>
+          <div class="engine-stat" data-label="TB"><span class="engine-tbhits"></span></div>
         </div>
         <div class="engine-pv" title=""></div>
       </section>` : ""}
