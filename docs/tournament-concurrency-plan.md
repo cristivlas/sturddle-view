@@ -7,20 +7,18 @@ Status: draft. Update as slices land.
 - Optional CPU affinity for measurement-quality runs (SPRT).
 - Preflight sanity checks + graceful crash handling for misconfigs.
 
-## Slice 1 — Oversubscribe opt-in + crash handling
-- Template field: `allow_oversubscribe: bool` (default false).
-- `build_command` (fastchess.py): pass `-force-concurrency` (verify exact flag name) when true.
-- UI: checkbox in tournament-template-form.js next to `games_in_parallel`.
-- Preflight (orchestrator, before `runner.start`): error if `parallel > physical_cores` and flag off.
-- Crash handling: enrich `runner_crash` payload with last N stderr lines. Currently `{rc}` only — supervisor in fastchess.py:493 should attach captured stderr tail.
-- Test: e2e — set `parallel = cores+1` w/o override → tournament reaches crashed state with stderr snippet visible.
+## Slice 1 — Oversubscribe opt-in + crash handling — DONE
+- `allow_oversubscribe` template field + UI switch (Slice 3 commit).
+- `build_command` emits `-force-concurrency` when the flag is on.
+- `runner_crash` carries `stderr_tail`; surfaced in toast/banner/info dialog.
+- Resource gating happens via the rescheck path (Slice 3), not a
+  parallel-only check.
 
-## Slice 2 — CPU affinity
-- Template field: `pin_affinity: bool` (default false). Explicit, no auto-magic.
-- `build_command`: pass fastchess `-affinity` flag when true.
-- Preflight: if affinity on AND `parallel * threads > physical_cores` → error (affinity needs slot ≤ core).
-- Tooltip: "Recommended for SPRT runs."
-- Smoke test on Windows before shipping — verify `SetProcessAffinityMask` actually pins engine threads as expected (vs. just the parent).
+## Slice 2 — CPU affinity — DONE
+- `pin_affinity` template field + UI switch.
+- `build_command` emits `-affinity`.
+- Rescheck blocks `pin_affinity AND load > physical_cores` (correctness
+  gate, never silenced by `allow_oversubscribe`).
 
 ## Slice 3 — Sanity checks
 
@@ -51,7 +49,7 @@ resolved_hash(e)    = e.options.Hash    ?? e.option_schema.Hash.default    ?? 16
 
 These resolved values are folded into the template at create time so
 the server can re-check at start without needing the registry. The
-client also calls `POST /api/tournaments/preflight` with the same
+client also calls `POST /api/tournaments/rescheck` with the same
 values *before* hitting `POST /api/tournaments` — failure blocks the
 create. `Orchestrator.start()` re-runs the same check against the
 stored template (covers stale tournaments started after machine specs
@@ -101,19 +99,18 @@ template form, not a block. Out of scope for rescheck.
   noisier than necessary.
 
 ## Open questions
-- Exact fastchess flag names — verify against current fastchess version (`-force-concurrency` vs `--force-concurrency` vs other).
-- Where to surface warnings in UI — start dialog confirmation? workspace banner?
-- Cross-platform physical-core detection: `psutil.cpu_count(logical=False)` is the obvious pick; confirm available in deps.
+- Where to surface rescheck warnings in UI — currently a toast at create
+  time. Stickier alternatives: workspace banner, info dialog row.
 
 ## Findings & open bugs (live)
 
-### Empirical: fastchess gates at LOGICAL cpu count (Windows; Linux TBD)
-- Earlier "doesn't gate" conclusion was wrong — proxy bug was masking the real failure mode.
-- Real behavior on Win box (8 physical / 16 logical): `parallel <= 16` accepted, `parallel = 17` refused with
-  `Concurrency exceeds number of CPUs. Use -force-concurrency to override.`
-- So default permits SMT oversubscription up to logical core count.
-- Slice 1 priority drops: overriding past logical CPU count is niche. Implement only if a user actually wants it.
-- TODO: repro on Linux to confirm same threshold (some fastchess builds may differ).
+### Empirical: fastchess gates at LOGICAL cpu count
+- On Win 8-physical/16-logical box: `parallel <= 16` accepted, `parallel
+  = 17` refused with `Concurrency exceeds number of CPUs. Use
+  -force-concurrency to override.`
+- We pass `-force-concurrency` whenever `allow_oversubscribe` is on so
+  fastchess matches our rescheck verdict.
+- Linux behavior: TBD. Same threshold is likely but not confirmed.
 
 ### RESOLVED — uciok timeout was the proxy on Windows (commit `8bceac3`)
 - Symptom: `Fatal; ... uciok after startup` reproducibly even at parallel=1.
@@ -126,25 +123,12 @@ template form, not a block. Out of scope for rescheck.
 - Fix: per-tournament Windows Job Object (`_win_job.create_job` + `assign_to_job` + `close_job`). Stop closes the Job handle → `KILL_ON_JOB_CLOSE` synchronously kills fastchess + every descendant → asyncio's wait resolves cleanly. Supervisor closes the Job on natural termination too.
 - Also obsoletes the brief `_force_terminal_event` workaround we tried.
 
-### Stale-running reconciliation (still open)
-- On server boot, `STATUS_RUNNING` rows currently get reconciled to `STATUS_STOPPED`. Should be `STATUS_FAILED` with synthetic `last_error = {"reason": "server crashed/killed mid-tournament"}`.
+### RESOLVED — stale-running reconciliation
+- Server-boot `STATUS_RUNNING` rows now flip to `STATUS_FAILED` with a
+  synthetic `last_error` (see `Orchestrator.reconcile_on_startup`).
 
-### Watch-window silence (resolved by proxy fix above)
-- Proxy now actually forwards UCI lines on Windows; live windows should populate.
-
-### TODO: pass `-force-concurrency` when `allow_oversubscribe` is on
-- Currently: flag silences our rescheck but fastchess still rejects
-  `concurrency > nproc` with "Concurrency exceeds number of CPUs. Use
-  -force-concurrency to override." → Start crashes at runtime.
-- Fix: in `build_command`, append `-force-concurrency` when
-  `template.allow_oversubscribe` is true. Verify exact flag spelling
-  against current fastchess version.
-
-### Slice 5 — Reframe oversubscription gate (was Slice 1's premise)
-- fastchess accepts oversubscription silently → gate is no longer "block hard error".
-- New purpose: warn user that high concurrency degrades Elo measurement (SMT contention + startup races).
-- UI shape: probably a soft warning at create time when `parallel > physical_cores`, not a hard block.
-
-### TODO: atomic spawn-into-Job (lower priority polish)
-- Today: assign-after-spawn has a tiny race where a child fastchess spawns BEFORE we call `AssignProcessToJobObject` escapes the Job. fastchess does ms of setup before forking engines, so observable race ≈ 0.
-- Proper fix: `PROC_THREAD_ATTRIBUTE_JOB_LIST` (Windows 10+) via ctypes `CreateProcess`. Requires bypassing `asyncio.create_subprocess_exec` for fastchess.
+### Deferred: SMT-noise warning
+- Even when `parallel <= logical_cores`, anything above `physical_cores`
+  uses SMT siblings → measurable noise on SPRT runs.
+- UI shape: soft warning at create time when `parallel > physical_cores
+  AND !pin_affinity`, surfaced as a toast.

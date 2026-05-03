@@ -151,6 +151,11 @@ def build_command(spec: RunSpec) -> list[str]:
     # Tournament setup
     if "games_in_parallel" in t:
         cmd.extend(["-concurrency", str(t["games_in_parallel"])])
+    # Without this, fastchess refuses concurrency > logical CPUs. Our
+    # own rescheck has already either passed or warned the user; the
+    # flag tells fastchess to honor the same intent.
+    if t.get("allow_oversubscribe"):
+        cmd.append("-force-concurrency")
     if t.get("pin_affinity"):
         cmd.append("-affinity")
     if "rounds" in t:

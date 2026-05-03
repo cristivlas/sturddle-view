@@ -200,6 +200,23 @@ def test_build_command_affinity(tmp_path):
     assert "-affinity" not in build_command(spec_off)
 
 
+def test_build_command_force_concurrency_when_oversubscribe(tmp_path):
+    spec = _make_spec(
+        tmp_path,
+        template={"games_in_parallel": 32, "allow_oversubscribe": True},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    cmd = build_command(spec)
+    assert "-force-concurrency" in cmd
+
+    spec_off = _make_spec(
+        tmp_path / "off",
+        template={"games_in_parallel": 32},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    assert "-force-concurrency" not in build_command(spec_off)
+
+
 def test_build_command_gauntlet_with_seeds(tmp_path):
     spec = _make_spec(
         tmp_path,
