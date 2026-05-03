@@ -216,7 +216,7 @@ export function showEngineOptionsDialog({ engine, api, probeError = null }) {
       const defaultsBtn = document.createElement("wa-button");
       defaultsBtn.slot = "footer";
       defaultsBtn.size = "small";
-      defaultsBtn.textContent = "Defaults";
+      defaultsBtn.textContent = "Reset";
       defaultsBtn.addEventListener("click", () => {
         // Reopen with a synthetic engine that has options cleared so the
         // initial render uses every field's advertised default.
