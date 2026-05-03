@@ -791,3 +791,20 @@ Future work (not part of the resume effort):
   `POST /api/tournaments`, returning a 409 with a suggestion. Or
   client-side validation that disables Create when the name is
   already taken. Not a data-corruption risk; a UX clarity one.
+- **CPU affinity (`-affinity`)**: pin each game-slot to a fixed
+  pair of cores to reduce scheduler-migration variance — material for
+  SPRT / rating-list runs. Likely template bool `pin_affinity`
+  (default off; recommended for SPRT). Requires
+  `parallel * threads ≤ physical_cores`. See
+  [docs/tournament-concurrency-plan.md](tournament-concurrency-plan.md)
+  Slice 2 for the working notes.
+- **Clone-and-edit tournament**: open the New Tournament dialog
+  pre-filled from an existing tournament's frozen template + engines,
+  with the name field cleared (or `"<name> (copy)"`). Saves the
+  re-typing for repeat-style runs (same engines, same TC, different
+  rounds/SPRT params). UI: "Clone" entry on the row's context menu
+  / ribbon. Server: no new endpoint needed — client just GETs the
+  source tournament and POSTs to `/api/tournaments` with the
+  pre-filled body. Engine entries are frozen snapshots so the clone
+  inherits the source's engine state, not the registry's current
+  state — matches the freeze-at-create semantics already in the spec.
