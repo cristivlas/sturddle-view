@@ -25,6 +25,7 @@ import sys
 from collections import deque
 from typing import Any
 
+from .._win_job import assign_pid as _win_assign_pid
 from .runner import EventCallback, RunSpec
 
 
@@ -344,6 +345,14 @@ class FastchessRunner:
             env=env,
             **_popen_kwargs(),
         )
+
+        # Windows: add fastchess to a process-wide Job so engines + proxies
+        # die with our server (clean exit or os._exit). No-op elsewhere.
+        if sys.platform == "win32":
+            try:
+                _win_assign_pid(self._proc.pid)
+            except OSError:
+                log.exception("Job Object assignment failed for pid=%d", self._proc.pid)
 
         # Pipe drains: stream stdout/stderr → log file (open in append mode).
         log_file = spec.log_path.open("a", encoding="utf-8", errors="replace")

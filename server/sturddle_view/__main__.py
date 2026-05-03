@@ -57,6 +57,12 @@ def main() -> None:
     if sys.platform == "win32" and args.reload:
         loop = asyncio.ProactorEventLoop
 
+    # Windows: SIGINT can't preempt uvicorn's C-level blocking; use the
+    # OS console handler instead. Hard-exits — children rely on Job Object
+    # (TODO 2) for cleanup.
+    if sys.platform == "win32" and not args.reload:
+        _install_windows_ctrl_handler()
+
     uvicorn.run(
         "sturddle_view.app:create_app",
         host=host,
@@ -69,6 +75,31 @@ def main() -> None:
         # and re-enable per-request access lines we already silenced.
         log_config=None,
     )
+
+
+_console_handler_ref = None  # keep wrapper alive across the OS callback
+
+
+def _install_windows_ctrl_handler() -> None:
+    """Force-exit on Ctrl+C / Break / console close. The OS calls this
+    handler on a dedicated thread, bypassing Python's signal queue."""
+    import ctypes
+    global _console_handler_ref
+    HANDLER = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)
+    # CTRL_C_EVENT=0, CTRL_BREAK_EVENT=1, CTRL_CLOSE_EVENT=2,
+    # CTRL_LOGOFF_EVENT=5, CTRL_SHUTDOWN_EVENT=6.
+    _HANDLED = {0, 1, 2, 5, 6}
+
+    def _handler(ctrl_type: int) -> bool:
+        if ctrl_type in _HANDLED:
+            os._exit(130)
+        return False
+
+    _console_handler_ref = HANDLER(_handler)
+    if not ctypes.windll.kernel32.SetConsoleCtrlHandler(_console_handler_ref, True):
+        logging.getLogger(__name__).warning(
+            "SetConsoleCtrlHandler failed; Ctrl+C may not exit cleanly."
+        )
 
 
 if __name__ == "__main__":
