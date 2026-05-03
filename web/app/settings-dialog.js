@@ -232,7 +232,8 @@ export async function openSettingsDialog({ api, initialTab }) {
       const preview = document.createElement("div");
       preview.style.width = "100%";
       preview.style.aspectRatio = `${cols} / ${rows}`;
-      preview.style.borderRadius = "3px";
+      preview.style.border = "2px solid #000";
+      preview.style.borderRadius = "var(--wa-border-radius-m, 4px)";
       preview.style.overflow = "hidden";
       previewWrap.append(previewLabel, preview);
       function renderPreview(styleId) {
