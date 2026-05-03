@@ -209,6 +209,70 @@ export function mountTournamentTemplateForm({
     return out;
   }
 
+  // Returns {ok, errors:[{key,message}]}. Decorates failing inputs with
+  // .ttf-invalid (cleared on each call). Caller passes engine count for
+  // the gauntlet seeds check; defaults to 2 (the API minimum).
+  function validate({ numEngines = 2 } = {}) {
+    const errors = [];
+    const push = (key, message) => errors.push({ key, message });
+
+    const tc = (inputs.tc.value || "").trim();
+    if (!tc) push("tc", "Time control is required (e.g. 10+0.1).");
+
+    const rounds = Number(inputs.rounds.value);
+    if (!Number.isFinite(rounds) || rounds < 1) {
+      push("rounds", "Rounds must be ≥ 1.");
+    }
+
+    const parallel = Number(inputs.games_in_parallel.value);
+    if (!Number.isFinite(parallel) || parallel < 1) {
+      push("games_in_parallel", "Parallel games must be ≥ 1.");
+    }
+
+    if (typeSelect.value === "gauntlet") {
+      const seeds = Number(seedsInput.value);
+      if (!Number.isFinite(seeds) || seeds < 1) {
+        push("seeds", "Seeds must be ≥ 1 for gauntlet.");
+      } else if (seeds >= numEngines) {
+        push("seeds", `Seeds must be < number of engines (${numEngines}).`);
+      }
+    }
+
+    if (resignBlock.sw.checked) {
+      const mc = Number(resignMoves.value);
+      const sc = Number(resignScore.value);
+      if (!Number.isFinite(mc) || mc < 1) push("resign.movecount", "Resign moves must be ≥ 1.");
+      if (!Number.isFinite(sc) || sc < 1) push("resign.score", "Resign score must be > 0 cp.");
+    }
+    if (drawBlock.sw.checked) {
+      const mn = Number(drawStart.value);
+      const mc = Number(drawMoves.value);
+      const sc = Number(drawScore.value);
+      if (!Number.isFinite(mn) || mn < 1) push("draw.movenumber", "Draw start move must be ≥ 1.");
+      if (!Number.isFinite(mc) || mc < 1) push("draw.movecount", "Draw moves must be ≥ 1.");
+      if (!Number.isFinite(sc) || sc < 0) push("draw.score", "Draw score must be ≥ 0 cp.");
+    }
+
+    for (const el of container.querySelectorAll(".ttf-invalid")) {
+      el.classList.remove("ttf-invalid");
+    }
+    for (const e of errors) {
+      const inp = inputs[e.key];
+      if (!inp) continue;
+      inp.classList.add("ttf-invalid");
+      // Auto-clear on the next user edit so the outline tracks intent.
+      const clear = () => {
+        inp.classList.remove("ttf-invalid");
+        inp.removeEventListener("input", clear);
+        inp.removeEventListener("wa-change", clear);
+      };
+      inp.addEventListener("input", clear);
+      inp.addEventListener("wa-change", clear);
+    }
+
+    return { ok: errors.length === 0, errors };
+  }
+
   function setValues(values) {
     const scalars = ["tc", "games_in_parallel", "rounds"];
     for (const k of scalars) {
@@ -233,5 +297,5 @@ export function mountTournamentTemplateForm({
     syncEnabled(drawBlock, drawFields);
   }
 
-  return { getValues, setValues };
+  return { getValues, setValues, validate };
 }

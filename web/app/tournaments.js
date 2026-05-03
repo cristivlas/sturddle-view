@@ -659,6 +659,11 @@ export function mountTournaments({ container, api, events, log, token }) {
 
         create.addEventListener("click", () => {
           if (!isValid()) return;
+          const v = tplCtl.validate({ numEngines: builder.getEngines().length });
+          if (!v.ok) {
+            toast(v.errors[0].message, { variant: "danger", duration: 6000 });
+            return;
+          }
           let template;
           try {
             template = tplCtl.getValues();

@@ -51,6 +51,10 @@ a { color: var(--wa-color-brand-70); }
 ::selection { background: var(--wa-color-brand-fill-loud); color: #fff; }
 :focus-visible { outline-color: var(--wa-color-focus, var(--wa-color-brand-60)); }
 
+/* Subdue WA's autofill highlight. CSS vars cascade through shadow DOM
+   and WA's :-webkit-autofill rule reads --wa-color-brand-fill-quiet. */
+wa-input, wa-number-field { --wa-color-brand-fill-quiet: var(--bg); }
+
 * { box-sizing: border-box; }
 
 /* Thin, macOS-style scrollbars everywhere. Firefox honors scrollbar-width;
@@ -1306,6 +1310,11 @@ wa-dialog::part(body) {
   grid-template-columns: 7em 8em 6em minmax(14em, 1fr);
 }
 .tournament-template-form .ttf-grid > * { min-width: 0; }
+/* Validation outline for required/out-of-range inputs (set by validate()). */
+.tournament-template-form .ttf-invalid::part(base) {
+  border-color: #a13a3a;
+  box-shadow: 0 0 0 1px #a13a3a;
+}
 .tournament-template-form .ttf-adjudication {
   display: flex; flex-direction: column; gap: 16px;
 }
