@@ -152,7 +152,13 @@ export function mountTournaments({ container, api, events, log, token }) {
 
     if (noTournaments) {
       emptyEl.classList.remove("hidden");
-      emptyMsg.textContent = "No tournaments yet — click + New Tournament to create one.";
+      emptyMsg.replaceChildren();
+      const newLink = document.createElement("a");
+      newLink.href = "#";
+      newLink.className = "settings-deeplink";
+      newLink.textContent = "+ New Tournament";
+      newLink.addEventListener("click", (e) => { e.preventDefault(); openNewTournamentDialog(); });
+      emptyMsg.append("No tournaments yet — click ", newLink, " to create one.");
       selectedId = null;
       syncRibbon();
       return;
