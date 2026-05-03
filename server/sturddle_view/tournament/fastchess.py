@@ -25,7 +25,7 @@ import sys
 from collections import deque
 from typing import Any
 
-from .._win_job import assign_pid as _win_assign_pid
+from .._win_job import assign_to_job, close_job, create_job
 from .runner import EventCallback, RunSpec
 
 
@@ -260,6 +260,9 @@ class FastchessRunner:
         # captured because fastchess emits early CLI errors to stdout.
         self._stderr_tail: deque[str] = deque(maxlen=_STDERR_TAIL_MAX)
         self._stdout_tail: deque[str] = deque(maxlen=_STDERR_TAIL_MAX)
+        # Per-tournament Windows Job: KILL_ON_JOB_CLOSE means closing
+        # this handle synchronously kills fastchess + all descendants.
+        self._job_handle: int | None = None
 
     @property
     def binary_path(self) -> str | None:
@@ -337,6 +340,14 @@ class FastchessRunner:
         if spec.proxy_secret:
             env["SV_PROXY_SECRET"] = spec.proxy_secret
 
+        # Create the per-tournament Job BEFORE spawn so we can assign
+        # immediately after CreateProcess returns (small race ok).
+        if sys.platform == "win32":
+            try:
+                self._job_handle = create_job()
+            except OSError:
+                log.exception("Job Object creation failed")
+
         self._proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -346,13 +357,11 @@ class FastchessRunner:
             **_popen_kwargs(),
         )
 
-        # Windows: add fastchess to a process-wide Job so engines + proxies
-        # die with our server (clean exit or os._exit). No-op elsewhere.
-        if sys.platform == "win32":
+        if self._job_handle is not None:
             try:
-                _win_assign_pid(self._proc.pid)
+                assign_to_job(self._job_handle, self._proc.pid)
             except OSError:
-                log.exception("Job Object assignment failed for pid=%d", self._proc.pid)
+                log.exception("assign_to_job failed for pid=%d", self._proc.pid)
 
         # Pipe drains: stream stdout/stderr → log file (open in append mode).
         log_file = spec.log_path.open("a", encoding="utf-8", errors="replace")
@@ -387,17 +396,13 @@ class FastchessRunner:
     _STOP_GRACE_SECONDS = 2.0
 
     async def stop(self) -> None:
-        """Stop the subprocess.
+        """Stop the subprocess. Idempotent.
 
-        Sends SIGTERM (POSIX) or terminate() (Windows; equivalent to a
-        hard kill there) and waits up to ``_STOP_GRACE_SECONDS`` for a
-        clean exit. Falls back to SIGKILL on timeout. Idempotent.
-
-        The graceful path lets fastchess's ``~BaseTournament`` run, which
-        flushes a final ``saveJson()`` for resume durability — see
-        Resume after Stop in docs/tournament-spec.md.
+        Windows: closes the per-tournament Job → KILL_ON_JOB_CLOSE
+        kills the entire tree synchronously. POSIX: SIGTERM + grace
+        for fastchess to flush resume state, escalates to SIGKILL.
         """
-        if self._proc is None:
+        if self._proc is None or self._supervisor is None:
             log.info("stop: no process to stop")
             return
         if self._proc.returncode is not None:
@@ -405,43 +410,45 @@ class FastchessRunner:
             return
         self._stop_requested = True
         pid = self._proc.pid
-        log.info("stop: sending SIGTERM/terminate to pid=%d", pid)
-        try:
-            self._proc.terminate()
-        except ProcessLookupError:
-            log.info("stop: process pid=%d already gone before terminate", pid)
+
+        if sys.platform == "win32":
+            # Closing the Job triggers KILL_ON_JOB_CLOSE — fastchess +
+            # every descendant dies synchronously in the OS. No orphans,
+            # no inherited pipe handles to wedge proc.wait().
+            log.info("stop: closing Job for pid=%d (kills tree)", pid)
+            close_job(self._job_handle)
+            self._job_handle = None
         else:
+            log.info("stop: SIGTERM pid=%d", pid)
             try:
-                await asyncio.wait_for(
-                    self._proc.wait(), timeout=self._STOP_GRACE_SECONDS
-                )
-                log.info(
-                    "stop: pid=%d exited gracefully after SIGTERM (rc=%s)",
-                    pid, self._proc.returncode,
-                )
-            except asyncio.TimeoutError:
-                log.warning(
-                    "stop: pid=%d did not exit within %.1fs of SIGTERM; sending SIGKILL",
-                    pid, self._STOP_GRACE_SECONDS,
-                )
+                self._proc.terminate()
+            except ProcessLookupError:
+                log.info("stop: pid=%d already gone before terminate", pid)
+            else:
                 try:
-                    if sys.platform == "win32":
-                        self._proc.kill()
-                    else:
-                        # POSIX: SIGKILL the whole process group so any
-                        # engine subprocesses fastchess failed to reap
-                        # don't outlive it as orphans. start_new_session
-                        # scopes the pgid to fastchess + its descendants.
+                    await asyncio.wait_for(
+                        asyncio.shield(self._supervisor),
+                        timeout=self._STOP_GRACE_SECONDS,
+                    )
+                    log.info("stop: pid=%d exited gracefully", pid)
+                    return
+                except asyncio.TimeoutError:
+                    log.warning(
+                        "stop: pid=%d ignored SIGTERM; SIGKILL pgrp", pid,
+                    )
+                    try:
                         import signal
                         os.killpg(os.getpgid(pid), signal.SIGKILL)
-                except ProcessLookupError:
-                    log.info("stop: process pid=%d gone before SIGKILL", pid)
-        # supervisor will observe the exit and emit "stopped"
-        if self._supervisor is not None:
-            try:
-                await self._supervisor
-            except asyncio.CancelledError:
-                pass
+                    except ProcessLookupError:
+                        pass
+
+        try:
+            await asyncio.wait_for(asyncio.shield(self._supervisor), timeout=10.0)
+            log.info("stop: supervisor returned for pid=%d", pid)
+        except asyncio.TimeoutError:
+            log.error("stop: supervisor did not finish 10s after kill (pid=%d)", pid)
+        except asyncio.CancelledError:
+            pass
 
     # ----- internals --------------------------------------------------------
 
@@ -488,8 +495,10 @@ class FastchessRunner:
 
     async def _supervise(self, log_file: Any) -> None:
         assert self._proc is not None
+        pid = self._proc.pid
         try:
             rc = await self._proc.wait()
+            log.info("supervise: pid=%d exited rc=%s", pid, rc)
         except asyncio.CancelledError:
             return
         # Wait for drain tasks to flush — they exit naturally on EOF.
@@ -508,6 +517,11 @@ class FastchessRunner:
         # underlying transport is released immediately rather than waiting for GC.
         if hasattr(self._proc, "close"):
             self._proc.close()
+
+        # Close the Job on natural termination too (done/crash) — kills
+        # any descendants fastchess didn't reap. Idempotent for stop().
+        close_job(self._job_handle)
+        self._job_handle = None
 
         if self._stop_requested:
             kind, payload = "stopped", {"rc": rc}

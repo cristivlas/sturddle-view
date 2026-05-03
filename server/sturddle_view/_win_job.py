@@ -1,13 +1,15 @@
 """Windows Job Object helper.
 
-A single process-wide Job is created lazily on first ``assign_pid``.
-Configured with ``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`` so when our
-Python process exits (clean or via os._exit), Windows tears down every
-process in the Job — fastchess and the UCI engines + proxies it spawned.
+Per-tournament Job pattern: caller creates a Job for each fastchess
+spawn (configured with KILL_ON_JOB_CLOSE), assigns fastchess to it,
+and closes the handle when the tournament terminates. Closing the
+handle synchronously kills fastchess + every descendant in the Job
+(engines + proxies), avoiding orphans and inherited-pipe-handle
+issues that wedge asyncio's process-exit detection.
 
-Race note: a child spawned by the assigned process before we call
-AssignProcessToJobObject is NOT in the Job. fastchess spawns engines
-only after some startup work, so the window is small but non-zero.
+Race note: a child spawned by the assigned process before
+AssignProcessToJobObject runs is NOT in the Job. fastchess spawns
+engines only after some startup work, so the window is small.
 """
 from __future__ import annotations
 
@@ -22,8 +24,6 @@ if sys.platform == "win32":
     _kernel32 = ctypes.windll.kernel32
 else:
     _kernel32 = None
-
-_JOB_HANDLE: int | None = None
 
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _JobObjectExtendedLimitInformation = 9
@@ -62,10 +62,11 @@ class _EXTENDED_LIMIT(ctypes.Structure):
     ]
 
 
-def _get_or_create_job() -> int:
-    global _JOB_HANDLE
-    if _JOB_HANDLE is not None:
-        return _JOB_HANDLE
+def create_job() -> int | None:
+    """Create a fresh Job Object configured with KILL_ON_JOB_CLOSE.
+    Returns the Job handle, or None off Windows."""
+    if sys.platform != "win32":
+        return None
     h = _kernel32.CreateJobObjectW(None, None)
     if not h:
         raise ctypes.WinError()
@@ -78,23 +79,28 @@ def _get_or_create_job() -> int:
         err = ctypes.WinError()
         _kernel32.CloseHandle(h)
         raise err
-    _JOB_HANDLE = h
     return h
 
 
-def assign_pid(pid: int) -> None:
-    """Add the given pid to the process-wide Job. No-op off Windows.
-
-    Children the process spawns AFTER this call inherit the Job and
-    are killed when our Python process exits.
-    """
-    if sys.platform != "win32":
+def assign_to_job(job_handle: int | None, pid: int) -> None:
+    """Add pid to the given Job. No-op if job_handle is None."""
+    if job_handle is None or sys.platform != "win32":
         return
     h_proc = _kernel32.OpenProcess(_PROCESS_TERMINATE_AND_SET_QUOTA, False, pid)
     if not h_proc:
         raise ctypes.WinError()
     try:
-        if not _kernel32.AssignProcessToJobObject(_get_or_create_job(), h_proc):
+        if not _kernel32.AssignProcessToJobObject(job_handle, h_proc):
             raise ctypes.WinError()
     finally:
         _kernel32.CloseHandle(h_proc)
+
+
+def close_job(job_handle: int | None) -> None:
+    """Close the Job handle. Triggers KILL_ON_JOB_CLOSE — every process
+    in the Job is killed synchronously by the OS. Idempotent on None."""
+    if job_handle is None or sys.platform != "win32":
+        return
+    if not _kernel32.CloseHandle(job_handle):
+        log.warning("close_job: CloseHandle failed (errno=%d)",
+                    ctypes.get_last_error())
