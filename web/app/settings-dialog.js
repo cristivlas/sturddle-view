@@ -218,20 +218,20 @@ export async function openSettingsDialog({ api, initialTab }) {
         boardStyleSelect.append(opt);
       }
 
-      // Preview block sits below the dropdown with breathing room. Square
-      // ~half the dropdown's width. The global
-      // `svg.cm-chessboard { width: 100% !important }` rule (see styles.css)
-      // forces full width on any SVG carrying that class, so the
-      // `cm-chessboard <theme>` class goes on a fixed-size wrapper DIV
-      // with the SVG nested inside.
+      // Preview sits below the dropdown, full row width, two ranks tall.
+      // The `cm-chessboard <theme>` class goes on the wrapper DIV; the
+      // SVG inside scales via viewBox so the cells stay square as the
+      // wrapper resizes with the dropdown.
       const previewWrap = document.createElement("div");
       previewWrap.style.marginTop = "16px";
       const previewLabel = document.createElement("label");
       previewLabel.textContent = "Board preview";
-      const previewSize = 180;
+      const cols = 8;
+      const rows = 2;
+      const tile = 10;
       const preview = document.createElement("div");
-      preview.style.width = `${previewSize}px`;
-      preview.style.height = `${previewSize}px`;
+      preview.style.width = "100%";
+      preview.style.aspectRatio = `${cols} / ${rows}`;
       preview.style.borderRadius = "3px";
       preview.style.overflow = "hidden";
       previewWrap.append(previewLabel, preview);
@@ -240,15 +240,14 @@ export async function openSettingsDialog({ api, initialTab }) {
         preview.className = `cm-chessboard ${def.cssClass}`;
         preview.innerHTML = "";
         const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-        svg.setAttribute("viewBox", "0 0 40 40");
-        svg.setAttribute("width", String(previewSize));
-        svg.setAttribute("height", String(previewSize));
+        svg.setAttribute("viewBox", `0 0 ${cols * tile} ${rows * tile}`);
+        svg.setAttribute("width", "100%");
+        svg.setAttribute("height", "100%");
         svg.style.display = "block";
         const board = document.createElementNS("http://www.w3.org/2000/svg", "g");
         board.setAttribute("class", "board");
-        const tile = 10;
-        for (let r = 0; r < 4; r++) {
-          for (let c = 0; c < 4; c++) {
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
             const sq = document.createElementNS("http://www.w3.org/2000/svg", "rect");
             sq.setAttribute("class", `square ${(r + c) % 2 === 0 ? "white" : "black"}`);
             sq.setAttribute("x", c * tile);
@@ -258,15 +257,13 @@ export async function openSettingsDialog({ api, initialTab }) {
             board.append(sq);
           }
         }
-        // Sprinkle a few pieces of each color across the mini-board so
+        // Sprinkle pieces across both ranks and both square colors so
         // theme contrast and piece-set silhouettes are both visible.
-        // Each sprite piece group sits inside a 40x40 viewBox; nest a
-        // sub-svg per piece with that viewBox to map it into one cell.
         const placements = [
-          { piece: "bn", col: 0, row: 0 },
-          { piece: "bk", col: 3, row: 1 },
-          { piece: "wq", col: 1, row: 2 },
-          { piece: "wp", col: 2, row: 3 },
+          { piece: "bn", col: 1, row: 0 },
+          { piece: "bk", col: 4, row: 0 },
+          { piece: "wq", col: 3, row: 1 },
+          { piece: "wp", col: 6, row: 1 },
         ];
         for (const { piece, col, row } of placements) {
           const pieceSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
