@@ -24,6 +24,7 @@ from sturddle_view.tournament.orchestrator import (
 from sturddle_view.tournament.runner import RunSpec
 from sturddle_view.tournament.store import (
     STATUS_DONE,
+    STATUS_FAILED,
     STATUS_RUNNING,
     STATUS_STOPPED,
     TournamentNotFoundError,
@@ -260,15 +261,33 @@ async def test_clean_exit_marks_done(store, runner, orch):
     assert store.get(tid).status == STATUS_DONE
 
 
-async def test_runner_crash_marks_stopped_no_resume(store, runner, orch):
-    """Phase 1 has no Resume — runner_crash collapses to 'stopped'."""
+async def test_runner_crash_marks_failed_with_last_error(store, runner, orch):
+    """runner_crash → STATUS_FAILED + last_error persisted with stderr_tail."""
     tid = _create(store)
     await orch.start(tid)
-    await runner.finish("runner_crash", {"rc": 137})
+    await runner.finish("runner_crash", {
+        "rc": 137,
+        "stderr_tail": ["Error; no TimeControl specified!"],
+    })
 
     assert orch.active_id() is None
     final = store.get(tid)
-    assert final.status == STATUS_STOPPED
+    assert final.status == STATUS_FAILED
+    assert final.last_error is not None
+    assert final.last_error["rc"] == 137
+    assert final.last_error["stderr_tail"] == ["Error; no TimeControl specified!"]
+    assert final.last_error["at"]
+
+
+async def test_restart_clears_last_error(store, runner, orch):
+    tid = _create(store)
+    await orch.start(tid)
+    await runner.finish("runner_crash", {"rc": 1, "stderr_tail": ["bad"]})
+    assert store.get(tid).last_error is not None
+
+    await orch.start(tid)
+    assert store.get(tid).last_error is None
+    await orch.stop(tid)
 
 
 async def test_stop_when_not_active_is_noop(store, runner, orch):

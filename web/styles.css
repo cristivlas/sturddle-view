@@ -1218,6 +1218,23 @@ wa-dialog::part(body) {
   border-color: #3f7a3f;
   color: #d6f5d6;
 }
+.tournament-status.status-failed {
+  background: #6b1f1f;
+  border-color: #a13a3a;
+  color: #ffd7d7;
+}
+.tournament-info-error {
+  margin: 0;
+  padding: 6px 8px;
+  background: #2a1414;
+  border: 1px solid #6b1f1f;
+  color: #ffd7d7;
+  font-family: var(--wa-font-family-code);
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  max-height: 8em;
+  overflow: auto;
+}
 
 /* New Tournament dialog */
 .new-tournament-form { display: flex; flex-direction: column; gap: 12px; }
@@ -1363,6 +1380,18 @@ wa-dialog::part(body) {
 .wb-log-kind { color: var(--accent); }
 .wb-log-runner { color: var(--fg); flex: 1; min-width: 0; word-break: break-word; }
 .wb-log-runner.err { color: var(--wa-color-danger-on-loud); }
+.wb-error-banner {
+  margin-bottom: 8px; padding: 8px 10px;
+  background: #2a1414; border: 1px solid #6b1f1f; border-radius: 4px;
+  color: #ffd7d7;
+}
+.wb-error-banner .wb-error-title {
+  font-weight: 600; margin-bottom: 4px;
+}
+.wb-error-banner pre {
+  margin: 0; font-family: var(--wa-font-family-code); font-size: 12px;
+  white-space: pre-wrap; max-height: 8em; overflow: auto;
+}
 
 /* Live game window (Slice 9c) */
 .wb-livegame {

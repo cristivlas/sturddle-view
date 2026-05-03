@@ -27,6 +27,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import platformdirs
 
@@ -34,11 +35,16 @@ from .._atomic import atomic_write_json
 
 
 # Allowed status values. Phase 1 has no `paused` (see tournament-spec.md).
+# `failed` is distinct from `stopped` — the latter is user-initiated, the
+# former is a runner crash with diagnostics in `last_error`.
 STATUS_IDLE = "idle"
 STATUS_RUNNING = "running"
 STATUS_STOPPED = "stopped"
 STATUS_DONE = "done"
-_VALID_STATUSES = frozenset({STATUS_IDLE, STATUS_RUNNING, STATUS_STOPPED, STATUS_DONE})
+STATUS_FAILED = "failed"
+_VALID_STATUSES = frozenset({
+    STATUS_IDLE, STATUS_RUNNING, STATUS_STOPPED, STATUS_DONE, STATUS_FAILED,
+})
 
 
 class StoreError(Exception):
@@ -71,6 +77,10 @@ class Tournament:
     # Snapshot of global engine_default_* settings at creation time.
     # Frozen so Stop/Resume can't drift if Settings change mid-run.
     engine_defaults: dict = field(default_factory=dict)
+    # Diagnostic for the most recent runner_crash. None when the
+    # tournament has never failed (or was cleared on a successful start).
+    # Shape: {"rc": int, "stderr_tail": list[str], "at": iso8601}.
+    last_error: dict | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -213,6 +223,8 @@ class TournamentStore:
             raise TournamentNotFoundError(tournament_id)
         shutil.rmtree(d)
 
+    _UNSET = object()
+
     def update_status(
         self,
         tournament_id: str,
@@ -220,6 +232,7 @@ class TournamentStore:
         *,
         started_at: str | None = None,
         stopped_at: str | None = None,
+        last_error: Any = _UNSET,
     ) -> Tournament:
         if status not in _VALID_STATUSES:
             raise ValueError(f"invalid status: {status!r}")
@@ -229,6 +242,8 @@ class TournamentStore:
             t.started_at = started_at
         if stopped_at is not None:
             t.stopped_at = stopped_at
+        if last_error is not self._UNSET:
+            t.last_error = last_error
         atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
         return t
 

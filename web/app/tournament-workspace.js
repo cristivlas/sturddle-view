@@ -102,7 +102,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   function makeLogBody() {
     const el = document.createElement("div");
     el.className = "wb-eventlog";
-    el.innerHTML = `<ul class="wb-eventlog-list"></ul>`;
+    el.innerHTML = `<div class="wb-error-banner" hidden></div><ul class="wb-eventlog-list"></ul>`;
     return el;
   }
 
@@ -301,6 +301,18 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   function renderEventLog() {
+    const banner = logBody.querySelector(".wb-error-banner");
+    if (banner) {
+      const err = detail?.last_error;
+      if (err) {
+        const tail = (err.stderr_tail || []).slice(-10).join("\n") || `exit code ${err.rc}`;
+        banner.innerHTML = `<div class="wb-error-title">Tournament failed (rc=${err.rc})</div><pre>${escape(tail)}</pre>`;
+        banner.hidden = false;
+      } else {
+        banner.hidden = true;
+        banner.innerHTML = "";
+      }
+    }
     const list = logBody.querySelector(".wb-eventlog-list");
     if (!list) return;
     list.innerHTML = eventLog.map((e) => {
@@ -345,6 +357,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
     renderStandings();
     renderSchedule();
+    renderEventLog();
   }
 
   function addLogEntry(evt) {

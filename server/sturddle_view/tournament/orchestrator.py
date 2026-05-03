@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from ..config import Settings
 from .store import (
     STATUS_DONE,
+    STATUS_FAILED,
     STATUS_RUNNING,
     STATUS_STOPPED,
     Tournament,
@@ -201,8 +202,10 @@ class Orchestrator:
             engine_default_book_order=_ed("book_order"),
         )
         try:
+            # Clear any prior last_error on (re)start — the user has
+            # acted on the diagnostic by retrying.
             updated = self._store.update_status(
-                t.id, STATUS_RUNNING, started_at=_now()
+                t.id, STATUS_RUNNING, started_at=_now(), last_error=None,
             )
             await self._emit_status(updated)
             await self._runner.start(spec, self._on_runner_event)
@@ -255,8 +258,8 @@ class Orchestrator:
         Maps:
           - ``done``         → status=done, active_id cleared
           - ``stopped``      → status=stopped, active_id cleared
-          - ``runner_crash`` → status=stopped, active_id cleared
-                               (no Resume in Phase 1)
+          - ``runner_crash`` → status=failed + last_error persisted,
+                               active_id cleared (no Resume in Phase 1)
           - ``started``      → no status change (we set RUNNING in start())
           - others           → forwarded as-is to broadcast
         """
@@ -264,10 +267,23 @@ class Orchestrator:
 
         if kind in ("done", "stopped", "runner_crash"):
             if active_id is not None:
-                terminal_status = STATUS_DONE if kind == "done" else STATUS_STOPPED
+                if kind == "done":
+                    terminal_status = STATUS_DONE
+                elif kind == "runner_crash":
+                    terminal_status = STATUS_FAILED
+                else:
+                    terminal_status = STATUS_STOPPED
+                last_error = None
+                if kind == "runner_crash":
+                    last_error = {
+                        "rc": payload.get("rc"),
+                        "stderr_tail": payload.get("stderr_tail", []),
+                        "at": _now(),
+                    }
                 try:
                     updated = self._store.update_status(
-                        active_id, terminal_status, stopped_at=_now()
+                        active_id, terminal_status, stopped_at=_now(),
+                        last_error=last_error,
                     )
                     await self._emit_status(updated)
                 except Exception:
@@ -293,6 +309,7 @@ class Orchestrator:
             "status": t.status,
             "started_at": t.started_at,
             "stopped_at": t.stopped_at,
+            "last_error": t.last_error,
         })
 
     async def _emit(self, kind: str, payload: dict) -> None:

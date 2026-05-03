@@ -516,6 +516,40 @@ async def test_runner_nonzero_exit_emits_runner_crash(tmp_path, patched_runner):
     assert rec.events[-1][1]["rc"] == 7
 
 
+async def test_runner_crash_payload_includes_stderr_tail(tmp_path, patched_runner):
+    """runner_crash payload carries recent stderr lines so the UI can
+    show *why* the tournament failed (instead of a silent terminal
+    transition)."""
+    spec = _make_spec(tmp_path, {}, [{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}])
+    rec = _Recorder()
+    runner = patched_runner(["--print-err", "3", "--exit", "1"])
+
+    await runner.start(spec, rec)
+    await asyncio.wait_for(rec.done.wait(), timeout=5.0)
+
+    last = rec.events[-1]
+    assert last[0] == "runner_crash"
+    tail = last[1]["stderr_tail"]
+    assert "err 0" in tail
+    assert "err 2" in tail
+
+
+async def test_runner_crash_falls_back_to_stdout_when_no_stderr(tmp_path, patched_runner):
+    """Some CLI errors are emitted on stdout; payload must still carry
+    a useful diagnostic."""
+    spec = _make_spec(tmp_path, {}, [{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}])
+    rec = _Recorder()
+    runner = patched_runner(["--print", "2", "--exit", "1"])
+
+    await runner.start(spec, rec)
+    await asyncio.wait_for(rec.done.wait(), timeout=5.0)
+
+    last = rec.events[-1]
+    assert last[0] == "runner_crash"
+    tail = last[1]["stderr_tail"]
+    assert "out 0" in tail and "out 1" in tail
+
+
 async def test_runner_stop_emits_stopped_not_crash(tmp_path, patched_runner):
     spec = _make_spec(tmp_path, {}, [{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}])
     rec = _Recorder()

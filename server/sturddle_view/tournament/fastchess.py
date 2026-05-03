@@ -22,9 +22,14 @@ import os
 import shutil
 import subprocess
 import sys
+from collections import deque
 from typing import Any
 
 from .runner import EventCallback, RunSpec
+
+
+# Recent stderr/stdout lines retained for runner_crash diagnostics.
+_STDERR_TAIL_MAX = 40
 
 
 def _quote_arg(arg: str) -> str:
@@ -250,6 +255,10 @@ class FastchessRunner:
         self._drain_tasks: list[asyncio.Task] = []
         self._on_event: EventCallback | None = None
         self._spec: RunSpec | None = None
+        # Tails attached to runner_crash for diagnostics. Both streams
+        # captured because fastchess emits early CLI errors to stdout.
+        self._stderr_tail: deque[str] = deque(maxlen=_STDERR_TAIL_MAX)
+        self._stdout_tail: deque[str] = deque(maxlen=_STDERR_TAIL_MAX)
 
     @property
     def binary_path(self) -> str | None:
@@ -295,6 +304,8 @@ class FastchessRunner:
         self._on_event = on_event
         self._spec = spec
         self._stop_requested = False
+        self._stderr_tail.clear()
+        self._stdout_tail.clear()
 
         cmd = build_command(spec)
         # Override the binary in the cmd in case detect_binary resolved it
@@ -442,6 +453,10 @@ class FastchessRunner:
                 if not line:
                     return
                 decoded = line.decode("utf-8", errors="replace")
+                stripped = decoded.rstrip("\r\n")
+                if stripped:
+                    tail = self._stderr_tail if tag == "err" else self._stdout_tail
+                    tail.append(stripped)
                 try:
                     log_file.write(decoded)
                     log_file.flush()
@@ -455,7 +470,7 @@ class FastchessRunner:
                 # flow through here; that's the proxy's job (Slice 9b).
                 await self._emit("runner_log", {
                     "stream": tag,
-                    "line": decoded.rstrip("\r\n"),
+                    "line": stripped,
                 })
         except asyncio.CancelledError:
             raise
@@ -490,7 +505,10 @@ class FastchessRunner:
         elif rc == 0:
             kind, payload = "done", {"rc": rc}
         else:
-            kind, payload = "runner_crash", {"rc": rc}
+            # Prefer stderr; fall back to stdout (fastchess emits some
+            # CLI errors there) so the UI never gets an empty diagnostic.
+            tail = list(self._stderr_tail) or list(self._stdout_tail)
+            kind, payload = "runner_crash", {"rc": rc, "stderr_tail": tail}
 
         await self._emit(kind, payload)
 

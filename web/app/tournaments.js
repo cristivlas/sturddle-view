@@ -272,7 +272,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     const isActive = t.id === activeId;
     const anotherRunning = activeId !== null && !isActive;
     const status = t.status;
-    const isResume = status === "stopped";
+    const isResume = status === "stopped" || status === "failed";
 
     ribbonStartBtn.disabled = isActive || anotherRunning || status === "running" || status === "done";
     ribbonStopBtn.disabled = !isActive;
@@ -451,6 +451,13 @@ export function mountTournaments({ container, api, events, log, token }) {
 
     row("ID", t.id);
     row("Status", t.status === "stopped" ? "paused" : t.status);
+    if (t.last_error) {
+      const tail = (t.last_error.stderr_tail || []).slice(-10).join("\n");
+      const pre = document.createElement("pre");
+      pre.className = "tournament-info-error";
+      pre.textContent = tail || `exit code ${t.last_error.rc}`;
+      row(`Last error (rc=${t.last_error.rc})`, pre);
+    }
     row("Type", formatType(tpl.tournament_type));
     row("Time control", tpl.tc);
     row("Rounds", tpl.rounds);
@@ -685,6 +692,18 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   const offEvents = events.on((evt) => {
     if (evt.kind === "tournament_status" || evt.kind === "tournament_update") {
+      // Surface runner crashes as a toast — the user may not have a
+      // workspace open and would otherwise see the row silently flip
+      // to a terminal state with no explanation.
+      const inner = evt.payload?.kind;
+      if (inner === "runner_crash") {
+        const tid = evt.payload?.tournament_id;
+        const t = tournaments.find((x) => x.id === tid);
+        const name = t ? t.name : "Tournament";
+        const tail = evt.payload?.stderr_tail || [];
+        const firstErr = tail.find((l) => /error|fatal|fail/i.test(l)) || tail[0] || `exit code ${evt.payload?.rc}`;
+        toast(`${name} failed: ${firstErr}`, { variant: "danger", duration: 10000 });
+      }
       loadList();
     }
   });
