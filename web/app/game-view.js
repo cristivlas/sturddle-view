@@ -359,17 +359,24 @@ export function mountGameView(container, opts = {}) {
         grid.style.removeProperty("--board-col-px");
         grid.style.removeProperty("--rail-w");
       }
-      // Cap the side rail so the moves panel doesn't extend below the
-      // board's bottom edge. Compute rail height = board bottom - rail top.
+      // Align the side rail's top with the board's top (the grid would
+       // otherwise place it next to the top clock row), and cap its height
+       // at the board's height so the moves panel stays within the board.
       const sideHost = grid.querySelector(".play-side-host");
       if (sideHost) {
         if (window.innerWidth > NARROW) {
           const boardRect = boardEl.getBoundingClientRect();
+          // Reset margin before measuring so the offset reflects the
+          // grid-natural top, not last frame's adjustment.
+          sideHost.style.marginTop = "0px";
           const sideRect = sideHost.getBoundingClientRect();
-          const target = Math.max(160, Math.floor(boardRect.bottom - sideRect.top));
+          const offset = Math.max(0, Math.floor(boardRect.top - sideRect.top));
+          sideHost.style.marginTop = `${offset}px`;
+          const target = Math.max(160, Math.floor(boardRect.height));
           sideHost.style.setProperty("max-height", `${target}px`);
         } else {
           sideHost.style.removeProperty("max-height");
+          sideHost.style.removeProperty("margin-top");
         }
       }
     }
