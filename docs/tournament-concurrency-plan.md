@@ -132,6 +132,14 @@ template form, not a block. Out of scope for rescheck.
 ### Watch-window silence (resolved by proxy fix above)
 - Proxy now actually forwards UCI lines on Windows; live windows should populate.
 
+### TODO: pass `-force-concurrency` when `allow_oversubscribe` is on
+- Currently: flag silences our rescheck but fastchess still rejects
+  `concurrency > nproc` with "Concurrency exceeds number of CPUs. Use
+  -force-concurrency to override." → Start crashes at runtime.
+- Fix: in `build_command`, append `-force-concurrency` when
+  `template.allow_oversubscribe` is true. Verify exact flag spelling
+  against current fastchess version.
+
 ### Slice 5 — Reframe oversubscription gate (was Slice 1's premise)
 - fastchess accepts oversubscription silently → gate is no longer "block hard error".
 - New purpose: warn user that high concurrency degrades Elo measurement (SMT contention + startup races).

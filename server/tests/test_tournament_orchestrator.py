@@ -21,6 +21,7 @@ from sturddle_view.tournament.orchestrator import (
     Orchestrator,
     TournamentBusyError,
 )
+from sturddle_view.tournament.rescheck import HostSpecs, RescheckError
 from sturddle_view.tournament.runner import RunSpec
 from sturddle_view.tournament.store import (
     STATUS_DONE,
@@ -277,6 +278,94 @@ async def test_runner_crash_marks_failed_with_last_error(store, runner, orch):
     assert final.last_error["rc"] == 137
     assert final.last_error["stderr_tail"] == ["Error; no TimeControl specified!"]
     assert final.last_error["at"]
+
+
+def _patch_specs(monkeypatch, *, logical=4, physical=2, total_ram_mb=8192):
+    monkeypatch.setattr(
+        "sturddle_view.tournament.rescheck.host_specs",
+        lambda: HostSpecs(logical, physical, total_ram_mb),
+    )
+
+
+async def test_rescheck_blocks_cpu_oversubscription(store, runner, orch, monkeypatch):
+    _patch_specs(monkeypatch, logical=4, physical=2)
+    tid = _create(
+        store,
+        template={"games_in_parallel": 8, "max_threads": 1, "max_hash_mb": 16},
+    )
+    with pytest.raises(RescheckError):
+        await orch.start(tid)
+    final = store.get(tid)
+    assert final.status == STATUS_FAILED
+    assert final.last_error["rescheck"]["reason"] == "oversubscribed"
+    assert orch.active_id() is None
+    assert not runner.is_running()
+
+
+async def test_rescheck_allow_oversubscribe_silences_cpu_block(store, runner, orch, monkeypatch):
+    _patch_specs(monkeypatch, logical=4, physical=2)
+    tid = _create(
+        store,
+        template={
+            "games_in_parallel": 8, "max_threads": 1, "max_hash_mb": 16,
+            "allow_oversubscribe": True,
+        },
+    )
+    await orch.start(tid)
+    assert store.get(tid).status == STATUS_RUNNING
+
+
+async def test_rescheck_blocks_affinity_over_physical(store, runner, orch, monkeypatch):
+    _patch_specs(monkeypatch, logical=8, physical=4)
+    tid = _create(
+        store,
+        template={
+            "games_in_parallel": 5, "max_threads": 1, "max_hash_mb": 16,
+            "pin_affinity": True,
+        },
+    )
+    with pytest.raises(RescheckError):
+        await orch.start(tid)
+    assert store.get(tid).last_error["rescheck"]["reason"] == "affinity_exceeds_physical"
+
+
+async def test_rescheck_affinity_block_not_silenced_by_oversubscribe(store, runner, orch, monkeypatch):
+    _patch_specs(monkeypatch, logical=8, physical=4)
+    tid = _create(
+        store,
+        template={
+            "games_in_parallel": 5, "max_threads": 1, "max_hash_mb": 16,
+            "pin_affinity": True, "allow_oversubscribe": True,
+        },
+    )
+    with pytest.raises(RescheckError):
+        await orch.start(tid)
+
+
+async def test_rescheck_blocks_ram(store, runner, orch, monkeypatch):
+    # 4 parallel * 2 engines * (4096 + 256) MB overhead = 34816 MB
+    # Budget = 0.75 * 8192 = 6144 MB → blocks.
+    _patch_specs(monkeypatch, logical=8, physical=4, total_ram_mb=8192)
+    tid = _create(
+        store,
+        template={"games_in_parallel": 4, "max_threads": 1, "max_hash_mb": 4096},
+    )
+    with pytest.raises(RescheckError):
+        await orch.start(tid)
+    assert store.get(tid).last_error["rescheck"]["reason"] == "insufficient_ram"
+
+
+async def test_rescheck_allow_oversubscribe_silences_ram_block(store, runner, orch, monkeypatch):
+    _patch_specs(monkeypatch, logical=8, physical=4, total_ram_mb=8192)
+    tid = _create(
+        store,
+        template={
+            "games_in_parallel": 4, "max_threads": 1, "max_hash_mb": 4096,
+            "allow_oversubscribe": True,
+        },
+    )
+    await orch.start(tid)
+    assert store.get(tid).status == STATUS_RUNNING
 
 
 async def test_restart_clears_last_error(store, runner, orch):

@@ -7,7 +7,7 @@
 // look and feel. Clicking a row selects it; ribbon actions target the
 // selected tournament. New / Sort / Window remain in the top menubar.
 
-import { confirm, reportError, showDialog, toast } from "./dialogs.js";
+import { apiErrorDetail, confirm, reportError, showDialog, toast } from "./dialogs.js";
 import { openSettingsDialog } from "./settings-dialog.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { getActiveWorkspace, openTournamentWorkspace } from "./tournament-workspace.js";
@@ -589,6 +589,54 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   document.addEventListener("click", closeMenus);
 
+  async function loadGlobalEngineDefaults() {
+    try {
+      const s = await api("GET", "/settings");
+      return {
+        threads: s.engine_default_threads,
+        hash_mb: s.engine_default_hash_mb,
+      };
+    } catch {
+      return { threads: null, hash_mb: null };
+    }
+  }
+
+  // Resolve worst-case threading + hash from the picked engines and the
+  // global engine_default_* override. Mirrors the formula in
+  // docs/tournament-concurrency-plan.md so the rescheck endpoint sees
+  // the same numbers the user is committing to.
+  function resolveResourceParams(template, pickedRegistry, globalDefaults) {
+    function resolvedFor(engine, optName, fallback) {
+      const opt = engine.options && engine.options[optName];
+      if (opt != null && opt !== "") return Number(opt);
+      const schema = engine.option_schema && engine.option_schema[optName];
+      if (schema && schema.default != null) return Number(schema.default);
+      return fallback;
+    }
+    const maxOver = (key, fallback) => {
+      if (!pickedRegistry.length) return fallback;
+      return pickedRegistry.reduce(
+        (acc, e) => Math.max(acc, resolvedFor(e, key, fallback)),
+        0,
+      ) || fallback;
+    };
+    const max_threads = globalDefaults.threads
+      ? Number(globalDefaults.threads)
+      : maxOver("Threads", 1);
+    const max_hash_mb = globalDefaults.hash_mb
+      ? Number(globalDefaults.hash_mb)
+      : maxOver("Hash", 16);
+
+    return {
+      parallel: Number(template.games_in_parallel || 1),
+      max_threads,
+      max_hash_mb,
+      ponder: !!template.ponder,
+      pin_affinity: !!template.pin_affinity,
+      allow_oversubscribe: !!template.allow_oversubscribe,
+    };
+  }
+
   async function openNewTournamentDialog() {
     let registry;
     try {
@@ -658,7 +706,7 @@ export function mountTournaments({ container, api, events, log, token }) {
         nameInput.addEventListener("input", refreshValidity);
         builder.onChange(refreshValidity);
 
-        create.addEventListener("click", () => {
+        create.addEventListener("click", async () => {
           if (!isValid()) return;
           const v = tplCtl.validate({ numEngines: builder.getEngines().length });
           if (!v.ok) {
@@ -672,6 +720,40 @@ export function mountTournaments({ container, api, events, log, token }) {
             toast(e.message, { variant: "danger" });
             return;
           }
+
+          // Resource check (rescheck): client resolves the per-engine
+          // threading + hash from the picked registry entries, server
+          // compares against the host's CPU/RAM. Failure blocks Create.
+          const picked = builder.getPickedRegistry();
+          const globalDefaults = await loadGlobalEngineDefaults();
+          const resolved = resolveResourceParams(template, picked, globalDefaults);
+          create.loading = true;
+          let rescheckResult;
+          try {
+            rescheckResult = await api("POST", "/api/tournaments/rescheck", resolved);
+          } catch (e) {
+            const detail = apiErrorDetail(e);
+            const msg = (detail && detail.message) || detail || "Resource check failed";
+            toast(typeof msg === "string" ? msg : String(msg), {
+              variant: "danger", duration: 8000,
+            });
+            create.loading = false;
+            return;
+          } finally {
+            create.loading = false;
+          }
+          if (rescheckResult.warnings && rescheckResult.warnings.length) {
+            for (const w of rescheckResult.warnings) {
+              toast(`Warning: ${w.message}`, { variant: "warning", duration: 8000 });
+            }
+          }
+
+          // Fold the resolved values into the template so the server can
+          // re-run the same check at start time without needing the
+          // engine registry.
+          template.max_threads = resolved.max_threads;
+          template.max_hash_mb = resolved.max_hash_mb;
+
           resolve({
             name: nameInput.value.trim(),
             template,
@@ -886,6 +968,11 @@ function mountEngineBuilder({ host, available, initial = [] }) {
         const e = byId.get(id);
         return { name: e.name, cmd: e.path };
       });
+    },
+    getPickedRegistry() {
+      // Full registry entries (with options + option_schema) for the
+      // picked engines — used by the rescheck resolver.
+      return pickedIds.map((id) => byId.get(id)).filter(Boolean);
     },
     onChange(fn) { listeners.add(fn); },
   };

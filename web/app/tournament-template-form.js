@@ -98,7 +98,17 @@ export function mountTournamentTemplateForm({
     "Reduces scheduler noise; recommended for SPRT.";
   inputs.pin_affinity = affinitySwitch;
 
-  switchRow.append(ponderSwitch, affinitySwitch);
+  const oversubSwitch = document.createElement("wa-switch");
+  oversubSwitch.size = "small";
+  oversubSwitch.dataset.key = "allow_oversubscribe";
+  if (initialValues.allow_oversubscribe) oversubSwitch.setAttribute("checked", "");
+  oversubSwitch.textContent = "Oversubscribe";
+  oversubSwitch.title =
+    "Allow CPU/RAM use to exceed the host's capacity. Resource checks " +
+    "downgrade from blockers to warnings. Don't use for SPRT.";
+  inputs.allow_oversubscribe = oversubSwitch;
+
+  switchRow.append(ponderSwitch, affinitySwitch, oversubSwitch);
 
   // ---- Adjudication: Resign + Draw --------------------------------------
 
@@ -204,6 +214,7 @@ export function mountTournamentTemplateForm({
     }
     if (ponderSwitch.checked) out.ponder = true;
     if (affinitySwitch.checked) out.pin_affinity = true;
+    if (oversubSwitch.checked) out.allow_oversubscribe = true;
 
     // Adjudication: only emit a sub-object when the switch is on AND
     // the required fields are present.
@@ -300,6 +311,7 @@ export function mountTournamentTemplateForm({
     syncSeedsVisibility();
     ponderSwitch.checked = !!values.ponder;
     affinitySwitch.checked = !!values.pin_affinity;
+    oversubSwitch.checked = !!values.allow_oversubscribe;
 
     const r = values.resign || {};
     resignMoves.value = String(r.movecount ?? RESIGN_DEFAULTS.movecount);

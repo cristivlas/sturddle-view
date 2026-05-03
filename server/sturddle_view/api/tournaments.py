@@ -40,6 +40,7 @@ from pydantic import BaseModel, Field
 from ..auth import require_token
 from ..tournament.fastchess import FastchessRunner
 from ..tournament.orchestrator import Orchestrator, TournamentBusyError, wrap_event_for_bus
+from ..tournament.rescheck import RescheckError, check as rescheck_run
 from ..tournament.pgn_stats import compute_games_list, compute_sprt, compute_standings
 from ..tournament.store import (
     CorruptStateError,
@@ -223,7 +224,45 @@ async def start_tournament(tournament_id: str, request: Request) -> dict:
     except FileNotFoundError as e:
         # fastchess binary missing
         raise HTTPException(status_code=400, detail=str(e)) from e
+    except RescheckError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"reason": e.reason, "message": str(e), **e.details},
+        ) from e
     return _serialize(t)
+
+
+class RescheckRequest(BaseModel):
+    """Resolved by the client from the template + selected engines'
+    UCI option_schema. Server compares against local CPU / RAM."""
+    parallel: int = 1
+    max_threads: int = 1
+    max_hash_mb: int = 16
+    ponder: bool = False
+    pin_affinity: bool = False
+    allow_oversubscribe: bool = False
+
+
+@router.post("/api/tournaments/rescheck")
+def rescheck_tournament(payload: RescheckRequest) -> dict:
+    """Resource sanity check called by the New Tournament dialog before
+    POSTing the template. 200 = OK (with optional warnings); 400 carries
+    a structured ``{reason, message, details}`` for the UI to render."""
+    try:
+        warnings = rescheck_run(
+            parallel=payload.parallel,
+            max_threads=payload.max_threads,
+            max_hash_mb=payload.max_hash_mb,
+            ponder=payload.ponder,
+            pin_affinity=payload.pin_affinity,
+            allow_oversubscribe=payload.allow_oversubscribe,
+        )
+    except RescheckError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"reason": e.reason, "message": str(e), **e.details},
+        ) from e
+    return {"ok": True, "warnings": warnings}
 
 
 @router.post("/api/tournaments/{tournament_id}/stop")

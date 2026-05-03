@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Awaitable, Callable
 
+from .rescheck import RescheckError, check_template
 from .runner import EventCallback, RunSpec, Runner
 
 if TYPE_CHECKING:
@@ -171,11 +172,6 @@ class Orchestrator:
         # Confirms existence and gets the frozen template.
         t = self._store.get(tournament_id)
 
-        # Mark active *before* spawning so a concurrent ``start`` call
-        # racing against this one is rejected by the busy check above.
-        self._active_id = t.id
-        self._proxy_secret = secrets.token_urlsafe(24)
-
         # Prefer the tournament's frozen snapshot; for tournaments created
         # before snapshotting was introduced, fall back to live Settings so
         # existing dirs still launch.
@@ -185,6 +181,31 @@ class Orchestrator:
             if key in ed:
                 return ed[key]
             return getattr(s, f"engine_default_{key}", None)
+
+        # Resource recheck — values were resolved + folded into the
+        # template by the client at create time; we re-verify against
+        # the current host (covers stale tournaments started after the
+        # machine specs changed, and direct-API misuse).
+        # Failure surfaces like a runner_crash: STATUS_FAILED + last_error.
+        try:
+            check_template(t.template)
+        except RescheckError as e:
+            last_error = {
+                "rc": None,
+                "stderr_tail": [str(e)],
+                "rescheck": {"reason": e.reason, **e.details},
+                "at": _now(),
+            }
+            failed = self._store.update_status(
+                t.id, STATUS_FAILED, stopped_at=_now(), last_error=last_error,
+            )
+            await self._emit_status(failed)
+            raise
+
+        # Mark active *before* spawning so a concurrent ``start`` call
+        # racing against this one is rejected by the busy check above.
+        self._active_id = t.id
+        self._proxy_secret = secrets.token_urlsafe(24)
         spec = RunSpec(
             tournament=t,
             binary_path=getattr(self._runner, "binary_path", "") or "",
