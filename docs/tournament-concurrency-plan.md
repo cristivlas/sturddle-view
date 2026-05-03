@@ -23,20 +23,59 @@ Status: draft. Update as slices land.
 - Smoke test on Windows before shipping — verify `SetProcessAffinityMask` actually pins engine threads as expected (vs. just the parent).
 
 ## Slice 3 — Sanity checks (preflight)
-Server-side, in orchestrator at start time. Returns warnings/errors surfaced to UI.
+Two independent categories, surfaced at create-time AND start-time.
+
+### 3a. Resource preflight ("don't kill the machine")
+
+Worst-case CPU load formula:
+
+```
+load = parallel * (2 if ponder else 1) * max_threads_setting
+```
+
+where `max_threads_setting` is the largest Threads value any single engine
+uses during a game:
+
+```
+max_threads_setting =
+    engine_default_threads                              # if set globally
+    else max(engine.uci_threads_default for engine in engines)
+```
+
+Rationale: with ponder off, one engine searches per slot → `1 * max_threads`
+CPUs busy. With ponder on, both engines search at once → `2 * max_threads`
+busy. `max_threads_setting` defends against asymmetric per-engine defaults
+when no global override is in place.
 
 Errors (block start):
-- `parallel * threads > physical_cores` AND `allow_oversubscribe=false`.
-- `pin_affinity=true` AND `parallel * threads > physical_cores`.
+- `load > logical_cores` AND `allow_oversubscribe=false` (matches fastchess'
+  own `-concurrency > nproc` rejection — see Empirical finding above).
+- `pin_affinity=true` AND `load > physical_cores` (affinity needs slot ≤
+  physical core; hyperthreading siblings won't satisfy it).
 
-Warnings (informational, non-blocking):
-- `engine_default_threads is None` AND `parallel > 1` → engines may use own thread counts; oversubscription possible.
-- `parallel * 2 * hash_mb > 0.7 * system_ram` → paging risk.
-- `sprt` set AND `parallel > 1` AND `pin_affinity=false` → noisier results expected.
+Warnings (informational):
+- `parallel * 2 * hash_mb > 0.7 * system_ram` → paging risk (2 engines/slot,
+  hash counted per-engine).
+- TB on slow disk + high concurrency (stretch).
 
-TODO / stretch:
-- TB on slow disk warn at high concurrency.
-- UCI-probe each engine's default `Threads` on add; store on engine record; use for accurate preflight when global threads unset.
+### 3b. Fairness preflight ("engines start on level ground")
+Per-engine UCI options should not differ silently across the tournament
+slate. When the global `engine_default_*` is set via `-each`, all engines
+are forced equal → fair. When unset, the fall-back is each engine's
+stored UCI defaults (already captured at registry add).
+
+Warnings:
+- `engine_default_threads is None` AND any two engines have differing
+  Threads defaults → asymmetric compute.
+- Same for `Hash`.
+- `template.ponder=true` AND some engines don't advertise the `Ponder`
+  UCI option → asymmetric (only ponder-aware engines benefit).
+- `sprt` set AND any fairness warning fires → strongly recommend fixing
+  before trusting the result.
+
+### Cross-cutting noise warnings
+- `sprt` set AND `parallel > 1` AND `pin_affinity=false` → measurement
+  noisier than necessary.
 
 ## Open questions
 - Exact fastchess flag names — verify against current fastchess version (`-force-concurrency` vs `--force-concurrency` vs other).
