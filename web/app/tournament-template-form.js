@@ -75,14 +75,30 @@ export function mountTournamentTemplateForm({
   syncSeedsVisibility();
   typeSelect.addEventListener("wa-change", syncSeedsVisibility);
 
-  // ---- Ponder ------------------------------------------------------------
+  // ---- Ponder + Affinity (single row) -----------------------------------
+
+  const switchRow = document.createElement("div");
+  switchRow.className = "ttf-switch-row";
 
   const ponderSwitch = document.createElement("wa-switch");
   ponderSwitch.size = "small";
   ponderSwitch.dataset.key = "ponder";
   if (initialValues.ponder) ponderSwitch.setAttribute("checked", "");
-  ponderSwitch.textContent = "Ponder (think on opponent's time)";
+  ponderSwitch.textContent = "Ponder";
+  ponderSwitch.title = "Engines think on opponent's time.";
   inputs.ponder = ponderSwitch;
+
+  const affinitySwitch = document.createElement("wa-switch");
+  affinitySwitch.size = "small";
+  affinitySwitch.dataset.key = "pin_affinity";
+  if (initialValues.pin_affinity) affinitySwitch.setAttribute("checked", "");
+  affinitySwitch.textContent = "CPU Affinity";
+  affinitySwitch.title =
+    "Pass -affinity to fastchess so each game-slot is bound to fixed cores. " +
+    "Reduces scheduler noise; recommended for SPRT.";
+  inputs.pin_affinity = affinitySwitch;
+
+  switchRow.append(ponderSwitch, affinitySwitch);
 
   // ---- Adjudication: Resign + Draw --------------------------------------
 
@@ -167,7 +183,7 @@ export function mountTournamentTemplateForm({
   resignBlock.sw.addEventListener("change", () => syncEnabled(resignBlock, resignFields));
   drawBlock.sw.addEventListener("change", () => syncEnabled(drawBlock, drawFields));
 
-  container.append(grid, ponderSwitch, adjSection);
+  container.append(grid, switchRow, adjSection);
 
   // ---- Public API --------------------------------------------------------
 
@@ -187,6 +203,7 @@ export function mountTournamentTemplateForm({
       out.seeds = Number(seedsInput.value);
     }
     if (ponderSwitch.checked) out.ponder = true;
+    if (affinitySwitch.checked) out.pin_affinity = true;
 
     // Adjudication: only emit a sub-object when the switch is on AND
     // the required fields are present.
@@ -282,6 +299,7 @@ export function mountTournamentTemplateForm({
     seedsInput.value = values.seeds != null ? String(values.seeds) : "";
     syncSeedsVisibility();
     ponderSwitch.checked = !!values.ponder;
+    affinitySwitch.checked = !!values.pin_affinity;
 
     const r = values.resign || {};
     resignMoves.value = String(r.movecount ?? RESIGN_DEFAULTS.movecount);

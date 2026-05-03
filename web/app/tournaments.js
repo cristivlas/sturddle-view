@@ -465,6 +465,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     row("Games", formatGames(t));
     if (tpl.tournament_type === "gauntlet") row("Seeds", tpl.seeds);
     row("Ponder", tpl.ponder ? "On" : "Off");
+    row("CPU affinity", tpl.pin_affinity ? "Pinned" : "Off");
     row("Resign", formatResign(tpl.resign));
     row("Draw adjudication", formatDraw(tpl.draw));
     const ed = t.engine_defaults || {};
@@ -807,6 +808,7 @@ function mountEngineBuilder({ host, available, initial = [] }) {
       li.className = "ne-item" + (e.id === availableSelectedId ? " selected" : "");
       li.dataset.id = e.id;
       li.textContent = e.name;
+      li.title = e.name;
       li.addEventListener("click", () => {
         availableSelectedId = e.id;
         render();

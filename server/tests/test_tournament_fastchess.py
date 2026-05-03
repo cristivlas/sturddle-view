@@ -182,6 +182,24 @@ def test_build_command_concurrency_rounds_games(tmp_path):
     assert cmd[cmd.index("-games") + 1] == "2"
 
 
+def test_build_command_affinity(tmp_path):
+    spec = _make_spec(
+        tmp_path,
+        template={"pin_affinity": True},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    cmd = build_command(spec)
+    assert "-affinity" in cmd
+
+    # Default off → not present.
+    spec_off = _make_spec(
+        tmp_path / "off",
+        template={},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    assert "-affinity" not in build_command(spec_off)
+
+
 def test_build_command_gauntlet_with_seeds(tmp_path):
     spec = _make_spec(
         tmp_path,

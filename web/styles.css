@@ -1282,6 +1282,7 @@ wa-dialog::part(body) {
 }
 .ne-item {
   padding: 4px 8px; cursor: pointer; border-radius: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ne-item:hover { background: var(--nav-btn-bg); }
 .ne-item.selected { background: var(--wa-color-brand-fill-loud); color: #fff; }
@@ -1324,6 +1325,9 @@ wa-dialog::part(body) {
   grid-template-columns: 7em 8em 6em minmax(14em, 1fr);
 }
 .tournament-template-form .ttf-grid > * { min-width: 0; }
+.tournament-template-form .ttf-switch-row {
+  display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: center;
+}
 /* Validation outline for required/out-of-range inputs (set by validate()). */
 .tournament-template-form .ttf-invalid::part(base) {
   border-color: #a13a3a;

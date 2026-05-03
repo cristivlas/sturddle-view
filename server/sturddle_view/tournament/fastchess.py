@@ -151,6 +151,8 @@ def build_command(spec: RunSpec) -> list[str]:
     # Tournament setup
     if "games_in_parallel" in t:
         cmd.extend(["-concurrency", str(t["games_in_parallel"])])
+    if t.get("pin_affinity"):
+        cmd.append("-affinity")
     if "rounds" in t:
         cmd.extend(["-rounds", str(t["rounds"])])
     if "games_per_round" in t:
