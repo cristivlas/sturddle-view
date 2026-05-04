@@ -159,8 +159,8 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
   }
 
   ws.addEventListener("close", () => {
-    statusEl.textContent = "ended";
     stopTimer();
+    try { wb.close(); } catch { /* */ }
   });
 
   ws.addEventListener("error", () => {

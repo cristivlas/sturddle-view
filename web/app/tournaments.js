@@ -582,7 +582,8 @@ export function mountTournaments({ container, api, events, log, token }) {
   }
 
   const hideAllBtn = container.querySelector(".tmb-hideall");
-  const sysTriggerBtn = container.querySelector(".tmb-sys-trigger");
+  const hiddenDisabledBtns = [".tmb-sys-trigger", ".tmb-tile", ".tmb-cascade"]
+    .map(s => container.querySelector(s));
 
   windowMenuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -593,7 +594,7 @@ export function mountTournaments({ container, api, events, log, token }) {
       const ws = getActiveWorkspace();
       const hidden = ws?.isHidden() ?? false;
       hideAllBtn.textContent = hidden ? "Show All" : "Hide All";
-      sysTriggerBtn.disabled = hidden;
+      for (const btn of hiddenDisabledBtns) btn.disabled = hidden;
       windowMenu.classList.add("open");
     }
   });
