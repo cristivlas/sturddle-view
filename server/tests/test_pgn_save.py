@@ -227,6 +227,18 @@ async def test_round_trip_save_then_reimport_clocks(hve):
     assert parsed.final_black_time == pytest.approx(saved_black, abs=0.5)
 
 
+async def test_pgn_save_is_atomic_no_tempfile_left_behind(hve):
+    """atomic_write_text writes via tempfile + os.replace. Verify the
+    tempfile (named '.<final>.<random>.tmp') doesn't outlive the call."""
+    h, _, tmp_path = hve
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    await h.submit_move("e2e4")
+    # Final PGN is present; no leftover .tmp siblings.
+    pgns = list(tmp_path.glob("*.pgn"))
+    assert len(pgns) == 1
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
 async def test_filename_stable_across_restore(hve, tmp_path):
     """A restored game keeps writing to the same PGN file."""
     h, settings, _ = hve

@@ -18,6 +18,7 @@ import chess
 import chess.engine
 import chess.pgn
 
+from .._atomic import atomic_write_text
 from ..events import Event, EventBus
 from .game_store import GameState, GameStore
 
@@ -1063,8 +1064,7 @@ class HumanVsEngine:
         ts = datetime.datetime.fromtimestamp(wall).strftime("%Y%m%d-%H%M%S")
         path = pgn_dir / f"{ts}-{self._game_id}.pgn"
         try:
-            with path.open("w", encoding="utf-8") as f:
-                print(game, file=f, end="\n\n")
+            atomic_write_text(path, f"{game}\n\n")
         except OSError:
             log.exception("could not write PGN to %s", path)
             return None
