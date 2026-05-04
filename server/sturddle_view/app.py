@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .api import agent as agent_api
+from .api import chess_utils as chess_api
 from .api import engines as engines_api
 from .api import fs as fs_api
 from .api import game as game_api
@@ -239,6 +240,7 @@ def create_app(
     # current Defaults-tab values without needing a restart.
     app.state.tournament_orch.set_settings(settings)
 
+    app.include_router(chess_api.router)
     app.include_router(settings_api.router)
     app.include_router(engines_api.router)
     app.include_router(fs_api.router)

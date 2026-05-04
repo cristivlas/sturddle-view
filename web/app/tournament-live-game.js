@@ -112,6 +112,8 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
   let engineColor = null;
   let timerInterval = null;
   let activeDeadline = 0;
+  let currentFen = null;
+  let positionGen = 0;
 
   wb.onclose = () => {
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
@@ -179,10 +181,34 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
     topTimeEl.textContent = formatMs(engineColor === "white" ? btime : wtime);
   }
 
+  async function applyBestMove(uciMove) {
+    const fen = currentFen;
+    const gen = positionGen;
+    try {
+      const headers = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const res = await fetch("/api/chess/apply-move", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ fen, move: uciMove }),
+      });
+      if (!res.ok) return;
+      const { fen: newFen } = await res.json();
+      // Discard if a newer `position` message arrived while the fetch was in flight.
+      if (positionGen === gen) {
+        currentFen = newFen;
+        board.setPosition(newFen, uciMove);
+        board.clearArrows();
+      }
+    } catch { /* non-fatal: next position message will correct the board */ }
+  }
+
   function handleParsed(p) {
     switch (p.kind) {
       case "position":
         if (p.fen) {
+          positionGen++;
+          currentFen = p.fen;
           const turn = p.fen.split(" ")[1];
           const color = turn === "b" ? "black" : "white";
           if (!orientationSet) {
@@ -221,6 +247,7 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
         if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
         clockBottomEl.classList.remove("active");
         clockTopEl.classList.toggle("active", !!engineColor);
+        if (currentFen && p.move) applyBestMove(p.move);
         break;
     }
   }
