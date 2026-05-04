@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -c \"import inspect; from uvicorn.loops import auto; print\\(inspect.getsource\\(auto\\)\\)\")",
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -c \"import inspect; from uvicorn.config import Config; print\\(inspect.getsource\\(Config.get_loop_factory\\)\\)\")",
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -m pytest server/tests/test_engines_api.py -x -q 2>&1)",
+      "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -m pytest server/tests/test_tournament_fastchess.py -x 2>&1)"
+    ]
+  }
+}

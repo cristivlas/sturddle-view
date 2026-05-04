@@ -1041,6 +1041,7 @@ wa-dialog wa-tab-panel > * + * { margin-top: 10px; }
 .tmb-dd-submenu > .tmb-dd-item::after { content: "›"; position: absolute; right: 10px; }
 .tmb-dd-submenu > .tmb-dropdown { top: -6px; left: 100%; z-index: 9001; }
 .tmb-dd-submenu:hover > .tmb-dropdown { display: block; }
+.tmb-dd-submenu:has(> .tmb-dd-item:disabled):hover > .tmb-dropdown { display: none; }
 .tmb-dd-item {
   display: block; width: 100%; background: none; border: none; border-radius: 0;
   color: inherit; text-align: left;

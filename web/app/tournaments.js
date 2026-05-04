@@ -30,7 +30,7 @@ export function mountTournaments({ container, api, events, log, token }) {
           <button class="tmb-item tmb-window-btn">Window</button>
           <ul class="tmb-dropdown">
             <li class="tmb-dd-submenu">
-              <button class="tmb-dd-item">System</button>
+              <button class="tmb-dd-item tmb-sys-trigger">System</button>
               <ul class="tmb-dropdown">
                 <li><button class="tmb-dd-item tmb-sys-standings">Standings</button></li>
                 <li><button class="tmb-dd-item tmb-sys-schedule">Schedule</button></li>
@@ -582,6 +582,7 @@ export function mountTournaments({ container, api, events, log, token }) {
   }
 
   const hideAllBtn = container.querySelector(".tmb-hideall");
+  const sysTriggerBtn = container.querySelector(".tmb-sys-trigger");
 
   windowMenuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -590,7 +591,9 @@ export function mountTournaments({ container, api, events, log, token }) {
     closeMenus();
     if (!isOpen) {
       const ws = getActiveWorkspace();
-      hideAllBtn.textContent = ws?.isHidden() ? "Show All" : "Hide All";
+      const hidden = ws?.isHidden() ?? false;
+      hideAllBtn.textContent = hidden ? "Show All" : "Hide All";
+      sysTriggerBtn.disabled = hidden;
       windowMenu.classList.add("open");
     }
   });
