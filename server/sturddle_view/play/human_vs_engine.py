@@ -384,6 +384,13 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 return
+            # In view mode there is no live game: clocks are frozen at 0,
+            # the engine isn't thinking, and starting the tick here would
+            # immediately fire a flag-fall on white_time=0.
+            if self._viewing:
+                await self._publish_board()
+                await self._publish_clock()
+                return
             if (
                 self._turn_started_at is None
                 and not self._paused
@@ -585,7 +592,10 @@ class HumanVsEngine:
                 raise RuntimeError("game is over")
             if self._analysis_mode:
                 return
-            if not self._paused:
+            # In play mode the game must be paused first (so no engine
+            # search is running and clocks are frozen). View mode already
+            # satisfies both conditions implicitly.
+            if not self._viewing and not self._paused:
                 raise RuntimeError("pause the game before entering analysis")
             self._analysis_mode = True
             # Snapshot game_id + board under the lock so the task doesn't
@@ -608,7 +618,10 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 return
-            self._paused = True
+            # Paused-flag is play-mode only; in view mode there's no clock
+            # to freeze and play_from_here is the canonical exit.
+            if not self._viewing:
+                self._paused = True
             self._turn_started_at = None
             await self._persist()
             await self._publish_board()
@@ -1145,7 +1158,9 @@ class HumanVsEngine:
                 "ply": self._board.ply(),
                 "moves_san": moves_san,
                 "last_move": self._board.peek().uci() if self._board.move_stack else None,
-                "human_white": self._human_white,
+                # human_white is meaningless in view mode (the user isn't
+                # playing); omit so the UI's local flip isn't clobbered.
+                "human_white": None if self._viewing else self._human_white,
                 "engine_name": self._engine_name,
                 "opening": opening_payload,
                 "tablebase": None,

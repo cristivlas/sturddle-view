@@ -89,6 +89,35 @@ export const playPerspective = {
             </button>
           </div>
 
+          <div id="view-controls" class="board-ribbon" style="display: none">
+            <button id="view-import" class="ribbon-btn desktop-only" aria-label="Open another position" title="Open">
+              <wa-icon name="folder-open"></wa-icon>
+            </button>
+            <span class="ribbon-sep" aria-hidden="true"></span>
+            <button id="view-first" class="ribbon-btn" aria-label="First move" title="First move">
+              <wa-icon name="backward-fast"></wa-icon>
+            </button>
+            <button id="view-back" class="ribbon-btn" aria-label="Previous move" title="Previous move">
+              <wa-icon name="backward-step"></wa-icon>
+            </button>
+            <button id="view-forward" class="ribbon-btn" aria-label="Next move" title="Next move">
+              <wa-icon name="forward-step"></wa-icon>
+            </button>
+            <button id="view-last" class="ribbon-btn" aria-label="Last move" title="Last move">
+              <wa-icon name="forward-fast"></wa-icon>
+            </button>
+            <span class="ribbon-sep" aria-hidden="true"></span>
+            <button id="view-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
+              <wa-icon name="arrow-right-arrow-left"></wa-icon>
+            </button>
+            <button id="view-analyze" class="ribbon-btn" aria-label="Analysis mode" title="Analysis mode">
+              <wa-icon name="magnifying-glass"></wa-icon>
+            </button>
+            <button id="view-play-from-here" class="ribbon-btn" aria-label="Play from here" title="Play from here">
+              <wa-icon name="play"></wa-icon>
+            </button>
+          </div>
+
           <div class="play-side-host"></div>
         </div>
       </section>
@@ -104,6 +133,17 @@ export const playPerspective = {
     const switchSidesBtn = root.querySelector("#switch-sides");
     const pauseBtn = root.querySelector("#pause");
     const analyzeBtn = root.querySelector("#analyze");
+    // View ribbon (shown only while a game is loaded into view mode).
+    const playRibbon = root.querySelector("#board-controls");
+    const viewRibbon = root.querySelector("#view-controls");
+    const viewImportBtn = root.querySelector("#view-import");
+    const viewFirstBtn = root.querySelector("#view-first");
+    const viewBackBtn = root.querySelector("#view-back");
+    const viewForwardBtn = root.querySelector("#view-forward");
+    const viewLastBtn = root.querySelector("#view-last");
+    const viewFlipBtn = root.querySelector("#view-flip");
+    const viewAnalyzeBtn = root.querySelector("#view-analyze");
+    const viewPlayFromHereBtn = root.querySelector("#view-play-from-here");
 
     // Fetch settings before mount so the board picks up the saved style.
     let initialBoardStyle = null;
@@ -193,6 +233,10 @@ export const playPerspective = {
     let turn = "white";
     let paused = false;
     let analyzing = false;
+    // View mode state (set from board_update.view payload).
+    let viewing = false;
+    let viewCursor = 0;
+    let viewTotalPlies = 0;
     const pausedBadge = document.getElementById("paused-badge");
     const finishedBadge = document.getElementById("finished-badge");
     function syncPausedUi() {
@@ -217,6 +261,28 @@ export const playPerspective = {
       else btn.removeAttribute("disabled");
     }
     function refreshButtons() {
+      // Swap ribbons based on mode. View ribbon is visible only when the
+      // backend reports viewing=true; play ribbon takes back over after
+      // play_from_here.
+      playRibbon.style.display = viewing ? "none" : "";
+      viewRibbon.style.display = viewing ? "" : "none";
+      if (viewing) {
+        const atStart = viewCursor === 0;
+        const atEnd = viewCursor === viewTotalPlies;
+        setDisabled(viewFirstBtn, analyzing || atStart);
+        setDisabled(viewBackBtn, analyzing || atStart);
+        setDisabled(viewForwardBtn, analyzing || atEnd);
+        setDisabled(viewLastBtn, analyzing || atEnd);
+        setDisabled(viewPlayFromHereBtn, analyzing);
+        viewAnalyzeBtn.classList.toggle("is-active", analyzing);
+        viewAnalyzeBtn.setAttribute(
+          "aria-label", analyzing ? "Stop analysis" : "Analysis mode",
+        );
+        viewAnalyzeBtn.setAttribute(
+          "title", analyzing ? "Stop analysis" : "Analysis mode",
+        );
+        return;
+      }
       const humanToMove = humanWhite ? turn === "white" : turn === "black";
       // Pause is restricted to the human's turn; Resume (paused=true) is
       // always allowed so a game paused on the engine's turn — e.g. after
@@ -256,14 +322,28 @@ export const playPerspective = {
           movesPlayed = evt.payload.moves_san?.length ?? 0;
           gameOver = false;
           showFinishedBadge("");
-          resignAvailable = true;
+          // View mode swaps the ribbon and suppresses play-mode signals
+          // (resignAvailable, etc.) — the user isn't playing yet.
+          const v = evt.payload.view;
+          viewing = !!v;
+          if (viewing) {
+            viewCursor = v.cursor ?? 0;
+            viewTotalPlies = v.total_plies ?? 0;
+            resignAvailable = false;
+            // Board is read-only in view mode; the user navigates via ribbon.
+            view.setEnabled(false);
+          } else {
+            resignAvailable = true;
+          }
           if (typeof evt.payload.human_white === "boolean") {
             humanWhite = evt.payload.human_white;
           }
           if (evt.payload.turn) turn = evt.payload.turn;
           if (typeof evt.payload.analyzing === "boolean") {
             analyzing = evt.payload.analyzing;
-            view.setEnabled(!analyzing && !paused);
+            // Don't re-enable interactivity in view mode regardless of
+            // analysis state.
+            if (!viewing) view.setEnabled(!analyzing && !paused);
             syncPausedUi();
             if (!analyzing) {
               dismissAnalysisToast?.();
@@ -358,7 +438,7 @@ export const playPerspective = {
     };
 
     const onImport = async () => {
-      if (movesPlayed > 0 && !gameOver) {
+      if (movesPlayed > 0 && !gameOver && !viewing) {
         const ok = await confirm({
           message: "Cancel the game in progress and import a new position?",
           okLabel: "Import",
@@ -372,20 +452,10 @@ export const playPerspective = {
       try {
         const r = await ctx.api("POST", "/game/import", result);
         view.setGameId(r.game_id);
-        view.setHumanWhite(!!r.human_white);
-        // No reset() — that would blast the board to startpos, hiding the
-        // imported position until the engine's first move arrives. Ask the
-        // server to republish the imported board state instead.
+        // Import lands in view mode; the board_update event drives the
+        // ribbon swap and disables interactivity. Sync to fetch the
+        // imported board state.
         ctx.api("POST", "/game/sync", {}).catch(() => {});
-        resignAvailable = true;
-        try {
-          const s = await ctx.api("GET", "/settings");
-          gameTcInitial = Number(s.tc_initial_seconds);
-          gameTcIncrement = Number(s.tc_increment_seconds);
-        } catch {
-          // ignore — drift detection just won't trigger for TC.
-        }
-        refreshButtons();
       } catch (e) {
         reportError(ctx, "Import failed", e);
       }
@@ -404,6 +474,44 @@ export const playPerspective = {
         await ctx.api("POST", paused ? "/game/resume" : "/game/pause", {});
       } catch (e) {
         reportError(ctx, paused ? "Resume failed" : "Pause failed", e);
+      }
+    };
+
+    const onViewNav = (endpoint) => async () => {
+      try {
+        await ctx.api("POST", endpoint, {});
+      } catch (e) {
+        reportError(ctx, "Navigation failed", e);
+      }
+    };
+    // View-mode flip is purely visual (no backend state; the user isn't
+    // playing yet so "which side am I" is meaningless). Toggles board
+    // orientation via the same setter onPlayFromHere uses.
+    let viewFlipped = false;
+    const onViewFlip = () => {
+      viewFlipped = !viewFlipped;
+      view.setHumanWhite(!viewFlipped);
+    };
+
+    const onViewFirst = onViewNav("/game/view/first");
+    const onViewBack = onViewNav("/game/view/back");
+    const onViewForward = onViewNav("/game/view/forward");
+    const onViewLast = onViewNav("/game/view/last");
+
+    const onPlayFromHere = async () => {
+      try {
+        const r = await ctx.api("POST", "/game/view/play-from-here", {});
+        view.setGameId(r.game_id);
+        // Snapshot TC for drift detection (mirrors onNewGame).
+        try {
+          const s = await ctx.api("GET", "/settings");
+          gameTcInitial = Number(s.tc_initial_seconds);
+          gameTcIncrement = Number(s.tc_increment_seconds);
+        } catch {
+          // ignore
+        }
+      } catch (e) {
+        reportError(ctx, "Play from here failed", e);
       }
     };
 
@@ -470,6 +578,14 @@ export const playPerspective = {
     switchSidesBtn.addEventListener("click", onSwitchSides);
     pauseBtn.addEventListener("click", onPause);
     analyzeBtn.addEventListener("click", onAnalyze);
+    viewImportBtn.addEventListener("click", onImport);
+    viewFirstBtn.addEventListener("click", onViewFirst);
+    viewBackBtn.addEventListener("click", onViewBack);
+    viewForwardBtn.addEventListener("click", onViewForward);
+    viewLastBtn.addEventListener("click", onViewLast);
+    viewFlipBtn.addEventListener("click", onViewFlip);
+    viewAnalyzeBtn.addEventListener("click", onAnalyze);
+    viewPlayFromHereBtn.addEventListener("click", onPlayFromHere);
 
     return {
       unmount() {
@@ -488,6 +604,14 @@ export const playPerspective = {
         switchSidesBtn.removeEventListener("click", onSwitchSides);
         pauseBtn.removeEventListener("click", onPause);
         analyzeBtn.removeEventListener("click", onAnalyze);
+        viewImportBtn.removeEventListener("click", onImport);
+        viewFirstBtn.removeEventListener("click", onViewFirst);
+        viewBackBtn.removeEventListener("click", onViewBack);
+        viewForwardBtn.removeEventListener("click", onViewForward);
+        viewLastBtn.removeEventListener("click", onViewLast);
+        viewFlipBtn.removeEventListener("click", onViewFlip);
+        viewAnalyzeBtn.removeEventListener("click", onAnalyze);
+        viewPlayFromHereBtn.removeEventListener("click", onPlayFromHere);
       },
     };
   },

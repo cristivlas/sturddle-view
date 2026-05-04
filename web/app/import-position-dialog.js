@@ -148,30 +148,17 @@ export function showImportPositionDialog({ api }) {
       status.textContent = EMPTY_PROMPT.fen;
       wrap.appendChild(status);
 
-      const playAsRow = document.createElement("div");
-      playAsRow.className = "import-pos-playas";
-      playAsRow.innerHTML = `
-        <label class="import-pos-playas-label">Play as</label>
-        <wa-radio-group name="play-as" value="side_to_move" size="small" orientation="horizontal">
-          <wa-radio value="white">White</wa-radio>
-          <wa-radio value="black">Black</wa-radio>
-          <wa-radio value="side_to_move">Side to move</wa-radio>
-        </wa-radio-group>
-      `;
-      wrap.appendChild(playAsRow);
-
       dialog.appendChild(wrap);
 
       const start = document.createElement("wa-button");
       start.slot = "footer";
       start.size = "small";
       start.variant = "brand";
-      start.textContent = "Start";
+      start.textContent = "Open";
       start.setAttribute("disabled", "");
       start.addEventListener("click", () => {
         if (!lastValid) return;
         cancelPendingValidate();
-        const playAs = playAsRow.querySelector("wa-radio-group").value;
         const text = textareas[format].value || "";
         saveRecent({
           format,
@@ -179,7 +166,7 @@ export function showImportPositionDialog({ api }) {
           summary: lastValid.summary,
           ts: Date.now(),
         });
-        resolve({ format, text, human_side: playAs });
+        resolve({ format, text });
       });
       dialog.appendChild(start);
 
