@@ -704,6 +704,8 @@ class HumanVsEngine:
                 board.push(m)
             self._board = board
             await self._publish_board()
+            # Clock display reflects historical clocks at the cursor.
+            await self._publish_clock()
 
     async def view_first(self) -> None:
         await self.view_goto(0)
@@ -1176,6 +1178,28 @@ class HumanVsEngine:
 
     def _clock_event(self) -> Event:
         assert self._board is not None and self._game_id is not None
+        if self._viewing:
+            # Historical clocks at the cursor when the imported PGN carried
+            # [%clk]; otherwise null so the UI can render dashes. Either way
+            # the clocks are frozen and the UI should style them as disabled.
+            wt: float | None = None
+            bt: float | None = None
+            if self._view_clock_history:
+                idx = min(self._view_cursor, len(self._view_clock_history) - 1)
+                wt, bt = self._view_clock_history[idx]
+            return Event(
+                kind="clock_tick",
+                game_id=self._game_id,
+                payload={
+                    "white_time": wt,
+                    "black_time": bt,
+                    "turn": "white" if self._board.turn else "black",
+                    "running": False,
+                    "paused": False,
+                    "analyzing": self._analysis_mode,
+                    "viewing": True,
+                },
+            )
         return Event(
             kind="clock_tick",
             game_id=self._game_id,

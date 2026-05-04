@@ -29,10 +29,13 @@ function loadRecents() {
 
 function saveRecent(entry) {
   // entry: { format, text, summary, ts }
+  // Trim on save AND compare so a trailing-newline edit doesn't create a dupe
+  // (and stored entries are canonical going forward).
+  const trimmed = { ...entry, text: (entry.text || "").trim() };
   const cur = loadRecents().filter(
-    (e) => !(e.format === entry.format && e.text === entry.text),
+    (e) => !(e.format === trimmed.format && (e.text || "").trim() === trimmed.text),
   );
-  cur.unshift(entry);
+  cur.unshift(trimmed);
   try {
     localStorage.setItem(RECENTS_KEY, JSON.stringify(cur.slice(0, RECENTS_MAX)));
   } catch {

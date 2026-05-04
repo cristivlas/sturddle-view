@@ -572,6 +572,7 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   border-color: var(--accent);
   background: rgba(26, 106, 255, 0.10);
 }
+.clock-row.clock-disabled { opacity: 0.5; }
 
 /* Engine "thinking" arrow: navy. */
 .cm-chessboard .arrow-success .arrow-head { fill: #1e3a8a; }

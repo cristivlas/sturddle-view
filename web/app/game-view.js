@@ -406,7 +406,7 @@ export function mountGameView(container, opts = {}) {
   }
   setHumanWhite(humanWhite);
 
-  function setClock({ white_time, black_time, turn, running }) {
+  function setClock({ white_time, black_time, turn, running, viewing }) {
     if (!showClocks) return;
     // bottom = humanWhite ? white : black; in observe, bottom = white, top = black
     const bottomIsWhite = interactive ? humanWhite : true;
@@ -419,6 +419,10 @@ export function mountGameView(container, opts = {}) {
       (turn === "white" && bottomIsWhite) || (turn === "black" && !bottomIsWhite);
     clockBottomRow?.classList.toggle("active", running && bottomToMove);
     clockTopRow?.classList.toggle("active", running && !bottomToMove);
+    // View mode: clocks are historical snapshots, frozen — visually mute
+    // both rows (no "active" highlight, dimmed via .clock-disabled).
+    clockBottomRow?.classList.toggle("clock-disabled", !!viewing);
+    clockTopRow?.classList.toggle("clock-disabled", !!viewing);
   }
 
   function applyEvent(evt) {

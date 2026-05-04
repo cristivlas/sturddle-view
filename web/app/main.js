@@ -74,12 +74,16 @@ const router = new PerspectiveRouter({ root, ctx });
 router.register(playPerspective);
 router.register(enginesPerspective);
 
+// View mode renames the "Play" tab to "View" so the active mode is
+// unambiguous from the top-level nav. Toggled by play.js dispatching
+// a sturddle:viewing-changed event.
+let inViewMode = false;
 function renderNav() {
   nav.innerHTML = "";
   for (const p of router.list()) {
     const btn = document.createElement("button");
     btn.dataset.perspective = p.id;
-    btn.textContent = p.label;
+    btn.textContent = p.id === "play" && inViewMode ? "View" : p.label;
     btn.addEventListener("click", async () => {
       await router.activate(p.id);
       renderNav();
@@ -88,6 +92,10 @@ function renderNav() {
     nav.appendChild(btn);
   }
 }
+window.addEventListener("sturddle:viewing-changed", (ev) => {
+  inViewMode = !!ev.detail?.viewing;
+  renderNav();
+});
 
 function setConnected(yes) {
   conn.classList.toggle("connected", yes);

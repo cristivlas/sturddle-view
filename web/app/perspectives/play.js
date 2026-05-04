@@ -325,6 +325,7 @@ export const playPerspective = {
           // View mode swaps the ribbon and suppresses play-mode signals
           // (resignAvailable, etc.) — the user isn't playing yet.
           const v = evt.payload.view;
+          const wasViewing = viewing;
           viewing = !!v;
           if (viewing) {
             viewCursor = v.cursor ?? 0;
@@ -334,6 +335,13 @@ export const playPerspective = {
             view.setEnabled(false);
           } else {
             resignAvailable = true;
+          }
+          // Notify the perspective router so the nav label can swap
+          // Play <-> View when the mode flips.
+          if (wasViewing !== viewing) {
+            window.dispatchEvent(new CustomEvent("sturddle:viewing-changed", {
+              detail: { viewing },
+            }));
           }
           if (typeof evt.payload.human_white === "boolean") {
             humanWhite = evt.payload.human_white;
