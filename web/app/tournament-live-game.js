@@ -124,7 +124,6 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
   requestAnimationFrame(constrainAndResize);
 
   let ws = null;
-  let orientationSet = false;
   let engineColor = null;
   let timerInterval = null;
   let activeDeadline = 0;
@@ -229,10 +228,9 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
           currentFen = p.fen;
           const turn = p.fen.split(" ")[1];
           const color = turn === "b" ? "black" : "white";
-          if (!orientationSet) {
+          if (color !== engineColor) {
             setEngineColor(color);
             board.setSide(color);
-            orientationSet = true;
           }
           board.setPosition(p.fen, p.last_move || null);
           board.clearArrows();
