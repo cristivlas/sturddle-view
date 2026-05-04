@@ -56,8 +56,6 @@ def parse_fen(text: str) -> ImportedPosition:
         # to just the diagnostic so the UI doesn't render a giant blob.
         msg = str(e).split(":", 1)[0] if ":" in str(e) else str(e)
         raise PositionImportError(f"invalid FEN: {msg}") from e
-    if board.is_game_over():
-        raise PositionImportError("position is already over (checkmate / stalemate / draw)")
     side = "white" if board.turn == chess.WHITE else "black"
     # Treat the standard startpos as None so opening-book lookup engages
     # on subsequent moves (lookup keys on move history from startpos).
@@ -102,8 +100,6 @@ def parse_pgn(text: str) -> ImportedPosition:
         moves_uci.append(move.uci())
         board.push(move)
         nodes.append(node)
-    if board.is_game_over():
-        raise PositionImportError("PGN ends in a finished position")
     # python-chess's PGN parser is lenient: arbitrary text yields a valid
     # game with no moves and a startpos board. Reject that — an "import"
     # that just gets you to startpos is the New Game button.

@@ -11,6 +11,15 @@
   --nav-btn-bg-hover: #32353c;
   --nav-btn-bg-active: #3a3d44;
 
+  /* Status callouts (used by import dialog and similar). Pinned because
+     webawesome's --wa-color-{success,danger}-50 tokens are dark-mode
+     tuned and clash with dark text on a dark surface. Theming work
+     should redefine these tokens per theme. */
+  --status-ok-fg:  #6ee7a3;
+  --status-ok-bg:  rgba(46, 160, 67, 0.12);
+  --status-err-fg: #ff8a80;
+  --status-err-bg: rgba(220, 50, 50, 0.15);
+
 
   --wa-font-family-body: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --wa-font-family-heading: var(--wa-font-family-body);
@@ -248,10 +257,8 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   line-height: 1.4;
   word-break: break-word;
 }
-/* Pinned hex values — webawesome's --wa-color-*-50 tokens are tuned for
-   dark-mode contrast, not light backgrounds, and clash with the text. */
-.import-pos-status.ok { color: #1f6b34; background: #eaf6ec; }
-.import-pos-status.err { color: #7a1810; background: #fdecea; }
+.import-pos-status.ok { color: var(--status-ok-fg); background: var(--status-ok-bg); }
+.import-pos-status.err { color: var(--status-err-fg); background: var(--status-err-bg); }
 .import-pos-status.muted { padding: 0; background: transparent; color: var(--muted); }
 .import-pos-playas { display: flex; align-items: center; gap: 12px; }
 .import-pos-playas-label { font-size: 0.9rem; color: var(--wa-color-neutral-700, #555); }

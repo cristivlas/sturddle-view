@@ -55,11 +55,12 @@ def test_parse_fen_invalid_rejected():
         parse_fen("not-a-fen")
 
 
-def test_parse_fen_finished_position_rejected():
-    # Fool's mate position: White just got mated.
+def test_parse_fen_accepts_finished_position():
+    # Fool's mate position: White just got mated. Finished games are valid
+    # for view mode (post-mortem inspection).
     fen = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3"
-    with pytest.raises(PositionImportError, match="already over"):
-        parse_fen(fen)
+    p = parse_fen(fen)
+    assert p.start_fen == fen
 
 
 # ---------- parse_pgn ----------
@@ -103,10 +104,12 @@ def test_parse_pgn_empty_rejected():
         parse_pgn("")
 
 
-def test_parse_pgn_finished_game_rejected():
+def test_parse_pgn_accepts_finished_game():
+    # Scholar's mate. Finished games are valid for view mode.
     pgn = "1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0"
-    with pytest.raises(PositionImportError, match="finished"):
-        parse_pgn(pgn)
+    p = parse_pgn(pgn)
+    assert p.moves_uci[-1] == "h5f7"
+    assert p.ply == 7
 
 
 def test_parse_fen_startpos_returns_none_start_fen():
@@ -347,14 +350,20 @@ def test_view_play_from_here_kicks_engine_when_engine_to_move(client):
     hve._engine_to_move.assert_not_called()
 
 
-def test_import_endpoint_rejects_finished_position(client):
+def test_import_endpoint_accepts_finished_position(client):
+    """Finished games (checkmate, stalemate, draw) are loaded into view
+    mode at the last ply for post-mortem inspection."""
     c, app, engine_path = client
-    _patch_hve(app, engine_path)
+    hve = _patch_hve(app, engine_path)
     r = c.post("/game/import", json={
         "format": "pgn",
         "text": "1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0",
     })
-    assert r.status_code == 400
+    assert r.status_code == 200, r.text
+    assert r.json()["viewing"] is True
+    assert hve._viewing is True
+    assert hve._view_cursor == 7  # 7 plies, cursor at the last
+    assert hve._board.is_checkmate()
 
 
 def test_imported_game_publishes_board_event_after_engine_move(client):

@@ -167,6 +167,28 @@ async def test_play_from_here_mid_game_derives_clocks_from_history(hve):
     assert h._black_time == 4 * 60 + 50
 
 
+async def test_play_from_here_at_finished_position_keeps_view_mode(hve):
+    """Bug regression: play-from-here on a checkmate cursor position must
+    raise *and* leave the viewer state intact — not strand the user in a
+    half-cleared state where neither view nor play is active."""
+    h, _ = hve
+    # Scholar's mate: 7 plies ending in #.
+    await h.enter_view_mode(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7"],
+        clock_history=None,
+    )
+    assert h._board.is_checkmate()
+    with pytest.raises(RuntimeError, match="game is over|already over"):
+        await h.play_from_here(tc=TimeControl(60, 0))
+    # Critical: still in view mode.
+    assert h._viewing is True
+    assert len(h._view_full_moves) == 7
+    # And view nav still works.
+    await h.view_first()
+    assert h._view_cursor == 0
+
+
 async def test_view_nav_rejected_during_analysis(hve):
     h, _ = hve
     await h.enter_view_mode(

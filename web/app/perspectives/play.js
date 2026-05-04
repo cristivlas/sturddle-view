@@ -237,6 +237,7 @@ export const playPerspective = {
     let viewing = false;
     let viewCursor = 0;
     let viewTotalPlies = 0;
+    let viewGameOver = false;
     const pausedBadge = document.getElementById("paused-badge");
     const finishedBadge = document.getElementById("finished-badge");
     function syncPausedUi() {
@@ -273,7 +274,10 @@ export const playPerspective = {
         setDisabled(viewBackBtn, analyzing || atStart);
         setDisabled(viewForwardBtn, analyzing || atEnd);
         setDisabled(viewLastBtn, analyzing || atEnd);
-        setDisabled(viewPlayFromHereBtn, analyzing);
+        // Play-from-here is rejected at game-over plies (checkmate /
+        // stalemate / draw). Backed by a backend guard that prevents
+        // half-cleared state if the UI is bypassed.
+        setDisabled(viewPlayFromHereBtn, analyzing || viewGameOver);
         viewAnalyzeBtn.classList.toggle("is-active", analyzing);
         viewAnalyzeBtn.setAttribute(
           "aria-label", analyzing ? "Stop analysis" : "Analysis mode",
@@ -330,6 +334,7 @@ export const playPerspective = {
           if (viewing) {
             viewCursor = v.cursor ?? 0;
             viewTotalPlies = v.total_plies ?? 0;
+            viewGameOver = !!v.game_over;
             resignAvailable = false;
             // Board is read-only in view mode; the user navigates via ribbon.
             view.setEnabled(false);

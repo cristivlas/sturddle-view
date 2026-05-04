@@ -766,6 +766,12 @@ class HumanVsEngine:
             board = chess.Board(start_fen) if start_fen else chess.Board()
             for m in self._view_full_moves[:cursor]:
                 board.push(m)
+            # Refuse if the cursor lands on a finished position — would
+            # otherwise raise inside new_game AFTER viewer state is cleared,
+            # stranding the user in neither view nor play. Caller should
+            # nav back first (UI disables the button at game-over plies).
+            if board.is_game_over():
+                raise RuntimeError("game is over at this ply; back up first")
             human_white = (board.turn == chess.WHITE)
             # Exit view mode before the new_game call (which re-acquires
             # the lock). Clear viewer state so new_game starts clean.
@@ -1167,6 +1173,9 @@ class HumanVsEngine:
                 "total_plies": len(self._view_full_moves),
                 "white_name": self._view_white_name,
                 "black_name": self._view_black_name,
+                # UI disables Play-from-here when the cursor lands on a
+                # finished position (mirror of the backend guard).
+                "game_over": self._board.is_game_over(),
             }
         return Event(
             kind="board_update",
