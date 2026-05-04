@@ -42,10 +42,20 @@ def parse_fen(text: str) -> ImportedPosition:
     fen = text.strip()
     if not fen:
         raise PositionImportError("empty FEN")
+    # Common mistake: paste a PGN into the FEN tab. Detect early and give a
+    # clear redirect instead of letting python-chess echo back the full
+    # pasted blob in its ValueError.
+    if "[Event " in fen or "[White " in fen or "[FEN " in fen:
+        raise PositionImportError(
+            "This looks like a PGN, not a FEN. Switch to the PGN tab."
+        )
     try:
         board = chess.Board(fen)
     except ValueError as e:
-        raise PositionImportError(f"invalid FEN: {e}") from e
+        # python-chess embeds the full FEN string in its message; collapse
+        # to just the diagnostic so the UI doesn't render a giant blob.
+        msg = str(e).split(":", 1)[0] if ":" in str(e) else str(e)
+        raise PositionImportError(f"invalid FEN: {msg}") from e
     if board.is_game_over():
         raise PositionImportError("position is already over (checkmate / stalemate / draw)")
     side = "white" if board.turn == chess.WHITE else "black"

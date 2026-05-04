@@ -140,6 +140,7 @@ async def import_game(payload: dict, request: Request) -> dict:
     """
     parsed = _parse_import_payload(payload)
     hve = await _get_hve(request)
+    headers = parsed.get("headers") or {}
     try:
         game_id = await hve.enter_view_mode(
             start_fen=parsed["start_fen"],
@@ -147,6 +148,8 @@ async def import_game(payload: dict, request: Request) -> dict:
             clock_history=parsed["clock_history"],
             final_white_time=parsed["final_white_time"],
             final_black_time=parsed["final_black_time"],
+            white_name=headers.get("White"),
+            black_name=headers.get("Black"),
         )
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

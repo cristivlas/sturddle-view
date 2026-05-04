@@ -152,6 +152,10 @@ class HumanVsEngine:
         # snapshot beyond the last entry to derive post-move clocks from).
         self._view_final_white: float | None = None
         self._view_final_black: float | None = None
+        # Player names from the imported PGN's [White]/[Black] headers,
+        # surfaced in clock-row labels while viewing.
+        self._view_white_name: str | None = None
+        self._view_black_name: str | None = None
         self._lock = asyncio.Lock()
 
     @property
@@ -637,6 +641,8 @@ class HumanVsEngine:
         clock_history: list[tuple[float | None, float | None]] | None,
         final_white_time: float | None = None,
         final_black_time: float | None = None,
+        white_name: str | None = None,
+        black_name: str | None = None,
     ) -> str:
         """Load a PGN-imported game into view mode at the LAST ply.
 
@@ -670,6 +676,8 @@ class HumanVsEngine:
             self._view_clock_history = list(clock_history) if clock_history else []
             self._view_final_white = final_white_time
             self._view_final_black = final_black_time
+            self._view_white_name = white_name
+            self._view_black_name = black_name
             self._view_cursor = len(full_moves)  # land at last ply
             self._start_fen = start_fen
             self._board = replay  # already at the final position
@@ -766,6 +774,8 @@ class HumanVsEngine:
             self._view_clock_history = []
             self._view_final_white = None
             self._view_final_black = None
+            self._view_white_name = None
+            self._view_black_name = None
             self._view_cursor = 0
         return await self.new_game(
             human_white=human_white,
@@ -1155,6 +1165,8 @@ class HumanVsEngine:
             view_payload = {
                 "cursor": self._view_cursor,
                 "total_plies": len(self._view_full_moves),
+                "white_name": self._view_white_name,
+                "black_name": self._view_black_name,
             }
         return Event(
             kind="board_update",

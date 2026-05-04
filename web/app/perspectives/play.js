@@ -506,7 +506,15 @@ export const playPerspective = {
     const onViewForward = onViewNav("/game/view/forward");
     const onViewLast = onViewNav("/game/view/last");
 
+    let playFromHereInflight = false;
     const onPlayFromHere = async () => {
+      if (playFromHereInflight) return;  // debounce double-click
+      playFromHereInflight = true;
+      setDisabled(viewPlayFromHereBtn, true);
+      // Reset gameId so the racing board_update from new_game (which fires
+      // BEFORE the API response carrying the new id) isn't dropped by the
+      // game_id filter — that drop loses the human_white/name swap.
+      view.setGameId(null);
       try {
         const r = await ctx.api("POST", "/game/view/play-from-here", {});
         view.setGameId(r.game_id);
@@ -520,6 +528,10 @@ export const playPerspective = {
         }
       } catch (e) {
         reportError(ctx, "Play from here failed", e);
+      } finally {
+        playFromHereInflight = false;
+        // Don't re-enable directly; refreshButtons() drives it next time
+        // viewing flips, and by then the button is hidden anyway.
       }
     };
 

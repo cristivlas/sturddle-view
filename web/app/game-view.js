@@ -15,9 +15,12 @@ function fmtClock(seconds) {
   return `${m}:${ss.toString().padStart(2, "0")}`;
 }
 
-function renderMoveList(el, sanList) {
+function renderMoveList(el, sanList, currentIdx = null) {
+  // currentIdx: index of the highlighted ply, or null for "last" (play mode).
   el.innerHTML = "";
   const lastIdx = sanList.length - 1;
+  const highlightIdx = currentIdx == null ? lastIdx : currentIdx;
+  let highlightedRow = null;
   for (let i = 0; i < sanList.length; i += 2) {
     const row = document.createElement("div");
     row.className = "move-row";
@@ -30,18 +33,30 @@ function renderMoveList(el, sanList) {
     const white = document.createElement("span");
     white.className = "move-cell";
     white.textContent = sanList[i] ?? "";
-    if (i === lastIdx) white.classList.add("is-current");
+    if (i === highlightIdx) {
+      white.classList.add("is-current");
+      highlightedRow = row;
+    }
     row.append(white);
 
     const black = document.createElement("span");
     black.className = "move-cell";
     black.textContent = sanList[i + 1] ?? "";
-    if (i + 1 === lastIdx) black.classList.add("is-current");
+    if (i + 1 === highlightIdx) {
+      black.classList.add("is-current");
+      highlightedRow = row;
+    }
     row.append(black);
 
     el.append(row);
   }
-  el.scrollTop = el.scrollHeight;
+  // Auto-scroll: in play mode (no explicit cursor) keep the latest move
+  // visible; in view mode keep the cursor visible as the user scrubs.
+  if (currentIdx == null) {
+    el.scrollTop = el.scrollHeight;
+  } else if (highlightedRow) {
+    highlightedRow.scrollIntoView({ block: "nearest" });
+  }
 }
 
 function fmtCount(n) {
@@ -387,14 +402,18 @@ export function mountGameView(container, opts = {}) {
   let engineName = "Engine";
   let names = { top: "—", bottom: "—" };
 
+  function _truncName(s, max = 24) {
+    if (!s) return s;
+    return s.length > max ? s.slice(0, max - 1) + "…" : s;
+  }
   function setNames({ top, bottom } = {}) {
     if (top !== undefined) {
       names.top = top;
-      if (clockTopName) clockTopName.textContent = top;
+      if (clockTopName) clockTopName.textContent = _truncName(top);
     }
     if (bottom !== undefined) {
       names.bottom = bottom;
-      if (clockBottomName) clockBottomName.textContent = bottom;
+      if (clockBottomName) clockBottomName.textContent = _truncName(bottom);
     }
   }
 
@@ -439,11 +458,26 @@ export function mountGameView(container, opts = {}) {
           board.setSide(humanWhite ? "white" : "black");
           if (interactive) setNames({ bottom: "Human", top: engineName });
         }
+        // View mode: surface the PGN's player names instead of Human/engine.
+        if (interactive && evt.payload.view) {
+          const w = evt.payload.view.white_name || "White";
+          const b = evt.payload.view.black_name || "Black";
+          // Bottom is white when not flipped (humanWhite acts as the orient
+          // toggle even in view mode).
+          if (humanWhite) setNames({ bottom: w, top: b });
+          else setNames({ bottom: b, top: w });
+        }
         board.setPosition(evt.payload.fen, evt.payload.last_move);
         setFen(evt.payload.fen);
         board.clearArrows();
         if (showMoves && moveListEl) {
-          renderMoveList(moveListEl, evt.payload.moves_san || []);
+          // View mode highlights the cursor's ply (cursor-1 = last played
+          // move; cursor=0 means initial position → no highlight).
+          let currentIdx = null;
+          if (evt.payload.view) {
+            currentIdx = (evt.payload.view.cursor ?? 0) - 1;
+          }
+          renderMoveList(moveListEl, evt.payload.moves_san || [], currentIdx);
         }
         setOpening(evt.payload.opening);
         setTablebase(evt.payload.tablebase);
