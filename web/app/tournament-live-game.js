@@ -14,6 +14,7 @@
 //   - Last bestmove highlighted on the board.
 
 import { mountBoard } from "./board.js";
+import { flashWindow } from "./wb-utils.js";
 
 const liveWindows = new Map(); // proxy_id -> WinBox instance
 
@@ -33,7 +34,9 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
   // opening a duplicate.
   const existing = liveWindows.get(proxyId);
   if (existing) {
+    if (existing.min) existing.restore();
     existing.focus();
+    flashWindow(existing);
     return;
   }
 
@@ -96,6 +99,7 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
   if (top > 0 && wb.y < top) wb.move(wb.x, top);
   if (left > 0 && wb.x < left) wb.move(left, wb.y);
   liveWindows.set(proxyId, wb);
+  requestAnimationFrame(() => flashWindow(wb));
 
   // Keep the board square and fitting the WinBox window on every resize.
   // Constrain clock rows to the same width so they align with board edges.

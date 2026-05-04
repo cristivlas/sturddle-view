@@ -3,25 +3,9 @@
 // holds Add, sort A→Z / Z→A, and the row-targeted Use / Options /
 // Remove actions (which act on the focused list row).
 
-import { confirm, pickFile, toast } from "./dialogs.js";
+import { apiErrorDetail, confirm, pickFile, toast } from "./dialogs.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 
-// The shared api() wrapper packs failures as "METHOD path -> NNN <body>".
-// Pull the inner FastAPI {"detail": "..."} string out so toasts and inline
-// messages don't show the URL envelope.
-function extractErrorDetail(err) {
-  const msg = err?.message || String(err);
-  const bodyStart = msg.indexOf("{");
-  if (bodyStart >= 0) {
-    try {
-      const parsed = JSON.parse(msg.slice(bodyStart));
-      if (parsed?.detail) return String(parsed.detail);
-    } catch {
-      /* fall through */
-    }
-  }
-  return msg;
-}
 
 export function mountEngines({ container, api, onError }) {
   container.innerHTML = `
@@ -325,7 +309,7 @@ export function mountEngines({ container, api, onError }) {
       try {
         engine = await api("POST", `/engines/${engine.id}/refresh-schema`, {});
       } catch (e) {
-        probeError = extractErrorDetail(e);
+        probeError = apiErrorDetail(e);
       }
     }
     while (engine) {

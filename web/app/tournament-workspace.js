@@ -4,6 +4,7 @@
 // renders the position from that engine's POV.
 
 import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, openLiveGameWindow } from "./tournament-live-game.js";
+import { escapeHtml, flashWindow } from "./wb-utils.js";
 //
 // State model:
 //   - One workspace open at a time per tab. Opening a workspace for a
@@ -196,7 +197,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const rows = standings.engines
       .map((e) => `
         <tr>
-          <td class="wb-eng-name">${escape(e.name)}</td>
+          <td class="wb-eng-name">${escapeHtml(e.name)}</td>
           <td>${e.games}</td>
           <td>${e.wins}</td>
           <td>${e.losses}</td>
@@ -238,8 +239,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const li = document.createElement("li");
       li.innerHTML = `
         <span class="wb-sched-icon">✓</span>
-        ${escape(g.white)} – ${escape(g.black)}
-        <span class="wb-sched-result">${escape(g.result)}</span>
+        ${escapeHtml(g.white)} – ${escapeHtml(g.black)}
+        <span class="wb-sched-result">${escapeHtml(g.result)}</span>
       `;
       list.appendChild(li);
     }
@@ -249,7 +250,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const engineLabel = p.engineName || pid;
       li.innerHTML = `
         <span class="wb-sched-icon">▶</span>
-        <span class="wb-sched-game">${escape(engineLabel)}</span>
+        <span class="wb-sched-game">${escapeHtml(engineLabel)}</span>
       `;
       const btn = document.createElement("button");
       btn.className = "wb-sched-attach-btn";
@@ -285,7 +286,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const err = detail?.last_error;
       if (err) {
         const tail = (err.stderr_tail || []).slice(-10).join("\n") || `exit code ${err.rc}`;
-        banner.innerHTML = `<div class="wb-error-title">Tournament failed (rc=${err.rc})</div><pre>${escape(tail)}</pre>`;
+        banner.innerHTML = `<div class="wb-error-title">Tournament failed (rc=${err.rc})</div><pre>${escapeHtml(tail)}</pre>`;
         banner.hidden = false;
       } else {
         banner.hidden = true;
@@ -302,17 +303,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       if (k === "runner_log" && e.payload?.line) {
         const stream = e.payload.stream === "err" ? " err" : "";
         return `<li><span class="wb-log-ts">${ts}</span>` +
-          `<span class="wb-log-runner${stream}">${escape(e.payload.line)}</span></li>`;
+          `<span class="wb-log-runner${stream}">${escapeHtml(e.payload.line)}</span></li>`;
       }
-      return `<li><span class="wb-log-ts">${ts}</span> <span class="wb-log-kind">${escape(k)}</span></li>`;
+      return `<li><span class="wb-log-ts">${ts}</span> <span class="wb-log-kind">${escapeHtml(k)}</span></li>`;
     }).join("");
     list.scrollTop = list.scrollHeight;
-  }
-
-  function escape(s) {
-    return String(s).replace(/[&<>"']/g, (c) => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-    }[c]));
   }
 
   // ---- Data refresh -----------------------------------------------------
@@ -563,11 +558,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   function isHidden() {
     const wbs = openWindows();
     return wbs.length > 0 && wbs.every(wb => wb.hidden);
-  }
-
-  function flashWindow(wb) {
-    wb.addClass("wb-attention");
-    wb.g.addEventListener("animationend", () => wb.removeClass("wb-attention"), { once: true });
   }
 
   function openSystemWindow(key) {
