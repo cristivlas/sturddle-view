@@ -325,6 +325,10 @@ export function getLiveWindows() {
   return [...liveWindows.values()];
 }
 
+export function isLiveWindowOpen(proxyId) {
+  return liveWindows.has(proxyId);
+}
+
 export function closeAllLiveGames() {
   for (const wb of liveWindows.values()) {
     try { wb.close(true); } catch { /* */ }

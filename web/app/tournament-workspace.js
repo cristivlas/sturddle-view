@@ -3,7 +3,7 @@
 // row in the Schedule subscribes to one engine's proxy stream and
 // renders the position from that engine's POV.
 
-import { closeAllLiveGames, getLiveWindows, openLiveGameWindow } from "./tournament-live-game.js";
+import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, openLiveGameWindow } from "./tournament-live-game.js";
 //
 // State model:
 //   - One workspace open at a time per tab. Opening a workspace for a
@@ -278,6 +278,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       btn.className = "wb-sched-attach-btn";
       btn.textContent = "watch";
       btn.title = pid;
+      btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(pid));
       btn.addEventListener("click", async () => {
         let boardStyle = null;
         try {
@@ -294,6 +295,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           left,
           boardStyle,
         });
+        btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(pid));
       });
       li.appendChild(btn);
       list.appendChild(li);
@@ -460,10 +462,17 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }, POLL_INTERVAL_MS);
 
   refresh();
+  window.addEventListener("sturddle:livegame-closed", refreshWatchButtons);
 
   // ---- Tear-down --------------------------------------------------------
 
   let liveWatcherAttached = false;
+
+  function refreshWatchButtons() {
+    for (const btn of scheduleBody.querySelectorAll(".wb-sched-attach-btn")) {
+      btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(btn.title));
+    }
+  }
 
   function onLiveGameClosed() {
     const allStandardClosed = Object.values(windows).every((w) => w === null);
@@ -471,6 +480,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   function finalize() {
+    window.removeEventListener("sturddle:livegame-closed", refreshWatchButtons);
     if (liveWatcherAttached) {
       window.removeEventListener("sturddle:livegame-closed", onLiveGameClosed);
       liveWatcherAttached = false;
@@ -555,12 +565,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     close();
   }
 
-  function minimizeAll() {
-    for (const wb of openWindows()) {
-      try { wb.minimize(); } catch { /* */ }
-    }
-  }
-
   function focus() {
     for (const wb of openWindows()) {
       try { wb.focus(); } catch { /* */ }
@@ -584,7 +588,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     return wbs.length > 0 && wbs.every(wb => wb.hidden);
   }
 
-  const workspace = { close, tile, cascade, closeAll, minimizeAll, focus, hide, show, isHidden, ensureWindows, tournamentId: tournament.id };
+  const workspace = { close, tile, cascade, closeAll, focus, hide, show, isHidden, ensureWindows, tournamentId: tournament.id };
   activeWorkspace = workspace;
   return workspace;
 }

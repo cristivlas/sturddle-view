@@ -1487,3 +1487,5 @@ wa-dialog::part(body) {
   padding: 2px 6px; cursor: pointer; font-size: 11px;
 }
 .wb-sched-attach-btn:hover { background: var(--nav-btn-bg-hover); border-color: var(--accent); }
+.wb-sched-attach-btn--live { border-color: var(--accent); color: var(--accent); }
+.wb-sched-attach-btn--live:hover { background: var(--nav-btn-bg-hover); }

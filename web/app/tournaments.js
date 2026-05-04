@@ -31,7 +31,6 @@ export function mountTournaments({ container, api, events, log, token }) {
           <ul class="tmb-dropdown">
             <li><button class="tmb-dd-item tmb-tile">Tile</button></li>
             <li><button class="tmb-dd-item tmb-cascade">Cascade</button></li>
-            <li><button class="tmb-dd-item tmb-minall">Minimize All</button></li>
             <li><button class="tmb-dd-item tmb-hideall">Hide All</button></li>
             <li class="tmb-separator"></li>
             <li><button class="tmb-dd-item tmb-closeall">Close All</button></li>
@@ -593,10 +592,6 @@ export function mountTournaments({ container, api, events, log, token }) {
   container.querySelector(".tmb-cascade").addEventListener("click", () => {
     closeMenus();
     getActiveWorkspace()?.cascade();
-  });
-  container.querySelector(".tmb-minall").addEventListener("click", () => {
-    closeMenus();
-    getActiveWorkspace()?.minimizeAll();
   });
   hideAllBtn.addEventListener("click", () => {
     closeMenus();
