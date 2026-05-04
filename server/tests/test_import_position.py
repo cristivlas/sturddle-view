@@ -74,7 +74,8 @@ def test_parse_pgn_basic_mainline():
     assert p.moves_uci == ["e2e4", "e7e5", "g1f3", "b8c6"]
     assert p.side_to_move == "white"
     assert p.ply == 4
-    assert p.start_fen == chess.Board().fen()
+    # Standard startpos PGN → start_fen is None so opening lookup engages.
+    assert p.start_fen is None
     assert "Carlsen" in p.summary and "Nakamura" in p.summary
     assert p.headers["White"] == "Carlsen"
 
@@ -106,6 +107,19 @@ def test_parse_pgn_finished_game_rejected():
     pgn = "1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0"
     with pytest.raises(PositionImportError, match="finished"):
         parse_pgn(pgn)
+
+
+def test_parse_fen_startpos_returns_none_start_fen():
+    # Startpos FEN → None, so the opening book identifies subsequent moves.
+    p = parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+    assert p.start_fen is None
+
+
+def test_parse_pgn_with_fen_header_preserves_start_fen():
+    # Non-startpos FEN header → start_fen is the header value (lookup suppressed).
+    fen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+    p = parse_pgn(f'[SetUp "1"]\n[FEN "{fen}"]\n\n3. Bb5 *')
+    assert p.start_fen == fen
 
 
 def test_parse_pgn_skips_variations_takes_mainline():

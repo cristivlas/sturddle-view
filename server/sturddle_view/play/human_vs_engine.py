@@ -272,7 +272,12 @@ class HumanVsEngine:
             self._white_time = tc.initial_seconds
             self._black_time = tc.initial_seconds
             self._turn_started_at = time.monotonic()
-            self._clock_history = []
+            # One snapshot per seeded ply, mirroring submit_move's pre-push append,
+            # so takeback's invariant len(_clock_history) == len(move_stack) holds.
+            self._clock_history = [
+                (tc.initial_seconds, tc.initial_seconds)
+                for _ in range(len(board.move_stack))
+            ]
             self._paused = False
             self._game_id = uuid.uuid4().hex[:12]
             await self._persist()

@@ -120,3 +120,22 @@ async def test_takeback_with_no_moves_raises(hve):
     await hve.new_game(human_white=True, tc=TimeControl(30.0, 0.0))
     with pytest.raises(RuntimeError, match="nothing to take back"):
         await hve.takeback()
+
+
+async def test_takeback_after_pgn_seeded_game(hve):
+    # Regression: seeding plies via start_moves_uci must populate _clock_history
+    # so takeback's pop() doesn't IndexError. Reproduces the import-PGN-then-undo
+    # crash with seed = 1.e4 c5 2.Nf3 (3 plies, white to move == human's turn).
+    await hve.new_game(
+        human_white=True,
+        tc=TimeControl(60.0, 0.0),
+        start_moves_uci=["e2e4", "c7c5", "g1f3"],
+    )
+    assert len(hve._board.move_stack) == 3
+    assert len(hve._clock_history) == 3  # invariant: one per ply
+
+    await hve.takeback()
+    # Black to move after Nf3 → engine-thinking branch: pop just the last ply.
+    assert [m.uci() for m in hve._board.move_stack] == ["e2e4", "c7c5"]
+    assert hve._white_time == pytest.approx(60.0, abs=1e-6)
+    assert hve._black_time == pytest.approx(60.0, abs=1e-6)

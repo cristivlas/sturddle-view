@@ -14,7 +14,10 @@ import chess.pgn
 
 @dataclass
 class ImportedPosition:
-    start_fen: str  # FEN of the starting position (before replaying moves)
+    # None when the import begins at the standard startpos (no PGN FEN header);
+    # downstream consumers (e.g. opening-book lookup) treat None as "startpos".
+    start_fen: str | None
+
     moves_uci: list[str]  # UCI moves to replay from start_fen
     final_fen: str  # FEN after replaying moves
     side_to_move: str  # "white" | "black", at the final position
@@ -38,8 +41,11 @@ def parse_fen(text: str) -> ImportedPosition:
     if board.is_game_over():
         raise PositionImportError("position is already over (checkmate / stalemate / draw)")
     side = "white" if board.turn == chess.WHITE else "black"
+    # Treat the standard startpos as None so opening-book lookup engages
+    # on subsequent moves (lookup keys on move history from startpos).
+    is_startpos = board.fen() == chess.STARTING_FEN
     return ImportedPosition(
-        start_fen=board.fen(),
+        start_fen=None if is_startpos else board.fen(),
         moves_uci=[],
         final_fen=board.fen(),
         side_to_move=side,
@@ -91,7 +97,7 @@ def parse_pgn(text: str) -> ImportedPosition:
         else f"{side.capitalize()} to move (ply {board.ply()})"
     )
     return ImportedPosition(
-        start_fen=start_board.fen(),
+        start_fen=start_fen_header if start_fen_header else None,
         moves_uci=moves_uci,
         final_fen=board.fen(),
         side_to_move=side,
