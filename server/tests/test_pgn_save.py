@@ -202,6 +202,31 @@ async def test_pgn_no_opening_header_for_fen_imported_game(hve):
     assert "[Opening " not in text
 
 
+async def test_round_trip_save_then_reimport_clocks(hve):
+    """Save a played game, re-import the resulting PGN, verify clocks match."""
+    from sturddle_view.play.import_position import parse_pgn
+
+    h, _, tmp_path = hve
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    await h.submit_move("e2e4")
+    async with h._lock:
+        h._clock_history.append((h._white_time, h._black_time))
+        h._consume_turn_time()
+        h._board.push(chess.Move.from_uci("e7e5"))
+    saved_black = h._black_time
+    # Trigger one more autosave to write the latest %clk values.
+    await h.submit_move("g1f3")
+
+    text = list(tmp_path.glob("*.pgn"))[0].read_text()
+    parsed = parse_pgn(text)
+    assert parsed.clock_history is not None
+    assert len(parsed.clock_history) == 3
+    # Re-imported live clocks should round-trip (post-Nf3 state).
+    assert parsed.final_white_time == pytest.approx(h._white_time, abs=0.5)
+    # Black hasn't moved since e7e5; their clock from the PGN matches.
+    assert parsed.final_black_time == pytest.approx(saved_black, abs=0.5)
+
+
 async def test_filename_stable_across_restore(hve, tmp_path):
     """A restored game keeps writing to the same PGN file."""
     h, settings, _ = hve

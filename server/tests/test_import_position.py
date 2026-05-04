@@ -115,6 +115,34 @@ def test_parse_fen_startpos_returns_none_start_fen():
     assert p.start_fen is None
 
 
+def test_parse_pgn_extracts_clk_annotations():
+    # PGN with [%clk] on each ply → clock_history reconstructed,
+    # final_*_time set to the most recent per-side clock.
+    pgn = (
+        "1. e4 { [%clk 0:04:55] } 1... c5 { [%clk 0:04:50] } "
+        "2. Nf3 { [%clk 0:04:48] } *"
+    )
+    p = parse_pgn(pgn)
+    assert p.clock_history is not None
+    assert len(p.clock_history) == 3
+    # Pre-move ply 0: nobody has moved → both None (consumer fills with TC).
+    assert p.clock_history[0] == (None, None)
+    # Pre-move ply 1: white played e4, black hasn't moved.
+    assert p.clock_history[1] == (4 * 60 + 55, None)
+    # Pre-move ply 2: both have one move on the clock.
+    assert p.clock_history[2] == (4 * 60 + 55, 4 * 60 + 50)
+    # After ply 2 (white's Nf3) — final clocks for both sides.
+    assert p.final_white_time == 4 * 60 + 48
+    assert p.final_black_time == 4 * 60 + 50
+
+
+def test_parse_pgn_no_clk_annotations_returns_none():
+    p = parse_pgn("1. e4 e5 2. Nf3 *")
+    assert p.clock_history is None
+    assert p.final_white_time is None
+    assert p.final_black_time is None
+
+
 def test_parse_pgn_with_fen_header_preserves_start_fen():
     # Non-startpos FEN header → start_fen is the header value (lookup suppressed).
     fen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
@@ -331,9 +359,34 @@ def test_imported_game_publishes_board_event_after_engine_move(client):
     assert evt.payload["moves_san"] == ["Qd1+"]
 
 
+def test_import_endpoint_honors_clk_annotations(client):
+    """Import a PGN with [%clk]; live clocks reflect the parsed values."""
+    c, app, engine_path = client
+    hve = _patch_hve(app, engine_path)
+    r = c.post("/game/import", json={
+        "format": "pgn",
+        "text": (
+            "1. e4 { [%clk 0:04:55] } 1... c5 { [%clk 0:04:50] } "
+            "2. Nf3 { [%clk 0:04:48] } *"
+        ),
+        "initial_seconds": 300,
+        "increment_seconds": 0,
+    })
+    assert r.status_code == 200, r.text
+    # Live clocks come from the PGN, not the configured TC initial.
+    assert hve._white_time == 4 * 60 + 48
+    assert hve._black_time == 4 * 60 + 50
+    # _clock_history has one entry per ply with PGN-derived snapshots
+    # (None entries fill from TC initial = 300).
+    assert hve._clock_history == [
+        (300.0, 300.0),  # ply 0: nobody moved yet
+        (4 * 60 + 55, 300.0),  # ply 1: only white moved
+        (4 * 60 + 55, 4 * 60 + 50),  # ply 2: both moved
+    ]
+
+
 def test_import_endpoint_seed_clocks_use_configured_tc(client):
-    """Imported positions start fresh at the configured TC (no PGN clock
-    comments honored). Verifies the settings/payload override path."""
+    """A PGN without [%clk] falls back to the configured TC for live clocks."""
     c, app, engine_path = client
     hve = _patch_hve(app, engine_path)
     r = c.post("/game/import", json={

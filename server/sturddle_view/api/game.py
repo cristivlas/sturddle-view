@@ -117,6 +117,9 @@ def _parse_import_payload(payload: dict) -> dict:
         "ply": parsed.ply,
         "summary": parsed.summary,
         "headers": parsed.headers,
+        "clock_history": parsed.clock_history,
+        "final_white_time": parsed.final_white_time,
+        "final_black_time": parsed.final_black_time,
         "detected_format": detected,
     }
 
@@ -153,6 +156,9 @@ async def import_game(payload: dict, request: Request) -> dict:
             tc=tc,
             start_fen=parsed["start_fen"],
             start_moves_uci=parsed["moves_uci"],
+            seed_clock_history=parsed["clock_history"],
+            seed_final_white_time=parsed["final_white_time"],
+            seed_final_black_time=parsed["final_black_time"],
         )
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=f"engine not found: {e}") from e

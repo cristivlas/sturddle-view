@@ -238,14 +238,17 @@ class HumanVsEngine:
         tc: TimeControl,
         start_fen: str | None = None,
         start_moves_uci: list[str] | None = None,
+        seed_clock_history: list[tuple[float | None, float | None]] | None = None,
+        seed_final_white_time: float | None = None,
+        seed_final_black_time: float | None = None,
     ) -> str:
         """Start a fresh game.
 
         Optional `start_fen` seeds the board (after replaying any
-        `start_moves_uci`). Clocks always start fresh at the configured
-        TC — imported PGN clock comments are ignored. The clock_history
-        is left empty: take-back can only undo plies played in this
-        session, not seeded ones.
+        `start_moves_uci`). When `seed_clock_history` is supplied (e.g. from
+        a PGN with [%clk] comments), per-ply clocks are restored and
+        take-back can undo into the seeded plies. None entries fall back
+        to `tc.initial_seconds`.
         """
         async with self._lock:
             await self._cancel_analysis()
@@ -272,15 +275,36 @@ class HumanVsEngine:
             self._start_fen = start_fen  # None for startpos games
             self._human_white = human_white
             self._tc = tc
-            self._white_time = tc.initial_seconds
-            self._black_time = tc.initial_seconds
             self._turn_started_at = time.monotonic()
-            # One snapshot per seeded ply, mirroring submit_move's pre-push append,
-            # so takeback's invariant len(_clock_history) == len(move_stack) holds.
-            self._clock_history = [
-                (tc.initial_seconds, tc.initial_seconds)
-                for _ in range(len(board.move_stack))
-            ]
+            # Seed _clock_history with one snapshot per ply (invariant for
+            # takeback). Use the parsed PGN values when available; otherwise
+            # synthesize (initial, initial) — clocks are unknown for the
+            # seeded plies but the invariant still holds.
+            n_plies = len(board.move_stack)
+            if seed_clock_history is not None and len(seed_clock_history) == n_plies:
+                self._clock_history = [
+                    (
+                        w if w is not None else tc.initial_seconds,
+                        b if b is not None else tc.initial_seconds,
+                    )
+                    for (w, b) in seed_clock_history
+                ]
+            else:
+                self._clock_history = [
+                    (tc.initial_seconds, tc.initial_seconds) for _ in range(n_plies)
+                ]
+            # Live clocks: use PGN-derived final values when available so the
+            # next move continues from the imported state.
+            self._white_time = (
+                seed_final_white_time
+                if seed_final_white_time is not None
+                else tc.initial_seconds
+            )
+            self._black_time = (
+                seed_final_black_time
+                if seed_final_black_time is not None
+                else tc.initial_seconds
+            )
             self._paused = False
             self._game_id = uuid.uuid4().hex[:12]
             self._game_started_wall = time.time()

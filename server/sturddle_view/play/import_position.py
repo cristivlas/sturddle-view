@@ -24,6 +24,14 @@ class ImportedPosition:
     ply: int  # ply count at the final position
     summary: str  # short human-readable description
     headers: dict[str, str] | None = None  # PGN headers, when applicable
+    # Per-ply pre-move (white, black) clock snapshots reconstructed from
+    # [%clk] comments. None when the PGN has no clock annotations at all.
+    # Inner values may be None for sides that hadn't moved yet at that ply
+    # (consumer fills those with the configured TC's initial seconds).
+    clock_history: list[tuple[float | None, float | None]] | None = None
+    # Live clocks AFTER the final ply. None when not derivable from the PGN.
+    final_white_time: float | None = None
+    final_black_time: float | None = None
 
 
 class PositionImportError(ValueError):
@@ -74,13 +82,16 @@ def parse_pgn(text: str) -> ImportedPosition:
         raise PositionImportError(f"PGN has invalid starting FEN header: {e}") from e
     moves_uci: list[str] = []
     board = start_board.copy()
-    for move in game.mainline_moves():
+    nodes: list[chess.pgn.ChildNode] = []
+    for node in game.mainline():
+        move = node.move
         if move not in board.legal_moves:
             raise PositionImportError(
                 f"illegal move in PGN at ply {len(moves_uci) + 1}: {move.uci()}"
             )
         moves_uci.append(move.uci())
         board.push(move)
+        nodes.append(node)
     if board.is_game_over():
         raise PositionImportError("PGN ends in a finished position")
     # python-chess's PGN parser is lenient: arbitrary text yields a valid
@@ -96,6 +107,27 @@ def parse_pgn(text: str) -> ImportedPosition:
         if (white != "?" or black != "?")
         else f"{side.capitalize()} to move (ply {board.ply()})"
     )
+    # Reconstruct (white, black) pre-move snapshots from [%clk] comments.
+    # Only emit a clock_history if at least one ply carries a clock.
+    clk_values = [n.clock() for n in nodes]
+    clock_history: list[tuple[float, float]] | None = None
+    final_white = final_black = None
+    if any(v is not None for v in clk_values):
+        clock_history = []
+        replay = start_board.copy()
+        last_w = last_b = None  # last known post-move clock per side
+        for i, node in enumerate(nodes):
+            mover_white = (replay.turn == chess.WHITE)
+            # Pre-move snapshot for ply i = last known clocks for each side.
+            clock_history.append((last_w, last_b))
+            after = clk_values[i]
+            if after is not None:
+                if mover_white:
+                    last_w = after
+                else:
+                    last_b = after
+            replay.push(node.move)
+        final_white, final_black = last_w, last_b
     return ImportedPosition(
         start_fen=start_fen_header if start_fen_header else None,
         moves_uci=moves_uci,
@@ -104,4 +136,7 @@ def parse_pgn(text: str) -> ImportedPosition:
         ply=board.ply(),
         summary=summary,
         headers=headers,
+        clock_history=clock_history,
+        final_white_time=final_white,
+        final_black_time=final_black,
     )
