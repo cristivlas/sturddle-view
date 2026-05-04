@@ -1,11 +1,7 @@
 """PGN-based standings, Elo, and SPRT computation.
 
-The runner's stdout summary is **not** the source of truth — these
-functions parse ``games.pgn`` directly. A ``Stop`` mid-run preserves
-prior games' contribution to standings, and a future Resume that
-appends to the same PGN yields correct cumulative numbers without
-special handling.
-
+``games.pgn`` is the source of truth (not the runner's stdout summary), so
+Stop/Resume across the same PGN yields correct cumulative numbers.
 Pure functions; no I/O beyond reading the PGN.
 """
 from __future__ import annotations

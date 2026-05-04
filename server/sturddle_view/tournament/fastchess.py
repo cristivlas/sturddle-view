@@ -1,18 +1,11 @@
-"""``FastchessRunner`` — implements the ``Runner`` protocol over fastchess.
+"""FastchessRunner: Runner protocol over the fastchess CLI.
 
-Responsibilities (per ``docs/tournament-spec.md``):
-
-  - Build the fastchess CLI from a frozen template.
-  - Spawn with cross-platform process-group isolation
-    (``CREATE_NEW_PROCESS_GROUP`` on Windows, ``start_new_session`` on Unix).
-  - Drain stdout/stderr to ``logs/fastchess.log`` via background tasks.
-  - ``stop()`` is a hard kill (``proc.kill()`` + ``proc.wait()``); idempotent.
-  - Detect clean exit vs killed; emit ``done`` or ``stopped`` accordingly.
-
-Cross-platform tactics cribbed from
-``~/Projects/sturddle-2/tools/tuneup/spsa/worker.py``: process-group
-isolation so the kill is targeted, pipe drain tasks so a full pipe
-never deadlocks the wrapper.
+- Cross-platform process-group isolation (CREATE_NEW_PROCESS_GROUP / start_new_session)
+  + Windows Job Object so kills are targeted and cascade to descendants.
+- Stdout/stderr drained to ``logs/fastchess.log`` via background tasks
+  (a full pipe never deadlocks the wrapper).
+- ``stop()`` is an idempotent hard kill (``proc.kill()`` + ``proc.wait()``).
+- Clean exit vs killed is distinguished and surfaced as ``done`` / ``stopped``.
 """
 from __future__ import annotations
 
@@ -255,20 +248,14 @@ def build_command(spec: RunSpec) -> list[str]:
 
 
 def _popen_kwargs() -> dict:
-    """Cross-platform process-group isolation, copied from
-    ``~/Projects/sturddle-2/tools/tuneup/spsa/worker.py``."""
+    """Cross-platform process-group isolation kwargs (POSIX vs Windows)."""
     if sys.platform == "win32":
         return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
     return {"start_new_session": True}
 
 
 class FastchessRunner:
-    """Owns one fastchess subprocess at a time.
-
-    Single-instance: calling ``start`` while already running raises.
-    The orchestrator enforces single-active across tournaments; this
-    class only enforces single-active inside itself.
-    """
+    """Owns one fastchess subprocess; ``start`` while running raises."""
 
     def __init__(self, binary_path: str | None = None) -> None:
         self._binary_path = binary_path

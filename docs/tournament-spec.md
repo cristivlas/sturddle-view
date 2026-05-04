@@ -149,8 +149,7 @@ artifacts." See **Resume after Stop** below for the concrete plan.
 
 ### Cross-platform process control
 
-Implementation must use the same tactics validated in
-`~/Projects/sturddle-2/tools/tuneup/spsa/worker.py`:
+Implementation must use the following tactics:
 
 - **Process-group isolation** when spawning fastchess so the orchestrator
   can target it without affecting the parent server:
@@ -715,8 +714,7 @@ Clicking **Start** on a `stopped` tournament resumes from where it
 left off using fastchess's native `-config` mechanism. Background:
 
 The fix uses fastchess's native resume mechanism (`-config`). Research
-findings (verified against fastchess source at
-`~/Projects/fastchess/app/src/`):
+findings (verified against the fastchess source tree):
 
 - Fastchess maintains state in a JSON file (default `config.json`,
   written by `BaseTournament::saveJson()`). The file contains the

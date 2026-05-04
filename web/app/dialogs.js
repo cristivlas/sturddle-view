@@ -12,14 +12,7 @@ function ensureContainer() {
   return c;
 }
 
-/**
- * Show an arbitrary <wa-dialog>. Resolves with whatever value the caller
- * passes to `resolve()` from inside the body. The dialog is removed from
- * the DOM after it closes.
- *
- * `body(resolve, dialog)` builds the dialog content and wires up handlers
- * that eventually call `resolve(value)` to close.
- */
+/** Show <wa-dialog>; resolve when body callback invokes resolve(value). */
 export function showDialog({ label, body, defaultValue = null, width, height }) {
   return new Promise((resolveOuter) => {
     const host = ensureContainer();
@@ -54,10 +47,7 @@ export function showDialog({ label, body, defaultValue = null, width, height }) 
   });
 }
 
-/** Modal alert. Resolves to undefined when dismissed.
- *
- * `messageClass` lets callers opt into a different message style (e.g.
- * "game-over-message" for a large, centered headline). */
+/** Modal alert; `messageClass` opts into a custom message style. */
 export function alert({ message, okLabel = "OK", messageClass } = {}) {
   return showDialog({
     label: "",
@@ -174,16 +164,8 @@ function rememberLastDir(key, dir) {
 }
 
 
-/**
- * Modal file/directory picker. Browses the server's filesystem via /fs.
- * Resolves to the selected path string, or null on cancel.
- *
- * Options:
- *   - api(method, path) -> json    (required)
- *   - title                        ("Pick a file")
- *   - mode: "file" | "directory" | "executable"  ("file")
- *   - startPath                    (defaults to home; from /fs without path)
- */
+/** Modal file/directory picker (browses server FS via /fs).
+ *  Resolves to selected path or null. mode: "file" | "directory" | "executable". */
 export function pickFile({
   api,
   title = "Pick a file",
@@ -420,12 +402,6 @@ export function pickFile({
   });
 }
 
-/**
- * Report an error: short toast + full detail to the app log.
- * `action` is a verb phrase ("Move rejected", "New game failed").
- * `error` is the caught Error or anything with a `.message`.
- * `ctx` must expose a `log(line)` function (same as the perspective ctx).
- */
 /** Strip the "METHOD /path -> STATUS " prefix and unwrap a JSON `detail`
  *  field from the kind of Error our api() helper throws. */
 export function apiErrorDetail(error) {
@@ -442,6 +418,7 @@ export function apiErrorDetail(error) {
   }
 }
 
+/** Report an error: toast + ctx.log(). `action` is a verb phrase. */
 export function reportError(ctx, action, error) {
   const message = (error && error.message) || String(error);
   toast(`${action}: ${apiErrorDetail(error)}`, { variant: "danger" });

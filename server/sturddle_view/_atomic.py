@@ -9,12 +9,11 @@ from typing import Any
 
 
 def atomic_write_json(path: Path, payload: Any, *, indent: int | None = None) -> None:
-    """Write `payload` as JSON to `path` via tempfile + os.replace.
+    """Write JSON via tempfile + os.replace.
 
-    Creates parent directories as needed. The temp file lives in the same
-    directory as `path` so the rename is atomic on the same filesystem; on
-    any failure the temp file is cleaned up and the original exception is
-    re-raised.
+    Tempfile lives in the same directory as ``path`` so the rename is atomic
+    (cross-filesystem renames aren't). Creates parent dirs; on failure unlinks
+    the temp file and re-raises.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(

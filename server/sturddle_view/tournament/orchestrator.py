@@ -1,23 +1,14 @@
 """Tournament orchestrator — composes ``TournamentStore`` and a ``Runner``.
 
 Owns:
+- Single-active-tournament invariant (the store can't tell stale ``running``
+  on disk from a real live process; the orchestrator can).
+- Startup reconciliation: persisted ``running`` is reset to ``stopped`` on boot.
+- Wiring runner events to the store and broadcast tap.
+- Per-tournament proxy bookkeeping (engine names, subscribers, broadcast
+  secret). Single-side observation only — pair detection deferred.
 
-  - The single-active-tournament invariant. The store can't tell stale
-    ``running`` on disk from a real running process; the orchestrator
-    can, because it owns the runner.
-  - Startup reconciliation: any tournament whose persisted status is
-    ``running`` is marked ``stopped`` on server boot (Phase 1: no
-    Resume — see ``docs/tournament-spec.md``).
-  - Wiring runner events back to the store and to the broadcast tap.
-  - Per-tournament proxy bookkeeping (engine names, subscribers,
-    broadcast secret) used by the live-observation pipeline (Slice 9b).
-    Single-side observation only — automatic pair detection was tried
-    and removed; deterministic pairing is deferred to a future phase
-    (likely with a vendored fastchess fork).
-
-Public surface is web-agnostic (takes ids and a broadcast callback) so
-the same orchestrator drives the Phase 1.5 CLI wrapper without HTTP
-coupling.
+Web-agnostic: takes ids + a broadcast callback, so the CLI wrapper can reuse it.
 """
 from __future__ import annotations
 

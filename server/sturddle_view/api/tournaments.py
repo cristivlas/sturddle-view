@@ -1,22 +1,8 @@
-"""REST surface for the tournament subsystem.
+"""REST + WS surface for the tournament subsystem.
 
-Endpoints (see ``docs/tournament-spec.md``):
-
-  GET    /api/tournaments
-  POST   /api/tournaments
-  GET    /api/tournaments/{id}
-  DELETE /api/tournaments/{id}
-  POST   /api/tournaments/{id}/start
-  POST   /api/tournaments/{id}/stop
-  GET    /api/tournament-settings
-  PUT    /api/tournament-settings
-
-  POST   /internal/proxy                   (Slice 9b: proxy → server tap)
-  WS     /ws/tournament/proxy/{proxy_id}   (Slice 9b: subscribe to a proxy)
-
-Live events flow through the existing ``EventBus`` /ws channel (kinds
-``tournament_status`` and ``tournament_update``); per-proxy line streams
-flow through the dedicated ``/ws/tournament/proxy/...`` channel.
+Live events flow on the shared ``EventBus`` /ws channel
+(``tournament_status`` / ``tournament_update``); per-proxy line streams
+have their own ``/ws/tournament/proxy/...`` channel.
 """
 from __future__ import annotations
 

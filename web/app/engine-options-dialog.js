@@ -127,15 +127,8 @@ function buildField(name, entry, current, ctx) {
   return { row, input };
 }
 
-/**
- * Open the UCI options dialog for an engine.
- * @param {object} args
- * @param {object} args.engine - Engine registry entry (must have option_schema).
- * @param {Function} args.api - api(method, path, body?) -> Promise.
- * @param {string} [args.probeError] - If the most recent UCI probe failed,
- *   the message to display in place of the generic "no options" note.
- * @returns {Promise<object|null>} the saved engine on commit, or null on cancel.
- */
+/** Open UCI options dialog; resolves to the saved engine, or null on cancel.
+ *  `probeError`: shown in place of the generic "no options" note. */
 export function showEngineOptionsDialog({ engine, api, probeError = null }) {
   const schema = engine.option_schema || {};
   const startValues = {};

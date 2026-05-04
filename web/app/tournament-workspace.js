@@ -1,27 +1,18 @@
-// Tournament workspace: three WinBox windows (Standings, Schedule, Event log).
-// Slice 9c adds the on-demand Live Game window: clicking an in-progress
-// row in the Schedule subscribes to one engine's proxy stream and
-// renders the position from that engine's POV.
+// Tournament workspace: WinBox windows for Standings, Schedule, Event log,
+// plus on-demand Live Game windows (one per engine POV).
+//
+// State: one workspace per tab; opening a different tournament closes the
+// prior one. User-closed windows do not auto-reopen on events. Layout
+// (position/size) persisted per-window in localStorage.
+//
+// Data flow:
+//   GET /api/tournaments/{id} on open → seed standings + schedule.
+//   WS `tournament_status`             → refresh metadata + standings.
+//   WS `tournament_update`             → event log; refresh on game-finished.
+//   Periodic GET while running         → reconcile standings.
 
 import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, openLiveGameWindow } from "./tournament-live-game.js";
 import { escapeHtml, flashWindow } from "./wb-utils.js";
-//
-// State model:
-//   - One workspace open at a time per tab. Opening a workspace for a
-//     different tournament closes the previous one.
-//   - The user can close any window via its X; it won't auto-reopen on
-//     subsequent events. To bring it back, re-click "Open workspace".
-//   - Layout (positions/sizes) is persisted per-window in localStorage as
-//     the user's preferred layout. First open uses the spec's defaults.
-//
-// Data flow:
-//   - GET /api/tournaments/{id} on open → seed standings + schedule.
-//   - WS `tournament_status`              → refresh metadata + standings.
-//   - WS `tournament_update`              → push to event log; refresh on
-//                                           game-finished kinds.
-//   - Periodic GET while running           → catch standings updates we
-//                                           inferred from events but didn't
-//                                           recompute in the browser.
 
 const STORAGE_KEY = "sturddle:tournament-workspace-layout";
 const POLL_INTERVAL_MS = 5000;

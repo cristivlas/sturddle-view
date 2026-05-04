@@ -1,21 +1,7 @@
-"""On-disk persistence for tournaments.
+"""On-disk tournament persistence under ``<tournaments-root>/<id>/``.
 
-Owns the directory tree under ``<tournaments-root>/<id>/`` and the
-``state.json`` schema. Pure persistence — no subprocess concept; the
-single-active invariant lives in the orchestrator (see
-``orchestrator.py``), which can distinguish stale ``running`` on disk
-from a real running process.
-
-Layout per tournament (see ``docs/tournament-spec.md``):
-
-    <tournaments-root>/
-      <id>/
-        state.json
-        config.json    ← fastchess-owned (resume artifact)
-        games.pgn      ← fastchess-owned
-        logs/
-          wrapper.log
-          fastchess.log
+Pure persistence — the single-active invariant lives in the orchestrator,
+which distinguishes a stale ``running`` on disk from a real live process.
 """
 from __future__ import annotations
 

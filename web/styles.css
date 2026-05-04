@@ -16,13 +16,8 @@
   --wa-font-family-heading: var(--wa-font-family-body);
   --wa-font-family-code: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, monospace;
 
-  /* Brand mapped to a deep, desaturated amber so primary actions live in the
-     same warm family as --accent without competing for "active state" reads.
-     --accent stays bright (state); brand is darker (primary chrome).
-     Web Awesome 2 uses a 5..95 tonal scale; brand-50 is the canonical mid
-     shade and other tokens (fill-loud, focus ring, border-loud) derive from
-     it. Mapping the full scale prevents blue from leaking through any
-     unmapped derived token. */
+  /* Brand: deep amber (chrome) so --accent (bright) keeps the active-state read.
+     Map the full 5..95 scale — derived tokens otherwise leak the WA blue default. */
   --wa-color-brand-5:  #1c0c02;
   --wa-color-brand-10: #431407;
   --wa-color-brand-20: #7c2d12;
@@ -1079,11 +1074,8 @@ wa-dialog wa-tab-panel > .settings-tournament-tpl-mount { margin-top: 24px; }
   text-transform: uppercase; letter-spacing: 0.05em;
 }
 
-/* Settings dialog: long tab panels scroll within the dialog instead of
-   pushing the dialog past the viewport. The earlier `overflow: visible`
-   rules above are needed to let select/popover overlays escape; they also
-   disable scroll. We restore vertical scroll only on the dialog body
-   (X stays visible so wa-select popups still escape). */
+/* Vertical scroll only on dialog body (X stays visible so wa-select popups
+   can still escape the clipping ancestors). */
 wa-dialog::part(body) {
   overflow-y: auto !important;
   max-height: calc(var(--dialog-height, 80vh) - 64px);
@@ -1334,11 +1326,7 @@ wa-dialog::part(body) {
   font-weight: normal;
   color: var(--muted);
 }
-/* Switch labels (Ponder, Resign after, Draw after) — same rhythm.
-   wa-switch renders its label as a slot inside a shadow root; inherited
-   font-size doesn't reliably reach it (the slotted label can pick up the
-   ancestor's larger size before the host's). Style the label part
-   directly so all switches in the form match exactly. */
+/* Switch label part: style directly — slotted label inherits unreliably. */
 .tournament-template-form wa-switch::part(label) {
   font-size: 12px;
   font-weight: normal;

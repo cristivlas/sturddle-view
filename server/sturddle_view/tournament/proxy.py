@@ -1,15 +1,8 @@
-"""Generic stdio proxy.
+"""Generic stdio proxy between fastchess and an engine.
 
-Sits between the tournament manager and an engine binary. Forwards
-stdin/stdout transparently and broadcasts a copy of all traffic to the
-GUI backend server.
+Dumb pipe with a broadcast tap to the GUI backend. One process per engine slot.
 
-No chess or UCI knowledge here; this is a dumb pipe. Run as a separate
-process per engine instance so a proxy crash does not take down the
-engine.
-
-Invoked as a script (the orchestrator builds the argv when wrapping
-each engine for fastchess)::
+Invocation (orchestrator builds argv)::
 
     SV_PROXY_SECRET=<per-tournament-secret> \\
     python -m sturddle_view.tournament.proxy \\
@@ -17,19 +10,13 @@ each engine for fastchess)::
         --engine-name "Sturddle 2.5.0" \\
         -- <engine_binary> [engine_args...]
 
-The secret is read from the ``SV_PROXY_SECRET`` env var rather than
-argv so it is not visible via ``ps``/``/proc/<pid>/cmdline`` to other
-local users. fastchess inherits the env from its parent and passes it
-through to each spawned engine slot.
-
-The proxy generates its own ``proxy_id`` at startup (one per process)
-so concurrent fastchess game-slots running the same engine spec each
-get a distinct id. fastchess reuses argv across slot processes, so
-the id cannot come from the orchestrator's pre-built argv.
-
-The broadcast tap is **batched** (see ``BATCH_INTERVAL_S`` and
-``BATCH_MAX_LINES``) so that engines emitting hundreds of ``info`` lines
-per second don't generate that many HTTP requests.
+- Secret comes via env, not argv, so other local users can't read it from
+  ``ps`` / ``/proc/<pid>/cmdline``. fastchess inherits and passes it to
+  each engine slot.
+- ``proxy_id`` is generated per process (fastchess reuses argv across
+  slots, so it can't come from the orchestrator's pre-built argv).
+- Broadcast tap is batched (``BATCH_INTERVAL_S`` / ``BATCH_MAX_LINES``)
+  so chatty ``info`` lines don't translate 1:1 into HTTP requests.
 """
 from __future__ import annotations
 

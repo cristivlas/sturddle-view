@@ -47,12 +47,8 @@ function detectFormatFromName(name) {
   return null;
 }
 
-/**
- * @param {object} args
- * @param {Function} args.api - api(method, path, body?) -> Promise.
- * @returns {Promise<object|null>} the import payload to POST to /game/import,
- *   or null on cancel. Caller is responsible for calling /game/import.
- */
+/** Show import dialog; resolves to /game/import payload or null on cancel.
+ *  Caller is responsible for POSTing the payload. */
 export function showImportPositionDialog({ api }) {
   return showDialog({
     label: "Open position",

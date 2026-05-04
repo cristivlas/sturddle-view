@@ -1,24 +1,5 @@
-// GameView: reusable visual representation of one game.
-//
-// Composed of: board, two clocks (top + bottom), move list, engine info.
-// Each aspect can be shown or hidden. Drives itself from event-bus events
-// scoped to a `gameId` (the caller is responsible for routing).
-//
-// Used by:
-//   - Play perspective (interactive, full-size)
-//   - Observe perspective (read-only, inside a WinBox window)
-//
-// API:
-//   const view = mountGameView(container, {
-//     events,              // ctx.events
-//     onMove(uci),         // optional; only called when interactive
-//     show: { clocks, moves, engineInfo },  // each defaults to true
-//     interactive: false,  // if true, board accepts user moves
-//   })
-//   view.setGameId(id)         // start tracking events for this game
-//   view.setHumanWhite(bool)   // when interactive, sets board orientation
-//   view.applyEvent(evt)       // alternative to subscribing through events bus
-//   view.unmount()
+// GameView: board + clocks + move list + engine info, scoped to a gameId.
+// Used by Play (interactive, full-size) and Observe (read-only, in a WinBox).
 
 import { mountBoard } from "./board.js";
 import { toast } from "./dialogs.js";

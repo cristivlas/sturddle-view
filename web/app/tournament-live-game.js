@@ -1,17 +1,7 @@
-// Live game window: subscribes to one engine's proxy stream and
-// renders the board from that engine's POV. The user attaches by
-// clicking a row in the Schedule window (Slice 9c).
-//
-// Per the spec's "attach to engine, not to game" model, this window
-// shows ONE engine's perspective. To see the opponent's POV, the user
-// opens a second live window for the other proxy.
-//
-// What's rendered:
-//   - Board reconstructed from `position` lines (FEN computed
-//     server-side; we just call setPosition).
-//   - Eval / depth / PV from this engine's `info` lines.
-//   - Both clocks from `go wtime / btime`.
-//   - Last bestmove highlighted on the board.
+// Live game window: one engine's proxy stream → board from that engine's POV.
+// "Attach to engine, not to game" — opponent POV needs a second window.
+// Renders: board (server-computed FEN from `position`), eval/depth/PV from
+// this engine's `info`, clocks from `go wtime/btime`, last bestmove highlight.
 
 import { mountBoard } from "./board.js";
 import { flashWindow } from "./wb-utils.js";

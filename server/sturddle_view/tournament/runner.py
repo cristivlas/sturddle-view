@@ -1,13 +1,9 @@
 """Runner protocol — abstract surface for tournament-manager backends.
 
-The Phase 1 implementation is ``FastchessRunner`` in ``fastchess.py``. The
-abstraction exists so a ``CutechessRunner`` can be added later without
-rewriting callers; it does not exist as a generalized facade speculating
-on capabilities of unknown future runners.
-
-The protocol is web-agnostic — events flow through an ``on_event``
-callback the orchestrator supplies, which it can route to the WebSocket
-layer or a local CLI consumer.
+Phase 1 impl is ``FastchessRunner`` in ``fastchess.py``; the protocol exists
+so a future ``CutechessRunner`` can drop in without rewriting callers.
+Web-agnostic — events flow through an ``on_event`` callback supplied by the
+orchestrator (routes to WebSocket or a local CLI consumer).
 """
 from __future__ import annotations
 

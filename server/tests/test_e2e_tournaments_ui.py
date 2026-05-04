@@ -1,17 +1,6 @@
-"""Slice 6 e2e: Tournaments perspective UI loads and renders correctly.
+"""E2E: Tournaments perspective renders correctly (Playwright/Chromium).
 
-Drives a real browser via Playwright. Skipped if Playwright or its
-Chromium isn't available so unit-only test runs aren't blocked.
-
-What this test verifies (without a running fastchess):
-  - Engines perspective shows exactly two sub-tabs: Roster, Tournaments
-    (the Observe sub-tab was removed in Slice 6).
-  - Switching to Tournaments shows the empty state since no fastchess
-    is configured: "fastchess not configured …".
-  - Setting fastchess_path via the API flips the empty state to
-    "no tournaments yet".
-  - Creating a tournament via the API surfaces a row in the list with
-    Start/Stop/Remove/Open-workspace buttons and a status badge.
+Skipped if Playwright/Chromium isn't installed.
 """
 from __future__ import annotations
 
