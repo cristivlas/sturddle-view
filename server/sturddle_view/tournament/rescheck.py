@@ -92,10 +92,8 @@ def check(
         raise RescheckError(
             reason="affinity_exceeds_physical",
             message=(
-                f"CPU affinity needs one physical core per engine slot, "
-                f"but requested load {affinity_load} > {specs.physical_cores} "
-                f"physical cores. Reduce parallelism, Threads, or turn "
-                f"CPU Affinity off."
+                f"CPU affinity: need {affinity_load} physical cores, "
+                f"have {specs.physical_cores}. Lower parallelism/Threads or disable Affinity."
             ),
             details=base,
         )
