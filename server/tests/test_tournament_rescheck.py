@@ -79,6 +79,29 @@ def test_check_affinity_block_not_silenced_by_oversubscribe():
     assert ei.value.reason == "affinity_exceeds_physical"
 
 
+def test_check_affinity_counts_both_engines_per_game():
+    # parallel=3 * 2 engines * 1 thread = 6 > 4 physical — must block even
+    # without ponder; old formula (parallel * 1 * max_threads = 3) would pass.
+    with pytest.raises(RescheckError) as ei:
+        check(
+            parallel=3, max_threads=1, max_hash_mb=16, pin_affinity=True,
+            specs=_HOST_8C_8GB,
+        )
+    assert ei.value.reason == "affinity_exceeds_physical"
+    assert ei.value.details["affinity_load"] == 6
+
+
+def test_check_affinity_ponder_does_not_inflate_load():
+    # affinity_load = 2 * 2 * 1 = 4 == physical_cores — should pass regardless
+    # of ponder (ponder only affects cpu_load, not process pinning).
+    warnings = check(
+        parallel=2, max_threads=1, max_hash_mb=16,
+        pin_affinity=True, ponder=True,
+        specs=_HOST_8C_8GB,
+    )
+    assert warnings == []
+
+
 def test_check_blocks_ram_when_over_budget():
     # 4 * 2 * (4096 + overhead) = 34816 MB > 0.75 * 8192 = 6144
     with pytest.raises(RescheckError) as ei:

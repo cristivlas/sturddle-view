@@ -70,12 +70,14 @@ def check(
     ram_load_mb = parallel * 2 * (max_hash_mb + ENGINE_OVERHEAD_MB)
     ram_budget_mb = int(specs.total_ram_mb * RAM_HEADROOM_FACTOR)
 
+    affinity_load = parallel * 2 * max_threads
     base = {
         "parallel": parallel,
         "max_threads": max_threads,
         "max_hash_mb": max_hash_mb,
         "ponder": ponder,
         "cpu_load": cpu_load,
+        "affinity_load": affinity_load,
         "ram_load_mb": ram_load_mb,
         "ram_budget_mb": ram_budget_mb,
         "logical_cores": specs.logical_cores,
@@ -84,15 +86,15 @@ def check(
     }
     warnings: list[dict] = []
 
-    # Affinity check is a correctness gate (hyperthreading siblings can't
-    # satisfy it) — never suppressed by allow_oversubscribe.
-    if pin_affinity and cpu_load > specs.physical_cores:
+    # Affinity pins each engine *process* to dedicated physical cores; always
+    # 2 processes per game regardless of ponder.
+    if pin_affinity and affinity_load > specs.physical_cores:
         raise RescheckError(
             reason="affinity_exceeds_physical",
             message=(
                 f"CPU affinity needs one physical core per engine slot, "
-                f"but requested load {cpu_load} > {specs.physical_cores} "
-                f"physical cores. Reduce parallelism, drop Ponder, or turn "
+                f"but requested load {affinity_load} > {specs.physical_cores} "
+                f"physical cores. Reduce parallelism, Threads, or turn "
                 f"CPU Affinity off."
             ),
             details=base,

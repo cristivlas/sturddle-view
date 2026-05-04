@@ -434,7 +434,9 @@ export function apiErrorDetail(error) {
   if (!m) return message;
   try {
     const parsed = JSON.parse(m[1]);
-    return parsed.detail || m[1];
+    const detail = parsed.detail || m[1];
+    if (detail && typeof detail === "object") return detail.message || JSON.stringify(detail);
+    return detail;
   } catch {
     return m[1];
   }
