@@ -88,3 +88,91 @@ async def test_filename_unique_across_games(hve):
     await h.submit_move("d2d4")
     await h.resign()
     assert len(list(tmp_path.glob("*.pgn"))) == 2
+
+
+async def test_per_move_autosave_writes_in_progress_pgn(hve):
+    """A move during a live game writes a PGN with Result=*/unterminated."""
+    h, _, tmp_path = hve
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    await h.submit_move("e2e4")
+    pgns = list(tmp_path.glob("*.pgn"))
+    assert len(pgns) == 1
+    text = pgns[0].read_text()
+    assert 'Result "*"' in text
+    assert 'Termination "unterminated"' in text
+    assert "1. e4" in text
+
+
+async def test_resign_overwrites_in_progress_save(hve):
+    """Resignation finalizes the same file the per-move autosave produced."""
+    h, _, tmp_path = hve
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    await h.submit_move("e2e4")
+    in_progress = list(tmp_path.glob("*.pgn"))
+    assert len(in_progress) == 1
+    in_progress_path = in_progress[0]
+
+    await h.resign()
+    final = list(tmp_path.glob("*.pgn"))
+    assert len(final) == 1
+    assert final[0] == in_progress_path  # same file, overwritten
+    text = final[0].read_text()
+    assert 'Result "0-1"' in text  # human white, resigned
+    assert 'Termination "resignation"' in text
+
+
+async def test_save_on_flag_fall(hve):
+    """Time-flag must save the PGN before tearing down the game."""
+    h, _, tmp_path = hve
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    await h.submit_move("e2e4")
+    # _handle_flag_fall fires when the side-to-move's clock hits zero. Here
+    # it's Black's turn (engine, mocked away), so Black is the loser.
+    await h._handle_flag_fall()
+    pgns = list(tmp_path.glob("*.pgn"))
+    assert len(pgns) == 1
+    text = pgns[0].read_text()
+    assert 'Result "1-0"' in text  # Black flagged → White wins
+    assert 'Termination "time_forfeit"' in text
+
+
+async def test_filename_stable_across_restore(hve, tmp_path):
+    """A restored game keeps writing to the same PGN file."""
+    h, settings, _ = hve
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    await h.submit_move("e2e4")
+    original = list(tmp_path.glob("*.pgn"))[0]
+
+    # Snapshot game state, simulate a fresh server, restore.
+    bus = EventBus()
+    h2 = HumanVsEngine(engine_path="/nonexistent", bus=bus, settings=settings)
+
+    async def fake_ensure_engine():
+        h2._engine = _StubEngine()
+        return h2._engine
+
+    h2._ensure_engine = fake_ensure_engine
+    h2._engine_to_move = AsyncMock()
+
+    # Build a GameState mirroring h's current state (h doesn't expose its
+    # store path in this fixture, so reconstruct manually).
+    from sturddle_view.play.game_store import GameState
+
+    state = GameState(
+        game_id=h._game_id,
+        human_white=True,
+        tc_initial_seconds=60.0,
+        tc_increment_seconds=0.0,
+        white_time=h._white_time,
+        black_time=h._black_time,
+        paused=False,
+        moves_uci=["e2e4"],
+        clock_history=[[w, b] for (w, b) in h._clock_history],
+        start_fen=None,
+        game_started_wall=h._game_started_wall,
+    )
+    h2.restore_from(state)
+    await h2.resign()
+    final = list(tmp_path.glob("*.pgn"))
+    assert len(final) == 1
+    assert final[0] == original  # same filename across the restart

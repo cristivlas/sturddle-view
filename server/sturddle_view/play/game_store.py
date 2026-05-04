@@ -47,6 +47,9 @@ class GameState:
     # game began at the standard starting position. Required so restore_from
     # can rebuild a board imported from a non-startpos FEN/PGN.
     start_fen: str | None = None
+    # Wall-clock seconds since epoch when the game was created. Persisted so
+    # the autosaved PGN keeps the same filename after a server restart.
+    game_started_wall: float | None = None
     version: int = SCHEMA_VERSION
 
 
@@ -87,6 +90,7 @@ class GameStore:
                 moves_uci=list(data.get("moves_uci", [])),
                 clock_history=[list(p) for p in data.get("clock_history", [])],
                 start_fen=data.get("start_fen"),
+                game_started_wall=data.get("game_started_wall"),
             )
         except (KeyError, TypeError, ValueError):
             log.exception("malformed saved game in %s; ignoring", self._path)

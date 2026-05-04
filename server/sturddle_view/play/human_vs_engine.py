@@ -109,6 +109,9 @@ class HumanVsEngine:
         # an imported game whose move_stack isn't replayable from startpos.
         self._start_fen: str | None = None
         self._game_id: str | None = None
+        # Wall-clock time the current game started, used for stable PGN
+        # filenames across per-move autosaves and end-of-game finalization.
+        self._game_started_wall: float | None = None
         self._human_white: bool = True
         self._tc: TimeControl = TimeControl(300.0, 0.0)
         self._white_time: float = 0.0
@@ -280,6 +283,7 @@ class HumanVsEngine:
             ]
             self._paused = False
             self._game_id = uuid.uuid4().hex[:12]
+            self._game_started_wall = time.time()
             await self._persist()
             await self._publish_board()
             await self._publish_clock()
@@ -316,6 +320,8 @@ class HumanVsEngine:
             ended = self._board.is_game_over()
             if ended:
                 end_game_id, end_payload = self._finalize_game_locked()
+            else:
+                self._maybe_save_pgn(result="*", termination="unterminated")
         if ended:
             await self._cancel_tick()
             await self._bus.publish(
@@ -609,6 +615,7 @@ class HumanVsEngine:
             moves_uci=[m.uci() for m in self._board.move_stack],
             clock_history=[[w, b] for (w, b) in self._clock_history],
             start_fen=self._start_fen,
+            game_started_wall=self._game_started_wall,
         )
         try:
             await asyncio.to_thread(self._store.save, state)
@@ -637,6 +644,9 @@ class HumanVsEngine:
         for uci in state.moves_uci:
             self._board.push(chess.Move.from_uci(uci))
         self._game_id = state.game_id
+        # Fall back to now() for older saves missing this field — preserves
+        # autosave behavior, just renames the file going forward.
+        self._game_started_wall = state.game_started_wall or time.time()
         self._human_white = state.human_white
         self._tc = TimeControl(
             initial_seconds=state.tc_initial_seconds,
@@ -758,6 +768,9 @@ class HumanVsEngine:
             loser = "white" if self._board.turn == chess.WHITE else "black"
             game_id = self._game_id
             await self._cancel_think()
+            # Loser is the side to move when the flag fell.
+            result = "0-1" if loser == "white" else "1-0"
+            self._maybe_save_pgn(result=result, termination="time_forfeit")
         await self._bus.publish(
             Event(
                 kind="game_result",
@@ -838,6 +851,8 @@ class HumanVsEngine:
             ended = self._board.is_game_over()
             if ended:
                 end_game_id, end_payload = self._finalize_game_locked()
+            else:
+                self._maybe_save_pgn(result="*", termination="unterminated")
         if ended:
             await self._cancel_tick()
             await self._bus.publish(
@@ -992,7 +1007,10 @@ class HumanVsEngine:
                 f"{int(self._tc.initial_seconds)}+{int(self._tc.increment_seconds)}"
             )
 
-        ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        # Game-start timestamp keeps the path stable across per-move autosaves
+        # and the final end-of-game write, so the file is overwritten in place.
+        wall = self._game_started_wall or time.time()
+        ts = datetime.datetime.fromtimestamp(wall).strftime("%Y%m%d-%H%M%S")
         path = pgn_dir / f"{ts}-{self._game_id}.pgn"
         try:
             with path.open("w", encoding="utf-8") as f:
