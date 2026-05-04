@@ -1398,6 +1398,11 @@ wa-dialog::part(body) {
   border: 1px solid #2e3138;
   opacity: 1 !important;
 }
+@keyframes wb-attention {
+  0%, 40% { outline: 2px solid var(--accent); outline-offset: -1px; }
+  100%     { outline: 2px solid transparent;  outline-offset: -1px; }
+}
+.winbox.wb-attention { animation: wb-attention 1.1s ease-out forwards; }
 /* Title bar matches the panel; default WinBox blue is jarring against
    our dark theme. */
 .winbox.sturddle-wb .wb-header {

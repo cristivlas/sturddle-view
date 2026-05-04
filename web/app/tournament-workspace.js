@@ -565,9 +565,19 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     return wbs.length > 0 && wbs.every(wb => wb.hidden);
   }
 
+  function flashWindow(wb) {
+    wb.addClass("wb-attention");
+    wb.g.addEventListener("animationend", () => wb.removeClass("wb-attention"), { once: true });
+  }
+
   function openSystemWindow(key) {
     if (windows[key]) {
-      try { windows[key].focus(); } catch {}
+      try {
+        const wb = windows[key];
+        if (wb.min) wb.restore();
+        wb.focus();
+        flashWindow(wb);
+      } catch {}
       return;
     }
     const spec = windowSpecs[key];
@@ -577,6 +587,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     spec.render();
     armSubscriptions();
     refresh();
+    requestAnimationFrame(() => { try { flashWindow(windows[key]); } catch {} });
   }
 
   const workspace = { close, tile, cascade, closeAll, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id };
