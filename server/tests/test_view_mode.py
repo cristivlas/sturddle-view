@@ -179,6 +179,43 @@ async def test_view_nav_rejected_during_analysis(hve):
         await h.play_from_here(tc=TimeControl(60, 0))
 
 
+async def test_flag_fall_does_not_trample_game_installed_during_publish(hve):
+    """Race regression: _handle_flag_fall releases the lock between its
+    two critical sections to publish the game_result event. If a new_game
+    or enter_view_mode lands in that gap, the second section MUST NOT
+    clear the freshly-installed _board / _game_id."""
+    h, _ = hve
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    # Force flag-fall: zero white's clock; it's white's turn.
+    h._white_time = 0.0
+
+    # Substitute a publish that, on the game_result event (between the
+    # two _handle_flag_fall lock sections), supersedes the game with a
+    # fresh enter_view_mode call.
+    real_publish = h._bus.publish
+    superseded = {"done": False}
+
+    async def racing_publish(evt):
+        await real_publish(evt)
+        if evt.kind == "game_result" and not superseded["done"]:
+            superseded["done"] = True
+            await h.enter_view_mode(
+                start_fen=None, moves_uci=["d2d4"], clock_history=None,
+            )
+
+    h._bus.publish = racing_publish
+
+    await h._handle_flag_fall()
+
+    # The new view-mode game must still be installed, not torn down by
+    # the flag-fall's second section.
+    assert superseded["done"] is True
+    assert h._viewing is True
+    assert h._board is not None
+    assert h._game_id is not None
+    assert [m.uci() for m in h._view_full_moves] == ["d2d4"]
+
+
 async def test_enter_view_supersedes_active_play_game(hve):
     """Importing a PGN tears down the current play game (autosave preserves
     the prior PGN; future load-from-history will let the user resume it)."""

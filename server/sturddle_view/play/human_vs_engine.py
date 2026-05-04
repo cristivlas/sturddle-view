@@ -995,9 +995,14 @@ class HumanVsEngine:
             )
         )
         async with self._lock:
-            self._game_id = None
-            self._board = None
-            self._clear_store()
+            # Only clear if the same game is still active. A racing
+            # new_game / enter_view_mode between the two critical sections
+            # may have replaced the game; in that case we must not trample
+            # the freshly-installed state.
+            if self._game_id == game_id:
+                self._game_id = None
+                self._board = None
+                self._clear_store()
 
     async def _engine_to_move(self) -> None:
         self._think_task = asyncio.create_task(self._think_and_play())
