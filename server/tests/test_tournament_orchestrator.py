@@ -535,9 +535,9 @@ async def test_integration_real_runner_clean_exit(tmp_path, monkeypatch):
 
     assert orch.active_id() is None
     assert store.get(t.id).status == STATUS_DONE
-    log_text = (store.root / t.id / "logs" / "fastchess.log").read_text()
-    assert "out 0" in log_text
-    assert "out 4" in log_text
+    out_lines = [p["line"] for k, p in captured if k == "runner_log" and p.get("stream") == "out"]
+    assert "out 0" in out_lines
+    assert "out 4" in out_lines
 
 
 async def test_integration_real_runner_stop(tmp_path, monkeypatch):

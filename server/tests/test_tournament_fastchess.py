@@ -189,7 +189,7 @@ def test_build_command_affinity(tmp_path):
         engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
     )
     cmd = build_command(spec)
-    assert "-affinity" in cmd
+    assert "-use-affinity" in cmd
 
     # Default off → not present.
     spec_off = _make_spec(
@@ -197,7 +197,7 @@ def test_build_command_affinity(tmp_path):
         template={},
         engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
     )
-    assert "-affinity" not in build_command(spec_off)
+    assert "-use-affinity" not in build_command(spec_off)
 
 
 def test_build_command_force_concurrency_when_oversubscribe(tmp_path):
@@ -519,10 +519,9 @@ async def test_runner_clean_exit_emits_done(tmp_path, patched_runner):
     assert "started" in kinds
     assert kinds[-1] == "done"
     assert rec.events[-1][1]["rc"] == 0
-    # fastchess.log should now contain the captured stdout
-    log_text = spec.log_path.read_text()
-    assert "out 0" in log_text
-    assert "out 2" in log_text
+    out_lines = [p["line"] for k, p in rec.events if k == "runner_log" and p.get("stream") == "out"]
+    assert "out 0" in out_lines
+    assert "out 2" in out_lines
 
 
 async def test_runner_emits_runner_log_per_stdout_line(tmp_path, patched_runner):
@@ -729,8 +728,8 @@ async def test_runner_drains_large_output_no_deadlock(tmp_path, patched_runner):
     await runner.start(spec, rec)
     await asyncio.wait_for(rec.done.wait(), timeout=10.0)
     assert rec.events[-1][0] == "done"
-    log_text = spec.log_path.read_text()
-    # Spot-check first and last expected lines were captured.
-    assert "out 0" in log_text
-    assert "out 1999" in log_text
-    assert "err 999" in log_text
+    out_lines = [p["line"] for k, p in rec.events if k == "runner_log" and p.get("stream") == "out"]
+    err_lines = [p["line"] for k, p in rec.events if k == "runner_log" and p.get("stream") == "err"]
+    assert "out 0" in out_lines
+    assert "out 1999" in out_lines
+    assert "err 999" in err_lines
