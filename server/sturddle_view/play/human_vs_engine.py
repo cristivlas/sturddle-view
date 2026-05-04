@@ -1007,6 +1007,32 @@ class HumanVsEngine:
                 f"{int(self._tc.initial_seconds)}+{int(self._tc.increment_seconds)}"
             )
 
+        # Opening header: longest registered prefix wins (sticky across
+        # transpositions and out-of-book moves). Skipped for FEN-imported
+        # games — lookup keys on move history from startpos.
+        if self._openings is not None and self._start_fen is None:
+            ucis = [m.uci() for m in self._board.move_stack]
+            hit = self._openings.lookup(ucis)
+            if hit is not None:
+                game.headers["ECO"] = hit.eco
+                game.headers["Opening"] = hit.name
+
+        # Per-ply [%clk] annotations. _clock_history[i] is (white, black)
+        # BEFORE ply i; the mover's clock AFTER ply i is _clock_history[i+1]
+        # for that side, or the live clock if i is the most recent ply.
+        # Mover is taken from the replay board (handles non-startpos games
+        # where ply 0 may be Black to move).
+        replay = chess.Board(self._start_fen) if self._start_fen else chess.Board()
+        nodes = list(game.mainline())
+        for i, node in enumerate(nodes):
+            mover_white = (replay.turn == chess.WHITE)
+            replay.push(self._board.move_stack[i])
+            if i + 1 < len(self._clock_history):
+                w_after, b_after = self._clock_history[i + 1]
+            else:
+                w_after, b_after = self._white_time, self._black_time
+            node.set_clock(w_after if mover_white else b_after)
+
         # Game-start timestamp keeps the path stable across per-move autosaves
         # and the final end-of-game write, so the file is overwritten in place.
         wall = self._game_started_wall or time.time()

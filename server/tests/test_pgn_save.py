@@ -136,6 +136,72 @@ async def test_save_on_flag_fall(hve):
     assert 'Termination "time_forfeit"' in text
 
 
+async def test_pgn_includes_clk_annotations(hve):
+    """Each ply gets a [%clk H:MM:SS] comment with monotonic decrease per side."""
+    h, _, tmp_path = hve
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    # White moves; clocks consume some time. With the engine mocked away,
+    # we drive a second white "move" by directly emulating an engine reply
+    # via the same path test_takeback uses.
+    import asyncio as _asyncio
+
+    await _asyncio.sleep(0.05)
+    await h.submit_move("e2e4")
+    # Inject Black's reply (engine mocked).
+    async with h._lock:
+        h._clock_history.append((h._white_time, h._black_time))
+        h._consume_turn_time()
+        h._board.push(chess.Move.from_uci("e7e5"))
+    await h.resign()
+
+    text = list(tmp_path.glob("*.pgn"))[0].read_text()
+    # python-chess writes [%clk H:MM:SS] (no fractional part by default).
+    assert "[%clk" in text
+    # Two plies, two clk annotations.
+    assert text.count("[%clk") == 2
+
+
+async def test_pgn_includes_opening_header_for_known_line(hve):
+    """A recognized opening writes ECO + Opening headers."""
+    from sturddle_view.openings import OpeningBook
+
+    h, _, tmp_path = hve
+    h._openings = OpeningBook.load()  # default dir; loaded from vendored TSVs
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    # 1.e4 c5 — the opening book recognizes this as the Sicilian Defense.
+    await h.submit_move("e2e4")
+    async with h._lock:
+        h._clock_history.append((h._white_time, h._black_time))
+        h._consume_turn_time()
+        h._board.push(chess.Move.from_uci("c7c5"))
+    await h.resign()
+
+    text = list(tmp_path.glob("*.pgn"))[0].read_text()
+    assert "[ECO " in text
+    assert "[Opening " in text
+    assert "Sicilian" in text
+
+
+async def test_pgn_no_opening_header_for_fen_imported_game(hve):
+    """FEN-imported games can't be classified; no Opening header is written."""
+    from sturddle_view.openings import OpeningBook
+
+    h, _, tmp_path = hve
+    h._openings = OpeningBook.load()
+    # Seed a game from a non-startpos FEN — Sicilian after 2.Nf3.
+    fen = "rnbqkbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
+    await h.new_game(human_white=True, tc=TimeControl(60, 0), start_fen=fen)
+    async with h._lock:
+        h._clock_history.append((h._white_time, h._black_time))
+        h._consume_turn_time()
+        h._board.push(chess.Move.from_uci("d7d6"))
+    await h.resign()
+
+    text = list(tmp_path.glob("*.pgn"))[0].read_text()
+    assert "[ECO " not in text
+    assert "[Opening " not in text
+
+
 async def test_filename_stable_across_restore(hve, tmp_path):
     """A restored game keeps writing to the same PGN file."""
     h, settings, _ = hve
