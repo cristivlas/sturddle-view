@@ -136,6 +136,22 @@ class HumanVsEngine:
         # with normal play; toggled via start_analysis/stop_analysis.
         self._analysis_mode: bool = False
         self._analysis_task: asyncio.Task | None = None
+        # View mode: cursor-based playback of an imported / loaded game.
+        # _board is rebuilt from _view_full_moves[:_view_cursor] on every
+        # navigation, so analyze sees the right position automatically.
+        # Autosave, submit_move, engine thinking, and clocks are all gated
+        # off while viewing. Exits via play_from_here.
+        self._viewing: bool = False
+        self._view_cursor: int = 0  # 0..len(_view_full_moves) inclusive
+        self._view_full_moves: list[chess.Move] = []
+        # Per-ply pre-move (white, black) snapshots from the imported PGN's
+        # [%clk] (None entries when not derivable). Sliced on play_from_here.
+        self._view_clock_history: list[tuple[float | None, float | None]] = []
+        # Live (white, black) clocks AFTER the imported PGN's final ply. Used
+        # by play_from_here when cursor lands at the last ply (no pre-move
+        # snapshot beyond the last entry to derive post-move clocks from).
+        self._view_final_white: float | None = None
+        self._view_final_black: float | None = None
         self._lock = asyncio.Lock()
 
     @property
@@ -322,6 +338,8 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
+            if self._viewing:
+                raise RuntimeError("view mode is on")
             if self._paused:
                 raise RuntimeError("game is paused")
             if self._analysis_mode:
@@ -398,6 +416,8 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
+            if self._viewing:
+                raise RuntimeError("view mode is on")
             if self._analysis_mode:
                 raise RuntimeError("analysis mode is on")
             await self._cancel_think()
@@ -438,6 +458,8 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
+            if self._viewing:
+                raise RuntimeError("view mode is on")
             if self._board.is_game_over():
                 raise RuntimeError("game is over")
             if self._analysis_mode:
@@ -468,6 +490,8 @@ class HumanVsEngine:
 
     async def resign(self) -> None:
         async with self._lock:
+            if self._viewing:
+                raise RuntimeError("view mode is on")
             await self._cancel_analysis()
             self._analysis_mode = False
             await self._cancel_think()
@@ -499,6 +523,8 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
+            if self._viewing:
+                raise RuntimeError("view mode is on")
             if self._board.is_game_over():
                 raise RuntimeError("game is over")
             if self._analysis_mode:
@@ -524,6 +550,8 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
+            if self._viewing:
+                raise RuntimeError("view mode is on")
             if not self._paused:
                 return
             self._paused = False
@@ -586,6 +614,154 @@ class HumanVsEngine:
             await self._publish_board()
             await self._publish_clock()
 
+    # ----- view mode -----
+
+    async def enter_view_mode(
+        self,
+        *,
+        start_fen: str | None,
+        moves_uci: list[str],
+        clock_history: list[tuple[float | None, float | None]] | None,
+        final_white_time: float | None = None,
+        final_black_time: float | None = None,
+    ) -> str:
+        """Load a PGN-imported game into view mode at the LAST ply.
+
+        Replaces any active live game (the autosave file preserves it for
+        future load-from-history). No clocks tick, no engine thinks, no
+        autosave fires. Navigation is via view_first/back/forward/last.
+        Exit via play_from_here, which seeds a fresh play game.
+        """
+        async with self._lock:
+            await self._cancel_analysis()
+            self._analysis_mode = False
+            await self._cancel_think()
+            await self._cancel_tick()
+            try:
+                start_board = chess.Board(start_fen) if start_fen else chess.Board()
+            except ValueError as e:
+                raise RuntimeError(f"invalid FEN: {e}") from e
+            full_moves: list[chess.Move] = []
+            replay = start_board.copy()
+            for uci in moves_uci:
+                try:
+                    move = chess.Move.from_uci(uci)
+                except ValueError as e:
+                    raise RuntimeError(f"invalid UCI in view moves: {uci}") from e
+                if move not in replay.legal_moves:
+                    raise RuntimeError(f"illegal move in view: {uci}")
+                full_moves.append(move)
+                replay.push(move)
+            self._viewing = True
+            self._view_full_moves = full_moves
+            self._view_clock_history = list(clock_history) if clock_history else []
+            self._view_final_white = final_white_time
+            self._view_final_black = final_black_time
+            self._view_cursor = len(full_moves)  # land at last ply
+            self._start_fen = start_fen
+            self._board = replay  # already at the final position
+            self._game_id = uuid.uuid4().hex[:12]
+            self._game_started_wall = None  # not a play game; no autosave
+            # Clocks frozen — irrelevant in view mode but keep types sane.
+            self._white_time = 0.0
+            self._black_time = 0.0
+            self._turn_started_at = None
+            self._clock_history = []
+            self._paused = False
+            await self._publish_board()
+            await self._publish_clock()
+        return self._game_id
+
+    async def view_goto(self, ply: int) -> None:
+        """Move the view cursor to ``ply`` (0..len(full_moves)). Rebuilds
+        the board by replaying from start. Rejected during analysis."""
+        async with self._lock:
+            if not self._viewing:
+                raise RuntimeError("not in view mode")
+            if self._analysis_mode:
+                raise RuntimeError("analysis is on; stop it before navigating")
+            n = len(self._view_full_moves)
+            if ply < 0 or ply > n:
+                raise RuntimeError(f"ply out of range: {ply} (0..{n})")
+            self._view_cursor = ply
+            board = (
+                chess.Board(self._start_fen) if self._start_fen else chess.Board()
+            )
+            for m in self._view_full_moves[:ply]:
+                board.push(m)
+            self._board = board
+            await self._publish_board()
+
+    async def view_first(self) -> None:
+        await self.view_goto(0)
+
+    async def view_back(self) -> None:
+        async with self._lock:
+            target = max(0, self._view_cursor - 1)
+        await self.view_goto(target)
+
+    async def view_forward(self) -> None:
+        async with self._lock:
+            target = min(len(self._view_full_moves), self._view_cursor + 1)
+        await self.view_goto(target)
+
+    async def view_last(self) -> None:
+        await self.view_goto(len(self._view_full_moves))
+
+    async def play_from_here(self, tc: TimeControl) -> str:
+        """Exit view mode by starting a fresh play game seeded with plies
+        0..cursor. New game_id, new autosave file. Side-to-play is whoever
+        is to move at the cursor (matches today's import default)."""
+        async with self._lock:
+            if not self._viewing:
+                raise RuntimeError("not in view mode")
+            if self._analysis_mode:
+                raise RuntimeError("analysis is on; stop it before play_from_here")
+            cursor = self._view_cursor
+            seed_moves = [m.uci() for m in self._view_full_moves[:cursor]]
+            seed_clocks = (
+                list(self._view_clock_history[:cursor])
+                if self._view_clock_history
+                else None
+            )
+            # Live clocks AFTER the seeded plies (post-move-cursor):
+            # - cursor at last ply → use the imported final_*_time (no
+            #   pre-move snapshot beyond it exists);
+            # - cursor mid-game → use the next ply's pre-move snapshot
+            #   (pre-move-(cursor+1) == post-move-cursor).
+            seed_final_w: float | None = None
+            seed_final_b: float | None = None
+            if self._view_clock_history:
+                if cursor == len(self._view_full_moves):
+                    seed_final_w = self._view_final_white
+                    seed_final_b = self._view_final_black
+                elif cursor < len(self._view_clock_history):
+                    nw, nb = self._view_clock_history[cursor]
+                    seed_final_w, seed_final_b = nw, nb
+            start_fen = self._start_fen
+            # Determine side-to-move at the cursor without leaving the lock.
+            board = chess.Board(start_fen) if start_fen else chess.Board()
+            for m in self._view_full_moves[:cursor]:
+                board.push(m)
+            human_white = (board.turn == chess.WHITE)
+            # Exit view mode before the new_game call (which re-acquires
+            # the lock). Clear viewer state so new_game starts clean.
+            self._viewing = False
+            self._view_full_moves = []
+            self._view_clock_history = []
+            self._view_final_white = None
+            self._view_final_black = None
+            self._view_cursor = 0
+        return await self.new_game(
+            human_white=human_white,
+            tc=tc,
+            start_fen=start_fen,
+            start_moves_uci=seed_moves,
+            seed_clock_history=seed_clocks,
+            seed_final_white_time=seed_final_w,
+            seed_final_black_time=seed_final_b,
+        )
+
     async def swap_engine(self, path: str) -> None:
         """Replace the engine binary; preserves the active game."""
         kick_engine = False
@@ -629,6 +805,8 @@ class HumanVsEngine:
         """
         if self._store is None or self._board is None or self._game_id is None:
             return
+        if self._viewing:
+            return  # view sessions aren't persisted; the source PGN is on disk
         state = GameState(
             game_id=self._game_id,
             human_white=self._human_white,
@@ -940,6 +1118,24 @@ class HumanVsEngine:
             hit = self._openings.lookup(ucis)
             if hit is not None:
                 opening_payload = {"eco": hit.eco, "name": hit.name}
+        # In view mode, moves_san reflects the FULL game (so the UI can show
+        # the whole list with the cursor highlighting one ply); in play mode
+        # it's just the moves on the live board.
+        if self._viewing:
+            full_board = (
+                chess.Board(self._start_fen) if self._start_fen else chess.Board()
+            )
+            for m in self._view_full_moves:
+                full_board.push(m)
+            moves_san = _moves_san(full_board, self._start_fen)
+        else:
+            moves_san = _moves_san(self._board, self._start_fen)
+        view_payload = None
+        if self._viewing:
+            view_payload = {
+                "cursor": self._view_cursor,
+                "total_plies": len(self._view_full_moves),
+            }
         return Event(
             kind="board_update",
             game_id=self._game_id,
@@ -947,13 +1143,14 @@ class HumanVsEngine:
                 "fen": self._board.fen(),
                 "turn": "white" if self._board.turn else "black",
                 "ply": self._board.ply(),
-                "moves_san": _moves_san(self._board, self._start_fen),
+                "moves_san": moves_san,
                 "last_move": self._board.peek().uci() if self._board.move_stack else None,
                 "human_white": self._human_white,
                 "engine_name": self._engine_name,
                 "opening": opening_payload,
                 "tablebase": None,
                 "analyzing": self._analysis_mode,
+                "view": view_payload,
             },
         )
 
@@ -1001,6 +1198,8 @@ class HumanVsEngine:
     def _maybe_save_pgn(self, *, result: str, termination: str) -> Path | None:
         if self._board is None or self._game_id is None:
             return None
+        if self._viewing:
+            return None  # not a play game; autosave is play-mode only
         if self._settings is None or not getattr(self._settings, "pgn_autosave", False):
             return None
         if not self._board.move_stack:

@@ -276,20 +276,35 @@ def test_validate_endpoint_default_format_is_auto(client):
     assert r.json()["detected_format"] == "pgn"
 
 
-def test_import_endpoint_starts_game_human_as_side_to_move(client):
+def test_import_endpoint_lands_in_view_mode_at_last_ply(client):
     c, app, engine_path = client
     hve = _patch_hve(app, engine_path)
     r = c.post("/game/import", json={
         "format": "fen",
         "text": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
-        "human_side": "side_to_move",
     })
     assert r.status_code == 200, r.text
-    assert r.json()["human_white"] is False  # side_to_move was Black
+    assert r.json()["viewing"] is True
+    assert hve._viewing is True
     assert hve._board is not None
     assert hve._board.turn == chess.BLACK
-    # Engine kick is not expected — it's the human's turn.
+    # No play-mode side effects yet: engine isn't kicked, no new game.
     hve._engine_to_move.assert_not_called()
+
+
+def test_view_play_from_here_inherits_side_to_move(client):
+    c, app, engine_path = client
+    hve = _patch_hve(app, engine_path)
+    # Black to move at the cursor → human plays Black on play-from-here.
+    c.post("/game/import", json={
+        "format": "fen",
+        "text": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+    })
+    r = c.post("/game/view/play-from-here", json={})
+    assert r.status_code == 200, r.text
+    assert r.json()["viewing"] is False
+    assert hve._viewing is False
+    assert hve._human_white is False  # side-to-move was Black
 
 
 def test_import_endpoint_pgn_replays_into_history(client):
@@ -298,30 +313,38 @@ def test_import_endpoint_pgn_replays_into_history(client):
     r = c.post("/game/import", json={
         "format": "pgn",
         "text": "1. e4 e5 2. Nf3 Nc6 *",
-        "human_side": "white",  # White's turn after Nc6 → human moves next.
     })
     assert r.status_code == 200, r.text
-    # Move stack should be populated, so the move panel renders the imported
-    # game and engine-side TB / repetition detection works.
-    assert [m.uci() for m in hve._board.move_stack] == [
+    # View mode lands at the last ply with all moves replayed.
+    assert hve._viewing is True
+    assert [m.uci() for m in hve._view_full_moves] == [
         "e2e4", "e7e5", "g1f3", "b8c6",
     ]
-    assert hve._human_white is True
+    assert hve._view_cursor == 4
     hve._engine_to_move.assert_not_called()
 
 
-def test_import_endpoint_kicks_engine_when_its_turn(client):
+def test_view_play_from_here_kicks_engine_when_engine_to_move(client):
+    """When the cursor's side-to-move is the engine's color, play_from_here
+    must kick the engine. Side here is implicitly inherited from the cursor."""
     c, app, engine_path = client
     hve = _patch_hve(app, engine_path)
-    # Black to move; human picks White → engine should immediately think.
-    r = c.post("/game/import", json={
+    # 1.e4 → Black to move. side-to-move at cursor is Black → human plays
+    # Black, so engine plays White and is NOT to move. Build a different
+    # scenario: cursor at startpos (ply 0), side-to-move is White → human
+    # plays White, engine is Black, no kick. To trigger a kick we need a
+    # cursor position where the engine (= the side opposite human) is to
+    # move. Since human is always the cursor's side-to-move, the engine is
+    # never to move right after play_from_here. So the engine kick happens
+    # only later, after human's first move. Confirm no kick at this stage.
+    c.post("/game/import", json={
         "format": "fen",
         "text": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
-        "human_side": "white",
     })
-    assert r.status_code == 200, r.text
-    assert r.json()["human_white"] is True
-    hve._engine_to_move.assert_called_once()
+    c.post("/game/view/play-from-here", json={})
+    # Side-to-move at cursor was Black → human is Black. Engine is White
+    # but it's Black's turn (the human's turn) — engine NOT kicked.
+    hve._engine_to_move.assert_not_called()
 
 
 def test_import_endpoint_rejects_finished_position(client):
@@ -337,18 +360,18 @@ def test_import_endpoint_rejects_finished_position(client):
 def test_imported_game_publishes_board_event_after_engine_move(client):
     """Regression: _moves_san used to replay on a fresh chess.Board() and
     asserted out for any imported (non-startpos) game once the engine moved.
-    The crash silently aborted the publish, leaving the client frozen."""
+    The crash silently aborted the publish, leaving the client frozen.
+
+    Now that import → view mode, exit via play-from-here first so this
+    exercises the play-mode _board_event code path the bug was in.
+    """
     c, app, engine_path = client
     hve = _patch_hve(app, engine_path)
-    # Black to move; human picks Black (so it's still Black to move and we
-    # can simulate an engine reply by directly invoking _board_event after
-    # pushing a move that's only legal in this position).
-    r = c.post("/game/import", json={
+    c.post("/game/import", json={
         "format": "fen",
         "text": "1k1r4/pp1b1R2/3q2pp/4p3/2B5/4Q3/PPP2B2/2K5 b - -",
-        "human_side": "white",  # so engine is on the move (Black)
     })
-    assert r.status_code == 200, r.text
+    c.post("/game/view/play-from-here", json={})
     # Simulate the engine's bestmove being pushed (the part of
     # _think_and_play that runs after the search returns).
     hve._board.push(chess.Move.from_uci("d6d1"))
@@ -359,16 +382,19 @@ def test_imported_game_publishes_board_event_after_engine_move(client):
     assert evt.payload["moves_san"] == ["Qd1+"]
 
 
-def test_import_endpoint_honors_clk_annotations(client):
-    """Import a PGN with [%clk]; live clocks reflect the parsed values."""
+def test_view_play_from_here_honors_clk_annotations(client):
+    """Import a PGN with [%clk] then play-from-here at the last ply; live
+    clocks reflect the parsed values, not the TC initial."""
     c, app, engine_path = client
     hve = _patch_hve(app, engine_path)
-    r = c.post("/game/import", json={
+    c.post("/game/import", json={
         "format": "pgn",
         "text": (
             "1. e4 { [%clk 0:04:55] } 1... c5 { [%clk 0:04:50] } "
             "2. Nf3 { [%clk 0:04:48] } *"
         ),
+    })
+    r = c.post("/game/view/play-from-here", json={
         "initial_seconds": 300,
         "increment_seconds": 0,
     })
@@ -376,7 +402,7 @@ def test_import_endpoint_honors_clk_annotations(client):
     # Live clocks come from the PGN, not the configured TC initial.
     assert hve._white_time == 4 * 60 + 48
     assert hve._black_time == 4 * 60 + 50
-    # _clock_history has one entry per ply with PGN-derived snapshots
+    # _clock_history has one entry per seeded ply with PGN-derived snapshots
     # (None entries fill from TC initial = 300).
     assert hve._clock_history == [
         (300.0, 300.0),  # ply 0: nobody moved yet
@@ -385,13 +411,15 @@ def test_import_endpoint_honors_clk_annotations(client):
     ]
 
 
-def test_import_endpoint_seed_clocks_use_configured_tc(client):
-    """A PGN without [%clk] falls back to the configured TC for live clocks."""
+def test_view_play_from_here_seed_clocks_use_configured_tc(client):
+    """A PGN without [%clk] then play-from-here falls back to TC initial."""
     c, app, engine_path = client
     hve = _patch_hve(app, engine_path)
-    r = c.post("/game/import", json={
+    c.post("/game/import", json={
         "format": "pgn",
         "text": "1. e4 e5 *",
+    })
+    r = c.post("/game/view/play-from-here", json={
         "initial_seconds": 123.0,
         "increment_seconds": 4.0,
     })

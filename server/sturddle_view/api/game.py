@@ -132,39 +132,83 @@ async def import_validate(payload: dict) -> dict:
 
 @router.post("/import")
 async def import_game(payload: dict, request: Request) -> dict:
-    """Start a new game from a FEN or PGN. Same shape as /game/new."""
+    """Import a FEN or PGN into VIEW MODE at the last ply.
+
+    The user inspects via /game/view/* navigation; exit view by calling
+    /game/view/play-from-here, which seeds a fresh play game from the
+    cursor with the configured/payload TC.
+    """
     parsed = _parse_import_payload(payload)
     hve = await _get_hve(request)
+    try:
+        game_id = await hve.enter_view_mode(
+            start_fen=parsed["start_fen"],
+            moves_uci=parsed["moves_uci"],
+            clock_history=parsed["clock_history"],
+            final_white_time=parsed["final_white_time"],
+            final_black_time=parsed["final_black_time"],
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"game_id": game_id, "viewing": True}
+
+
+@router.post("/view/first")
+async def view_first(request: Request) -> dict:
+    hve = await _get_hve(request)
+    try:
+        await hve.view_first()
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True}
+
+
+@router.post("/view/back")
+async def view_back(request: Request) -> dict:
+    hve = await _get_hve(request)
+    try:
+        await hve.view_back()
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True}
+
+
+@router.post("/view/forward")
+async def view_forward(request: Request) -> dict:
+    hve = await _get_hve(request)
+    try:
+        await hve.view_forward()
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True}
+
+
+@router.post("/view/last")
+async def view_last(request: Request) -> dict:
+    hve = await _get_hve(request)
+    try:
+        await hve.view_last()
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True}
+
+
+@router.post("/view/play-from-here")
+async def view_play_from_here(payload: dict, request: Request) -> dict:
+    """Exit view mode by seeding a fresh play game from plies 0..cursor."""
+    hve = await _get_hve(request)
     s = request.app.state.settings
-
-    # Side selection: "white"|"black"|"side_to_move" (default).
-    side = payload.get("human_side", "side_to_move")
-    if side == "white":
-        human_white = True
-    elif side == "black":
-        human_white = False
-    else:
-        human_white = parsed["side_to_move"] == "white"
-
     tc = TimeControl(
         initial_seconds=float(payload.get("initial_seconds", s.tc_initial_seconds)),
         increment_seconds=float(payload.get("increment_seconds", s.tc_increment_seconds)),
     )
     try:
-        game_id = await hve.new_game(
-            human_white=human_white,
-            tc=tc,
-            start_fen=parsed["start_fen"],
-            start_moves_uci=parsed["moves_uci"],
-            seed_clock_history=parsed["clock_history"],
-            seed_final_white_time=parsed["final_white_time"],
-            seed_final_black_time=parsed["final_black_time"],
-        )
+        game_id = await hve.play_from_here(tc=tc)
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=f"engine not found: {e}") from e
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    return {"game_id": game_id, "human_white": human_white}
+    return {"game_id": game_id, "viewing": False}
 
 
 @router.post("/move")
