@@ -38,6 +38,7 @@ import asyncio
 import json
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -49,6 +50,11 @@ import uuid
 # Batching defaults — see spec "Volume & high-concurrency considerations".
 BATCH_INTERVAL_S = 0.05  # 50 ms
 BATCH_MAX_LINES = 32
+
+# Lines matching this pattern are not broadcast (pipe to engine stays transparent).
+# TODO: consider a "System" settings category with user-editable log filters
+# (hot-reload and perf implications TBD before exposing in UI).
+_BROADCAST_FILTER: re.Pattern | None = None
 
 
 class Broadcaster:
@@ -185,10 +191,12 @@ async def _pump(
         except AttributeError:
             pass
         if broadcaster is not None:
-            try:
-                broadcaster.add_line(line.decode("utf-8", errors="replace"))
-            except Exception as e:  # noqa: BLE001 - belt and suspenders
-                print(f"proxy add_line failed: {e}", file=sys.stderr, flush=True)
+            decoded = line.decode("utf-8", errors="replace").rstrip("\r\n")
+            if _BROADCAST_FILTER is None or not _BROADCAST_FILTER.match(decoded):
+                try:
+                    broadcaster.add_line(decoded)
+                except Exception as e:  # noqa: BLE001 - belt and suspenders
+                    print(f"proxy add_line failed: {e}", file=sys.stderr, flush=True)
 
 
 async def _periodic_flush(broadcaster: Broadcaster, stop_event: asyncio.Event) -> None:
