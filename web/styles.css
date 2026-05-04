@@ -636,6 +636,7 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   text-align: right;
 }
 .move-row .move-cell { color: var(--fg); }
+.move-row .move-cell.clickable { cursor: pointer; }
 .move-row .move-cell.is-current {
   color: var(--accent);
   font-weight: 600;

@@ -15,12 +15,26 @@ function fmtClock(seconds) {
   return `${m}:${ss.toString().padStart(2, "0")}`;
 }
 
-function renderMoveList(el, sanList, currentIdx = null) {
+function renderMoveList(el, sanList, currentIdx = null, onMoveClick = null) {
   // currentIdx: index of the highlighted ply, or null for "last" (play mode).
+  // onMoveClick(plyIndex): when provided, each move cell becomes clickable
+  // and invokes the callback with its 0-based ply index. Used in view mode
+  // to jump the cursor to the clicked move.
   el.innerHTML = "";
   const lastIdx = sanList.length - 1;
   const highlightIdx = currentIdx == null ? lastIdx : currentIdx;
   let highlightedRow = null;
+  const makeCell = (san, plyIdx) => {
+    const cell = document.createElement("span");
+    cell.className = "move-cell";
+    if (!san) return cell;
+    cell.textContent = san;
+    if (onMoveClick) {
+      cell.classList.add("clickable");
+      cell.addEventListener("click", () => onMoveClick(plyIdx));
+    }
+    return cell;
+  };
   for (let i = 0; i < sanList.length; i += 2) {
     const row = document.createElement("div");
     row.className = "move-row";
@@ -30,18 +44,14 @@ function renderMoveList(el, sanList, currentIdx = null) {
     num.textContent = `${Math.floor(i / 2) + 1}.`;
     row.append(num);
 
-    const white = document.createElement("span");
-    white.className = "move-cell";
-    white.textContent = sanList[i] ?? "";
+    const white = makeCell(sanList[i], i);
     if (i === highlightIdx) {
       white.classList.add("is-current");
       highlightedRow = row;
     }
     row.append(white);
 
-    const black = document.createElement("span");
-    black.className = "move-cell";
-    black.textContent = sanList[i + 1] ?? "";
+    const black = makeCell(sanList[i + 1], i + 1);
     if (i + 1 === highlightIdx) {
       black.classList.add("is-current");
       highlightedRow = row;
@@ -79,6 +89,7 @@ export function mountGameView(container, opts = {}) {
   const {
     events,
     onMove,
+    onMoveJump = null, // view-mode click on a move; (plyIndex) => void
     show = {},
     interactive = false,
     sideContainer = null, // optional: separate host for the side rail
@@ -472,12 +483,17 @@ export function mountGameView(container, opts = {}) {
         board.clearArrows();
         if (showMoves && moveListEl) {
           // View mode highlights the cursor's ply (cursor-1 = last played
-          // move; cursor=0 means initial position → no highlight).
+          // move; cursor=0 means initial position → no highlight) and lets
+          // the user jump by clicking a move in the list.
           let currentIdx = null;
+          let clickHandler = null;
           if (evt.payload.view) {
             currentIdx = (evt.payload.view.cursor ?? 0) - 1;
+            clickHandler = onMoveJump;
           }
-          renderMoveList(moveListEl, evt.payload.moves_san || [], currentIdx);
+          renderMoveList(
+            moveListEl, evt.payload.moves_san || [], currentIdx, clickHandler,
+          );
         }
         setOpening(evt.payload.opening);
         setTablebase(evt.payload.tablebase);

@@ -196,6 +196,19 @@ async def view_last(request: Request) -> dict:
     return {"ok": True}
 
 
+@router.post("/view/goto")
+async def view_goto(payload: dict, request: Request) -> dict:
+    hve = await _get_hve(request)
+    ply = payload.get("ply")
+    if not isinstance(ply, int):
+        raise HTTPException(status_code=400, detail="missing or non-integer 'ply'")
+    try:
+        await hve.view_goto(ply)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True}
+
+
 @router.post("/view/play-from-here")
 async def view_play_from_here(payload: dict, request: Request) -> dict:
     """Exit view mode by seeding a fresh play game from plies 0..cursor."""

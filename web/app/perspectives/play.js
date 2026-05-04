@@ -167,6 +167,15 @@ export const playPerspective = {
           reportError(ctx, "Move rejected", e);
         }
       },
+      // Click on a move in the list (view mode only) → jump cursor to
+      // the position AFTER that move, i.e. ply = plyIndex + 1.
+      onMoveJump: async (plyIndex) => {
+        try {
+          await ctx.api("POST", "/game/view/goto", { ply: plyIndex + 1 });
+        } catch (e) {
+          reportError(ctx, "Navigation failed", e);
+        }
+      },
     });
 
     // Settings cache (refreshed on settings-changed).
