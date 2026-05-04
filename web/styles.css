@@ -1032,12 +1032,15 @@ wa-dialog wa-tab-panel > * + * { margin-top: 10px; }
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.25);
-  overflow: hidden;
   font-family: var(--wa-font-family-body);
   font-size: 13px;
 }
-.tmb-menu.open .tmb-dropdown { display: block; }
+.tmb-menu.open > .tmb-dropdown { display: block; }
 .tmb-dropdown > li { margin: 0; padding: 0; list-style: none; }
+.tmb-dd-submenu { position: relative; }
+.tmb-dd-submenu > .tmb-dd-item::after { content: "›"; position: absolute; right: 10px; }
+.tmb-dd-submenu > .tmb-dropdown { top: -6px; left: 100%; z-index: 9001; }
+.tmb-dd-submenu:hover > .tmb-dropdown { display: block; }
 .tmb-dd-item {
   display: block; width: 100%; background: none; border: none; border-radius: 0;
   color: inherit; text-align: left;

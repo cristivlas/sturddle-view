@@ -64,11 +64,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // attached engine windows survive — closing here would tear them
   // down via tearDown's closeAllLiveGames().
   if (activeWorkspace) {
-    if (activeWorkspace.tournamentId === tournament.id) {
-      activeWorkspace.ensureWindows();
-      activeWorkspace.focus();
-      return activeWorkspace;
-    }
+    if (activeWorkspace.tournamentId === tournament.id) return activeWorkspace;
     activeWorkspace.close();
     activeWorkspace = null;
   }
@@ -187,25 +183,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     schedule:  makeBox("schedule",  windowSpecs.schedule.title,  scheduleBody),
     log:       makeBox("log",       windowSpecs.log.title,       logBody),
   };
-
-  function ensureWindows() {
-    let recreated = false;
-    for (const key of Object.keys(windowSpecs)) {
-      if (windows[key]) continue;
-      const spec = windowSpecs[key];
-      const body = spec.makeBody();
-      spec.setBody(body);
-      windows[key] = makeBox(key, spec.title, body);
-      spec.render();
-      recreated = true;
-    }
-    // If subscriptions were torn down while only live-game windows were
-    // keeping the workspace alive, re-arm them so the new boxes update.
-    if (recreated) {
-      armSubscriptions();
-      refresh();
-    }
-  }
 
   // ---- Rendering --------------------------------------------------------
 
@@ -588,7 +565,21 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     return wbs.length > 0 && wbs.every(wb => wb.hidden);
   }
 
-  const workspace = { close, tile, cascade, closeAll, focus, hide, show, isHidden, ensureWindows, tournamentId: tournament.id };
+  function openSystemWindow(key) {
+    if (windows[key]) {
+      try { windows[key].focus(); } catch {}
+      return;
+    }
+    const spec = windowSpecs[key];
+    const body = spec.makeBody();
+    spec.setBody(body);
+    windows[key] = makeBox(key, spec.title, body);
+    spec.render();
+    armSubscriptions();
+    refresh();
+  }
+
+  const workspace = { close, tile, cascade, closeAll, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id };
   activeWorkspace = workspace;
   return workspace;
 }

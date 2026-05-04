@@ -29,6 +29,15 @@ export function mountTournaments({ container, api, events, log, token }) {
         <li class="tmb-menu tmb-window-menu">
           <button class="tmb-item tmb-window-btn">Window</button>
           <ul class="tmb-dropdown">
+            <li class="tmb-dd-submenu">
+              <button class="tmb-dd-item">System</button>
+              <ul class="tmb-dropdown">
+                <li><button class="tmb-dd-item tmb-sys-standings">Standings</button></li>
+                <li><button class="tmb-dd-item tmb-sys-schedule">Schedule</button></li>
+                <li><button class="tmb-dd-item tmb-sys-log">Event Log</button></li>
+              </ul>
+            </li>
+            <li class="tmb-separator"></li>
             <li><button class="tmb-dd-item tmb-tile">Tile</button></li>
             <li><button class="tmb-dd-item tmb-cascade">Cascade</button></li>
             <li><button class="tmb-dd-item tmb-hideall">Hide All</button></li>
@@ -287,7 +296,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     ribbonStartBtn.disabled = isActive || anotherRunning || status === "running" || status === "done";
     ribbonStopBtn.disabled = !isActive;
     ribbonRemoveBtn.disabled = isActive;
-    ribbonWorkspaceBtn.disabled = false;
+    ribbonWorkspaceBtn.disabled = !!getActiveWorkspace();
     ribbonInfoBtn.disabled = false;
 
     ribbonStartIcon.setAttribute("name", isResume ? "forward-step" : "play");
@@ -398,6 +407,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     const left = Math.max(Math.round(rect.left), ribbonRight);
     openTournamentWorkspace({ api, events, log, token, tournament: t, top, left });
     syncWindowMenu();
+    syncRibbon();
   }
 
   // ---- Info dialog -------------------------------------------------------
@@ -604,6 +614,16 @@ export function mountTournaments({ container, api, events, log, token }) {
     getActiveWorkspace()?.closeAll();
     syncWindowMenu();
   });
+  for (const [cls, key] of [
+    [".tmb-sys-standings", "standings"],
+    [".tmb-sys-schedule",  "schedule"],
+    [".tmb-sys-log",       "log"],
+  ]) {
+    container.querySelector(cls).addEventListener("click", () => {
+      closeMenus();
+      getActiveWorkspace()?.openSystemWindow(key);
+    });
+  }
 
   document.addEventListener("click", closeMenus);
 
@@ -819,7 +839,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     loadSettings();
   }
   window.addEventListener("sturddle:settings-changed", onSettingsChanged);
-  window.addEventListener("sturddle:workspace-closed", syncWindowMenu);
+  window.addEventListener("sturddle:workspace-closed", () => { syncWindowMenu(); syncRibbon(); });
 
   // ---- Initial load -------------------------------------------------------
 
