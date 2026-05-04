@@ -17,6 +17,16 @@ import { mountBoard } from "./board.js";
 
 const liveWindows = new Map(); // proxy_id -> WinBox instance
 
+const LIVE_MIN_BOARD = 120; // px — smallest usable board side
+const LIVE_CLOCK_H   = 36;  // px — one clock row (font 16px + padding)
+const LIVE_EVAL_H    = 24;  // px — eval + PV rows collapsed
+const LIVE_WINBOX_TITLE = 35; // px — WinBox title bar
+const LIVE_GAP       = 6;   // px — flex gap between sections
+
+const LIVE_MIN_WIDTH  = LIVE_MIN_BOARD;
+const LIVE_MIN_HEIGHT = LIVE_WINBOX_TITLE + LIVE_CLOCK_H * 2 + LIVE_MIN_BOARD
+                      + LIVE_EVAL_H + LIVE_GAP * 3;
+
 
 export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, boardStyle = null }) {
   // If a window for this proxy is already open, focus it instead of
@@ -74,6 +84,8 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
     title: label,
     width: "30%",
     height: "55%",
+    minwidth: LIVE_MIN_WIDTH,
+    minheight: LIVE_MIN_HEIGHT,
     x: `${20 + (idx * 4)}%`,
     y: `${5 + (idx * 4)}%`,
     top,
@@ -114,6 +126,8 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
   let activeDeadline = 0;
   let currentFen = null;
   let positionGen = 0;
+  let lastWtime = null;
+  let lastBtime = null;
 
   wb.onclose = () => {
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
@@ -224,6 +238,8 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
         renderEval(p);
         break;
       case "go":
+        lastWtime = p.wtime ?? lastWtime;
+        lastBtime = p.btime ?? lastBtime;
         updateClocks(p.wtime, p.btime);
         clockTopEl.classList.remove("active");
         clockBottomEl.classList.toggle("active", !!engineColor);
@@ -248,6 +264,20 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
         clockBottomEl.classList.remove("active");
         clockTopEl.classList.toggle("active", !!engineColor);
         if (currentFen && p.move) applyBestMove(p.move);
+        if (engineColor && lastWtime != null && lastBtime != null) {
+          const oppMs = engineColor === "white" ? lastBtime : lastWtime;
+          activeDeadline = Date.now() + oppMs;
+          const tick = () => {
+            const remaining = Math.max(0, activeDeadline - Date.now());
+            topTimeEl.textContent = formatMs(remaining);
+            if (remaining === 0 && timerInterval) {
+              clearInterval(timerInterval);
+              timerInterval = null;
+            }
+          };
+          tick();
+          timerInterval = setInterval(tick, 100);
+        }
         break;
     }
   }
