@@ -100,9 +100,11 @@ export function mountTournaments({ container, api, events, log, token }) {
   const ribbonRemoveBtn = container.querySelector(".t-remove");
 
   const SORT_KEY_LS = "sturddle.tournaments.sortBy";
+  const SORT_ASC_LS = "sturddle.tournaments.sortAsc";
   const VALID_SORTS = new Set(["name", "status", "created_at", "started_at"]);
   let sortBy = VALID_SORTS.has(localStorage.getItem(SORT_KEY_LS))
     ? localStorage.getItem(SORT_KEY_LS) : "created_at";
+  let sortAsc = localStorage.getItem(SORT_ASC_LS) !== "false";
 
   let tournaments = [];
   let activeId = null;
@@ -205,15 +207,16 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   function sortedTournaments() {
     const arr = tournaments.slice();
+    const dir = sortAsc ? 1 : -1;
     const cmp = (a, b) => {
       const av = a[sortBy] ?? "";
       const bv = b[sortBy] ?? "";
       if (av === bv) return a.created_at.localeCompare(b.created_at);
-      // Empty values sink to the bottom for time-based sorts.
+      // Empty values sink to the bottom regardless of direction.
       if (av === "") return 1;
       if (bv === "") return -1;
-      if (sortBy === "name") return av.localeCompare(bv, undefined, { sensitivity: "base" });
-      return av < bv ? -1 : 1;
+      if (sortBy === "name") return dir * av.localeCompare(bv, undefined, { sensitivity: "base" });
+      return dir * (av < bv ? -1 : 1);
     };
     return arr.sort(cmp);
   }
@@ -558,6 +561,11 @@ export function mountTournaments({ container, api, events, log, token }) {
     for (const opt of container.querySelectorAll(".tmb-sort-opt")) {
       opt.classList.toggle("is-active", opt.dataset.sort === sortBy);
     }
+    for (const opt of container.querySelectorAll(".tmb-sort-opt")) {
+      const active = opt.dataset.sort === sortBy;
+      if (active) opt.dataset.dir = sortAsc ? "asc" : "desc";
+      else delete opt.dataset.dir;
+    }
   }
   syncSortMenu();
 
@@ -570,13 +578,19 @@ export function mountTournaments({ container, api, events, log, token }) {
   for (const opt of container.querySelectorAll(".tmb-sort-opt")) {
     opt.addEventListener("click", () => {
       const next = opt.dataset.sort;
-      if (VALID_SORTS.has(next) && next !== sortBy) {
+      if (!VALID_SORTS.has(next)) { closeMenus(); return; }
+      const dir = () => sortAsc ? "ascending" : "descending";
+      if (next === sortBy) {
+        sortAsc = !sortAsc;
+        localStorage.setItem(SORT_ASC_LS, String(sortAsc));
+        toast(`Sorted by ${opt.textContent.trim()}, ${dir()}`);
+      } else {
         sortBy = next;
         localStorage.setItem(SORT_KEY_LS, sortBy);
-        syncSortMenu();
-        renderList();
-        toast(`Tournaments sorted by ${opt.textContent.trim()}`);
+        toast(`Sorted by ${opt.textContent.trim()}, ${dir()}`);
       }
+      syncSortMenu();
+      renderList();
       closeMenus();
     });
   }

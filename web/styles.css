@@ -1112,11 +1112,12 @@ wa-dialog::part(body) {
   padding-right: 4px;
   outline: none;
 }
-.tmb-sort-opt.is-active::before {
-  content: "✓"; position: absolute;
-  left: 8px; top: 50%; transform: translateY(-50%);
-  font-size: 11px; color: var(--accent);
+.tmb-sort-opt[data-dir]::before {
+  content: "▲"; position: absolute;
+  left: 7px; top: 50%; transform: translateY(-50%);
+  font-size: 13px; color: var(--accent);
 }
+.tmb-sort-opt[data-dir="desc"]::before { content: "▼"; }
 .tournaments-body {
   --ribbon-w: 36px;
   display: grid;
