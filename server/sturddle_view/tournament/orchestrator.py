@@ -14,14 +14,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import secrets
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Awaitable, Callable
 
+import chess
+
 from .rescheck import RescheckError, check_template
 from .runner import EventCallback, RunSpec, Runner
+from .uci_parse import parse_uci_line
 
 if TYPE_CHECKING:
     from ..config import Settings
@@ -49,6 +53,33 @@ BroadcastCallback = Callable[[str, dict], Awaitable[None]]
 # completed games, so a workspace opened mid-tournament still gets
 # a useful tail.
 _EVENT_HISTORY_MAX = 200
+
+
+# Two engines of one game share a FEN at the rendezvous: the thinker
+# (registered via ``position``) and the waiter (registered via
+# ``bestmove`` at the resulting FEN). ``info`` from the thinker fans
+# out to the waiter's subscribers — that's the opponent's PV arrow.
+_DEBUG_PAIRING = os.environ.get("SV_DEBUG_PAIRING", "0") == "1"
+
+
+def _opposite_side(side: str) -> str:
+    return "black" if side == "white" else "white"
+
+
+def _fanout(subs: set[asyncio.Queue], payload: dict) -> None:
+    """Slow-consumer policy: drop oldest, keep newest."""
+    for q in list(subs):
+        try:
+            q.put_nowait(payload)
+        except asyncio.QueueFull:
+            try:
+                q.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                q.put_nowait(payload)
+            except asyncio.QueueFull:
+                pass
 
 
 def wrap_event_for_bus(kind: str, payload: dict) -> dict:
@@ -104,6 +135,20 @@ class Orchestrator:
         # of the engine's state instead of waiting for the next event
         # (which under long time controls can be ≥10s away).
         self._proxy_snapshot: dict[str, dict[str, str]] = {}
+        # Pairing detection. Map from FEN → list of ``(proxy_id, color)``
+        # tuples. The thinker registers via ``position`` at F (its own
+        # color); the waiter registers via ``bestmove`` at F-after-m
+        # (still its own color — engine identity, not side-to-move).
+        # Two engines of one game share a FEN with opposite colors.
+        self._pairing_map: dict[str, list[tuple[str, str]]] = {}
+        # ``(fen, my_color)``. my_color is the engine's color in the
+        # current game (identity), not side-to-move at fen — that's
+        # what makes the rendezvous lookup distinguish thinker from
+        # waiter (same fen, opposite colors).
+        self._pairing_state: dict[str, tuple[str, str] | None] = {}
+        # Locked from side-to-move on the first ``position`` after
+        # ``ucinewgame`` (that's the engine's first turn).
+        self._pairing_color: dict[str, str | None] = {}
         # Per-tournament secret embedded in the proxy --broadcast-url so
         # only proxies belonging to the active tournament can post.
         # Cleared on tournament termination.
@@ -228,6 +273,9 @@ class Orchestrator:
             self._proxy_secret = None
             self._proxy_engine_names.clear()
             self._proxy_snapshot.clear()
+            self._pairing_map.clear()
+            self._pairing_state.clear()
+            self._pairing_color.clear()
             self._store.update_status(t.id, STATUS_STOPPED, stopped_at=_now())
             raise
 
@@ -314,6 +362,9 @@ class Orchestrator:
                     self._proxy_secret = None
                     self._proxy_engine_names.clear()
                     self._proxy_snapshot.clear()
+                    self._pairing_map.clear()
+                    self._pairing_state.clear()
+                    self._pairing_color.clear()
                     self._close_all_proxy_subscribers()
 
         # Always forward the runner event upstream — UI consumers want
@@ -402,40 +453,125 @@ class Orchestrator:
         """Called by the ``/internal/proxy`` endpoint with a batch of
         UCI lines from one proxy. Updates the per-proxy snapshot
         (always — independent of subscribers) and fans out to any
-        subscribed WS clients.
-        """
+        subscribed WS clients. Drives the pairing map so that ``info``
+        lines from the thinking engine also fan out to the
+        opposite-color subscribers (the live opponent's view)."""
         snap = self._proxy_snapshot.setdefault(proxy_id, {})
+        own_subs = self._proxy_subscribers.get(proxy_id)
         for line in lines:
             stripped = line.lstrip()
+            parsed: dict | None = None
+            paired_subs: set[asyncio.Queue] = set()
+            thinking_side: str | None = None
+
             if stripped.startswith("position "):
                 snap["position"] = line
-                # New position ⇒ stale eval; clear so the replay
-                # doesn't show last move's eval against a new board.
                 snap.pop("info", None)
+                parsed = parse_uci_line(stripped)
+                if parsed is not None and "fen" in parsed and "side_to_move" in parsed:
+                    if self._pairing_color.get(proxy_id) is None:
+                        self._pairing_color[proxy_id] = parsed["side_to_move"]
+                    color = self._pairing_color[proxy_id]
+                    if color is not None:
+                        self._pairing_register(proxy_id, parsed["fen"], color)
+            elif stripped.startswith("ucinewgame"):
+                self._pairing_unregister(proxy_id)
+                self._pairing_color[proxy_id] = None
             elif stripped.startswith("go "):
                 snap["go"] = line
+            elif stripped.startswith("bestmove "):
+                parsed = parse_uci_line(stripped)
+                self._pairing_apply_bestmove(proxy_id, parsed)
             elif stripped.startswith("info "):
                 if " score " in stripped or " pv " in stripped:
                     snap["info"] = line
+                state = self._pairing_state.get(proxy_id)
+                if state is not None:
+                    fen, my_color = state
+                    paired_subs = self._paired_subscribers(proxy_id, fen, my_color)
+                    thinking_side = my_color
 
-        subs = self._proxy_subscribers.get(proxy_id)
-        if not subs:
+            if own_subs:
+                payload: dict = {"proxy_id": proxy_id, "line": line}
+                if parsed is not None:
+                    payload["parsed"] = parsed
+                _fanout(own_subs, payload)
+            if paired_subs:
+                payload = {
+                    "proxy_id": proxy_id,
+                    "line": line,
+                    "paired": True,
+                    "thinking_side": thinking_side,
+                }
+                _fanout(paired_subs, payload)
+
+    def _pairing_register(self, proxy_id: str, fen: str, side: str) -> None:
+        """Atomic transition — a proxy is in the map at most once."""
+        self._pairing_unregister(proxy_id)
+        self._pairing_map.setdefault(fen, []).append((proxy_id, side))
+        self._pairing_state[proxy_id] = (fen, side)
+        if _DEBUG_PAIRING:
+            self._pairing_assert_invariants()
+
+    def _pairing_unregister(self, proxy_id: str) -> None:
+        prev = self._pairing_state.pop(proxy_id, None)
+        if prev is None:
             return
-        for line in lines:
-            payload = {"proxy_id": proxy_id, "line": line}
-            for q in list(subs):
-                try:
-                    q.put_nowait(payload)
-                except asyncio.QueueFull:
-                    # Slow consumer: drop oldest, keep newest.
-                    try:
-                        q.get_nowait()
-                    except asyncio.QueueEmpty:
-                        pass
-                    try:
-                        q.put_nowait(payload)
-                    except asyncio.QueueFull:
-                        pass
+        fen, _side = prev
+        bucket = self._pairing_map.get(fen)
+        if bucket is None:
+            return
+        bucket[:] = [(pid, s) for (pid, s) in bucket if pid != proxy_id]
+        if not bucket:
+            del self._pairing_map[fen]
+
+    def _pairing_apply_bestmove(self, proxy_id: str, parsed: dict | None) -> None:
+        """Re-register at post-move FEN (waiting for opponent). Same
+        color — engine identity is fixed for the game."""
+        state = self._pairing_state.get(proxy_id)
+        if state is None or not parsed:
+            return
+        move_uci = parsed.get("move")
+        if not move_uci or move_uci == "(none)":
+            return
+        fen, my_color = state
+        try:
+            board = chess.Board(fen)
+            board.push_uci(move_uci)
+        except (ValueError, chess.IllegalMoveError, chess.InvalidMoveError):
+            return
+        self._pairing_register(proxy_id, board.fen(), my_color)
+
+    def _paired_subscribers(
+        self, proxy_id: str, fen: str, side: str
+    ) -> set[asyncio.Queue]:
+        """WS queues of opposite-color proxies at ``fen`` (the waiter)."""
+        bucket = self._pairing_map.get(fen)
+        if not bucket:
+            return set()
+        target_side = _opposite_side(side)
+        out: set[asyncio.Queue] = set()
+        for pid, s in bucket:
+            if pid == proxy_id or s != target_side:
+                continue
+            subs = self._proxy_subscribers.get(pid)
+            if subs:
+                out.update(subs)
+        return out
+
+    def _pairing_assert_invariants(self) -> None:
+        """SV_DEBUG_PAIRING-gated. proxy unique across the map; color
+        unique within a bucket."""
+        seen: set[str] = set()
+        for fen, bucket in self._pairing_map.items():
+            colors_in_bucket: set[str] = set()
+            for pid, color in bucket:
+                assert pid not in seen, f"proxy {pid} registered at multiple FENs"
+                seen.add(pid)
+                assert color not in colors_in_bucket, (
+                    f"two proxies with color={color} share fen={fen}"
+                )
+                colors_in_bucket.add(color)
 
     async def proxy_session_started(self, proxy_id: str, engine_name: str) -> None:
         """Called when a proxy reports it has started up. Records the
@@ -454,6 +590,8 @@ class Orchestrator:
         Closes any subscribers and drops bookkeeping for this proxy."""
         self._proxy_engine_names.pop(proxy_id, None)
         self._proxy_snapshot.pop(proxy_id, None)
+        self._pairing_unregister(proxy_id)
+        self._pairing_color.pop(proxy_id, None)
         subs = self._proxy_subscribers.pop(proxy_id, None)
         if subs:
             for q in subs:

@@ -397,11 +397,13 @@ async def proxy_subscribe(
                 await websocket.send_json(payload)
                 break
             # Enrich with parsed fields where possible. ``line`` is
-            # always present in non-ended payloads.
-            line = payload.get("line", "")
-            parsed = parse_uci_line(line)
-            if parsed is not None:
-                payload = {**payload, "parsed": parsed}
+            # always present in non-ended payloads. Reuse the parse the
+            # orchestrator may have already done for pairing detection.
+            if "parsed" not in payload:
+                line = payload.get("line", "")
+                parsed = parse_uci_line(line)
+                if parsed is not None:
+                    payload = {**payload, "parsed": parsed}
             await websocket.send_json(payload)
     except WebSocketDisconnect:
         pass

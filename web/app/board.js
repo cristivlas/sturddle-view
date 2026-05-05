@@ -89,11 +89,27 @@ export function mountBoard({ element, onMove, styleId }) {
     }
   }
 
+  // Two arrow types share one visual style (default) but differ by class
+  // tag so each can be replaced independently — own thinker vs opponent
+  // (paired). Same color: arrows already differ by origin square; a
+  // distinct color (esp. danger/red) would falsely read as an error.
   function setArrow(fromUci, toUci) {
-    if (typeof board.removeArrows === "function") board.removeArrows();
+    if (typeof board.removeArrows === "function") {
+      board.removeArrows(ARROW_TYPE.default);
+    }
     if (!fromUci || !toUci) return;
     if (typeof board.addArrow === "function") {
       board.addArrow(ARROW_TYPE.default, fromUci, toUci);
+    }
+  }
+
+  function setOpponentArrow(fromUci, toUci) {
+    if (typeof board.removeArrows === "function") {
+      board.removeArrows(ARROW_TYPE.success);
+    }
+    if (!fromUci || !toUci) return;
+    if (typeof board.addArrow === "function") {
+      board.addArrow(ARROW_TYPE.success, fromUci, toUci);
     }
   }
 
@@ -113,5 +129,5 @@ export function mountBoard({ element, onMove, styleId }) {
     }
   }
 
-  return { setSide, setPosition, enableInput, forceResize, setArrow, clearArrows };
+  return { setSide, setPosition, enableInput, forceResize, setArrow, setOpponentArrow, clearArrows };
 }

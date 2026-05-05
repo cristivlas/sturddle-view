@@ -43,6 +43,12 @@ BATCH_MAX_LINES = 32
 # (hot-reload and perf implications TBD before exposing in UI).
 _BROADCAST_FILTER: re.Pattern | None = None
 
+# Kill-switch: when SV_BROADCAST_INFO=0, drop UCI ``info`` lines from the
+# broadcast tap. The pipe to fastchess remains transparent; only the
+# observability fan-out is suppressed. Used to bisect perf regressions
+# between the broadcast machinery and the engine itself.
+_BROADCAST_INFO = os.environ.get("SV_BROADCAST_INFO", "1") != "0"
+
 
 class Broadcaster:
     """Buffers proxy lines and POSTs them in batches to the server's
@@ -179,6 +185,8 @@ async def _pump(
             pass
         if broadcaster is not None:
             decoded = line.decode("utf-8", errors="replace").rstrip("\r\n")
+            if not _BROADCAST_INFO and decoded.lstrip().startswith("info "):
+                continue
             if _BROADCAST_FILTER is None or not _BROADCAST_FILTER.match(decoded):
                 try:
                     broadcaster.add_line(decoded)

@@ -172,6 +172,10 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
     }
     const parsed = msg.parsed;
     if (!parsed) return;
+    if (msg.paired) {
+      handlePairedParsed(parsed, msg.thinking_side);
+      return;
+    }
     handleParsed(parsed);
   });
 
@@ -272,6 +276,15 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
         }
         break;
     }
+  }
+
+  function handlePairedParsed(p, thinkingSide) {
+    // Paired info: from the opposite-color engine. Only ``info`` is
+    // forwarded; render its first-PV move as the opponent arrow.
+    if (p.kind !== "info" || !p.pv || !p.pv.length) return;
+    if (engineColor && thinkingSide === engineColor) return;
+    const m = p.pv[0];
+    if (m && m.length >= 4) board.setOpponentArrow(m.slice(0, 2), m.slice(2, 4));
   }
 
   function renderEval(p) {
