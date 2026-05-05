@@ -1484,21 +1484,25 @@ wa-dialog::part(body) {
 .wb-livegame.lg-compact .lg-pv,
 .wb-livegame.lg-compact .lg-status { display: none; }
 .wb-livegame .lg-board {
-  flex: 1 1 auto; min-height: 0;
+  flex: 0 0 auto;
+  align-self: center;
   display: flex; align-items: center; justify-content: center;
   overflow: hidden;
 }
 .wb-livegame .lg-eval {
   display: flex; gap: 8px; align-items: baseline;
   font-family: var(--wa-font-family-code); font-size: 13px;
+  min-height: 24px; flex-shrink: 0;
 }
 .wb-livegame .lg-eval-score { color: var(--accent); font-weight: 500; }
 .wb-livegame .lg-pv {
   font-family: var(--wa-font-family-code); font-size: 11px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  min-height: 16px; flex-shrink: 0;
 }
 .wb-livegame .lg-status {
   font-size: 11px; text-align: right;
+  min-height: 16px; flex-shrink: 0;
 }
 
 /* Schedule: in-progress rows */

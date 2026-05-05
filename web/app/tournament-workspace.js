@@ -545,7 +545,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       unminimize(wb);
       const col = i % cols;
       const row = Math.floor(i / cols);
-      wb.resize(w, h).move(left + col * w, top + row * h);
+      // Clamp to per-window minimums so live-game layout stays usable.
+      // (WinBox doesn't expose its config min* on the instance — windows
+      // that need clamping stash svMinWidth / svMinHeight at creation.)
+      const ww = Math.max(w, wb.svMinWidth || 0);
+      const hh = Math.max(h, wb.svMinHeight || 0);
+      wb.resize(ww, hh).move(left + col * w, top + row * h);
     });
   }
 

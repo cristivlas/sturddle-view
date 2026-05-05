@@ -8,6 +8,9 @@ import { flashWindow } from "./wb-utils.js";
 
 const liveWindows = new Map(); // proxy_id -> WinBox instance
 
+// Row heights are duplicated as `min-height` on .wb-livegame .lg-eval /
+// .lg-pv / .lg-status in styles.css so empty rows still hold space
+// before pairing data arrives. Keep the two in sync.
 const LIVE_MIN_BOARD    = 200; // px — smallest usable board side
 const LIVE_CLOCK_H      = 36;  // px — one clock row (font 16px + padding)
 const LIVE_EVAL_H       = 24;  // px — eval row (font 13px)
@@ -99,27 +102,38 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
   });
   if (top > 0 && wb.y < top) wb.move(wb.x, top);
   if (left > 0 && wb.x < left) wb.move(left, wb.y);
+  // WinBox doesn't expose its config minwidth/minheight as instance fields;
+  // stash them so the workspace's tile() can clamp.
+  wb.svMinWidth = LIVE_MIN_WIDTH;
+  wb.svMinHeight = LIVE_MIN_HEIGHT;
   liveWindows.set(proxyId, wb);
   requestAnimationFrame(() => flashWindow(wb));
 
-  // Keep the board square and fitting the WinBox window on every resize.
-  // Constrain clock rows to the same width so they align with board edges.
+  // Compute target board size deterministically from the body's
+  // dimensions and the known fixed-row heights. Reading the board
+  // host's measured size during a resize creates a feedback loop with
+  // cm-chessboard's internal SVG sizing, which is what produced the
+  // narrow-board-after-restore bug.
+  //
+  // Fixed (non-board) rows:
+  //   3× pv (pv-top, pv-bottom, status share the .lg-pv font size)
+  //   2× eval, 2× clock
+  //   7× flex gap
+  // In compact mode (body.clientHeight < 280) the .lg-pv and
+  // .lg-status rows are display:none, so those drop out.
+  const FIXED_FULL = LIVE_PV_H * 3 + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 7;
+  const FIXED_COMPACT = LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 4;
+
   function constrainAndResize() {
-    // Read phase — clear overrides so natural sizes are measurable.
-    for (const el of [clockTopEl, boardHost, clockBottomEl]) {
-      el.style.width = "";
-      el.style.margin = "";
-    }
     const compact = body.clientHeight < 280;
-    const h = boardHost.clientHeight;
-    const w = boardHost.clientWidth;
-    // Write phase.
     body.classList.toggle("lg-compact", compact);
-    if (h > 0 && h < w) {
-      for (const el of [clockTopEl, boardHost, clockBottomEl]) {
-        el.style.width = `${h}px`;
-        el.style.margin = "0 auto";
-      }
+    const fixed = compact ? FIXED_COMPACT : FIXED_FULL;
+    const sz = Math.max(0, Math.min(body.clientHeight - fixed, body.clientWidth));
+    boardHost.style.width = `${sz}px`;
+    boardHost.style.height = `${sz}px`;
+    for (const el of [clockTopEl, clockBottomEl]) {
+      el.style.width = `${sz}px`;
+      el.style.margin = "0 auto";
     }
     board.forceResize();
   }
