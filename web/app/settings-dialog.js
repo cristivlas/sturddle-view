@@ -189,6 +189,29 @@ export async function openSettingsDialog({ api, initialTab }) {
       humanSideLabel.textContent = "Human plays as";
       humanSideRow.append(humanSideLabel, humanSide);
 
+      const evalPov = document.createElement("wa-select");
+      evalPov.size = "small";
+      evalPov.setAttribute("distance", "4");
+      evalPov.value = initial.play_eval_pov ?? "white";
+      for (const [val, label] of [
+        ["white", "White's POV"],
+        ["engine", "Engine's POV (raw UCI)"],
+        ["human", "Human's POV"],
+      ]) {
+        const opt = document.createElement("wa-option");
+        opt.value = val;
+        opt.textContent = label;
+        evalPov.append(opt);
+      }
+      evalPov.addEventListener("change", () => {
+        putSettings({ play_eval_pov: evalPov.value });
+      });
+      const evalPovRow = document.createElement("div");
+      evalPovRow.className = "settings-row";
+      const evalPovLabel = document.createElement("label");
+      evalPovLabel.textContent = "Eval display";
+      evalPovRow.append(evalPovLabel, evalPov);
+
       const allowTakeback = document.createElement("wa-switch");
       allowTakeback.size = "small";
       allowTakeback.checked = initial.allow_takeback !== false;
@@ -292,7 +315,7 @@ export async function openSettingsDialog({ api, initialTab }) {
       });
       boardStyleRow.append(boardStyleLabel, boardStyleSelect, previewWrap);
 
-      playPanel.append(tcInitialRow, tcIncrementRow, humanSideRow, takebackRow, boardStyleRow);
+      playPanel.append(tcInitialRow, tcIncrementRow, humanSideRow, evalPovRow, takebackRow, boardStyleRow);
 
       // Path-row helper used by Common + Tournament tabs.
       // Layout: label on top, [path-field][Browse][Clear] on a row underneath.

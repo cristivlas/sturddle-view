@@ -31,6 +31,7 @@ PERSISTED_FIELDS = (
     "human_side",
     "allow_takeback",
     "board_style",
+    "play_eval_pov",
     "tournament_fastchess_path",
     "tournament_root",
     "tournament_default_template",
@@ -67,6 +68,9 @@ class Settings(BaseSettings):
     human_side: str = "white"
     allow_takeback: bool = True
     board_style: str = "black-and-white"
+    # HVE eval display POV: "white" (default, status quo), "engine"
+    # (raw UCI — engine's POV), or "human" (flipped to human's color).
+    play_eval_pov: str = "white"
 
     # Tournament subsystem settings. None = use platform default / not configured.
     tournament_fastchess_path: str | None = None

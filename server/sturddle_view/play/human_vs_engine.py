@@ -33,7 +33,10 @@ class TimeControl:
     increment_seconds: float = 0.0
 
 
-def _serialize_info(info: chess.engine.InfoDict, board: chess.Board) -> dict:
+def _serialize_info(
+    info: chess.engine.InfoDict, board: chess.Board,
+    eval_pov: chess.Color = chess.WHITE,
+) -> dict:
     out: dict = {}
     if "depth" in info:
         out["depth"] = info["depth"]
@@ -51,7 +54,7 @@ def _serialize_info(info: chess.engine.InfoDict, board: chess.Board) -> dict:
         out["time"] = info["time"]
     score = info.get("score")
     if score is not None:
-        pov = score.white()
+        pov = score.pov(eval_pov)
         if pov.is_mate():
             out["score"] = {"mate": pov.mate()}
         else:
@@ -234,6 +237,15 @@ class HumanVsEngine:
             except chess.engine.EngineError:
                 log.exception("engine refused options %s", accepted)
         return engine
+
+    def _eval_pov(self) -> chess.Color:
+        """Resolve play_eval_pov setting → chess.Color for serialization."""
+        mode = getattr(self._settings, "play_eval_pov", "white") if self._settings else "white"
+        if mode == "human":
+            return chess.WHITE if self._human_white else chess.BLACK
+        if mode == "engine":
+            return chess.BLACK if self._human_white else chess.WHITE
+        return chess.WHITE
 
     def _global_engine_defaults(self) -> dict:
         """UCI-option subset of the global engine defaults from settings.
@@ -1063,7 +1075,7 @@ class HumanVsEngine:
                             Event(
                                 kind="engine_info",
                                 game_id=game_id,
-                                payload=_serialize_info(info, board),
+                                payload=_serialize_info(info, board, self._eval_pov()),
                             )
                         )
                 result = analysis.wait()  # returns BestMove
@@ -1131,7 +1143,7 @@ class HumanVsEngine:
                             Event(
                                 kind="engine_info",
                                 game_id=game_id,
-                                payload=_serialize_info(info, board),
+                                payload=_serialize_info(info, board, self._eval_pov()),
                             )
                         )
         except chess.engine.EngineTerminatedError:

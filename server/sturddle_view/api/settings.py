@@ -10,6 +10,7 @@ from ..auth import require_token
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_token)])
 
 _VALID_SIDES = {"white", "black", "random"}
+_VALID_EVAL_POV = {"white", "engine", "human"}
 _VALID_BOARD_STYLES = {
     "classic", "classic-staunty",
     "green", "green-staunty",
@@ -32,6 +33,7 @@ def _serialize(s) -> dict:
         "human_side": s.human_side,
         "allow_takeback": s.allow_takeback,
         "board_style": s.board_style,
+        "play_eval_pov": s.play_eval_pov,
         "engine_default_threads": s.engine_default_threads,
         "engine_default_analysis_threads": s.engine_default_analysis_threads,
         "engine_default_hash_mb": s.engine_default_hash_mb,
@@ -133,6 +135,15 @@ def update_settings(payload: dict, request: Request) -> dict:
                 detail=f"board_style must be one of {sorted(_VALID_BOARD_STYLES)}",
             )
         s.board_style = style
+
+    if "play_eval_pov" in payload:
+        pov = payload["play_eval_pov"]
+        if pov not in _VALID_EVAL_POV:
+            raise HTTPException(
+                status_code=400,
+                detail=f"play_eval_pov must be one of {sorted(_VALID_EVAL_POV)}",
+            )
+        s.play_eval_pov = pov
 
     for key, min_v in (
         ("engine_default_threads", 1),
