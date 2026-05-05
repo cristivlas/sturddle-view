@@ -9,6 +9,7 @@
 
 import { apiErrorDetail, confirm, reportError, showDialog, toast } from "./dialogs.js";
 import { openSettingsDialog } from "./settings-dialog.js";
+import { EVT, KIND, STATUS } from "./tournament-events.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { getActiveWorkspace, openTournamentWorkspace } from "./tournament-workspace.js";
 
@@ -206,7 +207,7 @@ export function mountTournaments({ container, api, events, log, token }) {
   function syncMenubarProgress(sorted) {
     const strip = container.querySelector(".tournaments-menubar-progress");
     if (!strip) return;
-    const running = sorted.find((t) => t.status === "running");
+    const running = sorted.find((t) => t.status === STATUS.RUNNING);
     if (!running) {
       strip.style.width = "0%";
       return;
@@ -239,7 +240,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     li.dataset.id = t.id;
 
     const status = t.status;
-    const isRunning = status === "running";
+    const isRunning = status === STATUS.RUNNING;
     const played = t.standings?.games ?? 0;
     const total = totalGames(t);
     const pct = total ? Math.min(100, Math.round((played / total) * 100)) : 0;
@@ -307,10 +308,10 @@ export function mountTournaments({ container, api, events, log, token }) {
     const isActive = t.id === activeId;
     const anotherRunning = activeId !== null && !isActive;
     const status = t.status;
-    const isResume = status === "stopped" || status === "failed";
+    const isResume = status === STATUS.STOPPED || status === STATUS.FAILED;
 
     // !!startingId: only one tournament may start at a time (by design).
-    ribbonStartBtn.disabled = isActive || anotherRunning || status === "running" || status === "done" || !!startingId;
+    ribbonStartBtn.disabled = isActive || anotherRunning || status === STATUS.RUNNING || status === STATUS.DONE || !!startingId;
     ribbonStopBtn.disabled = !isActive;
     ribbonRemoveBtn.disabled = isActive;
     ribbonWorkspaceBtn.disabled = !!getActiveWorkspace();
@@ -500,7 +501,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     };
 
     row("ID", t.id);
-    row("Status", t.status === "stopped" ? "paused" : t.status);
+    row("Status", t.status === STATUS.STOPPED ? "paused" : t.status);
     if (t.last_error) {
       const tail = (t.last_error.stderr_tail || []).slice(-10).join("\n");
       const pre = document.createElement("pre");
@@ -862,12 +863,12 @@ export function mountTournaments({ container, api, events, log, token }) {
   // ---- Live updates from WS ----------------------------------------------
 
   const offEvents = events.on((evt) => {
-    if (evt.kind === "tournament_status" || evt.kind === "tournament_update") {
+    if (evt.kind === EVT.STATUS || evt.kind === EVT.UPDATE) {
       // Surface runner crashes as a toast — the user may not have a
       // workspace open and would otherwise see the row silently flip
       // to a terminal state with no explanation.
       const inner = evt.payload?.kind;
-      if (inner === "runner_crash") {
+      if (inner === KIND.RUNNER_CRASH) {
         const tid = evt.payload?.tournament_id;
         const t = tournaments.find((x) => x.id === tid);
         const name = t ? t.name : "Tournament";

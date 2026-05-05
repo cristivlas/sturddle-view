@@ -12,6 +12,7 @@
 //   Periodic GET while running         → reconcile standings.
 
 import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, openLiveGameWindow } from "./tournament-live-game.js";
+import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { escapeHtml, flashWindow } from "./wb-utils.js";
 
 const STORAGE_KEY = "sturddle:tournament-workspace-layout";
@@ -296,21 +297,21 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const ts = e.ts || "";
       const inner = e.payload?.kind;
       // runner_log: surface the actual fastchess stdout/stderr line.
-      if (inner === "runner_log" && e.payload?.line) {
+      if (inner === KIND.RUNNER_LOG && e.payload?.line) {
         const stream = e.payload.stream === "err" ? " err" : "";
         return `<li><span class="wb-log-ts">${ts}</span>` +
           `<span class="wb-log-runner${stream}">${escapeHtml(e.payload.line)}</span></li>`;
       }
       // Muted detail parts appended after the primary kind label.
       const parts = [];
-      if (e.kind === "tournament_status" && e.payload?.status)
+      if (e.kind === EVT.STATUS && e.payload?.status)
         parts.push(e.payload.status);
-      else if (inner === "game_finished" && e.payload?.result)
+      else if (inner === KIND.GAME_FINISHED && e.payload?.result)
         parts.push(inner, e.payload.result);
-      else if (inner === "proxy_started") {
+      else if (inner === KIND.PROXY_STARTED) {
         parts.push(inner);
         if (e.payload?.engine_name) parts.push(e.payload.engine_name);
-      } else if (inner === "runner_crash") {
+      } else if (inner === KIND.RUNNER_CRASH) {
         parts.push(inner);
         if (e.payload?.rc != null) parts.push(`rc=${e.payload.rc}`);
       } else if (inner) {
@@ -365,7 +366,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   function pushEvent(evt) {
     if (!evt) return;
-    if (!evt.kind?.startsWith("tournament_")) return;
+    if (!evt.kind?.startsWith(EVT_PREFIX)) return;
     // Only events for *our* tournament — the orchestrator stamps
     // tournament_id into payloads on the server side.
     const tid = evt.payload?.tournament_id;
@@ -375,36 +376,36 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
     // Track active proxies for Schedule rows.
     const inner = evt.payload?.kind;
-    if (inner === "proxy_started") {
+    if (inner === KIND.PROXY_STARTED) {
       const pid = evt.payload.proxy_id;
       if (pid) {
         activeProxies.set(pid, {
           engineName: evt.payload.engine_name || null,
         });
       }
-    } else if (inner === "proxy_ended") {
+    } else if (inner === KIND.PROXY_ENDED) {
       const pid = evt.payload.proxy_id;
       if (pid) activeProxies.delete(pid);
     } else if (
-      evt.kind === "tournament_status" ||
-      inner === "done" || inner === "stopped"
+      evt.kind === EVT.STATUS ||
+      inner === KIND.DONE || inner === KIND.STOPPED
     ) {
       activeProxies.clear();
     }
 
     if (added) renderEventLog();
-    if (inner === "proxy_started" || inner === "proxy_ended" ||
-        inner === "game_finished" || evt.kind === "tournament_status" ||
-        inner === "done" || inner === "stopped")
+    if (inner === KIND.PROXY_STARTED || inner === KIND.PROXY_ENDED ||
+        inner === KIND.GAME_FINISHED || evt.kind === EVT.STATUS ||
+        inner === KIND.DONE || inner === KIND.STOPPED)
       renderSchedule();
 
     // Status changes and game finishes are good triggers to refresh
     // standings authoritatively.
     if (
-      evt.kind === "tournament_status" ||
-      inner === "game_finished" ||
-      inner === "done" ||
-      inner === "stopped"
+      evt.kind === EVT.STATUS ||
+      inner === KIND.GAME_FINISHED ||
+      inner === KIND.DONE ||
+      inner === KIND.STOPPED
     ) {
       refresh();
     }
@@ -413,8 +414,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     // its live windows). User opens a new workspace explicitly when
     // starting another tournament.
     if (
-      evt.kind === "tournament_status" &&
-      ["stopped", "done", "failed"].includes(evt.payload?.status)
+      evt.kind === EVT.STATUS &&
+      [STATUS.STOPPED, STATUS.DONE, STATUS.FAILED].includes(evt.payload?.status)
     ) {
       close();
     }
@@ -426,7 +427,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
     if (pollTimer == null) {
       pollTimer = window.setInterval(() => {
-        if (detail?.status === "running") refresh();
+        if (detail?.status === STATUS.RUNNING) refresh();
       }, POLL_INTERVAL_MS);
     }
   }
@@ -440,7 +441,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const res = await api("GET", `/api/tournaments/${tournament.id}/events`);
       let added = false;
       for (const e of (res.events || [])) {
-        if (!e.kind?.startsWith("tournament_")) continue;
+        if (!e.kind?.startsWith(EVT_PREFIX)) continue;
         if (addLogEntry(e)) added = true;
       }
       if (added) renderEventLog();
@@ -454,7 +455,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // server-restart catch-up windows and PGN-only changes (e.g. the
   // server's pgn_stats picks up games we missed via WS).
   pollTimer = window.setInterval(() => {
-    if (detail?.status === "running") refresh();
+    if (detail?.status === STATUS.RUNNING) refresh();
   }, POLL_INTERVAL_MS);
 
   refresh();
