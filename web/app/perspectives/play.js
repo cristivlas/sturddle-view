@@ -465,11 +465,16 @@ export const playPerspective = {
       }
     };
 
+    let takebackPending = false;
     const onTakeback = async () => {
+      if (takebackPending) return;
+      takebackPending = true;
       try {
         await ctx.api("POST", "/game/takeback", {});
       } catch (e) {
         reportError(ctx, "Take-back failed", e);
+      } finally {
+        takebackPending = false;
       }
     };
 
