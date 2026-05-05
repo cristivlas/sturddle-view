@@ -10,13 +10,14 @@ const liveWindows = new Map(); // proxy_id -> WinBox instance
 
 const LIVE_MIN_BOARD = 120; // px — smallest usable board side
 const LIVE_CLOCK_H   = 36;  // px — one clock row (font 16px + padding)
-const LIVE_EVAL_H    = 24;  // px — eval + PV rows collapsed
+const LIVE_EVAL_H    = 24;  // px — eval + PV rows collapsed (per side)
 const LIVE_WINBOX_TITLE = 35; // px — WinBox title bar
 const LIVE_GAP       = 6;   // px — flex gap between sections
 
 const LIVE_MIN_WIDTH  = LIVE_MIN_BOARD;
+// Two eval/PV blocks: one above the board (opponent), one below (own).
 const LIVE_MIN_HEIGHT = LIVE_WINBOX_TITLE + LIVE_CLOCK_H * 2 + LIVE_MIN_BOARD
-                      + LIVE_EVAL_H + LIVE_GAP * 3;
+                      + LIVE_EVAL_H * 2 + LIVE_GAP * 4;
 
 
 export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, boardStyle = null }) {
@@ -33,6 +34,12 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
   const body = document.createElement("div");
   body.className = "wb-livegame";
   body.innerHTML = `
+    <div class="lg-pv lg-pv-top muted"></div>
+    <div class="lg-eval lg-eval-top">
+      <span class="lg-eval-score lg-eval-score-top"></span>
+      <span class="lg-eval-depth lg-eval-depth-top muted"></span>
+      <span class="lg-eval-tbhits lg-eval-tbhits-top muted"></span>
+    </div>
     <div class="clock-row lg-clock-top">
       <span class="clock-name lg-top-name">—</span>
       <span class="clock-time lg-top-time">—</span>
@@ -42,12 +49,12 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
       <span class="clock-name lg-bottom-name">—</span>
       <span class="clock-time lg-bottom-time">—</span>
     </div>
-    <div class="lg-eval">
-      <span class="lg-eval-score">—</span>
-      <span class="lg-eval-depth muted"></span>
-      <span class="lg-eval-tbhits muted"></span>
+    <div class="lg-eval lg-eval-bottom">
+      <span class="lg-eval-score lg-eval-score-bottom"></span>
+      <span class="lg-eval-depth lg-eval-depth-bottom muted"></span>
+      <span class="lg-eval-tbhits lg-eval-tbhits-bottom muted"></span>
     </div>
-    <div class="lg-pv muted"></div>
+    <div class="lg-pv lg-pv-bottom muted"></div>
     <div class="lg-status muted">connecting…</div>
   `;
 
@@ -58,10 +65,14 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
     onMove: () => {}, // read-only — moves come from the server.
   });
 
-  const evalScoreEl = body.querySelector(".lg-eval-score");
-  const evalDepthEl = body.querySelector(".lg-eval-depth");
-  const evalTbhitsEl = body.querySelector(".lg-eval-tbhits");
-  const pvEl = body.querySelector(".lg-pv");
+  const evalScoreEl = body.querySelector(".lg-eval-score-bottom");
+  const evalDepthEl = body.querySelector(".lg-eval-depth-bottom");
+  const evalTbhitsEl = body.querySelector(".lg-eval-tbhits-bottom");
+  const pvEl = body.querySelector(".lg-pv-bottom");
+  const oppEvalScoreEl = body.querySelector(".lg-eval-score-top");
+  const oppEvalDepthEl = body.querySelector(".lg-eval-depth-top");
+  const oppEvalTbhitsEl = body.querySelector(".lg-eval-tbhits-top");
+  const oppPvEl = body.querySelector(".lg-pv-top");
   const clockTopEl = body.querySelector(".lg-clock-top");
   const clockBottomEl = body.querySelector(".lg-clock-bottom");
   const topNameEl = body.querySelector(".lg-top-name");
@@ -279,12 +290,33 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
   }
 
   function handlePairedParsed(p, thinkingSide) {
-    // Paired info: from the opposite-color engine. Only ``info`` is
-    // forwarded; render its first-PV move as the opponent arrow.
-    if (p.kind !== "info" || !p.pv || !p.pv.length) return;
+    // Paired info: opposite-color engine's thinking. Mirror the same
+    // eval/PV/arrow rendering as own-side, into the top (opponent) row.
+    if (p.kind !== "info") return;
     if (engineColor && thinkingSide === engineColor) return;
-    const m = p.pv[0];
-    if (m && m.length >= 4) board.setOpponentArrow(m.slice(0, 2), m.slice(2, 4));
+    renderOpponentEval(p);
+    if (p.pv && p.pv.length) {
+      const m = p.pv[0];
+      if (m && m.length >= 4) board.setOpponentArrow(m.slice(0, 2), m.slice(2, 4));
+    }
+  }
+
+  function renderOpponentEval(p) {
+    let scoreText = "—";
+    if (p.score_cp != null) {
+      const cp = p.score_cp;
+      scoreText = (cp >= 0 ? "+" : "") + (cp / 100).toFixed(2);
+    } else if (p.score_mate != null) {
+      scoreText = `M${p.score_mate}`;
+    }
+    oppEvalScoreEl.textContent = scoreText;
+    oppEvalDepthEl.textContent = p.depth != null
+      ? (p.seldepth != null ? `d${p.depth}/${p.seldepth}` : `d${p.depth}`)
+      : "";
+    oppEvalTbhitsEl.textContent = p.tbhits ? `tb ${p.tbhits}` : "";
+    if (p.pv && p.pv.length) {
+      oppPvEl.textContent = p.pv.slice(0, 12).join(" ");
+    }
   }
 
   function renderEval(p) {

@@ -186,8 +186,8 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, brows
 
                 await page.wait_for_function(
                     """() => {
-                        const e = document.querySelector('.wb-livegame .lg-eval-score');
-                        return e && e.textContent !== '—' && e.textContent !== '';
+                        const e = document.querySelector('.wb-livegame .lg-eval-score-bottom');
+                        return e && e.textContent !== '';
                     }""",
                     timeout=5000,
                 )
