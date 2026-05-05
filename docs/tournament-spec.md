@@ -176,11 +176,33 @@ Why:
 - Swapping to a different runner later (cutechess, custom) does not
   affect the math.
 
-PGN parsing uses `python-chess` (already a project dep). Standard
-result tags (`1-0`, `0-1`, `1/2-1/2`) drive game tallies. SPRT requires
+PGN parsing is a header-only line scan (regex over `[White ...]`,
+`[Black ...]`, `[Result ...]`, `[Round ...]`) — `chess.pgn.read_game`'s
+full move-tree parse is ~50× slower on multi-MB PGNs and we never
+consume the moves for stats. Results are cached per-path keyed by
+`(mtime, size)`; PGN is append-only so this is sound. Standard result
+tags (`1-0`, `0-1`, `1/2-1/2`) drive game tallies. SPRT requires
 pentanomial scoring (paired games); the formula is standard but must be
-implemented in the wrapper, not delegated. Approximate effort: ~40
-lines, plus tests against known fixtures.
+implemented in the wrapper, not delegated.
+
+### Open: Elo display convention
+
+Current behavior: `compute_standings` stores `elo_from_score(score_pct)`
+on **each** engine independently. For a 2-engine tournament with
+A scoring 52%, that produces `A.elo = +14, B.elo = -14`. The leader's
+number matches `ordo -a 0 -A B`'s anchored output (which is the
+*rating gap*). Storing the mirror on the trailer gives the impression
+of a 28-Elo spread when the actual head-to-head gap is 14.
+
+This is a presentation question, not a math bug. Options:
+
+1. Show Elo only on the leader (trailer's `elo` = `None` or 0). Mirrors
+   ordo exactly.
+2. Halve the per-engine value so the displayed pair sums to the gap.
+3. Keep current and disambiguate in the UI.
+
+Deferred — touching this changes user-visible numbers and existing
+tournaments' archived standings.
 
 ---
 
