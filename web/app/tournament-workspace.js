@@ -259,6 +259,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         openLiveGameWindow({
           proxyId: pid,
           label: `${tournament.name} — ${engineLabel}`,
+          engineName: engineLabel,
           token,
           top,
           left,

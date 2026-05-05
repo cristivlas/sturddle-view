@@ -502,6 +502,7 @@ class Orchestrator:
                     "line": line,
                     "paired": True,
                     "thinking_side": thinking_side,
+                    "engine_name": self._proxy_engine_names.get(proxy_id),
                 }
                 _fanout(paired_subs, payload)
 

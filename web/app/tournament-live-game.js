@@ -20,7 +20,7 @@ const LIVE_MIN_HEIGHT = LIVE_WINBOX_TITLE + LIVE_CLOCK_H * 2 + LIVE_MIN_BOARD
                       + LIVE_EVAL_H * 2 + LIVE_GAP * 4;
 
 
-export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, boardStyle = null }) {
+export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0, left = 0, boardStyle = null }) {
   // If a window for this proxy is already open, focus it instead of
   // opening a duplicate.
   const existing = liveWindows.get(proxyId);
@@ -126,6 +126,7 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
 
   let ws = null;
   let engineColor = null;
+  let opponentName = null;
   let timerInterval = null;
   let activeDeadline = 0;
   let currentFen = null;
@@ -184,6 +185,7 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
     const parsed = msg.parsed;
     if (!parsed) return;
     if (msg.paired) {
+      if (msg.engine_name) setOpponentName(msg.engine_name);
       handlePairedParsed(parsed, msg.thinking_side);
       return;
     }
@@ -192,9 +194,16 @@ export function openLiveGameWindow({ proxyId, label, token, top = 0, left = 0, b
 
   function setEngineColor(color) {
     engineColor = color;
-    const opp = color === "white" ? "Black" : "White";
-    bottomNameEl.textContent = color === "white" ? "White" : "Black";
-    topNameEl.textContent = opp;
+    bottomNameEl.textContent = engineName || (color === "white" ? "White" : "Black");
+    if (!opponentName) {
+      topNameEl.textContent = color === "white" ? "Black" : "White";
+    }
+  }
+
+  function setOpponentName(name) {
+    if (!name || name === opponentName) return;
+    opponentName = name;
+    topNameEl.textContent = name;
   }
 
   function updateClocks(wtime, btime) {
