@@ -259,7 +259,7 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 }
 .import-pos-status.ok { color: var(--status-ok-fg); background: var(--status-ok-bg); }
 .import-pos-status.err { color: var(--status-err-fg); background: var(--status-err-bg); }
-.import-pos-status.muted { padding: 0; background: transparent; color: var(--muted); }
+.import-pos-status.muted { background: transparent; color: var(--muted); }
 .import-pos-playas { display: flex; align-items: center; gap: 12px; }
 .import-pos-playas-label { font-size: 0.9rem; color: var(--wa-color-neutral-700, #555); }
 
