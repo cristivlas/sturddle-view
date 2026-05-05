@@ -146,6 +146,47 @@ def test_parse_pgn_no_clk_annotations_returns_none():
     assert p.final_black_time is None
 
 
+def test_parse_pgn_emt_fallback_derives_clocks_from_timecontrol():
+    # %emt = elapsed move time. With a TimeControl header we can derive
+    # remaining clocks via initial - elapsed + increment.
+    pgn = (
+        '[TimeControl "300+2"]\n\n'
+        "1. e4 {[%emt 0:00:05]} c5 {[%emt 0:00:10]} "
+        "2. Nf3 {[%emt 0:00:08]} *"
+    )
+    p = parse_pgn(pgn)
+    assert p.clock_history is not None
+    assert len(p.clock_history) == 3
+    assert p.clock_history[0] == (300.0, 300.0)
+    # White spent 5s, +2 inc → 297. Black hasn't moved yet → still 300.
+    assert p.clock_history[1] == (297.0, 300.0)
+    # Black spent 10s, +2 → 292. White unchanged at 297.
+    assert p.clock_history[2] == (297.0, 292.0)
+    # White's Nf3: spent 8s, +2 → 291.
+    assert p.final_white_time == 291.0
+    assert p.final_black_time == 292.0
+
+
+def test_parse_pgn_emt_without_timecontrol_skipped():
+    # No TimeControl header → can't derive remaining clocks; clock_history
+    # stays None rather than fabricating a TC.
+    pgn = "1. e4 {[%emt 0:00:05]} c5 {[%emt 0:00:10]} *"
+    p = parse_pgn(pgn)
+    assert p.clock_history is None
+
+
+def test_parse_pgn_clk_wins_when_both_present():
+    # If both annotations are present, prefer %clk (authoritative state).
+    pgn = (
+        '[TimeControl "300+2"]\n\n'
+        "1. e4 {[%clk 0:04:55][%emt 0:00:99]} *"
+    )
+    p = parse_pgn(pgn)
+    assert p.clock_history is not None
+    # 4:55 = 295; the absurd %emt value is ignored.
+    assert p.final_white_time == 295.0
+
+
 def test_parse_pgn_with_fen_header_preserves_start_fen():
     # Non-startpos FEN header → start_fen is the header value (lookup suppressed).
     fen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"

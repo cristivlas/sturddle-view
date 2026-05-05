@@ -38,6 +38,31 @@ class PositionImportError(ValueError):
     pass
 
 
+def _parse_pgn_timecontrol(tc: str | None) -> tuple[float | None, float]:
+    """Best-effort parser for the PGN [TimeControl] header.
+
+    Recognized: ``"sec"``, ``"sec+inc"``, ``"moves/sec"``, ``"moves/sec+inc"``.
+    Returns (initial_seconds, increment_seconds); initial may be None when
+    the header is missing/unrecognized. Increment defaults to 0.
+
+    Multi-stage controls (``"40/7200:1800"``) collapse to the first stage.
+    """
+    if not tc or tc.strip() in ("?", "-"):
+        return None, 0.0
+    first = tc.split(":", 1)[0].strip()
+    head, _, inc_s = first.partition("+")
+    seconds_part = head.split("/", 1)[-1].strip()
+    try:
+        initial = float(seconds_part)
+    except ValueError:
+        return None, 0.0
+    try:
+        increment = float(inc_s) if inc_s else 0.0
+    except ValueError:
+        increment = 0.0
+    return initial, increment
+
+
 def parse_fen(text: str) -> ImportedPosition:
     fen = text.strip()
     if not fen:
@@ -113,8 +138,10 @@ def parse_pgn(text: str) -> ImportedPosition:
         if (white != "?" or black != "?")
         else f"{side.capitalize()} to move (ply {board.ply()})"
     )
-    # Reconstruct (white, black) pre-move snapshots from [%clk] comments.
-    # Only emit a clock_history if at least one ply carries a clock.
+    # Reconstruct (white, black) pre-move snapshots. Prefer [%clk] (state)
+    # since it's authoritative; fall back to [%emt] (per-move elapsed) when
+    # only that is present, deriving remaining clocks via initial+increment
+    # from the [TimeControl] header.
     clk_values = [n.clock() for n in nodes]
     clock_history: list[tuple[float, float]] | None = None
     final_white = final_black = None
@@ -134,6 +161,27 @@ def parse_pgn(text: str) -> ImportedPosition:
                     last_b = after
             replay.push(node.move)
         final_white, final_black = last_w, last_b
+    else:
+        emt_values = [n.emt() for n in nodes]
+        tc_initial, tc_increment = _parse_pgn_timecontrol(headers.get("TimeControl"))
+        if any(v is not None for v in emt_values) and tc_initial is not None:
+            clock_history = []
+            replay = start_board.copy()
+            last_w = tc_initial
+            last_b = tc_initial
+            for i, node in enumerate(nodes):
+                mover_white = (replay.turn == chess.WHITE)
+                clock_history.append((last_w, last_b))
+                spent = emt_values[i]
+                if spent is not None:
+                    new_remaining = max(0.0, (last_w if mover_white else last_b)
+                                        - spent + tc_increment)
+                    if mover_white:
+                        last_w = new_remaining
+                    else:
+                        last_b = new_remaining
+                replay.push(node.move)
+            final_white, final_black = last_w, last_b
     return ImportedPosition(
         start_fen=start_fen_header if start_fen_header else None,
         moves_uci=moves_uci,
