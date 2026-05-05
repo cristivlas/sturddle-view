@@ -1474,6 +1474,12 @@ wa-dialog::part(body) {
 .wb-livegame .clock-row { padding: 5px 10px; }
 .wb-livegame .clock-row .clock-time { font-size: 16px; flex-shrink: 0; }
 .wb-livegame .clock-row .clock-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.wb-livegame .clock-row[data-color="white"].active { border-color: transparent; background: #e8e8e8; color: #111; }
+.wb-livegame .clock-row[data-color="white"].active .clock-name,
+.wb-livegame .clock-row[data-color="white"].active .clock-time { color: #111; }
+.wb-livegame .clock-row[data-color="black"].active { border-color: transparent; background: #111; color: #e8e8e8; }
+.wb-livegame .clock-row[data-color="black"].active .clock-name,
+.wb-livegame .clock-row[data-color="black"].active .clock-time { color: #e8e8e8; }
 .wb-livegame.lg-compact .lg-pv,
 .wb-livegame.lg-compact .lg-status { display: none; }
 .wb-livegame .lg-board {

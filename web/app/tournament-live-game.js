@@ -203,10 +203,11 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
 
   function setEngineColor(color) {
     engineColor = color;
+    const oppColor = color === "white" ? "black" : "white";
     bottomNameEl.textContent = engineName || (color === "white" ? "White" : "Black");
-    if (!opponentName) {
-      topNameEl.textContent = color === "white" ? "Black" : "White";
-    }
+    if (!opponentName) topNameEl.textContent = oppColor === "white" ? "White" : "Black";
+    clockBottomEl.dataset.color = color;
+    clockTopEl.dataset.color = oppColor;
   }
 
   function setOpponentName(name) {

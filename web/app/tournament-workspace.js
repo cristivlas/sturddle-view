@@ -194,7 +194,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           <td>${e.losses}</td>
           <td>${e.draws}</td>
           <td>${(e.score_pct * 100).toFixed(1)}%</td>
-          <td>${e.elo == null ? "—" : e.elo.toFixed(1) + (e.elo_margin_95 == null ? "" : ` ± ${e.elo_margin_95.toFixed(1)}`)}</td>
+          <td>${e.elo == null ? "—" : (e.elo >= 0 ? "+" : "") + e.elo.toFixed(1) + (e.elo_margin_95 == null ? "" : ` ± ${e.elo_margin_95.toFixed(1)}`)}</td>
         </tr>`)
       .join("");
     const sprtRow = sprt
