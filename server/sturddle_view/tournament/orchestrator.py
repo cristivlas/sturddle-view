@@ -509,10 +509,21 @@ class Orchestrator:
     def _pairing_register(self, proxy_id: str, fen: str, side: str) -> None:
         """Atomic transition — a proxy is in the map at most once."""
         self._pairing_unregister(proxy_id)
-        self._pairing_map.setdefault(fen, []).append((proxy_id, side))
+        bucket = self._pairing_map.setdefault(fen, [])
+        bucket.append((proxy_id, side))
         self._pairing_state[proxy_id] = (fen, side)
         if _DEBUG_PAIRING:
             self._pairing_assert_invariants()
+            # Buckets >2 are normal under concurrency: fastchess pairs
+            # share an opening book line, so both games sit at the same
+            # early FEN until they diverge. Logged for observability —
+            # if a bucket stays large past book depth that's interesting.
+            if len(bucket) > 2:
+                log.warning(
+                    "pairing: bucket >2 fen=%s entries=%s",
+                    fen,
+                    [(pid[:8], s) for pid, s in bucket],
+                )
 
     def _pairing_unregister(self, proxy_id: str) -> None:
         prev = self._pairing_state.pop(proxy_id, None)
