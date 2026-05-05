@@ -287,6 +287,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
     const list = logBody.querySelector(".wb-eventlog-list");
     if (!list) return;
+    const scroller = logBody.parentElement;
+    const atBottom = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
     list.innerHTML = eventLog.map((e) => {
       const ts = e.ts || "";
       const inner = e.payload?.kind;
@@ -296,22 +298,25 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         return `<li><span class="wb-log-ts">${ts}</span>` +
           `<span class="wb-log-runner${stream}">${escapeHtml(e.payload.line)}</span></li>`;
       }
-      // Muted secondary detail appended after the primary kind label.
-      let detail = "";
+      // Muted detail parts appended after the primary kind label.
+      const parts = [];
       if (e.kind === "tournament_status" && e.payload?.status)
-        detail = e.payload.status;
+        parts.push(e.payload.status);
       else if (inner === "game_finished" && e.payload?.result)
-        detail = e.payload.result;
-      else if (inner === "proxy_started" && e.payload?.engine_name)
-        detail = e.payload.engine_name;
-      else if (inner === "runner_crash" && e.payload?.rc != null)
-        detail = `rc=${e.payload.rc}`;
-      else if (inner)
-        detail = inner;
-      const detailHtml = detail ? ` <span class="wb-log-detail">${escapeHtml(detail)}</span>` : "";
+        parts.push(inner, e.payload.result);
+      else if (inner === "proxy_started") {
+        parts.push(inner);
+        if (e.payload?.engine_name) parts.push(e.payload.engine_name);
+      } else if (inner === "runner_crash") {
+        parts.push(inner);
+        if (e.payload?.rc != null) parts.push(`rc=${e.payload.rc}`);
+      } else if (inner) {
+        parts.push(inner);
+      }
+      const detailHtml = parts.map(p => ` <span class="wb-log-detail">${escapeHtml(p)}</span>`).join("");
       return `<li><span class="wb-log-ts">${ts}</span> <span class="wb-log-kind">${escapeHtml(e.kind)}</span>${detailHtml}</li>`;
     }).join("");
-    list.scrollTop = list.scrollHeight;
+    if (atBottom && scroller) scroller.scrollTop = scroller.scrollHeight;
   }
 
   // ---- Data refresh -----------------------------------------------------
@@ -345,9 +350,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       seenSeqs.add(seq);
     }
     const tsRaw = evt.payload?._ts;
-    const ts = tsRaw
-      ? tsRaw.substring(11, 19)
-      : new Date().toISOString().substring(11, 19);
+    const ts = (tsRaw ? new Date(tsRaw) : new Date())
+      .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
     eventLog.push({ ts, kind: evt.kind, payload: evt.payload, _seq: seq });
     // Keep ordered by seq so backfill items slot in before any live
     // events that arrived during the REST round-trip.
