@@ -393,7 +393,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
 
     if (added) renderEventLog();
-    renderSchedule();
+    if (inner === "proxy_started" || inner === "proxy_ended" ||
+        inner === "game_finished" || evt.kind === "tournament_status" ||
+        inner === "done" || inner === "stopped")
+      renderSchedule();
 
     // Status changes and game finishes are good triggers to refresh
     // standings authoritatively.

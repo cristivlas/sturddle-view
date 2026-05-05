@@ -105,13 +105,16 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
   // Keep the board square and fitting the WinBox window on every resize.
   // Constrain clock rows to the same width so they align with board edges.
   function constrainAndResize() {
+    // Read phase — clear overrides so natural sizes are measurable.
     for (const el of [clockTopEl, boardHost, clockBottomEl]) {
       el.style.width = "";
       el.style.margin = "";
     }
-    body.classList.toggle("lg-compact", body.clientHeight < 280);
+    const compact = body.clientHeight < 280;
     const h = boardHost.clientHeight;
     const w = boardHost.clientWidth;
+    // Write phase.
+    body.classList.toggle("lg-compact", compact);
     if (h > 0 && h < w) {
       for (const el of [clockTopEl, boardHost, clockBottomEl]) {
         el.style.width = `${h}px`;
