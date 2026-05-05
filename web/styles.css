@@ -1088,7 +1088,8 @@ wa-dialog wa-tab-panel > * + * { margin-top: 10px; }
 }
 .settings-tournament-path-inner .path-field { flex: 1; min-width: 0; }
 wa-dialog wa-tab-panel > .settings-tournament-tpl-mount { margin-top: 24px; }
-.settings-row-actions { display: flex; gap: 4px; }
+.settings-row-actions { display: flex; gap: 4px; width: 12em; flex-shrink: 0; }
+.settings-row-actions > * { flex: 1; min-width: 0; }
 .settings-row-hint { font-size: 11px; }
 .settings-section-heading {
   font-size: 12px; color: var(--muted); margin: 12px 0 4px 0;
@@ -1356,12 +1357,12 @@ wa-dialog::part(body) {
 .tournament-template-form .ttf-grid {
   display: grid;
   /* TC + numeric inputs are narrow; tournament type (and seeds) get the slack. */
-  grid-template-columns: 7em 8em 6em minmax(14em, 2fr) minmax(0, 1fr);
+  grid-template-columns: 7em 8em minmax(6em, 1fr) 12em minmax(0, 1fr);
   gap: 8px;
   align-items: end;
 }
 .tournament-template-form .ttf-grid.ttf-grid--no-seeds {
-  grid-template-columns: 7em 8em 6em minmax(14em, 1fr);
+  grid-template-columns: 7em 8em minmax(6em, 1fr) 12em;
 }
 .tournament-template-form .ttf-grid > * { min-width: 0; }
 .tournament-template-form .ttf-switch-row {
