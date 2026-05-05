@@ -560,18 +560,17 @@ class Orchestrator:
         return out
 
     def _pairing_assert_invariants(self) -> None:
-        """SV_DEBUG_PAIRING-gated. proxy unique across the map; color
-        unique within a bucket."""
+        """SV_DEBUG_PAIRING-gated. Only proxy-uniqueness is invariant:
+        with concurrency > 1 fastchess runs multiple game-pairs and
+        two same-color proxies from different pairs can legitimately
+        share a FEN. Logs + continues rather than crashing ingest."""
         seen: set[str] = set()
-        for fen, bucket in self._pairing_map.items():
-            colors_in_bucket: set[str] = set()
-            for pid, color in bucket:
-                assert pid not in seen, f"proxy {pid} registered at multiple FENs"
+        for _fen, bucket in self._pairing_map.items():
+            for pid, _color in bucket:
+                if pid in seen:
+                    log.error("pairing invariant: proxy %s registered at multiple FENs; map=%s", pid, self._pairing_map)
+                    return
                 seen.add(pid)
-                assert color not in colors_in_bucket, (
-                    f"two proxies with color={color} share fen={fen}"
-                )
-                colors_in_bucket.add(color)
 
     async def proxy_session_started(self, proxy_id: str, engine_name: str) -> None:
         """Called when a proxy reports it has started up. Records the
