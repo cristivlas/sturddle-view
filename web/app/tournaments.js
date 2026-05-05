@@ -111,6 +111,16 @@ export function mountTournaments({ container, api, events, log, token }) {
   let selectedId = null;
   let settings = null; // { fastchess_path, tournaments_root, default_template, fastchess_detected }
 
+  // Wraps an async function so concurrent calls are dropped until it resolves.
+  function guard(fn) {
+    let inflight = false;
+    return async (...args) => {
+      if (inflight) return;
+      inflight = true;
+      try { await fn(...args); } finally { inflight = false; }
+    };
+  }
+
   // ---- API helpers --------------------------------------------------------
 
   async function loadSettings() {
@@ -269,7 +279,7 @@ export function mountTournaments({ container, api, events, log, token }) {
       li.classList.add("selected");
       syncRibbon();
     });
-    li.addEventListener("dblclick", () => openInfoDialog(t));
+    li.addEventListener("dblclick", () => openInfoGuarded(t));
 
     return li;
   }
@@ -336,9 +346,13 @@ export function mountTournaments({ container, api, events, log, token }) {
     syncRibbon();
   });
 
+  const startOneGuarded  = guard(startOne);
+  const removeOneGuarded = guard(removeOne);
+  const openInfoGuarded  = guard(openInfoDialog);
+
   ribbonStartBtn.addEventListener("click", () => {
     const t = selectedTournament();
-    if (t && !ribbonStartBtn.disabled) startOne(t);
+    if (t && !ribbonStartBtn.disabled) startOneGuarded(t);
   });
   ribbonStopBtn.addEventListener("click", async () => {
     const t = selectedTournament();
@@ -353,11 +367,11 @@ export function mountTournaments({ container, api, events, log, token }) {
   });
   ribbonInfoBtn.addEventListener("click", () => {
     const t = selectedTournament();
-    if (t) openInfoDialog(t);
+    if (t) openInfoGuarded(t);
   });
   ribbonRemoveBtn.addEventListener("click", () => {
     const t = selectedTournament();
-    if (t && !ribbonRemoveBtn.disabled) removeOne(t);
+    if (t && !ribbonRemoveBtn.disabled) removeOneGuarded(t);
   });
 
   // ---- Verbs --------------------------------------------------------------
