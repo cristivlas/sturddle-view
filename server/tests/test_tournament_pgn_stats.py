@@ -16,6 +16,7 @@ from sturddle_view.tournament.pgn_stats import (
     compute_sprt,
     compute_standings,
     elo_from_score,
+    elo_margin_from_wld,
 )
 
 
@@ -161,6 +162,39 @@ def test_standings_to_dict_includes_elo(tmp_path):
     # 2 wins out of 3 → score 2/3 → +120.something Elo
     assert a["elo"] is not None
     assert 100 < a["elo"] < 150
+    assert a["elo_margin_95"] is not None
+    assert a["elo_margin_95"] > 0
+
+
+def test_standings_elo_omitted_for_three_or_more_engines(tmp_path):
+    # With N≥3 the per-engine score% is "vs field" (mixed strengths),
+    # not a head-to-head Elo — both elo and elo_margin_95 must be None.
+    body = (
+        _game("A", "B", "1-0") + _game("A", "C", "1-0") + _game("B", "C", "1-0")
+    )
+    p = _write_pgn(tmp_path, body)
+    d = compute_standings(p).to_dict()
+    for e in d["engines"]:
+        assert e["elo"] is None
+        assert e["elo_margin_95"] is None
+
+
+def test_elo_margin_from_wld_perfect_score_is_none():
+    assert elo_margin_from_wld(5, 0, 0) is None
+    assert elo_margin_from_wld(0, 5, 0) is None
+
+
+def test_elo_margin_from_wld_under_two_games_is_none():
+    assert elo_margin_from_wld(0, 0, 0) is None
+    assert elo_margin_from_wld(1, 0, 0) is None
+
+
+def test_elo_margin_from_wld_shrinks_with_more_games():
+    # Same score% (50%), more games → tighter CI.
+    small = elo_margin_from_wld(5, 5, 0)
+    large = elo_margin_from_wld(50, 50, 0)
+    assert small is not None and large is not None
+    assert large < small
 
 
 def test_elo_from_score_perfect_score_is_none():

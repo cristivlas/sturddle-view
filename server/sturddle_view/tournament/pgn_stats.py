@@ -27,6 +27,12 @@ class EngineRecord:
     wins: int = 0
     losses: int = 0
     draws: int = 0
+    # Populated only when there are exactly two engines in the tournament:
+    # then ``score_pct`` is a head-to-head score and Elo is well-defined.
+    # ``elo_margin_95`` is the half-width of the 95% normal CI on Elo,
+    # propagated from the per-game W/L/D score variance.
+    elo: float | None = None
+    elo_margin_95: float | None = None
 
     @property
     def games(self) -> int:
@@ -51,7 +57,8 @@ class EngineRecord:
             "games": self.games,
             "points": self.points,
             "score_pct": self.score_pct,
-            "elo": elo_from_score(self.score_pct) if self.games else None,
+            "elo": self.elo,
+            "elo_margin_95": self.elo_margin_95,
         }
 
 
@@ -172,6 +179,27 @@ def elo_from_score(score: float) -> float | None:
     return -400.0 * math.log10(1.0 / score - 1.0)
 
 
+def elo_margin_from_wld(wins: int, losses: int, draws: int) -> float | None:
+    """95% Elo half-width from a W/L/D record (head-to-head only).
+
+    Per-game scores x_i ∈ {1, 0, 0.5}. With sample variance V on x_i,
+    SE(score) = sqrt(V/n). Propagate to Elo via dElo/dscore = 400/(ln(10)·s·(1−s)).
+    Returns ``None`` if score is 0/1 or n<2 (CI undefined).
+    """
+    n = wins + losses + draws
+    if n < 2:
+        return None
+    s = (wins + 0.5 * draws) / n
+    if s <= 0.0 or s >= 1.0:
+        return None
+    var = (wins * (1 - s) ** 2 + losses * (0 - s) ** 2 + draws * (0.5 - s) ** 2) / (n - 1)
+    if var <= 0.0:
+        return 0.0
+    se_score = math.sqrt(var / n)
+    delo_dscore = 400.0 / (math.log(10.0) * s * (1.0 - s))
+    return 1.96 * se_score * delo_dscore
+
+
 def compute_standings(pgn_path: Path) -> Standings:
     """Tally W/L/D per engine across all games in ``games.pgn``.
 
@@ -200,7 +228,16 @@ def compute_standings(pgn_path: Path) -> Standings:
             w.draws += 1
             b.draws += 1
 
-    return Standings(engines=list(records.values()), games=games)
+    engines = list(records.values())
+    # Elo is only meaningful as a head-to-head metric. With exactly two
+    # engines, every game is A-vs-B so ``score_pct`` *is* the head-to-head
+    # score and we attach Elo + 95% CI. With N≥3, score% is "vs field"
+    # (mixed strengths) and is not a real Elo — leave both fields None.
+    if len(engines) == 2:
+        for e in engines:
+            e.elo = elo_from_score(e.score_pct) if e.games else None
+            e.elo_margin_95 = elo_margin_from_wld(e.wins, e.losses, e.draws)
+    return Standings(engines=engines, games=games)
 
 
 # ---------------------------------------------------------------------------
