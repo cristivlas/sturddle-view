@@ -134,7 +134,9 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
   let lastWtime = null;
   let lastBtime = null;
 
+  let wbClosed = false;
   wb.onclose = () => {
+    wbClosed = true;
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
     if (ws) try { ws.close(); } catch { /* */ }
     ro.disconnect();
@@ -161,6 +163,10 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
 
   ws.addEventListener("close", () => {
     stopTimer();
+    // User-initiated close already tore the window down; calling
+    // wb.close() again here corrupts WinBox's focus tracker and breaks
+    // click-to-front globally.
+    if (wbClosed) return;
     try { wb.close(); } catch { /* */ }
   });
 
