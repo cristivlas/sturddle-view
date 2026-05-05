@@ -404,9 +404,13 @@ absent in the latter case.
 ### Window inventory
 
 - **Standings** (1 window). Table: engine, games played, W/L/D, score%,
-  Elo ± error. If SPRT is configured, a row at the top showing LLR,
-  bounds, and decision status (H0 / H1 / inconclusive). Source: PGN
-  parsed by `pgn_stats`, refreshed as games complete.
+  Elo ± 95% margin. Elo and margin are emitted only for head-to-head
+  (N=2) tournaments; with N≥3 the score% column is "vs field" (mixed
+  strengths) and the Elo column shows "—" until a multi-engine rating
+  estimator lands (see Future work). If SPRT is configured, a row at
+  the top showing LLR, bounds, and decision status (H0 / H1 /
+  inconclusive). Source: PGN parsed by `pgn_stats`, refreshed as games
+  complete.
 - **Schedule** (1 window). List of completed games (PGN-derived) plus
   any in-progress games the server is tracking (proxy-derived once the
   pipeline is wired). Clicking a row attaches a Live game window —
@@ -823,8 +827,11 @@ Future work (not part of the resume effort):
   tournament-creation time, store in the frozen template, warn (do
   not block) on Start if a binary's current hash differs. Prevents
   silent mixing of two engine versions into one Elo number.
-- **Display Elo error/σ** in Standings: SPRT computation already
-  yields variance (`pgn_stats.py:322`); surface as `Elo ± σ`.
+- **Multi-engine ratings (N≥3)**: replace the current "no Elo for
+  N≥3" placeholder with a proper rating estimator (Bradley-Terry /
+  Ordo-style iterative MLE) that yields per-engine ratings *and*
+  per-engine 95% margins from the pairwise W/L/D matrix. Until then
+  the Standings table renders "—" in the Elo column for N≥3.
 
 ---
 
