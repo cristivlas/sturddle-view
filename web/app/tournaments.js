@@ -260,7 +260,7 @@ export function mountTournaments({ container, api, events, log, token }) {
 
     li.innerHTML = `
       <div class="tournament-row-main">
-        <span class="tournament-status status-${status}">${status}</span>
+        <span class="tournament-status status-${status}">${status === STATUS.STOPPED ? "paused" : status}</span>
         <span class="tournament-name"></span>
         ${trailing}
       </div>
@@ -500,7 +500,7 @@ export function mountTournaments({ container, api, events, log, token }) {
       dl.append(dt, dd);
     };
 
-    row("ID", t.id);
+    row("ID", makeIdCell(t.id));
     row("Status", t.status === STATUS.STOPPED ? "paused" : t.status);
     if (t.last_error) {
       const tail = (t.last_error.stderr_tail || []).slice(-10).join("\n");
@@ -522,7 +522,12 @@ export function mountTournaments({ container, api, events, log, token }) {
     const ed = t.engine_defaults || {};
     row("Threads", ed.threads);
     row("Hash (MB)", ed.hash_mb);
-    row("Syzygy", ed.syzygy_path);
+    if (ed.syzygy_path) {
+      const span = document.createElement("span");
+      span.textContent = basename(ed.syzygy_path);
+      span.title = ed.syzygy_path;
+      row("Syzygy", span);
+    }
     if (ed.book_path) {
       const span = document.createElement("span");
       span.textContent = basename(ed.book_path);
@@ -550,6 +555,39 @@ export function mountTournaments({ container, api, events, log, token }) {
   function basename(p) {
     if (!p) return p;
     return p.split(/[\\/]/).pop() || p;
+  }
+
+  const ID_ELLIPSIS = "…";
+  function makeIdCell(id) {
+    if (!id) return id;
+    const s = String(id);
+    const span = document.createElement("span");
+    span.className = "tournament-id";
+    span.title = s;
+    span.textContent = s;
+    const fit = () => fitMiddleEllipsis(span, s);
+    requestAnimationFrame(fit);
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(fit).observe(span);
+    }
+    return span;
+  }
+
+  function fitMiddleEllipsis(el, full) {
+    el.textContent = full;
+    if (el.scrollWidth <= el.clientWidth) return;
+    let lo = 1, hi = full.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      const head = Math.ceil(mid / 2);
+      const tail = mid - head;
+      el.textContent = full.slice(0, head) + ID_ELLIPSIS + full.slice(full.length - tail);
+      if (el.scrollWidth <= el.clientWidth) lo = mid;
+      else hi = mid - 1;
+    }
+    const head = Math.ceil(lo / 2);
+    const tail = lo - head;
+    el.textContent = full.slice(0, head) + ID_ELLIPSIS + full.slice(full.length - tail);
   }
 
   function formatType(v) {

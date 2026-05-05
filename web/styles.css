@@ -1254,6 +1254,10 @@ wa-dialog::part(body) {
   50%      { box-shadow: 0 0 0 5px rgba(var(--accent-rgb), 0); }
 }
 
+.tournament-info {
+  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.28));
+  padding-top: 10px;
+}
 .tournament-info-grid {
   display: grid;
   grid-template-columns: max-content 1fr;
@@ -1261,7 +1265,8 @@ wa-dialog::part(body) {
   margin: 0;
 }
 .tournament-info-grid dt { color: var(--muted); font-size: 12px; align-self: start; }
-.tournament-info-grid dd { margin: 0; font-size: 13px; word-break: break-word; }
+.tournament-info-grid dd { margin: 0; font-size: 13px; word-break: break-word; min-width: 0; }
+.tournament-id { display: block; overflow: hidden; white-space: nowrap; }
 .tournament-info-engines { margin: 0; padding: 0; list-style: none; }
 .tournament-info-engines li { margin: 0; padding: 1px 0; }
 .tournament-status.status-running {
@@ -1271,8 +1276,8 @@ wa-dialog::part(body) {
   animation: tournament-pulse 1.6s ease-out infinite;
 }
 .tournament-status.status-stopped {
-  background: var(--accent);
-  border-color: #5d7a8c;
+  background: #c9a96a;
+  border-color: #8a7340;
   color: #1a1a1a;
 }
 .tournament-status.status-done {
