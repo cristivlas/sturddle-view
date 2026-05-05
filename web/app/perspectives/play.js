@@ -327,6 +327,13 @@ export const playPerspective = {
       );
     }
 
+    // View-mode flip is purely visual (no backend state; the user isn't
+    // playing yet so "which side am I" is meaningless). Persisted so it
+    // survives perspective remounts; applied on each entry into view mode.
+    const VIEW_FLIP_KEY = "sturddle-view:view-flipped";
+    let viewFlipped = false;
+    try { viewFlipped = localStorage.getItem(VIEW_FLIP_KEY) === "1"; } catch { /* */ }
+
     // --- Hook events for control-bar state changes (board state changes
     //     are GameView's responsibility). ---
     const offEvent = ctx.events.on((evt) => {
@@ -347,6 +354,8 @@ export const playPerspective = {
             resignAvailable = false;
             // Board is read-only in view mode; the user navigates via ribbon.
             view.setEnabled(false);
+            // Restore the user's prior flip preference on entry into view mode.
+            if (!wasViewing) view.setHumanWhite(!viewFlipped);
           } else {
             resignAvailable = true;
           }
@@ -506,12 +515,9 @@ export const playPerspective = {
         reportError(ctx, "Navigation failed", e);
       }
     };
-    // View-mode flip is purely visual (no backend state; the user isn't
-    // playing yet so "which side am I" is meaningless). Toggles board
-    // orientation via the same setter onPlayFromHere uses.
-    let viewFlipped = false;
     const onViewFlip = () => {
       viewFlipped = !viewFlipped;
+      try { localStorage.setItem(VIEW_FLIP_KEY, viewFlipped ? "1" : "0"); } catch { /* */ }
       view.setHumanWhite(!viewFlipped);
     };
 
