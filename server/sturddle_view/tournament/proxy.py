@@ -22,16 +22,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import queue
 import re
 import sys
 import threading
 import time
-import urllib.error
-import urllib.request
 import uuid
+
+import httpx
 
 
 # Batching defaults — see spec "Volume & high-concurrency considerations".
@@ -50,6 +49,9 @@ _BROADCAST_FILTER: re.Pattern | None = None
 _BROADCAST_INFO = os.environ.get("SV_BROADCAST_INFO", "1") != "0"
 
 
+_POST_TIMEOUT_S = 2
+
+
 class Broadcaster:
     """Buffers proxy lines and POSTs them in batches to the server's
     ``/internal/proxy`` endpoint. Failures are logged to stderr and
@@ -57,9 +59,10 @@ class Broadcaster:
     broadcast trouble.
 
     Posts run in a background worker thread so the asyncio loop that
-    pumps engine stdio is never blocked by HTTP latency. ``urllib`` is
-    synchronous; calling it directly from the loop stalls the engine
-    pipe and produces multi-second observable lag.
+    pumps engine stdio is never blocked by HTTP latency. A pooled
+    ``httpx.Client`` keeps the loopback TCP connection alive across
+    batches: fresh connections per batch are cheap on Linux but pay
+    multi-ms per call on Windows and pile up TIME_WAIT.
     """
 
     def __init__(
@@ -76,11 +79,14 @@ class Broadcaster:
         self._buf: list[str] = []
         self._last_flush = time.monotonic()
         self._announced = False
-        # Background poster: a single worker thread drains a queue of
-        # payloads and POSTs them in order. add_line / flush are
-        # non-blocking from the loop's perspective.
         self._post_q: queue.Queue = queue.Queue()
         self._post_stopped = threading.Event()
+        # One worker thread serializes posts; one connection in the
+        # pool is enough and keeps the keep-alive socket warm.
+        self._client = httpx.Client(
+            timeout=_POST_TIMEOUT_S,
+            limits=httpx.Limits(max_connections=1, max_keepalive_connections=1),
+        )
         self._post_thread = threading.Thread(
             target=self._post_worker, daemon=True
         )
@@ -90,23 +96,15 @@ class Broadcaster:
         while True:
             payload = self._post_q.get()
             if payload is None:
+                self._client.close()
                 self._post_stopped.set()
                 return
             self._post_blocking(payload)
 
     def _post_blocking(self, payload: dict) -> None:
-        body = json.dumps(payload).encode()
-        req = urllib.request.Request(
-            self._url,
-            data=body,
-            method="POST",
-            headers={"Content-Type": "application/json"},
-        )
         try:
-            with urllib.request.urlopen(req, timeout=2) as _resp:
-                pass
-        except (urllib.error.URLError, OSError) as e:
-            # Don't crash the engine because the GUI server is down.
+            self._client.post(self._url, json=payload)
+        except httpx.HTTPError as e:
             print(f"proxy broadcast failed: {e}", file=sys.stderr, flush=True)
 
     def _post(self, payload: dict) -> None:
