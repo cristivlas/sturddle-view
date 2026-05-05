@@ -1450,6 +1450,7 @@ wa-dialog::part(body) {
 }
 .wb-log-ts { color: var(--muted); flex: 0 0 60px; }
 .wb-log-kind { color: var(--accent); }
+.wb-log-detail { color: var(--muted); }
 .wb-log-runner { color: var(--fg); }
 .wb-log-runner.err { color: var(--wa-color-danger-on-loud); }
 .wb-error-banner {
@@ -1471,7 +1472,8 @@ wa-dialog::part(body) {
   height: 100%; min-height: 0;
 }
 .wb-livegame .clock-row { padding: 5px 10px; }
-.wb-livegame .clock-row .clock-time { font-size: 16px; }
+.wb-livegame .clock-row .clock-time { font-size: 16px; flex-shrink: 0; }
+.wb-livegame .clock-row .clock-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .wb-livegame.lg-compact .lg-pv,
 .wb-livegame.lg-compact .lg-status { display: none; }
 .wb-livegame .lg-board {

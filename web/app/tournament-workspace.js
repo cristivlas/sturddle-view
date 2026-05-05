@@ -289,15 +289,27 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (!list) return;
     list.innerHTML = eventLog.map((e) => {
       const ts = e.ts || "";
-      const k = e.payload?.kind || e.kind || "event";
-      // runner_log carries fastchess's own stdout/stderr output;
-      // surface the actual line, not just the kind.
-      if (k === "runner_log" && e.payload?.line) {
+      const inner = e.payload?.kind;
+      // runner_log: surface the actual fastchess stdout/stderr line.
+      if (inner === "runner_log" && e.payload?.line) {
         const stream = e.payload.stream === "err" ? " err" : "";
         return `<li><span class="wb-log-ts">${ts}</span>` +
           `<span class="wb-log-runner${stream}">${escapeHtml(e.payload.line)}</span></li>`;
       }
-      return `<li><span class="wb-log-ts">${ts}</span> <span class="wb-log-kind">${escapeHtml(k)}</span></li>`;
+      // Muted secondary detail appended after the primary kind label.
+      let detail = "";
+      if (e.kind === "tournament_status" && e.payload?.status)
+        detail = e.payload.status;
+      else if (inner === "game_finished" && e.payload?.result)
+        detail = e.payload.result;
+      else if (inner === "proxy_started" && e.payload?.engine_name)
+        detail = e.payload.engine_name;
+      else if (inner === "runner_crash" && e.payload?.rc != null)
+        detail = `rc=${e.payload.rc}`;
+      else if (inner)
+        detail = inner;
+      const detailHtml = detail ? ` <span class="wb-log-detail">${escapeHtml(detail)}</span>` : "";
+      return `<li><span class="wb-log-ts">${ts}</span> <span class="wb-log-kind">${escapeHtml(e.kind)}</span>${detailHtml}</li>`;
     }).join("");
     list.scrollTop = list.scrollHeight;
   }

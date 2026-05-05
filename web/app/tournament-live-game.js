@@ -8,16 +8,16 @@ import { flashWindow } from "./wb-utils.js";
 
 const liveWindows = new Map(); // proxy_id -> WinBox instance
 
-const LIVE_MIN_BOARD = 120; // px — smallest usable board side
-const LIVE_CLOCK_H   = 36;  // px — one clock row (font 16px + padding)
-const LIVE_EVAL_H    = 24;  // px — eval + PV rows collapsed (per side)
-const LIVE_WINBOX_TITLE = 35; // px — WinBox title bar
-const LIVE_GAP       = 6;   // px — flex gap between sections
+const LIVE_MIN_BOARD    = 200; // px — smallest usable board side
+const LIVE_CLOCK_H      = 36;  // px — one clock row (font 16px + padding)
+const LIVE_EVAL_H       = 24;  // px — eval row (font 13px)
+const LIVE_PV_H         = 16;  // px — pv row + status row (font 11px, same height)
+const LIVE_WINBOX_TITLE = 35;  // px — WinBox title bar
+const LIVE_GAP          = 6;   // px — flex gap between sections
 
 const LIVE_MIN_WIDTH  = LIVE_MIN_BOARD;
-// Two eval/PV blocks: one above the board (opponent), one below (own).
-const LIVE_MIN_HEIGHT = LIVE_WINBOX_TITLE + LIVE_CLOCK_H * 2 + LIVE_MIN_BOARD
-                      + LIVE_EVAL_H * 2 + LIVE_GAP * 4;
+// 8 flex children: pv-top, eval-top, clock-top, board, clock-bottom, eval-bottom, pv-bottom, status — 7 gaps.
+const LIVE_MIN_HEIGHT = LIVE_WINBOX_TITLE + LIVE_PV_H * 3 + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_MIN_BOARD + LIVE_GAP * 7;
 
 
 export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0, left = 0, boardStyle = null }) {
