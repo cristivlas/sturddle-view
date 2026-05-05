@@ -74,15 +74,15 @@ export const playPerspective = {
             <button id="takeback" class="ribbon-btn" disabled aria-label="Take back" title="Take back">
               <wa-icon name="rotate-left"></wa-icon>
             </button>
-            <button id="switch-sides" class="ribbon-btn" disabled aria-label="Switch sides" title="Flip board">
-              <wa-icon name="arrow-right-arrow-left"></wa-icon>
-            </button>
-            <span class="ribbon-sep" aria-hidden="true"></span>
             <button id="pause" class="ribbon-btn" disabled aria-label="Pause" title="Pause">
               <wa-icon name="pause"></wa-icon>
             </button>
+            <span class="ribbon-sep" aria-hidden="true"></span>
             <button id="analyze" class="ribbon-btn" disabled aria-label="Analysis mode" title="Analysis mode">
               <wa-icon name="magnifying-glass"></wa-icon>
+            </button>
+            <button id="switch-sides" class="ribbon-btn" disabled aria-label="Switch sides" title="Switch sides">
+              <wa-icon name="arrow-right-arrow-left"></wa-icon>
             </button>
             <button id="resign" class="ribbon-btn ribbon-btn--danger" disabled aria-label="Resign" title="Resign">
               <wa-icon name="flag"></wa-icon>
@@ -110,11 +110,11 @@ export const playPerspective = {
               <wa-icon name="forward-fast"></wa-icon>
             </button>
             <span class="ribbon-sep" aria-hidden="true"></span>
-            <button id="view-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
-              <wa-icon name="arrow-right-arrow-left"></wa-icon>
-            </button>
             <button id="view-analyze" class="ribbon-btn" aria-label="Analysis mode" title="Analysis mode">
               <wa-icon name="magnifying-glass"></wa-icon>
+            </button>
+            <button id="view-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
+              <wa-icon name="arrow-right-arrow-left"></wa-icon>
             </button>
             <button id="view-play-from-here" class="ribbon-btn" aria-label="Play from here" title="Play from here">
               <wa-icon name="play"></wa-icon>
