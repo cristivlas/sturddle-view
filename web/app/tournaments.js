@@ -93,7 +93,7 @@ export function mountTournaments({ container, api, events, log, token }) {
   const emptyMsg = emptyEl.querySelector(".empty-message");
 
   const ribbonStartBtn = container.querySelector(".t-start");
-  const ribbonStartIcon = container.querySelector(".t-start-icon");
+
   const ribbonStopBtn = container.querySelector(".t-stop");
   const ribbonWorkspaceBtn = container.querySelector(".t-workspace");
   const ribbonInfoBtn = container.querySelector(".t-info");
@@ -109,6 +109,8 @@ export function mountTournaments({ container, api, events, log, token }) {
   let tournaments = [];
   let activeId = null;
   let selectedId = null;
+  let stoppingId = null;
+  let startingId = null;
   let settings = null; // { fastchess_path, tournaments_root, default_template, fastchess_detected }
 
   // Wraps an async function so concurrent calls are dropped until it resolves.
@@ -296,7 +298,8 @@ export function mountTournaments({ container, api, events, log, token }) {
       ribbonWorkspaceBtn.disabled = true;
       ribbonInfoBtn.disabled = true;
       ribbonRemoveBtn.disabled = true;
-      ribbonStartIcon.setAttribute("name", "play");
+      if (!ribbonStartBtn.querySelector("wa-icon")) ribbonStartBtn.innerHTML = '<wa-icon class="t-start-icon" name="play"></wa-icon>';
+      else ribbonStartBtn.querySelector("wa-icon").setAttribute("name", "play");
       ribbonStartBtn.setAttribute("aria-label", "Start");
       ribbonStartBtn.setAttribute("title", "Start");
       return;
@@ -306,20 +309,28 @@ export function mountTournaments({ container, api, events, log, token }) {
     const status = t.status;
     const isResume = status === "stopped" || status === "failed";
 
-    ribbonStartBtn.disabled = isActive || anotherRunning || status === "running" || status === "done";
+    // !!startingId: only one tournament may start at a time (by design).
+    ribbonStartBtn.disabled = isActive || anotherRunning || status === "running" || status === "done" || !!startingId;
     ribbonStopBtn.disabled = !isActive;
     ribbonRemoveBtn.disabled = isActive;
     ribbonWorkspaceBtn.disabled = !!getActiveWorkspace();
     ribbonInfoBtn.disabled = false;
 
-    ribbonStartIcon.setAttribute("name", isResume ? "forward-step" : "play");
+    const starting = t.id === startingId;
+    if (starting) {
+      ribbonStartBtn.innerHTML = '<wa-spinner class="spinner-accent"></wa-spinner>';
+    } else {
+      if (!ribbonStartBtn.querySelector("wa-icon")) ribbonStartBtn.innerHTML = '<wa-icon class="t-start-icon" name="play"></wa-icon>';
+      else ribbonStartBtn.querySelector("wa-icon").setAttribute("name", isResume ? "forward-step" : "play");
+    }
     const startLabel = isResume ? "Resume" : "Start";
     ribbonStartBtn.setAttribute("aria-label", startLabel);
     ribbonStartBtn.setAttribute("title", startLabel);
-    // Restore stop icon only once the tournament has actually transitioned
-    // away from running — otherwise mid-flight games-count refreshes would
-    // clear the spinner before the row visually reflects the paused state.
-    if (!ribbonStopBtn.querySelector("wa-icon") && status !== "running") {
+    const stopping = t.id === stoppingId;
+    if (stopping) {
+      ribbonStopBtn.disabled = true;
+      ribbonStopBtn.innerHTML = '<wa-spinner class="spinner-accent"></wa-spinner>';
+    } else {
       ribbonStopBtn.innerHTML = '<wa-icon name="pause"></wa-icon>';
     }
   }
@@ -346,20 +357,22 @@ export function mountTournaments({ container, api, events, log, token }) {
     syncRibbon();
   });
 
-  const startOneGuarded  = guard(startOne);
   const removeOneGuarded = guard(removeOne);
   const openInfoGuarded  = guard(openInfoDialog);
 
-  ribbonStartBtn.addEventListener("click", () => {
+  ribbonStartBtn.addEventListener("click", async () => {
     const t = selectedTournament();
-    if (t && !ribbonStartBtn.disabled) startOneGuarded(t);
+    if (!t || ribbonStartBtn.disabled || startingId) return;
+    startingId = t.id;
+    syncRibbon();
+    try { await startOne(t); } finally { startingId = null; syncRibbon(); }
   });
   ribbonStopBtn.addEventListener("click", async () => {
     const t = selectedTournament();
-    if (!t || ribbonStopBtn.disabled) return;
-    ribbonStopBtn.disabled = true;
-    ribbonStopBtn.innerHTML = '<wa-spinner class="spinner-accent"></wa-spinner>';
-    await stopOne(t);
+    if (!t || ribbonStopBtn.disabled || stoppingId) return;
+    stoppingId = t.id;
+    syncRibbon();
+    try { await stopOne(t); } finally { stoppingId = null; syncRibbon(); }
   });
   ribbonWorkspaceBtn.addEventListener("click", () => {
     const t = selectedTournament();
