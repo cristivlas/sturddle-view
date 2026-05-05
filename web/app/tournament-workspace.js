@@ -259,6 +259,14 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         } catch {
           // ignore — fall back to default style
         }
+        // Hand the Schedule window's bounds to the live opener so the
+        // new window is displaced if it would land on top of Schedule;
+        // otherwise the user has to drag it aside before clicking the
+        // next "watch".
+        const sched = windows.schedule;
+        const avoidRect = sched
+          ? { x: sched.x, y: sched.y, w: sched.width, h: sched.height }
+          : null;
         openLiveGameWindow({
           proxyId: pid,
           label: `${tournament.name} — ${engineLabel}`,
@@ -267,6 +275,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           top,
           left,
           boardStyle,
+          avoidRect,
         });
         btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(pid));
       });

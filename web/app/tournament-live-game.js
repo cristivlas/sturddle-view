@@ -23,7 +23,39 @@ const LIVE_MIN_WIDTH  = LIVE_MIN_BOARD;
 const LIVE_MIN_HEIGHT = LIVE_WINBOX_TITLE + LIVE_PV_H * 3 + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_MIN_BOARD + LIVE_GAP * 7;
 
 
-export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0, left = 0, boardStyle = null }) {
+// Gap (px) between the avoid-rect and the new window when displacing.
+const AVOID_GAP = 8;
+
+function rectsOverlap(a, b) {
+  return !(a.x + a.w <= b.x || b.x + b.w <= a.x ||
+           a.y + a.h <= b.y || b.y + b.h <= a.y);
+}
+
+// Try to displace `wb` so it doesn't overlap `avoid`. `avoid` is
+// {x,y,w,h} in viewport pixels. Tries right, below, left, above in
+// order; first candidate that fits in the viewport wins. Leaves the
+// window in place if none fit.
+function avoidOverlap(wb, avoid, top, left) {
+  const cur = { x: wb.x, y: wb.y, w: wb.width, h: wb.height };
+  if (!rectsOverlap(cur, avoid)) return;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const candidates = [
+    { x: avoid.x + avoid.w + AVOID_GAP, y: cur.y },              // right
+    { x: cur.x, y: avoid.y + avoid.h + AVOID_GAP },              // below
+    { x: avoid.x - cur.w - AVOID_GAP, y: cur.y },                // left
+    { x: cur.x, y: avoid.y - cur.h - AVOID_GAP },                // above
+  ];
+  for (const c of candidates) {
+    if (c.x >= left && c.y >= top &&
+        c.x + cur.w <= vw && c.y + cur.h <= vh) {
+      wb.move(c.x, c.y);
+      return;
+    }
+  }
+}
+
+export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0, left = 0, boardStyle = null, avoidRect = null }) {
   // If a window for this proxy is already open, focus it instead of
   // opening a duplicate.
   const existing = liveWindows.get(proxyId);
@@ -102,6 +134,7 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
   });
   if (top > 0 && wb.y < top) wb.move(wb.x, top);
   if (left > 0 && wb.x < left) wb.move(left, wb.y);
+  if (avoidRect) avoidOverlap(wb, avoidRect, top, left);
   // WinBox doesn't expose its config minwidth/minheight as instance fields;
   // stash them so the workspace's tile() can clamp.
   wb.svMinWidth = LIVE_MIN_WIDTH;
