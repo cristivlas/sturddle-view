@@ -276,6 +276,14 @@ class HumanVsEngine:
             self._analysis_mode = False
             await self._cancel_think()
             await self._cancel_tick()
+            self._viewing = False
+            self._view_full_moves = []
+            self._view_clock_history = []
+            self._view_final_white = None
+            self._view_final_black = None
+            self._view_white_name = None
+            self._view_black_name = None
+            self._view_cursor = 0
             engine = await self._ensure_engine()
             engine.send_line("ucinewgame")
             try:

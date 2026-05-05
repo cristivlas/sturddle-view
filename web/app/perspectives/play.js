@@ -90,6 +90,9 @@ export const playPerspective = {
           </div>
 
           <div id="view-controls" class="board-ribbon" style="display: none">
+            <button id="view-new-game" class="ribbon-btn" aria-label="New game" title="New game">
+              <wa-icon name="plus"></wa-icon>
+            </button>
             <button id="view-import" class="ribbon-btn desktop-only" aria-label="Open another position" title="Open">
               <wa-icon name="folder-open"></wa-icon>
             </button>
@@ -136,6 +139,7 @@ export const playPerspective = {
     // View ribbon (shown only while a game is loaded into view mode).
     const playRibbon = root.querySelector("#board-controls");
     const viewRibbon = root.querySelector("#view-controls");
+    const viewNewGameBtn = root.querySelector("#view-new-game");
     const viewImportBtn = root.querySelector("#view-import");
     const viewFirstBtn = root.querySelector("#view-first");
     const viewBackBtn = root.querySelector("#view-back");
@@ -415,7 +419,7 @@ export const playPerspective = {
     });
 
     const onNewGame = async () => {
-      if (movesPlayed > 0 && !gameOver) {
+      if (!viewing && movesPlayed > 0 && !gameOver) {
         const ok = await confirm({
           message: "Cancel the game in progress and start a new one?",
           okLabel: "New game",
@@ -425,6 +429,7 @@ export const playPerspective = {
         if (!ok) return;
       }
       try {
+        view.setGameId(null);
         const r = await ctx.api("POST", "/game/new", {});
         view.setGameId(r.game_id);
         view.setHumanWhite(!!r.human_white);
@@ -618,6 +623,7 @@ export const playPerspective = {
     switchSidesBtn.addEventListener("click", onSwitchSides);
     pauseBtn.addEventListener("click", onPause);
     analyzeBtn.addEventListener("click", onAnalyze);
+    viewNewGameBtn.addEventListener("click", onNewGame);
     viewImportBtn.addEventListener("click", onImport);
     viewFirstBtn.addEventListener("click", onViewFirst);
     viewBackBtn.addEventListener("click", onViewBack);
@@ -644,6 +650,7 @@ export const playPerspective = {
         switchSidesBtn.removeEventListener("click", onSwitchSides);
         pauseBtn.removeEventListener("click", onPause);
         analyzeBtn.removeEventListener("click", onAnalyze);
+        viewNewGameBtn.removeEventListener("click", onNewGame);
         viewImportBtn.removeEventListener("click", onImport);
         viewFirstBtn.removeEventListener("click", onViewFirst);
         viewBackBtn.removeEventListener("click", onViewBack);
