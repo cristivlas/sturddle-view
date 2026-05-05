@@ -385,6 +385,16 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     ) {
       refresh();
     }
+
+    // Tournament reached a terminal state ⇒ close the workspace (and
+    // its live windows). User opens a new workspace explicitly when
+    // starting another tournament.
+    if (
+      evt.kind === "tournament_status" &&
+      ["stopped", "done", "failed"].includes(evt.payload?.status)
+    ) {
+      close();
+    }
   }
 
   function armSubscriptions() {
