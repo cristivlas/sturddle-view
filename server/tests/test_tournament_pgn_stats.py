@@ -214,6 +214,62 @@ def test_elo_from_score_known_values():
 
 
 # ---------------------------------------------------------------------------
+# Cache
+# ---------------------------------------------------------------------------
+
+
+def test_iter_games_cached_when_file_unchanged(tmp_path, monkeypatch):
+    from sturddle_view.tournament import pgn_stats
+
+    p = _write_pgn(tmp_path, _game("A", "B", "1-0"))
+    pgn_stats._iter_games_cache.pop(p, None)
+
+    calls = {"n": 0}
+    real = pgn_stats._iter_games_uncached
+
+    def counting(path):
+        calls["n"] += 1
+        yield from real(path)
+
+    monkeypatch.setattr(pgn_stats, "_iter_games_uncached", counting)
+
+    compute_standings(p)
+    compute_standings(p)
+    compute_standings(p)
+    assert calls["n"] == 1
+
+
+def test_iter_games_reparses_when_file_grows(tmp_path, monkeypatch):
+    import os
+    import time
+    from sturddle_view.tournament import pgn_stats
+
+    p = _write_pgn(tmp_path, _game("A", "B", "1-0"))
+    pgn_stats._iter_games_cache.pop(p, None)
+
+    calls = {"n": 0}
+    real = pgn_stats._iter_games_uncached
+
+    def counting(path):
+        calls["n"] += 1
+        yield from real(path)
+
+    monkeypatch.setattr(pgn_stats, "_iter_games_uncached", counting)
+
+    s1 = compute_standings(p)
+    assert s1.games == 1
+    # Append another game; bump mtime in case the write lands in the same tick.
+    with p.open("a", encoding="utf-8") as f:
+        f.write(_game("A", "B", "0-1"))
+    st = p.stat()
+    os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+
+    s2 = compute_standings(p)
+    assert s2.games == 2
+    assert calls["n"] == 2
+
+
+# ---------------------------------------------------------------------------
 # SPRT
 # ---------------------------------------------------------------------------
 

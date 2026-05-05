@@ -2,16 +2,14 @@
 
 ``games.pgn`` is the source of truth (not the runner's stdout summary), so
 Stop/Resume across the same PGN yields correct cumulative numbers.
-Pure functions; no I/O beyond reading the PGN.
+Reads the PGN; results are cached per-path keyed by (mtime, size).
 """
 from __future__ import annotations
 
-import io
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
-
-import chess.pgn
 
 
 # Result tags we recognize. Anything else (`*`, missing, malformed) is
@@ -19,6 +17,13 @@ import chess.pgn
 _WHITE_WIN = "1-0"
 _BLACK_WIN = "0-1"
 _DRAW_VALUES = frozenset({"1/2-1/2", "½-½"})
+
+# PGN tag line: [Name "value"]. Non-greedy value match — we don't honor
+# \"-escapes; the four headers we read never contain quotes in fastchess output.
+_TAG_RE = re.compile(r'\[(\w+)\s+"(.*?)"\]\s*$')
+
+# Tags we actually use; ignore the rest to skip a dict write per line.
+_WANTED_TAGS = frozenset({"White", "Black", "Result", "Round"})
 
 
 @dataclass
@@ -107,6 +112,12 @@ class SprtResult:
         }
 
 
+# Cache: pgn_path -> (mtime_ns, size, games_tuple). PGN is append-only,
+# so (mtime, size) is a sound invalidation key. One entry per path keeps
+# memory bounded; the entry self-replaces on every change.
+_iter_games_cache: dict[Path, tuple[int, int, tuple[tuple[str, str, str], ...]]] = {}
+
+
 def _iter_games(pgn_path: Path):
     """Yield ``(white_name, black_name, result_tag)`` for each game in the PGN.
 
@@ -121,28 +132,58 @@ def _iter_games(pgn_path: Path):
     dedup (no key to collide on) — fastchess always emits Round, so the
     fallback only matters for hand-crafted PGNs.
     """
-    if not pgn_path.exists():
+    try:
+        st = pgn_path.stat()
+    except FileNotFoundError:
+        _iter_games_cache.pop(pgn_path, None)
         return
-    # Two-pass to dedup: first collect all (key_or_None, value), then yield
-    # in encounter order with the *last* value for each non-None key.
+    cached = _iter_games_cache.get(pgn_path)
+    if cached is not None and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
+        yield from cached[2]
+        return
+    games = tuple(_iter_games_uncached(pgn_path))
+    _iter_games_cache[pgn_path] = (st.st_mtime_ns, st.st_size, games)
+    yield from games
+
+
+def _iter_games_uncached(pgn_path: Path):
+    # Header-only scan: standings/games/SPRT only need White/Black/Result/Round.
+    # Avoids ``chess.pgn.read_game``'s full move-tree parse (>50× slower on
+    # multi-MB PGNs). Section boundary = a non-tag line after we've seen at
+    # least one tag in the current game; lines before any tag are skipped.
+    # NOTE: trade-off — a `;`-comment line between tag block and moves
+    # would emit early. fastchess never emits those.
     entries: list[tuple[tuple[str, str, str] | None, tuple[str, str, str]]] = []
-    with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
-        while True:
-            game = chess.pgn.read_game(f)
-            if game is None:
-                break
-            result = game.headers.get("Result", "*")
-            if not (result == _WHITE_WIN or result == _BLACK_WIN or result in _DRAW_VALUES):
-                continue
-            white = game.headers.get("White", "?")
-            black = game.headers.get("Black", "?")
-            round_tag = game.headers.get("Round", "")
+    cur: dict[str, str] = {}
+    in_tags = False
+
+    def emit() -> None:
+        if not cur:
+            return
+        result = cur.get("Result", "*")
+        if result == _WHITE_WIN or result == _BLACK_WIN or result in _DRAW_VALUES:
+            white = cur.get("White", "?")
+            black = cur.get("Black", "?")
+            round_tag = cur.get("Round", "")
             value = (white, black, result)
-            # python-chess fills missing Seven-Tag Roster headers with "?";
-            # treat that as "no round" so dedup only fires on real round tags.
             has_round = round_tag and round_tag != "?"
             key = (round_tag, white, black) if has_round else None
             entries.append((key, value))
+        cur.clear()
+
+    with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            m = _TAG_RE.match(line)
+            if m is not None:
+                in_tags = True
+                name = m.group(1)
+                if name in _WANTED_TAGS:
+                    cur[name] = m.group(2)
+            elif in_tags:
+                emit()
+                in_tags = False
+        emit()
+
     last_value: dict[tuple[str, str, str], tuple[str, str, str]] = {
         k: v for k, v in entries if k is not None
     }
