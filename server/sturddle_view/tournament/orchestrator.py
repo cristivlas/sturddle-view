@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 import chess
 
 from .rescheck import RescheckError, check_template
-from .runner import EventCallback, RunSpec, Runner
+from .runner import RunSpec, Runner
 from .uci_parse import parse_uci_line
 
 if TYPE_CHECKING:
