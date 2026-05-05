@@ -175,6 +175,50 @@ def test_parse_pgn_emt_without_timecontrol_skipped():
     assert p.clock_history is None
 
 
+def test_parse_pgn_cutechess_inline_format():
+    # Cutechess/fastchess: "<eval>/<depth> <time>" at the end of comment.
+    # Time field is integer seconds without 's' suffix in real exports.
+    pgn = (
+        '[TimeControl "300+2"]\n\n'
+        "1. e4 {+0.06/20 3.3} c5 {+0.13/18 3.3} 2. Nf3 {-0.10/18 3.4} *"
+    )
+    p = parse_pgn(pgn)
+    assert p.clock_history is not None
+    assert len(p.clock_history) == 3
+    # White spent 3.3s, +2 inc → 298.7. Black untouched at 300.
+    assert p.clock_history[1] == (pytest.approx(298.7), 300.0)
+    assert p.final_white_time == pytest.approx(297.3)  # 298.7 - 3.4 + 2
+    assert p.final_black_time == pytest.approx(298.7)  # 300 - 3.3 + 2
+
+
+def test_parse_pgn_cutechess_with_variation_in_comment():
+    # Variation embedded in the comment (some exporters do this) must not
+    # confuse the time extractor — it anchors on the END of the comment.
+    pgn = (
+        '[TimeControl "300+0"]\n\n'
+        "1. e4 {(Nf3 d6 e4) -0.44/29 28} *"
+    )
+    p = parse_pgn(pgn)
+    assert p.clock_history is not None
+    # White spent 28s, no increment → 272.
+    assert p.final_white_time == pytest.approx(272.0)
+
+
+def test_parse_pgn_cutechess_book_move_no_time_skipped():
+    # "{book}" carries no time field; that ply has no spent value, so the
+    # mover's clock stays at the initial.
+    pgn = (
+        '[TimeControl "300+0"]\n\n'
+        "1. e4 {book} c5 {+0.13/18 5} *"
+    )
+    p = parse_pgn(pgn)
+    assert p.clock_history is not None
+    # White's e4 is "book" → no time → white stays at 300.
+    assert p.clock_history[1] == (300.0, 300.0)
+    # Black spent 5s → 295.
+    assert p.final_black_time == pytest.approx(295.0)
+
+
 def test_parse_pgn_clk_wins_when_both_present():
     # If both annotations are present, prefer %clk (authoritative state).
     pgn = (

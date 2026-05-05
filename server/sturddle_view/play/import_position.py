@@ -6,6 +6,7 @@ short human-readable summary used by the client to confirm before commit.
 from __future__ import annotations
 
 import io
+import re
 from dataclasses import dataclass
 
 import chess
@@ -61,6 +62,30 @@ def _parse_pgn_timecontrol(tc: str | None) -> tuple[float | None, float]:
     except ValueError:
         increment = 0.0
     return initial, increment
+
+
+# Cutechess / fastchess inline comment: "<eval>/<depth> <time>" at the END
+# of the comment (allowing a leading variation in parens or other prose).
+# Eval forms: +0.06, -0.44, 0.00, M5, -M3, +M2. Time: integer or float,
+# optional 's' or 'ms' suffix. We only care about the time field.
+_CUTECHESS_TIME_RE = re.compile(
+    r"[+-]?(?:M\d+|\d+(?:\.\d+)?)/\d+\s+(\d+(?:\.\d+)?)\s*(ms|s)?\s*\}?\s*$"
+)
+
+
+def _cutechess_time_seconds(comment: str | None) -> float | None:
+    """Best-effort parse of the time-spent field from a cutechess-style
+    comment. Returns seconds or None if no match."""
+    if not comment:
+        return None
+    m = _CUTECHESS_TIME_RE.search(comment)
+    if not m:
+        return None
+    try:
+        v = float(m.group(1))
+    except ValueError:
+        return None
+    return v / 1000.0 if m.group(2) == "ms" else v
 
 
 def parse_fen(text: str) -> ImportedPosition:
@@ -164,6 +189,10 @@ def parse_pgn(text: str) -> ImportedPosition:
     else:
         emt_values = [n.emt() for n in nodes]
         tc_initial, tc_increment = _parse_pgn_timecontrol(headers.get("TimeControl"))
+        # Third tier: cutechess/fastchess inline "<eval>/<depth> <time>".
+        # Only consulted when %clk and %emt are both absent.
+        if not any(v is not None for v in emt_values):
+            emt_values = [_cutechess_time_seconds(n.comment) for n in nodes]
         if any(v is not None for v in emt_values) and tc_initial is not None:
             clock_history = []
             replay = start_board.copy()
