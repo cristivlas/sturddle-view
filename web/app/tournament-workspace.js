@@ -223,6 +223,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       scheduleBody.innerHTML = `<div class="wb-empty">No games yet.</div>`;
       return;
     }
+    const scroller = scheduleBody.parentElement;
+    const atBottom = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
     scheduleBody.innerHTML = `<ul class="wb-sched-list"></ul>`;
     const list = scheduleBody.querySelector(".wb-sched-list");
 
@@ -270,6 +272,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       li.appendChild(btn);
       list.appendChild(li);
     }
+    if (atBottom && scroller) scroller.scrollTop = scroller.scrollHeight;
   }
 
   function renderEventLog() {
