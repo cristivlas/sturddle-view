@@ -101,6 +101,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   let scheduleBody = makeScheduleBody();
   let logBody = makeLogBody();
 
+  const MIN_SIZES = {
+    standings: { minwidth: 320, minheight: 200 },
+    schedule:  { minwidth: 320, minheight: 200 },
+    log:       { minwidth: 280, minheight: 150 },
+  };
+
   function makeBox(key, title, body) {
     const cfg = layout[key];
     const wb = new WinBox({
@@ -113,6 +119,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       left,
       mount: body,
       class: "sturddle-wb no-full",
+      ...MIN_SIZES[key],
     });
     // Wire callbacks after construction so they can refer to `wb` itself
     // (avoids a TDZ "cannot access wb before initialization" error from

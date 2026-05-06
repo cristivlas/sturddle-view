@@ -1435,7 +1435,7 @@ wa-dialog::part(body) {
 }
 .wb-empty { color: var(--muted); padding: 12px; text-align: center; }
 .wb-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.wb-table th, .wb-table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid #2e3138; }
+.wb-table th, .wb-table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid #2e3138; white-space: nowrap; }
 .wb-table th { color: var(--muted); font-weight: normal; font-size: 11px; text-transform: uppercase; }
 .wb-table .wb-eng-name { font-weight: 500; }
 .wb-sprt {
