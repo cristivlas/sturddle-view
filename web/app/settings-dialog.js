@@ -93,7 +93,7 @@ function debounce(fn, ms) {
   };
 }
 
-export async function openSettingsDialog({ api, initialTab }) {
+export async function openSettingsDialog({ api, initialTab, getActivePerspective }) {
   let initial;
   let tournamentInitial;
   try {
@@ -568,7 +568,7 @@ export async function openSettingsDialog({ api, initialTab }) {
     },
   });
 
-  if (boardStyleDirty) {
+  if (boardStyleDirty && getActivePerspective?.() === "play") {
     try { await boardStylePending; } catch {}
     // Idempotent re-PUT to guarantee the latest value is on disk before
     // reload — the change-handler PUT is fire-and-forget and could race

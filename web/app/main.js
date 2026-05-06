@@ -114,7 +114,7 @@ connect({
 });
 
 document.getElementById("settings-btn").addEventListener("click", () => {
-  openSettingsDialog({ api });
+  openSettingsDialog({ api, getActivePerspective: () => router.activeId() });
 });
 
 window.addEventListener("sturddle:connection", async (e) => {
