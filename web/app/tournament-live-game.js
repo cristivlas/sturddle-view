@@ -33,9 +33,11 @@ function rectsOverlap(a, b) {
 
 // Try to displace `wb` so it doesn't overlap `avoid`. `avoid` is
 // {x,y,w,h} in viewport pixels. Tries right, below, left, above in
-// order; first candidate that fits in the viewport wins. Leaves the
-// window in place if none fit.
-function avoidOverlap(wb, avoid, top, left) {
+// order; first candidate that fits in the viewport wins. `cascade`
+// adds a diagonal pixel offset so multiple windows stagger rather
+// than stack at the same position. Leaves the window in place if
+// none fit.
+function avoidOverlap(wb, avoid, top, left, cascade = 0) {
   const cur = { x: wb.x, y: wb.y, w: wb.width, h: wb.height };
   if (!rectsOverlap(cur, avoid)) return;
   const vw = window.innerWidth;
@@ -47,9 +49,10 @@ function avoidOverlap(wb, avoid, top, left) {
     { x: cur.x, y: avoid.y - cur.h - AVOID_GAP },                // above
   ];
   for (const c of candidates) {
-    if (c.x >= left && c.y >= top &&
-        c.x + cur.w <= vw && c.y + cur.h <= vh) {
-      wb.move(c.x, c.y);
+    const cx = c.x + cascade, cy = c.y + cascade;
+    if (cx >= left && cy >= top &&
+        cx + cur.w <= vw && cy + cur.h <= vh) {
+      wb.move(cx, cy);
       return;
     }
   }
@@ -134,7 +137,7 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
   });
   if (top > 0 && wb.y < top) wb.move(wb.x, top);
   if (left > 0 && wb.x < left) wb.move(left, wb.y);
-  if (avoidRect) avoidOverlap(wb, avoidRect, top, left);
+  if (avoidRect) avoidOverlap(wb, avoidRect, top, left, idx * 24);
   // WinBox doesn't expose its config minwidth/minheight as instance fields;
   // stash them so the workspace's tile() can clamp.
   wb.svMinWidth = LIVE_MIN_WIDTH;
