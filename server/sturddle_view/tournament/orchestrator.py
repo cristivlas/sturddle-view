@@ -683,30 +683,31 @@ class Orchestrator:
                     self._stamp_pair_game_n(pair_id, pid_a, pid_b, state_a[1])
                     new_pairs.add(group)
                     n = self._pair_game_n.get(pair_id)
-                    log.info(
-                        "pair confirmed tag=%s game_n=%s white=%s(%s) black=%s(%s) "
-                        "queues=started:%d/unstamped:%d/pairs:%d",
-                        pair_id[:8], n,
-                        self._proxy_engine_names.get(
-                            pid_a if state_a[1] == "white" else pid_b, "?"),
-                        (pid_a if state_a[1] == "white" else pid_b)[:8],
-                        self._proxy_engine_names.get(
-                            pid_b if state_a[1] == "white" else pid_a, "?"),
-                        (pid_b if state_a[1] == "white" else pid_a)[:8],
-                        len(self._started_games), len(self._unstamped_pairs),
-                        len(self._pair_proxies),
-                    )
-                    if n is None:
+                    if _DEBUG_PAIRING:
                         log.info(
-                            "pair confirmed tag=%s awaiting Started N; "
-                            "_started_games head=%s",
-                            pair_id[:8],
-                            list(self._started_games)[:3],
+                            "pair confirmed tag=%s game_n=%s white=%s(%s) black=%s(%s) "
+                            "queues=started:%d/unstamped:%d/pairs:%d",
+                            pair_id[:8], n,
+                            self._proxy_engine_names.get(
+                                pid_a if state_a[1] == "white" else pid_b, "?"),
+                            (pid_a if state_a[1] == "white" else pid_b)[:8],
+                            self._proxy_engine_names.get(
+                                pid_b if state_a[1] == "white" else pid_a, "?"),
+                            (pid_b if state_a[1] == "white" else pid_a)[:8],
+                            len(self._started_games), len(self._unstamped_pairs),
+                            len(self._pair_proxies),
                         )
-                elif name_a and name_b and name_a == name_b:
+                        if n is None:
+                            log.info(
+                                "pair confirmed tag=%s awaiting Started N; "
+                                "_started_games head=%s",
+                                pair_id[:8],
+                                list(self._started_games)[:3],
+                            )
+                elif name_a and name_b and name_a == name_b and _DEBUG_PAIRING:
                     log.info(
                         "pair candidate rejected (same engine name): "
-                        "%s(%s) vs %s(%s) — phantom from book-line collision",
+                        "%s(%s) vs %s(%s) -- phantom from book-line collision",
                         name_a, pid_a[:8], name_b, pid_b[:8],
                     )
             elif _DEBUG_PAIRING:
@@ -817,11 +818,12 @@ class Orchestrator:
             pair_id = self._pair_ids.get(frozenset((pid, peer)), "")
             if pair_id:
                 self._pending_dissolve.add(pair_id)
-                log.info(
-                    "pair pending tag=%s game_n=%s pid=%s peer=%s",
-                    pair_id[:8], self._pair_game_n.get(pair_id),
-                    pid[:8], peer[:8],
-                )
+                if _DEBUG_PAIRING:
+                    log.info(
+                        "pair pending tag=%s game_n=%s pid=%s peer=%s",
+                        pair_id[:8], self._pair_game_n.get(pair_id),
+                        pid[:8], peer[:8],
+                    )
 
     def _cap_match_queue(self, q: deque, name: str) -> None:
         """Bound the bidirectional FIFO queues. Past `_MATCH_QUEUE_MAX`
@@ -904,11 +906,12 @@ class Orchestrator:
                 break
         self._pending_dissolve.discard(pair_id)
         game_subs = self._game_subscribers.pop(pair_id, None)
-        log.info(
-            "pair dissolved tag=%s game_n=%s result=%s termination=%s game_subs=%d",
-            pair_id[:8], n, result, termination,
-            len(game_subs) if game_subs else 0,
-        )
+        if _DEBUG_PAIRING:
+            log.info(
+                "pair dissolved tag=%s game_n=%s result=%s termination=%s game_subs=%d",
+                pair_id[:8], n, result, termination,
+                len(game_subs) if game_subs else 0,
+            )
         if game_subs:
             for q in game_subs:
                 try:
@@ -993,7 +996,7 @@ class Orchestrator:
             if stamped is None:
                 self._started_games.append((n, white, black))
                 self._cap_match_queue(self._started_games, "started_games")
-            else:
+            elif _DEBUG_PAIRING:
                 log.info(
                     "pair late-stamped tag=%s game_n=%d white=%s black=%s",
                     stamped[:8], n, white, black,
