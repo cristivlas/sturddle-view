@@ -251,6 +251,14 @@ def test_done_tourney_does_not_lock(tmp_path, exe_a):
     assert c.delete(f"/engines/{eid}").status_code == 204
 
 
+def test_locked_engine_refresh_schema_409(tmp_path, exe_a):
+    c = _make_client_with_tourney(tmp_path, exe_a, STATUS_RUNNING)
+    eid = c.post("/engines", json={"name": "E", "path": exe_a}).json()["id"]
+    r = c.post(f"/engines/{eid}/refresh-schema")
+    assert r.status_code == 409
+    assert "T1" in r.json()["detail"]
+
+
 def test_locked_engine_list_includes_tourney_info(tmp_path, exe_a):
     c = _make_client_with_tourney(tmp_path, exe_a, STATUS_RUNNING)
     c.post("/engines", json={"name": "E", "path": exe_a})
