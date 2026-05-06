@@ -25,6 +25,7 @@ const EVENT_LOG_LIMIT = 500;
 const DEFAULT_LAYOUT = {
   standings: { x: "1%",  y: "1%",  width: "40%", height: "50%" },
   schedule:  { x: "1%",  y: "52%", width: "40%", height: "47%" },
+  engines:   { x: "42%", y: "1%",  width: "30%", height: "50%" },
   log:       { x: "42%", y: "70%", width: "57%", height: "29%" },
 };
 
@@ -98,16 +99,24 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     el.innerHTML = `<div class="wb-error-banner" hidden></div><ul class="wb-eventlog-list"></ul>`;
     return el;
   }
+  function makeEnginesBody() {
+    const el = document.createElement("div");
+    el.className = "wb-engines";
+    el.innerHTML = `<div class="wb-empty">Loading…</div>`;
+    return el;
+  }
 
   // Renderers read these via the closure; reassigned when a window is
   // re-opened after the user closed it (so renderers target the new body).
   let standingsBody = makeStandingsBody();
   let scheduleBody = makeScheduleBody();
   let logBody = makeLogBody();
+  let enginesBody = makeEnginesBody();
 
   const MIN_SIZES = {
     standings: { minwidth: 320, minheight: 200 },
     schedule:  { minwidth: 320, minheight: 200 },
+    engines:   { minwidth: 280, minheight: 200 },
     log:       { minwidth: 280, minheight: 150 },
   };
 
@@ -174,6 +183,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       setBody: (b) => { scheduleBody = b; },
       render: () => renderSchedule(),
     },
+    engines: {
+      title: `${tournament.name} — Engines`,
+      makeBody: makeEnginesBody,
+      setBody: (b) => { enginesBody = b; },
+      render: () => renderEngines(),
+    },
     log: {
       title: `${tournament.name} — Event log`,
       makeBody: makeLogBody,
@@ -215,6 +230,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   const windows = {
     standings: makeBox("standings", windowSpecs.standings.title, standingsBody),
     schedule:  makeBox("schedule",  windowSpecs.schedule.title,  scheduleBody),
+    engines:   null,
     log:       null,
   };
 
@@ -346,6 +362,51 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (atBottom && scroller) scroller.scrollTop = scroller.scrollHeight;
   }
 
+  function renderEngines() {
+    // One row per active proxy (engine process). Attach via proxy_id WS,
+    // single-engine identity (survives book-line ambiguity where pair
+    // confirmation hasn't happened yet). Distinct from Live Games which
+    // is keyed on confirmed pair_ids.
+    if (activeProxies.size === 0) {
+      enginesBody.innerHTML = `<div class="wb-empty">No active engines.</div>`;
+      return;
+    }
+    const scroller = enginesBody.parentElement;
+    const atBottom = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
+    enginesBody.innerHTML = `<ul class="wb-sched-list"></ul>`;
+    const list = enginesBody.querySelector(".wb-sched-list");
+    for (const [pid, p] of activeProxies) {
+      const li = document.createElement("li");
+      li.className = "wb-sched-live";
+      const engineLabel = p.engineName || pid;
+      li.innerHTML = `
+        <span class="wb-sched-icon">▶</span>
+        <span class="wb-sched-game">${escapeHtml(engineLabel)}</span>
+      `;
+      const btn = document.createElement("button");
+      btn.className = "wb-sched-attach-btn";
+      btn.textContent = "watch";
+      btn.title = pid;
+      btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(pid));
+      btn.addEventListener("click", async () => {
+        let boardStyle = null;
+        try { const s = await api("GET", "/settings"); boardStyle = s.board_style || null; } catch {}
+        const eng = windows.engines;
+        const avoidRect = eng ? { x: eng.x, y: eng.y, w: eng.width, h: eng.height } : null;
+        openLiveGameWindow({
+          proxyId: pid,
+          label: `${tournament.name} — ${engineLabel}`,
+          engineName: engineLabel,
+          token, top, left, boardStyle, avoidRect,
+        });
+        btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(pid));
+      });
+      li.appendChild(btn);
+      list.appendChild(li);
+    }
+    if (atBottom && scroller) scroller.scrollTop = scroller.scrollHeight;
+  }
+
   function renderEventLog() {
     const banner = logBody.querySelector(".wb-error-banner");
     if (banner) {
@@ -438,6 +499,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
     renderStandings();
     renderSchedule();
+    renderEngines();
     renderEventLog();
   }
 
@@ -505,6 +567,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         inner === KIND.GAME_FINISHED || evt.kind === EVT.STATUS ||
         inner === KIND.DONE || inner === KIND.STOPPED)
       renderSchedule();
+    if (inner === KIND.PROXY_STARTED || inner === KIND.PROXY_ENDED ||
+        evt.kind === EVT.STATUS || inner === KIND.DONE || inner === KIND.STOPPED)
+      renderEngines();
 
     // Status changes and game finishes are good triggers to refresh
     // standings authoritatively.
@@ -577,8 +642,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   let liveWatcherAttached = false;
 
   function refreshWatchButtons() {
-    for (const btn of scheduleBody.querySelectorAll(".wb-sched-attach-btn")) {
-      btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(btn.title));
+    for (const body of [scheduleBody, enginesBody]) {
+      for (const btn of body.querySelectorAll(".wb-sched-attach-btn")) {
+        btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(btn.title));
+      }
     }
   }
 

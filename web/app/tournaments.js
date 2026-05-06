@@ -36,6 +36,7 @@ export function mountTournaments({ container, api, events, log, token }) {
               <ul class="tmb-dropdown">
                 <li><button class="tmb-dd-item tmb-sys-standings">Standings</button></li>
                 <li><button class="tmb-dd-item tmb-sys-schedule">Live Games</button></li>
+                <li><button class="tmb-dd-item tmb-sys-engines">Engines</button></li>
                 <li><button class="tmb-dd-item tmb-sys-log">Event Log</button></li>
               </ul>
             </li>
@@ -957,6 +958,7 @@ export function mountTournaments({ container, api, events, log, token }) {
   for (const [cls, key] of [
     [".tmb-sys-standings", "standings"],
     [".tmb-sys-schedule",  "schedule"],
+    [".tmb-sys-engines",   "engines"],
     [".tmb-sys-log",       "log"],
   ]) {
     container.querySelector(cls).addEventListener("click", () => {
