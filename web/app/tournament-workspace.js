@@ -246,12 +246,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   function renderSchedule() {
-    // Completed games: PGN-derived (authoritative once fastchess flushes
-    // each finished game). In-progress: one row per active proxy
-    // (engine process), labeled with its engine name. Click "watch" to
-    // open a live window subscribed to that engine's stream.
-    const finished = (detail && detail.games) || []; // unused in UI for now
-    const inProgress = [...activeProxies.entries()];
+    // finished games (detail.games) and individual proxy rows (activeProxies)
+    // are currently not rendered — see commented-out blocks below.
     if (livePairings.size === 0) {
       scheduleBody.innerHTML = `<div class="wb-empty">No games yet.</div>`;
       return;
