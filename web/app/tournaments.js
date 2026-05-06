@@ -36,7 +36,8 @@ export function mountTournaments({ container, api, events, log, token }) {
               <ul class="tmb-dropdown">
                 <li><button class="tmb-dd-item tmb-sys-standings">Standings</button></li>
                 <li><button class="tmb-dd-item tmb-sys-schedule">Live Games</button></li>
-                <li><button class="tmb-dd-item tmb-sys-engines">Engines</button></li>
+                <li><button class="tmb-dd-item tmb-sys-engines">Engine Instances</button></li>
+                <li class="tmb-separator"></li>
                 <li><button class="tmb-dd-item tmb-sys-log">Event Log</button></li>
               </ul>
             </li>

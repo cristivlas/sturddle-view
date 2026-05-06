@@ -184,7 +184,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       render: () => renderSchedule(),
     },
     engines: {
-      title: `${tournament.name} — Engines`,
+      title: `${tournament.name} -- Engine Instances`,
       makeBody: makeEnginesBody,
       setBody: (b) => { enginesBody = b; },
       render: () => renderEngines(),
