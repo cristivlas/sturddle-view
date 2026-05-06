@@ -120,7 +120,6 @@ export function mountTournaments({ container, api, events, log, token }) {
   let stoppingId = null;
   let startingId = null;
   let settings = null; // { fastchess_path, tournaments_root, default_template, fastchess_detected }
-  let _loadGen = 0;
 
   // Wraps an async function so concurrent calls are dropped until it resolves.
   function guard(fn) {
@@ -132,29 +131,40 @@ export function mountTournaments({ container, api, events, log, token }) {
     };
   }
 
+  function debounce(fn, ms) {
+    let timer = null;
+    return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
+  }
+
+  // Returns an async function that drops its result if a newer call
+  // has been initiated. Always resolves with undefined --
+  // await is fire-and-forget; do not read state immediately after.
+  // `fetch` returns data; `commit` writes it; `onError` handles fetch errors.
+  function lastWriteWins(fetch, commit, onError) {
+    let gen = 0;
+    return async (...args) => {
+      const v = ++gen;
+      let data;
+      try { data = await fetch(...args); } catch (e) { onError(e); return; }
+      if (v !== gen) return;
+      commit(data);
+    };
+  }
+
   // ---- API helpers --------------------------------------------------------
 
-  async function loadSettings() {
-    try {
-      settings = await api("GET", "/api/tournament-settings");
-      renderList();
-    } catch (e) {
-      reportError({ log }, "Loading tournament settings failed", e);
-    }
-  }
+  const loadSettings = lastWriteWins(
+    () => api("GET", "/api/tournament-settings"),
+    (data) => { settings = data; renderList(); },
+    (e) => reportError({ log }, "Loading tournament settings failed", e),
+  );
 
-  async function loadList() {
-    const gen = ++_loadGen;
-    try {
-      const body = await api("GET", "/api/tournaments");
-      if (gen !== _loadGen) return; // superseded by a newer load
-      tournaments = body.tournaments;
-      activeId = body.active_id;
-      renderList();
-    } catch (e) {
-      reportError({ log }, "Loading tournaments failed", e);
-    }
-  }
+  const loadList = lastWriteWins(
+    () => api("GET", "/api/tournaments"),
+    (body) => { tournaments = body.tournaments; activeId = body.active_id; renderList(); },
+    (e) => reportError({ log }, "Loading tournaments failed", e),
+  );
+  const debouncedLoadList = debounce(loadList, 150);
 
   // ---- Rendering ----------------------------------------------------------
 
@@ -1035,7 +1045,7 @@ export function mountTournaments({ container, api, events, log, token }) {
         const firstErr = tail.find((l) => /error|fatal|fail/i.test(l)) || tail[0] || `exit code ${evt.payload?.rc}`;
         toast(`${name} failed: ${firstErr}`, { variant: "danger", duration: 10000 });
       }
-      loadList();
+      debouncedLoadList();
     }
   });
 
@@ -1052,10 +1062,10 @@ export function mountTournaments({ container, api, events, log, token }) {
   // Visibility is driven by the Engines tab group (see engines.js):
   // the workspace stays hidden unless the Tournaments sub-tab is active.
 
-  (async () => {
-    await loadSettings();
-    await loadList();
-  })();
+  // Fire-and-forget: lastWriteWins resolves undefined; state is populated
+  // asynchronously and rendered via renderList() inside each commit.
+  loadSettings();
+  loadList();
 
   return {
     unmount() {
