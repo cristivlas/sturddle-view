@@ -76,6 +76,7 @@ def main() -> None:
         # uvicorn's default — which would otherwise overwrite our settings
         # and re-enable per-request access lines we already silenced.
         log_config=None,
+        access_log=False,
     )
 
 

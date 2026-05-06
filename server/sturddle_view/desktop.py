@@ -22,7 +22,8 @@ def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> N
         host=host,
         port=port,
         factory=True,
-        log_level="info",
+        log_config=None,
+        access_log=False,
     )
     server = uvicorn.Server(config)
 
