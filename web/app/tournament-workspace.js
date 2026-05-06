@@ -73,8 +73,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   let unsubscribe = null;
   // proxy_id -> { engineName }
   const activeProxies = new Map();
-  // proxy_id -> { proxyA, engineA, sideA, proxyB, engineB, sideB }
-  // Both proxies in a pair map to the same info object (SV_LIVE_PAIRINGS).
+  // proxy_id -> { pairId, proxyA, engineA, sideA, proxyB, engineB, sideB }
+  // Both proxies in a pair map to the same info object.
   const livePairings = new Map();
 
   // ---- Window construction ----------------------------------------------
@@ -272,7 +272,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     //   list.appendChild(li);
     // }
 
-    // Live pairings section (SV_LIVE_PAIRINGS). Dedupe: both proxies map to
+    // Live pairings section. Dedupe: both proxies map to
     // the same info object, so skip if we already rendered this pair.
     const shownPairs = new Set();
     for (const [, info] of livePairings) {

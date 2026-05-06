@@ -61,7 +61,6 @@ _EVENT_HISTORY_MAX = 200
 # ``bestmove`` at the resulting FEN). ``info`` from the thinker fans
 # out to the waiter's subscribers — that's the opponent's PV arrow.
 _DEBUG_PAIRING   = os.environ.get("SV_DEBUG_PAIRING",   "0") == "1"
-_LIVE_PAIRINGS   = os.environ.get("SV_LIVE_PAIRINGS",   "0") == "1"
 
 
 def _opposite_side(side: str) -> str:
@@ -694,24 +693,21 @@ class Orchestrator:
     async def _emit_group_events(
         self, new_pairs: set[frozenset], orphaned: set[str]
     ) -> None:
-        """Emit ``proxy_paired`` / ``proxy_unpaired`` events for group deltas.
-
-        Logging is unconditional; event emission is gated on ``_LIVE_PAIRINGS``."""
-        if _LIVE_PAIRINGS:
-            for group in new_pairs:
-                pid_a, pid_b = tuple(group)
-                state_a = self._pairing_state.get(pid_a)
-                state_b = self._pairing_state.get(pid_b)
-                await self._emit("proxy_paired", {
-                    "tournament_id": self._active_id,
-                    "pair_id": self._pair_ids.get(group, ""),
-                    "proxy_a": pid_a,
-                    "engine_a": self._proxy_engine_names.get(pid_a, pid_a),
-                    "side_a": state_a[1] if state_a else "?",
-                    "proxy_b": pid_b,
-                    "engine_b": self._proxy_engine_names.get(pid_b, pid_b),
-                    "side_b": state_b[1] if state_b else "?",
-                })
+        """Emit ``proxy_paired`` / ``proxy_unpaired`` events for group deltas."""
+        for group in new_pairs:
+            pid_a, pid_b = tuple(group)
+            state_a = self._pairing_state.get(pid_a)
+            state_b = self._pairing_state.get(pid_b)
+            await self._emit("proxy_paired", {
+                "tournament_id": self._active_id,
+                "pair_id": self._pair_ids.get(group, ""),
+                "proxy_a": pid_a,
+                "engine_a": self._proxy_engine_names.get(pid_a, pid_a),
+                "side_a": state_a[1] if state_a else "?",
+                "proxy_b": pid_b,
+                "engine_b": self._proxy_engine_names.get(pid_b, pid_b),
+                "side_b": state_b[1] if state_b else "?",
+            })
         emitted: set[str] = set()
         for pid in orphaned:
             if pid in emitted:
@@ -731,13 +727,12 @@ class Orchestrator:
                         q.put_nowait({"proxy_id": pid, "ended": True})
                     except asyncio.QueueFull:
                         pass
-            if _LIVE_PAIRINGS:
-                await self._emit("proxy_unpaired", {
-                    "tournament_id": self._active_id,
-                    "pair_id": pair_id,
-                    "proxy_id": pid,
-                    "peer_id": peer,
-                })
+            await self._emit("proxy_unpaired", {
+                "tournament_id": self._active_id,
+                "pair_id": pair_id,
+                "proxy_id": pid,
+                "peer_id": peer,
+            })
 
     def _paired_subscribers(
         self, proxy_id: str, fen: str, side: str

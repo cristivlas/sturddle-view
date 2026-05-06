@@ -14,8 +14,8 @@ export const EVT = {
 export const KIND = {
   PROXY_STARTED:  "proxy_started",
   PROXY_ENDED:    "proxy_ended",
-  PROXY_PAIRED:   "proxy_paired",    // SV_LIVE_PAIRINGS only
-  PROXY_UNPAIRED: "proxy_unpaired",  // SV_LIVE_PAIRINGS only
+  PROXY_PAIRED:   "proxy_paired",
+  PROXY_UNPAIRED: "proxy_unpaired",
   GAME_FINISHED:  "game_finished",
   RUNNER_LOG:     "runner_log",
   RUNNER_CRASH:   "runner_crash",
