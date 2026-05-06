@@ -172,25 +172,25 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   const windowSpecs = {
     standings: {
-      title: `${tournament.name} — Standings`,
+      title: `Standings | ${tournament.name}`,
       makeBody: makeStandingsBody,
       setBody: (b) => { standingsBody = b; },
       render: () => renderStandings(),
     },
     schedule: {
-      title: `${tournament.name} — Live Games`,
+      title: `Live Games | ${tournament.name}`,
       makeBody: makeScheduleBody,
       setBody: (b) => { scheduleBody = b; },
       render: () => renderSchedule(),
     },
     engines: {
-      title: `${tournament.name} -- Engine Instances`,
+      title: `Engine Instances | ${tournament.name}`,
       makeBody: makeEnginesBody,
       setBody: (b) => { enginesBody = b; },
       render: () => renderEngines(),
     },
     log: {
-      title: `${tournament.name} — Event log`,
+      title: `Event log | ${tournament.name}`,
       makeBody: makeLogBody,
       setBody: (b) => { logBody = b; },
       render: () => renderEventLog(),
@@ -312,7 +312,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       btn.addEventListener("click", () => attachWatch(btn, info.pairId || key, "schedule", {
         proxyId: info.proxyA,
         gameId: info.pairId || null,
-        label: `${tournament.name} — ${wLabel} vs ${bLabel}`,
+        label: `${wLabel} vs ${bLabel} | ${tournament.name}`,
         engineName: wLabel,
       }));
       li.appendChild(btn);
@@ -350,7 +350,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(pid));
       btn.addEventListener("click", () => attachWatch(btn, pid, "engines", {
         proxyId: pid,
-        label: `${tournament.name} — ${engineLabel}`,
+        label: `${engineLabel} | ${tournament.name}`,
         engineName: engineLabel,
       }));
       li.appendChild(btn);
