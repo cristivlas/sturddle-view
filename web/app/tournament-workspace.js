@@ -13,6 +13,7 @@
 
 import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, openLiveGameWindow } from "./tournament-live-game.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
+import { toast } from "./dialogs.js";
 import { escapeHtml, flashWindow } from "./wb-utils.js";
 
 const STORAGE_KEY = "sturddle:tournament-workspace-layout";
@@ -196,7 +197,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
                   parts.push(`${e.payload?.engine_a}(${(e.payload?.proxy_a||"").slice(0,8)}) vs ${e.payload?.engine_b}(${(e.payload?.proxy_b||"").slice(0,8)})`);
                 return `${ts} ${parts.join(" ")}`;
               }).join("\n");
-            navigator.clipboard.writeText(text).catch(() => {});
+            navigator.clipboard.writeText(text)
+              .then(() => toast("Event log copied to clipboard", { variant: "success", duration: 1500 }))
+              .catch(() => {});
           },
         });
       },
