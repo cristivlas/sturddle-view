@@ -247,7 +247,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     }
     const parsed = msg.parsed;
     if (!parsed) return;
-    if (msg.paired) {
+    const isOpponent = msg.paired || (gameId && msg.proxy_id && msg.proxy_id !== proxyId);
+    if (isOpponent) {
       if (msg.engine_name) setOpponentName(msg.engine_name);
       handlePairedParsed(parsed, msg.thinking_side);
       return;

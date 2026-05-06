@@ -570,7 +570,13 @@ class Orchestrator:
                 if pair_id:
                     game_subs = self._game_subscribers.get(pair_id)
                     if game_subs:
-                        game_payload: dict = {"proxy_id": proxy_id, "line": line}
+                        state = self._pairing_state.get(proxy_id)
+                        game_payload: dict = {
+                            "proxy_id":     proxy_id,
+                            "line":         line,
+                            "thinking_side": state[1] if state else None,
+                            "engine_name":  self._proxy_engine_names.get(proxy_id),
+                        }
                         if parsed is not None:
                             game_payload["parsed"] = parsed
                         _fanout(game_subs, game_payload)
