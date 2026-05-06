@@ -18,6 +18,7 @@ from ..engines import (
     probe_engine,
     resolve_selected,
 )
+from ..tournament.store import STATUS_DONE, TournamentStore
 
 
 def _validate_engine_path(raw: str) -> str:
@@ -64,6 +65,39 @@ def _registry(request: Request) -> EngineRegistry:
     return request.app.state.engines
 
 
+def _engine_locks(request: Request) -> dict[str, list[dict]]:
+    """Map engine path -> list of {name, status} for non-DONE tournaments."""
+    ts: TournamentStore = getattr(request.app.state, "tournament_store", None)
+    if ts is None:
+        return {}
+    locks: dict[str, list[dict]] = {}
+    for t in ts.list():
+        if t.status == STATUS_DONE:
+            continue
+        for ref in t.engines or []:
+            cmd = ref.get("cmd") if isinstance(ref, dict) else getattr(ref, "cmd", None)
+            if cmd:
+                locks.setdefault(cmd, []).append({"name": t.name, "status": t.status})
+    return locks
+
+
+def _check_engine_locked(engine_id: str, request: Request) -> None:
+    """Raise 409 if the engine is referenced by any non-DONE tournament."""
+    ts: TournamentStore = getattr(request.app.state, "tournament_store", None)
+    if ts is None:
+        return
+    reg = _registry(request)
+    try:
+        e = reg.get(engine_id)
+    except EngineNotFoundError:
+        return
+    locks = _engine_locks(request)
+    refs = locks.get(e.path, [])
+    if refs:
+        names = ", ".join(f"{r['name']} ({r['status']})" for r in refs)
+        raise HTTPException(status_code=409, detail=f"engine in use by: {names}")
+
+
 def _serialize(e: Engine) -> dict:
     return asdict(e)
 
@@ -91,10 +125,13 @@ async def _ensure_schema(reg: EngineRegistry, e: Engine) -> Engine:
 @router.get("")
 async def list_engines(request: Request) -> dict:
     reg = _registry(request)
+    locks = _engine_locks(request)
     out = []
     for e in reg.list():
         e = await _ensure_schema(reg, e)
-        out.append(_serialize(e))
+        d = _serialize(e)
+        d["locked"] = locks.get(e.path, [])
+        out.append(d)
     return {
         "engines": out,
         "selected_id": reg.selected_id,
@@ -132,6 +169,7 @@ async def add_engine(payload: EngineCreate, request: Request) -> dict:
 
 @router.patch("/{engine_id}")
 def update_engine(engine_id: str, payload: EngineUpdate, request: Request) -> dict:
+    _check_engine_locked(engine_id, request)
     reg = _registry(request)
     new_path = _validate_engine_path(payload.path) if payload.path is not None else None
     try:
@@ -145,6 +183,7 @@ def update_engine(engine_id: str, payload: EngineUpdate, request: Request) -> di
 
 @router.delete("/{engine_id}", status_code=204)
 def remove_engine(engine_id: str, request: Request) -> None:
+    _check_engine_locked(engine_id, request)
     reg = _registry(request)
     try:
         reg.remove(engine_id)
@@ -173,11 +212,8 @@ async def select_engine(engine_id: str, request: Request) -> dict:
 
 @router.post("/{engine_id}/refresh-schema")
 async def refresh_engine_schema(engine_id: str, request: Request) -> dict:
-    """Re-spawn the engine to re-capture its UCI option list.
-
-    Useful after an engine binary upgrade — option set, ranges, or
-    defaults may have changed.
-    """
+    """Re-spawn the engine to re-capture its UCI option list."""
+    _check_engine_locked(engine_id, request)
     reg = _registry(request)
     try:
         e = reg.get(engine_id)
