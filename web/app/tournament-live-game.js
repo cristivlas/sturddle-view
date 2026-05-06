@@ -219,7 +219,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   ws = new WebSocket(url);
 
   ws.addEventListener("open", () => {
-    statusEl.textContent = "live";
+    statusEl.textContent = "";
   });
 
   function stopTimer() {
@@ -250,7 +250,11 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       return;
     }
     if (msg.ended) {
-      showResult(msg.result, msg.termination);
+      // game-id WS sends result + termination on Finished N → banner.
+      // proxy-id WS sends bare {ended:true} when the engine process
+      // exits (typically tournament shutdown) → quiet status text.
+      if (msg.result) showResult(msg.result, msg.termination);
+      else            statusEl.textContent = "engine exited";
       stopTimer();
       wbClosed = true; // suppress wb.close() in the WS close handler
       try { ws.close(); } catch { /* */ }
