@@ -14,7 +14,8 @@ const liveWindows = new Map(); // windowKey -> WinBox instance
 const LIVE_MIN_BOARD    = 200; // px — smallest usable board side
 const LIVE_CLOCK_H      = 36;  // px — one clock row (font 16px + padding)
 const LIVE_EVAL_H       = 24;  // px — eval row (font 13px)
-const LIVE_PV_H         = 16;  // px — pv row + status row (font 11px, same height)
+const LIVE_PV_H         = 16;  // px — pv row (font 11px)
+const LIVE_STATUS_H     = 18;  // px — status row (font 13px)
 const LIVE_WINBOX_TITLE = 35;  // px — WinBox title bar
 const LIVE_GAP          = 6;   // px — flex gap between sections
 
@@ -22,7 +23,7 @@ const ARROW_MIN_TIME_MS = 250; // skip arrow if side-to-move has less time than 
 
 const LIVE_MIN_WIDTH  = LIVE_MIN_BOARD;
 // 8 flex children: pv-top, eval-top, clock-top, board, clock-bottom, eval-bottom, pv-bottom, status — 7 gaps.
-const LIVE_MIN_HEIGHT = LIVE_WINBOX_TITLE + LIVE_PV_H * 3 + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_MIN_BOARD + LIVE_GAP * 7;
+const LIVE_MIN_HEIGHT = LIVE_WINBOX_TITLE + LIVE_PV_H * 2 + LIVE_STATUS_H + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_MIN_BOARD + LIVE_GAP * 7;
 
 
 // Gap (px) between the avoid-rect and the new window when displacing.
@@ -84,7 +85,12 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       <span class="clock-name lg-top-name">—</span>
       <span class="clock-time lg-top-time">—</span>
     </div>
-    <div class="lg-board"></div>
+    <div class="lg-board">
+      <div class="lg-result-overlay" hidden>
+        <div class="lg-result-score"></div>
+        <div class="lg-result-termination"></div>
+      </div>
+    </div>
     <div class="clock-row lg-clock-bottom">
       <span class="clock-name lg-bottom-name">—</span>
       <span class="clock-time lg-bottom-time">—</span>
@@ -120,6 +126,9 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   const topTimeEl = body.querySelector(".lg-top-time");
   const bottomTimeEl = body.querySelector(".lg-bottom-time");
   const statusEl = body.querySelector(".lg-status");
+  const resultOverlayEl = body.querySelector(".lg-result-overlay");
+  const resultScoreEl = body.querySelector(".lg-result-score");
+  const resultTerminationEl = body.querySelector(".lg-result-termination");
 
   // Default WinBox layout for live windows. Cascade by index so multiple
   // windows don't fully overlap.
@@ -159,7 +168,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   //   7× flex gap
   // In compact mode (body.clientHeight < 280) the .lg-pv and
   // .lg-status rows are display:none, so those drop out.
-  const FIXED_FULL = LIVE_PV_H * 3 + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 7;
+  const FIXED_FULL = LIVE_PV_H * 2 + LIVE_STATUS_H + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 7;
   const FIXED_COMPACT = LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 4;
 
   function constrainAndResize() {
@@ -241,7 +250,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       return;
     }
     if (msg.ended) {
-      statusEl.textContent = msg.result ?? "ended";
+      showResult(msg.result, msg.termination);
       stopTimer();
       wbClosed = true; // suppress wb.close() in the WS close handler
       try { ws.close(); } catch { /* */ }
@@ -363,6 +372,17 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
         }
         break;
     }
+  }
+
+  function showResult(result, termination) {
+    // result is "1-0" | "0-1" | "1/2-1/2" | "*" | null/undefined.
+    // termination is the fastchess raw string (e.g. "checkmate",
+    // "adjudication", "timeout") or null.
+    const score = (result && result !== "*") ? result : "ended";
+    resultScoreEl.textContent = score;
+    resultTerminationEl.textContent = termination ?? "";
+    resultOverlayEl.hidden = false;
+    statusEl.textContent = termination ? `${score} · ${termination}` : score;
   }
 
   function pvArrowMove(p) {

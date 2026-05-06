@@ -195,6 +195,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
                 if (inner) parts.push(inner);
                 if (inner === KIND.PROXY_PAIRED)
                   parts.push(`${e.payload?.engine_a}(${(e.payload?.proxy_a||"").slice(0,8)}) vs ${e.payload?.engine_b}(${(e.payload?.proxy_b||"").slice(0,8)})`);
+                else if (inner === KIND.GAME_FINISHED) {
+                  const result = e.payload?.result || "*";
+                  const termination = e.payload?.termination;
+                  parts.push(`${e.payload?.engine_a} vs ${e.payload?.engine_b}`,
+                             termination ? `${result} ${termination}` : result);
+                }
                 return `${ts} ${parts.join(" ")}`;
               }).join("\n");
             navigator.clipboard.writeText(text)
@@ -370,9 +376,14 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const parts = [];
       if (e.kind === EVT.STATUS && e.payload?.status)
         parts.push(e.payload.status);
-      else if (inner === KIND.GAME_FINISHED && e.payload?.result)
-        parts.push(inner, e.payload.result);
-      else if (inner === KIND.PROXY_PAIRED) {
+      else if (inner === KIND.GAME_FINISHED) {
+        const a = e.payload?.engine_a || "?";
+        const b = e.payload?.engine_b || "?";
+        const result = e.payload?.result || "*";
+        const termination = e.payload?.termination;
+        const tail = termination ? `${result} ${termination}` : result;
+        parts.push(inner, `${a} vs ${b}`, tail);
+      } else if (inner === KIND.PROXY_PAIRED) {
         const a = e.payload?.engine_a || "?";
         const b = e.payload?.engine_b || "?";
         const pa = (e.payload?.proxy_a || "").slice(0, 8);
@@ -475,9 +486,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
                      proxyB: p.proxy_b, engineB: p.engine_b, sideB: p.side_b };
       livePairings.set(p.proxy_a, info);
       livePairings.set(p.proxy_b, info);
-    } else if (inner === KIND.PROXY_UNPAIRED) {
-      livePairings.delete(evt.payload.proxy_id);
-      livePairings.delete(evt.payload.peer_id);
+    } else if (inner === KIND.GAME_FINISHED) {
+      // Authoritative game-end signal — drives livePairings cleanup +
+      // Schedule re-render. PROXY_UNPAIRED still arrives (debug signal,
+      // see _dissolve_pair) but is filtered from the visible event log.
+      livePairings.delete(evt.payload.proxy_a);
+      livePairings.delete(evt.payload.proxy_b);
     } else if (
       evt.kind === EVT.STATUS ||
       inner === KIND.DONE || inner === KIND.STOPPED
