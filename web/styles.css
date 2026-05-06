@@ -1452,6 +1452,19 @@ wa-dialog::part(body) {
   font-family: var(--wa-font-family-code);
 }
 .wb-sched-list, .wb-eventlog-list { list-style: none; padding: 0; margin: 0; }
+.wb-log-copy-ctrl {
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: 14px;
+  mask-size: 14px;
+  background-color: rgba(255,255,255,0.5) !important;
+  background-image: none !important;
+}
+.wb-log-copy-ctrl:hover { background-color: rgba(255,255,255,0.9) !important; }
 .wb-sched-list li { padding: 3px 0; font-size: 13px; border-bottom: 1px solid #2e3138; }
 .wb-sched-icon { display: inline-block; width: 18px; color: var(--accent); }
 .wb-sched-result {

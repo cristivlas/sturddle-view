@@ -178,6 +178,28 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       makeBody: makeLogBody,
       setBody: (b) => { logBody = b; },
       render: () => renderEventLog(),
+      postCreate: (wb) => {
+        wb.addControl({
+          class: "wb-log-copy-ctrl",
+          index: 3,
+          click: () => {
+            const text = eventLog
+              .filter(e => e.payload?.kind !== KIND.PROXY_UNPAIRED)
+              .map(e => {
+                const ts = e.ts || "";
+                const inner = e.payload?.kind;
+                const line = e.payload?.line;
+                if (inner === KIND.RUNNER_LOG && line) return `${ts} ${line}`;
+                const parts = [e.kind];
+                if (inner) parts.push(inner);
+                if (inner === KIND.PROXY_PAIRED)
+                  parts.push(`${e.payload?.engine_a}(${(e.payload?.proxy_a||"").slice(0,8)}) vs ${e.payload?.engine_b}(${(e.payload?.proxy_b||"").slice(0,8)})`);
+                return `${ts} ${parts.join(" ")}`;
+              }).join("\n");
+            navigator.clipboard.writeText(text).catch(() => {});
+          },
+        });
+      },
     },
   };
 
@@ -680,6 +702,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const body = spec.makeBody();
     spec.setBody(body);
     windows[key] = makeBox(key, spec.title, body);
+    spec.postCreate?.(windows[key]);
     spec.render();
     armSubscriptions();
     refresh();
