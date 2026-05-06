@@ -11,7 +11,7 @@ import { apiErrorDetail, confirm, reportError, showDialog, toast } from "./dialo
 import { openSettingsDialog } from "./settings-dialog.js";
 import { EVT, KIND, STATUS } from "./tournament-events.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
-import { getLiveWindows } from "./tournament-live-game.js";
+import { hasStaleLiveGames } from "./tournament-live-game.js";
 import { getActiveWorkspace, openTournamentWorkspace } from "./tournament-workspace.js";
 
 export function mountTournaments({ container, api, events, log, token }) {
@@ -296,7 +296,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     const ws = getActiveWorkspace();
     const hadWorkspace = ws && ws.tournamentId !== newId;
     if (hadWorkspace) {
-      if (getLiveWindows().length > 0) {
+      if (hasStaleLiveGames()) {
         const ok = await confirm({ message: "Live game windows are open. Close them and change active selection?" });
         if (!ok) return false;
       }

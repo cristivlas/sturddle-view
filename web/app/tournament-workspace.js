@@ -11,7 +11,7 @@
 //   WS `tournament_update`             → event log; refresh on game-finished.
 //   Periodic GET while running         → reconcile standings.
 
-import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, openLiveGameWindow } from "./tournament-live-game.js";
+import { closeAllLiveGames, closeStaleLiveGames, getLiveWindows, isLiveWindowOpen, openLiveGameWindow } from "./tournament-live-game.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { toast } from "./dialogs.js";
 import { escapeHtml, flashWindow } from "./wb-utils.js";
@@ -534,14 +534,16 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       refresh();
     }
 
-    // Tournament reached a terminal state ⇒ close the workspace (and
-    // its live windows). User opens a new workspace explicitly when
-    // starting another tournament.
+    // Tournament terminal state: drop stale live windows (proxy-id
+    // attaches always go stale; game-id windows that were force-
+    // dissolved without a real result also stale). Resolved game-id
+    // windows keep their final banner. Standard windows stay open
+    // so the user can review final state.
     if (
       evt.kind === EVT.STATUS &&
       [STATUS.STOPPED, STATUS.DONE, STATUS.FAILED].includes(evt.payload?.status)
     ) {
-      close();
+      closeStaleLiveGames();
     }
   }
 
@@ -642,13 +644,19 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   function close() {
+    // Tournament-switch path: close standard windows and stale live
+    // windows (proxy-id attaches and unresolved game-id windows).
+    // Resolved game-id windows persist with their final banner so
+    // the user can still review them. tearDown() defers finalize()
+    // until the last surviving live window is closed manually. The
+    // menu's "Close all" (closeAll) closes everything unconditionally.
     for (const k of Object.keys(windows)) {
       if (windows[k]) {
         windows[k].close(true); // skip the onclose callback's tearDown loop
         windows[k] = null;
       }
     }
-    closeAllLiveGames();
+    closeStaleLiveGames();
     tearDown();
   }
 
@@ -694,6 +702,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   function closeAll() {
+    closeAllLiveGames();
     close();
   }
 

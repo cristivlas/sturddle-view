@@ -228,6 +228,26 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, brows
                     f"(black-at-bottom), got {top_rank_label!r}"
                 )
 
+                # Close-on-terminal: stopping the tournament closes
+                # stale live windows (proxy-id attaches are always
+                # stale) but keeps standard windows so the user can
+                # review final state. 5 .winbox up before stop:
+                # Standings + Live Games + Event log + Engines (4
+                # standard) + 1 live (watch). After stop: 4 standard,
+                # 0 live.
+                assert await page.locator(".winbox.sturddle-wb").count() == 5
+                assert await page.locator(".winbox.sturddle-wb-live").count() == 1
+
+                await app.state.tournament_orch.stop(t.id)
+
+                # Live window goes away (proxy-id, stale on terminal).
+                await page.wait_for_function(
+                    "() => document.querySelectorAll('.winbox.sturddle-wb-live').length === 0",
+                    timeout=5000,
+                )
+                # Standard windows remain.
+                assert await page.locator(".winbox.sturddle-wb").count() == 4
+
                 assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
         finally:
             await ctx.close()
