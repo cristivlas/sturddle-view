@@ -85,6 +85,16 @@ _FASTCHESS_FINISHED_RE = re.compile(
 _RESULT_UNKNOWN = "*"
 _TERMINATION_UNKNOWN = "unknown"
 
+# Upper bound on the bidirectional FIFO queues that match
+# `Started N` ↔ pair confirmation. In steady state queues should hold
+# only a few entries (≈ concurrency); growth past this means a leak —
+# typically book-line collisions that prevented pair confirmation
+# (Started enqueued, no confirmation arrives). Without a bound, the
+# oldest leaked entry stays at the head and gets matched to *unrelated*
+# subsequent confirmations, stamping pairs with progressively stale Ns
+# and breaking dissolution. We evict the oldest with a warning.
+_MATCH_QUEUE_MAX = 64
+
 
 def _fanout(subs: set[asyncio.Queue], payload: dict) -> None:
     """Slow-consumer policy: drop oldest, keep newest."""
@@ -183,11 +193,17 @@ class Orchestrator:
         # Reverse: pair_id → frozenset(pid_a, pid_b). Used for snapshot replay.
         self._pair_proxies: dict[str, frozenset] = {}
         # fastchess game-N tracking. _started_games: FIFO of (N, white,
-        # black) from `Started game N` stdout lines, awaiting pair
-        # confirmation. _pair_game_n / _game_n_pair: bidirectional map
-        # between pair_id and N, established at confirmation time so the
-        # `Finished game N` line can address the right pair.
+        # black) from `Started game N` stdout lines awaiting pair
+        # confirmation. _unstamped_pairs: complementary FIFO of
+        # (pair_id, white, black) for confirmed pairs awaiting their
+        # `Started N`. Whichever signal arrives second consumes from
+        # the other queue. Race rationale: under concurrency, UCI
+        # rendezvous (HTTP) can land before the corresponding stdout
+        # line is drained. _pair_game_n / _game_n_pair: bidirectional
+        # map between pair_id and N, established when both signals
+        # have matched.
         self._started_games: deque[tuple[int, str, str]] = deque()
+        self._unstamped_pairs: deque[tuple[str, str, str]] = deque()
         self._pair_game_n: dict[str, int] = {}
         self._game_n_pair: dict[int, str] = {}
         # Pairs whose UCI side ended (ucinewgame / proxy_ended) but whose
@@ -231,6 +247,7 @@ class Orchestrator:
         self._pair_ids.clear()
         self._pair_proxies.clear()
         self._started_games.clear()
+        self._unstamped_pairs.clear()
         self._pair_game_n.clear()
         self._game_n_pair.clear()
         self._pending_dissolve.clear()
@@ -645,10 +662,19 @@ class Orchestrator:
                 pid_a, pid_b = tuple(group)
                 state_a = self._pairing_state.get(pid_a)
                 state_b = self._pairing_state.get(pid_b)
+                name_a = self._proxy_engine_names.get(pid_a)
+                name_b = self._proxy_engine_names.get(pid_b)
                 # Require opposite colors and neither proxy already confirmed.
+                # Reject same-engine-name pairs as phantoms from book-line
+                # collisions (4-bucket decay leaving two same-engine proxies
+                # that aren't actually playing each other in fastchess).
+                # TODO: lift this when self-play is supported — see spec
+                # § "Self-play (deferred)". Self-play needs orchestrator-
+                # level engine-name disambiguation before reaching fastchess.
                 if (state_a and state_b and state_a[1] != state_b[1]
                         and pid_a not in self._confirmed_pairs
-                        and pid_b not in self._confirmed_pairs):
+                        and pid_b not in self._confirmed_pairs
+                        and name_a and name_b and name_a != name_b):
                     self._confirmed_pairs[pid_a] = pid_b
                     self._confirmed_pairs[pid_b] = pid_a
                     pair_id = str(uuid.uuid4())
@@ -656,13 +682,33 @@ class Orchestrator:
                     self._pair_proxies[pair_id] = group
                     self._stamp_pair_game_n(pair_id, pid_a, pid_b, state_a[1])
                     new_pairs.add(group)
-                    if _DEBUG_PAIRING:
+                    n = self._pair_game_n.get(pair_id)
+                    log.info(
+                        "pair confirmed tag=%s game_n=%s white=%s(%s) black=%s(%s) "
+                        "queues=started:%d/unstamped:%d/pairs:%d",
+                        pair_id[:8], n,
+                        self._proxy_engine_names.get(
+                            pid_a if state_a[1] == "white" else pid_b, "?"),
+                        (pid_a if state_a[1] == "white" else pid_b)[:8],
+                        self._proxy_engine_names.get(
+                            pid_b if state_a[1] == "white" else pid_a, "?"),
+                        (pid_b if state_a[1] == "white" else pid_a)[:8],
+                        len(self._started_games), len(self._unstamped_pairs),
+                        len(self._pair_proxies),
+                    )
+                    if n is None:
                         log.info(
-                            "pairing: confirmed %s(%s) <-> %s(%s) game_n=%s",
-                            pid_a[:8], self._proxy_engine_names.get(pid_a, "?"),
-                            pid_b[:8], self._proxy_engine_names.get(pid_b, "?"),
-                            self._pair_game_n.get(pair_id),
+                            "pair confirmed tag=%s awaiting Started N; "
+                            "_started_games head=%s",
+                            pair_id[:8],
+                            list(self._started_games)[:3],
                         )
+                elif name_a and name_b and name_a == name_b:
+                    log.info(
+                        "pair candidate rejected (same engine name): "
+                        "%s(%s) vs %s(%s) — phantom from book-line collision",
+                        name_a, pid_a[:8], name_b, pid_b[:8],
+                    )
             elif _DEBUG_PAIRING:
                 fen = (self._pairing_state.get(next(iter(group))) or ("?",))[0]
                 log.debug(
@@ -771,6 +817,23 @@ class Orchestrator:
             pair_id = self._pair_ids.get(frozenset((pid, peer)), "")
             if pair_id:
                 self._pending_dissolve.add(pair_id)
+                log.info(
+                    "pair pending tag=%s game_n=%s pid=%s peer=%s",
+                    pair_id[:8], self._pair_game_n.get(pair_id),
+                    pid[:8], peer[:8],
+                )
+
+    def _cap_match_queue(self, q: deque, name: str) -> None:
+        """Bound the bidirectional FIFO queues. Past `_MATCH_QUEUE_MAX`
+        the oldest entry is almost certainly leaked (book-line collision
+        that never confirmed) and would cause stale-N stamping; drop it
+        with a warning carrying the dropped value for diagnosis."""
+        while len(q) > _MATCH_QUEUE_MAX:
+            dropped = q.popleft()
+            log.warning(
+                "%s queue cap exceeded; dropped oldest=%s len=%d",
+                name, dropped, len(q),
+            )
 
     def _white_black_for_group(self, group: frozenset) -> tuple[str, str]:
         """Return (white_pid, black_pid) for a confirmed pair. Frozenset
@@ -788,7 +851,9 @@ class Orchestrator:
         self, pair_id: str, pid_a: str, pid_b: str, side_a: str
     ) -> None:
         """Match a freshly-confirmed pair to the head of `_started_games`
-        whose `(white, black)` engine names match (FIFO)."""
+        whose `(white, black)` engine names match (FIFO). If no Started
+        line has arrived yet, queue the pair as unstamped — a later
+        `_match_started_to_unstamped` call will stamp it."""
         white_pid, black_pid = (pid_a, pid_b) if side_a == "white" else (pid_b, pid_a)
         white = self._proxy_engine_names.get(white_pid)
         black = self._proxy_engine_names.get(black_pid)
@@ -800,6 +865,21 @@ class Orchestrator:
                 self._pair_game_n[pair_id] = n
                 self._game_n_pair[n] = pair_id
                 return
+        self._unstamped_pairs.append((pair_id, white, black))
+        self._cap_match_queue(self._unstamped_pairs, "unstamped_pairs")
+
+    def _match_started_to_unstamped(self, n: int, white: str, black: str) -> str | None:
+        """Inverse of `_stamp_pair_game_n`: a `Started N` line lands;
+        try to bind it to an already-confirmed pair awaiting its N
+        (FIFO by direction). Returns the pair_id stamped, or ``None``
+        if no unstamped pair matches (caller should queue the entry)."""
+        for i, (pair_id, w, b) in enumerate(self._unstamped_pairs):
+            if w == white and b == black:
+                del self._unstamped_pairs[i]
+                self._pair_game_n[pair_id] = n
+                self._game_n_pair[n] = pair_id
+                return pair_id
+        return None
 
     async def _dissolve_pair(
         self, pair_id: str, result: str, termination: str | None
@@ -817,8 +897,18 @@ class Orchestrator:
         n = self._pair_game_n.pop(pair_id, None)
         if n is not None:
             self._game_n_pair.pop(n, None)
+        # Drop from unstamped queue if still waiting for its Started.
+        for i, (pid_, _, _) in enumerate(self._unstamped_pairs):
+            if pid_ == pair_id:
+                del self._unstamped_pairs[i]
+                break
         self._pending_dissolve.discard(pair_id)
         game_subs = self._game_subscribers.pop(pair_id, None)
+        log.info(
+            "pair dissolved tag=%s game_n=%s result=%s termination=%s game_subs=%d",
+            pair_id[:8], n, result, termination,
+            len(game_subs) if game_subs else 0,
+        )
         if game_subs:
             for q in game_subs:
                 try:
@@ -898,15 +988,27 @@ class Orchestrator:
             return
         kind, info = parsed
         if kind == "started":
-            self._started_games.append((info["n"], info["white"], info["black"]))
+            n, white, black = info["n"], info["white"], info["black"]
+            stamped = self._match_started_to_unstamped(n, white, black)
+            if stamped is None:
+                self._started_games.append((n, white, black))
+                self._cap_match_queue(self._started_games, "started_games")
+            else:
+                log.info(
+                    "pair late-stamped tag=%s game_n=%d white=%s black=%s",
+                    stamped[:8], n, white, black,
+                )
             return
         # finished
         n = info["n"]
         pair_id = self._game_n_pair.get(n)
         if pair_id is None:
-            log.info(
-                "fastchess Finished game %d (%s vs %s) had no confirmed pair; dropping",
+            log.warning(
+                "fastchess Finished game %d (%s vs %s) had no confirmed pair; "
+                "pending=%s known_game_ns=%s",
                 n, info["white"], info["black"],
+                [(p[:8], self._pair_game_n.get(p)) for p in self._pending_dissolve],
+                sorted(self._game_n_pair.keys())[:8],
             )
             return
         await self._dissolve_pair(pair_id, info["result"], info["termination"])

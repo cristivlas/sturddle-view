@@ -148,6 +148,36 @@ async def test_confirmation_stamps_game_n_from_started_queue(orch, emitted):
 
 
 @pytest.mark.asyncio
+async def test_confirmation_before_started_is_late_stamped(orch, emitted):
+    """Under load, the UCI rendezvous (HTTP) can land before fastchess's
+    `Started N` stdout. The pair confirms with no game_n; when Started N
+    arrives later, it must be retroactively stamped."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    # Confirm before any Started line.
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+    pair_id = next(iter(orch._pair_proxies))
+    assert orch._pair_game_n.get(pair_id) is None
+    # Pair is queued in unstamped.
+    assert any(pid == pair_id for pid, _, _ in orch._unstamped_pairs)
+
+    # Started N arrives.
+    await orch._handle_runner_log({"stream": "out",
+        "line": f"Started game 77 ({_ENGINE_A} vs {_ENGINE_B})"})
+
+    assert orch._pair_game_n[pair_id] == 77
+    assert orch._game_n_pair[77] == pair_id
+    assert not orch._unstamped_pairs
+
+    # Finished now resolves correctly.
+    await orch._handle_runner_log({"stream": "out",
+        "line": f"Finished game 77 ({_ENGINE_A} vs {_ENGINE_B}): 1-0 {{checkmate}}"})
+    finished = _events_of(emitted, "game_finished")
+    assert len(finished) == 1
+    assert finished[0]["game_n"] == 77
+
+
+@pytest.mark.asyncio
 async def test_started_queue_fifo_matches_by_color_pair(orch):
     """Two `Started` lines with the same (white, black) match
     confirmations FIFO."""
@@ -375,6 +405,24 @@ async def test_surviving_proxy_can_repair_while_pending(orch):
 # ---------------------------------------------------------------------------
 # Force-dissolve on terminal runner event
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_same_engine_name_pair_rejected_as_phantom(orch, emitted):
+    """Book-line collisions can leave two same-engine proxies (one
+    white, one black, from different actual slots) sharing a FEN.
+    Pair detection must reject them — they aren't playing each other.
+    See spec § "Self-play (deferred)" for when this rule lifts."""
+    # Both proxies report the same engine name (Sturddle 2.5.0 vs
+    # itself, only because of book-line collision in a 2.5.0/2.5.1
+    # tournament — not legitimate self-play).
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_A)
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+
+    assert _events_of(emitted, "proxy_paired") == []
+    assert not orch._pair_proxies
+    assert _PROXY_A not in orch._confirmed_pairs
 
 
 @pytest.mark.asyncio

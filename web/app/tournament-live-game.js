@@ -130,11 +130,15 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   const resultScoreEl = body.querySelector(".lg-result-score");
   const resultTerminationEl = body.querySelector(".lg-result-termination");
 
+  // Prefix title with the pair_id / proxy_id short tag so it stays
+  // visible even when WinBox truncates long titles.
+  const debugTag = (gameId ?? proxyId ?? "").slice(0, 8);
+  const titleWithTag = debugTag ? `[${debugTag}] ${label}` : label;
   // Default WinBox layout for live windows. Cascade by index so multiple
   // windows don't fully overlap.
   const idx = liveWindows.size;
   const wb = new WinBox({
-    title: label,
+    title: titleWithTag,
     width: "20%",
     // height: "55%",
     minwidth: LIVE_MIN_WIDTH,

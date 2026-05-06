@@ -685,6 +685,37 @@ pending entries).
 - `ucinewgame` arrives before `Started N` is queued (theoretical
   reorder): pair confirmation can't stamp N; falls through to
   forced-dissolve.
+- Same-engine-name pair candidate (book-line collision in a
+  tournament with two distinct engines whose 4-bucket decays into a
+  same-engine 2-bucket): rejected as phantom. See "Self-play
+  (deferred)" below for why this rejection is conditional on the
+  two-engine constraint.
+
+#### Self-play (deferred)
+
+Self-play tournaments — engine running against itself, e.g. for
+SPRT before/after a self-tune — are out of scope for the current
+implementation. Pair detection currently rejects same-engine-name
+candidates because under multi-engine tournaments those pairs are
+phantoms from book-line collision (4-bucket decays into a
+same-engine 2-bucket whose two proxies aren't actually playing each
+other in fastchess). With self-play that rejection becomes wrong:
+every legitimate pair has matching engine names.
+
+Lifting the rejection requires upstream disambiguation: the
+orchestrator must rename engine instances before passing them to
+fastchess (e.g., `Engine #1` / `Engine #2`) so that fastchess's
+`Started N (… vs …)` and PGN headers carry distinct names. The
+orchestrator-side pair detection then works unchanged, and the
+FIFO match in `_stamp_pair_game_n` keys correctly off the
+disambiguated names.
+
+TODO before self-play ships:
+- Orchestrator-level engine-name disambiguation (templates with
+  duplicate engine cmds get suffixes).
+- Tests covering self-play pair detection, dissolution, and
+  Started/Finished FIFO matching.
+- Lift the same-engine-name rejection in `_recompute_groups`.
 
 ### Stopped / done view
 
