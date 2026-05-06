@@ -270,6 +270,15 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     `;
   }
 
+  async function attachWatch(btn, attachKey, sourceWindowKey, openOpts) {
+    let boardStyle = null;
+    try { const s = await api("GET", "/settings"); boardStyle = s.board_style || null; } catch {}
+    const src = windows[sourceWindowKey];
+    const avoidRect = src ? { x: src.x, y: src.y, w: src.width, h: src.height } : null;
+    openLiveGameWindow({ ...openOpts, token, top, left, boardStyle, avoidRect });
+    btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(attachKey));
+  }
+
   function renderSchedule() {
     if (livePairings.size === 0) {
       scheduleBody.innerHTML = `<div class="wb-empty">No games yet.</div>`;
@@ -300,20 +309,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       btn.textContent = "watch";
       btn.title = info.pairId || key;
       btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(info.pairId || key));
-      btn.addEventListener("click", async () => {
-        let boardStyle = null;
-        try { const s = await api("GET", "/settings"); boardStyle = s.board_style || null; } catch {}
-        const sched = windows.schedule;
-        const avoidRect = sched ? { x: sched.x, y: sched.y, w: sched.width, h: sched.height } : null;
-        openLiveGameWindow({
-          proxyId: info.proxyA,
-          gameId: info.pairId || null,
-          label: `${tournament.name} — ${wLabel} vs ${bLabel}`,
-          engineName: wLabel,
-          token, top, left, boardStyle, avoidRect,
-        });
-        btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(info.pairId || key));
-      });
+      btn.addEventListener("click", () => attachWatch(btn, info.pairId || key, "schedule", {
+        proxyId: info.proxyA,
+        gameId: info.pairId || null,
+        label: `${tournament.name} — ${wLabel} vs ${bLabel}`,
+        engineName: wLabel,
+      }));
       li.appendChild(btn);
       list.appendChild(li);
     }
@@ -347,19 +348,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       btn.textContent = "watch";
       btn.title = pid;
       btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(pid));
-      btn.addEventListener("click", async () => {
-        let boardStyle = null;
-        try { const s = await api("GET", "/settings"); boardStyle = s.board_style || null; } catch {}
-        const eng = windows.engines;
-        const avoidRect = eng ? { x: eng.x, y: eng.y, w: eng.width, h: eng.height } : null;
-        openLiveGameWindow({
-          proxyId: pid,
-          label: `${tournament.name} — ${engineLabel}`,
-          engineName: engineLabel,
-          token, top, left, boardStyle, avoidRect,
-        });
-        btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(pid));
-      });
+      btn.addEventListener("click", () => attachWatch(btn, pid, "engines", {
+        proxyId: pid,
+        label: `${tournament.name} — ${engineLabel}`,
+        engineName: engineLabel,
+      }));
       li.appendChild(btn);
       list.appendChild(li);
     }
