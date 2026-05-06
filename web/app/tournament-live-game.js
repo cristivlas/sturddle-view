@@ -6,7 +6,7 @@
 import { mountBoard } from "./board.js";
 import { flashWindow } from "./wb-utils.js";
 
-const liveWindows = new Map(); // proxy_id -> WinBox instance
+const liveWindows = new Map(); // windowKey -> WinBox instance
 
 // Row heights are duplicated as `min-height` on .wb-livegame .lg-eval /
 // .lg-pv / .lg-status in styles.css so empty rows still hold space
@@ -58,10 +58,10 @@ function avoidOverlap(wb, avoid, top, left, cascade = 0) {
   }
 }
 
-export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0, left = 0, boardStyle = null, avoidRect = null }) {
-  // If a window for this proxy is already open, focus it instead of
+export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, top = 0, left = 0, boardStyle = null, avoidRect = null }) {
+  // If a window for this key is already open, focus it instead of
   // opening a duplicate.
-  const existing = liveWindows.get(proxyId);
+  const existing = liveWindows.get(windowKey);
   if (existing) {
     if (existing.min) existing.restore();
     existing.focus();
@@ -142,7 +142,7 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
   // stash them so the workspace's tile() can clamp.
   wb.svMinWidth = LIVE_MIN_WIDTH;
   wb.svMinHeight = LIVE_MIN_HEIGHT;
-  liveWindows.set(proxyId, wb);
+  liveWindows.set(windowKey, wb);
   requestAnimationFrame(() => flashWindow(wb));
 
   // Compute target board size deterministically from the body's
@@ -193,7 +193,7 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
     if (ws) try { ws.close(); } catch { /* */ }
     ro.disconnect();
-    liveWindows.delete(proxyId);
+    liveWindows.delete(windowKey);
     window.dispatchEvent(new CustomEvent("sturddle:livegame-closed"));
     return false;
   };
@@ -201,7 +201,10 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
   // Open WS subscription.
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const tokenQ = token ? `?token=${encodeURIComponent(token)}` : "";
-  const url = `${proto}//${location.host}/ws/tournament/proxy/${encodeURIComponent(proxyId)}${tokenQ}`;
+  const wsTarget = gameId
+    ? `game/${encodeURIComponent(gameId)}`
+    : `proxy/${encodeURIComponent(proxyId)}`;
+  const url = `${proto}//${location.host}/ws/tournament/${wsTarget}${tokenQ}`;
   ws = new WebSocket(url);
 
   ws.addEventListener("open", () => {
@@ -238,6 +241,7 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
     if (msg.ended) {
       statusEl.textContent = "ended";
       stopTimer();
+      wbClosed = true; // suppress wb.close() in the WS close handler
       try { ws.close(); } catch { /* */ }
       return;
     }

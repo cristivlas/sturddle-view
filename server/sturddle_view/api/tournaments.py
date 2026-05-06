@@ -466,3 +466,65 @@ async def proxy_subscribe(
             await websocket.close()
         except Exception:
             pass
+
+
+@internal_router.websocket("/ws/tournament/game/{pair_id}")
+async def game_subscribe(
+    websocket: WebSocket,
+    pair_id: str,
+    token: str = Query(default=""),
+) -> None:
+    """WS endpoint scoped to a confirmed game pair (pair_id = UUID).
+
+    Same frame format as ``/ws/tournament/proxy/{proxy_id}`` but the
+    stream closes automatically when the pairing dissolves."""
+    settings = websocket.app.state.settings
+    if not settings.auth_disabled:
+        import hmac
+        if not hmac.compare_digest(token, settings.token):
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+    await websocket.accept()
+    orch: Orchestrator = websocket.app.state.tournament_orch
+    queue = orch.subscribe_to_game(pair_id)
+
+    from ..tournament.uci_parse import parse_uci_line
+
+    async def _drain_recv() -> None:
+        while True:
+            await websocket.receive()
+
+    recv_task = asyncio.create_task(_drain_recv())
+    try:
+        while True:
+            get_task = asyncio.create_task(queue.get())
+            done, _ = await asyncio.wait(
+                {get_task, recv_task}, return_when=asyncio.FIRST_COMPLETED,
+            )
+            if recv_task in done:
+                get_task.cancel()
+                break
+            payload = get_task.result()
+            if payload.get("ended"):
+                await websocket.send_json(payload)
+                break
+            if "parsed" not in payload:
+                line = payload.get("line", "")
+                parsed = parse_uci_line(line)
+                if parsed is not None:
+                    payload = {**payload, "parsed": parsed}
+            await websocket.send_json(payload)
+    except WebSocketDisconnect:
+        pass
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        log.exception("game WS handler error")
+    finally:
+        recv_task.cancel()
+        orch.unsubscribe_from_game(pair_id, queue)
+        try:
+            await websocket.close()
+        except Exception:
+            pass

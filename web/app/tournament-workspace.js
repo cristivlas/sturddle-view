@@ -168,7 +168,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       render: () => renderStandings(),
     },
     schedule: {
-      title: `${tournament.name} — Schedule`,
+      title: `${tournament.name} — Live Games`,
       makeBody: makeScheduleBody,
       setBody: (b) => { scheduleBody = b; },
       render: () => renderSchedule(),
@@ -228,9 +228,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     // each finished game). In-progress: one row per active proxy
     // (engine process), labeled with its engine name. Click "watch" to
     // open a live window subscribed to that engine's stream.
-    const finished = (detail && detail.games) || [];
+    const finished = (detail && detail.games) || []; // unused in UI for now
     const inProgress = [...activeProxies.entries()];
-    if (finished.length === 0 && inProgress.length === 0) {
+    if (livePairings.size === 0) {
       scheduleBody.innerHTML = `<div class="wb-empty">No games yet.</div>`;
       return;
     }
@@ -239,15 +239,16 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     scheduleBody.innerHTML = `<ul class="wb-sched-list"></ul>`;
     const list = scheduleBody.querySelector(".wb-sched-list");
 
-    for (const g of finished) {
-      const li = document.createElement("li");
-      li.innerHTML = `
-        <span class="wb-sched-icon">✓</span>
-        ${escapeHtml(g.white)} – ${escapeHtml(g.black)}
-        <span class="wb-sched-result">${escapeHtml(g.result)}</span>
-      `;
-      list.appendChild(li);
-    }
+    // Finished games omitted for now — decide later whether to keep in UI.
+    // for (const g of finished) {
+    //   const li = document.createElement("li");
+    //   li.innerHTML = `
+    //     <span class="wb-sched-icon">✓</span>
+    //     ${escapeHtml(g.white)} – ${escapeHtml(g.black)}
+    //     <span class="wb-sched-result">${escapeHtml(g.result)}</span>
+    //   `;
+    //   list.appendChild(li);
+    // }
 
     // Live pairings section (SV_LIVE_PAIRINGS). Dedupe: both proxies map to
     // the same info object, so skip if we already rendered this pair.
@@ -261,14 +262,14 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const wLabel = info.sideA === "white" ? info.engineA : info.engineB;
       const bLabel = info.sideA === "white" ? info.engineB : info.engineA;
       li.innerHTML = `
-        <span class="wb-sched-icon">⚔</span>
+        <span class="wb-sched-icon">♟</span>
         <span class="wb-sched-game">${escapeHtml(wLabel)} – ${escapeHtml(bLabel)}</span>
       `;
       const btn = document.createElement("button");
       btn.className = "wb-sched-attach-btn";
       btn.textContent = "watch";
-      btn.title = info.proxyA;
-      btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(info.proxyA) || isLiveWindowOpen(info.proxyB));
+      btn.title = info.pairId || key;
+      btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(info.pairId || key));
       btn.addEventListener("click", async () => {
         let boardStyle = null;
         try { const s = await api("GET", "/settings"); boardStyle = s.board_style || null; } catch {}
@@ -276,60 +277,45 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         const avoidRect = sched ? { x: sched.x, y: sched.y, w: sched.width, h: sched.height } : null;
         openLiveGameWindow({
           proxyId: info.proxyA,
+          gameId: info.pairId || null,
           label: `${tournament.name} — ${wLabel} vs ${bLabel}`,
           engineName: wLabel,
           token, top, left, boardStyle, avoidRect,
         });
-        btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(info.proxyA) || isLiveWindowOpen(info.proxyB));
+        btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(info.pairId || key));
       });
       li.appendChild(btn);
       list.appendChild(li);
     }
 
-    for (const [pid, p] of inProgress) {
-      const li = document.createElement("li");
-      li.className = "wb-sched-live";
-      const engineLabel = p.engineName || pid;
-      li.innerHTML = `
-        <span class="wb-sched-icon">▶</span>
-        <span class="wb-sched-game">${escapeHtml(engineLabel)}</span>
-      `;
-      const btn = document.createElement("button");
-      btn.className = "wb-sched-attach-btn";
-      btn.textContent = "watch";
-      btn.title = pid;
-      btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(pid));
-      btn.addEventListener("click", async () => {
-        let boardStyle = null;
-        try {
-          const s = await api("GET", "/settings");
-          boardStyle = s.board_style || null;
-        } catch {
-          // ignore — fall back to default style
-        }
-        // Hand the Schedule window's bounds to the live opener so the
-        // new window is displaced if it would land on top of Schedule;
-        // otherwise the user has to drag it aside before clicking the
-        // next "watch".
-        const sched = windows.schedule;
-        const avoidRect = sched
-          ? { x: sched.x, y: sched.y, w: sched.width, h: sched.height }
-          : null;
-        openLiveGameWindow({
-          proxyId: pid,
-          label: `${tournament.name} — ${engineLabel}`,
-          engineName: engineLabel,
-          token,
-          top,
-          left,
-          boardStyle,
-          avoidRect,
-        });
-        btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(pid));
-      });
-      li.appendChild(btn);
-      list.appendChild(li);
-    }
+    // Individual proxy rows omitted for now — kept for debug/fallback use.
+    // for (const [pid, p] of inProgress) {
+    //   const li = document.createElement("li");
+    //   li.className = "wb-sched-live";
+    //   const engineLabel = p.engineName || pid;
+    //   li.innerHTML = `
+    //     <span class="wb-sched-icon">▶</span>
+    //     <span class="wb-sched-game">${escapeHtml(engineLabel)}</span>
+    //   `;
+    //   const btn = document.createElement("button");
+    //   btn.className = "wb-sched-attach-btn";
+    //   btn.textContent = "watch";
+    //   btn.title = pid;
+    //   btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(pid));
+    //   btn.addEventListener("click", async () => {
+    //     let boardStyle = null;
+    //     try { const s = await api("GET", "/settings"); boardStyle = s.board_style || null; } catch {}
+    //     const sched = windows.schedule;
+    //     const avoidRect = sched ? { x: sched.x, y: sched.y, w: sched.width, h: sched.height } : null;
+    //     openLiveGameWindow({
+    //       proxyId: pid, label: `${tournament.name} — ${engineLabel}`,
+    //       engineName: engineLabel, token, top, left, boardStyle, avoidRect,
+    //     });
+    //     btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(pid));
+    //   });
+    //   li.appendChild(btn);
+    //   list.appendChild(li);
+    // }
     if (atBottom && scroller) scroller.scrollTop = scroller.scrollHeight;
   }
 
@@ -413,7 +399,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     // workspaces don't depend on having caught every proxy_paired WS event.
     livePairings.clear();
     for (const p of (detail.pairings_active || [])) {
-      const info = { proxyA: p.proxy_a, engineA: p.engine_a, sideA: p.side_a,
+      const info = { pairId: p.pair_id, proxyA: p.proxy_a, engineA: p.engine_a, sideA: p.side_a,
                      proxyB: p.proxy_b, engineB: p.engine_b, sideB: p.side_b };
       livePairings.set(p.proxy_a, info);
       livePairings.set(p.proxy_b, info);
@@ -464,7 +450,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       if (pid) activeProxies.delete(pid);
     } else if (inner === KIND.PROXY_PAIRED) {
       const p = evt.payload;
-      const info = { proxyA: p.proxy_a, engineA: p.engine_a, sideA: p.side_a,
+      const info = { pairId: p.pair_id, proxyA: p.proxy_a, engineA: p.engine_a, sideA: p.side_a,
                      proxyB: p.proxy_b, engineB: p.engine_b, sideB: p.side_b };
       livePairings.set(p.proxy_a, info);
       livePairings.set(p.proxy_b, info);
