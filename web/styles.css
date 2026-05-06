@@ -581,16 +581,16 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   align-items: center;
   justify-content: space-between;
   padding: 8px 14px;
-  background: var(--panel);
+  background: #3a3d44;
+  color: var(--muted);
   border: 1px solid #333;
   border-radius: 4px;
   font-family: ui-monospace, SFMono-Regular, monospace;
-  transition: border-color 0.15s, background 0.15s;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
 }
-.clock-row.active {
-  border-color: var(--accent);
-  background: rgba(26, 106, 255, 0.10);
-}
+.clock-row.active { border-color: transparent; }
+.clock-row[data-color="white"].active { background: #e8e8e8; color: #111; }
+.clock-row[data-color="black"].active { background: #111; color: #e8e8e8; }
 .clock-row.clock-disabled { opacity: 0.5; }
 
 /* Engine "thinking" arrow: navy. */
@@ -598,13 +598,14 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .cm-chessboard .arrow-success .arrow-line { stroke: #1e3a8a; opacity: 0.55; }
 .clock-row .clock-name {
   font-size: 13px;
-  color: var(--fg);
+  color: inherit;
   font-family: var(--wa-font-family-body);
 }
 .clock-row .clock-time {
   font-size: 22px;
   font-weight: 600;
   letter-spacing: 0.5px;
+  color: inherit;
 }
 
 #board-controls {
@@ -1476,16 +1477,9 @@ wa-dialog::part(body) {
   display: flex; flex-direction: column; gap: 6px;
   height: 100%; min-height: 0;
 }
-.wb-livegame .clock-row { padding: 5px 10px; background: #3a3d44; color: var(--muted); transition: background 0.15s, color 0.15s; }
-.wb-livegame .clock-row .clock-name, .wb-livegame .clock-row .clock-time { color: var(--muted); }
+.wb-livegame .clock-row { padding: 5px 10px; }
 .wb-livegame .clock-row .clock-time { font-size: 16px; flex-shrink: 0; }
 .wb-livegame .clock-row .clock-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.wb-livegame .clock-row[data-color="white"].active { border-color: transparent; background: #e8e8e8; color: #111; }
-.wb-livegame .clock-row[data-color="white"].active .clock-name,
-.wb-livegame .clock-row[data-color="white"].active .clock-time { color: #111; }
-.wb-livegame .clock-row[data-color="black"].active { border-color: transparent; background: #111; color: #e8e8e8; }
-.wb-livegame .clock-row[data-color="black"].active .clock-name,
-.wb-livegame .clock-row[data-color="black"].active .clock-time { color: #e8e8e8; }
 .wb-livegame.lg-compact .lg-pv,
 .wb-livegame.lg-compact .lg-status { display: none; }
 .wb-livegame .lg-board {

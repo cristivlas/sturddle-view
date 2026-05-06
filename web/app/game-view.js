@@ -445,6 +445,8 @@ export function mountGameView(container, opts = {}) {
     if (clockBottomTime) clockBottomTime.textContent = fmtClock(bottomTime);
     if (clockTopTime) clockTopTime.textContent = fmtClock(topTime);
 
+    if (clockBottomRow) clockBottomRow.dataset.color = bottomIsWhite ? "white" : "black";
+    if (clockTopRow) clockTopRow.dataset.color = bottomIsWhite ? "black" : "white";
     const bottomToMove =
       (turn === "white" && bottomIsWhite) || (turn === "black" && !bottomIsWhite);
     clockBottomRow?.classList.toggle("active", running && bottomToMove);
