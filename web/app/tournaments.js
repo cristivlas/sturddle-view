@@ -547,8 +547,8 @@ export function mountTournaments({ container, api, events, log, token }) {
     row("Book plies", ed.book_plies);
     row("Book order", ed.book_order);
     row("Created", formatTime(t.created_at));
-    row("Started", formatTime(t.started_at));
-    row("Stopped", formatTime(t.stopped_at));
+    if (t.status === STATUS.RUNNING || t.status === STATUS.FAILED || t.status === STATUS.STOPPED) row("Started", formatTime(t.started_at));
+    if (t.status === STATUS.STOPPED) row("Paused", formatTime(t.stopped_at));
 
     const enginesList = document.createElement("ul");
     enginesList.className = "tournament-info-engines";
