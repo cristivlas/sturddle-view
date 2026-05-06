@@ -120,6 +120,7 @@ export function mountTournaments({ container, api, events, log, token }) {
   let stoppingId = null;
   let startingId = null;
   let settings = null; // { fastchess_path, tournaments_root, default_template, fastchess_detected }
+  let _loadGen = 0;
 
   // Wraps an async function so concurrent calls are dropped until it resolves.
   function guard(fn) {
@@ -143,8 +144,10 @@ export function mountTournaments({ container, api, events, log, token }) {
   }
 
   async function loadList() {
+    const gen = ++_loadGen;
     try {
       const body = await api("GET", "/api/tournaments");
+      if (gen !== _loadGen) return; // superseded by a newer load
       tournaments = body.tournaments;
       activeId = body.active_id;
       renderList();
@@ -431,8 +434,6 @@ export function mountTournaments({ container, api, events, log, token }) {
       await api("POST", `/api/tournaments/${t.id}/stop`);
     } catch (e) {
       reportError({ log }, `Stopping "${t.name}" failed`, e);
-      await loadList();
-      return;
     }
     await loadList();
   }
