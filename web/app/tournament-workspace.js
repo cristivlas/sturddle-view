@@ -239,6 +239,16 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     scheduleBody.innerHTML = `<ul class="wb-sched-list"></ul>`;
     const list = scheduleBody.querySelector(".wb-sched-list");
 
+    for (const g of finished) {
+      const li = document.createElement("li");
+      li.innerHTML = `
+        <span class="wb-sched-icon">✓</span>
+        ${escapeHtml(g.white)} – ${escapeHtml(g.black)}
+        <span class="wb-sched-result">${escapeHtml(g.result)}</span>
+      `;
+      list.appendChild(li);
+    }
+
     // Live pairings section (SV_LIVE_PAIRINGS). Dedupe: both proxies map to
     // the same info object, so skip if we already rendered this pair.
     const shownPairs = new Set();
@@ -276,15 +286,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       list.appendChild(li);
     }
 
-    for (const g of finished) {
-      const li = document.createElement("li");
-      li.innerHTML = `
-        <span class="wb-sched-icon">✓</span>
-        ${escapeHtml(g.white)} – ${escapeHtml(g.black)}
-        <span class="wb-sched-result">${escapeHtml(g.result)}</span>
-      `;
-      list.appendChild(li);
-    }
     for (const [pid, p] of inProgress) {
       const li = document.createElement("li");
       li.className = "wb-sched-live";
@@ -407,6 +408,15 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       if (p.proxy_id) {
         activeProxies.set(p.proxy_id, { engineName: p.engine_name || null });
       }
+    }
+    // Seed confirmed pairings — same authoritative replace so late-opening
+    // workspaces don't depend on having caught every proxy_paired WS event.
+    livePairings.clear();
+    for (const p of (detail.pairings_active || [])) {
+      const info = { proxyA: p.proxy_a, engineA: p.engine_a, sideA: p.side_a,
+                     proxyB: p.proxy_b, engineB: p.engine_b, sideB: p.side_b };
+      livePairings.set(p.proxy_a, info);
+      livePairings.set(p.proxy_b, info);
     }
     renderStandings();
     renderSchedule();

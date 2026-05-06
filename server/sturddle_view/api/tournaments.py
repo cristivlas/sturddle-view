@@ -105,8 +105,10 @@ def _serialize(
         # tournament is the running one.
         if orch is not None and orch.active_id() == t.id:
             out["proxies_active"] = orch.active_proxies()
+            out["pairings_active"] = orch.active_pairings()
         else:
             out["proxies_active"] = []
+            out["pairings_active"] = []
         sprt_params = (t.template or {}).get("sprt")
         if sprt_params:
             try:

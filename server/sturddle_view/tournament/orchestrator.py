@@ -447,6 +447,32 @@ class Orchestrator:
             for pid, name in sorted(self._proxy_engine_names.items())
         ]
 
+    def active_pairings(self) -> list[dict]:
+        """Snapshot of currently-confirmed proxy pairs. Same shape as the
+        ``proxy_paired`` WS event so the workspace can seed ``livePairings``
+        on mount without having to have caught all prior WS events.
+
+        Each entry: ``{proxy_a, engine_a, side_a, proxy_b, engine_b, side_b}``.
+        Deduped (bidirectional map → one entry per pair)."""
+        seen: set[frozenset] = set()
+        out: list[dict] = []
+        for pid_a, pid_b in self._confirmed_pairs.items():
+            key = frozenset((pid_a, pid_b))
+            if key in seen:
+                continue
+            seen.add(key)
+            state_a = self._pairing_state.get(pid_a)
+            state_b = self._pairing_state.get(pid_b)
+            out.append({
+                "proxy_a":  pid_a,
+                "engine_a": self._proxy_engine_names.get(pid_a),
+                "side_a":   state_a[1] if state_a else "?",
+                "proxy_b":  pid_b,
+                "engine_b": self._proxy_engine_names.get(pid_b),
+                "side_b":   state_b[1] if state_b else "?",
+            })
+        return out
+
     def engine_name_for(self, proxy_id: str) -> str | None:
         """Display name reported by a proxy on its session start, or
         ``None`` if the proxy never announced (or has ended)."""
