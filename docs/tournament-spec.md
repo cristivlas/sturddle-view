@@ -693,29 +693,77 @@ pending entries).
 
 #### Self-play (deferred)
 
-Self-play tournaments — engine running against itself, e.g. for
-SPRT before/after a self-tune — are out of scope for the current
-implementation. Pair detection currently rejects same-engine-name
-candidates because under multi-engine tournaments those pairs are
-phantoms from book-line collision (4-bucket decays into a
-same-engine 2-bucket whose two proxies aren't actually playing each
-other in fastchess). With self-play that rejection becomes wrong:
-every legitimate pair has matching engine names.
+Self-play tournaments -- engine running against itself, e.g. for
+SPRT before/after a self-tune -- are not directly supported today.
+Two layers block them:
 
-Lifting the rejection requires upstream disambiguation: the
-orchestrator must rename engine instances before passing them to
-fastchess (e.g., `Engine #1` / `Engine #2`) so that fastchess's
-`Started N (… vs …)` and PGN headers carry distinct names. The
-orchestrator-side pair detection then works unchanged, and the
-FIFO match in `_stamp_pair_game_n` keys correctly off the
-disambiguated names.
+1. **UI**: the engine-picker dialog (`mountEngineBuilder` in
+   `web/app/tournaments.js`) filters already-picked engines out of
+   the source pane and short-circuits `doAdd` on duplicate id. A
+   user cannot select the same registry entry twice in one
+   tournament.
+2. **Orchestrator**: pair detection rejects same-engine-name
+   candidates as phantoms from book-line collisions (4-bucket
+   decays into a same-engine 2-bucket whose two proxies aren't
+   actually playing each other in fastchess).
 
-TODO before self-play ships:
+**Workaround that works today**: register the same binary twice in
+the registry under distinct names (e.g. `Sturddle 2.5.0 (a)` and
+`Sturddle 2.5.0 (b)`). They are distinct registry entries with
+distinct ids; the picker accepts both; fastchess sees distinct
+names; pair detection's same-name guard passes. Everything
+downstream works.
+
+The "real" fix is orchestrator-level disambiguation so the user can
+pick one engine and have it play itself in one click. Lifting the
+rejection requires the orchestrator to rename engine instances
+before passing them to fastchess (e.g. `Engine #1` / `Engine #2`)
+so fastchess's `Started N (... vs ...)` and PGN headers carry
+distinct names. Pair detection then works unchanged, and the FIFO
+match in `_stamp_pair_game_n` keys correctly off the disambiguated
+names.
+
+TODO before native self-play UX ships:
 - Orchestrator-level engine-name disambiguation (templates with
   duplicate engine cmds get suffixes).
+- UI relaxation: allow picking the same engine twice.
 - Tests covering self-play pair detection, dissolution, and
   Started/Finished FIFO matching.
 - Lift the same-engine-name rejection in `_recompute_groups`.
+
+Given the registry-level workaround, this is low priority.
+
+#### fastchess output format dependency
+
+Pair lifecycle (game-N stamping, dissolution, result/termination)
+parses fastchess's stdout format produced by
+`-output format=fastchess`. The relied-upon lines:
+
+- `Started game <N> [of <M>] (<white> vs <black>)` -- queues N for
+  the next confirmation matching `(white, black)`.
+- `Finished game <N> [of <M>] (<white> vs <black>): <result>
+  {<termination>}` -- dissolves the pair stamped with N and emits
+  the authoritative `game_finished` event.
+
+Regexes live in `server/sturddle_view/tournament/orchestrator.py`
+(`_FASTCHESS_STARTED_RE`, `_FASTCHESS_FINISHED_RE`). They tolerate
+the optional ` of M` segment but are otherwise strict on the
+literal " vs " separator and the result tokens
+(`1-0` / `0-1` / `1/2-1/2` / `*`).
+
+This is a load-bearing dependency on an external tool's output
+format. fastchess targets cutechess-cli compatibility, which
+suggests format stability, but the contract is not declared. A
+silent format change in a fastchess update would cause `Finished N`
+lines to fail parsing -- pairs would never dissolve via the normal
+path and would only clear at tournament terminal via
+`_force_dissolve_pending` with `result="*"`. The failure is visible
+(WARNING-level "had no confirmed pair" log lines fire on every
+unrecognized Finished) but silent at the UI level until the user
+notices windows accumulating.
+
+Mitigation if it happens: update the regexes; add a unit test
+pinned to fixture stdout from the new fastchess version.
 
 ### Stopped / done view
 
