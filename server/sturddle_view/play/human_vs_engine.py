@@ -238,13 +238,13 @@ class HumanVsEngine:
                 log.exception("engine refused options %s", accepted)
         return engine
 
-    def _eval_pov(self) -> chess.Color:
+    def _eval_pov(self, stm: chess.Color = chess.WHITE) -> chess.Color:
         """Resolve play_eval_pov setting → chess.Color for serialization."""
         mode = getattr(self._settings, "play_eval_pov", "white") if self._settings else "white"
         if mode == "human":
             return chess.WHITE if self._human_white else chess.BLACK
         if mode == "engine":
-            return chess.BLACK if self._human_white else chess.WHITE
+            return stm  # raw UCI: score from the side to move
         return chess.WHITE
 
     def _global_engine_defaults(self) -> dict:
@@ -1075,7 +1075,7 @@ class HumanVsEngine:
                             Event(
                                 kind="engine_info",
                                 game_id=game_id,
-                                payload=_serialize_info(info, board, self._eval_pov()),
+                                payload=_serialize_info(info, board, self._eval_pov(board.turn)),
                             )
                         )
                 result = analysis.wait()  # returns BestMove
@@ -1143,7 +1143,7 @@ class HumanVsEngine:
                             Event(
                                 kind="engine_info",
                                 game_id=game_id,
-                                payload=_serialize_info(info, board, self._eval_pov()),
+                                payload=_serialize_info(info, board, self._eval_pov(board.turn)),
                             )
                         )
         except chess.engine.EngineTerminatedError:
