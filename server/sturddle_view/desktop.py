@@ -35,7 +35,8 @@ def run_desktop(host: str, port: int) -> None:
             break
         time.sleep(0.05)
 
-    url = f"http://{host}:{port}/?token={settings.token}"
+    window_host = "127.0.0.1" if host == "0.0.0.0" else host
+    url = f"http://{window_host}:{port}/?token={settings.token}"
     webview.create_window("sturddle-view", url)
     webview.start()
 

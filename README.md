@@ -23,17 +23,10 @@ sturddle-view --reload
 
 The server prints an auth token at startup and redirects `/` to `/ui/?token=...`.
 
-### Native window (PyWebView)
-
-```bash
-pip install -e '.[desktop]'
-sturddle-view --desktop
-```
-
 ### Submodules
 
 ```bash
-scripts/init-submodules.sh
+git submodule update --init --recursive
 ```
 
 ## Features
@@ -44,3 +37,36 @@ scripts/init-submodules.sh
 - Tournament settings (engine defaults, opening book) are snapshotted into the tournament's `state.json` at create time so Stop/Resume can't drift.
 
 See [docs/spec.md](docs/spec.md) and [docs/tournament-spec.md](docs/tournament-spec.md) for design details.
+
+## Native desktop window (optional)
+
+`--desktop` opens the app in a native window via [PyWebView](https://pywebview.app) instead of a browser tab. The normal browser URL still works alongside it.
+
+### Windows
+
+WebView2 (Edge) is built-in — no extra dependencies.
+
+```bat
+.venv\Scripts\activate
+pip install -e ".[desktop]"
+sturddle-view --desktop
+```
+
+### Linux
+
+PyWebView requires GTK + WebKit2 and a real display (it will not work headless or reliably over SSH X forwarding). The `gi` bindings are system packages and cannot be pip-installed, so the venv must be created with `--system-site-packages`.
+
+> **Note:** this replaces any existing `.venv` — your dependencies are reinstalled by the `pip install` step below.
+
+```bash
+# install system dependencies (once; package name may vary by distro)
+sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1
+
+# recreate the venv to expose them
+deactivate
+python3 -m venv --system-site-packages .venv
+source .venv/bin/activate
+pip install -e '.[dev,desktop]'
+
+sturddle-view --desktop
+```
