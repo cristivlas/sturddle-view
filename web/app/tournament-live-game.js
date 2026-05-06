@@ -147,7 +147,9 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     top,
     left,
     mount: body,
-    class: "sturddle-wb sturddle-wb-live no-full",
+    class: gameId
+      ? "sturddle-wb sturddle-wb-live sturddle-wb-live-game no-full"
+      : "sturddle-wb sturddle-wb-live sturddle-wb-live-proxy no-full",
   });
   if (top > 0 && wb.y < top) wb.move(wb.x, top);
   if (left > 0 && wb.x < left) wb.move(left, wb.y);

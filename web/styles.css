@@ -1492,7 +1492,14 @@ wa-dialog::part(body) {
   white-space: pre-wrap; max-height: 8em; overflow: auto;
 }
 
-/* Live game window (Slice 9c) */
+/* Live game window (Slice 9c). Border encodes attach type:
+   game-id windows are borderless (the "primary" surface, identified
+   by absence of chrome); proxy-id windows get a brighter gray border
+   (the default #2e3138 is too dark to register on this theme) so
+   they read as a secondary/debug surface. */
+.winbox.sturddle-wb.sturddle-wb-live-game  { border: none; }
+.winbox.sturddle-wb.sturddle-wb-live-proxy { border-color: var(--muted); }
+
 .wb-livegame {
   display: flex; flex-direction: column; gap: 6px;
   height: 100%; min-height: 0;
