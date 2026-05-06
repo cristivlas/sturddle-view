@@ -248,10 +248,12 @@ class TournamentStore:
         ``engine_defaults`` re-freezes the global engine_default_* snapshot
         (mirroring ``create``); pass ``None`` to keep the existing snapshot.
 
-        Deletes games.pgn only when the engine list changed (a different
-        roster invalidates prior results); same-roster edits preserve the
-        PGN. Returns ``(tournament, had_games)`` where ``had_games`` is
-        True when a PGN existed and was removed.
+        Always deletes games.pgn — any edit (template, engines, or even
+        rename) invalidates prior results since they were played under
+        potentially different conditions and must not mix with future
+        games. Caller is responsible for confirming with the user first.
+        Returns ``(tournament, had_games)`` where ``had_games`` is True
+        when a PGN existed and was removed.
         """
         with self._create_lock:
             t = self.get(tournament_id)
@@ -259,15 +261,13 @@ class TournamentStore:
                 x.name == name for x in self.list() if x.id != tournament_id
             ):
                 raise DuplicateNameError(name)
-            new_engines = list(engines)
-            engines_changed = new_engines != list(t.engines)
-            had_games = engines_changed and self.pgn_path(tournament_id).exists()
+            had_games = self.pgn_path(tournament_id).exists()
             if had_games:
                 self.pgn_path(tournament_id).unlink(missing_ok=True)
 
             t.name = name
             t.template = dict(template)
-            t.engines = new_engines
+            t.engines = list(engines)
             if engine_defaults is not None:
                 t.engine_defaults = dict(engine_defaults)
             t.status = STATUS_IDLE

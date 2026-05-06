@@ -318,29 +318,19 @@ def test_update_persists_across_reload(store):
     assert reloaded.status == STATUS_IDLE
 
 
-def test_update_deletes_pgn_when_engines_change(store):
+def test_update_always_deletes_pgn(store):
+    """Any edit (even a no-op) deletes games.pgn — past games were played
+    under potentially different conditions and must not mix with future
+    games."""
     t = store.create(name="x", template={}, engines=[{"name": "A"}])
     pgn = store.pgn_path(t.id)
     pgn.write_text("[Event \"?\"]\n\n1. e4 *\n")
     assert pgn.exists()
 
-    _, had_games = store.update(t.id, name="x", template={}, engines=[{"name": "B"}])
+    _, had_games = store.update(t.id, name="x", template={}, engines=[{"name": "A"}])
 
     assert had_games is True
     assert not pgn.exists()
-
-
-def test_update_preserves_pgn_when_engines_unchanged(store):
-    t = store.create(name="x", template={}, engines=[{"name": "A"}])
-    pgn = store.pgn_path(t.id)
-    pgn.write_text("[Event \"?\"]\n\n1. e4 *\n")
-
-    _, had_games = store.update(
-        t.id, name="x", template={"tc": "5+0"}, engines=[{"name": "A"}]
-    )
-
-    assert had_games is False
-    assert pgn.exists()
 
 
 def test_update_had_games_false_when_no_pgn(store):

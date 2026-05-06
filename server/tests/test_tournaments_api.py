@@ -493,20 +493,7 @@ def test_patch_rejects_fewer_than_two_engines(client):
     assert r.status_code == 400
 
 
-def test_patch_deletes_pgn_when_engines_change(client):
-    t = _create(client)
-    pgn = client.app.state.tournament_store.pgn_path(t["id"])
-    pgn.write_text("[Event \"?\"]\n\n1. e4 *\n")
-
-    r = client.patch(f"/api/tournaments/{t['id']}", json={
-        "name": t["name"],
-        "engines": [{"name": "C", "cmd": "/bin/C"}, {"name": "D", "cmd": "/bin/D"}],
-    })
-    assert r.status_code == 200
-    assert not pgn.exists()
-
-
-def test_patch_preserves_pgn_when_engines_unchanged(client):
+def test_patch_always_deletes_pgn(client):
     t = _create(client)
     pgn = client.app.state.tournament_store.pgn_path(t["id"])
     pgn.write_text("[Event \"?\"]\n\n1. e4 *\n")
@@ -517,7 +504,7 @@ def test_patch_preserves_pgn_when_engines_unchanged(client):
         "engines": _engines_payload(),
     })
     assert r.status_code == 200
-    assert pgn.exists()
+    assert not pgn.exists()
 
 
 def test_patch_unknown_returns_404(client):

@@ -772,6 +772,21 @@ export function mountTournaments({ container, api, events, log, token }) {
   }
 
   async function openEditTournamentDialog(t) {
+    // PRE-OPEN gate: warn early so the user can bail without loading the
+    // registry or filling the dialog. Keep this even though there is also a
+    // post-dialog confirm — the two guards serve different purposes: this one
+    // is a cheap "heads up" before any work; the post-dialog one fires only
+    // when the engine roster actually changed and gives a last chance to abort.
+    const hasGames = (t.standings?.games ?? 0) > 0;
+    if (hasGames) {
+      const proceed = await confirm({
+        message: `"${t.name}" has recorded games. Editing will delete all game results. Continue?`,
+        okLabel: "Continue",
+        destructive: true,
+      });
+      if (!proceed) return;
+    }
+
     let registry;
     try {
       registry = await api("GET", "/engines");
@@ -815,12 +830,11 @@ export function mountTournaments({ container, api, events, log, token }) {
     });
     if (!result) return;
 
-    // The server only deletes the PGN when the engine roster actually
-    // changes; only confirm in that case.
-    const hasGames = (t.standings?.games ?? 0) > 0;
-    const enginesChanged =
-      JSON.stringify(result.engines) !== JSON.stringify(original);
-    if (hasGames && enginesChanged) {
+    // POST-DIALOG gate: last chance to abort before the destructive PATCH.
+    // Any edit (template, engines, or rename) wipes the PGN server-side
+    // because past games were played under potentially different conditions
+    // and must not mix with future games — so this fires on hasGames alone.
+    if (hasGames) {
       const ok = await confirm({
         message: `Applying changes to "${t.name}" will permanently delete its recorded games. This cannot be undone.`,
         okLabel: "Apply & Delete Games",
