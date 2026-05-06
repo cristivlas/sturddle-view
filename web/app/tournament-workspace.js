@@ -181,7 +181,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   const windows = {
     standings: makeBox("standings", windowSpecs.standings.title, standingsBody),
     schedule:  makeBox("schedule",  windowSpecs.schedule.title,  scheduleBody),
-    log:       makeBox("log",       windowSpecs.log.title,       logBody),
+    log:       null,
   };
 
   // ---- Rendering --------------------------------------------------------
@@ -465,7 +465,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       log?.(`event backfill failed: ${e.message}`);
     }
   }
-  backfillEvents();
+  async function initWorkspace() {
+    await Promise.all([refresh(), backfillEvents()]);
+    if (eventLog.length > 0 || detail?.status === STATUS.RUNNING) {
+      openSystemWindow("log");
+    }
+  }
+  initWorkspace();
 
   // Periodic poll: events should drive most updates, but a poll catches
   // server-restart catch-up windows and PGN-only changes (e.g. the
@@ -473,8 +479,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   pollTimer = window.setInterval(() => {
     if (detail?.status === STATUS.RUNNING) refresh();
   }, POLL_INTERVAL_MS);
-
-  refresh();
   window.addEventListener("sturddle:livegame-closed", refreshWatchButtons);
 
   // ---- Tear-down --------------------------------------------------------

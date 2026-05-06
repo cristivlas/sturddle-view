@@ -11,6 +11,7 @@ import { apiErrorDetail, confirm, reportError, showDialog, toast } from "./dialo
 import { openSettingsDialog } from "./settings-dialog.js";
 import { EVT, KIND, STATUS } from "./tournament-events.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
+import { getLiveWindows } from "./tournament-live-game.js";
 import { getActiveWorkspace, openTournamentWorkspace } from "./tournament-workspace.js";
 
 export function mountTournaments({ container, api, events, log, token }) {
@@ -279,12 +280,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     li.addEventListener("click", () => {
       listEl.focus({ preventScroll: true });
       if (selectedId === t.id) return;
-      selectedId = t.id;
-      for (const el of listEl.querySelectorAll(".tournament-row.selected")) {
-        el.classList.remove("selected");
-      }
-      li.classList.add("selected");
-      syncRibbon();
+      navigateTo(t.id);
     });
     li.addEventListener("dblclick", () => openInfoGuarded(t));
 
@@ -293,6 +289,31 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   function selectedTournament() {
     return tournaments.find((t) => t.id === selectedId) || null;
+  }
+
+  async function navigateTo(newId) {
+    const ws = getActiveWorkspace();
+    const hadWorkspace = ws && ws.tournamentId !== newId;
+    if (hadWorkspace) {
+      if (getLiveWindows().length > 0) {
+        const ok = await confirm({ message: "Live game windows are open. Close them and switch tournament?" });
+        if (!ok) return false;
+      }
+      ws.close();
+    }
+    selectedId = newId;
+    for (const el of listEl.querySelectorAll(".tournament-row.selected")) el.classList.remove("selected");
+    const li = listEl.querySelector(`.tournament-row[data-id="${newId}"]`);
+    if (li) {
+      li.classList.add("selected");
+      li.scrollIntoView({ block: "nearest" });
+    }
+    syncRibbon();
+    if (hadWorkspace) {
+      const t = selectedTournament();
+      if (t) openWorkspace(t);
+    }
+    return true;
   }
 
   function syncRibbon() {
@@ -354,14 +375,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     else if (ev.key === "End") next = sorted.length - 1;
     if (next === cur) { ev.preventDefault(); return; }
     ev.preventDefault();
-    selectedId = sorted[next].id;
-    for (const el of listEl.querySelectorAll(".tournament-row.selected")) el.classList.remove("selected");
-    const li = listEl.querySelector(`.tournament-row[data-id="${selectedId}"]`);
-    if (li) {
-      li.classList.add("selected");
-      li.scrollIntoView({ block: "nearest" });
-    }
-    syncRibbon();
+    navigateTo(sorted[next].id);
   });
 
   const removeOneGuarded = guard(removeOne);
