@@ -9,7 +9,7 @@ import uvicorn
 from .config import Settings
 
 
-def run_desktop(host: str, port: int) -> None:
+def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> None:
     try:
         import webview  # type: ignore[import-untyped]
     except ImportError as exc:
@@ -37,7 +37,7 @@ def run_desktop(host: str, port: int) -> None:
 
     window_host = "127.0.0.1" if host == "0.0.0.0" else host
     url = f"http://{window_host}:{port}/?token={settings.token}"
-    webview.create_window("sturddle-view", url)
+    webview.create_window("sturddle-view", url, width=width, height=height)
     webview.start()
 
     server.should_exit = True
