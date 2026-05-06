@@ -137,9 +137,10 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   // Default WinBox layout for live windows. Cascade by index so multiple
   // windows don't fully overlap.
   const idx = liveWindows.size;
+  const initialWidth = Math.max(Math.round(window.innerWidth * 0.20), LIVE_MIN_WIDTH);
   const wb = new WinBox({
     title: titleWithTag,
-    width: "20%",
+    width: initialWidth,
     minwidth: LIVE_MIN_WIDTH,
     minheight: LIVE_MIN_HEIGHT,
     x: `${20 + (idx * 4)}%`,
