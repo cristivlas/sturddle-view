@@ -12,13 +12,15 @@ export const EVT = {
 // GAME_FINISHED is reserved for future use — server does not emit it today
 // (game completion is observed via PROXY_ENDED + standings refresh).
 export const KIND = {
-  PROXY_STARTED: "proxy_started",
-  PROXY_ENDED:   "proxy_ended",
-  GAME_FINISHED: "game_finished",
-  RUNNER_LOG:    "runner_log",
-  RUNNER_CRASH:  "runner_crash",
-  DONE:          "done",
-  STOPPED:       "stopped",
+  PROXY_STARTED:  "proxy_started",
+  PROXY_ENDED:    "proxy_ended",
+  PROXY_PAIRED:   "proxy_paired",    // SV_LIVE_PAIRINGS only
+  PROXY_UNPAIRED: "proxy_unpaired",  // SV_LIVE_PAIRINGS only
+  GAME_FINISHED:  "game_finished",
+  RUNNER_LOG:     "runner_log",
+  RUNNER_CRASH:   "runner_crash",
+  DONE:           "done",
+  STOPPED:        "stopped",
 };
 
 export const STATUS = {

@@ -59,7 +59,8 @@ _EVENT_HISTORY_MAX = 200
 # (registered via ``position``) and the waiter (registered via
 # ``bestmove`` at the resulting FEN). ``info`` from the thinker fans
 # out to the waiter's subscribers — that's the opponent's PV arrow.
-_DEBUG_PAIRING = os.environ.get("SV_DEBUG_PAIRING", "0") == "1"
+_DEBUG_PAIRING   = os.environ.get("SV_DEBUG_PAIRING",   "0") == "1"
+_LIVE_PAIRINGS   = os.environ.get("SV_LIVE_PAIRINGS",   "0") == "1"
 
 
 def _opposite_side(side: str) -> str:
@@ -149,6 +150,13 @@ class Orchestrator:
         # Locked from side-to-move on the first ``position`` after
         # ``ucinewgame`` (that's the engine's first turn).
         self._pairing_color: dict[str, str | None] = {}
+        # Derived from _pairing_map: one frozenset per FEN bucket with ≥2 entries.
+        # Diffed on each update to detect new pairings and orphaned proxies.
+        self._current_groups: set[frozenset] = set()
+        # Game-level confirmed pairs: proxy_id → peer_proxy_id (bidirectional).
+        # Added when a new unambiguous (size-2) group first appears; removed
+        # when a proxy becomes orphaned (absent from _pairing_state).
+        self._confirmed_pairs: dict[str, str] = {}
         # Per-tournament secret embedded in the proxy --broadcast-url so
         # only proxies belonging to the active tournament can post.
         # Cleared on tournament termination.
@@ -276,6 +284,8 @@ class Orchestrator:
             self._pairing_map.clear()
             self._pairing_state.clear()
             self._pairing_color.clear()
+            self._current_groups = set()
+            self._confirmed_pairs.clear()
             self._store.update_status(t.id, STATUS_STOPPED, stopped_at=_now())
             raise
 
@@ -365,6 +375,8 @@ class Orchestrator:
                     self._pairing_map.clear()
                     self._pairing_state.clear()
                     self._pairing_color.clear()
+                    self._current_groups = set()
+                    self._confirmed_pairs.clear()
                     self._close_all_proxy_subscribers()
 
         # Always forward the runner event upstream — UI consumers want
@@ -473,15 +485,19 @@ class Orchestrator:
                         self._pairing_color[proxy_id] = parsed["side_to_move"]
                     color = self._pairing_color[proxy_id]
                     if color is not None:
-                        self._pairing_register(proxy_id, parsed["fen"], color)
+                        new_pairs, orphaned = self._pairing_register(proxy_id, parsed["fen"], color)
+                        await self._emit_group_events(new_pairs, orphaned)
             elif stripped.startswith("ucinewgame"):
                 self._pairing_unregister(proxy_id)
+                new_pairs, orphaned = self._recompute_groups()
                 self._pairing_color[proxy_id] = None
+                await self._emit_group_events(new_pairs, orphaned)
             elif stripped.startswith("go "):
                 snap["go"] = line
             elif stripped.startswith("bestmove "):
                 parsed = parse_uci_line(stripped)
-                self._pairing_apply_bestmove(proxy_id, parsed)
+                new_pairs, orphaned = self._pairing_apply_bestmove(proxy_id, parsed)
+                await self._emit_group_events(new_pairs, orphaned)
             elif stripped.startswith("info "):
                 if " score " in stripped or " pv " in stripped:
                     snap["info"] = line
@@ -506,24 +522,87 @@ class Orchestrator:
                 }
                 _fanout(paired_subs, payload)
 
-    def _pairing_register(self, proxy_id: str, fen: str, side: str) -> None:
-        """Atomic transition — a proxy is in the map at most once."""
+    def _recompute_groups(self) -> tuple[set[frozenset], set[str]]:
+        """Derive the current set of pairing groups from ``_pairing_map``.
+
+        A group is the frozenset of all proxy_ids sharing one FEN bucket
+        (requires ≥ 2 entries). Updates ``_current_groups`` in place and
+        returns ``(new_pairs, orphaned)``:
+
+        - ``new_pairs``: unambiguous (size-2) groups that are newly confirmed
+          this game — callers should emit ``proxy_paired`` for each.
+        - ``orphaned``: proxies that were in a now-removed group but are no
+          longer registered at *any* FEN (i.e. absent from ``_pairing_state``).
+          Between-move transitions keep the proxy registered at a new FEN, so
+          they produce no orphans and no ``proxy_unpaired`` event.
+        """
+        new_groups: set[frozenset] = set()
+        for bucket in self._pairing_map.values():
+            if len(bucket) >= 2:
+                new_groups.add(frozenset(pid for pid, _ in bucket))
+
+        added   = new_groups - self._current_groups
+        removed = self._current_groups - new_groups
+        self._current_groups = new_groups
+
+        new_pairs: set[frozenset] = set()
+        for group in added:
+            if len(group) == 2:
+                pid_a, pid_b = tuple(group)
+                state_a = self._pairing_state.get(pid_a)
+                state_b = self._pairing_state.get(pid_b)
+                # Require opposite colors and neither proxy already confirmed.
+                if (state_a and state_b and state_a[1] != state_b[1]
+                        and pid_a not in self._confirmed_pairs
+                        and pid_b not in self._confirmed_pairs):
+                    self._confirmed_pairs[pid_a] = pid_b
+                    self._confirmed_pairs[pid_b] = pid_a
+                    new_pairs.add(group)
+                    if _DEBUG_PAIRING:
+                        log.info(
+                            "pairing: confirmed %s(%s) <-> %s(%s)",
+                            pid_a[:8], self._proxy_engine_names.get(pid_a, "?"),
+                            pid_b[:8], self._proxy_engine_names.get(pid_b, "?"),
+                        )
+            elif _DEBUG_PAIRING:
+                fen = (self._pairing_state.get(next(iter(group))) or ("?",))[0]
+                log.debug(
+                    "pairing: ambiguous size=%d fen=%.30s %s",
+                    len(group),
+                    fen,
+                    [(p[:8], self._proxy_engine_names.get(p, "?")) for p in group],
+                )
+
+        orphaned: set[str] = set()
+        for group in removed:
+            for pid in group:
+                if pid not in self._pairing_state:
+                    orphaned.add(pid)
+        if orphaned and _DEBUG_PAIRING:
+            log.info(
+                "pairing: orphaned %s",
+                [(p[:8], self._proxy_engine_names.get(p, "?")) for p in orphaned],
+            )
+
+        return new_pairs, orphaned
+
+    def _pairing_register(self, proxy_id: str, fen: str, side: str) -> tuple[set[frozenset], set[str]]:
+        """Re-register proxy at a new FEN, then recompute pairing groups.
+
+        Returns ``(new_pairs, orphaned)`` from ``_recompute_groups``."""
         self._pairing_unregister(proxy_id)
         bucket = self._pairing_map.setdefault(fen, [])
         bucket.append((proxy_id, side))
         self._pairing_state[proxy_id] = (fen, side)
         if _DEBUG_PAIRING:
             self._pairing_assert_invariants()
-            # Buckets >2 are normal under concurrency: fastchess pairs
-            # share an opening book line, so both games sit at the same
-            # early FEN until they diverge. Logged for observability —
-            # if a bucket stays large past book depth that's interesting.
             if len(bucket) > 2:
                 log.warning(
                     "pairing: bucket >2 fen=%s entries=%s",
                     fen,
                     [(pid[:8], s) for pid, s in bucket],
                 )
+        return self._recompute_groups()
 
     def _pairing_unregister(self, proxy_id: str) -> None:
         prev = self._pairing_state.pop(proxy_id, None)
@@ -537,22 +616,59 @@ class Orchestrator:
         if not bucket:
             del self._pairing_map[fen]
 
-    def _pairing_apply_bestmove(self, proxy_id: str, parsed: dict | None) -> None:
-        """Re-register at post-move FEN (waiting for opponent). Same
-        color — engine identity is fixed for the game."""
+    def _pairing_apply_bestmove(
+        self, proxy_id: str, parsed: dict | None
+    ) -> tuple[set[frozenset], set[str]]:
+        """Re-register at post-move FEN (waiting for opponent)."""
         state = self._pairing_state.get(proxy_id)
         if state is None or not parsed:
-            return
+            return set(), set()
         move_uci = parsed.get("move")
         if not move_uci or move_uci == "(none)":
-            return
+            return set(), set()
         fen, my_color = state
         try:
             board = chess.Board(fen)
             board.push_uci(move_uci)
         except (ValueError, chess.IllegalMoveError, chess.InvalidMoveError):
-            return
-        self._pairing_register(proxy_id, board.fen(), my_color)
+            return set(), set()
+        return self._pairing_register(proxy_id, board.fen(), my_color)
+
+    async def _emit_group_events(
+        self, new_pairs: set[frozenset], orphaned: set[str]
+    ) -> None:
+        """Emit ``proxy_paired`` / ``proxy_unpaired`` events for group deltas.
+
+        Logging is unconditional; event emission is gated on ``_LIVE_PAIRINGS``."""
+        if _LIVE_PAIRINGS:
+            for group in new_pairs:
+                pid_a, pid_b = tuple(group)
+                state_a = self._pairing_state.get(pid_a)
+                state_b = self._pairing_state.get(pid_b)
+                await self._emit("proxy_paired", {
+                    "tournament_id": self._active_id,
+                    "proxy_a": pid_a,
+                    "engine_a": self._proxy_engine_names.get(pid_a, pid_a),
+                    "side_a": state_a[1] if state_a else "?",
+                    "proxy_b": pid_b,
+                    "engine_b": self._proxy_engine_names.get(pid_b, pid_b),
+                    "side_b": state_b[1] if state_b else "?",
+                })
+        emitted: set[str] = set()
+        for pid in orphaned:
+            if pid in emitted:
+                continue
+            peer = self._confirmed_pairs.pop(pid, None)
+            if peer is None:
+                continue
+            self._confirmed_pairs.pop(peer, None)
+            emitted.update((pid, peer))
+            if _LIVE_PAIRINGS:
+                await self._emit("proxy_unpaired", {
+                    "tournament_id": self._active_id,
+                    "proxy_id": pid,
+                    "peer_id": peer,
+                })
 
     def _paired_subscribers(
         self, proxy_id: str, fen: str, side: str
@@ -602,6 +718,7 @@ class Orchestrator:
         self._proxy_engine_names.pop(proxy_id, None)
         self._proxy_snapshot.pop(proxy_id, None)
         self._pairing_unregister(proxy_id)
+        new_pairs, orphaned = self._recompute_groups()
         self._pairing_color.pop(proxy_id, None)
         subs = self._proxy_subscribers.pop(proxy_id, None)
         if subs:
@@ -615,6 +732,7 @@ class Orchestrator:
             "tournament_id": self._active_id,
             "proxy_id": proxy_id,
         })
+        await self._emit_group_events(new_pairs, orphaned)
 
     def subscribe_to_proxy(self, proxy_id: str) -> asyncio.Queue:
         """WS handler calls this; returns a bounded queue that receives

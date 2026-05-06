@@ -73,6 +73,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   let unsubscribe = null;
   // proxy_id -> { engineName }
   const activeProxies = new Map();
+  // proxy_id -> { proxyA, engineA, sideA, proxyB, engineB, sideB }
+  // Both proxies in a pair map to the same info object (SV_LIVE_PAIRINGS).
+  const livePairings = new Map();
 
   // ---- Window construction ----------------------------------------------
 
@@ -236,6 +239,43 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     scheduleBody.innerHTML = `<ul class="wb-sched-list"></ul>`;
     const list = scheduleBody.querySelector(".wb-sched-list");
 
+    // Live pairings section (SV_LIVE_PAIRINGS). Dedupe: both proxies map to
+    // the same info object, so skip if we already rendered this pair.
+    const shownPairs = new Set();
+    for (const [, info] of livePairings) {
+      const key = [info.proxyA, info.proxyB].sort().join(":");
+      if (shownPairs.has(key)) continue;
+      shownPairs.add(key);
+      const li = document.createElement("li");
+      li.className = "wb-sched-live wb-sched-pair";
+      const wLabel = info.sideA === "white" ? info.engineA : info.engineB;
+      const bLabel = info.sideA === "white" ? info.engineB : info.engineA;
+      li.innerHTML = `
+        <span class="wb-sched-icon">⚔</span>
+        <span class="wb-sched-game">${escapeHtml(wLabel)} – ${escapeHtml(bLabel)}</span>
+      `;
+      const btn = document.createElement("button");
+      btn.className = "wb-sched-attach-btn";
+      btn.textContent = "watch";
+      btn.title = info.proxyA;
+      btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(info.proxyA) || isLiveWindowOpen(info.proxyB));
+      btn.addEventListener("click", async () => {
+        let boardStyle = null;
+        try { const s = await api("GET", "/settings"); boardStyle = s.board_style || null; } catch {}
+        const sched = windows.schedule;
+        const avoidRect = sched ? { x: sched.x, y: sched.y, w: sched.width, h: sched.height } : null;
+        openLiveGameWindow({
+          proxyId: info.proxyA,
+          label: `${tournament.name} — ${wLabel} vs ${bLabel}`,
+          engineName: wLabel,
+          token, top, left, boardStyle, avoidRect,
+        });
+        btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(info.proxyA) || isLiveWindowOpen(info.proxyB));
+      });
+      li.appendChild(btn);
+      list.appendChild(li);
+    }
+
     for (const g of finished) {
       const li = document.createElement("li");
       li.innerHTML = `
@@ -309,7 +349,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (!list) return;
     const scroller = logBody.parentElement;
     const atBottom = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
-    list.innerHTML = eventLog.map((e) => {
+    list.innerHTML = eventLog.filter(e => e.payload?.kind !== KIND.PROXY_UNPAIRED).map((e) => {
       const ts = e.ts || "";
       const inner = e.payload?.kind;
       // runner_log: surface the actual fastchess stdout/stderr line.
@@ -324,7 +364,17 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         parts.push(e.payload.status);
       else if (inner === KIND.GAME_FINISHED && e.payload?.result)
         parts.push(inner, e.payload.result);
-      else if (inner === KIND.PROXY_STARTED) {
+      else if (inner === KIND.PROXY_PAIRED) {
+        const a = e.payload?.engine_a || "?";
+        const b = e.payload?.engine_b || "?";
+        const pa = (e.payload?.proxy_a || "").slice(0, 8);
+        const pb = (e.payload?.proxy_b || "").slice(0, 8);
+        parts.push(inner, `${a}(${pa}) vs ${b}(${pb})`);
+      } else if (inner === KIND.PROXY_UNPAIRED) {
+        const pa = (e.payload?.proxy_id || "").slice(0, 8);
+        const pb = (e.payload?.peer_id  || "").slice(0, 8);
+        parts.push(inner, pa, pb);
+      } else if (inner === KIND.PROXY_STARTED) {
         parts.push(inner);
         if (e.payload?.engine_name) parts.push(e.payload.engine_name);
       } else if (inner === KIND.RUNNER_CRASH) {
@@ -402,6 +452,15 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     } else if (inner === KIND.PROXY_ENDED) {
       const pid = evt.payload.proxy_id;
       if (pid) activeProxies.delete(pid);
+    } else if (inner === KIND.PROXY_PAIRED) {
+      const p = evt.payload;
+      const info = { proxyA: p.proxy_a, engineA: p.engine_a, sideA: p.side_a,
+                     proxyB: p.proxy_b, engineB: p.engine_b, sideB: p.side_b };
+      livePairings.set(p.proxy_a, info);
+      livePairings.set(p.proxy_b, info);
+    } else if (inner === KIND.PROXY_UNPAIRED) {
+      livePairings.delete(evt.payload.proxy_id);
+      livePairings.delete(evt.payload.peer_id);
     } else if (
       evt.kind === EVT.STATUS ||
       inner === KIND.DONE || inner === KIND.STOPPED
@@ -411,6 +470,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
     if (added) renderEventLog();
     if (inner === KIND.PROXY_STARTED || inner === KIND.PROXY_ENDED ||
+        inner === KIND.PROXY_PAIRED || inner === KIND.PROXY_UNPAIRED ||
         inner === KIND.GAME_FINISHED || evt.kind === EVT.STATUS ||
         inner === KIND.DONE || inner === KIND.STOPPED)
       renderSchedule();

@@ -1528,3 +1528,4 @@ wa-dialog::part(body) {
 .wb-sched-attach-btn:hover { background: var(--nav-btn-bg-hover); border-color: var(--accent); }
 .wb-sched-attach-btn--live { border-color: var(--accent); color: var(--accent); }
 .wb-sched-attach-btn--live:hover { background: var(--nav-btn-bg-hover); }
+.wb-sched-pair .wb-sched-icon { color: var(--muted); }
