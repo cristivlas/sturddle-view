@@ -236,8 +236,8 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
 
 @pytest.mark.asyncio
 async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, browser):
-    """Slice 8: clicking 'Open workspace' on a tournament row spawns
-    three WinBox windows (Standings / Schedule / Event log)."""
+    """Slice 8: clicking 'Open workspace' on an idle tournament spawns
+    two WinBox windows (Standings / Schedule); event log is deferred."""
     monkeypatch.setattr(
         FastchessRunner, "detect_binary",
         staticmethod(lambda configured: configured),
@@ -289,7 +289,7 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, b
             await page.click('.tournaments-ribbon .t-workspace')
 
             await page.wait_for_function(
-                "() => document.querySelectorAll('.winbox.sturddle-wb').length === 3",
+                "() => document.querySelectorAll('.winbox.sturddle-wb').length === 2",
                 timeout=5000,
             )
             titles = await page.evaluate(
@@ -298,7 +298,6 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, b
             )
             assert any("Standings" in t for t in titles)
             assert any("Schedule"  in t for t in titles)
-            assert any("Event log" in t for t in titles)
 
             await page.wait_for_function(
                 """() => /No games/.test(
@@ -318,7 +317,7 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, b
             await page.click('.tournament-row')
             await page.click('.tournaments-ribbon .t-workspace')
             await page.wait_for_function(
-                "() => document.querySelectorAll('.winbox.sturddle-wb').length === 3",
+                "() => document.querySelectorAll('.winbox.sturddle-wb').length === 2",
                 timeout=5000,
             )
 
