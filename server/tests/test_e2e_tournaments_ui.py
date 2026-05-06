@@ -297,7 +297,7 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, b
                             .map(t => t.textContent)"""
             )
             assert any("Standings" in t for t in titles)
-            assert any("Schedule"  in t for t in titles)
+            assert any("Live Games" in t for t in titles)
 
             await page.wait_for_function(
                 """() => /No games/.test(
