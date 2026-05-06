@@ -4,6 +4,15 @@ game window that subscribes to a proxy and renders the board.
 Uses a fake fastchess (a sleeping Python script) and injects proxy
 lines directly via the internal HTTP endpoint, so no real engine
 binaries are required.
+
+TODO: this test (and `test_e2e_tournaments_ui::test_tournament_workspace_opens_three_windows`)
+broke on the feat/live-pairings branch when Schedule switched from
+proxy-id rows to game-id (pair) rows: a single proxy with no peer
+never confirms a pair, so no `.wb-sched-live` row appears. Fix by
+either driving two proxies into a confirmed pair, or by re-enabling
+the commented-out individual-proxy rows in
+`web/app/tournament-workspace.js::renderSchedule` for the unpaired-
+proxy case.
 """
 from __future__ import annotations
 

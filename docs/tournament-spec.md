@@ -605,17 +605,86 @@ escape hatch.
 
 #### What end-of-game looks like
 
-The proxy doesn't classify; the consumer infers from the stream:
+The proxy doesn't classify. The orchestrator combines two signals:
 
-- **Start of a new game** on this engine: `ucinewgame`.
-- **End of a game** on this engine: the next `ucinewgame` (the next
-  game starts) or proxy disconnect (engine quit / fastchess closed
-  the connection).
-- **Result label** (`1-0` / `0-1` / `1/2-1/2`): comes from PGN, not
-  from the proxy. fastchess writes the result on adjudication. The
-  Schedule window already polls PGN; results overlay on a slight
-  delay (≤5s today; instant once fastchess's stdout `Finished game N`
-  line is forwarded into the event bus).
+- **UCI stream** (per-proxy): `ucinewgame` marks a game boundary.
+  Proxy disconnect (engine quit / fastchess closed it) marks a hard
+  end.
+- **fastchess stdout** (tournament-wide, authoritative): the
+  `Started game N (A vs B)` and `Finished game N (A vs B): result`
+  lines from `-output format=fastchess` carry the real result and
+  termination reason.
+
+The result label (`1-0` / `0-1` / `1/2-1/2`) comes from the
+`Finished` line — not from PGN polling and not from board-state
+inference. PGN remains the source for the Standings window.
+
+#### Pair lifecycle: confirmation and dissolution
+
+A "pair" is the orchestrator's runtime view of one in-flight game:
+two `proxy_id`s playing each other, identified by a `pair_id` UUID.
+Pairs need both *confirmation* (so live windows can attach) and
+*dissolution* (so windows close with the right result).
+
+**Confirmation.** Per-proxy UCI events register each engine into a
+FEN bucket. When a bucket has exactly two entries with opposite
+colors, the orchestrator confirms a pair, mints a `pair_id`, and
+emits `proxy_paired`. Buckets >2 occur transiently because
+fastchess feeds the same opening-book line to multiple slots; they
+resolve as engines diverge past book.
+
+**Game-N stamping.** fastchess's stdout assigns each game a
+monotonic integer N. On `Started game N (A vs B)` the orchestrator
+queues `(N, white=A, black=B)`. The next pair confirmation whose
+sides match `(A, B)` is stamped with N (FIFO). This makes the
+`pair_id ↔ N` mapping deterministic at any concurrency.
+
+**Dissolution (Option B — deferred).** `Finished game N` is the
+sole authoritative trigger for ending a pair: it carries the real
+result and termination, so it drives `proxy_unpaired` +
+`game_finished` and closes the per-pair WS subscribers with the
+result in the `ended` sentinel.
+
+UCI-side end-of-game (a `ucinewgame` from a confirmed proxy, or a
+`proxy_session_ended`) does *not* emit termination events on its
+own. It only marks the pair *pending dissolution*; the `Finished`
+line completes the cleanup. If `Finished` never arrives (proxy
+crashed before fastchess flushed, runner shutdown), a forced-
+dissolve path drains pending pairs with `result=unknown` so windows
+don't hang.
+
+**Why deferred.** The alternative is "first signal wins, emit a
+corrective second event if the real result arrives later." Under
+high concurrency that produces interleaved `unpaired` /
+`game_finished` events for already-dissolved pairs, pushing race
+reconciliation into the client. Deferral keeps the contract simple:
+exactly one terminal event per pair, carrying the real result, in
+order. The state cost is bounded by `concurrency` (≤ a few dozen
+pending entries).
+
+**Rejected alternatives.**
+
+- *Board-state inference from FEN.* Wrong for resignations
+  (`-resign`), adjudicated draws (`-draw`), and time forfeits — the
+  board doesn't reflect the verdict.
+- *PGN tail polling for results.* Adds a poller and doesn't solve
+  pair-id mapping under concurrency (PGN flush order is per-game,
+  not per-slot).
+- *Match results to pairs by `(white, black)` alone, without N.*
+  Under concurrency multiple in-flight pairs share `(white, black)`
+  in either direction; pair-id assignment becomes ambiguous.
+
+**Failure modes.**
+
+- Malformed `Started`/`Finished` line (fastchess version skew):
+  log a warning and fall through. Forced-dissolve on shutdown
+  cleans up.
+- `Finished N` for unknown N (pair never confirmed — book-line
+  collision held bucket >2 for the whole game): log + drop. No UI
+  window existed to update.
+- `ucinewgame` arrives before `Started N` is queued (theoretical
+  reorder): pair confirmation can't stamp N; falls through to
+  forced-dissolve.
 
 ### Stopped / done view
 

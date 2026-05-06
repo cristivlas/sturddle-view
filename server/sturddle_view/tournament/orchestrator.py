@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import secrets
 import uuid
 from collections import deque
@@ -67,20 +68,22 @@ def _opposite_side(side: str) -> str:
     return "black" if side == "white" else "white"
 
 
-def _game_result(fen: str | None) -> str:
-    if not fen:
-        return "adjudicated"
-    try:
-        board = chess.Board(fen)
-        if board.is_checkmate():
-            return "checkmate"
-        if board.is_stalemate():
-            return "stalemate"
-        if board.is_insufficient_material() or board.is_seventyfive_moves() or board.is_fivefold_repetition():
-            return "draw"
-    except Exception:
-        pass
-    return "adjudicated"
+# fastchess `-output format=fastchess` stdout lines. See spec §
+# "Pair lifecycle: confirmation and dissolution" for the role
+# these play in pair_id ↔ game-N stamping and dissolution.
+_FASTCHESS_STARTED_RE = re.compile(
+    r"Started game (\d+)(?: of \d+)? \((.+?) vs (.+?)\)"
+)
+_FASTCHESS_FINISHED_RE = re.compile(
+    r"Finished game (\d+)(?: of \d+)? \((.+?) vs (.+?)\): "
+    r"(1-0|0-1|1/2-1/2|\*)"
+    r"(?:\s*\{([^}]*)\})?"
+)
+
+# Fallback result/termination when a pair is force-dissolved without
+# a `Finished` line (proxy crash, runner shutdown mid-game).
+_RESULT_UNKNOWN = "*"
+_TERMINATION_UNKNOWN = "unknown"
 
 
 def _fanout(subs: set[asyncio.Queue], payload: dict) -> None:
@@ -179,9 +182,18 @@ class Orchestrator:
         self._pair_ids: dict[frozenset, str] = {}
         # Reverse: pair_id → frozenset(pid_a, pid_b). Used for snapshot replay.
         self._pair_proxies: dict[str, frozenset] = {}
-        # Last known FEN for each confirmed pair. Updated on every position
-        # event; consumed on dissolution to determine the game result.
-        self._pair_last_fen: dict[str, str] = {}
+        # fastchess game-N tracking. _started_games: FIFO of (N, white,
+        # black) from `Started game N` stdout lines, awaiting pair
+        # confirmation. _pair_game_n / _game_n_pair: bidirectional map
+        # between pair_id and N, established at confirmation time so the
+        # `Finished game N` line can address the right pair.
+        self._started_games: deque[tuple[int, str, str]] = deque()
+        self._pair_game_n: dict[str, int] = {}
+        self._game_n_pair: dict[int, str] = {}
+        # Pairs whose UCI side ended (ucinewgame / proxy_ended) but whose
+        # `Finished` line hasn't arrived yet. Held here so dissolution
+        # waits for the authoritative result; force-drained on shutdown.
+        self._pending_dissolve: set[str] = set()
         # WS subscribers keyed by pair_id. Same lifecycle as proxy subscribers
         # but scoped to the game: sentinel sent when the pair is dissolved.
         self._game_subscribers: dict[str, set[asyncio.Queue]] = {}
@@ -205,6 +217,24 @@ class Orchestrator:
         # event. Lets the workspace dedupe between REST backfill and the
         # WS firehose when both deliver the same event around open time.
         self._event_seq: int = 0
+
+    def _reset_pairing_state(self) -> None:
+        """Drop all per-tournament pairing/observation state. Used on
+        start rollback and on terminal runner events."""
+        self._proxy_engine_names.clear()
+        self._proxy_snapshot.clear()
+        self._pairing_map.clear()
+        self._pairing_state.clear()
+        self._pairing_color.clear()
+        self._current_groups = set()
+        self._confirmed_pairs.clear()
+        self._pair_ids.clear()
+        self._pair_proxies.clear()
+        self._started_games.clear()
+        self._pair_game_n.clear()
+        self._game_n_pair.clear()
+        self._pending_dissolve.clear()
+        self._game_subscribers.clear()
 
     def set_proxy_broadcast_url(self, url: str | None) -> None:
         """Configure the URL proxies POST to. The orchestrator passes
@@ -307,17 +337,7 @@ class Orchestrator:
             # out the next attempt.
             self._active_id = None
             self._proxy_secret = None
-            self._proxy_engine_names.clear()
-            self._proxy_snapshot.clear()
-            self._pairing_map.clear()
-            self._pairing_state.clear()
-            self._pairing_color.clear()
-            self._current_groups = set()
-            self._confirmed_pairs.clear()
-            self._pair_ids.clear()
-            self._pair_proxies.clear()
-            self._pair_last_fen.clear()
-            self._game_subscribers.clear()
+            self._reset_pairing_state()
             self._store.update_status(t.id, STATUS_STOPPED, stopped_at=_now())
             raise
 
@@ -400,20 +420,15 @@ class Orchestrator:
                     # Slice 9b: tear down the live-observation state so
                     # stale proxies (if any survive past fastchess exit)
                     # can't post and any open WS subscribers get a clean
-                    # "ended" signal.
+                    # "ended" signal. Drain pending pairs first so their
+                    # game subscribers see an `ended` frame.
                     self._proxy_secret = None
-                    self._proxy_engine_names.clear()
-                    self._proxy_snapshot.clear()
-                    self._pairing_map.clear()
-                    self._pairing_state.clear()
-                    self._pairing_color.clear()
-                    self._current_groups = set()
-                    self._confirmed_pairs.clear()
-                    self._pair_ids.clear()
-                    self._pair_proxies.clear()
-                    self._pair_last_fen.clear()
-                    self._game_subscribers.clear()
+                    await self._force_dissolve_pending()
+                    self._reset_pairing_state()
                     self._close_all_proxy_subscribers()
+
+        if kind == "runner_log":
+            await self._handle_runner_log(payload)
 
         # Always forward the runner event upstream — UI consumers want
         # ``runner_crash`` etc. distinct from a plain status change.
@@ -550,11 +565,6 @@ class Orchestrator:
                     if color is not None:
                         new_pairs, orphaned = self._pairing_register(proxy_id, parsed["fen"], color)
                         await self._emit_group_events(new_pairs, orphaned)
-                    peer = self._confirmed_pairs.get(proxy_id)
-                    if peer:
-                        pair_id = self._pair_ids.get(frozenset((proxy_id, peer)))
-                        if pair_id:
-                            self._pair_last_fen[pair_id] = parsed["fen"]
             elif stripped.startswith("ucinewgame"):
                 self._pairing_unregister(proxy_id)
                 new_pairs, orphaned = self._recompute_groups()
@@ -645,12 +655,14 @@ class Orchestrator:
                     pair_id = str(uuid.uuid4())
                     self._pair_ids[group] = pair_id
                     self._pair_proxies[pair_id] = group
+                    self._stamp_pair_game_n(pair_id, pid_a, pid_b, state_a[1])
                     new_pairs.add(group)
                     if _DEBUG_PAIRING:
                         log.info(
-                            "pairing: confirmed %s(%s) <-> %s(%s)",
+                            "pairing: confirmed %s(%s) <-> %s(%s) game_n=%s",
                             pid_a[:8], self._proxy_engine_names.get(pid_a, "?"),
                             pid_b[:8], self._proxy_engine_names.get(pid_b, "?"),
+                            self._pair_game_n.get(pair_id),
                         )
             elif _DEBUG_PAIRING:
                 fen = (self._pairing_state.get(next(iter(group))) or ("?",))[0]
@@ -725,7 +737,10 @@ class Orchestrator:
     async def _emit_group_events(
         self, new_pairs: set[frozenset], orphaned: set[str]
     ) -> None:
-        """Emit ``proxy_paired`` / ``proxy_unpaired`` events for group deltas."""
+        """Emit ``proxy_paired`` for new pairs; mark orphans pending.
+
+        Dissolution is deferred to the authoritative ``Finished game N``
+        line — see spec §"Pair lifecycle"."""
         for group in new_pairs:
             pid_a, pid_b = tuple(group)
             state_a = self._pairing_state.get(pid_a)
@@ -740,38 +755,148 @@ class Orchestrator:
                 "engine_b": self._proxy_engine_names.get(pid_b, pid_b),
                 "side_b": state_b[1] if state_b else "?",
             })
-        emitted: set[str] = set()
+        seen: set[str] = set()
         for pid in orphaned:
-            if pid in emitted:
+            if pid in seen:
                 continue
             peer = self._confirmed_pairs.pop(pid, None)
             if peer is None:
                 continue
             self._confirmed_pairs.pop(peer, None)
-            emitted.update((pid, peer))
-            pair_key = frozenset((pid, peer))
-            pair_id = self._pair_ids.pop(pair_key, "")
-            self._pair_proxies.pop(pair_id, None)
-            result = _game_result(self._pair_last_fen.pop(pair_id, None))
-            # TODO: emit "game_finished" broadcast here (pair_id, proxy_id,
-            # peer_id, result) so the workspace event log / standings refresh
-            # without polling. The client already handles KIND.GAME_FINISHED
-            # (tournament-workspace.js). Consider consolidating with the
-            # "ended" sentinel below — same result, different delivery channel
-            # (broadcast vs per-subscriber queue); a shared helper could unify.
-            game_subs = self._game_subscribers.pop(pair_id, None)
-            if game_subs:
-                for q in game_subs:
-                    try:
-                        q.put_nowait({"proxy_id": pid, "ended": True, "result": result})
-                    except asyncio.QueueFull:
-                        pass
-            await self._emit("proxy_unpaired", {
-                "tournament_id": self._active_id,
-                "pair_id": pair_id,
-                "proxy_id": pid,
-                "peer_id": peer,
+            seen.update((pid, peer))
+            # Free the proxy↔proxy link so the surviving proxy can
+            # re-pair on its next ucinewgame. _pair_ids / _pair_proxies
+            # / _pair_game_n stay until `Finished N` (or force-dissolve)
+            # actually cleans them up.
+            pair_id = self._pair_ids.get(frozenset((pid, peer)), "")
+            if pair_id:
+                self._pending_dissolve.add(pair_id)
+
+    def _stamp_pair_game_n(
+        self, pair_id: str, pid_a: str, pid_b: str, side_a: str
+    ) -> None:
+        """Match a freshly-confirmed pair to the head of `_started_games`
+        whose `(white, black)` engine names match (FIFO)."""
+        white_pid, black_pid = (pid_a, pid_b) if side_a == "white" else (pid_b, pid_a)
+        white = self._proxy_engine_names.get(white_pid)
+        black = self._proxy_engine_names.get(black_pid)
+        if not white or not black:
+            return
+        for i, (n, w, b) in enumerate(self._started_games):
+            if w == white and b == black:
+                del self._started_games[i]
+                self._pair_game_n[pair_id] = n
+                self._game_n_pair[n] = pair_id
+                return
+
+    async def _dissolve_pair(
+        self, pair_id: str, result: str, termination: str | None
+    ) -> None:
+        """Single dissolution path. Drops bookkeeping for the pair,
+        sends the game-WS sentinel, and emits ``proxy_unpaired`` +
+        ``game_finished``. Idempotent — a duplicate call is a no-op."""
+        proxies = self._pair_proxies.pop(pair_id, None)
+        if proxies is None:
+            return
+        pid_a, pid_b = tuple(proxies)
+        self._confirmed_pairs.pop(pid_a, None)
+        self._confirmed_pairs.pop(pid_b, None)
+        self._pair_ids.pop(proxies, None)
+        n = self._pair_game_n.pop(pair_id, None)
+        if n is not None:
+            self._game_n_pair.pop(n, None)
+        self._pending_dissolve.discard(pair_id)
+        game_subs = self._game_subscribers.pop(pair_id, None)
+        if game_subs:
+            for q in game_subs:
+                try:
+                    q.put_nowait({
+                        "proxy_id": pid_a,
+                        "ended": True,
+                        "result": result,
+                        "termination": termination,
+                    })
+                except asyncio.QueueFull:
+                    pass
+        # TODO: `proxy_unpaired` is redundant with `game_finished` — same
+        # trigger, overlapping payload. Kept for now as a debug signal
+        # (client filters it out of the visible event log but retains it
+        # in `_event_history`, useful for diagnosing pair-lifecycle
+        # asymmetries). Consider dropping once the `Finished N` path is
+        # battle-tested; would simplify both server emit and client
+        # subscriber wiring.
+        await self._emit("proxy_unpaired", {
+            "tournament_id": self._active_id,
+            "pair_id": pair_id,
+            "proxy_id": pid_a,
+            "peer_id": pid_b,
+        })
+        await self._emit("game_finished", {
+            "tournament_id": self._active_id,
+            "pair_id": pair_id,
+            "game_n": n,
+            "proxy_a": pid_a,
+            "proxy_b": pid_b,
+            "engine_a": self._proxy_engine_names.get(pid_a),
+            "engine_b": self._proxy_engine_names.get(pid_b),
+            "result": result,
+            "termination": termination,
+        })
+
+    async def _force_dissolve_pending(self) -> None:
+        """Drain pairs whose `Finished` line never arrived (proxy crash,
+        tournament killed mid-game). Called at terminal runner events."""
+        # Snapshot keys so dissolution mutations don't disturb iteration.
+        pending_ids = list(self._pair_ids.values())
+        for pair_id in pending_ids:
+            await self._dissolve_pair(
+                pair_id, _RESULT_UNKNOWN, _TERMINATION_UNKNOWN,
+            )
+
+    def _on_runner_log_line(self, line: str) -> tuple[str, dict] | None:
+        """Parse a fastchess stdout line for `Started game N` /
+        `Finished game N`. Returns ``("started", ...)`` /
+        ``("finished", ...)`` payload or ``None``."""
+        m = _FASTCHESS_STARTED_RE.search(line)
+        if m is not None:
+            return ("started", {
+                "n": int(m.group(1)),
+                "white": m.group(2),
+                "black": m.group(3),
             })
+        m = _FASTCHESS_FINISHED_RE.search(line)
+        if m is not None:
+            return ("finished", {
+                "n": int(m.group(1)),
+                "white": m.group(2),
+                "black": m.group(3),
+                "result": m.group(4),
+                "termination": (m.group(5) or "").strip() or None,
+            })
+        return None
+
+    async def _handle_runner_log(self, payload: dict) -> None:
+        """Inspect a `runner_log` event for game-N markers (stdout only)."""
+        if payload.get("stream") != "out":
+            return
+        line = payload.get("line", "")
+        parsed = self._on_runner_log_line(line)
+        if parsed is None:
+            return
+        kind, info = parsed
+        if kind == "started":
+            self._started_games.append((info["n"], info["white"], info["black"]))
+            return
+        # finished
+        n = info["n"]
+        pair_id = self._game_n_pair.get(n)
+        if pair_id is None:
+            log.info(
+                "fastchess Finished game %d (%s vs %s) had no confirmed pair; dropping",
+                n, info["white"], info["black"],
+            )
+            return
+        await self._dissolve_pair(pair_id, info["result"], info["termination"])
 
     def _paired_subscribers(
         self, proxy_id: str, fen: str, side: str
