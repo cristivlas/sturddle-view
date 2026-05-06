@@ -140,7 +140,6 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   const wb = new WinBox({
     title: titleWithTag,
     width: "20%",
-    // height: "55%",
     minwidth: LIVE_MIN_WIDTH,
     minheight: LIVE_MIN_HEIGHT,
     x: `${20 + (idx * 4)}%`,
