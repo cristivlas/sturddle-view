@@ -170,6 +170,9 @@ def build_command(spec: RunSpec) -> list[str]:
     elif t.get("tournament_type") == "roundrobin":
         cmd.extend(["-tournament", "roundrobin"])
 
+    if spec.tournament.name:
+        cmd.extend(["-event", spec.tournament.name])
+
     # Pinned seed for fastchess's PRNG (opening shuffle, etc). Stable
     # across Stop/Resume cycles — see Resume after Stop in
     # docs/tournament-spec.md.

@@ -267,6 +267,27 @@ def test_build_command_sets_autosaveinterval_to_one(tmp_path):
     assert cmd[cmd.index("-autosaveinterval") + 1] == "1"
 
 
+def test_build_command_event_name(tmp_path):
+    for name in ["My Tournament", "A/B test: α≥β", 'Quote"d', ""]:
+        t = Tournament(
+            id="e", name=name, status=STATUS_IDLE, created_at="2024-01-01T00:00:00Z",
+            template={"tc": "10+0.1"},
+            engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+        )
+        work = tmp_path / "e"
+        spec = RunSpec(
+            tournament=t, binary_path="fastchess", work_dir=work,
+            pgn_path=work / "games.pgn", config_path=work / "config.json",
+            log_path=work / "logs" / "fastchess.log",
+        )
+        cmd = build_command(spec)
+        if name:
+            idx = cmd.index("-event")
+            assert cmd[idx + 1] == name
+        else:
+            assert "-event" not in cmd
+
+
 def test_build_command_pins_seed_when_in_template(tmp_path):
     spec = _make_spec(
         tmp_path,
