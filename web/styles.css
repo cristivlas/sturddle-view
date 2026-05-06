@@ -960,6 +960,13 @@ wa-dialog wa-tab-panel > * + * { margin-top: 10px; }
 .settings-duration wa-input { flex: 1 1 auto; min-width: 0; width: auto; }
 .settings-duration wa-select { flex: 0 0 7em; width: auto; }
 
+/* Aligns right edge with the path-field in .settings-tournament-path-inner */
+.settings-panel-aligned { max-width: calc(100% - 12em - 8px); }
+.settings-num-group { display: flex; gap: 12px; }
+.settings-num-group > div { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.settings-num-group label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.settings-num-group wa-input { width: 100%; }
+
 .settings-row-pair { display: flex; gap: 6px; align-items: center; }
 .settings-row-pair > wa-input { flex: 0 0 5em; width: auto; }
 .settings-row-pair > wa-select { flex: 1 1 auto; min-width: 0; width: auto; }

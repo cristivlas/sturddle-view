@@ -382,40 +382,41 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       // --- Engine defaults (UCI overrides + tournament book) ---
       // Lives in the Common panel so users see one place for global,
       // non-Play, non-Tournament settings.
-      function makeNumRow(labelText, key, { hint, max } = {}) {
+      function makeNumGroup(fields) {
         const row = document.createElement("div");
-        row.className = "settings-row";
-        const lbl = document.createElement("label");
-        lbl.textContent = labelText;
-        if (hint) {
-          const h = document.createElement("span");
-          h.className = "muted settings-row-hint";
-          h.textContent = ` ${hint}`;
-          lbl.appendChild(h);
+        row.className = "settings-num-group settings-panel-aligned";
+        for (const [labelText, key, opts = {}] of fields) {
+          const { max } = opts;
+          const item = document.createElement("div");
+          const lbl = document.createElement("label");
+          lbl.textContent = labelText;
+          const input = document.createElement("wa-input");
+          input.size = "small";
+          input.type = "number";
+          input.min = "1";
+          if (max != null) input.max = String(max);
+          input.autocomplete = "off";
+          input.placeholder = "default";
+          const cur = initial[key];
+          if (cur != null) input.value = String(cur);
+          input.addEventListener("input", () => {
+            const raw = (input.value || "").trim();
+            if (raw === "") return putSettingsDebounced({ [key]: null });
+            const n = Number(raw);
+            if (Number.isFinite(n)) putSettingsDebounced({ [key]: n });
+          });
+          item.append(lbl, input);
+          row.append(item);
         }
-        const input = document.createElement("wa-input");
-        input.size = "small";
-        input.type = "number";
-        input.min = "1";
-        if (max != null) input.max = String(max);
-        input.autocomplete = "off";
-        input.placeholder = "engine default";
-        const cur = initial[key];
-        if (cur != null) input.value = String(cur);
-        input.addEventListener("input", () => {
-          // Blank/0 = clear override; the API normalises both to None.
-          // Non-numeric (NaN) is dropped on the floor — leave the field
-          // showing what the user typed instead of silently clearing.
-          const raw = (input.value || "").trim();
-          if (raw === "") return putSettingsDebounced({ [key]: null });
-          const n = Number(raw);
-          if (Number.isFinite(n)) putSettingsDebounced({ [key]: n });
-        });
-        row.append(lbl, input);
         return row;
       }
 
       generalPanel.append(
+        makeNumGroup([
+          ["Analysis Threads", "engine_default_analysis_threads", { max: initial.host?.logical_cores }],
+          ["Threads",          "engine_default_threads",          { max: initial.host?.logical_cores }],
+          ["Hash (MB)",        "engine_default_hash_mb"],
+        ]),
         pathRow(
           "PGN directory",
           initial.pgn_dir ?? "",
@@ -429,13 +430,6 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
           },
           { editable: true, placeholder: "/path/to/pgn (empty = no autosave)" },
         ),
-        makeNumRow("Analysis Threads", "engine_default_analysis_threads", {
-          max: initial.host?.logical_cores,
-        }),
-        makeNumRow("Threads", "engine_default_threads", {
-          max: initial.host?.logical_cores,
-        }),
-        makeNumRow("Hash (MB)", "engine_default_hash_mb"),
         pathRow(
           "SyzygyPath",
           initial.engine_default_syzygy_path || "",
@@ -456,7 +450,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
 
       function bookPliesAndOrderRow() {
         const row = document.createElement("div");
-        row.className = "settings-row";
+        row.className = "settings-row settings-panel-aligned";
         const lbl = document.createElement("label");
         lbl.textContent = "Book ply depth";
         const hint = document.createElement("span");
