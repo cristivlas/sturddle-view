@@ -171,6 +171,48 @@ async def test_started_queue_fifo_matches_by_color_pair(orch):
 
 
 @pytest.mark.asyncio
+async def test_payload_orientation_a_is_white_b_is_black(orch, emitted):
+    """`proxy_paired` and `game_finished` must always put white in `_a`
+    and black in `_b`. Frozenset-iteration order is nondeterministic;
+    if we let it leak through, downstream UI mislabels the board."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    await orch._handle_runner_log({"stream": "out",
+        "line": f"Started game 11 ({_ENGINE_A} vs {_ENGINE_B})"})
+    # _confirm_pair drives PROXY_A as white, PROXY_B as black.
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+
+    paired = _events_of(emitted, "proxy_paired")[0]
+    assert paired["side_a"] == "white"
+    assert paired["side_b"] == "black"
+    assert paired["proxy_a"] == _PROXY_A and paired["engine_a"] == _ENGINE_A
+    assert paired["proxy_b"] == _PROXY_B and paired["engine_b"] == _ENGINE_B
+
+    await orch._handle_runner_log({"stream": "out",
+        "line": f"Finished game 11 ({_ENGINE_A} vs {_ENGINE_B}): 1-0 {{checkmate}}"})
+    finished = _events_of(emitted, "game_finished")[0]
+    assert finished["proxy_a"] == _PROXY_A and finished["engine_a"] == _ENGINE_A
+    assert finished["proxy_b"] == _PROXY_B and finished["engine_b"] == _ENGINE_B
+
+
+@pytest.mark.asyncio
+async def test_active_pairings_orientation(orch):
+    """REST snapshot must also use white-in-_a orientation so a
+    late-attaching workspace doesn't disagree with live-event payloads."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+
+    snapshot = orch.active_pairings()
+    assert len(snapshot) == 1
+    entry = snapshot[0]
+    assert entry["side_a"] == "white"
+    assert entry["side_b"] == "black"
+    assert entry["proxy_a"] == _PROXY_A and entry["engine_a"] == _ENGINE_A
+    assert entry["proxy_b"] == _PROXY_B and entry["engine_b"] == _ENGINE_B
+
+
+@pytest.mark.asyncio
 async def test_finished_emits_game_finished_with_result(orch, emitted):
     await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
     await orch.proxy_session_started(_PROXY_B, _ENGINE_B)

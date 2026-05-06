@@ -512,16 +512,15 @@ class Orchestrator:
             if key in seen:
                 continue
             seen.add(key)
-            state_a = self._pairing_state.get(pid_a)
-            state_b = self._pairing_state.get(pid_b)
+            white_pid, black_pid = self._white_black_for_group(key)
             out.append({
                 "pair_id":  self._pair_ids.get(key, ""),
-                "proxy_a":  pid_a,
-                "engine_a": self._proxy_engine_names.get(pid_a),
-                "side_a":   state_a[1] if state_a else "?",
-                "proxy_b":  pid_b,
-                "engine_b": self._proxy_engine_names.get(pid_b),
-                "side_b":   state_b[1] if state_b else "?",
+                "proxy_a":  white_pid,
+                "engine_a": self._proxy_engine_names.get(white_pid),
+                "side_a":   "white",
+                "proxy_b":  black_pid,
+                "engine_b": self._proxy_engine_names.get(black_pid),
+                "side_b":   "black",
             })
         return out
 
@@ -742,18 +741,19 @@ class Orchestrator:
         Dissolution is deferred to the authoritative ``Finished game N``
         line — see spec §"Pair lifecycle"."""
         for group in new_pairs:
-            pid_a, pid_b = tuple(group)
-            state_a = self._pairing_state.get(pid_a)
-            state_b = self._pairing_state.get(pid_b)
+            white_pid, black_pid = self._white_black_for_group(group)
             await self._emit("proxy_paired", {
                 "tournament_id": self._active_id,
                 "pair_id": self._pair_ids.get(group, ""),
-                "proxy_a": pid_a,
-                "engine_a": self._proxy_engine_names.get(pid_a, pid_a),
-                "side_a": state_a[1] if state_a else "?",
-                "proxy_b": pid_b,
-                "engine_b": self._proxy_engine_names.get(pid_b, pid_b),
-                "side_b": state_b[1] if state_b else "?",
+                # `_a` is always white; `_b` is always black. See
+                # `_white_black_for_group` — frozenset iteration is
+                # nondeterministic so we sort by side explicitly.
+                "proxy_a": white_pid,
+                "engine_a": self._proxy_engine_names.get(white_pid, white_pid),
+                "side_a": "white",
+                "proxy_b": black_pid,
+                "engine_b": self._proxy_engine_names.get(black_pid, black_pid),
+                "side_b": "black",
             })
         seen: set[str] = set()
         for pid in orphaned:
@@ -771,6 +771,18 @@ class Orchestrator:
             pair_id = self._pair_ids.get(frozenset((pid, peer)), "")
             if pair_id:
                 self._pending_dissolve.add(pair_id)
+
+    def _white_black_for_group(self, group: frozenset) -> tuple[str, str]:
+        """Return (white_pid, black_pid) for a confirmed pair. Frozenset
+        iteration order is nondeterministic; this resolves orientation
+        from `_pairing_state[pid][1]` so payload `_a`/`_b` fields can
+        consistently mean white/black."""
+        pids = tuple(group)
+        if len(pids) != 2:
+            return pids[0] if pids else "", pids[1] if len(pids) > 1 else ""
+        pid_a, pid_b = pids
+        side_a = (self._pairing_state.get(pid_a) or ("", "?"))[1]
+        return (pid_a, pid_b) if side_a == "white" else (pid_b, pid_a)
 
     def _stamp_pair_game_n(
         self, pair_id: str, pid_a: str, pid_b: str, side_a: str
@@ -798,9 +810,9 @@ class Orchestrator:
         proxies = self._pair_proxies.pop(pair_id, None)
         if proxies is None:
             return
-        pid_a, pid_b = tuple(proxies)
-        self._confirmed_pairs.pop(pid_a, None)
-        self._confirmed_pairs.pop(pid_b, None)
+        white_pid, black_pid = self._white_black_for_group(proxies)
+        self._confirmed_pairs.pop(white_pid, None)
+        self._confirmed_pairs.pop(black_pid, None)
         self._pair_ids.pop(proxies, None)
         n = self._pair_game_n.pop(pair_id, None)
         if n is not None:
@@ -811,7 +823,7 @@ class Orchestrator:
             for q in game_subs:
                 try:
                     q.put_nowait({
-                        "proxy_id": pid_a,
+                        "proxy_id": white_pid,
                         "ended": True,
                         "result": result,
                         "termination": termination,
@@ -828,17 +840,18 @@ class Orchestrator:
         await self._emit("proxy_unpaired", {
             "tournament_id": self._active_id,
             "pair_id": pair_id,
-            "proxy_id": pid_a,
-            "peer_id": pid_b,
+            "proxy_id": white_pid,
+            "peer_id": black_pid,
         })
         await self._emit("game_finished", {
             "tournament_id": self._active_id,
             "pair_id": pair_id,
             "game_n": n,
-            "proxy_a": pid_a,
-            "proxy_b": pid_b,
-            "engine_a": self._proxy_engine_names.get(pid_a),
-            "engine_b": self._proxy_engine_names.get(pid_b),
+            # `_a` = white, `_b` = black. Mirrors proxy_paired contract.
+            "proxy_a": white_pid,
+            "proxy_b": black_pid,
+            "engine_a": self._proxy_engine_names.get(white_pid),
+            "engine_b": self._proxy_engine_names.get(black_pid),
             "result": result,
             "termination": termination,
         })
