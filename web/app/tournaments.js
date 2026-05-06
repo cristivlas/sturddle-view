@@ -32,7 +32,7 @@ export function mountTournaments({ container, api, events, log, token }) {
           <button class="tmb-item tmb-window-btn">Window</button>
           <ul class="tmb-dropdown">
             <li class="tmb-dd-submenu">
-              <button class="tmb-dd-item tmb-sys-trigger">Monitor</button>
+              <button class="tmb-dd-item tmb-sys-trigger">Tournament</button>
               <ul class="tmb-dropdown">
                 <li><button class="tmb-dd-item tmb-sys-standings">Standings</button></li>
                 <li><button class="tmb-dd-item tmb-sys-schedule">Live Games</button></li>
@@ -296,7 +296,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     const hadWorkspace = ws && ws.tournamentId !== newId;
     if (hadWorkspace) {
       if (getLiveWindows().length > 0) {
-        const ok = await confirm({ message: "Live game windows are open. Close them and switch tournament?" });
+        const ok = await confirm({ message: "Live game windows are open. Close them and change active selection?" });
         if (!ok) return false;
       }
       ws.close();

@@ -241,7 +241,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       return;
     }
     if (msg.ended) {
-      statusEl.textContent = "ended";
+      statusEl.textContent = msg.result ?? "ended";
       stopTimer();
       wbClosed = true; // suppress wb.close() in the WS close handler
       try { ws.close(); } catch { /* */ }

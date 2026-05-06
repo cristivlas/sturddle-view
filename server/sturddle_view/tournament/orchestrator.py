@@ -67,6 +67,22 @@ def _opposite_side(side: str) -> str:
     return "black" if side == "white" else "white"
 
 
+def _game_result(fen: str | None) -> str:
+    if not fen:
+        return "adjudicated"
+    try:
+        board = chess.Board(fen)
+        if board.is_checkmate():
+            return "checkmate"
+        if board.is_stalemate():
+            return "stalemate"
+        if board.is_insufficient_material() or board.is_seventyfive_moves() or board.is_fivefold_repetition():
+            return "draw"
+    except Exception:
+        pass
+    return "adjudicated"
+
+
 def _fanout(subs: set[asyncio.Queue], payload: dict) -> None:
     """Slow-consumer policy: drop oldest, keep newest."""
     for q in list(subs):
@@ -163,6 +179,9 @@ class Orchestrator:
         self._pair_ids: dict[frozenset, str] = {}
         # Reverse: pair_id → frozenset(pid_a, pid_b). Used for snapshot replay.
         self._pair_proxies: dict[str, frozenset] = {}
+        # Last known FEN for each confirmed pair. Updated on every position
+        # event; consumed on dissolution to determine the game result.
+        self._pair_last_fen: dict[str, str] = {}
         # WS subscribers keyed by pair_id. Same lifecycle as proxy subscribers
         # but scoped to the game: sentinel sent when the pair is dissolved.
         self._game_subscribers: dict[str, set[asyncio.Queue]] = {}
@@ -297,6 +316,7 @@ class Orchestrator:
             self._confirmed_pairs.clear()
             self._pair_ids.clear()
             self._pair_proxies.clear()
+            self._pair_last_fen.clear()
             self._game_subscribers.clear()
             self._store.update_status(t.id, STATUS_STOPPED, stopped_at=_now())
             raise
@@ -391,6 +411,7 @@ class Orchestrator:
                     self._confirmed_pairs.clear()
                     self._pair_ids.clear()
                     self._pair_proxies.clear()
+                    self._pair_last_fen.clear()
                     self._game_subscribers.clear()
                     self._close_all_proxy_subscribers()
 
@@ -529,6 +550,11 @@ class Orchestrator:
                     if color is not None:
                         new_pairs, orphaned = self._pairing_register(proxy_id, parsed["fen"], color)
                         await self._emit_group_events(new_pairs, orphaned)
+                    peer = self._confirmed_pairs.get(proxy_id)
+                    if peer:
+                        pair_id = self._pair_ids.get(frozenset((proxy_id, peer)))
+                        if pair_id:
+                            self._pair_last_fen[pair_id] = parsed["fen"]
             elif stripped.startswith("ucinewgame"):
                 self._pairing_unregister(proxy_id)
                 new_pairs, orphaned = self._recompute_groups()
@@ -726,11 +752,18 @@ class Orchestrator:
             pair_key = frozenset((pid, peer))
             pair_id = self._pair_ids.pop(pair_key, "")
             self._pair_proxies.pop(pair_id, None)
+            result = _game_result(self._pair_last_fen.pop(pair_id, None))
+            # TODO: emit "game_finished" broadcast here (pair_id, proxy_id,
+            # peer_id, result) so the workspace event log / standings refresh
+            # without polling. The client already handles KIND.GAME_FINISHED
+            # (tournament-workspace.js). Consider consolidating with the
+            # "ended" sentinel below — same result, different delivery channel
+            # (broadcast vs per-subscriber queue); a shared helper could unify.
             game_subs = self._game_subscribers.pop(pair_id, None)
             if game_subs:
                 for q in game_subs:
                     try:
-                        q.put_nowait({"proxy_id": pid, "ended": True})
+                        q.put_nowait({"proxy_id": pid, "ended": True, "result": result})
                     except asyncio.QueueFull:
                         pass
             await self._emit("proxy_unpaired", {
