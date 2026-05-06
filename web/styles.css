@@ -1331,7 +1331,7 @@ wa-dialog::part(body) {
 }
 .ne-item {
   padding: 4px 8px; cursor: pointer; border-radius: 3px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: none;
 }
 .ne-item:hover { background: var(--nav-btn-bg); }
 .ne-item.selected { background: var(--wa-color-brand-fill-loud); color: #fff; }
