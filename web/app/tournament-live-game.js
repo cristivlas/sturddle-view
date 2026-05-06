@@ -18,6 +18,8 @@ const LIVE_PV_H         = 16;  // px — pv row + status row (font 11px, same he
 const LIVE_WINBOX_TITLE = 35;  // px — WinBox title bar
 const LIVE_GAP          = 6;   // px — flex gap between sections
 
+const ARROW_MIN_TIME_MS = 250; // skip arrow if side-to-move has less time than this
+
 const LIVE_MIN_WIDTH  = LIVE_MIN_BOARD;
 // 8 flex children: pv-top, eval-top, clock-top, board, clock-bottom, eval-bottom, pv-bottom, status — 7 gaps.
 const LIVE_MIN_HEIGHT = LIVE_WINBOX_TITLE + LIVE_PV_H * 3 + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_MIN_BOARD + LIVE_GAP * 7;
@@ -363,16 +365,21 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     }
   }
 
+  function pvArrowMove(p) {
+    if (!p.pv || !p.pv.length) return null;
+    if (p.time != null && p.time < ARROW_MIN_TIME_MS) return null;
+    const m = p.pv[0];
+    return m && m.length >= 4 ? m : null;
+  }
+
   function handlePairedParsed(p, thinkingSide) {
     // Paired info: opposite-color engine's thinking. Mirror the same
     // eval/PV/arrow rendering as own-side, into the top (opponent) row.
     if (p.kind !== "info") return;
     if (engineColor && thinkingSide === engineColor) return;
     renderOpponentEval(p);
-    if (p.pv && p.pv.length) {
-      const m = p.pv[0];
-      if (m && m.length >= 4) board.setOpponentArrow(m.slice(0, 2), m.slice(2, 4));
-    }
+    const m = pvArrowMove(p);
+    if (m) board.setOpponentArrow(m.slice(0, 2), m.slice(2, 4));
   }
 
   function renderOpponentEval(p) {
@@ -408,8 +415,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     evalTbhitsEl.textContent = p.tbhits ? `tb ${p.tbhits}` : "";
     if (p.pv && p.pv.length) {
       pvEl.textContent = p.pv.slice(0, 12).join(" ");
-      const m = p.pv[0];
-      if (m && m.length >= 4) board.setArrow(m.slice(0, 2), m.slice(2, 4));
+      const m = pvArrowMove(p);
+      if (m) board.setArrow(m.slice(0, 2), m.slice(2, 4));
     }
   }
 
