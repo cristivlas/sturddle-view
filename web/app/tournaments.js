@@ -67,6 +67,9 @@ export function mountTournaments({ container, api, events, log, token }) {
           <button class="ribbon-btn t-info" disabled aria-label="Info" title="Info">
             <wa-icon name="circle-info"></wa-icon>
           </button>
+          <button class="ribbon-btn t-edit" disabled aria-label="Edit" title="Edit">
+            <wa-icon name="pen-to-square"></wa-icon>
+          </button>
           <span class="ribbon-sep" aria-hidden="true"></span>
           <button class="ribbon-btn ribbon-btn--danger t-remove" disabled aria-label="Remove" title="Remove">
             <wa-icon name="trash"></wa-icon>
@@ -98,6 +101,7 @@ export function mountTournaments({ container, api, events, log, token }) {
   const ribbonStopBtn = container.querySelector(".t-stop");
   const ribbonWorkspaceBtn = container.querySelector(".t-workspace");
   const ribbonInfoBtn = container.querySelector(".t-info");
+  const ribbonEditBtn = container.querySelector(".t-edit");
   const ribbonRemoveBtn = container.querySelector(".t-remove");
 
   const SORT_KEY_LS = "sturddle.tournaments.sortBy";
@@ -298,6 +302,7 @@ export function mountTournaments({ container, api, events, log, token }) {
       ribbonStopBtn.disabled = true;
       ribbonWorkspaceBtn.disabled = true;
       ribbonInfoBtn.disabled = true;
+      ribbonEditBtn.disabled = true;
       ribbonRemoveBtn.disabled = true;
       if (!ribbonStartBtn.querySelector("wa-icon")) ribbonStartBtn.innerHTML = '<wa-icon class="t-start-icon" name="play"></wa-icon>';
       else ribbonStartBtn.querySelector("wa-icon").setAttribute("name", "play");
@@ -316,6 +321,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     ribbonRemoveBtn.disabled = isActive;
     ribbonWorkspaceBtn.disabled = !!getActiveWorkspace();
     ribbonInfoBtn.disabled = false;
+    ribbonEditBtn.disabled = isActive || status === STATUS.DONE;
 
     const starting = t.id === startingId;
     if (starting) {
@@ -382,6 +388,10 @@ export function mountTournaments({ container, api, events, log, token }) {
   ribbonInfoBtn.addEventListener("click", () => {
     const t = selectedTournament();
     if (t) openInfoGuarded(t);
+  });
+  ribbonEditBtn.addEventListener("click", () => {
+    const t = selectedTournament();
+    if (t && !ribbonEditBtn.disabled) openEditTournamentDialog(t);
   });
   ribbonRemoveBtn.addEventListener("click", () => {
     const t = selectedTournament();
@@ -609,9 +619,227 @@ export function mountTournaments({ container, api, events, log, token }) {
     return d.toLocaleString();
   }
 
-  // ---- New Tournament dialog ---------------------------------------------
+  // ---- New / Edit Tournament dialogs -------------------------------------
 
   newBtn.addEventListener("click", () => openNewTournamentDialog());
+
+  // Shared dialog body for both create and edit flows.
+  // Returns a Promise that resolves to {name, template, engines} or null.
+  async function openTournamentDialog({ label, actionLabel, initialName, initialEngines, initialTemplate, available }) {
+    const defaults =
+      initialTemplate ||
+      (settings && settings.default_template) ||
+      { tc: "10+0.1", rounds: 10, games_in_parallel: 1 };
+
+    return showDialog({
+      label,
+      width: "min(720px, 94vw)",
+      defaultValue: null,
+      body: (resolve, dialog) => {
+        const wrap = document.createElement("div");
+        wrap.className = "new-tournament-form";
+        wrap.innerHTML = `
+          <wa-input class="nt-name" label="Name" size="small" placeholder="my tournament"></wa-input>
+
+          <div class="nt-section">
+            <div class="nt-engine-builder"></div>
+          </div>
+
+          <div class="nt-section">
+            <div class="nt-template-host"></div>
+          </div>
+        `;
+
+        const nameInput = wrap.querySelector(".nt-name");
+        nameInput.value = initialName || "";
+
+        const builderHost = wrap.querySelector(".nt-engine-builder");
+        const builder = mountEngineBuilder({
+          host: builderHost,
+          available,
+          initial: initialEngines || [],
+        });
+
+        const formHost = wrap.querySelector(".nt-template-host");
+        const tplCtl = mountTournamentTemplateForm({
+          container: formHost,
+          initialValues: defaults,
+        });
+
+        const actionBtn = document.createElement("wa-button");
+        actionBtn.slot = "footer";
+        actionBtn.size = "small";
+        actionBtn.variant = "brand";
+        actionBtn.textContent = actionLabel;
+
+        function isValid() {
+          return (nameInput.value || "").trim() !== "" && builder.getEngines().length >= 2;
+        }
+
+        function refreshValidity() {
+          actionBtn.disabled = !isValid();
+        }
+        refreshValidity();
+        nameInput.addEventListener("input", refreshValidity);
+        builder.onChange(refreshValidity);
+
+        actionBtn.addEventListener("click", async () => {
+          if (!isValid()) return;
+          const v = tplCtl.validate({ numEngines: builder.getEngines().length });
+          if (!v.ok) {
+            toast(v.errors[0].message, { variant: "danger", duration: 6000 });
+            return;
+          }
+          let template;
+          try {
+            template = tplCtl.getValues();
+          } catch (e) {
+            toast(e.message, { variant: "danger" });
+            return;
+          }
+
+          const picked = builder.getPickedRegistry();
+          const globalDefaults = await loadGlobalEngineDefaults();
+          const resolved = resolveResourceParams(template, picked, globalDefaults);
+          actionBtn.loading = true;
+          let rescheckResult;
+          try {
+            rescheckResult = await api("POST", "/api/tournaments/rescheck", resolved);
+          } catch (e) {
+            const detail = apiErrorDetail(e);
+            const msg = (detail && detail.message) || detail || "Resource check failed";
+            toast(typeof msg === "string" ? msg : String(msg), {
+              variant: "danger", duration: 8000,
+            });
+            actionBtn.loading = false;
+            return;
+          } finally {
+            actionBtn.loading = false;
+          }
+          if (rescheckResult.warnings && rescheckResult.warnings.length) {
+            for (const w of rescheckResult.warnings) {
+              toast(`Warning: ${w.message}`, { variant: "warning", duration: 8000 });
+            }
+          }
+
+          template.max_threads = resolved.max_threads;
+          template.max_hash_mb = resolved.max_hash_mb;
+
+          resolve({
+            name: nameInput.value.trim(),
+            template,
+            engines: builder.getEngines(),
+          });
+        });
+
+        dialog.append(wrap, actionBtn);
+        requestAnimationFrame(() => nameInput.focus());
+      },
+    });
+  }
+
+  async function openNewTournamentDialog() {
+    let registry;
+    try {
+      registry = await api("GET", "/engines");
+    } catch (e) {
+      reportError({ log }, "Loading engine registry failed", e);
+      return;
+    }
+    const available = registry.engines || [];
+    if (available.length < 2) {
+      toast("Register at least 2 engines first.", { variant: "danger" });
+      return;
+    }
+
+    const result = await openTournamentDialog({
+      label: "New Tournament",
+      actionLabel: "Create",
+      initialName: "",
+      initialEngines: [],
+      initialTemplate: (settings && settings.default_template) || null,
+      available,
+    });
+    if (!result) return;
+    try {
+      await api("POST", "/api/tournaments", result);
+      toast(`Created "${result.name}"`, { variant: "neutral" });
+    } catch (e) {
+      reportError({ log }, "Creating tournament failed", e);
+      return;
+    }
+    await loadList();
+  }
+
+  async function openEditTournamentDialog(t) {
+    let registry;
+    try {
+      registry = await api("GET", "/engines");
+    } catch (e) {
+      reportError({ log }, "Loading engine registry failed", e);
+      return;
+    }
+    const available = registry.engines || [];
+    if (available.length < 2) {
+      toast("Register at least 2 engines first.", { variant: "danger" });
+      return;
+    }
+
+    // Resolve the tournament's current engines to registry entries so the
+    // builder can preselect them. Prefer name match (canonical key for the
+    // registry); fall back to cmd so a renamed entry still preselects.
+    const byName = new Map(available.map((e) => [e.name, e]));
+    const byCmd = new Map(available.map((e) => [e.cmd, e]));
+    const original = t.engines || [];
+    const initialEngines = [];
+    let droppedCount = 0;
+    for (const e of original) {
+      const match = byName.get(e.name) || byCmd.get(e.cmd);
+      if (match) initialEngines.push(match);
+      else droppedCount += 1;
+    }
+    if (droppedCount > 0) {
+      toast(
+        `${droppedCount} engine${droppedCount === 1 ? "" : "s"} no longer in the registry — re-add before applying.`,
+        { variant: "warning", duration: 8000 },
+      );
+    }
+
+    const result = await openTournamentDialog({
+      label: `Edit "${t.name}"`,
+      actionLabel: "Apply",
+      initialName: t.name,
+      initialEngines,
+      initialTemplate: t.template || null,
+      available,
+    });
+    if (!result) return;
+
+    // The server only deletes the PGN when the engine roster actually
+    // changes; only confirm in that case.
+    const hasGames = (t.standings?.games ?? 0) > 0;
+    const enginesChanged =
+      JSON.stringify(result.engines) !== JSON.stringify(original);
+    if (hasGames && enginesChanged) {
+      const ok = await confirm({
+        message: `Applying changes to "${t.name}" will permanently delete its recorded games. This cannot be undone.`,
+        okLabel: "Apply & Delete Games",
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+
+    try {
+      await api("PATCH", `/api/tournaments/${t.id}`, result);
+      toast(`Updated "${result.name}"`, { variant: "neutral" });
+    } catch (e) {
+      reportError({ log }, "Updating tournament failed", e);
+    }
+    // Refresh either way: success applied changes; failure may indicate the
+    // local view drifted (e.g. tournament started elsewhere) and should
+    // re-sync.
+    await loadList();
+  }
 
   // ---- Window menu --------------------------------------------------------
 
@@ -757,145 +985,6 @@ export function mountTournaments({ container, api, events, log, token }) {
       pin_affinity: !!template.pin_affinity,
       allow_oversubscribe: !!template.allow_oversubscribe,
     };
-  }
-
-  async function openNewTournamentDialog() {
-    let registry;
-    try {
-      registry = await api("GET", "/engines");
-    } catch (e) {
-      reportError({ log }, "Loading engine registry failed", e);
-      return;
-    }
-    const available = registry.engines || [];
-    if (available.length < 2) {
-      toast("Register at least 2 engines first.", { variant: "danger" });
-      return;
-    }
-
-    const defaults =
-      (settings && settings.default_template) ||
-      { tc: "10+0.1", rounds: 10, games_in_parallel: 1 };
-
-    const result = await showDialog({
-      label: "New Tournament",
-      width: "min(720px, 94vw)",
-      defaultValue: null,
-      body: (resolve, dialog) => {
-        const wrap = document.createElement("div");
-        wrap.className = "new-tournament-form";
-        wrap.innerHTML = `
-          <wa-input class="nt-name" label="Name" size="small" placeholder="my tournament"></wa-input>
-
-          <div class="nt-section">
-            <div class="nt-engine-builder"></div>
-          </div>
-
-          <div class="nt-section">
-            <div class="nt-template-host"></div>
-          </div>
-        `;
-
-        const builderHost = wrap.querySelector(".nt-engine-builder");
-        const builder = mountEngineBuilder({
-          host: builderHost,
-          available,
-          initial: [],
-        });
-
-        const formHost = wrap.querySelector(".nt-template-host");
-        const tplCtl = mountTournamentTemplateForm({
-          container: formHost,
-          initialValues: defaults,
-        });
-
-        const nameInput = wrap.querySelector(".nt-name");
-
-        const create = document.createElement("wa-button");
-        create.slot = "footer";
-        create.size = "small";
-        create.variant = "brand";
-        create.textContent = "Create";
-
-        function isValid() {
-          return (nameInput.value || "").trim() !== "" && builder.getEngines().length >= 2;
-        }
-
-        function refreshValidity() {
-          create.disabled = !isValid();
-        }
-        refreshValidity();
-        nameInput.addEventListener("input", refreshValidity);
-        builder.onChange(refreshValidity);
-
-        create.addEventListener("click", async () => {
-          if (!isValid()) return;
-          const v = tplCtl.validate({ numEngines: builder.getEngines().length });
-          if (!v.ok) {
-            toast(v.errors[0].message, { variant: "danger", duration: 6000 });
-            return;
-          }
-          let template;
-          try {
-            template = tplCtl.getValues();
-          } catch (e) {
-            toast(e.message, { variant: "danger" });
-            return;
-          }
-
-          // Resource check (rescheck): client resolves the per-engine
-          // threading + hash from the picked registry entries, server
-          // compares against the host's CPU/RAM. Failure blocks Create.
-          const picked = builder.getPickedRegistry();
-          const globalDefaults = await loadGlobalEngineDefaults();
-          const resolved = resolveResourceParams(template, picked, globalDefaults);
-          create.loading = true;
-          let rescheckResult;
-          try {
-            rescheckResult = await api("POST", "/api/tournaments/rescheck", resolved);
-          } catch (e) {
-            const detail = apiErrorDetail(e);
-            const msg = (detail && detail.message) || detail || "Resource check failed";
-            toast(typeof msg === "string" ? msg : String(msg), {
-              variant: "danger", duration: 8000,
-            });
-            create.loading = false;
-            return;
-          } finally {
-            create.loading = false;
-          }
-          if (rescheckResult.warnings && rescheckResult.warnings.length) {
-            for (const w of rescheckResult.warnings) {
-              toast(`Warning: ${w.message}`, { variant: "warning", duration: 8000 });
-            }
-          }
-
-          // Fold the resolved values into the template so the server can
-          // re-run the same check at start time without needing the
-          // engine registry.
-          template.max_threads = resolved.max_threads;
-          template.max_hash_mb = resolved.max_hash_mb;
-
-          resolve({
-            name: nameInput.value.trim(),
-            template,
-            engines: builder.getEngines(),
-          });
-        });
-
-        dialog.append(wrap, create);
-        requestAnimationFrame(() => nameInput.focus());
-      },
-    });
-    if (!result) return;
-    try {
-      await api("POST", "/api/tournaments", result);
-      toast(`Created "${result.name}"`, { variant: "neutral" });
-    } catch (e) {
-      reportError({ log }, "Creating tournament failed", e);
-      return;
-    }
-    await loadList();
   }
 
   // ---- Live updates from WS ----------------------------------------------

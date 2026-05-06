@@ -444,3 +444,118 @@ def test_create_freezes_unset_engine_defaults_as_none(client, settings):
         "threads": None, "hash_mb": None, "syzygy_path": None,
         "book_path": None, "book_plies": None, "book_order": None,
     }
+
+
+# ---------------------------------------------------------------------------
+# PATCH /api/tournaments/{id}  (edit)
+# ---------------------------------------------------------------------------
+
+
+def _create(client, name="x") -> dict:
+    return client.post("/api/tournaments", json={
+        "name": name, "engines": _engines_payload(),
+    }).json()
+
+
+def test_patch_updates_name_template_engines(client):
+    t = _create(client)
+    r = client.patch(f"/api/tournaments/{t['id']}", json={
+        "name": "renamed",
+        "template": {"tc": "5+0.05", "rounds": 5},
+        "engines": [{"name": "C", "cmd": "/bin/C"}, {"name": "D", "cmd": "/bin/D"}],
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["name"] == "renamed"
+    assert body["template"]["tc"] == "5+0.05"
+    assert body["status"] == "idle"
+    assert [e["name"] for e in body["engines"]] == ["C", "D"]
+
+
+def test_patch_resets_status_to_idle(client):
+    from sturddle_view.tournament.store import STATUS_STOPPED
+    t = _create(client)
+    client.app.state.tournament_store.update_status(t["id"], STATUS_STOPPED)
+
+    r = client.patch(f"/api/tournaments/{t['id']}", json={
+        "name": t["name"], "template": {}, "engines": _engines_payload(),
+    })
+    assert r.status_code == 200
+    assert r.json()["status"] == "idle"
+
+
+def test_patch_rejects_fewer_than_two_engines(client):
+    t = _create(client)
+    r = client.patch(f"/api/tournaments/{t['id']}", json={
+        "name": t["name"],
+        "engines": [{"name": "A", "cmd": "/bin/A"}],
+    })
+    assert r.status_code == 400
+
+
+def test_patch_deletes_pgn_when_engines_change(client):
+    t = _create(client)
+    pgn = client.app.state.tournament_store.pgn_path(t["id"])
+    pgn.write_text("[Event \"?\"]\n\n1. e4 *\n")
+
+    r = client.patch(f"/api/tournaments/{t['id']}", json={
+        "name": t["name"],
+        "engines": [{"name": "C", "cmd": "/bin/C"}, {"name": "D", "cmd": "/bin/D"}],
+    })
+    assert r.status_code == 200
+    assert not pgn.exists()
+
+
+def test_patch_preserves_pgn_when_engines_unchanged(client):
+    t = _create(client)
+    pgn = client.app.state.tournament_store.pgn_path(t["id"])
+    pgn.write_text("[Event \"?\"]\n\n1. e4 *\n")
+
+    r = client.patch(f"/api/tournaments/{t['id']}", json={
+        "name": t["name"],
+        "template": {"tc": "5+0"},
+        "engines": _engines_payload(),
+    })
+    assert r.status_code == 200
+    assert pgn.exists()
+
+
+def test_patch_unknown_returns_404(client):
+    r = client.patch("/api/tournaments/no-such-id", json={
+        "name": "x", "engines": _engines_payload(),
+    })
+    assert r.status_code == 404
+
+
+def test_patch_rejects_duplicate_name(client):
+    _create(client, "alpha")
+    b = _create(client, "beta")
+    r = client.patch(f"/api/tournaments/{b['id']}", json={
+        "name": "alpha", "engines": _engines_payload(),
+    })
+    assert r.status_code == 409
+
+
+def test_patch_allows_same_name(client):
+    t = _create(client, "same")
+    r = client.patch(f"/api/tournaments/{t['id']}", json={
+        "name": "same",
+        "template": {"tc": "3+0"},
+        "engines": _engines_payload(),
+    })
+    assert r.status_code == 200
+    assert r.json()["template"]["tc"] == "3+0"
+
+
+def test_patch_running_returns_409(client, monkeypatch):
+    _patch_fake_fastchess(monkeypatch, "--sleep", "30")
+    t = _create(client)
+    client.post(f"/api/tournaments/{t['id']}/start")
+    try:
+        r = client.patch(f"/api/tournaments/{t['id']}", json={
+            "name": t["name"], "engines": _engines_payload(),
+        })
+        assert r.status_code == 409
+    finally:
+        client.post(f"/api/tournaments/{t['id']}/stop")
+        _wait_status(client, t["id"], "stopped")

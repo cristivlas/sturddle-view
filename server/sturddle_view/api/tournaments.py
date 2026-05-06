@@ -59,6 +59,12 @@ class TournamentCreate(BaseModel):
     engines: list[EngineRef]
 
 
+class TournamentUpdate(BaseModel):
+    name: str
+    template: dict[str, Any] = Field(default_factory=dict)
+    engines: list[EngineRef]
+
+
 class TournamentSettingsUpdate(BaseModel):
     fastchess_path: str | None = None
     tournaments_root: str | None = None
@@ -162,6 +168,46 @@ def get_tournament(tournament_id: str, request: Request) -> dict:
     except CorruptStateError as e:
         raise HTTPException(status_code=500, detail=f"corrupt state: {e}") from e
     return _serialize(t, with_stats=True, store=s, orch=_orch(request))
+
+
+@router.patch("/api/tournaments/{tournament_id}")
+def edit_tournament(tournament_id: str, payload: TournamentUpdate, request: Request) -> dict:
+    """Replace a tournament's name, template, and engines; reset it to idle.
+
+    Rejected if the tournament is currently running. Any recorded games
+    (games.pgn) are deleted — the caller must have confirmed this with
+    the user before posting.
+    """
+    orch = _orch(request)
+    if orch.active_id() == tournament_id:
+        raise HTTPException(
+            status_code=409, detail="tournament is running; stop it first"
+        )
+    if len(payload.engines) < 2:
+        raise HTTPException(status_code=400, detail="at least two engines required")
+    s = _store(request)
+    name = payload.name.strip() or "tournament"
+    # Re-freeze engine_default_* — same rationale as create: a tournament's
+    # behavior should not silently drift if Settings change later.
+    settings = request.app.state.settings
+    engine_defaults = {
+        k: getattr(settings, f"engine_default_{k}", None)
+        for k in ("threads", "hash_mb", "syzygy_path",
+                  "book_path", "book_plies", "book_order")
+    }
+    try:
+        t, _ = s.update(
+            tournament_id,
+            name=name,
+            template=payload.template,
+            engines=[e.model_dump(exclude_none=True) for e in payload.engines],
+            engine_defaults=engine_defaults,
+        )
+    except TournamentNotFoundError as e:
+        raise HTTPException(status_code=404, detail="tournament not found") from e
+    except DuplicateNameError:
+        raise HTTPException(status_code=409, detail="tournament name already exists")
+    return _serialize(t)
 
 
 @router.delete("/api/tournaments/{tournament_id}", status_code=204)

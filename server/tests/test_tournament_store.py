@@ -280,3 +280,115 @@ def test_tournament_dataclass_round_trips_through_dict():
     d = t.to_dict()
     t2 = Tournament(**d)
     assert t2 == t
+
+
+# ---------------------------------------------------------------------------
+# store.update()
+# ---------------------------------------------------------------------------
+
+
+def test_update_replaces_fields_and_resets_to_idle(store):
+    t = store.create(name="orig", template={"tc": "10+0.1"}, engines=[{"name": "A"}])
+    store.update_status(t.id, STATUS_STOPPED, stopped_at="2026-01-01T01:00:00+00:00")
+
+    updated, had_games = store.update(
+        t.id,
+        name="renamed",
+        template={"tc": "5+0.05"},
+        engines=[{"name": "B"}],
+    )
+
+    assert updated.name == "renamed"
+    assert updated.template["tc"] == "5+0.05"
+    assert updated.engines == [{"name": "B"}]
+    assert updated.status == STATUS_IDLE
+    assert updated.started_at is None
+    assert updated.stopped_at is None
+    assert updated.last_error is None
+    assert had_games is False
+
+
+def test_update_persists_across_reload(store):
+    t = store.create(name="x", template={}, engines=[])
+    store.update(t.id, name="y", template={"tc": "1+0"}, engines=[{"name": "C"}])
+
+    reloaded = store.get(t.id)
+    assert reloaded.name == "y"
+    assert reloaded.template["tc"] == "1+0"
+    assert reloaded.status == STATUS_IDLE
+
+
+def test_update_deletes_pgn_when_engines_change(store):
+    t = store.create(name="x", template={}, engines=[{"name": "A"}])
+    pgn = store.pgn_path(t.id)
+    pgn.write_text("[Event \"?\"]\n\n1. e4 *\n")
+    assert pgn.exists()
+
+    _, had_games = store.update(t.id, name="x", template={}, engines=[{"name": "B"}])
+
+    assert had_games is True
+    assert not pgn.exists()
+
+
+def test_update_preserves_pgn_when_engines_unchanged(store):
+    t = store.create(name="x", template={}, engines=[{"name": "A"}])
+    pgn = store.pgn_path(t.id)
+    pgn.write_text("[Event \"?\"]\n\n1. e4 *\n")
+
+    _, had_games = store.update(
+        t.id, name="x", template={"tc": "5+0"}, engines=[{"name": "A"}]
+    )
+
+    assert had_games is False
+    assert pgn.exists()
+
+
+def test_update_had_games_false_when_no_pgn(store):
+    t = store.create(name="x", template={}, engines=[{"name": "A"}])
+    _, had_games = store.update(
+        t.id, name="x", template={}, engines=[{"name": "B"}]
+    )
+    assert had_games is False
+
+
+def test_update_refreezes_engine_defaults(store):
+    t = store.create(
+        name="x", template={}, engines=[],
+        engine_defaults={"threads": 1, "hash_mb": 16},
+    )
+    store.update(
+        t.id, name="x", template={}, engines=[],
+        engine_defaults={"threads": 4, "hash_mb": 256},
+    )
+    reloaded = store.get(t.id)
+    assert reloaded.engine_defaults == {"threads": 4, "hash_mb": 256}
+
+
+def test_update_keeps_engine_defaults_when_omitted(store):
+    t = store.create(
+        name="x", template={}, engines=[],
+        engine_defaults={"threads": 1, "hash_mb": 16},
+    )
+    store.update(t.id, name="x", template={}, engines=[])
+    reloaded = store.get(t.id)
+    assert reloaded.engine_defaults == {"threads": 1, "hash_mb": 16}
+
+
+def test_update_rejects_duplicate_name(store):
+    a = store.create(name="alpha", template={}, engines=[])
+    store.create(name="beta", template={}, engines=[])
+
+    with pytest.raises(DuplicateNameError):
+        store.update(a.id, name="beta", template={}, engines=[])
+
+
+def test_update_allows_same_name(store):
+    t = store.create(name="same", template={"tc": "10+0"}, engines=[])
+    updated, _ = store.update(t.id, name="same", template={"tc": "5+0"}, engines=[])
+    assert updated.name == "same"
+    assert updated.template["tc"] == "5+0"
+
+
+def test_update_unknown_id_raises(store):
+    with pytest.raises(TournamentNotFoundError):
+        store.update("no-such-id", name="x", template={}, engines=[])

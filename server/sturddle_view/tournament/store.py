@@ -234,6 +234,49 @@ class TournamentStore:
         atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
         return t
 
+    def update(
+        self,
+        tournament_id: str,
+        *,
+        name: str,
+        template: dict,
+        engines: list,
+        engine_defaults: dict | None = None,
+    ) -> tuple["Tournament", bool]:
+        """Replace name/template/engines and reset the tournament to idle.
+
+        ``engine_defaults`` re-freezes the global engine_default_* snapshot
+        (mirroring ``create``); pass ``None`` to keep the existing snapshot.
+
+        Deletes games.pgn only when the engine list changed (a different
+        roster invalidates prior results); same-roster edits preserve the
+        PGN. Returns ``(tournament, had_games)`` where ``had_games`` is
+        True when a PGN existed and was removed.
+        """
+        with self._create_lock:
+            t = self.get(tournament_id)
+            if name != t.name and any(
+                x.name == name for x in self.list() if x.id != tournament_id
+            ):
+                raise DuplicateNameError(name)
+            new_engines = list(engines)
+            engines_changed = new_engines != list(t.engines)
+            had_games = engines_changed and self.pgn_path(tournament_id).exists()
+            if had_games:
+                self.pgn_path(tournament_id).unlink(missing_ok=True)
+
+            t.name = name
+            t.template = dict(template)
+            t.engines = new_engines
+            if engine_defaults is not None:
+                t.engine_defaults = dict(engine_defaults)
+            t.status = STATUS_IDLE
+            t.started_at = None
+            t.stopped_at = None
+            t.last_error = None
+            atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
+            return t, had_games
+
     def find_by_status(self, status: str) -> list[Tournament]:
         """All tournaments currently in the given status (helper for orchestrator
         startup reconciliation)."""
