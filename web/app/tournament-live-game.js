@@ -407,7 +407,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 
   function pvArrowMove(p) {
     if (!p.pv || !p.pv.length) return null;
-    if (p.time != null && p.time < ARROW_MIN_TIME_MS) return null;
+    if (!p.time || p.time < ARROW_MIN_TIME_MS) return null;
     const m = p.pv[0];
     return m && m.length >= 4 ? m : null;
   }
