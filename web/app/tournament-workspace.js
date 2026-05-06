@@ -589,6 +589,16 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   pollTimer = window.setInterval(() => {
     if (detail?.status === STATUS.RUNNING) refresh();
   }, POLL_INTERVAL_MS);
+  function onReconnect(e) {
+    if (!e.detail?.connected) {
+      seenSeqs.clear();
+      eventLog.length = 0;
+      return;
+    }
+    refresh();
+    backfillEvents();
+  }
+  window.addEventListener("sturddle:connection", onReconnect);
   window.addEventListener("sturddle:livegame-closed", refreshWatchButtons);
 
   // ---- Tear-down --------------------------------------------------------
@@ -609,6 +619,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   function finalize() {
+    window.removeEventListener("sturddle:connection", onReconnect);
     window.removeEventListener("sturddle:livegame-closed", refreshWatchButtons);
     if (liveWatcherAttached) {
       window.removeEventListener("sturddle:livegame-closed", onLiveGameClosed);
