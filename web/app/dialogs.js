@@ -434,7 +434,14 @@ export function toast(message, { variant = "neutral", duration = 4000 } = {}) {
   if (!stack) {
     stack = document.createElement("div");
     stack.id = "toast-stack";
+    // popover="manual" promotes the stack to the top-layer so toasts sit
+    // above any open <wa-dialog> backdrop (native <dialog> is top-layer
+    // too; without this, author z-index alone can't beat it).
+    stack.setAttribute("popover", "manual");
     host.appendChild(stack);
+  }
+  if (stack.showPopover && !stack.matches?.(":popover-open")) {
+    try { stack.showPopover(); } catch { /* unsupported / already open */ }
   }
   const t = document.createElement("div");
   t.className = `toast toast-${variant}`;
