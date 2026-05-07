@@ -229,7 +229,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   const windows = {
     standings: makeBox("standings", windowSpecs.standings.title, standingsBody),
-    schedule:  makeBox("schedule",  windowSpecs.schedule.title,  scheduleBody),
+    // Live Games opens only for running tournaments — there's nothing
+    // to render otherwise. Re-opens via the Window menu on demand.
+    schedule:  null,
     engines:   null,
     log:       null,
   };
@@ -533,16 +535,22 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       refresh();
     }
 
-    // Tournament terminal state: drop stale live windows (proxy-id
-    // attaches always go stale; game-id windows that were force-
-    // dissolved without a real result also stale). Resolved game-id
-    // windows keep their final banner. Standard windows stay open
-    // so the user can review final state.
+    // Tournament terminal state: close all live windows (result is
+    // always UNKNOWN, nothing to review post-game).
     if (
       evt.kind === EVT.STATUS &&
       [STATUS.STOPPED, STATUS.DONE, STATUS.FAILED].includes(evt.payload?.status)
     ) {
       closeStaleLiveGames();
+    }
+    // Tournament started: auto-open Live Games so the user sees
+    // pairings as they form.
+    if (
+      evt.kind === EVT.STATUS &&
+      evt.payload?.status === STATUS.RUNNING &&
+      windows.schedule == null
+    ) {
+      openSystemWindow("schedule");
     }
   }
 
@@ -576,6 +584,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
   async function initWorkspace() {
     await Promise.all([refresh(), backfillEvents()]);
+    if (detail?.status === STATUS.RUNNING) {
+      openSystemWindow("schedule");
+    }
     if (eventLog.length > 0 || detail?.status === STATUS.RUNNING) {
       openSystemWindow("log");
     }

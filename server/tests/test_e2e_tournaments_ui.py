@@ -288,8 +288,10 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, b
             await page.click('.tournament-row')
             await page.click('.tournaments-ribbon .t-workspace')
 
+            # Idle tournament: only Standings auto-opens. Live Games
+            # opens lazily when the tournament is running.
             await page.wait_for_function(
-                "() => document.querySelectorAll('.winbox.sturddle-wb').length === 2",
+                "() => document.querySelectorAll('.winbox.sturddle-wb').length === 1",
                 timeout=5000,
             )
             titles = await page.evaluate(
@@ -297,7 +299,6 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, b
                             .map(t => t.textContent)"""
             )
             assert any("Standings" in t for t in titles)
-            assert any("Live Games" in t for t in titles)
 
             await page.wait_for_function(
                 """() => /No games/.test(
@@ -317,7 +318,7 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, b
             await page.click('.tournament-row')
             await page.click('.tournaments-ribbon .t-workspace')
             await page.wait_for_function(
-                "() => document.querySelectorAll('.winbox.sturddle-wb').length === 2",
+                "() => document.querySelectorAll('.winbox.sturddle-wb').length === 1",
                 timeout=5000,
             )
 

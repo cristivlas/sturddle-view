@@ -311,7 +311,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     const hadWorkspace = ws && ws.tournamentId !== newId;
     if (hadWorkspace) {
       if (getLiveWindows().length > 0) {
-        const ok = await confirm({ message: "Live game windows are open. Close them and change active selection?" });
+        const ok = await confirm({ message: "Game windows are open. Close them and change active selection?" });
         if (!ok) return false;
       }
       ws.close();
