@@ -213,6 +213,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   wb.onclose = () => {
     wbClosed = true;
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    if (flashTimer) { clearTimeout(flashTimer); flashTimer = null; }
     if (ws) try { ws.close(); } catch { /* */ }
     ro.disconnect();
     liveWindows.delete(windowKey);
@@ -259,6 +260,12 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       msg = JSON.parse(ev.data);
     } catch {
       return;
+    }
+    // Engine Instance windows: flash a neutral "game" delimiter on
+    // ucinewgame. Banner text is intentionally tense-neutral because
+    // board animations are async -- we can't promise the new position.
+    if (!gameId && msg.line && msg.line.trimStart().startsWith("ucinewgame")) {
+      flashNewGame();
     }
     if (msg.ended) {
       // game-id WS sends result + termination on Finished N => banner.
@@ -403,6 +410,21 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     resultTerminationEl.textContent = termination ?? "";
     resultOverlayEl.hidden = false;
     statusEl.textContent = termination ? `${score} · ${termination}` : score;
+  }
+
+  // Transient between-games delimiter for Engine Instance windows.
+  // No result/termination shown: fastchess emits Finished N out of
+  // order vs per-proxy timeline, so it would be stale. See spec.
+  let flashTimer = null;
+  function flashNewGame(durationMs = 1800) {
+    resultScoreEl.textContent = "game";
+    resultTerminationEl.textContent = "";
+    resultOverlayEl.hidden = false;
+    if (flashTimer) clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => {
+      resultOverlayEl.hidden = true;
+      flashTimer = null;
+    }, durationMs);
   }
 
   function pvArrowMove(p) {

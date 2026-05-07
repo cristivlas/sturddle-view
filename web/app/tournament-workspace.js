@@ -501,9 +501,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       livePairings.set(p.proxy_a, info);
       livePairings.set(p.proxy_b, info);
     } else if (inner === KIND.GAME_FINISHED) {
-      // Authoritative game-end signal — drives livePairings cleanup +
-      // Schedule re-render. PROXY_UNPAIRED still arrives (debug signal,
-      // see _dissolve_pair) but is filtered from the visible event log.
+      // Authoritative game-end signal -- drives livePairings cleanup +
+      // Schedule re-render.
       livePairings.delete(evt.payload.proxy_a);
       livePairings.delete(evt.payload.proxy_b);
     } else if (

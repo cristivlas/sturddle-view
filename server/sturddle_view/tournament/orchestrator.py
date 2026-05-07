@@ -93,7 +93,7 @@ _TERMINATION_UNKNOWN = "unknown"
 # oldest leaked entry stays at the head and gets matched to *unrelated*
 # subsequent confirmations, stamping pairs with progressively stale Ns
 # and breaking dissolution. We evict the oldest with a warning.
-_MATCH_QUEUE_MAX = 64
+_MATCH_QUEUE_MAX = 4096
 
 
 def _fanout(subs: set[asyncio.Queue], payload: dict) -> None:
@@ -321,6 +321,10 @@ class Orchestrator:
             await self._emit_status(failed)
             raise
 
+        # Defense in depth: previous terminal event clears state; this
+        # is a no-op in the normal stop -> start (resume) flow but
+        # guards against any leak from prior runs.
+        self._reset_pairing_state()
         # Mark active *before* spawning so a concurrent ``start`` call
         # racing against this one is rejected by the busy check above.
         self._active_id = t.id
