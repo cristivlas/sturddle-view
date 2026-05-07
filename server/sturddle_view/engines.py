@@ -146,11 +146,18 @@ class EngineRegistry:
             return
         with self._path.open("r", encoding="utf-8") as f:
             data = json.load(f)
-        engines = {}
+        engines: dict[str, Engine] = {}
+        seen: set[str] = set()
+        mutated = False
         for entry in data.get("engines", []):
+            name = entry["name"]
+            unique = self._dedup_name(name, seen)
+            if unique != name:
+                mutated = True
+            seen.add(unique.casefold())
             e = Engine(
                 id=entry["id"],
-                name=entry["name"],
+                name=unique,
                 path=entry["path"],
                 options=entry.get("options", {}),
                 option_schema=entry.get("option_schema", {}),
@@ -161,6 +168,33 @@ class EngineRegistry:
         if self._selected_id and self._selected_id not in self._engines:
             self._selected_id = None
         self._loaded = True
+        if mutated:
+            self._save()
+
+    @staticmethod
+    def _dedup_name(desired: str, taken: set[str]) -> str:
+        if desired.casefold() not in taken:
+            return desired
+        n = 2
+        while f"{desired} ({n})".casefold() in taken:
+            n += 1
+        return f"{desired} ({n})"
+
+    def _unique_name(self, desired: str, exclude_id: str | None = None) -> str:
+        taken = {
+            e.name.casefold()
+            for eid, e in self._engines.items()
+            if eid != exclude_id
+        }
+        return self._dedup_name(desired, taken)
+
+    def _name_in_use(self, name: str, exclude_id: str | None = None) -> bool:
+        cf = name.casefold()
+        return any(
+            e.name.casefold() == cf
+            for eid, e in self._engines.items()
+            if eid != exclude_id
+        )
 
     def _save(self) -> None:
         payload = {
@@ -186,14 +220,16 @@ class EngineRegistry:
         path: str,
         options: dict | None = None,
         option_schema: dict | None = None,
+        auto_suffix: bool = False,
     ) -> Engine:
         self._ensure_loaded()
-        # Treat (name, path) pair as the uniqueness key. Same binary at the same
-        # path with the same display name is a duplicate; same binary with two
-        # different names (e.g. different UCI options) is allowed.
-        for e in self._engines.values():
-            if e.name == name and e.path == path:
-                raise DuplicateEngineError(f"engine already registered: {name} ({path})")
+        # Names are unique (case-insensitive). When the caller derived the
+        # name (UCI id / basename), auto-suffix on collision; when the user
+        # supplied it, raise so they can pick a different one.
+        if self._name_in_use(name):
+            if not auto_suffix:
+                raise DuplicateEngineError(f"engine name already in use: {name}")
+            name = self._unique_name(name)
         engine = Engine.new(
             name=name, path=path, options=options, option_schema=option_schema
         )
@@ -213,6 +249,8 @@ class EngineRegistry:
         self._ensure_loaded()
         engine = self.get(engine_id)
         if name is not None:
+            if name != engine.name and self._name_in_use(name, exclude_id=engine_id):
+                raise DuplicateEngineError(f"engine name already in use: {name}")
             engine.name = name
         if path is not None:
             engine.path = path

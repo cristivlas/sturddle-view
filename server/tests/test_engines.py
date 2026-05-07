@@ -33,13 +33,36 @@ def test_add_persists(registry):
     assert loaded.options == {"Hash": 256}
 
 
-def test_add_duplicate_rejected(registry):
+def test_add_duplicate_name_rejected(registry):
     registry.add(name="X", path="/p/x")
     with pytest.raises(DuplicateEngineError):
-        registry.add(name="X", path="/p/x")
+        registry.add(name="X", path="/p/y")
+    # Case-insensitive.
+    with pytest.raises(DuplicateEngineError):
+        registry.add(name="x", path="/p/z")
     # Different name on same path is allowed.
     registry.add(name="X-tuned", path="/p/x")
     assert len(registry.list()) == 2
+
+
+def test_add_auto_suffix_on_collision(registry):
+    registry.add(name="MyEngine", path="/p/a")
+    e2 = registry.add(name="MyEngine", path="/p/b", auto_suffix=True)
+    assert e2.name == "MyEngine (2)"
+    e3 = registry.add(name="MyEngine", path="/p/c", auto_suffix=True)
+    assert e3.name == "MyEngine (3)"
+
+
+def test_update_duplicate_name_rejected(registry):
+    registry.add(name="A", path="/p/a")
+    b = registry.add(name="B", path="/p/b")
+    with pytest.raises(DuplicateEngineError):
+        registry.update(b.id, name="A")
+    # Case-insensitive.
+    with pytest.raises(DuplicateEngineError):
+        registry.update(b.id, name="a")
+    # Renaming to the same name is fine (no-op).
+    registry.update(b.id, name="B")
 
 
 def test_update(registry):
@@ -118,6 +141,28 @@ def test_stale_selection_in_file_is_ignored(tmp_path):
     )
     reg = EngineRegistry(path=path)
     assert reg.selected_id is None
+
+
+def test_load_normalizes_duplicate_names(tmp_path):
+    path = tmp_path / "engines.json"
+    path.write_text(
+        json.dumps(
+            {
+                "engines": [
+                    {"id": "a", "name": "MyEngine", "path": "/p/a", "options": {}},
+                    {"id": "b", "name": "MyEngine", "path": "/p/b", "options": {}},
+                    {"id": "c", "name": "myengine", "path": "/p/c", "options": {}},
+                ]
+            }
+        )
+    )
+    reg = EngineRegistry(path=path)
+    names = [e.name for e in reg.list()]
+    # Case is preserved per-entry; uniqueness check is case-insensitive.
+    assert names == ["MyEngine", "MyEngine (2)", "myengine (3)"]
+    # Persisted: a fresh load sees the normalized names without further changes.
+    fresh = EngineRegistry(path=path)
+    assert [e.name for e in fresh.list()] == names
 
 
 def test_load_ignores_unknown_fields(tmp_path):

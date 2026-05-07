@@ -93,9 +93,28 @@ def test_add_then_list(client, exe_a):
     assert body["engines"][0]["id"] == eid
 
 
-def test_add_duplicate_409(client, exe_a):
+def test_add_duplicate_user_name_409(client, exe_a, exe_b):
+    """User-supplied names must collide → 409 (different paths, same name)."""
     client.post("/engines", json={"name": "X", "path": exe_a})
-    r = client.post("/engines", json={"name": "X", "path": exe_a})
+    r = client.post("/engines", json={"name": "X", "path": exe_b})
+    assert r.status_code == 409
+
+
+def test_add_auto_suffixes_derived_name(client, tmp_path):
+    """Two installs of the same UCI engine: derived names are auto-suffixed."""
+    exe1 = _make_fake_uci(tmp_path / "engine1", "FakeEngine 1.2")
+    exe2 = _make_fake_uci(tmp_path / "engine2", "FakeEngine 1.2")
+    r1 = client.post("/engines", json={"path": exe1})
+    r2 = client.post("/engines", json={"path": exe2})
+    assert r1.status_code == 201 and r2.status_code == 201
+    assert r1.json()["name"] == "FakeEngine 1.2"
+    assert r2.json()["name"] == "FakeEngine 1.2 (2)"
+
+
+def test_patch_rename_collision_409(client, exe_a, exe_b):
+    client.post("/engines", json={"name": "A", "path": exe_a})
+    bid = client.post("/engines", json={"name": "B", "path": exe_b}).json()["id"]
+    r = client.patch(f"/engines/{bid}", json={"name": "A"})
     assert r.status_code == 409
 
 

@@ -3,11 +3,11 @@
 // holds Add, sort A→Z / Z→A, and the row-targeted Use / Options /
 // Remove actions (which act on the focused list row).
 
-import { apiErrorDetail, confirm, pickFile, toast } from "./dialogs.js";
+import { apiErrorDetail, confirm, pickFile, reportError, toast } from "./dialogs.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 
 
-export function mountEngines({ container, api, onError }) {
+export function mountEngines({ container, api }) {
   container.innerHTML = `
     <div class="engines-panel">
       <div class="engines-ribbon" role="toolbar" aria-label="Engine actions">
@@ -101,7 +101,7 @@ export function mountEngines({ container, api, onError }) {
       }
       renderAll();
     } catch (e) {
-      onError?.(`engines: ${e.message}`);
+      reportError(null, "engines", e);
     }
   }
 
@@ -271,7 +271,7 @@ export function mountEngines({ container, api, onError }) {
       await api("POST", `/engines/${selectedDetailId}/select`);
       refresh();
     } catch (err) {
-      onError?.(`select: ${err.message}`);
+      reportError(null, "select", err);
     }
   }
   detailUseBtn.addEventListener("click", activateSelected);
@@ -301,7 +301,7 @@ export function mountEngines({ container, api, onError }) {
       selectedDetailId = null;
       refresh();
     } catch (err) {
-      onError?.(`remove: ${err.message}`);
+      reportError(null, "remove", err);
     }
   });
 
@@ -358,7 +358,7 @@ export function mountEngines({ container, api, onError }) {
       selectedDetailId = created.id;
       refresh();
     } catch (e) {
-      onError?.(`add: ${e.message}`);
+      reportError(null, "add", e);
     }
   });
 

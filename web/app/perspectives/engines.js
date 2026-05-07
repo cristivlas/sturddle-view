@@ -34,7 +34,6 @@ export const enginesPerspective = {
     mountEngines({
       container: rosterHost,
       api: ctx.api,
-      onError: (msg) => ctx.log(msg),
     });
 
     const tournamentsHost = root.querySelector(".tournaments-host");

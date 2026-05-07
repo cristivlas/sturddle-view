@@ -138,6 +138,7 @@ async def add_engine(payload: EngineCreate, request: Request) -> dict:
     reg = _registry(request)
     resolved_path = _validate_engine_path(payload.path)
     uci_name, schema, probe_error = await probe_engine(resolved_path)
+    user_supplied = bool((payload.name or "").strip())
     name = (payload.name or "").strip() or uci_name or Path(resolved_path).name
     try:
         e = reg.add(
@@ -145,6 +146,7 @@ async def add_engine(payload: EngineCreate, request: Request) -> dict:
             path=resolved_path,
             options=payload.options,
             option_schema=schema,
+            auto_suffix=not user_supplied,
         )
     except DuplicateEngineError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -173,6 +175,8 @@ def update_engine(engine_id: str, payload: EngineUpdate, request: Request) -> di
         )
     except EngineNotFoundError as exc:
         raise HTTPException(status_code=404, detail="engine not found") from exc
+    except DuplicateEngineError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _serialize(e)
 
 
