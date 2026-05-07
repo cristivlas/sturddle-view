@@ -2,8 +2,9 @@
 // plus on-demand Live Game windows (one per engine POV).
 //
 // State: one workspace per tab; opening a different tournament closes the
-// prior one. User-closed windows do not auto-reopen on events. Layout
-// (position/size) persisted per-window in localStorage.
+// prior one. Desktop state (open windows, position, size, min/max, z-order)
+// is snapshotted at the explicit save points (close / closeAll / finalize)
+// and restored on re-open. WinBox events are not monitored continuously.
 //
 // Data flow:
 //   GET /api/tournaments/{id} on open → seed standings + schedule.
@@ -11,11 +12,12 @@
 //   WS `tournament_update`             → event log; refresh on game-finished.
 //   Periodic GET while running         → reconcile standings.
 
-import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, openLiveGameWindow } from "./tournament-live-game.js";
+import { closeAllLiveGames, closeStaleLiveGames, getLiveWindows, isLiveWindowOpen, openLiveGameWindow } from "./tournament-live-game.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
+import { toast } from "./dialogs.js";
 import { escapeHtml, flashWindow } from "./wb-utils.js";
 
-const STORAGE_KEY = "sturddle:tournament-workspace-layout";
+const STORAGE_KEY_PREFIX = "sturddle:workspace:";
 const POLL_INTERVAL_MS = 5000;
 const EVENT_LOG_LIMIT = 500;
 
@@ -24,27 +26,43 @@ const EVENT_LOG_LIMIT = 500;
 const DEFAULT_LAYOUT = {
   standings: { x: "1%",  y: "1%",  width: "40%", height: "50%" },
   schedule:  { x: "1%",  y: "52%", width: "40%", height: "47%" },
+  engines:   { x: "42%", y: "1%",  width: "30%", height: "50%" },
   log:       { x: "42%", y: "70%", width: "57%", height: "29%" },
 };
 
 
-function loadLayout() {
+function loadState(id) {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...DEFAULT_LAYOUT };
-    const parsed = JSON.parse(raw);
-    return { ...DEFAULT_LAYOUT, ...parsed };
+    const raw = localStorage.getItem(STORAGE_KEY_PREFIX + id);
+    return raw ? JSON.parse(raw) : null;
   } catch {
-    return { ...DEFAULT_LAYOUT };
+    return null;
   }
 }
 
-function saveLayout(layout) {
+function saveState(id, state) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
+    localStorage.setItem(STORAGE_KEY_PREFIX + id, JSON.stringify(state));
   } catch {
     // Storage may be disabled (private mode quotas); best-effort.
   }
+}
+
+function hasOpenWindows(state) {
+  return state !== null &&
+    Object.entries(state).some(([k, v]) => k !== "_closed" && v?.open);
+}
+
+// Restorable: snapshot has open windows AND was not explicitly dismissed.
+// Navigation uses this to decide whether to reopen.
+export function hasSavedWorkspaceState(id) {
+  const s = loadState(id);
+  return s !== null && !s._closed && hasOpenWindows(s);
+}
+
+// Distinguishes "brand-new tournament" from "explicitly dismissed".
+export function hasAnyDesktopState(id) {
+  return loadState(id) !== null;
 }
 
 
@@ -62,7 +80,19 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     activeWorkspace = null;
   }
 
-  const layout = loadLayout();
+  const savedState = loadState(tournament.id);
+  // Restore-from-snapshot when there's any open window in the snapshot,
+  // regardless of _closed (the ribbon always restores; _closed only blocks
+  // navigation). lastGeometry holds last-known position/size per key so
+  // closed slots can carry geometry forward into the next snapshot.
+  const restoreFromSaved = hasOpenWindows(savedState);
+  const lastGeometry = {};
+  for (const key of Object.keys(DEFAULT_LAYOUT)) {
+    const s = savedState?.[key];
+    lastGeometry[key] = s
+      ? { x: s.x, y: s.y, width: s.width, height: s.height }
+      : { ...DEFAULT_LAYOUT[key] };
+  }
   let detail = null;
   const eventLog = [];
   // Server-stamped sequence numbers we've already added to eventLog.
@@ -71,8 +101,18 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   const seenSeqs = new Set();
   let pollTimer = null;
   let unsubscribe = null;
+  // True when close() / closeAll() drove the tear-down. Distinguishes from
+  // "user closed the last window manually" -- in that case finalize() is the
+  // one that writes the snapshot (with _closed=true).
+  let explicitlyClosed = false;
+  // Idempotency guard: tearDown can be reached via close() and again via the
+  // last onclose callback; finalize() must run exactly once.
+  let finalized = false;
   // proxy_id -> { engineName }
   const activeProxies = new Map();
+  // proxy_id -> { pairId, proxyA, engineA, sideA, proxyB, engineB, sideB }
+  // Both proxies in a pair map to the same info object.
+  const livePairings = new Map();
 
   // ---- Window construction ----------------------------------------------
 
@@ -94,56 +134,49 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     el.innerHTML = `<div class="wb-error-banner" hidden></div><ul class="wb-eventlog-list"></ul>`;
     return el;
   }
+  function makeEnginesBody() {
+    const el = document.createElement("div");
+    el.className = "wb-engines";
+    el.innerHTML = `<div class="wb-empty">Loading…</div>`;
+    return el;
+  }
 
   // Renderers read these via the closure; reassigned when a window is
   // re-opened after the user closed it (so renderers target the new body).
   let standingsBody = makeStandingsBody();
   let scheduleBody = makeScheduleBody();
   let logBody = makeLogBody();
+  let enginesBody = makeEnginesBody();
 
   const MIN_SIZES = {
     standings: { minwidth: 320, minheight: 200 },
     schedule:  { minwidth: 320, minheight: 200 },
+    engines:   { minwidth: 280, minheight: 200 },
     log:       { minwidth: 280, minheight: 150 },
   };
 
-  function makeBox(key, title, body) {
-    const cfg = layout[key];
+  function makeBox(key, title, body, { min = false, max = false } = {}) {
+    const cfg = lastGeometry[key];
     const wb = new WinBox({
-      title,
-      x: cfg.x,
-      y: cfg.y,
-      width: cfg.width,
-      height: cfg.height,
-      top,
-      left,
-      mount: body,
+      title, mount: body, top, left, min, max,
+      x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height,
       class: "sturddle-wb no-full",
       ...MIN_SIZES[key],
     });
-    // Wire callbacks after construction so they can refer to `wb` itself
-    // (avoids a TDZ "cannot access wb before initialization" error from
-    // wiring them inside the constructor options object).
+    // Wire onclose after construction (TDZ on `wb` otherwise). No persist
+    // here -- state is captured at workspace.close()/closeAll()/finalize().
     wb.onclose = () => {
-      layout[key] = wb_currentLayout(wb);
-      saveLayout(layout);
+      lastGeometry[key] = wbGeometry(wb);
       windows[key] = null;
-      if (Object.values(windows).every((w) => w === null)) {
-        tearDown();
-      }
-      return false; // allow close
+      if (Object.values(windows).every((w) => w === null)) tearDown();
+      return false;
     };
-    wb.onresize = () => persistLayout(key, wb);
-    wb.onmove = () => persistLayout(key, wb);
     if (top > 0 && wb.y < top) wb.move(wb.x, top);
     if (left > 0 && wb.x < left) wb.move(left, wb.y);
     return wb;
   }
 
-  function wb_currentLayout(wb) {
-    // WinBox exposes width/height/x/y as numeric pixel values on the
-    // instance after construction. Persist as plain integers; on reload
-    // we'll convert back to "Npx" strings.
+  function wbGeometry(wb) {
     return {
       x: `${Math.round(wb.x)}px`,
       y: `${Math.round(wb.y)}px`,
@@ -152,37 +185,94 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     };
   }
 
-  function persistLayout(key, wb) {
-    layout[key] = wb_currentLayout(wb);
-    saveLayout(layout);
+  function snapshot() {
+    const state = {};
+    for (const key of Object.keys(windows)) {
+      const wb = windows[key];
+      state[key] = wb
+        ? { open: true, ...wbGeometry(wb), min: !!wb.min, max: !!wb.max, z: wb.index ?? 0 }
+        : { open: false, ...lastGeometry[key], min: false, max: false, z: 0 };
+    }
+    return state;
   }
 
   const windowSpecs = {
     standings: {
-      title: `${tournament.name} — Standings`,
+      title: `Standings | ${tournament.name}`,
       makeBody: makeStandingsBody,
       setBody: (b) => { standingsBody = b; },
       render: () => renderStandings(),
     },
     schedule: {
-      title: `${tournament.name} — Schedule`,
+      title: `Live Games | ${tournament.name}`,
       makeBody: makeScheduleBody,
       setBody: (b) => { scheduleBody = b; },
       render: () => renderSchedule(),
     },
+    engines: {
+      title: `Engine Instances | ${tournament.name}`,
+      makeBody: makeEnginesBody,
+      setBody: (b) => { enginesBody = b; },
+      render: () => renderEngines(),
+    },
     log: {
-      title: `${tournament.name} — Event log`,
+      title: `Event log | ${tournament.name}`,
       makeBody: makeLogBody,
       setBody: (b) => { logBody = b; },
       render: () => renderEventLog(),
+      postCreate: (wb) => {
+        wb.addControl({
+          class: "wb-log-copy-ctrl",
+          index: 3,
+          click: () => {
+            const text = eventLog
+              .filter(e => e.payload?.kind !== KIND.PROXY_UNPAIRED)
+              .map(e => {
+                const ts = e.ts || "";
+                const inner = e.payload?.kind;
+                const line = e.payload?.line;
+                if (inner === KIND.RUNNER_LOG && line) return `${ts} ${line}`;
+                const parts = [e.kind];
+                if (inner) parts.push(inner);
+                if (inner === KIND.PROXY_PAIRED)
+                  parts.push(`${e.payload?.engine_a}(${e.payload?.proxy_a||""}) vs ${e.payload?.engine_b}(${e.payload?.proxy_b||""})`);
+                else if (inner === KIND.GAME_FINISHED) {
+                  const result = e.payload?.result;
+                  const termination = e.payload?.termination;
+                  const tail = (result && termination && termination !== "unknown")
+                    ? `${result} ${termination}` : (result || "");
+                  parts.push(`${e.payload?.engine_a} vs ${e.payload?.engine_b}`,
+                             ...(tail ? [tail] : []));
+                }
+                return `${ts} ${parts.join(" ")}`;
+              }).join("\n");
+            navigator.clipboard.writeText(text)
+              .then(() => toast("Event log copied to clipboard", { variant: "success", duration: 1500 }))
+              .catch(() => {});
+          },
+        });
+      },
     },
   };
 
-  const windows = {
-    standings: makeBox("standings", windowSpecs.standings.title, standingsBody),
-    schedule:  makeBox("schedule",  windowSpecs.schedule.title,  scheduleBody),
-    log:       null,
-  };
+  const windows = { standings: null, schedule: null, engines: null, log: null };
+  if (restoreFromSaved) {
+    // Recreate in saved z-order so the highest-z slot ends up topmost.
+    const openKeys = Object.keys(windows)
+      .filter(k => savedState[k]?.open)
+      .sort((a, b) => (savedState[a].z ?? 0) - (savedState[b].z ?? 0));
+    for (const key of openKeys) {
+      const s = savedState[key];
+      const spec = windowSpecs[key];
+      const body = spec.makeBody();
+      spec.setBody(body);
+      windows[key] = makeBox(key, spec.title, body, { min: s.min, max: s.max });
+      spec.postCreate?.(windows[key]);
+    }
+  } else {
+    // Default: standings only; initWorkspace opens more based on tournament status.
+    windows.standings = makeBox("standings", windowSpecs.standings.title, standingsBody);
+  }
 
   // ---- Rendering --------------------------------------------------------
 
@@ -220,15 +310,18 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     `;
   }
 
+  async function attachWatch(btn, attachKey, sourceWindowKey, openOpts) {
+    let boardStyle = null;
+    try { const s = await api("GET", "/settings"); boardStyle = s.board_style || null; } catch {}
+    const src = windows[sourceWindowKey];
+    const avoidRect = src ? { x: src.x, y: src.y, w: src.width, h: src.height } : null;
+    openLiveGameWindow({ ...openOpts, token, top, left, boardStyle, avoidRect });
+    btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(attachKey));
+  }
+
   function renderSchedule() {
-    // Completed games: PGN-derived (authoritative once fastchess flushes
-    // each finished game). In-progress: one row per active proxy
-    // (engine process), labeled with its engine name. Click "watch" to
-    // open a live window subscribed to that engine's stream.
-    const finished = (detail && detail.games) || [];
-    const inProgress = [...activeProxies.entries()];
-    if (finished.length === 0 && inProgress.length === 0) {
-      scheduleBody.innerHTML = `<div class="wb-empty">No games yet.</div>`;
+    if (livePairings.size === 0) {
+      scheduleBody.innerHTML = `<div class="wb-empty">No games in play.</div>`;
       return;
     }
     const scroller = scheduleBody.parentElement;
@@ -236,16 +329,53 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     scheduleBody.innerHTML = `<ul class="wb-sched-list"></ul>`;
     const list = scheduleBody.querySelector(".wb-sched-list");
 
-    for (const g of finished) {
+    // Dedupe: both proxies map to the same info object,
+    // so skip if we already rendered this pair.
+    const shownPairs = new Set();
+    for (const [, info] of livePairings) {
+      const key = [info.proxyA, info.proxyB].sort().join(":");
+      if (shownPairs.has(key)) continue;
+      shownPairs.add(key);
       const li = document.createElement("li");
+      li.className = "wb-sched-live wb-sched-pair";
+      const wLabel = info.sideA === "white" ? info.engineA : info.engineB;
+      const bLabel = info.sideA === "white" ? info.engineB : info.engineA;
       li.innerHTML = `
-        <span class="wb-sched-icon">✓</span>
-        ${escapeHtml(g.white)} – ${escapeHtml(g.black)}
-        <span class="wb-sched-result">${escapeHtml(g.result)}</span>
+        <span class="wb-sched-icon">&#9822;</span>
+        <span class="wb-sched-game">${escapeHtml(wLabel)} – ${escapeHtml(bLabel)}</span>
       `;
+      const btn = document.createElement("button");
+      btn.className = "wb-sched-attach-btn";
+      btn.textContent = "watch";
+      btn.title = info.pairId || key;
+      btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(info.pairId || key));
+      btn.addEventListener("click", () => attachWatch(btn, info.pairId || key, "schedule", {
+        proxyId: info.proxyA,
+        gameId: info.pairId || null,
+        label: `${wLabel} vs ${bLabel} | ${tournament.name}`,
+        engineName: wLabel,
+      }));
+      li.appendChild(btn);
       list.appendChild(li);
     }
-    for (const [pid, p] of inProgress) {
+
+    if (atBottom && scroller) scroller.scrollTop = scroller.scrollHeight;
+  }
+
+  function renderEngines() {
+    // One row per active proxy (engine process). Attach via proxy_id WS,
+    // single-engine identity (survives book-line ambiguity where pair
+    // confirmation hasn't happened yet). Distinct from Live Games which
+    // is keyed on confirmed pair_ids.
+    if (activeProxies.size === 0) {
+      enginesBody.innerHTML = `<div class="wb-empty">No active engines.</div>`;
+      return;
+    }
+    const scroller = enginesBody.parentElement;
+    const atBottom = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
+    enginesBody.innerHTML = `<ul class="wb-sched-list"></ul>`;
+    const list = enginesBody.querySelector(".wb-sched-list");
+    for (const [pid, p] of activeProxies) {
       const li = document.createElement("li");
       li.className = "wb-sched-live";
       const engineLabel = p.engineName || pid;
@@ -258,34 +388,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       btn.textContent = "watch";
       btn.title = pid;
       btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(pid));
-      btn.addEventListener("click", async () => {
-        let boardStyle = null;
-        try {
-          const s = await api("GET", "/settings");
-          boardStyle = s.board_style || null;
-        } catch {
-          // ignore — fall back to default style
-        }
-        // Hand the Schedule window's bounds to the live opener so the
-        // new window is displaced if it would land on top of Schedule;
-        // otherwise the user has to drag it aside before clicking the
-        // next "watch".
-        const sched = windows.schedule;
-        const avoidRect = sched
-          ? { x: sched.x, y: sched.y, w: sched.width, h: sched.height }
-          : null;
-        openLiveGameWindow({
-          proxyId: pid,
-          label: `${tournament.name} — ${engineLabel}`,
-          engineName: engineLabel,
-          token,
-          top,
-          left,
-          boardStyle,
-          avoidRect,
-        });
-        btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(pid));
-      });
+      btn.addEventListener("click", () => attachWatch(btn, pid, "engines", {
+        proxyId: pid,
+        label: `${engineLabel} | ${tournament.name}`,
+        engineName: engineLabel,
+      }));
       li.appendChild(btn);
       list.appendChild(li);
     }
@@ -309,7 +416,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (!list) return;
     const scroller = logBody.parentElement;
     const atBottom = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
-    list.innerHTML = eventLog.map((e) => {
+    list.innerHTML = eventLog.filter(e => e.payload?.kind !== KIND.PROXY_UNPAIRED).map((e) => {
       const ts = e.ts || "";
       const inner = e.payload?.kind;
       // runner_log: surface the actual fastchess stdout/stderr line.
@@ -322,9 +429,25 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const parts = [];
       if (e.kind === EVT.STATUS && e.payload?.status)
         parts.push(e.payload.status);
-      else if (inner === KIND.GAME_FINISHED && e.payload?.result)
-        parts.push(inner, e.payload.result);
-      else if (inner === KIND.PROXY_STARTED) {
+      else if (inner === KIND.GAME_FINISHED) {
+        const a = e.payload?.engine_a || "?";
+        const b = e.payload?.engine_b || "?";
+        const result = e.payload?.result;
+        const termination = e.payload?.termination;
+        const tail = (result && termination && termination !== "unknown")
+          ? `${result} ${termination}` : (result || "");
+        parts.push(inner, `${a} vs ${b}`, ...(tail ? [tail] : []));
+      } else if (inner === KIND.PROXY_PAIRED) {
+        const a = e.payload?.engine_a || "?";
+        const b = e.payload?.engine_b || "?";
+        const pa = e.payload?.proxy_a || "";
+        const pb = e.payload?.proxy_b || "";
+        parts.push(inner, `${a}(${pa}) vs ${b}(${pb})`);
+      } else if (inner === KIND.PROXY_UNPAIRED) {
+        const pa = e.payload?.proxy_id || "";
+        const pb = e.payload?.peer_id  || "";
+        parts.push(inner, pa, pb);
+      } else if (inner === KIND.PROXY_STARTED) {
         parts.push(inner);
         if (e.payload?.engine_name) parts.push(e.payload.engine_name);
       } else if (inner === KIND.RUNNER_CRASH) {
@@ -358,8 +481,18 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         activeProxies.set(p.proxy_id, { engineName: p.engine_name || null });
       }
     }
+    // Seed confirmed pairings — same authoritative replace so late-opening
+    // workspaces don't depend on having caught every proxy_paired WS event.
+    livePairings.clear();
+    for (const p of (detail.pairings_active || [])) {
+      const info = { pairId: p.pair_id, proxyA: p.proxy_a, engineA: p.engine_a, sideA: p.side_a,
+                     proxyB: p.proxy_b, engineB: p.engine_b, sideB: p.side_b };
+      livePairings.set(p.proxy_a, info);
+      livePairings.set(p.proxy_b, info);
+    }
     renderStandings();
     renderSchedule();
+    renderEngines();
     renderEventLog();
   }
 
@@ -402,6 +535,17 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     } else if (inner === KIND.PROXY_ENDED) {
       const pid = evt.payload.proxy_id;
       if (pid) activeProxies.delete(pid);
+    } else if (inner === KIND.PROXY_PAIRED) {
+      const p = evt.payload;
+      const info = { pairId: p.pair_id, proxyA: p.proxy_a, engineA: p.engine_a, sideA: p.side_a,
+                     proxyB: p.proxy_b, engineB: p.engine_b, sideB: p.side_b };
+      livePairings.set(p.proxy_a, info);
+      livePairings.set(p.proxy_b, info);
+    } else if (inner === KIND.GAME_FINISHED) {
+      // Authoritative game-end signal -- drives livePairings cleanup +
+      // Schedule re-render.
+      livePairings.delete(evt.payload.proxy_a);
+      livePairings.delete(evt.payload.proxy_b);
     } else if (
       evt.kind === EVT.STATUS ||
       inner === KIND.DONE || inner === KIND.STOPPED
@@ -411,9 +555,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
     if (added) renderEventLog();
     if (inner === KIND.PROXY_STARTED || inner === KIND.PROXY_ENDED ||
+        inner === KIND.PROXY_PAIRED || inner === KIND.PROXY_UNPAIRED ||
         inner === KIND.GAME_FINISHED || evt.kind === EVT.STATUS ||
         inner === KIND.DONE || inner === KIND.STOPPED)
       renderSchedule();
+    if (inner === KIND.PROXY_STARTED || inner === KIND.PROXY_ENDED ||
+        evt.kind === EVT.STATUS || inner === KIND.DONE || inner === KIND.STOPPED)
+      renderEngines();
 
     // Status changes and game finishes are good triggers to refresh
     // standings authoritatively.
@@ -426,14 +574,24 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       refresh();
     }
 
-    // Tournament reached a terminal state ⇒ close the workspace (and
-    // its live windows). User opens a new workspace explicitly when
-    // starting another tournament.
+    // Tournament terminal state: close all live windows (result is
+    // always UNKNOWN, nothing to review post-game).
     if (
       evt.kind === EVT.STATUS &&
       [STATUS.STOPPED, STATUS.DONE, STATUS.FAILED].includes(evt.payload?.status)
     ) {
-      close();
+      closeStaleLiveGames();
+    }
+    // Tournament started: auto-open Live Games so the user sees
+    // pairings as they form. Skip if restoring a saved desktop state --
+    // the user may have intentionally closed that window.
+    if (
+      !restoreFromSaved &&
+      evt.kind === EVT.STATUS &&
+      evt.payload?.status === STATUS.RUNNING &&
+      windows.schedule == null
+    ) {
+      openSystemWindow("schedule");
     }
   }
 
@@ -467,8 +625,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
   async function initWorkspace() {
     await Promise.all([refresh(), backfillEvents()]);
-    if (eventLog.length > 0 || detail?.status === STATUS.RUNNING) {
-      openSystemWindow("log");
+    if (!restoreFromSaved) {
+      if (detail?.status === STATUS.RUNNING) openSystemWindow("schedule");
+      if (eventLog.length > 0 || detail?.status === STATUS.RUNNING) openSystemWindow("log");
     }
   }
   initWorkspace();
@@ -479,6 +638,16 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   pollTimer = window.setInterval(() => {
     if (detail?.status === STATUS.RUNNING) refresh();
   }, POLL_INTERVAL_MS);
+  function onReconnect(e) {
+    if (!e.detail?.connected) {
+      seenSeqs.clear();
+      eventLog.length = 0;
+      return;
+    }
+    refresh();
+    backfillEvents();
+  }
+  window.addEventListener("sturddle:connection", onReconnect);
   window.addEventListener("sturddle:livegame-closed", refreshWatchButtons);
 
   // ---- Tear-down --------------------------------------------------------
@@ -486,8 +655,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   let liveWatcherAttached = false;
 
   function refreshWatchButtons() {
-    for (const btn of scheduleBody.querySelectorAll(".wb-sched-attach-btn")) {
-      btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(btn.title));
+    for (const body of [scheduleBody, enginesBody]) {
+      for (const btn of body.querySelectorAll(".wb-sched-attach-btn")) {
+        btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(btn.title));
+      }
     }
   }
 
@@ -497,15 +668,21 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   function finalize() {
+    if (finalized) return;
+    finalized = true;
+    window.removeEventListener("sturddle:connection", onReconnect);
     window.removeEventListener("sturddle:livegame-closed", refreshWatchButtons);
     if (liveWatcherAttached) {
       window.removeEventListener("sturddle:livegame-closed", onLiveGameClosed);
       liveWatcherAttached = false;
     }
+    // User X-closed the last window: persist a dismissed snapshot so a
+    // future navigation does not auto-reopen the workspace.
+    if (!explicitlyClosed) {
+      saveState(tournament.id, { ...snapshot(), _closed: true });
+    }
     if (activeWorkspace === workspace) activeWorkspace = null;
-    // Notify the perspective so the Window menu re-syncs even when
-    // the user closed the last standard window via its X button
-    // (rather than the Close-all menu item).
+    // Re-sync the Window menu (the user may have closed via X, not the menu).
     window.dispatchEvent(new CustomEvent("sturddle:workspace-closed"));
   }
 
@@ -518,9 +695,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       unsubscribe();
       unsubscribe = null;
     }
-    // While watch windows are still open, keep this workspace "active"
-    // so the Window menu's Tile/Cascade/Close All can still operate on
-    // them. Defer finalization until the last live window closes.
+    // While live-game windows survive, keep the workspace "active" so the
+    // Window menu can still operate on them. Defer finalize until the last
+    // live window closes.
     if (getLiveWindows().length > 0) {
       if (!liveWatcherAttached) {
         window.addEventListener("sturddle:livegame-closed", onLiveGameClosed);
@@ -531,15 +708,28 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     finalize();
   }
 
-  function close() {
+  // Snapshot, mark explicit-close, force-close all standard windows,
+  // tear down. Used by both close() (navigate-away) and closeAll().
+  function dismissWindows({ markClosed }) {
+    const state = snapshot();
+    if (markClosed) state._closed = true;
+    saveState(tournament.id, state);
+    explicitlyClosed = true;
     for (const k of Object.keys(windows)) {
       if (windows[k]) {
-        windows[k].close(true); // skip the onclose callback's tearDown loop
+        windows[k].close(true);
         windows[k] = null;
       }
     }
-    closeAllLiveGames();
+    closeStaleLiveGames();
     tearDown();
+  }
+
+  // Tournament-switch path: snapshot stays restorable (no _closed). Stale
+  // live windows close; resolved game-id windows persist (final banner).
+  // tearDown() defers finalize until those finally close.
+  function close() {
+    dismissWindows({ markClosed: false });
   }
 
   function openWindows() {
@@ -583,8 +773,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     });
   }
 
+  // Window menu's Close All: explicit dismissal. Snapshot remains
+  // restorable via the ribbon, but _closed=true blocks navigation reopen.
   function closeAll() {
-    close();
+    closeAllLiveGames();
+    dismissWindows({ markClosed: true });
   }
 
   function focus() {
@@ -624,6 +817,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const body = spec.makeBody();
     spec.setBody(body);
     windows[key] = makeBox(key, spec.title, body);
+    spec.postCreate?.(windows[key]);
     spec.render();
     armSubscriptions();
     refresh();

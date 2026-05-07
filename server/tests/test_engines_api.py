@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
+from sturddle_view.tournament.store import STATUS_DONE, STATUS_RUNNING, TournamentStore
 
 
 def _make_exec(path):
@@ -205,6 +206,63 @@ async def test_probe_engine_returns_error_when_spawn_fails(monkeypatch, exe_a):
     assert uci_name is None
     assert schema == {}
     assert error and "NotImplementedError" in error and "nope" in error
+
+
+# -- engine lock tests --------------------------------------------------------
+
+def _make_client_with_tourney(tmp_path, exe_path, status):
+    """Return (client, eid) with one tournament at `status` referencing engine E."""
+    settings = Settings(token="test-token")
+    registry = EngineRegistry(path=tmp_path / "engines.json")
+    app = create_app(settings=settings, engine_registry=registry)
+    c = TestClient(app)
+    c.headers["Authorization"] = "Bearer test-token"
+    eid = c.post("/engines", json={"name": "E", "path": exe_path}).json()["id"]
+    store = TournamentStore(tmp_path / "tourneys")
+    t = store.create(
+        name="T1",
+        template={},
+        engines=[{"id": eid, "name": "E", "cmd": exe_path}],
+    )
+    if status != t.status:
+        store.update_status(t.id, status)
+    app.state.tournament_store = store
+    return c, eid
+
+
+def test_locked_engine_delete_409(tmp_path, exe_a):
+    c, eid = _make_client_with_tourney(tmp_path, exe_a, STATUS_RUNNING)
+    r = c.delete(f"/engines/{eid}")
+    assert r.status_code == 409
+    assert "T1" in r.json()["detail"]
+
+
+def test_locked_engine_patch_409(tmp_path, exe_a):
+    c, eid = _make_client_with_tourney(tmp_path, exe_a, STATUS_RUNNING)
+    r = c.patch(f"/engines/{eid}", json={"name": "E2"})
+    assert r.status_code == 409
+    assert "T1" in r.json()["detail"]
+
+
+def test_done_tourney_does_not_lock(tmp_path, exe_a):
+    c, eid = _make_client_with_tourney(tmp_path, exe_a, STATUS_DONE)
+    assert c.delete(f"/engines/{eid}").status_code == 204
+
+
+def test_locked_engine_refresh_schema_409(tmp_path, exe_a):
+    c, eid = _make_client_with_tourney(tmp_path, exe_a, STATUS_RUNNING)
+    r = c.post(f"/engines/{eid}/refresh-schema")
+    assert r.status_code == 409
+    assert "T1" in r.json()["detail"]
+
+
+def test_locked_engine_list_includes_tourney_info(tmp_path, exe_a):
+    c, _eid = _make_client_with_tourney(tmp_path, exe_a, STATUS_RUNNING)
+    body = c.get("/engines").json()
+    locked = body["engines"][0]["locked"]
+    assert len(locked) == 1
+    assert locked[0]["name"] == "T1"
+    assert locked[0]["status"] == STATUS_RUNNING
 
 
 def test_add_includes_probe_error_when_probe_fails(client, monkeypatch, exe_a):

@@ -13,6 +13,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from . import __version__
 from .api import agent as agent_api
 from .api import chess_utils as chess_api
 from .api import engines as engines_api
@@ -41,9 +42,8 @@ class _NoCacheUIMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         path = request.url.path
         if path == "/" or path.startswith("/ui"):
-            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
             response.headers["Pragma"] = "no-cache"
-            response.headers["Expires"] = "0"
         return response
 
 
@@ -198,7 +198,7 @@ def create_app(
 ) -> FastAPI:
     settings = settings or Settings()
     settings.apply_persisted()
-    app = FastAPI(title="sturddle-view", version="0.0.1", lifespan=_lifespan)
+    app = FastAPI(title="sturddle-view", version=__version__, lifespan=_lifespan)
 
     app.state.settings = settings
     app.state.event_bus = EventBus()

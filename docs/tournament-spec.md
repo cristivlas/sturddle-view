@@ -605,17 +605,111 @@ escape hatch.
 
 #### What end-of-game looks like
 
-The proxy doesn't classify; the consumer infers from the stream:
+The proxy doesn't classify. End-of-game is signaled by **pair
+dissolution** alone: when one of a confirmed pair's proxies leaves
+its FEN bucket — typically via `ucinewgame` (entering its next
+game) or `proxy_session_ended` (engine quit / fastchess closed it)
+— the pair's game is over.
 
-- **Start of a new game** on this engine: `ucinewgame`.
-- **End of a game** on this engine: the next `ucinewgame` (the next
-  game starts) or proxy disconnect (engine quit / fastchess closed
-  the connection).
-- **Result label** (`1-0` / `0-1` / `1/2-1/2`): comes from PGN, not
-  from the proxy. fastchess writes the result on adjudication. The
-  Schedule window already polls PGN; results overlay on a slight
-  delay (≤5s today; instant once fastchess's stdout `Finished game N`
-  line is forwarded into the event bus).
+Result and termination are reported as `*` / `unknown` on the
+`game_finished` event. fastchess's `Started game N` / `Finished
+game N` stdout lines exist but are no longer parsed: under
+concurrency the same `(white_name, black_name)` matchup can be
+playing in N parallel slots, so a `Finished` line for that matchup
+cannot be unambiguously bound back to a specific pair. The PGN
+remains authoritative for results in the Standings window; the live
+view shows games ending without a per-game W/L/D verdict.
+
+The `game_n` field on `game_finished` is retained in the schema
+(always `null` today) so a future implementation that finds a
+reliable correlation signal can populate it without breaking
+consumers.
+
+#### Pair lifecycle: confirmation and dissolution
+
+A "pair" is the orchestrator's runtime view of one in-flight game:
+two `proxy_id`s playing each other, identified by a `pair_id` UUID.
+
+**Confirmation.** Per-proxy UCI events register each engine into a
+FEN bucket. When a bucket has exactly two entries with opposite
+colors, the orchestrator confirms a pair, mints a `pair_id`, and
+emits `proxy_paired`. Buckets >2 occur transiently because
+fastchess feeds the same opening-book line to multiple slots; they
+resolve as engines diverge past book.
+
+**Dissolution.** A confirmed pair dissolves when either proxy
+becomes orphaned from its FEN bucket — typically because the proxy
+forwarded `ucinewgame` to start its next game, or its session ended
+(`proxy_session_ended`). Dissolution emits `proxy_unpaired` +
+`game_finished` (with `result="*"`, `termination="unknown"`) and
+closes the per-pair WS subscribers with an `ended` sentinel.
+
+On terminal runner events (tournament done/stopped/failed), every
+remaining open pair is dissolved through the same path so any open
+game-WS subscribers receive their `ended` frame.
+
+**Rejected alternatives.**
+
+- *Parsing fastchess `Finished N` for the result.* Investigated and
+  abandoned: the `pair_id ↔ N` join is unsolvable when concurrency
+  > 1 with same-name engines. fastchess's `Started/Finished` lines
+  carry only `(white_name, black_name)` plus N; `name=` is shared
+  across all parallel slots of one engine, and there is no per-slot
+  identifier in the stdout protocol. Eval-based heuristics did not
+  produce stable disambiguation.
+- *Board-state inference from FEN.* Wrong for resignations
+  (`-resign`), adjudicated draws (`-draw`), and time forfeits — the
+  board doesn't reflect the verdict.
+- *PGN tail polling for results.* Adds a poller and doesn't solve
+  pair-id mapping under concurrency (PGN flush order is per-game,
+  not per-slot).
+
+**Failure modes.**
+
+- Same-engine-name pair candidate (book-line collision in a
+  tournament with two distinct engines whose 4-bucket decays into a
+  same-engine 2-bucket): rejected as phantom. See "Self-play
+  (deferred)" below for why this rejection is conditional on the
+  two-engine constraint.
+
+#### Self-play (deferred)
+
+Self-play tournaments -- engine running against itself, e.g. for
+SPRT before/after a self-tune -- are not directly supported today.
+Two layers block them:
+
+1. **UI**: the engine-picker dialog (`mountEngineBuilder` in
+   `web/app/tournaments.js`) filters already-picked engines out of
+   the source pane and short-circuits `doAdd` on duplicate id. A
+   user cannot select the same registry entry twice in one
+   tournament.
+2. **Orchestrator**: pair detection rejects same-engine-name
+   candidates as phantoms from book-line collisions (4-bucket
+   decays into a same-engine 2-bucket whose two proxies aren't
+   actually playing each other in fastchess).
+
+**Workaround that works today**: register the same binary twice in
+the registry under distinct names (e.g. `Sturddle 2.5.0 (a)` and
+`Sturddle 2.5.0 (b)`). They are distinct registry entries with
+distinct ids; the picker accepts both; fastchess sees distinct
+names; pair detection's same-name guard passes. Everything
+downstream works.
+
+The "real" fix is orchestrator-level disambiguation so the user can
+pick one engine and have it play itself in one click. Lifting the
+rejection requires the orchestrator to rename engine instances
+before passing them to fastchess (e.g. `Engine #1` / `Engine #2`)
+so fastchess's PGN headers carry distinct names. Pair detection
+then works unchanged once the same-name guard is lifted.
+
+TODO before native self-play UX ships:
+- Orchestrator-level engine-name disambiguation (templates with
+  duplicate engine cmds get suffixes).
+- UI relaxation: allow picking the same engine twice.
+- Tests covering self-play pair detection and dissolution.
+- Lift the same-engine-name rejection in `_recompute_groups`.
+
+Given the registry-level workaround, this is low priority.
 
 ### Stopped / done view
 

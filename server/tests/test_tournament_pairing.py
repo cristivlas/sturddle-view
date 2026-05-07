@@ -195,6 +195,8 @@ async def test_info_fans_out_to_paired_subscriber(orch):
     await orch.ingest_proxy_lines("white", [
         "info depth 12 score cp 25 pv g1f3",
     ])
+    # Info coalescing holds the line for _INFO_COALESCE_MS; let it flush.
+    await asyncio.sleep(0.15)
 
     items = []
     while not q_black.empty():
@@ -219,6 +221,7 @@ async def test_info_does_not_fan_out_when_no_pair(orch):
     await orch.ingest_proxy_lines("white", [
         "info depth 12 score cp 25 pv e2e4",
     ])
+    await asyncio.sleep(0.15)
 
     items = []
     while not q_white.empty():
@@ -285,7 +288,7 @@ def running_app(tmp_path, monkeypatch):
     with TestClient(app) as c:
         t = c.post("/api/tournaments", json={
             "name": "t",
-            "engines": [{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
+            "engines": [{"id": "id-A", "name": "A", "cmd": "/bin/A"}, {"id": "id-B", "name": "B", "cmd": "/bin/B"}],
         }).json()
         c.post(f"/api/tournaments/{t['id']}/start")
         yield c, app

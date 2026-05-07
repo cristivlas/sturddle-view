@@ -1,9 +1,13 @@
-"""Slice 9c e2e: clicking an in-progress row in Schedule opens a live
+"""Slice 9c e2e: clicking a row in the Engines window opens a live
 game window that subscribes to a proxy and renders the board.
 
 Uses a fake fastchess (a sleeping Python script) and injects proxy
 lines directly via the internal HTTP endpoint, so no real engine
 binaries are required.
+
+The single-proxy attach goes through the Engines window (proxy_id
+WS path), not Live Games (game_id WS path). Live Games requires two
+proxies to confirm a pair and is covered by other tests.
 """
 from __future__ import annotations
 
@@ -136,7 +140,9 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, brows
                 await page.click('#engines-perspective wa-tab[panel="tournaments"]')
                 await page.wait_for_selector(".tournament-row", timeout=5000)
 
-                # Open workspace.
+                # Open workspace. Default opens 3 windows
+                # (Standings + Live Games + Event log; the log window
+                # auto-opens for running tournaments via initWorkspace).
                 await page.click(".tournament-row")
                 await page.click(".tournaments-ribbon .t-workspace")
                 await page.wait_for_function(
@@ -144,28 +150,34 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, brows
                     timeout=5000,
                 )
 
+                # Open the Engines window via the workspace JS API.
+                # Hovering the nested submenu (Window → Tournament →
+                # Engines) is brittle in Playwright; the API call is
+                # what the menu handler invokes anyway.
+                await page.evaluate(
+                    """async () => {
+                        const m = await import('/ui/app/tournament-workspace.js');
+                        m.getActiveWorkspace().openSystemWindow('engines');
+                    }"""
+                )
+                await page.wait_for_function(
+                    "() => document.querySelectorAll('.winbox.sturddle-wb').length === 4",
+                    timeout=5000,
+                )
+
                 # The workspace seeds from `proxies_active` on its
                 # initial refresh — the active proxy should appear
-                # immediately as a Schedule row.
+                # immediately as an Engines row.
                 await page.wait_for_selector(
-                    ".wb-sched-list .wb-sched-live .wb-sched-attach-btn",
+                    ".wb-engines .wb-sched-list .wb-sched-live .wb-sched-attach-btn",
                     timeout=5000,
                 )
 
                 # Click the watch button → live game window opens.
                 await page.click(
-                    ".wb-sched-list .wb-sched-live .wb-sched-attach-btn"
+                    ".wb-engines .wb-sched-list .wb-sched-live .wb-sched-attach-btn"
                 )
                 await page.wait_for_selector(".wb-livegame .lg-board", timeout=5000)
-
-                # WS connects → status becomes "live".
-                await page.wait_for_function(
-                    """() => {
-                        const e = document.querySelector('.wb-livegame .lg-status');
-                        return e && /live|ended/i.test(e.textContent);
-                    }""",
-                    timeout=5000,
-                )
 
                 # Drive the proxy stream:
                 #   1. position → engine learns it's playing Black (FEN
@@ -215,6 +227,26 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, brows
                     f"Bug 4 regression: expected top rank label '1' "
                     f"(black-at-bottom), got {top_rank_label!r}"
                 )
+
+                # Close-on-terminal: stopping the tournament closes
+                # stale live windows (proxy-id attaches are always
+                # stale) but keeps standard windows so the user can
+                # review final state. 5 .winbox up before stop:
+                # Standings + Live Games + Event log + Engines (4
+                # standard) + 1 live (watch). After stop: 4 standard,
+                # 0 live.
+                assert await page.locator(".winbox.sturddle-wb").count() == 5
+                assert await page.locator(".winbox.sturddle-wb-live").count() == 1
+
+                await app.state.tournament_orch.stop(t.id)
+
+                # Live window goes away (proxy-id, stale on terminal).
+                await page.wait_for_function(
+                    "() => document.querySelectorAll('.winbox.sturddle-wb-live').length === 0",
+                    timeout=5000,
+                )
+                # Standard windows remain.
+                assert await page.locator(".winbox.sturddle-wb").count() == 4
 
                 assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
         finally:

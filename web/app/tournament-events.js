@@ -9,16 +9,16 @@ export const EVT = {
 };
 
 // Inner payload kinds carried by tournament_update events.
-// GAME_FINISHED is reserved for future use — server does not emit it today
-// (game completion is observed via PROXY_ENDED + standings refresh).
 export const KIND = {
-  PROXY_STARTED: "proxy_started",
-  PROXY_ENDED:   "proxy_ended",
-  GAME_FINISHED: "game_finished",
-  RUNNER_LOG:    "runner_log",
-  RUNNER_CRASH:  "runner_crash",
-  DONE:          "done",
-  STOPPED:       "stopped",
+  PROXY_STARTED:  "proxy_started",
+  PROXY_ENDED:    "proxy_ended",
+  PROXY_PAIRED:   "proxy_paired",
+  PROXY_UNPAIRED: "proxy_unpaired",
+  GAME_FINISHED:  "game_finished",
+  RUNNER_LOG:     "runner_log",
+  RUNNER_CRASH:   "runner_crash",
+  DONE:           "done",
+  STOPPED:        "stopped",
 };
 
 export const STATUS = {

@@ -192,6 +192,12 @@ export function mountEngines({ container, api, onError }) {
     }
   }
 
+  function lockedMsg(e) {
+    if (!e?.locked?.length) return null;
+    const list = e.locked.map((t) => `${t.name} (${t.status})`).join(", ");
+    return `${e.name} is used by: ${list}`;
+  }
+
   function syncDetailButtons() {
     const e = engines.find((x) => x.id === selectedDetailId);
     const has = !!e;
@@ -280,6 +286,8 @@ export function mountEngines({ container, api, onError }) {
     if (!selectedDetailId) return;
     const e = engines.find((x) => x.id === selectedDetailId);
     if (!e) return;
+    const msg = lockedMsg(e);
+    if (msg) { toast(msg, { variant: "warning" }); return; }
     const ok = await confirm({
       title: "Remove engine",
       message: `Remove ${e.name}?`,
@@ -300,6 +308,8 @@ export function mountEngines({ container, api, onError }) {
   async function openOptionsForSelected() {
     if (!selectedDetailId) return;
     let engine = engines.find((x) => x.id === selectedDetailId);
+    const msg = lockedMsg(engine);
+    if (msg) { toast(msg, { variant: "warning" }); return; }
     // If we have no cached UCI options, try one auto re-probe before
     // opening — heals the case where the original add-time probe failed
     // (e.g. transient spawn error) so the user doesn't see an empty dialog

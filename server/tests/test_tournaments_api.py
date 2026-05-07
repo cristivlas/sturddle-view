@@ -61,7 +61,7 @@ def client(settings, monkeypatch):
 
 
 def _engines_payload() -> list[dict]:
-    return [{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}]
+    return [{"id": "id-A", "name": "A", "cmd": "/bin/A"}, {"id": "id-B", "name": "B", "cmd": "/bin/B"}]
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +100,7 @@ def test_create_rejects_missing_engines(client):
 def test_create_rejects_single_engine(client):
     r = client.post("/api/tournaments", json={
         "name": "x",
-        "engines": [{"name": "solo", "cmd": "/bin/x"}],
+        "engines": [{"id": "id-solo", "name": "solo", "cmd": "/bin/x"}],
     })
     assert r.status_code == 400
 
@@ -462,7 +462,7 @@ def test_patch_updates_name_template_engines(client):
     r = client.patch(f"/api/tournaments/{t['id']}", json={
         "name": "renamed",
         "template": {"tc": "5+0.05", "rounds": 5},
-        "engines": [{"name": "C", "cmd": "/bin/C"}, {"name": "D", "cmd": "/bin/D"}],
+        "engines": [{"id": "id-C", "name": "C", "cmd": "/bin/C"}, {"id": "id-D", "name": "D", "cmd": "/bin/D"}],
     })
     assert r.status_code == 200, r.text
     body = r.json()
@@ -488,7 +488,7 @@ def test_patch_rejects_fewer_than_two_engines(client):
     t = _create(client)
     r = client.patch(f"/api/tournaments/{t['id']}", json={
         "name": t["name"],
-        "engines": [{"name": "A", "cmd": "/bin/A"}],
+        "engines": [{"id": "id-A", "name": "A", "cmd": "/bin/A"}],
     })
     assert r.status_code == 400
 

@@ -6,7 +6,7 @@
 import { mountBoard } from "./board.js";
 import { flashWindow } from "./wb-utils.js";
 
-const liveWindows = new Map(); // proxy_id -> WinBox instance
+const liveWindows = new Map(); // windowKey -> WinBox instance
 
 // Row heights are duplicated as `min-height` on .wb-livegame .lg-eval /
 // .lg-pv / .lg-status in styles.css so empty rows still hold space
@@ -14,13 +14,16 @@ const liveWindows = new Map(); // proxy_id -> WinBox instance
 const LIVE_MIN_BOARD    = 200; // px — smallest usable board side
 const LIVE_CLOCK_H      = 36;  // px — one clock row (font 16px + padding)
 const LIVE_EVAL_H       = 24;  // px — eval row (font 13px)
-const LIVE_PV_H         = 16;  // px — pv row + status row (font 11px, same height)
+const LIVE_PV_H         = 16;  // px — pv row (font 11px)
+const LIVE_STATUS_H     = 18;  // px — status row (font 13px)
 const LIVE_WINBOX_TITLE = 35;  // px — WinBox title bar
 const LIVE_GAP          = 6;   // px — flex gap between sections
 
+const ARROW_MIN_TIME_MS = 250; // skip arrow if side-to-move has less time than this
+
 const LIVE_MIN_WIDTH  = LIVE_MIN_BOARD;
 // 8 flex children: pv-top, eval-top, clock-top, board, clock-bottom, eval-bottom, pv-bottom, status — 7 gaps.
-const LIVE_MIN_HEIGHT = LIVE_WINBOX_TITLE + LIVE_PV_H * 3 + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_MIN_BOARD + LIVE_GAP * 7;
+const LIVE_MIN_HEIGHT = LIVE_WINBOX_TITLE + LIVE_PV_H * 2 + LIVE_STATUS_H + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_MIN_BOARD + LIVE_GAP * 7;
 
 
 // Gap (px) between the avoid-rect and the new window when displacing.
@@ -58,10 +61,10 @@ function avoidOverlap(wb, avoid, top, left, cascade = 0) {
   }
 }
 
-export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0, left = 0, boardStyle = null, avoidRect = null }) {
-  // If a window for this proxy is already open, focus it instead of
+export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, top = 0, left = 0, boardStyle = null, avoidRect = null }) {
+  // If a window for this key is already open, focus it instead of
   // opening a duplicate.
-  const existing = liveWindows.get(proxyId);
+  const existing = liveWindows.get(windowKey);
   if (existing) {
     if (existing.min) existing.restore();
     existing.focus();
@@ -82,7 +85,12 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
       <span class="clock-name lg-top-name">—</span>
       <span class="clock-time lg-top-time">—</span>
     </div>
-    <div class="lg-board"></div>
+    <div class="lg-board">
+      <div class="lg-result-overlay" hidden>
+        <div class="lg-result-score"></div>
+        <div class="lg-result-termination"></div>
+      </div>
+    </div>
     <div class="clock-row lg-clock-bottom">
       <span class="clock-name lg-bottom-name">—</span>
       <span class="clock-time lg-bottom-time">—</span>
@@ -118,14 +126,19 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
   const topTimeEl = body.querySelector(".lg-top-time");
   const bottomTimeEl = body.querySelector(".lg-bottom-time");
   const statusEl = body.querySelector(".lg-status");
+  const resultOverlayEl = body.querySelector(".lg-result-overlay");
+  const resultScoreEl = body.querySelector(".lg-result-score");
+  const resultTerminationEl = body.querySelector(".lg-result-termination");
 
+  const debugTag = gameId ?? proxyId ?? "";
+  const titleWithTag = debugTag ? `${label} [${debugTag}]` : label;
   // Default WinBox layout for live windows. Cascade by index so multiple
   // windows don't fully overlap.
   const idx = liveWindows.size;
+  const initialWidth = Math.max(Math.round(window.innerWidth * 0.20), LIVE_MIN_WIDTH);
   const wb = new WinBox({
-    title: label,
-    width: "30%",
-    height: "55%",
+    title: titleWithTag,
+    width: initialWidth,
     minwidth: LIVE_MIN_WIDTH,
     minheight: LIVE_MIN_HEIGHT,
     x: `${20 + (idx * 4)}%`,
@@ -133,16 +146,24 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
     top,
     left,
     mount: body,
-    class: "sturddle-wb sturddle-wb-live no-full",
+    class: gameId
+      ? "sturddle-wb sturddle-wb-live sturddle-wb-live-game no-full"
+      : "sturddle-wb sturddle-wb-live sturddle-wb-live-proxy no-full",
   });
-  if (top > 0 && wb.y < top) wb.move(wb.x, top);
-  if (left > 0 && wb.x < left) wb.move(left, wb.y);
+  const clampToViewport = () => {
+    const maxX = Math.max(left, window.innerWidth  - wb.width);
+    const maxY = Math.max(top,  window.innerHeight - wb.height);
+    const cx = Math.min(Math.max(wb.x, left), maxX);
+    const cy = Math.min(Math.max(wb.y, top),  maxY);
+    if (cx !== wb.x || cy !== wb.y) wb.move(cx, cy);
+  };
+  clampToViewport();
   if (avoidRect) avoidOverlap(wb, avoidRect, top, left, idx * 24);
   // WinBox doesn't expose its config minwidth/minheight as instance fields;
   // stash them so the workspace's tile() can clamp.
   wb.svMinWidth = LIVE_MIN_WIDTH;
   wb.svMinHeight = LIVE_MIN_HEIGHT;
-  liveWindows.set(proxyId, wb);
+  liveWindows.set(windowKey, wb);
   requestAnimationFrame(() => flashWindow(wb));
 
   // Compute target board size deterministically from the body's
@@ -157,7 +178,7 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
   //   7× flex gap
   // In compact mode (body.clientHeight < 280) the .lg-pv and
   // .lg-status rows are display:none, so those drop out.
-  const FIXED_FULL = LIVE_PV_H * 3 + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 7;
+  const FIXED_FULL = LIVE_PV_H * 2 + LIVE_STATUS_H + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 7;
   const FIXED_COMPACT = LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 4;
 
   function constrainAndResize() {
@@ -193,7 +214,7 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
     if (ws) try { ws.close(); } catch { /* */ }
     ro.disconnect();
-    liveWindows.delete(proxyId);
+    liveWindows.delete(windowKey);
     window.dispatchEvent(new CustomEvent("sturddle:livegame-closed"));
     return false;
   };
@@ -201,11 +222,14 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
   // Open WS subscription.
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   const tokenQ = token ? `?token=${encodeURIComponent(token)}` : "";
-  const url = `${proto}//${location.host}/ws/tournament/proxy/${encodeURIComponent(proxyId)}${tokenQ}`;
+  const wsTarget = gameId
+    ? `game/${encodeURIComponent(gameId)}`
+    : `proxy/${encodeURIComponent(proxyId)}`;
+  const url = `${proto}//${location.host}/ws/tournament/${wsTarget}${tokenQ}`;
   ws = new WebSocket(url);
 
   ws.addEventListener("open", () => {
-    statusEl.textContent = "live";
+    statusEl.textContent = "";
   });
 
   function stopTimer() {
@@ -236,14 +260,32 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
       return;
     }
     if (msg.ended) {
-      statusEl.textContent = "ended";
+      // Late-attach race: sentinel arrived before any position. The
+      // window has nothing to show — auto-close instead of leaving a
+      // startpos banner behind.
+      if (gameId && currentFen === null) {
+        stopTimer();
+        try { ws.close(); } catch { /* */ }
+        try { wb.close(); } catch { /* */ }
+        return;
+      }
+      // game-id WS sends result + termination on dissolution => banner.
+      // proxy-id WS sends bare {ended:true} when the engine process
+      // exits (typically tournament shutdown) => quiet status text.
+      if (msg.result) {
+        showResult(msg.result, msg.termination);
+      } else {
+        statusEl.textContent = "engine exited";
+      }
       stopTimer();
+      wbClosed = true; // suppress wb.close() in the WS close handler
       try { ws.close(); } catch { /* */ }
       return;
     }
     const parsed = msg.parsed;
     if (!parsed) return;
-    if (msg.paired) {
+    const isOpponent = msg.paired || (gameId && msg.proxy_id && msg.proxy_id !== proxyId);
+    if (isOpponent) {
       if (msg.engine_name) setOpponentName(msg.engine_name);
       handlePairedParsed(parsed, msg.thinking_side);
       return;
@@ -358,16 +400,34 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
     }
   }
 
+  function showResult(result, termination) {
+    // result is "1-0" | "0-1" | "1/2-1/2" | "*" | null/undefined.
+    // termination may be "unknown" when the orchestrator can't infer
+    // it (today: always, since dissolution carries no fastchess result).
+    const score = (result && result !== "*") ? result : "game ended";
+    const term = (termination && termination !== "unknown") ? termination : "";
+    resultScoreEl.textContent = score;
+    resultTerminationEl.textContent = term;
+    resultOverlayEl.hidden = false;
+    statusEl.textContent = term ? `${score} · ${term}` : score;
+  }
+
+
+  function pvArrowMove(p) {
+    if (!p.pv || !p.pv.length) return null;
+    if (!p.time || p.time < ARROW_MIN_TIME_MS) return null;
+    const m = p.pv[0];
+    return m && m.length >= 4 ? m : null;
+  }
+
   function handlePairedParsed(p, thinkingSide) {
     // Paired info: opposite-color engine's thinking. Mirror the same
     // eval/PV/arrow rendering as own-side, into the top (opponent) row.
     if (p.kind !== "info") return;
     if (engineColor && thinkingSide === engineColor) return;
     renderOpponentEval(p);
-    if (p.pv && p.pv.length) {
-      const m = p.pv[0];
-      if (m && m.length >= 4) board.setOpponentArrow(m.slice(0, 2), m.slice(2, 4));
-    }
+    const m = pvArrowMove(p);
+    if (m) board.setOpponentArrow(m.slice(0, 2), m.slice(2, 4));
   }
 
   function renderOpponentEval(p) {
@@ -403,8 +463,8 @@ export function openLiveGameWindow({ proxyId, label, engineName, token, top = 0,
     evalTbhitsEl.textContent = p.tbhits ? `tb ${p.tbhits}` : "";
     if (p.pv && p.pv.length) {
       pvEl.textContent = p.pv.slice(0, 12).join(" ");
-      const m = p.pv[0];
-      if (m && m.length >= 4) board.setArrow(m.slice(0, 2), m.slice(2, 4));
+      const m = pvArrowMove(p);
+      if (m) board.setArrow(m.slice(0, 2), m.slice(2, 4));
     }
   }
 
@@ -440,4 +500,13 @@ export function closeAllLiveGames() {
     try { wb.close(true); } catch { /* */ }
   }
   liveWindows.clear();
+}
+
+// Close all live windows on terminal/switch. Result/termination is
+// always UNKNOWN today, so there's nothing to review post-game.
+export function closeStaleLiveGames() {
+  for (const [key, wb] of [...liveWindows.entries()]) {
+    try { wb.close(true); } catch { /* */ }
+    liveWindows.delete(key);
+  }
 }

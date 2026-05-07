@@ -12,7 +12,7 @@ import { openSettingsDialog } from "./settings-dialog.js";
 import { EVT, KIND, STATUS } from "./tournament-events.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { getLiveWindows } from "./tournament-live-game.js";
-import { getActiveWorkspace, openTournamentWorkspace } from "./tournament-workspace.js";
+import { getActiveWorkspace, hasAnyDesktopState, hasSavedWorkspaceState, openTournamentWorkspace } from "./tournament-workspace.js";
 
 export function mountTournaments({ container, api, events, log, token }) {
   container.innerHTML = `
@@ -32,10 +32,12 @@ export function mountTournaments({ container, api, events, log, token }) {
           <button class="tmb-item tmb-window-btn">Window</button>
           <ul class="tmb-dropdown">
             <li class="tmb-dd-submenu">
-              <button class="tmb-dd-item tmb-sys-trigger">System</button>
+              <button class="tmb-dd-item tmb-sys-trigger">Tournament</button>
               <ul class="tmb-dropdown">
                 <li><button class="tmb-dd-item tmb-sys-standings">Standings</button></li>
-                <li><button class="tmb-dd-item tmb-sys-schedule">Schedule</button></li>
+                <li><button class="tmb-dd-item tmb-sys-schedule">Live Games</button></li>
+                <li><button class="tmb-dd-item tmb-sys-engines">Engine Instances</button></li>
+                <li class="tmb-separator"></li>
                 <li><button class="tmb-dd-item tmb-sys-log">Event Log</button></li>
               </ul>
             </li>
@@ -129,27 +131,40 @@ export function mountTournaments({ container, api, events, log, token }) {
     };
   }
 
+  function debounce(fn, ms) {
+    let timer = null;
+    return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
+  }
+
+  // Returns an async function that drops its result if a newer call
+  // has been initiated. Always resolves with undefined --
+  // await is fire-and-forget; do not read state immediately after.
+  // `fetch` returns data; `commit` writes it; `onError` handles fetch errors.
+  function lastWriteWins(fetch, commit, onError) {
+    let gen = 0;
+    return async (...args) => {
+      const v = ++gen;
+      let data;
+      try { data = await fetch(...args); } catch (e) { onError(e); return; }
+      if (v !== gen) return;
+      commit(data);
+    };
+  }
+
   // ---- API helpers --------------------------------------------------------
 
-  async function loadSettings() {
-    try {
-      settings = await api("GET", "/api/tournament-settings");
-      renderList();
-    } catch (e) {
-      reportError({ log }, "Loading tournament settings failed", e);
-    }
-  }
+  const loadSettings = lastWriteWins(
+    () => api("GET", "/api/tournament-settings"),
+    (data) => { settings = data; renderList(); },
+    (e) => reportError({ log }, "Loading tournament settings failed", e),
+  );
 
-  async function loadList() {
-    try {
-      const body = await api("GET", "/api/tournaments");
-      tournaments = body.tournaments;
-      activeId = body.active_id;
-      renderList();
-    } catch (e) {
-      reportError({ log }, "Loading tournaments failed", e);
-    }
-  }
+  const loadList = lastWriteWins(
+    () => api("GET", "/api/tournaments"),
+    (body) => { tournaments = body.tournaments; activeId = body.active_id; renderList(); },
+    (e) => reportError({ log }, "Loading tournaments failed", e),
+  );
+  const debouncedLoadList = debounce(loadList, 150);
 
   // ---- Rendering ----------------------------------------------------------
 
@@ -296,7 +311,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     const hadWorkspace = ws && ws.tournamentId !== newId;
     if (hadWorkspace) {
       if (getLiveWindows().length > 0) {
-        const ok = await confirm({ message: "Live game windows are open. Close them and switch tournament?" });
+        const ok = await confirm({ message: "Game windows are open. Close them and change active selection?" });
         if (!ok) return false;
       }
       ws.close();
@@ -309,9 +324,16 @@ export function mountTournaments({ container, api, events, log, token }) {
       li.scrollIntoView({ block: "nearest" });
     }
     syncRibbon();
-    if (hadWorkspace) {
-      const t = selectedTournament();
-      if (t) openWorkspace(t);
+    const t = selectedTournament();
+    if (t) {
+      if (hasSavedWorkspaceState(t.id)) {
+        // Saved state with open windows -- always restore.
+        openWorkspace(t);
+      } else if (hadWorkspace && !hasAnyDesktopState(t.id)) {
+        // No saved state at all (brand-new tournament) -- continue workspace mode.
+        openWorkspace(t);
+      }
+      // All-closed saved state: workspace was explicitly dismissed, don't reopen.
     }
     return true;
   }
@@ -429,8 +451,6 @@ export function mountTournaments({ container, api, events, log, token }) {
       await api("POST", `/api/tournaments/${t.id}/stop`);
     } catch (e) {
       reportError({ log }, `Stopping "${t.name}" failed`, e);
-      await loadList();
-      return;
     }
     await loadList();
   }
@@ -815,15 +835,15 @@ export function mountTournaments({ container, api, events, log, token }) {
     }
 
     // Resolve the tournament's current engines to registry entries so the
-    // builder can preselect them. Prefer name match (canonical key for the
-    // registry); fall back to cmd so a renamed entry still preselects.
+    // builder can preselect them. Prefer id match; fall back to name then cmd.
+    const byId   = new Map(available.map((e) => [e.id,   e]));
     const byName = new Map(available.map((e) => [e.name, e]));
-    const byCmd = new Map(available.map((e) => [e.cmd, e]));
+    const byCmd  = new Map(available.map((e) => [e.path, e]));
     const original = t.engines || [];
     const initialEngines = [];
     let droppedCount = 0;
     for (const e of original) {
-      const match = byName.get(e.name) || byCmd.get(e.cmd);
+      const match = byId.get(e.id) || byName.get(e.name) || byCmd.get(e.cmd);
       if (match) initialEngines.push(match);
       else droppedCount += 1;
     }
@@ -957,6 +977,7 @@ export function mountTournaments({ container, api, events, log, token }) {
   for (const [cls, key] of [
     [".tmb-sys-standings", "standings"],
     [".tmb-sys-schedule",  "schedule"],
+    [".tmb-sys-engines",   "engines"],
     [".tmb-sys-log",       "log"],
   ]) {
     container.querySelector(cls).addEventListener("click", () => {
@@ -1031,7 +1052,7 @@ export function mountTournaments({ container, api, events, log, token }) {
         const firstErr = tail.find((l) => /error|fatal|fail/i.test(l)) || tail[0] || `exit code ${evt.payload?.rc}`;
         toast(`${name} failed: ${firstErr}`, { variant: "danger", duration: 10000 });
       }
-      loadList();
+      debouncedLoadList();
     }
   });
 
@@ -1048,10 +1069,10 @@ export function mountTournaments({ container, api, events, log, token }) {
   // Visibility is driven by the Engines tab group (see engines.js):
   // the workspace stays hidden unless the Tournaments sub-tab is active.
 
-  (async () => {
-    await loadSettings();
-    await loadList();
-  })();
+  // Fire-and-forget: lastWriteWins resolves undefined; state is populated
+  // asynchronously and rendered via renderList() inside each commit.
+  loadSettings();
+  loadList();
 
   return {
     unmount() {
@@ -1205,7 +1226,7 @@ function mountEngineBuilder({ host, available, initial = [] }) {
     getEngines() {
       return pickedIds.map((id) => {
         const e = byId.get(id);
-        return { name: e.name, cmd: e.path };
+        return { id, name: e.name, cmd: e.path };
       });
     },
     getPickedRegistry() {

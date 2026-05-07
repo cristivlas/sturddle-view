@@ -1062,7 +1062,7 @@ wa-dialog wa-tab-panel > * + * { margin-top: 10px; }
 .tmb-menu.open > .tmb-dropdown { display: block; }
 .tmb-dropdown > li { margin: 0; padding: 0; list-style: none; }
 .tmb-dd-submenu { position: relative; }
-.tmb-dd-submenu > .tmb-dd-item::after { content: "›"; position: absolute; right: 10px; }
+.tmb-dd-submenu > .tmb-dd-item::after { content: "▶"; position: absolute; right: 10px; font-size: 10px; }
 .tmb-dd-submenu > .tmb-dropdown { top: -6px; left: 100%; z-index: 9001; }
 .tmb-dd-submenu:hover > .tmb-dropdown { display: block; }
 .tmb-dd-submenu:has(> .tmb-dd-item:disabled):hover > .tmb-dropdown { display: none; }
@@ -1452,6 +1452,19 @@ wa-dialog::part(body) {
   font-family: var(--wa-font-family-code);
 }
 .wb-sched-list, .wb-eventlog-list { list-style: none; padding: 0; margin: 0; }
+.wb-log-copy-ctrl {
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: 14px;
+  mask-size: 14px;
+  background-color: rgba(255,255,255,0.5) !important;
+  background-image: none !important;
+}
+.wb-log-copy-ctrl:hover { background-color: rgba(255,255,255,0.9) !important; }
 .wb-sched-list li { padding: 3px 0; font-size: 13px; border-bottom: 1px solid #2e3138; }
 .wb-sched-icon { display: inline-block; width: 18px; color: var(--accent); }
 .wb-sched-result {
@@ -1479,7 +1492,14 @@ wa-dialog::part(body) {
   white-space: pre-wrap; max-height: 8em; overflow: auto;
 }
 
-/* Live game window (Slice 9c) */
+/* Live game window (Slice 9c). Border encodes attach type:
+   game-id windows are borderless (the "primary" surface, identified
+   by absence of chrome); proxy-id windows get a brighter gray border
+   (the default #2e3138 is too dark to register on this theme) so
+   they read as a secondary/debug surface. */
+.winbox.sturddle-wb.sturddle-wb-live-game  { border: none; }
+.winbox.sturddle-wb.sturddle-wb-live-proxy { border-color: var(--muted); }
+
 .wb-livegame {
   display: flex; flex-direction: column; gap: 6px;
   height: 100%; min-height: 0;
@@ -1494,6 +1514,30 @@ wa-dialog::part(body) {
   align-self: center;
   display: flex; align-items: center; justify-content: center;
   overflow: hidden;
+  position: relative;
+}
+.wb-livegame .lg-result-overlay {
+  position: absolute;
+  left: 0; right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  text-align: center;
+  background: rgba(20, 22, 26, 0.88);
+  color: var(--fg);
+  padding: 14px 8px;
+  pointer-events: none;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+}
+.wb-livegame .lg-result-score {
+  font-size: 22px; font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+.wb-livegame .lg-result-termination {
+  font-size: 14px;
+  margin-top: 4px;
+  color: var(--muted);
+  text-transform: lowercase;
 }
 .wb-livegame .lg-eval {
   display: flex; gap: 8px; align-items: baseline;
@@ -1507,8 +1551,8 @@ wa-dialog::part(body) {
   min-height: 16px; flex-shrink: 0;
 }
 .wb-livegame .lg-status {
-  font-size: 11px; text-align: right;
-  min-height: 16px; flex-shrink: 0;
+  font-size: 13px; text-align: right;
+  min-height: 18px; flex-shrink: 0;
 }
 
 /* Schedule: in-progress rows */
@@ -1528,3 +1572,4 @@ wa-dialog::part(body) {
 .wb-sched-attach-btn:hover { background: var(--nav-btn-bg-hover); border-color: var(--accent); }
 .wb-sched-attach-btn--live { border-color: var(--accent); color: var(--accent); }
 .wb-sched-attach-btn--live:hover { background: var(--nav-btn-bg-hover); }
+.wb-sched-pair .wb-sched-icon { color: var(--muted); }
