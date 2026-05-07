@@ -53,6 +53,15 @@ def _spawn_server(tmp_path, monkeypatch, *, tournaments=("A", "B")):
             template={"tc": "10+0.1"},
             engines=[{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
         )
+    # Capture the server's running event loop on app.state so tests can
+    # publish onto the EventBus via run_coroutine_threadsafe.
+    @app.middleware("http")
+    async def _capture_loop(request, call_next):
+        import asyncio as _asyncio
+        if not hasattr(request.app.state, "loop"):
+            request.app.state.loop = _asyncio.get_running_loop()
+        return await call_next(request)
+
     port = _free_port()
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto")
     s = uvicorn.Server(config)
@@ -61,13 +70,25 @@ def _spawn_server(tmp_path, monkeypatch, *, tournaments=("A", "B")):
     deadline = time.time() + 10
     while time.time() < deadline and not s.started:
         time.sleep(0.05)
-    return f"http://127.0.0.1:{port}", s, thread
+    return f"http://127.0.0.1:{port}", s, thread, app
 
 
 @pytest.fixture
 def server(tmp_path, monkeypatch):
-    base, s, thread = _spawn_server(tmp_path, monkeypatch)
+    base, s, thread, _app = _spawn_server(tmp_path, monkeypatch)
     yield base
+    s.should_exit = True
+    s.force_exit = True
+    thread.join(timeout=2)
+
+
+@pytest.fixture
+def server_app(tmp_path, monkeypatch):
+    """Like ``server`` but also exposes the FastAPI app so tests can pre-seed
+    tournament status (and publish into the event bus for transition tests).
+    """
+    base, s, thread, app = _spawn_server(tmp_path, monkeypatch)
+    yield base, app
     s.should_exit = True
     s.force_exit = True
     thread.join(timeout=2)
@@ -599,6 +620,139 @@ async def test_TBUG3_no_prior_save_close_all_open_restores_what_was_open(server,
         titles = await _wb_titles(page)
         assert any("Standings" in t for t in titles)
         assert any("Engine Instances" in t for t in titles)
+        _assert_no_errors(errors)
+    finally:
+        await ctx.close()
+
+
+# ---- Status-driven defaults (no saved state) -------------------------------
+# Covers the gap from the rules audit: ribbon "Open Workspace" against a
+# tournament with no saved state, for each non-idle status.
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["stopped", "done"])
+async def test_default_open_terminal_status_only_standings(server_app, browser, status):
+    """STOPPED / DONE with no replayed events: log is empty and tournament
+    is not RUNNING -> default logic opens Standings only."""
+    if browser is None:
+        pytest.skip("chromium not installed")
+    base, app = server_app
+    tids = [t.id for t in app.state.tournament_store.list()]
+    app.state.tournament_store.update_status(tids[0], status)
+
+    ctx, page, errors = await _new_page(browser)
+    try:
+        await _goto_app(page, base)
+        await _click_row(page, 0)
+        await _open_workspace_via_ribbon(page)
+        await _wait_wb_count(page, 1)
+        titles = await _wb_titles(page)
+        assert any("Standings" in t for t in titles)
+        assert not any("Live Games" in t for t in titles)
+        assert not any("Event log" in t for t in titles)
+        _assert_no_errors(errors)
+    finally:
+        await ctx.close()
+
+
+@pytest.mark.asyncio
+async def test_default_open_failed_status_surfaces_error_banner(server_app, browser):
+    """FAILED tournament: default opens Standings only (no log entries to
+    trigger the log auto-open). Manually opening the Event Log via the
+    Window menu must surface the persisted last_error banner."""
+    if browser is None:
+        pytest.skip("chromium not installed")
+    base, app = server_app
+    tids = [t.id for t in app.state.tournament_store.list()]
+    app.state.tournament_store.update_status(
+        tids[0],
+        "failed",
+        last_error={"rc": 137, "stderr_tail": ["fatal: engine crashed"]},
+    )
+
+    ctx, page, errors = await _new_page(browser)
+    try:
+        await _goto_app(page, base)
+        await _click_row(page, 0)
+        await _open_workspace_via_ribbon(page)
+        await _wait_wb_count(page, 1)
+        titles = await _wb_titles(page)
+        assert any("Standings" in t for t in titles)
+        # Open the Event Log via the menu and wait for the banner to render.
+        await _open_extra_window(page, "log")
+        await _wait_wb_count(page, 2)
+        await page.wait_for_function(
+            """() => {
+                const b = document.querySelector('.wb-error-banner');
+                return b && !b.hidden && /rc=137/.test(b.textContent);
+            }""",
+            timeout=3000,
+        )
+        _assert_no_errors(errors)
+    finally:
+        await ctx.close()
+
+
+@pytest.mark.asyncio
+async def test_default_open_running_opens_three_windows(server_app, browser):
+    """RUNNING tournament with no saved state: Standings + Live Games +
+    Event Log all auto-open (Live Games and Event Log because RUNNING)."""
+    if browser is None:
+        pytest.skip("chromium not installed")
+    base, app = server_app
+    tids = [t.id for t in app.state.tournament_store.list()]
+    app.state.tournament_store.update_status(tids[0], "running")
+
+    ctx, page, errors = await _new_page(browser)
+    try:
+        await _goto_app(page, base)
+        await _click_row(page, 0)
+        await _open_workspace_via_ribbon(page)
+        await _wait_wb_count(page, 3)
+        titles = await _wb_titles(page)
+        assert any("Standings" in t for t in titles)
+        assert any("Live Games" in t for t in titles)
+        assert any("Event log" in t for t in titles)
+        _assert_no_errors(errors)
+    finally:
+        await ctx.close()
+
+
+@pytest.mark.asyncio
+async def test_idle_to_running_transition_auto_opens_live_games(server_app, browser):
+    """Workspace open on an idle tournament with no saved state: when a
+    tournament_status RUNNING event fires, Live Games window auto-opens."""
+    if browser is None:
+        pytest.skip("chromium not installed")
+    import asyncio
+    from sturddle_view.events import Event
+
+    base, app = server_app
+    tids = [t.id for t in app.state.tournament_store.list()]
+
+    ctx, page, errors = await _new_page(browser)
+    try:
+        await _goto_app(page, base)
+        await _click_row(page, 0)
+        await _open_workspace_via_ribbon(page)
+        await _wait_wb_count(page, 1)
+        # Publish a status change onto the live event bus -- the WS pipes
+        # it to the browser and the workspace's pushEvent handler opens
+        # Live Games when payload.status === "running".
+        loop = app.state.loop  # captured by the loop-capture middleware
+        fut = asyncio.run_coroutine_threadsafe(
+            app.state.event_bus.publish(Event(
+                kind="tournament_status",
+                payload={"tournament_id": tids[0], "status": "running", "_seq": 9999},
+            )),
+            loop,
+        )
+        fut.result(timeout=3)
+        await page.wait_for_function(
+            """() => [...document.querySelectorAll('.winbox.sturddle-wb .wb-title')]
+                       .some(t => /Live Games/.test(t.textContent))""",
+            timeout=5000,
+        )
         _assert_no_errors(errors)
     finally:
         await ctx.close()
