@@ -192,10 +192,10 @@ export function mountEngines({ container, api }) {
     }
   }
 
-  function lockedMsg(e) {
+  function lockedMsg(e, action) {
     if (!e?.locked?.length) return null;
     const list = e.locked.map((t) => `${t.name} (${t.status})`).join(", ");
-    return `${e.name} is used by: ${list}`;
+    return `Cannot ${action} ${e.name}: in use by ${list}`;
   }
 
   function syncDetailButtons() {
@@ -286,7 +286,7 @@ export function mountEngines({ container, api }) {
     if (!selectedDetailId) return;
     const e = engines.find((x) => x.id === selectedDetailId);
     if (!e) return;
-    const msg = lockedMsg(e);
+    const msg = lockedMsg(e, "remove");
     if (msg) { toast(msg, { variant: "warning" }); return; }
     const ok = await confirm({
       title: "Remove engine",
@@ -308,7 +308,7 @@ export function mountEngines({ container, api }) {
   async function openOptionsForSelected() {
     if (!selectedDetailId) return;
     let engine = engines.find((x) => x.id === selectedDetailId);
-    const msg = lockedMsg(engine);
+    const msg = lockedMsg(engine, "edit");
     if (msg) { toast(msg, { variant: "warning" }); return; }
     // If we have no cached UCI options, try one auto re-probe before
     // opening — heals the case where the original add-time probe failed
