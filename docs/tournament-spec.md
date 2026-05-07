@@ -605,26 +605,30 @@ escape hatch.
 
 #### What end-of-game looks like
 
-The proxy doesn't classify. The orchestrator combines two signals:
+The proxy doesn't classify. End-of-game is signaled by **pair
+dissolution** alone: when one of a confirmed pair's proxies leaves
+its FEN bucket — typically via `ucinewgame` (entering its next
+game) or `proxy_session_ended` (engine quit / fastchess closed it)
+— the pair's game is over.
 
-- **UCI stream** (per-proxy): `ucinewgame` marks a game boundary.
-  Proxy disconnect (engine quit / fastchess closed it) marks a hard
-  end.
-- **fastchess stdout** (tournament-wide, authoritative): the
-  `Started game N (A vs B)` and `Finished game N (A vs B): result`
-  lines from `-output format=fastchess` carry the real result and
-  termination reason.
+Result and termination are reported as `*` / `unknown` on the
+`game_finished` event. fastchess's `Started game N` / `Finished
+game N` stdout lines exist but are no longer parsed: under
+concurrency the same `(white_name, black_name)` matchup can be
+playing in N parallel slots, so a `Finished` line for that matchup
+cannot be unambiguously bound back to a specific pair. The PGN
+remains authoritative for results in the Standings window; the live
+view shows games ending without a per-game W/L/D verdict.
 
-The result label (`1-0` / `0-1` / `1/2-1/2`) comes from the
-`Finished` line — not from PGN polling and not from board-state
-inference. PGN remains the source for the Standings window.
+The `game_n` field on `game_finished` is retained in the schema
+(always `null` today) so a future implementation that finds a
+reliable correlation signal can populate it without breaking
+consumers.
 
 #### Pair lifecycle: confirmation and dissolution
 
 A "pair" is the orchestrator's runtime view of one in-flight game:
 two `proxy_id`s playing each other, identified by a `pair_id` UUID.
-Pairs need both *confirmation* (so live windows can attach) and
-*dissolution* (so windows close with the right result).
 
 **Confirmation.** Per-proxy UCI events register each engine into a
 FEN bucket. When a bucket has exactly two entries with opposite
@@ -633,58 +637,35 @@ emits `proxy_paired`. Buckets >2 occur transiently because
 fastchess feeds the same opening-book line to multiple slots; they
 resolve as engines diverge past book.
 
-**Game-N stamping.** fastchess's stdout assigns each game a
-monotonic integer N. On `Started game N (A vs B)` the orchestrator
-queues `(N, white=A, black=B)`. The next pair confirmation whose
-sides match `(A, B)` is stamped with N (FIFO). This makes the
-`pair_id ↔ N` mapping deterministic at any concurrency.
+**Dissolution.** A confirmed pair dissolves when either proxy
+becomes orphaned from its FEN bucket — typically because the proxy
+forwarded `ucinewgame` to start its next game, or its session ended
+(`proxy_session_ended`). Dissolution emits `proxy_unpaired` +
+`game_finished` (with `result="*"`, `termination="unknown"`) and
+closes the per-pair WS subscribers with an `ended` sentinel.
 
-**Dissolution (Option B — deferred).** `Finished game N` is the
-sole authoritative trigger for ending a pair: it carries the real
-result and termination, so it drives `proxy_unpaired` +
-`game_finished` and closes the per-pair WS subscribers with the
-result in the `ended` sentinel.
-
-UCI-side end-of-game (a `ucinewgame` from a confirmed proxy, or a
-`proxy_session_ended`) does *not* emit termination events on its
-own. It only marks the pair *pending dissolution*; the `Finished`
-line completes the cleanup. If `Finished` never arrives (proxy
-crashed before fastchess flushed, runner shutdown), a forced-
-dissolve path drains pending pairs with `result=unknown` so windows
-don't hang.
-
-**Why deferred.** The alternative is "first signal wins, emit a
-corrective second event if the real result arrives later." Under
-high concurrency that produces interleaved `unpaired` /
-`game_finished` events for already-dissolved pairs, pushing race
-reconciliation into the client. Deferral keeps the contract simple:
-exactly one terminal event per pair, carrying the real result, in
-order. The state cost is bounded by `concurrency` (≤ a few dozen
-pending entries).
+On terminal runner events (tournament done/stopped/failed), every
+remaining open pair is dissolved through the same path so any open
+game-WS subscribers receive their `ended` frame.
 
 **Rejected alternatives.**
 
+- *Parsing fastchess `Finished N` for the result.* Investigated and
+  abandoned: the `pair_id ↔ N` join is unsolvable when concurrency
+  > 1 with same-name engines. fastchess's `Started/Finished` lines
+  carry only `(white_name, black_name)` plus N; `name=` is shared
+  across all parallel slots of one engine, and there is no per-slot
+  identifier in the stdout protocol. Eval-based heuristics did not
+  produce stable disambiguation.
 - *Board-state inference from FEN.* Wrong for resignations
   (`-resign`), adjudicated draws (`-draw`), and time forfeits — the
   board doesn't reflect the verdict.
 - *PGN tail polling for results.* Adds a poller and doesn't solve
   pair-id mapping under concurrency (PGN flush order is per-game,
   not per-slot).
-- *Match results to pairs by `(white, black)` alone, without N.*
-  Under concurrency multiple in-flight pairs share `(white, black)`
-  in either direction; pair-id assignment becomes ambiguous.
 
 **Failure modes.**
 
-- Malformed `Started`/`Finished` line (fastchess version skew):
-  log a warning and fall through. Forced-dissolve on shutdown
-  cleans up.
-- `Finished N` for unknown N (pair never confirmed — book-line
-  collision held bucket >2 for the whole game): log + drop. No UI
-  window existed to update.
-- `ucinewgame` arrives before `Started N` is queued (theoretical
-  reorder): pair confirmation can't stamp N; falls through to
-  forced-dissolve.
 - Same-engine-name pair candidate (book-line collision in a
   tournament with two distinct engines whose 4-bucket decays into a
   same-engine 2-bucket): rejected as phantom. See "Self-play
@@ -718,52 +699,17 @@ The "real" fix is orchestrator-level disambiguation so the user can
 pick one engine and have it play itself in one click. Lifting the
 rejection requires the orchestrator to rename engine instances
 before passing them to fastchess (e.g. `Engine #1` / `Engine #2`)
-so fastchess's `Started N (... vs ...)` and PGN headers carry
-distinct names. Pair detection then works unchanged, and the FIFO
-match in `_stamp_pair_game_n` keys correctly off the disambiguated
-names.
+so fastchess's PGN headers carry distinct names. Pair detection
+then works unchanged once the same-name guard is lifted.
 
 TODO before native self-play UX ships:
 - Orchestrator-level engine-name disambiguation (templates with
   duplicate engine cmds get suffixes).
 - UI relaxation: allow picking the same engine twice.
-- Tests covering self-play pair detection, dissolution, and
-  Started/Finished FIFO matching.
+- Tests covering self-play pair detection and dissolution.
 - Lift the same-engine-name rejection in `_recompute_groups`.
 
 Given the registry-level workaround, this is low priority.
-
-#### fastchess output format dependency
-
-Pair lifecycle (game-N stamping, dissolution, result/termination)
-parses fastchess's stdout format produced by
-`-output format=fastchess`. The relied-upon lines:
-
-- `Started game <N> [of <M>] (<white> vs <black>)` -- queues N for
-  the next confirmation matching `(white, black)`.
-- `Finished game <N> [of <M>] (<white> vs <black>): <result>
-  {<termination>}` -- dissolves the pair stamped with N and emits
-  the authoritative `game_finished` event.
-
-Regexes live in `server/sturddle_view/tournament/orchestrator.py`
-(`_FASTCHESS_STARTED_RE`, `_FASTCHESS_FINISHED_RE`). They tolerate
-the optional ` of M` segment but are otherwise strict on the
-literal " vs " separator and the result tokens
-(`1-0` / `0-1` / `1/2-1/2` / `*`).
-
-This is a load-bearing dependency on an external tool's output
-format. fastchess targets cutechess-cli compatibility, which
-suggests format stability, but the contract is not declared. A
-silent format change in a fastchess update would cause `Finished N`
-lines to fail parsing -- pairs would never dissolve via the normal
-path and would only clear at tournament terminal via
-`_force_dissolve_pending` with `result="*"`. The failure is visible
-(WARNING-level "had no confirmed pair" log lines fire on every
-unrecognized Finished) but silent at the UI level until the user
-notices windows accumulating.
-
-Mitigation if it happens: update the regexes; add a unit test
-pinned to fixture stdout from the new fastchess version.
 
 ### Stopped / done view
 

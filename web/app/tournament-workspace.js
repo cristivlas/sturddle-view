@@ -281,7 +281,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   function renderSchedule() {
     if (livePairings.size === 0) {
-      scheduleBody.innerHTML = `<div class="wb-empty">No games yet.</div>`;
+      scheduleBody.innerHTML = `<div class="wb-empty">No games in play.</div>`;
       return;
     }
     const scroller = scheduleBody.parentElement;

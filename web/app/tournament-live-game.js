@@ -403,13 +403,14 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 
   function showResult(result, termination) {
     // result is "1-0" | "0-1" | "1/2-1/2" | "*" | null/undefined.
-    // termination is the fastchess raw string (e.g. "checkmate",
-    // "adjudication", "timeout") or null.
+    // termination may be "unknown" when the orchestrator can't infer
+    // it (today: always, since dissolution carries no fastchess result).
     const score = (result && result !== "*") ? result : "ended";
+    const term = (termination && termination !== "unknown") ? termination : "";
     resultScoreEl.textContent = score;
-    resultTerminationEl.textContent = termination ?? "";
+    resultTerminationEl.textContent = term;
     resultOverlayEl.hidden = false;
-    statusEl.textContent = termination ? `${score} · ${termination}` : score;
+    statusEl.textContent = term ? `${score} · ${term}` : score;
   }
 
   // Transient between-games delimiter for Engine Instance windows.
