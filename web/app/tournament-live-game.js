@@ -274,7 +274,16 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       flashNewGame();
     }
     if (msg.ended) {
-      // game-id WS sends result + termination on Finished N => banner.
+      // Late-attach race: sentinel arrived before any position. The
+      // window has nothing to show — auto-close instead of leaving a
+      // startpos banner behind.
+      if (gameId && currentFen === null) {
+        stopTimer();
+        try { ws.close(); } catch { /* */ }
+        try { wb.close(); } catch { /* */ }
+        return;
+      }
+      // game-id WS sends result + termination on dissolution => banner.
       // proxy-id WS sends bare {ended:true} when the engine process
       // exits (typically tournament shutdown) => quiet status text.
       // svResolved flips only for real results (not "*" force-dissolve).
