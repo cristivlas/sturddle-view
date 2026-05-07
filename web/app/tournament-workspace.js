@@ -209,12 +209,14 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
                 const parts = [e.kind];
                 if (inner) parts.push(inner);
                 if (inner === KIND.PROXY_PAIRED)
-                  parts.push(`${e.payload?.engine_a}(${(e.payload?.proxy_a||"").slice(0,8)}) vs ${e.payload?.engine_b}(${(e.payload?.proxy_b||"").slice(0,8)})`);
+                  parts.push(`${e.payload?.engine_a}(${e.payload?.proxy_a||""}) vs ${e.payload?.engine_b}(${e.payload?.proxy_b||""})`);
                 else if (inner === KIND.GAME_FINISHED) {
-                  const result = e.payload?.result || "*";
+                  const result = e.payload?.result;
                   const termination = e.payload?.termination;
+                  const tail = (result && termination && termination !== "unknown")
+                    ? `${result} ${termination}` : (result || "");
                   parts.push(`${e.payload?.engine_a} vs ${e.payload?.engine_b}`,
-                             termination ? `${result} ${termination}` : result);
+                             ...(tail ? [tail] : []));
                 }
                 return `${ts} ${parts.join(" ")}`;
               }).join("\n");
@@ -394,10 +396,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       else if (inner === KIND.GAME_FINISHED) {
         const a = e.payload?.engine_a || "?";
         const b = e.payload?.engine_b || "?";
-        const result = e.payload?.result || "*";
+        const result = e.payload?.result;
         const termination = e.payload?.termination;
-        const tail = termination ? `${result} ${termination}` : result;
-        parts.push(inner, `${a} vs ${b}`, tail);
+        const tail = (result && termination && termination !== "unknown")
+          ? `${result} ${termination}` : (result || "");
+        parts.push(inner, `${a} vs ${b}`, ...(tail ? [tail] : []));
       } else if (inner === KIND.PROXY_PAIRED) {
         const a = e.payload?.engine_a || "?";
         const b = e.payload?.engine_b || "?";
