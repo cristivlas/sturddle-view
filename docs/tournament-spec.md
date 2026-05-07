@@ -787,6 +787,31 @@ preserves prior games already in `games.pgn`; only the in-flight game
 at the moment of the crash is lost — the same loss profile as a
 user-initiated Stop.
 
+#### Single-orchestrator-per-store assumption
+
+Reconcile-on-startup is only sound under the assumption that **one
+orchestrator instance owns the tournament store at any time**. A second
+process pointed at the same `tournament_root` will, on its own startup,
+mistake the first instance's live `running` rows for a crash and flip
+them to `failed` — silently corrupting the running tournament's
+persisted status while the actual subprocess keeps chugging.
+
+Phase 1 does not support multi-instance deployments and the spec does
+not promise this. Single-user desktop deployments naturally satisfy the
+invariant. The risk in practice is *accidental* shared roots — most
+notably tests that boot a `create_app` against the developer's real
+platformdirs path. The test harness (`server/tests/conftest.py`)
+redirects every default-path producer to a per-test tmp dir to keep
+this from happening; any new default-path code must be wired into that
+fixture.
+
+TODO (post-Phase 1): if multi-instance ever becomes a use case (e.g.
+a CLI runner started while the desktop server is up), add a pidfile or
+flock-style guard at the store root so a second orchestrator either
+refuses to start or skips reconcile. Today's implicit "don't do that"
+contract is fine for the desktop product but should not leak into
+shared-host configurations.
+
 ### Decoupling from the web layer
 
 The orchestrator must be callable without any web/REST coupling — its

@@ -25,7 +25,11 @@ def store(tmp_path):
     return TournamentStore(tmp_path / "tournaments")
 
 
-def test_default_root_uses_platformdirs():
+def test_default_root_uses_platformdirs(monkeypatch):
+    # The conftest autouse fixture redirects default_root() to a tmp path
+    # so tests can't write to the user's real platformdirs tree. For this
+    # one test we want the unredirected behavior, so undo the patch.
+    monkeypatch.undo()
     root = default_root()
     assert root.name == "tournaments"
     assert "sturddle-view" in str(root)

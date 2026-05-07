@@ -33,16 +33,33 @@ async def browser():
 def _isolate_user_config(tmp_path, monkeypatch):
     """Redirect default user-config paths to per-test tmp locations.
 
-    Covers the saved-game snapshot and the persisted settings file so tests
-    don't read from or write into the developer's actual ~/.config dir.
-    Tests that need to inspect a saved file should pass an explicit
-    GameStore to create_app instead of relying on this default.
+    Covers every default that would otherwise resolve to the developer's
+    real platformdirs/~/.config tree: the saved-game snapshot, persisted
+    settings, the engine registry, and the tournament store root. Without
+    this, a test that constructs ``create_app(settings=...)`` without
+    overriding ``tournament_root`` would mount the user's *live*
+    tournament directory and the orchestrator's startup reconcile would
+    flip any in-flight tournament to ``failed``.
+
+    Tests that need to inspect a saved file should pass explicit paths
+    (e.g. ``GameStore``, ``EngineRegistry(path=...)``, or
+    ``Settings.tournament_root``) instead of relying on these defaults.
     """
+    import sturddle_view.app as app_mod
     import sturddle_view.config as cfg
+    import sturddle_view.engines as engines_mod
     import sturddle_view.play.game_store as gs
+    import sturddle_view.tournament.store as ts_mod
     monkeypatch.setattr(
         gs, "default_state_path", lambda: tmp_path / "current_game.json"
     )
     monkeypatch.setattr(
         cfg, "default_settings_file", lambda: tmp_path / "settings.json"
     )
+    monkeypatch.setattr(
+        engines_mod, "default_registry_path", lambda: tmp_path / "engines.json"
+    )
+    # Patch both the canonical symbol and app.py's local import binding.
+    fake_root = tmp_path / "tournaments"
+    monkeypatch.setattr(ts_mod, "default_root", lambda: fake_root)
+    monkeypatch.setattr(app_mod, "default_root", lambda: fake_root)
