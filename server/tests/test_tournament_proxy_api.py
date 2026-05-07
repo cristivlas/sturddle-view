@@ -53,7 +53,7 @@ def running_app(tmp_path, monkeypatch):
         # Create + start a tournament so the orchestrator has a secret.
         t = c.post("/api/tournaments", json={
             "name": "test",
-            "engines": [{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
+            "engines": [{"id": "id-A", "name": "A", "cmd": "/bin/A"}, {"id": "id-B", "name": "B", "cmd": "/bin/B"}],
         }).json()
         c.post(f"/api/tournaments/{t['id']}/start")
         yield c, app
@@ -208,7 +208,7 @@ def test_orchestrator_clears_secret_on_stop(tmp_path, monkeypatch):
     with TestClient(app) as c:
         t = c.post("/api/tournaments", json={
             "name": "test",
-            "engines": [{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
+            "engines": [{"id": "id-A", "name": "A", "cmd": "/bin/A"}, {"id": "id-B", "name": "B", "cmd": "/bin/B"}],
         }).json()
         c.post(f"/api/tournaments/{t['id']}/start")
         # Wait for fake-fastchess to exit cleanly → orchestrator clears secret.

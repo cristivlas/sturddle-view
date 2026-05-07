@@ -47,6 +47,7 @@ internal_router = APIRouter(tags=["tournaments-internal"])
 
 
 class EngineRef(BaseModel):
+    id: str
     name: str
     cmd: str
     args: str | None = None

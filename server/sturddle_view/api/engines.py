@@ -66,7 +66,7 @@ def _registry(request: Request) -> EngineRegistry:
 
 
 def _engine_locks(request: Request) -> dict[str, list[dict]]:
-    """Map engine path -> list of {name, status} for non-DONE tournaments."""
+    """Map engine registry id -> list of {name, status} for non-DONE tournaments."""
     ts: TournamentStore = getattr(request.app.state, "tournament_store", None)
     if ts is None:
         return {}
@@ -75,9 +75,9 @@ def _engine_locks(request: Request) -> dict[str, list[dict]]:
         if t.status == STATUS_DONE:
             continue
         for ref in t.engines or []:
-            cmd = ref.get("cmd") if isinstance(ref, dict) else getattr(ref, "cmd", None)
-            if cmd:
-                locks.setdefault(cmd, []).append({"name": t.name, "status": t.status})
+            eng_id = ref.get("id") if isinstance(ref, dict) else getattr(ref, "id", None)
+            if eng_id:
+                locks.setdefault(eng_id, []).append({"name": t.name, "status": t.status})
     return locks
 
 
@@ -86,13 +86,8 @@ def _check_engine_locked(engine_id: str, request: Request) -> None:
     ts: TournamentStore = getattr(request.app.state, "tournament_store", None)
     if ts is None:
         return
-    reg = _registry(request)
-    try:
-        e = reg.get(engine_id)
-    except EngineNotFoundError:
-        return
     locks = _engine_locks(request)
-    refs = locks.get(e.path, [])
+    refs = locks.get(engine_id, [])
     if refs:
         names = ", ".join(f"{r['name']} ({r['status']})" for r in refs)
         raise HTTPException(status_code=409, detail=f"engine in use by: {names}")
@@ -130,7 +125,7 @@ async def list_engines(request: Request) -> dict:
     for e in reg.list():
         e = await _ensure_schema(reg, e)
         d = _serialize(e)
-        d["locked"] = locks.get(e.path, [])
+        d["locked"] = locks.get(e.id, [])
         out.append(d)
     return {
         "engines": out,

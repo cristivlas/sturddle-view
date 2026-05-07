@@ -288,7 +288,7 @@ def running_app(tmp_path, monkeypatch):
     with TestClient(app) as c:
         t = c.post("/api/tournaments", json={
             "name": "t",
-            "engines": [{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
+            "engines": [{"id": "id-A", "name": "A", "cmd": "/bin/A"}, {"id": "id-B", "name": "B", "cmd": "/bin/B"}],
         }).json()
         c.post(f"/api/tournaments/{t['id']}/start")
         yield c, app

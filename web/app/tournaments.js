@@ -828,15 +828,15 @@ export function mountTournaments({ container, api, events, log, token }) {
     }
 
     // Resolve the tournament's current engines to registry entries so the
-    // builder can preselect them. Prefer name match (canonical key for the
-    // registry); fall back to cmd so a renamed entry still preselects.
+    // builder can preselect them. Prefer id match; fall back to name then cmd.
+    const byId   = new Map(available.map((e) => [e.id,   e]));
     const byName = new Map(available.map((e) => [e.name, e]));
-    const byCmd = new Map(available.map((e) => [e.cmd, e]));
+    const byCmd  = new Map(available.map((e) => [e.path, e]));
     const original = t.engines || [];
     const initialEngines = [];
     let droppedCount = 0;
     for (const e of original) {
-      const match = byName.get(e.name) || byCmd.get(e.cmd);
+      const match = byId.get(e.id) || byName.get(e.name) || byCmd.get(e.cmd);
       if (match) initialEngines.push(match);
       else droppedCount += 1;
     }
@@ -1219,7 +1219,7 @@ function mountEngineBuilder({ host, available, initial = [] }) {
     getEngines() {
       return pickedIds.map((id) => {
         const e = byId.get(id);
-        return { name: e.name, cmd: e.path };
+        return { id, name: e.name, cmd: e.path };
       });
     },
     getPickedRegistry() {
