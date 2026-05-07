@@ -152,8 +152,14 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       ? "sturddle-wb sturddle-wb-live sturddle-wb-live-game no-full"
       : "sturddle-wb sturddle-wb-live sturddle-wb-live-proxy no-full",
   });
-  if (top > 0 && wb.y < top) wb.move(wb.x, top);
-  if (left > 0 && wb.x < left) wb.move(left, wb.y);
+  const clampToViewport = () => {
+    const maxX = Math.max(left, window.innerWidth  - wb.width);
+    const maxY = Math.max(top,  window.innerHeight - wb.height);
+    const cx = Math.min(Math.max(wb.x, left), maxX);
+    const cy = Math.min(Math.max(wb.y, top),  maxY);
+    if (cx !== wb.x || cy !== wb.y) wb.move(cx, cy);
+  };
+  clampToViewport();
   if (avoidRect) avoidOverlap(wb, avoidRect, top, left, idx * 24);
   // WinBox doesn't expose its config minwidth/minheight as instance fields;
   // stash them so the workspace's tile() can clamp.
