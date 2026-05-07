@@ -301,7 +301,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const wLabel = info.sideA === "white" ? info.engineA : info.engineB;
       const bLabel = info.sideA === "white" ? info.engineB : info.engineA;
       li.innerHTML = `
-        <span class="wb-sched-icon">♟</span>
+        <span class="wb-sched-icon">&#9822;</span>
         <span class="wb-sched-game">${escapeHtml(wLabel)} – ${escapeHtml(bLabel)}</span>
       `;
       const btn = document.createElement("button");
