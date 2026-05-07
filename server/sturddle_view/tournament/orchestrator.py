@@ -759,17 +759,17 @@ class Orchestrator:
                             pair_id[:8],
                             self._proxy_engine_names.get(
                                 pid_a if state_a[1] == "white" else pid_b, "?"),
-                            (pid_a if state_a[1] == "white" else pid_b)[:8],
+                            (pid_a if state_a[1] == "white" else pid_b),
                             self._proxy_engine_names.get(
                                 pid_b if state_a[1] == "white" else pid_a, "?"),
-                            (pid_b if state_a[1] == "white" else pid_a)[:8],
+                            (pid_b if state_a[1] == "white" else pid_a),
                             len(self._pair_proxies),
                         )
                 elif name_a and name_b and name_a == name_b and _DEBUG_PAIRING:
                     log.info(
                         "pair candidate rejected (same engine name): "
                         "%s(%s) vs %s(%s) -- phantom from book-line collision",
-                        name_a, pid_a[:8], name_b, pid_b[:8],
+                        name_a, pid_a, name_b, pid_b,
                     )
             elif _DEBUG_PAIRING:
                 fen = (self._pairing_state.get(next(iter(group))) or ("?",))[0]
@@ -777,7 +777,7 @@ class Orchestrator:
                     "pairing: ambiguous size=%d fen=%.30s %s",
                     len(group),
                     fen,
-                    [(p[:8], self._proxy_engine_names.get(p, "?")) for p in group],
+                    [(p, self._proxy_engine_names.get(p, "?")) for p in group],
                 )
 
         orphaned: set[str] = set()
@@ -788,7 +788,7 @@ class Orchestrator:
         if orphaned and _DEBUG_PAIRING:
             log.info(
                 "pairing: orphaned %s",
-                [(p[:8], self._proxy_engine_names.get(p, "?")) for p in orphaned],
+                [(p, self._proxy_engine_names.get(p, "?")) for p in orphaned],
             )
 
         return new_pairs, orphaned
@@ -807,7 +807,7 @@ class Orchestrator:
                 log.warning(
                     "pairing: bucket >2 fen=%s entries=%s",
                     fen,
-                    [(pid[:8], s) for pid, s in bucket],
+                    [(pid, s) for pid, s in bucket],
                 )
         return self._recompute_groups()
 

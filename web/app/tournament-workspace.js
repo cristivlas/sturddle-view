@@ -401,12 +401,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       } else if (inner === KIND.PROXY_PAIRED) {
         const a = e.payload?.engine_a || "?";
         const b = e.payload?.engine_b || "?";
-        const pa = (e.payload?.proxy_a || "").slice(0, 8);
-        const pb = (e.payload?.proxy_b || "").slice(0, 8);
+        const pa = e.payload?.proxy_a || "";
+        const pb = e.payload?.proxy_b || "";
         parts.push(inner, `${a}(${pa}) vs ${b}(${pb})`);
       } else if (inner === KIND.PROXY_UNPAIRED) {
-        const pa = (e.payload?.proxy_id || "").slice(0, 8);
-        const pb = (e.payload?.peer_id  || "").slice(0, 8);
+        const pa = e.payload?.proxy_id || "";
+        const pb = e.payload?.peer_id  || "";
         parts.push(inner, pa, pb);
       } else if (inner === KIND.PROXY_STARTED) {
         parts.push(inner);
