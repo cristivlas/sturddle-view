@@ -165,11 +165,6 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   // stash them so the workspace's tile() can clamp.
   wb.svMinWidth = LIVE_MIN_WIDTH;
   wb.svMinHeight = LIVE_MIN_HEIGHT;
-  // Attach type and resolution state -- the workspace's selective
-  // close-on-terminal logic uses these to keep finished game-id
-  // windows (real banner) and discard proxy-id / unresolved ones.
-  wb.svAttachType = gameId ? "game" : "proxy";
-  wb.svResolved = false;
   liveWindows.set(windowKey, wb);
   requestAnimationFrame(() => flashWindow(wb));
 
@@ -219,7 +214,6 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   wb.onclose = () => {
     wbClosed = true;
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-    if (flashTimer) { clearTimeout(flashTimer); flashTimer = null; }
     if (ws) try { ws.close(); } catch { /* */ }
     ro.disconnect();
     liveWindows.delete(windowKey);
@@ -267,12 +261,6 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     } catch {
       return;
     }
-    // Engine Instance windows: flash a neutral "game" delimiter on
-    // ucinewgame. Banner text is intentionally tense-neutral because
-    // board animations are async -- we can't promise the new position.
-    if (!gameId && msg.line && msg.line.trimStart().startsWith("ucinewgame")) {
-      flashNewGame();
-    }
     if (msg.ended) {
       // Late-attach race: sentinel arrived before any position. The
       // window has nothing to show — auto-close instead of leaving a
@@ -286,10 +274,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       // game-id WS sends result + termination on dissolution => banner.
       // proxy-id WS sends bare {ended:true} when the engine process
       // exits (typically tournament shutdown) => quiet status text.
-      // svResolved flips only for real results (not "*" force-dissolve).
       if (msg.result) {
         showResult(msg.result, msg.termination);
-        if (msg.result !== "*") wb.svResolved = true;
       } else {
         statusEl.textContent = "engine exited";
       }
@@ -428,20 +414,6 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     statusEl.textContent = term ? `${score} · ${term}` : score;
   }
 
-  // Transient between-games delimiter for Engine Instance windows.
-  // No result/termination shown: fastchess emits Finished N out of
-  // order vs per-proxy timeline, so it would be stale. See spec.
-  let flashTimer = null;
-  function flashNewGame(durationMs = 1800) {
-    resultScoreEl.textContent = "game";
-    resultTerminationEl.textContent = "";
-    resultOverlayEl.hidden = false;
-    if (flashTimer) clearTimeout(flashTimer);
-    flashTimer = setTimeout(() => {
-      resultOverlayEl.hidden = true;
-      flashTimer = null;
-    }, durationMs);
-  }
 
   function pvArrowMove(p) {
     if (!p.pv || !p.pv.length) return null;
@@ -532,39 +504,11 @@ export function closeAllLiveGames() {
   liveWindows.clear();
 }
 
-// TODO (UX): revisit the auto-close policy. Three options were on the
-// table when this landed:
-//   1. close-nothing: never auto-close any live windows; user owns
-//      them entirely. Simpler code (drop svAttachType / svResolved /
-//      isStaleLiveWindow). Downside: clutter accumulates over a long
-//      session, esp. concurrency=8 with multiple attaches per game.
-//   2. close-all: always close all live windows on terminal/switch.
-//      Loses the final-result banner the user might be reviewing.
-//   3. (current) close-stale: close proxy-id and unresolved game-id;
-//      keep resolved game-id windows. Compromise.
-// Reassess after real usage; pick whichever feels right and prune
-// the unused state if we move to (1) or (2).
-function isStaleLiveWindow(wb) {
-  return wb.svAttachType === "proxy" || !wb.svResolved;
-}
-
-// Close proxy-id windows (always transient) and game-id windows that
-// never received a real result (force-dissolved with "*"). Resolved
-// game-id windows stay open so the user can review the final banner.
+// Close all live windows on terminal/switch. Result/termination is
+// always UNKNOWN today, so there's nothing to review post-game.
 export function closeStaleLiveGames() {
   for (const [key, wb] of [...liveWindows.entries()]) {
-    if (isStaleLiveWindow(wb)) {
-      try { wb.close(true); } catch { /* */ }
-      liveWindows.delete(key);
-    }
+    try { wb.close(true); } catch { /* */ }
+    liveWindows.delete(key);
   }
-}
-
-// True if any live window would be closed by closeStaleLiveGames.
-// Used to decide whether tournament-switch needs a confirm prompt.
-export function hasStaleLiveGames() {
-  for (const wb of liveWindows.values()) {
-    if (isStaleLiveWindow(wb)) return true;
-  }
-  return false;
 }
