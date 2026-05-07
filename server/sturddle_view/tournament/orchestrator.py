@@ -146,14 +146,12 @@ class CoalescingQueue:
             self._try_put(held)
 
     def put_other(self, payload: dict) -> None:
-        # Flush pending infos first so order is preserved.
-        proxy_id = payload.get("proxy_id", "")
-        if proxy_id in self._slots:
-            timer = self._timers.pop(proxy_id, None)
-            if timer is not None:
-                timer.cancel()
-            held = self._slots.pop(proxy_id)
-            self._try_put(held)
+        # Flush ALL pending infos first (across both own + paired
+        # engines) so a non-info event like position/bestmove can't be
+        # overtaken by a stale info that's still sitting in another
+        # proxy's coalescing slot. See bug: stale paired-info arrows
+        # redrawn after the board updated.
+        self._flush_all_slots()
         self._try_put(payload)
 
     def put_sentinel(self, payload: dict) -> None:
