@@ -11,6 +11,8 @@ See `docs/tournament-spec.md` § "Pair lifecycle" for the design.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from sturddle_view.tournament.orchestrator import (
@@ -258,3 +260,54 @@ async def test_dissolve_all_pairs_drains_open_pairs(orch, emitted):
     assert finished[0]["result"] == _RESULT_UNKNOWN
     assert finished[0]["termination"] == _TERMINATION_UNKNOWN
     assert not orch._pair_proxies
+
+
+# ---------------------------------------------------------------------------
+# Subscriber edge cases
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_subscribe_to_dissolved_pair_returns_sentinel(orch):
+    """User clicks Watch as a game ends: WS subscribes after dissolve.
+    Must immediately push the `ended` sentinel so the handler closes
+    the WS instead of leaving a stuck startpos window."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+    pair_id = next(iter(orch._pair_proxies))
+    await orch.ingest_proxy_lines(_PROXY_A, ["ucinewgame"])
+    assert pair_id not in orch._pair_proxies
+
+    q = orch.subscribe_to_game(pair_id)
+
+    msg = q.get_nowait()
+    assert msg["ended"] is True
+
+
+@pytest.mark.asyncio
+async def test_dissolve_sentinel_survives_full_queue(orch):
+    """Game-WS queue can fill under fast TC + slow consumer. The
+    terminal sentinel must still land — eviction policy drops oldest."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+    pair_id = next(iter(orch._pair_proxies))
+    q = orch.subscribe_to_game(pair_id)
+    # Saturate the queue (maxsize=512).
+    while True:
+        try:
+            q.put_nowait({"filler": True})
+        except asyncio.QueueFull:
+            break
+
+    await orch.ingest_proxy_lines(_PROXY_A, ["ucinewgame"])
+
+    # Drain to find the sentinel — it should be present.
+    found = False
+    while not q.empty():
+        msg = q.get_nowait()
+        if msg.get("ended"):
+            found = True
+            break
+    assert found, "ended sentinel evicted instead of landing"

@@ -989,10 +989,22 @@ class Orchestrator:
         proxy subscriber but is closed (via ``{ended: True}`` sentinel)
         when the pair dissolves, not when the proxy session ends."""
         q: asyncio.Queue = asyncio.Queue(maxsize=512)
+        proxies = self._pair_proxies.get(pair_id)
+        if not proxies:
+            # Pair already dissolved before this subscriber attached
+            # (race: user clicks Watch as the game ends). Push the
+            # sentinel immediately so the WS handler closes cleanly
+            # instead of leaving a stuck window.
+            q.put_nowait({
+                "proxy_id": "",
+                "ended": True,
+                "result": _RESULT_UNKNOWN,
+                "termination": _TERMINATION_UNKNOWN,
+            })
+            return q
         self._game_subscribers.setdefault(pair_id, set()).add(q)
         # Replay snapshot for both proxies so a late subscriber gets
         # instant board state without waiting for the next UCI event.
-        proxies = self._pair_proxies.get(pair_id, frozenset())
         for pid in proxies:
             snap = self._proxy_snapshot.get(pid)
             if snap:
