@@ -76,20 +76,116 @@ _RESULT_UNKNOWN = "*"
 _TERMINATION_UNKNOWN = "unknown"
 
 
-def _fanout(subs: set[asyncio.Queue], payload: dict) -> None:
-    """Slow-consumer policy: drop oldest, keep newest."""
+def _fanout(subs: "set[CoalescingQueue]", payload: dict) -> None:
+    """Route a payload to all subscribers. `info` lines coalesce per
+    proxy (latest wins, flushed on timer or on next non-info); other
+    lines drain pending infos first, then enqueue with eviction-as-
+    fallback so terminal frames can't be silently lost."""
+    is_info = isinstance(payload.get("line"), str) and payload["line"].lstrip().startswith("info ")
     for q in list(subs):
+        if is_info:
+            q.put_info(payload)
+        else:
+            q.put_other(payload)
+
+
+# Time-based info coalescing window. Slow TCs (engines emit info every
+# few hundred ms) see every info because the timer flushes between
+# arrivals. Fast TCs (sub-100ms info cadence) collapse to the latest,
+# bounding queue pressure.
+_INFO_COALESCE_MS = 100
+
+
+class CoalescingQueue:
+    """Per-subscriber wrapper around ``asyncio.Queue`` with per-proxy
+    info coalescing. Non-info events flush pending info first to
+    preserve order. The terminal sentinel uses ``put_sentinel`` which
+    evicts oldest on QueueFull so it always lands."""
+
+    __slots__ = ("_q", "_slots", "_timers", "_loop")
+
+    def __init__(self, maxsize: int) -> None:
+        self._q: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
+        self._slots: dict[str, dict] = {}
+        self._timers: dict[str, asyncio.TimerHandle] = {}
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def _ensure_loop(self) -> asyncio.AbstractEventLoop:
+        if self._loop is None:
+            self._loop = asyncio.get_running_loop()
+        return self._loop
+
+    def _try_put(self, payload: dict) -> None:
         try:
-            q.put_nowait(payload)
+            self._q.put_nowait(payload)
+        except asyncio.QueueFull:
+            pass
+
+    def put_info(self, payload: dict) -> None:
+        proxy_id = payload.get("proxy_id", "")
+        self._slots[proxy_id] = payload
+        if proxy_id in self._timers:
+            return
+        loop = self._ensure_loop()
+        self._timers[proxy_id] = loop.call_later(
+            _INFO_COALESCE_MS / 1000, self._flush_slot, proxy_id,
+        )
+
+    def _flush_slot(self, proxy_id: str) -> None:
+        self._timers.pop(proxy_id, None)
+        held = self._slots.pop(proxy_id, None)
+        if held is not None:
+            self._try_put(held)
+
+    def _flush_all_slots(self) -> None:
+        for proxy_id in list(self._slots.keys()):
+            timer = self._timers.pop(proxy_id, None)
+            if timer is not None:
+                timer.cancel()
+            held = self._slots.pop(proxy_id)
+            self._try_put(held)
+
+    def put_other(self, payload: dict) -> None:
+        # Flush pending infos first so order is preserved.
+        proxy_id = payload.get("proxy_id", "")
+        if proxy_id in self._slots:
+            timer = self._timers.pop(proxy_id, None)
+            if timer is not None:
+                timer.cancel()
+            held = self._slots.pop(proxy_id)
+            self._try_put(held)
+        self._try_put(payload)
+
+    def put_sentinel(self, payload: dict) -> None:
+        # Terminal frame: flush all pending, then enqueue with eviction
+        # so the sentinel always lands.
+        self._flush_all_slots()
+        try:
+            self._q.put_nowait(payload)
         except asyncio.QueueFull:
             try:
-                q.get_nowait()
+                self._q.get_nowait()
             except asyncio.QueueEmpty:
                 pass
             try:
-                q.put_nowait(payload)
+                self._q.put_nowait(payload)
             except asyncio.QueueFull:
                 pass
+
+    async def get(self) -> dict:
+        return await self._q.get()
+
+    def get_nowait(self) -> dict:
+        return self._q.get_nowait()
+
+    def empty(self) -> bool:
+        return self._q.empty()
+
+    def cancel_timers(self) -> None:
+        for t in self._timers.values():
+            t.cancel()
+        self._timers.clear()
+        self._slots.clear()
 
 
 def wrap_event_for_bus(kind: str, payload: dict) -> dict:
@@ -133,7 +229,7 @@ class Orchestrator:
 
         # Slice 9b: live observation pipeline. WS subscribers attach
         # per-proxy and receive that engine's UCI line stream.
-        self._proxy_subscribers: dict[str, set[asyncio.Queue]] = {}
+        self._proxy_subscribers: dict[str, set[CoalescingQueue]] = {}
         # Display name reported by each proxy on session start. Used to
         # label rows / buttons in the workspace UI. Cleared on session
         # end and on tournament teardown.
@@ -179,7 +275,7 @@ class Orchestrator:
         self._pair_white: dict[str, str] = {}
         # WS subscribers keyed by pair_id. Same lifecycle as proxy subscribers
         # but scoped to the game: sentinel sent when the pair is dissolved.
-        self._game_subscribers: dict[str, set[asyncio.Queue]] = {}
+        self._game_subscribers: dict[str, set[CoalescingQueue]] = {}
         # Per-tournament secret embedded in the proxy --broadcast-url so
         # only proxies belonging to the active tournament can post.
         # Cleared on tournament termination.
@@ -531,7 +627,7 @@ class Orchestrator:
         for line in lines:
             stripped = line.lstrip()
             parsed: dict | None = None
-            paired_subs: set[asyncio.Queue] = set()
+            paired_subs: set[CoalescingQueue] = set()
             thinking_side: str | None = None
 
             if stripped.startswith("position "):
@@ -834,18 +930,8 @@ class Orchestrator:
                 "termination": termination,
             }
             for q in game_subs:
-                # Terminal frame must land. If queue is full, drop oldest.
-                try:
-                    q.put_nowait(sentinel)
-                except asyncio.QueueFull:
-                    try:
-                        q.get_nowait()
-                    except asyncio.QueueEmpty:
-                        pass
-                    try:
-                        q.put_nowait(sentinel)
-                    except asyncio.QueueFull:
-                        pass
+                q.put_sentinel(sentinel)
+                q.cancel_timers()
         # TODO: `proxy_unpaired` is redundant with `game_finished` — same
         # trigger, overlapping payload. Kept for now as a debug signal.
         await self._emit("proxy_unpaired", {
@@ -882,13 +968,13 @@ class Orchestrator:
 
     def _paired_subscribers(
         self, proxy_id: str, fen: str, side: str
-    ) -> set[asyncio.Queue]:
+    ) -> "set[CoalescingQueue]":
         """WS queues of opposite-color proxies at ``fen`` (the waiter)."""
         bucket = self._pairing_map.get(fen)
         if not bucket:
             return set()
         target_side = _opposite_side(side)
-        out: set[asyncio.Queue] = set()
+        out: set[CoalescingQueue] = set()
         for pid, s in bucket:
             if pid == proxy_id or s != target_side:
                 continue
@@ -941,18 +1027,15 @@ class Orchestrator:
         subs = self._proxy_subscribers.pop(proxy_id, None)
         if subs:
             for q in subs:
-                # Sentinel: signal end of stream to subscribers.
-                try:
-                    q.put_nowait({"proxy_id": proxy_id, "ended": True})
-                except asyncio.QueueFull:
-                    pass
+                q.put_sentinel({"proxy_id": proxy_id, "ended": True})
+                q.cancel_timers()
         await self._emit("proxy_ended", {
             "tournament_id": self._active_id,
             "proxy_id": proxy_id,
         })
         await self._emit_group_events(new_pairs, orphaned)
 
-    def subscribe_to_proxy(self, proxy_id: str) -> asyncio.Queue:
+    def subscribe_to_proxy(self, proxy_id: str) -> CoalescingQueue:
         """WS handler calls this; returns a bounded queue that receives
         per-line dicts ``{proxy_id, line}`` and a final
         ``{proxy_id, ended: True}`` when the proxy session ends.
@@ -961,7 +1044,7 @@ class Orchestrator:
         ``go`` / ``info``) onto the queue so a window opened mid-game
         gets an instant render of the engine's state instead of having
         to wait for the engine's next event (≥10s under long TC)."""
-        q: asyncio.Queue = asyncio.Queue(maxsize=512)
+        q = CoalescingQueue(maxsize=512)
         self._proxy_subscribers.setdefault(proxy_id, set()).add(q)
         snap = self._proxy_snapshot.get(proxy_id)
         if snap:
@@ -969,33 +1052,37 @@ class Orchestrator:
                 line = snap.get(kind)
                 if line is None:
                     continue
-                try:
-                    q.put_nowait({"proxy_id": proxy_id, "line": line})
-                except asyncio.QueueFull:
-                    pass
+                # Snapshot replay bypasses coalescing — these are all
+                # the latest values already, no benefit to slotting.
+                payload = {"proxy_id": proxy_id, "line": line}
+                if kind == "info":
+                    q.put_info(payload)
+                else:
+                    q.put_other(payload)
         return q
 
-    def unsubscribe_from_proxy(self, proxy_id: str, queue: asyncio.Queue) -> None:
+    def unsubscribe_from_proxy(self, proxy_id: str, queue: CoalescingQueue) -> None:
         subs = self._proxy_subscribers.get(proxy_id)
         if subs is not None:
             subs.discard(queue)
             if not subs:
                 self._proxy_subscribers.pop(proxy_id, None)
+        queue.cancel_timers()
 
-    def subscribe_to_game(self, pair_id: str) -> asyncio.Queue:
+    def subscribe_to_game(self, pair_id: str) -> CoalescingQueue:
         """WS handler calls this for game-scoped subscriptions.
 
         The queue receives the same ``{proxy_id, line}`` payloads as the
         proxy subscriber but is closed (via ``{ended: True}`` sentinel)
         when the pair dissolves, not when the proxy session ends."""
-        q: asyncio.Queue = asyncio.Queue(maxsize=512)
+        q = CoalescingQueue(maxsize=512)
         proxies = self._pair_proxies.get(pair_id)
         if not proxies:
             # Pair already dissolved before this subscriber attached
             # (race: user clicks Watch as the game ends). Push the
             # sentinel immediately so the WS handler closes cleanly
             # instead of leaving a stuck window.
-            q.put_nowait({
+            q.put_sentinel({
                 "proxy_id": "",
                 "ended": True,
                 "result": _RESULT_UNKNOWN,
@@ -1011,27 +1098,26 @@ class Orchestrator:
                 for kind in ("position", "go", "info"):
                     raw = snap.get(kind)
                     if raw:
-                        try:
-                            q.put_nowait({"proxy_id": pid, "line": raw,
-                                          "parsed": parse_uci_line(raw)})
-                        except asyncio.QueueFull:
-                            pass
+                        payload = {"proxy_id": pid, "line": raw,
+                                   "parsed": parse_uci_line(raw)}
+                        if kind == "info":
+                            q.put_info(payload)
+                        else:
+                            q.put_other(payload)
         return q
 
-    def unsubscribe_from_game(self, pair_id: str, queue: asyncio.Queue) -> None:
+    def unsubscribe_from_game(self, pair_id: str, queue: CoalescingQueue) -> None:
         subs = self._game_subscribers.get(pair_id)
         if subs is not None:
             subs.discard(queue)
             if not subs:
                 self._game_subscribers.pop(pair_id, None)
+        queue.cancel_timers()
 
     def _close_all_proxy_subscribers(self) -> None:
         """End-of-tournament cleanup — wake all subscribers with the
         ended sentinel and drop the subscription table."""
         for proxy_id, subs in list(self._proxy_subscribers.items()):
             for q in subs:
-                try:
-                    q.put_nowait({"proxy_id": proxy_id, "ended": True})
-                except asyncio.QueueFull:
-                    pass
+                q.put_sentinel({"proxy_id": proxy_id, "ended": True})
         self._proxy_subscribers.clear()

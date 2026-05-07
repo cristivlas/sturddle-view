@@ -411,7 +411,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     // result is "1-0" | "0-1" | "1/2-1/2" | "*" | null/undefined.
     // termination may be "unknown" when the orchestrator can't infer
     // it (today: always, since dissolution carries no fastchess result).
-    const score = (result && result !== "*") ? result : "ended";
+    const score = (result && result !== "*") ? result : "game ended";
     const term = (termination && termination !== "unknown") ? termination : "";
     resultScoreEl.textContent = score;
     resultTerminationEl.textContent = term;

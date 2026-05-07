@@ -286,6 +286,91 @@ async def test_subscribe_to_dissolved_pair_returns_sentinel(orch):
 
 
 @pytest.mark.asyncio
+async def test_info_burst_coalesces_to_latest(orch):
+    """Fast TC: many infos arrive within the coalesce window. The
+    queue receives only the latest — earlier infos are overwritten in
+    the slot before the timer fires. Non-info events are unaffected."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+    pair_id = next(iter(orch._pair_proxies))
+    q = orch.subscribe_to_game(pair_id)
+    while not q.empty():
+        q.get_nowait()
+
+    # Burst of 5 infos within the coalesce window (well under 100ms).
+    await orch.ingest_proxy_lines(_PROXY_A, [
+        "info depth 10 score cp 10 pv e2e4",
+        "info depth 11 score cp 15 pv e2e4",
+        "info depth 12 score cp 20 pv e2e4",
+        "info depth 13 score cp 25 pv e2e4",
+        "info depth 14 score cp 30 pv e2e4",
+    ])
+    await asyncio.sleep(0.15)
+
+    items = []
+    while not q.empty():
+        items.append(q.get_nowait())
+    infos = [m for m in items if isinstance(m.get("line"), str)
+             and m["line"].lstrip().startswith("info ")]
+    assert len(infos) == 1
+    assert "depth 14" in infos[0]["line"]
+
+
+@pytest.mark.asyncio
+async def test_slow_info_flushes_each_through(orch):
+    """Slow TC: infos arrive far apart. Each one flushes via the timer
+    before the next arrives, so the queue receives every one."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+    pair_id = next(iter(orch._pair_proxies))
+    q = orch.subscribe_to_game(pair_id)
+    while not q.empty():
+        q.get_nowait()
+
+    for cp in (10, 20, 30):
+        await orch.ingest_proxy_lines(_PROXY_A, [
+            f"info depth 12 score cp {cp} pv e2e4",
+        ])
+        # Wait past the coalesce window so the slot flushes.
+        await asyncio.sleep(0.15)
+
+    items = []
+    while not q.empty():
+        items.append(q.get_nowait())
+    infos = [m for m in items if isinstance(m.get("line"), str)
+             and m["line"].lstrip().startswith("info ")]
+    assert len(infos) == 3
+
+
+@pytest.mark.asyncio
+async def test_non_info_event_flushes_pending_info(orch):
+    """A non-info event must drain the slot first so order is preserved."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+    pair_id = next(iter(orch._pair_proxies))
+    q = orch.subscribe_to_game(pair_id)
+    while not q.empty():
+        q.get_nowait()
+
+    # Info, then bestmove (non-info) before the coalesce timer fires.
+    await orch.ingest_proxy_lines(_PROXY_A, [
+        "info depth 12 score cp 50 pv e2e4",
+        "bestmove e2e4",
+    ])
+
+    items = []
+    while not q.empty():
+        items.append(q.get_nowait())
+    lines = [m["line"] for m in items if isinstance(m.get("line"), str)]
+    info_idx = next(i for i, ln in enumerate(lines) if ln.startswith("info "))
+    bestmove_idx = next(i for i, ln in enumerate(lines) if ln.startswith("bestmove "))
+    assert info_idx < bestmove_idx
+
+
+@pytest.mark.asyncio
 async def test_dissolve_sentinel_survives_full_queue(orch):
     """Game-WS queue can fill under fast TC + slow consumer. The
     terminal sentinel must still land — eviction policy drops oldest."""
@@ -297,7 +382,7 @@ async def test_dissolve_sentinel_survives_full_queue(orch):
     # Saturate the queue (maxsize=512).
     while True:
         try:
-            q.put_nowait({"filler": True})
+            q._q.put_nowait({"filler": True})
         except asyncio.QueueFull:
             break
 
