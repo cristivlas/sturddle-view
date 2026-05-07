@@ -2,8 +2,9 @@
 // plus on-demand Live Game windows (one per engine POV).
 //
 // State: one workspace per tab; opening a different tournament closes the
-// prior one. User-closed windows do not auto-reopen on events. Layout
-// (position/size) persisted per-window in localStorage.
+// prior one. Desktop state (open windows, position, size, min/max, z-order)
+// is snapshotted at the explicit save points (close / closeAll / finalize)
+// and restored on re-open. WinBox events are not monitored continuously.
 //
 // Data flow:
 //   GET /api/tournaments/{id} on open → seed standings + schedule.
@@ -16,7 +17,7 @@ import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { toast } from "./dialogs.js";
 import { escapeHtml, flashWindow } from "./wb-utils.js";
 
-const STORAGE_KEY = "sturddle:tournament-workspace-layout";
+const STORAGE_KEY_PREFIX = "sturddle:workspace:";
 const POLL_INTERVAL_MS = 5000;
 const EVENT_LOG_LIMIT = 500;
 
@@ -30,23 +31,38 @@ const DEFAULT_LAYOUT = {
 };
 
 
-function loadLayout() {
+function loadState(id) {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...DEFAULT_LAYOUT };
-    const parsed = JSON.parse(raw);
-    return { ...DEFAULT_LAYOUT, ...parsed };
+    const raw = localStorage.getItem(STORAGE_KEY_PREFIX + id);
+    return raw ? JSON.parse(raw) : null;
   } catch {
-    return { ...DEFAULT_LAYOUT };
+    return null;
   }
 }
 
-function saveLayout(layout) {
+function saveState(id, state) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
+    localStorage.setItem(STORAGE_KEY_PREFIX + id, JSON.stringify(state));
   } catch {
     // Storage may be disabled (private mode quotas); best-effort.
   }
+}
+
+function hasOpenWindows(state) {
+  return state !== null &&
+    Object.entries(state).some(([k, v]) => k !== "_closed" && v?.open);
+}
+
+// Restorable: snapshot has open windows AND was not explicitly dismissed.
+// Navigation uses this to decide whether to reopen.
+export function hasSavedWorkspaceState(id) {
+  const s = loadState(id);
+  return s !== null && !s._closed && hasOpenWindows(s);
+}
+
+// Distinguishes "brand-new tournament" from "explicitly dismissed".
+export function hasAnyDesktopState(id) {
+  return loadState(id) !== null;
 }
 
 
@@ -64,7 +80,19 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     activeWorkspace = null;
   }
 
-  const layout = loadLayout();
+  const savedState = loadState(tournament.id);
+  // Restore-from-snapshot when there's any open window in the snapshot,
+  // regardless of _closed (the ribbon always restores; _closed only blocks
+  // navigation). lastGeometry holds last-known position/size per key so
+  // closed slots can carry geometry forward into the next snapshot.
+  const restoreFromSaved = hasOpenWindows(savedState);
+  const lastGeometry = {};
+  for (const key of Object.keys(DEFAULT_LAYOUT)) {
+    const s = savedState?.[key];
+    lastGeometry[key] = s
+      ? { x: s.x, y: s.y, width: s.width, height: s.height }
+      : { ...DEFAULT_LAYOUT[key] };
+  }
   let detail = null;
   const eventLog = [];
   // Server-stamped sequence numbers we've already added to eventLog.
@@ -73,6 +101,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   const seenSeqs = new Set();
   let pollTimer = null;
   let unsubscribe = null;
+  // True when close() / closeAll() drove the tear-down. Distinguishes from
+  // "user closed the last window manually" -- in that case finalize() is the
+  // one that writes the snapshot (with _closed=true).
+  let explicitlyClosed = false;
+  // Idempotency guard: tearDown can be reached via close() and again via the
+  // last onclose callback; finalize() must run exactly once.
+  let finalized = false;
   // proxy_id -> { engineName }
   const activeProxies = new Map();
   // proxy_id -> { pairId, proxyA, engineA, sideA, proxyB, engineB, sideB }
@@ -120,43 +155,28 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     log:       { minwidth: 280, minheight: 150 },
   };
 
-  function makeBox(key, title, body) {
-    const cfg = layout[key];
+  function makeBox(key, title, body, { min = false, max = false } = {}) {
+    const cfg = lastGeometry[key];
     const wb = new WinBox({
-      title,
-      x: cfg.x,
-      y: cfg.y,
-      width: cfg.width,
-      height: cfg.height,
-      top,
-      left,
-      mount: body,
+      title, mount: body, top, left, min, max,
+      x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height,
       class: "sturddle-wb no-full",
       ...MIN_SIZES[key],
     });
-    // Wire callbacks after construction so they can refer to `wb` itself
-    // (avoids a TDZ "cannot access wb before initialization" error from
-    // wiring them inside the constructor options object).
+    // Wire onclose after construction (TDZ on `wb` otherwise). No persist
+    // here -- state is captured at workspace.close()/closeAll()/finalize().
     wb.onclose = () => {
-      layout[key] = wb_currentLayout(wb);
-      saveLayout(layout);
+      lastGeometry[key] = wbGeometry(wb);
       windows[key] = null;
-      if (Object.values(windows).every((w) => w === null)) {
-        tearDown();
-      }
-      return false; // allow close
+      if (Object.values(windows).every((w) => w === null)) tearDown();
+      return false;
     };
-    wb.onresize = () => persistLayout(key, wb);
-    wb.onmove = () => persistLayout(key, wb);
     if (top > 0 && wb.y < top) wb.move(wb.x, top);
     if (left > 0 && wb.x < left) wb.move(left, wb.y);
     return wb;
   }
 
-  function wb_currentLayout(wb) {
-    // WinBox exposes width/height/x/y as numeric pixel values on the
-    // instance after construction. Persist as plain integers; on reload
-    // we'll convert back to "Npx" strings.
+  function wbGeometry(wb) {
     return {
       x: `${Math.round(wb.x)}px`,
       y: `${Math.round(wb.y)}px`,
@@ -165,9 +185,15 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     };
   }
 
-  function persistLayout(key, wb) {
-    layout[key] = wb_currentLayout(wb);
-    saveLayout(layout);
+  function snapshot() {
+    const state = {};
+    for (const key of Object.keys(windows)) {
+      const wb = windows[key];
+      state[key] = wb
+        ? { open: true, ...wbGeometry(wb), min: !!wb.min, max: !!wb.max, z: wb.index ?? 0 }
+        : { open: false, ...lastGeometry[key], min: false, max: false, z: 0 };
+    }
+    return state;
   }
 
   const windowSpecs = {
@@ -229,14 +255,24 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     },
   };
 
-  const windows = {
-    standings: makeBox("standings", windowSpecs.standings.title, standingsBody),
-    // Live Games opens only for running tournaments — there's nothing
-    // to render otherwise. Re-opens via the Window menu on demand.
-    schedule:  null,
-    engines:   null,
-    log:       null,
-  };
+  const windows = { standings: null, schedule: null, engines: null, log: null };
+  if (restoreFromSaved) {
+    // Recreate in saved z-order so the highest-z slot ends up topmost.
+    const openKeys = Object.keys(windows)
+      .filter(k => savedState[k]?.open)
+      .sort((a, b) => (savedState[a].z ?? 0) - (savedState[b].z ?? 0));
+    for (const key of openKeys) {
+      const s = savedState[key];
+      const spec = windowSpecs[key];
+      const body = spec.makeBody();
+      spec.setBody(body);
+      windows[key] = makeBox(key, spec.title, body, { min: s.min, max: s.max });
+      spec.postCreate?.(windows[key]);
+    }
+  } else {
+    // Default: standings only; initWorkspace opens more based on tournament status.
+    windows.standings = makeBox("standings", windowSpecs.standings.title, standingsBody);
+  }
 
   // ---- Rendering --------------------------------------------------------
 
@@ -547,8 +583,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       closeStaleLiveGames();
     }
     // Tournament started: auto-open Live Games so the user sees
-    // pairings as they form.
+    // pairings as they form. Skip if restoring a saved desktop state --
+    // the user may have intentionally closed that window.
     if (
+      !restoreFromSaved &&
       evt.kind === EVT.STATUS &&
       evt.payload?.status === STATUS.RUNNING &&
       windows.schedule == null
@@ -587,11 +625,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
   async function initWorkspace() {
     await Promise.all([refresh(), backfillEvents()]);
-    if (detail?.status === STATUS.RUNNING) {
-      openSystemWindow("schedule");
-    }
-    if (eventLog.length > 0 || detail?.status === STATUS.RUNNING) {
-      openSystemWindow("log");
+    if (!restoreFromSaved) {
+      if (detail?.status === STATUS.RUNNING) openSystemWindow("schedule");
+      if (eventLog.length > 0 || detail?.status === STATUS.RUNNING) openSystemWindow("log");
     }
   }
   initWorkspace();
@@ -632,16 +668,21 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   function finalize() {
+    if (finalized) return;
+    finalized = true;
     window.removeEventListener("sturddle:connection", onReconnect);
     window.removeEventListener("sturddle:livegame-closed", refreshWatchButtons);
     if (liveWatcherAttached) {
       window.removeEventListener("sturddle:livegame-closed", onLiveGameClosed);
       liveWatcherAttached = false;
     }
+    // User X-closed the last window: persist a dismissed snapshot so a
+    // future navigation does not auto-reopen the workspace.
+    if (!explicitlyClosed) {
+      saveState(tournament.id, { ...snapshot(), _closed: true });
+    }
     if (activeWorkspace === workspace) activeWorkspace = null;
-    // Notify the perspective so the Window menu re-syncs even when
-    // the user closed the last standard window via its X button
-    // (rather than the Close-all menu item).
+    // Re-sync the Window menu (the user may have closed via X, not the menu).
     window.dispatchEvent(new CustomEvent("sturddle:workspace-closed"));
   }
 
@@ -654,9 +695,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       unsubscribe();
       unsubscribe = null;
     }
-    // While watch windows are still open, keep this workspace "active"
-    // so the Window menu's Tile/Cascade/Close All can still operate on
-    // them. Defer finalization until the last live window closes.
+    // While live-game windows survive, keep the workspace "active" so the
+    // Window menu can still operate on them. Defer finalize until the last
+    // live window closes.
     if (getLiveWindows().length > 0) {
       if (!liveWatcherAttached) {
         window.addEventListener("sturddle:livegame-closed", onLiveGameClosed);
@@ -667,21 +708,28 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     finalize();
   }
 
-  function close() {
-    // Tournament-switch path: close standard windows and stale live
-    // windows (proxy-id attaches and unresolved game-id windows).
-    // Resolved game-id windows persist with their final banner so
-    // the user can still review them. tearDown() defers finalize()
-    // until the last surviving live window is closed manually. The
-    // menu's "Close all" (closeAll) closes everything unconditionally.
+  // Snapshot, mark explicit-close, force-close all standard windows,
+  // tear down. Used by both close() (navigate-away) and closeAll().
+  function dismissWindows({ markClosed }) {
+    const state = snapshot();
+    if (markClosed) state._closed = true;
+    saveState(tournament.id, state);
+    explicitlyClosed = true;
     for (const k of Object.keys(windows)) {
       if (windows[k]) {
-        windows[k].close(true); // skip the onclose callback's tearDown loop
+        windows[k].close(true);
         windows[k] = null;
       }
     }
     closeStaleLiveGames();
     tearDown();
+  }
+
+  // Tournament-switch path: snapshot stays restorable (no _closed). Stale
+  // live windows close; resolved game-id windows persist (final banner).
+  // tearDown() defers finalize until those finally close.
+  function close() {
+    dismissWindows({ markClosed: false });
   }
 
   function openWindows() {
@@ -725,9 +773,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     });
   }
 
+  // Window menu's Close All: explicit dismissal. Snapshot remains
+  // restorable via the ribbon, but _closed=true blocks navigation reopen.
   function closeAll() {
     closeAllLiveGames();
-    close();
+    dismissWindows({ markClosed: true });
   }
 
   function focus() {
