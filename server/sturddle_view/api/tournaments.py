@@ -21,9 +21,10 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..auth import require_token
+from ..engines import InvalidLaunchProfileError, validate_launch_profile
 from ..tournament.fastchess import FastchessRunner
 from ..tournament.orchestrator import Orchestrator, TournamentBusyError, wrap_event_for_bus
 from ..tournament.rescheck import RescheckError, check as rescheck_run
@@ -50,8 +51,29 @@ class EngineRef(BaseModel):
     id: str
     name: str
     cmd: str
-    args: str | None = None
+    # Per-engine launch profile. ``args`` accepts either the modern
+    # list[str] form (one literal argv element per entry) or the legacy
+    # single pre-joined string for older saved tournaments. ``env`` is
+    # an overlay applied on top of inherited env at engine spawn time.
+    args: list[str] | str | None = None
+    env: dict[str, str] = Field(default_factory=dict)
     dir: str | None = None
+
+    @field_validator("args", "env")
+    @classmethod
+    def _check_launch_profile(cls, v, info):
+        # Reuse the registry-layer validator so a direct tournament POST
+        # can't ship malformed argv/env that would only blow up at
+        # proxy spawn time. Legacy `args` as a single string is allowed
+        # through unchecked (validator only enforces list-form rules).
+        try:
+            if info.field_name == "args":
+                validate_launch_profile(v if isinstance(v, list) else None, None)
+            else:
+                validate_launch_profile(None, v)
+        except InvalidLaunchProfileError as e:
+            raise ValueError(str(e)) from e
+        return v
 
 
 class TournamentCreate(BaseModel):

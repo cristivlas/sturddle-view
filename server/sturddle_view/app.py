@@ -166,15 +166,15 @@ def _maybe_restore_game(app: FastAPI) -> None:
     state = s.game_store.load()
     if state is None:
         return
-    engine_path, engine_name, engine_options = resolve_selected(s.engines, s.settings)
-    if engine_path is None:
+    launch = resolve_selected(s.engines, s.settings)
+    if launch.path is None:
         log.warning(
             "saved game found but no engine is configured; "
             "register and select one to resume"
         )
         return
     hve = HumanVsEngine(
-        engine_path,
+        launch.path,
         s.event_bus,
         openings=s.openings,
         settings=s.settings,
@@ -184,8 +184,10 @@ def _maybe_restore_game(app: FastAPI) -> None:
     # Seed name + UCI options from the registry so a client reconnecting
     # before any move sees the same label, and the engine spawns with the
     # user's saved options on its first invocation.
-    hve.set_engine_name(engine_name)
-    hve.set_engine_options(engine_options)
+    hve.set_engine_name(launch.name)
+    hve.set_engine_options(launch.options)
+    hve.set_engine_args(launch.args)
+    hve.set_engine_env(launch.env)
     s.hve = hve
     log.info("restored saved game (%d plies)", len(state.moves_uci))
 

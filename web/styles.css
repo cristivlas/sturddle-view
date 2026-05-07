@@ -769,20 +769,11 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
   }
 }
 
-.engine-opt-form {
-  display: grid;
-  grid-template-columns: minmax(120px, max-content) 1fr;
-  gap: 8px 16px;
-  align-items: center;
-  max-height: 60vh;
-  overflow-y: auto;
-  padding: 4px 4px 4px 0;
-}
 .engine-opt-row { display: contents; }
 .engine-opt-label {
   font-size: 13px;
   color: var(--muted);
-  text-align: right;
+  text-align: left;
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
 .engine-opt-input { min-width: 0; }
@@ -792,6 +783,100 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
   align-items: center;
 }
 .engine-opt-path wa-input { flex: 1 1 auto; min-width: 0; }
+
+/* Engine settings dialog: pin the tab-group, panels, and inner forms
+   to the same fixed height so switching tabs can't reflow the dialog.
+   The wa-tab-panel sits in wa-tab-group's shadow DOM in a slot wrapper
+   that does NOT propagate ``height: 100%`` from its parent — without
+   an explicit panel height, the panel sizes to its content and the
+   wa-tab-group becomes the scroll surface, dragging the left rail.
+   Pinning every level to the same height keeps the form as the only
+   scroll container. The bottom padding on each form leaves clearance
+   for the dialog's footer button strip; the 4px elsewhere preserves
+   focus-ring space against the panel edge. */
+wa-dialog .engine-settings-tabs {
+  --engine-settings-panel-h: 40vh;
+  height: var(--engine-settings-panel-h);
+}
+wa-dialog .engine-settings-tabs wa-tab-panel {
+  height: var(--engine-settings-panel-h);
+  overflow: clip;
+}
+.engine-launch-form,
+.engine-opt-form {
+  max-height: var(--engine-settings-panel-h);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+  contain: layout paint;
+  padding: 4px 16px 28px 4px;
+}
+.engine-launch-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.engine-opt-form {
+  /* Grid layout the row class relies on (lives inside this form via
+     display: contents). */
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  gap: 8px 16px;
+  align-content: start;
+  align-items: center;
+}
+.engine-launch-section { display: flex; flex-direction: column; gap: 2px; }
+/* Hairline separator + breathing room above the second section. */
+.engine-launch-section-divided {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border, #34373d);
+}
+.engine-launch-section-hdr-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.engine-launch-section-hdr {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.engine-launch-help {
+  margin: 0 0 2px 0;
+  font-size: 12px;
+}
+.engine-launch-args-list,
+.engine-launch-env-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px;
+  min-width: 0;
+}
+.engine-launch-args-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+.engine-launch-env-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+/* Force the wa-input web components to fill their grid track instead
+   of sitting at their intrinsic ~280px width (which clips the second
+   env column and triggers a horizontal scrollbar at narrow widths). */
+.engine-launch-args-row wa-input,
+.engine-launch-env-row wa-input {
+  width: 100%;
+  min-width: 0;
+}
+.engine-launch-section-add { flex: 0 0 auto; }
 
 .engines-table-wrap {
   position: relative;

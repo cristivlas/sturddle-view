@@ -15,8 +15,10 @@ from ..engines import (
     Engine,
     EngineNotFoundError,
     EngineRegistry,
+    InvalidLaunchProfileError,
     probe_engine,
     resolve_selected,
+    validate_launch_profile,
 )
 from ..tournament.store import STATUS_DONE, TournamentStore
 
@@ -53,12 +55,33 @@ class EngineCreate(BaseModel):
     name: str | None = None
     path: str
     options: dict[str, Any] = {}
+    args: list[str] = []
+    env: dict[str, str] = {}
 
 
 class EngineUpdate(BaseModel):
     name: str | None = None
     path: str | None = None
     options: dict[str, Any] | None = None
+    args: list[str] | None = None
+    env: dict[str, str] | None = None
+
+
+class EngineProbe(BaseModel):
+    """Trial-spawn payload — does not touch the registry. Used by the
+    Engine Settings dialog to probe with the user's *in-progress* launch
+    profile (current path/args/env edits) before saving."""
+    path: str
+    args: list[str] = []
+    env: dict[str, str] = {}
+
+
+def _validate_launch(args: list[str] | None, env: dict[str, str] | None) -> None:
+    """Wrap the shared ``validate_launch_profile`` and re-raise as an HTTP 400."""
+    try:
+        validate_launch_profile(args, env)
+    except InvalidLaunchProfileError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 def _registry(request: Request) -> EngineRegistry:
@@ -137,7 +160,10 @@ async def list_engines(request: Request) -> dict:
 async def add_engine(payload: EngineCreate, request: Request) -> dict:
     reg = _registry(request)
     resolved_path = _validate_engine_path(payload.path)
-    uci_name, schema, probe_error = await probe_engine(resolved_path)
+    _validate_launch(payload.args, payload.env)
+    uci_name, schema, probe_error = await probe_engine(
+        resolved_path, args=list(payload.args), env=dict(payload.env),
+    )
     user_supplied = bool((payload.name or "").strip())
     name = (payload.name or "").strip() or uci_name or Path(resolved_path).name
     try:
@@ -146,6 +172,8 @@ async def add_engine(payload: EngineCreate, request: Request) -> dict:
             path=resolved_path,
             options=payload.options,
             option_schema=schema,
+            args=list(payload.args),
+            env=dict(payload.env),
             auto_suffix=not user_supplied,
         )
     except DuplicateEngineError as exc:
@@ -169,9 +197,15 @@ def update_engine(engine_id: str, payload: EngineUpdate, request: Request) -> di
     _check_engine_locked(engine_id, request)
     reg = _registry(request)
     new_path = _validate_engine_path(payload.path) if payload.path is not None else None
+    _validate_launch(payload.args, payload.env)
     try:
         e = reg.update(
-            engine_id, name=payload.name, path=new_path, options=payload.options
+            engine_id,
+            name=payload.name,
+            path=new_path,
+            options=payload.options,
+            args=payload.args,
+            env=payload.env,
         )
     except EngineNotFoundError as exc:
         raise HTTPException(status_code=404, detail="engine not found") from exc
@@ -201,24 +235,32 @@ async def select_engine(engine_id: str, request: Request) -> dict:
     s = request.app.state
     hve = getattr(s, "hve", None)
     if hve is not None:
-        path, name, options = resolve_selected(s.engines, s.settings)
-        if path is not None and hve.engine_path != path:
-            await hve.swap_engine(path)
-            hve.set_engine_name(name)
-            hve.set_engine_options(options)
+        launch = resolve_selected(s.engines, s.settings)
+        if launch.path is not None and hve.engine_path != launch.path:
+            await hve.swap_engine(launch.path)
+            hve.set_engine_name(launch.name)
+            hve.set_engine_options(launch.options)
+            hve.set_engine_args(launch.args)
+            hve.set_engine_env(launch.env)
     return {"selected_id": engine_id}
 
 
 @router.post("/{engine_id}/refresh-schema")
 async def refresh_engine_schema(engine_id: str, request: Request) -> dict:
-    """Re-spawn the engine to re-capture its UCI option list."""
+    """Re-spawn the engine to re-capture its UCI option list.
+
+    Uses the engine's *saved* launch profile (path/args/env). For probing
+    with in-progress edits before save, use POST /engines/probe.
+    """
     _check_engine_locked(engine_id, request)
     reg = _registry(request)
     try:
         e = reg.get(engine_id)
     except EngineNotFoundError as exc:
         raise HTTPException(status_code=404, detail="engine not found") from exc
-    _uci_name, schema, probe_error = await probe_engine(e.path)
+    _uci_name, schema, probe_error = await probe_engine(
+        e.path, args=list(e.args or []), env=dict(e.env or {}),
+    )
     if not schema:
         detail = "could not capture options from engine"
         if probe_error:
@@ -229,3 +271,22 @@ async def refresh_engine_schema(engine_id: str, request: Request) -> dict:
     except EngineNotFoundError as exc:
         raise HTTPException(status_code=404, detail="engine not found") from exc
     return _serialize(e)
+
+
+@router.post("/probe")
+async def probe(payload: EngineProbe) -> dict:
+    """Trial-spawn a launch profile; return UCI name + option schema.
+
+    Does not touch the registry. Lets the Engine Settings dialog probe
+    with the user's current edits to path/args/env before they hit Save.
+    """
+    resolved_path = _validate_engine_path(payload.path)
+    _validate_launch(payload.args, payload.env)
+    uci_name, schema, probe_error = await probe_engine(
+        resolved_path, args=list(payload.args), env=dict(payload.env),
+    )
+    return {
+        "uci_name": uci_name,
+        "option_schema": schema,
+        "probe_error": probe_error,
+    }

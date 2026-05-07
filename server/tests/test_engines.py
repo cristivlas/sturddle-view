@@ -143,6 +143,38 @@ def test_stale_selection_in_file_is_ignored(tmp_path):
     assert reg.selected_id is None
 
 
+def test_args_env_round_trip(registry):
+    e = registry.add(
+        name="E1", path="/p/e", args=["--foo", "bar"], env={"K": "v"},
+    )
+    assert e.args == ["--foo", "bar"]
+    assert e.env == {"K": "v"}
+    fresh = EngineRegistry(path=registry.path)
+    [loaded] = fresh.list()
+    assert loaded.args == ["--foo", "bar"]
+    assert loaded.env == {"K": "v"}
+
+
+def test_args_env_default_empty_for_legacy_entries(tmp_path):
+    """Engines persisted before args/env existed load with empty defaults."""
+    path = tmp_path / "engines.json"
+    path.write_text(
+        json.dumps({"engines": [{"id": "a", "name": "Old", "path": "/p/old"}]})
+    )
+    reg = EngineRegistry(path=path)
+    [e] = reg.list()
+    assert e.args == []
+    assert e.env == {}
+
+
+def test_update_args_and_env(registry):
+    e = registry.add(name="E1", path="/p/e")
+    registry.update(e.id, args=["-q"], env={"X": "1"})
+    got = registry.get(e.id)
+    assert got.args == ["-q"]
+    assert got.env == {"X": "1"}
+
+
 def test_load_normalizes_duplicate_names(tmp_path):
     path = tmp_path / "engines.json"
     path.write_text(

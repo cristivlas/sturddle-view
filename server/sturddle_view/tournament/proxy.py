@@ -233,12 +233,17 @@ async def _run(
     proxy_id: str,
     secret: str | None,
     engine_name: str | None,
+    engine_env: dict[str, str] | None = None,
 ) -> int:
+    spawn_env = None
+    if engine_env:
+        spawn_env = {**os.environ, **engine_env}
     proc = await asyncio.create_subprocess_exec(
         *engine_argv,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=sys.stderr,
+        env=spawn_env,
     )
     assert proc.stdin and proc.stdout
 
@@ -281,6 +286,11 @@ def main() -> None:
                              "same engine spec get distinct ids.")
     parser.add_argument("--engine-name", default=None,
                         help="display name reported on session start")
+    parser.add_argument(
+        "--env", action="append", default=[],
+        help="per-engine env override KEY=VAL (repeatable). Overlaid on "
+             "top of the inherited environment at engine spawn time.",
+    )
     parser.add_argument("engine", help="Engine binary path")
     parser.add_argument("engine_args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -290,6 +300,17 @@ def main() -> None:
     # inherit the secret in its environment.
     secret = os.environ.pop("SV_PROXY_SECRET", None)
 
+    engine_env: dict[str, str] = {}
+    for kv in args.env:
+        if "=" not in kv:
+            print(f"proxy: ignoring malformed --env (no '='): {kv!r}", file=sys.stderr)
+            continue
+        k, v = kv.split("=", 1)
+        if not k:
+            print(f"proxy: ignoring --env with empty key: {kv!r}", file=sys.stderr)
+            continue
+        engine_env[k] = v
+
     engine_argv = [args.engine, *args.engine_args]
     rc = asyncio.run(_run(
         engine_argv,
@@ -297,6 +318,7 @@ def main() -> None:
         proxy_id,
         secret,
         args.engine_name,
+        engine_env or None,
     ))
     sys.exit(rc)
 

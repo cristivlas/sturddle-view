@@ -97,6 +97,15 @@ def build_command(spec: RunSpec) -> list[str]:
         if "cmd" not in eng:
             raise ValueError(f"engine missing 'cmd': {eng!r}")
         engine_name = eng.get("name", eng["cmd"])
+        # Per-engine launch profile (registered via the Engine Settings
+        # dialog). ``args`` is a list[str] today; older callers / tests may
+        # pass a single pre-joined string — accept both for resilience.
+        eng_args_raw = eng.get("args") or []
+        if isinstance(eng_args_raw, str):
+            eng_args: list[str] = [eng_args_raw] if eng_args_raw else []
+        else:
+            eng_args = [str(a) for a in eng_args_raw]
+        eng_env = eng.get("env") or {}
         e: list[str] = ["-engine"]
         if proxy_enabled:
             # cmd = python; args = the proxy invocation + the real
@@ -109,21 +118,33 @@ def build_command(spec: RunSpec) -> list[str]:
             # Secret is passed via SV_PROXY_SECRET in the environment
             # (see FastchessRunner._spawn). Keeping it out of argv hides
             # it from `ps` / `/proc/<pid>/cmdline`.
-            proxy_args = " ".join([
+            # Per-engine env overrides ride along as repeatable
+            # ``--env KEY=VAL`` flags; the proxy applies them when it
+            # spawns the real engine.
+            parts: list[str] = [
                 "-m", "sturddle_view.tournament.proxy",
                 "--broadcast-url", proxy_url,
                 "--engine-name", _quote_arg(engine_name),
-                "--",
-                _quote_arg(eng["cmd"]),
-            ])
-            if eng.get("args"):
-                proxy_args = f"{proxy_args} {eng['args']}"
+            ]
+            for k, v in eng_env.items():
+                parts.extend(["--env", _quote_arg(f"{k}={v}")])
+            parts.extend(["--", _quote_arg(eng["cmd"])])
+            for a in eng_args:
+                parts.append(_quote_arg(a))
             e.append(f"cmd={sys.executable}")
-            e.append(f"args={proxy_args}")
+            e.append(f"args={' '.join(parts)}")
         else:
+            # No-proxy path is test-only; per-engine env is silently
+            # dropped here because fastchess has no per-engine env knob.
+            # Production always runs with the proxy enabled.
+            if eng_env:
+                log.warning(
+                    "engine %s: per-engine env ignored (proxy disabled)",
+                    engine_name,
+                )
             e.append(f"cmd={eng['cmd']}")
-            if eng.get("args"):
-                e.append(f"args={eng['args']}")
+            if eng_args:
+                e.append(f"args={' '.join(_quote_arg(a) for a in eng_args)}")
         e.append(f"name={engine_name}")
         if eng.get("dir"):
             e.append(f"dir={eng['dir']}")

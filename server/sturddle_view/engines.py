@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -34,8 +35,16 @@ _HIDDEN_OPTIONS = {"multipv", "ponder", "uci_chess960", "uci_variant", "uci_anal
 
 async def probe_engine(
     engine_path: str,
+    args: list[str] | None = None,
+    env: dict[str, str] | None = None,
 ) -> tuple[str | None, dict[str, dict], str | None]:
     """Briefly spawn the engine; return (uci_id_name, option_schema, error).
+
+    `args` and `env` mirror the launch settings stored on the engine — we
+    probe with the same launch profile that will run the engine in earnest,
+    so option discovery reflects flags / env vars that gate UCI options.
+    `env` is overlaid on top of the parent process environment (the user
+    can override or add, never wipe inherited vars).
 
     `option_schema` is a {name: {type, default, min?, max?, vars?}} dict,
     skipping engine-managed options (multipv, ponder, etc.). `uci_id_name`
@@ -46,8 +55,12 @@ async def probe_engine(
     Best-effort: on any failure logs and returns (None, {}, error) so the
     engine can still be registered.
     """
+    command: str | list[str] = [engine_path, *args] if args else engine_path
+    popen_kwargs: dict = {}
+    if env:
+        popen_kwargs["env"] = {**os.environ, **env}
     try:
-        transport, engine = await chess.engine.popen_uci(engine_path)
+        transport, engine = await chess.engine.popen_uci(command, **popen_kwargs)
     except Exception as e:
         log.exception("could not spawn %s for probe", engine_path)
         return None, {}, f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
@@ -87,6 +100,12 @@ class Engine:
     #   {name: {type, default, min?, max?, vars?}}
     # type ∈ "spin" | "combo" | "check" | "string" | "button"
     option_schema: dict[str, dict] = field(default_factory=dict)
+    # Extra command-line argv passed to the engine on launch. One literal
+    # argv element per list entry — no shell parsing.
+    args: list[str] = field(default_factory=list)
+    # Per-engine environment overrides. Overlaid on top of the parent
+    # process env at spawn time (parent env is always inherited).
+    env: dict[str, str] = field(default_factory=dict)
 
     @staticmethod
     def new(
@@ -94,6 +113,8 @@ class Engine:
         path: str,
         options: dict | None = None,
         option_schema: dict | None = None,
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
     ) -> "Engine":
         return Engine(
             id=uuid.uuid4().hex[:12],
@@ -101,6 +122,8 @@ class Engine:
             path=path,
             options=options or {},
             option_schema=option_schema or {},
+            args=list(args or []),
+            env=dict(env or {}),
         )
 
 
@@ -110,6 +133,50 @@ class EngineNotFoundError(KeyError):
 
 class DuplicateEngineError(ValueError):
     pass
+
+
+class InvalidLaunchProfileError(ValueError):
+    """Raised when ``args``/``env`` would be unspawnable (NUL bytes, blank
+    or ``=``-bearing env keys, non-string values).
+
+    Enforced at the registry boundary so a hand-edited ``engines.json``
+    can't ship malformed values that only blow up at probe/spawn time.
+    """
+
+
+_ENV_KEY_FORBIDDEN_CHARS = ("=", "\x00", "\n", "\r")
+
+
+def validate_launch_profile(
+    args: list[str] | None, env: dict[str, str] | None,
+) -> None:
+    """Raise ``InvalidLaunchProfileError`` if args/env are unspawnable.
+
+    Same checks as the API layer, hoisted here so direct registry use
+    (CLI, tests, manual edits via ``add``/``update``) can't bypass them.
+    """
+    if args is not None:
+        for a in args:
+            if not isinstance(a, str):
+                raise InvalidLaunchProfileError("each arg must be a string")
+            if "\x00" in a:
+                raise InvalidLaunchProfileError("arg contains NUL")
+    if env is not None:
+        for k, v in env.items():
+            if not isinstance(k, str) or not k:
+                raise InvalidLaunchProfileError(
+                    "env key must be a non-empty string",
+                )
+            if any(c in k for c in _ENV_KEY_FORBIDDEN_CHARS):
+                raise InvalidLaunchProfileError(
+                    f"env key contains forbidden character: {k!r}",
+                )
+            if not isinstance(v, str):
+                raise InvalidLaunchProfileError(
+                    f"env value must be a string: {k}",
+                )
+            if "\x00" in v:
+                raise InvalidLaunchProfileError(f"env value contains NUL: {k}")
 
 
 class EngineRegistry:
@@ -155,12 +222,28 @@ class EngineRegistry:
             if unique != name:
                 mutated = True
             seen.add(unique.casefold())
+            args = list(entry.get("args", []) or [])
+            env = dict(entry.get("env", {}) or {})
+            try:
+                validate_launch_profile(args, env)
+            except InvalidLaunchProfileError:
+                # Don't refuse to load the whole registry over a bad
+                # entry — drop the launch profile and keep the engine
+                # otherwise usable. The user can re-edit via the dialog.
+                log.warning(
+                    "engine %s: invalid launch profile in registry; dropping args/env",
+                    entry["id"],
+                )
+                args, env = [], {}
+                mutated = True
             e = Engine(
                 id=entry["id"],
                 name=unique,
                 path=entry["path"],
                 options=entry.get("options", {}),
                 option_schema=entry.get("option_schema", {}),
+                args=args,
+                env=env,
             )
             engines[e.id] = e
         self._engines = engines
@@ -220,9 +303,12 @@ class EngineRegistry:
         path: str,
         options: dict | None = None,
         option_schema: dict | None = None,
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
         auto_suffix: bool = False,
     ) -> Engine:
         self._ensure_loaded()
+        validate_launch_profile(args, env)
         # Names are unique (case-insensitive). When the caller derived the
         # name (UCI id / basename), auto-suffix on collision; when the user
         # supplied it, raise so they can pick a different one.
@@ -231,7 +317,12 @@ class EngineRegistry:
                 raise DuplicateEngineError(f"engine name already in use: {name}")
             name = self._unique_name(name)
         engine = Engine.new(
-            name=name, path=path, options=options, option_schema=option_schema
+            name=name,
+            path=path,
+            options=options,
+            option_schema=option_schema,
+            args=args,
+            env=env,
         )
         self._engines[engine.id] = engine
         self._save()
@@ -245,8 +336,11 @@ class EngineRegistry:
         path: str | None = None,
         options: dict | None = None,
         option_schema: dict | None = None,
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
     ) -> Engine:
         self._ensure_loaded()
+        validate_launch_profile(args, env)
         engine = self.get(engine_id)
         if name is not None:
             if name != engine.name and self._name_in_use(name, exclude_id=engine_id):
@@ -258,6 +352,10 @@ class EngineRegistry:
             engine.options = options
         if option_schema is not None:
             engine.option_schema = option_schema
+        if args is not None:
+            engine.args = list(args)
+        if env is not None:
+            engine.env = dict(env)
         self._save()
         return engine
 
@@ -275,23 +373,42 @@ class EngineRegistry:
             self.load()
 
 
+@dataclass
+class ResolvedLaunch:
+    """Launch profile for the active engine.
+
+    `name` and `options` are None when resolved via the legacy
+    ``settings.engine_path`` fallback (no registry entry). `path` is
+    None when no engine is configured at all.
+    """
+    path: str | None
+    name: str | None
+    options: dict | None
+    args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
+
+
 def resolve_selected(
     registry: EngineRegistry, settings,
-) -> tuple[str | None, str | None, dict | None]:
-    """(path, display_name, options) for the active engine.
+) -> ResolvedLaunch:
+    """Launch profile for the active engine.
 
     Tries the registry's selected entry first; falls back to
-    `settings.engine_path` (the legacy --engine flag). Returns
-    (None, None, None) when nothing is configured. The name/options are
-    None for the fallback path so HumanVsEngine derives a name from the
-    UCI handshake on first launch.
+    `settings.engine_path` (the legacy --engine flag). Returns an empty
+    profile when nothing is configured.
     """
     if registry.selected_id:
         try:
             e = registry.get(registry.selected_id)
-            return e.path, e.name, dict(e.options or {})
+            return ResolvedLaunch(
+                path=e.path,
+                name=e.name,
+                options=dict(e.options or {}),
+                args=list(e.args or []),
+                env=dict(e.env or {}),
+            )
         except EngineNotFoundError:
             pass
     if settings.engine_path:
-        return str(settings.engine_path), None, None
-    return None, None, None
+        return ResolvedLaunch(path=str(settings.engine_path), name=None, options=None)
+    return ResolvedLaunch(path=None, name=None, options=None)

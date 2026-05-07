@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -107,6 +108,10 @@ class HumanVsEngine:
         # Updated by the API layer on every fetch from the registry; takes
         # effect on the next launch (existing process keeps its options).
         self._engine_options: dict = {}
+        # Extra command-line args / per-engine env. Updated by the API
+        # layer on every fetch; take effect on the next launch.
+        self._engine_args: list[str] = []
+        self._engine_env: dict[str, str] = {}
         self._board: chess.Board | None = None
         # FEN of the board *before* any moves on _board.move_stack — None for
         # games that began at startpos. Persisted so restore_from can rebuild
@@ -182,6 +187,14 @@ class HumanVsEngine:
         """
         self._engine_options = dict(options or {})
 
+    def set_engine_args(self, args: list[str] | None) -> None:
+        """Set the extra argv passed on the next engine launch."""
+        self._engine_args = list(args or [])
+
+    def set_engine_env(self, env: dict[str, str] | None) -> None:
+        """Set the per-engine env overlay applied on the next launch."""
+        self._engine_env = dict(env or {})
+
     def set_engine_name(self, name: str | None) -> None:
         """Override the display name shown to the user.
 
@@ -212,7 +225,14 @@ class HumanVsEngine:
         Skips unknown/managed options instead of failing (engine schema may
         have drifted since save).
         """
-        _transport, engine = await chess.engine.popen_uci(self._engine_path)
+        command: str | list[str] = (
+            [self._engine_path, *self._engine_args]
+            if self._engine_args else self._engine_path
+        )
+        popen_kwargs: dict = {}
+        if self._engine_env:
+            popen_kwargs["env"] = {**os.environ, **self._engine_env}
+        _transport, engine = await chess.engine.popen_uci(command, **popen_kwargs)
         rc_future = getattr(engine, "returncode", None)
         if rc_future is not None:
             rc_future.add_done_callback(lambda f: f.exception())
@@ -814,7 +834,13 @@ class HumanVsEngine:
         )
 
     async def swap_engine(self, path: str) -> None:
-        """Replace the engine binary; preserves the active game."""
+        """Replace the engine binary; preserves the active game.
+
+        Per-engine ``args``/``env`` are picked up via the existing
+        ``set_engine_args``/``set_engine_env`` setters that the API layer
+        already calls on every fetch — they apply to the next spawn after
+        the swap, so we don't need to thread them through here.
+        """
         kick_engine = False
         async with self._lock:
             await self._cancel_analysis()

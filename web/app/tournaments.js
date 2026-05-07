@@ -1226,7 +1226,12 @@ function mountEngineBuilder({ host, available, initial = [] }) {
     getEngines() {
       return pickedIds.map((id) => {
         const e = byId.get(id);
-        return { id, name: e.name, cmd: e.path };
+        const ref = { id, name: e.name, cmd: e.path };
+        if (Array.isArray(e.args) && e.args.length) ref.args = e.args.slice();
+        if (e.env && typeof e.env === "object" && Object.keys(e.env).length) {
+          ref.env = { ...e.env };
+        }
+        return ref;
       });
     },
     getPickedRegistry() {

@@ -322,7 +322,7 @@ The UI composes from a fixed set of primitives. Adding a new ad-hoc widget shoul
 - **Floating panel (window)** — non-modal, draggable, resizable, optionally minimizable. Multiple panels can coexist on screen. Used for live engine info per game, agent commentary, tournament observer per-game views.
 - **Docked panel** — non-modal, attached to a screen edge or a region of the layout. Used for primary navigation, the active board, persistent status.
 - **File browser dialog** — modal, lets the user pick a path on the **server's** filesystem (engine binary, PGN save dir, opening book, tablebase root). Backed by a server endpoint that enumerates directories — the browser cannot read the server's filesystem directly.
-- **Inline form controls** — buttons, inputs, selects, switches, checkboxes, tabs, accordions, tooltips. Themed consistently.
+- **Inline form controls** — buttons, inputs, selects, switches, checkboxes, tabs, accordions, tooltips. Themed consistently. Tabs inside a dialog default to **left placement** (`wa-tab-group placement="start"`) so multi-section dialogs feel like settings panels and scale to more sections without reflowing the header. Top placement is reserved for short, equally-weighted sibling pairs where a category metaphor would be misleading.
 
 ### Interaction model
 

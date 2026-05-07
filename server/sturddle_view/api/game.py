@@ -12,8 +12,8 @@ router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_
 
 async def _get_hve(request: Request) -> HumanVsEngine:
     s = request.app.state
-    path, name, options = resolve_selected(s.engines, s.settings)
-    if path is None:
+    launch = resolve_selected(s.engines, s.settings)
+    if launch.path is None:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -21,12 +21,12 @@ async def _get_hve(request: Request) -> HumanVsEngine:
                 "POST /engines/{id}/select, or start with --engine <path>"
             ),
         )
-    if s.hve is not None and s.hve.engine_path != path:
+    if s.hve is not None and s.hve.engine_path != launch.path:
         # Swap in-place to preserve the active game across engine changes.
-        await s.hve.swap_engine(path)
+        await s.hve.swap_engine(launch.path)
     if s.hve is None:
         s.hve = HumanVsEngine(
-            path,
+            launch.path,
             s.event_bus,
             openings=getattr(s, "openings", None),
             settings=s.settings,
@@ -34,8 +34,10 @@ async def _get_hve(request: Request) -> HumanVsEngine:
         )
     # Refresh display name + UCI options on every fetch so registry edits
     # take effect on the next engine launch without restarting the server.
-    s.hve.set_engine_name(name)
-    s.hve.set_engine_options(options)
+    s.hve.set_engine_name(launch.name)
+    s.hve.set_engine_options(launch.options)
+    s.hve.set_engine_args(launch.args)
+    s.hve.set_engine_env(launch.env)
     return s.hve
 
 

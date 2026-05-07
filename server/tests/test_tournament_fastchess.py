@@ -754,3 +754,95 @@ async def test_runner_drains_large_output_no_deadlock(tmp_path, patched_runner):
     assert "out 0" in out_lines
     assert "out 1999" in out_lines
     assert "err 999" in err_lines
+
+
+# ---------------------------------------------------------------------------
+# Per-engine launch profile (args + env) in proxy mode
+# ---------------------------------------------------------------------------
+
+
+def _engine_args_string(cmd: list[str], engine_name: str) -> str:
+    """Pull out the ``args=...`` value attached to ``-engine ... name=NAME``."""
+    args_str = None
+    for i, tok in enumerate(cmd):
+        if tok == "-engine":
+            block_end = next(
+                (j for j in range(i + 1, len(cmd)) if cmd[j] == "-engine" or cmd[j].startswith("-")),
+                len(cmd),
+            )
+            block = cmd[i + 1 : block_end]
+            if any(t == f"name={engine_name}" for t in block):
+                for t in block:
+                    if t.startswith("args="):
+                        args_str = t[len("args="):]
+                        break
+                break
+    return args_str
+
+
+def test_build_command_proxy_passes_args_and_env(tmp_path):
+    """Proxy mode: per-engine env emitted as ``--env`` flags, args quoted."""
+    spec = _make_spec(
+        tmp_path,
+        template={"tc": "10+0.1"},
+        engines=[
+            {
+                "name": "A",
+                "cmd": "/bin/engineA",
+                "args": ["--mode", "fast lane"],
+                "env": {"FOO": "bar", "EMPTY": ""},
+            },
+            {"name": "B", "cmd": "/bin/engineB"},
+        ],
+        proxy_broadcast_url="http://127.0.0.1:9999/internal/proxy",
+        proxy_secret="s3cret",
+    )
+    cmd = build_command(spec)
+    a_args = _engine_args_string(cmd, "A")
+    assert a_args is not None
+    # Both env entries appear as quoted KEY=VAL (value with spaces would
+    # need quoting; FOO=bar has none so it stays bare). EMPTY= (no value)
+    # is still passed through.
+    assert "--env FOO=bar" in a_args
+    assert "--env EMPTY=" in a_args
+    # User args sit after `--`, with the second arg quoted because of the space.
+    assert "-- /bin/engineA --mode \"fast lane\"" in a_args
+    # Engine B has no env / args — none of those flags appear in its block.
+    b_args = _engine_args_string(cmd, "B")
+    assert "--env" not in b_args
+    assert "-- /bin/engineB" in b_args
+
+
+def test_build_command_no_proxy_drops_env_keeps_args(tmp_path, caplog):
+    """Without proxy, env is dropped (logged) and args go straight to fastchess."""
+    spec = _make_spec(
+        tmp_path,
+        template={"tc": "10+0.1"},
+        engines=[
+            {
+                "name": "A", "cmd": "/bin/engineA",
+                "args": ["--quiet", "with space"],
+                "env": {"K": "v"},
+            },
+        ],
+    )
+    with caplog.at_level("WARNING"):
+        cmd = build_command(spec)
+    a_args = _engine_args_string(cmd, "A")
+    assert a_args == "--quiet \"with space\""
+    assert any("per-engine env ignored" in r.message for r in caplog.records)
+
+
+def test_build_command_legacy_string_args(tmp_path):
+    """Old saved tournaments stored ``args`` as a single pre-joined string —
+    build_command must still accept that shape."""
+    spec = _make_spec(
+        tmp_path,
+        template={"tc": "10+0.1"},
+        engines=[{"name": "A", "cmd": "/bin/engineA", "args": "--legacy form"}],
+    )
+    cmd = build_command(spec)
+    a_args = _engine_args_string(cmd, "A")
+    # Legacy string is passed through verbatim as a single arg token (quoted
+    # because it contains a space).
+    assert a_args == "\"--legacy form\""

@@ -17,7 +17,7 @@ export function mountEngines({ container, api }) {
         <button class="ribbon-btn engines-detail-use" disabled aria-label="Use as active engine" title="Use as active engine">
           <wa-icon name="check"></wa-icon>
         </button>
-        <button class="ribbon-btn engines-detail-options" disabled aria-label="UCI options" title="UCI options">
+        <button class="ribbon-btn engines-detail-options" disabled aria-label="Engine settings" title="Engine settings">
           <wa-icon name="sliders"></wa-icon>
         </button>
         <span class="ribbon-sep" aria-hidden="true"></span>
