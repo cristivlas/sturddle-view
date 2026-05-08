@@ -1,12 +1,9 @@
-"""PGN reconciliation: move-list capture (slice 1).
+"""PGN reconciliation: orchestrator integration.
 
-Verifies that the orchestrator captures the cumulative UCI move list
-of each confirmed pair, updates it from `position startpos moves ...`
-lines emitted by either side, and tears it down at dissolution and
-on terminal runner events.
-
-Slices 2-3 add the PGN tailer and the match queue + `game_reconciled`
-event; their tests will live alongside these.
+Slice 1 covers move-list capture; slice 3 covers the match queue +
+`game_reconciled` emission. Pure-queue mechanics live in
+`test_pgn_reconcile_queue.py`; the PGN tailer lives in
+`test_pgn_tail.py`.
 
 See `docs/pgn-reconciliation.md`.
 """
@@ -15,6 +12,8 @@ from __future__ import annotations
 import pytest
 
 from sturddle_view.tournament.orchestrator import Orchestrator
+from sturddle_view.tournament.pgn_reconcile import MIN_PLIES_FOR_MATCH
+from sturddle_view.tournament.pgn_tail import PgnGameRecord
 from sturddle_view.tournament.runner import RunSpec
 from sturddle_view.tournament.store import TournamentStore
 
@@ -168,3 +167,176 @@ async def test_position_outside_confirmed_pair_is_ignored(orch):
         "position startpos moves e2e4",
     ])
     assert orch._pair_moves == {}
+
+
+# ---------------------------------------------------------------------------
+# Slice 3: match queue + `game_reconciled` emission
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def emitted(orch):
+    """Capture every event the orchestrator broadcasts."""
+    events: list[tuple[str, dict]] = []
+    async def cb(kind: str, payload: dict) -> None:
+        events.append((kind, payload))
+    orch.set_broadcast(cb)
+    return events
+
+
+def _events_of(emitted, kind: str) -> list[dict]:
+    return [p for k, p in emitted if k == kind]
+
+
+# A move list long enough to clear the min-plies floor. Reuses the
+# Ruy Lopez Berlin from the earlier shared fixture.
+_LONG_MOVES = [
+    "e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6", "b5a6",
+    "g8f6", "e1g1", "f8e7", "f1e1", "d7d6",
+]
+assert len(_LONG_MOVES) >= MIN_PLIES_FOR_MATCH
+
+
+async def _drive_pair_to(orch, moves: list[str]) -> str:
+    """Confirm a pair and ingest enough position lines to populate
+    `_pair_moves[pair_id]` with the given move list. Returns the
+    `pair_id`."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    # Initial rendezvous (white plays first move, black sees it).
+    await orch.ingest_proxy_lines(_PROXY_A, [
+        "position startpos",
+        "bestmove " + moves[0],
+    ])
+    await orch.ingest_proxy_lines(_PROXY_B, [
+        "position startpos moves " + moves[0],
+    ])
+    pair_id = _pair_id(orch)
+    # Drive in the rest. We alternate which proxy reports each new
+    # frame to mirror real ingest, but the `_update_pair_moves` rule
+    # only requires monotonic prefix-extension, so any order works.
+    if len(moves) > 1:
+        running = " ".join(moves)
+        await orch.ingest_proxy_lines(_PROXY_A, [
+            "position startpos moves " + running,
+        ])
+    return pair_id
+
+
+@pytest.mark.asyncio
+async def test_pgn_record_arrives_after_dissolution_emits_reconciled(orch, emitted):
+    """The dissolution side fires first; the PGN tailer's record
+    arrives later and triggers reconciliation."""
+    pair_id = await _drive_pair_to(orch, _LONG_MOVES)
+    assert orch._pair_moves[pair_id] == _LONG_MOVES
+
+    # Dissolve. game_finished fires now with result=*; nothing has
+    # matched yet.
+    await orch.ingest_proxy_lines(_PROXY_A, ["ucinewgame"])
+    finished = _events_of(emitted, "game_finished")
+    assert len(finished) == 1
+    assert finished[0]["result"] == "*"
+    assert finished[0]["game_n"] is None
+    assert _events_of(emitted, "game_reconciled") == []
+    assert orch._reconcile_queue.pending_count == 1
+
+    # Tailer parses a matching PGN game.
+    record = PgnGameRecord(
+        white="Engine A", black="Engine B",
+        result="1-0", termination="normal",
+        uci_moves=list(_LONG_MOVES), game_n=7, round_tag="1",
+    )
+    await orch._on_pgn_record(record)
+
+    reconciled = _events_of(emitted, "game_reconciled")
+    assert len(reconciled) == 1
+    r = reconciled[0]
+    assert r["pair_id"] == pair_id
+    assert r["result"] == "1-0"
+    assert r["termination"] == "normal"
+    assert r["game_n"] == 7
+    assert r["matched"] is True
+    assert r["ply_count"] == len(_LONG_MOVES)
+    # Both queue sides drained.
+    assert orch._reconcile_queue.pending_count == 0
+    assert orch._reconcile_queue.pgn_buffer_count == 0
+
+
+@pytest.mark.asyncio
+async def test_pgn_record_arrives_before_dissolution(orch, emitted):
+    """If the PGN flush wins the race, the record sits in the buffer
+    until the dissolution shows up."""
+    pair_id = await _drive_pair_to(orch, _LONG_MOVES)
+
+    record = PgnGameRecord(
+        white="Engine A", black="Engine B",
+        result="1/2-1/2", termination="adjudication",
+        uci_moves=list(_LONG_MOVES), game_n=3, round_tag="1",
+    )
+    await orch._on_pgn_record(record)
+    assert _events_of(emitted, "game_reconciled") == []
+    assert orch._reconcile_queue.pgn_buffer_count == 1
+
+    await orch.ingest_proxy_lines(_PROXY_A, ["ucinewgame"])
+
+    reconciled = _events_of(emitted, "game_reconciled")
+    assert len(reconciled) == 1
+    assert reconciled[0]["pair_id"] == pair_id
+    assert reconciled[0]["result"] == "1/2-1/2"
+    assert reconciled[0]["game_n"] == 3
+
+
+@pytest.mark.asyncio
+async def test_short_game_does_not_attempt_reconciliation(orch, emitted):
+    """Below the min-plies floor the dissolution fires `game_finished`
+    as today and no reconciliation is attempted, even if a PGN record
+    is available."""
+    pair_id = await _drive_pair_to(orch, ["e2e4"])  # 1 ply, way below floor
+
+    await orch.ingest_proxy_lines(_PROXY_A, ["ucinewgame"])
+    assert orch._reconcile_queue.pending_count == 0
+
+    # Even handing the matching PGN record in does not produce an event.
+    record = PgnGameRecord(
+        white="Engine A", black="Engine B",
+        result="1-0", termination="?",
+        uci_moves=["e2e4"], game_n=1, round_tag="1",
+    )
+    await orch._on_pgn_record(record)
+    assert _events_of(emitted, "game_reconciled") == []
+    del pair_id  # not asserted on; using just to exercise the same path
+
+
+@pytest.mark.asyncio
+async def test_reset_state_clears_reconcile_queue(orch):
+    """Terminal teardown must drop pending entries so a follow-up
+    tournament doesn't see ghost matches from the previous one."""
+    await _drive_pair_to(orch, _LONG_MOVES)
+    await orch.ingest_proxy_lines(_PROXY_A, ["ucinewgame"])
+    assert orch._reconcile_queue.pending_count == 1
+
+    orch._reset_pairing_state()
+
+    assert orch._reconcile_queue.pending_count == 0
+    assert orch._reconcile_queue.pgn_buffer_count == 0
+
+
+@pytest.mark.asyncio
+async def test_non_matching_pgn_record_does_not_emit(orch, emitted):
+    """A PGN record whose move list doesn't match any pending entry
+    sits in the buffer; no event is emitted until something matches."""
+    await _drive_pair_to(orch, _LONG_MOVES)
+    await orch.ingest_proxy_lines(_PROXY_A, ["ucinewgame"])
+
+    other = list(_LONG_MOVES)
+    other[-1] = "h7h6"  # diverge
+
+    record = PgnGameRecord(
+        white="Engine A", black="Engine B",
+        result="1-0", termination="?",
+        uci_moves=other, game_n=99, round_tag="1",
+    )
+    await orch._on_pgn_record(record)
+    assert _events_of(emitted, "game_reconciled") == []
+    assert orch._reconcile_queue.pending_count == 1
+    assert orch._reconcile_queue.pgn_buffer_count == 1

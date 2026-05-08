@@ -24,6 +24,11 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 
 import chess
 
+from .pgn_reconcile import (
+    PendingMatch,
+    ReconciledMatch,
+    ReconciliationQueue,
+)
 from .pgn_tail import PgnGameRecord, PgnTailer
 from .rescheck import RescheckError, check_template
 from .runner import RunSpec, Runner
@@ -282,11 +287,12 @@ class Orchestrator:
         # Captured into the reconciliation pending queue at dissolution.
         self._pair_moves: dict[str, list[str]] = {}
         # Per-tournament PGN tailer; spawned at start, stopped on
-        # terminal runner events. Slice 3 will route records into the
-        # match queue; for now records flow through ``_on_pgn_record``
-        # purely so the tailer's lifecycle and parse correctness can
-        # be exercised in tests.
+        # terminal runner events.
         self._pgn_tailer: PgnTailer | None = None
+        # Match queue joining dissolved pairs to PGN records. Cleared
+        # at terminal runner events alongside the rest of the per-
+        # tournament state.
+        self._reconcile_queue = ReconciliationQueue()
         # Per-tournament secret embedded in the proxy --broadcast-url so
         # only proxies belonging to the active tournament can post.
         # Cleared on tournament termination.
@@ -323,6 +329,7 @@ class Orchestrator:
         self._pair_white.clear()
         self._game_subscribers.clear()
         self._pair_moves.clear()
+        self._reconcile_queue.clear()
 
     def set_proxy_broadcast_url(self, url: str | None) -> None:
         """Configure the URL proxies POST to. The orchestrator passes
@@ -935,16 +942,31 @@ class Orchestrator:
         return (pid_a, pid_b) if side_a == "white" else (pid_b, pid_a)
 
     async def _on_pgn_record(self, record: PgnGameRecord) -> None:
-        """Handed each completed game the PGN tailer parses. Slice 2
-        is observation-only — slice 3 will route records into the
-        reconciliation match queue here. The hook exists now so the
-        tailer's lifecycle and parse correctness can be exercised in
-        tests without a UI consumer."""
-        log.debug(
-            "pgn record n=%d white=%s black=%s result=%s plies=%d",
-            record.game_n, record.white, record.black,
-            record.result, len(record.uci_moves),
-        )
+        """Handed each completed game the PGN tailer parses. Routes
+        into the reconciliation queue; emits ``game_reconciled`` when
+        the dissolution side has already landed.
+
+        Also runs a timeout sweep on each tick so abandoned pendings
+        don't pile up indefinitely (e.g. resume/stop edge cases where
+        a dissolution never gets a matching PGN record).
+        """
+        self._reconcile_queue.sweep()
+        reconciled = self._reconcile_queue.add_pgn_record(record)
+        if reconciled is not None:
+            await self._emit_reconciled(reconciled)
+
+    async def _emit_reconciled(self, m: ReconciledMatch) -> None:
+        await self._emit("game_reconciled", {
+            "tournament_id": self._active_id,
+            "pair_id": m.pair_id,
+            "game_n": m.game_n,
+            "white": m.pgn_white,
+            "black": m.pgn_black,
+            "result": m.result,
+            "termination": m.termination,
+            "matched": True,
+            "ply_count": m.ply_count,
+        })
 
     def _update_pair_moves(self, proxy_id: str, parsed: dict | None) -> None:
         """Capture the cumulative move list reported by either side of a
@@ -985,8 +1007,21 @@ class Orchestrator:
         self._confirmed_pairs.pop(black_pid, None)
         self._pair_ids.pop(proxies, None)
         self._pair_white.pop(pair_id, None)
-        # Slice 3 will hand this off to the reconciliation queue here.
-        self._pair_moves.pop(pair_id, None)
+        # Hand the captured move list to the reconciliation queue.
+        # Returns a ReconciledMatch immediately if the PGN record had
+        # already arrived; otherwise the entry sits until tailer poll
+        # or the timeout sweep.
+        moves = self._pair_moves.pop(pair_id, None)
+        reconciled: ReconciledMatch | None = None
+        if moves:
+            reconciled = self._reconcile_queue.add_pending(PendingMatch(
+                pair_id=pair_id,
+                white_proxy=white_pid,
+                black_proxy=black_pid,
+                white_engine=self._proxy_engine_names.get(white_pid),
+                black_engine=self._proxy_engine_names.get(black_pid),
+                uci_moves=moves,
+            ))
         game_subs = self._game_subscribers.pop(pair_id, None)
         if _DEBUG_PAIRING:
             log.info(
@@ -1017,7 +1052,9 @@ class Orchestrator:
             "pair_id": pair_id,
             # `game_n` retained in the schema for future implementations
             # that can reliably correlate proxy lifecycle to fastchess
-            # game numbers; today it is always None.
+            # game numbers; today it is always None. Reconciliation
+            # surfaces the matched value on the new ``game_reconciled``
+            # event instead of mutating an event already emitted.
             "game_n": None,
             "proxy_a": white_pid,
             "proxy_b": black_pid,
@@ -1026,6 +1063,8 @@ class Orchestrator:
             "result": result,
             "termination": termination,
         })
+        if reconciled is not None:
+            await self._emit_reconciled(reconciled)
 
     async def _dissolve_all_pairs(self) -> None:
         """Dissolve every confirmed pair. Called on terminal runner
