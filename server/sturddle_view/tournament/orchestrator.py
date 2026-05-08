@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 
 import chess
 
+from .pgn_tail import PgnGameRecord, PgnTailer
 from .rescheck import RescheckError, check_template
 from .runner import RunSpec, Runner
 from .uci_parse import parse_uci_line
@@ -280,6 +281,12 @@ class Orchestrator:
         # so the late-reporter's stale shorter list doesn't clobber.
         # Captured into the reconciliation pending queue at dissolution.
         self._pair_moves: dict[str, list[str]] = {}
+        # Per-tournament PGN tailer; spawned at start, stopped on
+        # terminal runner events. Slice 3 will route records into the
+        # match queue; for now records flow through ``_on_pgn_record``
+        # purely so the tailer's lifecycle and parse correctness can
+        # be exercised in tests.
+        self._pgn_tailer: PgnTailer | None = None
         # Per-tournament secret embedded in the proxy --broadcast-url so
         # only proxies belonging to the active tournament can post.
         # Cleared on tournament termination.
@@ -426,6 +433,14 @@ class Orchestrator:
             self._store.update_status(t.id, STATUS_STOPPED, stopped_at=_now())
             raise
 
+        # Tail the tournament's PGN for reconciliation. Spawned after
+        # the runner is up so a runner_start failure rolls back without
+        # leaving an orphan tailer task.
+        self._pgn_tailer = PgnTailer(
+            spec.pgn_path, self._on_pgn_record,
+        )
+        await self._pgn_tailer.start()
+
         return updated
 
     async def stop(self, tournament_id: str) -> Tournament:
@@ -509,6 +524,17 @@ class Orchestrator:
                     # game subscribers see an `ended` frame.
                     self._proxy_secret = None
                     await self._dissolve_all_pairs()
+                    # Stop the PGN tailer; one final poll first so any
+                    # games fastchess flushed just before exit are
+                    # parsed before we release the dissolution state
+                    # they'd reconcile against.
+                    if self._pgn_tailer is not None:
+                        try:
+                            await self._pgn_tailer.poll_once()
+                        except Exception:
+                            log.exception("final PGN poll failed")
+                        await self._pgn_tailer.stop()
+                        self._pgn_tailer = None
                     self._reset_pairing_state()
                     self._close_all_proxy_subscribers()
 
@@ -907,6 +933,18 @@ class Orchestrator:
             return (white, pid_b if white == pid_a else pid_a)
         side_a = (self._pairing_state.get(pid_a) or ("", "?"))[1]
         return (pid_a, pid_b) if side_a == "white" else (pid_b, pid_a)
+
+    async def _on_pgn_record(self, record: PgnGameRecord) -> None:
+        """Handed each completed game the PGN tailer parses. Slice 2
+        is observation-only — slice 3 will route records into the
+        reconciliation match queue here. The hook exists now so the
+        tailer's lifecycle and parse correctness can be exercised in
+        tests without a UI consumer."""
+        log.debug(
+            "pgn record n=%d white=%s black=%s result=%s plies=%d",
+            record.game_n, record.white, record.black,
+            record.result, len(record.uci_moves),
+        )
 
     def _update_pair_moves(self, proxy_id: str, parsed: dict | None) -> None:
         """Capture the cumulative move list reported by either side of a
