@@ -108,7 +108,10 @@ export function mountTournamentTemplateForm({
     "downgrade from blockers to warnings. Don't use for SPRT.";
   inputs.allow_oversubscribe = oversubSwitch;
 
-  switchRow.append(ponderSwitch, affinitySwitch, oversubSwitch);
+  // Order: Affinity + Oversubscribe first (logically paired — both about
+  // CPU resource policy), Ponder last so when the row wraps on narrow
+  // viewports the related pair stays together on the first line.
+  switchRow.append(affinitySwitch, oversubSwitch, ponderSwitch);
 
   // ---- Adjudication: Resign + Draw --------------------------------------
 
