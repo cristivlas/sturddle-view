@@ -811,11 +811,22 @@ wa-dialog .engine-settings-tabs wa-tab-panel::part(base) {
   padding-right: 0;
 }
 /* wa-tab's shadow ``[part="base"]`` defaults to 21px padding on every
-   side — that adds to wa-dialog::part(body)'s 24px to make tab labels
-   look ~21px more inset than the form's right edge. Zero the left so
-   "Options"/"Launch" text aligns with the body's content-left edge. */
-wa-dialog .engine-settings-tabs wa-tab::part(base) {
-  padding-left: 0;
+   side — that adds to wa-dialog::part(body)'s 24px to make side-tab
+   labels look ~21px more inset than the form's right edge. Trim the
+   left so labels sit closer to the body's content-left edge while
+   leaving enough room for the focus ring (2px outline + 2px breathing
+   room ≈ 4px minimum). Scoped to ``.dialog-side-tabs`` so top-tab
+   dialogs (e.g. Import position) keep their first-tab indentation. */
+wa-dialog .dialog-side-tabs wa-tab::part(base) {
+  padding-left: 10px;
+}
+/* Equalize side-tab widths so focus rings + active-tab bars form a
+   consistent vertical strip instead of hugging each label's content
+   width. Each tab's ::part(base) fills the rail's column. */
+wa-dialog .dialog-side-tabs wa-tab,
+wa-dialog .dialog-side-tabs wa-tab::part(base) {
+  width: 100%;
+  box-sizing: border-box;
 }
 .engine-launch-form,
 .engine-opt-form {
@@ -1073,6 +1084,38 @@ wa-dialog[style*="--dialog-height"]::part(dialog) {
    margin rules on each component type. */
 wa-dialog wa-tab-panel > * + * { margin-top: 10px; }
 
+/* Settings dialog: cap each tab's form to a reasonable column width so
+   short panels (Common, Gameplay) don't strand whitespace on the right.
+   The wa-tab's shadow ``[part="base"]`` already pads the form 32px on
+   each side horizontally; we add small vertical padding so focus rings
+   on the first/last row don't get clipped at the panel's top/bottom
+   edge. */
+wa-dialog .settings-tabs wa-tab-panel::part(base) {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+wa-dialog .settings-tabs wa-tab-panel > * {
+  max-width: 480px;
+}
+/* Per-tab inter-row spacing — each tab's content has a different
+   natural height, so the gap is tuned per tab to use the available
+   space without overflowing the dialog cap. Gameplay (play) keeps the
+   default 10px because its chess-board preview already fills the cap. */
+wa-dialog .settings-tabs wa-tab-panel[name="general"] > * + * {
+  margin-top: 28px;
+}
+/* Gameplay tab: pair two short selects (e.g. Human plays as + Eval
+   display) on the same line. Each takes equal share. */
+.settings-pair-row {
+  display: flex;
+  align-items: end;
+  gap: 16px;
+}
+.settings-pair-row > .settings-row { margin: 0; flex: 1 1 0; min-width: 0; }
+wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
+  margin-top: 18px;
+}
+
 /* Form-style rows (label + input) inside a panel. */
 .settings-row { max-width: 360px; }
 .settings-row label {
@@ -1095,8 +1138,10 @@ wa-dialog wa-tab-panel > * + * { margin-top: 10px; }
 .settings-duration wa-input { flex: 1 1 auto; min-width: 0; width: auto; }
 .settings-duration wa-select { flex: 0 0 7em; width: auto; }
 
-/* Aligns right edge with the path-field in .settings-tournament-path-inner */
-.settings-panel-aligned { max-width: calc(100% - 12em - 8px); }
+/* Aligns right edge with the path-field in .settings-tournament-path-inner.
+   The reserved-width subtraction here must match ``.settings-row-actions``'
+   width below. */
+.settings-panel-aligned { max-width: calc(100% - 6em - 8px); }
 .settings-num-group { display: flex; gap: 12px; }
 .settings-num-group > div { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .settings-num-group label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
@@ -1231,8 +1276,19 @@ wa-dialog wa-tab-panel > * + * { margin-top: 10px; }
 }
 .settings-tournament-path-inner .path-field { flex: 1; min-width: 0; }
 wa-dialog wa-tab-panel > .settings-tournament-tpl-mount { margin-top: 24px; }
-.settings-row-actions { display: flex; gap: 4px; width: 12em; flex-shrink: 0; }
-.settings-row-actions > * { flex: 1; min-width: 0; }
+/* Width must accommodate the two icon buttons' intrinsic width + gap
+   (otherwise they overflow the container and the rightmost button
+   extends past the form's visual right edge). 6em comfortably fits
+   the folder-open and xmark buttons at our default sizing. */
+.settings-row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  width: 6em;
+  flex-shrink: 0;
+}
+/* Icon buttons have intrinsic size — don't stretch them across the column. */
+.settings-row-actions > * { flex: 0 0 auto; }
 .settings-row-hint { font-size: 11px; }
 .settings-section-heading {
   font-size: 12px; color: var(--muted); margin: 12px 0 4px 0;

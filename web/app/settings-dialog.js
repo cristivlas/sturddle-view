@@ -114,8 +114,8 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
 
   await showDialog({
     label: "Settings",
-    width: "min(760px, 94vw)",
-    height: "min(620px, 92vh)",
+    width: "min(690px, 94vw)",
+    height: "min(580px, 92vh)",
     body: (resolve, dialog) => {
       // ---- helper: PUT a partial settings update; toast on failure. ----
       const putSettings = async (patch) => {
@@ -139,6 +139,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
 
       const tabs = document.createElement("wa-tab-group");
       tabs.placement = "start";
+      tabs.classList.add("dialog-side-tabs", "settings-tabs");
 
       // --- Common tab (PGN + global engine defaults) ---
       // PGN autosave is implicit: a non-empty pgn_dir enables it; Clear
@@ -153,7 +154,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       // --- Play tab ---
       const playTab = document.createElement("wa-tab");
       playTab.panel = "play";
-      playTab.textContent = "Play";
+      playTab.textContent = "Gameplay";
       const playPanel = document.createElement("wa-tab-panel");
       playPanel.name = "play";
 
@@ -247,8 +248,6 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       // wrapper resizes with the dropdown.
       const previewWrap = document.createElement("div");
       previewWrap.style.marginTop = "16px";
-      const previewLabel = document.createElement("label");
-      previewLabel.textContent = "Board preview";
       const cols = 8;
       const rows = 2;
       const tile = 10;
@@ -258,7 +257,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       preview.style.border = "2px solid #000";
       preview.style.borderRadius = "var(--wa-border-radius-m, 4px)";
       preview.style.overflow = "hidden";
-      previewWrap.append(previewLabel, preview);
+      previewWrap.append(preview);
       function renderPreview(styleId) {
         const def = resolveBoardStyle(styleId);
         preview.className = `cm-chessboard ${def.cssClass}`;
@@ -315,7 +314,13 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       });
       boardStyleRow.append(boardStyleLabel, boardStyleSelect, previewWrap);
 
-      playPanel.append(tcInitialRow, tcIncrementRow, humanSideRow, evalPovRow, takebackRow, boardStyleRow);
+      // Pair Human plays as + Eval display on a single row to save
+      // vertical space (both narrow selects, semantically related —
+      // both about how the player sees their game).
+      const humanEvalRow = document.createElement("div");
+      humanEvalRow.className = "settings-pair-row";
+      humanEvalRow.append(humanSideRow, evalPovRow);
+      playPanel.append(tcInitialRow, tcIncrementRow, humanEvalRow, takebackRow, boardStyleRow);
 
       // Path-row helper used by Common + Tournament tabs.
       // Layout: label on top, [path-field][Browse][Clear] on a row underneath.
@@ -359,7 +364,11 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         inner_actions.className = "settings-row-actions";
         const browse = document.createElement("wa-button");
         browse.size = "small";
-        browse.textContent = "Browse…";
+        browse.title = "Browse…";
+        browse.setAttribute("aria-label", pickerTitle || "Browse");
+        const browseIcon = document.createElement("wa-icon");
+        browseIcon.setAttribute("name", "folder-open");
+        browse.appendChild(browseIcon);
         browse.addEventListener("click", async () => {
           const path = await pickFile({ api, mode, title: pickerTitle });
           if (!path) return;
@@ -368,7 +377,11 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         });
         const clear = document.createElement("wa-button");
         clear.size = "small";
-        clear.textContent = "Clear";
+        clear.title = "Clear";
+        clear.setAttribute("aria-label", `Clear ${pickerTitle || "value"}`);
+        const clearIcon = document.createElement("wa-icon");
+        clearIcon.setAttribute("name", "xmark");
+        clear.appendChild(clearIcon);
         clear.addEventListener("click", () => {
           field.value = "";
           onPick("");

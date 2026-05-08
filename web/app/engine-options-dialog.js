@@ -89,7 +89,11 @@ function buildField(name, entry, current, ctx) {
         });
         const browse = document.createElement("wa-button");
         browse.size = "small";
-        browse.textContent = "Browse…";
+        browse.title = "Browse…";
+        browse.setAttribute("aria-label", `Pick ${name}`);
+        const browseIcon = document.createElement("wa-icon");
+        browseIcon.setAttribute("name", "folder-open");
+        browse.appendChild(browseIcon);
         browse.addEventListener("click", async () => {
           const picked = await pickFile({
             api: ctx.api,
@@ -337,7 +341,7 @@ export function showEngineOptionsDialog({ engine, api, probeError = null }) {
       // Tab group ------------------------------------------------------
       const tabs = document.createElement("wa-tab-group");
       tabs.placement = "start";
-      tabs.classList.add("engine-settings-tabs");
+      tabs.classList.add("engine-settings-tabs", "dialog-side-tabs");
 
       const optionsTab = document.createElement("wa-tab");
       optionsTab.slot = "nav";
