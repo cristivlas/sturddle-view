@@ -164,6 +164,10 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   wb.svMinWidth = LIVE_MIN_WIDTH;
   wb.svMinHeight = LIVE_MIN_HEIGHT;
   liveWindows.set(windowKey, wb);
+  // Hook for the workspace to upgrade the result banner when a
+  // `game_reconciled` event lands after the per-pair WS sentinel
+  // already painted "game ended". See upgradeLiveGameResult below.
+  wb.svShowResult = (result, termination) => showResult(result, termination);
   requestAnimationFrame(() => flashWindow(wb));
 
   // Compute target board size deterministically from the body's
@@ -493,6 +497,17 @@ export function getLiveWindows() {
 
 export function isLiveWindowOpen(proxyId) {
   return liveWindows.has(proxyId);
+}
+
+// Re-paint the result banner of a live window with reconciled fields
+// from a `game_reconciled` event. Identifies the window by `pair_id`
+// since the workspace keys game-id windows on the pair_id at
+// openLiveGameWindow time. No-op if the window has been closed.
+export function upgradeLiveGameResult(pairId, result, termination) {
+  if (!pairId) return;
+  const wb = liveWindows.get(pairId);
+  if (!wb || typeof wb.svShowResult !== "function") return;
+  wb.svShowResult(result, termination);
 }
 
 export function closeAllLiveGames() {

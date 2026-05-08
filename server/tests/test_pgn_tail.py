@@ -200,6 +200,46 @@ async def test_resume_pre_existing_pgn_parses_on_first_poll(pgn_path):
     assert [r.game_n for r in records] == [1, 2]
 
 
+@pytest.mark.asyncio
+async def test_offset_advances_monotonically(pgn_path):
+    """Guard against a regression where ``_offset`` resets every poll
+    and forces a full re-parse of the PGN — that turned `pgn_stats`
+    sluggish historically, and the same shape of bug in the tailer
+    would do worse: re-parse the *full* movetree on every poll, not
+    just headers. Truncation is the only legal reset path; a normal
+    append must never shrink the offset."""
+    pgn_path.write_text(_ONE_GAME, encoding="utf-8")
+    records, cb = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    await tailer.poll_once()
+    off1 = tailer.offset
+    assert off1 > 0
+
+    # Append a second game — offset must grow, not reset.
+    with pgn_path.open("a", encoding="utf-8") as f:
+        f.write(_SECOND_GAME)
+    _bump_mtime(pgn_path)
+
+    await tailer.poll_once()
+    off2 = tailer.offset
+    assert off2 > off1
+
+    # Idempotent poll on unchanged file — offset must hold.
+    await tailer.poll_once()
+    assert tailer.offset == off2
+
+    # Append a third complete game (reuse the second's bytes — distinct
+    # round number, doesn't matter for this guard).
+    with pgn_path.open("a", encoding="utf-8") as f:
+        f.write(_SECOND_GAME)
+    _bump_mtime(pgn_path)
+
+    await tailer.poll_once()
+    assert tailer.offset > off2
+    assert len(records) == 3
+
+
 # ---------------------------------------------------------------------------
 # Lifecycle (start / stop)
 # ---------------------------------------------------------------------------

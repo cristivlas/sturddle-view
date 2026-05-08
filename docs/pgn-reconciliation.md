@@ -211,6 +211,21 @@ on the new event so consumers don't need to reason about
   bottleneck if a tournament emits hundreds of finishes per second
   — not realistic at human-watchable timecontrols.
 
+## Same-name self-play
+
+Same-engine vs same-engine matchups are **structurally impossible**
+in the current design — both at the picker (UI dedupe) and at pair
+confirmation (orchestrator rejects same-engine-name candidates as
+phantoms from book-line collisions). See `docs/tournament-spec.md`
+§ "Self-play (deferred)" for the full rationale and the registry
+workaround (register the binary twice under distinct display names).
+
+Reconciliation matches on **UCI move list**, which is independent of
+engine names, so this featurette would work transparently if/when
+self-play is unblocked. Nothing here adds a new self-play
+constraint, and nothing here needs to change when the existing
+constraint is lifted.
+
 ## Cost summary
 
 - **CPU**: 1 `stat()` per second per active tournament. Each
@@ -267,3 +282,67 @@ Slices 1–3 ship together; slice 4 is its own follow-up.
    already emitted is awkward), emit a separate `game_reconciled`
    (current proposal), or both? Current proposal: only the new
    event. Existing consumers untouched.
+
+## Logging strategy
+
+Server-side logging for this featurette uses the same conventions as
+the rest of the tournament module: stdlib `logging`, no `--debug`
+flag (uvicorn DEBUG is unusably noisy on a busy server). A
+debug-grade env flag `SV_DEBUG_RECONCILE=1` mirrors
+`SV_DEBUG_PAIRING` and gates the verbose lines.
+
+**Always-on (INFO).** One line per success, one line per silent
+failure. Anything more is noise.
+
+- `reconciled pair=<short_id> game_n=<N> result=<R> termination=<T> plies=<P>`
+  — emitted from the orchestrator when `_emit_reconciled` fires.
+- `reconcile timeout pair=<short_id> plies=<P> age=<T>s` — emitted
+  when the timeout sweep drops a pending entry.
+- `reconcile pgn_buffer evicted plies=<P> age=<T>s` — emitted when
+  a buffered PGN record times out without ever being matched
+  (rare; could indicate a dissolution that never fired).
+
+**Always-on (WARNING).** Already implemented in `pgn_tail.py`:
+parse crash, illegal move, task hang on stop, queue overflow.
+Nothing new at this level for the reconciliation queue itself.
+
+**Debug (gated by `SV_DEBUG_RECONCILE=1`).** Off by default. Turn
+on for troubleshooting only:
+
+- per pending enqueue: pair_id, plies, white/black engine names.
+- per PGN record arrival: game_n, white/black, plies.
+- per match attempt: hit / miss + brief reason on miss
+  (e.g. `miss: ply_count 84 vs 82`).
+- offset bookkeeping anomalies in `pgn_tail.py` (truncation, reset).
+
+**When to enable.** Ask the user explicitly to set
+`SV_DEBUG_RECONCILE=1` before reproducing a reconciliation issue.
+Don't leave it enabled — the per-record + per-match traffic at
+high concurrency is voluminous.
+
+## Future revisit
+
+Items deliberately deferred from the first three slices. None
+blocks current behavior; revisit once the featurette has been
+exercised in practice.
+
+- **Constants audit.** `MIN_PLIES_FOR_MATCH`, `RECONCILE_TIMEOUT_S`,
+  `_QUEUE_MAX` (`pgn_reconcile.py`), poll interval (`pgn_tail.py`),
+  Live event log size (`tournament-workspace.js`),
+  `_EVENT_HISTORY_MAX` (`orchestrator.py`). Decide which deserve
+  public names, which should be env-overridable
+  (`SV_RECONCILE_*`), and which stay private. Audit together so
+  naming + override conventions stay consistent — addressing them
+  one-by-one as we touch them risks drift.
+- **Backfill replay edge case.** A workspace opened *very* late
+  in a long-running tournament can find both `game_finished` and
+  `game_reconciled` for the same game evicted from the
+  200-event ring. The standings table stays correct (PGN-derived);
+  only the event-log row is missing. Mitigation if needed: bump
+  ring size, or expose a "reconciled summary by pair_id" REST
+  endpoint computed from the PGN at request time.
+- **Stop button vs trailing PGN flush.** The orchestrator's final
+  PGN poll on terminal events catches in-flight flushes, but a
+  flush landing *after* that poll completes (and after the queue
+  is wiped) leaves that game's row at `*` permanently. Acceptable
+  per spec; could be revisited if users complain.

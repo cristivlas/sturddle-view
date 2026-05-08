@@ -956,6 +956,11 @@ class Orchestrator:
             await self._emit_reconciled(reconciled)
 
     async def _emit_reconciled(self, m: ReconciledMatch) -> None:
+        log.info(
+            "reconciled pair=%s game_n=%d result=%s termination=%s plies=%d",
+            m.pair_id[:8], m.game_n, m.result,
+            m.termination or "<none>", m.ply_count,
+        )
         await self._emit("game_reconciled", {
             "tournament_id": self._active_id,
             "pair_id": m.pair_id,

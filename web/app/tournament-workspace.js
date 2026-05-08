@@ -12,7 +12,7 @@
 //   WS `tournament_update`             → event log; refresh on game-finished.
 //   Periodic GET while running         → reconcile standings.
 
-import { closeAllLiveGames, closeStaleLiveGames, getLiveWindows, isLiveWindowOpen, openLiveGameWindow } from "./tournament-live-game.js";
+import { closeAllLiveGames, closeStaleLiveGames, getLiveWindows, isLiveWindowOpen, openLiveGameWindow, upgradeLiveGameResult } from "./tournament-live-game.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { toast } from "./dialogs.js";
 import { escapeHtml, flashWindow } from "./wb-utils.js";
@@ -241,6 +241,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
                   const termination = e.payload?.termination;
                   const tail = (result && termination && termination !== "unknown")
                     ? `${result} ${termination}` : (result || "");
+                  const gn = e.payload?.game_n;
+                  if (gn != null) parts[parts.length - 1] = `${parts[parts.length - 1]} #${gn}`;
                   parts.push(`${e.payload?.engine_a} vs ${e.payload?.engine_b}`,
                              ...(tail ? [tail] : []));
                 }
@@ -436,7 +438,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         const termination = e.payload?.termination;
         const tail = (result && termination && termination !== "unknown")
           ? `${result} ${termination}` : (result || "");
-        parts.push(inner, `${a} vs ${b}`, ...(tail ? [tail] : []));
+        const gn = e.payload?.game_n;
+        const head = (gn != null) ? `${inner} #${gn}` : inner;
+        parts.push(head, `${a} vs ${b}`, ...(tail ? [tail] : []));
       } else if (inner === KIND.PROXY_PAIRED) {
         const a = e.payload?.engine_a || "?";
         const b = e.payload?.engine_b || "?";
@@ -502,6 +506,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       if (seenSeqs.has(seq)) return false;
       seenSeqs.add(seq);
     }
+    // `game_reconciled` upgrades an existing game_finished row in place
+    // (see pushEvent) -- don't surface a second row for the same game.
+    // Still mark seq seen above so backfill replays are deduped.
+    if (evt.payload?.kind === KIND.GAME_RECONCILED) return false;
     const tsRaw = evt.payload?._ts;
     const ts = (tsRaw ? new Date(tsRaw) : new Date())
       .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
@@ -546,6 +554,30 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       // Schedule re-render.
       livePairings.delete(evt.payload.proxy_a);
       livePairings.delete(evt.payload.proxy_b);
+    } else if (inner === KIND.GAME_RECONCILED) {
+      // Upgrade the prior `game_finished` entry for this pair_id with
+      // the matched result/termination/game_n instead of pushing a
+      // separate row. One game = one log entry.
+      const pid = evt.payload?.pair_id;
+      if (pid) {
+        for (let i = eventLog.length - 1; i >= 0; i--) {
+          const ent = eventLog[i];
+          if (ent.payload?.kind === KIND.GAME_FINISHED && ent.payload?.pair_id === pid) {
+            ent.payload = {
+              ...ent.payload,
+              result: evt.payload.result,
+              termination: evt.payload.termination,
+              game_n: evt.payload.game_n,
+              reconciled: true,
+            };
+            break;
+          }
+        }
+        // Repaint the live-window result banner if that window is
+        // still open (user kept watching past dissolution). No-op
+        // otherwise.
+        upgradeLiveGameResult(pid, evt.payload.result, evt.payload.termination);
+      }
     } else if (
       evt.kind === EVT.STATUS ||
       inner === KIND.DONE || inner === KIND.STOPPED

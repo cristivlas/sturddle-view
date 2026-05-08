@@ -19,6 +19,7 @@ See ``docs/pgn-reconciliation.md``.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -27,6 +28,12 @@ from .pgn_tail import PgnGameRecord
 
 
 log = logging.getLogger(__name__)
+
+# Debug-grade tracing for reconciliation. Off by default — turn on
+# only when troubleshooting a specific run; the per-record + per-
+# match traffic at high concurrency is voluminous. Mirrors
+# ``SV_DEBUG_PAIRING`` in the orchestrator.
+_DEBUG = os.environ.get("SV_DEBUG_RECONCILE", "0") == "1"
 
 
 # Below this ply count we don't even attempt a match — opening-prefix
@@ -116,6 +123,12 @@ class ReconciliationQueue:
         place."""
         if len(entry.uci_moves) < self._min_plies:
             return None
+        if _DEBUG:
+            log.info(
+                "reconcile pending pair=%s plies=%d white=%s black=%s",
+                entry.pair_id[:8], len(entry.uci_moves),
+                entry.white_engine, entry.black_engine,
+            )
         match = self._try_match_pending(entry)
         if match is not None:
             return match
@@ -130,6 +143,12 @@ class ReconciliationQueue:
             # Below floor: don't bother buffering. We won't try to
             # reconcile anyway.
             return None
+        if _DEBUG:
+            log.info(
+                "reconcile pgn_record n=%d plies=%d white=%s black=%s result=%s",
+                record.game_n, len(record.uci_moves),
+                record.white, record.black, record.result,
+            )
         match = self._try_match_pgn(record)
         if match is not None:
             return match
@@ -141,13 +160,27 @@ class ReconciliationQueue:
         PGN ring buffer. Returns the dropped pending entries so the
         caller can log them or emit a ``timed out`` event if desired
         — current orchestrator implementation doesn't, matching the
-        spec's "no worse than today" fallback."""
+        spec's "no worse than today" fallback.
+
+        INFO-logs each dropped entry on either side so the user has a
+        breadcrumb trail when "game ended" never upgrades to a result.
+        """
         now = time.monotonic()
         dropped: list[PendingMatch] = []
         while self._pending and (now - self._pending[0].enqueued_at) > self._timeout_s:
-            dropped.append(self._pending.popleft())
+            entry = self._pending.popleft()
+            log.info(
+                "reconcile timeout pair=%s plies=%d age=%.1fs",
+                entry.pair_id[:8], len(entry.uci_moves),
+                now - entry.enqueued_at,
+            )
+            dropped.append(entry)
         while self._pgn and (now - self._pgn[0][1]) > self._timeout_s:
-            self._pgn.popleft()
+            rec, ts = self._pgn.popleft()
+            log.info(
+                "reconcile pgn_buffer evicted n=%d plies=%d age=%.1fs",
+                rec.game_n, len(rec.uci_moves), now - ts,
+            )
         return dropped
 
     def clear(self) -> None:
@@ -164,6 +197,14 @@ class ReconciliationQueue:
             if rec.uci_moves == entry.uci_moves:
                 del self._pgn[i]
                 return _join(entry, rec)
+        if _DEBUG and self._pgn:
+            # Cheap diagnostic — show the closest candidate by length.
+            closest = min(self._pgn, key=lambda x: abs(len(x[0].uci_moves) - len(entry.uci_moves)))
+            log.info(
+                "reconcile miss (pending) pair=%s plies=%d closest_pgn_plies=%d",
+                entry.pair_id[:8], len(entry.uci_moves),
+                len(closest[0].uci_moves),
+            )
         return None
 
     def _try_match_pgn(self, record: PgnGameRecord) -> ReconciledMatch | None:
@@ -171,6 +212,13 @@ class ReconciliationQueue:
             if entry.uci_moves == record.uci_moves:
                 del self._pending[i]
                 return _join(entry, record)
+        if _DEBUG and self._pending:
+            closest = min(self._pending, key=lambda e: abs(len(e.uci_moves) - len(record.uci_moves)))
+            log.info(
+                "reconcile miss (pgn) n=%d plies=%d closest_pending_plies=%d",
+                record.game_n, len(record.uci_moves),
+                len(closest.uci_moves),
+            )
         return None
 
 
