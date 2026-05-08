@@ -449,12 +449,9 @@ export function mountGameView(container, opts = {}) {
     if (clockTopRow) clockTopRow.dataset.color = bottomIsWhite ? "black" : "white";
     const bottomToMove =
       (turn === "white" && bottomIsWhite) || (turn === "black" && !bottomIsWhite);
-    clockBottomRow?.classList.toggle("active", running && bottomToMove);
-    clockTopRow?.classList.toggle("active", running && !bottomToMove);
-    // View mode: clocks are historical snapshots, frozen — visually mute
-    // both rows (no "active" highlight, dimmed via .clock-disabled).
-    clockBottomRow?.classList.toggle("clock-disabled", !!viewing);
-    clockTopRow?.classList.toggle("clock-disabled", !!viewing);
+    const active = running || !!viewing;
+    clockBottomRow?.classList.toggle("active", active && bottomToMove);
+    clockTopRow?.classList.toggle("active", active && !bottomToMove);
   }
 
   function applyEvent(evt) {
