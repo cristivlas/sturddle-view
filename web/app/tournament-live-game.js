@@ -4,7 +4,46 @@
 // this engine's `info`, clocks from `go wtime/btime`, last bestmove highlight.
 
 import { mountBoard } from "./board.js";
+import { confirm, reportError } from "./dialogs.js";
+import { isPlayInProgress } from "./perspectives/play.js";
 import { flashWindow } from "./wb-utils.js";
+
+const REPLAY_DISCARD_MSG = "Cancel the game in progress and replay the tournament game?";
+
+async function replayTournamentGame({ tournamentId, gameN, token }) {
+  if (isPlayInProgress()) {
+    const ok = await confirm({
+      message: REPLAY_DISCARD_MSG,
+      okLabel: "Replay",
+      cancelLabel: "Keep playing",
+      destructive: true,
+    });
+    if (!ok) return;
+  }
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  let pgn;
+  try {
+    const res = await fetch(`/api/tournaments/${encodeURIComponent(tournamentId)}/games/${gameN}/pgn`, { headers });
+    if (!res.ok) throw new Error(`fetch pgn -> ${res.status}`);
+    pgn = (await res.json()).pgn;
+  } catch (e) {
+    reportError(null, "Replay: fetch failed", e);
+    return;
+  }
+  try {
+    const res = await fetch("/game/import", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ text: pgn, format: "pgn" }),
+    });
+    if (!res.ok) throw new Error(`import -> ${res.status}`);
+  } catch (e) {
+    reportError(null, "Replay: import failed", e);
+    return;
+  }
+  window.dispatchEvent(new CustomEvent("sturddle:activate-perspective", { detail: { id: "play" } }));
+}
 
 const liveWindows = new Map(); // windowKey -> WinBox instance
 
@@ -61,7 +100,7 @@ function avoidOverlap(wb, avoid, top, left, cascade = 0) {
   }
 }
 
-export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, top = 0, left = 0, boardStyle = null, avoidRect = null }) {
+export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, boardStyle = null, avoidRect = null }) {
   // If a window for this key is already open, focus it instead of
   // opening a duplicate.
   const existing = liveWindows.get(windowKey);
@@ -89,6 +128,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       <div class="lg-result-overlay" hidden>
         <div class="lg-result-score"></div>
         <div class="lg-result-termination"></div>
+        <button type="button" class="lg-result-replay" hidden>Replay</button>
       </div>
     </div>
     <div class="clock-row lg-clock-bottom">
@@ -129,6 +169,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   const resultOverlayEl = body.querySelector(".lg-result-overlay");
   const resultScoreEl = body.querySelector(".lg-result-score");
   const resultTerminationEl = body.querySelector(".lg-result-termination");
+  const replayBtnEl = body.querySelector(".lg-result-replay");
 
   const debugTag = gameId ?? proxyId ?? "";
   const titleWithTag = debugTag ? `${label} [${debugTag}]` : label;
@@ -165,12 +206,32 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   wb.svMinHeight = LIVE_MIN_HEIGHT;
   liveWindows.set(windowKey, wb);
   // Result-banner upgrade on game_reconciled (workspace dispatches).
+  // Captured here so the Replay button knows which PGN slice to fetch.
+  let reconciledGameN = null;
+  let replayInFlight = false;
   const onReconciled = (e) => {
     if (gameId && e.detail?.pairId === gameId) {
       showResult(e.detail.result, e.detail.termination);
+      if (e.detail.gameN != null && tournamentId) {
+        reconciledGameN = e.detail.gameN;
+        replayBtnEl.hidden = false;
+      }
     }
   };
-  if (gameId) window.addEventListener("sturddle:reconciled", onReconciled);
+  if (gameId) {
+    window.addEventListener("sturddle:reconciled", onReconciled);
+    replayBtnEl.addEventListener("click", async () => {
+      if (replayInFlight || reconciledGameN == null || !tournamentId) return;
+      replayInFlight = true;
+      replayBtnEl.disabled = true;
+      try {
+        await replayTournamentGame({ tournamentId, gameN: reconciledGameN, token });
+      } finally {
+        replayInFlight = false;
+        replayBtnEl.disabled = false;
+      }
+    });
+  }
   requestAnimationFrame(() => flashWindow(wb));
 
   // Compute target board size deterministically from the body's

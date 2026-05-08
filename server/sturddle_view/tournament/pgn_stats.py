@@ -196,6 +196,35 @@ def _iter_games_uncached(pgn_path: Path):
             yield last_value[key]
 
 
+_DECISIVE_RESULTS = frozenset({_WHITE_WIN, _BLACK_WIN, *_DRAW_VALUES})
+
+
+def read_game_pgn(pgn_path: Path, game_n: int) -> str | None:
+    """Return the PGN text of the 1-based Nth completed game, or None.
+
+    Counts only games with a decisive Result, matching ``pgn_tail``'s
+    ``game_n`` so a Replay click resolves to the same game the
+    reconciliation event identified.
+    """
+    if game_n < 1:
+        return None
+    import chess.pgn
+    seen = 0
+    with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
+        while True:
+            offset = f.tell()
+            headers = chess.pgn.read_headers(f)
+            if headers is None:
+                return None
+            if headers.get("Result", "*") not in _DECISIVE_RESULTS:
+                continue
+            seen += 1
+            if seen == game_n:
+                f.seek(offset)
+                game = chess.pgn.read_game(f)
+                return str(game) if game is not None else None
+
+
 def compute_games_list(pgn_path: Path) -> list[dict]:
     """Return one dict per completed game in PGN order.
 

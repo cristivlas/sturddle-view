@@ -317,7 +317,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     try { const s = await api("GET", "/settings"); boardStyle = s.board_style || null; } catch {}
     const src = windows[sourceWindowKey];
     const avoidRect = src ? { x: src.x, y: src.y, w: src.width, h: src.height } : null;
-    openLiveGameWindow({ ...openOpts, token, top, left, boardStyle, avoidRect });
+    openLiveGameWindow({ ...openOpts, token, tournamentId: tournament.id, top, left, boardStyle, avoidRect });
     btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(attachKey));
   }
 
@@ -576,7 +576,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         // Live windows listening for this pair_id will repaint
         // their banner; no-op if window already closed.
         window.dispatchEvent(new CustomEvent("sturddle:reconciled", {
-          detail: { pairId: pid, result: evt.payload.result, termination: evt.payload.termination },
+          detail: {
+            pairId: pid,
+            result: evt.payload.result,
+            termination: evt.payload.termination,
+            gameN: evt.payload.game_n ?? null,
+            tournamentId: tournament.id,
+          },
         }));
       }
     } else if (

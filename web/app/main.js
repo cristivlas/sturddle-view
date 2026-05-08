@@ -125,5 +125,16 @@ window.addEventListener("sturddle:connection", async (e) => {
   }
 });
 
+window.addEventListener("sturddle:activate-perspective", async (e) => {
+  const id = e.detail?.id;
+  if (!id || router.activeId() === id) return;
+  try {
+    await router.activate(id);
+    renderNav();
+  } catch (err) {
+    console.error(`activate-perspective(${id}) failed`, err);
+  }
+});
+
 await router.activateInitial();
 renderNav();

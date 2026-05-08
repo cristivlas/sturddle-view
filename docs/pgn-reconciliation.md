@@ -296,8 +296,8 @@ constraint is lifted.
 
    **Trigger:** "Replay" button on the Live game window's result
    banner (visible once `game_reconciled` lands, since `game_n` is
-   what addresses the PGN). Optionally also on finished Schedule
-   rows -- decide during impl.
+   what addresses the PGN). The Schedule window only shows live
+   pairings, so there is no finished-row surface to attach to.
 
    **Action on click:**
    1. If a human-vs-engine game is in progress in the Play
