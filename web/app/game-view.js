@@ -412,6 +412,7 @@ export function mountGameView(container, opts = {}) {
   let gameId = null;
   let engineName = "Engine";
   let names = { top: "—", bottom: "—" };
+  let viewing = false;
 
   function _truncName(s, max = 24) {
     if (!s) return s;
@@ -431,8 +432,9 @@ export function mountGameView(container, opts = {}) {
   function setHumanWhite(value) {
     humanWhite = !!value;
     board.setSide(humanWhite ? "white" : "black");
-    // In interactive (Play) mode, bottom = human, top = engine.
-    if (interactive) setNames({ bottom: "Human", top: engineName });
+    // In interactive (Play) mode, bottom = human, top = engine. Skip in
+    // view mode so PGN names (set from board_update.view) aren't clobbered.
+    if (interactive && !viewing) setNames({ bottom: "Human", top: engineName });
   }
   setHumanWhite(humanWhite);
 
@@ -459,6 +461,7 @@ export function mountGameView(container, opts = {}) {
     if (gameId !== null && evt.game_id && evt.game_id !== gameId) return;
     switch (evt.kind) {
       case "board_update":
+        viewing = !!evt.payload.view;
         if (evt.payload.engine_name) {
           engineName = evt.payload.engine_name;
           if (interactive) setNames({ top: engineName });
