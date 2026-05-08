@@ -114,6 +114,15 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // Both proxies in a pair map to the same info object.
   const livePairings = new Map();
 
+  // Board style is fetched once per workspace open and reused for every
+  // watch click. Avoids a /settings round-trip on each click and keeps
+  // all live windows in this session visually consistent even if the
+  // user changes the global setting mid-tournament.
+  let boardStyleCached = null;
+  api("GET", "/settings")
+    .then(s => { boardStyleCached = s?.board_style || null; })
+    .catch(() => {});
+
   // ---- Window construction ----------------------------------------------
 
   function makeStandingsBody() {
@@ -312,12 +321,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     `;
   }
 
-  async function attachWatch(btn, attachKey, sourceWindowKey, openOpts) {
-    let boardStyle = null;
-    try { const s = await api("GET", "/settings"); boardStyle = s.board_style || null; } catch {}
+  function attachWatch(btn, attachKey, sourceWindowKey, openOpts) {
     const src = windows[sourceWindowKey];
     const avoidRect = src ? { x: src.x, y: src.y, w: src.width, h: src.height } : null;
-    openLiveGameWindow({ ...openOpts, token, tournamentId: tournament.id, top, left, boardStyle, avoidRect });
+    openLiveGameWindow({ ...openOpts, token, tournamentId: tournament.id, top, left, boardStyle: boardStyleCached, avoidRect });
     btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(attachKey));
   }
 
