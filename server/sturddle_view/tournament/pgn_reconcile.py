@@ -107,7 +107,7 @@ class ReconciliationQueue:
         if len(entry.uci_moves) < self._min_plies:
             return None
         if _DEBUG:
-            log.info(
+            log.debug(
                 "reconcile pending pair=%s plies=%d white=%s black=%s",
                 entry.pair_id[:8], len(entry.uci_moves),
                 entry.white_engine, entry.black_engine,
@@ -132,7 +132,7 @@ class ReconciliationQueue:
         if len(record.uci_moves) < self._min_plies:
             return None
         if _DEBUG:
-            log.info(
+            log.debug(
                 "reconcile pgn_record n=%d plies=%d white=%s black=%s result=%s",
                 record.game_n, len(record.uci_moves),
                 record.white, record.black, record.result,
@@ -161,7 +161,7 @@ class ReconciliationQueue:
         while self._pgn and (now - self._pgn[0][1]) > self._timeout_s:
             rec, ts = self._pgn.popleft()
             if _DEBUG:
-                log.info(
+                log.debug(
                     "reconcile pgn_buffer evicted n=%d plies=%d age=%.1fs",
                     rec.game_n, len(rec.uci_moves), now - ts,
                 )
@@ -206,7 +206,7 @@ class ReconciliationQueue:
         if _DEBUG and container:
             closest = min(container, key=lambda x: abs(len(moves_of(x)) - query_plies))
             fmt, *prefix_args = miss_log
-            log.info(fmt, *prefix_args, query_plies, len(moves_of(closest)))
+            log.debug(fmt, *prefix_args, query_plies, len(moves_of(closest)))
         return None
 
 

@@ -270,6 +270,63 @@ async def test_start_and_stop(pgn_path):
 
 
 @pytest.mark.asyncio
+async def test_loop_stays_responsive_during_slow_parse(pgn_path):
+    """Synthetic 200ms parse must not block other coroutines on the
+    loop. We schedule a 50ms heartbeat alongside poll_once and assert
+    the heartbeat ticked while the parse was still in flight."""
+    import time as _t
+
+    pgn_path.write_text(_ONE_GAME, encoding="utf-8")
+    records, cb = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    real_parse = tailer._parse_delta
+    def slow_parse(start, end):
+        _t.sleep(0.2)
+        return real_parse(start, end)
+    tailer._parse_delta = slow_parse
+
+    ticks = 0
+    async def heartbeat():
+        nonlocal ticks
+        for _ in range(8):
+            await asyncio.sleep(0.025)
+            ticks += 1
+
+    poll_task = asyncio.create_task(tailer.poll_once())
+    hb_task = asyncio.create_task(heartbeat())
+    await asyncio.gather(poll_task, hb_task)
+    assert len(records) == 1
+    assert ticks >= 5  # at minimum, heartbeat did real work during the parse
+
+
+@pytest.mark.asyncio
+async def test_parse_runs_off_main_loop_thread(pgn_path):
+    """Multi-MB PGN deltas must not block the asyncio loop. The parse
+    is dispatched via asyncio.to_thread; verify the actual call lands
+    on a worker thread, not the main thread that ran poll_once."""
+    import threading
+
+    pgn_path.write_text(_ONE_GAME, encoding="utf-8")
+    records, cb = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    main_thread = threading.get_ident()
+    parse_thread: list[int] = []
+    real_parse = tailer._parse_delta
+
+    def spy_parse(start, end):
+        parse_thread.append(threading.get_ident())
+        return real_parse(start, end)
+    tailer._parse_delta = spy_parse
+
+    await tailer.poll_once()
+    assert len(records) == 1
+    assert len(parse_thread) == 1
+    assert parse_thread[0] != main_thread
+
+
+@pytest.mark.asyncio
 async def test_callback_exceptions_dont_kill_tailer(pgn_path):
     """One bad callback must not stop the loop -- log + carry on. Slice
     3 will plug a real consumer in here, and we want any bug there to

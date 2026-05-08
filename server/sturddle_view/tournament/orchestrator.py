@@ -780,7 +780,7 @@ class Orchestrator:
                     self._pair_moves[pair_id] = []
                     new_pairs.add(group)
                     if _DEBUG_PAIRING:
-                        log.info(
+                        log.debug(
                             "pair confirmed tag=%s white=%s(%s) black=%s(%s) pairs=%d",
                             pair_id[:8],
                             self._proxy_engine_names.get(
@@ -792,7 +792,7 @@ class Orchestrator:
                             len(self._pair_proxies),
                         )
                 elif name_a and name_b and name_a == name_b and _DEBUG_PAIRING:
-                    log.info(
+                    log.debug(
                         "pair candidate rejected (same engine name): "
                         "%s(%s) vs %s(%s) -- phantom from book-line collision",
                         name_a, pid_a, name_b, pid_b,
@@ -812,7 +812,7 @@ class Orchestrator:
                 if pid not in self._pairing_state:
                     orphaned.add(pid)
         if orphaned and _DEBUG_PAIRING:
-            log.info(
+            log.debug(
                 "pairing: orphaned %s",
                 [(p, self._proxy_engine_names.get(p, "?")) for p in orphaned],
             )
@@ -996,7 +996,7 @@ class Orchestrator:
         self._pair_ids.pop(proxies, None)
         self._pair_white.pop(pair_id, None)
         moves = self._pair_moves.pop(pair_id, None)
-        log.info(
+        log.debug(
             "dissolve pair=%s plies=%d terminal=%s white=%s black=%s",
             pair_id[:8],
             len(moves) if moves else 0,
@@ -1024,7 +1024,7 @@ class Orchestrator:
                 reconciled = self._reconcile_queue.add_pending(entry)
         game_subs = self._game_subscribers.pop(pair_id, None)
         if _DEBUG_PAIRING:
-            log.info(
+            log.debug(
                 "pair dissolved tag=%s result=%s termination=%s game_subs=%d",
                 pair_id[:8], result, termination,
                 len(game_subs) if game_subs else 0,

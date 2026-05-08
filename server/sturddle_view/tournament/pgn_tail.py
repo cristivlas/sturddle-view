@@ -161,7 +161,11 @@ class PgnTailer:
         if st.st_size == self._offset:
             return 0
 
-        records, new_offset = self._parse_delta(self._offset, st.st_size)
+        # Offload the synchronous parse + SAN->UCI replay to a thread
+        # so a multi-MB delta can't stall the server's main loop.
+        records, new_offset = await asyncio.to_thread(
+            self._parse_delta, self._offset, st.st_size,
+        )
         if not records:
             # Delta has no complete game yet -- in-flight bytes; retry next pass.
             return 0

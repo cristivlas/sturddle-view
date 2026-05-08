@@ -285,11 +285,58 @@ constraint is lifted.
    - Tests: end-to-end with synthetic UCI ingest + synthesized
      PGN file, assert event ordering and payloads.
 
-4. **(Deferred) Replay surface.**
-   - REST endpoint for fetching a pair's move list.
-   - UI button on Schedule rows to open a replay window.
+4. **Replay surface.** Reuse the Play perspective's existing view
+   mode rather than building a separate replay window.
+
+   **Source:** the PGN file is authoritative. New REST endpoint
+   `GET /api/tournaments/{id}/games/{game_n}/pgn` returns the
+   single-game PGN text. Implementation re-scans the file at
+   request time (a Replay click is rare; no need to cache byte
+   ranges in memory).
+
+   **Trigger:** "Replay" button on the Live game window's result
+   banner (visible once `game_reconciled` lands, since `game_n` is
+   what addresses the PGN). Optionally also on finished Schedule
+   rows -- decide during impl.
+
+   **Action on click:**
+   1. If a human-vs-engine game is in progress in the Play
+      perspective, prompt with a confirm dialog ("Discard your
+      current game and view the tournament game?"). View-mode and
+      idle Play states need no confirm.
+   2. `POST /game/import` with the fetched PGN. The endpoint
+      already enters view mode, drives the ribbon swap, and seeds
+      board state. No Play-side changes required.
+   3. Switch active perspective to Play. The tournament workspace
+      and any open Live windows survive (they're not perspective-
+      coupled), so the user can navigate back via the perspective
+      ribbon and Replay another game.
+
+   **TC caveat for play-from-here.** View mode lets the user resume
+   the position against the engine via `play-from-here`. The
+   tournament's TC (e.g. 120+2) is unplayable for a human; the
+   import endpoint already takes a payload TC, so we either pass
+   the user's last Play TC or expose a TC selector at the
+   play-from-here moment. Resolve during impl.
 
 Slices 1-3 ship together; slice 4 is its own follow-up.
+
+### Slice 4 caveats
+
+- Re-importing a PGN replaces whatever was loaded in Play. The
+  confirm dialog only protects against discarding an in-progress
+  game vs engine; consecutive Replays of different tournament
+  games silently swap.
+- The PGN file lives forever (per-tournament directory), so any
+  reconciled game is replayable after restart. Unreconciled games
+  (rare; see "Stop button vs trailing PGN flush" in Future revisit)
+  show no Replay button -- without `game_n` we can't address the
+  PGN slice.
+- `play-from-here` from a tournament position picks up
+  engine-vs-human, not engine-vs-engine. If the user wants to see
+  what their engine would do differently, they get the analytical
+  branch; reproducing the original tournament game would require
+  a separate "rerun this matchup" feature outside scope.
 
 ## Open questions
 
@@ -307,11 +354,12 @@ Slices 1-3 ship together; slice 4 is its own follow-up.
 
 ## Logging strategy
 
-Server-side logging for this featurette uses the same conventions as
-the rest of the tournament module: stdlib `logging`, no `--debug`
-flag (uvicorn DEBUG is unusably noisy on a busy server). A
-debug-grade env flag `SV_DEBUG_RECONCILE=1` mirrors
-`SV_DEBUG_PAIRING` and gates the verbose lines.
+Server-side logging uses stdlib `logging`. Two CLI flags split level
+control: `--debug` raises the `sturddle_view` logger tree to DEBUG;
+`--server-debug` does the same for `uvicorn` (independent so app-
+debug runs don't drown in per-request server noise). Within an
+app-debug run, env flags `SV_DEBUG_RECONCILE=1` and
+`SV_DEBUG_PAIRING=1` further gate per-subsystem traces.
 
 **Always-on (INFO).** One line per success, one line per silent
 failure. Anything more is noise.
@@ -321,26 +369,28 @@ failure. Anything more is noise.
 - `reconcile timeout pair=<short_id> plies=<P> age=<T>s` -- emitted
   when the timeout sweep drops a pending entry. Real-game signal,
   actionable.
-- `dissolve pair=<short_id> plies=<N> terminal=<bool> ...` -- one
-  per pair end. Useful for spot-checking match rate (each non-
-  terminal dissolve should be followed by a `reconciled`).
 
 **Always-on (WARNING).** Already implemented in `pgn_tail.py`:
 parse crash, illegal move, task hang on stop, queue overflow.
 Nothing new at this level for the reconciliation queue itself.
 
-**Debug (gated by `SV_DEBUG_RECONCILE=1`).** Off by default. Turn
-on for troubleshooting only:
+**Debug (visible with `--debug`).** Always emitted at DEBUG level;
+visible only when the `sturddle_view` logger is at DEBUG:
+
+- `dissolve pair=<id> plies=<N> terminal=<bool> ...` -- one per
+  pair end. Useful for spot-checking match rate (each non-terminal
+  dissolve should be followed by a `reconciled`).
+
+**Debug + `SV_DEBUG_RECONCILE=1`.** Per-subsystem traces, only on
+when both `--debug` is set *and* the env flag is set:
 
 - per pending enqueue: pair_id, plies, white/black engine names.
 - per PGN record arrival: game_n, white/black, plies.
-- per match attempt: hit / miss + brief reason on miss
-  (e.g. `miss: ply_count 84 vs 82`).
+- per match attempt: closest-by-length miss diagnostic.
 - `reconcile pgn_buffer evicted` -- buffered PGN record timed out
   without matching any pending dissolution. Mostly noise from
   pre-existing PGN bytes the tailer parsed before live state
   caught up; signal only if it fires for *current-run* games.
-- offset bookkeeping anomalies in `pgn_tail.py` (truncation, reset).
 
 **When to enable.** Ask the user explicitly to set
 `SV_DEBUG_RECONCILE=1` before reproducing a reconciliation issue.
