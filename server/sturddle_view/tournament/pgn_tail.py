@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -23,7 +24,21 @@ log = logging.getLogger(__name__)
 
 _DECISIVE_RESULTS = frozenset({"1-0", "0-1", "1/2-1/2"})
 
-_DEFAULT_POLL_S = 1.0
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        log.warning("ignoring non-numeric %s=%r; using default %s", name, raw, default)
+        return default
+
+
+# Operator knob (env-overridable). 1Hz is the default; lower for
+# faster matching at the cost of more stat() calls.
+PGN_TAIL_POLL_S = _env_float("SV_PGN_TAIL_POLL_S", 1.0)
 
 
 @dataclass
@@ -58,7 +73,7 @@ class PgnTailer:
         self,
         pgn_path: Path,
         on_record: RecordCallback,
-        poll_interval: float = _DEFAULT_POLL_S,
+        poll_interval: float = PGN_TAIL_POLL_S,
     ) -> None:
         self._path = pgn_path
         self._on_record = on_record

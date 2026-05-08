@@ -20,18 +20,38 @@ log = logging.getLogger(__name__)
 # SV_DEBUG_RECONCILE=1 turns on per-record / per-match traces.
 _DEBUG = os.environ.get("SV_DEBUG_RECONCILE", "0") == "1"
 
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        log.warning("ignoring non-numeric %s=%r; using default %s", name, raw, default)
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        log.warning("ignoring non-numeric %s=%r; using default %s", name, raw, default)
+        return default
+
+
 # Min captured plies before we attempt a match -- guards against
 # opening-prefix collisions across parallel slots.
 MIN_PLIES_FOR_MATCH = 12
 
-RECONCILE_TIMEOUT_S = 60.0
-
-# Pending entries matched after this many seconds emit an INFO line --
-# early-warning telemetry. Well below RECONCILE_TIMEOUT_S so drift can
-# be spotted before timeouts start firing.
-RECONCILE_LATE_WARNING_S = 5.0
-
-_QUEUE_MAX = 256
+# Operator knobs (env-overridable). Defaults work for typical
+# tournaments; bump under high concurrency or slow disk.
+RECONCILE_TIMEOUT_S = _env_float("SV_RECONCILE_TIMEOUT_S", 60.0)
+RECONCILE_LATE_WARNING_S = _env_float("SV_RECONCILE_LATE_WARNING_S", 5.0)
+RECONCILE_QUEUE_MAX = _env_int("SV_RECONCILE_QUEUE_MAX", 256)
 
 # Captured may overrun PGN by 1 ply when fastchess adjudicates after
 # the engine has already emitted bestmove.
@@ -91,7 +111,7 @@ class ReconciliationQueue:
         self,
         timeout_s: float = RECONCILE_TIMEOUT_S,
         min_plies: int = MIN_PLIES_FOR_MATCH,
-        queue_max: int = _QUEUE_MAX,
+        queue_max: int = RECONCILE_QUEUE_MAX,
     ) -> None:
         self._timeout_s = timeout_s
         self._min_plies = min_plies

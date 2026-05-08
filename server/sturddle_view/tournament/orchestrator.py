@@ -55,11 +55,23 @@ log = logging.getLogger(__name__)
 BroadcastCallback = Callable[[str, dict], Awaitable[None]]
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        log.warning("ignoring non-numeric %s=%r; using default %s", name, raw, default)
+        return default
+
+
 # Per-tournament event history depth. Big enough to cover all the
 # fastchess startup chatter (engine init, opening probes) plus a few
 # completed games, so a workspace opened mid-tournament still gets
-# a useful tail.
-_EVENT_HISTORY_MAX = 200
+# a useful tail. Operator knob: bump if late-joiners observe
+# evicted game_finished/game_reconciled rows in the event log.
+EVENT_HISTORY_MAX = _env_int("SV_EVENT_HISTORY_MAX", 200)
 
 
 # Two engines of one game share a FEN at the rendezvous: the thinker
@@ -553,7 +565,7 @@ class Orchestrator:
         tid = payload.get("tournament_id")
         if tid:
             hist = self._event_history.setdefault(
-                tid, deque(maxlen=_EVENT_HISTORY_MAX)
+                tid, deque(maxlen=EVENT_HISTORY_MAX)
             )
             hist.append({"kind": kind, "payload": payload})
         if self._broadcast is None:

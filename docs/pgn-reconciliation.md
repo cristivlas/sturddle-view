@@ -401,20 +401,23 @@ when both `--debug` is set *and* the env flag is set:
 Don't leave it enabled -- the per-record + per-match traffic at
 high concurrency is voluminous.
 
+## Operator knobs
+
+Five constants are env-overridable for production tuning:
+`SV_RECONCILE_TIMEOUT_S`, `SV_RECONCILE_LATE_WARNING_S`,
+`SV_RECONCILE_QUEUE_MAX`, `SV_EVENT_HISTORY_MAX`, `SV_PGN_TAIL_POLL_S`.
+See [env-vars.md](env-vars.md) for defaults and effects.
+
+Algorithm constants (`_MAX_CAPTURED_OVERRUN_PLIES`,
+`MIN_PLIES_FOR_MATCH`) are not env-overridable -- they encode
+properties of the fastchess + UCI protocol, not operator tunables.
+
 ## Future revisit
 
 Items deliberately deferred from the first three slices. None
 blocks current behavior; revisit once the featurette has been
 exercised in practice.
 
-- **Constants audit.** `MIN_PLIES_FOR_MATCH`, `RECONCILE_TIMEOUT_S`,
-  `_QUEUE_MAX` (`pgn_reconcile.py`), poll interval (`pgn_tail.py`),
-  Live event log size (`tournament-workspace.js`),
-  `_EVENT_HISTORY_MAX` (`orchestrator.py`). Decide which deserve
-  public names, which should be env-overridable
-  (`SV_RECONCILE_*`), and which stay private. Audit together so
-  naming + override conventions stay consistent -- addressing them
-  one-by-one as we touch them risks drift.
 - **Backfill replay edge case.** A workspace opened *very* late
   in a long-running tournament can find both `game_finished` and
   `game_reconciled` for the same game evicted from the
