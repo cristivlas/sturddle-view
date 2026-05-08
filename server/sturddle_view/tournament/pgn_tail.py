@@ -24,6 +24,9 @@ log = logging.getLogger(__name__)
 
 _DECISIVE_RESULTS = frozenset({"1-0", "0-1", "1/2-1/2"})
 
+# Same flag the reconcile queue uses; one opt-in for the whole subsystem.
+_DEBUG = os.environ.get("SV_DEBUG_RECONCILE", "0") == "1"
+
 
 def _env_float(name: str, default: float) -> float:
     raw = os.environ.get(name)
@@ -178,9 +181,15 @@ class PgnTailer:
 
         # Offload the synchronous parse + SAN->UCI replay to a thread
         # so a multi-MB delta can't stall the server's main loop.
+        delta_bytes = st.st_size - self._offset
         records, new_offset = await asyncio.to_thread(
             self._parse_delta, self._offset, st.st_size,
         )
+        if _DEBUG:
+            log.debug(
+                "PgnTailer parsed delta=%dB games=%d new_offset=%d",
+                delta_bytes, len(records), new_offset,
+            )
         if not records:
             # Delta has no complete game yet -- in-flight bytes; retry next pass.
             return 0

@@ -391,6 +391,9 @@ when both `--debug` is set *and* the env flag is set:
 - per pending enqueue: pair_id, plies, white/black engine names.
 - per PGN record arrival: game_n, white/black, plies.
 - per match attempt: closest-by-length miss diagnostic.
+- per tailer delta: `PgnTailer parsed delta=<B>B games=<N>
+  new_offset=<O>` -- one line per parse pass with non-empty delta.
+  Useful for sanity-checking what the tailer is doing under load.
 - `reconcile pgn_buffer evicted` -- buffered PGN record timed out
   without matching any pending dissolution. Mostly noise from
   pre-existing PGN bytes the tailer parsed before live state
