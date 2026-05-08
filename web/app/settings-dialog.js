@@ -115,7 +115,8 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
   await showDialog({
     label: "Settings",
     width: "min(690px, 94vw)",
-    height: "min(580px, 92vh)",
+    // Phones get the full vertical share; desktops cap at 580px.
+    height: matchMedia("(max-width: 480px)").matches ? "92vh" : "min(580px, 92vh)",
     body: (resolve, dialog) => {
       // ---- helper: PUT a partial settings update; toast on failure. ----
       const putSettings = async (patch) => {
@@ -138,7 +139,8 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       };
 
       const tabs = document.createElement("wa-tab-group");
-      tabs.placement = "start";
+      const isNarrow = matchMedia("(max-width: 480px)").matches;
+      tabs.placement = isNarrow ? "top" : "start";
       tabs.classList.add("dialog-side-tabs", "settings-tabs");
 
       // --- Common tab (PGN + global engine defaults) ---

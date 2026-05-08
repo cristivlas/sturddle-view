@@ -795,8 +795,27 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
    for the dialog's footer button strip; the 4px elsewhere preserves
    focus-ring space against the panel edge. */
 wa-dialog .engine-settings-tabs {
+  /* Narrow / portrait viewports get a much larger share of the screen
+     because the dialog is the *only* surface in view; on desktop the
+     dialog is one of many things competing for vertical space. */
   --engine-settings-panel-h: 40vh;
   height: var(--engine-settings-panel-h);
+}
+@media (max-width: 480px) {
+  /* Mobile: drop the panel-height cap entirely so tabs size to their
+     content and the form doesn't scroll inside a too-short panel. The
+     "no reflow on tab switch" rule we hold on desktop is relaxed here
+     — phone users configure one tab at a time, not bounce between. */
+  wa-dialog .engine-settings-tabs {
+    --engine-settings-panel-h: auto;
+  }
+  wa-dialog .engine-settings-tabs wa-tab-panel {
+    height: auto;
+  }
+  .engine-launch-form,
+  .engine-opt-form {
+    max-height: none;
+  }
 }
 wa-dialog .engine-settings-tabs wa-tab-panel {
   height: var(--engine-settings-panel-h);
@@ -822,11 +841,15 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
 }
 /* Equalize side-tab widths so focus rings + active-tab bars form a
    consistent vertical strip instead of hugging each label's content
-   width. Each tab's ::part(base) fills the rail's column. */
-wa-dialog .dialog-side-tabs wa-tab,
-wa-dialog .dialog-side-tabs wa-tab::part(base) {
-  width: 100%;
-  box-sizing: border-box;
+   width. Each tab's ::part(base) fills the rail's column. Only apply
+   when the rail is actually a vertical column — on narrow viewports we
+   switch placement to "top" via JS and tabs go horizontal. */
+@media (min-width: 481px) {
+  wa-dialog .dialog-side-tabs wa-tab,
+  wa-dialog .dialog-side-tabs wa-tab::part(base) {
+    width: 100%;
+    box-sizing: border-box;
+  }
 }
 .engine-launch-form,
 .engine-opt-form {
@@ -871,6 +894,30 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   gap: 8px 16px;
   align-content: start;
   align-items: center;
+}
+/* Narrow viewports (phones, small tablets in portrait): collapse the
+   form to one column so labels stack above inputs and inputs get the
+   full available width. The label-on-top layout is denser per row but
+   readable, and avoids the "Stur..." truncation in the screenshot. */
+@media (max-width: 480px) {
+  .engine-opt-form,
+  .engine-launch-form {
+    /* Mobile drops the panel-height cap so the dialog grows with
+       content; the desktop bottom-padding-to-clear-footer reserve is
+       no longer needed. Keep a small buffer so the last row's focus
+       ring isn't kissed by the footer button strip. */
+    padding-bottom: 12px;
+  }
+  .engine-opt-form {
+    grid-template-columns: 1fr;
+    gap: 2px 0;
+    align-items: stretch;
+  }
+  .engine-opt-label {
+    text-align: left;
+    margin-top: 8px;
+  }
+  .engine-opt-row:first-child .engine-opt-label { margin-top: 0; }
 }
 .engine-launch-section { display: flex; flex-direction: column; gap: 2px; }
 /* Hairline separator + breathing room above the second section. */
@@ -1569,6 +1616,15 @@ wa-dialog::part(body) {
   grid-template-columns: 7em 8em minmax(6em, 1fr) 12em;
 }
 .tournament-template-form .ttf-grid > * { min-width: 0; }
+/* Narrow viewports: collapse the 5-column row (TC, parallel, rounds,
+   tournament type, seeds) to 2 columns. The fixed em-based desktop
+   widths (7em + 8em + 6em + 12em ≈ 33em) overflow a phone-width form. */
+@media (max-width: 480px) {
+  .tournament-template-form .ttf-grid,
+  .tournament-template-form .ttf-grid.ttf-grid--no-seeds {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
 .tournament-template-form .ttf-switch-row {
   display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: center;
 }

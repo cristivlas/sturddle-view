@@ -326,7 +326,7 @@ export function showEngineOptionsDialog({ engine, api, probeError = null }) {
 
   return showDialog({
     label: engine.name || "Engine settings",
-    width: "560px",
+    width: "min(560px, 94vw)",
     body: (resolve, dialog) => {
       const ctx = {
         api,
@@ -340,7 +340,10 @@ export function showEngineOptionsDialog({ engine, api, probeError = null }) {
 
       // Tab group ------------------------------------------------------
       const tabs = document.createElement("wa-tab-group");
-      tabs.placement = "start";
+      // Side tabs on desktop, top tabs on narrow viewports — the rail
+      // eats too much horizontal space on phones.
+      const isNarrow = matchMedia("(max-width: 480px)").matches;
+      tabs.placement = isNarrow ? "top" : "start";
       tabs.classList.add("engine-settings-tabs", "dialog-side-tabs");
 
       const optionsTab = document.createElement("wa-tab");
