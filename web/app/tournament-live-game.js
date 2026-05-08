@@ -408,11 +408,16 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     }
   }
 
+  let resultPainted = false;
   function showResult(result, termination) {
     // result is "1-0" | "0-1" | "1/2-1/2" | "*" | null/undefined.
-    // termination may be "unknown" when the orchestrator can't infer
-    // it (today: always, since dissolution carries no fastchess result).
-    const score = (result && result !== "*") ? result : "game ended";
+    // The per-pair WS sentinel and the tournament-wide game_reconciled
+    // arrive in nondeterministic order; if real values landed first,
+    // ignore a subsequent "*" downgrade.
+    const isReal = result && result !== "*";
+    if (resultPainted && !isReal) return;
+    if (isReal) resultPainted = true;
+    const score = isReal ? result : "game ended";
     const term = (termination && termination !== "unknown") ? termination : "";
     resultScoreEl.textContent = score;
     resultTerminationEl.textContent = term;
