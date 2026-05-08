@@ -319,10 +319,11 @@ failure. Anything more is noise.
 - `reconciled pair=<short_id> game_n=<N> result=<R> termination=<T> plies=<P>`
   -- emitted from the orchestrator when `_emit_reconciled` fires.
 - `reconcile timeout pair=<short_id> plies=<P> age=<T>s` -- emitted
-  when the timeout sweep drops a pending entry.
-- `reconcile pgn_buffer evicted plies=<P> age=<T>s` -- emitted when
-  a buffered PGN record times out without ever being matched
-  (rare; could indicate a dissolution that never fired).
+  when the timeout sweep drops a pending entry. Real-game signal,
+  actionable.
+- `dissolve pair=<short_id> plies=<N> terminal=<bool> ...` -- one
+  per pair end. Useful for spot-checking match rate (each non-
+  terminal dissolve should be followed by a `reconciled`).
 
 **Always-on (WARNING).** Already implemented in `pgn_tail.py`:
 parse crash, illegal move, task hang on stop, queue overflow.
@@ -335,6 +336,10 @@ on for troubleshooting only:
 - per PGN record arrival: game_n, white/black, plies.
 - per match attempt: hit / miss + brief reason on miss
   (e.g. `miss: ply_count 84 vs 82`).
+- `reconcile pgn_buffer evicted` -- buffered PGN record timed out
+  without matching any pending dissolution. Mostly noise from
+  pre-existing PGN bytes the tailer parsed before live state
+  caught up; signal only if it fires for *current-run* games.
 - offset bookkeeping anomalies in `pgn_tail.py` (truncation, reset).
 
 **When to enable.** Ask the user explicitly to set
@@ -375,3 +380,11 @@ exercised in practice.
   tournament id, and proxies would need to carry a tournament tag
   in their broadcast payload so `ingest_proxy_lines` routes to the
   right instance. Same shape, just keyed.
+- **PGN buffering vs reconcile timeout.** `RECONCILE_TIMEOUT_S =
+  60s` assumes fastchess flushes per-game (sub-second). We don't
+  control that: fastchess argv tweaks, OS-level disk buffering,
+  or future runner changes could batch flushes. If real-game
+  `reconcile timeout` lines start appearing under load, bump the
+  constant before assuming a logic bug. A "matched but >5s late"
+  early-warning log would be a cheap addition to spot drift
+  before timeouts bite.
