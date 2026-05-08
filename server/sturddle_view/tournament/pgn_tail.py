@@ -1,21 +1,9 @@
 """Per-tournament PGN delta tailer.
 
 Polls ``games.pgn`` once per second; on growth, reads from the
-last-known offset and parses newly-completed games into
-``PgnGameRecord``s. Records are handed to a callback supplied at
-construction; the orchestrator (slice 3) routes them into the
-reconciliation match queue.
-
-Cross-platform: ``Path.stat()`` returns ``st_mtime_ns`` and ``st_size``
-on Linux + Windows alike. No filesystem-events dependency. Cost is
-one syscall per second per running tournament; PGN parse is bounded
-by the delta size, not the full file.
-
-PGN truncation (``size < last_offset``) resets the offset to 0 and
-reparses the file. fastchess uses ``-pgnout append=true`` so this is
-defensive — it shouldn't happen in normal operation.
-
-See ``docs/pgn-reconciliation.md``.
+last-known offset and yields ``PgnGameRecord`` instances to a
+callback. Cross-platform via ``Path.stat()``. See
+``docs/pgn-reconciliation.md``.
 """
 from __future__ import annotations
 
@@ -33,12 +21,8 @@ import chess.pgn
 log = logging.getLogger(__name__)
 
 
-# Decisive result tags (anything else, including ``*``, is treated as
-# "no result" and the game is skipped).
 _DECISIVE_RESULTS = frozenset({"1-0", "0-1", "1/2-1/2"})
 
-# Default poll interval. Overridable via the constructor for tests
-# that want to drive the loop manually with ``poll_once``.
 _DEFAULT_POLL_S = 1.0
 
 
@@ -46,10 +30,9 @@ _DEFAULT_POLL_S = 1.0
 class PgnGameRecord:
     """One completed game parsed out of the PGN delta.
 
-    ``uci_moves`` is the move list converted from PGN SAN to UCI.
-    ``game_n`` is the 1-based index across the PGN (matches fastchess's
-    ``Started game N``); since we count games in PGN order, this is the
-    cumulative game count up to and including this one.
+    ``uci_moves`` is SAN-to-UCI converted; ``game_n`` is the 1-based
+    cumulative count in PGN order (matches fastchess's ``Started
+    game N``).
     """
     white: str
     black: str
@@ -60,22 +43,15 @@ class PgnGameRecord:
     round_tag: str
 
 
-# Callback handed records as the tailer parses them. Async so the
-# orchestrator can ``await`` event emission inside.
 RecordCallback = Callable[[PgnGameRecord], Awaitable[None]]
 
 
 class PgnTailer:
     """Owns one tail loop on a single PGN file.
 
-    Lifecycle:
-
-    - ``start()`` spawns the poll task. Idempotent — calling twice is
-      a no-op (logs a warning).
-    - ``stop()`` cancels the task and awaits its exit. Idempotent.
-    - ``poll_once()`` runs one tail-and-parse pass synchronously.
-      Tests use it to drive the loop deterministically; the real
-      tail loop calls it once per ``poll_interval``.
+    ``start()`` spawns the poll task; ``stop()`` cancels it; both
+    idempotent. ``poll_once()`` runs a single pass synchronously
+    (used by tests).
     """
 
     def __init__(
@@ -89,15 +65,8 @@ class PgnTailer:
         self._poll_interval = poll_interval
         self._task: asyncio.Task | None = None
         self._stop_event: asyncio.Event | None = None
-        # Last byte we've finished parsing through. Survives across
-        # poll passes; reset to 0 on truncation detection.
         self._offset = 0
-        # Cumulative completed-game counter. Stamped on each record so
-        # consumers can correlate with fastchess's ``Started game N``
-        # line ordering. Reset alongside ``_offset`` on truncation.
         self._game_n = 0
-        # Cached stat() result; the inner work is skipped when neither
-        # mtime nor size has changed since the last pass.
         self._last_mtime_ns: int | None = None
         self._last_size: int | None = None
 
@@ -143,8 +112,7 @@ class PgnTailer:
 
     async def _run(self) -> None:
         assert self._stop_event is not None
-        # One immediate pass so a tournament with a pre-existing PGN
-        # (resume) gets parsed without waiting for the first interval.
+        # Resume case: pre-existing PGN parsed without waiting.
         try:
             await self.poll_once()
         except Exception:
@@ -160,24 +128,18 @@ class PgnTailer:
             try:
                 await self.poll_once()
             except Exception:
-                # Never let a parse error kill the tailer; log and keep
-                # polling. A malformed PGN tail should not break the
-                # tournament.
+                # Parse error must not kill the tailer.
                 log.exception("PgnTailer poll failed for %s", self._path)
 
     async def poll_once(self) -> int:
-        """Run one tail pass. Returns the number of newly-emitted
-        records (0 if the file did not grow or did not contain
-        any complete new games)."""
+        """Run one tail pass; return number of records newly emitted."""
         try:
             st = self._path.stat()
         except FileNotFoundError:
-            # Pre-creation window; orchestrator may start the tailer
-            # before fastchess writes its first PGN line. No-op.
+            # Pre-creation window: tailer may start before fastchess writes.
             return 0
 
-        # Truncation guard: defensive — fastchess always appends, but
-        # tests, manual edits, or a future runner could shrink the file.
+        # Truncation guard (defensive; fastchess always appends).
         if st.st_size < self._offset:
             log.info(
                 "PgnTailer: %s shrank (size=%d offset=%d); resetting",
@@ -186,8 +148,7 @@ class PgnTailer:
             self._offset = 0
             self._game_n = 0
 
-        # Fast skip: nothing changed since the last pass. Cheaper than
-        # opening the file even when no new games landed.
+        # Fast skip when nothing has changed since last pass.
         if (
             st.st_mtime_ns == self._last_mtime_ns
             and st.st_size == self._last_size
@@ -202,10 +163,7 @@ class PgnTailer:
 
         records, new_offset = self._parse_delta(self._offset, st.st_size)
         if not records:
-            # Delta exists but contained no completed game (e.g.
-            # fastchess flushed a header block but the moves haven't
-            # been written yet). Leave _offset at the last *complete*
-            # game boundary so we re-read the in-flight bytes next pass.
+            # Delta has no complete game yet -- in-flight bytes; retry next pass.
             return 0
 
         emitted = 0
@@ -226,11 +184,9 @@ class PgnTailer:
     def _parse_delta(
         self, start: int, end: int,
     ) -> tuple[list[PgnGameRecord], int]:
-        """Read bytes ``[start, end)`` from the PGN, parse complete
-        games, and return ``(records, new_offset)``. ``new_offset`` is
-        the byte position after the last complete game we parsed; any
-        in-flight trailing bytes are deliberately left for next pass.
-        """
+        """Parse complete games from byte range ``[start, end)``.
+        Returns ``(records, new_offset)``; in-flight trailing bytes
+        are left for the next pass."""
         try:
             with self._path.open("rb") as f:
                 f.seek(start)
@@ -242,10 +198,7 @@ class PgnTailer:
         text = blob.decode("utf-8", errors="replace")
         f = io.StringIO(text)
         records: list[PgnGameRecord] = []
-        # Byte offset (relative to ``start``) of the end of the last
-        # successfully-parsed game. ``StringIO.tell()`` is a *character*
-        # offset; we re-encode the consumed prefix to get a byte count
-        # that lines up with file offsets for non-ASCII headers.
+        # ``StringIO.tell()`` is char offset; re-encode for byte offset.
         last_complete_bytes = 0
 
         while True:
@@ -260,11 +213,7 @@ class PgnTailer:
                 break
             result = game.headers.get("Result", "*")
             if result not in _DECISIVE_RESULTS:
-                # `*` = unfinished. fastchess writes the final result
-                # tag *with* the rest of the game (atomic per-game
-                # append), so an unfinished tag here means we're
-                # looking at trailing in-flight bytes. Leave the offset
-                # at the last complete game so we re-read on next pass.
+                # `*` = in-flight bytes; retry this region next pass.
                 break
 
             uci_moves: list[str] = []
@@ -275,11 +224,9 @@ class PgnTailer:
                     board.push(node.move)
             except (ValueError, chess.IllegalMoveError, chess.InvalidMoveError):
                 log.warning(
-                    "PgnTailer: illegal move in PGN game_n≈%d; skipping",
+                    "PgnTailer: illegal move in PGN game_n~=%d; skipping",
                     self._game_n + len(records) + 1,
                 )
-                # Skip the bad game but advance past it so we don't
-                # re-parse forever.
                 last_complete_bytes = len(text[: f.tell()].encode("utf-8"))
                 continue
 

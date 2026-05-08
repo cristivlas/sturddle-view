@@ -46,14 +46,19 @@ def _record(moves: list[str] | None = None, n: int = 1, result: str = "1-0") -> 
 
 
 def test_pending_then_pgn_matches():
+    """Captured side is a strict prefix of PGN by 1 ply -- the
+    typical case (engine never gets a follow-up `position` after the
+    final `bestmove`)."""
     q = ReconciliationQueue()
-    assert q.add_pending(_pending()) is None
-    m = q.add_pgn_record(_record())
+    captured = list(_ENOUGH)            # 12 plies
+    pgn_full = list(_ENOUGH) + ["b1c3"]  # 13 plies
+    assert q.add_pending(_pending(moves=captured)) is None
+    m = q.add_pgn_record(_record(moves=pgn_full))
     assert m is not None
     assert m.pair_id == "pair-1"
     assert m.result == "1-0"
     assert m.game_n == 1
-    assert m.ply_count == len(_ENOUGH)
+    assert m.ply_count == len(pgn_full)
     # Both queues empty after a match.
     assert q.pending_count == 0
     assert q.pgn_buffer_count == 0
@@ -63,10 +68,71 @@ def test_pgn_then_pending_matches():
     """The PGN side may arrive first if fastchess flushes ahead of
     the orchestrator's dissolution. Order shouldn't matter."""
     q = ReconciliationQueue()
-    assert q.add_pgn_record(_record()) is None
-    m = q.add_pending(_pending())
+    captured = list(_ENOUGH)
+    pgn_full = list(_ENOUGH) + ["b1c3"]
+    assert q.add_pgn_record(_record(moves=pgn_full)) is None
+    m = q.add_pending(_pending(moves=captured))
     assert m is not None
     assert m.pair_id == "pair-1"
+
+
+def test_exact_equal_lists_match():
+    """Sanity: if the engine *did* receive a follow-up position after
+    its last bestmove (rare but legal), our captured list equals the
+    PGN list and matching still succeeds."""
+    q = ReconciliationQueue()
+    moves = list(_ENOUGH)
+    q.add_pending(_pending(moves=moves))
+    m = q.add_pgn_record(_record(moves=moves))
+    assert m is not None
+
+
+def test_captured_prefix_two_plies_short_matches():
+    """fastchess can adjudicate one move ahead, leaving us 2 plies
+    short relative to the PGN (e.g. the deciding move and the
+    response). Still a match."""
+    q = ReconciliationQueue()
+    captured = list(_ENOUGH)            # 12 plies
+    pgn_full = list(_ENOUGH) + ["b1c3", "d8d7"]  # 14 plies
+    q.add_pending(_pending(moves=captured))
+    m = q.add_pgn_record(_record(moves=pgn_full))
+    assert m is not None
+
+
+def test_captured_overrun_by_one_matches():
+    """Adjudication-after-bestmove case: the engine emitted bestmove
+    so we appended it to the captured list, but fastchess adjudicated
+    and never wrote that final move into the PGN. Captured is one ply
+    longer than PGN -- still a match."""
+    q = ReconciliationQueue()
+    captured = list(_ENOUGH) + ["b1c3"]  # 13 plies
+    pgn_short = list(_ENOUGH)            # 12 plies
+    q.add_pending(_pending(moves=captured))
+    m = q.add_pgn_record(_record(moves=pgn_short))
+    assert m is not None
+
+
+def test_captured_overrun_by_two_does_not_match():
+    """Larger overrun means the captured list has moves the PGN
+    doesn't -- treat as real divergence, not a tail-truncation."""
+    q = ReconciliationQueue()
+    captured = list(_ENOUGH) + ["b1c3", "d8d7"]
+    pgn_short = list(_ENOUGH)
+    q.add_pending(_pending(moves=captured))
+    assert q.add_pgn_record(_record(moves=pgn_short)) is None
+    assert q.pending_count == 1
+    assert q.pgn_buffer_count == 1
+
+
+def test_internal_divergence_does_not_match():
+    """Same length, identical opening, divergence in the middle. Must
+    not match -- backwards walk catches it."""
+    q = ReconciliationQueue()
+    captured = list(_ENOUGH)
+    pgn = list(_ENOUGH)
+    pgn[6] = "h2h4"  # diverge at ply 6
+    q.add_pending(_pending(moves=captured))
+    assert q.add_pgn_record(_record(moves=pgn)) is None
 
 
 def test_below_min_plies_does_not_match():
@@ -142,6 +208,28 @@ def test_clear_drops_everything():
     assert q.pending_count == 1 and q.pgn_buffer_count == 1
     q.clear()
     assert q.pending_count == 0 and q.pgn_buffer_count == 0
+
+
+def test_try_match_now_hits_buffered_pgn():
+    """Terminal-teardown path: PGN was already buffered, dissolution
+    fires with `terminal=True`, one-shot match succeeds without
+    parking the entry."""
+    q = ReconciliationQueue()
+    captured = list(_ENOUGH)
+    pgn_full = list(_ENOUGH) + ["b1c3"]
+    assert q.add_pgn_record(_record(moves=pgn_full)) is None
+    m = q.try_match_now(_pending(moves=captured))
+    assert m is not None
+    assert q.pending_count == 0
+    assert q.pgn_buffer_count == 0
+
+
+def test_try_match_now_misses_does_not_park():
+    """No PGN buffered (game never finished) -- one-shot returns
+    None and the entry is *not* parked for later."""
+    q = ReconciliationQueue()
+    assert q.try_match_now(_pending()) is None
+    assert q.pending_count == 0
 
 
 def test_queue_max_evicts_oldest():

@@ -280,18 +280,10 @@ class Orchestrator:
         # WS subscribers keyed by pair_id. Same lifecycle as proxy subscribers
         # but scoped to the game: sentinel sent when the pair is dissolved.
         self._game_subscribers: dict[str, set[CoalescingQueue]] = {}
-        # Move list (UCI) for each confirmed pair. Initialized to [] at
-        # confirmation; updated from each ``position startpos moves ...``
-        # line ingested for either side; longest-prefix-extension wins
-        # so the late-reporter's stale shorter list doesn't clobber.
-        # Captured into the reconciliation pending queue at dissolution.
+        # UCI move list per confirmed pair, longest-prefix-extension
+        # wins; handed to the reconciliation queue at dissolution.
         self._pair_moves: dict[str, list[str]] = {}
-        # Per-tournament PGN tailer; spawned at start, stopped on
-        # terminal runner events.
         self._pgn_tailer: PgnTailer | None = None
-        # Match queue joining dissolved pairs to PGN records. Cleared
-        # at terminal runner events alongside the rest of the per-
-        # tournament state.
         self._reconcile_queue = ReconciliationQueue()
         # Per-tournament secret embedded in the proxy --broadcast-url so
         # only proxies belonging to the active tournament can post.
@@ -440,12 +432,9 @@ class Orchestrator:
             self._store.update_status(t.id, STATUS_STOPPED, stopped_at=_now())
             raise
 
-        # Tail the tournament's PGN for reconciliation. Spawned after
-        # the runner is up so a runner_start failure rolls back without
-        # leaving an orphan tailer task.
-        self._pgn_tailer = PgnTailer(
-            spec.pgn_path, self._on_pgn_record,
-        )
+        # PGN tailer for reconciliation. Spawned after the runner is
+        # up so a runner_start failure doesn't orphan it.
+        self._pgn_tailer = PgnTailer(spec.pgn_path, self._on_pgn_record)
         await self._pgn_tailer.start()
 
         return updated
@@ -524,17 +513,11 @@ class Orchestrator:
                     log.exception("failed to persist terminal status for %s", active_id)
                 finally:
                     self._active_id = None
-                    # Slice 9b: tear down the live-observation state so
-                    # stale proxies (if any survive past fastchess exit)
-                    # can't post and any open WS subscribers get a clean
-                    # "ended" signal. Drain pending pairs first so their
-                    # game subscribers see an `ended` frame.
                     self._proxy_secret = None
-                    await self._dissolve_all_pairs()
-                    # Stop the PGN tailer; one final poll first so any
-                    # games fastchess flushed just before exit are
-                    # parsed before we release the dissolution state
-                    # they'd reconcile against.
+                    # Final PGN poll *before* dissolve so any game
+                    # fastchess flushed just before exit lands in the
+                    # buffer; terminal dissolves then try a one-shot
+                    # match against it via try_match_now.
                     if self._pgn_tailer is not None:
                         try:
                             await self._pgn_tailer.poll_once()
@@ -542,6 +525,7 @@ class Orchestrator:
                             log.exception("final PGN poll failed")
                         await self._pgn_tailer.stop()
                         self._pgn_tailer = None
+                    await self._dissolve_all_pairs()
                     self._reset_pairing_state()
                     self._close_all_proxy_subscribers()
 
@@ -942,14 +926,8 @@ class Orchestrator:
         return (pid_a, pid_b) if side_a == "white" else (pid_b, pid_a)
 
     async def _on_pgn_record(self, record: PgnGameRecord) -> None:
-        """Handed each completed game the PGN tailer parses. Routes
-        into the reconciliation queue; emits ``game_reconciled`` when
-        the dissolution side has already landed.
-
-        Also runs a timeout sweep on each tick so abandoned pendings
-        don't pile up indefinitely (e.g. resume/stop edge cases where
-        a dissolution never gets a matching PGN record).
-        """
+        """Tailer hook: route into the reconciliation queue and emit
+        ``game_reconciled`` on a hit. Sweeps stale entries each tick."""
         self._reconcile_queue.sweep()
         reconciled = self._reconcile_queue.add_pgn_record(record)
         if reconciled is not None:
@@ -974,12 +952,9 @@ class Orchestrator:
         })
 
     def _update_pair_moves(self, proxy_id: str, parsed: dict | None) -> None:
-        """Capture the cumulative move list reported by either side of a
-        confirmed pair. Both engines report the same UCI move list one
-        ply apart; we keep the longer one. A shorter or non-extending
-        list (book-line collision before divergence, late stale frame)
-        is ignored. Used by PGN reconciliation at dissolution time.
-        """
+        """Capture the cumulative UCI move list of a confirmed pair.
+        Longest-prefix-extension wins; book-prefix collisions and
+        stale shorter frames are ignored."""
         if parsed is None or parsed.get("kind") != "position":
             return
         moves = parsed.get("moves")
@@ -999,11 +974,19 @@ class Orchestrator:
             self._pair_moves[pair_id] = list(moves)
 
     async def _dissolve_pair(
-        self, pair_id: str, result: str, termination: str | None
+        self,
+        pair_id: str,
+        result: str,
+        termination: str | None,
+        terminal: bool = False,
     ) -> None:
-        """Single dissolution path. Drops bookkeeping for the pair,
-        sends the game-WS sentinel, and emits ``proxy_unpaired`` +
-        ``game_finished``. Idempotent — a duplicate call is a no-op."""
+        """Drops pair bookkeeping, flushes WS sentinel, emits
+        ``proxy_unpaired`` + ``game_finished``. Idempotent.
+
+        ``terminal=True`` for tournament Stop/Done/Failed teardown:
+        skip the reconciliation push since the PGN won't ever have
+        these games (fastchess was killed mid-flight).
+        """
         proxies = self._pair_proxies.pop(pair_id, None)
         if proxies is None:
             return
@@ -1012,21 +995,33 @@ class Orchestrator:
         self._confirmed_pairs.pop(black_pid, None)
         self._pair_ids.pop(proxies, None)
         self._pair_white.pop(pair_id, None)
-        # Hand the captured move list to the reconciliation queue.
-        # Returns a ReconciledMatch immediately if the PGN record had
-        # already arrived; otherwise the entry sits until tailer poll
-        # or the timeout sweep.
         moves = self._pair_moves.pop(pair_id, None)
+        log.info(
+            "dissolve pair=%s plies=%d terminal=%s white=%s black=%s",
+            pair_id[:8],
+            len(moves) if moves else 0,
+            terminal,
+            self._proxy_engine_names.get(white_pid, "?"),
+            self._proxy_engine_names.get(black_pid, "?"),
+        )
         reconciled: ReconciledMatch | None = None
         if moves:
-            reconciled = self._reconcile_queue.add_pending(PendingMatch(
+            # On terminal teardown, try a one-shot match against the
+            # PGN buffer (the last in-flight game may have flushed
+            # before fastchess exited) but never park the entry --
+            # there'll be nothing to match against later.
+            entry = PendingMatch(
                 pair_id=pair_id,
                 white_proxy=white_pid,
                 black_proxy=black_pid,
                 white_engine=self._proxy_engine_names.get(white_pid),
                 black_engine=self._proxy_engine_names.get(black_pid),
                 uci_moves=moves,
-            ))
+            )
+            if terminal:
+                reconciled = self._reconcile_queue.try_match_now(entry)
+            else:
+                reconciled = self._reconcile_queue.add_pending(entry)
         game_subs = self._game_subscribers.pop(pair_id, None)
         if _DEBUG_PAIRING:
             log.info(
@@ -1055,11 +1050,7 @@ class Orchestrator:
         await self._emit("game_finished", {
             "tournament_id": self._active_id,
             "pair_id": pair_id,
-            # `game_n` retained in the schema for future implementations
-            # that can reliably correlate proxy lifecycle to fastchess
-            # game numbers; today it is always None. Reconciliation
-            # surfaces the matched value on the new ``game_reconciled``
-            # event instead of mutating an event already emitted.
+            # game_n stays null here; reconciliation surfaces it on game_reconciled.
             "game_n": None,
             "proxy_a": white_pid,
             "proxy_b": black_pid,
@@ -1072,14 +1063,14 @@ class Orchestrator:
             await self._emit_reconciled(reconciled)
 
     async def _dissolve_all_pairs(self) -> None:
-        """Dissolve every confirmed pair. Called on terminal runner
-        events (tournament done/stopped/failed) so any open game-WS
-        subscribers receive the `ended` sentinel."""
-        # Snapshot keys so dissolution mutations don't disturb iteration.
+        """Dissolve every confirmed pair on terminal runner events.
+        ``terminal=True`` tells _dissolve_pair to skip the reconcile
+        queue push -- those games never finished in the PGN."""
         pending_ids = list(self._pair_ids.values())
         for pair_id in pending_ids:
             await self._dissolve_pair(
                 pair_id, _RESULT_UNKNOWN, _TERMINATION_UNKNOWN,
+                terminal=True,
             )
 
     def _paired_subscribers(

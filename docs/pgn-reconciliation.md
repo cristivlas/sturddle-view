@@ -108,9 +108,25 @@ for pending in pending_queue:
             break
 ```
 
-Match key is **exact UCI move-list equality** (post the min-plies
-gate). No hashing needed at this scale; lists are short and Python
-list equality is fast.
+Match key is **UCI move-list equality with end-anchored alignment**
+(post the min-plies gate). The captured engine-side list is normally
+1–2 plies *shorter* than the PGN: fastchess never sends a follow-up
+`position startpos moves <full>` after the engines' final
+`bestmove` — the game ended, the next `position` would only land at
+`ucinewgame` for the next game, which is for a different pair under
+concurrency. Adjudication can also leave the captured list 1 ply
+*longer* than the PGN (engine emitted bestmove, fastchess decided
+to adjudicate before applying it).
+
+`_moves_match` walks back from the end:
+
+- accepts `len(captured) - len(pgn) ∈ {-N, …, +1}` (any prefix of
+  PGN, plus a single overrun ply);
+- compares `captured[i] == pgn[i]` for `i` from the last shared
+  index down to 0; first mismatch rejects.
+
+No hashing; both queues are bounded so the linear scan is
+microseconds.
 
 ### Eviction / abandonment
 
@@ -122,9 +138,15 @@ list equality is fast.
 - `_pair_moves[pair_id]` is dropped in `_dissolve_pair` after the
   list is captured into the pending entry (move list lives on in
   the queue, not in the pair table).
-- On terminal runner events / proxy session end: existing teardown
-  paths cover this. `_reset_pairing_state` drops `_pair_moves`;
-  the pending queue is cleared along with the tailer task.
+- On terminal runner events: the orchestrator runs a final PGN
+  poll *before* `_dissolve_all_pairs` so any game fastchess flushed
+  just before exit lands in the buffer; terminal dissolves then
+  pass `terminal=True` and use `try_match_now` (one-shot match
+  against the buffered PGN, no parking). Aborted mid-game pairs
+  produce no pending — there's no PGN counterpart to match.
+- On proxy session end: existing teardown paths cover this.
+  `_reset_pairing_state` drops `_pair_moves` and clears the queue
+  alongside the tailer task.
 - WS close (user closes window): does **not** affect pending
   entries — those are tournament-scoped, not viewer-scoped. The
   existing per-pair WS subscriber teardown is unchanged.
