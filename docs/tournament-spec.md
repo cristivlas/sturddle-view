@@ -640,19 +640,19 @@ its FEN bucket -- typically via `ucinewgame` (entering its next
 game) or `proxy_session_ended` (engine quit / fastchess closed it)
 -- the pair's game is over.
 
-Result and termination are reported as `*` / `unknown` on the
-`game_finished` event. fastchess's `Started game N` / `Finished
-game N` stdout lines exist but are no longer parsed: under
-concurrency the same `(white_name, black_name)` matchup can be
-playing in N parallel slots, so a `Finished` line for that matchup
-cannot be unambiguously bound back to a specific pair. The PGN
-remains authoritative for results in the Standings window; the live
-view shows games ending without a per-game W/L/D verdict.
+`game_finished` is emitted immediately on dissolution with
+`result="*"` / `termination="unknown"` / `game_n=null` -- the proxy
+side cannot classify, and fastchess's `Started/Finished game N`
+stdout cannot be unambiguously joined to a `pair_id` under
+concurrency (same-name engines, no per-slot identifier).
 
-The `game_n` field on `game_finished` is retained in the schema
-(always `null` today) so a future implementation that finds a
-reliable correlation signal can populate it without breaking
-consumers.
+A separate `game_reconciled` event upgrades the row when the
+captured UCI move list is matched against fastchess's PGN output;
+that event carries the real `result`, `termination` (PGN
+[Termination "..."]), and `game_n`. Consumers that don't care about
+the upgrade can ignore `game_reconciled`; the Standings window
+still derives from the PGN directly. See `docs/pgn-reconciliation.md`
+for the matching algorithm and edge cases.
 
 #### Pair lifecycle: confirmation and dissolution
 
@@ -670,8 +670,10 @@ resolve as engines diverge past book.
 becomes orphaned from its FEN bucket -- typically because the proxy
 forwarded `ucinewgame` to start its next game, or its session ended
 (`proxy_session_ended`). Dissolution emits `proxy_unpaired` +
-`game_finished` (with `result="*"`, `termination="unknown"`) and
-closes the per-pair WS subscribers with an `ended` sentinel.
+`game_finished` (with `result="*"`, `termination="unknown"`,
+upgraded later by `game_reconciled` -- see "What end-of-game looks
+like" above) and closes the per-pair WS subscribers with an `ended`
+sentinel.
 
 On terminal runner events (tournament done/stopped/failed), every
 remaining open pair is dissolved through the same path so any open
@@ -689,9 +691,11 @@ game-WS subscribers receive their `ended` frame.
 - *Board-state inference from FEN.* Wrong for resignations
   (`-resign`), adjudicated draws (`-draw`), and time forfeits -- the
   board doesn't reflect the verdict.
-- *PGN tail polling for results.* Adds a poller and doesn't solve
-  pair-id mapping under concurrency (PGN flush order is per-game,
-  not per-slot).
+- *PGN tail polling matched on `(white, black, N)`.* Same
+  `pair_id <-> N` join failure as the stdout case above. The
+  reconciliation feature uses PGN tail polling but matches on the
+  full UCI move list instead, which disambiguates under concurrency
+  even with same-name engines (see `docs/pgn-reconciliation.md`).
 
 **Failure modes.**
 

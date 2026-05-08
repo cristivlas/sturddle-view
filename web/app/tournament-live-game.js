@@ -8,14 +8,14 @@ import { confirm, reportError } from "./dialogs.js";
 import { isPlayInProgress } from "./perspectives/play.js";
 import { flashWindow } from "./wb-utils.js";
 
-const REPLAY_DISCARD_MSG = "Cancel the game in progress and replay the tournament game?";
+const REPLAY_DISCARD_MSG = "Discard your in-progress game and replay this tournament game?";
 
 async function replayTournamentGame({ tournamentId, gameN, token }) {
   if (isPlayInProgress()) {
     const ok = await confirm({
       message: REPLAY_DISCARD_MSG,
       okLabel: "Replay",
-      cancelLabel: "Keep playing",
+      cancelLabel: "Cancel",
       destructive: true,
     });
     if (!ok) return;
