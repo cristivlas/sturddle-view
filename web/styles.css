@@ -802,14 +802,49 @@ wa-dialog .engine-settings-tabs wa-tab-panel {
   height: var(--engine-settings-panel-h);
   overflow: clip;
 }
+/* wa-tab-panel's shadow ``[part="base"]`` slot wrapper defaults to
+   32px padding on every side. Zero only the right (so input/scrollbar
+   right edges line up with the wa-dialog footer button strip) and
+   keep the left so the form has visual breathing room from the tab
+   rail. The form's own padding handles the rest. */
+wa-dialog .engine-settings-tabs wa-tab-panel::part(base) {
+  padding-right: 0;
+}
+/* wa-tab's shadow ``[part="base"]`` defaults to 21px padding on every
+   side — that adds to wa-dialog::part(body)'s 24px to make tab labels
+   look ~21px more inset than the form's right edge. Zero the left so
+   "Options"/"Launch" text aligns with the body's content-left edge. */
+wa-dialog .engine-settings-tabs wa-tab::part(base) {
+  padding-left: 0;
+}
 .engine-launch-form,
 .engine-opt-form {
+  /* Fill the panel's full inner width so input/scrollbar right edges
+     align with the wa-dialog footer's button strip. Without this the
+     form sizes to its content (or its grid intrinsic width) and ends
+     ~30px short of the panel — the wa-tab-panel slot wrapper padding
+     leaks through and the right edges stop misaligned. */
+  width: 100%;
   max-height: var(--engine-settings-panel-h);
   overflow-y: auto;
+  /* Reserve scrollbar space at all times so inputs don't slide under
+     the scrollbar (which would clip the right-side focus ring) when
+     the form starts overflowing. Trades perfect "input flush with
+     Save" alignment for a stable layout and clean focus rings. */
+  scrollbar-gutter: stable;
   overscroll-behavior: contain;
   box-sizing: border-box;
-  contain: layout paint;
-  padding: 4px 16px 28px 4px;
+  /* `contain: layout` only — `paint` would clip child focus rings at
+     the form's box edge. Vertical overflow is already handled by
+     ``overflow-y: auto`` so we don't need paint containment for that. */
+  contain: layout;
+  /* Padding budget: 4px each side leaves clearance for input focus
+     rings, which the form's scroll container would otherwise clip
+     (scroll containers always clip overflow — `contain` doesn't help).
+     Bottom padding clears the dialog footer overlap. Trade-off: input
+     right edge sits ~4px short of the Save button, but focus rings
+     stay visible. */
+  padding: 4px 4px 28px 4px;
 }
 .engine-launch-form {
   display: flex;
