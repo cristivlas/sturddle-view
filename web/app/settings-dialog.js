@@ -397,41 +397,67 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       // --- Engine defaults (UCI overrides + tournament book) ---
       // Lives in the Common panel so users see one place for global,
       // non-Play, non-Tournament settings.
+      function makeNumInput(labelText, key, opts = {}) {
+        const { max } = opts;
+        const item = document.createElement("div");
+        const lbl = document.createElement("label");
+        lbl.textContent = labelText;
+        const input = document.createElement("wa-input");
+        input.size = "small";
+        input.type = "number";
+        input.min = "1";
+        if (max != null) input.max = String(max);
+        input.autocomplete = "off";
+        input.placeholder = "default";
+        const cur = initial[key];
+        if (cur != null) input.value = String(cur);
+        input.addEventListener("input", () => {
+          const raw = (input.value || "").trim();
+          if (raw === "") return putSettingsDebounced({ [key]: null });
+          const n = Number(raw);
+          if (Number.isFinite(n)) putSettingsDebounced({ [key]: n });
+        });
+        item.append(lbl, input);
+        return item;
+      }
       function makeNumGroup(fields) {
         const row = document.createElement("div");
         row.className = "settings-num-group settings-panel-aligned";
         for (const [labelText, key, opts = {}] of fields) {
-          const { max } = opts;
-          const item = document.createElement("div");
-          const lbl = document.createElement("label");
-          lbl.textContent = labelText;
-          const input = document.createElement("wa-input");
-          input.size = "small";
-          input.type = "number";
-          input.min = "1";
-          if (max != null) input.max = String(max);
-          input.autocomplete = "off";
-          input.placeholder = "default";
-          const cur = initial[key];
-          if (cur != null) input.value = String(cur);
-          input.addEventListener("input", () => {
-            const raw = (input.value || "").trim();
-            if (raw === "") return putSettingsDebounced({ [key]: null });
-            const n = Number(raw);
-            if (Number.isFinite(n)) putSettingsDebounced({ [key]: n });
-          });
-          item.append(lbl, input);
-          row.append(item);
+          row.append(makeNumInput(labelText, key, opts));
         }
+        return row;
+      }
+      // Threads subgroup: bordered block holding Analysis + Play threads
+      // (same UCI knob, two contexts) so the relationship is obvious;
+      // Hash sits alongside as a peer with a matching border so the two
+      // visually pair without padding arithmetic.
+      function makeThreadsHashRow(maxThreads) {
+        const row = document.createElement("div");
+        row.className = "settings-num-group settings-panel-aligned";
+        const threads = document.createElement("div");
+        threads.className = "settings-threads-subgroup";
+        const hdr = document.createElement("div");
+        hdr.className = "settings-threads-subgroup-hdr";
+        hdr.textContent = "Threads";
+        hdr.title = "UCI Threads — sent to engines on launch";
+        const inner = document.createElement("div");
+        inner.className = "settings-threads-subgroup-inner";
+        inner.append(
+          makeNumInput("Analysis", "engine_default_analysis_threads", { max: maxThreads }),
+          makeNumInput("Play", "engine_default_threads", { max: maxThreads }),
+        );
+        threads.append(hdr, inner);
+        // Hash: just the existing input, with a border to match the
+        // threads box's frame.
+        const hash = makeNumInput("Hash (MB)", "engine_default_hash_mb");
+        hash.classList.add("settings-hash-boxed");
+        row.append(threads, hash);
         return row;
       }
 
       generalPanel.append(
-        makeNumGroup([
-          ["Analysis Threads", "engine_default_analysis_threads", { max: initial.host?.logical_cores }],
-          ["Threads",          "engine_default_threads",          { max: initial.host?.logical_cores }],
-          ["Hash (MB)",        "engine_default_hash_mb"],
-        ]),
+        makeThreadsHashRow(initial.host?.logical_cores),
         pathRow(
           "PGN directory",
           initial.pgn_dir ?? "",

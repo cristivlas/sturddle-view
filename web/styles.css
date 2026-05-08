@@ -1193,6 +1193,43 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .settings-num-group > div { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .settings-num-group label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
 .settings-num-group wa-input { width: 100%; }
+/* Threads subgroup: "Threads" header sits to the LEFT of a bordered
+   box holding Analysis + Play inputs. Specificity: must chain the
+   parent class so we match at (0,2,0) and beat `.settings-num-group >
+   div` (0,1,1, due to the `div` type selector) — otherwise the
+   subgroup inherits flex-direction: column and the header stacks. */
+.settings-num-group .settings-threads-subgroup {
+  flex: 2 1 0 !important;
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.settings-threads-subgroup-hdr {
+  font-size: 12px;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.settings-threads-subgroup-inner {
+  display: flex;
+  gap: 8px;
+  border: 1px solid #34373d;
+  border-radius: 6px;
+  padding: 6px 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.settings-threads-subgroup-inner > div { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.settings-threads-subgroup-inner label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.settings-threads-subgroup-inner wa-input { width: 100%; }
+/* Hash gets a matching border so it visually pairs with the threads
+   box without changing its label/input structure. */
+.settings-hash-boxed {
+  border: 1px solid #34373d;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
 
 .settings-row-pair { display: flex; gap: 6px; align-items: center; }
 .settings-row-pair > wa-input { flex: 0 0 5em; width: auto; }
