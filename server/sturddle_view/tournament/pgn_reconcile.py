@@ -26,6 +26,11 @@ MIN_PLIES_FOR_MATCH = 12
 
 RECONCILE_TIMEOUT_S = 60.0
 
+# Pending entries matched after this many seconds emit an INFO line --
+# early-warning telemetry. Well below RECONCILE_TIMEOUT_S so drift can
+# be spotted before timeouts start firing.
+RECONCILE_LATE_WARNING_S = 5.0
+
 _QUEUE_MAX = 256
 
 # Captured may overrun PGN by 1 ply when fastchess adjudicates after
@@ -211,6 +216,12 @@ class ReconciliationQueue:
 
 
 def _join(entry: PendingMatch, record: PgnGameRecord) -> ReconciledMatch:
+    age = time.monotonic() - entry.enqueued_at
+    if age >= RECONCILE_LATE_WARNING_S:
+        log.info(
+            "reconcile late pair=%s plies=%d age=%.1fs",
+            entry.pair_id[:8], len(entry.uci_moves), age,
+        )
     return ReconciledMatch(
         pair_id=entry.pair_id,
         white_proxy=entry.white_proxy,

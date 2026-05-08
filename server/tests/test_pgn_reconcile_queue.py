@@ -11,6 +11,7 @@ import pytest
 
 from sturddle_view.tournament.pgn_reconcile import (
     MIN_PLIES_FOR_MATCH,
+    RECONCILE_LATE_WARNING_S,
     PendingMatch,
     ReconciliationQueue,
 )
@@ -244,3 +245,27 @@ def test_queue_max_evicts_oldest():
         # cares about list equality, so any unique sentinel works.
         q.add_pending(_pending(pair_id=f"P{i}", moves=moves))
     assert q.pending_count == 3
+
+
+def test_late_match_emits_warning(monkeypatch, caplog):
+    """Pending entry sat past LATE_WARNING_S before matching -- INFO log."""
+    q = ReconciliationQueue()
+    real = time.monotonic()
+    monkeypatch.setattr(time, "monotonic", lambda: real)
+    assert q.add_pending(_pending()) is None
+
+    monkeypatch.setattr(time, "monotonic", lambda: real + RECONCILE_LATE_WARNING_S + 0.1)
+    with caplog.at_level("INFO", logger="sturddle_view.tournament.pgn_reconcile"):
+        m = q.add_pgn_record(_record())
+    assert m is not None
+    assert any("reconcile late" in r.message for r in caplog.records)
+
+
+def test_fresh_match_does_not_warn(caplog):
+    """Sub-threshold latency stays silent."""
+    q = ReconciliationQueue()
+    q.add_pending(_pending())
+    with caplog.at_level("INFO", logger="sturddle_view.tournament.pgn_reconcile"):
+        m = q.add_pgn_record(_record())
+    assert m is not None
+    assert not any("reconcile late" in r.message for r in caplog.records)

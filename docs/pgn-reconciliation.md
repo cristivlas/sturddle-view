@@ -369,6 +369,10 @@ failure. Anything more is noise.
 - `reconcile timeout pair=<short_id> plies=<P> age=<T>s` -- emitted
   when the timeout sweep drops a pending entry. Real-game signal,
   actionable.
+- `reconcile late pair=<short_id> plies=<P> age=<T>s` -- emitted
+  when a match completes more than `RECONCILE_LATE_WARNING_S = 5s`
+  after the pending entry was enqueued. Early warning that flush
+  latency is drifting toward the timeout.
 
 **Always-on (WARNING).** Already implemented in `pgn_tail.py`:
 parse crash, illegal move, task hang on stop, queue overflow.
@@ -435,6 +439,6 @@ exercised in practice.
   control that: fastchess argv tweaks, OS-level disk buffering,
   or future runner changes could batch flushes. If real-game
   `reconcile timeout` lines start appearing under load, bump the
-  constant before assuming a logic bug. A "matched but >5s late"
-  early-warning log would be a cheap addition to spot drift
-  before timeouts bite.
+  constant before assuming a logic bug. The
+  `RECONCILE_LATE_WARNING_S = 5s` log line emits before any
+  timeout fires, so drift can be spotted early.
