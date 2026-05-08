@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 # SV_DEBUG_RECONCILE=1 turns on per-record / per-match traces.
 _DEBUG = os.environ.get("SV_DEBUG_RECONCILE", "0") == "1"
 
-# Min captured plies before we attempt a match — guards against
+# Min captured plies before we attempt a match -- guards against
 # opening-prefix collisions across parallel slots.
 MIN_PLIES_FOR_MATCH = 12
 
@@ -172,31 +172,38 @@ class ReconciliationQueue:
     # ----- internals --------------------------------------------------------
 
     def _try_match_pending(self, entry: PendingMatch) -> ReconciledMatch | None:
-        for i, (rec, _ts) in enumerate(self._pgn):
-            if _moves_match(entry.uci_moves, rec.uci_moves):
-                del self._pgn[i]
-                return _join(entry, rec)
-        if _DEBUG and self._pgn:
-            closest = min(self._pgn, key=lambda x: abs(len(x[0].uci_moves) - len(entry.uci_moves)))
-            log.info(
-                "reconcile miss (pending) pair=%s plies=%d closest_pgn_plies=%d",
-                entry.pair_id[:8], len(entry.uci_moves),
-                len(closest[0].uci_moves),
-            )
-        return None
+        return self._scan(
+            container=self._pgn,
+            moves_of=lambda item: item[0].uci_moves,
+            matches=lambda item: _moves_match(entry.uci_moves, item[0].uci_moves),
+            on_hit=lambda item: _join(entry, item[0]),
+            query_plies=len(entry.uci_moves),
+            miss_log=("reconcile miss (pending) pair=%s plies=%d closest_pgn_plies=%d",
+                      entry.pair_id[:8]),
+        )
 
     def _try_match_pgn(self, record: PgnGameRecord) -> ReconciledMatch | None:
-        for i, entry in enumerate(self._pending):
-            if _moves_match(entry.uci_moves, record.uci_moves):
-                del self._pending[i]
-                return _join(entry, record)
-        if _DEBUG and self._pending:
-            closest = min(self._pending, key=lambda e: abs(len(e.uci_moves) - len(record.uci_moves)))
-            log.info(
-                "reconcile miss (pgn) n=%d plies=%d closest_pending_plies=%d",
-                record.game_n, len(record.uci_moves),
-                len(closest.uci_moves),
-            )
+        return self._scan(
+            container=self._pending,
+            moves_of=lambda item: item.uci_moves,
+            matches=lambda item: _moves_match(item.uci_moves, record.uci_moves),
+            on_hit=lambda item: _join(item, record),
+            query_plies=len(record.uci_moves),
+            miss_log=("reconcile miss (pgn) n=%d plies=%d closest_pending_plies=%d",
+                      record.game_n),
+        )
+
+    def _scan(self, container, moves_of, matches, on_hit, query_plies, miss_log):
+        """Linear scan of `container`; pop+join on first match. Logs
+        the closest-by-length miss when SV_DEBUG_RECONCILE is on."""
+        for i, item in enumerate(container):
+            if matches(item):
+                del container[i]
+                return on_hit(item)
+        if _DEBUG and container:
+            closest = min(container, key=lambda x: abs(len(moves_of(x)) - query_plies))
+            fmt, *prefix_args = miss_log
+            log.info(fmt, *prefix_args, query_plies, len(moves_of(closest)))
         return None
 
 

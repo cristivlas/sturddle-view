@@ -156,7 +156,7 @@ async def test_no_change_is_skipped(pgn_path):
     n1 = await tailer.poll_once()
     assert n1 == 1
 
-    # Same mtime + same size + same offset → fast path.
+    # Same mtime + same size + same offset -> fast path.
     n2 = await tailer.poll_once()
     assert n2 == 0
     assert len(records) == 1
@@ -190,7 +190,7 @@ async def test_truncation_resets_offset(pgn_path):
 @pytest.mark.asyncio
 async def test_resume_pre_existing_pgn_parses_on_first_poll(pgn_path):
     """A tournament Resume starts the tailer against an existing PGN.
-    The first poll must parse the whole file — not wait for an append."""
+    The first poll must parse the whole file, not wait for an append."""
     pgn_path.write_text(_ONE_GAME + _SECOND_GAME, encoding="utf-8")
     records, cb = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
@@ -203,7 +203,7 @@ async def test_resume_pre_existing_pgn_parses_on_first_poll(pgn_path):
 @pytest.mark.asyncio
 async def test_offset_advances_monotonically(pgn_path):
     """Guard against a regression where ``_offset`` resets every poll
-    and forces a full re-parse of the PGN — that turned `pgn_stats`
+    and forces a full re-parse of the PGN -- that turned `pgn_stats`
     sluggish historically, and the same shape of bug in the tailer
     would do worse: re-parse the *full* movetree on every poll, not
     just headers. Truncation is the only legal reset path; a normal
@@ -216,7 +216,7 @@ async def test_offset_advances_monotonically(pgn_path):
     off1 = tailer.offset
     assert off1 > 0
 
-    # Append a second game — offset must grow, not reset.
+    # Append a second game; offset must grow, not reset.
     with pgn_path.open("a", encoding="utf-8") as f:
         f.write(_SECOND_GAME)
     _bump_mtime(pgn_path)
@@ -225,11 +225,11 @@ async def test_offset_advances_monotonically(pgn_path):
     off2 = tailer.offset
     assert off2 > off1
 
-    # Idempotent poll on unchanged file — offset must hold.
+    # Idempotent poll on unchanged file; offset must hold.
     await tailer.poll_once()
     assert tailer.offset == off2
 
-    # Append a third complete game (reuse the second's bytes — distinct
+    # Append a third complete game (reuse the second's bytes; distinct
     # round number, doesn't matter for this guard).
     with pgn_path.open("a", encoding="utf-8") as f:
         f.write(_SECOND_GAME)
@@ -271,7 +271,7 @@ async def test_start_and_stop(pgn_path):
 
 @pytest.mark.asyncio
 async def test_callback_exceptions_dont_kill_tailer(pgn_path):
-    """One bad callback must not stop the loop — log + carry on. Slice
+    """One bad callback must not stop the loop -- log + carry on. Slice
     3 will plug a real consumer in here, and we want any bug there to
     surface as a log line, not a frozen tournament."""
     pgn_path.write_text(_ONE_GAME, encoding="utf-8")

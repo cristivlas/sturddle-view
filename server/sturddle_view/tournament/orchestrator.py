@@ -1,4 +1,4 @@
-"""Tournament orchestrator — composes ``TournamentStore`` and a ``Runner``.
+"""Tournament orchestrator -- composes ``TournamentStore`` and a ``Runner``.
 
 Owns:
 - Single-active-tournament invariant (the store can't tell stale ``running``
@@ -6,7 +6,7 @@ Owns:
 - Startup reconciliation: persisted ``running`` is reset to ``stopped`` on boot.
 - Wiring runner events to the store and broadcast tap.
 - Per-tournament proxy bookkeeping (engine names, subscribers, broadcast
-  secret). Single-side observation only — pair detection deferred.
+  secret). Single-side observation only -- pair detection deferred.
 
 Web-agnostic: takes ids + a broadcast callback, so the CLI wrapper can reuse it.
 """
@@ -65,7 +65,7 @@ _EVENT_HISTORY_MAX = 200
 # Two engines of one game share a FEN at the rendezvous: the thinker
 # (registered via ``position``) and the waiter (registered via
 # ``bestmove`` at the resulting FEN). ``info`` from the thinker fans
-# out to the waiter's subscribers — that's the opponent's PV arrow.
+# out to the waiter's subscribers -- that's the opponent's PV arrow.
 _DEBUG_PAIRING   = os.environ.get("SV_DEBUG_PAIRING",   "0") == "1"
 
 
@@ -216,7 +216,7 @@ def _now() -> str:
 
 @dataclass
 class OrchestratorConfig:
-    """Composition wiring decided at construction. Kept tiny on purpose —
+    """Composition wiring decided at construction. Kept tiny on purpose --
     the orchestrator is a thin coordinator, not a god object."""
     store: TournamentStore
     runner: Runner
@@ -243,34 +243,34 @@ class Orchestrator:
         # ``info`` (current eval/depth/PV). Replayed to a subscriber on
         # connect so a window opened mid-game gets an instant snapshot
         # of the engine's state instead of waiting for the next event
-        # (which under long time controls can be ≥10s away).
+        # (which under long time controls can be >=10s away).
         self._proxy_snapshot: dict[str, dict[str, str]] = {}
-        # Pairing detection. Map from FEN → list of ``(proxy_id, color)``
+        # Pairing detection. Map from FEN -> list of ``(proxy_id, color)``
         # tuples. The thinker registers via ``position`` at F (its own
         # color); the waiter registers via ``bestmove`` at F-after-m
-        # (still its own color — engine identity, not side-to-move).
+        # (still its own color -- engine identity, not side-to-move).
         # Two engines of one game share a FEN with opposite colors.
         self._pairing_map: dict[str, list[tuple[str, str]]] = {}
         # ``(fen, my_color)``. my_color is the engine's color in the
-        # current game (identity), not side-to-move at fen — that's
+        # current game (identity), not side-to-move at fen -- that's
         # what makes the rendezvous lookup distinguish thinker from
         # waiter (same fen, opposite colors).
         self._pairing_state: dict[str, tuple[str, str] | None] = {}
         # Locked from side-to-move on the first ``position`` after
         # ``ucinewgame`` (that's the engine's first turn).
         self._pairing_color: dict[str, str | None] = {}
-        # Derived from _pairing_map: one frozenset per FEN bucket with ≥2 entries.
+        # Derived from _pairing_map: one frozenset per FEN bucket with >=2 entries.
         # Diffed on each update to detect new pairings and orphaned proxies.
         self._current_groups: set[frozenset] = set()
-        # Game-level confirmed pairs: proxy_id → peer_proxy_id (bidirectional).
+        # Game-level confirmed pairs: proxy_id -> peer_proxy_id (bidirectional).
         # Added when a new unambiguous (size-2) group first appears; removed
         # when a proxy becomes orphaned (absent from _pairing_state).
         self._confirmed_pairs: dict[str, str] = {}
-        # Stable game identity for each confirmed pair. frozenset(pid_a, pid_b) → uuid str.
+        # Stable game identity for each confirmed pair. frozenset(pid_a, pid_b) -> uuid str.
         # A new UUID is minted at confirmation time so the client can key windows
         # to game identity rather than proxy identity (proxies can re-pair).
         self._pair_ids: dict[frozenset, str] = {}
-        # Reverse: pair_id → frozenset(pid_a, pid_b). Used for snapshot replay.
+        # Reverse: pair_id -> frozenset(pid_a, pid_b). Used for snapshot replay.
         self._pair_proxies: dict[str, frozenset] = {}
         # White proxy_id captured at confirmation time. Dissolution may
         # run after one side has unregistered (ucinewgame clears its
@@ -371,7 +371,7 @@ class Orchestrator:
                 return ed[key]
             return getattr(s, f"engine_default_{key}", None)
 
-        # Resource recheck — values were resolved + folded into the
+        # Resource recheck -- values were resolved + folded into the
         # template by the client at create time; we re-verify against
         # the current host (covers stale tournaments started after the
         # machine specs changed, and direct-API misuse).
@@ -416,7 +416,7 @@ class Orchestrator:
             engine_default_book_order=_ed("book_order"),
         )
         try:
-            # Clear any prior last_error on (re)start — the user has
+            # Clear any prior last_error on (re)start -- the user has
             # acted on the diagnostic by retrying.
             updated = self._store.update_status(
                 t.id, STATUS_RUNNING, started_at=_now(), last_error=None,
@@ -450,7 +450,7 @@ class Orchestrator:
 
     def reconcile_on_startup(self) -> list[Tournament]:
         """Mark persisted ``running`` rows as ``failed`` with a synthetic
-        last_error — server died mid-tournament; can't claim a clean
+        last_error -- server died mid-tournament; can't claim a clean
         stop. Resume via Start (config.json still on disk)."""
         stale = self._store.find_by_status(STATUS_RUNNING)
         out: list[Tournament] = []
@@ -479,12 +479,12 @@ class Orchestrator:
         """Receives events from the Runner.
 
         Maps:
-          - ``done``         → status=done, active_id cleared
-          - ``stopped``      → status=stopped, active_id cleared
-          - ``runner_crash`` → status=failed + last_error persisted,
+          - ``done``         -> status=done, active_id cleared
+          - ``stopped``      -> status=stopped, active_id cleared
+          - ``runner_crash`` -> status=failed + last_error persisted,
                                active_id cleared (no Resume in Phase 1)
-          - ``started``      → no status change (we set RUNNING in start())
-          - others           → forwarded as-is to broadcast
+          - ``started``      -> no status change (we set RUNNING in start())
+          - others           -> forwarded as-is to broadcast
         """
         active_id = self._active_id
 
@@ -529,7 +529,7 @@ class Orchestrator:
                     self._reset_pairing_state()
                     self._close_all_proxy_subscribers()
 
-        # Always forward the runner event upstream — UI consumers want
+        # Always forward the runner event upstream -- UI consumers want
         # ``runner_crash`` etc. distinct from a plain status change.
         await self._emit(kind, {"tournament_id": active_id, **payload})
 
@@ -567,7 +567,7 @@ class Orchestrator:
         """Recent emitted events for a tournament, oldest first.
 
         Each item: ``{"kind": str, "payload": dict}`` where ``kind`` is
-        the raw runner kind (``runner_log``, ``status_change``, …) and
+        the raw runner kind (``runner_log``, ``status_change``, ...) and
         ``payload`` carries ``_seq`` + ``_ts`` stamps.
         """
         return list(self._event_history.get(tournament_id, []))
@@ -603,7 +603,7 @@ class Orchestrator:
         on mount without having to have caught all prior WS events.
 
         Each entry: ``{proxy_a, engine_a, side_a, proxy_b, engine_b, side_b}``.
-        Deduped (bidirectional map → one entry per pair)."""
+        Deduped (bidirectional map -> one entry per pair)."""
         seen: set[frozenset] = set()
         out: list[dict] = []
         for pid_a, pid_b in self._confirmed_pairs.items():
@@ -640,7 +640,7 @@ class Orchestrator:
     ) -> None:
         """Called by the ``/internal/proxy`` endpoint with a batch of
         UCI lines from one proxy. Updates the per-proxy snapshot
-        (always — independent of subscribers) and fans out to any
+        (always -- independent of subscribers) and fans out to any
         subscribed WS clients. Drives the pairing map so that ``info``
         lines from the thinking engine also fan out to the
         opposite-color subscribers (the live opponent's view)."""
@@ -731,11 +731,11 @@ class Orchestrator:
         """Derive the current set of pairing groups from ``_pairing_map``.
 
         A group is the frozenset of all proxy_ids sharing one FEN bucket
-        (requires ≥ 2 entries). Updates ``_current_groups`` in place and
+        (requires >= 2 entries). Updates ``_current_groups`` in place and
         returns ``(new_pairs, orphaned)``:
 
         - ``new_pairs``: unambiguous (size-2) groups that are newly confirmed
-          this game — callers should emit ``proxy_paired`` for each.
+          this game -- callers should emit ``proxy_paired`` for each.
         - ``orphaned``: proxies that were in a now-removed group but are no
           longer registered at *any* FEN (i.e. absent from ``_pairing_state``).
           Between-move transitions keep the proxy registered at a new FEN, so
@@ -762,8 +762,8 @@ class Orchestrator:
                 # Reject same-engine-name pairs as phantoms from book-line
                 # collisions (4-bucket decay leaving two same-engine proxies
                 # that aren't actually playing each other in fastchess).
-                # TODO: lift this when self-play is supported — see spec
-                # § "Self-play (deferred)". Self-play needs orchestrator-
+                # TODO: lift this when self-play is supported -- see spec
+                # sec. "Self-play (deferred)". Self-play needs orchestrator-
                 # level engine-name disambiguation before reaching fastchess.
                 if (state_a and state_b and state_a[1] != state_b[1]
                         and pid_a not in self._confirmed_pairs
@@ -875,7 +875,7 @@ class Orchestrator:
         Pair dissolution is the sole game-end signal: when one of a
         confirmed pair's proxies leaves its FEN bucket (typically via
         ``ucinewgame``), that pair's game is over. Result/termination
-        are not derivable from UCI alone — we report UNKNOWN and let
+        are not derivable from UCI alone -- we report UNKNOWN and let
         consumers fill them in from another signal if/when available."""
         for group in new_pairs:
             white_pid, black_pid = self._white_black_for_group(group)
@@ -883,7 +883,7 @@ class Orchestrator:
                 "tournament_id": self._active_id,
                 "pair_id": self._pair_ids.get(group, ""),
                 # `_a` is always white; `_b` is always black. See
-                # `_white_black_for_group` — frozenset iteration is
+                # `_white_black_for_group` -- frozenset iteration is
                 # nondeterministic so we sort by side explicitly.
                 "proxy_a": white_pid,
                 "engine_a": self._proxy_engine_names.get(white_pid, white_pid),
@@ -1039,7 +1039,7 @@ class Orchestrator:
             for q in game_subs:
                 q.put_sentinel(sentinel)
                 q.cancel_timers()
-        # TODO: `proxy_unpaired` is redundant with `game_finished` — same
+        # TODO: `proxy_unpaired` is redundant with `game_finished` -- same
         # trigger, overlapping payload. Kept for now as a debug signal.
         await self._emit("proxy_unpaired", {
             "tournament_id": self._active_id,
@@ -1150,7 +1150,7 @@ class Orchestrator:
         Replays the proxy's current snapshot (latest ``position`` /
         ``go`` / ``info``) onto the queue so a window opened mid-game
         gets an instant render of the engine's state instead of having
-        to wait for the engine's next event (≥10s under long TC)."""
+        to wait for the engine's next event (>=10s under long TC)."""
         q = CoalescingQueue(maxsize=512)
         self._proxy_subscribers.setdefault(proxy_id, set()).add(q)
         snap = self._proxy_snapshot.get(proxy_id)
@@ -1159,7 +1159,7 @@ class Orchestrator:
                 line = snap.get(kind)
                 if line is None:
                     continue
-                # Snapshot replay bypasses coalescing — these are all
+                # Snapshot replay bypasses coalescing -- these are all
                 # the latest values already, no benefit to slotting.
                 payload = {"proxy_id": proxy_id, "line": line}
                 if kind == "info":
@@ -1222,7 +1222,7 @@ class Orchestrator:
         queue.cancel_timers()
 
     def _close_all_proxy_subscribers(self) -> None:
-        """End-of-tournament cleanup — wake all subscribers with the
+        """End-of-tournament cleanup -- wake all subscribers with the
         ended sentinel and drop the subscription table."""
         for proxy_id, subs in list(self._proxy_subscribers.items()):
             for q in subs:

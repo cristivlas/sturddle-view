@@ -1,6 +1,6 @@
 """Match queue and matching logic for PGN reconciliation (slice 3).
 
-Pure unit tests for `ReconciliationQueue` — the orchestrator wiring
+Pure unit tests for `ReconciliationQueue`. Orchestrator wiring
 is exercised in `test_pgn_reconciliation.py`.
 """
 from __future__ import annotations

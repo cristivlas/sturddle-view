@@ -7,12 +7,12 @@
 // and restored on re-open. WinBox events are not monitored continuously.
 //
 // Data flow:
-//   GET /api/tournaments/{id} on open → seed standings + schedule.
-//   WS `tournament_status`             → refresh metadata + standings.
-//   WS `tournament_update`             → event log; refresh on game-finished.
-//   Periodic GET while running         → reconcile standings.
+//   GET /api/tournaments/{id} on open -> seed standings + schedule.
+//   WS `tournament_status`             -> refresh metadata + standings.
+//   WS `tournament_update`             -> event log; refresh on game-finished.
+//   Periodic GET while running         -> reconcile standings.
 
-import { closeAllLiveGames, closeStaleLiveGames, getLiveWindows, isLiveWindowOpen, openLiveGameWindow, upgradeLiveGameResult } from "./tournament-live-game.js";
+import { closeAllLiveGames, closeStaleLiveGames, getLiveWindows, isLiveWindowOpen, openLiveGameWindow } from "./tournament-live-game.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { toast } from "./dialogs.js";
 import { escapeHtml, flashWindow } from "./wb-utils.js";
@@ -72,7 +72,7 @@ let activeWorkspace = null;
 export function openTournamentWorkspace({ api, events, log, token, tournament, top = 0, left = 0 }) {
   // Single-active model. Re-clicking the workspace icon for the
   // already-open tournament is a no-op (just focus its windows) so
-  // attached engine windows survive — closing here would tear them
+  // attached engine windows survive -- closing here would tear them
   // down via tearDown's closeAllLiveGames().
   if (activeWorkspace) {
     if (activeWorkspace.tournamentId === tournament.id) return activeWorkspace;
@@ -119,13 +119,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   function makeStandingsBody() {
     const el = document.createElement("div");
     el.className = "wb-standings";
-    el.innerHTML = `<div class="wb-empty">Loading…</div>`;
+    el.innerHTML = `<div class="wb-empty">Loading...</div>`;
     return el;
   }
   function makeScheduleBody() {
     const el = document.createElement("div");
     el.className = "wb-schedule";
-    el.innerHTML = `<div class="wb-empty">Loading…</div>`;
+    el.innerHTML = `<div class="wb-empty">Loading...</div>`;
     return el;
   }
   function makeLogBody() {
@@ -137,7 +137,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   function makeEnginesBody() {
     const el = document.createElement("div");
     el.className = "wb-engines";
-    el.innerHTML = `<div class="wb-empty">Loading…</div>`;
+    el.innerHTML = `<div class="wb-empty">Loading...</div>`;
     return el;
   }
 
@@ -294,12 +294,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           <td>${e.losses}</td>
           <td>${e.draws}</td>
           <td>${(e.score_pct * 100).toFixed(1)}%</td>
-          <td>${e.elo == null ? "—" : (e.elo >= 0 ? "+" : "") + e.elo.toFixed(1) + (e.elo_margin_95 == null ? "" : ` ± ${e.elo_margin_95.toFixed(1)}`)}</td>
+          <td>${e.elo == null ? "--" : (e.elo >= 0 ? "+" : "") + e.elo.toFixed(1) + (e.elo_margin_95 == null ? "" : ` +/- ${e.elo_margin_95.toFixed(1)}`)}</td>
         </tr>`)
       .join("");
     const sprtRow = sprt
-      ? `<div class="wb-sprt">SPRT [${sprt.elo0}, ${sprt.elo1}] · LLR=${sprt.llr.toFixed(2)} ` +
-        `[${sprt.lower_bound.toFixed(2)}, ${sprt.upper_bound.toFixed(2)}] · ${sprt.status}</div>`
+      ? `<div class="wb-sprt">SPRT [${sprt.elo0}, ${sprt.elo1}] * LLR=${sprt.llr.toFixed(2)} ` +
+        `[${sprt.lower_bound.toFixed(2)}, ${sprt.upper_bound.toFixed(2)}] * ${sprt.status}</div>`
       : "";
     standingsBody.innerHTML = `
       ${sprtRow}
@@ -344,7 +344,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const bLabel = info.sideA === "white" ? info.engineB : info.engineA;
       li.innerHTML = `
         <span class="wb-sched-icon">&#9822;</span>
-        <span class="wb-sched-game">${escapeHtml(wLabel)} – ${escapeHtml(bLabel)}</span>
+        <span class="wb-sched-game">${escapeHtml(wLabel)} - ${escapeHtml(bLabel)}</span>
       `;
       const btn = document.createElement("button");
       btn.className = "wb-sched-attach-btn";
@@ -382,7 +382,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       li.className = "wb-sched-live";
       const engineLabel = p.engineName || pid;
       li.innerHTML = `
-        <span class="wb-sched-icon">▶</span>
+        <span class="wb-sched-icon">></span>
         <span class="wb-sched-game">${escapeHtml(engineLabel)}</span>
       `;
       const btn = document.createElement("button");
@@ -475,7 +475,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       log?.(`workspace refresh failed: ${e.message}`);
       return;
     }
-    // Seed active proxies from server snapshot — authoritative; replace
+    // Seed active proxies from server snapshot -- authoritative; replace
     // wholesale so we drop any rows for proxies the server no longer
     // tracks (e.g. ended sessions whose proxy_ended event we missed).
     const seeded = detail.proxies_active || [];
@@ -485,7 +485,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         activeProxies.set(p.proxy_id, { engineName: p.engine_name || null });
       }
     }
-    // Seed confirmed pairings — same authoritative replace so late-opening
+    // Seed confirmed pairings -- same authoritative replace so late-opening
     // workspaces don't depend on having caught every proxy_paired WS event.
     livePairings.clear();
     for (const p of (detail.pairings_active || [])) {
@@ -524,7 +524,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   function pushEvent(evt) {
     if (!evt) return;
     if (!evt.kind?.startsWith(EVT_PREFIX)) return;
-    // Only events for *our* tournament — the orchestrator stamps
+    // Only events for *our* tournament -- the orchestrator stamps
     // tournament_id into payloads on the server side.
     const tid = evt.payload?.tournament_id;
     if (tid && tid !== tournament.id) return;
@@ -573,10 +573,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
             break;
           }
         }
-        // Repaint the live-window result banner if that window is
-        // still open (user kept watching past dissolution). No-op
-        // otherwise.
-        upgradeLiveGameResult(pid, evt.payload.result, evt.payload.termination);
+        // Live windows listening for this pair_id will repaint
+        // their banner; no-op if window already closed.
+        window.dispatchEvent(new CustomEvent("sturddle:reconciled", {
+          detail: { pairId: pid, result: evt.payload.result, termination: evt.payload.termination },
+        }));
       }
     } else if (
       evt.kind === EVT.STATUS ||
@@ -770,7 +771,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   function unminimize(wb) {
     // resize/move on a minimized or maximized WinBox leaves it stuck in
-    // that state — restore first so the new geometry actually takes.
+    // that state -- restore first so the new geometry actually takes.
     if (wb.min || wb.max) wb.restore();
   }
 
@@ -788,7 +789,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const col = i % cols;
       const row = Math.floor(i / cols);
       // Clamp to per-window minimums so live-game layout stays usable.
-      // (WinBox doesn't expose its config min* on the instance — windows
+      // (WinBox doesn't expose its config min* on the instance -- windows
       // that need clamping stash svMinWidth / svMinHeight at creation.)
       const ww = Math.max(w, wb.svMinWidth || 0);
       const hh = Math.max(h, wb.svMinHeight || 0);

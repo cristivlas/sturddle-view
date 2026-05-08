@@ -1,4 +1,4 @@
-# PGN reconciliation — featurette spec
+# PGN reconciliation -- featurette spec
 
 Reconcile live-observed games (proxy-driven) with fastchess's PGN
 output (authoritative for results) by matching on **move list**, not
@@ -12,7 +12,7 @@ implementation start.
 
 ## Problem
 
-`docs/tournament-spec.md` § "What end-of-game looks like" documents
+`docs/tournament-spec.md` # "What end-of-game looks like" documents
 the current limitation: pair dissolution is the sole game-end signal,
 but result/termination/`game_n` are reported `unknown` because
 fastchess's `Started/Finished game N` stdout cannot be unambiguously
@@ -20,8 +20,8 @@ joined to a `pair_id` under concurrency (same-name engines, no
 per-slot identifier).
 
 The spec's own list of rejected alternatives includes "PGN tail
-polling for results" — rejected on the grounds that it doesn't solve
-the `pair_id ↔ N` mapping. That reasoning assumed matching on
+polling for results" -- rejected on the grounds that it doesn't solve
+the `pair_id <-> N` mapping. That reasoning assumed matching on
 `(white, black, N)`. **This featurette uses a different match key:
 the full move list of the game**, which is unique enough in practice
 to disambiguate even under concurrency with same-name engines.
@@ -48,8 +48,8 @@ a snapshot. We add a new keying:
   ignore book-line collisions during the transient phase before
   divergence.
 
-Storage: one `list[str]` per active pair. ~6 bytes/move × ~80 plies
-× ~200 parallel games = ~100KB. Cap per-pair length at 600 plies as
+Storage: one `list[str]` per active pair. ~6 bytes/move x ~80 plies
+x ~200 parallel games = ~100KB. Cap per-pair length at 600 plies as
 a runaway guard.
 
 ### PGN delta tailer (one per tournament)
@@ -68,7 +68,7 @@ Key cross-platform / perf properties:
 
 - `Path.stat()` is stdlib, identical on Linux + Windows; returns
   `st_mtime_ns` and `st_size`.
-- Cost is one syscall per second per running tournament (≤1
+- Cost is one syscall per second per running tournament (<=1
   active at any time given the orchestrator's single-active
   invariant). Noise floor.
 - No `watchdog` dependency, no per-game pollers, no per-OS
@@ -110,9 +110,9 @@ for pending in pending_queue:
 
 Match key is **UCI move-list equality with end-anchored alignment**
 (post the min-plies gate). The captured engine-side list is normally
-1–2 plies *shorter* than the PGN: fastchess never sends a follow-up
+1-2 plies *shorter* than the PGN: fastchess never sends a follow-up
 `position startpos moves <full>` after the engines' final
-`bestmove` — the game ended, the next `position` would only land at
+`bestmove` -- the game ended, the next `position` would only land at
 `ucinewgame` for the next game, which is for a different pair under
 concurrency. Adjudication can also leave the captured list 1 ply
 *longer* than the PGN (engine emitted bestmove, fastchess decided
@@ -120,7 +120,7 @@ to adjudicate before applying it).
 
 `_moves_match` walks back from the end:
 
-- accepts `len(captured) - len(pgn) ∈ {-N, …, +1}` (any prefix of
+- accepts `len(captured) - len(pgn)  in  {-N, ..., +1}` (any prefix of
   PGN, plus a single overrun ply);
 - compares `captured[i] == pgn[i]` for `i` from the last shared
   index down to 0; first mismatch rejects.
@@ -133,7 +133,7 @@ microseconds.
 - Pending entries older than `RECONCILE_TIMEOUT_S = 60` (PGN flush
   is non-deterministic; 60s is generous) are dropped from the
   queue with a `game_reconciled` emission carrying the original
-  `*` / `unknown` / `null` (or simply: no event — current
+  `*` / `unknown` / `null` (or simply: no event -- current
   behavior is preserved).
 - `_pair_moves[pair_id]` is dropped in `_dissolve_pair` after the
   list is captured into the pending entry (move list lives on in
@@ -143,12 +143,12 @@ microseconds.
   just before exit lands in the buffer; terminal dissolves then
   pass `terminal=True` and use `try_match_now` (one-shot match
   against the buffered PGN, no parking). Aborted mid-game pairs
-  produce no pending — there's no PGN counterpart to match.
+  produce no pending -- there's no PGN counterpart to match.
 - On proxy session end: existing teardown paths cover this.
   `_reset_pairing_state` drops `_pair_moves` and clears the queue
   alongside the tailer task.
 - WS close (user closes window): does **not** affect pending
-  entries — those are tournament-scoped, not viewer-scoped. The
+  entries -- those are tournament-scoped, not viewer-scoped. The
   existing per-pair WS subscriber teardown is unchanged.
 
 ### Min-plies floor
@@ -158,7 +158,7 @@ The pair dissolution emits the current `result="*"` /
 `termination="unknown"` event and we don't attempt enrichment.
 This is no worse than today and avoids opening-prefix collisions.
 
-12 plies is a heuristic — short enough that virtually every real
+12 plies is a heuristic -- short enough that virtually every real
 game qualifies, long enough that two book-following games with the
 same opening have already diverged for both engines. Tunable.
 
@@ -201,14 +201,14 @@ needs.
 ```
 
 Emitted **after** `game_finished` (which keeps its current
-`unknown` shape — consumers that don't care about reconciliation
+`unknown` shape -- consumers that don't care about reconciliation
 need not change). Subscribers that *do* care upgrade their
 display when `game_reconciled` arrives. If reconciliation times
 out, no `game_reconciled` is emitted and the `game_finished`
 event remains the final word.
 
 Existing `game_finished.game_n` field is **not** populated by
-this work — kept `null` per spec. The reconciled `game_n` lives
+this work -- kept `null` per spec. The reconciled `game_n` lives
 on the new event so consumers don't need to reason about
 "updated" `game_finished` payloads.
 
@@ -223,7 +223,7 @@ on the new event so consumers don't need to reason about
   we only emit completed games (movetext terminated by Result tag).
 - **Server restart between dissolution and PGN flush.** Move list
   was in memory; lost on restart. Pair stays unreconciled. PGN
-  remains authoritative for standings — no regression. Document.
+  remains authoritative for standings -- no regression. Document.
 - **Match queue overflow.** Bounded at 256 pending entries; oldest
   evicted with no `game_reconciled` emission. Same effective
   outcome as today.
@@ -231,15 +231,15 @@ on the new event so consumers don't need to reason about
   `pgn_stats._iter_games_uncached`) is the model; movetext SAN
   replay only needed on the delta. python-chess parse is the
   bottleneck if a tournament emits hundreds of finishes per second
-  — not realistic at human-watchable timecontrols.
+  -- not realistic at human-watchable timecontrols.
 
 ## Same-name self-play
 
 Same-engine vs same-engine matchups are **structurally impossible**
-in the current design — both at the picker (UI dedupe) and at pair
+in the current design -- both at the picker (UI dedupe) and at pair
 confirmation (orchestrator rejects same-engine-name candidates as
 phantoms from book-line collisions). See `docs/tournament-spec.md`
-§ "Self-play (deferred)" for the full rationale and the registry
+# "Self-play (deferred)" for the full rationale and the registry
 workaround (register the binary twice under distinct display names).
 
 Reconciliation matches on **UCI move list**, which is independent of
@@ -252,8 +252,8 @@ constraint is lifted.
 
 - **CPU**: 1 `stat()` per second per active tournament. Each
   PGN-delta wake parses only newly-appended games. Match algo is
-  `O(pending * recent_pgn)` — bounded sets, microseconds.
-- **Memory**: ≤ ~100KB per tournament (pair-moves + pending queue
+  `O(pending * recent_pgn)` -- bounded sets, microseconds.
+- **Memory**: <= ~100KB per tournament (pair-moves + pending queue
   + ring buffer).
 - **Disk**: none (read-only tail of an existing file).
 - **Network**: none (proxy POST traffic unchanged).
@@ -264,7 +264,7 @@ constraint is lifted.
    - Add `_pair_moves: dict[str, list[str]]`.
    - Init on pair confirmation, update on `position` ingest for
      confirmed pairs only, drop on `_reset_pairing_state`.
-   - Tests: confirm, play moves, dissolve — list captured + freed.
+   - Tests: confirm, play moves, dissolve -- list captured + freed.
 
 2. **PGN tailer task per tournament.**
    - Spawn on tournament start (in `Orchestrator.start` after
@@ -272,12 +272,12 @@ constraint is lifted.
    - Public method `_tail_pgn_loop` running 1Hz `stat()`.
    - Parse delta into `(white, black, result, termination, uci_moves,
      game_n)` records. Reuse `pgn_stats._iter_games_uncached`-style
-     header scan; add a movetext SAN→UCI replay for the new records.
+     header scan; add a movetext SAN->UCI replay for the new records.
    - Tests: append PGN game to a fixture file, assert tailer parses
      and yields the expected record.
 
 3. **Match queue + `game_reconciled` event.**
-   - On `_dissolve_pair`, snapshot the `_pair_moves` entry (if ≥12
+   - On `_dissolve_pair`, snapshot the `_pair_moves` entry (if >=12
      plies) into the pending queue.
    - On every tailer wake, run the match loop, emit
      `game_reconciled` for hits.
@@ -289,7 +289,7 @@ constraint is lifted.
    - REST endpoint for fetching a pair's move list.
    - UI button on Schedule rows to open a replay window.
 
-Slices 1–3 ship together; slice 4 is its own follow-up.
+Slices 1-3 ship together; slice 4 is its own follow-up.
 
 ## Open questions
 
@@ -297,7 +297,7 @@ Slices 1–3 ship together; slice 4 is its own follow-up.
    enough to look up replay-side later? Lean toward "not in the
    event; fetch on demand for replay." Keeps event size bounded.
 2. Is `MIN_PLIES_FOR_MATCH = 12` right, or should it scale with the
-   opening book ply depth (template's book plies)? Probably yes —
+   opening book ply depth (template's book plies)? Probably yes --
    `max(12, book_plies + 4)` so we always require divergence past
    book.
 3. Do we want to backfill `game_finished.game_n` (mutating an event
@@ -317,10 +317,10 @@ debug-grade env flag `SV_DEBUG_RECONCILE=1` mirrors
 failure. Anything more is noise.
 
 - `reconciled pair=<short_id> game_n=<N> result=<R> termination=<T> plies=<P>`
-  — emitted from the orchestrator when `_emit_reconciled` fires.
-- `reconcile timeout pair=<short_id> plies=<P> age=<T>s` — emitted
+  -- emitted from the orchestrator when `_emit_reconciled` fires.
+- `reconcile timeout pair=<short_id> plies=<P> age=<T>s` -- emitted
   when the timeout sweep drops a pending entry.
-- `reconcile pgn_buffer evicted plies=<P> age=<T>s` — emitted when
+- `reconcile pgn_buffer evicted plies=<P> age=<T>s` -- emitted when
   a buffered PGN record times out without ever being matched
   (rare; could indicate a dissolution that never fired).
 
@@ -339,7 +339,7 @@ on for troubleshooting only:
 
 **When to enable.** Ask the user explicitly to set
 `SV_DEBUG_RECONCILE=1` before reproducing a reconciliation issue.
-Don't leave it enabled — the per-record + per-match traffic at
+Don't leave it enabled -- the per-record + per-match traffic at
 high concurrency is voluminous.
 
 ## Future revisit
@@ -354,7 +354,7 @@ exercised in practice.
   `_EVENT_HISTORY_MAX` (`orchestrator.py`). Decide which deserve
   public names, which should be env-overridable
   (`SV_RECONCILE_*`), and which stay private. Audit together so
-  naming + override conventions stay consistent — addressing them
+  naming + override conventions stay consistent -- addressing them
   one-by-one as we touch them risks drift.
 - **Backfill replay edge case.** A workspace opened *very* late
   in a long-running tournament can find both `game_finished` and
@@ -368,3 +368,10 @@ exercised in practice.
   flush landing *after* that poll completes (and after the queue
   is wiped) leaves that game's row at `*` permanently. Acceptable
   per spec; could be revisited if users complain.
+- **Multi-tournament scoping.** All reconciliation state is held
+  flat (one queue, one tailer, one `_pair_moves`). If/when the
+  single-active invariant is lifted (see `tournament-spec.md`
+  # "Why single-active"), each of these would need to be keyed by
+  tournament id, and proxies would need to carry a tournament tag
+  in their broadcast payload so `ingest_proxy_lines` routes to the
+  right instance. Same shape, just keyed.

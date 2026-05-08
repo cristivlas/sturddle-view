@@ -198,15 +198,22 @@ class PgnTailer:
         text = blob.decode("utf-8", errors="replace")
         f = io.StringIO(text)
         records: list[PgnGameRecord] = []
-        # ``StringIO.tell()`` is char offset; re-encode for byte offset.
+        # Running byte counter so we don't re-encode the consumed
+        # prefix per game (was O(N^2) on a multi-MB delta).
+        prev_char_pos = 0
         last_complete_bytes = 0
+
+        def advance_bytes() -> int:
+            nonlocal prev_char_pos
+            cur = f.tell()
+            n = len(text[prev_char_pos:cur].encode("utf-8"))
+            prev_char_pos = cur
+            return n
 
         while True:
             try:
                 game = chess.pgn.read_game(f)
             except Exception:
-                # Malformed game in the delta. Stop here; we'll retry
-                # the same byte range next pass once more bytes land.
                 log.exception("PgnTailer read_game raised")
                 break
             if game is None:
@@ -227,7 +234,7 @@ class PgnTailer:
                     "PgnTailer: illegal move in PGN game_n~=%d; skipping",
                     self._game_n + len(records) + 1,
                 )
-                last_complete_bytes = len(text[: f.tell()].encode("utf-8"))
+                last_complete_bytes += advance_bytes()
                 continue
 
             records.append(PgnGameRecord(
@@ -239,6 +246,6 @@ class PgnTailer:
                 game_n=0,  # filled in by the caller (cumulative)
                 round_tag=game.headers.get("Round", ""),
             ))
-            last_complete_bytes = len(text[: f.tell()].encode("utf-8"))
+            last_complete_bytes += advance_bytes()
 
         return records, start + last_complete_bytes
