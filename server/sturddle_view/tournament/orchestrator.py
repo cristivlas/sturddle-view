@@ -274,6 +274,12 @@ class Orchestrator:
         # WS subscribers keyed by pair_id. Same lifecycle as proxy subscribers
         # but scoped to the game: sentinel sent when the pair is dissolved.
         self._game_subscribers: dict[str, set[CoalescingQueue]] = {}
+        # Move list (UCI) for each confirmed pair. Initialized to [] at
+        # confirmation; updated from each ``position startpos moves ...``
+        # line ingested for either side; longest-prefix-extension wins
+        # so the late-reporter's stale shorter list doesn't clobber.
+        # Captured into the reconciliation pending queue at dissolution.
+        self._pair_moves: dict[str, list[str]] = {}
         # Per-tournament secret embedded in the proxy --broadcast-url so
         # only proxies belonging to the active tournament can post.
         # Cleared on tournament termination.
@@ -309,6 +315,7 @@ class Orchestrator:
         self._pair_proxies.clear()
         self._pair_white.clear()
         self._game_subscribers.clear()
+        self._pair_moves.clear()
 
     def set_proxy_broadcast_url(self, url: str | None) -> None:
         """Configure the URL proxies POST to. The orchestrator passes
@@ -639,6 +646,7 @@ class Orchestrator:
                     if color is not None:
                         new_pairs, orphaned = self._pairing_register(proxy_id, parsed["fen"], color)
                         await self._emit_group_events(new_pairs, orphaned)
+                self._update_pair_moves(proxy_id, parsed)
             elif stripped.startswith("ucinewgame"):
                 # Dissolve confirmed pair directly: pair-FEN rendezvous
                 # is transient, so orphan detection misses most exits.
@@ -752,6 +760,7 @@ class Orchestrator:
                     self._pair_white[pair_id] = (
                         pid_a if state_a[1] == "white" else pid_b
                     )
+                    self._pair_moves[pair_id] = []
                     new_pairs.add(group)
                     if _DEBUG_PAIRING:
                         log.info(
@@ -899,6 +908,31 @@ class Orchestrator:
         side_a = (self._pairing_state.get(pid_a) or ("", "?"))[1]
         return (pid_a, pid_b) if side_a == "white" else (pid_b, pid_a)
 
+    def _update_pair_moves(self, proxy_id: str, parsed: dict | None) -> None:
+        """Capture the cumulative move list reported by either side of a
+        confirmed pair. Both engines report the same UCI move list one
+        ply apart; we keep the longer one. A shorter or non-extending
+        list (book-line collision before divergence, late stale frame)
+        is ignored. Used by PGN reconciliation at dissolution time.
+        """
+        if parsed is None or parsed.get("kind") != "position":
+            return
+        moves = parsed.get("moves")
+        if not isinstance(moves, list):
+            return
+        peer = self._confirmed_pairs.get(proxy_id)
+        if peer is None:
+            return
+        pair_id = self._pair_ids.get(frozenset((proxy_id, peer)))
+        if not pair_id:
+            return
+        current = self._pair_moves.get(pair_id)
+        if current is None:
+            return
+        # Longest-prefix-extension wins. Equal lengths: keep current.
+        if len(moves) > len(current) and moves[: len(current)] == current:
+            self._pair_moves[pair_id] = list(moves)
+
     async def _dissolve_pair(
         self, pair_id: str, result: str, termination: str | None
     ) -> None:
@@ -913,6 +947,8 @@ class Orchestrator:
         self._confirmed_pairs.pop(black_pid, None)
         self._pair_ids.pop(proxies, None)
         self._pair_white.pop(pair_id, None)
+        # Slice 3 will hand this off to the reconciliation queue here.
+        self._pair_moves.pop(pair_id, None)
         game_subs = self._game_subscribers.pop(pair_id, None)
         if _DEBUG_PAIRING:
             log.info(
