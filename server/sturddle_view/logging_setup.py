@@ -1,6 +1,6 @@
 """Application-wide logging configuration.
 
-Single entry point: `configure_logging(level)`. Idempotent — safe to call
+Single entry point: `configure_logging(level)`. Idempotent -- safe to call
 multiple times.
 """
 from __future__ import annotations
@@ -21,15 +21,26 @@ def default_log_dir() -> Path:
 _configured = False
 
 
-def configure_logging(level: int = logging.INFO, log_dir: Path | None = None) -> Path:
+def configure_logging(
+    level: int = logging.INFO,
+    server_level: int | None = None,
+    log_dir: Path | None = None,
+) -> Path:
+    """``level`` controls the ``sturddle_view`` logger tree.
+    ``server_level`` controls ``uvicorn``; defaults to WARNING so
+    uvicorn doesn't drown app logs even when --debug is on. Pass
+    ``DEBUG`` to debug the server itself."""
     global _configured
     log_dir = log_dir or default_log_dir()
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "sturddle-view.log"
+    if server_level is None:
+        server_level = logging.WARNING
 
     if _configured:
-        # Update level only.
-        logging.getLogger().setLevel(level)
+        logging.getLogger("sturddle_view").setLevel(level)
+        logging.getLogger("uvicorn").setLevel(server_level)
+        logging.getLogger("uvicorn.access").setLevel(max(server_level, logging.WARNING))
         return log_file
 
     fmt = logging.Formatter(
@@ -43,19 +54,23 @@ def configure_logging(level: int = logging.INFO, log_dir: Path | None = None) ->
     file_handler.setFormatter(fmt)
     file_handler.setLevel(logging.DEBUG)
 
+    # Stream level tracks the *minimum* of the requested levels so
+    # nothing the user asked for ends up only in the file.
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(fmt)
-    stream_handler.setLevel(level)
+    stream_handler.setLevel(min(level, server_level))
 
     root = logging.getLogger()
-    root.setLevel(min(level, logging.DEBUG))
+    root.setLevel(logging.DEBUG)  # handlers gate visibility
     root.addHandler(file_handler)
     root.addHandler(stream_handler)
 
-    # Quiet down noisy uvicorn access logs at INFO; let DEBUG see them.
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    logging.getLogger("sturddle_view").setLevel(level)
+    logging.getLogger("uvicorn").setLevel(server_level)
+    # Per-request access lines are noise; clamp at WARNING regardless.
+    logging.getLogger("uvicorn.access").setLevel(max(server_level, logging.WARNING))
     # WS lifecycle ("connection open/closed", "[accepted]") is INFO in
-    # uvicorn.error — too chatty. Demote those records to DEBUG so they
+    # uvicorn.error -- too chatty. Demote those records to DEBUG so they
     # only land in the file handler, not the console.
     logging.getLogger("uvicorn.error").addFilter(_demote_ws_lifecycle)
 

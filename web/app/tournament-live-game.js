@@ -1,28 +1,67 @@
-// Live game window: one engine's proxy stream → board from that engine's POV.
-// "Attach to engine, not to game" — opponent POV needs a second window.
+// Live game window: one engine's proxy stream -> board from that engine's POV.
+// "Attach to engine, not to game" -- opponent POV needs a second window.
 // Renders: board (server-computed FEN from `position`), eval/depth/PV from
 // this engine's `info`, clocks from `go wtime/btime`, last bestmove highlight.
 
 import { mountBoard } from "./board.js";
+import { confirm, reportError } from "./dialogs.js";
+import { isPlayInProgress } from "./perspectives/play.js";
 import { flashWindow } from "./wb-utils.js";
+
+const REPLAY_DISCARD_MSG = "Discard your in-progress game and replay this tournament game?";
+
+async function replayTournamentGame({ tournamentId, gameN, token }) {
+  if (isPlayInProgress()) {
+    const ok = await confirm({
+      message: REPLAY_DISCARD_MSG,
+      okLabel: "Replay",
+      cancelLabel: "Cancel",
+      destructive: true,
+    });
+    if (!ok) return;
+  }
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  let pgn;
+  try {
+    const res = await fetch(`/api/tournaments/${encodeURIComponent(tournamentId)}/games/${gameN}/pgn`, { headers });
+    if (!res.ok) throw new Error(`fetch pgn -> ${res.status}`);
+    pgn = (await res.json()).pgn;
+  } catch (e) {
+    reportError(null, "Replay: fetch failed", e);
+    return;
+  }
+  try {
+    const res = await fetch("/game/import", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ text: pgn, format: "pgn" }),
+    });
+    if (!res.ok) throw new Error(`import -> ${res.status}`);
+  } catch (e) {
+    reportError(null, "Replay: import failed", e);
+    return;
+  }
+  window.dispatchEvent(new CustomEvent("sturddle:activate-perspective", { detail: { id: "play" } }));
+}
 
 const liveWindows = new Map(); // windowKey -> WinBox instance
 
 // Row heights are duplicated as `min-height` on .wb-livegame .lg-eval /
 // .lg-pv / .lg-status in styles.css so empty rows still hold space
 // before pairing data arrives. Keep the two in sync.
-const LIVE_MIN_BOARD    = 200; // px — smallest usable board side
-const LIVE_CLOCK_H      = 36;  // px — one clock row (font 16px + padding)
-const LIVE_EVAL_H       = 24;  // px — eval row (font 13px)
-const LIVE_PV_H         = 16;  // px — pv row (font 11px)
-const LIVE_STATUS_H     = 18;  // px — status row (font 13px)
-const LIVE_WINBOX_TITLE = 35;  // px — WinBox title bar
-const LIVE_GAP          = 6;   // px — flex gap between sections
+const LIVE_MIN_BOARD    = 200; // px -- smallest usable board side
+const LIVE_CLOCK_H      = 36;  // px -- one clock row (font 16px + padding)
+const LIVE_EVAL_H       = 24;  // px -- eval row (font 13px)
+const LIVE_PV_H         = 16;  // px -- pv row (font 11px)
+const LIVE_STATUS_H     = 18;  // px -- status row (font 13px)
+const LIVE_WINBOX_TITLE = 35;  // px -- WinBox title bar
+const LIVE_GAP          = 6;   // px -- flex gap between sections
 
 const ARROW_MIN_TIME_MS = 250; // skip arrow if side-to-move has less time than this
 
 const LIVE_MIN_WIDTH  = LIVE_MIN_BOARD;
-// 8 flex children: pv-top, eval-top, clock-top, board, clock-bottom, eval-bottom, pv-bottom, status — 7 gaps.
+// 8 flex children: pv-top, eval-top, clock-top, board, clock-bottom, eval-bottom, pv-bottom, status -- 7 gaps.
 const LIVE_MIN_HEIGHT = LIVE_WINBOX_TITLE + LIVE_PV_H * 2 + LIVE_STATUS_H + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_MIN_BOARD + LIVE_GAP * 7;
 
 
@@ -61,7 +100,7 @@ function avoidOverlap(wb, avoid, top, left, cascade = 0) {
   }
 }
 
-export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, top = 0, left = 0, boardStyle = null, avoidRect = null }) {
+export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, boardStyle = null, avoidRect = null }) {
   // If a window for this key is already open, focus it instead of
   // opening a duplicate.
   const existing = liveWindows.get(windowKey);
@@ -82,18 +121,19 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       <span class="lg-eval-tbhits lg-eval-tbhits-top muted"></span>
     </div>
     <div class="clock-row lg-clock-top">
-      <span class="clock-name lg-top-name">—</span>
-      <span class="clock-time lg-top-time">—</span>
+      <span class="clock-name lg-top-name">--</span>
+      <span class="clock-time lg-top-time">--</span>
     </div>
     <div class="lg-board">
       <div class="lg-result-overlay" hidden>
         <div class="lg-result-score"></div>
         <div class="lg-result-termination"></div>
+        <button type="button" class="lg-result-replay" hidden>Replay</button>
       </div>
     </div>
     <div class="clock-row lg-clock-bottom">
-      <span class="clock-name lg-bottom-name">—</span>
-      <span class="clock-time lg-bottom-time">—</span>
+      <span class="clock-name lg-bottom-name">--</span>
+      <span class="clock-time lg-bottom-time">--</span>
     </div>
     <div class="lg-eval lg-eval-bottom">
       <span class="lg-eval-score lg-eval-score-bottom"></span>
@@ -101,14 +141,14 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       <span class="lg-eval-tbhits lg-eval-tbhits-bottom muted"></span>
     </div>
     <div class="lg-pv lg-pv-bottom muted"></div>
-    <div class="lg-status muted">connecting…</div>
+    <div class="lg-status muted">connecting...</div>
   `;
 
   const boardHost = body.querySelector(".lg-board");
   const board = mountBoard({
     element: boardHost,
     styleId: boardStyle,
-    onMove: () => {}, // read-only — moves come from the server.
+    onMove: () => {}, // read-only -- moves come from the server.
   });
 
   const evalScoreEl = body.querySelector(".lg-eval-score-bottom");
@@ -129,6 +169,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   const resultOverlayEl = body.querySelector(".lg-result-overlay");
   const resultScoreEl = body.querySelector(".lg-result-score");
   const resultTerminationEl = body.querySelector(".lg-result-termination");
+  const replayBtnEl = body.querySelector(".lg-result-replay");
 
   const debugTag = gameId ?? proxyId ?? "";
   const titleWithTag = debugTag ? `${label} [${debugTag}]` : label;
@@ -164,6 +205,33 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   wb.svMinWidth = LIVE_MIN_WIDTH;
   wb.svMinHeight = LIVE_MIN_HEIGHT;
   liveWindows.set(windowKey, wb);
+  // Result-banner upgrade on game_reconciled (workspace dispatches).
+  // Captured here so the Replay button knows which PGN slice to fetch.
+  let reconciledGameN = null;
+  let replayInFlight = false;
+  const onReconciled = (e) => {
+    if (gameId && e.detail?.pairId === gameId) {
+      showResult(e.detail.result, e.detail.termination);
+      if (e.detail.gameN != null && tournamentId) {
+        reconciledGameN = e.detail.gameN;
+        replayBtnEl.hidden = false;
+      }
+    }
+  };
+  if (gameId) {
+    window.addEventListener("sturddle:reconciled", onReconciled);
+    replayBtnEl.addEventListener("click", async () => {
+      if (replayInFlight || reconciledGameN == null || !tournamentId) return;
+      replayInFlight = true;
+      replayBtnEl.disabled = true;
+      try {
+        await replayTournamentGame({ tournamentId, gameN: reconciledGameN, token });
+      } finally {
+        replayInFlight = false;
+        replayBtnEl.disabled = false;
+      }
+    });
+  }
   requestAnimationFrame(() => flashWindow(wb));
 
   // Compute target board size deterministically from the body's
@@ -173,9 +241,9 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   // narrow-board-after-restore bug.
   //
   // Fixed (non-board) rows:
-  //   3× pv (pv-top, pv-bottom, status share the .lg-pv font size)
-  //   2× eval, 2× clock
-  //   7× flex gap
+  //   3x pv (pv-top, pv-bottom, status share the .lg-pv font size)
+  //   2x eval, 2x clock
+  //   7x flex gap
   // In compact mode (body.clientHeight < 280) the .lg-pv and
   // .lg-status rows are display:none, so those drop out.
   const FIXED_FULL = LIVE_PV_H * 2 + LIVE_STATUS_H + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 7;
@@ -214,6 +282,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
     if (ws) try { ws.close(); } catch { /* */ }
     ro.disconnect();
+    if (gameId) window.removeEventListener("sturddle:reconciled", onReconciled);
     liveWindows.delete(windowKey);
     window.dispatchEvent(new CustomEvent("sturddle:livegame-closed"));
     return false;
@@ -261,7 +330,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     }
     if (msg.ended) {
       // Late-attach race: sentinel arrived before any position. The
-      // window has nothing to show — auto-close instead of leaving a
+      // window has nothing to show -- auto-close instead of leaving a
       // startpos banner behind.
       if (gameId && currentFen === null) {
         stopTimer();
@@ -400,16 +469,21 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     }
   }
 
+  let resultPainted = false;
   function showResult(result, termination) {
     // result is "1-0" | "0-1" | "1/2-1/2" | "*" | null/undefined.
-    // termination may be "unknown" when the orchestrator can't infer
-    // it (today: always, since dissolution carries no fastchess result).
-    const score = (result && result !== "*") ? result : "game ended";
+    // The per-pair WS sentinel and the tournament-wide game_reconciled
+    // arrive in nondeterministic order; if real values landed first,
+    // ignore a subsequent "*" downgrade.
+    const isReal = result && result !== "*";
+    if (resultPainted && !isReal) return;
+    if (isReal) resultPainted = true;
+    const score = isReal ? result : "game ended";
     const term = (termination && termination !== "unknown") ? termination : "";
     resultScoreEl.textContent = score;
     resultTerminationEl.textContent = term;
     resultOverlayEl.hidden = false;
-    statusEl.textContent = term ? `${score} · ${term}` : score;
+    statusEl.textContent = term ? `${score} * ${term}` : score;
   }
 
 
@@ -431,7 +505,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   }
 
   function renderOpponentEval(p) {
-    let scoreText = "—";
+    let scoreText = "--";
     if (p.score_cp != null) {
       const cp = p.score_cp;
       scoreText = (cp >= 0 ? "+" : "") + (cp / 100).toFixed(2);
@@ -449,7 +523,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   }
 
   function renderEval(p) {
-    let scoreText = "—";
+    let scoreText = "--";
     if (p.score_cp != null) {
       const cp = p.score_cp;
       scoreText = (cp >= 0 ? "+" : "") + (cp / 100).toFixed(2);

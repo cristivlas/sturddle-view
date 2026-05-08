@@ -9,12 +9,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Path as FastApiPath,
     Query,
     Request,
     WebSocket,
@@ -28,7 +29,7 @@ from ..engines import InvalidLaunchProfileError, validate_launch_profile
 from ..tournament.fastchess import FastchessRunner
 from ..tournament.orchestrator import Orchestrator, TournamentBusyError, wrap_event_for_bus
 from ..tournament.rescheck import RescheckError, check as rescheck_run
-from ..tournament.pgn_stats import compute_games_list, compute_sprt, compute_standings
+from ..tournament.pgn_stats import compute_games_list, compute_sprt, compute_standings, read_game_pgn
 from ..tournament.store import (
     CorruptStateError,
     DuplicateNameError,
@@ -267,6 +268,29 @@ def get_tournament_events(tournament_id: str, request: Request) -> dict:
             for e in orch.event_history(tournament_id)
         ]
     }
+
+
+@router.get("/api/tournaments/{tournament_id}/games/{game_n}/pgn")
+def get_tournament_game_pgn(
+    tournament_id: str,
+    game_n: Annotated[int, FastApiPath(ge=1)],
+    request: Request,
+) -> dict:
+    """Return the PGN text of the Nth completed game (1-based)."""
+    s = _store(request)
+    try:
+        s.get(tournament_id)
+    except TournamentNotFoundError as e:
+        raise HTTPException(status_code=404, detail="tournament not found") from e
+    except CorruptStateError as e:
+        raise HTTPException(status_code=500, detail=f"corrupt state: {e}") from e
+    pgn_path = s.pgn_path(tournament_id)
+    if not pgn_path.exists():
+        raise HTTPException(status_code=404, detail="no games recorded")
+    pgn = read_game_pgn(pgn_path, game_n)
+    if pgn is None:
+        raise HTTPException(status_code=404, detail="game not found")
+    return {"pgn": pgn}
 
 
 @router.post("/api/tournaments/{tournament_id}/start")

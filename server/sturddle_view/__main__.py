@@ -26,10 +26,16 @@ def main() -> None:
         action="store_true",
         help="Disable token auth (dev convenience; do not use on untrusted networks)",
     )
-    parser.add_argument("--debug", action="store_true", help="Verbose (DEBUG) logging")
+    parser.add_argument("--debug", action="store_true",
+                        help="Verbose (DEBUG) logging for the app (sturddle_view)")
+    parser.add_argument("--server-debug", action="store_true",
+                        help="Verbose (DEBUG) logging for uvicorn (independent of --debug)")
     args = parser.parse_args()
 
-    log_file = configure_logging(level=logging.DEBUG if args.debug else logging.INFO)
+    log_file = configure_logging(
+        level=logging.DEBUG if args.debug else logging.INFO,
+        server_level=logging.DEBUG if args.server_debug else logging.WARNING,
+    )
     logging.getLogger(__name__).info("logging to %s", log_file)
 
     # Push CLI overrides into env so the worker process's Settings() picks them up.

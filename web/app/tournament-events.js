@@ -15,6 +15,7 @@ export const KIND = {
   PROXY_PAIRED:   "proxy_paired",
   PROXY_UNPAIRED: "proxy_unpaired",
   GAME_FINISHED:  "game_finished",
+  GAME_RECONCILED: "game_reconciled",
   RUNNER_LOG:     "runner_log",
   RUNNER_CRASH:   "runner_crash",
   DONE:           "done",

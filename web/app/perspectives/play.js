@@ -6,6 +6,15 @@ import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog } from "../import-position-dialog.js";
 
+// Module-scope mirror of "user has a live human-vs-engine game running"
+// so other modules (e.g. tournament Replay button) can decide whether
+// to confirm before discarding it. Updated from the perspective's
+// board_update / game_result handlers below.
+let _playInProgress = false;
+export function isPlayInProgress() {
+  return _playInProgress;
+}
+
 // Reduce a game_result payload to the canonical chess result string for
 // the header badge. resign/timeout don't carry "1-0"/"0-1" in the payload
 // so we derive it from who lost (only human can resign today).
@@ -388,6 +397,7 @@ export const playPerspective = {
           boardHost.classList.remove("board-idle");
           setDisabled(newGameBtn, false);
           refreshButtons();
+          _playInProgress = movesPlayed > 0 && !gameOver && !viewing;
           break;
         }
         case "game_result":
@@ -402,6 +412,7 @@ export const playPerspective = {
           syncPausedUi();
           showFinishedBadge(formatResult(evt.payload, humanWhite));
           refreshButtons();
+          _playInProgress = false;
           showAlert({
             message: formatGameOver(evt.payload, humanWhite),
             messageClass: "game-over-message",

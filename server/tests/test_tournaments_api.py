@@ -546,3 +546,112 @@ def test_patch_running_returns_409(client, monkeypatch):
     finally:
         client.post(f"/api/tournaments/{t['id']}/stop")
         _wait_status(client, t["id"], "stopped")
+
+
+# ---------------------------------------------------------------------------
+# Per-game PGN fetch (slice 4 replay)
+# ---------------------------------------------------------------------------
+
+
+_THREE_GAME_PGN = """[Event "g1"]
+[White "A"]
+[Black "B"]
+[Result "1-0"]
+
+1. e4 e5 1-0
+
+[Event "g2"]
+[White "B"]
+[Black "A"]
+[Result "0-1"]
+
+1. d4 d5 0-1
+
+[Event "g3"]
+[White "A"]
+[Black "B"]
+[Result "1/2-1/2"]
+
+1. c4 c5 1/2-1/2
+"""
+
+
+def test_get_game_pgn_returns_nth_game(client):
+    t = _create(client)
+    pgn = client.app.state.tournament_store.pgn_path(t["id"])
+    pgn.parent.mkdir(parents=True, exist_ok=True)
+    pgn.write_text(_THREE_GAME_PGN, encoding="utf-8")
+
+    r = client.get(f"/api/tournaments/{t['id']}/games/2/pgn")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "0-1" in body["pgn"]
+    assert "1. d4" in body["pgn"]
+    assert "1. e4" not in body["pgn"]
+
+
+def test_get_game_pgn_unknown_tournament_returns_404(client):
+    r = client.get("/api/tournaments/no-such/games/1/pgn")
+    assert r.status_code == 404
+
+
+def test_get_game_pgn_no_file_returns_404(client):
+    t = _create(client)
+    r = client.get(f"/api/tournaments/{t['id']}/games/1/pgn")
+    assert r.status_code == 404
+
+
+def test_get_game_pgn_out_of_range_returns_404(client):
+    t = _create(client)
+    pgn = client.app.state.tournament_store.pgn_path(t["id"])
+    pgn.parent.mkdir(parents=True, exist_ok=True)
+    pgn.write_text(_THREE_GAME_PGN, encoding="utf-8")
+
+    r = client.get(f"/api/tournaments/{t['id']}/games/99/pgn")
+    assert r.status_code == 404
+
+
+# Same shape as _THREE_GAME_PGN but the middle entry is in-flight (Result "*").
+# pgn_tail counts only decisive games, so what we call "game 2" must skip the
+# `*` and resolve to the third entry (1/2-1/2). Guards the read_game_pgn fix.
+_PGN_WITH_INFLIGHT_MIDDLE = """[Event "g1"]
+[White "A"]
+[Black "B"]
+[Result "1-0"]
+
+1. e4 e5 1-0
+
+[Event "g2-inflight"]
+[White "B"]
+[Black "A"]
+[Result "*"]
+
+1. d4 d5 *
+
+[Event "g3"]
+[White "A"]
+[Black "B"]
+[Result "1/2-1/2"]
+
+1. c4 c5 1/2-1/2
+"""
+
+
+def test_get_game_pgn_skips_non_decisive(client):
+    t = _create(client)
+    pgn = client.app.state.tournament_store.pgn_path(t["id"])
+    pgn.parent.mkdir(parents=True, exist_ok=True)
+    pgn.write_text(_PGN_WITH_INFLIGHT_MIDDLE, encoding="utf-8")
+
+    r = client.get(f"/api/tournaments/{t['id']}/games/2/pgn")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "1/2-1/2" in body["pgn"]
+    assert "1. c4" in body["pgn"]
+
+
+def test_get_game_pgn_zero_returns_422(client):
+    # FastAPI's ge=1 path validator rejects with 422 (validation error).
+    t = _create(client)
+    r = client.get(f"/api/tournaments/{t['id']}/games/0/pgn")
+    assert r.status_code == 422

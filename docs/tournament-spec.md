@@ -1,4 +1,4 @@
-# Tournament Subsystem — Design Specification
+# Tournament Subsystem -- Design Specification
 
 Status: shipped (Phase 1).
 
@@ -49,7 +49,7 @@ it to ``stopped``; starting it again resumes from where it left off
   facade speculating on capabilities of unknown future runners.
 - Per-runner detection: if the configured binary is missing or invalid,
   the Tournaments perspective surfaces a single empty-state message
-  ("fastchess not configured — open Settings → Tournament to set the
+  ("fastchess not configured -- open Settings -> Tournament to set the
   binary path") and disables the **+ New Tournament** button. No
   silently disabled controls.
 - The runner kind is **inferred from the configured path/binary name**.
@@ -69,12 +69,41 @@ it to ``stopped``; starting it again resumes from where it left off
 - When remote / multi-host support is added later, this constraint may
   be relaxed per host. Not in Phase 1.
 
+### Why single-active (not just an arbitrary limit)
+
+Two reasons, in priority order:
+
+1. **Hardware sanity.** rescheck (above) is per-tournament. Running
+   N tournaments at once would either oversubscribe the box (each
+   tournament's rescheck passes in isolation; sum doesn't) or
+   require a global resource budget split across them -- both worse
+   UX than "one at a time, finishes faster." On a beefy box you'd
+   still rather run one tournament fast than several slow.
+2. **UX.** The workspace, Live windows, Schedule, and standings are
+   all keyed to "the active tournament." Multi-tournament needs a
+   selector and disambiguation throughout. Significant surface for
+   marginal value.
+
+If we ever want to lift this:
+
+- The orchestrator's per-tournament state (`_proxy_subscribers`,
+  `_pair_ids`, `_pair_moves`, `_reconcile_queue`, `_pgn_tailer`)
+  would need to be keyed by tournament id rather than held flat.
+- Proxies would need a tournament-scoped tag in their broadcast
+  payload (today the per-tournament secret already disambiguates
+  active vs stale; it could carry the id too) so
+  ``ingest_proxy_lines`` routes to the right orchestrator instance.
+- rescheck would need a global host-load view, not per-template.
+
+Documented for future-revisit; no work to do until someone has a
+concrete need.
+
 ---
 
 ## Resource sanity checks (rescheck)
 
 Block clearly-unsafe configurations before they reach fastchess. Lives
-in `server/sturddle_view/tournament/rescheck.py` — pure (no orchestrator
+in `server/sturddle_view/tournament/rescheck.py` -- pure (no orchestrator
 state), called by both the create-time endpoint and the start-time
 recheck.
 
@@ -104,9 +133,9 @@ stacks). Revisit when telemetry justifies it.
 
 **Block conditions.**
 
-- `cpu_load > logical_cores` → `oversubscribed`
-- `ram_load_mb > 0.75 * total_ram` → `insufficient_ram`
-- `pin_affinity AND cpu_load > physical_cores` →
+- `cpu_load > logical_cores` -> `oversubscribed`
+- `ram_load_mb > 0.75 * total_ram` -> `insufficient_ram`
+- `pin_affinity AND cpu_load > physical_cores` ->
   `affinity_exceeds_physical`
 
 `allow_oversubscribe = true` downgrades `oversubscribed` and
@@ -126,24 +155,24 @@ for the working notes (deferred slices, empirical findings).
 
 ## Lifecycle and state machine
 
-States: `idle` → `running` → (`stopped` | `done`).
+States: `idle` -> `running` -> (`stopped` | `done`).
 
 - **Start**: validates the frozen config, creates the on-disk tournament
-  directory, spawns fastchess, transitions `idle → running`.
+  directory, spawns fastchess, transitions `idle -> running`.
 - **Stop**: hard-kills the fastchess subprocess (`proc.kill()` +
-  `proc.wait()`), transitions `running → stopped`. The in-flight
+  `proc.wait()`), transitions `running -> stopped`. The in-flight
   game(s) are lost; previously completed games are preserved in
   `games.pgn` because fastchess writes them as they finish (with
   `append=true`).
 - **Done**: fastchess exits cleanly (all rounds completed, or SPRT
-  decided), transitions `running → done`.
+  decided), transitions `running -> done`.
 
 There is **no Pause/Resume verb** in Phase 1. Rationale: simpler state
 machine, identical behavior on all platforms, no chunked-loop runner
 complexity, no signal-handling asymmetry between POSIX (SIGTERM) and
 Windows (TerminateProcess is hard-kill anyway). If a Resume verb is
-later requested, fastchess's `-config file=…` mechanism makes it
-trivially addable without changing the existing state machine — Resume
+later requested, fastchess's `-config file=...` mechanism makes it
+trivially addable without changing the existing state machine -- Resume
 becomes "Start with `-config` pointing at the prior tournament's
 artifacts." See **Resume after Stop** below for the concrete plan.
 
@@ -169,7 +198,7 @@ Elo, and SPRT statistics are computed by parsing `games.pgn` ourselves.
 
 Why:
 
-- A `Stop` mid-tournament still has correct standings — every game
+- A `Stop` mid-tournament still has correct standings -- every game
   fastchess flushed to PGN counts; only the in-flight game is lost.
 - A future Resume that appends to the same PGN yields correct
   cumulative numbers without special handling.
@@ -177,8 +206,8 @@ Why:
   affect the math.
 
 PGN parsing is a header-only line scan (regex over `[White ...]`,
-`[Black ...]`, `[Result ...]`, `[Round ...]`) — `chess.pgn.read_game`'s
-full move-tree parse is ~50× slower on multi-MB PGNs and we never
+`[Black ...]`, `[Result ...]`, `[Round ...]`) -- `chess.pgn.read_game`'s
+full move-tree parse is ~50x slower on multi-MB PGNs and we never
 consume the moves for stats. Results are cached per-path keyed by
 `(mtime, size)`; PGN is append-only so this is sound. Standard result
 tags (`1-0`, `0-1`, `1/2-1/2`) drive game tallies. SPRT requires
@@ -201,7 +230,7 @@ This is a presentation question, not a math bug. Options:
 2. Halve the per-engine value so the displayed pair sums to the gap.
 3. Keep current and disambiguate in the UI.
 
-Deferred — touching this changes user-visible numbers and existing
+Deferred -- touching this changes user-visible numbers and existing
 tournaments' archived standings.
 
 ---
@@ -211,12 +240,12 @@ tournaments' archived standings.
 ```
 <tournaments-root>/
   <id>/
-    state.json     ← wrapper-owned: id, name, status, timestamps, frozen template
-    config.json    ← fastchess-owned: resume artifact (its filename, we don't pick)
-    games.pgn      ← fastchess-owned: -pgnout file=games.pgn append=true
+    state.json     <- wrapper-owned: id, name, status, timestamps, frozen template
+    config.json    <- fastchess-owned: resume artifact (its filename, we don't pick)
+    games.pgn      <- fastchess-owned: -pgnout file=games.pgn append=true
     logs/
-      wrapper.log    ← orchestrator output
-      fastchess.log  ← fastchess stdout/stderr capture
+      wrapper.log    <- orchestrator output
+      fastchess.log  <- fastchess stdout/stderr capture
 ```
 
 - **One directory per tournament**, named by `<id>` (UUID).
@@ -224,7 +253,7 @@ tournaments' archived standings.
   `_atomic.atomic_write_json` helper.
 - **`<tournaments-root>` default**: `platformdirs.user_data_dir(
   "sturddle-view") / "tournaments"`. User can override under
-  Settings → Tournament (see "Settings surface" below).
+  Settings -> Tournament (see "Settings surface" below).
 - **Auto-create on first use**: if the configured root does not exist,
   it is created the first time the user creates a tournament. A toast
   confirms creation; no silent surprises.
@@ -252,7 +281,7 @@ Schema may be extended; existing fields are stable contracts.
 
 ## Tournament template (frozen-on-create)
 
-Tournaments are created from a **template** — a set of run-time
+Tournaments are created from a **template** -- a set of run-time
 parameters that override per-engine defaults for the duration of the
 tournament. The template values are frozen into `state.json` at
 creation time and **cannot be modified** after the tournament is
@@ -266,7 +295,7 @@ Fields the form renders today (Phase 1):
 - **Hash** size in MB (per engine).
 - **Threads** (per engine; the UCI `Threads` option). Default 1.
 - **Games in parallel** (fastchess `-concurrency`; how many *games*
-  run in parallel — independent from `Threads`). Default 1. The label
+  run in parallel -- independent from `Threads`). Default 1. The label
   is "games in parallel" in the UI; the code/CLI flag retains the
   fastchess name.
 - **Rounds** count.
@@ -286,22 +315,22 @@ Fields the form renders today (Phase 1):
   selected engines, or the global override if set). Persisted so the
   server can re-run the rescheck at start time without consulting the
   engine registry.
-- **Adjudication — Resign** with on/off switch. Inputs prefilled with
+- **Adjudication -- Resign** with on/off switch. Inputs prefilled with
   the customary fastchess values (3 moves at score 700 cp); the switch
   controls whether the values are emitted on save.
-- **Adjudication — Draw** with on/off switch. Inputs prefilled with
+- **Adjudication -- Draw** with on/off switch. Inputs prefilled with
   the customary fastchess values (from move 40, for 8 moves, with
-  `|score| ≤ 10` cp); the switch controls whether the values are
+  `|score| <= 10` cp); the switch controls whether the values are
   emitted on save.
 
 Spec'd but **not** in the v0 form (added in their own slices later):
 
-- **Opening book** path (fastchess `-openings file=…`; tournament-level
+- **Opening book** path (fastchess `-openings file=...`; tournament-level
   starting positions for both engines).
 - **Tablebase** path (per-engine `SyzygyPath` UCI option).
 - **Games per round** (>2 does not improve statistics; we currently
   rely on fastchess's default of 2).
-- **SPRT parameters** (`elo0`, `elo1`, `alpha`, `beta`, `model`) —
+- **SPRT parameters** (`elo0`, `elo1`, `alpha`, `beta`, `model`) --
   deferred to **Phase 2**. The server-side computation is implemented
   (`pgn_stats.compute_sprt`) and the API consumes a `template.sprt`
   sub-object if present, but the UI does not currently expose it.
@@ -322,7 +351,7 @@ Spec'd but **not** in the v0 form (added in their own slices later):
 The same form component (`mountTournamentTemplateForm` in
 `web/app/tournament-template-form.js`) renders in three contexts:
 
-1. **Global Settings dialog → Tournament tab**: editable; auto-saves
+1. **Global Settings dialog -> Tournament tab**: editable; auto-saves
    on input (debounced) and persists as the default template for new
    tournaments.
 2. **New Tournament dialog**: editable; pre-filled from the saved
@@ -349,11 +378,11 @@ place to find install-time configuration.
 
 The Tournament settings tab contains:
 
-- `fastchess_path` — binary location. Empty by default. Empty value
-  triggers the "fastchess not configured — open Settings → Tournament"
+- `fastchess_path` -- binary location. Empty by default. Empty value
+  triggers the "fastchess not configured -- open Settings -> Tournament"
   empty state on the Tournaments perspective and disables the
   **+ New Tournament** button.
-- `tournaments_root` — storage location for `<id>/` dirs. Defaults to
+- `tournaments_root` -- storage location for `<id>/` dirs. Defaults to
   `platformdirs.user_data_dir("sturddle-view") / "tournaments"`.
 - The **tournament defaults template** (all fields listed under
   "Template fields" above), serving as the pre-fill for new
@@ -376,19 +405,19 @@ tournament row.
 The Engines perspective's **Tournaments** sub-tab becomes a master list
 of saved tournaments. Per-row verbs:
 
-- **Start / Resume** — only enabled when no tournament is currently
+- **Start / Resume** -- only enabled when no tournament is currently
   running. The icon switches between *play* (idle) and *forward-step*
   (resume from a previously stopped tournament).
-- **Pause** — only enabled when this row is the running tournament.
+- **Pause** -- only enabled when this row is the running tournament.
   Stops fastchess; the next Start resumes from the same state.
-- **Open workspace** — opens the workspace view (WinBox-driven). Valid
+- **Open workspace** -- opens the workspace view (WinBox-driven). Valid
   in any state: live windows when running, frozen view when stopped /
   done.
-- **Info** — opens a human-readable dialog summarizing the tournament
+- **Info** -- opens a human-readable dialog summarizing the tournament
   (engines list, time control, rounds, parallel games, games played
   vs total, ponder/resign/draw, opening book, created/started/stopped
   timestamps). Opening book displays as basename; full path on hover.
-- **Remove** — delete the saved tournament directory. Disabled while
+- **Remove** -- delete the saved tournament directory. Disabled while
   the tournament is running.
 
 The list itself has a **Sort** menu (Name / Status / Created /
@@ -398,7 +427,7 @@ Plus a top-level action: **+ New Tournament**, which opens a dialog
 containing:
 
 - A **Name** field.
-- An **engine-list builder**: two panes (Available ↔ In tournament)
+- An **engine-list builder**: two panes (Available <-> In tournament)
   with Add / Remove arrow buttons, plus Up / Down reorder buttons on
   the In-tournament pane (order matters for gauntlet seeding).
 - The shared template form (see "Reusable form component" above),
@@ -407,7 +436,7 @@ containing:
 
 The dialog's primary action (**Create**) is enabled only when the
 name is non-empty and at least two engines are picked. There is no
-Cancel button — the dialog's X handles dismissal — and no
+Cancel button -- the dialog's X handles dismissal -- and no
 "required *" decoration on fields (see the project memory note on
 modern app-style dialogs).
 
@@ -426,16 +455,16 @@ absent in the latter case.
 ### Window inventory
 
 - **Standings** (1 window). Table: engine, games played, W/L/D, score%,
-  Elo ± 95% margin. Elo and margin are emitted only for head-to-head
-  (N=2) tournaments; with N≥3 the score% column is "vs field" (mixed
-  strengths) and the Elo column shows "—" until a multi-engine rating
+  Elo +/- 95% margin. Elo and margin are emitted only for head-to-head
+  (N=2) tournaments; with N>=3 the score% column is "vs field" (mixed
+  strengths) and the Elo column shows "--" until a multi-engine rating
   estimator lands (see Future work). If SPRT is configured, a row at
   the top showing LLR, bounds, and decision status (H0 / H1 /
   inconclusive). Source: PGN parsed by `pgn_stats`, refreshed as games
   complete.
 - **Schedule** (1 window). List of completed games (PGN-derived) plus
   any in-progress games the server is tracking (proxy-derived once the
-  pipeline is wired). Clicking a row attaches a Live game window —
+  pipeline is wired). Clicking a row attaches a Live game window --
   see below.
 - **Event log** (1 window). Chronological text feed driven by the
   existing `EventBus`. Phase 1 surface is sparse (`tournament_status`
@@ -465,16 +494,16 @@ row-click suffices), eval graphs (Phase 2).
 
 ### Live observation pipeline
 
-This section captures the design for live game viewing — the part of
+This section captures the design for live game viewing -- the part of
 the workspace that was deferred when Slice 8 shipped. Implementing it
 involves three independently-shippable pieces (see
 `docs/tournament-plan.md` for the slice breakdown).
 
 #### Two pieces, well-bounded
 
-1. **Wrapper around fastchess** — the high-level manager
+1. **Wrapper around fastchess** -- the high-level manager
    (`FastchessRunner` + `Orchestrator`). Already shipped.
-2. **Stdio proxy** — a thin pipe that sits between fastchess and each
+2. **Stdio proxy** -- a thin pipe that sits between fastchess and each
    engine binary. Forwards stdin/stdout transparently and broadcasts
    a copy of every line to the GUI server. The proxy stays a **dumb
    pipe**: no chess knowledge, no UCI parsing, no game state.
@@ -484,7 +513,7 @@ manageable.
 
 #### Attach-to-engine, not attach-to-game
 
-The Live game window subscribes to **one engine's proxy stream** —
+The Live game window subscribes to **one engine's proxy stream** --
 not to a "game" abstraction. The user picks the engine they want to
 follow; the window renders the board from that engine's POV.
 
@@ -497,12 +526,12 @@ engine's POV, attach a second window to the other proxy.
 Everything needed to render the board is already in the engine's UCI
 stream:
 
-- `position startpos moves e2e4 e7e5 ...` — fastchess sends the full
+- `position startpos moves e2e4 e7e5 ...` -- fastchess sends the full
   move list every turn. Reconstruct the board with python-chess in
   one line; opponent's move comes for free.
-- `go wtime ... btime ...` — both clocks.
-- `info depth N score cp ... pv ...` — this engine's eval, depth, PV.
-- `bestmove ...` — the move this engine just played.
+- `go wtime ... btime ...` -- both clocks.
+- `info depth N score cp ... pv ...` -- this engine's eval, depth, PV.
+- `bestmove ...` -- the move this engine just played.
 
 What you give up: the **opponent engine's** internal eval/PV/depth.
 That's available from the opponent's proxy if the user attaches a
@@ -531,7 +560,7 @@ Why pairing turned out untenable in Phase 1:
   A locked pair stays locked even after fastchess re-pairs the
   engines for the next round; the index silently keeps stale
   partnerships.
-- **Strict ply-difference checks flap.** Forcing `|ply_a - ply_b| ≤ 1`
+- **Strict ply-difference checks flap.** Forcing `|ply_a - ply_b| <= 1`
   to guarantee opposite side-to-move yields constant
   observe / dissolve flapping under normal batching, because one
   side often races ahead by several plies before the other catches up.
@@ -551,14 +580,14 @@ per click. To see both sides of a game the user opens two windows.
 #### Volume & high-concurrency considerations
 
 UCI engines emit `info` lines continuously while searching. At
-N=8–48 parallel games on a multi-core box, raw line-by-line POSTs
+N=8-48 parallel games on a multi-core box, raw line-by-line POSTs
 from each proxy to the server would peak in the thousands of
 requests per second range.
 
 Mitigations baked into the design:
 
 - **Batch at the proxy.** Each proxy buffers and POSTs every ~50ms
-  or every ~32 lines, whichever first. Drops request rate ~50× with
+  or every ~32 lines, whichever first. Drops request rate ~50x with
   no perceptible loss in liveness (50ms is below the human flicker
   threshold).
 - **Posts run in a background worker thread.** The proxy's asyncio
@@ -571,8 +600,8 @@ Mitigations baked into the design:
 - **Per-proxy snapshot replay on subscribe.** The orchestrator keeps
   the latest `position` / `go` / `info` line per proxy and replays
   them when a WS subscriber connects. Without this, a window opened
-  mid-game would render empty until the engine's next event — which
-  under long time controls (TC=720+8) can be ≥10s away. The "info"
+  mid-game would render empty until the engine's next event -- which
+  under long time controls (TC=720+8) can be >=10s away. The "info"
   snapshot is cleared on each new "position" so a stale eval doesn't
   paint against a fresh board.
 - **Per-process proxy_id.** The proxy script mints its own uuid at
@@ -580,24 +609,24 @@ Mitigations baked into the design:
   fastchess reuses argv across slot processes when `-concurrency > 1`,
   so an argv-baked id would be shared between slots and silently
   collapse multiple distinct streams into one.
-- **Throttle DOM updates.** Schedule re-renders at ≤4 Hz even if
+- **Throttle DOM updates.** Schedule re-renders at <=4 Hz even if
   the underlying state ticks faster.
 
 If profiling at very high concurrency (the user's 48-core box) ever
 shows the Python proxy is itself the bottleneck, the proxy can be
-rewritten in C++ — it's a self-contained process with a
+rewritten in C++ -- it's a self-contained process with a
 language-agnostic protocol. Out of scope for now; documented as an
 escape hatch.
 
 ##### Operational footnotes
 
 - WS subscriber queues are bounded (`maxsize=512`) with drop-oldest
-  on `QueueFull`. Sized for observed bursts of ~17–22 `info` lines/s
+  on `QueueFull`. Sized for observed bursts of ~17-22 `info` lines/s
   per engine; if a slow consumer (e.g. a backgrounded browser tab)
   ever falls badly behind, lines get coalesced silently rather than
   blocking the producer. Acceptable for live observation.
 - The snapshot only retains `info` lines that carry `score` or `pv`,
-  filtering out `info string …` debug noise and `info nodes/nps`-only
+  filtering out `info string ...` debug noise and `info nodes/nps`-only
   lines some engines emit between depth iterations. Sturddle's
   meaningful info lines always carry score+pv, so snapshot accuracy
   is fine for the engines this project targets; engines with sparser
@@ -607,23 +636,23 @@ escape hatch.
 
 The proxy doesn't classify. End-of-game is signaled by **pair
 dissolution** alone: when one of a confirmed pair's proxies leaves
-its FEN bucket — typically via `ucinewgame` (entering its next
+its FEN bucket -- typically via `ucinewgame` (entering its next
 game) or `proxy_session_ended` (engine quit / fastchess closed it)
-— the pair's game is over.
+-- the pair's game is over.
 
-Result and termination are reported as `*` / `unknown` on the
-`game_finished` event. fastchess's `Started game N` / `Finished
-game N` stdout lines exist but are no longer parsed: under
-concurrency the same `(white_name, black_name)` matchup can be
-playing in N parallel slots, so a `Finished` line for that matchup
-cannot be unambiguously bound back to a specific pair. The PGN
-remains authoritative for results in the Standings window; the live
-view shows games ending without a per-game W/L/D verdict.
+`game_finished` is emitted immediately on dissolution with
+`result="*"` / `termination="unknown"` / `game_n=null` -- the proxy
+side cannot classify, and fastchess's `Started/Finished game N`
+stdout cannot be unambiguously joined to a `pair_id` under
+concurrency (same-name engines, no per-slot identifier).
 
-The `game_n` field on `game_finished` is retained in the schema
-(always `null` today) so a future implementation that finds a
-reliable correlation signal can populate it without breaking
-consumers.
+A separate `game_reconciled` event upgrades the row when the
+captured UCI move list is matched against fastchess's PGN output;
+that event carries the real `result`, `termination` (PGN
+[Termination "..."]), and `game_n`. Consumers that don't care about
+the upgrade can ignore `game_reconciled`; the Standings window
+still derives from the PGN directly. See `docs/pgn-reconciliation.md`
+for the matching algorithm and edge cases.
 
 #### Pair lifecycle: confirmation and dissolution
 
@@ -638,11 +667,13 @@ fastchess feeds the same opening-book line to multiple slots; they
 resolve as engines diverge past book.
 
 **Dissolution.** A confirmed pair dissolves when either proxy
-becomes orphaned from its FEN bucket — typically because the proxy
+becomes orphaned from its FEN bucket -- typically because the proxy
 forwarded `ucinewgame` to start its next game, or its session ended
 (`proxy_session_ended`). Dissolution emits `proxy_unpaired` +
-`game_finished` (with `result="*"`, `termination="unknown"`) and
-closes the per-pair WS subscribers with an `ended` sentinel.
+`game_finished` (with `result="*"`, `termination="unknown"`,
+upgraded later by `game_reconciled` -- see "What end-of-game looks
+like" above) and closes the per-pair WS subscribers with an `ended`
+sentinel.
 
 On terminal runner events (tournament done/stopped/failed), every
 remaining open pair is dissolved through the same path so any open
@@ -651,18 +682,20 @@ game-WS subscribers receive their `ended` frame.
 **Rejected alternatives.**
 
 - *Parsing fastchess `Finished N` for the result.* Investigated and
-  abandoned: the `pair_id ↔ N` join is unsolvable when concurrency
+  abandoned: the `pair_id <-> N` join is unsolvable when concurrency
   > 1 with same-name engines. fastchess's `Started/Finished` lines
   carry only `(white_name, black_name)` plus N; `name=` is shared
   across all parallel slots of one engine, and there is no per-slot
   identifier in the stdout protocol. Eval-based heuristics did not
   produce stable disambiguation.
 - *Board-state inference from FEN.* Wrong for resignations
-  (`-resign`), adjudicated draws (`-draw`), and time forfeits — the
+  (`-resign`), adjudicated draws (`-draw`), and time forfeits -- the
   board doesn't reflect the verdict.
-- *PGN tail polling for results.* Adds a poller and doesn't solve
-  pair-id mapping under concurrency (PGN flush order is per-game,
-  not per-slot).
+- *PGN tail polling matched on `(white, black, N)`.* Same
+  `pair_id <-> N` join failure as the stdout case above. The
+  reconciliation feature uses PGN tail polling but matches on the
+  full UCI move list instead, which disambiguates under concurrency
+  even with same-name engines (see `docs/pgn-reconciliation.md`).
 
 **Failure modes.**
 
@@ -736,10 +769,10 @@ if needed once the single-layout model is in use.
 Deterministic placement, non-tiling (windows may overlap as concurrency
 grows):
 
-- Standings: top-left, ~40% width × ~50% height.
-- Schedule: bottom-left, ~40% width × ~50% height.
-- Event log: bottom-right, ~60% width × ~30% height.
-- Live game windows: cascade from upper-right, each ~30% × ~45%,
+- Standings: top-left, ~40% width x ~50% height.
+- Schedule: bottom-left, ~40% width x ~50% height.
+- Event log: bottom-right, ~60% width x ~30% height.
+- Live game windows: cascade from upper-right, each ~30% x ~45%,
   offset 30px per window.
 
 Numbers are starting values; expect to tune once the workspace is in
@@ -749,8 +782,8 @@ front of real users.
 
 ## Server module shape
 
-Two responsibilities — **persistent state** and **subprocess
-lifecycle** — are decoupled via composition, not inheritance. Each
+Two responsibilities -- **persistent state** and **subprocess
+lifecycle** -- are decoupled via composition, not inheritance. Each
 component is independently testable and the runner is the swap point
 for a future second runner (cutechess); the store and orchestrator
 are unaffected by that swap.
@@ -758,18 +791,18 @@ are unaffected by that swap.
 ```
 server/sturddle_view/tournament/
   __init__.py
-  store.py           ← TournamentStore: on-disk layout, list/load/create/remove,
+  store.py           <- TournamentStore: on-disk layout, list/load/create/remove,
                        atomic state.json writes. No subprocess knowledge.
-  pgn_stats.py       ← PGN → Elo / SPRT computation (pure functions)
-  runner.py          ← Runner protocol: start / stop / is_running
-  fastchess.py       ← FastchessRunner implements Runner. Knows fastchess CLI,
+  pgn_stats.py       <- PGN -> Elo / SPRT computation (pure functions)
+  runner.py          <- Runner protocol: start / stop / is_running
+  fastchess.py       <- FastchessRunner implements Runner. Knows fastchess CLI,
                        process-group isolation, pipe draining. No on-disk
                        schema knowledge beyond paths it is handed.
-  orchestrator.py    ← Orchestrator: composes Store + Runner. Thin coordinator;
+  orchestrator.py    <- Orchestrator: composes Store + Runner. Thin coordinator;
                        owns the single-active invariant and startup
                        reconciliation. The public API called by REST/WS
                        handlers and the future CLI wrapper.
-  proxy.py           ← stdio proxy + HTTP broadcast tap (per-process worker
+  proxy.py           <- stdio proxy + HTTP broadcast tap (per-process worker
                        thread for non-blocking POSTs); per-process proxy_id
 ```
 
@@ -784,7 +817,7 @@ On server startup, the orchestrator reconciles: any tournament whose
 persisted status is `running` is marked `stopped` (Phase 1 does not
 support Resume; reviving the subprocess is not attempted). This
 preserves prior games already in `games.pgn`; only the in-flight game
-at the moment of the crash is lost — the same loss profile as a
+at the moment of the crash is lost -- the same loss profile as a
 user-initiated Stop.
 
 #### Single-orchestrator-per-store assumption
@@ -793,12 +826,12 @@ Reconcile-on-startup is only sound under the assumption that **one
 orchestrator instance owns the tournament store at any time**. A second
 process pointed at the same `tournament_root` will, on its own startup,
 mistake the first instance's live `running` rows for a crash and flip
-them to `failed` — silently corrupting the running tournament's
+them to `failed` -- silently corrupting the running tournament's
 persisted status while the actual subprocess keeps chugging.
 
 Phase 1 does not support multi-instance deployments and the spec does
 not promise this. Single-user desktop deployments naturally satisfy the
-invariant. The risk in practice is *accidental* shared roots — most
+invariant. The risk in practice is *accidental* shared roots -- most
 notably tests that boot a `create_app` against the developer's real
 platformdirs path. The test harness (`server/tests/conftest.py`)
 redirects every default-path producer to a per-test tmp dir to keep
@@ -814,7 +847,7 @@ shared-host configurations.
 
 ### Decoupling from the web layer
 
-The orchestrator must be callable without any web/REST coupling — its
+The orchestrator must be callable without any web/REST coupling -- its
 public surface takes a tournament id (or a `TournamentConfig` for
 creation) and a broadcast callback. This factoring is what enables the
 Phase 1.5 CLI wrapper: it instantiates Store + Runner + Orchestrator
@@ -844,8 +877,8 @@ Rules enforced for every test shipped with this subsystem:
 
 3. **30-second wall-clock limit per test.** Tests that must wait for
    async state changes (e.g. pairing, WS subscription) do so with tight
-   `deadline = time.time() + N` loops (N ≤ 5 s) or Playwright
-   `wait_for_selector`/`wait_for_function` timeouts (≤ 5 s).
+   `deadline = time.time() + N` loops (N <= 5 s) or Playwright
+   `wait_for_selector`/`wait_for_function` timeouts (<= 5 s).
 
 4. **WebSocket transport: `wsproto`.** All uvicorn test servers must pass
    `ws="wsproto"` to avoid import-order warnings from the `websockets`
@@ -935,15 +968,15 @@ Implementation (shipped):
    resume after a kill that lands between PGN-append and
    cfg.json-write. Same pass should also drop games without a
    definitive `[Result]` (handles the rare `*`-tail case from a
-   killed in-flight game). Independent of resume — ship anytime.
-6. **Disable Start when `status === "done"`** — already in place
+   killed in-flight game). Independent of resume -- ship anytime.
+6. **Disable Start when `status === "done"`** -- already in place
    (web/app/tournaments.js:142 gates on
    `running` and `done`). Listed for completeness only; no change
    needed.
 7. **Graceful stop**: send SIGTERM, wait ~2 s for fastchess's
    `~BaseTournament` to flush state (and ideally fire a final
    `saveJson()`) and join the engine pool, fall back to SIGKILL only
-   on timeout. Reduces — but does not eliminate — duplicate-game
+   on timeout. Reduces -- but does not eliminate -- duplicate-game
    risk on resume, since SIGTERM lets fastchess finish any
    in-flight save. PGN truncation risk (an unterminated tail game)
    also drops to near-zero. Step 5's dedup/filter is the
@@ -968,11 +1001,11 @@ Future work (not part of the resume effort):
   tournament-creation time, store in the frozen template, warn (do
   not block) on Start if a binary's current hash differs. Prevents
   silent mixing of two engine versions into one Elo number.
-- **Multi-engine ratings (N≥3)**: replace the current "no Elo for
-  N≥3" placeholder with a proper rating estimator (Bradley-Terry /
+- **Multi-engine ratings (N>=3)**: replace the current "no Elo for
+  N>=3" placeholder with a proper rating estimator (Bradley-Terry /
   Ordo-style iterative MLE) that yields per-engine ratings *and*
   per-engine 95% margins from the pairwise W/L/D matrix. Until then
-  the Standings table renders "—" in the Elo column for N≥3.
+  the Standings table renders "--" in the Elo column for N>=3.
 
 ---
 
@@ -987,7 +1020,7 @@ Future work (not part of the resume effort):
   engine's display name in the Roster does not update the Play
   perspective's side-panel label until the next page load. Tournaments
   intentionally freeze engine names at creation (by spec) and ignore
-  later renames. The HVE side is not by design — re-resolving from
+  later renames. The HVE side is not by design -- re-resolving from
   the registry on each new game would fix it; left as-is until
   someone cares.
 - **Clone-and-edit tournament**: open the New Tournament dialog
@@ -995,8 +1028,8 @@ Future work (not part of the resume effort):
   with the name field cleared (or `"<name> (copy)"`). Saves the
   re-typing for repeat-style runs (same engines, same TC, different
   rounds/SPRT params). UI: "Clone" entry on the row's context menu
-  / ribbon. Server: no new endpoint needed — client just GETs the
+  / ribbon. Server: no new endpoint needed -- client just GETs the
   source tournament and POSTs to `/api/tournaments` with the
   pre-filled body. Engine entries are frozen snapshots so the clone
   inherits the source's engine state, not the registry's current
-  state — matches the freeze-at-create semantics already in the spec.
+  state -- matches the freeze-at-create semantics already in the spec.
