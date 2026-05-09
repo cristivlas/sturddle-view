@@ -12,10 +12,15 @@
 //   WS `tournament_update`             -> event log; refresh on game-finished.
 //   Periodic GET while running         -> reconcile standings.
 
-import { closeAllLiveGames, closeStaleLiveGames, getLiveWindows, isLiveWindowOpen, openLiveGameWindow } from "./tournament-live-game.js";
+import {
+  closeAllLiveGames, closeStaleLiveGames, getLiveWindows,
+  isLiveWindowOpen, openLiveGameWindow,
+  LIVE_MIN_WIDTH, LIVE_MIN_HEIGHT,
+} from "./tournament-live-game.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { toast } from "./dialogs.js";
 import { escapeHtml, flashWindow } from "./wb-utils.js";
+import { createSlotGrid } from "./workspace-slot-grid.js";
 
 const STORAGE_KEY_PREFIX = "sturddle:workspace:";
 const POLL_INTERVAL_MS = 5000;
@@ -122,6 +127,21 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   api("GET", "/settings")
     .then(s => { boardStyleCached = s?.board_style || null; })
     .catch(() => {});
+
+  // Slot grid hands out aligned rects for live-board windows. A slot is
+  // free if no live window currently overlaps it, so dragging a window
+  // out of its slot frees that slot without explicit bookkeeping. When
+  // no slot fits, the new window is minimized -- WS still connects so
+  // the live state stays current behind the minimize bar.
+  const SLOT_W = Math.max(LIVE_MIN_WIDTH, Math.round(window.innerWidth * 0.20));
+  const slotGrid = createSlotGrid({
+    top, left, cellWidth: SLOT_W, cellHeight: LIVE_MIN_HEIGHT,
+    getWindows: () => getLiveWindows(),
+  });
+  // Horizontal cascade for overflow-restore (no slot available):
+  // successive restores step right so they don't stack.
+  const OVERFLOW_X_OFFSET = 24;
+  let overflowRestoreCount = 0;
 
   // ---- Window construction ----------------------------------------------
 
@@ -334,19 +354,50 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   const DEBUG_WATCH = false;
   function attachWatch(btn, attachKey, sourceWindowKey, openOpts) {
     if (DEBUG_WATCH) console.log("[WATCH] click", { attachKey, sourceWindowKey, openOpts });
-    const src = windows[sourceWindowKey];
-    const avoidRect = src ? { x: src.x, y: src.y, w: src.width, h: src.height } : null;
+    // Claim a slot BEFORE creating the window so the new window's own
+    // default position doesn't shadow the slot it would occupy.
+    const rawClaim = isLiveWindowOpen(attachKey) ? null : slotGrid.claim();
+    // Clamp to viewport so a slot near the right/bottom edge can't
+    // push the window off-screen.
+    const claim = rawClaim ? {
+      ...rawClaim,
+      x: Math.min(rawClaim.x, Math.max(left, window.innerWidth - rawClaim.w)),
+      y: Math.min(rawClaim.y, Math.max(top, window.innerHeight - rawClaim.h)),
+    } : null;
+    let result;
     try {
-      openLiveGameWindow({
+      result = openLiveGameWindow({
         ...openOpts, token, tournamentId: tournament.id,
-        top, left, boardStyle: boardStyleCached, avoidRect,
+        top, left, boardStyle: boardStyleCached,
+        initialRect: claim ? { x: claim.x, y: claim.y, w: claim.w, h: claim.h } : null,
+        // On restore from minimize: try to land the window in a free
+        // slot; if grid is full, cascade horizontally from the left
+        // edge so successive overflow restores don't all stack.
+        onAfterRestore: (wb) => {
+          const c = slotGrid.claim();
+          if (c) {
+            wb.resize(c.w, c.h).move(c.x, c.y);
+            return;
+          }
+          const x = Math.min(
+            left + overflowRestoreCount * OVERFLOW_X_OFFSET,
+            Math.max(left, window.innerWidth - wb.width),
+          );
+          wb.move(x, top);
+          overflowRestoreCount++;
+        },
       });
     } catch (e) {
       console.error("[WATCH] openLiveGameWindow threw", e, { attachKey, openOpts });
       return;
     }
+    // No slot fit -- minimize so the grid stays clean. WS already
+    // connected; live state stays current behind the minimize bar.
+    if (result?.wb && !result.alreadyOpen && !claim) {
+      try { result.wb.minimize(); } catch { /* */ }
+    }
     const isLive = isLiveWindowOpen(attachKey);
-    if (DEBUG_WATCH) console.log("[WATCH] post-open", { attachKey, isLive });
+    if (DEBUG_WATCH) console.log("[WATCH] post-open", { attachKey, isLive, slotted: !!claim });
     btn.classList.toggle("wb-sched-attach-btn--live", isLive);
   }
 
