@@ -236,25 +236,25 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   const windowSpecs = {
     standings: {
-      title: `Standings | ${tournament.name}`,
+      title: "Standings",
       makeBody: makeStandingsBody,
       setBody: (b) => { standingsBody = b; },
       render: () => renderStandings(),
     },
     schedule: {
-      title: `Live Games | ${tournament.name}`,
+      title: "Live Games",
       makeBody: makeScheduleBody,
       setBody: (b) => { scheduleBody = b; },
       render: () => renderSchedule(),
     },
     engines: {
-      title: `Engine Instances | ${tournament.name}`,
+      title: "Engine Instances",
       makeBody: makeEnginesBody,
       setBody: (b) => { enginesBody = b; },
       render: () => renderEngines(),
     },
     log: {
-      title: `Event log | ${tournament.name}`,
+      title: "Event log",
       makeBody: makeLogBody,
       setBody: (b) => { logBody = b; },
       render: () => renderEventLog(),
@@ -890,15 +890,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     });
   }
 
-  function cascade() {
-    const wbs = openWindows();
-    const offset = 30;
-    wbs.forEach((wb, i) => {
-      unminimize(wb);
-      wb.move(left + i * offset, top + i * offset);
-    });
-  }
-
   // 2x2 in the bottom half of the viewport. Auto-opens any of the
   // four target windows that aren't open yet. Reserves a footer strip
   // at the bottom so minimized WinBoxes have a place to dock.
@@ -933,6 +924,14 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       if (!wb) continue;
       unminimize(wb);
       wb.resize(w, h).move(x, y);
+    }
+    // Z-order back-to-front: standings, log, engines, schedule.
+    // Last focus() wins.
+    for (const k of ["standings", "log", "engines", "schedule"]) {
+      const wb = windows[k];
+      if (wb && !wb.min) {
+        try { wb.focus(); } catch { /* */ }
+      }
     }
   }
 
@@ -987,7 +986,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     requestAnimationFrame(() => { try { flashWindow(windows[key]); } catch {} });
   }
 
-  const workspace = { close, tile, cascade, arrange, closeAll, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id };
+  const workspace = { close, tile, arrange, closeAll, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id };
   activeWorkspace = workspace;
   return workspace;
 }
