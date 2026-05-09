@@ -771,10 +771,15 @@ class HumanVsEngine:
     async def view_last(self) -> None:
         await self.view_goto(len(self._view_full_moves))
 
-    async def play_from_here(self, tc: TimeControl) -> str:
+    async def play_from_here(self, tc: TimeControl, inherit_clocks: bool = False) -> str:
         """Exit view mode by starting a fresh play game seeded with plies
         0..cursor. New game_id, new autosave file. Side-to-play is whoever
-        is to move at the cursor (matches today's import default)."""
+        is to move at the cursor (matches today's import default).
+
+        ``inherit_clocks``: when True, seed live clocks from the PGN cursor
+        (study time pressure / repro engine behavior). When False, live
+        clocks reset to ``tc.initial_seconds``.
+        """
         async with self._lock:
             if not self._viewing:
                 raise RuntimeError("not in view mode")
@@ -788,13 +793,14 @@ class HumanVsEngine:
                 else None
             )
             # Live clocks AFTER the seeded plies (post-move-cursor):
-            # - cursor at last ply → use the imported final_*_time (no
+            # - cursor at last ply -- use the imported final_*_time (no
             #   pre-move snapshot beyond it exists);
-            # - cursor mid-game → use the next ply's pre-move snapshot
+            # - cursor mid-game    -- use the next ply's pre-move snapshot
             #   (pre-move-(cursor+1) == post-move-cursor).
+            # Only consulted when inherit_clocks is True.
             seed_final_w: float | None = None
             seed_final_b: float | None = None
-            if self._view_clock_history:
+            if inherit_clocks and self._view_clock_history:
                 if cursor == len(self._view_full_moves):
                     seed_final_w = self._view_final_white
                     seed_final_b = self._view_final_black

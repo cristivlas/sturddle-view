@@ -220,8 +220,9 @@ async def view_play_from_here(payload: dict, request: Request) -> dict:
         initial_seconds=float(payload.get("initial_seconds", s.tc_initial_seconds)),
         increment_seconds=float(payload.get("increment_seconds", s.tc_increment_seconds)),
     )
+    inherit_clocks = bool(payload.get("inherit_pgn_clocks", s.inherit_pgn_clocks))
     try:
-        game_id = await hve.play_from_here(tc=tc)
+        game_id = await hve.play_from_here(tc=tc, inherit_clocks=inherit_clocks)
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=f"engine not found: {e}") from e
     except RuntimeError as e:

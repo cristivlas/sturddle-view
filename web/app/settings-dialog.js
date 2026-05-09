@@ -215,6 +215,17 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       evalPovLabel.textContent = "Eval display";
       evalPovRow.append(evalPovLabel, evalPov);
 
+      const inheritClocks = document.createElement("wa-switch");
+      inheritClocks.size = "small";
+      inheritClocks.checked = !!initial.inherit_pgn_clocks;
+      inheritClocks.textContent = "Inherit PGN clocks";
+      inheritClocks.addEventListener("change", () => {
+        putSettings({ inherit_pgn_clocks: inheritClocks.checked });
+      });
+      const inheritClocksRow = document.createElement("div");
+      inheritClocksRow.className = "settings-row";
+      inheritClocksRow.append(inheritClocks);
+
       const allowTakeback = document.createElement("wa-switch");
       allowTakeback.size = "small";
       allowTakeback.checked = initial.allow_takeback !== false;
@@ -322,7 +333,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const humanEvalRow = document.createElement("div");
       humanEvalRow.className = "settings-pair-row";
       humanEvalRow.append(humanSideRow, evalPovRow);
-      playPanel.append(tcInitialRow, tcIncrementRow, humanEvalRow, takebackRow, boardStyleRow);
+      playPanel.append(tcInitialRow, tcIncrementRow, inheritClocksRow, humanEvalRow, takebackRow, boardStyleRow);
 
       // Path-row helper used by Common + Tournament tabs.
       // Layout: label on top, [path-field][Browse][Clear] on a row underneath.

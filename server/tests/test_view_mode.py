@@ -131,8 +131,8 @@ async def test_play_from_here_seeds_new_game_at_cursor(hve):
 
 
 async def test_play_from_here_at_last_ply_uses_imported_final_clocks(hve):
-    """Round-trip with [%clk]: import → no nav → play_from_here at last ply
-    must restore the live clocks from the imported PGN."""
+    """Round-trip with [%clk]: import -- no nav -- play_from_here at last
+    ply with inherit_clocks=True must restore live clocks from the PGN."""
     h, _ = hve
     await h.enter_view_mode(
         start_fen=None,
@@ -141,7 +141,7 @@ async def test_play_from_here_at_last_ply_uses_imported_final_clocks(hve):
         final_white_time=4 * 60 + 48,
         final_black_time=4 * 60 + 50,
     )
-    await h.play_from_here(tc=TimeControl(300, 0))
+    await h.play_from_here(tc=TimeControl(300, 0), inherit_clocks=True)
     assert h._white_time == 4 * 60 + 48
     assert h._black_time == 4 * 60 + 50
 
@@ -162,7 +162,7 @@ async def test_play_from_here_mid_game_derives_clocks_from_history(hve):
     # snapshot = view_clock_history[2] = (4:55, 4:50).
     await h.view_back()
     assert h._view_cursor == 2
-    await h.play_from_here(tc=TimeControl(300, 0))
+    await h.play_from_here(tc=TimeControl(300, 0), inherit_clocks=True)
     assert h._white_time == 4 * 60 + 55
     assert h._black_time == 4 * 60 + 50
 
