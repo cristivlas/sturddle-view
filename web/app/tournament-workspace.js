@@ -15,7 +15,7 @@
 import {
   closeAllLiveGames, closeStaleLiveGames, getLiveWindows,
   isLiveWindowOpen, openLiveGameWindow,
-  LIVE_MIN_WIDTH, LIVE_MIN_HEIGHT,
+  LIVE_MIN_WIDTH, LIVE_MIN_HEIGHT, DEBUG_WATCH,
 } from "./tournament-live-game.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { toast } from "./dialogs.js";
@@ -133,9 +133,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // out of its slot frees that slot without explicit bookkeeping. When
   // no slot fits, the new window is minimized -- WS still connects so
   // the live state stays current behind the minimize bar.
-  const SLOT_W = Math.max(LIVE_MIN_WIDTH, Math.round(window.innerWidth * 0.20));
   const slotGrid = createSlotGrid({
-    top, left, cellWidth: SLOT_W, cellHeight: LIVE_MIN_HEIGHT,
+    top, left,
+    getCellWidth: () => Math.max(LIVE_MIN_WIDTH, Math.round(window.innerWidth * 0.20)),
+    cellHeight: LIVE_MIN_HEIGHT,
     getWindows: () => getLiveWindows(),
   });
   // Horizontal cascade for overflow-restore (no slot available):
@@ -349,9 +350,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     `;
   }
 
-  // Flip to true to re-enable verbose [WATCH] tracing for debugging
-  // intermittent click-watch failures. Errors are always logged.
-  const DEBUG_WATCH = false;
   function attachWatch(btn, attachKey, sourceWindowKey, openOpts) {
     if (DEBUG_WATCH) console.log("[WATCH] click", { attachKey, sourceWindowKey, openOpts });
     // Claim a slot BEFORE creating the window so the new window's own

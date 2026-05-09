@@ -7,23 +7,24 @@
 
 const SLOT_GAP = 8;
 
-export function createSlotGrid({ top, left, cellWidth, cellHeight, gap = SLOT_GAP, getWindows }) {
+export function createSlotGrid({ top, left, getCellWidth, cellHeight, gap = SLOT_GAP, getWindows }) {
   function gridDims() {
+    const cw = getCellWidth();
     const availW = Math.max(0, window.innerWidth - left);
     const availH = Math.max(0, window.innerHeight - top);
-    const cols = Math.max(1, Math.floor((availW + gap) / (cellWidth + gap)));
+    const cols = Math.max(1, Math.floor((availW + gap) / (cw + gap)));
     const rows = Math.max(1, Math.floor((availH + gap) / (cellHeight + gap)));
-    return { cols, rows };
+    return { cols, rows, cw };
   }
 
   function rectAt(slot) {
-    const { cols } = gridDims();
+    const { cols, cw } = gridDims();
     const col = slot % cols;
     const row = Math.floor(slot / cols);
     return {
-      x: left + col * (cellWidth + gap),
+      x: left + col * (cw + gap),
       y: top + row * (cellHeight + gap),
-      w: cellWidth,
+      w: cw,
       h: cellHeight,
     };
   }
@@ -52,7 +53,7 @@ export function createSlotGrid({ top, left, cellWidth, cellHeight, gap = SLOT_GA
   function claim() {
     const cap = capacity();
     for (let i = 0; i < cap; i++) {
-      if (!slotIsOccupied(i)) return { slot: i, ...rectAt(i) };
+      if (!slotIsOccupied(i)) return rectAt(i);
     }
     return null;
   }

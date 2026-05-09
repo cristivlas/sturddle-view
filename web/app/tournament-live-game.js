@@ -47,7 +47,7 @@ async function replayTournamentGame({ tournamentId, gameN, token }) {
 
 // Flip to true to re-enable verbose [WATCH] tracing for debugging
 // intermittent click-watch failures. Errors are always logged.
-const DEBUG_WATCH = false;
+export const DEBUG_WATCH = false;
 
 const liveWindows = new Map(); // windowKey -> WinBox instance
 
