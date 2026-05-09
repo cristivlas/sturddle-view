@@ -41,6 +41,7 @@ export function createSlotGrid({ top, left, cellWidth, cellHeight, gap = SLOT_GA
   function slotIsOccupied(slot) {
     const r = rectAt(slot);
     for (const wb of getWindows()) {
+      if (wb.min) continue;
       const wr = { x: wb.x, y: wb.y, w: wb.width, h: wb.height };
       if (rectsOverlap(r, wr)) return true;
     }

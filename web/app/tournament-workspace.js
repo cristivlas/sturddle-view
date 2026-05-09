@@ -370,13 +370,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         ...openOpts, token, tournamentId: tournament.id,
         top, left, boardStyle: boardStyleCached,
         initialRect: claim ? { x: claim.x, y: claim.y, w: claim.w, h: claim.h } : null,
-        // On restore from minimize: try to land the window in a free
-        // slot; if grid is full, cascade horizontally from the left
-        // edge so successive overflow restores don't all stack.
-        onAfterRestore: (wb) => {
+        // Only overflow windows get a restore callback -- slotted windows
+        // already have a position and restore to it naturally.
+        onAfterRestore: !claim ? (wb) => {
           const c = slotGrid.claim();
           if (c) {
             wb.resize(c.w, c.h).move(c.x, c.y);
+            overflowRestoreCount = 0;
             return;
           }
           const x = Math.min(
@@ -385,7 +385,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           );
           wb.move(x, top);
           overflowRestoreCount++;
-        },
+        } : null,
       });
     } catch (e) {
       console.error("[WATCH] openLiveGameWindow threw", e, { attachKey, openOpts });
