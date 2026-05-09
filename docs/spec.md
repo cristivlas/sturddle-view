@@ -509,6 +509,14 @@ A thin app-level wrapper (`web/app/dialogs.js`) exposes `confirm()`, `alert()`, 
 - Theme integration for board annotations: when themes (dark/light) are
   wired up, the engine "considered move" arrow color must derive from the
   active theme rather than the cm-chessboard default green.
+- Auto-claim draws (3-fold repetition, 50-move rule). Currently the
+  engine plays on at claimable positions; tournament games called as
+  draws by fastchess become playable in play-from-here. Surface area
+  is larger than a one-liner: hooks every is_game_over caller (engine
+  think loop, move submission, autosave, restoration, view exit), must
+  not auto-claim while viewing, needs PGN result/termination wiring,
+  and a UI affordance for "claimable but not auto" when the setting is
+  off. Setting: Gameplay > "Auto-claim draws" toggle, default on.
 
 ### Server-side persistence — to be revisited
 
