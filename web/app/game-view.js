@@ -412,6 +412,7 @@ export function mountGameView(container, opts = {}) {
   let gameId = null;
   let engineName = "Engine";
   let names = { top: "—", bottom: "—" };
+  let viewing = false;
 
   function _truncName(s, max = 24) {
     if (!s) return s;
@@ -431,8 +432,9 @@ export function mountGameView(container, opts = {}) {
   function setHumanWhite(value) {
     humanWhite = !!value;
     board.setSide(humanWhite ? "white" : "black");
-    // In interactive (Play) mode, bottom = human, top = engine.
-    if (interactive) setNames({ bottom: "Human", top: engineName });
+    // In interactive (Play) mode, bottom = human, top = engine. Skip in
+    // view mode so PGN names (set from board_update.view) aren't clobbered.
+    if (interactive && !viewing) setNames({ bottom: "Human", top: engineName });
   }
   setHumanWhite(humanWhite);
 
@@ -449,12 +451,9 @@ export function mountGameView(container, opts = {}) {
     if (clockTopRow) clockTopRow.dataset.color = bottomIsWhite ? "black" : "white";
     const bottomToMove =
       (turn === "white" && bottomIsWhite) || (turn === "black" && !bottomIsWhite);
-    clockBottomRow?.classList.toggle("active", running && bottomToMove);
-    clockTopRow?.classList.toggle("active", running && !bottomToMove);
-    // View mode: clocks are historical snapshots, frozen — visually mute
-    // both rows (no "active" highlight, dimmed via .clock-disabled).
-    clockBottomRow?.classList.toggle("clock-disabled", !!viewing);
-    clockTopRow?.classList.toggle("clock-disabled", !!viewing);
+    const active = running || !!viewing;
+    clockBottomRow?.classList.toggle("active", active && bottomToMove);
+    clockTopRow?.classList.toggle("active", active && !bottomToMove);
   }
 
   function applyEvent(evt) {
@@ -462,6 +461,7 @@ export function mountGameView(container, opts = {}) {
     if (gameId !== null && evt.game_id && evt.game_id !== gameId) return;
     switch (evt.kind) {
       case "board_update":
+        viewing = !!evt.payload.view;
         if (evt.payload.engine_name) {
           engineName = evt.payload.engine_name;
           if (interactive) setNames({ top: engineName });
@@ -499,6 +499,26 @@ export function mountGameView(container, opts = {}) {
         }
         setOpening(evt.payload.opening);
         setTablebase(evt.payload.tablebase);
+        // View mode: surface PGN-derived eval (white POV) in the engine
+        // info panel so scrubbing through the game shows per-ply scores.
+        if (showEngineInfo && evt.payload.view) {
+          const ev = evt.payload.view.eval;
+          if (ev) {
+            engineSection?.classList.remove("is-empty");
+            if (engineScore) engineScore.textContent = fmtScore(ev);
+            if (engineDepth) engineDepth.textContent = ev.depth ?? "";
+            // Clear live-only fields that have no PGN equivalent.
+            if (engineNodes) engineNodes.textContent = "";
+            if (engineNps) engineNps.textContent = "";
+            if (engineTbhits) engineTbhits.textContent = "";
+            if (engineHashfull) engineHashfull.textContent = "";
+            if (enginePv) { enginePv.textContent = ""; enginePv.removeAttribute("title"); }
+          } else {
+            // No eval at this cursor (e.g., ply 0): clear the panel.
+            if (engineScore) engineScore.textContent = "";
+            if (engineDepth) engineDepth.textContent = "";
+          }
+        }
         if (interactive) board.enableInput(true);
         break;
       case "clock_tick":

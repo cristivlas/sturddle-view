@@ -30,6 +30,7 @@ PERSISTED_FIELDS = (
     "tc_increment_seconds",
     "human_side",
     "allow_takeback",
+    "inherit_pgn_clocks",
     "board_style",
     "play_eval_pov",
     "tournament_fastchess_path",
@@ -67,6 +68,11 @@ class Settings(BaseSettings):
     tc_increment_seconds: float = 0.0
     human_side: str = "white"
     allow_takeback: bool = True
+    # Play From Here: when True, new game inherits live clock values from
+    # the PGN cursor (study time pressure / repro engine behavior under the
+    # exact remaining time). When False (default), live clocks reset to
+    # current TC's initial.
+    inherit_pgn_clocks: bool = False
     board_style: str = "black-and-white"
     # HVE eval display POV: "white" (default, status quo), "engine"
     # (raw UCI — engine's POV), or "human" (flipped to human's color).

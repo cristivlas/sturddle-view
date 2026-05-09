@@ -491,6 +491,7 @@ def test_view_play_from_here_honors_clk_annotations(client):
     r = c.post("/game/view/play-from-here", json={
         "initial_seconds": 300,
         "increment_seconds": 0,
+        "inherit_pgn_clocks": True,
     })
     assert r.status_code == 200, r.text
     # Live clocks come from the PGN, not the configured TC initial.
@@ -522,3 +523,46 @@ def test_view_play_from_here_seed_clocks_use_configured_tc(client):
     assert hve._tc.increment_seconds == 4.0
     assert hve._white_time == 123.0
     assert hve._black_time == 123.0
+
+
+def test_view_play_from_here_resets_clocks_when_inherit_disabled(client):
+    """Default inherit_pgn_clocks=False: live clocks reset to TC initial
+    even when the PGN carries [%clk] annotations. Repro of the issue
+    where replaying a fast tournament game would inherit a few-seconds
+    residual clock and time-forfeit the human immediately."""
+    c, app, engine_path = client
+    hve = _patch_hve(app, engine_path)
+    c.post("/game/import", json={
+        "format": "pgn",
+        "text": (
+            "1. e4 { [%clk 0:00:04] } 1... c5 { [%clk 0:00:03] } "
+            "2. Nf3 { [%clk 0:00:02] } *"
+        ),
+    })
+    r = c.post("/game/view/play-from-here", json={
+        "initial_seconds": 300.0,
+        "increment_seconds": 0.0,
+    })
+    assert r.status_code == 200, r.text
+    # Live clocks come from the configured TC, NOT the PGN's residuals.
+    assert hve._white_time == 300.0
+    assert hve._black_time == 300.0
+
+
+def test_view_play_from_here_inherit_clocks_safe_without_clk(client):
+    """inherit_pgn_clocks=True on a PGN with no [%clk]: graceful fallback
+    to TC initial (no exception, no None clocks)."""
+    c, app, engine_path = client
+    hve = _patch_hve(app, engine_path)
+    c.post("/game/import", json={
+        "format": "pgn",
+        "text": "1. e4 e5 *",
+    })
+    r = c.post("/game/view/play-from-here", json={
+        "initial_seconds": 60.0,
+        "increment_seconds": 0.0,
+        "inherit_pgn_clocks": True,
+    })
+    assert r.status_code == 200, r.text
+    assert hve._white_time == 60.0
+    assert hve._black_time == 60.0

@@ -32,6 +32,7 @@ def _serialize(s) -> dict:
         "tc_increment_seconds": s.tc_increment_seconds,
         "human_side": s.human_side,
         "allow_takeback": s.allow_takeback,
+        "inherit_pgn_clocks": s.inherit_pgn_clocks,
         "board_style": s.board_style,
         "play_eval_pov": s.play_eval_pov,
         "engine_default_threads": s.engine_default_threads,
@@ -126,6 +127,9 @@ def update_settings(payload: dict, request: Request) -> dict:
 
     if "allow_takeback" in payload:
         s.allow_takeback = bool(payload["allow_takeback"])
+
+    if "inherit_pgn_clocks" in payload:
+        s.inherit_pgn_clocks = bool(payload["inherit_pgn_clocks"])
 
     if "board_style" in payload:
         style = payload["board_style"]

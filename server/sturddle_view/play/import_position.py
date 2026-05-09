@@ -33,6 +33,10 @@ class ImportedPosition:
     # Live clocks AFTER the final ply. None when not derivable from the PGN.
     final_white_time: float | None = None
     final_black_time: float | None = None
+    # Per-ply post-move eval (white POV). None entries when a ply's comment
+    # carries no recognizable eval. Whole field is None when the PGN has no
+    # evals at all. Each entry: {"cp": int} or {"mate": int}, optional "depth".
+    eval_history: list[dict | None] | None = None
 
 
 class PositionImportError(ValueError):
@@ -72,6 +76,17 @@ _CUTECHESS_TIME_RE = re.compile(
     r"[+-]?(?:M\d+|\d+(?:\.\d+)?)/\d+\s+(\d+(?:\.\d+)?)\s*(ms|s)?\s*\}?\s*$"
 )
 
+# Cutechess / fastchess full eval+depth capture (eval and depth groups).
+_CUTECHESS_EVAL_RE = re.compile(
+    r"(?P<eval>[+-]?(?:M\d+|\d+(?:\.\d+)?))/(?P<depth>\d+)(?:\s+\d+(?:\.\d+)?\s*(?:ms|s)?)?\s*\}?\s*$"
+)
+
+# [%eval ...] bracket comment: ChessBase / GBSelect style is "<int_cp>,<depth>"
+# (STM POV). Lichess style is "<float_pawns>" or "#<n>" (white POV) with no
+# comma. Mate is "#N" or "-#N" (sign optional). Disambiguation is by comma:
+# present -- integer-cp STM-POV; absent -- float-pawn white-POV.
+_BRACKET_EVAL_RE = re.compile(r"\[%eval\s+(?P<body>[^\]]+)\]")
+
 
 def _cutechess_time_seconds(comment: str | None) -> float | None:
     """Best-effort parse of the time-spent field from a cutechess-style
@@ -86,6 +101,106 @@ def _cutechess_time_seconds(comment: str | None) -> float | None:
     except ValueError:
         return None
     return v / 1000.0 if m.group(2) == "ms" else v
+
+
+def _parse_eval_token(tok: str) -> dict | None:
+    """Parse a single eval token into ``{"cp": int}`` or ``{"mate": int}``.
+    Token may be ``+0.34``, ``-1.85``, ``225`` (cp), or ``#5``/``-#3``/``M5``/``-M3``.
+    POV is the caller's responsibility -- this only extracts the magnitude
+    and sign as written.
+    Returns None on parse failure.
+    """
+    s = tok.strip()
+    if not s:
+        return None
+    sign = 1
+    if s.startswith("-"):
+        sign = -1
+        s = s[1:]
+    elif s.startswith("+"):
+        s = s[1:]
+    # Mate: #N or MN
+    if s.startswith("#") or s.startswith("M"):
+        try:
+            n = int(s[1:])
+        except ValueError:
+            return None
+        return {"mate": sign * n}
+    # Float pawns vs integer centipawns: a decimal point (or value < ~50)
+    # implies pawns. Without a decimal we can't tell, but in practice:
+    # - Cutechess uses dotted floats (+0.34).
+    # - GBSelect/ChessBase uses raw int cp (225).
+    # The bracket parser passes the format hint via caller.
+    try:
+        f = float(s)
+    except ValueError:
+        return None
+    if "." in s:
+        return {"cp": int(round(sign * f * 100))}
+    return {"cp": sign * int(f)}
+
+
+def _flip_pov(score: dict) -> dict:
+    """Negate cp/mate for STM->white POV conversion."""
+    if "cp" in score:
+        return {"cp": -score["cp"]}
+    if "mate" in score:
+        return {"mate": -score["mate"]}
+    return score
+
+
+def _parse_pgn_eval(comment: str | None, mover_white: bool) -> dict | None:
+    """Extract a per-ply eval from a PGN move comment, normalized to white
+    POV. Returns ``{"cp": int}`` or ``{"mate": int}`` (optionally with
+    ``"depth": int``), or None when no recognizable eval is present.
+
+    Recognized formats (in order):
+    1. ``[%eval CP,DEPTH]`` -- integer cp + depth, STM POV (GBSelect/CB).
+       Mate: ``[%eval #N,DEPTH]`` or ``[%eval -#N,DEPTH]``.
+    2. ``[%eval VALUE]`` (no comma) -- Lichess float pawns or ``#N``,
+       white POV.
+    3. Cutechess/fastchess trailing ``<eval>/<depth>`` -- float pawns or
+       ``M<n>``, STM POV.
+    """
+    if not comment:
+        return None
+
+    # 1 & 2: bracket [%eval ...]
+    m = _BRACKET_EVAL_RE.search(comment)
+    if m:
+        body = m.group("body").strip()
+        if "," in body:
+            # GBSelect/ChessBase: integer cp + depth, STM POV.
+            head, _, depth_s = body.partition(",")
+            score = _parse_eval_token(head)
+            if score is not None:
+                if not mover_white:
+                    score = _flip_pov(score)
+                try:
+                    score["depth"] = int(depth_s.strip())
+                except ValueError:
+                    pass
+                return score
+        else:
+            # Lichess: float pawns or mate, white POV (no flip).
+            score = _parse_eval_token(body)
+            if score is not None:
+                return score
+
+    # 3: cutechess trailing token
+    m = _CUTECHESS_EVAL_RE.search(comment)
+    if m:
+        score = _parse_eval_token(m.group("eval"))
+        if score is not None:
+            if not mover_white:
+                score = _flip_pov(score)
+            try:
+                score["depth"] = int(m.group("depth"))
+            except ValueError:
+                pass
+            return score
+
+    return None
 
 
 def parse_fen(text: str) -> ImportedPosition:
@@ -168,6 +283,9 @@ def parse_pgn(text: str) -> ImportedPosition:
     # only that is present, deriving remaining clocks via initial+increment
     # from the [TimeControl] header.
     clk_values = [n.clock() for n in nodes]
+    # Per-ply eval, white POV. Extracted on the same node walk so the STM
+    # flip can use the side-to-move at each ply.
+    eval_per_ply: list[dict | None] = []
     clock_history: list[tuple[float, float]] | None = None
     final_white = final_black = None
     if any(v is not None for v in clk_values):
@@ -184,6 +302,7 @@ def parse_pgn(text: str) -> ImportedPosition:
                     last_w = after
                 else:
                     last_b = after
+            eval_per_ply.append(_parse_pgn_eval(node.comment, mover_white))
             replay.push(node.move)
         final_white, final_black = last_w, last_b
     else:
@@ -193,9 +312,9 @@ def parse_pgn(text: str) -> ImportedPosition:
         # Only consulted when %clk and %emt are both absent.
         if not any(v is not None for v in emt_values):
             emt_values = [_cutechess_time_seconds(n.comment) for n in nodes]
+        replay = start_board.copy()
         if any(v is not None for v in emt_values) and tc_initial is not None:
             clock_history = []
-            replay = start_board.copy()
             last_w = tc_initial
             last_b = tc_initial
             for i, node in enumerate(nodes):
@@ -209,8 +328,18 @@ def parse_pgn(text: str) -> ImportedPosition:
                         last_w = new_remaining
                     else:
                         last_b = new_remaining
+                eval_per_ply.append(_parse_pgn_eval(node.comment, mover_white))
                 replay.push(node.move)
             final_white, final_black = last_w, last_b
+        else:
+            # No clock info but we still want evals if any are present.
+            for node in nodes:
+                mover_white = (replay.turn == chess.WHITE)
+                eval_per_ply.append(_parse_pgn_eval(node.comment, mover_white))
+                replay.push(node.move)
+    eval_history: list[dict | None] | None = (
+        eval_per_ply if any(e is not None for e in eval_per_ply) else None
+    )
     return ImportedPosition(
         start_fen=start_fen_header if start_fen_header else None,
         moves_uci=moves_uci,
@@ -222,4 +351,5 @@ def parse_pgn(text: str) -> ImportedPosition:
         clock_history=clock_history,
         final_white_time=final_white,
         final_black_time=final_black,
+        eval_history=eval_history,
     )

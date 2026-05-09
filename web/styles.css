@@ -373,8 +373,10 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   pointer-events: none;
   filter: grayscale(0.4);
 }
-/* Game paused (not analyzing): dim board to reinforce the header badge. */
-.play-board-host.board-paused .board {
+/* Game paused (not analyzing): dim board to reinforce the header badge.
+   Suppressed while a wa-dialog is open so the modal backdrop doesn't
+   stack on top of the paused-dim and double-darken the board. */
+body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   opacity: 0.6;
   pointer-events: none;
   filter: grayscale(0.5) brightness(0.85);
