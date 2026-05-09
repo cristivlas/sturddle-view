@@ -18,7 +18,6 @@ export function mountTournaments({ container, api, events, log, token }) {
   container.innerHTML = `
     <div class="tournaments-panel">
       <menu class="tournaments-menubar">
-        <div class="tournaments-menubar-progress" aria-hidden="true"></div>
         <li class="tmb-menu tmb-sort-menu">
           <button class="tmb-item tmb-sort-btn">Sort</button>
           <ul class="tmb-dropdown">
@@ -36,15 +35,14 @@ export function mountTournaments({ container, api, events, log, token }) {
               <ul class="tmb-dropdown">
                 <li><button class="tmb-dd-item tmb-sys-standings">Standings</button></li>
                 <li><button class="tmb-dd-item tmb-sys-schedule">Live Games</button></li>
-                <li><button class="tmb-dd-item tmb-sys-engines">Engine Instances</button></li>
+                <li><button class="tmb-dd-item tmb-sys-engines">Engines</button></li>
                 <li class="tmb-separator"></li>
                 <li><button class="tmb-dd-item tmb-sys-log">Event Log</button></li>
               </ul>
             </li>
             <li class="tmb-separator"></li>
             <li><button class="tmb-dd-item tmb-tile">Tile</button></li>
-            <li><button class="tmb-dd-item tmb-cascade">Cascade</button></li>
-            <li><button class="tmb-dd-item tmb-hideall">Hide All</button></li>
+            <li><button class="tmb-dd-item tmb-tidy">Organize</button></li>
             <li class="tmb-separator"></li>
             <li><button class="tmb-dd-item tmb-closeall">Close All</button></li>
           </ul>
@@ -220,22 +218,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     for (const t of sorted) {
       listEl.appendChild(renderRow(t));
     }
-    syncMenubarProgress(sorted);
     syncRibbon();
-  }
-
-  function syncMenubarProgress(sorted) {
-    const strip = container.querySelector(".tournaments-menubar-progress");
-    if (!strip) return;
-    const running = sorted.find((t) => t.status === STATUS.RUNNING);
-    if (!running) {
-      strip.style.width = "0%";
-      return;
-    }
-    const played = running.standings?.games ?? 0;
-    const total = totalGames(running);
-    const pct = total ? Math.min(100, (played / total) * 100) : 0;
-    strip.style.width = pct + "%";
   }
 
   function sortedTournaments() {
@@ -271,8 +254,8 @@ export function mountTournaments({ container, api, events, log, token }) {
         <div class="tournament-progress" role="progressbar"
              aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${played}">
           <div class="tournament-progress-fill" style="width: ${pct}%"></div>
-          <span class="tournament-progress-label">${played} / ${total} · ${pct}%</span>
         </div>
+        <span class="tournament-progress-label">${played} / ${total} · ${pct}%</span>
       `;
     } else {
       trailing = `<span class="tournament-engines muted"></span>`;
@@ -480,7 +463,16 @@ export function mountTournaments({ container, api, events, log, token }) {
     const ribbonRight = (ribbonRect && ribbonRect.left < 8) ? Math.round(ribbonRect.right) : 0;
     const top = Math.round(rect.bottom);
     const left = Math.max(Math.round(rect.left), ribbonRight);
-    openTournamentWorkspace({ api, events, log, token, tournament: t, top, left });
+    // Live getter so tidy()/etc. see the current row right edge
+    // even after window resize.
+    const getRight = () => {
+      const row = document.querySelector(".tournament-row");
+      if (row) return Math.round(row.getBoundingClientRect().right);
+      const list = document.querySelector(".tournaments-list");
+      if (list) return Math.round(list.getBoundingClientRect().right);
+      return window.innerWidth;
+    };
+    openTournamentWorkspace({ api, events, log, token, tournament: t, top, left, getRight });
     syncWindowMenu();
     syncRibbon();
   }
@@ -917,57 +909,40 @@ export function mountTournaments({ container, api, events, log, token }) {
     closeMenus();
     if (!isOpen) sortMenu.classList.add("open");
   });
+  function applySort(nextBy, nextAsc) {
+    sortBy = nextBy;
+    sortAsc = nextAsc;
+    localStorage.setItem(SORT_KEY_LS, sortBy);
+    localStorage.setItem(SORT_ASC_LS, String(sortAsc));
+    syncSortMenu();
+    renderList();
+  }
   for (const opt of container.querySelectorAll(".tmb-sort-opt")) {
     opt.addEventListener("click", () => {
       const next = opt.dataset.sort;
       if (!VALID_SORTS.has(next)) { closeMenus(); return; }
-      const dir = () => sortAsc ? "ascending" : "descending";
-      if (next === sortBy) {
-        sortAsc = !sortAsc;
-        localStorage.setItem(SORT_ASC_LS, String(sortAsc));
-        toast(`Sorted by ${opt.textContent.trim()}, ${dir()}`);
-      } else {
-        sortBy = next;
-        localStorage.setItem(SORT_KEY_LS, sortBy);
-        toast(`Sorted by ${opt.textContent.trim()}, ${dir()}`);
-      }
-      syncSortMenu();
-      renderList();
+      const nextAsc = next === sortBy ? !sortAsc : sortAsc;
+      applySort(next, nextAsc);
+      toast(`Sorted by ${opt.textContent.trim()}, ${nextAsc ? "ascending" : "descending"}`);
       closeMenus();
     });
   }
-
-  const hideAllBtn = container.querySelector(".tmb-hideall");
-  const hiddenDisabledBtns = [".tmb-sys-trigger", ".tmb-tile", ".tmb-cascade"]
-    .map(s => container.querySelector(s));
 
   windowMenuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     if (windowMenuBtn.disabled) return;
     const isOpen = windowMenu.classList.contains("open");
     closeMenus();
-    if (!isOpen) {
-      const ws = getActiveWorkspace();
-      const hidden = ws?.isHidden() ?? false;
-      hideAllBtn.textContent = hidden ? "Show All" : "Hide All";
-      for (const btn of hiddenDisabledBtns) btn.disabled = hidden;
-      windowMenu.classList.add("open");
-    }
+    if (!isOpen) windowMenu.classList.add("open");
   });
 
   container.querySelector(".tmb-tile").addEventListener("click", () => {
     closeMenus();
     getActiveWorkspace()?.tile();
   });
-  container.querySelector(".tmb-cascade").addEventListener("click", () => {
+  container.querySelector(".tmb-tidy").addEventListener("click", () => {
     closeMenus();
-    getActiveWorkspace()?.cascade();
-  });
-  hideAllBtn.addEventListener("click", () => {
-    closeMenus();
-    const ws = getActiveWorkspace();
-    if (!ws) return;
-    ws.isHidden() ? ws.show() : ws.hide();
+    getActiveWorkspace()?.tidy();
   });
   container.querySelector(".tmb-closeall").addEventListener("click", () => {
     closeMenus();

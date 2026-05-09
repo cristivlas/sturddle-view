@@ -12,10 +12,15 @@
 //   WS `tournament_update`             -> event log; refresh on game-finished.
 //   Periodic GET while running         -> reconcile standings.
 
-import { closeAllLiveGames, closeStaleLiveGames, getLiveWindows, isLiveWindowOpen, openLiveGameWindow } from "./tournament-live-game.js";
+import {
+  closeAllLiveGames, closeStaleLiveGames, getLiveWindows,
+  isLiveWindowOpen, openLiveGameWindow,
+  LIVE_MIN_WIDTH, LIVE_MIN_HEIGHT, DEBUG_WATCH,
+} from "./tournament-live-game.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { toast } from "./dialogs.js";
 import { escapeHtml, flashWindow } from "./wb-utils.js";
+import { createSlotGrid } from "./workspace-slot-grid.js";
 
 const STORAGE_KEY_PREFIX = "sturddle:workspace:";
 const POLL_INTERVAL_MS = 5000;
@@ -69,7 +74,7 @@ export function hasAnyDesktopState(id) {
 let activeWorkspace = null;
 
 
-export function openTournamentWorkspace({ api, events, log, token, tournament, top = 0, left = 0 }) {
+export function openTournamentWorkspace({ api, events, log, token, tournament, top = 0, left = 0, getRight = () => window.innerWidth }) {
   // Single-active model. Re-clicking the workspace icon for the
   // already-open tournament is a no-op (just focus its windows) so
   // attached engine windows survive -- closing here would tear them
@@ -123,6 +128,22 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     .then(s => { boardStyleCached = s?.board_style || null; })
     .catch(() => {});
 
+  // Slot grid hands out aligned rects for live-board windows. A slot is
+  // free if no live window currently overlaps it, so dragging a window
+  // out of its slot frees that slot without explicit bookkeeping. When
+  // no slot fits, the new window is minimized -- WS still connects so
+  // the live state stays current behind the minimize bar.
+  const slotGrid = createSlotGrid({
+    top, left,
+    getCellWidth: () => Math.max(LIVE_MIN_WIDTH, Math.round(window.innerWidth * 0.20)),
+    cellHeight: LIVE_MIN_HEIGHT,
+    getWindows: () => getLiveWindows(),
+  });
+  // Horizontal cascade for overflow-restore (no slot available):
+  // successive restores step right so they don't stack.
+  const OVERFLOW_X_OFFSET = 24;
+  let overflowRestoreCount = 0;
+
   // ---- Window construction ----------------------------------------------
 
   function makeStandingsBody() {
@@ -158,18 +179,26 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   let enginesBody = makeEnginesBody();
 
   const MIN_SIZES = {
-    standings: { minwidth: 320, minheight: 200 },
-    schedule:  { minwidth: 320, minheight: 200 },
-    engines:   { minwidth: 280, minheight: 200 },
+    standings: { minwidth: 320, minheight: 150 },
+    schedule:  { minwidth: 320, minheight: 150 },
+    engines:   { minwidth: 280, minheight: 150 },
     log:       { minwidth: 280, minheight: 150 },
+  };
+
+  // Per-window CSS class hooks (added to the WinBox outer container).
+  // schedule = "Live Games" panel; gets a stable scrollbar gutter to
+  // avoid width pulsation when rows come and go.
+  const EXTRA_CLASS = {
+    schedule: "sturddle-wb-live-games",
   };
 
   function makeBox(key, title, body, { min = false, max = false } = {}) {
     const cfg = lastGeometry[key];
+    const extra = EXTRA_CLASS[key] ? ` ${EXTRA_CLASS[key]}` : "";
     const wb = new WinBox({
       title, mount: body, top, left, min, max,
       x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height,
-      class: "sturddle-wb no-full",
+      class: `sturddle-wb no-full${extra}`,
       ...MIN_SIZES[key],
     });
     // Wire onclose after construction (TDZ on `wb` otherwise). No persist
@@ -207,25 +236,25 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   const windowSpecs = {
     standings: {
-      title: `Standings | ${tournament.name}`,
+      title: "Standings",
       makeBody: makeStandingsBody,
       setBody: (b) => { standingsBody = b; },
       render: () => renderStandings(),
     },
     schedule: {
-      title: `Live Games | ${tournament.name}`,
+      title: "Live Games",
       makeBody: makeScheduleBody,
       setBody: (b) => { scheduleBody = b; },
       render: () => renderSchedule(),
     },
     engines: {
-      title: `Engine Instances | ${tournament.name}`,
+      title: "Engine Instances",
       makeBody: makeEnginesBody,
       setBody: (b) => { enginesBody = b; },
       render: () => renderEngines(),
     },
     log: {
-      title: `Event log | ${tournament.name}`,
+      title: "Event log",
       makeBody: makeLogBody,
       setBody: (b) => { logBody = b; },
       render: () => renderEventLog(),
@@ -322,10 +351,61 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   function attachWatch(btn, attachKey, sourceWindowKey, openOpts) {
-    const src = windows[sourceWindowKey];
-    const avoidRect = src ? { x: src.x, y: src.y, w: src.width, h: src.height } : null;
-    openLiveGameWindow({ ...openOpts, token, tournamentId: tournament.id, top, left, boardStyle: boardStyleCached, avoidRect });
-    btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(attachKey));
+    if (DEBUG_WATCH) console.log("[WATCH] click", { attachKey, sourceWindowKey, openOpts });
+    // Claim a slot BEFORE creating the window so the new window's own
+    // default position doesn't shadow the slot it would occupy.
+    const rawClaim = isLiveWindowOpen(attachKey) ? null : slotGrid.claim();
+    // Clamp to viewport so a slot near the right/bottom edge can't
+    // push the window off-screen.
+    const claim = rawClaim ? {
+      ...rawClaim,
+      x: Math.min(rawClaim.x, Math.max(left, window.innerWidth - rawClaim.w)),
+      y: Math.min(rawClaim.y, Math.max(top, window.innerHeight - rawClaim.h)),
+    } : null;
+    let result;
+    try {
+      result = openLiveGameWindow({
+        ...openOpts, token, tournamentId: tournament.id,
+        top, left, boardStyle: boardStyleCached,
+        initialRect: claim ? { x: claim.x, y: claim.y, w: claim.w, h: claim.h } : null,
+        // Only overflow windows get a restore callback -- slotted windows
+        // already have a position and restore to it naturally.
+        onAfterRestore: !claim ? (wb) => {
+          const c = slotGrid.claim();
+          if (c) {
+            wb.resize(c.w, c.h).move(c.x, c.y);
+            overflowRestoreCount = 0;
+            return;
+          }
+          const x = Math.min(
+            left + overflowRestoreCount * OVERFLOW_X_OFFSET,
+            Math.max(left, window.innerWidth - wb.width),
+          );
+          wb.move(x, top);
+          overflowRestoreCount++;
+        } : null,
+      });
+    } catch (e) {
+      console.error("[WATCH] openLiveGameWindow threw", e, { attachKey, openOpts });
+      return;
+    }
+    // No slot fit -- minimize so the grid stays clean. WS already
+    // connected; live state stays current behind the minimize bar.
+    if (result?.wb && !result.alreadyOpen && !claim) {
+      try { result.wb.minimize(); } catch { /* */ }
+    }
+    // Keep the source panel on top: clicking a watch button shouldn't
+    // bury the panel under the new watcher. Skip when watcher was
+    // already open (let it flash) or minimized (already out of the way).
+    if (result?.wb && !result.alreadyOpen && !result.wb.min) {
+      const src = windows[sourceWindowKey];
+      if (src && !src.min) {
+        try { src.focus(); } catch { /* */ }
+      }
+    }
+    const isLive = isLiveWindowOpen(attachKey);
+    if (DEBUG_WATCH) console.log("[WATCH] post-open", { attachKey, isLive, slotted: !!claim });
+    btn.classList.toggle("wb-sched-attach-btn--live", isLive);
   }
 
   function renderSchedule() {
@@ -361,7 +441,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       btn.addEventListener("click", () => attachWatch(btn, info.pairId || key, "schedule", {
         proxyId: info.proxyA,
         gameId: info.pairId || null,
-        label: `${wLabel} vs ${bLabel} | ${tournament.name}`,
+        label: `${wLabel} vs ${bLabel}`,
         engineName: wLabel,
       }));
       li.appendChild(btn);
@@ -389,7 +469,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       li.className = "wb-sched-live";
       const engineLabel = p.engineName || pid;
       li.innerHTML = `
-        <span class="wb-sched-icon">></span>
+        <span class="wb-sched-icon">&#9881;</span>
         <span class="wb-sched-game">${escapeHtml(engineLabel)}</span>
       `;
       const btn = document.createElement("button");
@@ -399,7 +479,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(pid));
       btn.addEventListener("click", () => attachWatch(btn, pid, "engines", {
         proxyId: pid,
-        label: `${engineLabel} | ${tournament.name}`,
+        label: `${engineLabel}`,
         engineName: engineLabel,
       }));
       li.appendChild(btn);
@@ -810,13 +890,73 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     });
   }
 
-  function cascade() {
-    const wbs = openWindows();
-    const offset = 30;
-    wbs.forEach((wb, i) => {
+  // 2x2 in the bottom half of the viewport. Auto-opens any of the
+  // four target windows that aren't open yet. Reserves a footer strip
+  // at the bottom so minimized WinBoxes have a place to dock.
+  const MINIMIZE_FOOTER_H = 40;
+  function tidy() {
+    const keys = ["engines", "standings", "schedule", "log"];
+    for (const k of keys) {
+      if (!windows[k]) openSystemWindow(k);
+    }
+    // If watchers exist, re-grid them first while the 4 system panels
+    // are hidden, so the user doesn't see the panels flicker beneath
+    // the watcher reshuffle. Overflow watchers are minimized.
+    const watchers = getLiveWindows();
+    if (watchers.length > 0) {
+      for (const k of keys) {
+        const wb = windows[k];
+        if (wb) try { wb.hide(); } catch { /* */ }
+      }
+      const cap = slotGrid.capacity();
+      watchers.forEach((wb, i) => {
+        if (i < cap) {
+          unminimize(wb);
+          const r = slotGrid.rectAt(i);
+          wb.resize(r.w, r.h).move(r.x, r.y);
+        } else {
+          try { wb.minimize(); } catch { /* */ }
+        }
+      });
+      for (const k of keys) {
+        const wb = windows[k];
+        if (wb) try { wb.show(); } catch { /* */ }
+      }
+    }
+    const availW = getRight() - left;
+    const availH = window.innerHeight - top - MINIMIZE_FOOTER_H;
+    const leftW = Math.max(Math.round(availW * 0.35), MIN_SIZES.engines.minwidth);
+    const rightW = availW - leftW;
+    // Clamp each row to the tallest minheight in that row so both
+    // windows in a row resize to the same height (otherwise WinBox
+    // silently floors to per-window minheight, misaligning bottoms).
+    const desiredRowH = Math.floor(availH * 0.25);
+    const topRowH = Math.max(desiredRowH, MIN_SIZES.engines.minheight, MIN_SIZES.standings.minheight);
+    const botRowH = Math.max(desiredRowH, MIN_SIZES.schedule.minheight, MIN_SIZES.log.minheight);
+    // Anchor bottom edge to top + availH (which already excludes the
+    // minimize footer). If clamped rows exceed availH the layout
+    // extends upward, but never below the reserved footer.
+    const regionTop = top + availH - (topRowH + botRowH);
+    const placements = [
+      ["engines",   left,         regionTop,            leftW,  topRowH],
+      ["standings", left + leftW, regionTop,            rightW, topRowH],
+      ["schedule",  left,         regionTop + topRowH, leftW,  botRowH],
+      ["log",       left + leftW, regionTop + topRowH, rightW, botRowH],
+    ];
+    for (const [k, x, y, w, h] of placements) {
+      const wb = windows[k];
+      if (!wb) continue;
       unminimize(wb);
-      wb.move(left + i * offset, top + i * offset);
-    });
+      wb.resize(w, h).move(x, y);
+    }
+    // Z-order back-to-front: standings, log, engines, schedule.
+    // Last focus() wins.
+    for (const k of ["standings", "log", "engines", "schedule"]) {
+      const wb = windows[k];
+      if (wb && !wb.min) {
+        try { wb.focus(); } catch { /* */ }
+      }
+    }
   }
 
   // Window menu's Close All: explicit dismissal. Snapshot remains
@@ -870,7 +1010,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     requestAnimationFrame(() => { try { flashWindow(windows[key]); } catch {} });
   }
 
-  const workspace = { close, tile, cascade, closeAll, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id };
+  const workspace = { close, tile, tidy, closeAll, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id };
   activeWorkspace = workspace;
   return workspace;
 }

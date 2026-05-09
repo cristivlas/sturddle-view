@@ -45,6 +45,10 @@ async function replayTournamentGame({ tournamentId, gameN, token }) {
   window.dispatchEvent(new CustomEvent("sturddle:activate-perspective", { detail: { id: "play" } }));
 }
 
+// Flip to true to re-enable verbose [WATCH] tracing for debugging
+// intermittent click-watch failures. Errors are always logged.
+export const DEBUG_WATCH = false;
+
 const liveWindows = new Map(); // windowKey -> WinBox instance
 
 // Row heights are duplicated as `min-height` on .wb-livegame .lg-eval /
@@ -60,9 +64,9 @@ const LIVE_GAP          = 6;   // px -- flex gap between sections
 
 const ARROW_MIN_TIME_MS = 250; // skip arrow if side-to-move has less time than this
 
-const LIVE_MIN_WIDTH  = LIVE_MIN_BOARD;
+export const LIVE_MIN_WIDTH  = LIVE_MIN_BOARD;
 // 8 flex children: pv-top, eval-top, clock-top, board, clock-bottom, eval-bottom, pv-bottom, status -- 7 gaps.
-const LIVE_MIN_HEIGHT = LIVE_WINBOX_TITLE + LIVE_PV_H * 2 + LIVE_STATUS_H + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_MIN_BOARD + LIVE_GAP * 7;
+export const LIVE_MIN_HEIGHT = LIVE_WINBOX_TITLE + LIVE_PV_H * 2 + LIVE_STATUS_H + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_MIN_BOARD + LIVE_GAP * 7;
 
 
 // Gap (px) between the avoid-rect and the new window when displacing.
@@ -100,15 +104,21 @@ function avoidOverlap(wb, avoid, top, left, cascade = 0) {
   }
 }
 
-export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, boardStyle = null, avoidRect = null }) {
+export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, boardStyle = null, avoidRect = null, initialRect = null, onAfterRestore = null }) {
+  if (DEBUG_WATCH) console.log("[WATCH] openLiveGameWindow", { proxyId, gameId, windowKey, label });
+  if (!windowKey) {
+    console.error("[WATCH] no windowKey -- need at least one of proxyId/gameId", { proxyId, gameId });
+    return;
+  }
   // If a window for this key is already open, focus it instead of
   // opening a duplicate.
   const existing = liveWindows.get(windowKey);
   if (existing) {
+    if (DEBUG_WATCH) console.log("[WATCH] window already open -- focusing", { windowKey });
     if (existing.min) existing.restore();
     existing.focus();
     flashWindow(existing);
-    return;
+    return { wb: existing, alreadyOpen: true };
   }
 
   const body = document.createElement("div");
@@ -173,17 +183,19 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 
   const debugTag = gameId ?? proxyId ?? "";
   const titleWithTag = debugTag ? `${label} [${debugTag}]` : label;
-  // Default WinBox layout for live windows. Cascade by index so multiple
-  // windows don't fully overlap.
+  // Caller-provided slot wins; otherwise fall back to a cascading default.
   const idx = liveWindows.size;
-  const initialWidth = Math.max(Math.round(window.innerWidth * 0.20), LIVE_MIN_WIDTH);
+  const initialWidth = initialRect?.w
+    ?? Math.max(Math.round(window.innerWidth * 0.20), LIVE_MIN_WIDTH);
+  const initialHeight = initialRect?.h ?? null;
   const wb = new WinBox({
     title: titleWithTag,
     width: initialWidth,
+    ...(initialHeight ? { height: initialHeight } : {}),
     minwidth: LIVE_MIN_WIDTH,
     minheight: LIVE_MIN_HEIGHT,
-    x: `${20 + (idx * 4)}%`,
-    y: `${5 + (idx * 4)}%`,
+    x: initialRect ? initialRect.x : `${20 + (idx * 4)}%`,
+    y: initialRect ? initialRect.y : `${5 + (idx * 4)}%`,
     top,
     left,
     mount: body,
@@ -191,6 +203,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       ? "sturddle-wb sturddle-wb-live sturddle-wb-live-game no-full"
       : "sturddle-wb sturddle-wb-live sturddle-wb-live-proxy no-full",
   });
+  if (onAfterRestore) wb.onrestore = () => onAfterRestore(wb);
   const clampToViewport = () => {
     const maxX = Math.max(left, window.innerWidth  - wb.width);
     const maxY = Math.max(top,  window.innerHeight - wb.height);
@@ -295,9 +308,11 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     ? `game/${encodeURIComponent(gameId)}`
     : `proxy/${encodeURIComponent(proxyId)}`;
   const url = `${proto}//${location.host}/ws/tournament/${wsTarget}${tokenQ}`;
+  if (DEBUG_WATCH) console.log("[WATCH] ws connect", { windowKey, url });
   ws = new WebSocket(url);
 
   ws.addEventListener("open", () => {
+    if (DEBUG_WATCH) console.log("[WATCH] ws open", { windowKey });
     statusEl.textContent = "";
   });
 
@@ -307,7 +322,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     clockBottomEl.classList.remove("active");
   }
 
-  ws.addEventListener("close", () => {
+  ws.addEventListener("close", (e) => {
+    if (DEBUG_WATCH) console.log("[WATCH] ws close", { windowKey, code: e.code, reason: e.reason, wasClean: e.wasClean });
     stopTimer();
     // User-initiated close already tore the window down; calling
     // wb.close() again here corrupts WinBox's focus tracker and breaks
@@ -316,7 +332,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     try { wb.close(); } catch { /* */ }
   });
 
-  ws.addEventListener("error", () => {
+  ws.addEventListener("error", (e) => {
+    console.error("[WATCH] ws error", { windowKey, event: e });
     statusEl.textContent = "connection error";
     stopTimer();
   });
@@ -554,6 +571,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   }
 
   return {
+    wb,
+    alreadyOpen: false,
     close() {
       try { wb.close(); } catch { /* */ }
     },
