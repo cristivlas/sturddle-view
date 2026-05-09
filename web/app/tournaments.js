@@ -43,6 +43,7 @@ export function mountTournaments({ container, api, events, log, token }) {
             <li class="tmb-separator"></li>
             <li><button class="tmb-dd-item tmb-tile">Tile</button></li>
             <li><button class="tmb-dd-item tmb-cascade">Cascade</button></li>
+            <li><button class="tmb-dd-item tmb-arrange">Arrange</button></li>
             <li><button class="tmb-dd-item tmb-hideall">Hide All</button></li>
             <li class="tmb-separator"></li>
             <li><button class="tmb-dd-item tmb-closeall">Close All</button></li>
@@ -922,7 +923,7 @@ export function mountTournaments({ container, api, events, log, token }) {
   }
 
   const hideAllBtn = container.querySelector(".tmb-hideall");
-  const hiddenDisabledBtns = [".tmb-sys-trigger", ".tmb-tile", ".tmb-cascade"]
+  const hiddenDisabledBtns = [".tmb-sys-trigger", ".tmb-tile", ".tmb-cascade", ".tmb-arrange"]
     .map(s => container.querySelector(s));
 
   windowMenuBtn.addEventListener("click", (e) => {
@@ -946,6 +947,10 @@ export function mountTournaments({ container, api, events, log, token }) {
   container.querySelector(".tmb-cascade").addEventListener("click", () => {
     closeMenus();
     getActiveWorkspace()?.cascade();
+  });
+  container.querySelector(".tmb-arrange").addEventListener("click", () => {
+    closeMenus();
+    getActiveWorkspace()?.arrange();
   });
   hideAllBtn.addEventListener("click", () => {
     closeMenus();

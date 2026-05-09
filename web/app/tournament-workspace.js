@@ -394,6 +394,15 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (result?.wb && !result.alreadyOpen && !claim) {
       try { result.wb.minimize(); } catch { /* */ }
     }
+    // Keep the source panel on top: clicking a watch button shouldn't
+    // bury the panel under the new watcher. Skip when watcher was
+    // already open (let it flash) or minimized (already out of the way).
+    if (result?.wb && !result.alreadyOpen && !result.wb.min) {
+      const src = windows[sourceWindowKey];
+      if (src && !src.min) {
+        try { src.focus(); } catch { /* */ }
+      }
+    }
     const isLive = isLiveWindowOpen(attachKey);
     if (DEBUG_WATCH) console.log("[WATCH] post-open", { attachKey, isLive, slotted: !!claim });
     btn.classList.toggle("wb-sched-attach-btn--live", isLive);
@@ -890,6 +899,43 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     });
   }
 
+  // 2x2 in the bottom half of the viewport. Auto-opens any of the
+  // four target windows that aren't open yet. Reserves a footer strip
+  // at the bottom so minimized WinBoxes have a place to dock.
+  const MINIMIZE_FOOTER_H = 40;
+  function arrange() {
+    const keys = ["engines", "standings", "schedule", "log"];
+    for (const k of keys) {
+      if (!windows[k]) openSystemWindow(k);
+    }
+    const availW = window.innerWidth - left;
+    const availH = window.innerHeight - top - MINIMIZE_FOOTER_H;
+    const leftW = Math.max(Math.round(availW * 0.35), MIN_SIZES.engines.minwidth);
+    const rightW = availW - leftW;
+    // Clamp each row to the tallest minheight in that row so both
+    // windows in a row resize to the same height (otherwise WinBox
+    // silently floors to per-window minheight, misaligning bottoms).
+    const desiredRowH = Math.floor(availH * 0.25);
+    const topRowH = Math.max(desiredRowH, MIN_SIZES.engines.minheight, MIN_SIZES.standings.minheight);
+    const botRowH = Math.max(desiredRowH, MIN_SIZES.schedule.minheight, MIN_SIZES.log.minheight);
+    // Anchor bottom edge to top + availH (which already excludes the
+    // minimize footer). If clamped rows exceed availH the layout
+    // extends upward, but never below the reserved footer.
+    const regionTop = top + availH - (topRowH + botRowH);
+    const placements = [
+      ["engines",   left,         regionTop,            leftW,  topRowH],
+      ["standings", left + leftW, regionTop,            rightW, topRowH],
+      ["schedule",  left,         regionTop + topRowH, leftW,  botRowH],
+      ["log",       left + leftW, regionTop + topRowH, rightW, botRowH],
+    ];
+    for (const [k, x, y, w, h] of placements) {
+      const wb = windows[k];
+      if (!wb) continue;
+      unminimize(wb);
+      wb.resize(w, h).move(x, y);
+    }
+  }
+
   // Window menu's Close All: explicit dismissal. Snapshot remains
   // restorable via the ribbon, but _closed=true blocks navigation reopen.
   function closeAll() {
@@ -941,7 +987,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     requestAnimationFrame(() => { try { flashWindow(windows[key]); } catch {} });
   }
 
-  const workspace = { close, tile, cascade, closeAll, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id };
+  const workspace = { close, tile, cascade, arrange, closeAll, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id };
   activeWorkspace = workspace;
   return workspace;
 }
