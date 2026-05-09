@@ -416,6 +416,10 @@ export function mountGameView(container, opts = {}) {
   let engineName = "Engine";
   let names = { top: "—", bottom: "—" };
   let viewing = false;
+  // Cached PGN names so flipping the board in view mode can re-swap
+  // top/bottom without waiting for a fresh board_update.
+  let viewWhiteName = null;
+  let viewBlackName = null;
 
   function _truncName(s, max = 24) {
     if (!s) return s;
@@ -435,9 +439,14 @@ export function mountGameView(container, opts = {}) {
   function setHumanWhite(value) {
     humanWhite = !!value;
     board.setSide(humanWhite ? "white" : "black");
-    // In interactive (Play) mode, bottom = human, top = engine. Skip in
-    // view mode so PGN names (set from board_update.view) aren't clobbered.
-    if (interactive && !viewing) setNames({ bottom: "Human", top: engineName });
+    // In interactive (Play) mode, bottom = human, top = engine. In view
+    // mode, re-swap cached PGN names to match the new orientation.
+    if (interactive && !viewing) {
+      setNames({ bottom: "Human", top: engineName });
+    } else if (viewing && viewWhiteName !== null) {
+      if (humanWhite) setNames({ bottom: viewWhiteName, top: viewBlackName });
+      else setNames({ bottom: viewBlackName, top: viewWhiteName });
+    }
   }
   setHumanWhite(humanWhite);
 
@@ -478,6 +487,8 @@ export function mountGameView(container, opts = {}) {
         if (interactive && evt.payload.view) {
           const w = evt.payload.view.white_name || "White";
           const b = evt.payload.view.black_name || "Black";
+          viewWhiteName = w;
+          viewBlackName = b;
           // Bottom is white when not flipped (humanWhite acts as the orient
           // toggle even in view mode).
           if (humanWhite) setNames({ bottom: w, top: b });
