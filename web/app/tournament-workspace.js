@@ -74,7 +74,7 @@ export function hasAnyDesktopState(id) {
 let activeWorkspace = null;
 
 
-export function openTournamentWorkspace({ api, events, log, token, tournament, top = 0, left = 0 }) {
+export function openTournamentWorkspace({ api, events, log, token, tournament, top = 0, left = 0, getRight = () => window.innerWidth }) {
   // Single-active model. Re-clicking the workspace icon for the
   // already-open tournament is a no-op (just focus its windows) so
   // attached engine windows survive -- closing here would tear them
@@ -179,9 +179,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   let enginesBody = makeEnginesBody();
 
   const MIN_SIZES = {
-    standings: { minwidth: 320, minheight: 200 },
-    schedule:  { minwidth: 320, minheight: 200 },
-    engines:   { minwidth: 280, minheight: 200 },
+    standings: { minwidth: 320, minheight: 150 },
+    schedule:  { minwidth: 320, minheight: 150 },
+    engines:   { minwidth: 280, minheight: 150 },
     log:       { minwidth: 280, minheight: 150 },
   };
 
@@ -441,7 +441,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       btn.addEventListener("click", () => attachWatch(btn, info.pairId || key, "schedule", {
         proxyId: info.proxyA,
         gameId: info.pairId || null,
-        label: `${wLabel} vs ${bLabel} | ${tournament.name}`,
+        label: `${wLabel} vs ${bLabel}`,
         engineName: wLabel,
       }));
       li.appendChild(btn);
@@ -479,7 +479,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(pid));
       btn.addEventListener("click", () => attachWatch(btn, pid, "engines", {
         proxyId: pid,
-        label: `${engineLabel} | ${tournament.name}`,
+        label: `${engineLabel}`,
         engineName: engineLabel,
       }));
       li.appendChild(btn);
@@ -894,12 +894,36 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // four target windows that aren't open yet. Reserves a footer strip
   // at the bottom so minimized WinBoxes have a place to dock.
   const MINIMIZE_FOOTER_H = 40;
-  function arrange() {
+  function tidy() {
     const keys = ["engines", "standings", "schedule", "log"];
     for (const k of keys) {
       if (!windows[k]) openSystemWindow(k);
     }
-    const availW = window.innerWidth - left;
+    // If watchers exist, re-grid them first while the 4 system panels
+    // are hidden, so the user doesn't see the panels flicker beneath
+    // the watcher reshuffle. Overflow watchers are minimized.
+    const watchers = getLiveWindows();
+    if (watchers.length > 0) {
+      for (const k of keys) {
+        const wb = windows[k];
+        if (wb) try { wb.hide(); } catch { /* */ }
+      }
+      const cap = slotGrid.capacity();
+      watchers.forEach((wb, i) => {
+        if (i < cap) {
+          unminimize(wb);
+          const r = slotGrid.rectAt(i);
+          wb.resize(r.w, r.h).move(r.x, r.y);
+        } else {
+          try { wb.minimize(); } catch { /* */ }
+        }
+      });
+      for (const k of keys) {
+        const wb = windows[k];
+        if (wb) try { wb.show(); } catch { /* */ }
+      }
+    }
+    const availW = getRight() - left;
     const availH = window.innerHeight - top - MINIMIZE_FOOTER_H;
     const leftW = Math.max(Math.round(availW * 0.35), MIN_SIZES.engines.minwidth);
     const rightW = availW - leftW;
@@ -986,7 +1010,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     requestAnimationFrame(() => { try { flashWindow(windows[key]); } catch {} });
   }
 
-  const workspace = { close, tile, arrange, closeAll, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id };
+  const workspace = { close, tile, tidy, closeAll, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id };
   activeWorkspace = workspace;
   return workspace;
 }

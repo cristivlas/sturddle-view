@@ -42,7 +42,7 @@ export function mountTournaments({ container, api, events, log, token }) {
             </li>
             <li class="tmb-separator"></li>
             <li><button class="tmb-dd-item tmb-tile">Tile</button></li>
-            <li><button class="tmb-dd-item tmb-arrange">Arrange</button></li>
+            <li><button class="tmb-dd-item tmb-tidy">Organize</button></li>
             <li class="tmb-separator"></li>
             <li><button class="tmb-dd-item tmb-closeall">Close All</button></li>
           </ul>
@@ -463,7 +463,16 @@ export function mountTournaments({ container, api, events, log, token }) {
     const ribbonRight = (ribbonRect && ribbonRect.left < 8) ? Math.round(ribbonRect.right) : 0;
     const top = Math.round(rect.bottom);
     const left = Math.max(Math.round(rect.left), ribbonRight);
-    openTournamentWorkspace({ api, events, log, token, tournament: t, top, left });
+    // Live getter so tidy()/etc. see the current row right edge
+    // even after window resize.
+    const getRight = () => {
+      const row = document.querySelector(".tournament-row");
+      if (row) return Math.round(row.getBoundingClientRect().right);
+      const list = document.querySelector(".tournaments-list");
+      if (list) return Math.round(list.getBoundingClientRect().right);
+      return window.innerWidth;
+    };
+    openTournamentWorkspace({ api, events, log, token, tournament: t, top, left, getRight });
     syncWindowMenu();
     syncRibbon();
   }
@@ -931,9 +940,9 @@ export function mountTournaments({ container, api, events, log, token }) {
     closeMenus();
     getActiveWorkspace()?.tile();
   });
-  container.querySelector(".tmb-arrange").addEventListener("click", () => {
+  container.querySelector(".tmb-tidy").addEventListener("click", () => {
     closeMenus();
-    getActiveWorkspace()?.arrange();
+    getActiveWorkspace()?.tidy();
   });
   container.querySelector(".tmb-closeall").addEventListener("click", () => {
     closeMenus();
