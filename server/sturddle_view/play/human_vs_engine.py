@@ -164,6 +164,9 @@ class HumanVsEngine:
         # surfaced in clock-row labels while viewing.
         self._view_white_name: str | None = None
         self._view_black_name: str | None = None
+        # Per-ply post-move eval (white POV) parsed from PGN comments.
+        # None when the PGN had no recognizable eval annotations.
+        self._view_eval_history: list[dict | None] | None = None
         self._lock = asyncio.Lock()
 
     @property
@@ -315,6 +318,7 @@ class HumanVsEngine:
             self._view_final_black = None
             self._view_white_name = None
             self._view_black_name = None
+            self._view_eval_history = None
             self._view_cursor = 0
             engine = await self._ensure_engine()
             engine.send_line("ucinewgame")
@@ -683,6 +687,7 @@ class HumanVsEngine:
         final_black_time: float | None = None,
         white_name: str | None = None,
         black_name: str | None = None,
+        eval_history: list[dict | None] | None = None,
     ) -> str:
         """Load a PGN-imported game into view mode at the LAST ply.
 
@@ -718,6 +723,9 @@ class HumanVsEngine:
             self._view_final_black = final_black_time
             self._view_white_name = white_name
             self._view_black_name = black_name
+            self._view_eval_history = (
+                list(eval_history) if eval_history else None
+            )
             self._view_cursor = len(full_moves)  # land at last ply
             self._start_fen = start_fen
             self._board = replay  # already at the final position
@@ -828,6 +836,7 @@ class HumanVsEngine:
             self._view_final_black = None
             self._view_white_name = None
             self._view_black_name = None
+            self._view_eval_history = None
             self._view_cursor = 0
         return await self.new_game(
             human_white=human_white,
@@ -1220,11 +1229,20 @@ class HumanVsEngine:
             moves_san = _moves_san(self._board, self._start_fen)
         view_payload = None
         if self._viewing:
+            # Eval at the cursor = eval recorded for the last played move.
+            # cursor==0 means initial position, no move yet -> no eval.
+            eval_at_cursor = None
+            if (
+                self._view_eval_history is not None
+                and 0 < self._view_cursor <= len(self._view_eval_history)
+            ):
+                eval_at_cursor = self._view_eval_history[self._view_cursor - 1]
             view_payload = {
                 "cursor": self._view_cursor,
                 "total_plies": len(self._view_full_moves),
                 "white_name": self._view_white_name,
                 "black_name": self._view_black_name,
+                "eval": eval_at_cursor,
                 # UI disables Play-from-here when the cursor lands on a
                 # finished position (mirror of the backend guard).
                 "game_over": self._board.is_game_over(),

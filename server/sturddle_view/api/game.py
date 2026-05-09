@@ -122,6 +122,7 @@ def _parse_import_payload(payload: dict) -> dict:
         "clock_history": parsed.clock_history,
         "final_white_time": parsed.final_white_time,
         "final_black_time": parsed.final_black_time,
+        "eval_history": parsed.eval_history,
         "detected_format": detected,
     }
 
@@ -152,6 +153,7 @@ async def import_game(payload: dict, request: Request) -> dict:
             final_black_time=parsed["final_black_time"],
             white_name=headers.get("White"),
             black_name=headers.get("Black"),
+            eval_history=parsed.get("eval_history"),
         )
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

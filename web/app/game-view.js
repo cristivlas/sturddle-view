@@ -499,6 +499,26 @@ export function mountGameView(container, opts = {}) {
         }
         setOpening(evt.payload.opening);
         setTablebase(evt.payload.tablebase);
+        // View mode: surface PGN-derived eval (white POV) in the engine
+        // info panel so scrubbing through the game shows per-ply scores.
+        if (showEngineInfo && evt.payload.view) {
+          const ev = evt.payload.view.eval;
+          if (ev) {
+            engineSection?.classList.remove("is-empty");
+            if (engineScore) engineScore.textContent = fmtScore(ev);
+            if (engineDepth) engineDepth.textContent = ev.depth ?? "";
+            // Clear live-only fields that have no PGN equivalent.
+            if (engineNodes) engineNodes.textContent = "";
+            if (engineNps) engineNps.textContent = "";
+            if (engineTbhits) engineTbhits.textContent = "";
+            if (engineHashfull) engineHashfull.textContent = "";
+            if (enginePv) { enginePv.textContent = ""; enginePv.removeAttribute("title"); }
+          } else {
+            // No eval at this cursor (e.g., ply 0): clear the panel.
+            if (engineScore) engineScore.textContent = "";
+            if (engineDepth) engineDepth.textContent = "";
+          }
+        }
         if (interactive) board.enableInput(true);
         break;
       case "clock_tick":
