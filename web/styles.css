@@ -1512,14 +1512,14 @@ wa-dialog::part(body) {
   flex: 1 1 auto;
   height: 12px;
   min-width: 100px;
-  background: #1c1f25;
+  background: #3a3d44;
   border: 1px solid #2e3138;
   border-radius: 6px;
   overflow: hidden;
 }
 .tournament-progress-fill {
   height: 100%;
-  background: var(--wa-color-brand-fill-loud);
+  background: var(--accent);
   transition: width 0.3s ease;
 }
 .tournament-progress-label {
@@ -1727,6 +1727,9 @@ wa-dialog::part(body) {
   padding: 8px 12px;
   overflow: auto;
 }
+/* Live Games panel: reserve scrollbar gutter so adding/removing rows
+   doesn't visibly shrink the inner width when overflow toggles. */
+.winbox.sturddle-wb-live-games .wb-body { scrollbar-gutter: stable; }
 .wb-empty { color: var(--muted); padding: 12px; text-align: center; }
 .wb-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .wb-table th, .wb-table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid #2e3138; white-space: nowrap; }

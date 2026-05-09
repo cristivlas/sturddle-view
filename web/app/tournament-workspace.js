@@ -164,12 +164,20 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     log:       { minwidth: 280, minheight: 150 },
   };
 
+  // Per-window CSS class hooks (added to the WinBox outer container).
+  // schedule = "Live Games" panel; gets a stable scrollbar gutter to
+  // avoid width pulsation when rows come and go.
+  const EXTRA_CLASS = {
+    schedule: "sturddle-wb-live-games",
+  };
+
   function makeBox(key, title, body, { min = false, max = false } = {}) {
     const cfg = lastGeometry[key];
+    const extra = EXTRA_CLASS[key] ? ` ${EXTRA_CLASS[key]}` : "";
     const wb = new WinBox({
       title, mount: body, top, left, min, max,
       x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height,
-      class: "sturddle-wb no-full",
+      class: `sturddle-wb no-full${extra}`,
       ...MIN_SIZES[key],
     });
     // Wire onclose after construction (TDZ on `wb` otherwise). No persist
@@ -321,11 +329,25 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     `;
   }
 
+  // Flip to true to re-enable verbose [WATCH] tracing for debugging
+  // intermittent click-watch failures. Errors are always logged.
+  const DEBUG_WATCH = false;
   function attachWatch(btn, attachKey, sourceWindowKey, openOpts) {
+    if (DEBUG_WATCH) console.log("[WATCH] click", { attachKey, sourceWindowKey, openOpts });
     const src = windows[sourceWindowKey];
     const avoidRect = src ? { x: src.x, y: src.y, w: src.width, h: src.height } : null;
-    openLiveGameWindow({ ...openOpts, token, tournamentId: tournament.id, top, left, boardStyle: boardStyleCached, avoidRect });
-    btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(attachKey));
+    try {
+      openLiveGameWindow({
+        ...openOpts, token, tournamentId: tournament.id,
+        top, left, boardStyle: boardStyleCached, avoidRect,
+      });
+    } catch (e) {
+      console.error("[WATCH] openLiveGameWindow threw", e, { attachKey, openOpts });
+      return;
+    }
+    const isLive = isLiveWindowOpen(attachKey);
+    if (DEBUG_WATCH) console.log("[WATCH] post-open", { attachKey, isLive });
+    btn.classList.toggle("wb-sched-attach-btn--live", isLive);
   }
 
   function renderSchedule() {

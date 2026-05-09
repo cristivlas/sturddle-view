@@ -45,6 +45,10 @@ async function replayTournamentGame({ tournamentId, gameN, token }) {
   window.dispatchEvent(new CustomEvent("sturddle:activate-perspective", { detail: { id: "play" } }));
 }
 
+// Flip to true to re-enable verbose [WATCH] tracing for debugging
+// intermittent click-watch failures. Errors are always logged.
+const DEBUG_WATCH = false;
+
 const liveWindows = new Map(); // windowKey -> WinBox instance
 
 // Row heights are duplicated as `min-height` on .wb-livegame .lg-eval /
@@ -101,10 +105,16 @@ function avoidOverlap(wb, avoid, top, left, cascade = 0) {
 }
 
 export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, boardStyle = null, avoidRect = null }) {
+  if (DEBUG_WATCH) console.log("[WATCH] openLiveGameWindow", { proxyId, gameId, windowKey, label });
+  if (!windowKey) {
+    console.error("[WATCH] no windowKey -- need at least one of proxyId/gameId", { proxyId, gameId });
+    return;
+  }
   // If a window for this key is already open, focus it instead of
   // opening a duplicate.
   const existing = liveWindows.get(windowKey);
   if (existing) {
+    if (DEBUG_WATCH) console.log("[WATCH] window already open -- focusing", { windowKey });
     if (existing.min) existing.restore();
     existing.focus();
     flashWindow(existing);
@@ -295,9 +305,11 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     ? `game/${encodeURIComponent(gameId)}`
     : `proxy/${encodeURIComponent(proxyId)}`;
   const url = `${proto}//${location.host}/ws/tournament/${wsTarget}${tokenQ}`;
+  if (DEBUG_WATCH) console.log("[WATCH] ws connect", { windowKey, url });
   ws = new WebSocket(url);
 
   ws.addEventListener("open", () => {
+    if (DEBUG_WATCH) console.log("[WATCH] ws open", { windowKey });
     statusEl.textContent = "";
   });
 
@@ -307,7 +319,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     clockBottomEl.classList.remove("active");
   }
 
-  ws.addEventListener("close", () => {
+  ws.addEventListener("close", (e) => {
+    if (DEBUG_WATCH) console.log("[WATCH] ws close", { windowKey, code: e.code, reason: e.reason, wasClean: e.wasClean });
     stopTimer();
     // User-initiated close already tore the window down; calling
     // wb.close() again here corrupts WinBox's focus tracker and breaks
@@ -316,7 +329,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     try { wb.close(); } catch { /* */ }
   });
 
-  ws.addEventListener("error", () => {
+  ws.addEventListener("error", (e) => {
+    console.error("[WATCH] ws error", { windowKey, event: e });
     statusEl.textContent = "connection error";
     stopTimer();
   });
