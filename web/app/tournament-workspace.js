@@ -460,7 +460,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       li.className = "wb-sched-live";
       const engineLabel = p.engineName || pid;
       li.innerHTML = `
-        <span class="wb-sched-icon">></span>
+        <span class="wb-sched-icon">&#9881;</span>
         <span class="wb-sched-game">${escapeHtml(engineLabel)}</span>
       `;
       const btn = document.createElement("button");

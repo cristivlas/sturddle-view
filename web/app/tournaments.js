@@ -18,7 +18,6 @@ export function mountTournaments({ container, api, events, log, token }) {
   container.innerHTML = `
     <div class="tournaments-panel">
       <menu class="tournaments-menubar">
-        <div class="tournaments-menubar-progress" aria-hidden="true"></div>
         <li class="tmb-menu tmb-sort-menu">
           <button class="tmb-item tmb-sort-btn">Sort</button>
           <ul class="tmb-dropdown">
@@ -36,7 +35,7 @@ export function mountTournaments({ container, api, events, log, token }) {
               <ul class="tmb-dropdown">
                 <li><button class="tmb-dd-item tmb-sys-standings">Standings</button></li>
                 <li><button class="tmb-dd-item tmb-sys-schedule">Live Games</button></li>
-                <li><button class="tmb-dd-item tmb-sys-engines">Engine Instances</button></li>
+                <li><button class="tmb-dd-item tmb-sys-engines">Engines</button></li>
                 <li class="tmb-separator"></li>
                 <li><button class="tmb-dd-item tmb-sys-log">Event Log</button></li>
               </ul>
@@ -220,22 +219,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     for (const t of sorted) {
       listEl.appendChild(renderRow(t));
     }
-    syncMenubarProgress(sorted);
     syncRibbon();
-  }
-
-  function syncMenubarProgress(sorted) {
-    const strip = container.querySelector(".tournaments-menubar-progress");
-    if (!strip) return;
-    const running = sorted.find((t) => t.status === STATUS.RUNNING);
-    if (!running) {
-      strip.style.width = "0%";
-      return;
-    }
-    const played = running.standings?.games ?? 0;
-    const total = totalGames(running);
-    const pct = total ? Math.min(100, (played / total) * 100) : 0;
-    strip.style.width = pct + "%";
   }
 
   function sortedTournaments() {
@@ -271,8 +255,8 @@ export function mountTournaments({ container, api, events, log, token }) {
         <div class="tournament-progress" role="progressbar"
              aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${played}">
           <div class="tournament-progress-fill" style="width: ${pct}%"></div>
-          <span class="tournament-progress-label">${played} / ${total} · ${pct}%</span>
         </div>
+        <span class="tournament-progress-label">${played} / ${total} · ${pct}%</span>
       `;
     } else {
       trailing = `<span class="tournament-engines muted"></span>`;

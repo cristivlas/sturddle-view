@@ -1296,16 +1296,6 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   border-bottom: 1px solid var(--wa-color-border-loud, #333);
   user-select: none;
 }
-.tournaments-menubar-progress {
-  position: absolute;
-  left: 0; bottom: 0;
-  height: 2px;
-  width: 0%;
-  background: var(--accent);
-  transition: width 0.3s ease;
-  pointer-events: none;
-  z-index: 2;
-}
 .tmb-menu { position: relative; }
 .tmb-item {
   background: none; border: none; border-radius: 0; color: inherit;
@@ -1510,28 +1500,23 @@ wa-dialog::part(body) {
 .tournament-progress {
   position: relative;
   flex: 1 1 auto;
-  height: 12px;
+  height: 6px;
   min-width: 100px;
-  background: #3a3d44;
-  border: 1px solid #2e3138;
+  background: var(--panel);
+  border: none;
   border-radius: 6px;
   overflow: hidden;
 }
 .tournament-progress-fill {
   height: 100%;
-  background: var(--accent);
+  background: var(--wa-color-brand-50);
   transition: width 0.3s ease;
 }
 .tournament-progress-label {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: 600;
-  color: #fff;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.7);
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
   letter-spacing: 0.3px;
 }
 @keyframes tournament-pulse {
@@ -1561,9 +1546,9 @@ wa-dialog::part(body) {
   animation: tournament-pulse 1.6s ease-out infinite;
 }
 .tournament-status.status-stopped {
-  background: #c9a96a;
-  border-color: #8a7340;
-  color: #1a1a1a;
+  background: #3a3d44;
+  border-color: #50535a;
+  color: #b8bcc4;
 }
 .tournament-status.status-done {
   background: #2d5a2d;
