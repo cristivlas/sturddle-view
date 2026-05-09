@@ -4,6 +4,8 @@
 import { mountBoard } from "./board.js";
 import { toast } from "./dialogs.js";
 
+const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
 function fmtClock(seconds) {
   if (!Number.isFinite(seconds)) return "—";
   const t = Math.max(0, seconds);
@@ -188,7 +190,8 @@ export function mountGameView(container, opts = {}) {
   const fenText = container.querySelector(".fen-text");
   const fenCopyBtn = container.querySelector(".fen-copy");
 
-  let currentFen = "";
+  let currentFen = INITIAL_FEN;
+  if (fenText) fenText.textContent = INITIAL_FEN;
   function setFen(fen) {
     currentFen = fen || "";
     if (fenText) fenText.textContent = currentFen;
@@ -581,7 +584,7 @@ export function mountGameView(container, opts = {}) {
     reset() {
       // Reset visible game state for a fresh game; the next board_update
       // from the server will set the new starting position.
-      board.setPosition("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", null);
+      board.setPosition(INITIAL_FEN, null);
       if (moveListEl) moveListEl.innerHTML = "";
       if (engineDepth) engineDepth.textContent = "";
       if (engineScore) engineScore.textContent = "";
@@ -593,7 +596,7 @@ export function mountGameView(container, opts = {}) {
       engineSection?.classList.add("is-empty");
       setOpening(null);
       setTablebase(null);
-      setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+      setFen(INITIAL_FEN);
     },
     unmount() {
       off?.();
