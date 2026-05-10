@@ -5,9 +5,13 @@ import asyncio
 import logging
 import os
 import sys
+from pathlib import Path
 
 import uvicorn
+from platformdirs import user_config_dir
 
+from . import APP_NAME
+from ._instance_lock import acquire as _acquire_lock
 from .config import Settings
 from .logging_setup import configure_logging
 
@@ -37,6 +41,14 @@ def main() -> None:
         server_level=logging.DEBUG if args.server_debug else logging.WARNING,
     )
     logging.getLogger(__name__).info("logging to %s", log_file)
+
+    if not args.reload:
+        lock_path = Path(user_config_dir(APP_NAME, appauthor=False)) / "server.lock"
+        if not _acquire_lock(lock_path):
+            logging.getLogger(__name__).error(
+                "Another %s instance is already running. Exiting.", APP_NAME
+            )
+            sys.exit(1)
 
     # Push CLI overrides into env so the worker process's Settings() picks them up.
     if args.engine:
