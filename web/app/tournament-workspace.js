@@ -340,7 +340,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         `[${sprt.lower_bound.toFixed(2)}, ${sprt.upper_bound.toFixed(2)}] * ${sprt.status}</div>`
       : "";
     const partialPairs = detail.partial_pairs ?? 0;
-    const partialRow = partialPairs > 0
+    // Hide during RUNNING -- a fresh game-1 always sits alone in the
+    // PGN until game-2 of the pair finishes; that's normal, not data loss.
+    const showPartial = partialPairs > 0 && detail.status !== STATUS.RUNNING;
+    const partialRow = showPartial
       ? `<div class="wb-partial-pairs">${partialPairs} incomplete pair${partialPairs === 1 ? "" : "s"} ` +
         `(one game missing, likely lost when paused)</div>`
       : "";
@@ -416,7 +419,15 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   function renderSchedule() {
     if (livePairings.size === 0) {
-      scheduleBody.innerHTML = `<div class="wb-empty">No games in play.</div>`;
+      // Pair confirmation can lag game start by seconds at fast tc;
+      // distinguish "settling" (proxies up, no confirmed pairs yet)
+      // from "really nothing running".
+      const settling = (
+        detail?.status === STATUS.RUNNING && activeProxies.size > 0
+      );
+      scheduleBody.innerHTML = settling
+        ? `<div class="wb-empty">Starting up...</div>`
+        : `<div class="wb-empty">No games in play.</div>`;
       return;
     }
     const scroller = scheduleBody.parentElement;
@@ -568,20 +579,20 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       log?.(`workspace refresh failed: ${e.message}`);
       return;
     }
-    // Seed active proxies from server snapshot -- authoritative; replace
-    // wholesale so we drop any rows for proxies the server no longer
-    // tracks (e.g. ended sessions whose proxy_ended event we missed).
-    const seeded = detail.proxies_active || [];
-    activeProxies.clear();
-    for (const p of seeded) {
-      if (p.proxy_id) {
+    // While RUNNING, API state can lag WS events under fast tc, so
+    // treat API as additive (add missing entries, never remove).
+    // When not RUNNING, replace authoritatively to drop ghosts.
+    const seededProxies = detail.proxies_active || [];
+    if (detail.status !== STATUS.RUNNING) activeProxies.clear();
+    for (const p of seededProxies) {
+      if (p.proxy_id && !activeProxies.has(p.proxy_id)) {
         activeProxies.set(p.proxy_id, { engineName: p.engine_name || null });
       }
     }
-    // Seed confirmed pairings -- same authoritative replace so late-opening
-    // workspaces don't depend on having caught every proxy_paired WS event.
-    livePairings.clear();
-    for (const p of (detail.pairings_active || [])) {
+    const seededPairings = detail.pairings_active || [];
+    if (detail.status !== STATUS.RUNNING) livePairings.clear();
+    for (const p of seededPairings) {
+      if (livePairings.has(p.proxy_a) || livePairings.has(p.proxy_b)) continue;
       const info = { pairId: p.pair_id, proxyA: p.proxy_a, engineA: p.engine_a, sideA: p.side_a,
                      proxyB: p.proxy_b, engineB: p.engine_b, sideB: p.side_b };
       livePairings.set(p.proxy_a, info);
@@ -679,8 +690,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         }));
       }
     } else if (
-      evt.kind === EVT.STATUS ||
-      inner === KIND.DONE || inner === KIND.STOPPED
+      inner === KIND.DONE || inner === KIND.STOPPED ||
+      (evt.kind === EVT.STATUS &&
+       [STATUS.STOPPED, STATUS.DONE, STATUS.FAILED].includes(evt.payload?.status))
     ) {
       activeProxies.clear();
     }

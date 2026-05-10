@@ -124,11 +124,11 @@ def _serialize(
         except FileNotFoundError:
             standings = {"games": 0, "engines": []}
         out["standings"] = standings
+    if with_stats and store is not None:
         try:
             out["partial_pairs"] = count_partial_pairs(store.pgn_path(t.id))
         except FileNotFoundError:
             out["partial_pairs"] = 0
-    if with_stats and store is not None:
         try:
             out["games"] = compute_games_list(store.pgn_path(t.id))
         except FileNotFoundError:

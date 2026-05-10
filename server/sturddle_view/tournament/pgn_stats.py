@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -24,6 +26,7 @@ _DRAW_VALUES = frozenset({"1/2-1/2", "½-½"})
 # PGN tag line: [Name "value"]. Non-greedy value match — we don't honor
 # \"-escapes; the four headers we read never contain quotes in fastchess output.
 _TAG_RE = re.compile(r'\[(\w+)\s+"(.*?)"\]\s*$')
+_TAG_RE_BLOCK = re.compile(r'^\[(\w+)\s+"(.*?)"\]', re.MULTILINE)
 
 # Tags we actually use; ignore the rest to skip a dict write per line.
 _WANTED_TAGS = frozenset({"White", "Black", "Result", "Round"})
@@ -241,6 +244,158 @@ def read_game_pgn(pgn_path: Path, game_n: int) -> str | None:
                 f.seek(offset)
                 game = chess.pgn.read_game(f)
                 return str(game) if game is not None else None
+
+
+def _needs_rewrite(pgn_path: Path) -> bool:
+    """Header-only scan: True if the PGN has partial pairs or resume dups."""
+    seen: set[tuple[str, str, str]] = set()
+    pair_counts: dict[tuple[str, frozenset[str]], int] = {}
+    cur: dict[str, str] = {}
+    in_tags = False
+
+    def consume() -> bool:
+        """Returns True if a duplicate is detected (caller should bail early)."""
+        if not cur:
+            return False
+        result = cur.get("Result", "*")
+        if result == _WHITE_WIN or result == _BLACK_WIN or result in _DRAW_VALUES:
+            white = cur.get("White", "?")
+            black = cur.get("Black", "?")
+            round_tag = cur.get("Round", "")
+            if round_tag and round_tag != "?":
+                key = (round_tag, white, black)
+                if key in seen:
+                    return True  # duplicate
+                seen.add(key)
+                pkey = (round_tag, frozenset((white, black)))
+                pair_counts[pkey] = pair_counts.get(pkey, 0) + 1
+        cur.clear()
+        return False
+
+    with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            m = _TAG_RE.match(line)
+            if m is not None:
+                in_tags = True
+                name = m.group(1)
+                if name in _WANTED_TAGS:
+                    cur[name] = m.group(2)
+            elif in_tags:
+                if consume():
+                    return True
+                in_tags = False
+        if consume():
+            return True
+
+    return any(n == 1 for n in pair_counts.values())
+
+
+def rewrite_drop_partial_pairs(pgn_path: Path) -> int:
+    """Drop games belonging to partial pairs (and resume duplicates).
+
+    For tournaments where Pause interrupted the second game of a pair
+    before its PGN write, the round is left with only one game. Stats
+    on top of that are biased; this function rewrites the file to drop
+    those games (and keeps only the last copy of any
+    `(round, white, black)` duplicate from resume cycles).
+
+    Returns the number of game records removed. If 0, the file is
+    untouched and no backup is written. Otherwise the prior file is
+    preserved as `<pgn>.bak` (overwriting any earlier backup) and the
+    cleaned PGN replaces the original atomically.
+    """
+    if not pgn_path.exists():
+        return 0
+    # Fast pre-check via header-only scan (~50x faster than chess.pgn).
+    # Skip the expensive full-parse below if the file is already clean.
+    if not _needs_rewrite(pgn_path):
+        return 0
+
+    # Split the PGN into per-game text blocks via line scan -- avoids
+    # chess.pgn's full move-tree parse (which dominates rewrite time
+    # on multi-MB files). Each block contains its own tags + move
+    # section, ready to write back verbatim.
+    text = pgn_path.read_text(encoding="utf-8", errors="replace")
+    blocks: list[str] = []
+    current: list[str] = []
+    in_tags = False
+    for line in text.splitlines(keepends=True):
+        # Use the strict tag pattern, not a leading-`[` test -- some PGN
+        # writers emit move-line annotations like `[%clk ...]` that would
+        # otherwise be misclassified as a new game's first tag.
+        if _TAG_RE.match(line):
+            if not in_tags and current:
+                blocks.append("".join(current))
+                current = []
+            in_tags = True
+            current.append(line)
+        else:
+            in_tags = False
+            current.append(line)
+    if current:
+        blocks.append("".join(current))
+
+    games: list[tuple[str, str, str, str, str]] = []
+    for block in blocks:
+        headers = dict(_TAG_RE_BLOCK.findall(block))
+        result = headers.get("Result", "*")
+        if result not in (_WHITE_WIN, _BLACK_WIN, *_DRAW_VALUES):
+            continue
+        games.append((
+            headers.get("Round", ""),
+            headers.get("White", "?"),
+            headers.get("Black", "?"),
+            result,
+            block,
+        ))
+
+    # Dedup pass: for each (round, white, black), keep only the last index.
+    last_idx: dict[tuple[str, str, str], int] = {}
+    for i, (rd, w, b, _r, _bl) in enumerate(games):
+        if rd and rd != "?":
+            last_idx[(rd, w, b)] = i
+
+    keep: set[int] = set()
+    for i, (rd, w, b, _r, _bl) in enumerate(games):
+        if not rd or rd == "?":
+            keep.add(i)
+        elif last_idx[(rd, w, b)] == i:
+            keep.add(i)
+
+    pair_counts: dict[tuple[str, frozenset[str]], int] = {}
+    for i in keep:
+        rd, w, b, _r, _bl = games[i]
+        if not rd or rd == "?":
+            continue
+        key = (rd, frozenset((w, b)))
+        pair_counts[key] = pair_counts.get(key, 0) + 1
+
+    final_keep: set[int] = set()
+    for i in keep:
+        rd, w, b, _r, _bl = games[i]
+        if rd and rd != "?":
+            key = (rd, frozenset((w, b)))
+            if pair_counts[key] == 1:
+                continue
+        final_keep.add(i)
+
+    dropped = len(games) - len(final_keep)
+    if dropped == 0:
+        return 0
+
+    backup = pgn_path.with_suffix(pgn_path.suffix + ".bak")
+    shutil.copyfile(pgn_path, backup)
+    tmp = pgn_path.with_suffix(pgn_path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8", newline="\n") as f:
+        for i in range(len(games)):
+            if i in final_keep:
+                block = games[i][4]
+                f.write(block)
+                if not block.endswith("\n\n"):
+                    f.write("\n" if block.endswith("\n") else "\n\n")
+    os.replace(tmp, pgn_path)
+    _iter_games_cache.pop(pgn_path, None)
+    return dropped
 
 
 def count_partial_pairs(pgn_path: Path) -> int:

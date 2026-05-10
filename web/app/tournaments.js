@@ -350,11 +350,13 @@ export function mountTournaments({ container, api, events, log, token }) {
     ribbonEditBtn.disabled = isActive || status === STATUS.DONE;
 
     const starting = t.id === startingId;
+    const startIconName = isResume ? "forward-step" : "play";
     if (starting) {
       ribbonStartBtn.innerHTML = '<wa-spinner class="spinner-accent"></wa-spinner>';
+    } else if (!ribbonStartBtn.querySelector("wa-icon")) {
+      ribbonStartBtn.innerHTML = `<wa-icon class="t-start-icon" name="${startIconName}"></wa-icon>`;
     } else {
-      if (!ribbonStartBtn.querySelector("wa-icon")) ribbonStartBtn.innerHTML = '<wa-icon class="t-start-icon" name="play"></wa-icon>';
-      else ribbonStartBtn.querySelector("wa-icon").setAttribute("name", isResume ? "forward-step" : "play");
+      ribbonStartBtn.querySelector("wa-icon").setAttribute("name", startIconName);
     }
     const startLabel = isResume ? "Resume" : "Start";
     ribbonStartBtn.setAttribute("aria-label", startLabel);
@@ -420,6 +422,10 @@ export function mountTournaments({ container, api, events, log, token }) {
   // ---- Verbs --------------------------------------------------------------
 
   async function startOne(t) {
+    const isResume = t.status === STATUS.STOPPED || t.status === STATUS.FAILED;
+    if (isResume) {
+      toast("Preparing tournament for resume...", { variant: "neutral", duration: 3000 });
+    }
     try {
       await api("POST", `/api/tournaments/${t.id}/start`);
     } catch (e) {
@@ -1027,6 +1033,29 @@ export function mountTournaments({ container, api, events, log, token }) {
         const firstErr = tail.find((l) => /error|fatal|fail/i.test(l)) || tail[0] || `exit code ${evt.payload?.rc}`;
         toast(`${name} failed: ${firstErr}`, { variant: "danger", duration: 10000 });
       }
+      // The /start API doesn't return until orchestrator.start completes
+      // (which can include a multi-second PGN rewrite); the status event
+      // fires earlier. Clear pending flags here, with an optimistic local
+      // status update so syncRibbon reflects the transition immediately.
+      const tid = evt.payload?.tournament_id;
+      const newStatus = evt.payload?.status;
+      const t = tid ? tournaments.find((x) => x.id === tid) : null;
+      if (t && newStatus) {
+        t.status = newStatus;
+        if (newStatus === STATUS.RUNNING) activeId = tid;
+        else if (activeId === tid) activeId = null;
+      }
+      if (startingId === tid && newStatus === STATUS.RUNNING) {
+        startingId = null;
+      }
+      if (
+        stoppingId === tid &&
+        [STATUS.STOPPED, STATUS.DONE, STATUS.FAILED].includes(newStatus)
+      ) {
+        stoppingId = null;
+      }
+      // Re-render with the optimistic state; debouncedLoadList canonicalizes.
+      renderList();
       debouncedLoadList();
     }
   });

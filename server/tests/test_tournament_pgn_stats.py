@@ -19,6 +19,7 @@ from sturddle_view.tournament.pgn_stats import (
     elo_from_score,
     elo_margin_from_wld,
     read_game_pgn,
+    rewrite_drop_partial_pairs,
 )
 
 
@@ -538,6 +539,109 @@ def test_count_partial_pairs_multi_engine(tmp_path):
     )
     p = _write_pgn(tmp_path, body)
     assert count_partial_pairs(p) == 1
+
+
+# ---------------------------------------------------------------------------
+# rewrite_drop_partial_pairs
+# ---------------------------------------------------------------------------
+
+
+def test_rewrite_no_partials_no_op(tmp_path):
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("2", "A", "B", "1/2-1/2") + _game_round("2", "B", "A", "1/2-1/2")
+    )
+    p = _write_pgn(tmp_path, body)
+    before = p.read_bytes()
+    n = rewrite_drop_partial_pairs(p)
+    assert n == 0
+    assert p.read_bytes() == before
+    bak = p.with_suffix(p.suffix + ".bak")
+    assert not bak.exists()
+
+
+def test_rewrite_drops_partial_pair(tmp_path):
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("2", "A", "B", "1-0")  # partial: round 2 missing B vs A
+    )
+    p = _write_pgn(tmp_path, body)
+    n = rewrite_drop_partial_pairs(p)
+    assert n == 1
+    bak = p.with_suffix(p.suffix + ".bak")
+    assert bak.exists()
+    # After rewrite: 0 partial pairs, 2 unique games.
+    assert count_partial_pairs(p) == 0
+    assert compute_standings(p).games == 2
+
+
+def test_rewrite_dedups_resume_duplicates(tmp_path):
+    body = (
+        _game_round("1", "A", "B", "1-0")
+        + _game_round("1", "A", "B", "1-0")  # duplicate of game 1
+        + _game_round("1", "B", "A", "0-1")
+    )
+    p = _write_pgn(tmp_path, body)
+    n = rewrite_drop_partial_pairs(p)
+    assert n == 1  # one duplicate dropped; no partial pair (round 1 has both colors)
+    assert compute_standings(p).games == 2
+
+
+def test_rewrite_mixed_partials_and_dups(tmp_path):
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")  # complete
+        + _game_round("2", "A", "B", "1-0") + _game_round("2", "A", "B", "1-0")  # dup, partial
+        + _game_round("3", "A", "B", "1-0") + _game_round("3", "B", "A", "0-1")  # complete
+    )
+    p = _write_pgn(tmp_path, body)
+    n = rewrite_drop_partial_pairs(p)
+    # Round 2 dedups to 1 game (still partial, so dropped). Total dropped = 2.
+    assert n == 2
+    assert count_partial_pairs(p) == 0
+    assert compute_standings(p).games == 4
+
+
+def test_rewrite_missing_pgn_no_op(tmp_path):
+    p = tmp_path / "absent.pgn"
+    assert rewrite_drop_partial_pairs(p) == 0
+
+
+def test_rewrite_backup_bytes_equal_original(tmp_path):
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("2", "A", "B", "1-0")  # partial -> triggers rewrite
+    )
+    p = _write_pgn(tmp_path, body)
+    original = p.read_bytes()
+    rewrite_drop_partial_pairs(p)
+    bak = p.with_suffix(p.suffix + ".bak")
+    assert bak.read_bytes() == original
+
+
+def test_rewrite_idempotent(tmp_path):
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("2", "A", "B", "1-0")  # partial
+    )
+    p = _write_pgn(tmp_path, body)
+    assert rewrite_drop_partial_pairs(p) == 1  # first run drops the partial
+    assert rewrite_drop_partial_pairs(p) == 0  # second run is a no-op
+
+
+def test_rewrite_skips_ongoing_results(tmp_path):
+    # `*` (ongoing) games are not preserved by the rewrite. Output file
+    # should only contain the decisive games.
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("2", "A", "B", "*") + _game_round("2", "B", "A", "*")
+        + _game_round("3", "A", "B", "1-0")  # partial -> triggers rewrite
+    )
+    p = _write_pgn(tmp_path, body)
+    rewrite_drop_partial_pairs(p)
+    after = p.read_text(encoding="utf-8")
+    assert '[Result "*"]' not in after
+    assert '[Round "3"]' not in after  # partial dropped
+    assert '[Round "1"]' in after
 
 
 # ---------------------------------------------------------------------------

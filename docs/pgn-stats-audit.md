@@ -300,6 +300,53 @@ turns out to be incomplete:
   in the UI keeps users from thinking a `done` tournament is
   cleaner than it is.
 
+### 9. Pair confirmation lags far behind game start at fast TC
+
+Observed empirically (2026-05-10) at `tc=2+0.1`, concurrency=8: first
+`pair confirmed` debug line fires **~24 seconds** after the first
+`proxy session started`. By then fastchess has churned through
+multiple finished games. The Live Games workspace panel is empty
+during this window because `livePairings` is genuinely empty --
+not a UI bug.
+
+Root cause: pair confirmation requires both proxies in a pair to
+register at the same post-book FEN bucket
+(`orchestrator._recompute_groups`). FEN updates arrive over HTTP
+from the proxy script (`position startpos moves ...` POSTed to the
+broadcast endpoint). At concurrency=8 with fast TC, the HTTP
+traffic floods the same FastAPI loop that's serving polled
+refreshes; FEN updates buffer and arrive late, often out of order.
+The "bucket >2" warning fires when this happens.
+
+Same-engine-name rejection in `_recompute_groups:828` adds a second
+delay: when two same-engine proxies hit a FEN before their partners
+do, the candidate is dropped as a phantom and we wait for another
+state change before re-checking.
+
+#### Workspace placeholder (this branch)
+
+Live Games panel shows "Starting up..." (instead of "No games in
+play") when `detail.status === RUNNING` and `activeProxies.size > 0`
+but `livePairings.size == 0`. Honest about state: games are
+spawning, pairs not yet confirmed.
+
+#### Deferred fix: provisional pairs from stdout
+
+fastchess emits `Started game N (engine_a vs engine_b)` to stdout
+seconds before FEN-based pair confirmation completes. Parse those
+lines and emit provisional pair entries (without `pair_id`) that
+the workspace renders as "(starting)" rows, then upgrade to
+confirmed when `proxy_paired` arrives. Larger change; involves
+runner_log parsing and a new event vocabulary. Out of scope here.
+
+#### Deferred fix: faster FEN ingestion
+
+The HTTP broadcast endpoint serializes through a single FastAPI
+async loop. Splitting FEN-update intake to a dedicated higher-
+priority path (e.g., a separate Uvicorn worker, or in-process
+queue with non-blocking accept) would reduce confirmation latency
+under high concurrency. Architectural; defer.
+
 ## Test gaps
 
 - `½-½` draw notation
@@ -505,6 +552,9 @@ distill into a minimal fixture, don't import the whole file.
 | 8b | ~~Graceful Windows Stop (CTRL_BREAK + grace)~~ | -- | -- | Tried 2026-05-10; fastchess ignores CTRL_BREAK. Reverted |
 | 8c | Surface partial-pair count in API/UI | small | medium | Honest reporting after 8a |
 | 8d | Path B: resume completion via config.json reconstruction | medium-large | medium | Deferred -- depends on fastchess internals |
+| 9a | Live Games "Starting up..." placeholder | trivial | low | Honest UI during pair-confirmation lag |
+| 9b | Provisional pairs from fastchess stdout | medium | medium | Deferred -- new event vocabulary |
+| 9c | Faster FEN ingestion (orchestrator HTTP path) | large | high | Architectural; defer |
 | 9 | Gauntlet UX hint (leader = engine[0]) | trivial | low | One label change in the form |
 | 10 | Gauntlet standings test fixture | small | high | Locks current W/L/D behavior before changing math |
 | 11 | Gauntlet Elo (leader vs field, challenger vs leader) | medium | high | `compute_standings(tournament_type=...)`; pure server-side |
