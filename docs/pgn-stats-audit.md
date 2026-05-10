@@ -474,7 +474,7 @@ defer unless P1+P3 don't move the needle enough.
 
 | # | Item | Effort | Impact | Notes |
 |---|------|--------|--------|-------|
-| P1 | Drop standings from list endpoint | small | high (cold cache) | Simplest: just stop computing them in the list path |
+| P1 | (partial) Drop standings from list endpoint | small | high (cold cache) | Original P1 unchanged. `count_partial_pairs` removed from list path in commit 1bdd930; full standings drop still pending |
 | P2 | Tailer offset checkpoint | small | medium (restart) | Atomic sidecar via `_atomic` |
 | P3 | Append-aware `_iter_games` cache | medium | high (steady-state running tournament) | Hot-path edit; needs careful tests |
 | P4 | Unify the three walks | medium | low | Defer; revisit only if profiling justifies |
@@ -540,31 +540,28 @@ distill into a minimal fixture, don't import the whole file.
 
 | # | Item | Effort | Testability | Notes |
 |---|------|--------|-------------|-------|
-| 1 | Delete `parse_pgn_string` | trivial | n/a | Pure removal; nothing references it |
-| 2 | Test `½-½` draw | trivial | high | Add one line to existing test fixture |
-| 3 | Test all-draws SPRT (zero var) | trivial | high | Drives finding #3 fix |
-| 4 | Fix zero-variance fallback (#3) | small | high | Test from #3 locks behavior |
-| 5 | SPRT param validation (#4) | small | high | Pure function, easy to unit test |
-| 6 | `read_game_pgn` out-of-range tests | small | high | Add 3 cases |
-| 7 | Log warnings in `_iter_pairs` (#2) | small | medium | Assert on caplog |
-| 8 | Orphan fastchess on start failure (#7) | small | medium | Real correctness bug; inject failure post-spawn |
-| 8a | Partial-pair PGN rewrite (Path A, no resume completion) | small | high | Surgical scope; doesn't touch fastchess config.json |
+| 1 | ✅ Delete `parse_pgn_string` | trivial | n/a | Done (commit b2f787b) |
+| 2 | (skip for now) Test `½-½` draw | trivial | high | Skipped pending more real-life PGNs to check |
+| 3 | ✅ Test all-draws SPRT (zero var) | trivial | high | Done with #4 (commit 8f85438) |
+| 4 | ✅ Fix zero-variance fallback | small | high | Done (commit 8f85438) |
+| 5 | ✅ SPRT param validation | small | high | Done (commit 6fc2a3b) |
+| 6 | ✅ `read_game_pgn` out-of-range tests | small | high | Done (commit 6c138ee) |
+| 7 | ✅ Log warnings in `_iter_pairs` | small | medium | Done (commit b5ac05c) |
+| 8 | ✅ Orphan fastchess on start failure | small | medium | Done (commit 6886cf5) |
+| 8a | ✅ Partial-pair PGN rewrite (Path A) | small | high | Done (commit 28f5ccf) |
 | 8b | ~~Graceful Windows Stop (CTRL_BREAK + grace)~~ | -- | -- | Tried 2026-05-10; fastchess ignores CTRL_BREAK. Reverted |
-| 8c | Surface partial-pair count in API/UI | small | medium | Honest reporting after 8a |
+| 8c | ✅ Surface partial-pair count in API/UI | small | medium | Done (commit 1bdd930) |
 | 8d | Path B: resume completion via config.json reconstruction | medium-large | medium | Deferred -- depends on fastchess internals |
-| 9a | Live Games "Starting up..." placeholder | trivial | low | Honest UI during pair-confirmation lag |
+| 9a | ✅ Live Games "Starting up..." placeholder | trivial | low | Done (commit 28f5ccf) |
 | 9b | Provisional pairs from fastchess stdout | medium | medium | Deferred -- new event vocabulary |
 | 9c | Faster FEN ingestion (orchestrator HTTP path) | large | high | Architectural; defer |
-| 9 | Gauntlet UX hint (leader = engine[0]) | trivial | low | One label change in the form |
-| 10 | Gauntlet standings test fixture | small | high | Locks current W/L/D behavior before changing math |
-| 11 | Gauntlet Elo (leader vs field, challenger vs leader) | medium | high | `compute_standings(tournament_type=...)`; pure server-side |
-| 12 | Surface `tournament_type` in API standings response | trivial | high | One line in `api/tournaments.py` |
-| 13 | UTF-8 replace logging (#5) | small | low | Hard to trigger cleanly; defer |
-| 14 | SPRT UI in template form | medium | medium | Separate PR; spec already exists |
-| P1 | Drop standings from list endpoint | small | high | See Performance section |
-| P2 | Tailer offset checkpoint | small | medium | See Performance section |
-| P3 | Append-aware `_iter_games` cache | medium | high | See Performance section |
-| P4 | Unify the three walks | medium | low | See Performance section; defer |
+| 10 | Gauntlet UX hint (leader = engine[0]) | trivial | low | One label change in the form |
+| 11 | Gauntlet standings test fixture | small | high | Locks current W/L/D behavior before changing math |
+| 12 | Gauntlet Elo (leader vs field, challenger vs leader) | medium | high | `compute_standings(tournament_type=...)`; pure server-side |
+| 13 | Surface `tournament_type` in API standings response | trivial | high | One line in `api/tournaments.py` |
+| 14 | UTF-8 replace logging | small | low | Hard to trigger cleanly; defer |
+| 15 | SPRT UI in template form | medium | medium | Separate PR; spec already exists |
+| -- | Stop-cleanup / supervisor / restart | -- | -- | See `docs/stop-cleanup-and-restart.md` -- design + Step 1 done (commit e48d567), Step 2/3 done (commit 7ef670b) |
 
 Items 1-6 are all single-file, server-only, fully unit-testable.
 Items 7-8 add log lines (caplog assertions). Item 9 is the only one
