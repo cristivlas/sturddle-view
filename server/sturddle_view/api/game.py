@@ -154,6 +154,8 @@ async def import_game(payload: dict, request: Request) -> dict:
             white_name=headers.get("White"),
             black_name=headers.get("Black"),
             eval_history=parsed.get("eval_history"),
+            pgn_result=headers.get("Result"),
+            pgn_termination=headers.get("Termination"),
         )
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

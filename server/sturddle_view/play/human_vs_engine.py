@@ -319,6 +319,8 @@ class HumanVsEngine:
             self._view_white_name = None
             self._view_black_name = None
             self._view_eval_history = None
+            self._view_pgn_result = None
+            self._view_pgn_termination = None
             self._view_cursor = 0
             engine = await self._ensure_engine()
             engine.send_line("ucinewgame")
@@ -408,7 +410,7 @@ class HumanVsEngine:
             await self._persist()
             await self._publish_board()
             await self._publish_clock()
-            ended = self._board.is_game_over()
+            ended = self._is_ended()
             if ended:
                 end_game_id, end_payload = self._finalize_game_locked()
             else:
@@ -688,6 +690,8 @@ class HumanVsEngine:
         white_name: str | None = None,
         black_name: str | None = None,
         eval_history: list[dict | None] | None = None,
+        pgn_result: str | None = None,
+        pgn_termination: str | None = None,
     ) -> str:
         """Load a PGN-imported game into view mode at the LAST ply.
 
@@ -723,6 +727,8 @@ class HumanVsEngine:
             self._view_final_black = final_black_time
             self._view_white_name = white_name
             self._view_black_name = black_name
+            self._view_pgn_result = pgn_result
+            self._view_pgn_termination = pgn_termination
             self._view_eval_history = (
                 list(eval_history) if eval_history else None
             )
@@ -837,6 +843,8 @@ class HumanVsEngine:
             self._view_white_name = None
             self._view_black_name = None
             self._view_eval_history = None
+            self._view_pgn_result = None
+            self._view_pgn_termination = None
             self._view_cursor = 0
         return await self.new_game(
             human_white=human_white,
@@ -1148,7 +1156,7 @@ class HumanVsEngine:
             await self._persist()
             await self._publish_board()
             await self._publish_clock()
-            ended = self._board.is_game_over()
+            ended = self._is_ended()
             if ended:
                 end_game_id, end_payload = self._finalize_game_locked()
             else:
@@ -1245,14 +1253,24 @@ class HumanVsEngine:
                 "eval": eval_at_cursor,
                 # UI disables Play-from-here when the cursor lands on a
                 # finished position (mirror of the backend guard).
-                "game_over": (outcome := self._board.outcome()) is not None,
+                # game_over is true for forced endings AND claimable draws
+                # recorded in the PGN headers.
+                "game_over": (outcome := self._board.outcome()) is not None
+                    or bool(self._view_pgn_result and self._view_pgn_result != "*"),
                 **(
                     {
                         "result": outcome.result(),
                         "termination": outcome.termination.name.lower(),
                     }
                     if outcome is not None
-                    else {}
+                    else (
+                        {
+                            "result": self._view_pgn_result,
+                            "termination": self._view_pgn_termination,
+                        }
+                        if self._view_pgn_result and self._view_pgn_result != "*"
+                        else {}
+                    )
                 ),
             }
         return Event(
@@ -1314,6 +1332,18 @@ class HumanVsEngine:
             },
         )
 
+    def _is_ended(self) -> bool:
+        """True if the game is over, including claimable draws when auto_claim_draws is on."""
+        assert self._board is not None
+        if self._board.is_game_over():
+            return True
+        if getattr(self._settings, "auto_claim_draws", True):
+            return (
+                self._board.can_claim_threefold_repetition()
+                or self._board.can_claim_fifty_moves()
+            )
+        return False
+
     async def _publish_board(self) -> None:
         await self._bus.publish(self._board_event())
 
@@ -1329,8 +1359,15 @@ class HumanVsEngine:
         assert self._lock.locked(), "_finalize_game_locked called without lock"
         assert self._board is not None and self._game_id is not None
         outcome = self._board.outcome()
-        result = outcome.result() if outcome else "*"
-        termination = outcome.termination.name.lower() if outcome else "unknown"
+        if outcome:
+            result = outcome.result()
+            termination = outcome.termination.name.lower()
+        elif self._board.can_claim_threefold_repetition():
+            result, termination = "1/2-1/2", "threefold_repetition"
+        elif self._board.can_claim_fifty_moves():
+            result, termination = "1/2-1/2", "fifty_moves"
+        else:
+            result, termination = "*", "unknown"
         self._maybe_save_pgn(result=result, termination=termination)
         self._clear_store()
         game_id = self._game_id

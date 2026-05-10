@@ -253,3 +253,49 @@ async def test_enter_view_supersedes_active_play_game(hve):
     assert h._viewing is True
     # The prior play autosave is still on disk.
     assert list(tmp_path.glob("*.pgn")) == play_pgn
+
+
+# Threefold repetition sequence: Ng1-f3, Ng8-f6 x3 (10 plies).
+_THREEFOLD_MOVES = [
+    "g1f3", "g8f6", "f3g1", "f6g8",
+    "g1f3", "g8f6", "f3g1", "f6g8",
+    "g1f3", "g8f6",
+]
+
+# Fool's mate (shortest checkmate): 2 moves.
+_FOOLS_MATE_MOVES = ["f2f3", "e7e5", "g2g4", "d8h4"]
+
+
+async def test_view_payload_includes_result_from_pgn_headers_on_threefold(hve):
+    """When a PGN with threefold-repetition result is loaded, the board_event
+    view payload must carry result/termination from the headers, not board state
+    (board.outcome() is None for claimable draws)."""
+    h, _ = hve
+    await h.enter_view_mode(
+        start_fen=None,
+        moves_uci=_THREEFOLD_MOVES,
+        clock_history=None,
+        pgn_result="1/2-1/2",
+        pgn_termination="threefold_repetition",
+    )
+    evt = h._board_event()
+    view = evt.payload["view"]
+    assert view["game_over"] is True
+    assert view["result"] == "1/2-1/2"
+    assert view["termination"] == "threefold_repetition"
+
+
+async def test_view_payload_result_from_board_on_checkmate(hve):
+    """Forced endings (checkmate) still derive result/termination from the
+    board even without PGN headers."""
+    h, _ = hve
+    await h.enter_view_mode(
+        start_fen=None,
+        moves_uci=_FOOLS_MATE_MOVES,
+        clock_history=None,
+    )
+    evt = h._board_event()
+    view = evt.payload["view"]
+    assert view["game_over"] is True
+    assert view["result"] == "0-1"
+    assert view["termination"] == "checkmate"

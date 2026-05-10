@@ -30,6 +30,7 @@ PERSISTED_FIELDS = (
     "tc_increment_seconds",
     "human_side",
     "allow_takeback",
+    "auto_claim_draws",
     "inherit_pgn_clocks",
     "board_style",
     "play_eval_pov",
@@ -68,6 +69,7 @@ class Settings(BaseSettings):
     tc_increment_seconds: float = 0.0
     human_side: str = "white"
     allow_takeback: bool = True
+    auto_claim_draws: bool = True
     # Play From Here: when True, new game inherits live clock values from
     # the PGN cursor (study time pressure / repro engine behavior under the
     # exact remaining time). When False (default), live clocks reset to

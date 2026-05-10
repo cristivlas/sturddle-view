@@ -233,9 +233,18 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       allowTakeback.addEventListener("change", () => {
         putSettings({ allow_takeback: allowTakeback.checked });
       });
+      const autoClaimDraws = document.createElement("wa-switch");
+      autoClaimDraws.size = "small";
+      autoClaimDraws.checked = initial.auto_claim_draws !== false;
+      autoClaimDraws.textContent = "Auto-claim draws";
+      autoClaimDraws.title = "Automatically end the game on threefold repetition or 50-move rule";
+      autoClaimDraws.style.marginLeft = "16px";
+      autoClaimDraws.addEventListener("change", () => {
+        putSettings({ auto_claim_draws: autoClaimDraws.checked });
+      });
       const takebackRow = document.createElement("div");
       takebackRow.className = "settings-row";
-      takebackRow.append(allowTakeback);
+      takebackRow.append(allowTakeback, autoClaimDraws);
 
       // Board style: single preset picker + live preview swatch reusing
       // cm-chessboard's CSS class + sprite so the preview matches the
