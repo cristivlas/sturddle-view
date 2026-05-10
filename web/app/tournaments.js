@@ -396,6 +396,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     try { await startOne(t); } finally { startingId = null; syncRibbon(); }
   });
   ribbonStopBtn.addEventListener("click", async () => {
+    console.log("[diag] stop clicked", { t: selectedTournament()?.id, disabled: ribbonStopBtn.disabled, stoppingId });
     const t = selectedTournament();
     if (!t || ribbonStopBtn.disabled || stoppingId) return;
     stoppingId = t.id;
@@ -407,9 +408,13 @@ export function mountTournaments({ container, api, events, log, token }) {
     if (t) openWorkspace(t);
   });
   ribbonInfoBtn.addEventListener("click", () => {
+    console.log("[diag] info clicked", { t: selectedTournament()?.id });
     const t = selectedTournament();
     if (t) openInfoGuarded(t);
   });
+  document.addEventListener("click", (e) => {
+    console.log("[diag-doc] click", e.target, "path:", e.composedPath().slice(0, 5));
+  }, true);
   ribbonEditBtn.addEventListener("click", () => {
     const t = selectedTournament();
     if (t && !ribbonEditBtn.disabled) openEditTournamentDialog(t);
