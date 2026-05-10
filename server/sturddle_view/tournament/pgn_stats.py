@@ -483,20 +483,3 @@ def compute_sprt(
         elo1=elo1,
         model=model,
     )
-
-
-def parse_pgn_string(s: str) -> list[tuple[str, str, str]]:
-    """Test helper: parse PGN from a string, return ``(white, black, result)`` list."""
-    out: list[tuple[str, str, str]] = []
-    f = io.StringIO(s)
-    while True:
-        game = chess.pgn.read_game(f)
-        if game is None:
-            return out
-        result = game.headers.get("Result", "*")
-        if result in (_WHITE_WIN, _BLACK_WIN, *_DRAW_VALUES):
-            out.append((
-                game.headers.get("White", "?"),
-                game.headers.get("Black", "?"),
-                result,
-            ))
