@@ -178,6 +178,125 @@ Testability: medium. Inject a failure into `_emit("started", ...)`
 or monkey-patch `assign_to_job` to raise; assert `is_running()` is
 False after the rollback.
 
+### 8. Partial pairs leak into completed tournaments after Stop/Resume
+
+A round in this codebase is a color-flipped pair of games. Pair
+completeness is load-bearing for every statistic we compute --
+pentanomial SPRT explicitly works on per-pair scores in {0, 0.5, 1,
+1.5, 2}, gauntlet Elo assumes balanced color exposure, and even
+W/L/D standings are biased if one color of a pair is missing.
+
+Empirical case (tournament `55505ae0d3234e8ba6d3fc11d20dc05e`,
+4096 games expected, "done" status, 4077 games shown):
+
+- PGN contains 4193 raw game records.
+- 116 of those are `(round, white, black)` duplicates from
+  Stop/Resume cycles. Last-wins dedup leaves 4077.
+- 19 rounds have only one of the two color-flipped games.
+- The 19 affected round numbers correlate with the resume offsets
+  observed in fastchess.log (32, 50, 116, 122, 127, 153, 174 ...).
+
+Mechanism: on Windows our Stop closes the Job Object
+(`fastchess.py:453`, `KILL_ON_JOB_CLOSE`) with no grace period. Game
+1 of the pair is already in the PGN; game 2 is in flight when the
+process tree dies. On Resume, fastchess sees the partial round,
+treats it as advanced enough, and moves on. POSIX has a 2-second
+SIGTERM grace and is less affected, but a crash or power loss would
+produce the same outcome on any platform.
+
+19 Stops over the tournament's lifetime = 19 missing games.
+
+#### Verification finding: fastchess `config.json` complicates the rewrite
+
+Inspecting `config.json` from the affected tournament:
+
+- `opening.start` is a single integer ("next opening to use"). Drives
+  resume position. Not per-round/per-pair.
+- `stats.<pair>` block stores per-pair W/L/D counters AND the
+  pentanomial table (penta_WW, WD, WL, DD, LD, LL).
+- For tournament `55505ae0...`: `W+L+D = 1197+1131+1768 = 4096`
+  (matches the **expected** game count); pentanomial sums to 2048
+  pairs. fastchess thinks every pair is complete.
+
+But the PGN only contains 4077 unique games (after dedup). Inference:
+fastchess increments its in-memory stats counter when a game
+finishes, **before** the PGN write hits disk. A kill mid-write loses
+the PGN line but the counter has already advanced. On resume,
+fastchess loads `config.json`, sees the pair as complete, and skips
+the round -- the PGN content is **not** the source of truth for
+resume position.
+
+So the originally-sketched "rewrite PGN, fastchess resume fills the
+gaps" approach does **not** work as-is. fastchess's own counters
+must also be reconciled, and that reconciliation has problems:
+
+- `opening.start` is a single sequential int. Setting it back to the
+  earliest partial round forces re-play of every later round too,
+  generating large amounts of duplicate work.
+- `stats.<pair>` decrements for removed games are computable, but
+  pentanomial counts can't be exactly reconstructed from a partial
+  pair (we don't know what color/outcome the missing half would have
+  produced). We'd lose information.
+
+#### Proposed fix (Path A, this branch)
+
+Surgical scope: keep stats honest, do not attempt resume completion.
+
+1. On orchestrator startup, before reconciling tournament status,
+   walk the PGN and identify partial pairs.
+2. If any are found, atomic-rewrite the PGN via `_atomic` to drop
+   the games belonging to partial pairs. Also dedup
+   `(round, white, black)` duplicates (last-wins) in the same pass.
+   Preserve the prior file as `games.pgn.bak` for one cycle.
+3. Surface the count of dropped games in the API response and the
+   workspace UI. Tournament status reflects "done with N partial
+   pairs dropped" rather than silently misleading.
+4. Do **not** touch fastchess's `config.json`. If the user clicks
+   Resume on a partial-pair tournament, fastchess will (correctly,
+   given its own state) advance past the now-missing rounds. That
+   is a known limitation, documented to the user.
+
+After Path A, `compute_standings` and `compute_sprt` operate on a
+clean PGN: every pair complete, no resume duplicates. SPRT pair
+walking and Elo math become correct by construction.
+
+Effort: small. Logic is mostly already in `_iter_games`; the new
+piece is the rewrite step. Testability: high (hand-craft a PGN
+with partial pairs, run the rewrite, assert partials gone, backup
+preserved).
+
+Perf cost on restart: ~100-200ms for a 13MB / 4193-game PGN.
+
+#### Deferred: Path B (resume completion)
+
+Actually replaying the missing halves of partial pairs requires
+reconstructing fastchess's `config.json` -- decrementing
+per-pair stats, resetting `opening.start` to a round number that
+lets fastchess fill the gaps without redoing complete rounds, and
+accepting some loss in pentanomial accuracy (or recomputing it
+from the cleaned PGN, which means dropping the in-flight pair
+data fastchess held but never wrote).
+
+This is more of a feature ("repair and resume a tournament with
+partial pairs") than a bug fix. It also depends on fastchess
+internal layout we don't control across versions. Defer until
+there's a concrete need.
+
+#### Belt-and-suspenders mitigations
+
+These do not replace the rewrite but reduce the likelihood of
+hitting it in the first place, or limit the damage if a rewrite
+turns out to be incomplete:
+
+- Graceful Windows shutdown. Send `GenerateConsoleCtrlEvent(
+  CTRL_BREAK_EVENT, pid)` to fastchess before closing the Job, with
+  the same 2-second grace as POSIX. Reduces incidence; does not
+  eliminate (crashes, power loss).
+- Surface partial-pair count in the API response and the workspace.
+  Even with the rewrite in place, exposing "completed N of M pairs"
+  in the UI keeps users from thinking a `done` tournament is
+  cleaner than it is.
+
 ## Test gaps
 
 - `½-½` draw notation
@@ -379,6 +498,10 @@ distill into a minimal fixture, don't import the whole file.
 | 6 | `read_game_pgn` out-of-range tests | small | high | Add 3 cases |
 | 7 | Log warnings in `_iter_pairs` (#2) | small | medium | Assert on caplog |
 | 8 | Orphan fastchess on start failure (#7) | small | medium | Real correctness bug; inject failure post-spawn |
+| 8a | Partial-pair PGN rewrite (Path A, no resume completion) | small | high | Surgical scope; doesn't touch fastchess config.json |
+| 8b | Graceful Windows Stop (CTRL_BREAK + grace) | small | medium | Reduces incidence of partial pairs going forward |
+| 8c | Surface partial-pair count in API/UI | small | medium | Honest reporting after 8a |
+| 8d | Path B: resume completion via config.json reconstruction | medium-large | medium | Deferred -- depends on fastchess internals |
 | 9 | Gauntlet UX hint (leader = engine[0]) | trivial | low | One label change in the form |
 | 10 | Gauntlet standings test fixture | small | high | Locks current W/L/D behavior before changing math |
 | 11 | Gauntlet Elo (leader vs field, challenger vs leader) | medium | high | `compute_standings(tournament_type=...)`; pure server-side |
