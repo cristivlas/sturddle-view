@@ -212,6 +212,12 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     if (cx !== wb.x || cy !== wb.y) wb.move(cx, cy);
   };
   clampToViewport();
+  // Clamp height so the window can't grow taller than the board needs:
+  // a portrait-stretched window wastes space and looks broken.
+  wb.onresize = (w, h) => {
+    const maxH = w + LIVE_WINBOX_TITLE + FIXED_FULL;
+    if (h > maxH) wb.resize(w, maxH);
+  };
   if (avoidRect) avoidOverlap(wb, avoidRect, top, left, idx * 24);
   // WinBox doesn't expose its config minwidth/minheight as instance fields;
   // stash them so the workspace's tile() can clamp.
