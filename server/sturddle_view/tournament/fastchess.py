@@ -473,6 +473,10 @@ class FastchessRunner:
                     os.killpg(pgid, signal.SIGTERM)
                 except ProcessLookupError:
                     log.info("stop: pgid=%d already gone before SIGTERM", pgid)
+            # TODO(#7): the grace timeout fires when the supervisor's
+            # terminal chain takes >2s -- not necessarily because fastchess
+            # ignored SIGTERM. Only escalate to SIGKILL if proc.returncode
+            # is None. Needs Linux/macOS to test.
             try:
                 await asyncio.wait_for(
                     asyncio.shield(self._supervisor),
