@@ -17,6 +17,7 @@ from sturddle_view.tournament.pgn_stats import (
     compute_standings,
     elo_from_score,
     elo_margin_from_wld,
+    read_game_pgn,
 )
 
 
@@ -427,6 +428,47 @@ def test_sprt_to_dict_round_trip(tmp_path):
         "llr", "lower_bound", "upper_bound", "status",
         "pairs", "elo0", "elo1", "model",
     }
+
+
+# ---------------------------------------------------------------------------
+# read_game_pgn
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("game_n", [0, -1, -100])
+def test_read_game_pgn_non_positive_returns_none(tmp_path, game_n):
+    p = _write_pgn(tmp_path, _game("A", "B", "1-0"))
+    assert read_game_pgn(p, game_n) is None
+
+
+def test_read_game_pgn_beyond_end_returns_none(tmp_path):
+    body = _game("A", "B", "1-0") + _game("B", "A", "0-1")
+    p = _write_pgn(tmp_path, body)
+    assert read_game_pgn(p, 3) is None
+    assert read_game_pgn(p, 999) is None
+
+
+def test_read_game_pgn_skips_ongoing_games(tmp_path):
+    # Decisive games are counted; "*" (ongoing) is skipped. Game_n=2
+    # should resolve to the third record on disk.
+    body = (
+        _game("A", "B", "1-0")
+        + _game("A", "B", "*")
+        + _game("B", "A", "1/2-1/2")
+    )
+    p = _write_pgn(tmp_path, body)
+    text = read_game_pgn(p, 2)
+    assert text is not None
+    assert '[Result "1/2-1/2"]' in text
+
+
+def test_read_game_pgn_returns_first_game(tmp_path):
+    body = _game("A", "B", "1-0") + _game("B", "A", "0-1")
+    p = _write_pgn(tmp_path, body)
+    text = read_game_pgn(p, 1)
+    assert text is not None
+    assert '[White "A"]' in text and '[Black "B"]' in text
+    assert '[Result "1-0"]' in text
 
 
 # ---------------------------------------------------------------------------
