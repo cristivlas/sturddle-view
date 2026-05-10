@@ -15,6 +15,7 @@ from sturddle_view.tournament.pgn_stats import (
     SprtResult,
     compute_sprt,
     compute_standings,
+    count_partial_pairs,
     elo_from_score,
     elo_margin_from_wld,
     read_game_pgn,
@@ -486,6 +487,57 @@ def test_read_game_pgn_returns_first_game(tmp_path):
     assert text is not None
     assert '[White "A"]' in text and '[Black "B"]' in text
     assert '[Result "1-0"]' in text
+
+
+# ---------------------------------------------------------------------------
+# count_partial_pairs
+# ---------------------------------------------------------------------------
+
+
+def test_count_partial_pairs_empty(tmp_path):
+    p = _write_pgn(tmp_path, "")
+    assert count_partial_pairs(p) == 0
+
+
+def test_count_partial_pairs_all_complete(tmp_path):
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("2", "A", "B", "1/2-1/2") + _game_round("2", "B", "A", "1/2-1/2")
+    )
+    p = _write_pgn(tmp_path, body)
+    assert count_partial_pairs(p) == 0
+
+
+def test_count_partial_pairs_one_partial(tmp_path):
+    # Round 1 complete, round 2 has only the white-A game.
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("2", "A", "B", "1-0")
+    )
+    p = _write_pgn(tmp_path, body)
+    assert count_partial_pairs(p) == 1
+
+
+def test_count_partial_pairs_resume_dups_dont_count(tmp_path):
+    # Round 1 has 3 raw records (resume wrote game1 twice). Dedup leaves
+    # 2 -- one per color. Should NOT count as partial.
+    body = (
+        _game_round("1", "A", "B", "1-0")
+        + _game_round("1", "A", "B", "1-0")  # duplicate
+        + _game_round("1", "B", "A", "0-1")
+    )
+    p = _write_pgn(tmp_path, body)
+    assert count_partial_pairs(p) == 0
+
+
+def test_count_partial_pairs_multi_engine(tmp_path):
+    # Round 1: A-B and B-A complete; A-C complete; C-A missing.
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("1", "A", "C", "1-0")
+    )
+    p = _write_pgn(tmp_path, body)
+    assert count_partial_pairs(p) == 1
 
 
 # ---------------------------------------------------------------------------

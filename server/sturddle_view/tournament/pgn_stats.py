@@ -115,10 +115,35 @@ class SprtResult:
         }
 
 
-# Cache: pgn_path -> (mtime_ns, size, games_tuple). PGN is append-only,
-# so (mtime, size) is a sound invalidation key. One entry per path keeps
-# memory bounded; the entry self-replaces on every change.
-_iter_games_cache: dict[Path, tuple[int, int, tuple[tuple[str, str, str], ...]]] = {}
+# Cache: pgn_path -> (mtime_ns, size, keyed_games_tuple). Entries are
+# 4-tuples (round, white, black, result); ``_iter_games`` strips the round
+# for callers that don't need it. PGN is append-only, so (mtime, size) is
+# a sound invalidation key. One entry per path keeps memory bounded; the
+# entry self-replaces on every change.
+_iter_games_cache: dict[
+    Path, tuple[int, int, tuple[tuple[str, str, str, str], ...]]
+] = {}
+
+
+def _iter_games_keyed(pgn_path: Path):
+    """Yield ``(round, white, black, result)`` 4-tuples for each game.
+
+    Same dedup and skip rules as ``_iter_games``; this is the version
+    that retains the Round tag for callers that need it (e.g. partial
+    pair detection).
+    """
+    try:
+        st = pgn_path.stat()
+    except FileNotFoundError:
+        _iter_games_cache.pop(pgn_path, None)
+        return
+    cached = _iter_games_cache.get(pgn_path)
+    if cached is not None and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
+        yield from cached[2]
+        return
+    games = tuple(_iter_games_uncached(pgn_path))
+    _iter_games_cache[pgn_path] = (st.st_mtime_ns, st.st_size, games)
+    yield from games
 
 
 def _iter_games(pgn_path: Path):
@@ -135,18 +160,8 @@ def _iter_games(pgn_path: Path):
     dedup (no key to collide on) — fastchess always emits Round, so the
     fallback only matters for hand-crafted PGNs.
     """
-    try:
-        st = pgn_path.stat()
-    except FileNotFoundError:
-        _iter_games_cache.pop(pgn_path, None)
-        return
-    cached = _iter_games_cache.get(pgn_path)
-    if cached is not None and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
-        yield from cached[2]
-        return
-    games = tuple(_iter_games_uncached(pgn_path))
-    _iter_games_cache[pgn_path] = (st.st_mtime_ns, st.st_size, games)
-    yield from games
+    for _round, white, black, result in _iter_games_keyed(pgn_path):
+        yield (white, black, result)
 
 
 def _iter_games_uncached(pgn_path: Path):
@@ -156,7 +171,7 @@ def _iter_games_uncached(pgn_path: Path):
     # least one tag in the current game; lines before any tag are skipped.
     # NOTE: trade-off — a `;`-comment line between tag block and moves
     # would emit early. fastchess never emits those.
-    entries: list[tuple[tuple[str, str, str] | None, tuple[str, str, str]]] = []
+    entries: list[tuple[tuple[str, str, str] | None, tuple[str, str, str, str]]] = []
     cur: dict[str, str] = {}
     in_tags = False
 
@@ -168,7 +183,7 @@ def _iter_games_uncached(pgn_path: Path):
             white = cur.get("White", "?")
             black = cur.get("Black", "?")
             round_tag = cur.get("Round", "")
-            value = (white, black, result)
+            value = (round_tag, white, black, result)
             has_round = round_tag and round_tag != "?"
             key = (round_tag, white, black) if has_round else None
             entries.append((key, value))
@@ -187,7 +202,7 @@ def _iter_games_uncached(pgn_path: Path):
                 in_tags = False
         emit()
 
-    last_value: dict[tuple[str, str, str], tuple[str, str, str]] = {
+    last_value: dict[tuple[str, str, str], tuple[str, str, str, str]] = {
         k: v for k, v in entries if k is not None
     }
     emitted: set[tuple[str, str, str]] = set()
@@ -226,6 +241,26 @@ def read_game_pgn(pgn_path: Path, game_n: int) -> str | None:
                 f.seek(offset)
                 game = chess.pgn.read_game(f)
                 return str(game) if game is not None else None
+
+
+def count_partial_pairs(pgn_path: Path) -> int:
+    """Number of (round, engine pair) instances missing one color-flipped game.
+
+    A complete pair has both `(round, A vs B)` and `(round, B vs A)` in
+    the PGN. A partial pair has one of the two; this typically results
+    from an interrupted Stop on Windows (KILL_ON_JOB_CLOSE has no grace
+    period) where game 1 made it to disk but game 2 was in flight.
+
+    Counted post-dedup, so resume duplicates do not inflate the count.
+    Games with no Round tag are skipped (no key to pair on).
+    """
+    counts: dict[tuple[str, frozenset[str]], int] = {}
+    for round_, white, black, _result in _iter_games_keyed(pgn_path):
+        if not round_ or round_ == "?":
+            continue
+        key = (round_, frozenset((white, black)))
+        counts[key] = counts.get(key, 0) + 1
+    return sum(1 for n in counts.values() if n == 1)
 
 
 def compute_games_list(pgn_path: Path) -> list[dict]:

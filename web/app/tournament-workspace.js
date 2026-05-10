@@ -339,8 +339,14 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       ? `<div class="wb-sprt">SPRT [${sprt.elo0}, ${sprt.elo1}] * LLR=${sprt.llr.toFixed(2)} ` +
         `[${sprt.lower_bound.toFixed(2)}, ${sprt.upper_bound.toFixed(2)}] * ${sprt.status}</div>`
       : "";
+    const partialPairs = detail.partial_pairs ?? 0;
+    const partialRow = partialPairs > 0
+      ? `<div class="wb-partial-pairs">${partialPairs} partial pair${partialPairs === 1 ? "" : "s"} ` +
+        `(one color missing -- likely from an interrupted Stop)</div>`
+      : "";
     standingsBody.innerHTML = `
       ${sprtRow}
+      ${partialRow}
       <table class="wb-table">
         <thead>
           <tr><th>Engine</th><th>G</th><th>W</th><th>L</th><th>D</th><th>%</th><th>Elo</th></tr>

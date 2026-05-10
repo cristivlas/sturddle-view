@@ -1728,6 +1728,10 @@ wa-dialog::part(body) {
   padding: 6px 8px; margin-bottom: 8px; font-size: 12px;
   font-family: var(--wa-font-family-code);
 }
+.wb-partial-pairs {
+  background: var(--bg); border: 1px solid #4a3d1f; border-radius: 4px;
+  padding: 6px 8px; margin-bottom: 8px; font-size: 12px; color: #d4a854;
+}
 .wb-sched-list, .wb-eventlog-list { list-style: none; padding: 0; margin: 0; }
 .wb-log-copy-ctrl {
   -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);
