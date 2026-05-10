@@ -3,6 +3,7 @@ import { PerspectiveRouter } from "./perspectives.js";
 import { playPerspective } from "./perspectives/play.js";
 import { enginesPerspective } from "./perspectives/engines.js";
 import { openSettingsDialog } from "./settings-dialog.js";
+import { openAboutDialog } from "./about-dialog.js";
 
 const params = new URLSearchParams(location.search);
 const token = params.get("token") || "";
@@ -113,6 +114,9 @@ connect({
   onEvent: (evt) => events.emit(evt),
 });
 
+document.getElementById("about-btn").addEventListener("click", () => {
+  openAboutDialog({ api });
+});
 document.getElementById("settings-btn").addEventListener("click", () => {
   openSettingsDialog({ api, getActivePerspective: () => router.activeId() });
 });

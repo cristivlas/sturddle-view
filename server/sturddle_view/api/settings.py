@@ -5,6 +5,7 @@ from pathlib import Path
 import psutil
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from .. import __author__, __copyright__, __version__
 from ..auth import require_token
 
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_token)])
@@ -44,6 +45,9 @@ def _serialize(s) -> dict:
         "engine_default_book_plies": s.engine_default_book_plies,
         "engine_default_book_order": s.engine_default_book_order,
         "host": {"logical_cores": logical, "physical_cores": physical},
+        "version": __version__,
+        "author": __author__,
+        "copyright": __copyright__,
     }
 
 
