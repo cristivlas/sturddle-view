@@ -288,10 +288,13 @@ These do not replace the rewrite but reduce the likelihood of
 hitting it in the first place, or limit the damage if a rewrite
 turns out to be incomplete:
 
-- Graceful Windows shutdown. Send `GenerateConsoleCtrlEvent(
-  CTRL_BREAK_EVENT, pid)` to fastchess before closing the Job, with
-  the same 2-second grace as POSIX. Reduces incidence; does not
-  eliminate (crashes, power loss).
+- ~~Graceful Windows shutdown. Send `GenerateConsoleCtrlEvent(
+  CTRL_BREAK_EVENT, pid)` to fastchess before closing the Job.~~
+  **Tried 2026-05-10; fastchess ignores CTRL_BREAK.** A 10s grace
+  produced no behavior change; the fallback Job close is what
+  actually stops the process. Reverted, since the path adds Pause
+  latency without correctness benefit. Reconsider only if upstream
+  fastchess gains a CTRL_BREAK handler.
 - Surface partial-pair count in the API response and the workspace.
   Even with the rewrite in place, exposing "completed N of M pairs"
   in the UI keeps users from thinking a `done` tournament is
@@ -499,7 +502,7 @@ distill into a minimal fixture, don't import the whole file.
 | 7 | Log warnings in `_iter_pairs` (#2) | small | medium | Assert on caplog |
 | 8 | Orphan fastchess on start failure (#7) | small | medium | Real correctness bug; inject failure post-spawn |
 | 8a | Partial-pair PGN rewrite (Path A, no resume completion) | small | high | Surgical scope; doesn't touch fastchess config.json |
-| 8b | Graceful Windows Stop (CTRL_BREAK + grace) | small | medium | Reduces incidence of partial pairs going forward |
+| 8b | ~~Graceful Windows Stop (CTRL_BREAK + grace)~~ | -- | -- | Tried 2026-05-10; fastchess ignores CTRL_BREAK. Reverted |
 | 8c | Surface partial-pair count in API/UI | small | medium | Honest reporting after 8a |
 | 8d | Path B: resume completion via config.json reconstruction | medium-large | medium | Deferred -- depends on fastchess internals |
 | 9 | Gauntlet UX hint (leader = engine[0]) | trivial | low | One label change in the form |

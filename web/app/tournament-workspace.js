@@ -341,8 +341,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       : "";
     const partialPairs = detail.partial_pairs ?? 0;
     const partialRow = partialPairs > 0
-      ? `<div class="wb-partial-pairs">${partialPairs} partial pair${partialPairs === 1 ? "" : "s"} ` +
-        `(one color missing -- likely from an interrupted Stop)</div>`
+      ? `<div class="wb-partial-pairs">${partialPairs} incomplete pair${partialPairs === 1 ? "" : "s"} ` +
+        `(one game missing, likely lost when paused)</div>`
       : "";
     standingsBody.innerHTML = `
       ${sprtRow}
