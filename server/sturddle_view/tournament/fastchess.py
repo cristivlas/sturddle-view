@@ -391,36 +391,42 @@ class FastchessRunner:
                 **_popen_kwargs(),
             )
 
-        # Belt-and-suspenders: if the atomic path silently no-op'd
-        # (e.g. interception bypass), make sure fastchess is in the Job.
-        if self._job_handle is not None:
-            try:
-                assign_to_job(self._job_handle, self._proc.pid)
-            except OSError as e:
-                # ERROR_ACCESS_DENIED (5) = already in this Job. Expected
-                # in the atomic path. Anything else is real.
-                if getattr(e, "winerror", None) != 5:
-                    log.exception("assign_to_job failed for pid=%d", self._proc.pid)
+        # Post-spawn setup: any failure here must kill the proc, otherwise
+        # we leak a running fastchess (no supervisor => no auto-cleanup).
+        try:
+            # Belt-and-suspenders: if the atomic path silently no-op'd
+            # (e.g. interception bypass), make sure fastchess is in the Job.
+            if self._job_handle is not None:
+                try:
+                    assign_to_job(self._job_handle, self._proc.pid)
+                except OSError as e:
+                    # ERROR_ACCESS_DENIED (5) = already in this Job. Expected
+                    # in the atomic path. Anything else is real.
+                    if getattr(e, "winerror", None) != 5:
+                        log.exception("assign_to_job failed for pid=%d", self._proc.pid)
 
-        # Pipe drains: emit runner_log events; fastchess writes the log file.
-        self._drain_tasks = [
-            asyncio.create_task(
-                self._drain(self._proc.stdout, "out"),
-                name="fastchess-stdout",
-            ),
-            asyncio.create_task(
-                self._drain(self._proc.stderr, "err"),
-                name="fastchess-stderr",
-            ),
-        ]
+            # Pipe drains: emit runner_log events; fastchess writes the log file.
+            self._drain_tasks = [
+                asyncio.create_task(
+                    self._drain(self._proc.stdout, "out"),
+                    name="fastchess-stdout",
+                ),
+                asyncio.create_task(
+                    self._drain(self._proc.stderr, "err"),
+                    name="fastchess-stderr",
+                ),
+            ]
 
-        await self._emit("started", {"pid": self._proc.pid})
+            await self._emit("started", {"pid": self._proc.pid})
 
-        # Supervisor task watches for exit and emits the terminal event.
-        # Detached: callers don't await it; ``stop()`` cancels it cleanly.
-        self._supervisor = asyncio.create_task(
-            self._supervise(), name="fastchess-supervisor"
-        )
+            # Supervisor task watches for exit and emits the terminal event.
+            # Detached: callers don't await it; ``stop()`` cancels it cleanly.
+            self._supervisor = asyncio.create_task(
+                self._supervise(), name="fastchess-supervisor"
+            )
+        except BaseException:
+            await self._abort_setup()
+            raise
 
     # How long to wait between SIGTERM and SIGKILL on Stop. Long enough
     # for fastchess to flush a final saveJson() (post-game bookkeeping is
@@ -490,6 +496,28 @@ class FastchessRunner:
             log.info("stop: supervisor returned for pid=%d", pid)
         except asyncio.CancelledError:
             pass
+
+    async def _abort_setup(self) -> None:
+        """Tear down a half-spawned runner when start() fails post-spawn.
+        Without this, a running fastchess leaks (no supervisor)."""
+        proc = self._proc
+        for t in self._drain_tasks:
+            t.cancel()
+        self._drain_tasks = []
+        if sys.platform == "win32" and self._job_handle is not None:
+            close_job(self._job_handle)  # KILL_ON_JOB_CLOSE => synchronous tree kill
+            self._job_handle = None
+        elif proc is not None and proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        if proc is not None:
+            try:
+                await proc.wait()
+            except Exception:  # noqa: BLE001
+                log.exception("abort_setup: proc.wait raised")
+        self._proc = None
 
     # ----- internals --------------------------------------------------------
 

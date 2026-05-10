@@ -727,6 +727,30 @@ async def test_runner_double_start_raises(tmp_path, patched_runner):
         await asyncio.wait_for(rec.done.wait(), timeout=5.0)
 
 
+async def test_runner_kills_proc_when_post_spawn_setup_fails(
+    tmp_path, patched_runner, monkeypatch
+):
+    """If start() raises after spawn but before the supervisor exists,
+    the proc must not leak (no supervisor => no auto-cleanup)."""
+    spec = _make_spec(tmp_path, {}, [{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}])
+    rec = _Recorder()
+    runner = patched_runner(["--sleep", "30"])
+
+    boom = RuntimeError("simulated post-spawn failure")
+
+    async def _raising_emit(self, kind, payload):
+        if kind == "started":
+            raise boom
+
+    monkeypatch.setattr(FastchessRunner, "_emit", _raising_emit)
+
+    with pytest.raises(RuntimeError, match="simulated"):
+        await runner.start(spec, rec)
+
+    assert runner._proc is None
+    assert runner._supervisor is None
+
+
 async def test_runner_binary_missing_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(
         FastchessRunner, "detect_binary",
