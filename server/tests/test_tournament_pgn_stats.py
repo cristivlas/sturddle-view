@@ -389,12 +389,29 @@ def test_sprt_all_decisive_same_direction_returns_continue(tmp_path):
     assert r.llr == 0.0
 
 
-def test_sprt_drops_trailing_odd_game(tmp_path):
-    # 3 games → 1 complete pair, last game dropped.
+def test_sprt_drops_trailing_odd_game(tmp_path, caplog):
+    # 3 games → 1 complete pair, last game dropped. Warns about the drop.
     body = _game("A", "B", "1-0") + _game("B", "A", "0-1") + _game("A", "B", "1-0")
     p = _write_pgn(tmp_path, body)
-    r = compute_sprt(p, _params())
+    with caplog.at_level("WARNING", logger="sturddle_view.tournament.pgn_stats"):
+        r = compute_sprt(p, _params())
     assert r.pairs == 1
+    assert any("trailing odd game" in m for m in caplog.messages)
+
+
+def test_sprt_warns_on_engine_mismatch(tmp_path, caplog):
+    # Pairs 1+3 are clean A/B; pair 2 sneaks in a C engine. Pair 2 is
+    # skipped silently in the result; the warning makes it visible.
+    body = (
+        _game("A", "B", "1-0") + _game("B", "A", "0-1")  # pair 1 ok
+        + _game("A", "C", "1-0") + _game("C", "A", "0-1")  # pair 2 mismatch
+        + _game("A", "B", "1-0") + _game("B", "A", "0-1")  # pair 3 ok
+    )
+    p = _write_pgn(tmp_path, body)
+    with caplog.at_level("WARNING", logger="sturddle_view.tournament.pgn_stats"):
+        r = compute_sprt(p, _params())
+    assert r.pairs == 2
+    assert any("pair at offset" in m for m in caplog.messages)
 
 
 def test_sprt_unimplemented_model_raises(tmp_path):

@@ -6,10 +6,13 @@ Reads the PGN; results are cached per-path keyed by (mtime, size).
 """
 from __future__ import annotations
 
+import logging
 import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 
 # Result tags we recognize. Anything else (`*`, missing, malformed) is
@@ -362,6 +365,11 @@ def _iter_pairs(pgn_path: Path) -> list[tuple[str, str, float]]:
     games = list(_iter_games(pgn_path))
     if not games:
         return []
+    if len(games) % 2 == 1:
+        log.warning(
+            "SPRT %s: dropping trailing odd game (total=%d)",
+            pgn_path.name, len(games),
+        )
     # Engine A = whichever engine appears first (deterministic).
     first_white, first_black, _ = games[0]
     a_name, b_name = first_white, first_black
@@ -373,6 +381,11 @@ def _iter_pairs(pgn_path: Path) -> list[tuple[str, str, float]]:
             # Skip pair if it doesn't involve our two engines (shouldn't
             # happen in a 2-engine SPRT, but be defensive).
             if {white, black} != {a_name, b_name}:
+                log.warning(
+                    "SPRT %s: pair at offset %d skipped "
+                    "(engines %s vs %s, expected %s vs %s)",
+                    pgn_path.name, i, white, black, a_name, b_name,
+                )
                 break
             if result == _WHITE_WIN:
                 score += 1.0 if white == a_name else 0.0
