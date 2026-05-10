@@ -33,6 +33,22 @@ function formatResult(payload, humanWhite) {
   return "";
 }
 
+function formatViewGameOver({ result, termination }) {
+  const reasons = {
+    checkmate: "Checkmate",
+    stalemate: "Stalemate",
+    insufficient_material: "Draw -- insufficient material",
+    seventyfive_moves: "Draw -- 75-move rule",
+    fivefold_repetition: "Draw -- fivefold repetition",
+    fifty_moves: "Draw -- 50-move rule",
+    threefold_repetition: "Draw -- threefold repetition",
+  };
+  const reason = reasons[termination] ?? (termination ?? "Game over");
+  if (result === "1-0") return `${reason} -- White wins.`;
+  if (result === "0-1") return `${reason} -- Black wins.`;
+  return reason;
+}
+
 function formatGameOver(payload, humanWhite) {
   const { result, termination, by, loser } = payload;
   if (result === "resign") {
@@ -260,6 +276,8 @@ export const playPerspective = {
     let viewCursor = 0;
     let viewTotalPlies = 0;
     let viewGameOver = false;
+    let viewGameOverAlertShown = false;
+    let viewingGameId = null;
     const pausedBadge = document.getElementById("paused-badge");
     const finishedBadge = document.getElementById("finished-badge");
     function syncPausedUi() {
@@ -359,11 +377,18 @@ export const playPerspective = {
           // (resignAvailable, etc.) — the user isn't playing yet.
           const v = evt.payload.view;
           const wasViewing = viewing;
+          const prevGameId = viewingGameId;
+          viewingGameId = evt.game_id ?? null;
           viewing = !!v;
           if (viewing) {
+            if (!wasViewing || viewingGameId !== prevGameId) viewGameOverAlertShown = false;
             viewCursor = v.cursor ?? 0;
             viewTotalPlies = v.total_plies ?? 0;
             viewGameOver = !!v.game_over;
+            if (viewGameOver && viewCursor === viewTotalPlies && v.result && !viewGameOverAlertShown) {
+              viewGameOverAlertShown = true;
+              showAlert({ message: formatViewGameOver(v), messageClass: "game-over-message" });
+            }
             resignAvailable = false;
             // Board is read-only in view mode; the user navigates via ribbon.
             view.setEnabled(false);

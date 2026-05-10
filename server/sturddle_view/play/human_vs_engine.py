@@ -1245,7 +1245,15 @@ class HumanVsEngine:
                 "eval": eval_at_cursor,
                 # UI disables Play-from-here when the cursor lands on a
                 # finished position (mirror of the backend guard).
-                "game_over": self._board.is_game_over(),
+                "game_over": (outcome := self._board.outcome()) is not None,
+                **(
+                    {
+                        "result": outcome.result(),
+                        "termination": outcome.termination.name.lower(),
+                    }
+                    if outcome is not None
+                    else {}
+                ),
             }
         return Event(
             kind="board_update",
