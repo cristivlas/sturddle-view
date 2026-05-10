@@ -505,6 +505,19 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (atBottom && scroller) scroller.scrollTop = scroller.scrollHeight;
   }
 
+  // rAF-coalesced render: at fast TC the runner_log stream can drive
+  // hundreds of renders/sec; without this the main thread wedges and
+  // button clicks feel dead.
+  let _eventLogPending = false;
+  function scheduleEventLog() {
+    if (_eventLogPending) return;
+    _eventLogPending = true;
+    requestAnimationFrame(() => {
+      _eventLogPending = false;
+      renderEventLog();
+    });
+  }
+
   function renderEventLog() {
     const banner = logBody.querySelector(".wb-error-banner");
     if (banner) {
@@ -697,7 +710,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       activeProxies.clear();
     }
 
-    if (added) renderEventLog();
+    if (added) scheduleEventLog();
     if (inner === KIND.PROXY_STARTED || inner === KIND.PROXY_ENDED ||
         inner === KIND.PROXY_PAIRED || inner === KIND.PROXY_UNPAIRED ||
         inner === KIND.GAME_FINISHED || evt.kind === EVT.STATUS ||
@@ -762,7 +775,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         if (!e.kind?.startsWith(EVT_PREFIX)) continue;
         if (addLogEntry(e)) added = true;
       }
-      if (added) renderEventLog();
+      if (added) scheduleEventLog();
     } catch (e) {
       log?.(`event backfill failed: ${e.message}`);
     }
