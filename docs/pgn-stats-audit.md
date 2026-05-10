@@ -561,7 +561,13 @@ distill into a minimal fixture, don't import the whole file.
 | 13 | Surface `tournament_type` in API standings response | trivial | high | One line in `api/tournaments.py` |
 | 14 | UTF-8 replace logging | small | low | Hard to trigger cleanly; defer |
 | 15 | SPRT UI in template form | medium | medium | Separate PR; spec already exists |
-| -- | Stop-cleanup / supervisor / restart | -- | -- | See `docs/stop-cleanup-and-restart.md` -- design + Step 1 done (commit e48d567), Step 2/3 done (commit 7ef670b) |
+| 16 | ✅ Bound PGN tail polls so Stop is responsive | small | medium | Done (commit 14f2620). 256KB cap snapped to PGN game boundary; runner.stop() unbounded await once chain is bounded |
+| 16a | ✅ Warn once per oversized PGN game | trivial | medium | Done (commit a0b548d) |
+| 16b | ✅ Kill proc if start() fails after spawn | small | high | Done (commit 68de9a6). Runner-level complement to #8 |
+| 16c | TODO: POSIX SIGTERM grace race | small | medium | Marked in code (commit eefb158); needs Linux/macOS to test |
+| 17 | ✅ rAF-coalesce event log render | small | low | Done (commit 6b8cd7c). Per-event innerHTML rebuild swamped main thread at fast TC |
+| 18 | UI Pause/Info "delay" -- server-side bottleneck | medium | medium | Tabled. Symptom: GET /api/tournaments/{id} and POST /stop slow under load; suspect lock contention or in-line stats compute. Diagnostic at `scripts/diag_pause_stall.py` |
+| -- | ~~Stop-cleanup / supervisor / restart~~ | -- | -- | Restart approach (e48d567, 7ef670b) rejected; reverted to 28f5ccf. Replaced by bounded-chain + unbounded-await (#16). Backup: `backup/restart-attempt` |
 
 Items 1-6 are all single-file, server-only, fully unit-testable.
 Items 7-8 add log lines (caplog assertions). Item 9 is the only one
