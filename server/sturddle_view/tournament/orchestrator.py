@@ -444,8 +444,8 @@ class Orchestrator:
                         t.id, pgn_size / (1024 * 1024),
                     )
                 t0 = time.monotonic()
-                dropped = await asyncio.to_thread(
-                    rewrite_drop_partial_pairs, spec.pgn_path,
+                dropped, _deltas = await asyncio.to_thread(
+                    rewrite_drop_partial_pairs, spec.pgn_path, spec.config_path,
                 )
                 elapsed = time.monotonic() - t0
                 if dropped:

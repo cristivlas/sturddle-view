@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+import json
+
 from sturddle_view.tournament.pgn_stats import (
     Standings,
     SprtResult,
@@ -18,6 +20,7 @@ from sturddle_view.tournament.pgn_stats import (
     count_partial_pairs,
     elo_from_score,
     elo_margin_from_wld,
+    patch_config_json,
     read_game_pgn,
     rewrite_drop_partial_pairs,
 )
@@ -553,8 +556,9 @@ def test_rewrite_no_partials_no_op(tmp_path):
     )
     p = _write_pgn(tmp_path, body)
     before = p.read_bytes()
-    n = rewrite_drop_partial_pairs(p)
+    n, deltas = rewrite_drop_partial_pairs(p)
     assert n == 0
+    assert deltas == {}
     assert p.read_bytes() == before
     bak = p.with_suffix(p.suffix + ".bak")
     assert not bak.exists()
@@ -566,8 +570,9 @@ def test_rewrite_drops_partial_pair(tmp_path):
         + _game_round("2", "A", "B", "1-0")  # partial: round 2 missing B vs A
     )
     p = _write_pgn(tmp_path, body)
-    n = rewrite_drop_partial_pairs(p)
+    n, deltas = rewrite_drop_partial_pairs(p)
     assert n == 1
+    assert deltas == {"A vs B": {"wins": 1, "losses": 0, "draws": 0}}
     bak = p.with_suffix(p.suffix + ".bak")
     assert bak.exists()
     # After rewrite: 0 partial pairs, 2 unique games.
@@ -582,8 +587,9 @@ def test_rewrite_dedups_resume_duplicates(tmp_path):
         + _game_round("1", "B", "A", "0-1")
     )
     p = _write_pgn(tmp_path, body)
-    n = rewrite_drop_partial_pairs(p)
+    n, deltas = rewrite_drop_partial_pairs(p)
     assert n == 1  # one duplicate dropped; no partial pair (round 1 has both colors)
+    assert deltas == {"A vs B": {"wins": 1, "losses": 0, "draws": 0}}
     assert compute_standings(p).games == 2
 
 
@@ -594,16 +600,53 @@ def test_rewrite_mixed_partials_and_dups(tmp_path):
         + _game_round("3", "A", "B", "1-0") + _game_round("3", "B", "A", "0-1")  # complete
     )
     p = _write_pgn(tmp_path, body)
-    n = rewrite_drop_partial_pairs(p)
+    n, deltas = rewrite_drop_partial_pairs(p)
     # Round 2 dedups to 1 game (still partial, so dropped). Total dropped = 2.
     assert n == 2
+    assert deltas == {"A vs B": {"wins": 2, "losses": 0, "draws": 0}}
     assert count_partial_pairs(p) == 0
     assert compute_standings(p).games == 4
 
 
+def test_rewrite_delta_loss(tmp_path):
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("2", "A", "B", "0-1")  # partial: A loses as White
+    )
+    p = _write_pgn(tmp_path, body)
+    _n, deltas = rewrite_drop_partial_pairs(p)
+    assert deltas == {"A vs B": {"wins": 0, "losses": 1, "draws": 0}}
+
+
+def test_rewrite_delta_draw(tmp_path):
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("2", "A", "B", "1/2-1/2")  # partial: draw
+    )
+    p = _write_pgn(tmp_path, body)
+    _n, deltas = rewrite_drop_partial_pairs(p)
+    assert deltas == {"A vs B": {"wins": 0, "losses": 0, "draws": 1}}
+
+
+def test_rewrite_delta_multi_pair(tmp_path):
+    # Two separate engine pairs each have a partial round.
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("1", "C", "D", "1-0") + _game_round("1", "D", "C", "0-1")
+        + _game_round("2", "A", "B", "1/2-1/2")   # partial A vs B
+        + _game_round("2", "C", "D", "0-1")        # partial C vs D
+    )
+    p = _write_pgn(tmp_path, body)
+    _n, deltas = rewrite_drop_partial_pairs(p)
+    assert deltas == {
+        "A vs B": {"wins": 0, "losses": 0, "draws": 1},
+        "C vs D": {"wins": 0, "losses": 1, "draws": 0},
+    }
+
+
 def test_rewrite_missing_pgn_no_op(tmp_path):
     p = tmp_path / "absent.pgn"
-    assert rewrite_drop_partial_pairs(p) == 0
+    assert rewrite_drop_partial_pairs(p) == (0, {})
 
 
 def test_rewrite_backup_bytes_equal_original(tmp_path):
@@ -624,8 +667,11 @@ def test_rewrite_idempotent(tmp_path):
         + _game_round("2", "A", "B", "1-0")  # partial
     )
     p = _write_pgn(tmp_path, body)
-    assert rewrite_drop_partial_pairs(p) == 1  # first run drops the partial
-    assert rewrite_drop_partial_pairs(p) == 0  # second run is a no-op
+    n, _ = rewrite_drop_partial_pairs(p)
+    assert n == 1  # first run drops the partial
+    n, deltas = rewrite_drop_partial_pairs(p)
+    assert n == 0  # second run is a no-op
+    assert deltas == {}
 
 
 def test_rewrite_skips_ongoing_results(tmp_path):
@@ -642,6 +688,103 @@ def test_rewrite_skips_ongoing_results(tmp_path):
     assert '[Result "*"]' not in after
     assert '[Round "3"]' not in after  # partial dropped
     assert '[Round "1"]' in after
+
+
+# ---------------------------------------------------------------------------
+# patch_config_json
+# ---------------------------------------------------------------------------
+
+_CONFIG_TEMPLATE = {
+    "opening": {"start": 1},
+    "stats": {
+        "A vs B": {
+            "wins": 10, "losses": 8, "draws": 4,
+            "penta_WW": 2, "penta_WD": 3, "penta_WL": 1,
+            "penta_DD": 1, "penta_LD": 2, "penta_LL": 1,
+        }
+    },
+}
+
+
+def _write_config(tmp_path, data=None):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps(data or _CONFIG_TEMPLATE, indent=4), encoding="utf-8")
+    return p
+
+
+def test_patch_config_subtracts_wld(tmp_path):
+    p = _write_config(tmp_path)
+    patch_config_json(p, {"A vs B": {"wins": 1, "losses": 0, "draws": 0}})
+    stats = json.loads(p.read_text())["stats"]["A vs B"]
+    assert stats["wins"] == 9
+    assert stats["losses"] == 8
+    assert stats["draws"] == 4
+
+
+def test_patch_config_zeros_penta(tmp_path):
+    p = _write_config(tmp_path)
+    patch_config_json(p, {"A vs B": {"wins": 1, "losses": 0, "draws": 0}})
+    stats = json.loads(p.read_text())["stats"]["A vs B"]
+    for pk in ("penta_WW", "penta_WD", "penta_WL", "penta_DD", "penta_LD", "penta_LL"):
+        assert stats[pk] == 0
+
+
+def test_patch_config_clamps_at_zero(tmp_path):
+    data = {
+        "stats": {"A vs B": {"wins": 0, "losses": 0, "draws": 0,
+                              "penta_WW": 0, "penta_WD": 0, "penta_WL": 0,
+                              "penta_DD": 0, "penta_LD": 0, "penta_LL": 0}}
+    }
+    p = _write_config(tmp_path, data)
+    patch_config_json(p, {"A vs B": {"wins": 5, "losses": 5, "draws": 5}})
+    stats = json.loads(p.read_text())["stats"]["A vs B"]
+    assert stats["wins"] == 0
+    assert stats["losses"] == 0
+    assert stats["draws"] == 0
+
+
+def test_patch_config_writes_backup(tmp_path):
+    p = _write_config(tmp_path)
+    original = p.read_bytes()
+    patch_config_json(p, {"A vs B": {"wins": 1, "losses": 0, "draws": 0}})
+    bak = p.with_suffix(p.suffix + ".bak")
+    assert bak.read_bytes() == original
+
+
+def test_patch_config_no_op_if_missing(tmp_path):
+    p = tmp_path / "config.json"
+    patch_config_json(p, {"A vs B": {"wins": 1, "losses": 0, "draws": 0}})
+    assert not p.exists()
+
+
+def test_patch_config_no_op_if_empty_deltas(tmp_path):
+    p = _write_config(tmp_path)
+    original = p.read_bytes()
+    patch_config_json(p, {})
+    assert p.read_bytes() == original
+
+
+def test_patch_config_unknown_pair_warns(tmp_path, caplog):
+    import logging
+    p = _write_config(tmp_path)
+    with caplog.at_level(logging.WARNING):
+        patch_config_json(p, {"X vs Y": {"wins": 1, "losses": 0, "draws": 0}})
+    assert "X vs Y" in caplog.text
+    # File unchanged -- no known pair was patched.
+    assert not p.with_suffix(p.suffix + ".bak").exists()
+
+
+def test_patch_config_reversed_key(tmp_path):
+    # config.json stores "A vs B"; delta arrives as "B vs A" (game played
+    # with colors swapped). wins<->losses must be flipped when applying.
+    p = _write_config(tmp_path)  # stats stored as "A vs B": wins=10, losses=8
+    patch_config_json(p, {"B vs A": {"wins": 2, "losses": 1, "draws": 0}})
+    stats = json.loads(p.read_text())["stats"]["A vs B"]
+    # "B vs A" win = "A vs B" loss: losses 8 - 2 = 6
+    # "B vs A" loss = "A vs B" win: wins 10 - 1 = 9
+    assert stats["wins"] == 9
+    assert stats["losses"] == 6
+    assert stats["draws"] == 4
 
 
 # ---------------------------------------------------------------------------

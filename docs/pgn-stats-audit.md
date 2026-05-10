@@ -551,7 +551,7 @@ distill into a minimal fixture, don't import the whole file.
 | 8a | ✅ Partial-pair PGN rewrite (Path A) | small | high | Done (commit 28f5ccf) |
 | 8b | ~~Graceful Windows Stop (CTRL_BREAK + grace)~~ | -- | -- | Tried 2026-05-10; fastchess ignores CTRL_BREAK. Reverted |
 | 8c | ✅ Surface partial-pair count in API/UI | small | medium | Done (commit 1bdd930) |
-| 8d | Path B: resume completion via config.json reconstruction | medium-large | medium | Deferred -- depends on fastchess internals |
+| 8d | ✅ Path B: patch config.json stats after partial-pair rewrite | medium | high | Done. rewrite_drop_partial_pairs(pgn_path, config_path) returns deltas; patch_config_json subtracts W/L/D (swapping wins/losses for reversed pair keys) and zeros penta for affected pairs so fastchess resumes from the correct round. Both steps run in one to_thread call. Validated on real tournaments; no measurable overhead vs pre-8d baseline. |
 | 9a | ✅ Live Games "Starting up..." placeholder | trivial | low | Done (commit 28f5ccf) |
 | 9b | Provisional pairs from fastchess stdout | medium | medium | Deferred -- new event vocabulary |
 | 9c | Faster FEN ingestion (orchestrator HTTP path) | large | high | Architectural; defer |

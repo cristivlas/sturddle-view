@@ -6,6 +6,7 @@ Reads the PGN; results are cached per-path keyed by (mtime, size).
 """
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
@@ -290,7 +291,10 @@ def _needs_rewrite(pgn_path: Path) -> bool:
     return any(n == 1 for n in pair_counts.values())
 
 
-def rewrite_drop_partial_pairs(pgn_path: Path) -> int:
+def rewrite_drop_partial_pairs(
+    pgn_path: Path,
+    config_path: Path | None = None,
+) -> tuple[int, dict[str, dict[str, int]]]:
     """Drop games belonging to partial pairs (and resume duplicates).
 
     For tournaments where Pause interrupted the second game of a pair
@@ -299,17 +303,21 @@ def rewrite_drop_partial_pairs(pgn_path: Path) -> int:
     those games (and keeps only the last copy of any
     `(round, white, black)` duplicate from resume cycles).
 
-    Returns the number of game records removed. If 0, the file is
-    untouched and no backup is written. Otherwise the prior file is
-    preserved as `<pgn>.bak` (overwriting any earlier backup) and the
-    cleaned PGN replaces the original atomically.
+    If ``config_path`` is given and a rewrite occurs, ``patch_config_json``
+    is called in the same thread to keep fastchess's resume counter in sync.
+
+    Returns ``(dropped_count, deltas)`` where ``deltas`` maps each
+    fastchess pair key (``"White vs Black"``) to a dict of
+    ``{"wins": N, "losses": N, "draws": N}`` tallied from the dropped
+    games.  If ``dropped_count == 0`` the file is untouched, no backup is
+    written, and ``deltas`` is empty.
     """
     if not pgn_path.exists():
-        return 0
+        return 0, {}
     # Fast pre-check via header-only scan (~50x faster than chess.pgn).
     # Skip the expensive full-parse below if the file is already clean.
     if not _needs_rewrite(pgn_path):
-        return 0
+        return 0, {}
 
     # Split the PGN into per-game text blocks via line scan -- avoids
     # chess.pgn's full move-tree parse (which dominates rewrite time
@@ -381,7 +389,22 @@ def rewrite_drop_partial_pairs(pgn_path: Path) -> int:
 
     dropped = len(games) - len(final_keep)
     if dropped == 0:
-        return 0
+        return 0, {}
+
+    # Tally W/L/D for each dropped game, keyed by fastchess pair key
+    # ("White vs Black") so the caller can patch config.json stats.
+    deltas: dict[str, dict[str, int]] = {}
+    for i in range(len(games)):
+        if i not in final_keep:
+            _rd, w, b, result, _bl = games[i]
+            key = f"{w} vs {b}"
+            entry = deltas.setdefault(key, {"wins": 0, "losses": 0, "draws": 0})
+            if result == _WHITE_WIN:
+                entry["wins"] += 1
+            elif result == _BLACK_WIN:
+                entry["losses"] += 1
+            else:
+                entry["draws"] += 1
 
     backup = pgn_path.with_suffix(pgn_path.suffix + ".bak")
     shutil.copyfile(pgn_path, backup)
@@ -395,7 +418,65 @@ def rewrite_drop_partial_pairs(pgn_path: Path) -> int:
                     f.write("\n" if block.endswith("\n") else "\n\n")
     os.replace(tmp, pgn_path)
     _iter_games_cache.pop(pgn_path, None)
-    return dropped
+    if config_path is not None:
+        patch_config_json(config_path, deltas)
+    return dropped, deltas
+
+
+_PENTA_KEYS = ("penta_WW", "penta_WD", "penta_WL", "penta_DD", "penta_LD", "penta_LL")
+
+
+def patch_config_json(
+    config_path: Path,
+    deltas: dict[str, dict[str, int]],
+) -> None:
+    """Subtract dropped-game W/L/D from fastchess config.json stats.
+
+    ``deltas`` maps ``"White vs Black"`` pair keys to
+    ``{"wins": N, "losses": N, "draws": N}`` tallied from games that
+    were removed by ``rewrite_drop_partial_pairs``.  For each affected
+    pair, penta counts are zeroed because we cannot reconstruct partial
+    pair outcomes -- fastchess will rebuild them from new games.
+
+    Written atomically; the original is preserved as ``config.json.bak``.
+    No-op if ``config_path`` does not exist or ``deltas`` is empty.
+    """
+    if not deltas or not config_path.exists():
+        return
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    stats = data.get("stats", {})
+    changed = False
+    for pair_key, delta in deltas.items():
+        # fastchess serializes stats under whichever engine was "first" in
+        # its PlayerPairKey -- typically the engine listed first in the
+        # command. If the dropped game had the engines in the opposite order
+        # (White=engine2), our delta key is reversed vs the stored key.
+        # Try the reversed key and swap wins<->losses to match perspective.
+        w, _sep, b = pair_key.partition(" vs ")
+        rev_key = f"{b} vs {w}"
+        if pair_key in stats:
+            d = delta
+            key = pair_key
+        elif rev_key in stats:
+            d = {"wins": delta["losses"], "losses": delta["wins"], "draws": delta["draws"]}
+            key = rev_key
+        else:
+            log.warning("patch_config_json: pair key %r not found in stats", pair_key)
+            continue
+        entry = stats[key]
+        entry["wins"] = max(0, entry.get("wins", 0) - d["wins"])
+        entry["losses"] = max(0, entry.get("losses", 0) - d["losses"])
+        entry["draws"] = max(0, entry.get("draws", 0) - d["draws"])
+        for pk in _PENTA_KEYS:
+            entry[pk] = 0
+        changed = True
+    if not changed:
+        return
+    backup = config_path.with_suffix(config_path.suffix + ".bak")
+    shutil.copyfile(config_path, backup)
+    tmp = config_path.with_suffix(config_path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    os.replace(tmp, config_path)
 
 
 def count_partial_pairs(pgn_path: Path) -> int:
