@@ -33,17 +33,18 @@ function formatResult(payload, humanWhite) {
   return "";
 }
 
+const TERMINATION_REASONS = {
+  checkmate: "Checkmate",
+  stalemate: "Stalemate",
+  insufficient_material: "Draw -- insufficient material",
+  seventyfive_moves: "Draw -- 75-move rule",
+  fivefold_repetition: "Draw -- fivefold repetition",
+  fifty_moves: "Draw -- 50-move rule",
+  threefold_repetition: "Draw -- threefold repetition",
+};
+
 function formatViewGameOver({ result, termination }) {
-  const reasons = {
-    checkmate: "Checkmate",
-    stalemate: "Stalemate",
-    insufficient_material: "Draw -- insufficient material",
-    seventyfive_moves: "Draw -- 75-move rule",
-    fivefold_repetition: "Draw -- fivefold repetition",
-    fifty_moves: "Draw -- 50-move rule",
-    threefold_repetition: "Draw -- threefold repetition",
-  };
-  const reason = reasons[termination] ?? (termination ?? "Game over");
+  const reason = TERMINATION_REASONS[termination] ?? (termination ?? "Game over");
   if (result === "1-0") return `${reason} -- White wins.`;
   if (result === "0-1") return `${reason} -- Black wins.`;
   return reason;
@@ -58,23 +59,11 @@ function formatGameOver(payload, humanWhite) {
     const humanLost = (loser === "white") === humanWhite;
     return humanLost ? "You lost on time." : "Engine lost on time.";
   }
-  // Standard chess result string + python-chess termination name.
-  // Map known terminations to a short phrase; fall back to the raw name.
-  const reasons = {
-    checkmate: "Checkmate",
-    stalemate: "Stalemate",
-    insufficient_material: "Draw — insufficient material",
-    seventyfive_moves: "Draw — 75-move rule",
-    fivefold_repetition: "Draw — fivefold repetition",
-    fifty_moves: "Draw — 50-move rule",
-    threefold_repetition: "Draw — threefold repetition",
-  };
-  const reason = reasons[termination] ?? (termination ?? "Game over");
+  const reason = TERMINATION_REASONS[termination] ?? (termination ?? "Game over");
   if (result === "1-0" || result === "0-1") {
     const humanWon = (result === "1-0") === humanWhite;
-    return `${reason} — ${humanWon ? "you win" : "engine wins"}.`;
+    return `${reason} -- ${humanWon ? "you win" : "engine wins"}.`;
   }
-  // 1/2-1/2 or unknown.
   return reason;
 }
 
