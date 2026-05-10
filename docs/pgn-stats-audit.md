@@ -195,6 +195,121 @@ file change (~50 lines) plus matching `setValues`/`getValues`/
 only as a pointer; design lives in `docs/tournament-spec.md` lines
 333-336.
 
+## Performance
+
+Today's design holds up under typical workloads. The concerns below
+show up at scale (many tournaments / large PGNs / cold cache) or
+after server restarts.
+
+### What is already good
+
+- `_iter_games` cache is per-path, single-entry, keyed by
+  `(mtime_ns, st_size)`. One entry per tournament's `games.pgn`.
+  Bounded by the number of tournaments on disk; ~100KB per
+  1000-game tournament. No leak.
+- `_serialize(with_stats=True)` triggers three walks in sequence
+  (`compute_standings`, `compute_games_list`, `compute_sprt`), but
+  they all dispatch to the same `_iter_games` and hit the cache --
+  exactly one parse per request when the file hasn't changed.
+- `_TAG_RE` is compiled once at module load; header-only scan
+  skips move trees. ~100-200ms for a 5000-game PGN on a cold
+  cache, near-zero on a hot one.
+- PGN tailer reads only the appended bytes per tick (`stat`-then-
+  seek-to-offset); no full rescans during steady state.
+- Sync FastAPI handlers run on the threadpool, so PGN parsing
+  never blocks the event loop.
+- Workspace polls at 5s, not 1Hz. Standings are not recomputed on
+  every WS event -- the client refreshes wholesale every 5s and
+  trusts the server cache between refreshes.
+
+### Real concerns
+
+#### P1. List endpoint is O(N) over PGNs on cold cache
+
+`api/tournaments.py:155` calls `_serialize(t, with_standings=True)`
+for every tournament. After a server restart (cache cold), with 50
+tournaments at 1000 games each this is ~50 sequential PGN parses,
+~5-10 seconds total before the response returns. After the cache
+warms, near-zero.
+
+Options:
+- (a) Drop `with_standings=True` from the list endpoint; let each
+  workspace fetch its own standings via `/api/tournaments/{id}`.
+  Requires UI change to handle missing standings on initial render.
+- (b) Warm the cache on startup with a background task that walks
+  every tournament's PGN once, off the critical path.
+- (c) Persist a small "summary cache" (W/L/D per engine + game
+  count) to each tournament's state.json on game finish; serve from
+  it without parsing.
+
+Recommendation: (a) first. It's the smallest change and the data
+is rarely needed in the list view (the list mostly shows status
+and name).
+
+#### P2. Tailer re-scans full PGN on orchestrator restart
+
+`pgn_tail.py` starts at `_offset=0` after a restart and walks the
+whole file to re-emit games to the reconciliation queue. Uses
+`chess.pgn.read_game` (full move tree), not the header-only path,
+because reconciliation needs `uci_moves`. For a 10k-game tournament
+this is 1-2 seconds at startup.
+
+The tailer's `_offset` and `_game_n` are pure in-memory state. No
+checkpoint to disk.
+
+Option: persist `(offset, game_n)` to a sidecar file (e.g.
+`<tournament>/tailer.checkpoint`) on each successful poll, atomically
+via the existing `_atomic` helper. On restart, seek to the saved
+offset. Worst case (checkpoint older than truth) just re-emits a
+handful of games to reconciliation -- already idempotent.
+
+Effort: small. Testability: high (write checkpoint, restart,
+assert offset honored).
+
+#### P3. compute_standings / compute_sprt do not survive across
+fastchess appends
+
+The `_iter_games` cache invalidates the moment fastchess writes one
+new game (size changes, mtime changes). So during an active
+tournament, every workspace refresh re-parses the entire PGN from
+scratch -- even though only a handful of games are new. At 1000
+games this is ~50ms per refresh per running tournament, which is
+fine for one tournament but climbs O(N) when several are running
+concurrently.
+
+Option: change `_iter_games` from a single-snapshot cache to an
+append-aware cache that keeps the prior tuple and only parses bytes
+past the prior `st_size`. Mtime check is unchanged for invalidation
+on rewrites/truncation.
+
+Effort: medium. Touches a hot path; needs careful tests for
+edge cases (file shrinks, file replaced wholesale).
+
+#### P4. Three walks per /api/tournaments/{id} request even on hot cache
+
+`compute_standings`, `compute_games_list`, and `compute_sprt` each
+iterate the cached games tuple top-to-bottom. The cache prevents
+re-parsing, but doesn't prevent three sequential O(games) scans.
+For a 5000-game tournament this is ~3x the work it has to be.
+
+Option: introduce a single internal walk that produces a typed
+record (white, black, result, round, ply_count, ...) and let
+the three functions consume from one pass. `compute_sprt` needs
+the round tag that the others don't, so the unified record needs
+to carry it.
+
+Effort: medium. Net win is small (~10% of an already-fast call);
+defer unless P1+P3 don't move the needle enough.
+
+### Perf priority
+
+| # | Item | Effort | Impact | Notes |
+|---|------|--------|--------|-------|
+| P1 | Drop standings from list endpoint | small | high (cold cache) | Simplest: just stop computing them in the list path |
+| P2 | Tailer offset checkpoint | small | medium (restart) | Atomic sidecar via `_atomic` |
+| P3 | Append-aware `_iter_games` cache | medium | high (steady-state running tournament) | Hot-path edit; needs careful tests |
+| P4 | Unify the three walks | medium | low | Defer; revisit only if profiling justifies |
+
 ## Test strategy
 
 Don't pick one methodology for the whole list. Each item below is
@@ -270,6 +385,10 @@ distill into a minimal fixture, don't import the whole file.
 | 12 | Surface `tournament_type` in API standings response | trivial | high | One line in `api/tournaments.py` |
 | 13 | UTF-8 replace logging (#5) | small | low | Hard to trigger cleanly; defer |
 | 14 | SPRT UI in template form | medium | medium | Separate PR; spec already exists |
+| P1 | Drop standings from list endpoint | small | high | See Performance section |
+| P2 | Tailer offset checkpoint | small | medium | See Performance section |
+| P3 | Append-aware `_iter_games` cache | medium | high | See Performance section |
+| P4 | Unify the three walks | medium | low | See Performance section; defer |
 
 Items 1-6 are all single-file, server-only, fully unit-testable.
 Items 7-8 add log lines (caplog assertions). Item 9 is the only one
