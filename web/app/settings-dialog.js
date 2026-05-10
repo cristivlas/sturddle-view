@@ -238,12 +238,12 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       autoClaimDraws.checked = initial.auto_claim_draws !== false;
       autoClaimDraws.textContent = "Auto-claim draws";
       autoClaimDraws.title = "Automatically end the game on threefold repetition or 50-move rule";
-      autoClaimDraws.style.marginLeft = "16px";
       autoClaimDraws.addEventListener("change", () => {
         putSettings({ auto_claim_draws: autoClaimDraws.checked });
       });
       const takebackRow = document.createElement("div");
       takebackRow.className = "settings-row";
+      takebackRow.style.cssText = "display:flex; flex-wrap:wrap; gap:16px; align-items:center;";
       takebackRow.append(allowTakeback, autoClaimDraws);
 
       // Board style: single preset picker + live preview swatch reusing
