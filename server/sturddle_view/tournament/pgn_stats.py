@@ -410,6 +410,12 @@ def compute_sprt(
     model = params.get("model", "normalized")
     if model != "normalized":
         raise NotImplementedError(f"SPRT model {model!r} not implemented")
+    if elo0 >= elo1:
+        raise ValueError(f"SPRT requires elo0 < elo1; got elo0={elo0}, elo1={elo1}")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError(f"SPRT alpha must be in (0, 1); got {alpha}")
+    if not 0.0 < beta < 1.0:
+        raise ValueError(f"SPRT beta must be in (0, 1); got {beta}")
 
     lower, upper = _sprt_bounds(alpha, beta)
     pairs = _iter_pairs(pgn_path)

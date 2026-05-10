@@ -137,7 +137,8 @@ def _serialize(
         if sprt_params:
             try:
                 out["sprt"] = compute_sprt(store.pgn_path(t.id), sprt_params).to_dict()
-            except (NotImplementedError, KeyError):
+            except (NotImplementedError, KeyError, ValueError) as e:
+                log.warning("compute_sprt failed for %s: %s", t.id, e)
                 out["sprt"] = None
     return out
 

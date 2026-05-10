@@ -402,6 +402,24 @@ def test_sprt_unimplemented_model_raises(tmp_path):
         compute_sprt(p, _params(model="bayesian"))
 
 
+@pytest.mark.parametrize("overrides", [
+    {"elo0": 5.0, "elo1": 5.0},   # hypotheses must differ
+    {"elo0": 5.0, "elo1": 0.0},   # elo0 must be < elo1
+    {"alpha": 0.0},               # probability must be > 0
+    {"alpha": 1.0},               # probability must be < 1
+    {"alpha": -0.1},
+    {"alpha": 1.5},
+    {"beta": 0.0},
+    {"beta": 1.0},
+    {"beta": -0.1},
+    {"beta": 1.5},
+])
+def test_sprt_invalid_params_raise(tmp_path, overrides):
+    p = _write_pgn(tmp_path, "")
+    with pytest.raises(ValueError):
+        compute_sprt(p, _params(**overrides))
+
+
 def test_sprt_to_dict_round_trip(tmp_path):
     p = _write_pgn(tmp_path, "")
     d = compute_sprt(p, _params()).to_dict()
