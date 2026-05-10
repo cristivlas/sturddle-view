@@ -96,6 +96,9 @@ class PgnTailer:
         # available delta (cap hit). The run loop uses this to skip its
         # sleep so backlog drains promptly.
         self._has_more = False
+        # One-shot guard: avoid logging the oversized-game warning on
+        # every poll while the same giant game is in flight.
+        self._warned_oversized = False
 
     @property
     def path(self) -> Path:
@@ -256,12 +259,15 @@ class PgnTailer:
             return end
         sep = chunk.rfind(b"\n\n[")
         if sep < 0:
-            log.warning(
-                "PgnTailer: no game boundary in %d-byte window starting "
-                "at offset %d (single game > cap?); reading full delta",
-                end - start, start,
-            )
+            if not self._warned_oversized:
+                log.warning(
+                    "PgnTailer: no game boundary in %d-byte window starting "
+                    "at offset %d (single game > cap?); reading full delta",
+                    end - start, start,
+                )
+                self._warned_oversized = True
             return file_size
+        self._warned_oversized = False
         return start + sep + 2  # include the blank line; leave the `[` for next pass
 
     def _parse_delta(
