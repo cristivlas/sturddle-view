@@ -481,11 +481,13 @@ class FastchessRunner:
                 except ProcessLookupError:
                     pass
 
+        # Wait for the supervisor to finish its terminal-event chain. The
+        # chain is bounded (state update + non-blocking publishes + bounded
+        # tailer drain), so an unbounded await is safe and required: we
+        # must not return while cleanup may still race with the next start.
         try:
-            await asyncio.wait_for(asyncio.shield(self._supervisor), timeout=10.0)
+            await asyncio.shield(self._supervisor)
             log.info("stop: supervisor returned for pid=%d", pid)
-        except asyncio.TimeoutError:
-            log.error("stop: supervisor did not finish 10s after kill (pid=%d)", pid)
         except asyncio.CancelledError:
             pass
 
