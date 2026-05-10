@@ -149,6 +149,30 @@ async def test_start_rolls_back_on_runner_failure(store, monkeypatch):
     assert final.stopped_at is not None
 
 
+async def test_start_stops_runner_on_post_spawn_failure(store):
+    # Fastchess.start() can raise AFTER spawning the subprocess (e.g.
+    # assign_to_job throws, or the started-event emit fails). Without
+    # the rollback calling runner.stop(), the subprocess is orphaned.
+    bad = _FakeRunner()
+
+    async def boom(spec, on_event):
+        bad._running = True
+        bad._on_event = on_event
+        bad.started.append(spec)
+        raise RuntimeError("boom after spawn")
+
+    bad.start = boom  # type: ignore[assignment]
+    orch = Orchestrator(store, bad)
+    tid = _create(store)
+
+    with pytest.raises(RuntimeError, match="boom after spawn"):
+        await orch.start(tid)
+
+    assert not bad.is_running(), "orphaned runner after failed start"
+    assert orch.active_id() is None
+    assert store.get(tid).status == STATUS_STOPPED
+
+
 async def test_start_passes_correct_runspec(store, runner, orch):
     tid = _create(store, template={"tc": "10+0.1"})
     await orch.start(tid)

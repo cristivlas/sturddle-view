@@ -436,6 +436,15 @@ class Orchestrator:
             await self._emit_status(updated)
             await self._runner.start(spec, self._on_runner_event)
         except Exception:
+            # If start() raised AFTER spawning the subprocess (e.g.
+            # post-spawn assign_to_job or event-emit failure), the runner
+            # is left "running" and will orphan the process unless we
+            # stop it explicitly. stop() is idempotent for the
+            # never-spawned case.
+            try:
+                await self._runner.stop()
+            except Exception:
+                log.exception("rollback: runner.stop() failed")
             # Roll back the active claim so a failed start doesn't lock
             # out the next attempt.
             self._active_id = None
