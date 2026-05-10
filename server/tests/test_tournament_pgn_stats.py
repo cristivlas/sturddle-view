@@ -303,11 +303,13 @@ def test_sprt_bounds_have_correct_signs():
 
 
 def test_sprt_runaway_a_dominates_accepts_h1(tmp_path):
-    # 100 pairs, A wins both games of every pair. Strong H1.
+    # 99 pairs A wins both + 1 pair drawn. Strong H1. The single drawn
+    # pair seeds nonzero sample variance (real runs always have one).
     body = ""
-    for _ in range(100):
+    for _ in range(99):
         body += _game("A", "B", "1-0")  # game 1: A white wins
         body += _game("B", "A", "0-1")  # game 2: A black wins
+    body += _game("A", "B", "1/2-1/2") + _game("B", "A", "1/2-1/2")
     p = _write_pgn(tmp_path, body)
     r = compute_sprt(p, _params(elo0=0, elo1=5))
     assert r.pairs == 100
@@ -316,11 +318,12 @@ def test_sprt_runaway_a_dominates_accepts_h1(tmp_path):
 
 
 def test_sprt_runaway_b_dominates_accepts_h0(tmp_path):
-    # 100 pairs, A loses both games of every pair. Strongly rejects H1.
+    # 99 pairs A loses both + 1 pair drawn. Strongly rejects H1.
     body = ""
-    for _ in range(100):
+    for _ in range(99):
         body += _game("A", "B", "0-1")
         body += _game("B", "A", "1-0")
+    body += _game("A", "B", "1/2-1/2") + _game("B", "A", "1/2-1/2")
     p = _write_pgn(tmp_path, body)
     r = compute_sprt(p, _params(elo0=0, elo1=5))
     assert r.pairs == 100
@@ -355,6 +358,34 @@ def test_sprt_balanced_play_continues(tmp_path):
     assert r.status == "continue", (
         f"expected continue with balanced play, got {r.status} (LLR={r.llr})"
     )
+
+
+def test_sprt_all_draws_returns_continue(tmp_path):
+    # All pairs score identically (1.0 each) -> sample variance is 0.
+    # The sample carries no information about the hypothesis; LLR should
+    # be 0 and status "continue", consistent with n<2.
+    body = ""
+    for _ in range(20):
+        body += _game("A", "B", "1/2-1/2") + _game("B", "A", "1/2-1/2")
+    p = _write_pgn(tmp_path, body)
+    r = compute_sprt(p, _params(elo0=0, elo1=5))
+    assert r.pairs == 20
+    assert r.status == "continue"
+    assert r.llr == 0.0
+
+
+def test_sprt_all_decisive_same_direction_returns_continue(tmp_path):
+    # Every pair: A wins both games -> per-pair score 2.0 for all pairs.
+    # Variance is 0 even though A is dominating; with no spread the
+    # pentanomial model has no variance estimate.
+    body = ""
+    for _ in range(20):
+        body += _game("A", "B", "1-0") + _game("B", "A", "0-1")
+    p = _write_pgn(tmp_path, body)
+    r = compute_sprt(p, _params(elo0=0, elo1=5))
+    assert r.pairs == 20
+    assert r.status == "continue"
+    assert r.llr == 0.0
 
 
 def test_sprt_drops_trailing_odd_game(tmp_path):

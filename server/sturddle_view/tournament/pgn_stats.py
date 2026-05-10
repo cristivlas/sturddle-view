@@ -447,10 +447,20 @@ def compute_sprt(
     # Pentanomial variance: sample variance of per-pair score around μ.
     var = sum((s - mu) ** 2 for s in scores) / (n - 1)
     if var <= 0.0:
-        # All pairs identical (e.g. all 1.0). Still compute a meaningful
-        # LLR by giving a tiny floor; otherwise division blows up.
-        var = 1e-12
-    sigma = math.sqrt(var)
+        # All pairs scored identically -- the sample carries no spread
+        # and so no information about the hypothesis. Returning a
+        # variance-floored LLR would invent significance; treat as the
+        # n<2 case instead.
+        return SprtResult(
+            llr=0.0,
+            lower_bound=lower,
+            upper_bound=upper,
+            status="continue",
+            pairs=n,
+            elo0=elo0,
+            elo1=elo1,
+            model=model,
+        )
 
     # Convert elo (logistic, per-game) into per-pair score offset.
     # Per-game score offset for elo Δ: dscore ≈ Δ * ln(10) / 1600.
