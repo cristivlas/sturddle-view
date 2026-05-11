@@ -828,10 +828,14 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   const onResize = () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      for (const wb of getLiveWindows()) if (wb.max) { wb.restore(); wb.maximize(); }
-      if (activeLayout === LAYOUT.TIDY) tidy({ preserveMin: true });
-      else if (activeLayout === LAYOUT.TILE) tile();
-      else if (activeLayout === LAYOUT.SNAP) snap();
+      const all = openWindows();
+      const anyMax = all.some(wb => wb.max);
+      for (const wb of all) if (wb.max) { wb.restore(); wb.maximize(); }
+      if (!anyMax) {
+        if (activeLayout === LAYOUT.TIDY) tidy({ preserveMin: true });
+        else if (activeLayout === LAYOUT.TILE) tile();
+        else if (activeLayout === LAYOUT.SNAP) snap();
+      }
     }, 150);
   };
   function attachResizeListeners() {
