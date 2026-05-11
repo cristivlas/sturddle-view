@@ -1256,7 +1256,11 @@ class HumanVsEngine:
                 # game_over is true for forced endings AND claimable draws
                 # recorded in the PGN headers.
                 "game_over": (outcome := self._board.outcome()) is not None
-                    or bool(self._view_pgn_result and self._view_pgn_result != "*"),
+                    or (
+                        bool(self._view_pgn_result)
+                        and self._view_pgn_result != "*"
+                        and self._view_cursor == len(self._view_full_moves)
+                    ),
                 **(
                     {
                         "result": outcome.result(),
@@ -1266,7 +1270,13 @@ class HumanVsEngine:
                     else (
                         {
                             "result": self._view_pgn_result,
-                            "termination": self._view_pgn_termination,
+                            "termination": (
+                                "threefold_repetition"
+                                if self._board.can_claim_threefold_repetition()
+                                else "fifty_moves"
+                                if self._board.can_claim_fifty_moves()
+                                else self._view_pgn_termination
+                            ) if self._view_pgn_termination == "normal" else self._view_pgn_termination,
                         }
                         if self._view_pgn_result and self._view_pgn_result != "*"
                         else {}

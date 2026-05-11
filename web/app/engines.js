@@ -416,7 +416,10 @@ export function mountEngines({ container, api }) {
         applyColPcts();
         placeLines(e.clientX);
       }
+      let done = false;
       function onUp() {
+        if (done) return;
+        done = true;
         grip.classList.remove("dragging");
         rightLine.remove();
         leftLine.remove();
@@ -424,10 +427,14 @@ export function mountEngines({ container, api }) {
         grip.removeEventListener("pointermove", onMove);
         grip.removeEventListener("pointerup", onUp);
         grip.removeEventListener("pointercancel", onUp);
+        document.removeEventListener("pointerup", onUp);
+        document.removeEventListener("pointercancel", onUp);
       }
       grip.addEventListener("pointermove", onMove);
       grip.addEventListener("pointerup", onUp);
       grip.addEventListener("pointercancel", onUp);
+      document.addEventListener("pointerup", onUp);
+      document.addEventListener("pointercancel", onUp);
     });
   });
 

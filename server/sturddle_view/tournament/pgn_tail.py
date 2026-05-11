@@ -43,6 +43,11 @@ def _env_float(name: str, default: float) -> float:
 # faster matching at the cost of more stat() calls.
 PGN_TAIL_POLL_S = _env_float("SV_PGN_TAIL_POLL_S", 1.0)
 
+# Cap bytes parsed per poll so each call stays bounded -- matters on stop,
+# where the tailer task must finish promptly. Backlog drains across multiple
+# polls (the run loop skips its sleep while more delta is pending).
+_MAX_DELTA_BYTES_PER_POLL = 256 * 1024
+
 
 @dataclass
 class PgnGameRecord:
@@ -87,6 +92,13 @@ class PgnTailer:
         self._game_n = 0
         self._last_mtime_ns: int | None = None
         self._last_size: int | None = None
+        # True when the most recent poll_once consumed only part of the
+        # available delta (cap hit). The run loop uses this to skip its
+        # sleep so backlog drains promptly.
+        self._has_more = False
+        # One-shot guard: avoid logging the oversized-game warning on
+        # every poll while the same giant game is in flight.
+        self._warned_oversized = False
 
     @property
     def path(self) -> Path:
@@ -136,13 +148,20 @@ class PgnTailer:
         except Exception:
             log.exception("PgnTailer initial poll failed for %s", self._path)
         while not self._stop_event.is_set():
-            try:
-                await asyncio.wait_for(
-                    self._stop_event.wait(), timeout=self._poll_interval,
-                )
-                return  # stop requested
-            except asyncio.TimeoutError:
-                pass
+            if self._has_more:
+                # Backlog pending from a capped poll: yield once so other
+                # tasks run, then drain immediately without the poll sleep.
+                await asyncio.sleep(0)
+                if self._stop_event.is_set():
+                    return
+            else:
+                try:
+                    await asyncio.wait_for(
+                        self._stop_event.wait(), timeout=self._poll_interval,
+                    )
+                    return  # stop requested
+                except asyncio.TimeoutError:
+                    pass
             try:
                 await self.poll_once()
             except Exception:
@@ -177,13 +196,22 @@ class PgnTailer:
         self._last_size = st.st_size
 
         if st.st_size == self._offset:
+            self._has_more = False
             return 0
 
-        # Offload the synchronous parse + SAN->UCI replay to a thread
-        # so a multi-MB delta can't stall the server's main loop.
-        delta_bytes = st.st_size - self._offset
+        # Cap how much we parse per call so the worker thread can't run
+        # for many seconds during a stop sequence -- backlog drains across
+        # subsequent polls (run loop skips its sleep when ``_has_more``).
+        # Snap the cap down to a game boundary so chess.pgn never sees a
+        # mid-game-truncated buffer (which logs noisy "illegal san" errors).
+        end = min(st.st_size, self._offset + _MAX_DELTA_BYTES_PER_POLL)
+        if end < st.st_size:
+            end = await asyncio.to_thread(
+                self._snap_to_boundary, self._offset, end, st.st_size,
+            )
+        delta_bytes = end - self._offset
         records, new_offset = await asyncio.to_thread(
-            self._parse_delta, self._offset, st.st_size,
+            self._parse_delta, self._offset, end,
         )
         if _DEBUG:
             log.debug(
@@ -192,6 +220,7 @@ class PgnTailer:
             )
         if not records:
             # Delta has no complete game yet -- in-flight bytes; retry next pass.
+            self._has_more = end < st.st_size
             return 0
 
         emitted = 0
@@ -207,7 +236,39 @@ class PgnTailer:
                     rec.game_n,
                 )
         self._offset = new_offset
+        self._has_more = self._offset < st.st_size
         return emitted
+
+    def _snap_to_boundary(self, start: int, end: int, file_size: int) -> int:
+        """Return ``end' <= file_size`` aligned to the last PGN game
+        boundary in ``[start, end)``. PGN games are separated by
+        ``\\n\\n[`` (blank line then a new tag block); cutting there
+        leaves ``read_game`` with only complete games to parse.
+
+        Fallback when no boundary is found in the window: return
+        ``file_size`` (uncap this poll). Otherwise we'd repeatedly read
+        the same mid-game-truncated window and never make progress.
+        Triggers only on a single PGN game > the cap size, which doesn't
+        happen in practice for chess tournaments -- log a warning if it
+        ever does."""
+        try:
+            with self._path.open("rb") as f:
+                f.seek(start)
+                chunk = f.read(end - start)
+        except OSError:
+            return end
+        sep = chunk.rfind(b"\n\n[")
+        if sep < 0:
+            if not self._warned_oversized:
+                log.warning(
+                    "PgnTailer: no game boundary in %d-byte window starting "
+                    "at offset %d (single game > cap?); reading full delta",
+                    end - start, start,
+                )
+                self._warned_oversized = True
+            return file_size
+        self._warned_oversized = False
+        return start + sep + 2  # include the blank line; leave the `[` for next pass
 
     def _parse_delta(
         self, start: int, end: int,

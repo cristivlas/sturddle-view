@@ -285,6 +285,23 @@ async def test_view_payload_includes_result_from_pgn_headers_on_threefold(hve):
     assert view["termination"] == "threefold_repetition"
 
 
+async def test_normal_termination_enriched_to_threefold(hve):
+    """Termination 'normal' is replaced with 'threefold_repetition' when the
+    final board position has a claimable threefold draw."""
+    h, _ = hve
+    await h.enter_view_mode(
+        start_fen=None,
+        moves_uci=_THREEFOLD_MOVES,
+        clock_history=None,
+        pgn_result="1/2-1/2",
+        pgn_termination="normal",
+    )
+    evt = h._board_event()
+    view = evt.payload["view"]
+    assert view["termination"] == "threefold_repetition"
+    assert view["result"] == "1/2-1/2"
+
+
 async def test_view_payload_result_from_board_on_checkmate(hve):
     """Forced endings (checkmate) still derive result/termination from the
     board even without PGN headers."""
@@ -299,3 +316,34 @@ async def test_view_payload_result_from_board_on_checkmate(hve):
     assert view["game_over"] is True
     assert view["result"] == "0-1"
     assert view["termination"] == "checkmate"
+
+
+async def test_game_over_false_one_ply_before_checkmate(hve):
+    """game_over must be False at the ply just before the mating move."""
+    h, _ = hve
+    await h.enter_view_mode(
+        start_fen=None,
+        moves_uci=_FOOLS_MATE_MOVES,
+        clock_history=None,
+    )
+    await h.view_goto(len(_FOOLS_MATE_MOVES) - 1)
+    evt = h._board_event()
+    assert evt.payload["view"]["game_over"] is False
+
+
+async def test_game_over_false_at_mid_game_ply_despite_pgn_result(hve):
+    """PGN result header must not mark game_over=True at non-terminal plies.
+    Regression: result header previously disabled play-from-here for the whole game."""
+    h, _ = hve
+    await h.enter_view_mode(
+        start_fen=None,
+        moves_uci=_THREEFOLD_MOVES,
+        clock_history=None,
+        pgn_result="1/2-1/2",
+        pgn_termination="threefold_repetition",
+    )
+    # Navigate back to a mid-game ply -- board is not terminal there.
+    await h.view_goto(4)
+    evt = h._board_event()
+    view = evt.payload["view"]
+    assert view["game_over"] is False

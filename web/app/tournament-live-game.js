@@ -58,15 +58,14 @@ const LIVE_MIN_BOARD    = 200; // px -- smallest usable board side
 const LIVE_CLOCK_H      = 36;  // px -- one clock row (font 16px + padding)
 const LIVE_EVAL_H       = 24;  // px -- eval row (font 13px)
 const LIVE_PV_H         = 16;  // px -- pv row (font 11px)
-const LIVE_STATUS_H     = 18;  // px -- status row (font 13px)
 const LIVE_WINBOX_TITLE = 35;  // px -- WinBox title bar
 const LIVE_GAP          = 6;   // px -- flex gap between sections
 
 const ARROW_MIN_TIME_MS = 250; // skip arrow if side-to-move has less time than this
 
 export const LIVE_MIN_WIDTH  = LIVE_MIN_BOARD;
-// 8 flex children: pv-top, eval-top, clock-top, board, clock-bottom, eval-bottom, pv-bottom, status -- 7 gaps.
-export const LIVE_MIN_HEIGHT = LIVE_WINBOX_TITLE + LIVE_PV_H * 2 + LIVE_STATUS_H + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_MIN_BOARD + LIVE_GAP * 7;
+// 7 flex children: pv-top, eval-top, clock-top, board, clock-bottom, eval-bottom, pv-bottom -- 6 gaps.
+export const LIVE_MIN_HEIGHT = LIVE_WINBOX_TITLE + LIVE_PV_H * 2 + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_MIN_BOARD + LIVE_GAP * 6;
 
 
 // Gap (px) between the avoid-rect and the new window when displacing.
@@ -151,7 +150,6 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       <span class="lg-eval-tbhits lg-eval-tbhits-bottom muted"></span>
     </div>
     <div class="lg-pv lg-pv-bottom muted"></div>
-    <div class="lg-status muted">connecting...</div>
   `;
 
   const boardHost = body.querySelector(".lg-board");
@@ -175,7 +173,6 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   const bottomNameEl = body.querySelector(".lg-bottom-name");
   const topTimeEl = body.querySelector(".lg-top-time");
   const bottomTimeEl = body.querySelector(".lg-bottom-time");
-  const statusEl = body.querySelector(".lg-status");
   const resultOverlayEl = body.querySelector(".lg-result-overlay");
   const resultScoreEl = body.querySelector(".lg-result-score");
   const resultTerminationEl = body.querySelector(".lg-result-termination");
@@ -259,13 +256,10 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   // cm-chessboard's internal SVG sizing, which is what produced the
   // narrow-board-after-restore bug.
   //
-  // Fixed (non-board) rows:
-  //   3x pv (pv-top, pv-bottom, status share the .lg-pv font size)
-  //   2x eval, 2x clock
-  //   7x flex gap
-  // In compact mode (body.clientHeight < 280) the .lg-pv and
-  // .lg-status rows are display:none, so those drop out.
-  const FIXED_FULL = LIVE_PV_H * 2 + LIVE_STATUS_H + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 7;
+  // Fixed (non-board) rows: 2x pv, 2x eval, 2x clock + 6 gaps (7 children total).
+  // In compact mode (body.clientHeight < 280) the .lg-pv rows are
+  // display:none, so those drop out.
+  const FIXED_FULL = LIVE_PV_H * 2 + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 6;
   const FIXED_COMPACT = LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 4;
 
   function constrainAndResize() {
@@ -319,7 +313,6 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 
   ws.addEventListener("open", () => {
     if (DEBUG_WATCH) console.log("[WATCH] ws open", { windowKey });
-    statusEl.textContent = "";
   });
 
   function stopTimer() {
@@ -340,7 +333,6 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 
   ws.addEventListener("error", (e) => {
     console.error("[WATCH] ws error", { windowKey, event: e });
-    statusEl.textContent = "connection error";
     stopTimer();
   });
 
@@ -367,7 +359,6 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       if (msg.result) {
         showResult(msg.result, msg.termination);
       } else {
-        statusEl.textContent = "engine exited";
       }
       stopTimer();
       wbClosed = true; // suppress wb.close() in the WS close handler
@@ -417,6 +408,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
         headers,
         body: JSON.stringify({ fen, move: uciMove }),
       });
+      if (res.status === 204) { console.warn("late bestmove skipped:", uciMove); return; }
       if (!res.ok) return;
       const { fen: newFen } = await res.json();
       // Discard if a newer `position` message arrived while the fetch was in flight.
@@ -506,7 +498,6 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     resultScoreEl.textContent = score;
     resultTerminationEl.textContent = term;
     resultOverlayEl.hidden = false;
-    statusEl.textContent = term ? `${score} * ${term}` : score;
   }
 
 

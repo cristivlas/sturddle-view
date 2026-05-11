@@ -16,6 +16,7 @@ import asyncio
 import logging
 import os
 import secrets
+import time
 import uuid
 from collections import deque
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ from .pgn_reconcile import (
     ReconciledMatch,
     ReconciliationQueue,
 )
+from .pgn_stats import rewrite_drop_partial_pairs
 from .pgn_tail import PgnGameRecord, PgnTailer
 from .rescheck import RescheckError, check_template
 from .runner import RunSpec, Runner
@@ -428,6 +430,40 @@ class Orchestrator:
             engine_default_book_order=_ed("book_order"),
         )
         try:
+            # On resume, drop any partial pairs from a prior interrupted
+            # Pause so fastchess's first emitted stats are honest. Threaded
+            # so a multi-MB scan can't stall the event loop.
+            try:
+                pgn_size = (
+                    spec.pgn_path.stat().st_size
+                    if spec.pgn_path.exists() else 0
+                )
+                if pgn_size > 0:
+                    log.info(
+                        "tournament %s: scanning PGN for partial pairs (%.1f MB)",
+                        t.id, pgn_size / (1024 * 1024),
+                    )
+                t0 = time.monotonic()
+                ts = datetime.now()
+                dropped, _deltas = await asyncio.to_thread(
+                    rewrite_drop_partial_pairs, spec.pgn_path, spec.config_path, ts,
+                )
+                elapsed = time.monotonic() - t0
+                if dropped:
+                    stamp = ts.strftime("%Y-%m-%dT%H-%M-%S")
+                    log.info(
+                        "tournament %s: rewrote PGN, dropped %d game(s) "
+                        "(partial pairs + resume dups) in %.1fs; "
+                        "backup at %s.%s.bak.gz",
+                        t.id, dropped, elapsed, spec.pgn_path.name, stamp,
+                    )
+                elif pgn_size > 0:
+                    log.info(
+                        "tournament %s: PGN clean (no partial pairs) in %.1fs",
+                        t.id, elapsed,
+                    )
+            except Exception:
+                log.exception("partial-pair rewrite failed for %s", t.id)
             # Clear any prior last_error on (re)start -- the user has
             # acted on the diagnostic by retrying.
             updated = self._store.update_status(
@@ -436,6 +472,15 @@ class Orchestrator:
             await self._emit_status(updated)
             await self._runner.start(spec, self._on_runner_event)
         except Exception:
+            # If start() raised AFTER spawning the subprocess (e.g.
+            # post-spawn assign_to_job or event-emit failure), the runner
+            # is left "running" and will orphan the process unless we
+            # stop it explicitly. stop() is idempotent for the
+            # never-spawned case.
+            try:
+                await self._runner.stop()
+            except Exception:
+                log.exception("rollback: runner.stop() failed")
             # Roll back the active claim so a failed start doesn't lock
             # out the next attempt.
             self._active_id = None

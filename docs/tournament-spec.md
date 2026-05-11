@@ -1033,3 +1033,42 @@ Future work (not part of the resume effort):
   pre-filled body. Engine entries are frozen snapshots so the clone
   inherits the source's engine state, not the registry's current
   state -- matches the freeze-at-create semantics already in the spec.
+
+---
+
+## Cross-proxy bestmove race: approach history
+
+### The race
+
+Each engine runs as a separate proxy process. Both POST their UCI traffic
+independently. Within one proxy events are ordered (position then bestmove
+for that turn), but between proxies the POSTs race: after black plays,
+fastchess immediately feeds white its new position. White's position POST
+and black's bestmove POST can arrive in either order.
+
+If the client receives a bestmove before its position, it calls
+`/api/chess/apply-move` against a stale FEN and gets an error response.
+
+### Attempted fix: server-side reorder buffer (reverted)
+
+Per-pair queues held each proxy's events and drained them in canonical
+(color, ply) order before fanning out to game subscribers. This guaranteed
+the client always saw position-before-bestmove.
+
+Downsides that led to reverting:
+- Added ~150 lines of orchestrator state and logic.
+- `go` events (clock updates) were held in the buffer during the race
+  window, so clock display could lag.
+- Buffered `info` lines for the stalled turn were all flushed to
+  `_fanout` in a tight synchronous loop. Because `CoalescingQueue`
+  uses latest-wins per-proxy coalescing, only the last `info` of the
+  batch survived -- earlier depth/score updates from that turn were
+  silently dropped.
+
+### Current approach: client-side graceful skip
+
+`/api/chess/apply-move` returns **204** (instead of 400) when the move
+is illegal (i.e. applied against a stale FEN). The client logs a
+`console.warn` and returns early. The next `position` event self-corrects
+the board. No server buffering, no lost `info` lines, no clock lag.
+Tradeoff: the move animation is skipped for the affected half-move.

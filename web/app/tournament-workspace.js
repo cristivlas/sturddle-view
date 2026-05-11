@@ -20,7 +20,7 @@ import {
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { toast } from "./dialogs.js";
 import { escapeHtml, flashWindow } from "./wb-utils.js";
-import { createSlotGrid } from "./workspace-slot-grid.js";
+import { createSlotGrid, SLOT_GAP } from "./workspace-slot-grid.js";
 
 const STORAGE_KEY_PREFIX = "sturddle:workspace:";
 const POLL_INTERVAL_MS = 5000;
@@ -71,7 +71,15 @@ export function hasAnyDesktopState(id) {
 }
 
 
+const LAYOUT = Object.freeze({ NONE: 0, TIDY: 1, TILE: 2, SNAP: 3 });
+const LAYOUT_STORAGE_KEY = "sturddle:active-layout";
+
 let activeWorkspace = null;
+let activeLayout = Number(localStorage.getItem(LAYOUT_STORAGE_KEY) ?? LAYOUT.NONE);
+function setLayout(mode) {
+  activeLayout = mode;
+  localStorage.setItem(LAYOUT_STORAGE_KEY, mode);
+}
 
 
 export function openTournamentWorkspace({ api, events, log, token, tournament, top = 0, left = 0, getRight = () => window.innerWidth }) {
@@ -134,8 +142,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // no slot fits, the new window is minimized -- WS still connects so
   // the live state stays current behind the minimize bar.
   const slotGrid = createSlotGrid({
-    top, left,
-    getCellWidth: () => Math.max(LIVE_MIN_WIDTH, Math.round(window.innerWidth * 0.20)),
+    top, left, getRight,
+    getCellWidth: () => Math.max(LIVE_MIN_WIDTH, Math.floor((getRight() - left - SLOT_GAP * 3) / 4)),
     cellHeight: LIVE_MIN_HEIGHT,
     getWindows: () => getLiveWindows(),
   });
@@ -179,10 +187,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   let enginesBody = makeEnginesBody();
 
   const MIN_SIZES = {
-    standings: { minwidth: 320, minheight: 150 },
-    schedule:  { minwidth: 320, minheight: 150 },
-    engines:   { minwidth: 280, minheight: 150 },
-    log:       { minwidth: 280, minheight: 150 },
+    standings: { minwidth: 320, minheight: 120 },
+    schedule:  { minwidth: 320, minheight: 120 },
+    engines:   { minwidth: 280, minheight: 120 },
+    log:       { minwidth: 280, minheight: 120 },
   };
 
   // Per-window CSS class hooks (added to the WinBox outer container).
@@ -201,6 +209,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       class: `sturddle-wb no-full${extra}`,
       ...MIN_SIZES[key],
     });
+    // Stash so tile()/snap() can read the effective min size from the
+    // instance (WinBox doesn't expose its config min* on the instance).
+    wb.svMinWidth = MIN_SIZES[key].minwidth;
+    wb.svMinHeight = MIN_SIZES[key].minheight;
     // Wire onclose after construction (TDZ on `wb` otherwise). No persist
     // here -- state is captured at workspace.close()/closeAll()/finalize().
     wb.onclose = () => {
@@ -261,7 +273,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       postCreate: (wb) => {
         wb.addControl({
           class: "wb-log-copy-ctrl",
-          index: 3,
+          index: 0,
           click: () => {
             const text = eventLog
               .filter(e => e.payload?.kind !== KIND.PROXY_UNPAIRED)
@@ -339,8 +351,17 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       ? `<div class="wb-sprt">SPRT [${sprt.elo0}, ${sprt.elo1}] * LLR=${sprt.llr.toFixed(2)} ` +
         `[${sprt.lower_bound.toFixed(2)}, ${sprt.upper_bound.toFixed(2)}] * ${sprt.status}</div>`
       : "";
+    const partialPairs = detail.partial_pairs ?? 0;
+    // Hide during RUNNING -- a fresh game-1 always sits alone in the
+    // PGN until game-2 of the pair finishes; that's normal, not data loss.
+    const showPartial = partialPairs > 0 && detail.status !== STATUS.RUNNING;
+    const partialRow = showPartial
+      ? `<div class="wb-partial-pairs">${partialPairs} incomplete pair${partialPairs === 1 ? "" : "s"} ` +
+        `(one game missing, likely lost when paused)</div>`
+      : "";
     standingsBody.innerHTML = `
       ${sprtRow}
+      ${partialRow}
       <table class="wb-table">
         <thead>
           <tr><th>Engine</th><th>G</th><th>W</th><th>L</th><th>D</th><th>%</th><th>Elo</th></tr>
@@ -394,15 +415,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (result?.wb && !result.alreadyOpen && !claim) {
       try { result.wb.minimize(); } catch { /* */ }
     }
-    // Keep the source panel on top: clicking a watch button shouldn't
-    // bury the panel under the new watcher. Skip when watcher was
-    // already open (let it flash) or minimized (already out of the way).
-    if (result?.wb && !result.alreadyOpen && !result.wb.min) {
-      const src = windows[sourceWindowKey];
-      if (src && !src.min) {
-        try { src.focus(); } catch { /* */ }
-      }
-    }
     const isLive = isLiveWindowOpen(attachKey);
     if (DEBUG_WATCH) console.log("[WATCH] post-open", { attachKey, isLive, slotted: !!claim });
     btn.classList.toggle("wb-sched-attach-btn--live", isLive);
@@ -410,7 +422,15 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   function renderSchedule() {
     if (livePairings.size === 0) {
-      scheduleBody.innerHTML = `<div class="wb-empty">No games in play.</div>`;
+      // Pair confirmation can lag game start by seconds at fast tc;
+      // distinguish "settling" (proxies up, no confirmed pairs yet)
+      // from "really nothing running".
+      const settling = (
+        detail?.status === STATUS.RUNNING && activeProxies.size > 0
+      );
+      scheduleBody.innerHTML = settling
+        ? `<div class="wb-empty">Starting up...</div>`
+        : `<div class="wb-empty">No games in play.</div>`;
       return;
     }
     const scroller = scheduleBody.parentElement;
@@ -488,6 +508,33 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (atBottom && scroller) scroller.scrollTop = scroller.scrollHeight;
   }
 
+  let _schedulePending = false;
+  function scheduleSchedule() {
+    if (_schedulePending) return;
+    _schedulePending = true;
+    requestAnimationFrame(() => { _schedulePending = false; renderSchedule(); });
+  }
+
+  let _enginesPending = false;
+  function scheduleEngines() {
+    if (_enginesPending) return;
+    _enginesPending = true;
+    requestAnimationFrame(() => { _enginesPending = false; renderEngines(); });
+  }
+
+  // rAF-coalesced render: at fast TC the runner_log stream can drive
+  // hundreds of renders/sec; without this the main thread wedges and
+  // button clicks feel dead.
+  let _eventLogPending = false;
+  function scheduleEventLog() {
+    if (_eventLogPending) return;
+    _eventLogPending = true;
+    requestAnimationFrame(() => {
+      _eventLogPending = false;
+      renderEventLog();
+    });
+  }
+
   function renderEventLog() {
     const banner = logBody.querySelector(".wb-error-banner");
     if (banner) {
@@ -562,20 +609,20 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       log?.(`workspace refresh failed: ${e.message}`);
       return;
     }
-    // Seed active proxies from server snapshot -- authoritative; replace
-    // wholesale so we drop any rows for proxies the server no longer
-    // tracks (e.g. ended sessions whose proxy_ended event we missed).
-    const seeded = detail.proxies_active || [];
-    activeProxies.clear();
-    for (const p of seeded) {
-      if (p.proxy_id) {
+    // While RUNNING, API state can lag WS events under fast tc, so
+    // treat API as additive (add missing entries, never remove).
+    // When not RUNNING, replace authoritatively to drop ghosts.
+    const seededProxies = detail.proxies_active || [];
+    if (detail.status !== STATUS.RUNNING) activeProxies.clear();
+    for (const p of seededProxies) {
+      if (p.proxy_id && !activeProxies.has(p.proxy_id)) {
         activeProxies.set(p.proxy_id, { engineName: p.engine_name || null });
       }
     }
-    // Seed confirmed pairings -- same authoritative replace so late-opening
-    // workspaces don't depend on having caught every proxy_paired WS event.
-    livePairings.clear();
-    for (const p of (detail.pairings_active || [])) {
+    const seededPairings = detail.pairings_active || [];
+    if (detail.status !== STATUS.RUNNING) livePairings.clear();
+    for (const p of seededPairings) {
+      if (livePairings.has(p.proxy_a) || livePairings.has(p.proxy_b)) continue;
       const info = { pairId: p.pair_id, proxyA: p.proxy_a, engineA: p.engine_a, sideA: p.side_a,
                      proxyB: p.proxy_b, engineB: p.engine_b, sideB: p.side_b };
       livePairings.set(p.proxy_a, info);
@@ -673,21 +720,22 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         }));
       }
     } else if (
-      evt.kind === EVT.STATUS ||
-      inner === KIND.DONE || inner === KIND.STOPPED
+      inner === KIND.DONE || inner === KIND.STOPPED ||
+      (evt.kind === EVT.STATUS &&
+       [STATUS.STOPPED, STATUS.DONE, STATUS.FAILED].includes(evt.payload?.status))
     ) {
       activeProxies.clear();
     }
 
-    if (added) renderEventLog();
+    if (added) scheduleEventLog();
     if (inner === KIND.PROXY_STARTED || inner === KIND.PROXY_ENDED ||
         inner === KIND.PROXY_PAIRED || inner === KIND.PROXY_UNPAIRED ||
         inner === KIND.GAME_FINISHED || evt.kind === EVT.STATUS ||
         inner === KIND.DONE || inner === KIND.STOPPED)
-      renderSchedule();
+      scheduleSchedule();
     if (inner === KIND.PROXY_STARTED || inner === KIND.PROXY_ENDED ||
         evt.kind === EVT.STATUS || inner === KIND.DONE || inner === KIND.STOPPED)
-      renderEngines();
+      scheduleEngines();
 
     // Status changes and game finishes are good triggers to refresh
     // standings authoritatively.
@@ -744,7 +792,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         if (!e.kind?.startsWith(EVT_PREFIX)) continue;
         if (addLogEntry(e)) added = true;
       }
-      if (added) renderEventLog();
+      if (added) scheduleEventLog();
     } catch (e) {
       log?.(`event backfill failed: ${e.message}`);
     }
@@ -776,6 +824,31 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   window.addEventListener("sturddle:connection", onReconnect);
   window.addEventListener("sturddle:livegame-closed", refreshWatchButtons);
 
+  let resizeTimer = null;
+  const onResize = () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      const all = openWindows();
+      const anyMax = all.some(wb => wb.max);
+      for (const wb of all) if (wb.max) { wb.restore(); wb.maximize(); }
+      if (!anyMax) {
+        if (activeLayout === LAYOUT.TIDY) tidy({ preserveMin: true });
+        else if (activeLayout === LAYOUT.TILE) tile();
+        else if (activeLayout === LAYOUT.SNAP) snap();
+      }
+    }, 150);
+  };
+  function attachResizeListeners() {
+    window.addEventListener("resize", onResize);
+    document.addEventListener("fullscreenchange", onResize);
+  }
+  function detachResizeListeners() {
+    window.removeEventListener("resize", onResize);
+    document.removeEventListener("fullscreenchange", onResize);
+    clearTimeout(resizeTimer);
+  }
+  attachResizeListeners();
+
   // ---- Tear-down --------------------------------------------------------
 
   let liveWatcherAttached = false;
@@ -798,6 +871,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     finalized = true;
     window.removeEventListener("sturddle:connection", onReconnect);
     window.removeEventListener("sturddle:livegame-closed", refreshWatchButtons);
+    detachResizeListeners();
     if (liveWatcherAttached) {
       window.removeEventListener("sturddle:livegame-closed", onLiveGameClosed);
       liveWatcherAttached = false;
@@ -868,33 +942,58 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (wb.min || wb.max) wb.restore();
   }
 
-  function tile() {
-    const wbs = openWindows();
+  // Focus windows top-left first so bottom-right ends up on top.
+  function zOrder(wbs) {
+    [...wbs].sort((a, b) => a.y !== b.y ? a.y - b.y : a.x - b.x)
+      .forEach(wb => { try { wb.focus(); } catch { /* */ } });
+  }
+
+  // Reserved strip at the bottom so minimized WinBoxes have a place to dock.
+  const MINIMIZE_FOOTER_H = 40;
+  // Visual gap between tiled/snapped windows; also absorbs WinBox rounding.
+  const TILE_MARGIN = 1;
+
+  // wbsIn: explicit list (snap fallback -- skip minimized, don't unminimize).
+  // Omit to use all open windows (menu path -- unminimizes everything).
+  function tile(wbsIn, { reserveDock = false } = {}) {
+    setLayout(LAYOUT.TILE);
+    const wbs = wbsIn ?? openWindows();
     if (!wbs.length) return;
+    if (!wbsIn) wbs.forEach(unminimize);
     const availW = window.innerWidth - left;
-    const availH = window.innerHeight - top;
-    const cols = Math.ceil(Math.sqrt(wbs.length));
-    const rows = Math.ceil(wbs.length / cols);
+    const availH = window.innerHeight - top - (reserveDock ? MINIMIZE_FOOTER_H : 0);
+    const maxMinW = Math.max(...wbs.map(wb => wb.svMinWidth ?? 0));
+    const maxMinH = Math.max(...wbs.map(wb => wb.svMinHeight ?? 0));
+    const n = wbs.length;
+    const maxCols = maxMinW ? Math.floor(availW / maxMinW) : n;
+    const minCols = maxMinH ? Math.ceil(n / Math.max(1, Math.floor(availH / maxMinH))) : 1;
+    const cols = Math.min(maxCols, Math.max(minCols, Math.ceil(Math.sqrt(n))));
+    const rows = Math.ceil(n / cols);
     const w = Math.floor(availW / cols);
     const h = Math.floor(availH / rows);
     wbs.forEach((wb, i) => {
-      unminimize(wb);
       const col = i % cols;
       const row = Math.floor(i / cols);
-      // Clamp to per-window minimums so live-game layout stays usable.
-      // (WinBox doesn't expose its config min* on the instance -- windows
-      // that need clamping stash svMinWidth / svMinHeight at creation.)
-      const ww = Math.max(w, wb.svMinWidth || 0);
-      const hh = Math.max(h, wb.svMinHeight || 0);
-      wb.resize(ww, hh).move(left + col * w, top + row * h);
+      // Window size = cell minus TILE_MARGIN, but floored to per-window min
+      // (live-game windows stash svMinWidth/svMinHeight at creation; WinBox
+      // doesn't expose config min* on the instance).
+      const ww = Math.max(w - TILE_MARGIN, wb.svMinWidth ?? 0);
+      const hh = Math.max(h - TILE_MARGIN, wb.svMinHeight ?? 0);
+      // Clamp position so bottom-right stays inside [availW, availH] when
+      // min size > cell size -- prevents the bottom row from spilling into
+      // the reserved dock area. Trade-off: pushed windows may overlap the
+      // row/column above them. Acceptable for this "didn't fit" fallback.
+      const x = Math.max(left, Math.min(left + col * w, left + availW - ww));
+      const y = Math.max(top,  Math.min(top  + row * h, top  + availH - hh));
+      wb.resize(ww, hh).move(x, y);
     });
+    zOrder(wbs);
   }
 
   // 2x2 in the bottom half of the viewport. Auto-opens any of the
-  // four target windows that aren't open yet. Reserves a footer strip
-  // at the bottom so minimized WinBoxes have a place to dock.
-  const MINIMIZE_FOOTER_H = 40;
-  function tidy() {
+  // four target windows that aren't open yet.
+  function tidy({ preserveMin = false } = {}) {
+    setLayout(LAYOUT.TIDY);
     const keys = ["engines", "standings", "schedule", "log"];
     for (const k of keys) {
       if (!windows[k]) openSystemWindow(k);
@@ -909,10 +1008,28 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         if (wb) try { wb.hide(); } catch { /* */ }
       }
       const cap = slotGrid.capacity();
-      watchers.forEach((wb, i) => {
-        if (i < cap) {
+      let slot = 0;
+      // Sort by current x position so slot assignment matches physical order,
+      // not registration order. Minimized/maximized go last when preserving.
+      const ordered = [...watchers].sort((a, b) => {
+        const aDeferred = preserveMin && (a.min || a.max);
+        const bDeferred = preserveMin && (b.min || b.max);
+        if (aDeferred !== bDeferred) return aDeferred ? 1 : -1;
+        return a.x !== b.x ? a.x - b.x : a.y - b.y;
+      });
+      ordered.forEach(wb => {
+        if (preserveMin && (wb.min || wb.max)) {
+          wb.onrestore = () => {
+            const c = slotGrid.claim();
+            if (c) wb.resize(c.w, c.h).move(c.x, c.y);
+            wb.onrestore = null;
+          };
+          return;
+        }
+        if (slot < cap) {
+          wb.onrestore = null;
           unminimize(wb);
-          const r = slotGrid.rectAt(i);
+          const r = slotGrid.rectAt(slot++);
           wb.resize(r.w, r.h).move(r.x, r.y);
         } else {
           try { wb.minimize(); } catch { /* */ }
@@ -927,10 +1044,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const availH = window.innerHeight - top - MINIMIZE_FOOTER_H;
     const leftW = Math.max(Math.round(availW * 0.35), MIN_SIZES.engines.minwidth);
     const rightW = availW - leftW;
-    // Clamp each row to the tallest minheight in that row so both
-    // windows in a row resize to the same height (otherwise WinBox
-    // silently floors to per-window minheight, misaligning bottoms).
-    const desiredRowH = Math.floor(availH * 0.25);
+    // System rows get what's left after one row of board slots.
+    // Clamp each row so both windows in a row share the same height
+    // (WinBox silently floors to per-window minheight otherwise).
+    const systemH = availH - LIVE_MIN_HEIGHT;
+    const desiredRowH = Math.floor(systemH / 2);
     const topRowH = Math.max(desiredRowH, MIN_SIZES.engines.minheight, MIN_SIZES.standings.minheight);
     const botRowH = Math.max(desiredRowH, MIN_SIZES.schedule.minheight, MIN_SIZES.log.minheight);
     // Anchor bottom edge to top + availH (which already excludes the
@@ -949,14 +1067,96 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       unminimize(wb);
       wb.resize(w, h).move(x, y);
     }
-    // Z-order back-to-front: standings, log, engines, schedule.
-    // Last focus() wins.
-    for (const k of ["standings", "log", "engines", "schedule"]) {
-      const wb = windows[k];
-      if (wb && !wb.min) {
-        try { wb.focus(); } catch { /* */ }
+    if (!preserveMin) zOrder(openWindows().filter(wb => !wb.min));
+  }
+
+  // Snap: k-d tree / slice-and-dice partition. Recursively split the
+  // viewport at the axis of greatest center-spread; each leaf gets one
+  // window. Produces a perfect rectangular tiling -- no gaps, no overlaps,
+  // O(N log N), idempotent. Minimized/maximized windows are skipped.
+  function snap() {
+    setLayout(LAYOUT.SNAP);
+    const vx0 = left, vy0 = top;
+    const vx1 = window.innerWidth;
+
+    const allWindows = openWindows();
+    // Restore any maximized windows so they participate in the snap layout
+    // (otherwise non-max windows would be tiled invisibly underneath them).
+    // Minimized windows stay minimized and are excluded.
+    for (const wb of allWindows) if (wb.max) wb.restore();
+    const wbs = allWindows.filter(wb => !wb.min);
+    if (!wbs.length) return;
+    // Reserve bottom strip for the minimize dock only if any window is
+    // currently minimized -- otherwise full viewport.
+    const hasMin = allWindows.some(wb => wb.min);
+    const vy1 = window.innerHeight - (hasMin ? MINIMIZE_FOOTER_H : 0);
+
+    const items = wbs.map(wb => ({
+      wb,
+      cx: wb.x + wb.width / 2,
+      cy: wb.y + wb.height / 2,
+      cw: wb.width,
+      ch: wb.height,
+      minW: wb.svMinWidth ?? 1,
+      minH: wb.svMinHeight ?? 1,
+      rect: null,
+    }));
+
+    function partition(rect, group) {
+      if (group.length === 1) { group[0].rect = rect; return; }
+      let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+      for (const it of group) {
+        if (it.cx < xMin) xMin = it.cx;
+        if (it.cx > xMax) xMax = it.cx;
+        if (it.cy < yMin) yMin = it.cy;
+        if (it.cy > yMax) yMax = it.cy;
+      }
+      const xSpread = xMax - xMin, ySpread = yMax - yMin;
+      const cutV = xSpread > ySpread || (xSpread === ySpread && rect.w >= rect.h);
+      group.sort((a, b) => cutV ? a.cx - b.cx : a.cy - b.cy);
+      const mid = Math.floor(group.length / 2);
+      const A = group.slice(0, mid), B = group.slice(mid);
+      // Cut between the rightmost (bottommost) edge of A and the leftmost
+      // (topmost) edge of B. Edge-based cut is idempotent under TILE_MARGIN:
+      // after snap, A's max edge = cut - TILE_MARGIN, B's min edge = cut,
+      // and round((cut - 1 + cut) / 2) = cut, so subsequent snaps don't drift.
+      if (cutV) {
+        let aMax = -Infinity, bMin = Infinity;
+        for (const it of A) { const e = it.cx + it.cw / 2; if (e > aMax) aMax = e; }
+        for (const it of B) { const e = it.cx - it.cw / 2; if (e < bMin) bMin = e; }
+        const cut = Math.round((aMax + bMin) / 2);
+        const c = Math.max(rect.x + 1, Math.min(cut, rect.x + rect.w - 1));
+        partition({ x: rect.x, y: rect.y, w: c - rect.x, h: rect.h }, A);
+        partition({ x: c, y: rect.y, w: rect.x + rect.w - c, h: rect.h }, B);
+      } else {
+        let aMax = -Infinity, bMin = Infinity;
+        for (const it of A) { const e = it.cy + it.ch / 2; if (e > aMax) aMax = e; }
+        for (const it of B) { const e = it.cy - it.ch / 2; if (e < bMin) bMin = e; }
+        const cut = Math.round((aMax + bMin) / 2);
+        const c = Math.max(rect.y + 1, Math.min(cut, rect.y + rect.h - 1));
+        partition({ x: rect.x, y: rect.y, w: rect.w, h: c - rect.y }, A);
+        partition({ x: rect.x, y: c, w: rect.w, h: rect.y + rect.h - c }, B);
       }
     }
+
+    partition({ x: vx0, y: vy0, w: vx1 - vx0, h: vy1 - vy0 }, items);
+
+    // If any leaf rect can't accommodate the window's min size, fall back to
+    // tile. Always reserve the dock here: this is the "didn't fit" path and
+    // a window may well end up minimized as part of recovery.
+    for (const it of items) {
+      if (it.rect.w - TILE_MARGIN < it.minW || it.rect.h - TILE_MARGIN < it.minH) {
+        tile(wbs, { reserveDock: true });
+        setLayout(LAYOUT.SNAP);  // restore -- tile() above overwrites it
+        return;
+      }
+    }
+
+    for (const it of items) {
+      const r = it.rect;
+      it.wb.resize(r.w - TILE_MARGIN, r.h - TILE_MARGIN).move(r.x, r.y);
+    }
+    zOrder(wbs);
   }
 
   // Window menu's Close All: explicit dismissal. Snapshot remains
@@ -973,6 +1173,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   function hide() {
+    detachResizeListeners();
     for (const wb of openWindows()) {
       try { wb.hide(); } catch { /* */ }
     }
@@ -982,6 +1183,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     for (const wb of openWindows()) {
       try { wb.show(); } catch { /* */ }
     }
+    attachResizeListeners();
   }
 
   function isHidden() {
@@ -1010,7 +1212,16 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     requestAnimationFrame(() => { try { flashWindow(windows[key]); } catch {} });
   }
 
-  const workspace = { close, tile, tidy, closeAll, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id };
+  function untidy() { setLayout(LAYOUT.NONE); }
+  function minimizeAll() {
+    const wbs = openWindows().filter(wb => !wb.min);
+    for (const wb of wbs) try { wb.minimize(); } catch { /* */ }
+    return wbs;
+  }
+  function restoreWindows(wbs) {
+    for (const wb of wbs) try { unminimize(wb); } catch { /* */ }
+  }
+  const workspace = { close, tile, tidy, untidy, snap, closeAll, minimizeAll, restoreWindows, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id, get isTidy() { return activeLayout === LAYOUT.TIDY; } };
   activeWorkspace = workspace;
   return workspace;
 }
@@ -1018,3 +1229,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 export function getActiveWorkspace() {
   return activeWorkspace;
 }
+
+export function isTidyMode() {
+  return activeLayout === LAYOUT.TIDY;
+}
+
+export function getActiveLayout() {
+  return activeLayout;
+}
+
+export { LAYOUT };

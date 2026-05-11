@@ -124,7 +124,8 @@ def test_get_includes_standings_with_no_games(client):
     r = client.get(f"/api/tournaments/{created['id']}")
     assert r.status_code == 200
     body = r.json()
-    assert body["standings"] == {"games": 0, "engines": []}
+    assert body["standings"]["games"] == 0
+    assert body["standings"]["engines"] == []
 
 
 def test_list_returns_created(client):

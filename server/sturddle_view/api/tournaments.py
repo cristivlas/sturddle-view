@@ -29,7 +29,13 @@ from ..engines import InvalidLaunchProfileError, validate_launch_profile
 from ..tournament.fastchess import FastchessRunner
 from ..tournament.orchestrator import Orchestrator, TournamentBusyError, wrap_event_for_bus
 from ..tournament.rescheck import RescheckError, check as rescheck_run
-from ..tournament.pgn_stats import compute_games_list, compute_sprt, compute_standings, read_game_pgn
+from ..tournament.pgn_stats import (
+    compute_games_list,
+    compute_sprt,
+    compute_standings,
+    count_partial_pairs,
+    read_game_pgn,
+)
 from ..tournament.store import (
     CorruptStateError,
     DuplicateNameError,
@@ -113,12 +119,20 @@ def _serialize(
 ) -> dict:
     out = t.to_dict()
     if (with_stats or with_standings) and store is not None:
+        tournament_type = (t.template or {}).get("tournament_type", "roundrobin")
         try:
-            standings = compute_standings(store.pgn_path(t.id)).to_dict()
+            standings = compute_standings(
+                store.pgn_path(t.id), tournament_type=tournament_type
+            ).to_dict()
         except FileNotFoundError:
             standings = {"games": 0, "engines": []}
+        standings["tournament_type"] = tournament_type
         out["standings"] = standings
     if with_stats and store is not None:
+        try:
+            out["partial_pairs"] = count_partial_pairs(store.pgn_path(t.id))
+        except FileNotFoundError:
+            out["partial_pairs"] = 0
         try:
             out["games"] = compute_games_list(store.pgn_path(t.id))
         except FileNotFoundError:
@@ -137,7 +151,8 @@ def _serialize(
         if sprt_params:
             try:
                 out["sprt"] = compute_sprt(store.pgn_path(t.id), sprt_params).to_dict()
-            except (NotImplementedError, KeyError):
+            except (NotImplementedError, KeyError, ValueError) as e:
+                log.warning("compute_sprt failed for %s: %s", t.id, e)
                 out["sprt"] = None
     return out
 

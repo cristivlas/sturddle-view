@@ -12,7 +12,7 @@ import { openSettingsDialog } from "./settings-dialog.js";
 import { EVT, KIND, STATUS } from "./tournament-events.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { getLiveWindows } from "./tournament-live-game.js";
-import { getActiveWorkspace, hasAnyDesktopState, hasSavedWorkspaceState, openTournamentWorkspace } from "./tournament-workspace.js";
+import { getActiveLayout, getActiveWorkspace, hasAnyDesktopState, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 
 export function mountTournaments({ container, api, events, log, token }) {
   container.innerHTML = `
@@ -41,8 +41,9 @@ export function mountTournaments({ container, api, events, log, token }) {
               </ul>
             </li>
             <li class="tmb-separator"></li>
+            <li><button class="tmb-dd-item tmb-snap">Snap</button></li>
             <li><button class="tmb-dd-item tmb-tile">Tile</button></li>
-            <li><button class="tmb-dd-item tmb-tidy">Organize</button></li>
+            <li><button class="tmb-dd-item tmb-tidy">Keep Tidy</button></li>
             <li class="tmb-separator"></li>
             <li><button class="tmb-dd-item tmb-closeall">Close All</button></li>
           </ul>
@@ -289,6 +290,23 @@ export function mountTournaments({ container, api, events, log, token }) {
     return tournaments.find((t) => t.id === selectedId) || null;
   }
 
+  function dismissSortToastNow() {
+    dismissSortToast?.();
+    dismissSortToast = null;
+    sortToastTextEl = null;
+    sortToastToggleBtn = null;
+    sortToastHiddenWbs = [];
+  }
+
+  function teardownWorkspace(ws) {
+    dismissSortToastNow();
+    ws.close();
+    // Note: if the user closes all windows individually, finalize() fires
+    // inside tournament-workspace.js with no callback here, so the sort
+    // toast may linger with stale WinBox refs. Harmless (restoreWindows
+    // swallows errors), but not covered by this fix.
+  }
+
   async function navigateTo(newId) {
     const ws = getActiveWorkspace();
     const hadWorkspace = ws && ws.tournamentId !== newId;
@@ -297,7 +315,7 @@ export function mountTournaments({ container, api, events, log, token }) {
         const ok = await confirm({ message: "Game windows are open. Close them and change active selection?" });
         if (!ok) return false;
       }
-      ws.close();
+      teardownWorkspace(ws);
     }
     selectedId = newId;
     for (const el of listEl.querySelectorAll(".tournament-row.selected")) el.classList.remove("selected");
@@ -322,6 +340,7 @@ export function mountTournaments({ container, api, events, log, token }) {
   }
 
   function syncRibbon() {
+    syncTidyBtn();
     const t = selectedTournament();
     if (!t) {
       ribbonStartBtn.disabled = true;
@@ -350,11 +369,13 @@ export function mountTournaments({ container, api, events, log, token }) {
     ribbonEditBtn.disabled = isActive || status === STATUS.DONE;
 
     const starting = t.id === startingId;
+    const startIconName = isResume ? "forward-step" : "play";
     if (starting) {
       ribbonStartBtn.innerHTML = '<wa-spinner class="spinner-accent"></wa-spinner>';
+    } else if (!ribbonStartBtn.querySelector("wa-icon")) {
+      ribbonStartBtn.innerHTML = `<wa-icon class="t-start-icon" name="${startIconName}"></wa-icon>`;
     } else {
-      if (!ribbonStartBtn.querySelector("wa-icon")) ribbonStartBtn.innerHTML = '<wa-icon class="t-start-icon" name="play"></wa-icon>';
-      else ribbonStartBtn.querySelector("wa-icon").setAttribute("name", isResume ? "forward-step" : "play");
+      ribbonStartBtn.querySelector("wa-icon").setAttribute("name", startIconName);
     }
     const startLabel = isResume ? "Resume" : "Start";
     ribbonStartBtn.setAttribute("aria-label", startLabel);
@@ -420,6 +441,8 @@ export function mountTournaments({ container, api, events, log, token }) {
   // ---- Verbs --------------------------------------------------------------
 
   async function startOne(t) {
+    const isResume = t.status === STATUS.STOPPED || t.status === STATUS.FAILED;
+
     try {
       await api("POST", `/api/tournaments/${t.id}/start`);
     } catch (e) {
@@ -917,13 +940,55 @@ export function mountTournaments({ container, api, events, log, token }) {
     syncSortMenu();
     renderList();
   }
+  // Persistent sort toast -- reuse DOM in place to avoid flicker on re-sort.
+  let dismissSortToast = null;
+  let sortToastTextEl = null;
+  let sortToastToggleBtn = null;
+  let sortToastHidden = false;
+  let sortToastHiddenWbs = [];
+
+  function ensureSortToast(ws) {
+    if (dismissSortToast) return;
+    const msg = document.createElement("span");
+    msg.className = "toast-sort-msg";
+    sortToastTextEl = document.createElement("span");
+    sortToastToggleBtn = document.createElement("button");
+    sortToastToggleBtn.className = "toast-action-btn toast-ws-toggle toast-ws-minimize";
+    sortToastHidden = false;
+    sortToastHiddenWbs = [];
+    sortToastToggleBtn.addEventListener("click", () => {
+      if (!sortToastHidden) {
+        sortToastHiddenWbs = ws.minimizeAll();
+        sortToastToggleBtn.classList.replace("toast-ws-minimize", "toast-ws-restore");
+      } else {
+        ws.restoreWindows(sortToastHiddenWbs);
+        sortToastHiddenWbs = [];
+        sortToastToggleBtn.classList.replace("toast-ws-restore", "toast-ws-minimize");
+      }
+      sortToastHidden = !sortToastHidden;
+    });
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "toast-action-btn toast-close-btn";
+    closeBtn.textContent = "X";
+    closeBtn.addEventListener("click", dismissSortToastNow);
+    msg.append(sortToastTextEl, sortToastToggleBtn, closeBtn);
+    dismissSortToast = toast(msg, { duration: 0 });
+  }
+
   for (const opt of container.querySelectorAll(".tmb-sort-opt")) {
     opt.addEventListener("click", () => {
       const next = opt.dataset.sort;
       if (!VALID_SORTS.has(next)) { closeMenus(); return; }
       const nextAsc = next === sortBy ? !sortAsc : sortAsc;
       applySort(next, nextAsc);
-      toast(`Sorted by ${opt.textContent.trim()}, ${nextAsc ? "ascending" : "descending"}`);
+      const label = `Tournaments sorted by ${opt.textContent.trim()}, ${nextAsc ? "ascending" : "descending"}`;
+      const ws = getActiveWorkspace();
+      if (ws) {
+        ensureSortToast(ws);
+        sortToastTextEl.textContent = label;
+      } else {
+        toast(label);
+      }
       closeMenus();
     });
   }
@@ -936,17 +1001,40 @@ export function mountTournaments({ container, api, events, log, token }) {
     if (!isOpen) windowMenu.classList.add("open");
   });
 
-  container.querySelector(".tmb-tile").addEventListener("click", () => {
+  const snapBtn = container.querySelector(".tmb-snap");
+  const tileBtn = container.querySelector(".tmb-tile");
+  const tidyBtn = container.querySelector(".tmb-tidy");
+  const syncTidyBtn = () => {
+    const layout = getActiveLayout();
+    snapBtn.classList.toggle("tmb-active", layout === LAYOUT.SNAP);
+    tileBtn.classList.toggle("tmb-active", layout === LAYOUT.TILE);
+    tidyBtn.classList.toggle("tmb-active", layout === LAYOUT.TIDY);
+  };
+  snapBtn.addEventListener("click", () => {
     closeMenus();
-    getActiveWorkspace()?.tile();
+    const ws = getActiveWorkspace();
+    if (!ws) return;
+    if (getActiveLayout() === LAYOUT.SNAP) ws.untidy(); else ws.snap();
+    syncTidyBtn();
   });
-  container.querySelector(".tmb-tidy").addEventListener("click", () => {
+  tileBtn.addEventListener("click", () => {
     closeMenus();
-    getActiveWorkspace()?.tidy();
+    const ws = getActiveWorkspace();
+    if (!ws) return;
+    if (getActiveLayout() === LAYOUT.TILE) ws.untidy(); else ws.tile();
+    syncTidyBtn();
+  });
+  tidyBtn.addEventListener("click", () => {
+    closeMenus();
+    const ws = getActiveWorkspace();
+    if (!ws) return;
+    if (getActiveLayout() === LAYOUT.TIDY) ws.untidy(); else ws.tidy();
+    syncTidyBtn();
   });
   container.querySelector(".tmb-closeall").addEventListener("click", () => {
     closeMenus();
-    getActiveWorkspace()?.closeAll();
+    const ws = getActiveWorkspace();
+    if (ws) { dismissSortToastNow(); ws.closeAll(); }
     syncWindowMenu();
   });
   for (const [cls, key] of [
@@ -1027,6 +1115,29 @@ export function mountTournaments({ container, api, events, log, token }) {
         const firstErr = tail.find((l) => /error|fatal|fail/i.test(l)) || tail[0] || `exit code ${evt.payload?.rc}`;
         toast(`${name} failed: ${firstErr}`, { variant: "danger", duration: 10000 });
       }
+      // The /start API doesn't return until orchestrator.start completes
+      // (which can include a multi-second PGN rewrite); the status event
+      // fires earlier. Clear pending flags here, with an optimistic local
+      // status update so syncRibbon reflects the transition immediately.
+      const tid = evt.payload?.tournament_id;
+      const newStatus = evt.payload?.status;
+      const t = tid ? tournaments.find((x) => x.id === tid) : null;
+      if (t && newStatus) {
+        t.status = newStatus;
+        if (newStatus === STATUS.RUNNING) activeId = tid;
+        else if (activeId === tid) activeId = null;
+      }
+      if (startingId === tid && newStatus === STATUS.RUNNING) {
+        startingId = null;
+      }
+      if (
+        stoppingId === tid &&
+        [STATUS.STOPPED, STATUS.DONE, STATUS.FAILED].includes(newStatus)
+      ) {
+        stoppingId = null;
+      }
+      // Re-render with the optimistic state; debouncedLoadList canonicalizes.
+      renderList();
       debouncedLoadList();
     }
   });
