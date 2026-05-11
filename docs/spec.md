@@ -64,7 +64,7 @@ in a native window via PyWebView.
 - Rewrites engine paths in tournament config to point at stdio proxies
 - Launches tournament manager as subprocess, or attaches to an already-running one
 - On attach: reconstructs current tournament state from existing PGN/log output ("catch-up"), then switches to live proxy stream
-- Exposes a launcher wrapper: `launch [--gui]` — optionally opens GUI immediately or allows attaching later
+- Entry point: `sturddle-view [--desktop]` — `--desktop` opens a PyWebView native window immediately; omit to run headless and point any browser at the server URL
 - Tournament manager lifecycle (crashes, restarts) is detected and reported upstream
 
 ### 2. Stdio Proxy
@@ -116,17 +116,31 @@ current "accept and notify" policy is fine for the single-game case but
 may not suffice once a tournament owns the engine for hours.
 
 Persisted fields:
+
+Gameplay:
 - `pgn_autosave` (toggle), `pgn_dir` (path) — save games as PGN
 - `tc_initial_seconds`, `tc_increment_seconds` — default time control
 - `human_side` — `"white" | "black" | "random"`
 - `allow_takeback`
+- `auto_claim_draws` — auto-claim 3-fold / 50-move draws
+- `inherit_pgn_clocks` — new game inherits live clock from PGN cursor when true; resets to TC initial when false
+- `play_eval_pov` — eval display POV: `"white" | "engine" | "human"`
+- `board_style` — board color scheme
+
+Engine defaults (applied across all engines unless overridden per-engine):
 - `engine_path` — fallback engine when no engine selected from registry
+- `engine_default_threads`, `engine_default_analysis_threads`
+- `engine_default_hash_mb`
+- `engine_default_syzygy_path`
+- `engine_default_book_path`, `engine_default_book_plies`, `engine_default_book_order`
+
+Tournament:
+- `tournament_fastchess_path` — path to fastchess binary
+- `tournament_root` — root directory for tournament files
+- `tournament_default_template` — default tournament config template
 
 Excluded from persistence: `token`, `host`, `port`, `auth_disabled`, `web_dir`.
-These come from CLI flags / env vars.
-
-Future fields (per spec, not yet implemented): opening book paths, tournament
-config defaults.
+These come from CLI flags / env vars (`STURDDLE_*` prefix or `.env` at repo root).
 
 Client-side (localStorage, server-agnostic):
 - Active perspective, per-perspective layout (window positions, sizes)
@@ -261,14 +275,18 @@ No additional runtime required on Windows 11 (WebView2 ships with OS).
 
 ## Agent / Plugin Interface
 
-Agents are first-class participants, not bolts-on:
+Phase 1 infrastructure (implemented):
 
-- Any agent subscribes to the WebSocket event stream like any other client
-- Dedicated agent API endpoint: agents push annotations, suggestions, commentary back to server
-- Server broadcasts agent output to all clients
-- Client UI has designated panels for agent content (analysis, commentary, teacher mode)
-- Use cases envisioned: game analysis, move suggestions, teaching/explanation, post-game review
-- Voice control / speech interface: deferred to later phase, designed to plug into the same event bus
+- `POST /agent/annotation` — agents push `{game_id, annotations}` to the server
+- Server publishes an `agent_annotation` event to the WebSocket event bus, broadcast to all clients
+- Any external agent can subscribe to the WebSocket stream as a plain client
+
+Deferred to Phase 2:
+
+- Client UI panels for agent output (analysis, commentary, teacher mode)
+- Agent subscribe/consume helper library
+- Built-in agents (analysis, move suggestions, teaching/explanation, post-game review)
+- Voice control / speech interface — designed to plug into the same event bus
 
 ---
 
@@ -468,10 +486,10 @@ A thin app-level wrapper (`web/app/dialogs.js`) exposes `confirm()`, `alert()`, 
 
 ## Tablebase Management
 
-- Configure local tablebase paths (Syzygy, Gaviota)
-- Server-side lookup exposed to both human vs engine and tournament observer views
-- Display DTZ/DTM, WDL result, best move in tablebase positions
-- python-chess has built-in tablebase support — use it directly
+TODO: not yet implemented. Plan:
+- Configure local tablebase paths (Syzygy, Gaviota) — `engine_default_syzygy_path` setting exists and is forwarded to engines, but no server-side lookup is wired up
+- Server-side lookup via python-chess built-in tablebase support exposed to both human vs engine and tournament observer views
+- Display DTZ/DTM, WDL result, best move in tablebase positions; publish in `board_update` payload (placeholder `tablebase: null` field exists)
 
 ---
 
@@ -484,7 +502,8 @@ A thin app-level wrapper (`web/app/dialogs.js`) exposes `confirm()`, `alert()`, 
 - Server loads all `*.tsv` files at startup, parses PGN move sequences into
   UCI tuples, builds a dict for prefix lookup. Longest matching prefix wins.
 - Result is published in the `board_update` event payload as
-  `opening: { eco, name }` and rendered by GameView under the board.
+  `opening: { eco, name }` (embedded in the event, not a separate event type)
+  and rendered by GameView under the board.
 - Fully offline, no external API dependency.
 
 ---
@@ -520,24 +539,14 @@ A thin app-level wrapper (`web/app/dialogs.js`) exposes `confirm()`, `alert()`, 
 
 ### Server-side persistence — to be revisited
 
-Current state (Phase 1, as implemented): only `settings.json` and `engines.json` are
-persisted (under the OS user-config dir via `platformdirs`). Games and logs are
-**in-memory only** — they evaporate on server restart. The `pgn_autosave` /
-`pgn_dir` settings are wired through the API but have no writer behind them yet.
+Implemented: `settings.json`, `engines.json` (OS user-config dir via `platformdirs`),
+human-vs-engine PGN autosave (per-game file, atomic write on each move and game end),
+tournament PGNs (per-tournament directory under `tournament_root`),
+rotating server log (5 x 2 MB, `platformdirs.user_log_dir()`).
 
 Decisions deferred:
 
-- **Game persistence**: where PGNs land (per-game file vs append to a session
-  archive), retention, and how history is exposed in the UI (Library/History
-  perspective). Tournament PGNs likely follow a different path (per-tournament
-  directory) than human-vs-engine PGNs.
-- **Log management**: today logs go to stdout/stderr only. Once the server runs
-  detached or under PyWebView for long sessions, we will need rotating file
-  logs (size- or time-based), a configurable log dir, retention policy, and a
-  way to surface recent server logs in the GUI for debugging. Engine stdio
-  traffic captured by the proxy is a separate, higher-volume stream — it should
-  not share the application log file. Cross-platform: file paths via
-  `platformdirs.user_log_dir()`, no syslog/journald assumptions.
+- **Game history UI**: Library/History perspective for browsing saved PGNs — not Phase 1.
 - **Tournament history storage**: PGN-on-disk is enough for browsing, but
   standings, SPRT state, and schedule reconstruction may want a small index
   (sqlite) — flagged for the tournament-history milestone, not Phase 1.
