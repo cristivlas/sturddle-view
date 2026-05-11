@@ -1333,6 +1333,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   background: var(--nav-btn-bg-hover);
   box-shadow: inset 3px 0 0 var(--accent-line);
 }
+.tmb-dd-item.tmb-active::before { content: "✓"; position: absolute; left: 8px; }
 .tmb-separator {
   border-top: 1px solid var(--wa-color-border-loud, #333);
   margin: 4px 0;

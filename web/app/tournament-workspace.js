@@ -72,6 +72,11 @@ export function hasAnyDesktopState(id) {
 
 
 let activeWorkspace = null;
+let tidyMode = localStorage.getItem("sturddle:tidy-mode") === "1";
+function setTidyMode(on) {
+  tidyMode = on;
+  localStorage.setItem("sturddle:tidy-mode", on ? "1" : "0");
+}
 
 
 export function openTournamentWorkspace({ api, events, log, token, tournament, top = 0, left = 0, getRight = () => window.innerWidth }) {
@@ -815,10 +820,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
   window.addEventListener("sturddle:connection", onReconnect);
   window.addEventListener("sturddle:livegame-closed", refreshWatchButtons);
-  let tidyActive = false;
+
   let resizeTimer = null;
   const onResize = () => {
-    if (!tidyActive) return;
+    if (!tidyMode) return;
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => tidy({ preserveMin: true }), 150);
   };
@@ -934,7 +939,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // wbsIn: explicit list (snap fallback -- skip minimized, don't unminimize).
   // Omit to use all open windows (menu path -- unminimizes everything).
   function tile(wbsIn, { reserveDock = false } = {}) {
-    tidyActive = false;
+    setTidyMode(false);
     const wbs = wbsIn ?? openWindows();
     if (!wbs.length) return;
     if (!wbsIn) wbs.forEach(unminimize);
@@ -971,7 +976,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // 2x2 in the bottom half of the viewport. Auto-opens any of the
   // four target windows that aren't open yet.
   function tidy({ preserveMin = false } = {}) {
-    tidyActive = true;
+    setTidyMode(true);
     const keys = ["engines", "standings", "schedule", "log"];
     for (const k of keys) {
       if (!windows[k]) openSystemWindow(k);
@@ -1053,7 +1058,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // window. Produces a perfect rectangular tiling -- no gaps, no overlaps,
   // O(N log N), idempotent. Minimized/maximized windows are skipped.
   function snap() {
-    tidyActive = false;
+    setTidyMode(false);
     const vx0 = left, vy0 = top;
     const vx1 = window.innerWidth;
 
@@ -1187,11 +1192,16 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     requestAnimationFrame(() => { try { flashWindow(windows[key]); } catch {} });
   }
 
-  const workspace = { close, tile, tidy, snap, closeAll, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id };
+  function untidy() { setTidyMode(false); }
+  const workspace = { close, tile, tidy, untidy, snap, closeAll, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id, get isTidy() { return tidyMode; } };
   activeWorkspace = workspace;
   return workspace;
 }
 
 export function getActiveWorkspace() {
   return activeWorkspace;
+}
+
+export function isTidyMode() {
+  return tidyMode;
 }

@@ -12,7 +12,7 @@ import { openSettingsDialog } from "./settings-dialog.js";
 import { EVT, KIND, STATUS } from "./tournament-events.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { getLiveWindows } from "./tournament-live-game.js";
-import { getActiveWorkspace, hasAnyDesktopState, hasSavedWorkspaceState, openTournamentWorkspace } from "./tournament-workspace.js";
+import { getActiveWorkspace, hasAnyDesktopState, hasSavedWorkspaceState, isTidyMode, openTournamentWorkspace } from "./tournament-workspace.js";
 
 export function mountTournaments({ container, api, events, log, token }) {
   container.innerHTML = `
@@ -43,7 +43,7 @@ export function mountTournaments({ container, api, events, log, token }) {
             <li class="tmb-separator"></li>
             <li><button class="tmb-dd-item tmb-snap">Snap</button></li>
             <li><button class="tmb-dd-item tmb-tile">Tile</button></li>
-            <li><button class="tmb-dd-item tmb-tidy">Organize</button></li>
+            <li><button class="tmb-dd-item tmb-tidy">Keep Tidy</button></li>
             <li class="tmb-separator"></li>
             <li><button class="tmb-dd-item tmb-closeall">Close All</button></li>
           </ul>
@@ -323,6 +323,7 @@ export function mountTournaments({ container, api, events, log, token }) {
   }
 
   function syncRibbon() {
+    syncTidyBtn();
     const t = selectedTournament();
     if (!t) {
       ribbonStartBtn.disabled = true;
@@ -941,17 +942,26 @@ export function mountTournaments({ container, api, events, log, token }) {
     if (!isOpen) windowMenu.classList.add("open");
   });
 
+  const tidyBtn = container.querySelector(".tmb-tidy");
+  const syncTidyBtn = () => {
+    tidyBtn.classList.toggle("tmb-active", isTidyMode());
+  };
   container.querySelector(".tmb-snap").addEventListener("click", () => {
     closeMenus();
     getActiveWorkspace()?.snap();
+    syncTidyBtn();
   });
   container.querySelector(".tmb-tile").addEventListener("click", () => {
     closeMenus();
     getActiveWorkspace()?.tile();
+    syncTidyBtn();
   });
-  container.querySelector(".tmb-tidy").addEventListener("click", () => {
+  tidyBtn.addEventListener("click", () => {
     closeMenus();
-    getActiveWorkspace()?.tidy();
+    const ws = getActiveWorkspace();
+    if (!ws) return;
+    if (ws.isTidy) { ws.untidy(); } else { ws.tidy(); }
+    syncTidyBtn();
   });
   container.querySelector(".tmb-closeall").addEventListener("click", () => {
     closeMenus();
