@@ -221,6 +221,8 @@ def parse_fen(text: str) -> ImportedPosition:
         # to just the diagnostic so the UI doesn't render a giant blob.
         msg = str(e).split(":", 1)[0] if ":" in str(e) else str(e)
         raise PositionImportError(f"invalid FEN: {msg}") from e
+    if not board.is_valid():
+        raise PositionImportError("illegal position (e.g. adjacent kings, too many pieces, pawns on back rank)")
     side = "white" if board.turn == chess.WHITE else "black"
     # Treat the standard startpos as None so opening-book lookup engages
     # on subsequent moves (lookup keys on move history from startpos).
@@ -253,6 +255,8 @@ def parse_pgn(text: str) -> ImportedPosition:
         )
     except ValueError as e:
         raise PositionImportError(f"PGN has invalid starting FEN header: {e}") from e
+    if start_fen_header and not start_board.is_valid():
+        raise PositionImportError("PGN has illegal starting position in FEN header")
     moves_uci: list[str] = []
     board = start_board.copy()
     nodes: list[chess.pgn.ChildNode] = []

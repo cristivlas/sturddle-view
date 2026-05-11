@@ -625,12 +625,15 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   align-items: baseline;
   color: var(--muted);
 }
-.tablebase-line .tb-label {
+.tablebase-line .tb-indent {
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 11px;
-  text-transform: uppercase;
+  min-width: 3ch;
+  flex-shrink: 0;
 }
-.tablebase-line .tb-result { color: var(--fg); }
+.tablebase-line .tb-info { color: var(--fg); }
+.tablebase-line .hm-clock { color: var(--fg); }
+.tablebase-line .hm-clock-warn { color: var(--accent); }
 
 .clock-row {
   display: flex;

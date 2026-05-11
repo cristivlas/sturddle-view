@@ -55,6 +55,23 @@ def test_parse_fen_invalid_rejected():
         parse_fen("not-a-fen")
 
 
+def test_parse_fen_adjacent_kings_rejected():
+    # Kings on e1 and e2 -- structurally parseable but illegal position.
+    with pytest.raises(PositionImportError, match="illegal position"):
+        parse_fen("8/8/8/8/8/8/4k3/4K3 w - - 0 1")
+
+
+def test_parse_fen_pawn_on_back_rank_rejected():
+    with pytest.raises(PositionImportError, match="illegal position"):
+        parse_fen("4K2P/8/8/8/8/8/8/4k3 w - - 0 1")
+
+
+def test_parse_pgn_illegal_fen_header_rejected():
+    pgn = '[FEN "8/8/8/8/8/8/4k3/4K3 w - - 0 1"]\n\n*'
+    with pytest.raises(PositionImportError, match="illegal"):
+        parse_pgn(pgn)
+
+
 def test_parse_fen_accepts_finished_position():
     # Fool's mate position: White just got mated. Finished games are valid
     # for view mode (post-mortem inspection).

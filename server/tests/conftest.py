@@ -5,6 +5,10 @@ import pytest
 import pytest_asyncio
 
 
+def pytest_addoption(parser):
+    parser.addoption("--syzygy-path", default=None, help="Path to Syzygy tablebase files")
+
+
 @pytest_asyncio.fixture(scope="session")
 async def browser():
     """One Chromium instance shared across the whole test session.

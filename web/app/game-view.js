@@ -125,8 +125,9 @@ export function mountGameView(container, opts = {}) {
           <span class="opening-name"></span>
         </div>
         <div class="tablebase-line is-empty">
-          <span class="tb-label">TB</span>
-          <span class="tb-result"></span>
+          <span class="tb-indent"></span>
+          <span class="hm-clock"></span>
+          <span class="tb-info"></span>
         </div>
       </div>
 
@@ -186,7 +187,8 @@ export function mountGameView(container, opts = {}) {
   const openingEco = container.querySelector(".opening-eco");
   const openingName = container.querySelector(".opening-name");
   const tbLine = container.querySelector(".tablebase-line");
-  const tbResult = container.querySelector(".tb-result");
+  const tbInfo = container.querySelector(".tb-info");
+  const hmClock = container.querySelector(".hm-clock");
   const fenText = container.querySelector(".fen-text");
   const fenCopyBtn = container.querySelector(".fen-copy");
 
@@ -236,16 +238,28 @@ export function mountGameView(container, opts = {}) {
 
   function setTablebase(tb) {
     if (!tbLine) return;
-    if (!tb || tb.wdl === undefined || tb.wdl === null) {
+    const hm = tb && Number.isFinite(tb.halfmove_clock) ? tb.halfmove_clock : null;
+    const hasTb = tb && tb.wdl !== undefined && tb.wdl !== null;
+    if (!hasTb && hm === null) {
       tbLine.classList.add("is-empty");
       return;
     }
-    const wdl = ({ 2: "Win", 1: "Cursed win", 0: "Draw", "-1": "Blessed loss", "-2": "Loss" })[tb.wdl] ?? "—";
-    let s = wdl;
-    if (Number.isFinite(tb.dtz)) s += ` · DTZ ${tb.dtz}`;
-    if (Number.isFinite(tb.dtm)) s += ` · DTM ${tb.dtm}`;
-    if (tb.best) s += ` · ${tb.best}`;
-    tbResult.textContent = s;
+    if (tbInfo) {
+      if (hasTb) {
+        const wdl = ({ 2: "Win", 1: "Cursed win", 0: "Draw", "-1": "Blessed loss", "-2": "Loss" })[tb.wdl] ?? "--";
+        let s = hm !== null ? ` · ${wdl}` : wdl;
+        if (Number.isFinite(tb.dtz)) s += ` · DTZ ${tb.dtz}`;
+        if (Number.isFinite(tb.dtm)) s += ` · DTM ${tb.dtm}`;
+        if (tb.best) s += ` · ${tb.best}`;
+        tbInfo.textContent = s;
+      } else {
+        tbInfo.textContent = "";
+      }
+    }
+    if (hmClock) {
+      hmClock.textContent = hm !== null ? `50-move rule: ${hm}/100` : "";
+      hmClock.classList.toggle("hm-clock-warn", hm !== null && hm >= 40);
+    }
     tbLine.classList.remove("is-empty");
   }
 

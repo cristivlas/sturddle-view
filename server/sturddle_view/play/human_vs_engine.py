@@ -22,6 +22,7 @@ import chess.pgn
 from .._atomic import atomic_write_text
 from ..events import Event, EventBus
 from .game_store import GameState, GameStore
+from .tablebase import TablebaseProber
 
 log = logging.getLogger(__name__)
 
@@ -167,6 +168,7 @@ class HumanVsEngine:
         # Per-ply post-move eval (white POV) parsed from PGN comments.
         # None when the PGN had no recognizable eval annotations.
         self._view_eval_history: list[dict | None] | None = None
+        self._tb: TablebaseProber | None = None
         self._lock = asyncio.Lock()
 
     @property
@@ -288,6 +290,14 @@ class HumanVsEngine:
             out["SyzygyPath"] = sp
         return out
 
+    def _ensure_tablebase(self) -> None:
+        sp = getattr(self._settings, "engine_default_syzygy_path", None)
+        if self._tb is not None and self._tb.path != sp:
+            self._tb.close()
+            self._tb = None
+        if self._tb is None and sp:
+            self._tb = TablebaseProber(sp)
+
     async def new_game(
         self,
         human_white: bool,
@@ -322,6 +332,7 @@ class HumanVsEngine:
             self._view_pgn_result = None
             self._view_pgn_termination = None
             self._view_cursor = 0
+            self._ensure_tablebase()
             engine = await self._ensure_engine()
             engine.send_line("ucinewgame")
             try:
@@ -705,6 +716,7 @@ class HumanVsEngine:
             self._analysis_mode = False
             await self._cancel_think()
             await self._cancel_tick()
+            self._ensure_tablebase()
             try:
                 start_board = chess.Board(start_fen) if start_fen else chess.Board()
             except ValueError as e:
@@ -892,6 +904,9 @@ class HumanVsEngine:
                 except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
                     pass
                 self._engine = None
+            if self._tb is not None:
+                self._tb.close()
+                self._tb = None
 
     # ----- persistence -----
 
@@ -1297,7 +1312,10 @@ class HumanVsEngine:
                 "human_white": None if self._viewing else self._human_white,
                 "engine_name": self._engine_name,
                 "opening": opening_payload,
-                "tablebase": None,
+                "tablebase": {
+                    "halfmove_clock": self._board.halfmove_clock,
+                    **(self._tb.probe(self._board) or {} if self._tb else {}),
+                },
                 "analyzing": self._analysis_mode,
                 "view": view_payload,
             },
