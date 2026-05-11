@@ -428,9 +428,7 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   async function startOne(t) {
     const isResume = t.status === STATUS.STOPPED || t.status === STATUS.FAILED;
-    if (isResume) {
-      toast("Preparing tournament for resume...", { variant: "neutral", duration: 3000 });
-    }
+
     try {
       await api("POST", `/api/tournaments/${t.id}/start`);
     } catch (e) {

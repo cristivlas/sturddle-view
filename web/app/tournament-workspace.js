@@ -403,15 +403,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (result?.wb && !result.alreadyOpen && !claim) {
       try { result.wb.minimize(); } catch { /* */ }
     }
-    // Keep the source panel on top: clicking a watch button shouldn't
-    // bury the panel under the new watcher. Skip when watcher was
-    // already open (let it flash) or minimized (already out of the way).
-    if (result?.wb && !result.alreadyOpen && !result.wb.min) {
-      const src = windows[sourceWindowKey];
-      if (src && !src.min) {
-        try { src.focus(); } catch { /* */ }
-      }
-    }
     const isLive = isLiveWindowOpen(attachKey);
     if (DEBUG_WATCH) console.log("[WATCH] post-open", { attachKey, isLive, slotted: !!claim });
     btn.classList.toggle("wb-sched-attach-btn--live", isLive);
@@ -980,14 +971,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       unminimize(wb);
       wb.resize(w, h).move(x, y);
     }
-    // Z-order back-to-front: standings, log, engines, schedule.
-    // Last focus() wins.
-    for (const k of ["standings", "log", "engines", "schedule"]) {
-      const wb = windows[k];
-      if (wb && !wb.min) {
-        try { wb.focus(); } catch { /* */ }
-      }
-    }
+
   }
 
   // Window menu's Close All: explicit dismissal. Snapshot remains
