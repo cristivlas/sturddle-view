@@ -1743,10 +1743,9 @@ wa-dialog::part(body) {
   mask-position: center;
   -webkit-mask-size: 14px;
   mask-size: 14px;
-  background-color: rgba(255,255,255,0.5) !important;
+  background-color: rgba(255,255,255,0.9) !important;
   background-image: none !important;
 }
-.wb-log-copy-ctrl:hover { background-color: rgba(255,255,255,0.9) !important; }
 .wb-sched-list li { padding: 3px 0; font-size: 13px; border-bottom: 1px solid #2e3138; }
 .wb-sched-icon { display: inline-block; width: 18px; color: var(--accent); }
 .wb-sched-result {

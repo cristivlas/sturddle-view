@@ -273,7 +273,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       postCreate: (wb) => {
         wb.addControl({
           class: "wb-log-copy-ctrl",
-          index: 3,
+          index: 0,
           click: () => {
             const text = eventLog
               .filter(e => e.payload?.kind !== KIND.PROXY_UNPAIRED)
