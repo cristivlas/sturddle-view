@@ -48,7 +48,7 @@
   --wa-color-overlay-modal: rgb(0 0 0 / 0.45);
 }
 
-html { font-size: 16px; }
+html { font-size: 100%; }
 :root { --wa-font-size-scale: 1; }
 
 a { color: var(--wa-color-brand-70); }
@@ -78,7 +78,7 @@ wa-input, wa-number-field { --wa-color-brand-fill-quiet: var(--bg); }
 *::-webkit-scrollbar-corner { background: transparent; }
 body {
   margin: 0;
-  font: 14px/1.4 system-ui, -apple-system, Segoe UI, sans-serif;
+  font: 0.875rem/1.4 system-ui, -apple-system, Segoe UI, sans-serif;
   background: var(--bg);
   color: var(--fg);
 }
@@ -98,7 +98,7 @@ header {
   background: var(--panel);
   border-bottom: 2px solid var(--accent-line);
 }
-header h1 { margin: 0; font-size: 16px; color: #b8b8b8; font-weight: 500; }
+header h1 { margin: 0; font-size: 1rem; color: #b8b8b8; font-weight: 500; }
 nav { display: flex; gap: 6px; }
 nav button {
   background: transparent;
@@ -128,7 +128,7 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   display: inline-flex;
   align-items: center;
   padding: 3px 10px;
-  font-size: 11px;
+  font-size: 0.6875rem;
   font-weight: 700;
   letter-spacing: 1.2px;
   text-transform: uppercase;
@@ -224,7 +224,7 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   border-radius: 4px;
 }
 .icon-btn:hover { color: var(--accent); border-color: #444; }
-.icon-btn wa-icon { font-size: 18px; }
+.icon-btn wa-icon { font-size: 1.125rem; }
 
 /* When disconnected: visually disable Settings gear and the Engines nav button.
    Play stays usable for last-known state inspection. */
@@ -273,7 +273,7 @@ svg.cm-chessboard {
   color: var(--fg);
   border: 1px solid #444;
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   transition: opacity 0.2s, transform 0.2s;
@@ -381,7 +381,7 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 }
 .ribbon-btn.is-active { color: var(--accent); }
 .ribbon-btn.is-active::before { background: var(--accent); }
-.ribbon-btn wa-icon { font-size: 16px; }
+.ribbon-btn wa-icon { font-size: 1rem; }
 .ribbon-btn--danger:hover:not(:disabled) {
   color: var(--wa-color-danger-fill-loud, #d65a5a);
 }
@@ -438,7 +438,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
     padding: 6px 0;
   }
   .ribbon-btn { width: 44px; height: 44px; }
-  .ribbon-btn wa-icon { font-size: 18px; }
+  .ribbon-btn wa-icon { font-size: 1.125rem; }
   .ribbon-btn::before {
     left: 6px; right: 6px; top: 0; bottom: auto;
     width: auto; height: 2px;
@@ -484,7 +484,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 }
 .engine-stat::before {
   content: attr(data-label);
-  font-size: 11px;
+  font-size: 0.6875rem;
   font-family: ui-monospace, SFMono-Regular, monospace;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -540,7 +540,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   border-top: 1px solid var(--border, rgba(127, 127, 127, 0.25));
 }
 .game-view-engine .engine-score {
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 500;
   color: var(--accent);
 }
@@ -550,13 +550,13 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 .game-view-engine .engine-nps,
 .game-view-engine .engine-tbhits,
 .game-view-engine .engine-hashfull {
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 500;
   color: var(--fg);
 }
 .game-view-engine .engine-pv {
   font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--muted);
   margin-top: 22px;
   padding-top: 10px;
@@ -569,7 +569,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: 12px;
+  font-size: 0.75rem;
   /* Reserve space for FEN + opening + tablebase lines so the page doesn't
      reflow when they appear. FEN is rendered slightly larger than the
      other meta lines, so account for that explicitly. */
@@ -598,7 +598,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 .fen-copy:hover { color: var(--fg); }
 .fen-text {
   font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -616,7 +616,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 .opening-eco {
   font-family: ui-monospace, SFMono-Regular, monospace;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 0.6875rem;
 }
 .opening-name { color: var(--fg); }
 .tablebase-line {
@@ -627,7 +627,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 }
 .tablebase-line .tb-indent {
   font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 11px;
+  font-size: 0.6875rem;
   min-width: 3ch;
   flex-shrink: 0;
 }
@@ -656,12 +656,12 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 .cm-chessboard .arrow-success .arrow-head { fill: #1e3a8a; }
 .cm-chessboard .arrow-success .arrow-line { stroke: #1e3a8a; opacity: 0.55; }
 .clock-row .clock-name {
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: inherit;
   font-family: var(--wa-font-family-body);
 }
 .clock-row .clock-time {
-  font-size: 22px;
+  font-size: 1.375rem;
   font-weight: 600;
   letter-spacing: 0.5px;
   color: inherit;
@@ -676,10 +676,10 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 .move-list {
   background: transparent;
   padding: 0;
-  height: 240px;
+  max-height: 15rem;
   overflow-y: auto;
   font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 14px;
+  font-size: 0.875rem;
   line-height: 1.4;
 }
 .move-row {
@@ -692,7 +692,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 .move-row:hover { background: var(--nav-btn-bg); }
 .move-row .move-num {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 0.75rem;
   text-align: right;
 }
 .move-row .move-cell { color: var(--fg); }
@@ -717,10 +717,10 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   color: var(--muted);
 }
 #engines-perspective .placeholder p { margin: 4px 0; }
-#engines-perspective .placeholder .muted { font-size: 12px; }
+#engines-perspective .placeholder .muted { font-size: 0.75rem; }
 .engines-roster-host { width: 100%; }
 
-pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-size: 12px; }
+pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-size: 0.75rem; }
 
 /* ---------- Engines tab: ribbon + stacked body ---------- */
 .engines-panel {
@@ -815,7 +815,7 @@ pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-
 
 .engine-opt-row { display: contents; }
 .engine-opt-label {
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--muted);
   text-align: left;
   font-family: ui-monospace, SFMono-Regular, monospace;
@@ -978,12 +978,12 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
 }
 .engine-launch-section-hdr {
   margin: 0;
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 600;
 }
 .engine-launch-help {
   margin: 0 0 2px 0;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 .engine-launch-args-list,
 .engine-launch-env-grid {
@@ -1022,7 +1022,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   height: calc(100vh - 268px);
   min-height: 200px;
   overflow-y: auto;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 .engines-list:focus { outline: none; }
 .engines-table {
@@ -1038,7 +1038,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   background: var(--bg);
   padding: 6px 10px;
   text-align: left;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 700;
   color: var(--muted);
   text-transform: uppercase;
@@ -1081,17 +1081,17 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
 .engines-list-active-cell { text-align: left; }
 .engines-list-active-badge {
   color: var(--accent);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 .engines-list-path {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 0.75rem;
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
 .engines-list-empty {
   padding: 12px;
   text-align: center;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 .th-grip {
   position: absolute;
@@ -1135,7 +1135,7 @@ wa-dialog::part(header-actions) { gap: 6px; }
 /* Headerless confirm/alert dialogs: the message is the heading. */
 .confirm-message {
   margin: 0 24px 24px 24px;
-  font-size: 15px;
+  font-size: 0.9375rem;
   line-height: 1.5;
   text-align: center;
 }
@@ -1149,7 +1149,7 @@ wa-dialog[no-header]::part(dialog) {
 }
 .confirm-message.game-over-message {
   margin: 0;
-  font-size: 20px;
+  font-size: 1.25rem;
   font-weight: 600;
   text-align: center;
   padding: 12px 8px;
@@ -1212,7 +1212,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .settings-row label {
   display: block;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 0.75rem;
   margin-bottom: 4px;
 }
 .settings-row wa-input,
@@ -1235,7 +1235,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .settings-panel-aligned { max-width: calc(100% - 6em - 8px); }
 .settings-num-group { display: flex; gap: 12px; }
 .settings-num-group > div { display: flex; flex-direction: column; flex: 1; min-width: 0; }
-.settings-num-group label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.settings-num-group label { display: block; color: var(--muted); font-size: 0.75rem; margin-bottom: 4px; }
 .settings-num-group wa-input { width: 100%; }
 /* Threads subgroup: "Threads" header sits to the LEFT of a bordered
    box holding Analysis + Play inputs. Specificity: must chain the
@@ -1251,7 +1251,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   gap: 8px;
 }
 .settings-threads-subgroup-hdr {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted);
   flex: 0 0 auto;
 }
@@ -1265,7 +1265,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   min-width: 0;
 }
 .settings-threads-subgroup-inner > div { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.settings-threads-subgroup-inner label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.settings-threads-subgroup-inner label { display: block; color: var(--muted); font-size: 0.75rem; margin-bottom: 4px; }
 .settings-threads-subgroup-inner wa-input { width: 100%; }
 /* Hash gets a matching border so it visually pairs with the threads
    box without changing its label/input structure. */
@@ -1309,7 +1309,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   max-height: 480px;
   overflow: auto;
   font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 .fs-entry {
   display: flex;
@@ -1324,7 +1324,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .fs-entry.dim { color: var(--muted); }
 .fs-entry.selected { background: var(--wa-color-brand-fill-loud); color: #fff; }
 .fs-entry.dim.selected { color: #fff; }
-.fs-entry wa-icon { font-size: 14px; flex: 0 0 auto; }
+.fs-entry wa-icon { font-size: 0.875rem; flex: 0 0 auto; }
 .fs-entry .fs-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- Tournaments tab ---------- */
@@ -1355,12 +1355,12 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   border-radius: 8px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.25);
   font-family: var(--wa-font-family-body);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 .tmb-menu.open > .tmb-dropdown { display: block; }
 .tmb-dropdown > li { margin: 0; padding: 0; list-style: none; }
 .tmb-dd-submenu { position: relative; }
-.tmb-dd-submenu > .tmb-dd-item::after { content: "▶"; position: absolute; right: 10px; font-size: 10px; }
+.tmb-dd-submenu > .tmb-dd-item::after { content: "▶"; position: absolute; right: 10px; font-size: 0.625rem; }
 .tmb-dd-submenu > .tmb-dropdown { top: -6px; left: 100%; z-index: 9001; }
 .tmb-dd-submenu:hover > .tmb-dropdown { display: block; }
 .tmb-dd-submenu:has(> .tmb-dd-item:disabled):hover > .tmb-dropdown { display: none; }
@@ -1368,7 +1368,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   display: block; width: 100%; background: none; border: none; border-radius: 0;
   color: inherit; text-align: left;
   padding: 6px 12px 6px 24px;
-  font-size: 13px; line-height: 1.5; cursor: pointer;
+  font-size: 0.8125rem; line-height: 1.5; cursor: pointer;
   position: relative;
 }
 .tmb-dd-item:hover {
@@ -1387,7 +1387,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   max-width: none; margin-bottom: 8px;
 }
 .settings-tournament-path-label {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted);
 }
 .settings-tournament-path-inner {
@@ -1408,9 +1408,9 @@ wa-dialog wa-tab-panel > .settings-tournament-tpl-mount { margin-top: 24px; }
 }
 /* Icon buttons have intrinsic size — don't stretch them across the column. */
 .settings-row-actions > * { flex: 0 0 auto; }
-.settings-row-hint { font-size: 11px; }
+.settings-row-hint { font-size: 0.6875rem; }
 .settings-section-heading {
-  font-size: 12px; color: var(--muted); margin: 12px 0 4px 0;
+  font-size: 0.75rem; color: var(--muted); margin: 12px 0 4px 0;
   text-transform: uppercase; letter-spacing: 0.05em;
 }
 
@@ -1438,8 +1438,8 @@ wa-dialog::part(body) {
 }
 .settings-deeplink:hover { color: var(--accent, #4a9eff); }
 .about-dialog { text-align: center; padding: 8px 0 16px; }
-.about-name { font-size: 18px; font-weight: 600; margin-bottom: 12px; }
-.about-meta { font-size: 12px; color: var(--muted); line-height: 1.6; }
+.about-name { font-size: 1.125rem; font-weight: 600; margin-bottom: 12px; }
+.about-meta { font-size: 0.75rem; color: var(--muted); line-height: 1.6; }
 .tournaments-list {
   list-style: none; padding: 0; margin: 0;
   display: flex; flex-direction: column; gap: 8px;
@@ -1450,7 +1450,7 @@ wa-dialog::part(body) {
 .tmb-sort-opt[data-dir]::before {
   content: "▲"; position: absolute;
   left: 7px; top: 50%; transform: translateY(-50%);
-  font-size: 13px; color: var(--accent);
+  font-size: 0.8125rem; color: var(--accent);
 }
 .tmb-sort-opt[data-dir="desc"]::before { content: "▼"; }
 .tournaments-body {
@@ -1508,7 +1508,7 @@ wa-dialog::part(body) {
   .t-workspace, .tmb-window-menu { display: none; }
 }
 .tournament-engines {
-  font-size: 12px;
+  font-size: 0.75rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1528,7 +1528,7 @@ wa-dialog::part(body) {
   display: inline-block;
   width: 60px;
   text-align: center;
-  font-size: 10px;
+  font-size: 0.625rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.4px;
@@ -1560,7 +1560,7 @@ wa-dialog::part(body) {
 }
 .tournament-progress-label {
   flex: 0 0 auto;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted);
   white-space: nowrap;
   letter-spacing: 0.3px;
@@ -1580,8 +1580,8 @@ wa-dialog::part(body) {
   gap: 6px 16px;
   margin: 0;
 }
-.tournament-info-grid dt { color: var(--muted); font-size: 12px; align-self: start; }
-.tournament-info-grid dd { margin: 0; font-size: 13px; word-break: break-word; min-width: 0; }
+.tournament-info-grid dt { color: var(--muted); font-size: 0.75rem; align-self: start; }
+.tournament-info-grid dd { margin: 0; font-size: 0.8125rem; word-break: break-word; min-width: 0; }
 .tournament-id { display: block; overflow: hidden; white-space: nowrap; }
 .tournament-info-engines { margin: 0; padding: 0; list-style: none; }
 .tournament-info-engines li { margin: 0; padding: 1px 0; }
@@ -1636,11 +1636,11 @@ wa-dialog::part(body) {
   display: flex; flex-direction: column; min-height: 180px;
 }
 .ne-pane-title {
-  padding: 6px 10px; font-size: 11px; color: var(--muted);
+  padding: 6px 10px; font-size: 0.6875rem; color: var(--muted);
   text-transform: uppercase; letter-spacing: 0.05em;
   border-bottom: 1px solid #2e3138;
 }
-.ne-order-hint { text-transform: none; letter-spacing: 0; font-size: 11px; }
+.ne-order-hint { text-transform: none; letter-spacing: 0; font-size: 0.6875rem; }
 .ne-list {
   list-style: none; margin: 0; padding: 4px;
   flex: 1; overflow-y: auto; min-height: 0;
@@ -1665,13 +1665,13 @@ wa-dialog::part(body) {
 /* Match settings dialog label rhythm: 12px, muted, normal weight. */
 .tournament-template-form wa-input::part(form-control-label),
 .tournament-template-form wa-select::part(form-control-label) {
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: normal;
   color: var(--muted);
 }
 /* Switch label part: style directly — slotted label inherits unreliably. */
 .tournament-template-form wa-switch::part(label) {
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: normal;
   color: var(--muted);
 }
@@ -1710,7 +1710,7 @@ wa-dialog::part(body) {
   display: flex; flex-direction: column; gap: 6px;
 }
 .tournament-template-form .ttf-adj-header {
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 .tournament-template-form .ttf-adj-fields {
   display: grid; gap: 6px;
@@ -1729,7 +1729,7 @@ wa-dialog::part(body) {
 }
 
 .inspect-form { display: flex; flex-direction: column; gap: 10px; }
-.inspect-meta { font-size: 12px; }
+.inspect-meta { font-size: 0.75rem; }
 
 /* Tournament workspace windows (Slice 8) */
 /* opacity: WinBox's fade-in keyframe ends at 0.85 with no closing 100%
@@ -1762,18 +1762,18 @@ wa-dialog::part(body) {
    doesn't visibly shrink the inner width when overflow toggles. */
 .winbox.sturddle-wb-live-games .wb-body { scrollbar-gutter: stable; }
 .wb-empty { color: var(--muted); padding: 12px; text-align: center; }
-.wb-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.wb-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
 .wb-table th, .wb-table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid #2e3138; white-space: nowrap; }
-.wb-table th { color: var(--muted); font-weight: normal; font-size: 11px; text-transform: uppercase; }
+.wb-table th { color: var(--muted); font-weight: normal; font-size: 0.6875rem; text-transform: uppercase; }
 .wb-table .wb-eng-name { font-weight: 500; }
 .wb-sprt {
   background: var(--bg); border: 1px solid #2e3138; border-radius: 4px;
-  padding: 6px 8px; margin-bottom: 8px; font-size: 12px;
+  padding: 6px 8px; margin-bottom: 8px; font-size: 0.75rem;
   font-family: var(--wa-font-family-code);
 }
 .wb-partial-pairs {
   background: var(--bg); border: 1px solid #4a3d1f; border-radius: 4px;
-  padding: 6px 8px; margin-bottom: 8px; font-size: 12px; color: #d4a854;
+  padding: 6px 8px; margin-bottom: 8px; font-size: 0.75rem; color: #d4a854;
 }
 .wb-sched-list, .wb-eventlog-list { list-style: none; padding: 0; margin: 0; }
 .wb-log-copy-ctrl {
@@ -1788,13 +1788,13 @@ wa-dialog::part(body) {
   background-color: rgba(255,255,255,0.9) !important;
   background-image: none !important;
 }
-.wb-sched-list li { padding: 3px 0; font-size: 13px; border-bottom: 1px solid #2e3138; }
+.wb-sched-list li { padding: 3px 0; font-size: 0.8125rem; border-bottom: 1px solid #2e3138; }
 .wb-sched-icon { display: inline-block; width: 18px; color: var(--accent); }
 .wb-sched-result {
   font-family: var(--wa-font-family-code); color: var(--muted); margin-left: 8px;
 }
 .wb-eventlog-list li {
-  font-family: var(--wa-font-family-code); font-size: 12px; padding: 1px 0;
+  font-family: var(--wa-font-family-code); font-size: 0.75rem; padding: 1px 0;
   display: flex; gap: 8px; white-space: nowrap;
 }
 .wb-log-ts { color: var(--muted); flex: 0 0 60px; }
@@ -1811,7 +1811,7 @@ wa-dialog::part(body) {
   font-weight: 600; margin-bottom: 4px;
 }
 .wb-error-banner pre {
-  margin: 0; font-family: var(--wa-font-family-code); font-size: 12px;
+  margin: 0; font-family: var(--wa-font-family-code); font-size: 0.75rem;
   white-space: pre-wrap; max-height: 8em; overflow: auto;
 }
 
@@ -1828,7 +1828,7 @@ wa-dialog::part(body) {
   height: 100%; min-height: 0;
 }
 .wb-livegame .clock-row { padding: 5px 10px; }
-.wb-livegame .clock-row .clock-time { font-size: 16px; flex-shrink: 0; }
+.wb-livegame .clock-row .clock-time { font-size: 1rem; flex-shrink: 0; }
 .wb-livegame .clock-row .clock-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .wb-livegame.lg-compact .lg-pv { display: none; }
 .wb-livegame .lg-board {
@@ -1851,12 +1851,12 @@ wa-dialog::part(body) {
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
 }
 .wb-livegame .lg-result-score {
-  font-size: 22px; font-weight: 700;
+  font-size: 1.375rem; font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--accent);
 }
 .wb-livegame .lg-result-termination {
-  font-size: 14px;
+  font-size: 0.875rem;
   margin-top: 4px;
   color: var(--muted);
   text-transform: lowercase;
@@ -1864,7 +1864,7 @@ wa-dialog::part(body) {
 .wb-livegame .lg-result-replay {
   margin-top: 10px;
   padding: 4px 12px;
-  font-size: 12px;
+  font-size: 0.75rem;
   background: var(--accent);
   color: var(--bg);
   border: none;
@@ -1877,12 +1877,12 @@ wa-dialog::part(body) {
 }
 .wb-livegame .lg-eval {
   display: flex; gap: 8px; align-items: baseline;
-  font-family: var(--wa-font-family-code); font-size: 13px;
+  font-family: var(--wa-font-family-code); font-size: 0.8125rem;
   min-height: 24px; flex-shrink: 0;
 }
 .wb-livegame .lg-eval-score { color: var(--accent); font-weight: 500; }
 .wb-livegame .lg-pv {
-  font-family: var(--wa-font-family-code); font-size: 11px;
+  font-family: var(--wa-font-family-code); font-size: 0.6875rem;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   min-height: 16px; flex-shrink: 0;
 }
@@ -1892,14 +1892,14 @@ wa-dialog::part(body) {
   display: flex; align-items: center; gap: 8px;
 }
 .wb-sched-list .wb-sched-game { flex: 1; }
-.wb-sched-list .wb-sched-attach { font-size: 11px; }
+.wb-sched-list .wb-sched-attach { font-size: 0.6875rem; }
 .wb-sched-list .wb-sched-attach-buttons {
   display: inline-flex; gap: 4px;
 }
 .wb-sched-attach-btn {
   background: var(--nav-btn-bg); color: var(--fg);
   border: 1px solid #2e3138; border-radius: 3px;
-  padding: 2px 6px; cursor: pointer; font-size: 11px;
+  padding: 2px 6px; cursor: pointer; font-size: 0.6875rem;
 }
 .wb-sched-attach-btn:hover { background: var(--nav-btn-bg-hover); border-color: var(--accent); }
 .wb-sched-attach-btn--live { border-color: var(--accent); color: var(--accent); }
