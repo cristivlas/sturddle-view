@@ -290,6 +290,23 @@ export function mountTournaments({ container, api, events, log, token }) {
     return tournaments.find((t) => t.id === selectedId) || null;
   }
 
+  function dismissSortToastNow() {
+    dismissSortToast?.();
+    dismissSortToast = null;
+    sortToastTextEl = null;
+    sortToastToggleBtn = null;
+    sortToastHiddenWbs = [];
+  }
+
+  function teardownWorkspace(ws) {
+    dismissSortToastNow();
+    ws.close();
+    // Note: if the user closes all windows individually, finalize() fires
+    // inside tournament-workspace.js with no callback here, so the sort
+    // toast may linger with stale WinBox refs. Harmless (restoreWindows
+    // swallows errors), but not covered by this fix.
+  }
+
   async function navigateTo(newId) {
     const ws = getActiveWorkspace();
     const hadWorkspace = ws && ws.tournamentId !== newId;
@@ -298,7 +315,7 @@ export function mountTournaments({ container, api, events, log, token }) {
         const ok = await confirm({ message: "Game windows are open. Close them and change active selection?" });
         if (!ok) return false;
       }
-      ws.close();
+      teardownWorkspace(ws);
     }
     selectedId = newId;
     for (const el of listEl.querySelectorAll(".tournament-row.selected")) el.classList.remove("selected");
@@ -953,12 +970,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     const closeBtn = document.createElement("button");
     closeBtn.className = "toast-action-btn toast-close-btn";
     closeBtn.textContent = "X";
-    closeBtn.addEventListener("click", () => {
-      dismissSortToast?.();
-      dismissSortToast = null;
-      sortToastTextEl = null;
-      sortToastToggleBtn = null;
-    });
+    closeBtn.addEventListener("click", dismissSortToastNow);
     msg.append(sortToastTextEl, sortToastToggleBtn, closeBtn);
     dismissSortToast = toast(msg, { duration: 0 });
   }
@@ -1021,7 +1033,8 @@ export function mountTournaments({ container, api, events, log, token }) {
   });
   container.querySelector(".tmb-closeall").addEventListener("click", () => {
     closeMenus();
-    getActiveWorkspace()?.closeAll();
+    const ws = getActiveWorkspace();
+    if (ws) { dismissSortToastNow(); ws.closeAll(); }
     syncWindowMenu();
   });
   for (const [cls, key] of [
