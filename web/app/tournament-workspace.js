@@ -820,7 +820,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   const onResize = () => {
     if (!tidyActive) return;
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => tidy(), 150);
+    resizeTimer = setTimeout(() => tidy({ preserveMin: true }), 150);
   };
   window.addEventListener("resize", onResize);
   document.addEventListener("fullscreenchange", onResize);
@@ -970,7 +970,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   // 2x2 in the bottom half of the viewport. Auto-opens any of the
   // four target windows that aren't open yet.
-  function tidy() {
+  function tidy({ preserveMin = false } = {}) {
     tidyActive = true;
     const keys = ["engines", "standings", "schedule", "log"];
     for (const k of keys) {
@@ -986,10 +986,19 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         if (wb) try { wb.hide(); } catch { /* */ }
       }
       const cap = slotGrid.capacity();
-      watchers.forEach((wb, i) => {
-        if (i < cap) {
+      let slot = 0;
+      watchers.forEach((wb) => {
+        if (preserveMin && (wb.min || wb.max)) {
+          wb.onrestore = () => {
+            const c = slotGrid.claim();
+            if (c) wb.resize(c.w, c.h).move(c.x, c.y);
+            wb.onrestore = null;
+          };
+          return;
+        }
+        if (slot < cap) {
           unminimize(wb);
-          const r = slotGrid.rectAt(i);
+          const r = slotGrid.rectAt(slot++);
           wb.resize(r.w, r.h).move(r.x, r.y);
         } else {
           try { wb.minimize(); } catch { /* */ }
@@ -1027,7 +1036,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       unminimize(wb);
       wb.resize(w, h).move(x, y);
     }
-    zOrder(openWindows().filter(wb => !wb.min));
+    if (!preserveMin) zOrder(openWindows().filter(wb => !wb.min));
   }
 
   // Snap: k-d tree / slice-and-dice partition. Recursively split the
