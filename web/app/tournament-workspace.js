@@ -823,12 +823,22 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   let resizeTimer = null;
   const onResize = () => {
-    if (!tidyMode) return;
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => tidy({ preserveMin: true }), 150);
+    resizeTimer = setTimeout(() => {
+      for (const wb of getLiveWindows()) if (wb.max) { wb.restore(); wb.maximize(); }
+      if (tidyMode) tidy({ preserveMin: true });
+    }, 150);
   };
-  window.addEventListener("resize", onResize);
-  document.addEventListener("fullscreenchange", onResize);
+  function attachResizeListeners() {
+    window.addEventListener("resize", onResize);
+    document.addEventListener("fullscreenchange", onResize);
+  }
+  function detachResizeListeners() {
+    window.removeEventListener("resize", onResize);
+    document.removeEventListener("fullscreenchange", onResize);
+    clearTimeout(resizeTimer);
+  }
+  attachResizeListeners();
 
   // ---- Tear-down --------------------------------------------------------
 
@@ -852,9 +862,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     finalized = true;
     window.removeEventListener("sturddle:connection", onReconnect);
     window.removeEventListener("sturddle:livegame-closed", refreshWatchButtons);
-    window.removeEventListener("resize", onResize);
-    document.removeEventListener("fullscreenchange", onResize);
-    clearTimeout(resizeTimer);
+    detachResizeListeners();
     if (liveWatcherAttached) {
       window.removeEventListener("sturddle:livegame-closed", onLiveGameClosed);
       liveWatcherAttached = false;
@@ -1155,6 +1163,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   function hide() {
+    detachResizeListeners();
     for (const wb of openWindows()) {
       try { wb.hide(); } catch { /* */ }
     }
@@ -1164,6 +1173,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     for (const wb of openWindows()) {
       try { wb.show(); } catch { /* */ }
     }
+    attachResizeListeners();
   }
 
   function isHidden() {
