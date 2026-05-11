@@ -417,6 +417,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
         headers,
         body: JSON.stringify({ fen, move: uciMove }),
       });
+      if (res.status === 204) { console.warn("late bestmove skipped:", uciMove); return; }
       if (!res.ok) return;
       const { fen: newFen } = await res.json();
       // Discard if a newer `position` message arrived while the fetch was in flight.
