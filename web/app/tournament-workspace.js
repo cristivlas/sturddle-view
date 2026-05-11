@@ -920,6 +920,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (wb.min || wb.max) wb.restore();
   }
 
+  // Focus windows top-left first so bottom-right ends up on top.
+  function zOrder(wbs) {
+    [...wbs].sort((a, b) => a.y !== b.y ? a.y - b.y : a.x - b.x)
+      .forEach(wb => { try { wb.focus(); } catch { /* */ } });
+  }
+
   // Reserved strip at the bottom so minimized WinBoxes have a place to dock.
   const MINIMIZE_FOOTER_H = 40;
   // Visual gap between tiled/snapped windows; also absorbs WinBox rounding.
@@ -959,6 +965,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const y = Math.max(top,  Math.min(top  + row * h, top  + availH - hh));
       wb.resize(ww, hh).move(x, y);
     });
+    zOrder(wbs);
   }
 
   // 2x2 in the bottom half of the viewport. Auto-opens any of the
@@ -1020,7 +1027,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       unminimize(wb);
       wb.resize(w, h).move(x, y);
     }
-
+    zOrder(openWindows().filter(wb => !wb.min));
   }
 
   // Snap: k-d tree / slice-and-dice partition. Recursively split the
@@ -1108,6 +1115,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const r = it.rect;
       it.wb.resize(r.w - TILE_MARGIN, r.h - TILE_MARGIN).move(r.x, r.y);
     }
+    zOrder(wbs);
   }
 
   // Window menu's Close All: explicit dismissal. Snapshot remains
