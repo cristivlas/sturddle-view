@@ -820,7 +820,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   const onResize = () => {
     if (!tidyActive) return;
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => { if (getLiveWindows().length > 0) tidy(); }, 150);
+    resizeTimer = setTimeout(() => tidy(), 150);
   };
   window.addEventListener("resize", onResize);
   document.addEventListener("fullscreenchange", onResize);
