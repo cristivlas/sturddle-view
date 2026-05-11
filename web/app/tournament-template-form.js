@@ -64,7 +64,7 @@ export function mountTournamentTemplateForm({
   inputs.tournament_type = typeSelect;
   grid.appendChild(typeSelect);
 
-  const seedsInput = addInput("seeds", "Seeds", { type: "number", min: 1 });
+  const seedsInput = addInput("seeds", "Seeds", { type: "number", min: 1, defaultValue: 1 });
   grid.appendChild(seedsInput);
 
   function syncSeedsVisibility() {
@@ -310,7 +310,7 @@ export function mountTournamentTemplateForm({
       inputs[k].value = values[k] != null ? String(values[k]) : "";
     }
     typeSelect.value = values.tournament_type || "roundrobin";
-    seedsInput.value = values.seeds != null ? String(values.seeds) : "";
+    seedsInput.value = String(values.seeds ?? 1);
     syncSeedsVisibility();
     ponderSwitch.checked = !!values.ponder;
     affinitySwitch.checked = !!values.pin_affinity;
