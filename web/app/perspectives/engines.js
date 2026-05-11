@@ -50,7 +50,7 @@ export const enginesPerspective = {
     const tabGroup = root.querySelector(".engines-subnav");
     const applyVisibility = (panelName) => {
       if (panelName === "tournaments") getActiveWorkspace()?.show();
-      else getActiveWorkspace()?.hide();
+      else { tournamentsCtl?.dismissSortToast?.(); getActiveWorkspace()?.hide(); }
     };
     const onTabShow = (e) => {
       const name = e.detail?.name;

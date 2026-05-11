@@ -1161,11 +1161,13 @@ export function mountTournaments({ container, api, events, log, token }) {
   loadList();
 
   return {
+    dismissSortToast: dismissSortToastNow,
     unmount() {
       offEvents();
       window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
       window.removeEventListener("sturddle:workspace-closed", syncWindowMenu);
       document.removeEventListener("click", closeMenus);
+      dismissSortToastNow();
       // Hide (don't close) so the workspace survives perspective
       // navigation; it'll be re-shown when the user returns.
       getActiveWorkspace()?.hide();
