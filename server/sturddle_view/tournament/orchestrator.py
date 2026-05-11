@@ -9,6 +9,48 @@ Owns:
   secret). Single-side observation only -- pair detection deferred.
 
 Web-agnostic: takes ids + a broadcast callback, so the CLI wrapper can reuse it.
+
+Cross-proxy event reordering for game subscribers
+-------------------------------------------------
+Each engine in a pair runs as a separate proxy process. Both proxies POST
+their UCI traffic to ``/internal/proxy`` over independent HTTP clients.
+Within ONE proxy's stream the orchestrator receives lines in correct order
+(position-then-bestmove for the same turn, separated by the engine's
+thinking time), but BETWEEN proxies the POSTs race -- after engine B plays,
+fastchess immediately feeds engine A its new position. Proxy A's stdin pump
+catches the position; meanwhile proxy B's stdout pump is still finishing
+the POST for its bestmove. Depending on batching/scheduling, either POST
+can land first.
+
+If a game subscriber receives a same-color bestmove BEFORE its position,
+the live-game UI applies the move against a stale FEN and the
+``/api/chess/apply-move`` endpoint rejects it with HTTP 400 (illegal move).
+Symptom is always a FEN whose side-to-move is opposite to the move's color
+-- the prior turn's post-applyBestMove state.
+
+The fix is a per-pair reorder buffer:
+
+- ``_expected_bestmove[pair_id]`` tracks the (color, ply) of the next
+  bestmove we expect, anchored on the first position of the pair and
+  advanced each time a matching bestmove drains.
+
+- ``_reorder_queues[pair_id][proxy_id]`` holds each proxy's events in
+  arrival order (already canonical within one proxy).
+
+- On every event for a confirmed pair we attempt to drain: find the proxy
+  whose color matches ``_expected_bestmove``, walk its queue until the
+  first bestmove, emit everything up to and including it, flip the
+  expected side and ply, repeat. A drain stalls when the expected side's
+  queue has no bestmove yet -- pending events stay queued, no event ever
+  reaches the subscriber out of canonical order.
+
+- With no game subscribers attached, queues are dropped and state is
+  advanced only on matching bestmoves so a later subscriber observes
+  correct ordering from the next event onward.
+
+If symptoms ever return (400s with FENs that show opposite side-to-move
+relative to the rejected move's color), suspect a regression in this
+reorder path or in the per-proxy color/ply tracking it relies on.
 """
 from __future__ import annotations
 
@@ -297,6 +339,14 @@ class Orchestrator:
         # UCI move list per confirmed pair, longest-prefix-extension
         # wins; handed to the reconciliation queue at dissolution.
         self._pair_moves: dict[str, list[str]] = {}
+        # Ordering: per pair, the next bestmove we expect (color, ply).
+        # Per-pair per-proxy queues hold each side's events in arrival
+        # order (which is already canonical within one proxy). Draining
+        # alternates between the two proxies' queues according to the
+        # expected bestmove, so subscribers see events in canonical
+        # ply order regardless of cross-proxy POST races.
+        self._expected_bestmove: dict[str, tuple[str, int]] = {}
+        self._reorder_queues: dict[str, dict[str, list[dict]]] = {}
         self._pgn_tailer: PgnTailer | None = None
         self._reconcile_queue = ReconciliationQueue()
         # Per-tournament secret embedded in the proxy --broadcast-url so
@@ -765,22 +815,112 @@ class Orchestrator:
                 }
                 _fanout(paired_subs, payload)
             # Fan out to game subscribers (keyed by pair_id, not proxy_id).
+            # Reorder buffer: cross-proxy POST races can deliver events to
+            # the orchestrator out of canonical chess order. We hold
+            # everything for the pair until the expected bestmove arrives,
+            # then drain the buffer in (color, ply) order so subscribers
+            # never see a bestmove before its own position.
             peer = self._confirmed_pairs.get(proxy_id)
-            if peer:
-                pair_id = self._pair_ids.get(frozenset((proxy_id, peer)))
-                if pair_id:
-                    game_subs = self._game_subscribers.get(pair_id)
-                    if game_subs:
-                        state = self._pairing_state.get(proxy_id)
-                        game_payload: dict = {
-                            "proxy_id":     proxy_id,
-                            "line":         line,
-                            "thinking_side": state[1] if state else None,
-                            "engine_name":  self._proxy_engine_names.get(proxy_id),
-                        }
-                        if parsed is not None:
-                            game_payload["parsed"] = parsed
-                        _fanout(game_subs, game_payload)
+            pair_id = self._pair_ids.get(frozenset((proxy_id, peer))) if peer else None
+            if pair_id:
+                game_subs = self._game_subscribers.get(pair_id)
+                state = self._pairing_state.get(proxy_id)
+                game_payload: dict = {
+                    "proxy_id":     proxy_id,
+                    "line":         line,
+                    "thinking_side": state[1] if state else None,
+                    "engine_name":  self._proxy_engine_names.get(proxy_id),
+                }
+                if parsed is not None:
+                    game_payload["parsed"] = parsed
+                self._reorder_emit(pair_id, proxy_id, parsed, game_payload, game_subs)
+
+    def _reorder_emit(
+        self,
+        pair_id: str,
+        proxy_id: str,
+        parsed: dict | None,
+        payload: dict,
+        game_subs: "set[CoalescingQueue] | None",
+    ) -> None:
+        """Per-proxy queueing + canonical-order drain.
+
+        Each proxy's events arrive in correct order from that proxy.
+        We hold them per-proxy and emit by alternating turns according
+        to ``_expected_bestmove[pair_id] = (color, ply)``: drain the
+        active side's queue through its bestmove, then flip to the
+        opposite side. This produces canonical ply order regardless of
+        cross-proxy POST race timing.
+
+        When no game subscribers are attached, skip buffering but keep
+        ``_expected_bestmove`` advanced so a later subscriber observes
+        correct ordering from the next event onward.
+        """
+        kind = parsed.get("kind") if parsed is not None else None
+        ply = parsed.get("ply") if parsed is not None else None
+        color = self._pairing_color.get(proxy_id)
+
+        # Anchor on first position seen for this pair.
+        if pair_id not in self._expected_bestmove:
+            if kind == "position" and color is not None and ply is not None:
+                self._expected_bestmove[pair_id] = (color, ply)
+
+        if not game_subs:
+            # No subscribers -- drop any leftover queue from a previous
+            # subscription window and advance state on matching bestmove
+            # so the next subscriber sees correct ordering.
+            self._reorder_queues.pop(pair_id, None)
+            if kind == "bestmove" and color is not None:
+                expected = self._expected_bestmove.get(pair_id)
+                if expected and expected[0] == color:
+                    self._expected_bestmove[pair_id] = (
+                        _opposite_side(color), expected[1] + 1
+                    )
+            return
+
+        # Enqueue and try to drain.
+        self._reorder_queues.setdefault(pair_id, {}).setdefault(proxy_id, []).append(payload)
+        self._reorder_drain(pair_id, game_subs)
+
+    def _reorder_drain(
+        self,
+        pair_id: str,
+        game_subs: "set[CoalescingQueue]",
+    ) -> None:
+        """Drain queues by alternating turns. Each iteration: find the
+        proxy whose color matches the expected side, emit its queued
+        events through (and including) its next bestmove, then flip
+        the expected side. Stops when no proxy has the expected next
+        bestmove yet."""
+        queues = self._reorder_queues.get(pair_id)
+        if not queues:
+            return
+        while True:
+            expected = self._expected_bestmove.get(pair_id)
+            if expected is None:
+                break
+            exp_color, exp_ply = expected
+            active_pid: str | None = None
+            for pid in queues:
+                if self._pairing_color.get(pid) == exp_color:
+                    active_pid = pid
+                    break
+            if active_pid is None:
+                break
+            q = queues.get(active_pid) or []
+            # Find first bestmove in this proxy's queue.
+            bm_idx = -1
+            for i, p in enumerate(q):
+                pp = p.get("parsed")
+                if pp is not None and pp.get("kind") == "bestmove":
+                    bm_idx = i
+                    break
+            if bm_idx < 0:
+                break
+            for item in q[: bm_idx + 1]:
+                _fanout(game_subs, item)
+            queues[active_pid] = q[bm_idx + 1:]
+            self._expected_bestmove[pair_id] = (_opposite_side(exp_color), exp_ply + 1)
 
     def _recompute_groups(self) -> tuple[set[frozenset], set[str]]:
         """Derive the current set of pairing groups from ``_pairing_map``.
@@ -833,6 +973,8 @@ class Orchestrator:
                         pid_a if state_a[1] == "white" else pid_b
                     )
                     self._pair_moves[pair_id] = []
+                    self._expected_bestmove.pop(pair_id, None)
+                    self._reorder_queues.pop(pair_id, None)
                     new_pairs.add(group)
                     if _DEBUG_PAIRING:
                         log.debug(
@@ -1050,6 +1192,8 @@ class Orchestrator:
         self._confirmed_pairs.pop(black_pid, None)
         self._pair_ids.pop(proxies, None)
         self._pair_white.pop(pair_id, None)
+        self._expected_bestmove.pop(pair_id, None)
+        self._reorder_queues.pop(pair_id, None)
         moves = self._pair_moves.pop(pair_id, None)
         log.debug(
             "dissolve pair=%s plies=%d terminal=%s white=%s black=%s",
