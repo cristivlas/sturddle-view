@@ -5,6 +5,7 @@ PGN files. Each test writes to a tmp file because the public API takes
 a Path."""
 from __future__ import annotations
 
+import gzip
 import math
 from pathlib import Path
 
@@ -24,6 +25,11 @@ from sturddle_view.tournament.pgn_stats import (
     read_game_pgn,
     rewrite_drop_partial_pairs,
 )
+
+
+def _find_bak_gz(p: Path) -> Path | None:
+    matches = sorted(p.parent.glob(f"{p.name}.*.bak.gz"))
+    return matches[-1] if matches else None
 
 
 def _write_pgn(tmp_path: Path, body: str) -> Path:
@@ -606,8 +612,7 @@ def test_rewrite_no_partials_no_op(tmp_path):
     assert n == 0
     assert deltas == {}
     assert p.read_bytes() == before
-    bak = p.with_suffix(p.suffix + ".bak")
-    assert not bak.exists()
+    assert _find_bak_gz(p) is None
 
 
 def test_rewrite_drops_partial_pair(tmp_path):
@@ -619,8 +624,7 @@ def test_rewrite_drops_partial_pair(tmp_path):
     n, deltas = rewrite_drop_partial_pairs(p)
     assert n == 1
     assert deltas == {"A vs B": {"wins": 1, "losses": 0, "draws": 0}}
-    bak = p.with_suffix(p.suffix + ".bak")
-    assert bak.exists()
+    assert _find_bak_gz(p) is not None
     # After rewrite: 0 partial pairs, 2 unique games.
     assert count_partial_pairs(p) == 0
     assert compute_standings(p).games == 2
@@ -703,8 +707,9 @@ def test_rewrite_backup_bytes_equal_original(tmp_path):
     p = _write_pgn(tmp_path, body)
     original = p.read_bytes()
     rewrite_drop_partial_pairs(p)
-    bak = p.with_suffix(p.suffix + ".bak")
-    assert bak.read_bytes() == original
+    bak = _find_bak_gz(p)
+    assert bak is not None
+    assert gzip.decompress(bak.read_bytes()) == original
 
 
 def test_rewrite_idempotent(tmp_path):
@@ -793,8 +798,9 @@ def test_patch_config_writes_backup(tmp_path):
     p = _write_config(tmp_path)
     original = p.read_bytes()
     patch_config_json(p, {"A vs B": {"wins": 1, "losses": 0, "draws": 0}})
-    bak = p.with_suffix(p.suffix + ".bak")
-    assert bak.read_bytes() == original
+    bak = _find_bak_gz(p)
+    assert bak is not None
+    assert gzip.decompress(bak.read_bytes()) == original
 
 
 def test_patch_config_no_op_if_missing(tmp_path):
@@ -817,7 +823,7 @@ def test_patch_config_unknown_pair_warns(tmp_path, caplog):
         patch_config_json(p, {"X vs Y": {"wins": 1, "losses": 0, "draws": 0}})
     assert "X vs Y" in caplog.text
     # File unchanged -- no known pair was patched.
-    assert not p.with_suffix(p.suffix + ".bak").exists()
+    assert _find_bak_gz(p) is None
 
 
 def test_patch_config_reversed_key(tmp_path):

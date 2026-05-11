@@ -444,16 +444,18 @@ class Orchestrator:
                         t.id, pgn_size / (1024 * 1024),
                     )
                 t0 = time.monotonic()
+                ts = datetime.now()
                 dropped, _deltas = await asyncio.to_thread(
-                    rewrite_drop_partial_pairs, spec.pgn_path, spec.config_path,
+                    rewrite_drop_partial_pairs, spec.pgn_path, spec.config_path, ts,
                 )
                 elapsed = time.monotonic() - t0
                 if dropped:
+                    stamp = ts.strftime("%Y-%m-%dT%H-%M-%S")
                     log.info(
                         "tournament %s: rewrote PGN, dropped %d game(s) "
                         "(partial pairs + resume dups) in %.1fs; "
-                        "backup at %s.bak",
-                        t.id, dropped, elapsed, spec.pgn_path.name,
+                        "backup at %s.%s.bak.gz",
+                        t.id, dropped, elapsed, spec.pgn_path.name, stamp,
                     )
                 elif pgn_size > 0:
                     log.info(

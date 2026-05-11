@@ -6,6 +6,7 @@ Reads the PGN; results are cached per-path keyed by (mtime, size).
 """
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import math
@@ -13,6 +14,7 @@ import os
 import re
 import shutil
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -294,6 +296,7 @@ def _needs_rewrite(pgn_path: Path) -> bool:
 def rewrite_drop_partial_pairs(
     pgn_path: Path,
     config_path: Path | None = None,
+    ts: datetime | None = None,
 ) -> tuple[int, dict[str, dict[str, int]]]:
     """Drop games belonging to partial pairs (and resume duplicates).
 
@@ -415,8 +418,11 @@ def rewrite_drop_partial_pairs(
             else:
                 entry["draws"] += 1
 
-    backup = pgn_path.with_suffix(pgn_path.suffix + ".bak")
-    shutil.copyfile(pgn_path, backup)
+    ts = ts or datetime.now()
+    stamp = ts.strftime("%Y-%m-%dT%H-%M-%S")
+    backup = pgn_path.with_name(pgn_path.name + f".{stamp}.bak.gz")
+    with pgn_path.open("rb") as src, gzip.open(backup, "wb") as dst:
+        shutil.copyfileobj(src, dst)
     tmp = pgn_path.with_suffix(pgn_path.suffix + ".tmp")
     with tmp.open("w", encoding="utf-8", newline="\n") as f:
         for i in range(len(games)):
@@ -428,7 +434,7 @@ def rewrite_drop_partial_pairs(
     os.replace(tmp, pgn_path)
     _iter_games_cache.pop(pgn_path, None)
     if config_path is not None:
-        patch_config_json(config_path, deltas)
+        patch_config_json(config_path, deltas, ts=ts)
     return dropped, deltas
 
 
@@ -438,6 +444,7 @@ _PENTA_KEYS = ("penta_WW", "penta_WD", "penta_WL", "penta_DD", "penta_LD", "pent
 def patch_config_json(
     config_path: Path,
     deltas: dict[str, dict[str, int]],
+    ts: datetime | None = None,
 ) -> None:
     """Subtract dropped-game W/L/D from fastchess config.json stats.
 
@@ -447,7 +454,7 @@ def patch_config_json(
     pair, penta counts are zeroed because we cannot reconstruct partial
     pair outcomes -- fastchess will rebuild them from new games.
 
-    Written atomically; the original is preserved as ``config.json.bak``.
+    Written atomically; the original is compressed to a timestamped ``.bak.gz``.
     No-op if ``config_path`` does not exist or ``deltas`` is empty.
     """
     if not deltas or not config_path.exists():
@@ -481,8 +488,10 @@ def patch_config_json(
         changed = True
     if not changed:
         return
-    backup = config_path.with_suffix(config_path.suffix + ".bak")
-    shutil.copyfile(config_path, backup)
+    stamp = (ts or datetime.now()).strftime("%Y-%m-%dT%H-%M-%S")
+    backup = config_path.with_name(config_path.name + f".{stamp}.bak.gz")
+    with config_path.open("rb") as src, gzip.open(backup, "wb") as dst:
+        shutil.copyfileobj(src, dst)
     tmp = config_path.with_suffix(config_path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, indent=4), encoding="utf-8")
     os.replace(tmp, config_path)
