@@ -12,7 +12,7 @@ import { openSettingsDialog } from "./settings-dialog.js";
 import { EVT, KIND, STATUS } from "./tournament-events.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { getLiveWindows } from "./tournament-live-game.js";
-import { getActiveWorkspace, hasAnyDesktopState, hasSavedWorkspaceState, isTidyMode, openTournamentWorkspace } from "./tournament-workspace.js";
+import { getActiveLayout, getActiveWorkspace, hasAnyDesktopState, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 
 export function mountTournaments({ container, api, events, log, token }) {
   container.innerHTML = `
@@ -942,25 +942,34 @@ export function mountTournaments({ container, api, events, log, token }) {
     if (!isOpen) windowMenu.classList.add("open");
   });
 
+  const snapBtn = container.querySelector(".tmb-snap");
+  const tileBtn = container.querySelector(".tmb-tile");
   const tidyBtn = container.querySelector(".tmb-tidy");
   const syncTidyBtn = () => {
-    tidyBtn.classList.toggle("tmb-active", isTidyMode());
+    const layout = getActiveLayout();
+    snapBtn.classList.toggle("tmb-active", layout === LAYOUT.SNAP);
+    tileBtn.classList.toggle("tmb-active", layout === LAYOUT.TILE);
+    tidyBtn.classList.toggle("tmb-active", layout === LAYOUT.TIDY);
   };
-  container.querySelector(".tmb-snap").addEventListener("click", () => {
+  snapBtn.addEventListener("click", () => {
     closeMenus();
-    getActiveWorkspace()?.snap();
+    const ws = getActiveWorkspace();
+    if (!ws) return;
+    if (getActiveLayout() === LAYOUT.SNAP) ws.untidy(); else ws.snap();
     syncTidyBtn();
   });
-  container.querySelector(".tmb-tile").addEventListener("click", () => {
+  tileBtn.addEventListener("click", () => {
     closeMenus();
-    getActiveWorkspace()?.tile();
+    const ws = getActiveWorkspace();
+    if (!ws) return;
+    if (getActiveLayout() === LAYOUT.TILE) ws.untidy(); else ws.tile();
     syncTidyBtn();
   });
   tidyBtn.addEventListener("click", () => {
     closeMenus();
     const ws = getActiveWorkspace();
     if (!ws) return;
-    if (ws.isTidy) { ws.untidy(); } else { ws.tidy(); }
+    if (getActiveLayout() === LAYOUT.TIDY) ws.untidy(); else ws.tidy();
     syncTidyBtn();
   });
   container.querySelector(".tmb-closeall").addEventListener("click", () => {

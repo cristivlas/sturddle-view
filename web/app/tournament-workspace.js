@@ -71,11 +71,14 @@ export function hasAnyDesktopState(id) {
 }
 
 
+const LAYOUT = Object.freeze({ NONE: 0, TIDY: 1, TILE: 2, SNAP: 3 });
+const LAYOUT_STORAGE_KEY = "sturddle:active-layout";
+
 let activeWorkspace = null;
-let tidyMode = localStorage.getItem("sturddle:tidy-mode") === "1";
-function setTidyMode(on) {
-  tidyMode = on;
-  localStorage.setItem("sturddle:tidy-mode", on ? "1" : "0");
+let activeLayout = Number(localStorage.getItem(LAYOUT_STORAGE_KEY) ?? LAYOUT.NONE);
+function setLayout(mode) {
+  activeLayout = mode;
+  localStorage.setItem(LAYOUT_STORAGE_KEY, mode);
 }
 
 
@@ -826,7 +829,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
       for (const wb of getLiveWindows()) if (wb.max) { wb.restore(); wb.maximize(); }
-      if (tidyMode) tidy({ preserveMin: true });
+      if (activeLayout === LAYOUT.TIDY) tidy({ preserveMin: true });
+      else if (activeLayout === LAYOUT.TILE) tile();
+      else if (activeLayout === LAYOUT.SNAP) snap();
     }, 150);
   };
   function attachResizeListeners() {
@@ -947,7 +952,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // wbsIn: explicit list (snap fallback -- skip minimized, don't unminimize).
   // Omit to use all open windows (menu path -- unminimizes everything).
   function tile(wbsIn, { reserveDock = false } = {}) {
-    setTidyMode(false);
+    setLayout(LAYOUT.TILE);
     const wbs = wbsIn ?? openWindows();
     if (!wbs.length) return;
     if (!wbsIn) wbs.forEach(unminimize);
@@ -984,7 +989,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // 2x2 in the bottom half of the viewport. Auto-opens any of the
   // four target windows that aren't open yet.
   function tidy({ preserveMin = false } = {}) {
-    setTidyMode(true);
+    setLayout(LAYOUT.TIDY);
     const keys = ["engines", "standings", "schedule", "log"];
     for (const k of keys) {
       if (!windows[k]) openSystemWindow(k);
@@ -1066,7 +1071,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // window. Produces a perfect rectangular tiling -- no gaps, no overlaps,
   // O(N log N), idempotent. Minimized/maximized windows are skipped.
   function snap() {
-    setTidyMode(false);
+    setLayout(LAYOUT.SNAP);
     const vx0 = left, vy0 = top;
     const vx1 = window.innerWidth;
 
@@ -1138,6 +1143,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     for (const it of items) {
       if (it.rect.w - TILE_MARGIN < it.minW || it.rect.h - TILE_MARGIN < it.minH) {
         tile(wbs, { reserveDock: true });
+        setLayout(LAYOUT.SNAP);  // restore -- tile() above overwrites it
         return;
       }
     }
@@ -1202,8 +1208,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     requestAnimationFrame(() => { try { flashWindow(windows[key]); } catch {} });
   }
 
-  function untidy() { setTidyMode(false); }
-  const workspace = { close, tile, tidy, untidy, snap, closeAll, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id, get isTidy() { return tidyMode; } };
+  function untidy() { setLayout(LAYOUT.NONE); }
+  const workspace = { close, tile, tidy, untidy, snap, closeAll, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id, get isTidy() { return activeLayout === LAYOUT.TIDY; } };
   activeWorkspace = workspace;
   return workspace;
 }
@@ -1213,5 +1219,11 @@ export function getActiveWorkspace() {
 }
 
 export function isTidyMode() {
-  return tidyMode;
+  return activeLayout === LAYOUT.TIDY;
 }
+
+export function getActiveLayout() {
+  return activeLayout;
+}
+
+export { LAYOUT };
