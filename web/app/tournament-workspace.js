@@ -20,7 +20,7 @@ import {
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { toast } from "./dialogs.js";
 import { escapeHtml, flashWindow } from "./wb-utils.js";
-import { createSlotGrid } from "./workspace-slot-grid.js";
+import { createSlotGrid, SLOT_GAP } from "./workspace-slot-grid.js";
 
 const STORAGE_KEY_PREFIX = "sturddle:workspace:";
 const POLL_INTERVAL_MS = 5000;
@@ -134,8 +134,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // no slot fits, the new window is minimized -- WS still connects so
   // the live state stays current behind the minimize bar.
   const slotGrid = createSlotGrid({
-    top, left,
-    getCellWidth: () => Math.max(LIVE_MIN_WIDTH, Math.round(window.innerWidth * 0.20)),
+    top, left, getRight,
+    getCellWidth: () => Math.max(LIVE_MIN_WIDTH, Math.floor((getRight() - left - SLOT_GAP * 3) / 4)),
     cellHeight: LIVE_MIN_HEIGHT,
     getWindows: () => getLiveWindows(),
   });
@@ -179,10 +179,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   let enginesBody = makeEnginesBody();
 
   const MIN_SIZES = {
-    standings: { minwidth: 320, minheight: 150 },
-    schedule:  { minwidth: 320, minheight: 150 },
-    engines:   { minwidth: 280, minheight: 150 },
-    log:       { minwidth: 280, minheight: 150 },
+    standings: { minwidth: 320, minheight: 120 },
+    schedule:  { minwidth: 320, minheight: 120 },
+    engines:   { minwidth: 280, minheight: 120 },
+    log:       { minwidth: 280, minheight: 120 },
   };
 
   // Per-window CSS class hooks (added to the WinBox outer container).
@@ -815,6 +815,14 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
   window.addEventListener("sturddle:connection", onReconnect);
   window.addEventListener("sturddle:livegame-closed", refreshWatchButtons);
+  let tidyActive = false;
+  let resizeTimer = null;
+  const onResize = () => {
+    if (!tidyActive) return;
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { if (getLiveWindows().length > 0) tidy(); }, 150);
+  };
+  window.addEventListener("resize", onResize);
 
   // ---- Tear-down --------------------------------------------------------
 
@@ -838,6 +846,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     finalized = true;
     window.removeEventListener("sturddle:connection", onReconnect);
     window.removeEventListener("sturddle:livegame-closed", refreshWatchButtons);
+    window.removeEventListener("resize", onResize);
+    clearTimeout(resizeTimer);
     if (liveWatcherAttached) {
       window.removeEventListener("sturddle:livegame-closed", onLiveGameClosed);
       liveWatcherAttached = false;
@@ -916,6 +926,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // wbsIn: explicit list (snap fallback -- skip minimized, don't unminimize).
   // Omit to use all open windows (menu path -- unminimizes everything).
   function tile(wbsIn, { reserveDock = false } = {}) {
+    tidyActive = false;
     const wbs = wbsIn ?? openWindows();
     if (!wbs.length) return;
     if (!wbsIn) wbs.forEach(unminimize);
@@ -946,6 +957,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // 2x2 in the bottom half of the viewport. Auto-opens any of the
   // four target windows that aren't open yet.
   function tidy() {
+    tidyActive = true;
     const keys = ["engines", "standings", "schedule", "log"];
     for (const k of keys) {
       if (!windows[k]) openSystemWindow(k);
@@ -978,10 +990,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const availH = window.innerHeight - top - MINIMIZE_FOOTER_H;
     const leftW = Math.max(Math.round(availW * 0.35), MIN_SIZES.engines.minwidth);
     const rightW = availW - leftW;
-    // Clamp each row to the tallest minheight in that row so both
-    // windows in a row resize to the same height (otherwise WinBox
-    // silently floors to per-window minheight, misaligning bottoms).
-    const desiredRowH = Math.floor(availH * 0.25);
+    // System rows get what's left after one row of board slots.
+    // Clamp each row so both windows in a row share the same height
+    // (WinBox silently floors to per-window minheight otherwise).
+    const systemH = availH - LIVE_MIN_HEIGHT;
+    const desiredRowH = Math.floor(systemH / 2);
     const topRowH = Math.max(desiredRowH, MIN_SIZES.engines.minheight, MIN_SIZES.standings.minheight);
     const botRowH = Math.max(desiredRowH, MIN_SIZES.schedule.minheight, MIN_SIZES.log.minheight);
     // Anchor bottom edge to top + availH (which already excludes the
@@ -1008,6 +1021,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // window. Produces a perfect rectangular tiling -- no gaps, no overlaps,
   // O(N log N), idempotent. Minimized/maximized windows are skipped.
   function snap() {
+    tidyActive = false;
     const vx0 = left, vy0 = top;
     const vx1 = window.innerWidth;
 
