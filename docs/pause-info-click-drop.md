@@ -85,42 +85,32 @@ The element is in the DOM and visible. That narrows it to:
 These are all consistent with the symptoms (intermittent, no log
 fires, no visible disabled state). None has been confirmed.
 
-## Current instrumentation (in the code, on branch
-`pgn-stats-hardening`, uncommitted)
+## Key data points collected
 
-`web/app/tournaments.js` -- diagnostic `console.log` at the top of
-the Pause and Info click handlers:
+- When the bug repros, **no `[diag]` log appeared** from click handlers
+  added at the top of the Pause/Info listeners. Handler not reached.
+- A document-level capture-phase `click` listener was added next.
+  When the bug reprod, **no `[diag-doc]` log appeared either** --
+  the click event never fired at all, not even in capture phase.
+- Both diagnostic listeners have been removed (2026-05-10).
 
-```js
-ribbonStopBtn.addEventListener("click", async () => {
-  console.log("[diag] stop clicked", { t: selectedTournament()?.id, disabled: ribbonStopBtn.disabled, stoppingId });
-  ...
-});
-ribbonInfoBtn.addEventListener("click", () => {
-  console.log("[diag] info clicked", { t: selectedTournament()?.id });
-  ...
-});
-```
+This conclusively points to **main thread stall**: the browser received
+the input but the JS event loop was blocked and could not dispatch it.
 
-User confirmed: when the bug repros, **no `[diag]` log appears**.
-This is the load-bearing data point. Do not lose it.
+## Attempted fix (2026-05-10)
 
-Revert these lines once the root cause is found.
+`renderSchedule()` and `renderEngines()` in
+`web/app/tournament-workspace.js` were called synchronously on every WS
+event. They now go through rAF-coalesced wrappers (`scheduleSchedule`,
+`scheduleEngines`) matching the existing pattern for `renderEventLog`.
+Under heavy event flux this yields the main thread between frames,
+giving input events a chance to land.
 
 ## Diagnostic script available
 
 `scripts/diag_pause_stall.py` -- Playwright script that instruments
-`window.fetch` and probes ribbon button state every 2s. Intended
-for repro against a running server (`python scripts/diag_pause_stall.py`).
-Was written for a related earlier hypothesis (hung fetches wedging
-the guards); not yet adapted for the "click never reaches handler"
-hypothesis.
-
-A useful extension would be to add a `pointerdown`/`pointerup`/
-`click` listener at the document level (capture phase) and log
-which element actually received the event when buttons "don't take".
-That would distinguish overlay-absorbing-click from
-pointer-events-none from main-thread-stall.
+`window.fetch` and probes ribbon button state every 2s. Not yet adapted
+for the main-thread-stall hypothesis.
 
 ## File reference
 

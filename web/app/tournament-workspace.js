@@ -496,6 +496,20 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (atBottom && scroller) scroller.scrollTop = scroller.scrollHeight;
   }
 
+  let _schedulePending = false;
+  function scheduleSchedule() {
+    if (_schedulePending) return;
+    _schedulePending = true;
+    requestAnimationFrame(() => { _schedulePending = false; renderSchedule(); });
+  }
+
+  let _enginesPending = false;
+  function scheduleEngines() {
+    if (_enginesPending) return;
+    _enginesPending = true;
+    requestAnimationFrame(() => { _enginesPending = false; renderEngines(); });
+  }
+
   // rAF-coalesced render: at fast TC the runner_log stream can drive
   // hundreds of renders/sec; without this the main thread wedges and
   // button clicks feel dead.
@@ -706,10 +720,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         inner === KIND.PROXY_PAIRED || inner === KIND.PROXY_UNPAIRED ||
         inner === KIND.GAME_FINISHED || evt.kind === EVT.STATUS ||
         inner === KIND.DONE || inner === KIND.STOPPED)
-      renderSchedule();
+      scheduleSchedule();
     if (inner === KIND.PROXY_STARTED || inner === KIND.PROXY_ENDED ||
         evt.kind === EVT.STATUS || inner === KIND.DONE || inner === KIND.STOPPED)
-      renderEngines();
+      scheduleEngines();
 
     // Status changes and game finishes are good triggers to refresh
     // standings authoritatively.
