@@ -823,6 +823,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     resizeTimer = setTimeout(() => { if (getLiveWindows().length > 0) tidy(); }, 150);
   };
   window.addEventListener("resize", onResize);
+  document.addEventListener("fullscreenchange", onResize);
 
   // ---- Tear-down --------------------------------------------------------
 
@@ -847,6 +848,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     window.removeEventListener("sturddle:connection", onReconnect);
     window.removeEventListener("sturddle:livegame-closed", refreshWatchButtons);
     window.removeEventListener("resize", onResize);
+    document.removeEventListener("fullscreenchange", onResize);
     clearTimeout(resizeTimer);
     if (liveWatcherAttached) {
       window.removeEventListener("sturddle:livegame-closed", onLiveGameClosed);
