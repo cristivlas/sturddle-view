@@ -923,13 +923,60 @@ export function mountTournaments({ container, api, events, log, token }) {
     syncSortMenu();
     renderList();
   }
+  // Persistent sort toast -- reuse DOM in place to avoid flicker on re-sort.
+  let dismissSortToast = null;
+  let sortToastTextEl = null;
+  let sortToastToggleBtn = null;
+  let sortToastHidden = false;
+  let sortToastHiddenWbs = [];
+
+  function ensureSortToast(ws) {
+    if (dismissSortToast) return;
+    const msg = document.createElement("span");
+    msg.className = "toast-sort-msg";
+    sortToastTextEl = document.createElement("span");
+    sortToastToggleBtn = document.createElement("button");
+    sortToastToggleBtn.className = "toast-action-btn toast-ws-toggle toast-ws-minimize";
+    sortToastHidden = false;
+    sortToastHiddenWbs = [];
+    sortToastToggleBtn.addEventListener("click", () => {
+      if (!sortToastHidden) {
+        sortToastHiddenWbs = ws.minimizeAll();
+        sortToastToggleBtn.classList.replace("toast-ws-minimize", "toast-ws-restore");
+      } else {
+        ws.restoreWindows(sortToastHiddenWbs);
+        sortToastHiddenWbs = [];
+        sortToastToggleBtn.classList.replace("toast-ws-restore", "toast-ws-minimize");
+      }
+      sortToastHidden = !sortToastHidden;
+    });
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "toast-action-btn toast-close-btn";
+    closeBtn.textContent = "X";
+    closeBtn.addEventListener("click", () => {
+      dismissSortToast?.();
+      dismissSortToast = null;
+      sortToastTextEl = null;
+      sortToastToggleBtn = null;
+    });
+    msg.append(sortToastTextEl, sortToastToggleBtn, closeBtn);
+    dismissSortToast = toast(msg, { duration: 0 });
+  }
+
   for (const opt of container.querySelectorAll(".tmb-sort-opt")) {
     opt.addEventListener("click", () => {
       const next = opt.dataset.sort;
       if (!VALID_SORTS.has(next)) { closeMenus(); return; }
       const nextAsc = next === sortBy ? !sortAsc : sortAsc;
       applySort(next, nextAsc);
-      toast(`Sorted by ${opt.textContent.trim()}, ${nextAsc ? "ascending" : "descending"}`);
+      const label = `Tournaments sorted by ${opt.textContent.trim()}, ${nextAsc ? "ascending" : "descending"}`;
+      const ws = getActiveWorkspace();
+      if (ws) {
+        ensureSortToast(ws);
+        sortToastTextEl.textContent = label;
+      } else {
+        toast(label);
+      }
       closeMenus();
     });
   }

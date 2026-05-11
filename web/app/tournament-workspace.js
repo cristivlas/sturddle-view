@@ -1213,7 +1213,15 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   function untidy() { setLayout(LAYOUT.NONE); }
-  const workspace = { close, tile, tidy, untidy, snap, closeAll, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id, get isTidy() { return activeLayout === LAYOUT.TIDY; } };
+  function minimizeAll() {
+    const wbs = openWindows().filter(wb => !wb.min);
+    for (const wb of wbs) try { wb.minimize(); } catch { /* */ }
+    return wbs;
+  }
+  function restoreWindows(wbs) {
+    for (const wb of wbs) try { unminimize(wb); } catch { /* */ }
+  }
+  const workspace = { close, tile, tidy, untidy, snap, closeAll, minimizeAll, restoreWindows, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id, get isTidy() { return activeLayout === LAYOUT.TIDY; } };
   activeWorkspace = workspace;
   return workspace;
 }

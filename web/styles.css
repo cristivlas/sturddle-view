@@ -146,7 +146,8 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.22);
 }
-.toast-icon-btn {
+.toast-icon-btn,
+.toast-action-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -158,9 +159,47 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   cursor: pointer;
   pointer-events: auto;
 }
-.toast-icon-btn:hover {
+.toast-icon-btn:hover,
+.toast-action-btn:hover {
   background: rgba(255, 255, 255, 0.18);
   border-color: rgba(255, 255, 255, 0.4);
+}
+.toast-sort-msg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.toast-close-btn {
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  flex-shrink: 0;
+}
+.toast-ws-toggle {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  flex-shrink: 0;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: 14px;
+  mask-size: 14px;
+  background-color: rgba(255,255,255,0.85);
+  color: transparent;
+}
+.toast-ws-toggle:hover {
+  background-color: rgba(255,255,255,1);
+}
+.toast-ws-minimize {
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/window-minimize.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/window-minimize.svg);
+}
+.toast-ws-restore {
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/window-restore.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/window-restore.svg);
 }
 /* When a status badge is visible, it claims the auto-margin so .conn stops
    pushing right; collapse .conn's auto-margin to a normal gap. */
