@@ -41,6 +41,7 @@ export function mountTournaments({ container, api, events, log, token }) {
               </ul>
             </li>
             <li class="tmb-separator"></li>
+            <li><button class="tmb-dd-item tmb-snap">Snap</button></li>
             <li><button class="tmb-dd-item tmb-tile">Tile</button></li>
             <li><button class="tmb-dd-item tmb-tidy">Organize</button></li>
             <li class="tmb-separator"></li>
@@ -940,6 +941,10 @@ export function mountTournaments({ container, api, events, log, token }) {
     if (!isOpen) windowMenu.classList.add("open");
   });
 
+  container.querySelector(".tmb-snap").addEventListener("click", () => {
+    closeMenus();
+    getActiveWorkspace()?.snap();
+  });
   container.querySelector(".tmb-tile").addEventListener("click", () => {
     closeMenus();
     getActiveWorkspace()?.tile();

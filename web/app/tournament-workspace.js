@@ -201,6 +201,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       class: `sturddle-wb no-full${extra}`,
       ...MIN_SIZES[key],
     });
+    // Stash so tile()/snap() can read the effective min size from the
+    // instance (WinBox doesn't expose its config min* on the instance).
+    wb.svMinWidth = MIN_SIZES[key].minwidth;
+    wb.svMinHeight = MIN_SIZES[key].minheight;
     // Wire onclose after construction (TDZ on `wb` otherwise). No persist
     // here -- state is captured at workspace.close()/closeAll()/finalize().
     wb.onclose = () => {
@@ -904,32 +908,43 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (wb.min || wb.max) wb.restore();
   }
 
-  function tile() {
-    const wbs = openWindows();
+  // Reserved strip at the bottom so minimized WinBoxes have a place to dock.
+  const MINIMIZE_FOOTER_H = 40;
+  // Visual gap between tiled/snapped windows; also absorbs WinBox rounding.
+  const TILE_MARGIN = 1;
+
+  // wbsIn: explicit list (snap fallback -- skip minimized, don't unminimize).
+  // Omit to use all open windows (menu path -- unminimizes everything).
+  function tile(wbsIn, { reserveDock = false } = {}) {
+    const wbs = wbsIn ?? openWindows();
     if (!wbs.length) return;
+    if (!wbsIn) wbs.forEach(unminimize);
     const availW = window.innerWidth - left;
-    const availH = window.innerHeight - top;
+    const availH = window.innerHeight - top - (reserveDock ? MINIMIZE_FOOTER_H : 0);
     const cols = Math.ceil(Math.sqrt(wbs.length));
     const rows = Math.ceil(wbs.length / cols);
     const w = Math.floor(availW / cols);
     const h = Math.floor(availH / rows);
     wbs.forEach((wb, i) => {
-      unminimize(wb);
       const col = i % cols;
       const row = Math.floor(i / cols);
-      // Clamp to per-window minimums so live-game layout stays usable.
-      // (WinBox doesn't expose its config min* on the instance -- windows
-      // that need clamping stash svMinWidth / svMinHeight at creation.)
-      const ww = Math.max(w, wb.svMinWidth || 0);
-      const hh = Math.max(h, wb.svMinHeight || 0);
-      wb.resize(ww, hh).move(left + col * w, top + row * h);
+      // Window size = cell minus TILE_MARGIN, but floored to per-window min
+      // (live-game windows stash svMinWidth/svMinHeight at creation; WinBox
+      // doesn't expose config min* on the instance).
+      const ww = Math.max(w - TILE_MARGIN, wb.svMinWidth ?? 0);
+      const hh = Math.max(h - TILE_MARGIN, wb.svMinHeight ?? 0);
+      // Clamp position so bottom-right stays inside [availW, availH] when
+      // min size > cell size -- prevents the bottom row from spilling into
+      // the reserved dock area. Trade-off: pushed windows may overlap the
+      // row/column above them. Acceptable for this "didn't fit" fallback.
+      const x = Math.max(left, Math.min(left + col * w, left + availW - ww));
+      const y = Math.max(top,  Math.min(top  + row * h, top  + availH - hh));
+      wb.resize(ww, hh).move(x, y);
     });
   }
 
   // 2x2 in the bottom half of the viewport. Auto-opens any of the
-  // four target windows that aren't open yet. Reserves a footer strip
-  // at the bottom so minimized WinBoxes have a place to dock.
-  const MINIMIZE_FOOTER_H = 40;
+  // four target windows that aren't open yet.
   function tidy() {
     const keys = ["engines", "standings", "schedule", "log"];
     for (const k of keys) {
@@ -988,6 +1003,92 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   }
 
+  // Snap: k-d tree / slice-and-dice partition. Recursively split the
+  // viewport at the axis of greatest center-spread; each leaf gets one
+  // window. Produces a perfect rectangular tiling -- no gaps, no overlaps,
+  // O(N log N), idempotent. Minimized/maximized windows are skipped.
+  function snap() {
+    const vx0 = left, vy0 = top;
+    const vx1 = window.innerWidth;
+
+    const allWindows = openWindows();
+    // Restore any maximized windows so they participate in the snap layout
+    // (otherwise non-max windows would be tiled invisibly underneath them).
+    // Minimized windows stay minimized and are excluded.
+    for (const wb of allWindows) if (wb.max) wb.restore();
+    const wbs = allWindows.filter(wb => !wb.min);
+    if (!wbs.length) return;
+    // Reserve bottom strip for the minimize dock only if any window is
+    // currently minimized -- otherwise full viewport.
+    const hasMin = allWindows.some(wb => wb.min);
+    const vy1 = window.innerHeight - (hasMin ? MINIMIZE_FOOTER_H : 0);
+
+    const items = wbs.map(wb => ({
+      wb,
+      cx: wb.x + wb.width / 2,
+      cy: wb.y + wb.height / 2,
+      cw: wb.width,
+      ch: wb.height,
+      minW: wb.svMinWidth ?? 1,
+      minH: wb.svMinHeight ?? 1,
+      rect: null,
+    }));
+
+    function partition(rect, group) {
+      if (group.length === 1) { group[0].rect = rect; return; }
+      let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+      for (const it of group) {
+        if (it.cx < xMin) xMin = it.cx;
+        if (it.cx > xMax) xMax = it.cx;
+        if (it.cy < yMin) yMin = it.cy;
+        if (it.cy > yMax) yMax = it.cy;
+      }
+      const xSpread = xMax - xMin, ySpread = yMax - yMin;
+      const cutV = xSpread > ySpread || (xSpread === ySpread && rect.w >= rect.h);
+      group.sort((a, b) => cutV ? a.cx - b.cx : a.cy - b.cy);
+      const mid = Math.floor(group.length / 2);
+      const A = group.slice(0, mid), B = group.slice(mid);
+      // Cut between the rightmost (bottommost) edge of A and the leftmost
+      // (topmost) edge of B. Edge-based cut is idempotent under TILE_MARGIN:
+      // after snap, A's max edge = cut - TILE_MARGIN, B's min edge = cut,
+      // and round((cut - 1 + cut) / 2) = cut, so subsequent snaps don't drift.
+      if (cutV) {
+        let aMax = -Infinity, bMin = Infinity;
+        for (const it of A) { const e = it.cx + it.cw / 2; if (e > aMax) aMax = e; }
+        for (const it of B) { const e = it.cx - it.cw / 2; if (e < bMin) bMin = e; }
+        const cut = Math.round((aMax + bMin) / 2);
+        const c = Math.max(rect.x + 1, Math.min(cut, rect.x + rect.w - 1));
+        partition({ x: rect.x, y: rect.y, w: c - rect.x, h: rect.h }, A);
+        partition({ x: c, y: rect.y, w: rect.x + rect.w - c, h: rect.h }, B);
+      } else {
+        let aMax = -Infinity, bMin = Infinity;
+        for (const it of A) { const e = it.cy + it.ch / 2; if (e > aMax) aMax = e; }
+        for (const it of B) { const e = it.cy - it.ch / 2; if (e < bMin) bMin = e; }
+        const cut = Math.round((aMax + bMin) / 2);
+        const c = Math.max(rect.y + 1, Math.min(cut, rect.y + rect.h - 1));
+        partition({ x: rect.x, y: rect.y, w: rect.w, h: c - rect.y }, A);
+        partition({ x: rect.x, y: c, w: rect.w, h: rect.y + rect.h - c }, B);
+      }
+    }
+
+    partition({ x: vx0, y: vy0, w: vx1 - vx0, h: vy1 - vy0 }, items);
+
+    // If any leaf rect can't accommodate the window's min size, fall back to
+    // tile. Always reserve the dock here: this is the "didn't fit" path and
+    // a window may well end up minimized as part of recovery.
+    for (const it of items) {
+      if (it.rect.w - TILE_MARGIN < it.minW || it.rect.h - TILE_MARGIN < it.minH) {
+        tile(wbs, { reserveDock: true });
+        return;
+      }
+    }
+
+    for (const it of items) {
+      const r = it.rect;
+      it.wb.resize(r.w - TILE_MARGIN, r.h - TILE_MARGIN).move(r.x, r.y);
+    }
+  }
+
   // Window menu's Close All: explicit dismissal. Snapshot remains
   // restorable via the ribbon, but _closed=true blocks navigation reopen.
   function closeAll() {
@@ -1039,7 +1140,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     requestAnimationFrame(() => { try { flashWindow(windows[key]); } catch {} });
   }
 
-  const workspace = { close, tile, tidy, closeAll, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id };
+  const workspace = { close, tile, tidy, snap, closeAll, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id };
   activeWorkspace = workspace;
   return workspace;
 }
