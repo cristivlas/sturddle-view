@@ -987,7 +987,15 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       }
       const cap = slotGrid.capacity();
       let slot = 0;
-      watchers.forEach((wb) => {
+      // Sort by current x position so slot assignment matches physical order,
+      // not registration order. Minimized/maximized go last when preserving.
+      const ordered = [...watchers].sort((a, b) => {
+        const aDeferred = preserveMin && (a.min || a.max);
+        const bDeferred = preserveMin && (b.min || b.max);
+        if (aDeferred !== bDeferred) return aDeferred ? 1 : -1;
+        return a.x !== b.x ? a.x - b.x : a.y - b.y;
+      });
+      ordered.forEach(wb => {
         if (preserveMin && (wb.min || wb.max)) {
           wb.onrestore = () => {
             const c = slotGrid.claim();
@@ -997,6 +1005,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           return;
         }
         if (slot < cap) {
+          wb.onrestore = null;
           unminimize(wb);
           const r = slotGrid.rectAt(slot++);
           wb.resize(r.w, r.h).move(r.x, r.y);
