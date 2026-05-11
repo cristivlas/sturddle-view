@@ -285,6 +285,23 @@ async def test_view_payload_includes_result_from_pgn_headers_on_threefold(hve):
     assert view["termination"] == "threefold_repetition"
 
 
+async def test_normal_termination_enriched_to_threefold(hve):
+    """Termination 'normal' is replaced with 'threefold_repetition' when the
+    final board position has a claimable threefold draw."""
+    h, _ = hve
+    await h.enter_view_mode(
+        start_fen=None,
+        moves_uci=_THREEFOLD_MOVES,
+        clock_history=None,
+        pgn_result="1/2-1/2",
+        pgn_termination="normal",
+    )
+    evt = h._board_event()
+    view = evt.payload["view"]
+    assert view["termination"] == "threefold_repetition"
+    assert view["result"] == "1/2-1/2"
+
+
 async def test_view_payload_result_from_board_on_checkmate(hve):
     """Forced endings (checkmate) still derive result/termination from the
     board even without PGN headers."""
