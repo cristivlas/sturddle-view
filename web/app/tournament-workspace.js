@@ -932,8 +932,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (!wbsIn) wbs.forEach(unminimize);
     const availW = window.innerWidth - left;
     const availH = window.innerHeight - top - (reserveDock ? MINIMIZE_FOOTER_H : 0);
-    const cols = Math.ceil(Math.sqrt(wbs.length));
-    const rows = Math.ceil(wbs.length / cols);
+    const maxMinW = Math.max(...wbs.map(wb => wb.svMinWidth ?? 0));
+    const maxMinH = Math.max(...wbs.map(wb => wb.svMinHeight ?? 0));
+    const n = wbs.length;
+    const maxCols = maxMinW ? Math.floor(availW / maxMinW) : n;
+    const minCols = maxMinH ? Math.ceil(n / Math.max(1, Math.floor(availH / maxMinH))) : 1;
+    const cols = Math.min(maxCols, Math.max(minCols, Math.ceil(Math.sqrt(n))));
+    const rows = Math.ceil(n / cols);
     const w = Math.floor(availW / cols);
     const h = Math.floor(availH / rows);
     wbs.forEach((wb, i) => {
