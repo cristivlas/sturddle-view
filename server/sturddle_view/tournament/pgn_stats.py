@@ -297,14 +297,23 @@ def rewrite_drop_partial_pairs(
 ) -> tuple[int, dict[str, dict[str, int]]]:
     """Drop games belonging to partial pairs (and resume duplicates).
 
-    For tournaments where Pause interrupted the second game of a pair
-    before its PGN write, the round is left with only one game. Stats
-    on top of that are biased; this function rewrites the file to drop
-    those games (and keeps only the last copy of any
-    `(round, white, black)` duplicate from resume cycles).
+    Two distinct failure modes are handled here:
+
+    1. Partial pairs: Stop killed fastchess after game-1 of a pair but
+       before game-2 was written. The lone game is dropped from the PGN
+       and subtracted from config.json (via ``patch_config_json``) so
+       fastchess replays the full pair on resume.
+
+    2. Resume duplicates: fastchess wrote a game to the PGN but was
+       killed before updating config.json. On resume it replays the
+       round, producing a second PGN entry. The config patch does NOT
+       cover this case (config already under-counts; we must not subtract
+       further). Last-wins dedup in this function removes the stale copy;
+       no config change is needed.
 
     If ``config_path`` is given and a rewrite occurs, ``patch_config_json``
-    is called in the same thread to keep fastchess's resume counter in sync.
+    is called in the same thread to keep fastchess's resume counter in sync
+    for case 1 only.
 
     Returns ``(dropped_count, deltas)`` where ``deltas`` maps each
     fastchess pair key (``"White vs Black"``) to a dict of
