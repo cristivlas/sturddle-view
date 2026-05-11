@@ -173,8 +173,8 @@ def test_standings_to_dict_includes_elo(tmp_path):
 
 
 def test_standings_elo_omitted_for_three_or_more_engines(tmp_path):
-    # With N≥3 the per-engine score% is "vs field" (mixed strengths),
-    # not a head-to-head Elo — both elo and elo_margin_95 must be None.
+    # With N>=3 the per-engine score% is "vs field" (mixed strengths),
+    # not a head-to-head Elo -- both elo and elo_margin_95 must be None.
     body = (
         _game("A", "B", "1-0") + _game("A", "C", "1-0") + _game("B", "C", "1-0")
     )
@@ -183,6 +183,52 @@ def test_standings_elo_omitted_for_three_or_more_engines(tmp_path):
     for e in d["engines"]:
         assert e["elo"] is None
         assert e["elo_margin_95"] is None
+
+
+def test_gauntlet_standings_wld(tmp_path):
+    # 3-engine gauntlet: leader A plays B and C (color-flipped pairs).
+    # A wins all 4 games vs B; A draws all 4 games vs C.
+    body = (
+        _game("A", "B", "1-0") + _game("B", "A", "0-1")  # pair A vs B
+        + _game("A", "B", "1-0") + _game("B", "A", "0-1")  # pair A vs B
+        + _game("A", "C", "1/2-1/2") + _game("C", "A", "1/2-1/2")  # pair A vs C
+        + _game("A", "C", "1/2-1/2") + _game("C", "A", "1/2-1/2")  # pair A vs C
+    )
+    p = _write_pgn(tmp_path, body)
+    s = compute_standings(p, tournament_type="gauntlet")
+    by = {e.name: e for e in s.engines}
+    assert s.games == 8
+    assert by["A"].wins == 4 and by["A"].losses == 0 and by["A"].draws == 4
+    assert by["B"].wins == 0 and by["B"].losses == 4 and by["B"].draws == 0
+    assert by["C"].wins == 0 and by["C"].losses == 0 and by["C"].draws == 4
+
+
+def test_gauntlet_standings_leader_elo_is_none(tmp_path):
+    # Leader (A) has no meaningful head-to-head record vs itself; elo stays None.
+    body = (
+        _game("A", "B", "1-0") + _game("B", "A", "0-1")
+        + _game("A", "C", "1/2-1/2") + _game("C", "A", "1/2-1/2")
+    )
+    p = _write_pgn(tmp_path, body)
+    d = compute_standings(p, tournament_type="gauntlet").to_dict()
+    leader = next(e for e in d["engines"] if e["name"] == "A")
+    assert leader["elo"] is None
+
+
+def test_gauntlet_standings_elo_per_engine(tmp_path):
+    # Elo is computed per-engine vs the leader (A), not vs field.
+    # B scores 1/4 vs A => negative Elo. C scores 2/4 (all draws) => ~0 Elo.
+    body = (
+        _game("A", "B", "1-0") + _game("B", "A", "0-1")
+        + _game("A", "B", "1-0") + _game("B", "A", "1-0")  # B wins once
+        + _game("A", "C", "1/2-1/2") + _game("C", "A", "1/2-1/2")
+        + _game("A", "C", "1/2-1/2") + _game("C", "A", "1/2-1/2")
+    )
+    p = _write_pgn(tmp_path, body)
+    d = compute_standings(p, tournament_type="gauntlet").to_dict()
+    by = {e["name"]: e for e in d["engines"]}
+    assert by["B"]["elo"] is not None and by["B"]["elo"] < 0
+    assert by["C"]["elo"] is not None and by["C"]["elo"] == pytest.approx(0.0, abs=1.0)
 
 
 def test_elo_margin_from_wld_perfect_score_is_none():

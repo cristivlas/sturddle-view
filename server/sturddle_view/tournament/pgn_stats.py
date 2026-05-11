@@ -544,12 +544,17 @@ def elo_margin_from_wld(wins: int, losses: int, draws: int) -> float | None:
     return 1.96 * se_score * delo_dscore
 
 
-def compute_standings(pgn_path: Path) -> Standings:
+def compute_standings(
+    pgn_path: Path,
+    tournament_type: str = "roundrobin",
+) -> Standings:
     """Tally W/L/D per engine across all games in ``games.pgn``.
 
     The PGN may be empty, missing, or partially-written; results from
     valid games are counted, the rest skipped.
     """
+    # wld[a][b] = [wins, losses, draws] for engine a vs engine b
+    wld: dict[str, dict[str, list[int]]] = {}
     records: dict[str, EngineRecord] = {}
     games = 0
 
@@ -565,22 +570,37 @@ def compute_standings(pgn_path: Path) -> Standings:
         if result == _WHITE_WIN:
             w.wins += 1
             b.losses += 1
+            wld.setdefault(white, {}).setdefault(black, [0, 0, 0])[0] += 1
+            wld.setdefault(black, {}).setdefault(white, [0, 0, 0])[1] += 1
         elif result == _BLACK_WIN:
             b.wins += 1
             w.losses += 1
+            wld.setdefault(black, {}).setdefault(white, [0, 0, 0])[0] += 1
+            wld.setdefault(white, {}).setdefault(black, [0, 0, 0])[1] += 1
         else:  # draw
             w.draws += 1
             b.draws += 1
+            wld.setdefault(white, {}).setdefault(black, [0, 0, 0])[2] += 1
+            wld.setdefault(black, {}).setdefault(white, [0, 0, 0])[2] += 1
 
     engines = list(records.values())
-    # Elo is only meaningful as a head-to-head metric. With exactly two
-    # engines, every game is A-vs-B so ``score_pct`` *is* the head-to-head
-    # score and we attach Elo + 95% CI. With N≥3, score% is "vs field"
-    # (mixed strengths) and is not a real Elo — leave both fields None.
     if len(engines) == 2:
+        # Head-to-head Elo is well-defined for any 2-engine tournament.
         for e in engines:
             e.elo = elo_from_score(e.score_pct) if e.games else None
             e.elo_margin_95 = elo_margin_from_wld(e.wins, e.losses, e.draws)
+    elif len(engines) >= 3 and tournament_type == "gauntlet":
+        # Leader plays every other engine; auto-detect by max game count.
+        # Per-challenger Elo is head-to-head vs the leader only.
+        leader = max(engines, key=lambda e: e.games)
+        for e in engines:
+            vs = wld.get(e.name, {}).get(leader.name)
+            if vs is None or not sum(vs):
+                continue
+            wi, li, di = vs
+            score = (wi + 0.5 * di) / sum(vs)
+            e.elo = elo_from_score(score)
+            e.elo_margin_95 = elo_margin_from_wld(wi, li, di)
     return Standings(engines=engines, games=games)
 
 

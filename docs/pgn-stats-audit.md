@@ -555,10 +555,10 @@ distill into a minimal fixture, don't import the whole file.
 | 9a | ✅ Live Games "Starting up..." placeholder | trivial | low | Done (commit 28f5ccf) |
 | 9b | Provisional pairs from fastchess stdout | medium | medium | Deferred -- new event vocabulary |
 | 9c | Faster FEN ingestion (orchestrator HTTP path) | large | high | Architectural; defer |
-| 10 | Gauntlet UX hint (leader = engine[0]) | trivial | low | One label change in the form |
-| 11 | Gauntlet standings test fixture | small | high | Locks current W/L/D behavior before changing math |
-| 12 | Gauntlet Elo (leader vs field, challenger vs leader) | medium | high | `compute_standings(tournament_type=...)`; pure server-side |
-| 13 | Surface `tournament_type` in API standings response | trivial | high | One line in `api/tournaments.py` |
+| 10 | ~~Gauntlet UX hint (leader = engine[0])~~ | -- | -- | Skipped -- less is more; implied by engine ordering |
+| 11 | ✅ Gauntlet standings test fixture | small | high | Done. Three tests: W/L/D counts, per-challenger Elo, leader elo=None |
+| 12 | ✅ Gauntlet Elo (leader vs field, challenger vs leader) | medium | high | Done. `compute_standings(tournament_type=...)`, leader auto-detected by max game count |
+| 13 | ✅ Surface `tournament_type` in API standings response | trivial | high | Done. Injected in `_serialize` for both with_stats and with_standings paths |
 | 14 | UTF-8 replace logging | small | low | Hard to trigger cleanly; defer |
 | 15 | SPRT UI in template form | medium | medium | Separate PR; spec already exists |
 | 16 | ✅ Bound PGN tail polls so Stop is responsive | small | medium | Done (commit 14f2620). 256KB cap snapped to PGN game boundary; runner.stop() unbounded await once chain is bounded |

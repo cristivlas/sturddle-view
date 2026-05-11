@@ -119,10 +119,14 @@ def _serialize(
 ) -> dict:
     out = t.to_dict()
     if (with_stats or with_standings) and store is not None:
+        tournament_type = (t.template or {}).get("tournament_type", "roundrobin")
         try:
-            standings = compute_standings(store.pgn_path(t.id)).to_dict()
+            standings = compute_standings(
+                store.pgn_path(t.id), tournament_type=tournament_type
+            ).to_dict()
         except FileNotFoundError:
             standings = {"games": 0, "engines": []}
+        standings["tournament_type"] = tournament_type
         out["standings"] = standings
     if with_stats and store is not None:
         try:
