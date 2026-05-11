@@ -47,6 +47,7 @@ function formatViewGameOver({ result, termination }) {
   const reason = TERMINATION_REASONS[termination] ?? (termination ?? "Game over");
   if (result === "1-0") return `${reason} -- White wins.`;
   if (result === "0-1") return `${reason} -- Black wins.`;
+  if (result === "1/2-1/2") return `${reason} -- Draw.`;
   return reason;
 }
 
