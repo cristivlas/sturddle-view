@@ -1255,8 +1255,7 @@ class HumanVsEngine:
                 # finished position (mirror of the backend guard).
                 # game_over is true for forced endings AND claimable draws
                 # recorded in the PGN headers.
-                "game_over": (outcome := self._board.outcome()) is not None
-                    or bool(self._view_pgn_result and self._view_pgn_result != "*"),
+                "game_over": (outcome := self._board.outcome()) is not None,
                 **(
                     {
                         "result": outcome.result(),
