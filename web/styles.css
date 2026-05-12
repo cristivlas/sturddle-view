@@ -1695,6 +1695,14 @@ wa-dialog::part(body) {
   font-weight: normal;
   color: var(--muted);
 }
+/* When the SPRT toggle disables the type select, its combobox outline
+   sits at full-alpha white under the surface. Removing the disabled
+   attribute then runs a 75ms outline-color fade-out from white to
+   transparent — visible as a focus-ring flash. Force the disabled-state
+   outline to be transparent so there's nothing to fade. */
+.tournament-template-form wa-select[data-key="tournament_type"][disabled]::part(combobox) {
+  outline-color: transparent;
+}
 .tournament-template-form .ttf-grid {
   display: grid;
   /* TC + numeric inputs are narrow; tournament type (and seeds) get the slack. */

@@ -116,8 +116,10 @@ export function mountTournamentTemplateForm({
 
   function syncSprtUI(on) {
     if (on) {
-      typeSelect.value = "roundrobin";
-      syncSeedsVisibility();
+      if (typeSelect.value !== "roundrobin") {
+        typeSelect.value = "roundrobin";
+        syncSeedsVisibility();
+      }
       typeSelect.setAttribute("disabled", "");
       inputs.rounds.setAttribute("disabled", "");
     } else {
