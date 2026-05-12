@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -397,7 +396,7 @@ def reveal_tournament_folder(tournament_id: str, request: Request) -> None:
     if not path.is_dir():
         raise HTTPException(status_code=404, detail="tournament folder not found")
     if sys.platform == "win32":
-        os.startfile(path)
+        subprocess.Popen(["explorer", str(path)])
     elif sys.platform == "darwin":
         subprocess.Popen(["open", str(path)])
     else:
