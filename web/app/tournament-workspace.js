@@ -988,7 +988,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   // Reserved strip at the bottom so minimized WinBoxes have a place to dock.
-  const MINIMIZE_FOOTER_H = 40;
+  const MINIMIZE_FOOTER_H = 36;
   // Visual gap between tiled/snapped windows; also absorbs WinBox rounding.
   const TILE_MARGIN = 1;
   const TIDY_GAP = 1;
