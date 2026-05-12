@@ -576,8 +576,30 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (banner) {
       const err = detail?.last_error;
       if (err) {
-        const tail = (err.stderr_tail || []).slice(-10).join("\n") || `exit code ${err.rc}`;
+        const RESUME_SUFFIX = "; press Start to resume.";
+        const rawTail = (err.stderr_tail || []).slice(-10);
+        const lastIdx = rawTail.length - 1;
+        const hasResume = lastIdx >= 0 && rawTail[lastIdx].endsWith(RESUME_SUFFIX);
+        const tail = (hasResume
+          ? [...rawTail.slice(0, lastIdx), rawTail[lastIdx].slice(0, -RESUME_SUFFIX.length)]
+          : rawTail
+        ).join("\n") || `exit code ${err.rc}`;
         banner.innerHTML = `<div class="wb-error-title">Tournament failed (rc=${err.rc})</div><pre>${escapeHtml(tail)}</pre>`;
+        if (hasResume) {
+          const pre = banner.querySelector("pre");
+          pre.append("; press ");
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "toast-icon-btn";
+          btn.setAttribute("aria-label", "Resume");
+          btn.setAttribute("title", "Resume");
+          const ic = document.createElement("wa-icon");
+          ic.setAttribute("name", "forward-step");
+          btn.appendChild(ic);
+          btn.addEventListener("click", () => api("POST", `/api/tournaments/${tournament.id}/start`).catch(() => {}));
+          pre.appendChild(btn);
+          pre.append(" to resume.");
+        }
         banner.hidden = false;
       } else {
         banner.hidden = true;
