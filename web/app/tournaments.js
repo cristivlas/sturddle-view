@@ -12,7 +12,7 @@ import { openSettingsDialog } from "./settings-dialog.js";
 import { EVT, KIND, STATUS } from "./tournament-events.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { getLiveWindows } from "./tournament-live-game.js";
-import { getActiveLayout, getActiveWorkspace, hasAnyDesktopState, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
+import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasAnyDesktopState, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 
 export function mountTournaments({ container, api, events, log, token }) {
   container.innerHTML = `
@@ -472,6 +472,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     if (!ok) return;
     try {
       await api("DELETE", `/api/tournaments/${t.id}`);
+      clearWorkspaceState(t.id);
       toast(`Removed "${t.name}"`, { variant: "neutral" });
     } catch (e) {
       reportError({ log }, `Removing "${t.name}" failed`, e);

@@ -70,6 +70,10 @@ export function hasAnyDesktopState(id) {
   return loadState(id) !== null;
 }
 
+export function clearWorkspaceState(id) {
+  try { localStorage.removeItem(STORAGE_KEY_PREFIX + id); } catch {}
+}
+
 
 const LAYOUT = Object.freeze({ NONE: 0, TIDY: 1, TILE: 2, SNAP: 3 });
 const LAYOUT_STORAGE_KEY = "sturddle:active-layout";
@@ -99,12 +103,21 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // navigation). lastGeometry holds last-known position/size per key so
   // closed slots can carry geometry forward into the next snapshot.
   const restoreFromSaved = hasOpenWindows(savedState);
+  const MIN_SIZES = {
+    standings: { minwidth: 320, minheight: 120 },
+    schedule:  { minwidth: 320, minheight: 120 },
+    engines:   { minwidth: 280, minheight: 120 },
+    log:       { minwidth: 280, minheight: 120 },
+  };
   const lastGeometry = {};
   for (const key of Object.keys(DEFAULT_LAYOUT)) {
     const s = savedState?.[key];
+    const ms = MIN_SIZES[key];
     lastGeometry[key] = s
       ? { x: s.x, y: s.y, width: s.width, height: s.height }
-      : { ...DEFAULT_LAYOUT[key] };
+      : ms
+        ? { x: "center", y: "center", width: `${ms.minwidth}px`, height: `${ms.minheight}px` }
+        : { ...DEFAULT_LAYOUT[key] };
   }
   let detail = null;
   const eventLog = [];
@@ -186,13 +199,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   let logBody = makeLogBody();
   let enginesBody = makeEnginesBody();
 
-  const MIN_SIZES = {
-    standings: { minwidth: 320, minheight: 120 },
-    schedule:  { minwidth: 320, minheight: 120 },
-    engines:   { minwidth: 280, minheight: 120 },
-    log:       { minwidth: 280, minheight: 120 },
-  };
-
   // Per-window CSS class hooks (added to the WinBox outer container).
   // schedule = "Live Games" panel; gets a stable scrollbar gutter to
   // avoid width pulsation when rows come and go.
@@ -219,10 +225,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       lastGeometry[key] = wbGeometry(wb);
       windows[key] = null;
       if (Object.values(windows).every((w) => w === null)) tearDown();
+      else requestAnimationFrame(reapplyLayout);
       return false;
     };
     if (top > 0 && wb.y < top) wb.move(wb.x, top);
     if (left > 0 && wb.x < left) wb.move(left, wb.y);
+    requestAnimationFrame(reapplyLayout);
     return wb;
   }
 
@@ -386,9 +394,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   function attachWatch(btn, attachKey, sourceWindowKey, openOpts) {
     if (DEBUG_WATCH) console.log("[WATCH] click", { attachKey, sourceWindowKey, openOpts });
+    // Slot grid is tidy-mode only; tile/snap reflow handles placement.
+    const useSlotsGrid = activeLayout === LAYOUT.NONE || activeLayout === LAYOUT.TIDY;
     // Claim a slot BEFORE creating the window so the new window's own
     // default position doesn't shadow the slot it would occupy.
-    const rawClaim = isLiveWindowOpen(attachKey) ? null : slotGrid.claim();
+    const rawClaim = (useSlotsGrid && !isLiveWindowOpen(attachKey)) ? slotGrid.claim() : null;
     // Clamp to viewport so a slot near the right/bottom edge can't
     // push the window off-screen.
     const claim = rawClaim ? {
@@ -404,7 +414,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         initialRect: claim ? { x: claim.x, y: claim.y, w: claim.w, h: claim.h } : null,
         // Only overflow windows get a restore callback -- slotted windows
         // already have a position and restore to it naturally.
-        onAfterRestore: !claim ? (wb) => {
+        onAfterRestore: !useSlotsGrid ? () => requestAnimationFrame(reapplyLayout)
+          : !claim ? (wb) => {
           const c = slotGrid.claim();
           if (c) {
             wb.resize(c.w, c.h).move(c.x, c.y);
@@ -423,11 +434,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       console.error("[WATCH] openLiveGameWindow threw", e, { attachKey, openOpts });
       return;
     }
-    // No slot fit -- minimize so the grid stays clean. WS already
-    // connected; live state stays current behind the minimize bar.
-    if (result?.wb && !result.alreadyOpen && !claim) {
+    // No slot fit in tidy/none mode -- minimize so the grid stays clean.
+    if (result?.wb && !result.alreadyOpen && useSlotsGrid && !claim) {
       try { result.wb.minimize(); } catch { /* */ }
     }
+    if (result?.wb && !result.alreadyOpen && !result.wb.min) requestAnimationFrame(reapplyLayout);
     const isLive = isLiveWindowOpen(attachKey);
     if (DEBUG_WATCH) console.log("[WATCH] post-open", { attachKey, isLive, slotted: !!claim });
     btn.classList.toggle("wb-sched-attach-btn--live", isLive);
@@ -836,6 +847,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
   window.addEventListener("sturddle:connection", onReconnect);
   window.addEventListener("sturddle:livegame-closed", refreshWatchButtons);
+  const onLiveGameClosedReapply = () => requestAnimationFrame(reapplyLayout);
+  window.addEventListener("sturddle:livegame-closed", onLiveGameClosedReapply);
 
   let resizeTimer = null;
   const onResize = () => {
@@ -884,6 +897,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     finalized = true;
     window.removeEventListener("sturddle:connection", onReconnect);
     window.removeEventListener("sturddle:livegame-closed", refreshWatchButtons);
+    window.removeEventListener("sturddle:livegame-closed", onLiveGameClosedReapply);
     detachResizeListeners();
     if (liveWatcherAttached) {
       window.removeEventListener("sturddle:livegame-closed", onLiveGameClosed);
@@ -1226,6 +1240,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   function untidy() { setLayout(LAYOUT.NONE); }
+  function reapplyLayout() {
+    if (activeLayout === LAYOUT.TILE) tile();
+    else if (activeLayout === LAYOUT.SNAP) snap();
+  }
   function minimizeAll() {
     const wbs = openWindows().filter(wb => !wb.min);
     for (const wb of wbs) try { wb.minimize(); } catch { /* */ }
