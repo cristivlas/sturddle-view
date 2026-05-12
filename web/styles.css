@@ -1801,7 +1801,7 @@ wa-dialog::part(body) {
 .wb-table .wb-eng-name { font-weight: 500; }
 .wb-sprt {
   background: var(--bg); border: 1px solid #2e3138; border-radius: 4px;
-  padding: 6px 8px; margin-bottom: 8px; font-size: 0.75rem;
+  padding: 6px 8px; margin-bottom: 0; font-size: 0.75rem;
 }
 .wb-sprt--h1 { border-color: #2d6a3f; }
 .wb-sprt--h0 { border-color: #7a2222; }

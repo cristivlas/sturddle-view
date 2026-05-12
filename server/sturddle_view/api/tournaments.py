@@ -167,9 +167,14 @@ def _serialize(
             out["proxies_active"] = []
             out["pairings_active"] = []
         sprt_params = (t.template or {}).get("sprt")
-        if sprt_params:
+        if sprt_params and len(t.engines) >= 2:
             try:
-                out["sprt"] = compute_sprt(store.pgn_path(t.id), sprt_params).to_dict()
+                out["sprt"] = compute_sprt(
+                    store.pgn_path(t.id),
+                    sprt_params,
+                    engine_a=t.engines[0]["name"],
+                    engine_b=t.engines[1]["name"],
+                ).to_dict()
             except (NotImplementedError, KeyError, ValueError) as e:
                 log.warning("compute_sprt failed for %s: %s", t.id, e)
                 out["sprt"] = None

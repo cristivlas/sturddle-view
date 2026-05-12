@@ -653,7 +653,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const sprtModelSelect = document.createElement("wa-select");
       sprtModelSelect.size = "small";
       sprtModelSelect.setAttribute("distance", "4");
-      for (const [val, lbl] of [["normalized", "Normalized (pentanomial)"], ["logistic", "Logistic (trinomial)"]]) {
+      for (const [val, lbl] of [["normalized", "Pentanomial (logistic Elo)"], ["logistic", "Logistic (trinomial)"]]) {
         const o = document.createElement("wa-option");
         o.value = val;
         o.textContent = lbl;

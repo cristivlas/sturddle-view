@@ -623,87 +623,122 @@ def compute_standings(
 
 
 # ---------------------------------------------------------------------------
-# SPRT (Sequential Probability Ratio Test)
+# SPRT (Sequential Probability Ratio Test) -- pentanomial variant
 #
-# We implement the *normalized Elo / pentanomial* model used by
-# fastchess as the default. Games are paired (engine A plays both
-# colors against engine B for the same opening); each pair scores
-# {0, 0.5, 1, 1.5, 2} for engine A. The five-bin distribution yields
-# a tighter variance estimate than a binomial W/L/D model.
+# Games are paired: engine A plays both colors vs B on the same opening,
+# so each pair scores in {0, 0.5, 1, 1.5, 2} for A. The five-bin pair
+# distribution gives a tighter variance estimate than per-game W/L/D.
 #
+# Convention: elo0/elo1 are *logistic Elo* (per-game), the same scale as
+# everywhere else in the UI. Internally we convert each hypothesis to a
+# per-pair mean score offset and run a Gaussian LLR against the observed
+# pair scores using the sample pair-variance.
+#
+# Note: this differs from fastchess's own `-sprt model=normalized`, which
+# parameterizes elo0/elo1 in *normalized Elo* units (mean shift divided
+# by pair stdev). The two tests reach the same accept/reject decision
+# asymptotically, but the LLR magnitudes shown here will not match
+# fastchess's stdout for the same elo bounds.
+#
+# Math summary (per-pair scale, A's per-pair score s_i in [0, 2]):
+#   x_i = s_i / 2                                  (per-game score in [0, 1])
+#   mu  = (1/N) sum x_i
+#   var = (1/(N-1)) sum (x_i - mu)^2               (Bessel-corrected sample var)
+#   For hypothesis Hk: mu_k = 0.5 + elo_k * ln(10) / 1600
+#   LLR = N * (mu_1 - mu_0) * (mu - (mu_0 + mu_1)/2) / var
+#
+# Bounds: log(beta/(1-alpha)) and log((1-beta)/alpha).
 # Reference: fastchess-cli docs and the Bayesian-Elo project notes.
-# Math summary:
-#
-#   For each pair, A's score s_i ∈ {0, 0.5, 1, 1.5, 2}.
-#   mean μ = (1/N) Σ s_i / 2          (per-game score in [0,1])
-#   variance σ² = (1/(N-1)) Σ (s_i/2 - μ)²
-#   per-pair variance is σ²·2 (two games), so we use σ²_pair = (Σ(s_i/2-μ)²) / N
-#   We work with normalized Elo: elo_norm = (μ - 0.5) / σ_pair * scale
-#   where scale converts to the customary unit (see below).
-#
-# We test H0: elo = elo0 vs H1: elo = elo1 with a likelihood ratio
-# under a normal approximation, yielding LLR. Bounds are
-# log(beta/(1-alpha)) and log((1-beta)/alpha).
 # ---------------------------------------------------------------------------
-
-
-# Convert "logistic Elo" parameter to a per-pair score-scale offset under the
-# normalized-Elo model. fastchess uses a fixed coefficient: the score
-# difference (μ − 0.5) corresponds to elo via 200/ln(10) when normalized by
-# the pair-stdev, i.e.
-#     elo_normalized = (μ − 0.5) * (800 / ln(10)) / σ_pair
-# (200 per game * 2 games per pair / σ_pair, in nats vs base-10).
-#
-# We don't need to convert elo0/elo1 away from this convention; this is the
-# convention they're already specified in.
 
 _PAIR_BINS = (0.0, 0.5, 1.0, 1.5, 2.0)
 
 
-def _iter_pairs(pgn_path: Path) -> list[tuple[str, str, float]]:
-    """Group games into back-to-back paired matches.
+def _iter_pairs(
+    pgn_path: Path,
+    *,
+    engine_a: str,
+    engine_b: str,
+) -> list[tuple[str, str, float]]:
+    """Group games into color-flipped paired matches keyed by Round tag.
 
-    fastchess emits games in pairs where consecutive games share the same
-    pairing with reversed colors (game 2k and 2k+1). For SPRT we pair them
-    and emit ``(engine_a, engine_b, a_score_in_pair)`` for each completed
-    pair. Engine A is the *first* engine seen in the PGN (typical SPRT
-    setup: A is "new", B is "base").
+    fastchess assigns the same Round to a pair's two color-flipped games
+    (A-vs-B and B-vs-A on the same opening). Under ``-concurrency > 1``
+    pair-mates are written in completion order, so they are not adjacent
+    in the PGN -- grouping by consecutive index would mispair them.
+    Grouping by Round is order-independent.
 
-    Trailing odd game (incomplete pair) is dropped.
+    A round qualifies if it contains exactly two games, both involving
+    the {A, B} engine set, with opposite colors. Partial pairs (one
+    game), pre-resume duplicates, and rounds whose two games don't
+    color-flip are dropped.
+
+    ``engine_a`` is the candidate (the "new" engine being tested) and
+    ``engine_b`` is the baseline. Both are taken from the tournament
+    config in creation order, not inferred from PGN file order --
+    under concurrency the first-completed game may be from any round.
+
+    Returns ``[(engine_a, engine_b, a_score_in_pair), ...]`` in
+    first-seen Round order.
     """
-    games = list(_iter_games(pgn_path))
-    if not games:
+    keyed = list(_iter_games_keyed(pgn_path))
+    if not keyed:
         return []
-    if len(games) % 2 == 1:
-        log.debug(
-            "SPRT %s: odd game count %d -- SPRT concluded mid-pair, trailing game dropped",
-            pgn_path.name, len(games),
-        )
-    # Engine A = whichever engine appears first (deterministic).
-    first_white, first_black, _ = games[0]
-    a_name, b_name = first_white, first_black
+    a_name, b_name = engine_a, engine_b
+    engines = {a_name, b_name}
+
+    # Group by Round, preserving first-seen order. Games with no Round
+    # tag are skipped: there's no key to pair on.
+    round_order: list[str] = []
+    by_round: dict[str, list[tuple[str, str, str]]] = {}
+    for round_tag, white, black, result in keyed:
+        if not round_tag or round_tag == "?":
+            log.debug(
+                "SPRT %s: game without Round tag skipped (no key to pair on)",
+                pgn_path.name,
+            )
+            continue
+        if round_tag not in by_round:
+            by_round[round_tag] = []
+            round_order.append(round_tag)
+        by_round[round_tag].append((white, black, result))
+
     pairs: list[tuple[str, str, float]] = []
-    for i in range(0, len(games) - 1, 2):
+    for round_tag in round_order:
+        games = by_round[round_tag]
+        if len(games) != 2:
+            log.debug(
+                "SPRT %s: round %s has %d game(s), expected 2 -- skipped",
+                pgn_path.name, round_tag, len(games),
+            )
+            continue
+        (w1, b1, _r1), (w2, b2, _r2) = games
+        if {w1, b1} != engines or {w2, b2} != engines:
+            log.warning(
+                "SPRT %s: round %s skipped "
+                "(engines %s vs %s / %s vs %s, expected %s vs %s)",
+                pgn_path.name, round_tag, w1, b1, w2, b2, a_name, b_name,
+            )
+            continue
+        if w1 == w2:
+            # Unreachable from real PGN input: _iter_games_uncached dedups
+            # on (round, white, black), so same-color games in one round
+            # collapse to one entry (caught by the len != 2 check above).
+            # Kept as a guard against future dedup-key changes.
+            log.debug(
+                "SPRT %s: round %s skipped (both games same color)",
+                pgn_path.name, round_tag,
+            )
+            continue
         score = 0.0
-        for game in games[i : i + 2]:
-            white, black, result = game
-            # Skip pair if it doesn't involve our two engines (shouldn't
-            # happen in a 2-engine SPRT, but be defensive).
-            if {white, black} != {a_name, b_name}:
-                log.warning(
-                    "SPRT %s: pair at offset %d skipped "
-                    "(engines %s vs %s, expected %s vs %s)",
-                    pgn_path.name, i, white, black, a_name, b_name,
-                )
-                break
+        for white, black, result in games:
             if result == _WHITE_WIN:
                 score += 1.0 if white == a_name else 0.0
             elif result == _BLACK_WIN:
                 score += 1.0 if black == a_name else 0.0
-            else:  # draw
+            else:
                 score += 0.5
-        else:
-            pairs.append((a_name, b_name, score))
+        pairs.append((a_name, b_name, score))
     return pairs
 
 
@@ -718,8 +753,16 @@ _SUPPORTED_SPRT_MODELS = frozenset({"normalized", "pentanomial", "logistic"})
 def compute_sprt(
     pgn_path: Path,
     params: dict,
+    *,
+    engine_a: str,
+    engine_b: str,
 ) -> SprtResult:
     """Compute SPRT LLR + decision over the games in ``pgn_path``.
+
+    ``engine_a`` / ``engine_b`` are the candidate and baseline names from
+    the tournament config (engine[0] / engine[1] in creation order).
+    Required: under concurrency the PGN's first-completed game is not a
+    reliable indicator of which engine is the candidate.
 
     ``params`` keys:
       - ``elo0``  (float, required)
@@ -750,10 +793,12 @@ def compute_sprt(
 
     if model == "logistic":
         return _compute_sprt_logistic(
-            pgn_path, elo0=elo0, elo1=elo1, lower=lower, upper=upper,
+            pgn_path,
+            elo0=elo0, elo1=elo1, lower=lower, upper=upper,
+            engine_a=engine_a, engine_b=engine_b,
         )
 
-    pairs = _iter_pairs(pgn_path)
+    pairs = _iter_pairs(pgn_path, engine_a=engine_a, engine_b=engine_b)
     n = len(pairs)
 
     # Per-pair score in [0, 1]: pair_total / 2.
@@ -803,18 +848,18 @@ def compute_sprt(
             model=model,
         )
 
-    # Convert elo (logistic, per-game) into per-pair score offset.
-    # Per-game score offset for elo Δ: dscore ≈ Δ * ln(10) / 1600.
-    # Per-pair: same dscore (we work in per-pair score units for both
-    # the observed mean and the hypothesis means).
+    # Logistic-Elo per-game score offset: dscore ~= elo * ln(10) / 1600
+    # (linearization of 1/(1+10^(-elo/400)) at score=0.5). Same offset
+    # applies in per-pair score units, since mu is already per-game.
     def elo_to_score(elo: float) -> float:
         return 0.5 + elo * math.log(10.0) / 1600.0
 
     s0 = elo_to_score(elo0)
     s1 = elo_to_score(elo1)
 
-    # LLR for two normal hypotheses with common variance:
-    #   LLR = n * [(s1 - s0)*(μ - (s0+s1)/2)] / σ²
+    # Gaussian LLR with variance estimated from the sample (conventional
+    # SPRT shortcut, not a strict Wald test):
+    #   LLR = n * (s1 - s0) * (mu - (s0 + s1)/2) / var
     llr = n * (s1 - s0) * (mu - (s0 + s1) / 2.0) / var
 
     if llr >= upper:
@@ -861,6 +906,8 @@ def _compute_sprt_logistic(
     elo1: float,
     lower: float,
     upper: float,
+    engine_a: str,
+    engine_b: str,
 ) -> SprtResult:
     """Compute logistic-model SPRT over individual W/D/L games.
 
@@ -868,6 +915,9 @@ def _compute_sprt_logistic(
     field is reused so the UI doesn't need a model-specific branch. The
     label "pairs" remains accurate for the pentanomial/normalized path; for
     logistic it counts decided games, which is the appropriate analogue.
+
+    ``engine_a`` / ``engine_b`` identify the candidate and baseline from
+    tournament config; same reasoning as ``compute_sprt``.
     """
     games = list(_iter_games(pgn_path))
     if not games:
@@ -877,8 +927,7 @@ def _compute_sprt_logistic(
             elo0=elo0, elo1=elo1, model="logistic",
         )
 
-    # Engine A = whichever engine appears first (matches pentanomial path).
-    a_name, b_name = games[0][0], games[0][1]
+    a_name, b_name = engine_a, engine_b
     w = l = d = 0
     for white, black, result in games:
         if {white, black} != {a_name, b_name}:
