@@ -230,7 +230,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     };
     if (top > 0 && wb.y < top) wb.move(wb.x, top);
     if (left > 0 && wb.x < left) wb.move(left, wb.y);
-    requestAnimationFrame(reapplyLayout);
     return wb;
   }
 
