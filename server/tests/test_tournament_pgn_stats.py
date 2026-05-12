@@ -475,6 +475,8 @@ def test_sprt_unimplemented_model_raises(tmp_path):
     p = _write_pgn(tmp_path, "")
     with pytest.raises(NotImplementedError):
         compute_sprt(p, _params(model="bayesian"))
+    with pytest.raises(NotImplementedError):
+        compute_sprt(p, _params(model="fakemodel"))
 
 
 @pytest.mark.parametrize("overrides", [
@@ -502,6 +504,127 @@ def test_sprt_to_dict_round_trip(tmp_path):
         "llr", "lower_bound", "upper_bound", "status",
         "pairs", "elo0", "elo1", "model",
     }
+
+
+# ---------------------------------------------------------------------------
+# Logistic SPRT (per-game W/D/L trinomial)
+# ---------------------------------------------------------------------------
+
+
+def test_sprt_logistic_no_games(tmp_path):
+    p = _write_pgn(tmp_path, "")
+    r = compute_sprt(p, _params(model="logistic"))
+    assert r.status == "continue"
+    assert r.pairs == 0
+    assert r.llr == 0.0
+    assert r.model == "logistic"
+
+
+def test_sprt_logistic_single_game_continues(tmp_path):
+    p = _write_pgn(tmp_path, _game("A", "B", "1-0"))
+    r = compute_sprt(p, _params(model="logistic"))
+    # One win can land above upper for very wide alpha/beta; with the
+    # _params() defaults (alpha=beta=0.05) it stays below upper.
+    assert r.pairs == 1
+    assert r.status == "continue"
+
+
+def test_sprt_logistic_runaway_a_dominates_accepts_h1(tmp_path):
+    # Strong A dominance with a wider elo gap so LLR clears the Wald
+    # upper bound within a tractable game count.
+    body = ""
+    for _ in range(160):
+        body += _game("A", "B", "1-0")
+    for _ in range(40):
+        body += _game("A", "B", "1/2-1/2")
+    p = _write_pgn(tmp_path, body)
+    r = compute_sprt(p, _params(elo0=0, elo1=20, model="logistic"))
+    assert r.pairs == 200
+    assert r.status == "H1"
+    assert r.llr > r.upper_bound
+
+
+def test_sprt_logistic_runaway_b_dominates_accepts_h0(tmp_path):
+    body = ""
+    for _ in range(160):
+        body += _game("A", "B", "0-1")
+    for _ in range(40):
+        body += _game("A", "B", "1/2-1/2")
+    p = _write_pgn(tmp_path, body)
+    r = compute_sprt(p, _params(elo0=0, elo1=20, model="logistic"))
+    assert r.pairs == 200
+    assert r.status == "H0"
+    assert r.llr < r.lower_bound
+
+
+def test_sprt_logistic_balanced_continues(tmp_path):
+    # 5W / 5L / 10D -> mean score 0.5, no signal in either direction.
+    body = ""
+    for _ in range(5):
+        body += _game("A", "B", "1-0")
+    for _ in range(5):
+        body += _game("A", "B", "0-1")
+    for _ in range(10):
+        body += _game("A", "B", "1/2-1/2")
+    p = _write_pgn(tmp_path, body)
+    r = compute_sprt(p, _params(elo0=0, elo1=10, model="logistic"))
+    assert r.pairs == 20
+    assert r.status == "continue"
+
+
+def test_sprt_logistic_degenerate_extreme_elo_continues(tmp_path):
+    # No draws + extreme elo bounds force pw/pl<=0 in the trinomial.
+    # Should emit LLR=0, continue, not crash.
+    body = _game("A", "B", "1-0")
+    p = _write_pgn(tmp_path, body)
+    # elo1=10000 pushes score_1 ~ 1.0 -> pl1 = 1 - 1 - 0 = 0 (degenerate).
+    r = compute_sprt(p, _params(elo0=0, elo1=10000, model="logistic"))
+    assert r.status == "continue"
+    assert r.llr == 0.0
+
+
+def test_sprt_logistic_uses_observed_draw_rate(tmp_path):
+    # Two PGNs with same W/L but different draw rates must give different
+    # LLRs under the logistic model (draw rate enters via d_obs).
+    body_low_draws = _game("A", "B", "1-0") + _game("A", "B", "1-0") + _game("A", "B", "0-1")
+    body_high_draws = (
+        _game("A", "B", "1-0") + _game("A", "B", "1-0") + _game("A", "B", "0-1")
+        + _game("A", "B", "1/2-1/2") * 10
+    )
+    p1 = tmp_path / "low.pgn"
+    p2 = tmp_path / "high.pgn"
+    p1.write_text(body_low_draws, encoding="utf-8")
+    p2.write_text(body_high_draws, encoding="utf-8")
+    r1 = compute_sprt(p1, _params(elo0=0, elo1=10, model="logistic"))
+    r2 = compute_sprt(p2, _params(elo0=0, elo1=10, model="logistic"))
+    assert r1.llr != r2.llr
+
+
+def test_sprt_logistic_counts_games_not_pairs(tmp_path):
+    # 5 individual games -> pairs field reports 5 (per-game count).
+    body = _game("A", "B", "1-0") * 3 + _game("A", "B", "0-1") + _game("A", "B", "1/2-1/2")
+    p = _write_pgn(tmp_path, body)
+    r = compute_sprt(p, _params(model="logistic"))
+    assert r.pairs == 5
+
+
+def test_sprt_logistic_model_reported_in_result(tmp_path):
+    p = _write_pgn(tmp_path, _game("A", "B", "1-0"))
+    r = compute_sprt(p, _params(model="logistic"))
+    assert r.model == "logistic"
+
+
+def test_sprt_logistic_skips_engine_mismatch(tmp_path, caplog):
+    body = (
+        _game("A", "B", "1-0")
+        + _game("A", "C", "1-0")  # mismatch
+        + _game("A", "B", "1-0")
+    )
+    p = _write_pgn(tmp_path, body)
+    with caplog.at_level("WARNING", logger="sturddle_view.tournament.pgn_stats"):
+        r = compute_sprt(p, _params(model="logistic"))
+    assert r.pairs == 2
+    assert any("game skipped" in m for m in caplog.messages)
 
 
 # ---------------------------------------------------------------------------

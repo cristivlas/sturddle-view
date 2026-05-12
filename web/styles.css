@@ -1403,8 +1403,10 @@ wa-dialog wa-tab-panel > .settings-tournament-tpl-mount { margin-top: 24px; }
   gap: 12px;
   padding: 4px 0 8px;
 }
-.sprt-settings-grid wa-select,
-.sprt-params-form wa-select { grid-column: 1 / -1; }
+.sprt-settings-grid .settings-row,
+.sprt-params-form .settings-row { max-width: none; }
+.sprt-settings-grid .settings-row:has(wa-select),
+.sprt-params-form .settings-row:has(wa-select) { grid-column: 1 / -1; }
 /* Width must accommodate the two icon buttons' intrinsic width + gap
    (otherwise they overflow the container and the rightmost button
    extends past the form's visual right edge). 6em comfortably fits
@@ -1717,7 +1719,8 @@ wa-dialog::part(body) {
   display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: center;
 }
 /* Validation outline for required/out-of-range inputs (set by validate()). */
-.tournament-template-form .ttf-invalid::part(base) {
+.tournament-template-form .ttf-invalid::part(base),
+.sprt-settings-grid .sprt-invalid::part(base) {
   border-color: #a13a3a;
   box-shadow: 0 0 0 1px #a13a3a;
 }
@@ -1790,33 +1793,6 @@ wa-dialog::part(body) {
 }
 .wb-sprt--h1 { border-color: #2d6a3f; }
 .wb-sprt--h0 { border-color: #7a2222; }
-.wb-sprt-bar-row {
-  display: flex; align-items: center; gap: 6px;
-}
-.wb-sprt-label {
-  font-size: 0.6875rem; color: var(--muted); white-space: nowrap; width: 1.5rem; text-align: center;
-}
-.wb-sprt-track {
-  position: relative; flex: 1; height: 10px;
-  background: #2e3138; border-radius: 5px; overflow: visible;
-}
-.wb-sprt--h1 .wb-sprt-track { background: #1a3d26; }
-.wb-sprt--h0 .wb-sprt-track { background: #3d1a1a; }
-.wb-sprt-thumb {
-  position: absolute; top: 50%; transform: translate(-50%, -50%);
-  width: 10px; height: 10px; border-radius: 50%;
-  background: #8a9bb0; border: 2px solid #c0cfe0; pointer-events: none;
-}
-.wb-sprt--h1 .wb-sprt-thumb { background: #4caf72; border-color: #88d4a4; }
-.wb-sprt--h0 .wb-sprt-thumb { background: #c0453a; border-color: #e08880; }
-.wb-sprt-pairs {
-  margin-top: 4px; font-size: 0.6875rem; color: var(--muted);
-}
-.wb-sprt-banner {
-  margin-top: 5px; padding: 3px 6px; border-radius: 3px; font-size: 0.75rem;
-  background: #1e3a28; color: #88d4a4;
-}
-.wb-sprt--h0 .wb-sprt-banner { background: #3a1e1e; color: #e08880; }
 .wb-partial-pairs {
   background: var(--bg); border: 1px solid #4a3d1f; border-radius: 4px;
   padding: 6px 8px; margin-bottom: 8px; font-size: 0.75rem; color: #d4a854;

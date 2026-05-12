@@ -737,6 +737,7 @@ export function mountTournaments({ container, api, events, log, token }) {
           actionBtn.disabled = !isValid();
         }
         refreshValidity();
+        tplCtl.setSprtAvailable(builder.getEngines().length === 2);
         nameInput.addEventListener("input", refreshValidity);
         builder.onChange(() => {
           tplCtl.setSprtAvailable(builder.getEngines().length === 2);

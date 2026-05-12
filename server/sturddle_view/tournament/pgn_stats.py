@@ -712,6 +712,9 @@ def _sprt_bounds(alpha: float, beta: float) -> tuple[float, float]:
     return math.log(beta / (1.0 - alpha)), math.log((1.0 - beta) / alpha)
 
 
+_SUPPORTED_SPRT_MODELS = frozenset({"normalized", "pentanomial", "logistic"})
+
+
 def compute_sprt(
     pgn_path: Path,
     params: dict,
@@ -723,7 +726,8 @@ def compute_sprt(
       - ``elo1``  (float, required)
       - ``alpha`` (float, default 0.05)
       - ``beta``  (float, default 0.05)
-      - ``model`` (str,  default "normalized" — only model implemented)
+      - ``model`` (str,  default "normalized"; also accepts "pentanomial"
+        as an alias, and "logistic" for the trinomial W/D/L model)
     """
     elo0 = float(params["elo0"])
     elo1 = float(params["elo1"])
@@ -733,7 +737,7 @@ def compute_sprt(
     # "pentanomial" is the UI-facing name; "normalized" is the internal alias.
     if model == "pentanomial":
         model = "normalized"
-    if model != "normalized":
+    if model not in _SUPPORTED_SPRT_MODELS:
         raise NotImplementedError(f"SPRT model {model!r} not implemented")
     if elo0 >= elo1:
         raise ValueError(f"SPRT requires elo0 < elo1; got elo0={elo0}, elo1={elo1}")
@@ -743,6 +747,12 @@ def compute_sprt(
         raise ValueError(f"SPRT beta must be in (0, 1); got {beta}")
 
     lower, upper = _sprt_bounds(alpha, beta)
+
+    if model == "logistic":
+        return _compute_sprt_logistic(
+            pgn_path, elo0=elo0, elo1=elo1, lower=lower, upper=upper,
+        )
+
     pairs = _iter_pairs(pgn_path)
     n = len(pairs)
 
@@ -823,4 +833,103 @@ def compute_sprt(
         elo0=elo0,
         elo1=elo1,
         model=model,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Logistic SPRT (per-game W/D/L trinomial)
+#
+# Standard cutechess-cli style: per-game LLR with a trinomial model
+# parameterized by the observed draw rate. For hypothesis Hk:
+#     score_k = 1 / (1 + 10^(-elo_k/400))
+#     Pw_k    = score_k - d_obs/2
+#     Pl_k    = 1 - score_k - d_obs/2
+#     Pd_k    = d_obs
+# LLR = w*log(Pw1/Pw0) + l*log(Pl1/Pl0)   (draw term cancels: Pd1 == Pd0)
+#
+# If either Pw_k or Pl_k is non-positive (extreme elo bounds vs observed
+# draw rate), the trinomial is degenerate and the sample carries no
+# usable information; emit LLR=0 / continue, matching the pentanomial
+# zero-variance handling.
+# ---------------------------------------------------------------------------
+
+
+def _compute_sprt_logistic(
+    pgn_path: Path,
+    *,
+    elo0: float,
+    elo1: float,
+    lower: float,
+    upper: float,
+) -> SprtResult:
+    """Compute logistic-model SPRT over individual W/D/L games.
+
+    Game count (not pair count) is what's reported in ``pairs`` here -- the
+    field is reused so the UI doesn't need a model-specific branch. The
+    label "pairs" remains accurate for the pentanomial/normalized path; for
+    logistic it counts decided games, which is the appropriate analogue.
+    """
+    games = list(_iter_games(pgn_path))
+    if not games:
+        return SprtResult(
+            llr=0.0, lower_bound=lower, upper_bound=upper,
+            status="continue", pairs=0,
+            elo0=elo0, elo1=elo1, model="logistic",
+        )
+
+    # Engine A = whichever engine appears first (matches pentanomial path).
+    a_name, b_name = games[0][0], games[0][1]
+    w = l = d = 0
+    for white, black, result in games:
+        if {white, black} != {a_name, b_name}:
+            log.warning(
+                "SPRT %s: game skipped (engines %s vs %s, expected %s vs %s)",
+                pgn_path.name, white, black, a_name, b_name,
+            )
+            continue
+        if result == _WHITE_WIN:
+            if white == a_name:
+                w += 1
+            else:
+                l += 1
+        elif result == _BLACK_WIN:
+            if black == a_name:
+                w += 1
+            else:
+                l += 1
+        else:
+            d += 1
+
+    n = w + l + d
+    if n == 0:
+        return SprtResult(
+            llr=0.0, lower_bound=lower, upper_bound=upper,
+            status="continue", pairs=0,
+            elo0=elo0, elo1=elo1, model="logistic",
+        )
+
+    d_obs = d / n
+    s0 = 1.0 / (1.0 + math.pow(10.0, -elo0 / 400.0))
+    s1 = 1.0 / (1.0 + math.pow(10.0, -elo1 / 400.0))
+    pw0, pl0 = s0 - d_obs / 2.0, 1.0 - s0 - d_obs / 2.0
+    pw1, pl1 = s1 - d_obs / 2.0, 1.0 - s1 - d_obs / 2.0
+    if min(pw0, pl0, pw1, pl1) <= 0.0:
+        return SprtResult(
+            llr=0.0, lower_bound=lower, upper_bound=upper,
+            status="continue", pairs=n,
+            elo0=elo0, elo1=elo1, model="logistic",
+        )
+
+    llr = w * math.log(pw1 / pw0) + l * math.log(pl1 / pl0)
+    if llr >= upper:
+        status = "H1"
+    elif llr <= lower:
+        status = "H0"
+    else:
+        status = "continue"
+
+    return SprtResult(
+        llr=llr, lower_bound=lower, upper_bound=upper,
+        status=status, pairs=n,
+        elo0=elo0, elo1=elo1, model="logistic",
     )

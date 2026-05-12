@@ -243,3 +243,97 @@ async def test_sprt_info_dialog_shows_params(tmp_path, monkeypatch, browser):
         s.should_exit = True
         s.force_exit = True
         thread.join(timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_sprt_settings_validation_marks_invalid_and_skips_persist(tmp_path, monkeypatch, browser):
+    """On the Settings > SPRT tab, invalid inputs (elo0>=elo1, alpha<=0,
+    etc.) get the .sprt-invalid class and the PUT is skipped. Fixing the
+    fields clears the class and persistence resumes."""
+    if browser is None:
+        pytest.skip("chromium not installed")
+
+    s, thread, port, app = _make_server(tmp_path, monkeypatch)
+    base = f"http://127.0.0.1:{port}"
+    try:
+        ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
+        page = await ctx.new_page()
+        page_errors: list[str] = []
+        page.on("pageerror", lambda exc: page_errors.append(str(exc)))
+        page.on("console", lambda msg: page_errors.append(
+            f"console.{msg.type}: {msg.text}"
+        ) if msg.type == "error" else None)
+
+        put_count = {"n": 0}
+        async def _on_request(req):
+            if req.method == "PUT" and "tournament-settings" in req.url:
+                put_count["n"] += 1
+        page.on("request", lambda req: _on_request(req))
+
+        try:
+            await page.goto(base + "/")
+            await page.wait_for_selector("#play-perspective", timeout=5000)
+            await page.click("#settings-btn")
+            await page.wait_for_function(
+                """() => !!document.querySelector('wa-dialog wa-tab[panel="sprt"]')""",
+                timeout=5000,
+            )
+            await page.click('wa-dialog wa-tab[panel="sprt"]')
+            await page.wait_for_selector('.sprt-settings-grid wa-input[data-key="elo0"]', timeout=5000)
+
+            # Set elo0 > elo1 -- both fields should pick up .sprt-invalid.
+            await page.evaluate("""() => {
+                const e0 = document.querySelector('.sprt-settings-grid wa-input[data-key="elo0"]');
+                const e1 = document.querySelector('.sprt-settings-grid wa-input[data-key="elo1"]');
+                e0.value = "50"; e0.dispatchEvent(new Event('input', { bubbles: true }));
+                e1.value = "10"; e1.dispatchEvent(new Event('input', { bubbles: true }));
+            }""")
+            await page.wait_for_function(
+                """() => {
+                    const e0 = document.querySelector('.sprt-settings-grid wa-input[data-key="elo0"]');
+                    const e1 = document.querySelector('.sprt-settings-grid wa-input[data-key="elo1"]');
+                    return e0.classList.contains('sprt-invalid') && e1.classList.contains('sprt-invalid');
+                }""",
+                timeout=3000,
+            )
+
+            # Now set alpha out of range -- it should also be flagged.
+            await page.evaluate("""() => {
+                const a = document.querySelector('.sprt-settings-grid wa-input[data-key="alpha"]');
+                a.value = "0"; a.dispatchEvent(new Event('input', { bubbles: true }));
+            }""")
+            await page.wait_for_function(
+                """() => document.querySelector('.sprt-settings-grid wa-input[data-key="alpha"]').classList.contains('sprt-invalid')""",
+                timeout=3000,
+            )
+
+            # Wait past the debounce; no PUT should have fired while invalid.
+            await page.wait_for_timeout(600)
+            assert put_count["n"] == 0, f"expected no PUTs while invalid, got {put_count['n']}"
+
+            # Fix all fields; invalid markers should clear and a PUT should fire.
+            await page.evaluate("""() => {
+                const e0 = document.querySelector('.sprt-settings-grid wa-input[data-key="elo0"]');
+                const e1 = document.querySelector('.sprt-settings-grid wa-input[data-key="elo1"]');
+                const a  = document.querySelector('.sprt-settings-grid wa-input[data-key="alpha"]');
+                e0.value = "0";    e0.dispatchEvent(new Event('input', { bubbles: true }));
+                e1.value = "10";   e1.dispatchEvent(new Event('input', { bubbles: true }));
+                a.value  = "0.05"; a.dispatchEvent(new Event('input', { bubbles: true }));
+            }""")
+            await page.wait_for_function(
+                """() => {
+                    const all = document.querySelectorAll('.sprt-settings-grid wa-input');
+                    return [...all].every(el => !el.classList.contains('sprt-invalid'));
+                }""",
+                timeout=3000,
+            )
+            await page.wait_for_timeout(600)  # debounce
+            assert put_count["n"] >= 1, "expected at least one PUT after fields became valid"
+
+            assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
+        finally:
+            await ctx.close()
+    finally:
+        s.should_exit = True
+        s.force_exit = True
+        thread.join(timeout=2)

@@ -335,34 +335,6 @@ export function mountTournamentTemplateForm({
     return { ok: errors.length === 0, errors };
   }
 
-  function setValues(values) {
-    const scalars = ["tc", "games_in_parallel", "rounds"];
-    for (const k of scalars) {
-      inputs[k].value = values[k] != null ? String(values[k]) : "";
-    }
-    typeSelect.value = values.tournament_type || "roundrobin";
-    seedsInput.value = String(values.seeds ?? 1);
-    syncSeedsVisibility();
-    ponderSwitch.checked = !!values.ponder;
-    affinitySwitch.checked = !!values.pin_affinity;
-    oversubSwitch.checked = !!values.allow_oversubscribe;
-    sprtSwitch.checked = !!values.sprt;
-    syncSprtUI(sprtSwitch.checked);
-
-    const r = values.resign || {};
-    resignMoves.value = String(r.movecount ?? RESIGN_DEFAULTS.movecount);
-    resignScore.value = String(r.score ?? RESIGN_DEFAULTS.score);
-    resignBlock.sw.checked = !!(r.movecount != null && r.score != null);
-    syncEnabled(resignBlock, resignFields);
-
-    const d = values.draw || {};
-    drawStart.value  = String(d.movenumber ?? DRAW_DEFAULTS.movenumber);
-    drawMoves.value  = String(d.movecount ?? DRAW_DEFAULTS.movecount);
-    drawScore.value  = String(d.score ?? DRAW_DEFAULTS.score);
-    drawBlock.sw.checked = !!(d.movenumber != null && d.movecount != null && d.score != null);
-    syncEnabled(drawBlock, drawFields);
-  }
-
   function setSprtAvailable(available) {
     if (!available && sprtSwitch.checked) {
       sprtSwitch.checked = false;
@@ -373,5 +345,5 @@ export function mountTournamentTemplateForm({
     else sprtSwitch.setAttribute("disabled", "");
   }
 
-  return { getValues, setValues, validate, setSprtAvailable };
+  return { getValues, validate, setSprtAvailable };
 }
