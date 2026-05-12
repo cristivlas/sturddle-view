@@ -408,6 +408,76 @@ def test_ws_receives_tournament_status_change(client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# _resolve_sprt: SPRT bool -> full params dict at create/edit time
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def sprt_settings(tmp_path, monkeypatch):
+    s = Settings(auth_disabled=True)
+    s.tournament_root = str(tmp_path / "tournaments")
+    s.tournament_fastchess_path = sys.executable
+    s.tournament_sprt_defaults = {"elo0": 3, "elo1": 15, "alpha": 0.02, "beta": 0.02, "model": "bayesian"}
+    monkeypatch.setattr(FastchessRunner, "detect_binary", staticmethod(lambda c: c))
+    return s
+
+
+@pytest.fixture
+def sprt_client(sprt_settings):
+    app = create_app(settings=sprt_settings)
+    with TestClient(app) as c:
+        yield c
+
+
+def test_create_sprt_true_merges_defaults(sprt_client):
+    r = sprt_client.post("/api/tournaments", json={
+        "name": "s", "template": {"tc": "5+0.05", "sprt": True},
+        "engines": _engines_payload(),
+    })
+    assert r.status_code == 201, r.text
+    sprt = r.json()["template"]["sprt"]
+    assert sprt["elo0"] == 3
+    assert sprt["elo1"] == 15
+    assert sprt["alpha"] == 0.02
+    assert sprt["model"] == "bayesian"
+
+
+def test_create_sprt_dict_overrides_defaults(sprt_client):
+    r = sprt_client.post("/api/tournaments", json={
+        "name": "s2", "template": {"tc": "5+0.05", "sprt": {"elo0": 7, "elo1": 20}},
+        "engines": _engines_payload(),
+    })
+    assert r.status_code == 201, r.text
+    sprt = r.json()["template"]["sprt"]
+    assert sprt["elo0"] == 7
+    assert sprt["elo1"] == 20
+    # Remaining keys fall through from sprt_defaults.
+    assert sprt["model"] == "bayesian"
+
+
+def test_create_no_sprt_passthrough(sprt_client):
+    r = sprt_client.post("/api/tournaments", json={
+        "name": "s3", "template": {"tc": "5+0.05", "rounds": 10},
+        "engines": _engines_payload(),
+    })
+    assert r.status_code == 201, r.text
+    assert "sprt" not in r.json()["template"]
+
+
+def test_edit_sprt_true_merges_defaults(sprt_client):
+    t = sprt_client.post("/api/tournaments", json={
+        "name": "e1", "template": {"tc": "5+0.05"}, "engines": _engines_payload(),
+    }).json()
+    r = sprt_client.patch(f"/api/tournaments/{t['id']}", json={
+        "name": "e1", "template": {"tc": "5+0.05", "sprt": True},
+        "engines": _engines_payload(),
+    })
+    assert r.status_code == 200, r.text
+    sprt = r.json()["template"]["sprt"]
+    assert sprt["elo0"] == 3
+    assert sprt["model"] == "bayesian"
+
+# ---------------------------------------------------------------------------
 # engine_defaults snapshot at create time
 # ---------------------------------------------------------------------------
 
