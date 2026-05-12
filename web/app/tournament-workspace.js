@@ -420,23 +420,22 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         ...openOpts, token, tournamentId: tournament.id,
         top, left, boardStyle: boardStyleCached,
         initialRect: claim ? { x: claim.x, y: claim.y, w: claim.w, h: claim.h } : null,
-        // Only overflow windows get a restore callback -- slotted windows
-        // already have a position and restore to it naturally.
-        onAfterRestore: !useSlotsGrid ? null
-          : !claim ? (wb) => {
-          const c = slotGrid.claim();
+        getSlotSize: !useSlotsGrid ? null : () => slotGrid.rectAt(0),
+        onAfterRestore: !useSlotsGrid ? null : (wb) => {
+          const c = slotGrid.claim(wb);
           if (c) {
             wb.resize(c.w, c.h).move(c.x, c.y);
             overflowRestoreCount = 0;
             return;
           }
+          if (claim) return;
           const x = Math.min(
             left + overflowRestoreCount * OVERFLOW_X_OFFSET,
             Math.max(left, window.innerWidth - wb.width),
           );
           wb.move(x, top);
           overflowRestoreCount++;
-        } : null,
+        },
       });
     } catch (e) {
       console.error("[WATCH] openLiveGameWindow threw", e, { attachKey, openOpts });
@@ -448,7 +447,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
     if (result?.wb && !result.alreadyOpen && !result.wb.min) requestAnimationFrame(reapplyLayout);
     if (result?.wb && !result.alreadyOpen) {
-      result.wb.onminimize = onWbMinimize;
+      const prevMin = result.wb.onminimize;
+      result.wb.onminimize = prevMin ? () => { prevMin(); onWbMinimize(); } : onWbMinimize;
       if (!useSlotsGrid) result.wb.onrestore = onWbRestore;
     }
     const isLive = isLiveWindowOpen(attachKey);
@@ -1058,10 +1058,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       });
       ordered.forEach(wb => {
         if (preserveMin && (wb.min || wb.max)) {
+          const prevRestore = wb.onrestore;
           wb.onrestore = () => {
-            const c = slotGrid.claim();
+            if (prevRestore) prevRestore();
+            const c = slotGrid.claim(wb);
             if (c) wb.resize(c.w, c.h).move(c.x, c.y);
-            wb.onrestore = null;
+            wb.onrestore = prevRestore ?? null;
           };
           return;
         }
