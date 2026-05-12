@@ -1603,6 +1603,10 @@ wa-dialog::part(body) {
 .tournament-info-grid dt { color: var(--muted); font-size: 0.75rem; align-self: start; }
 .tournament-info-grid dd { margin: 0; font-size: 0.8125rem; word-break: break-word; min-width: 0; }
 .tournament-id { display: block; overflow: hidden; white-space: nowrap; }
+.tournament-id-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tournament-id-row .tournament-id { flex: 1; min-width: 0; }
+.tournament-info-reveal-btn { flex-shrink: 0; background: none; border: none; padding: 2px; cursor: pointer; color: var(--muted); line-height: 1; }
+.tournament-info-reveal-btn:hover { color: var(--wa-color-neutral-950); }
 .tournament-info-engines { margin: 0; padding: 0; list-style: none; }
 .tournament-info-engines li { margin: 0; padding: 1px 0; }
 .tournament-status.status-running {

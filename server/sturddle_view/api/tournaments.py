@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -386,6 +389,19 @@ async def stop_tournament(tournament_id: str, request: Request) -> dict:
     except TournamentNotFoundError as e:
         raise HTTPException(status_code=404, detail="tournament not found") from e
     return _serialize(t)
+
+
+@router.post("/api/tournaments/{tournament_id}/reveal", status_code=204)
+def reveal_tournament_folder(tournament_id: str, request: Request) -> None:
+    path = _store(request).dir_for(tournament_id)
+    if not path.is_dir():
+        raise HTTPException(status_code=404, detail="tournament folder not found")
+    if sys.platform == "win32":
+        os.startfile(path)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(path)])
+    else:
+        subprocess.Popen(["xdg-open", str(path)])
 
 
 # ---------------------------------------------------------------------------

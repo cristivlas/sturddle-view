@@ -505,6 +505,8 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   // ---- Info dialog -------------------------------------------------------
 
+  const IS_LOCAL = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+
   async function openInfoDialog(t) {
     let detailed = t;
     try {
@@ -562,7 +564,30 @@ export function mountTournaments({ container, api, events, log, token }) {
       dl.append(dt, dd);
     };
 
-    row("ID", makeIdCell(t.id));
+    const idCell = document.createElement("div");
+    idCell.className = "tournament-id-row";
+    const idSpan = makeIdCell(t.id);
+    idCell.appendChild(idSpan);
+    if (settings?.tournaments_root) {
+      const folder = settings.tournaments_root.replace(/[\\/]+$/, "") + "/" + t.id;
+      if (IS_LOCAL) {
+        const btn = document.createElement("button");
+        btn.className = "tournament-info-reveal-btn";
+        btn.title = folder;
+        btn.innerHTML = `<wa-icon name="folder-open"></wa-icon>`;
+        btn.addEventListener("click", async () => {
+          try {
+            await api("POST", `/api/tournaments/${t.id}/reveal`);
+          } catch (e) {
+            reportError({ log }, "Could not open folder", e);
+          }
+        });
+        idCell.appendChild(btn);
+      } else {
+        idSpan.title = folder;
+      }
+    }
+    row("ID", idCell);
     row("Status", t.status === STATUS.STOPPED ? "paused" : t.status);
     if (t.last_error) {
       const tail = (t.last_error.stderr_tail || []).slice(-10).join("\n");
