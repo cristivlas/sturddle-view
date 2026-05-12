@@ -154,9 +154,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // out of its slot frees that slot without explicit bookkeeping. When
   // no slot fits, the new window is minimized -- WS still connects so
   // the live state stays current behind the minimize bar.
+  const MAX_GRID_COLS = 4;
   const slotGrid = createSlotGrid({
     top, left, getRight,
-    getCellWidth: () => Math.max(LIVE_MIN_WIDTH, Math.floor((getRight() - left - SLOT_GAP * 3) / 4)),
+    getCellWidth: () => {
+      const cols = Math.min(MAX_GRID_COLS, Number(detail?.template?.games_in_parallel) || MAX_GRID_COLS);
+      return Math.max(LIVE_MIN_WIDTH, Math.floor((getRight() - left - SLOT_GAP * (cols - 1)) / cols));
+    },
     cellHeight: LIVE_MIN_HEIGHT,
     getWindows: () => getLiveWindows(),
   });
