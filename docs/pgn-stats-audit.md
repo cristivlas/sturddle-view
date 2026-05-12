@@ -251,10 +251,17 @@ Surgical scope: keep stats honest, do not attempt resume completion.
 3. Surface the count of dropped games in the API response and the
    workspace UI. Tournament status reflects "done with N partial
    pairs dropped" rather than silently misleading.
-4. Do **not** touch fastchess's `config.json`. If the user clicks
-   Resume on a partial-pair tournament, fastchess will (correctly,
-   given its own state) advance past the now-missing rounds. That
-   is a known limitation, documented to the user.
+4. Touch fastchess's `config.json` minimally: subtract the dropped
+   game's W/L/D from the per-pair counters so fastchess's stdout
+   stays roughly in sync with the cleaned PGN. Do **not** touch the
+   pentanomial counters (`penta_*`). fastchess only writes a
+   pentanomial entry when a pair's second game completes, so partial
+   pairs (the only thing this rewrite drops) never made it into the
+   pentanomial -- there is nothing to subtract. Zeroing them was
+   tried (commit b221385) and reverted: it wiped fastchess's running
+   pentanomial on every Stop and broke fastchess's internal SPRT
+   auto-stop. The workspace banner LLR (recomputed from the PGN) is
+   immune to either choice.
 
 After Path A, `compute_standings` and `compute_sprt` operate on a
 clean PGN: every pair complete, no resume duplicates. SPRT pair

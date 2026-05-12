@@ -1048,12 +1048,16 @@ def test_patch_config_subtracts_wld(tmp_path):
     assert stats["draws"] == 4
 
 
-def test_patch_config_zeros_penta(tmp_path):
+def test_patch_config_preserves_penta(tmp_path):
+    # Pentanomial counters must NOT be touched by the patch. Zeroing them
+    # on every Stop wiped fastchess's running pentanomial across Pause/
+    # Resume cycles, breaking its internal SPRT auto-stop.
     p = _write_config(tmp_path)
     patch_config_json(p, {"A vs B": {"wins": 1, "losses": 0, "draws": 0}})
     stats = json.loads(p.read_text())["stats"]["A vs B"]
+    expected = _CONFIG_TEMPLATE["stats"]["A vs B"]
     for pk in ("penta_WW", "penta_WD", "penta_WL", "penta_DD", "penta_LD", "penta_LL"):
-        assert stats[pk] == 0
+        assert stats[pk] == expected[pk]
 
 
 def test_patch_config_clamps_at_zero(tmp_path):

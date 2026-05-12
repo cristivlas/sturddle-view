@@ -438,9 +438,6 @@ def rewrite_drop_partial_pairs(
     return dropped, deltas
 
 
-_PENTA_KEYS = ("penta_WW", "penta_WD", "penta_WL", "penta_DD", "penta_LD", "penta_LL")
-
-
 def patch_config_json(
     config_path: Path,
     deltas: dict[str, dict[str, int]],
@@ -450,9 +447,15 @@ def patch_config_json(
 
     ``deltas`` maps ``"White vs Black"`` pair keys to
     ``{"wins": N, "losses": N, "draws": N}`` tallied from games that
-    were removed by ``rewrite_drop_partial_pairs``.  For each affected
-    pair, penta counts are zeroed because we cannot reconstruct partial
-    pair outcomes -- fastchess will rebuild them from new games.
+    were removed by ``rewrite_drop_partial_pairs``. Pentanomial counters
+    (``penta_*``) are *not* touched. fastchess only writes a pentanomial
+    entry when a pair's *second* game completes, so partial pairs (the
+    only thing this rewrite drops) never made it into the pentanomial
+    in the first place -- there is nothing to subtract. Zeroing them
+    was tried (commit b221385) and wiped fastchess's running pentanomial
+    on every Pause/Resume, which broke its internal SPRT auto-stop.
+    The workspace banner LLR is recomputed from the PGN and remains
+    authoritative regardless.
 
     Written atomically; the original is compressed to a timestamped ``.bak.gz``.
     No-op if ``config_path`` does not exist or ``deltas`` is empty.
@@ -483,8 +486,6 @@ def patch_config_json(
         entry["wins"] = max(0, entry.get("wins", 0) - d["wins"])
         entry["losses"] = max(0, entry.get("losses", 0) - d["losses"])
         entry["draws"] = max(0, entry.get("draws", 0) - d["draws"])
-        for pk in _PENTA_KEYS:
-            entry[pk] = 0
         changed = True
     if not changed:
         return
