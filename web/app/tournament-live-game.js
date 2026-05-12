@@ -56,10 +56,10 @@ const liveWindows = new Map(); // windowKey -> WinBox instance
 // before pairing data arrives. Keep the two in sync.
 const LIVE_MIN_BOARD    = 200; // px -- smallest usable board side
 const LIVE_CLOCK_H      = 36;  // px -- one clock row (font 16px + padding)
-const LIVE_EVAL_H       = 24;  // px -- eval row (font 13px)
-const LIVE_PV_H         = 16;  // px -- pv row (font 11px)
+const LIVE_EVAL_H       = 18;  // px -- eval row (0.8125rem * 1.4 line-height)
+const LIVE_PV_H         = 17;  // px -- pv row (0.6875rem * 1.4 line-height, +2px bottom padding)
 const LIVE_WINBOX_TITLE = 35;  // px -- WinBox title bar
-const LIVE_GAP          = 6;   // px -- flex gap between sections
+const LIVE_GAP          = 4;   // px -- flex gap between sections
 
 const ARROW_MIN_TIME_MS = 250; // skip arrow if side-to-move has less time than this
 

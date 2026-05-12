@@ -991,6 +991,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   const MINIMIZE_FOOTER_H = 40;
   // Visual gap between tiled/snapped windows; also absorbs WinBox rounding.
   const TILE_MARGIN = 1;
+  const TIDY_GAP = 1;
 
   // wbsIn: explicit list (snap fallback -- skip minimized, don't unminimize).
   // Omit to use all open windows (menu path -- unminimizes everything).
@@ -1084,23 +1085,23 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const availW = getRight() - left;
     const availH = window.innerHeight - top - MINIMIZE_FOOTER_H;
     const leftW = Math.max(Math.round(availW * 0.35), MIN_SIZES.engines.minwidth);
-    const rightW = availW - leftW;
+    const rightW = availW - leftW - TIDY_GAP;
     // System rows get what's left after one row of board slots.
     // Clamp each row so both windows in a row share the same height
     // (WinBox silently floors to per-window minheight otherwise).
     const systemH = availH - LIVE_MIN_HEIGHT;
-    const desiredRowH = Math.floor(systemH / 2);
+    const desiredRowH = Math.floor((systemH - TIDY_GAP) / 2);
     const topRowH = Math.max(desiredRowH, MIN_SIZES.engines.minheight, MIN_SIZES.standings.minheight);
     const botRowH = Math.max(desiredRowH, MIN_SIZES.schedule.minheight, MIN_SIZES.log.minheight);
     // Anchor bottom edge to top + availH (which already excludes the
     // minimize footer). If clamped rows exceed availH the layout
     // extends upward, but never below the reserved footer.
-    const regionTop = top + availH - (topRowH + botRowH);
+    const regionTop = top + availH - (topRowH + TIDY_GAP + botRowH);
     const placements = [
-      ["engines",   left,         regionTop,            leftW,  topRowH],
-      ["standings", left + leftW, regionTop,            rightW, topRowH],
-      ["schedule",  left,         regionTop + topRowH, leftW,  botRowH],
-      ["log",       left + leftW, regionTop + topRowH, rightW, botRowH],
+      ["engines",   left,                   regionTop,                       leftW,  topRowH],
+      ["standings", left + leftW + TIDY_GAP, regionTop,                      rightW, topRowH],
+      ["schedule",  left,                   regionTop + topRowH + TIDY_GAP,  leftW,  botRowH],
+      ["log",       left + leftW + TIDY_GAP, regionTop + topRowH + TIDY_GAP, rightW, botRowH],
     ];
     for (const [k, x, y, w, h] of placements) {
       const wb = windows[k];
