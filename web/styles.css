@@ -1329,6 +1329,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 
 /* ---------- Tournaments tab ---------- */
 #engines-perspective wa-tab-panel:has(.tournaments-panel) { padding-top: 0; }
+#engines-perspective wa-tab-panel:has(.tournaments-panel)::part(base) { padding-top: 0; }
 .tournaments-panel { display: flex; flex-direction: column; gap: 12px; min-height: 50vh; }
 
 .tournaments-menubar {
