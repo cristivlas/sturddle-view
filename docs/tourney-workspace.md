@@ -3,6 +3,7 @@
 ## Storage
 
 One entry per tournament in localStorage, keyed `sturddle:workspace:<id>`.
+Cleared automatically when the tournament is deleted.
 
 Shape:
 ```json
@@ -30,6 +31,7 @@ Absent or false when saved via navigate-away.
 | All windows `open: false`, or no saved state | Default logic |
 
 Default logic: open Standings; if tournament is RUNNING also open Live Games; if event log has entries or tournament is RUNNING also open Event Log.
+Windows with no saved position/size open at their minimum size, centered.
 
 ### Navigation (clicking a tournament in the list)
 
@@ -41,6 +43,17 @@ Default logic: open Standings; if tournament is RUNNING also open Live Games; if
 | No saved state | false | Just select, do not open workspace |
 
 `hadWorkspace`: a workspace for a *different* tournament was active at the time of navigation.
+
+### Layout mode interaction (Tile / Snap)
+
+When the active layout is Tile or Snap (not None or Tidy):
+- Opening a live game window (Watch button) triggers an immediate layout reapply.
+- Closing any window (system or live) triggers a layout reapply.
+- Restoring a minimized live window triggers a layout reapply.
+- Slot grid placement and overflow-minimize are disabled; all live windows open visible.
+
+Tidy mode is excluded from auto-reapply on open/close because it also opens all
+system windows, which would be disruptive.
 
 ### Status-driven auto-opens (inside an active workspace)
 

@@ -1329,6 +1329,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 
 /* ---------- Tournaments tab ---------- */
 #engines-perspective wa-tab-panel:has(.tournaments-panel) { padding-top: 0; }
+#engines-perspective wa-tab-panel:has(.tournaments-panel)::part(base) { padding-top: 0; }
 .tournaments-panel { display: flex; flex-direction: column; gap: 12px; min-height: 50vh; }
 
 .tournaments-menubar {
@@ -1395,6 +1396,17 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 }
 .settings-tournament-path-inner .path-field { flex: 1; min-width: 0; }
 wa-dialog wa-tab-panel > .settings-tournament-tpl-mount { margin-top: 24px; }
+.sprt-settings-grid,
+.sprt-params-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 4px 0 8px;
+}
+.sprt-settings-grid .settings-row,
+.sprt-params-form .settings-row { max-width: none; }
+.sprt-settings-grid .settings-row:has(wa-select),
+.sprt-params-form .settings-row:has(wa-select) { grid-column: 1 / -1; }
 /* Width must accommodate the two icon buttons' intrinsic width + gap
    (otherwise they overflow the container and the rightmost button
    extends past the form's visual right edge). 6em comfortably fits
@@ -1523,6 +1535,14 @@ wa-dialog::part(body) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.tournament-sprt-badge {
+  flex: 0 0 auto;
+  font-size: 0.625rem; font-weight: 700; letter-spacing: 0.8px;
+  padding: 1px 5px; border-radius: 3px;
+  background: rgba(var(--accent-rgb), 0.15);
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
+  color: var(--accent);
+}
 .tournament-status {
   flex: 0 0 auto;
   display: inline-block;
@@ -1583,6 +1603,10 @@ wa-dialog::part(body) {
 .tournament-info-grid dt { color: var(--muted); font-size: 0.75rem; align-self: start; }
 .tournament-info-grid dd { margin: 0; font-size: 0.8125rem; word-break: break-word; min-width: 0; }
 .tournament-id { display: block; overflow: hidden; white-space: nowrap; }
+.tournament-id-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tournament-id-row .tournament-id { flex: 1; min-width: 0; }
+.tournament-info-reveal-btn { flex-shrink: 0; background: none; border: none; padding: 2px; cursor: pointer; color: var(--muted); line-height: 1; }
+.tournament-info-reveal-btn:hover { color: var(--wa-color-neutral-950); }
 .tournament-info-engines { margin: 0; padding: 0; list-style: none; }
 .tournament-info-engines li { margin: 0; padding: 1px 0; }
 .tournament-status.status-running {
@@ -1675,6 +1699,14 @@ wa-dialog::part(body) {
   font-weight: normal;
   color: var(--muted);
 }
+/* When the SPRT toggle disables the type select, its combobox outline
+   sits at full-alpha white under the surface. Removing the disabled
+   attribute then runs a 75ms outline-color fade-out from white to
+   transparent — visible as a focus-ring flash. Force the disabled-state
+   outline to be transparent so there's nothing to fade. */
+.tournament-template-form wa-select[data-key="tournament_type"][disabled]::part(combobox) {
+  outline-color: transparent;
+}
 .tournament-template-form .ttf-grid {
   display: grid;
   /* TC + numeric inputs are narrow; tournament type (and seeds) get the slack. */
@@ -1699,7 +1731,8 @@ wa-dialog::part(body) {
   display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: center;
 }
 /* Validation outline for required/out-of-range inputs (set by validate()). */
-.tournament-template-form .ttf-invalid::part(base) {
+.tournament-template-form .ttf-invalid::part(base),
+.sprt-settings-grid .sprt-invalid::part(base) {
   border-color: #a13a3a;
   box-shadow: 0 0 0 1px #a13a3a;
 }
@@ -1768,9 +1801,10 @@ wa-dialog::part(body) {
 .wb-table .wb-eng-name { font-weight: 500; }
 .wb-sprt {
   background: var(--bg); border: 1px solid #2e3138; border-radius: 4px;
-  padding: 6px 8px; margin-bottom: 8px; font-size: 0.75rem;
-  font-family: var(--wa-font-family-code);
+  padding: 6px 8px; margin-bottom: 0; font-size: 0.75rem;
 }
+.wb-sprt--h1 { border-color: #2d6a3f; }
+.wb-sprt--h0 { border-color: #7a2222; }
 .wb-partial-pairs {
   background: var(--bg); border: 1px solid #4a3d1f; border-radius: 4px;
   padding: 6px 8px; margin-bottom: 8px; font-size: 0.75rem; color: #d4a854;
@@ -1824,7 +1858,7 @@ wa-dialog::part(body) {
 .winbox.sturddle-wb.sturddle-wb-live-proxy { border-color: var(--muted); }
 
 .wb-livegame {
-  display: flex; flex-direction: column; gap: 6px;
+  display: flex; flex-direction: column; gap: 4px;
   height: 100%; min-height: 0;
 }
 .wb-livegame .clock-row { padding: 5px 10px; }
@@ -1878,14 +1912,15 @@ wa-dialog::part(body) {
 .wb-livegame .lg-eval {
   display: flex; gap: 8px; align-items: baseline;
   font-family: var(--wa-font-family-code); font-size: 0.8125rem;
-  min-height: 24px; flex-shrink: 0;
+  min-height: 1em; flex-shrink: 0;
 }
 .wb-livegame .lg-eval-score { color: var(--accent); font-weight: 500; }
 .wb-livegame .lg-pv {
   font-family: var(--wa-font-family-code); font-size: 0.6875rem;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  min-height: 16px; flex-shrink: 0;
+  min-height: 1em; flex-shrink: 0;
 }
+.wb-livegame .lg-pv-bottom { padding-bottom: 2px; }
 
 /* Schedule: in-progress rows */
 .wb-sched-list .wb-sched-live {

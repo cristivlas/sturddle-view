@@ -70,6 +70,10 @@ export function hasAnyDesktopState(id) {
   return loadState(id) !== null;
 }
 
+export function clearWorkspaceState(id) {
+  try { localStorage.removeItem(STORAGE_KEY_PREFIX + id); } catch {}
+}
+
 
 const LAYOUT = Object.freeze({ NONE: 0, TIDY: 1, TILE: 2, SNAP: 3 });
 const LAYOUT_STORAGE_KEY = "sturddle:active-layout";
@@ -99,12 +103,21 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // navigation). lastGeometry holds last-known position/size per key so
   // closed slots can carry geometry forward into the next snapshot.
   const restoreFromSaved = hasOpenWindows(savedState);
+  const MIN_SIZES = {
+    standings: { minwidth: 320, minheight: 120 },
+    schedule:  { minwidth: 320, minheight: 120 },
+    engines:   { minwidth: 280, minheight: 120 },
+    log:       { minwidth: 280, minheight: 120 },
+  };
   const lastGeometry = {};
   for (const key of Object.keys(DEFAULT_LAYOUT)) {
     const s = savedState?.[key];
+    const ms = MIN_SIZES[key];
     lastGeometry[key] = s
       ? { x: s.x, y: s.y, width: s.width, height: s.height }
-      : { ...DEFAULT_LAYOUT[key] };
+      : ms
+        ? { x: "center", y: "center", width: `${ms.minwidth}px`, height: `${ms.minheight}px` }
+        : { ...DEFAULT_LAYOUT[key] };
   }
   let detail = null;
   const eventLog = [];
@@ -141,9 +154,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // out of its slot frees that slot without explicit bookkeeping. When
   // no slot fits, the new window is minimized -- WS still connects so
   // the live state stays current behind the minimize bar.
+  const MAX_GRID_COLS = 4;
   const slotGrid = createSlotGrid({
     top, left, getRight,
-    getCellWidth: () => Math.max(LIVE_MIN_WIDTH, Math.floor((getRight() - left - SLOT_GAP * 3) / 4)),
+    getCellWidth: () => {
+      const cols = Math.min(MAX_GRID_COLS, Number(detail?.template?.games_in_parallel) || MAX_GRID_COLS);
+      return Math.max(LIVE_MIN_WIDTH, Math.floor((getRight() - left - SLOT_GAP * (cols - 1)) / cols));
+    },
     cellHeight: LIVE_MIN_HEIGHT,
     getWindows: () => getLiveWindows(),
   });
@@ -186,19 +203,15 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   let logBody = makeLogBody();
   let enginesBody = makeEnginesBody();
 
-  const MIN_SIZES = {
-    standings: { minwidth: 320, minheight: 120 },
-    schedule:  { minwidth: 320, minheight: 120 },
-    engines:   { minwidth: 280, minheight: 120 },
-    log:       { minwidth: 280, minheight: 120 },
-  };
-
   // Per-window CSS class hooks (added to the WinBox outer container).
   // schedule = "Live Games" panel; gets a stable scrollbar gutter to
   // avoid width pulsation when rows come and go.
   const EXTRA_CLASS = {
     schedule: "sturddle-wb-live-games",
   };
+
+  const onWbMinimize = () => { if (activeLayout === LAYOUT.SNAP) requestAnimationFrame(reapplyLayout); };
+  const onWbRestore = () => { if (activeLayout === LAYOUT.SNAP) requestAnimationFrame(reapplyLayout); };
 
   function makeBox(key, title, body, { min = false, max = false } = {}) {
     const cfg = lastGeometry[key];
@@ -219,8 +232,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       lastGeometry[key] = wbGeometry(wb);
       windows[key] = null;
       if (Object.values(windows).every((w) => w === null)) tearDown();
+      else requestAnimationFrame(reapplyLayout);
       return false;
     };
+    wb.onminimize = onWbMinimize;
+    wb.onrestore = onWbRestore;
     if (top > 0 && wb.y < top) wb.move(wb.x, top);
     if (left > 0 && wb.x < left) wb.move(left, wb.y);
     return wb;
@@ -347,10 +363,23 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           <td>${e.elo == null ? "--" : (e.elo >= 0 ? "+" : "") + e.elo.toFixed(1) + (e.elo_margin_95 == null ? "" : ` +/- ${e.elo_margin_95.toFixed(1)}`)}</td>
         </tr>`)
       .join("");
-    const sprtRow = sprt
-      ? `<div class="wb-sprt">SPRT [${sprt.elo0}, ${sprt.elo1}] * LLR=${sprt.llr.toFixed(2)} ` +
-        `[${sprt.lower_bound.toFixed(2)}, ${sprt.upper_bound.toFixed(2)}] * ${sprt.status}</div>`
-      : "";
+    let sprtRow = "";
+    if (sprt) {
+      const lo = sprt.lower_bound, hi = sprt.upper_bound, llr = sprt.llr;
+      const concluded = sprt.status !== "continue";
+      const colorMod = concluded ? (sprt.status === "H1" ? " wb-sprt--h1" : " wb-sprt--h0") : "";
+      const candidate = detail.engines?.[0]?.name ? escapeHtml(detail.engines[0].name) : "candidate";
+      const pairsText = sprt.pairs != null ? ` * ${sprt.pairs} pair${sprt.pairs === 1 ? "" : "s"}` : "";
+      const statusText = sprt.status === "H1"
+        ? `H1 (${candidate} is stronger)`
+        : sprt.status === "H0"
+          ? `H0 (no significant difference)`
+          : sprt.status;
+      sprtRow = `<div class="wb-sprt${colorMod}">` +
+        `SPRT ${candidate} [${sprt.elo0}, ${sprt.elo1}] * LLR=${llr.toFixed(2)} [${lo.toFixed(2)}, ${hi.toFixed(2)}]` +
+        `${pairsText} * ${statusText}` +
+        `</div>`;
+    }
     const partialPairs = detail.partial_pairs ?? 0;
     // Hide during RUNNING -- a fresh game-1 always sits alone in the
     // PGN until game-2 of the pair finishes; that's normal, not data loss.
@@ -373,9 +402,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   function attachWatch(btn, attachKey, sourceWindowKey, openOpts) {
     if (DEBUG_WATCH) console.log("[WATCH] click", { attachKey, sourceWindowKey, openOpts });
+    // Slot grid is tidy-mode only; tile/snap reflow handles placement.
+    const useSlotsGrid = activeLayout === LAYOUT.NONE || activeLayout === LAYOUT.TIDY;
     // Claim a slot BEFORE creating the window so the new window's own
     // default position doesn't shadow the slot it would occupy.
-    const rawClaim = isLiveWindowOpen(attachKey) ? null : slotGrid.claim();
+    const rawClaim = (useSlotsGrid && !isLiveWindowOpen(attachKey)) ? slotGrid.claim() : null;
     // Clamp to viewport so a slot near the right/bottom edge can't
     // push the window off-screen.
     const claim = rawClaim ? {
@@ -389,31 +420,36 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         ...openOpts, token, tournamentId: tournament.id,
         top, left, boardStyle: boardStyleCached,
         initialRect: claim ? { x: claim.x, y: claim.y, w: claim.w, h: claim.h } : null,
-        // Only overflow windows get a restore callback -- slotted windows
-        // already have a position and restore to it naturally.
-        onAfterRestore: !claim ? (wb) => {
-          const c = slotGrid.claim();
+        getSlotSize: !useSlotsGrid ? null : () => slotGrid.rectAt(0),
+        onAfterRestore: !useSlotsGrid ? null : (wb) => {
+          const c = slotGrid.claim(wb);
           if (c) {
             wb.resize(c.w, c.h).move(c.x, c.y);
             overflowRestoreCount = 0;
             return;
           }
+          if (claim) return;
           const x = Math.min(
             left + overflowRestoreCount * OVERFLOW_X_OFFSET,
             Math.max(left, window.innerWidth - wb.width),
           );
           wb.move(x, top);
           overflowRestoreCount++;
-        } : null,
+        },
       });
     } catch (e) {
       console.error("[WATCH] openLiveGameWindow threw", e, { attachKey, openOpts });
       return;
     }
-    // No slot fit -- minimize so the grid stays clean. WS already
-    // connected; live state stays current behind the minimize bar.
-    if (result?.wb && !result.alreadyOpen && !claim) {
+    // No slot fit in tidy/none mode -- minimize so the grid stays clean.
+    if (result?.wb && !result.alreadyOpen && useSlotsGrid && !claim) {
       try { result.wb.minimize(); } catch { /* */ }
+    }
+    if (result?.wb && !result.alreadyOpen && !result.wb.min) requestAnimationFrame(reapplyLayout);
+    if (result?.wb && !result.alreadyOpen) {
+      const prevMin = result.wb.onminimize;
+      result.wb.onminimize = prevMin ? () => { prevMin(); onWbMinimize(); } : onWbMinimize;
+      if (!useSlotsGrid) result.wb.onrestore = onWbRestore;
     }
     const isLive = isLiveWindowOpen(attachKey);
     if (DEBUG_WATCH) console.log("[WATCH] post-open", { attachKey, isLive, slotted: !!claim });
@@ -823,6 +859,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
   window.addEventListener("sturddle:connection", onReconnect);
   window.addEventListener("sturddle:livegame-closed", refreshWatchButtons);
+  const onLiveGameClosedReapply = () => requestAnimationFrame(reapplyLayout);
+  window.addEventListener("sturddle:livegame-closed", onLiveGameClosedReapply);
 
   let resizeTimer = null;
   const onResize = () => {
@@ -871,6 +909,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     finalized = true;
     window.removeEventListener("sturddle:connection", onReconnect);
     window.removeEventListener("sturddle:livegame-closed", refreshWatchButtons);
+    window.removeEventListener("sturddle:livegame-closed", onLiveGameClosedReapply);
     detachResizeListeners();
     if (liveWatcherAttached) {
       window.removeEventListener("sturddle:livegame-closed", onLiveGameClosed);
@@ -949,9 +988,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   // Reserved strip at the bottom so minimized WinBoxes have a place to dock.
-  const MINIMIZE_FOOTER_H = 40;
+  const MINIMIZE_FOOTER_H = 36;
   // Visual gap between tiled/snapped windows; also absorbs WinBox rounding.
   const TILE_MARGIN = 1;
+  const TIDY_GAP = 1;
 
   // wbsIn: explicit list (snap fallback -- skip minimized, don't unminimize).
   // Omit to use all open windows (menu path -- unminimizes everything).
@@ -1019,10 +1059,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       });
       ordered.forEach(wb => {
         if (preserveMin && (wb.min || wb.max)) {
+          const prevRestore = wb.onrestore;
           wb.onrestore = () => {
-            const c = slotGrid.claim();
+            if (prevRestore) prevRestore();
+            const c = slotGrid.claim(wb);
             if (c) wb.resize(c.w, c.h).move(c.x, c.y);
-            wb.onrestore = null;
+            wb.onrestore = prevRestore ?? null;
           };
           return;
         }
@@ -1043,23 +1085,23 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const availW = getRight() - left;
     const availH = window.innerHeight - top - MINIMIZE_FOOTER_H;
     const leftW = Math.max(Math.round(availW * 0.35), MIN_SIZES.engines.minwidth);
-    const rightW = availW - leftW;
+    const rightW = availW - leftW - TIDY_GAP;
     // System rows get what's left after one row of board slots.
     // Clamp each row so both windows in a row share the same height
     // (WinBox silently floors to per-window minheight otherwise).
     const systemH = availH - LIVE_MIN_HEIGHT;
-    const desiredRowH = Math.floor(systemH / 2);
+    const desiredRowH = Math.floor((systemH - TIDY_GAP) / 2);
     const topRowH = Math.max(desiredRowH, MIN_SIZES.engines.minheight, MIN_SIZES.standings.minheight);
     const botRowH = Math.max(desiredRowH, MIN_SIZES.schedule.minheight, MIN_SIZES.log.minheight);
     // Anchor bottom edge to top + availH (which already excludes the
     // minimize footer). If clamped rows exceed availH the layout
     // extends upward, but never below the reserved footer.
-    const regionTop = top + availH - (topRowH + botRowH);
+    const regionTop = top + availH - (topRowH + TIDY_GAP + botRowH);
     const placements = [
-      ["engines",   left,         regionTop,            leftW,  topRowH],
-      ["standings", left + leftW, regionTop,            rightW, topRowH],
-      ["schedule",  left,         regionTop + topRowH, leftW,  botRowH],
-      ["log",       left + leftW, regionTop + topRowH, rightW, botRowH],
+      ["engines",   left,                   regionTop,                       leftW,  topRowH],
+      ["standings", left + leftW + TIDY_GAP, regionTop,                      rightW, topRowH],
+      ["schedule",  left,                   regionTop + topRowH + TIDY_GAP,  leftW,  botRowH],
+      ["log",       left + leftW + TIDY_GAP, regionTop + topRowH + TIDY_GAP, rightW, botRowH],
     ];
     for (const [k, x, y, w, h] of placements) {
       const wb = windows[k];
@@ -1213,6 +1255,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   function untidy() { setLayout(LAYOUT.NONE); }
+  function reapplyLayout() {
+    if (activeLayout === LAYOUT.TILE) tile();
+    else if (activeLayout === LAYOUT.SNAP) snap();
+  }
   function minimizeAll() {
     const wbs = openWindows().filter(wb => !wb.min);
     for (const wb of wbs) try { wb.minimize(); } catch { /* */ }

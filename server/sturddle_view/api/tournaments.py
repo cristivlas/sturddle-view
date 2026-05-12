@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import subprocess
+import sys
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -83,6 +85,22 @@ class EngineRef(BaseModel):
         return v
 
 
+_SPRT_DEFAULTS = {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05, "model": "normalized"}
+
+
+def _resolve_sprt(template: dict, settings) -> dict:
+    """If template.sprt is truthy but not a full dict, merge with sprt_defaults."""
+    sprt = template.get("sprt")
+    if not sprt:
+        return template
+    if not isinstance(sprt, dict):
+        sprt = {}
+    base = dict(_SPRT_DEFAULTS)
+    base.update(settings.tournament_sprt_defaults or {})
+    base.update(sprt)
+    return {**template, "sprt": base}
+
+
 class TournamentCreate(BaseModel):
     name: str
     template: dict[str, Any] = Field(default_factory=dict)
@@ -99,6 +117,7 @@ class TournamentSettingsUpdate(BaseModel):
     fastchess_path: str | None = None
     tournaments_root: str | None = None
     default_template: dict[str, Any] | None = None
+    sprt_defaults: dict[str, Any] | None = None
 
 
 def _store(request: Request) -> TournamentStore:
@@ -148,9 +167,14 @@ def _serialize(
             out["proxies_active"] = []
             out["pairings_active"] = []
         sprt_params = (t.template or {}).get("sprt")
-        if sprt_params:
+        if sprt_params and len(t.engines) >= 2:
             try:
-                out["sprt"] = compute_sprt(store.pgn_path(t.id), sprt_params).to_dict()
+                out["sprt"] = compute_sprt(
+                    store.pgn_path(t.id),
+                    sprt_params,
+                    engine_a=t.engines[0]["name"],
+                    engine_b=t.engines[1]["name"],
+                ).to_dict()
             except (NotImplementedError, KeyError, ValueError) as e:
                 log.warning("compute_sprt failed for %s: %s", t.id, e)
                 out["sprt"] = None
@@ -190,7 +214,7 @@ def create_tournament(payload: TournamentCreate, request: Request) -> dict:
     try:
         t = s.create(
             name=name,
-            template=payload.template,
+            template=_resolve_sprt(payload.template, settings),
             engines=[e.model_dump(exclude_none=True) for e in payload.engines],
             engine_defaults=engine_defaults,
         )
@@ -240,7 +264,7 @@ def edit_tournament(tournament_id: str, payload: TournamentUpdate, request: Requ
         t, _ = s.update(
             tournament_id,
             name=name,
-            template=payload.template,
+            template=_resolve_sprt(payload.template, settings),
             engines=[e.model_dump(exclude_none=True) for e in payload.engines],
             engine_defaults=engine_defaults,
         )
@@ -371,6 +395,19 @@ async def stop_tournament(tournament_id: str, request: Request) -> dict:
     return _serialize(t)
 
 
+@router.post("/api/tournaments/{tournament_id}/reveal", status_code=204)
+def reveal_tournament_folder(tournament_id: str, request: Request) -> None:
+    path = _store(request).dir_for(tournament_id)
+    if not path.is_dir():
+        raise HTTPException(status_code=404, detail="tournament folder not found")
+    if sys.platform == "win32":
+        subprocess.Popen(["explorer", str(path)])
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(path)])
+    else:
+        subprocess.Popen(["xdg-open", str(path)])
+
+
 # ---------------------------------------------------------------------------
 # Tournament settings
 # ---------------------------------------------------------------------------
@@ -381,6 +418,7 @@ def _serialize_settings(s) -> dict:
         "fastchess_path": s.tournament_fastchess_path,
         "tournaments_root": s.tournament_root or str(_default_root_for_settings()),
         "default_template": dict(s.tournament_default_template or {}),
+        "sprt_defaults": dict(s.tournament_sprt_defaults or {}),
         "fastchess_detected": FastchessRunner.detect_binary(s.tournament_fastchess_path),
     }
 
@@ -413,6 +451,8 @@ def update_tournament_settings(payload: TournamentSettingsUpdate, request: Reque
         store.set_root(Path(new_root) if new_root else _default_root_for_settings())
     if payload.default_template is not None:
         s.tournament_default_template = dict(payload.default_template)
+    if payload.sprt_defaults is not None:
+        s.tournament_sprt_defaults = dict(payload.sprt_defaults)
 
     try:
         s.save_persisted()

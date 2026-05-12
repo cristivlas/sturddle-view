@@ -56,10 +56,10 @@ const liveWindows = new Map(); // windowKey -> WinBox instance
 // before pairing data arrives. Keep the two in sync.
 const LIVE_MIN_BOARD    = 200; // px -- smallest usable board side
 const LIVE_CLOCK_H      = 36;  // px -- one clock row (font 16px + padding)
-const LIVE_EVAL_H       = 24;  // px -- eval row (font 13px)
-const LIVE_PV_H         = 16;  // px -- pv row (font 11px)
+const LIVE_EVAL_H       = 18;  // px -- eval row (0.8125rem * 1.4 line-height)
+const LIVE_PV_H         = 17;  // px -- pv row (0.6875rem * 1.4 line-height, +2px bottom padding)
 const LIVE_WINBOX_TITLE = 35;  // px -- WinBox title bar
-const LIVE_GAP          = 6;   // px -- flex gap between sections
+const LIVE_GAP          = 4;   // px -- flex gap between sections
 
 const ARROW_MIN_TIME_MS = 250; // skip arrow if side-to-move has less time than this
 
@@ -103,7 +103,7 @@ function avoidOverlap(wb, avoid, top, left, cascade = 0) {
   }
 }
 
-export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, boardStyle = null, avoidRect = null, initialRect = null, onAfterRestore = null }) {
+export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, boardStyle = null, avoidRect = null, initialRect = null, onAfterRestore = null, getSlotSize = null }) {
   if (DEBUG_WATCH) console.log("[WATCH] openLiveGameWindow", { proxyId, gameId, windowKey, label });
   if (!windowKey) {
     console.error("[WATCH] no windowKey -- need at least one of proxyId/gameId", { proxyId, gameId });
@@ -200,7 +200,13 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       ? "sturddle-wb sturddle-wb-live sturddle-wb-live-game no-full"
       : "sturddle-wb sturddle-wb-live sturddle-wb-live-proxy no-full",
   });
-  if (onAfterRestore) wb.onrestore = () => onAfterRestore(wb);
+  let slotSizeSnap = null;
+  if (getSlotSize) wb.onminimize = () => { slotSizeSnap = getSlotSize(); };
+  if (onAfterRestore) wb.onrestore = () => {
+    if (slotSizeSnap) { wb.resize(slotSizeSnap.w, slotSizeSnap.h); slotSizeSnap = null; }
+    onAfterRestore(wb);
+  };
+
   const clampToViewport = () => {
     const maxX = Math.max(left, window.innerWidth  - wb.width);
     const maxY = Math.max(top,  window.innerHeight - wb.height);

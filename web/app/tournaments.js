@@ -12,7 +12,7 @@ import { openSettingsDialog } from "./settings-dialog.js";
 import { EVT, KIND, STATUS } from "./tournament-events.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { getLiveWindows } from "./tournament-live-game.js";
-import { getActiveLayout, getActiveWorkspace, hasAnyDesktopState, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
+import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasAnyDesktopState, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 
 export function mountTournaments({ container, api, events, log, token }) {
   container.innerHTML = `
@@ -262,10 +262,12 @@ export function mountTournaments({ container, api, events, log, token }) {
       trailing = `<span class="tournament-engines muted"></span>`;
     }
 
+    const sprtBadge = t.template?.sprt ? `<span class="tournament-sprt-badge">SPRT</span>` : "";
     li.innerHTML = `
       <div class="tournament-row-main">
         <span class="tournament-status status-${status}">${status === STATUS.STOPPED ? "paused" : status}</span>
         <span class="tournament-name"></span>
+        ${sprtBadge}
         ${trailing}
       </div>
     `;
@@ -470,6 +472,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     if (!ok) return;
     try {
       await api("DELETE", `/api/tournaments/${t.id}`);
+      clearWorkspaceState(t.id);
       toast(`Removed "${t.name}"`, { variant: "neutral" });
     } catch (e) {
       reportError({ log }, `Removing "${t.name}" failed`, e);
@@ -501,6 +504,8 @@ export function mountTournaments({ container, api, events, log, token }) {
   }
 
   // ---- Info dialog -------------------------------------------------------
+
+  const IS_LOCAL = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 
   async function openInfoDialog(t) {
     let detailed = t;
@@ -559,7 +564,30 @@ export function mountTournaments({ container, api, events, log, token }) {
       dl.append(dt, dd);
     };
 
-    row("ID", makeIdCell(t.id));
+    const idCell = document.createElement("div");
+    idCell.className = "tournament-id-row";
+    const idSpan = makeIdCell(t.id);
+    idCell.appendChild(idSpan);
+    if (settings?.tournaments_root) {
+      const folder = settings.tournaments_root.replace(/[\\/]+$/, "") + "/" + t.id;
+      if (IS_LOCAL) {
+        const btn = document.createElement("button");
+        btn.className = "tournament-info-reveal-btn";
+        btn.title = folder;
+        btn.innerHTML = `<wa-icon name="folder-open"></wa-icon>`;
+        btn.addEventListener("click", async () => {
+          try {
+            await api("POST", `/api/tournaments/${t.id}/reveal`);
+          } catch (e) {
+            reportError({ log }, "Could not open folder", e);
+          }
+        });
+        idCell.appendChild(btn);
+      } else {
+        idSpan.title = folder;
+      }
+    }
+    row("ID", idCell);
     row("Status", t.status === STATUS.STOPPED ? "paused" : t.status);
     if (t.last_error) {
       const tail = (t.last_error.stderr_tail || []).slice(-10).join("\n");
@@ -570,7 +598,13 @@ export function mountTournaments({ container, api, events, log, token }) {
     }
     row("Type", formatType(tpl.tournament_type));
     row("Time control", tpl.tc);
-    row("Rounds", tpl.rounds);
+    if (tpl.sprt) {
+      const s = tpl.sprt;
+      row("Rounds", "unlimited (SPRT)");
+      row("SPRT", `elo0=${s.elo0} elo1=${s.elo1} alpha=${s.alpha} beta=${s.beta} model=${s.model}`);
+    } else {
+      row("Rounds", tpl.rounds);
+    }
     row("Parallel games", tpl.games_in_parallel);
     row("Games", formatGames(t));
     if (tpl.tournament_type === "gauntlet") row("Seeds", tpl.seeds);
@@ -729,8 +763,12 @@ export function mountTournaments({ container, api, events, log, token }) {
           actionBtn.disabled = !isValid();
         }
         refreshValidity();
+        tplCtl.setSprtAvailable(builder.getEngines().length === 2);
         nameInput.addEventListener("input", refreshValidity);
-        builder.onChange(refreshValidity);
+        builder.onChange(() => {
+          tplCtl.setSprtAvailable(builder.getEngines().length === 2);
+          refreshValidity();
+        });
 
         actionBtn.addEventListener("click", async () => {
           if (!isValid()) return;

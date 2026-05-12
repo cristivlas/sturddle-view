@@ -39,10 +39,10 @@ export function createSlotGrid({ top, left, getCellWidth, cellHeight, gap = SLOT
              a.y + a.h <= b.y || b.y + b.h <= a.y);
   }
 
-  function slotIsOccupied(slot) {
+  function slotIsOccupied(slot, exclude) {
     const r = rectAt(slot);
     for (const wb of getWindows()) {
-      if (wb.min) continue;
+      if (wb.min || wb === exclude) continue;
       const wr = { x: wb.x, y: wb.y, w: wb.width, h: wb.height };
       if (rectsOverlap(r, wr)) return true;
     }
@@ -50,10 +50,10 @@ export function createSlotGrid({ top, left, getCellWidth, cellHeight, gap = SLOT
   }
 
   // Returns the lowest unoccupied slot's rect, or null if all are taken.
-  function claim() {
+  function claim(exclude) {
     const cap = capacity();
     for (let i = 0; i < cap; i++) {
-      if (!slotIsOccupied(i)) return rectAt(i);
+      if (!slotIsOccupied(i, exclude)) return rectAt(i);
     }
     return null;
   }

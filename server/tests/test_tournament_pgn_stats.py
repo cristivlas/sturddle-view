@@ -52,6 +52,29 @@ def _game_round(round_tag: str, white: str, black: str, result: str) -> str:
     )
 
 
+class _RoundCounter:
+    """Hands out monotonically increasing round tags for SPRT pair fixtures."""
+    __slots__ = ("_n",)
+
+    def __init__(self) -> None:
+        self._n = 0
+
+    def next(self) -> str:
+        self._n += 1
+        return str(self._n)
+
+
+def _pair(rc: _RoundCounter, a: str, b: str, result_ab: str, result_ba: str) -> str:
+    """One color-flipped Round-tagged pair: A-as-white then B-as-white."""
+    rt = rc.next()
+    return _game_round(rt, a, b, result_ab) + _game_round(rt, b, a, result_ba)
+
+
+def _sprt(pgn_path, params, *, engine_a="A", engine_b="B"):
+    """compute_sprt with default A/B engine identities for tests."""
+    return compute_sprt(pgn_path, params, engine_a=engine_a, engine_b=engine_b)
+
+
 # ---------------------------------------------------------------------------
 # Standings
 # ---------------------------------------------------------------------------
@@ -340,21 +363,24 @@ def _params(**overrides) -> dict:
 
 def test_sprt_no_games_returns_continue(tmp_path):
     p = _write_pgn(tmp_path, "")
-    r = compute_sprt(p, _params())
+    r = _sprt(p, _params())
     assert r.status == "continue"
     assert r.pairs == 0
     assert r.llr == 0.0
 
 
 def test_sprt_one_game_returns_continue(tmp_path):
-    p = _write_pgn(tmp_path, _game("A", "B", "1-0"))
-    r = compute_sprt(p, _params())
+    # Single game = partial pair (mate hasn't been written yet). Should
+    # produce zero pairs and continue.
+    p = _write_pgn(tmp_path, _game_round("1", "A", "B", "1-0"))
+    r = _sprt(p, _params())
     assert r.status == "continue"
+    assert r.pairs == 0
 
 
 def test_sprt_bounds_have_correct_signs():
     # Wald bounds: lower < 0 < upper for typical alpha=beta=0.05.
-    r = compute_sprt(Path("/dev/null"), _params())
+    r = _sprt(Path("/dev/null"), _params())
     assert r.lower_bound < 0 < r.upper_bound
     assert r.lower_bound == pytest.approx(math.log(0.05 / 0.95))
     assert r.upper_bound == pytest.approx(math.log(0.95 / 0.05))
@@ -363,13 +389,11 @@ def test_sprt_bounds_have_correct_signs():
 def test_sprt_runaway_a_dominates_accepts_h1(tmp_path):
     # 99 pairs A wins both + 1 pair drawn. Strong H1. The single drawn
     # pair seeds nonzero sample variance (real runs always have one).
-    body = ""
-    for _ in range(99):
-        body += _game("A", "B", "1-0")  # game 1: A white wins
-        body += _game("B", "A", "0-1")  # game 2: A black wins
-    body += _game("A", "B", "1/2-1/2") + _game("B", "A", "1/2-1/2")
+    rc = _RoundCounter()
+    body = "".join(_pair(rc, "A", "B", "1-0", "0-1") for _ in range(99))
+    body += _pair(rc, "A", "B", "1/2-1/2", "1/2-1/2")
     p = _write_pgn(tmp_path, body)
-    r = compute_sprt(p, _params(elo0=0, elo1=5))
+    r = _sprt(p, _params(elo0=0, elo1=5))
     assert r.pairs == 100
     assert r.status == "H1"
     assert r.llr > r.upper_bound
@@ -377,13 +401,11 @@ def test_sprt_runaway_a_dominates_accepts_h1(tmp_path):
 
 def test_sprt_runaway_b_dominates_accepts_h0(tmp_path):
     # 99 pairs A loses both + 1 pair drawn. Strongly rejects H1.
-    body = ""
-    for _ in range(99):
-        body += _game("A", "B", "0-1")
-        body += _game("B", "A", "1-0")
-    body += _game("A", "B", "1/2-1/2") + _game("B", "A", "1/2-1/2")
+    rc = _RoundCounter()
+    body = "".join(_pair(rc, "A", "B", "0-1", "1-0") for _ in range(99))
+    body += _pair(rc, "A", "B", "1/2-1/2", "1/2-1/2")
     p = _write_pgn(tmp_path, body)
-    r = compute_sprt(p, _params(elo0=0, elo1=5))
+    r = _sprt(p, _params(elo0=0, elo1=5))
     assert r.pairs == 100
     assert r.status == "H0"
     assert r.llr < r.lower_bound
@@ -409,10 +431,12 @@ def test_sprt_balanced_play_continues(tmp_path):
         ("1/2-1/2", "1-0"),       # 1.5
         ("1/2-1/2", "0-1"),       # 0.5
     ]
+    rc = _RoundCounter()
+    body = ""
     for r1, r2 in pair_outcomes:
-        body += _game("A", "B", r1) + _game("B", "A", r2)
+        body += _pair(rc, "A", "B", r1, r2)
     p = _write_pgn(tmp_path, body)
-    r = compute_sprt(p, _params(elo0=0, elo1=5))
+    r = _sprt(p, _params(elo0=0, elo1=5))
     assert r.status == "continue", (
         f"expected continue with balanced play, got {r.status} (LLR={r.llr})"
     )
@@ -422,11 +446,10 @@ def test_sprt_all_draws_returns_continue(tmp_path):
     # All pairs score identically (1.0 each) -> sample variance is 0.
     # The sample carries no information about the hypothesis; LLR should
     # be 0 and status "continue", consistent with n<2.
-    body = ""
-    for _ in range(20):
-        body += _game("A", "B", "1/2-1/2") + _game("B", "A", "1/2-1/2")
+    rc = _RoundCounter()
+    body = "".join(_pair(rc, "A", "B", "1/2-1/2", "1/2-1/2") for _ in range(20))
     p = _write_pgn(tmp_path, body)
-    r = compute_sprt(p, _params(elo0=0, elo1=5))
+    r = _sprt(p, _params(elo0=0, elo1=5))
     assert r.pairs == 20
     assert r.status == "continue"
     assert r.llr == 0.0
@@ -436,45 +459,49 @@ def test_sprt_all_decisive_same_direction_returns_continue(tmp_path):
     # Every pair: A wins both games -> per-pair score 2.0 for all pairs.
     # Variance is 0 even though A is dominating; with no spread the
     # pentanomial model has no variance estimate.
-    body = ""
-    for _ in range(20):
-        body += _game("A", "B", "1-0") + _game("B", "A", "0-1")
+    rc = _RoundCounter()
+    body = "".join(_pair(rc, "A", "B", "1-0", "0-1") for _ in range(20))
     p = _write_pgn(tmp_path, body)
-    r = compute_sprt(p, _params(elo0=0, elo1=5))
+    r = _sprt(p, _params(elo0=0, elo1=5))
     assert r.pairs == 20
     assert r.status == "continue"
     assert r.llr == 0.0
 
 
-def test_sprt_drops_trailing_odd_game(tmp_path, caplog):
-    # 3 games → 1 complete pair, last game dropped. Warns about the drop.
-    body = _game("A", "B", "1-0") + _game("B", "A", "0-1") + _game("A", "B", "1-0")
+def test_sprt_drops_partial_round(tmp_path, caplog):
+    # Round 1 complete + Round 2 partial (only one of the two color-flipped
+    # games written). Round 2 is dropped, leaving 1 pair. Logs the drop at
+    # DEBUG so on-call can confirm the cause without raising the noise floor.
+    rc = _RoundCounter()
+    body = _pair(rc, "A", "B", "1-0", "0-1") + _game_round("2", "A", "B", "1-0")
     p = _write_pgn(tmp_path, body)
-    with caplog.at_level("WARNING", logger="sturddle_view.tournament.pgn_stats"):
-        r = compute_sprt(p, _params())
+    with caplog.at_level("DEBUG", logger="sturddle_view.tournament.pgn_stats"):
+        r = _sprt(p, _params())
     assert r.pairs == 1
-    assert any("trailing odd game" in m for m in caplog.messages)
+    assert any("expected 2" in m for m in caplog.messages)
 
 
 def test_sprt_warns_on_engine_mismatch(tmp_path, caplog):
-    # Pairs 1+3 are clean A/B; pair 2 sneaks in a C engine. Pair 2 is
+    # Rounds 1+3 are clean A/B; Round 2 sneaks in a C engine. Round 2 is
     # skipped silently in the result; the warning makes it visible.
     body = (
-        _game("A", "B", "1-0") + _game("B", "A", "0-1")  # pair 1 ok
-        + _game("A", "C", "1-0") + _game("C", "A", "0-1")  # pair 2 mismatch
-        + _game("A", "B", "1-0") + _game("B", "A", "0-1")  # pair 3 ok
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("2", "A", "C", "1-0") + _game_round("2", "C", "A", "0-1")
+        + _game_round("3", "A", "B", "1-0") + _game_round("3", "B", "A", "0-1")
     )
     p = _write_pgn(tmp_path, body)
     with caplog.at_level("WARNING", logger="sturddle_view.tournament.pgn_stats"):
-        r = compute_sprt(p, _params())
+        r = _sprt(p, _params())
     assert r.pairs == 2
-    assert any("pair at offset" in m for m in caplog.messages)
+    assert any("round 2 skipped" in m for m in caplog.messages)
 
 
 def test_sprt_unimplemented_model_raises(tmp_path):
     p = _write_pgn(tmp_path, "")
     with pytest.raises(NotImplementedError):
-        compute_sprt(p, _params(model="bayesian"))
+        _sprt(p, _params(model="bayesian"))
+    with pytest.raises(NotImplementedError):
+        _sprt(p, _params(model="fakemodel"))
 
 
 @pytest.mark.parametrize("overrides", [
@@ -492,16 +519,265 @@ def test_sprt_unimplemented_model_raises(tmp_path):
 def test_sprt_invalid_params_raise(tmp_path, overrides):
     p = _write_pgn(tmp_path, "")
     with pytest.raises(ValueError):
-        compute_sprt(p, _params(**overrides))
+        _sprt(p, _params(**overrides))
 
 
 def test_sprt_to_dict_round_trip(tmp_path):
     p = _write_pgn(tmp_path, "")
-    d = compute_sprt(p, _params()).to_dict()
+    d = _sprt(p, _params()).to_dict()
     assert set(d.keys()) == {
         "llr", "lower_bound", "upper_bound", "status",
         "pairs", "elo0", "elo1", "model",
     }
+
+
+# ---------------------------------------------------------------------------
+# Pair grouping under concurrency > 1
+#
+# fastchess writes games to PGN in *completion order*. When two pair-slots
+# run in parallel, pair-mates from the same Round are not adjacent --
+# they get separated by games from the other slot. Pair grouping must
+# use the Round tag, not consecutive index.
+# ---------------------------------------------------------------------------
+
+
+def test_sprt_pair_grouping_uses_round_under_concurrency(tmp_path):
+    # Same 4 game outcomes, two PGN orderings: in-order vs interleaved
+    # (as fastchess emits under concurrency=2). Round-aware grouping
+    # must yield identical LLR for both. Consecutive-index grouping
+    # would mispair the interleaved case and produce a different LLR.
+    in_order = (
+        _game_round("1", "A", "B", "1-0")
+        + _game_round("1", "B", "A", "0-1")  # pair 1: A wins both -> 2.0
+        + _game_round("2", "A", "B", "1/2-1/2")
+        + _game_round("2", "B", "A", "1/2-1/2")  # pair 2: both draw -> 1.0
+    )
+    interleaved = (
+        _game_round("1", "A", "B", "1-0")        # pair 1, game 1
+        + _game_round("2", "A", "B", "1/2-1/2")  # pair 2, game 1 (other slot)
+        + _game_round("1", "B", "A", "0-1")      # pair 1, game 2 (late)
+        + _game_round("2", "B", "A", "1/2-1/2")  # pair 2, game 2
+    )
+    p1 = tmp_path / "in_order.pgn"
+    p2 = tmp_path / "interleaved.pgn"
+    p1.write_text(in_order, encoding="utf-8")
+    p2.write_text(interleaved, encoding="utf-8")
+    r1 = _sprt(p1, _params())
+    r2 = _sprt(p2, _params())
+    assert r1.pairs == r2.pairs == 2
+    assert r1.llr == pytest.approx(r2.llr)
+
+
+def test_sprt_pair_grouping_drops_partial_pair_keeps_complete(tmp_path):
+    # 5 games: Rounds 1 and 3 are complete color-flipped pairs; Round 2
+    # has only one game (mate was lost mid-Stop or still in flight).
+    # Round-aware grouping drops Round 2 -> 2 pairs. Consecutive-index
+    # grouping (legacy) would yield 2 pairs from indices (0,1) and (2,3)
+    # with the trailing 5th game dropped -- a *different* pair set that
+    # mispairs Round 1's BvA with Round 2's AvB. Check the LLR matches
+    # what you'd get from just Rounds 1 and 3 standalone.
+    partial_body = (
+        _game_round("1", "A", "B", "1-0")
+        + _game_round("1", "B", "A", "0-1")
+        + _game_round("2", "A", "B", "1/2-1/2")  # partial: no Round-2 BvA
+        + _game_round("3", "A", "B", "1-0")
+        + _game_round("3", "B", "A", "0-1")
+    )
+    clean_body = (
+        _game_round("1", "A", "B", "1-0")
+        + _game_round("1", "B", "A", "0-1")
+        + _game_round("3", "A", "B", "1-0")
+        + _game_round("3", "B", "A", "0-1")
+    )
+    p1 = tmp_path / "with_partial.pgn"
+    p2 = tmp_path / "clean.pgn"
+    p1.write_text(partial_body, encoding="utf-8")
+    p2.write_text(clean_body, encoding="utf-8")
+    r1 = _sprt(p1, _params())
+    r2 = _sprt(p2, _params())
+    assert r1.pairs == 2
+    assert r2.pairs == 2
+    assert r1.llr == pytest.approx(r2.llr)
+
+
+def test_sprt_pair_grouping_skips_round_with_engine_mismatch(tmp_path):
+    # Round 2 pairs A with C instead of B -- the round's two games don't
+    # form a valid A-vs-B pair and must be excluded. Rounds 1 and 3 are
+    # clean A-vs-B pairs; result is 2 pairs.
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("2", "A", "C", "1-0") + _game_round("2", "C", "A", "0-1")
+        + _game_round("3", "A", "B", "1-0") + _game_round("3", "B", "A", "0-1")
+    )
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params())
+    assert r.pairs == 2
+
+
+def test_sprt_engine_identity_independent_of_pgn_file_order(tmp_path):
+    # Two PGNs encode identical pair outcomes (A wins pair 1 outright;
+    # pair 2 is 1 win + 1 draw for A). They differ only in *which*
+    # color-flipped game lands first on disk. Pre-fix code labeled the
+    # candidate as whoever was white in PGN game 1, so swapping the
+    # order would flip A <-> B and invert the LLR sign. With engine_a
+    # passed in from config, ordering must be irrelevant.
+    a_first = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("2", "A", "B", "1-0") + _game_round("2", "B", "A", "1/2-1/2")
+    )
+    b_first = (
+        _game_round("1", "B", "A", "0-1") + _game_round("1", "A", "B", "1-0")
+        + _game_round("2", "B", "A", "1/2-1/2") + _game_round("2", "A", "B", "1-0")
+    )
+    p1 = tmp_path / "a_first.pgn"
+    p2 = tmp_path / "b_first.pgn"
+    p1.write_text(a_first, encoding="utf-8")
+    p2.write_text(b_first, encoding="utf-8")
+    r1 = _sprt(p1, _params(elo0=0, elo1=5))
+    r2 = _sprt(p2, _params(elo0=0, elo1=5))
+    assert r1.pairs == r2.pairs == 2
+    assert r1.llr == pytest.approx(r2.llr)
+    # A dominates the sample; LLR must favor H1 regardless of file order.
+    assert r1.llr > 0
+
+
+# ---------------------------------------------------------------------------
+# Logistic SPRT (per-game W/D/L trinomial)
+# ---------------------------------------------------------------------------
+
+
+def test_sprt_logistic_no_games(tmp_path):
+    p = _write_pgn(tmp_path, "")
+    r = _sprt(p, _params(model="logistic"))
+    assert r.status == "continue"
+    assert r.pairs == 0
+    assert r.llr == 0.0
+    assert r.model == "logistic"
+
+
+def test_sprt_logistic_single_game_continues(tmp_path):
+    p = _write_pgn(tmp_path, _game("A", "B", "1-0"))
+    r = _sprt(p, _params(model="logistic"))
+    # One win can land above upper for very wide alpha/beta; with the
+    # _params() defaults (alpha=beta=0.05) it stays below upper.
+    assert r.pairs == 1
+    assert r.status == "continue"
+
+
+def test_sprt_logistic_runaway_a_dominates_accepts_h1(tmp_path):
+    # Strong A dominance with a wider elo gap so LLR clears the Wald
+    # upper bound within a tractable game count.
+    body = ""
+    for _ in range(160):
+        body += _game("A", "B", "1-0")
+    for _ in range(40):
+        body += _game("A", "B", "1/2-1/2")
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params(elo0=0, elo1=20, model="logistic"))
+    assert r.pairs == 200
+    assert r.status == "H1"
+    assert r.llr > r.upper_bound
+
+
+def test_sprt_logistic_runaway_b_dominates_accepts_h0(tmp_path):
+    body = ""
+    for _ in range(160):
+        body += _game("A", "B", "0-1")
+    for _ in range(40):
+        body += _game("A", "B", "1/2-1/2")
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params(elo0=0, elo1=20, model="logistic"))
+    assert r.pairs == 200
+    assert r.status == "H0"
+    assert r.llr < r.lower_bound
+
+
+def test_sprt_logistic_balanced_continues(tmp_path):
+    # 5W / 5L / 10D -> mean score 0.5, no signal in either direction.
+    body = ""
+    for _ in range(5):
+        body += _game("A", "B", "1-0")
+    for _ in range(5):
+        body += _game("A", "B", "0-1")
+    for _ in range(10):
+        body += _game("A", "B", "1/2-1/2")
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params(elo0=0, elo1=10, model="logistic"))
+    assert r.pairs == 20
+    assert r.status == "continue"
+
+
+def test_sprt_logistic_degenerate_extreme_elo_continues(tmp_path):
+    # No draws + extreme elo bounds force pw/pl<=0 in the trinomial.
+    # Should emit LLR=0, continue, not crash.
+    body = _game("A", "B", "1-0")
+    p = _write_pgn(tmp_path, body)
+    # elo1=10000 pushes score_1 ~ 1.0 -> pl1 = 1 - 1 - 0 = 0 (degenerate).
+    r = _sprt(p, _params(elo0=0, elo1=10000, model="logistic"))
+    assert r.status == "continue"
+    assert r.llr == 0.0
+
+
+def test_sprt_logistic_uses_observed_draw_rate(tmp_path):
+    # Two PGNs with same W/L but different draw rates must give different
+    # LLRs under the logistic model (draw rate enters via d_obs).
+    body_low_draws = _game("A", "B", "1-0") + _game("A", "B", "1-0") + _game("A", "B", "0-1")
+    body_high_draws = (
+        _game("A", "B", "1-0") + _game("A", "B", "1-0") + _game("A", "B", "0-1")
+        + _game("A", "B", "1/2-1/2") * 10
+    )
+    p1 = tmp_path / "low.pgn"
+    p2 = tmp_path / "high.pgn"
+    p1.write_text(body_low_draws, encoding="utf-8")
+    p2.write_text(body_high_draws, encoding="utf-8")
+    r1 = _sprt(p1, _params(elo0=0, elo1=10, model="logistic"))
+    r2 = _sprt(p2, _params(elo0=0, elo1=10, model="logistic"))
+    assert r1.llr != r2.llr
+
+
+def test_sprt_logistic_counts_games_not_pairs(tmp_path):
+    # 5 individual games -> pairs field reports 5 (per-game count).
+    body = _game("A", "B", "1-0") * 3 + _game("A", "B", "0-1") + _game("A", "B", "1/2-1/2")
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params(model="logistic"))
+    assert r.pairs == 5
+
+
+def test_sprt_logistic_model_reported_in_result(tmp_path):
+    p = _write_pgn(tmp_path, _game("A", "B", "1-0"))
+    r = _sprt(p, _params(model="logistic"))
+    assert r.model == "logistic"
+
+
+def test_sprt_logistic_skips_engine_mismatch(tmp_path, caplog):
+    body = (
+        _game("A", "B", "1-0")
+        + _game("A", "C", "1-0")  # mismatch
+        + _game("A", "B", "1-0")
+    )
+    p = _write_pgn(tmp_path, body)
+    with caplog.at_level("WARNING", logger="sturddle_view.tournament.pgn_stats"):
+        r = _sprt(p, _params(model="logistic"))
+    assert r.pairs == 2
+    assert any("game skipped" in m for m in caplog.messages)
+
+
+def test_sprt_logistic_engine_identity_independent_of_pgn_file_order(tmp_path):
+    # Logistic counterpart to the pentanomial identity test: a dominates
+    # the per-game W/D/L tally regardless of which engine had white in
+    # the first PGN entry.
+    a_first = _game("A", "B", "1-0") + _game("B", "A", "0-1") + _game("A", "B", "1-0")
+    b_first = _game("B", "A", "0-1") + _game("A", "B", "1-0") + _game("A", "B", "1-0")
+    p1 = tmp_path / "a_first.pgn"
+    p2 = tmp_path / "b_first.pgn"
+    p1.write_text(a_first, encoding="utf-8")
+    p2.write_text(b_first, encoding="utf-8")
+    r1 = _sprt(p1, _params(elo0=0, elo1=10, model="logistic"))
+    r2 = _sprt(p2, _params(elo0=0, elo1=10, model="logistic"))
+    assert r1.pairs == r2.pairs == 3
+    assert r1.llr == pytest.approx(r2.llr)
+    # A wins all 3 -> LLR positive regardless of file order.
+    assert r1.llr > 0
 
 
 # ---------------------------------------------------------------------------

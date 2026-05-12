@@ -401,6 +401,38 @@ def test_build_command_sprt(tmp_path):
     assert "model=normalized" in block
 
 
+def test_build_command_sprt_uses_rounds_zero(tmp_path):
+    spec = _make_spec(
+        tmp_path,
+        template={"sprt": {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05, "model": "normalized"}, "rounds": 50},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    cmd = build_command(spec)
+    assert cmd[cmd.index("-rounds") + 1] == "0"
+
+
+def test_build_command_sprt_model_pentanomial_alias(tmp_path):
+    spec = _make_spec(
+        tmp_path,
+        template={"sprt": {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05, "model": "pentanomial"}},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    cmd = build_command(spec)
+    idx = cmd.index("-sprt")
+    assert "model=normalized" in cmd[idx + 1 : idx + 6]
+
+
+def test_build_command_no_sprt_uses_template_rounds(tmp_path):
+    spec = _make_spec(
+        tmp_path,
+        template={"rounds": 20},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    cmd = build_command(spec)
+    assert cmd[cmd.index("-rounds") + 1] == "20"
+    assert "-sprt" not in cmd
+
+
 def test_build_command_resign_and_draw(tmp_path):
     spec = _make_spec(
         tmp_path,

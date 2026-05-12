@@ -1,12 +1,13 @@
 # SPRT UX -- mini-spec
 
-Status: design complete, not yet implemented.
+Status: implemented.
 
-## 1. Settings dialog -- new SPRT tab
+## 1. Settings dialog -- SPRT tab
 
-New tab alongside the existing Tournament tab. Stores global SPRT defaults
-used to pre-populate new tournament SPRT params dialogs. Does not override
-per-tournament values once set.
+Tab alongside the existing Tournament tab. Stores global SPRT defaults
+used by the server to expand `sprt: true` in tournament templates into a
+full params dict at create/edit time. Defaults do not override
+per-tournament values that already include explicit params.
 
 Fields:
 
@@ -16,9 +17,23 @@ Fields:
 | `elo1`  | number                        | > elo0          | 10      |
 | `alpha` | number                        | 0 < x < 1       | 0.05    |
 | `beta`  | number                        | 0 < x < 1       | 0.05    |
-| `model` | select: trinomial/pentanomial | required        | pentanomial |
+| `model` | select: pentanomial/logistic  | required        | pentanomial |
 
-Persisted to global settings (same mechanism as Tournament tab).
+Validation runs on input/change. Invalid fields get a red outline
+(`.sprt-invalid`); the debounced PUT is skipped while any field is
+invalid. Last-valid persists. The dialog can be closed in any state --
+invalid defaults simply don't reach the server.
+
+The `model` select offers only what the server can compute locally:
+
+- `pentanomial` (sent to fastchess as `normalized`): the per-pair
+  normalized-Elo model. Default.
+- `logistic`: the per-game W/D/L trinomial model with observed draw
+  rate as the nuisance parameter.
+
+fastchess also accepts `bayesian`, but the local server-side SPRT
+computation does not implement it; it's intentionally omitted from the
+select to avoid silent failure during recompute.
 
 ---
 
@@ -26,90 +41,78 @@ Persisted to global settings (same mechanism as Tournament tab).
 
 ### Switch placement
 
-Add a `wa-switch` labeled "SPRT" to the existing switch row (Affinity /
-Oversubscribe / Ponder). No inline param fields in the main form.
+A `wa-switch` labeled "SPRT" sits in the existing switch row (Affinity /
+Oversubscribe / Ponder / SPRT). No inline SPRT param fields in the form.
+
+### Availability
+
+The switch is disabled unless the engine builder has exactly 2 engines.
+Toggling the engine count to !=2 while SPRT is on flips the switch off
+automatically.
 
 ### Toggle-on behavior
 
-1. `tournament_type` coerced to roundrobin; type select disabled.
-2. `rounds` input disabled (value preserved, not cleared).
-3. A per-tournament SPRT params popup opens (see section 2a), pre-filled
-   from Settings > SPRT defaults.
+1. `tournament_type` is set to roundrobin and the type select is disabled.
+2. The `rounds` input is disabled (value preserved, not cleared).
+3. The template payload carries `sprt: true` (boolean) -- no popup.
 
 ### Toggle-off behavior
 
 1. Type select and `rounds` re-enabled.
-2. Stored SPRT params removed from the template payload.
+2. `sprt` removed from the template payload.
 
 ### `getValues()` output
 
-When SPRT switch is on and popup was confirmed:
+When the switch is on:
+
 ```json
 {
-  "sprt": { "elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05, "model": "pentanomial" },
+  "sprt": true,
   "tournament_type": "roundrobin"
 }
 ```
-`rounds` is omitted when SPRT is on (fastchess self-terminates on conclusion).
 
-### 2a. Per-tournament SPRT params popup
+`rounds` is omitted when SPRT is on (fastchess self-terminates on
+conclusion via `-rounds 0` -> 500,000-round cap; see
+`tournament/fastchess.py`).
 
-- Small modal dialog, not a settings page.
-- Pre-filled from Settings > SPRT defaults on first open; from the
-  tournament's stored values on subsequent opens (e.g. edit flow).
-- Same five fields as Settings > SPRT tab.
-- Confirm button disabled until validation passes.
-- Validation: `elo0 < elo1`; `0 < alpha < 1`; `0 < beta < 1`.
-- Cancelling leaves the SPRT switch in whatever state it was before the
-  popup opened (i.e. if user toggled on then cancelled, switch reverts off).
-- Always reachable via a small "Edit..." link next to the SPRT switch when
-  the switch is on, so params can be revised without re-toggling.
+### Per-tournament param overrides
+
+Not exposed in the UI. Per-tournament params are resolved server-side
+by `_resolve_sprt` in `api/tournaments.py`: it merges the incoming
+template's `sprt` value (truthy or partial dict) with the global
+Settings > SPRT defaults. To change params for a single tournament,
+edit the global defaults in Settings before creating it. An earlier
+draft of this spec proposed a per-tournament popup; that was prototyped
+and dropped (poor UX -- adds a modal-in-modal to the create flow for a
+case that's rare in practice).
 
 ---
 
 ## 3. Tournament workspace -- SPRT panel
 
-Current state: `.wb-sprt` is a single text line:
-```
-SPRT [elo0, elo1] * LLR=x.xx [lower, upper] * status
-```
-
-### 3a. LLR progress bar
-
-Replace the text line with a structured block:
+The `.wb-sprt` block is a single text line:
 
 ```
-H0  [====|=========*============|====]  H1
-        lower     llr          upper
+SPRT <candidate> [elo0, elo1] * LLR=x.xx [lower, upper] * N pairs * status
 ```
 
-- Bar spans the full `[lower_bound, upper_bound]` range.
-- Marker (`*` / thumb) positioned proportionally at current `llr`.
-- Color scheme:
-  - Running: neutral (gray/blue)
-  - `status === "H1"`: green (engine is stronger)
-  - `status === "H0"`: red (no significant difference)
-- Tooltip on hover: "LLR = x.xx (lower_bound, upper_bound)"
-- Labels: "H0" left, "H1" right; `elo0`/`elo1` values shown as
-  subscripts or in the tooltip, not inline (keeps bar compact).
+- `<candidate>` is the first engine name (engine A in the SPRT sense).
+- `N pairs` is `sprt.pairs` from the API response. For the logistic
+  model this counts individual games rather than pairs -- the field name
+  is kept for UI continuity.
+- `status` is one of:
+  - `continue`
+  - `H1 (<candidate> is stronger)` -- block gets `.wb-sprt--h1` (green border)
+  - `H0 (no significant difference)` -- block gets `.wb-sprt--h0` (red border)
 
-### 3b. Conclusion banner
-
-When `sprt.status !== "continue"`, render a one-line banner above the
-standings table (below the progress bar):
-
-- `H1`: "H1 accepted -- [EngineA] is stronger (Elo +{elo1})"
-- `H0`: "H0 accepted -- no significant difference at Elo +{elo1}"
-
-Banner persists for the lifetime of the tournament view (not dismissible).
-Color matches the bar: green for H1, red/amber for H0.
-
-### 3c. Pairs count label
-
-The existing `G` column in the standings table counts individual games.
-For SPRT tournaments, add a secondary line below the progress bar:
-"N pairs played" (where N = `sprt.pairs` from the API response).
-This makes it clear the test operates on pairs, not individual games.
+An earlier draft of this spec called for a graphical LLR progress bar
+between H0 and H1 with a thumb at the current LLR, plus a separate
+conclusion banner above the standings table and a separate "N pairs
+played" line. That was prototyped and dropped: the numeric text line
+already conveys range, current LLR, pair count, and the colored verdict
+in less space, and the bar didn't add enough at-a-glance value to
+justify the extra surface.
 
 ---
 
@@ -131,3 +134,4 @@ sprt.status ("continue" | "H0" | "H1"), sprt.pairs
 - Path B resume completion for partial SPRT pairs (already deferred in
   pgn-stats-audit.md).
 - Per-engine SPRT (only 2-engine tournaments supported).
+- Bayesian SPRT (fastchess supports it; the local recompute path does not).
