@@ -35,6 +35,11 @@ _LOG_FILTER = re.compile(
 )
 
 
+def _sprt_model(model: str) -> str:
+    """Map UI model name to fastchess CLI model name."""
+    return "normalized" if model == "pentanomial" else model
+
+
 def _quote_arg(arg: str) -> str:
     """Quote an argument for fastchess's ``args=`` field.
 
@@ -180,7 +185,10 @@ def build_command(spec: RunSpec) -> list[str]:
         cmd.append("-force-concurrency")
     if t.get("pin_affinity"):
         cmd.append("-use-affinity")
-    if "rounds" in t:
+    if "sprt" in t and t["sprt"]:
+        # rounds=0 triggers fastchess's SPRT-unlimited mode (500k rounds).
+        cmd.extend(["-rounds", "0"])
+    elif "rounds" in t:
         cmd.extend(["-rounds", str(t["rounds"])])
     if "games_per_round" in t:
         cmd.extend(["-games", str(t["games_per_round"])])
@@ -227,7 +235,7 @@ def build_command(spec: RunSpec) -> list[str]:
             f"elo1={s['elo1']}",
             f"alpha={s.get('alpha', 0.05)}",
             f"beta={s.get('beta', 0.05)}",
-            f"model={s.get('model', 'normalized')}",
+            f"model={_sprt_model(s.get('model', 'normalized'))}",
         ])
 
     # Adjudication
@@ -580,6 +588,7 @@ class FastchessRunner:
             # CLI errors there) so the UI never gets an empty diagnostic.
             tail = list(self._stderr_tail) or list(self._stdout_tail)
             kind, payload = "runner_crash", {"rc": rc, "stderr_tail": tail}
+            log.error("runner_crash: rc=%d\n%s", rc, "\n".join(tail) if tail else "(no output captured)")
 
         await self._emit(kind, payload)
 

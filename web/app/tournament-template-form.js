@@ -1,12 +1,11 @@
 // Reusable tournament-template form. Mounted in two contexts:
-//   1. Global Settings dialog → "Tournament" tab (defaults for new tournaments).
-//   2. New Tournament dialog → editable; pre-filled from defaults; save = create.
+//   1. Global Settings dialog -> "Tournament" tab (defaults for new tournaments).
+//   2. New Tournament dialog -> editable; pre-filled from defaults; save = create.
 //
 // Native fields cover everything Phase 1 needs: time control,
 // games-in-parallel, rounds, tournament type / seeds, ponder, resign, draw.
 // Hash / Threads / SyzygyPath / opening book live in the global Settings
-// "Defaults" tab — applied uniformly to all engines at launch time.
-// SPRT is Phase 2 work.
+// "Defaults" tab -- applied uniformly to all engines at launch time.
 
 const TOURNAMENT_TYPES = [
   { value: "roundrobin", label: "Round robin" },
@@ -108,10 +107,37 @@ export function mountTournamentTemplateForm({
     "downgrade from blockers to warnings. Don't use for SPRT.";
   inputs.allow_oversubscribe = oversubSwitch;
 
-  // Order: Affinity + Oversubscribe first (logically paired — both about
+  const sprtSwitch = document.createElement("wa-switch");
+  sprtSwitch.size = "small";
+  sprtSwitch.dataset.key = "sprt";
+  if (initialValues.sprt) sprtSwitch.setAttribute("checked", "");
+  sprtSwitch.textContent = "SPRT";
+  sprtSwitch.title = "Sequential Probability Ratio Test: terminates when statistical conclusion is reached.";
+
+  function syncSprtUI(on) {
+    if (on) {
+      typeSelect.value = "roundrobin";
+      syncSeedsVisibility();
+      typeSelect.setAttribute("disabled", "");
+      inputs.rounds.setAttribute("disabled", "");
+    } else {
+      typeSelect.removeAttribute("disabled");
+      inputs.rounds.removeAttribute("disabled");
+    }
+  }
+
+  sprtSwitch.addEventListener("change", () => {
+    syncSprtUI(sprtSwitch.checked);
+    container.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+
+  // Apply initial state.
+  syncSprtUI(!!initialValues.sprt);
+
+  // Order: Affinity + Oversubscribe first (logically paired -- both about
   // CPU resource policy), Ponder last so when the row wraps on narrow
   // viewports the related pair stays together on the first line.
-  switchRow.append(affinitySwitch, oversubSwitch, ponderSwitch);
+  switchRow.append(affinitySwitch, oversubSwitch, ponderSwitch, sprtSwitch);
 
   // ---- Adjudication: Resign + Draw --------------------------------------
 
@@ -202,9 +228,10 @@ export function mountTournamentTemplateForm({
 
   function getValues() {
     const out = {};
+    const sprtOn = sprtSwitch.checked;
 
-    // Core scalar fields.
-    const scalars = ["tc", "games_in_parallel", "rounds"];
+    // Core scalar fields. rounds omitted when SPRT is on (fastchess self-terminates).
+    const scalars = sprtOn ? ["tc", "games_in_parallel"] : ["tc", "games_in_parallel", "rounds"];
     for (const k of scalars) {
       const raw = inputs[k].value;
       if (raw === "" || raw == null) continue;
@@ -218,6 +245,7 @@ export function mountTournamentTemplateForm({
     if (ponderSwitch.checked) out.ponder = true;
     if (affinitySwitch.checked) out.pin_affinity = true;
     if (oversubSwitch.checked) out.allow_oversubscribe = true;
+    if (sprtOn) out.sprt = true;
 
     // Adjudication: only emit a sub-object when the switch is on AND
     // the required fields are present.
@@ -250,9 +278,12 @@ export function mountTournamentTemplateForm({
     const tc = (inputs.tc.value || "").trim();
     if (!tc) push("tc", "Time control is required (e.g. 10+0.1).");
 
-    const rounds = Number(inputs.rounds.value);
-    if (!Number.isFinite(rounds) || rounds < 1) {
-      push("rounds", "Rounds must be ≥ 1.");
+    const sprtOn = sprtSwitch.checked;
+    if (!sprtOn) {
+      const rounds = Number(inputs.rounds.value);
+      if (!Number.isFinite(rounds) || rounds < 1) {
+        push("rounds", "Rounds must be >= 1.");
+      }
     }
 
     const parallel = Number(inputs.games_in_parallel.value);
@@ -315,6 +346,8 @@ export function mountTournamentTemplateForm({
     ponderSwitch.checked = !!values.ponder;
     affinitySwitch.checked = !!values.pin_affinity;
     oversubSwitch.checked = !!values.allow_oversubscribe;
+    sprtSwitch.checked = !!values.sprt;
+    syncSprtUI(sprtSwitch.checked);
 
     const r = values.resign || {};
     resignMoves.value = String(r.movecount ?? RESIGN_DEFAULTS.movecount);
@@ -330,5 +363,15 @@ export function mountTournamentTemplateForm({
     syncEnabled(drawBlock, drawFields);
   }
 
-  return { getValues, setValues, validate };
+  function setSprtAvailable(available) {
+    if (!available && sprtSwitch.checked) {
+      sprtSwitch.checked = false;
+      syncSprtUI(false);
+      container.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    if (available) sprtSwitch.removeAttribute("disabled");
+    else sprtSwitch.setAttribute("disabled", "");
+  }
+
+  return { getValues, setValues, validate, setSprtAvailable };
 }

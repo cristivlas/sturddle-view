@@ -610,13 +610,74 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       tplHost.addEventListener("input", persistTemplate);
       tplHost.addEventListener("change", persistTemplate);
 
-      const tabByName = { general: generalTab, play: playTab, tournament: tournamentTab };
+      // --- SPRT tab ---
+      const SPRT_FIELD_DEFAULTS = { elo0: 0, elo1: 10, alpha: 0.05, beta: 0.05, model: "normalized" };
+      const sprtTab = document.createElement("wa-tab");
+      sprtTab.panel = "sprt";
+      sprtTab.textContent = "SPRT";
+      const sprtPanel = document.createElement("wa-tab-panel");
+      sprtPanel.name = "sprt";
+
+      const sprtInitial = tournamentInitial.sprt_defaults || {};
+
+      function makeSprtInput(key, label, { step } = {}) {
+        const el = document.createElement("wa-input");
+        el.label = label;
+        el.size = "small";
+        el.type = "number";
+        el.setAttribute("autocomplete", "off");
+        if (step != null) el.setAttribute("step", String(step));
+        const v = sprtInitial[key] != null ? sprtInitial[key] : SPRT_FIELD_DEFAULTS[key];
+        el.value = String(v);
+        el.dataset.key = key;
+        return el;
+      }
+
+      const sprtElo0  = makeSprtInput("elo0",  "Elo0");
+      const sprtElo1  = makeSprtInput("elo1",  "Elo1");
+      const sprtAlpha = makeSprtInput("alpha", "Alpha", { step: 0.01 });
+      const sprtBeta  = makeSprtInput("beta",  "Beta",  { step: 0.01 });
+
+      const sprtModelSelect = document.createElement("wa-select");
+      sprtModelSelect.label = "Model";
+      sprtModelSelect.size = "small";
+      for (const [val, lbl] of [["normalized", "Normalized"], ["bayesian", "Bayesian"], ["logistic", "Logistic"]]) {
+        const o = document.createElement("wa-option");
+        o.value = val;
+        o.textContent = lbl;
+        sprtModelSelect.appendChild(o);
+      }
+      sprtModelSelect.value = sprtInitial.model || "normalized";
+
+      const sprtGrid = document.createElement("div");
+      sprtGrid.className = "sprt-settings-grid";
+      sprtGrid.append(sprtElo0, sprtElo1, sprtAlpha, sprtBeta, sprtModelSelect);
+      sprtPanel.appendChild(sprtGrid);
+
+      function readSprtDefaults() {
+        return {
+          elo0:  Number(sprtElo0.value),
+          elo1:  Number(sprtElo1.value),
+          alpha: Number(sprtAlpha.value),
+          beta:  Number(sprtBeta.value),
+          model: sprtModelSelect.value || "normalized",
+        };
+      }
+
+      const persistSprt = debounce(() => {
+        putTournamentSettings({ sprt_defaults: readSprtDefaults() });
+      }, 400);
+
+      sprtPanel.addEventListener("input", persistSprt);
+      sprtPanel.addEventListener("change", persistSprt);
+
+      const tabByName = { general: generalTab, play: playTab, tournament: tournamentTab, sprt: sprtTab };
       const startTab = tabByName[initialTab] || generalTab;
       startTab.setAttribute("active", "");
 
       tabs.append(
-        generalTab, playTab, tournamentTab,
-        generalPanel, playPanel, tournamentPanel,
+        generalTab, playTab, tournamentTab, sprtTab,
+        generalPanel, playPanel, tournamentPanel, sprtPanel,
       );
 
       dialog.append(tabs);

@@ -37,6 +37,7 @@ PERSISTED_FIELDS = (
     "tournament_fastchess_path",
     "tournament_root",
     "tournament_default_template",
+    "tournament_sprt_defaults",
     "engine_default_threads",
     "engine_default_analysis_threads",
     "engine_default_hash_mb",
@@ -84,6 +85,7 @@ class Settings(BaseSettings):
     tournament_fastchess_path: str | None = None
     tournament_root: str | None = None
     tournament_default_template: dict = Field(default_factory=dict)
+    tournament_sprt_defaults: dict = Field(default_factory=dict)
 
     # Global engine defaults. Layered on top of per-engine UCI options at
     # launch time (HVE + tournament). Blank/None = no override.

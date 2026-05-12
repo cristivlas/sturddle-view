@@ -347,10 +347,23 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           <td>${e.elo == null ? "--" : (e.elo >= 0 ? "+" : "") + e.elo.toFixed(1) + (e.elo_margin_95 == null ? "" : ` +/- ${e.elo_margin_95.toFixed(1)}`)}</td>
         </tr>`)
       .join("");
-    const sprtRow = sprt
-      ? `<div class="wb-sprt">SPRT [${sprt.elo0}, ${sprt.elo1}] * LLR=${sprt.llr.toFixed(2)} ` +
-        `[${sprt.lower_bound.toFixed(2)}, ${sprt.upper_bound.toFixed(2)}] * ${sprt.status}</div>`
-      : "";
+    let sprtRow = "";
+    if (sprt) {
+      const lo = sprt.lower_bound, hi = sprt.upper_bound, llr = sprt.llr;
+      const concluded = sprt.status !== "continue";
+      const colorMod = concluded ? (sprt.status === "H1" ? " wb-sprt--h1" : " wb-sprt--h0") : "";
+      const candidate = detail.engines?.[0]?.name ? escapeHtml(detail.engines[0].name) : "candidate";
+      const pairsText = sprt.pairs != null ? ` * ${sprt.pairs} pair${sprt.pairs === 1 ? "" : "s"}` : "";
+      const statusText = sprt.status === "H1"
+        ? `H1 (${candidate} is stronger)`
+        : sprt.status === "H0"
+          ? `H0 (no significant difference)`
+          : sprt.status;
+      sprtRow = `<div class="wb-sprt${colorMod}">` +
+        `SPRT ${candidate} [${sprt.elo0}, ${sprt.elo1}] * LLR=${llr.toFixed(2)} [${lo.toFixed(2)}, ${hi.toFixed(2)}]` +
+        `${pairsText} * ${statusText}` +
+        `</div>`;
+    }
     const partialPairs = detail.partial_pairs ?? 0;
     // Hide during RUNNING -- a fresh game-1 always sits alone in the
     // PGN until game-2 of the pair finishes; that's normal, not data loss.

@@ -675,8 +675,8 @@ def _iter_pairs(pgn_path: Path) -> list[tuple[str, str, float]]:
     if not games:
         return []
     if len(games) % 2 == 1:
-        log.warning(
-            "SPRT %s: dropping trailing odd game (total=%d)",
+        log.debug(
+            "SPRT %s: odd game count %d -- SPRT concluded mid-pair, trailing game dropped",
             pgn_path.name, len(games),
         )
     # Engine A = whichever engine appears first (deterministic).
@@ -730,6 +730,9 @@ def compute_sprt(
     alpha = float(params.get("alpha", 0.05))
     beta = float(params.get("beta", 0.05))
     model = params.get("model", "normalized")
+    # "pentanomial" is the UI-facing name; "normalized" is the internal alias.
+    if model == "pentanomial":
+        model = "normalized"
     if model != "normalized":
         raise NotImplementedError(f"SPRT model {model!r} not implemented")
     if elo0 >= elo1:

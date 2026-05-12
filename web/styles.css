@@ -1396,6 +1396,15 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 }
 .settings-tournament-path-inner .path-field { flex: 1; min-width: 0; }
 wa-dialog wa-tab-panel > .settings-tournament-tpl-mount { margin-top: 24px; }
+.sprt-settings-grid,
+.sprt-params-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 4px 0 8px;
+}
+.sprt-settings-grid wa-select,
+.sprt-params-form wa-select { grid-column: 1 / -1; }
 /* Width must accommodate the two icon buttons' intrinsic width + gap
    (otherwise they overflow the container and the rightmost button
    extends past the form's visual right edge). 6em comfortably fits
@@ -1523,6 +1532,14 @@ wa-dialog::part(body) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.tournament-sprt-badge {
+  flex: 0 0 auto;
+  font-size: 0.625rem; font-weight: 700; letter-spacing: 0.8px;
+  padding: 1px 5px; border-radius: 3px;
+  background: rgba(var(--accent-rgb), 0.15);
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
+  color: var(--accent);
 }
 .tournament-status {
   flex: 0 0 auto;
@@ -1770,8 +1787,36 @@ wa-dialog::part(body) {
 .wb-sprt {
   background: var(--bg); border: 1px solid #2e3138; border-radius: 4px;
   padding: 6px 8px; margin-bottom: 8px; font-size: 0.75rem;
-  font-family: var(--wa-font-family-code);
 }
+.wb-sprt--h1 { border-color: #2d6a3f; }
+.wb-sprt--h0 { border-color: #7a2222; }
+.wb-sprt-bar-row {
+  display: flex; align-items: center; gap: 6px;
+}
+.wb-sprt-label {
+  font-size: 0.6875rem; color: var(--muted); white-space: nowrap; width: 1.5rem; text-align: center;
+}
+.wb-sprt-track {
+  position: relative; flex: 1; height: 10px;
+  background: #2e3138; border-radius: 5px; overflow: visible;
+}
+.wb-sprt--h1 .wb-sprt-track { background: #1a3d26; }
+.wb-sprt--h0 .wb-sprt-track { background: #3d1a1a; }
+.wb-sprt-thumb {
+  position: absolute; top: 50%; transform: translate(-50%, -50%);
+  width: 10px; height: 10px; border-radius: 50%;
+  background: #8a9bb0; border: 2px solid #c0cfe0; pointer-events: none;
+}
+.wb-sprt--h1 .wb-sprt-thumb { background: #4caf72; border-color: #88d4a4; }
+.wb-sprt--h0 .wb-sprt-thumb { background: #c0453a; border-color: #e08880; }
+.wb-sprt-pairs {
+  margin-top: 4px; font-size: 0.6875rem; color: var(--muted);
+}
+.wb-sprt-banner {
+  margin-top: 5px; padding: 3px 6px; border-radius: 3px; font-size: 0.75rem;
+  background: #1e3a28; color: #88d4a4;
+}
+.wb-sprt--h0 .wb-sprt-banner { background: #3a1e1e; color: #e08880; }
 .wb-partial-pairs {
   background: var(--bg); border: 1px solid #4a3d1f; border-radius: 4px;
   padding: 6px 8px; margin-bottom: 8px; font-size: 0.75rem; color: #d4a854;

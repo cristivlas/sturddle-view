@@ -262,10 +262,12 @@ export function mountTournaments({ container, api, events, log, token }) {
       trailing = `<span class="tournament-engines muted"></span>`;
     }
 
+    const sprtBadge = t.template?.sprt ? `<span class="tournament-sprt-badge">SPRT</span>` : "";
     li.innerHTML = `
       <div class="tournament-row-main">
         <span class="tournament-status status-${status}">${status === STATUS.STOPPED ? "paused" : status}</span>
         <span class="tournament-name"></span>
+        ${sprtBadge}
         ${trailing}
       </div>
     `;
@@ -570,7 +572,13 @@ export function mountTournaments({ container, api, events, log, token }) {
     }
     row("Type", formatType(tpl.tournament_type));
     row("Time control", tpl.tc);
-    row("Rounds", tpl.rounds);
+    if (tpl.sprt) {
+      const s = tpl.sprt;
+      row("Rounds", "unlimited (SPRT)");
+      row("SPRT", `elo0=${s.elo0} elo1=${s.elo1} alpha=${s.alpha} beta=${s.beta} model=${s.model}`);
+    } else {
+      row("Rounds", tpl.rounds);
+    }
     row("Parallel games", tpl.games_in_parallel);
     row("Games", formatGames(t));
     if (tpl.tournament_type === "gauntlet") row("Seeds", tpl.seeds);
@@ -730,7 +738,10 @@ export function mountTournaments({ container, api, events, log, token }) {
         }
         refreshValidity();
         nameInput.addEventListener("input", refreshValidity);
-        builder.onChange(refreshValidity);
+        builder.onChange(() => {
+          tplCtl.setSprtAvailable(builder.getEngines().length === 2);
+          refreshValidity();
+        });
 
         actionBtn.addEventListener("click", async () => {
           if (!isValid()) return;

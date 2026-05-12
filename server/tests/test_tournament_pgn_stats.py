@@ -447,13 +447,13 @@ def test_sprt_all_decisive_same_direction_returns_continue(tmp_path):
 
 
 def test_sprt_drops_trailing_odd_game(tmp_path, caplog):
-    # 3 games → 1 complete pair, last game dropped. Warns about the drop.
+    # 3 games → 1 complete pair, last game dropped. Logs the drop at DEBUG.
     body = _game("A", "B", "1-0") + _game("B", "A", "0-1") + _game("A", "B", "1-0")
     p = _write_pgn(tmp_path, body)
-    with caplog.at_level("WARNING", logger="sturddle_view.tournament.pgn_stats"):
+    with caplog.at_level("DEBUG", logger="sturddle_view.tournament.pgn_stats"):
         r = compute_sprt(p, _params())
     assert r.pairs == 1
-    assert any("trailing odd game" in m for m in caplog.messages)
+    assert any("trailing" in m and "odd" in m for m in caplog.messages)
 
 
 def test_sprt_warns_on_engine_mismatch(tmp_path, caplog):
