@@ -206,6 +206,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     schedule: "sturddle-wb-live-games",
   };
 
+  const onWbMinimize = () => { if (activeLayout === LAYOUT.SNAP) requestAnimationFrame(reapplyLayout); };
+  const onWbRestore = () => { if (activeLayout === LAYOUT.SNAP) requestAnimationFrame(reapplyLayout); };
+
   function makeBox(key, title, body, { min = false, max = false } = {}) {
     const cfg = lastGeometry[key];
     const extra = EXTRA_CLASS[key] ? ` ${EXTRA_CLASS[key]}` : "";
@@ -228,6 +231,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       else requestAnimationFrame(reapplyLayout);
       return false;
     };
+    wb.onminimize = onWbMinimize;
+    wb.onrestore = onWbRestore;
     if (top > 0 && wb.y < top) wb.move(wb.x, top);
     if (left > 0 && wb.x < left) wb.move(left, wb.y);
     return wb;
@@ -413,7 +418,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         initialRect: claim ? { x: claim.x, y: claim.y, w: claim.w, h: claim.h } : null,
         // Only overflow windows get a restore callback -- slotted windows
         // already have a position and restore to it naturally.
-        onAfterRestore: !useSlotsGrid ? () => requestAnimationFrame(reapplyLayout)
+        onAfterRestore: !useSlotsGrid ? null
           : !claim ? (wb) => {
           const c = slotGrid.claim();
           if (c) {
@@ -438,6 +443,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       try { result.wb.minimize(); } catch { /* */ }
     }
     if (result?.wb && !result.alreadyOpen && !result.wb.min) requestAnimationFrame(reapplyLayout);
+    if (result?.wb && !result.alreadyOpen) {
+      result.wb.onminimize = onWbMinimize;
+      if (!useSlotsGrid) result.wb.onrestore = onWbRestore;
+    }
     const isLive = isLiveWindowOpen(attachKey);
     if (DEBUG_WATCH) console.log("[WATCH] post-open", { attachKey, isLive, slotted: !!claim });
     btn.classList.toggle("wb-sched-attach-btn--live", isLive);
