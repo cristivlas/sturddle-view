@@ -5,6 +5,7 @@
 import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog } from "../import-position-dialog.js";
+import { openUciLogWindow, openPvTableWindow, closeDebugWindows, restoreDebugWindows } from "../play-debug-windows.js";
 
 // Module-scope mirror of "user has a live human-vs-engine game running"
 // so other modules (e.g. tournament Replay button) can decide whether
@@ -107,6 +108,13 @@ export const playPerspective = {
             <button id="resign" class="ribbon-btn ribbon-btn--danger" disabled aria-label="Resign" title="Resign">
               <wa-icon name="flag"></wa-icon>
             </button>
+            <span class="ribbon-sep ribbon-sep--push desktop-only" aria-hidden="true"></span>
+            <button id="uci-log-btn" class="ribbon-btn desktop-only" aria-label="UCI log" title="UCI log">
+              <wa-icon name="terminal"></wa-icon>
+            </button>
+            <button id="pv-table-btn" class="ribbon-btn desktop-only" aria-label="PV table" title="PV table">
+              <wa-icon name="table-list"></wa-icon>
+            </button>
           </div>
 
           <div id="view-controls" class="board-ribbon" style="display: none">
@@ -156,6 +164,8 @@ export const playPerspective = {
     const switchSidesBtn = root.querySelector("#switch-sides");
     const pauseBtn = root.querySelector("#pause");
     const analyzeBtn = root.querySelector("#analyze");
+    const uciLogBtn = root.querySelector("#uci-log-btn");
+    const pvTableBtn = root.querySelector("#pv-table-btn");
     // View ribbon (shown only while a game is loaded into view mode).
     const playRibbon = root.querySelector("#board-controls");
     const viewRibbon = root.querySelector("#view-controls");
@@ -376,6 +386,7 @@ export const playPerspective = {
           viewingGameId = evt.game_id ?? null;
           viewing = !!v;
           if (viewing) {
+            if (!wasViewing) closeDebugWindows();
             if (!wasViewing || viewingGameId !== prevGameId) viewGameOverAlertShown = false;
             viewCursor = v.cursor ?? 0;
             viewTotalPlies = v.total_plies ?? 0;
@@ -655,6 +666,11 @@ export const playPerspective = {
     newGameBtn.addEventListener("click", onNewGame);
     importBtn.addEventListener("click", onImport);
     resignBtn.addEventListener("click", onResign);
+    const onUciLog = () => openUciLogWindow(ctx.events);
+    const onPvTable = () => openPvTableWindow(ctx.events, sideHost.querySelector(".game-view-engine"));
+    uciLogBtn?.addEventListener("click", onUciLog);
+    pvTableBtn?.addEventListener("click", onPvTable);
+    restoreDebugWindows(ctx.events, sideHost.querySelector(".game-view-engine"));
     takebackBtn.addEventListener("click", onTakeback);
     switchSidesBtn.addEventListener("click", onSwitchSides);
     pauseBtn.addEventListener("click", onPause);
@@ -669,12 +685,37 @@ export const playPerspective = {
     viewAnalyzeBtn.addEventListener("click", onAnalyze);
     viewPlayFromHereBtn.addEventListener("click", onPlayFromHere);
 
+    function showEngineCrashToast() {
+      const msg = document.createElement("span");
+      msg.textContent = "Engine crashed unexpectedly.";
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "toast-action-btn toast-close-btn";
+      closeBtn.textContent = "X";
+      const node = document.createElement("span");
+      node.className = "toast-sort-msg";
+      closeBtn.style.marginLeft = "auto";
+      node.append(msg, closeBtn);
+      const dismiss = toast(node, { variant: "danger", duration: 0 });
+      closeBtn.onclick = dismiss;
+    }
+
+    const offCrash = ctx.events.on(async (evt) => {
+      if (evt.kind !== "system" || evt.payload?.error !== "engine_terminated") return;
+      view.clearArrows();
+      if (analyzing) {
+        await onAnalyze();
+      }
+      showEngineCrashToast();
+    });
+
     return {
       unmount() {
+        closeDebugWindows();
         dismissAnalysisToast?.();
         dismissAnalysisToast = null;
         pausedBadge?.classList.add("hidden");
         showFinishedBadge("");
+        offCrash();
         offEvent();
         view.unmount();
         window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
@@ -682,6 +723,8 @@ export const playPerspective = {
         newGameBtn.removeEventListener("click", onNewGame);
         importBtn.removeEventListener("click", onImport);
         resignBtn.removeEventListener("click", onResign);
+        uciLogBtn?.removeEventListener("click", onUciLog);
+        pvTableBtn?.removeEventListener("click", onPvTable);
         takebackBtn.removeEventListener("click", onTakeback);
         switchSidesBtn.removeEventListener("click", onSwitchSides);
         pauseBtn.removeEventListener("click", onPause);

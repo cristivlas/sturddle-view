@@ -172,6 +172,9 @@ class HumanVsEngine:
         self._view_eval_history: list[dict | None] | None = None
         self._tb: TablebaseProber | None = None
         self._lock = asyncio.Lock()
+        # Pending uci_log publish tasks; held to keep them from being GC'd
+        # mid-flight (asyncio only keeps weak refs to tasks).
+        self._uci_log_tasks: set[asyncio.Task] = set()
 
     @property
     def engine_path(self) -> str:
@@ -245,6 +248,7 @@ class HumanVsEngine:
         rc_future = getattr(engine, "returncode", None)
         if rc_future is not None:
             rc_future.add_done_callback(lambda f: f.exception())
+        self._patch_uci_log(engine)
         accepted: dict = {}
         for k, v in (self._engine_options or {}).items():
             if k in engine.options and not engine.options[k].is_managed():
@@ -266,6 +270,37 @@ class HumanVsEngine:
             except chess.engine.EngineError:
                 log.exception("engine refused options %s", accepted)
         return engine
+
+    def _patch_uci_log(self, engine: chess.engine.UciProtocol) -> None:
+        """Wrap send_line / line_received to emit uci_log events.
+
+        Note: the uci/uciok handshake done by popen_uci runs before this
+        patch, so those lines are not captured. setoption + isready and
+        all subsequent traffic are.
+        """
+        bus = self._bus
+        tasks = self._uci_log_tasks
+        loop = asyncio.get_running_loop()
+        orig_send = engine.send_line
+        orig_recv = engine.line_received
+
+        def _emit(direction: str, line: str) -> None:
+            t = loop.create_task(
+                bus.publish(Event(kind="uci_log", payload={"dir": direction, "line": line}))
+            )
+            tasks.add(t)
+            t.add_done_callback(tasks.discard)
+
+        def _send(line: str) -> None:
+            orig_send(line)
+            _emit(">", line)
+
+        def _recv(line: str) -> None:
+            orig_recv(line)
+            _emit("<", line)
+
+        engine.send_line = _send
+        engine.line_received = _recv
 
     def _eval_pov(self, stm: chess.Color = chess.WHITE) -> chess.Color:
         """Resolve play_eval_pov setting → chess.Color for serialization."""
@@ -908,6 +943,7 @@ class HumanVsEngine:
                 except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
                     pass
                 self._engine = None
+            self._uci_log_tasks.clear()
             if self._tb is not None:
                 self._tb.close()
                 self._tb = None
@@ -1015,13 +1051,24 @@ class HumanVsEngine:
     async def _cancel_think(self) -> None:
         self._think_gen += 1
         if self._engine is not None:
-            try:
-                t = getattr(self._engine, "transport", None)
-                if t is not None:
+            t = getattr(self._engine, "transport", None)
+            stopped_cleanly = False
+            if t is not None and self._think_task and not self._think_task.done():
+                try:
+                    t.write(b"stop\n")
+                    await asyncio.wait_for(asyncio.shield(self._think_task), timeout=0.5)
+                    stopped_cleanly = True
+                    log.info("engine responded to stop")
+                except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                    pass
+            if not stopped_cleanly and t is not None:
+                log.warning("engine did not respond to stop -- terminating")
+                try:
                     t.close()
-            except Exception:
-                log.exception("error tearing down engine")
+                except Exception:
+                    pass
             self._engine = None
+        self._uci_log_tasks.clear()
         if self._think_task and not self._think_task.done():
             self._think_task.cancel()
         self._think_task = None
@@ -1152,10 +1199,14 @@ class HumanVsEngine:
                 if best is None:
                     return
         except chess.engine.EngineTerminatedError:
-            log.exception("engine terminated mid-search")
-            await self._bus.publish(
-                Event(kind="system", game_id=game_id, payload={"error": "engine_terminated"})
-            )
+            if self._think_gen == gen:
+                log.error("engine crashed mid-search")
+                await self._cancel_tick()
+                await self._bus.publish(
+                    Event(kind="system", game_id=game_id, payload={"error": "engine_terminated"})
+                )
+            else:
+                log.info("engine terminated (takeback or shutdown)")
             return
         except (asyncio.CancelledError, RuntimeError, BrokenPipeError):
             return
@@ -1215,7 +1266,7 @@ class HumanVsEngine:
                             )
                         )
         except chess.engine.EngineTerminatedError:
-            log.exception("engine terminated mid-analysis")
+            log.error("engine crashed mid-analysis")
             await self._bus.publish(
                 Event(kind="system", game_id=game_id, payload={"error": "engine_terminated"})
             )

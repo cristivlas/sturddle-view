@@ -105,15 +105,16 @@ def _install_proactor_accept_resilience() -> None:
 
 
 def _install_engine_sigkill_filter() -> None:
-    # Drop "Future exception was never retrieved" from our SIGKILL of a
-    # hung engine on Undo, plus orphan accept_coro tasks from transient
-    # AcceptEx WinErrors (see _install_proactor_accept_resilience).
+    # Drop "Future exception was never retrieved" from intentional engine
+    # termination on takeback/cancel (transport.close() after failed stop),
+    # plus orphan accept_coro tasks from transient AcceptEx WinErrors
+    # (see _install_proactor_accept_resilience).
     loop = asyncio.get_running_loop()
     prev = loop.get_exception_handler()
 
     def handler(loop_, ctx):
         exc = ctx.get("exception")
-        if isinstance(exc, chess.engine.EngineTerminatedError) and "exit code: -9" in str(exc):
+        if isinstance(exc, chess.engine.EngineTerminatedError):
             return
         if isinstance(exc, OSError) and getattr(exc, "winerror", None) in _TRANSIENT_ACCEPT_WINERR:
             return

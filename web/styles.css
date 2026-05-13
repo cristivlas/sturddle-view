@@ -1941,3 +1941,36 @@ wa-dialog::part(body) {
 .wb-sched-attach-btn--live { border-color: var(--accent); color: var(--accent); }
 .wb-sched-attach-btn--live:hover { background: var(--nav-btn-bg-hover); }
 .wb-sched-pair .wb-sched-icon { color: var(--muted); }
+
+/* Pushes subsequent ribbon buttons to the far end of the ribbon. */
+.ribbon-sep--push { flex: 1 1 auto; }
+
+/* UCI log window. Negative margin + sticky top:-8px cancel wb-body's
+   default 8px/12px padding so the toolbar pins to the body edge while
+   the lines below keep that padding. */
+.wb-uci-log-toolbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 4px 8px; margin: -8px -12px 8px;
+  border-bottom: 1px solid #2e3138; font-size: 0.8125rem;
+  position: sticky; top: -8px; background: var(--panel); z-index: 1;
+}
+.wb-uci-log-toolbar button {
+  background: var(--nav-btn-bg); color: var(--fg);
+  border: 1px solid #2e3138; border-radius: 3px;
+  padding: 2px 8px; cursor: pointer; font-size: 0.75rem;
+}
+.wb-uci-log-toolbar button:hover { background: var(--nav-btn-bg-hover); }
+.sturddle-wb-uci-log .wb-body { overflow-x: auto; }
+.wb-uci-log-line {
+  font-family: var(--wa-font-family-code); font-size: 0.75rem; line-height: 1.5;
+  white-space: pre; min-width: max-content;
+}
+.wb-uci-log-line.uci-out { color: #7ec8e3; }
+.wb-uci-log-line.uci-in  { color: #a8e6a3; }
+
+/* PV table window. The PV cell scrolls horizontally (no ellipsis) so the
+   user can read full variations; wb-table sets table-layout:auto by
+   default so we don't need to constrain the cell width. */
+.wb-pvtable-pv {
+  white-space: nowrap; overflow-x: auto; max-width: 100%;
+}

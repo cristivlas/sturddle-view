@@ -48,9 +48,18 @@ export const enginesPerspective = {
     // Tab-driven workspace visibility: Tournament boards stay hidden
     // unless the Tournaments sub-tab is active.
     const tabGroup = root.querySelector(".engines-subnav");
+    let workspaceRestored = false;
     const applyVisibility = (panelName) => {
-      if (panelName === "tournaments") getActiveWorkspace()?.show();
-      else { tournamentsCtl?.dismissSortToast?.(); getActiveWorkspace()?.hide(); }
+      if (panelName === "tournaments") {
+        getActiveWorkspace()?.show();
+        if (!workspaceRestored) {
+          workspaceRestored = true;
+          tournamentsCtl?.restoreWorkspace?.();
+        }
+      } else {
+        tournamentsCtl?.dismissSortToast?.();
+        getActiveWorkspace()?.hide();
+      }
     };
     const onTabShow = (e) => {
       const name = e.detail?.name;

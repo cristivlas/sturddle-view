@@ -25,6 +25,19 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _ignore_wsproto_closed(args):
+    # uvicorn calls connection.shutdown() on already-closed WS connections
+    # during teardown; the resulting LocalProtocolError is harmless.
+    try:
+        from wsproto.utilities import LocalProtocolError
+    except ImportError:
+        pass
+    else:
+        if isinstance(args.exc_value, LocalProtocolError):
+            return
+    threading.__excepthook__(args)
+
+
 def _make_server(tmp_path, monkeypatch, *, sprt_defaults=None):
     monkeypatch.setattr(
         FastchessRunner, "detect_binary",
@@ -45,12 +58,14 @@ def _make_server(tmp_path, monkeypatch, *, sprt_defaults=None):
     port = _free_port()
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto")
     s = uvicorn.Server(config)
+    prev_excepthook = threading.excepthook
+    threading.excepthook = _ignore_wsproto_closed
     thread = threading.Thread(target=s.run, daemon=True)
     thread.start()
     deadline = time.time() + 10
     while time.time() < deadline and not s.started:
         time.sleep(0.05)
-    return s, thread, port, app
+    return s, thread, port, app, prev_excepthook
 
 
 async def _nav_to_tournaments(page, base):
@@ -80,7 +95,7 @@ async def test_sprt_switch_disables_rounds_and_type(tmp_path, monkeypatch, brows
     if browser is None:
         pytest.skip("chromium not installed")
 
-    s, thread, port, app = _make_server(tmp_path, monkeypatch)
+    s, thread, port, app, prev_hook = _make_server(tmp_path, monkeypatch)
     base = f"http://127.0.0.1:{port}"
     try:
         ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
@@ -144,6 +159,7 @@ async def test_sprt_switch_disables_rounds_and_type(tmp_path, monkeypatch, brows
         s.should_exit = True
         s.force_exit = True
         thread.join(timeout=2)
+        threading.excepthook = prev_hook
 
 
 @pytest.mark.asyncio
@@ -154,7 +170,7 @@ async def test_sprt_badge_shown_in_tournament_list(tmp_path, monkeypatch, browse
         pytest.skip("chromium not installed")
 
     sprt_defaults = {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05, "model": "normalized"}
-    s, thread, port, app = _make_server(tmp_path, monkeypatch, sprt_defaults=sprt_defaults)
+    s, thread, port, app, prev_hook = _make_server(tmp_path, monkeypatch, sprt_defaults=sprt_defaults)
     base = f"http://127.0.0.1:{port}"
 
     # Pre-seed a tournament with resolved SPRT params (as the API would store).
@@ -189,6 +205,7 @@ async def test_sprt_badge_shown_in_tournament_list(tmp_path, monkeypatch, browse
         s.should_exit = True
         s.force_exit = True
         thread.join(timeout=2)
+        threading.excepthook = prev_hook
 
 
 @pytest.mark.asyncio
@@ -199,7 +216,7 @@ async def test_sprt_info_dialog_shows_params(tmp_path, monkeypatch, browser):
         pytest.skip("chromium not installed")
 
     sprt_params = {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05, "model": "normalized"}
-    s, thread, port, app = _make_server(tmp_path, monkeypatch, sprt_defaults=sprt_params)
+    s, thread, port, app, prev_hook = _make_server(tmp_path, monkeypatch, sprt_defaults=sprt_params)
     base = f"http://127.0.0.1:{port}"
 
     app.state.tournament_store.create(
@@ -243,6 +260,7 @@ async def test_sprt_info_dialog_shows_params(tmp_path, monkeypatch, browser):
         s.should_exit = True
         s.force_exit = True
         thread.join(timeout=2)
+        threading.excepthook = prev_hook
 
 
 @pytest.mark.asyncio
@@ -253,7 +271,7 @@ async def test_sprt_settings_validation_marks_invalid_and_skips_persist(tmp_path
     if browser is None:
         pytest.skip("chromium not installed")
 
-    s, thread, port, app = _make_server(tmp_path, monkeypatch)
+    s, thread, port, app, prev_hook = _make_server(tmp_path, monkeypatch)
     base = f"http://127.0.0.1:{port}"
     try:
         ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
@@ -337,3 +355,4 @@ async def test_sprt_settings_validation_marks_invalid_and_skips_persist(tmp_path
         s.should_exit = True
         s.force_exit = True
         thread.join(timeout=2)
+        threading.excepthook = prev_hook
