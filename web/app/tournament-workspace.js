@@ -1106,7 +1106,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           return;
         }
         if (slot < cap) {
-          wb.onrestore = null;
           unminimize(wb);
           const r = slotGrid.rectAt(slot++);
           wb.resize(r.w, r.h).move(r.x, r.y);
