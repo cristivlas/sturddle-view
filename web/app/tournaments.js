@@ -1212,7 +1212,9 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   function restoreWorkspace() {
     tournamentsTabActive = true;
-    maybeRestoreWorkspace();
+    // Defer one frame so the tab panel is laid out before openWorkspace
+    // measures ribbon/menubar geometry via getBoundingClientRect().
+    requestAnimationFrame(maybeRestoreWorkspace);
   }
 
   return {
