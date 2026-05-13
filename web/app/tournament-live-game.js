@@ -103,7 +103,7 @@ function avoidOverlap(wb, avoid, top, left, cascade = 0) {
   }
 }
 
-export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, boardStyle = null, avoidRect = null, initialRect = null, onAfterRestore = null, getSlotSize = null }) {
+export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, boardStyle = null, avoidRect = null, initialRect = null, onAfterRestore = null, getSlotSize = null, flash = true }) {
   if (DEBUG_WATCH) console.log("[WATCH] openLiveGameWindow", { proxyId, gameId, windowKey, label });
   if (!windowKey) {
     console.error("[WATCH] no windowKey -- need at least one of proxyId/gameId", { proxyId, gameId });
@@ -255,7 +255,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       }
     });
   }
-  requestAnimationFrame(() => flashWindow(wb));
+  if (flash) requestAnimationFrame(() => flashWindow(wb));
 
   // Compute target board size deterministically from the body's
   // dimensions and the known fixed-row heights. Reading the board

@@ -859,8 +859,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   async function initWorkspace() {
     await Promise.all([refresh(), backfillEvents()]);
     if (!restoreFromSaved) {
-      if (detail?.status === STATUS.RUNNING) openSystemWindow("schedule");
-      if (eventLog.length > 0 || detail?.status === STATUS.RUNNING) openSystemWindow("log");
+      if (detail?.status === STATUS.RUNNING) openSystemWindow("schedule", { flash: false });
+      if (eventLog.length > 0 || detail?.status === STATUS.RUNNING) openSystemWindow("log", { flash: false });
     }
     if (detail?.status === STATUS.RUNNING && Array.isArray(savedState?.live)) {
       const sorted = [...savedState.live].sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
@@ -869,6 +869,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           proxyId: s.proxyId, gameId: s.gameId ?? null,
           label: s.label, engineName: s.engineName,
           initialRect: { x: s.x, y: s.y, w: s.width, h: s.height },
+          flash: false,
         });
       }
     }
@@ -1073,7 +1074,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     setLayout(LAYOUT.TIDY);
     const keys = ["engines", "standings", "schedule", "log"];
     for (const k of keys) {
-      if (!windows[k]) openSystemWindow(k);
+      if (!windows[k]) openSystemWindow(k, { flash: false });
     }
     // If watchers exist, re-grid them first while the 4 system panels
     // are hidden, so the user doesn't see the panels flicker beneath
@@ -1270,13 +1271,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     return wbs.length > 0 && wbs.every(wb => wb.hidden);
   }
 
-  function openSystemWindow(key) {
+  function openSystemWindow(key, { flash = true } = {}) {
     if (windows[key]) {
       try {
         const wb = windows[key];
         if (wb.min) wb.restore();
         wb.focus();
-        flashWindow(wb);
+        if (flash) flashWindow(wb);
       } catch {}
       return;
     }
@@ -1288,7 +1289,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     spec.render();
     armSubscriptions();
     refresh();
-    requestAnimationFrame(() => { try { flashWindow(windows[key]); } catch {} });
+    if (flash) requestAnimationFrame(() => { try { flashWindow(windows[key]); } catch {} });
     requestAnimationFrame(reapplyLayout);
   }
 
