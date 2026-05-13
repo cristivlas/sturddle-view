@@ -3,6 +3,7 @@
 // 2. PV table: per-iteration principal variation, cutechess-style.
 
 import { toast } from "./dialogs.js";
+import { flashWindow } from "./wb-utils.js";
 
 const UCI_LOG_MAX_LINES = 1000;
 // Once the buffer overflows, trim this many lines in one go instead of
@@ -51,6 +52,7 @@ export function openUciLogWindow(events) {
   if (uciLogWb) {
     if (uciLogWb.min) uciLogWb.restore();
     uciLogWb.focus();
+    flashWindow(uciLogWb);
     return;
   }
 
@@ -144,6 +146,7 @@ export function openPvTableWindow(events, anchor = null) {
   if (pvTableWb) {
     if (pvTableWb.min) pvTableWb.restore();
     pvTableWb.focus();
+    flashWindow(pvTableWb);
     return;
   }
 
