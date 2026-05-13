@@ -172,6 +172,9 @@ class HumanVsEngine:
         self._view_eval_history: list[dict | None] | None = None
         self._tb: TablebaseProber | None = None
         self._lock = asyncio.Lock()
+        # Pending uci_log publish tasks; held to keep them from being GC'd
+        # mid-flight (asyncio only keeps weak refs to tasks).
+        self._uci_log_tasks: set[asyncio.Task] = set()
 
     @property
     def engine_path(self) -> str:
@@ -245,6 +248,7 @@ class HumanVsEngine:
         rc_future = getattr(engine, "returncode", None)
         if rc_future is not None:
             rc_future.add_done_callback(lambda f: f.exception())
+        self._patch_uci_log(engine)
         accepted: dict = {}
         for k, v in (self._engine_options or {}).items():
             if k in engine.options and not engine.options[k].is_managed():
@@ -266,6 +270,36 @@ class HumanVsEngine:
             except chess.engine.EngineError:
                 log.exception("engine refused options %s", accepted)
         return engine
+
+    def _patch_uci_log(self, engine: chess.engine.UciProtocol) -> None:
+        """Wrap send_line / line_received to emit uci_log events.
+
+        Note: the uci/uciok handshake done by popen_uci runs before this
+        patch, so those lines are not captured. setoption + isready and
+        all subsequent traffic are.
+        """
+        bus = self._bus
+        tasks = self._uci_log_tasks
+        orig_send = engine.send_line
+        orig_recv = engine.line_received
+
+        def _emit(direction: str, line: str) -> None:
+            t = asyncio.get_running_loop().create_task(
+                bus.publish(Event(kind="uci_log", payload={"dir": direction, "line": line}))
+            )
+            tasks.add(t)
+            t.add_done_callback(tasks.discard)
+
+        def _send(line: str) -> None:
+            orig_send(line)
+            _emit(">", line)
+
+        def _recv(line: str) -> None:
+            orig_recv(line)
+            _emit("<", line)
+
+        engine.send_line = _send
+        engine.line_received = _recv
 
     def _eval_pov(self, stm: chess.Color = chess.WHITE) -> chess.Color:
         """Resolve play_eval_pov setting → chess.Color for serialization."""

@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 EventKind = Literal[
     "engine_info",
+    "uci_log",
     "board_update",
     "clock_tick",
     "clock_update",

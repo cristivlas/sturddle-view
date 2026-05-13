@@ -5,6 +5,7 @@
 import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog } from "../import-position-dialog.js";
+import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows } from "../play-debug-windows.js";
 
 // Module-scope mirror of "user has a live human-vs-engine game running"
 // so other modules (e.g. tournament Replay button) can decide whether
@@ -107,6 +108,13 @@ export const playPerspective = {
             <button id="resign" class="ribbon-btn ribbon-btn--danger" disabled aria-label="Resign" title="Resign">
               <wa-icon name="flag"></wa-icon>
             </button>
+            <span class="ribbon-sep ribbon-sep--push desktop-only" aria-hidden="true"></span>
+            <button id="uci-log-btn" class="ribbon-btn desktop-only" aria-label="UCI log" title="UCI log">
+              <wa-icon name="terminal"></wa-icon>
+            </button>
+            <button id="pv-table-btn" class="ribbon-btn desktop-only" aria-label="PV table" title="PV table">
+              <wa-icon name="table-list"></wa-icon>
+            </button>
           </div>
 
           <div id="view-controls" class="board-ribbon" style="display: none">
@@ -156,6 +164,8 @@ export const playPerspective = {
     const switchSidesBtn = root.querySelector("#switch-sides");
     const pauseBtn = root.querySelector("#pause");
     const analyzeBtn = root.querySelector("#analyze");
+    const uciLogBtn = root.querySelector("#uci-log-btn");
+    const pvTableBtn = root.querySelector("#pv-table-btn");
     // View ribbon (shown only while a game is loaded into view mode).
     const playRibbon = root.querySelector("#board-controls");
     const viewRibbon = root.querySelector("#view-controls");
@@ -376,6 +386,7 @@ export const playPerspective = {
           viewingGameId = evt.game_id ?? null;
           viewing = !!v;
           if (viewing) {
+            if (!wasViewing) closeDebugWindows();
             if (!wasViewing || viewingGameId !== prevGameId) viewGameOverAlertShown = false;
             viewCursor = v.cursor ?? 0;
             viewTotalPlies = v.total_plies ?? 0;
@@ -655,6 +666,8 @@ export const playPerspective = {
     newGameBtn.addEventListener("click", onNewGame);
     importBtn.addEventListener("click", onImport);
     resignBtn.addEventListener("click", onResign);
+    uciLogBtn?.addEventListener("click", () => toggleUciLogWindow(ctx.events));
+    pvTableBtn?.addEventListener("click", () => togglePvTableWindow(ctx.events));
     takebackBtn.addEventListener("click", onTakeback);
     switchSidesBtn.addEventListener("click", onSwitchSides);
     pauseBtn.addEventListener("click", onPause);
@@ -671,6 +684,7 @@ export const playPerspective = {
 
     return {
       unmount() {
+        closeDebugWindows();
         dismissAnalysisToast?.();
         dismissAnalysisToast = null;
         pausedBadge?.classList.add("hidden");
