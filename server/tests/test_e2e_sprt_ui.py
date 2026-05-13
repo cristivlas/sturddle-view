@@ -268,7 +268,7 @@ async def test_sprt_settings_validation_marks_invalid_and_skips_persist(tmp_path
         async def _on_request(req):
             if req.method == "PUT" and "tournament-settings" in req.url:
                 put_count["n"] += 1
-        page.on("request", lambda req: _on_request(req))
+        page.on("request", _on_request)
 
         try:
             await page.goto(base + "/")
