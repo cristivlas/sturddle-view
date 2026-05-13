@@ -17,6 +17,15 @@ from .logging_setup import configure_logging
 
 
 def main() -> None:
+    # "proxy" subcommand: the frozen exe re-invokes itself to run the stdio
+    # proxy (see _runtime.proxy_argv_prefix). Strip the subcommand token so
+    # proxy.main() receives a clean argv.
+    if sys.argv[1:2] == ["proxy"]:
+        sys.argv = [sys.argv[0]] + sys.argv[2:]
+        from .tournament.proxy import main as _proxy_main
+        _proxy_main()
+        return
+
     parser = argparse.ArgumentParser(prog="sturddle-view")
     parser.add_argument("--host", default=None)
     parser.add_argument("--port", type=int, default=None)

@@ -5,7 +5,9 @@ import threading
 import time
 
 import uvicorn
+from platformdirs import user_data_dir
 
+from . import APP_NAME
 from .config import Settings
 
 
@@ -39,7 +41,7 @@ def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> N
     window_host = "127.0.0.1" if host == "0.0.0.0" else host
     url = f"http://{window_host}:{port}/?token={settings.token}"
     webview.create_window("sturddle-view", url, width=width, height=height)
-    webview.start()
+    webview.start(private_mode=False, storage_path=user_data_dir(APP_NAME, appauthor=False))
 
     server.should_exit = True
     thread.join(timeout=5)

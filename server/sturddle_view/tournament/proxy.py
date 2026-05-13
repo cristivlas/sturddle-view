@@ -25,6 +25,7 @@ import asyncio
 import os
 import queue
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -238,12 +239,14 @@ async def _run(
     spawn_env = None
     if engine_env:
         spawn_env = {**os.environ, **engine_env}
+    extra = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
     proc = await asyncio.create_subprocess_exec(
         *engine_argv,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=sys.stderr,
         env=spawn_env,
+        **extra,
     )
     assert proc.stdin and proc.stdout
 

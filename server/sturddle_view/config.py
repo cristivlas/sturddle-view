@@ -10,9 +10,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import APP_NAME
 from ._atomic import atomic_write_json
+from ._runtime import app_root
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = app_root()
 WEB_DIR = REPO_ROOT / "web"
 
 
