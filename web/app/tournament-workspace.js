@@ -243,6 +243,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     };
   }
 
+  function snapshotLive() {
+    return getLiveWindows()
+      .filter(wb => wb._watchOpts)
+      .map(wb => ({ ...wb._watchOpts, ...wbGeometry(wb), min: !!wb.min, max: !!wb.max, z: wb.index ?? 0 }));
+  }
+
   function snapshot() {
     const state = {};
     for (const key of Object.keys(windows)) {
@@ -251,6 +257,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         ? { open: true, ...wbGeometry(wb), min: !!wb.min, max: !!wb.max, z: wb.index ?? 0 }
         : { open: false, ...lastGeometry[key], min: false, max: false, z: 0 };
     }
+    state.live = snapshotLive();
     return state;
   }
 
@@ -446,7 +453,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
     const isLive = isLiveWindowOpen(attachKey);
     if (DEBUG_WATCH) console.log("[WATCH] post-open", { attachKey, isLive, slotted: !!claim });
-    btn.classList.toggle("wb-sched-attach-btn--live", isLive);
+    btn?.classList.toggle("wb-sched-attach-btn--live", isLive);
   }
 
   function renderSchedule() {
@@ -855,6 +862,16 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       if (detail?.status === STATUS.RUNNING) openSystemWindow("schedule");
       if (eventLog.length > 0 || detail?.status === STATUS.RUNNING) openSystemWindow("log");
     }
+    if (detail?.status === STATUS.RUNNING && Array.isArray(savedState?.live)) {
+      const sorted = [...savedState.live].sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
+      for (const s of sorted) {
+        attachWatch(null, s.gameId ?? s.proxyId, null, {
+          proxyId: s.proxyId, gameId: s.gameId ?? null,
+          label: s.label, engineName: s.engineName,
+          initialRect: { x: s.x, y: s.y, w: s.width, h: s.height },
+        });
+      }
+    }
   }
   initWorkspace();
 
@@ -965,8 +982,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   // Snapshot, mark explicit-close, force-close all standard windows,
   // tear down. Used by both close() (navigate-away) and closeAll().
-  function dismissWindows({ markClosed }) {
+  function dismissWindows({ markClosed, liveSnap } = {}) {
     const state = snapshot();
+    if (liveSnap) state.live = liveSnap;
     if (markClosed) state._closed = true;
     saveState(tournament.id, state);
     explicitlyClosed = true;
@@ -1220,8 +1238,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // Window menu's Close All: explicit dismissal. Snapshot remains
   // restorable via the ribbon, but _closed=true blocks navigation reopen.
   function closeAll() {
+    const liveSnap = snapshotLive();
     closeAllLiveGames();
-    dismissWindows({ markClosed: true });
+    dismissWindows({ markClosed: true, liveSnap });
   }
 
   function focus() {

@@ -200,6 +200,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       ? "sturddle-wb sturddle-wb-live sturddle-wb-live-game no-full"
       : "sturddle-wb sturddle-wb-live sturddle-wb-live-proxy no-full",
   });
+  wb._watchOpts = { proxyId, gameId, label, engineName };
   let slotSizeSnap = null;
   if (getSlotSize) wb.onminimize = () => { slotSizeSnap = getSlotSize(); };
   if (onAfterRestore) wb.onrestore = () => {
