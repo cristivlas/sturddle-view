@@ -18,7 +18,7 @@ import {
   LIVE_MIN_WIDTH, LIVE_MIN_HEIGHT, DEBUG_WATCH,
 } from "./tournament-live-game.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
-import { toast } from "./dialogs.js";
+import { apiErrorDetail, toast } from "./dialogs.js";
 import { escapeHtml, flashWindow } from "./wb-utils.js";
 import { createSlotGrid, SLOT_GAP } from "./workspace-slot-grid.js";
 
@@ -598,7 +598,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           const ic = document.createElement("wa-icon");
           ic.setAttribute("name", "forward-step");
           btn.appendChild(ic);
-          btn.addEventListener("click", () => api("POST", `/api/tournaments/${tournament.id}/start`).catch(() => {}));
+          btn.addEventListener("click", () => api("POST", `/api/tournaments/${tournament.id}/start`)
+            .catch((e) => toast(`Resume failed: ${apiErrorDetail(e)}`, { variant: "danger" })));
           pre.appendChild(btn);
           pre.append(" to resume.");
         }
