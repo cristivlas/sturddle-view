@@ -3,10 +3,9 @@
 Steps:
   1. Read version from server/sturddle_view/__init__.py.
   2. Delete and recreate build_venv/ with a stock pip.
-  3. Install .[desktop] + pyinstaller (+ Pillow for icon conversion).
-  4. Convert web/favicon-512.png -> build_venv/icon.ico.
-  5. Run PyInstaller --onefile --windowed with full data + hidden imports.
-  6. Write dist/<name>.sha256 next to the exe.
+  3. Install .[desktop] + pyinstaller.
+  4. Run PyInstaller --onefile --windowed with full data + hidden imports.
+  5. Write dist/<name>.sha256 next to the exe.
 
 Run from the repository root:
     python scripts/build_exe.py
