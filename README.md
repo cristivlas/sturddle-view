@@ -31,7 +31,7 @@ git submodule update --init --recursive
 
 ## Features
 
-- Human-vs-engine play with a stockfish-style move list, engine eval/PV, and adjustable time control.
+- Human-vs-engine play with engine eval/PV display and adjustable time control.
 - Engine roster: register UCI engines, edit per-engine options, set defaults (Hash, Threads, SyzygyPath, opening book).
 - Tournaments: round-robin or gauntlet via [fastchess](https://github.com/Disservin/fastchess); per-row Info, Start/Pause/Resume, sortable list, live game observation in floating windows.
 - Tournament settings (engine defaults, opening book) are snapshotted into the tournament's `state.json` at create time so Stop/Resume can't drift.
