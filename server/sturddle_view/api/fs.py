@@ -109,10 +109,13 @@ def list_dir(
         raise HTTPException(status_code=400, detail=f"not a directory: {target}")
 
     try:
-        children = sorted(
-            target.iterdir(),
-            key=lambda p: (not p.is_dir(), p.name.lower()),
-        )
+        def _sort_key(p: Path) -> tuple:
+            try:
+                return (not p.is_dir(), p.name.lower())
+            except OSError:
+                return (True, p.name.lower())
+
+        children = sorted(target.iterdir(), key=_sort_key)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e)) from e
 
