@@ -472,6 +472,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     if (!ok) return;
     try {
       await api("DELETE", `/api/tournaments/${t.id}`);
+      if (getActiveWorkspace()?.tournamentId === t.id) getActiveWorkspace().close();
       clearWorkspaceState(t.id);
       toast(`Removed "${t.name}"`, { variant: "neutral" });
     } catch (e) {

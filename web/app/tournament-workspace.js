@@ -1015,7 +1015,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const wbs = wbsIn ?? openWindows();
     if (!wbs.length) return;
     if (!wbsIn) wbs.forEach(unminimize);
-    const availW = window.innerWidth - left;
+    const availW = getRight() - left;
     const availH = window.innerHeight - top - (reserveDock ? MINIMIZE_FOOTER_H : 0);
     const maxMinW = Math.max(...wbs.map(wb => wb.svMinWidth ?? 0));
     const maxMinH = Math.max(...wbs.map(wb => wb.svMinHeight ?? 0));
@@ -1134,7 +1134,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   function snap() {
     setLayout(LAYOUT.SNAP);
     const vx0 = left, vy0 = top;
-    const vx1 = window.innerWidth;
+    const vx1 = getRight();
 
     const allWindows = openWindows();
     // Restore any maximized windows so they participate in the snap layout
