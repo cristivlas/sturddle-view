@@ -455,7 +455,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const useSlotsGrid = activeLayout === LAYOUT.TIDY;
     // Claim a slot BEFORE creating the window so the new window's own
     // default position doesn't shadow the slot it would occupy.
-    const rawClaim = (useSlotsGrid && !isLiveWindowOpen(attachKey)) ? slotGrid.claim() : null;
+    // Skip claim for windows being restored as minimized -- they dock, not slot.
+    const rawClaim = (useSlotsGrid && !openOpts.min && !isLiveWindowOpen(attachKey)) ? slotGrid.claim() : null;
     // Clamp to viewport so a slot near the right/bottom edge can't
     // push the window off-screen.
     const claim = rawClaim ? {
@@ -902,10 +903,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         attachWatch(null, s.gameId ?? s.proxyId, null, {
           proxyId: s.proxyId, gameId: s.gameId ?? null,
           label: s.label, engineName: s.engineName,
-          initialRect: { x: s.x, y: s.y, w: s.width, h: s.height },
-          flash: false,
+          // Don't restore minimized-window geometry -- it's the dock position, not the pre-minimize rect.
+          initialRect: s.min ? null : { x: s.x, y: s.y, w: s.width, h: s.height },
+          min: !!s.min, flash: false,
         });
       }
+      requestAnimationFrame(reapplyLayout);
     }
   }
   initWorkspace();

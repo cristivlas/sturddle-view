@@ -103,7 +103,7 @@ function avoidOverlap(wb, avoid, top, left, cascade = 0) {
   }
 }
 
-export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, boardStyle = null, avoidRect = null, initialRect = null, flash = true }) {
+export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, flash = true }) {
   if (DEBUG_WATCH) console.log("[WATCH] openLiveGameWindow", { proxyId, gameId, windowKey, label });
   if (!windowKey) {
     console.error("[WATCH] no windowKey -- need at least one of proxyId/gameId", { proxyId, gameId });
@@ -195,6 +195,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     y: initialRect ? initialRect.y : `${5 + (idx * 4)}%`,
     top,
     left,
+    min,
     mount: body,
     class: gameId
       ? "sturddle-wb sturddle-wb-live sturddle-wb-live-game no-full"
@@ -209,7 +210,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     const cy = Math.min(Math.max(wb.y, top),  maxY);
     if (cx !== wb.x || cy !== wb.y) wb.move(cx, cy);
   };
-  clampToViewport();
+  if (!min) clampToViewport();
   // Clamp height so the window can't grow taller than the board needs:
   // a portrait-stretched window wastes space and looks broken.
   wb.onresize = (w, h) => {
@@ -249,7 +250,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       }
     });
   }
-  if (flash) requestAnimationFrame(() => flashWindow(wb));
+  if (flash && !min) requestAnimationFrame(() => flashWindow(wb));
 
   // Compute target board size deterministically from the body's
   // dimensions and the known fixed-row heights. Reading the board
