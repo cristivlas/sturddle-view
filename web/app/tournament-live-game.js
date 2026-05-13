@@ -103,7 +103,7 @@ function avoidOverlap(wb, avoid, top, left, cascade = 0) {
   }
 }
 
-export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, boardStyle = null, avoidRect = null, initialRect = null, onAfterRestore = null, getSlotSize = null, flash = true }) {
+export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, boardStyle = null, avoidRect = null, initialRect = null, flash = true }) {
   if (DEBUG_WATCH) console.log("[WATCH] openLiveGameWindow", { proxyId, gameId, windowKey, label });
   if (!windowKey) {
     console.error("[WATCH] no windowKey -- need at least one of proxyId/gameId", { proxyId, gameId });
@@ -201,12 +201,6 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       : "sturddle-wb sturddle-wb-live sturddle-wb-live-proxy no-full",
   });
   wb._watchOpts = { proxyId, gameId, label, engineName };
-  let slotSizeSnap = null;
-  if (getSlotSize) wb.onminimize = () => { slotSizeSnap = getSlotSize(); };
-  if (onAfterRestore) wb.onrestore = () => {
-    if (slotSizeSnap) { wb.resize(slotSizeSnap.w, slotSizeSnap.h); slotSizeSnap = null; }
-    onAfterRestore(wb);
-  };
 
   const clampToViewport = () => {
     const maxX = Math.max(left, window.innerWidth  - wb.width);

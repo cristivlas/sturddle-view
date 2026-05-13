@@ -155,11 +155,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     getWindows: () => getLiveWindows(),
     getMaxRows: () => activeLayout === LAYOUT.TIDY ? 1 : Infinity,
   });
-  // Horizontal cascade for overflow-restore (no slot available):
-  // successive restores step right so they don't stack.
-  const OVERFLOW_X_OFFSET = 24;
-  let overflowRestoreCount = 0;
-
   // ---- Window construction ----------------------------------------------
 
   function makeStandingsBody() {
@@ -201,9 +196,37 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     schedule: "sturddle-wb-live-games",
   };
 
-  const reapplyOnMinMax = () => { if (activeLayout === LAYOUT.SNAP || activeLayout === LAYOUT.TILE) requestAnimationFrame(reapplyLayout); };
-  const onWbMinimize = reapplyOnMinMax;
-  const onWbRestore = reapplyOnMinMax;
+  const LAYOUT_NAME = { 0: "NONE", 1: "TIDY", 2: "TILE", 3: "SNAP" };
+  const OVERFLOW_X_OFFSET = 24;
+  // Counts consecutive overflow restores in TIDY mode (grid full); reset on
+  // successful slot claim so the cascade restarts from the left edge.
+  let overflowRestoreCount = 0;
+
+  // Shared onminimize/onrestore handler for all windows. Set once at creation;
+  // reads activeLayout at call time so layout switches never leave stale handlers.
+  const onReflow = (wb, isRestore) => {
+    //console.log("[onReflow] layout=", LAYOUT_NAME[activeLayout], isRestore ? "restore" : "minimize");
+    if (activeLayout === LAYOUT.TIDY) {
+      // On restore: place into next free slot; if grid full, cascade across the
+      // top rather than re-minimizing -- the user explicitly asked to see the window.
+      if (isRestore) {
+        const c = slotGrid.claim(wb);
+        if (c) {
+          wb.resize(c.w, c.h).move(c.x, c.y);
+          overflowRestoreCount = 0;
+        } else {
+          const x = Math.min(
+            left + overflowRestoreCount * OVERFLOW_X_OFFSET,
+            Math.max(left, window.innerWidth - wb.width),
+          );
+          wb.move(x, top);
+          overflowRestoreCount++;
+        }
+      }
+    } else if (activeLayout === LAYOUT.TILE || activeLayout === LAYOUT.SNAP) {
+      requestAnimationFrame(reapplyLayout);
+    }
+  };
 
   function makeBox(key, title, body, { min = false, max = false } = {}) {
     const cfg = lastGeometry[key];
@@ -227,8 +250,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       else if (activeLayout !== LAYOUT.TIDY) requestAnimationFrame(reapplyLayout);
       return false;
     };
-    wb.onminimize = onWbMinimize;
-    wb.onrestore = onWbRestore;
+    wb.onminimize = () => onReflow(wb, false);
+    wb.onrestore = () => onReflow(wb, true);
     if (top > 0 && wb.y < top) wb.move(wb.x, top);
     if (left > 0 && wb.x < left) wb.move(left, wb.y);
     return wb;
@@ -420,22 +443,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         ...openOpts, token, tournamentId: tournament.id,
         top, left, boardStyle: boardStyleCached,
         initialRect: claim ? { x: claim.x, y: claim.y, w: claim.w, h: claim.h } : (openOpts.initialRect ?? null),
-        getSlotSize: !useSlotsGrid ? null : () => slotGrid.rectAt(0),
-        onAfterRestore: !useSlotsGrid ? null : (wb) => {
-          const c = slotGrid.claim(wb);
-          if (c) {
-            wb.resize(c.w, c.h).move(c.x, c.y);
-            overflowRestoreCount = 0;
-            return;
-          }
-          if (claim) return;
-          const x = Math.min(
-            left + overflowRestoreCount * OVERFLOW_X_OFFSET,
-            Math.max(left, window.innerWidth - wb.width),
-          );
-          wb.move(x, top);
-          overflowRestoreCount++;
-        },
       });
     } catch (e) {
       console.error("[WATCH] openLiveGameWindow threw", e, { attachKey, openOpts });
@@ -447,9 +454,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
     if (result?.wb && !result.alreadyOpen && !result.wb.min) requestAnimationFrame(reapplyLayout);
     if (result?.wb && !result.alreadyOpen) {
-      const prevMin = result.wb.onminimize;
-      result.wb.onminimize = prevMin ? () => { prevMin(); onWbMinimize(); } : onWbMinimize;
-      if (!useSlotsGrid) result.wb.onrestore = onWbRestore;
+      const wb = result.wb;
+      wb.onminimize = () => onReflow(wb, false);
+      wb.onrestore = () => onReflow(wb, true);
     }
     const isLive = isLiveWindowOpen(attachKey);
     if (DEBUG_WATCH) console.log("[WATCH] post-open", { attachKey, isLive, slotted: !!claim });
@@ -1097,14 +1104,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       });
       ordered.forEach(wb => {
         if (preserveMin && (wb.min || wb.max)) {
-          const prevRestore = wb.onrestore;
-          wb.onrestore = () => {
-            if (prevRestore) prevRestore();
-            const c = slotGrid.claim(wb);
-            if (c) wb.resize(c.w, c.h).move(c.x, c.y);
-            wb.onrestore = prevRestore ?? null;
-          };
-          return;
+          return; // onReflow handles slot placement on restore
         }
         if (slot < cap) {
           unminimize(wb);
@@ -1295,6 +1295,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   function untidy() { setLayout(LAYOUT.NONE); }
   function reapplyLayout() {
+    //console.log("[reapplyLayout] layout=", LAYOUT_NAME[activeLayout], "windows=", openWindows().length);
     if (activeLayout === LAYOUT.TIDY) tidy({ preserveMin: true });
     else if (activeLayout === LAYOUT.TILE) tile(null, { preserveMin: true, reserveDock: true });
     else if (activeLayout === LAYOUT.SNAP) snap();
