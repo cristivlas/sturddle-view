@@ -425,6 +425,11 @@ export function mountGameView(container, opts = {}) {
   window.addEventListener("sturddle:layout-changed", recomputeBoardSize);
   requestAnimationFrame(recomputeBoardSize);
 
+  function onVisibilityChange() {
+    if (!document.hidden) board.cancelAnimations();
+  }
+  document.addEventListener("visibilitychange", onVisibilityChange);
+
   let humanWhite = true;
   let gameId = null;
   let engineName = "Engine";
@@ -587,6 +592,7 @@ export function mountGameView(container, opts = {}) {
         break;
       case "game_result":
         if (interactive) board.enableInput(false);
+        board.cancelAnimations();
         break;
     }
   }
@@ -631,6 +637,7 @@ export function mountGameView(container, opts = {}) {
       try { ro.disconnect(); } catch {}
       window.removeEventListener("resize", recomputeBoardSize);
       window.removeEventListener("sturddle:layout-changed", recomputeBoardSize);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       if (recomputeRaf) cancelAnimationFrame(recomputeRaf);
     },
   };

@@ -4,6 +4,7 @@ import {
   INPUT_EVENT_TYPE,
   FEN,
 } from "../vendor/cm-chessboard/src/Chessboard.js";
+import { PositionAnimationsQueue } from "../vendor/cm-chessboard/src/view/PositionAnimationsQueue.js";
 import { MARKER_TYPE, Markers } from "../vendor/cm-chessboard/src/extensions/markers/Markers.js";
 import { ARROW_TYPE, Arrows } from "../vendor/cm-chessboard/src/extensions/arrows/Arrows.js";
 import {
@@ -117,6 +118,12 @@ export function mountBoard({ element, onMove, styleId }) {
     if (typeof board.removeArrows === "function") board.removeArrows();
   }
 
+  function cancelAnimations() {
+    board.positionAnimationsQueue.destroy();
+    board.positionAnimationsQueue = new PositionAnimationsQueue(board);
+    board.setPosition(board.getPosition(), false);
+  }
+
   function forceResize() {
     // cm-chessboard has no public resize API; fall back to its private view.
     // Defensive: tolerate any future structural changes in the library.
@@ -129,5 +136,5 @@ export function mountBoard({ element, onMove, styleId }) {
     }
   }
 
-  return { setSide, setPosition, enableInput, forceResize, setArrow, setOpponentArrow, clearArrows };
+  return { setSide, setPosition, enableInput, forceResize, cancelAnimations, setArrow, setOpponentArrow, clearArrows };
 }
