@@ -31,7 +31,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--desktop", action="store_true", help="Open in PyWebView native window")
     parser.add_argument("--width", type=int, default=1280, help="Desktop window width (default 1280)")
-    parser.add_argument("--height", type=int, default=800, help="Desktop window height (default 800)")
+    parser.add_argument("--height", type=int, default=1000, help="Desktop window height (default 1000)")
     parser.add_argument("--reload", action="store_true", help="Dev mode: auto-reload on changes")
     parser.add_argument("--engine", default=None, help="Path to UCI engine binary")
     parser.add_argument(
