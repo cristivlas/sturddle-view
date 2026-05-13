@@ -5,7 +5,7 @@
 import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog } from "../import-position-dialog.js";
-import { openUciLogWindow, openPvTableWindow, closeDebugWindows } from "../play-debug-windows.js";
+import { openUciLogWindow, openPvTableWindow, closeDebugWindows, restoreDebugWindows } from "../play-debug-windows.js";
 
 // Module-scope mirror of "user has a live human-vs-engine game running"
 // so other modules (e.g. tournament Replay button) can decide whether
@@ -668,6 +668,7 @@ export const playPerspective = {
     resignBtn.addEventListener("click", onResign);
     uciLogBtn?.addEventListener("click", () => openUciLogWindow(ctx.events));
     pvTableBtn?.addEventListener("click", () => openPvTableWindow(ctx.events, sideHost.querySelector(".game-view-engine")));
+    restoreDebugWindows(ctx.events, sideHost.querySelector(".game-view-engine"));
     takebackBtn.addEventListener("click", onTakeback);
     switchSidesBtn.addEventListener("click", onSwitchSides);
     pauseBtn.addEventListener("click", onPause);

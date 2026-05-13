@@ -34,6 +34,15 @@ function winboxBase(title, className, width, height, x, y) {
   };
 }
 
+// -- saved geometry for navigation-away restore ------------------------------
+
+function wbGeometry(wb) {
+  return { x: wb.x, y: wb.y, width: wb.width, height: wb.height };
+}
+
+let uciLogSaved = null;
+let pvTableSaved = null;
+
 // -- UCI log window ----------------------------------------------------------
 
 let uciLogWb = null;
@@ -98,12 +107,17 @@ export function openUciLogWindow(events) {
     if (pinned) scroller.scrollTop = scroller.scrollHeight;
   });
 
-  const uciH = 320;
-  const clockBottom = document.querySelector(".clock-row.clock-bottom");
-  const clockTop = clockBottom ? Math.round(clockBottom.getBoundingClientRect().top) : window.innerHeight;
-  const uciY = clockTop - uciH - WIN_MARGIN;
+  const uciH = uciLogSaved?.height ?? 320;
+  const uciW = uciLogSaved?.width ?? rightColumnWidth(480);
+  const uciX = uciLogSaved?.x ?? "right";
+  const uciY = uciLogSaved?.y ?? (() => {
+    const clockBottom = document.querySelector(".clock-row.clock-bottom");
+    const clockTop = clockBottom ? Math.round(clockBottom.getBoundingClientRect().top) : window.innerHeight;
+    return clockTop - uciH - WIN_MARGIN;
+  })();
+  uciLogSaved = null;
   uciLogWb = new WinBox({
-    ...winboxBase("UCI Log", "sturddle-wb-uci-log", rightColumnWidth(480), uciH, "right", uciY),
+    ...winboxBase("UCI Log", "sturddle-wb-uci-log", uciW, uciH, uciX, uciY),
     mount: body,
     onclose() { offEvent(); uciLogWb = null; },
   });
@@ -189,15 +203,24 @@ export function openPvTableWindow(events, anchor = null) {
     if (pv?.[0]) tr.cells[4].textContent = pv[0];
   });
 
-  const pvY = anchor ? Math.round(anchor.getBoundingClientRect().top) : HEADER_H;
+  const pvH = pvTableSaved?.height ?? 260;
+  const pvW = pvTableSaved?.width ?? rightColumnWidth(560);
+  const pvX = pvTableSaved?.x ?? "right";
+  const pvY = pvTableSaved?.y ?? (anchor ? Math.round(anchor.getBoundingClientRect().top) : HEADER_H);
+  pvTableSaved = null;
   pvTableWb = new WinBox({
-    ...winboxBase("PV Table", "sturddle-wb-pvtable", rightColumnWidth(560), 260, "right", pvY),
+    ...winboxBase("PV Table", "sturddle-wb-pvtable", pvW, pvH, pvX, pvY),
     mount: body,
     onclose() { offEvent(); pvTableWb = null; },
   });
 }
 
 export function closeDebugWindows() {
-  uciLogWb?.close();
-  pvTableWb?.close();
+  if (uciLogWb) { uciLogSaved = wbGeometry(uciLogWb); uciLogWb.close(); }
+  if (pvTableWb) { pvTableSaved = wbGeometry(pvTableWb); pvTableWb.close(); }
+}
+
+export function restoreDebugWindows(events, anchor = null) {
+  if (uciLogSaved) openUciLogWindow(events);
+  if (pvTableSaved) openPvTableWindow(events, anchor);
 }
