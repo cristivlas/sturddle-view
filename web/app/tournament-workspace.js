@@ -153,6 +153,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     },
     cellHeight: LIVE_MIN_HEIGHT,
     getWindows: () => getLiveWindows(),
+    getMaxRows: () => activeLayout === LAYOUT.TIDY ? 1 : Infinity,
   });
   // Horizontal cascade for overflow-restore (no slot available):
   // successive restores step right so they don't stack.
