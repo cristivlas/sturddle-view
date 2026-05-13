@@ -1960,9 +1960,10 @@ wa-dialog::part(body) {
   padding: 2px 8px; cursor: pointer; font-size: 0.75rem;
 }
 .wb-uci-log-toolbar button:hover { background: var(--nav-btn-bg-hover); }
+.sturddle-wb-uci-log .wb-body { overflow-x: auto; }
 .wb-uci-log-line {
   font-family: var(--wa-font-family-code); font-size: 0.75rem; line-height: 1.5;
-  white-space: pre-wrap; word-break: break-all;
+  white-space: pre; min-width: max-content;
 }
 .wb-uci-log-line.uci-out { color: #7ec8e3; }
 .wb-uci-log-line.uci-in  { color: #a8e6a3; }

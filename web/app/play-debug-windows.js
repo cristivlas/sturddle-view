@@ -23,7 +23,7 @@ function rightColumnWidth(fallback = 480) {
 function winboxBase(title, className, width, height, x, y) {
   return {
     title,
-    class: `sturddle-wb ${className} no-full no-max`,
+    class: `sturddle-wb ${className} no-full`,
     width,
     height,
     minwidth: 320,
