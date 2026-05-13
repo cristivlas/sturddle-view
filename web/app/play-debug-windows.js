@@ -99,7 +99,9 @@ export function openUciLogWindow(events) {
   });
 
   const uciH = 320;
-  const uciY = window.innerHeight - uciH - WIN_MARGIN;
+  const clockBottom = document.querySelector(".clock-row.clock-bottom");
+  const clockTop = clockBottom ? Math.round(clockBottom.getBoundingClientRect().top) : window.innerHeight;
+  const uciY = clockTop - uciH - WIN_MARGIN;
   uciLogWb = new WinBox({
     ...winboxBase("UCI Log", "sturddle-wb-uci-log", rightColumnWidth(480), uciH, "right", uciY),
     mount: body,
