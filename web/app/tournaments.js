@@ -575,13 +575,13 @@ export function mountTournaments({ container, api, events, log, token }) {
         btn.className = "tournament-info-reveal-btn";
         btn.title = folder;
         btn.innerHTML = `<wa-icon name="folder-open"></wa-icon>`;
-        btn.addEventListener("click", async () => {
+        btn.addEventListener("click", debounce(async () => {
           try {
             await api("POST", `/api/tournaments/${t.id}/reveal`);
           } catch (e) {
             reportError({ log }, "Could not open folder", e);
           }
-        });
+        }, 500));
         idCell.appendChild(btn);
       } else {
         idSpan.title = folder;
