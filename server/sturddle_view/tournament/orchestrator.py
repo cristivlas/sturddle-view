@@ -368,9 +368,15 @@ class Orchestrator:
           - ``TournamentBusyError`` if another tournament is running.
         """
         if self._active_id is not None or self._runner.is_running():
-            raise TournamentBusyError(
-                f"another tournament is running: {self._active_id!r}"
-            )
+            try:
+                active = self._store.get(self._active_id) if self._active_id else None
+            except Exception:
+                active = None
+            if active:
+                raise TournamentBusyError(
+                    f'another tournament is running: "{active.name}" ({active.id})'
+                )
+            raise TournamentBusyError("another tournament is running")
 
         # Confirms existence and gets the frozen template.
         t = self._store.get(tournament_id)
