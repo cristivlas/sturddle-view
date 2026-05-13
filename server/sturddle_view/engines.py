@@ -11,6 +11,8 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
+import sys
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -59,6 +61,8 @@ async def probe_engine(
     popen_kwargs: dict = {}
     if env:
         popen_kwargs["env"] = {**os.environ, **env}
+    if sys.platform == "win32":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
         transport, engine = await chess.engine.popen_uci(command, **popen_kwargs)
     except Exception as e:

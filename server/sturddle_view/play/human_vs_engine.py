@@ -10,6 +10,8 @@ import asyncio
 import datetime
 import logging
 import os
+import subprocess
+import sys
 import time
 import uuid
 from dataclasses import dataclass
@@ -237,6 +239,8 @@ class HumanVsEngine:
         popen_kwargs: dict = {}
         if self._engine_env:
             popen_kwargs["env"] = {**os.environ, **self._engine_env}
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         _transport, engine = await chess.engine.popen_uci(command, **popen_kwargs)
         rc_future = getattr(engine, "returncode", None)
         if rc_future is not None:
