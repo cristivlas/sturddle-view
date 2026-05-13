@@ -667,7 +667,7 @@ export const playPerspective = {
     importBtn.addEventListener("click", onImport);
     resignBtn.addEventListener("click", onResign);
     uciLogBtn?.addEventListener("click", () => toggleUciLogWindow(ctx.events));
-    pvTableBtn?.addEventListener("click", () => togglePvTableWindow(ctx.events));
+    pvTableBtn?.addEventListener("click", () => togglePvTableWindow(ctx.events, sideHost.querySelector(".game-view-engine")));
     takebackBtn.addEventListener("click", onTakeback);
     switchSidesBtn.addEventListener("click", onSwitchSides);
     pauseBtn.addEventListener("click", onPause);

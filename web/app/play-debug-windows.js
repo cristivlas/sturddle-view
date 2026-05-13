@@ -2,13 +2,25 @@
 // 1. UCI log: raw lines flowing between python-chess and the engine.
 // 2. PV table: per-iteration principal variation, cutechess-style.
 
+import { toast } from "./dialogs.js";
+
 const UCI_LOG_MAX_LINES = 1000;
 // Once the buffer overflows, trim this many lines in one go instead of
 // one-per-incoming-line -- amortizes the layout cost at high info rates.
 const UCI_LOG_TRIM_CHUNK = 100;
 const HEADER_H = 44; // px -- approximate nav header height
+const WIN_MARGIN = 8; // gap between window edge and WinBox
 
-function winboxDefaults(title, className, width, height) {
+// Width that fits in the space to the right of the board, with fallback.
+function rightColumnWidth(fallback = 480) {
+  const board = document.querySelector(".play-board-host");
+  if (!board) return fallback;
+  const right = Math.round(board.getBoundingClientRect().right);
+  const avail = window.innerWidth - right - WIN_MARGIN * 2;
+  return Math.max(320, Math.min(avail, fallback));
+}
+
+function winboxBase(title, className, width, height, x, y) {
   return {
     title,
     class: `sturddle-wb ${className} no-full no-max`,
@@ -16,8 +28,8 @@ function winboxDefaults(title, className, width, height) {
     height,
     minwidth: 320,
     minheight: 120,
-    x: "right",
-    y: HEADER_H,
+    x,
+    y,
     top: HEADER_H,
   };
 }
@@ -38,6 +50,7 @@ export function toggleUciLogWindow(events) {
   body.innerHTML = `
     <div class="wb-uci-log-toolbar">
       <label><input type="checkbox" class="uci-log-pause"> Pause</label>
+      <button type="button" class="uci-log-copy" title="Copy to clipboard">Copy</button>
       <button type="button" class="uci-log-clear">Clear</button>
     </div>
     <div class="wb-uci-log-lines"></div>
@@ -45,12 +58,21 @@ export function toggleUciLogWindow(events) {
 
   const lines = body.querySelector(".wb-uci-log-lines");
   const pauseChk = body.querySelector(".uci-log-pause");
+  const copyBtn = body.querySelector(".uci-log-copy");
   const clearBtn = body.querySelector(".uci-log-clear");
   let lineCount = 0;
   let paused = false;
 
+  copyBtn.disabled = true;
+
   pauseChk.addEventListener("change", () => { paused = pauseChk.checked; });
-  clearBtn.addEventListener("click", () => { lines.textContent = ""; lineCount = 0; });
+  copyBtn.addEventListener("click", () => {
+    const text = Array.from(lines.children).map(d => d.textContent).join("\n");
+    navigator.clipboard.writeText(text)
+      .then(() => toast("UCI log copied to clipboard", { variant: "success", duration: 1500 }))
+      .catch((e) => toast(`Copy failed: ${e.message}`, { variant: "danger" }));
+  });
+  clearBtn.addEventListener("click", () => { lines.textContent = ""; lineCount = 0; copyBtn.disabled = true; });
 
   // Autoscroll only when the user is already pinned to the bottom; otherwise
   // they're inspecting earlier output and new lines must not yank them away.
@@ -65,6 +87,7 @@ export function toggleUciLogWindow(events) {
     div.className = `wb-uci-log-line ${dir === ">" ? "uci-out" : "uci-in"}`;
     div.textContent = `${dir} ${line}`;
     lines.appendChild(div);
+    if (copyBtn.disabled) copyBtn.disabled = false;
     lineCount++;
     if (lineCount > UCI_LOG_MAX_LINES) {
       for (let i = 0; i < UCI_LOG_TRIM_CHUNK && lines.firstChild; i++) {
@@ -75,8 +98,10 @@ export function toggleUciLogWindow(events) {
     if (pinned) scroller.scrollTop = scroller.scrollHeight;
   });
 
+  const uciH = 320;
+  const uciY = window.innerHeight - uciH - WIN_MARGIN;
   uciLogWb = new WinBox({
-    ...winboxDefaults("UCI Log", "sturddle-wb-uci-log", 480, 320),
+    ...winboxBase("UCI Log", "sturddle-wb-uci-log", rightColumnWidth(480), uciH, "right", uciY),
     mount: body,
     onclose() { offEvent(); uciLogWb = null; },
   });
@@ -99,7 +124,7 @@ function fmtK(n) {
   return String(n);
 }
 
-export function togglePvTableWindow(events) {
+export function togglePvTableWindow(events, anchor = null) {
   if (pvTableWb) {
     if (pvTableWb.min) pvTableWb.restore();
     pvTableWb.focus();
@@ -122,8 +147,6 @@ export function togglePvTableWindow(events) {
   const tbody = body.querySelector("tbody");
   // depth -> <tr>
   const rowMap = new Map();
-  // Highest depth seen in the current search. A new info with depth < this
-  // means the engine started a fresh search -- clear and restart.
   let maxDepth = 0;
 
   function clearTable() {
@@ -136,7 +159,9 @@ export function togglePvTableWindow(events) {
     if (evt.kind !== "engine_info") return;
     const { depth, score, nodes, nps, pv } = evt.payload;
     if (depth == null) return;
-    if (depth < maxDepth) clearTable();
+    // depth === 1 after maxDepth > 1 is an unambiguous new-search signal;
+    // a bare regression could be a late multipv line from the same search.
+    if (depth === 1 && maxDepth > 1) clearTable();
     if (depth > maxDepth) maxDepth = depth;
     let tr = rowMap.get(depth);
     if (!tr) {
@@ -162,8 +187,9 @@ export function togglePvTableWindow(events) {
     if (pv?.[0]) tr.cells[4].textContent = pv[0];
   });
 
+  const pvY = anchor ? Math.round(anchor.getBoundingClientRect().top) : HEADER_H;
   pvTableWb = new WinBox({
-    ...winboxDefaults("PV Table", "sturddle-wb-pvtable", 560, 260),
+    ...winboxBase("PV Table", "sturddle-wb-pvtable", rightColumnWidth(560), 260, "right", pvY),
     mount: body,
     onclose() { offEvent(); pvTableWb = null; },
   });
