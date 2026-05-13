@@ -603,6 +603,9 @@ export function mountGameView(container, opts = {}) {
     setHumanWhite,
     setNames,
     applyEvent,
+    clearArrows() {
+      board.clearArrows();
+    },
     setEnabled(enabled) {
       board.enableInput(interactive && enabled);
     },

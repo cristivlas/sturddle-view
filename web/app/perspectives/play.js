@@ -683,6 +683,29 @@ export const playPerspective = {
     viewAnalyzeBtn.addEventListener("click", onAnalyze);
     viewPlayFromHereBtn.addEventListener("click", onPlayFromHere);
 
+    function showEngineCrashToast() {
+      const msg = document.createElement("span");
+      msg.textContent = "Engine crashed unexpectedly.";
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "toast-action-btn toast-close-btn";
+      closeBtn.textContent = "X";
+      const node = document.createElement("span");
+      node.className = "toast-sort-msg";
+      closeBtn.style.marginLeft = "auto";
+      node.append(msg, closeBtn);
+      const dismiss = toast(node, { variant: "danger", duration: 0 });
+      closeBtn.onclick = dismiss;
+    }
+
+    const offCrash = ctx.events.on(async (evt) => {
+      if (evt.kind !== "system" || evt.payload?.error !== "engine_terminated") return;
+      view.clearArrows();
+      if (analyzing) {
+        await onAnalyze();
+      }
+      showEngineCrashToast();
+    });
+
     return {
       unmount() {
         closeDebugWindows();
@@ -690,6 +713,7 @@ export const playPerspective = {
         dismissAnalysisToast = null;
         pausedBadge?.classList.add("hidden");
         showFinishedBadge("");
+        offCrash();
         offEvent();
         view.unmount();
         window.removeEventListener("sturddle:settings-changed", onSettingsChanged);

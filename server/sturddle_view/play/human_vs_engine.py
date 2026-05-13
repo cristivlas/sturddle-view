@@ -1201,6 +1201,7 @@ class HumanVsEngine:
         except chess.engine.EngineTerminatedError:
             if self._think_gen == gen:
                 log.error("engine crashed mid-search")
+                await self._cancel_tick()
                 await self._bus.publish(
                     Event(kind="system", game_id=game_id, payload={"error": "engine_terminated"})
                 )
@@ -1265,7 +1266,7 @@ class HumanVsEngine:
                             )
                         )
         except chess.engine.EngineTerminatedError:
-            log.exception("engine terminated mid-analysis")
+            log.error("engine crashed mid-analysis")
             await self._bus.publish(
                 Event(kind="system", game_id=game_id, payload={"error": "engine_terminated"})
             )
