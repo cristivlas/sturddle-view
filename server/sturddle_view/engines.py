@@ -369,7 +369,7 @@ class EngineRegistry:
             raise EngineNotFoundError(engine_id)
         del self._engines[engine_id]
         if self._selected_id == engine_id:
-            self._selected_id = None
+            self._selected_id = next(iter(self._engines), None)
         self._save()
 
     def _ensure_loaded(self) -> None:
