@@ -3,6 +3,7 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+build_venv/
 build/
 dist/
 !web/vendor/*/dist/

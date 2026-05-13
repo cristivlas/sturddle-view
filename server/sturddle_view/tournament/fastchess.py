@@ -19,6 +19,7 @@ import subprocess
 import sys
 from collections import deque
 
+from .._runtime import proxy_argv_prefix
 from .._win_job import assign_to_job, close_job, create_job, spawn_in_job
 from .runner import EventCallback, RunSpec
 
@@ -126,8 +127,10 @@ def build_command(spec: RunSpec) -> list[str]:
             # Per-engine env overrides ride along as repeatable
             # ``--env KEY=VAL`` flags; the proxy applies them when it
             # spawns the real engine.
-            parts: list[str] = [
-                "-m", "sturddle_view.tournament.proxy",
+            _proxy_prefix = proxy_argv_prefix()
+            # _proxy_prefix[0] is the executable; [1:] are the subcommand
+            # args that route to the proxy (differs between dev and frozen).
+            parts: list[str] = list(_proxy_prefix[1:]) + [
                 "--broadcast-url", proxy_url,
                 "--engine-name", _quote_arg(engine_name),
             ]
@@ -136,7 +139,7 @@ def build_command(spec: RunSpec) -> list[str]:
             parts.extend(["--", _quote_arg(eng["cmd"])])
             for a in eng_args:
                 parts.append(_quote_arg(a))
-            e.append(f"cmd={sys.executable}")
+            e.append(f"cmd={_proxy_prefix[0]}")
             e.append(f"args={' '.join(parts)}")
         else:
             # No-proxy path is test-only; per-engine env is silently
@@ -282,7 +285,7 @@ def build_command(spec: RunSpec) -> list[str]:
 def _popen_kwargs() -> dict:
     """Cross-platform process-group isolation kwargs (POSIX vs Windows)."""
     if sys.platform == "win32":
-        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW}
     return {"start_new_session": True}
 
 

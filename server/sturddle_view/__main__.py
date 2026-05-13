@@ -17,12 +17,21 @@ from .logging_setup import configure_logging
 
 
 def main() -> None:
+    # "proxy" subcommand: the frozen exe re-invokes itself to run the stdio
+    # proxy (see _runtime.proxy_argv_prefix). Strip the subcommand token so
+    # proxy.main() receives a clean argv.
+    if sys.argv[1:2] == ["proxy"]:
+        sys.argv = [sys.argv[0]] + sys.argv[2:]
+        from .tournament.proxy import main as _proxy_main
+        _proxy_main()
+        return
+
     parser = argparse.ArgumentParser(prog="sturddle-view")
     parser.add_argument("--host", default=None)
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--desktop", action="store_true", help="Open in PyWebView native window")
     parser.add_argument("--width", type=int, default=1280, help="Desktop window width (default 1280)")
-    parser.add_argument("--height", type=int, default=800, help="Desktop window height (default 800)")
+    parser.add_argument("--height", type=int, default=1000, help="Desktop window height (default 1000)")
     parser.add_argument("--reload", action="store_true", help="Dev mode: auto-reload on changes")
     parser.add_argument("--engine", default=None, help="Path to UCI engine binary")
     parser.add_argument(
@@ -45,9 +54,12 @@ def main() -> None:
     if not args.reload:
         lock_path = Path(user_config_dir(APP_NAME, appauthor=False)) / "server.lock"
         if not _acquire_lock(lock_path):
-            logging.getLogger(__name__).error(
-                "Another %s instance is already running. Exiting.", APP_NAME
-            )
+            msg = f"Another {APP_NAME} instance is already running."
+            logging.getLogger(__name__).error("%s Exiting.", msg)
+            print(msg, file=sys.stderr)
+            if args.desktop:
+                from .desktop import show_error
+                show_error(APP_NAME, msg)
             sys.exit(1)
 
     # Push CLI overrides into env so the worker process's Settings() picks them up.

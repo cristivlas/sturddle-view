@@ -14,9 +14,10 @@ import chess
 import chess.pgn
 import io
 
+from ._runtime import app_root
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_OPENINGS_DIR = REPO_ROOT / "web" / "vendor" / "chess-openings"
+
+DEFAULT_OPENINGS_DIR = app_root() / "web" / "vendor" / "chess-openings"
 
 
 @dataclass(slots=True, frozen=True)
