@@ -201,9 +201,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     schedule: "sturddle-wb-live-games",
   };
 
-  // Snap reflows around minimized windows; tile restores them forcefully so no reapply needed there.
-  const onWbMinimize = () => { if (activeLayout === LAYOUT.SNAP) requestAnimationFrame(reapplyLayout); };
-  const onWbRestore = () => { if (activeLayout === LAYOUT.SNAP) requestAnimationFrame(reapplyLayout); };
+  const reapplyOnMinMax = () => { if (activeLayout === LAYOUT.SNAP || activeLayout === LAYOUT.TILE) requestAnimationFrame(reapplyLayout); };
+  const onWbMinimize = reapplyOnMinMax;
+  const onWbRestore = reapplyOnMinMax;
 
   function makeBox(key, title, body, { min = false, max = false } = {}) {
     const cfg = lastGeometry[key];
@@ -906,7 +906,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       for (const wb of all) if (wb.max) { wb.restore(); wb.maximize(); }
       if (!anyMax) {
         if (activeLayout === LAYOUT.TIDY) tidy({ preserveMin: true });
-        else if (activeLayout === LAYOUT.TILE) tile();
+        else if (activeLayout === LAYOUT.TILE) tile(null, { preserveMin: true, reserveDock: true });
         else if (activeLayout === LAYOUT.SNAP) snap();
       }
     }, 150);
@@ -1031,12 +1031,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   const TIDY_GAP = 1;
 
   // wbsIn: explicit list (snap fallback -- skip minimized, don't unminimize).
-  // Omit to use all open windows (menu path -- unminimizes everything).
-  function tile(wbsIn, { reserveDock = false } = {}) {
+  function tile(wbsIn, { reserveDock = false, preserveMin = false } = {}) {
     setLayout(LAYOUT.TILE);
-    const wbs = wbsIn ?? openWindows();
+    let wbs = wbsIn ?? openWindows();
     if (!wbs.length) return;
-    if (!wbsIn) wbs.forEach(unminimize);
+    if (preserveMin) wbs = wbs.filter(wb => !wb.min);
+    else wbs.forEach(unminimize);
     const availW = getRight() - left;
     const availH = window.innerHeight - top - (reserveDock ? MINIMIZE_FOOTER_H : 0);
     const maxMinW = Math.max(...wbs.map(wb => wb.svMinWidth ?? 0));
@@ -1295,7 +1295,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   function untidy() { setLayout(LAYOUT.NONE); }
   function reapplyLayout() {
     if (activeLayout === LAYOUT.TIDY) tidy({ preserveMin: true });
-    else if (activeLayout === LAYOUT.TILE) tile();
+    else if (activeLayout === LAYOUT.TILE) tile(null, { preserveMin: true, reserveDock: true });
     else if (activeLayout === LAYOUT.SNAP) snap();
   }
   function minimizeAll() {
