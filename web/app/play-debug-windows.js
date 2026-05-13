@@ -3,6 +3,9 @@
 // 2. PV table: per-iteration principal variation, cutechess-style.
 
 const UCI_LOG_MAX_LINES = 1000;
+// Once the buffer overflows, trim this many lines in one go instead of
+// one-per-incoming-line -- amortizes the layout cost at high info rates.
+const UCI_LOG_TRIM_CHUNK = 100;
 const HEADER_H = 44; // px -- approximate nav header height
 
 function winboxDefaults(title, className, width, height) {
@@ -34,15 +37,15 @@ export function toggleUciLogWindow(events) {
   body.className = "wb-uci-log";
   body.innerHTML = `
     <div class="wb-uci-log-toolbar">
-      <label><input type="checkbox" id="uci-log-pause"> Pause</label>
-      <button type="button" id="uci-log-clear">Clear</button>
+      <label><input type="checkbox" class="uci-log-pause"> Pause</label>
+      <button type="button" class="uci-log-clear">Clear</button>
     </div>
     <div class="wb-uci-log-lines"></div>
   `;
 
   const lines = body.querySelector(".wb-uci-log-lines");
-  const pauseChk = body.querySelector("#uci-log-pause");
-  const clearBtn = body.querySelector("#uci-log-clear");
+  const pauseChk = body.querySelector(".uci-log-pause");
+  const clearBtn = body.querySelector(".uci-log-clear");
   let lineCount = 0;
   let paused = false;
 
@@ -64,8 +67,10 @@ export function toggleUciLogWindow(events) {
     lines.appendChild(div);
     lineCount++;
     if (lineCount > UCI_LOG_MAX_LINES) {
-      lines.removeChild(lines.firstChild);
-      lineCount--;
+      for (let i = 0; i < UCI_LOG_TRIM_CHUNK && lines.firstChild; i++) {
+        lines.removeChild(lines.firstChild);
+        lineCount--;
+      }
     }
     if (pinned) scroller.scrollTop = scroller.scrollHeight;
   });
@@ -136,12 +141,13 @@ export function togglePvTableWindow(events) {
     let tr = rowMap.get(depth);
     if (!tr) {
       tr = document.createElement("tr");
+      tr.dataset.depth = String(depth);
       tr.innerHTML = `<td></td><td></td><td></td><td></td><td class="wb-pvtable-pv"></td>`;
       rowMap.set(depth, tr);
       // Insert sorted by depth descending (highest at top).
       let inserted = false;
       for (const row of tbody.rows) {
-        if (Number(row.cells[0].textContent) < depth) {
+        if (Number(row.dataset.depth) < depth) {
           tbody.insertBefore(tr, row);
           inserted = true;
           break;
