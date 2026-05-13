@@ -202,10 +202,23 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // successful slot claim so the cascade restarts from the left edge.
   let overflowRestoreCount = 0;
 
+  // pageX recorded on mousedown of a maximized window's header; used by onReflow
+  // to reposition the window so the cursor stays proportionally on the title bar.
+  let pendingDragX = null;
+
   // Shared onminimize/onrestore handler for all windows. Set once at creation;
   // reads activeLayout at call time so layout switches never leave stale handlers.
   const onReflow = (wb, isRestore) => {
     //console.log("[onReflow] layout=", LAYOUT_NAME[activeLayout], isRestore ? "restore" : "minimize");
+    if (isRestore && pendingDragX !== null) {
+      // Drag-unmaximize: place restored window so cursor stays at the same
+      // proportional position on the title bar it occupied in the maximized window.
+      const ratio = Math.max(0, Math.min(1, (pendingDragX - left) / (window.innerWidth - left)));
+      const x = Math.max(left, Math.min(pendingDragX - Math.round(ratio * wb.width), window.innerWidth - wb.width));
+      wb.move(x, wb.y);
+      pendingDragX = null;
+      return;
+    }
     if (activeLayout === LAYOUT.TIDY) {
       // On restore: place into next free slot; if grid full, cascade across the
       // top rather than re-minimizing -- the user explicitly asked to see the window.
@@ -227,6 +240,18 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       requestAnimationFrame(reapplyLayout);
     }
   };
+
+  // Wire the drag-unmaximize repositioning on a window's header.
+  function wireHeader(wb) {
+    const dragEl = wb.g?.querySelector(".wb-drag");
+    if (!dragEl) return;
+    dragEl.addEventListener("mousedown", (e) => {
+      if (wb.max) {
+        pendingDragX = e.pageX;
+        window.addEventListener("mouseup", () => { pendingDragX = null; }, { once: true });
+      }
+    }, { capture: true });
+  }
 
   function makeBox(key, title, body, { min = false, max = false } = {}) {
     const cfg = lastGeometry[key];
@@ -252,6 +277,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     };
     wb.onminimize = () => onReflow(wb, false);
     wb.onrestore = () => onReflow(wb, true);
+    wireHeader(wb);
     if (top > 0 && wb.y < top) wb.move(wb.x, top);
     if (left > 0 && wb.x < left) wb.move(left, wb.y);
     return wb;
@@ -457,6 +483,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const wb = result.wb;
       wb.onminimize = () => onReflow(wb, false);
       wb.onrestore = () => onReflow(wb, true);
+      wireHeader(wb);
     }
     const isLive = isLiveWindowOpen(attachKey);
     if (DEBUG_WATCH) console.log("[WATCH] post-open", { attachKey, isLive, slotted: !!claim });
