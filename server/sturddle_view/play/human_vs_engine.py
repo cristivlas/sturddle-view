@@ -280,11 +280,12 @@ class HumanVsEngine:
         """
         bus = self._bus
         tasks = self._uci_log_tasks
+        loop = asyncio.get_running_loop()
         orig_send = engine.send_line
         orig_recv = engine.line_received
 
         def _emit(direction: str, line: str) -> None:
-            t = asyncio.get_running_loop().create_task(
+            t = loop.create_task(
                 bus.publish(Event(kind="uci_log", payload={"dir": direction, "line": line}))
             )
             tasks.add(t)
@@ -942,6 +943,7 @@ class HumanVsEngine:
                 except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
                     pass
                 self._engine = None
+            self._uci_log_tasks.clear()
             if self._tb is not None:
                 self._tb.close()
                 self._tb = None
@@ -1056,6 +1058,7 @@ class HumanVsEngine:
             except Exception:
                 log.exception("error tearing down engine")
             self._engine = None
+        self._uci_log_tasks.clear()
         if self._think_task and not self._think_task.done():
             self._think_task.cancel()
         self._think_task = None

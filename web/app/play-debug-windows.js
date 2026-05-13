@@ -38,7 +38,7 @@ function winboxBase(title, className, width, height, x, y) {
 
 let uciLogWb = null;
 
-export function toggleUciLogWindow(events) {
+export function openUciLogWindow(events) {
   if (uciLogWb) {
     if (uciLogWb.min) uciLogWb.restore();
     uciLogWb.focus();
@@ -124,7 +124,7 @@ function fmtK(n) {
   return String(n);
 }
 
-export function togglePvTableWindow(events, anchor = null) {
+export function openPvTableWindow(events, anchor = null) {
   if (pvTableWb) {
     if (pvTableWb.min) pvTableWb.restore();
     pvTableWb.focus();
@@ -159,8 +159,8 @@ export function togglePvTableWindow(events, anchor = null) {
     if (evt.kind !== "engine_info") return;
     const { depth, score, nodes, nps, pv } = evt.payload;
     if (depth == null) return;
-    // depth === 1 after maxDepth > 1 is an unambiguous new-search signal;
-    // a bare regression could be a late multipv line from the same search.
+    // depth === 1 after maxDepth > 1 signals a new search (single-PV assumption;
+    // MultiPV > 1 can emit low-depth lines mid-search and would false-trigger).
     if (depth === 1 && maxDepth > 1) clearTable();
     if (depth > maxDepth) maxDepth = depth;
     let tr = rowMap.get(depth);

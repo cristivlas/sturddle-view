@@ -222,8 +222,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     syncRibbon();
     if (initialLoad) {
       initialLoad = false;
-      const t = selectedTournament();
-      if (t && hasSavedWorkspaceState(t.id)) openWorkspace(t);
+      maybeRestoreWorkspace();
     }
   }
 
@@ -1202,8 +1201,23 @@ export function mountTournaments({ container, api, events, log, token }) {
   loadSettings();
   loadList();
 
+  // true once engines.js confirms the Tournaments tab is active on load.
+  let tournamentsTabActive = false;
+
+  function maybeRestoreWorkspace() {
+    if (!tournamentsTabActive || initialLoad) return;
+    const t = selectedTournament();
+    if (t && hasSavedWorkspaceState(t.id)) openWorkspace(t);
+  }
+
+  function restoreWorkspace() {
+    tournamentsTabActive = true;
+    maybeRestoreWorkspace();
+  }
+
   return {
     dismissSortToast: dismissSortToastNow,
+    restoreWorkspace,
     unmount() {
       offEvents();
       window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
