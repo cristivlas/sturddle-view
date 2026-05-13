@@ -26,14 +26,6 @@ const STORAGE_KEY_PREFIX = "sturddle:workspace:";
 const POLL_INTERVAL_MS = 5000;
 const EVENT_LOG_LIMIT = 500;
 
-// Default layout, in viewport-percent units. WinBox accepts strings like
-// "40%". Cast to strings at use time.
-const DEFAULT_LAYOUT = {
-  standings: { x: "1%",  y: "1%",  width: "40%", height: "50%" },
-  schedule:  { x: "1%",  y: "52%", width: "40%", height: "47%" },
-  engines:   { x: "42%", y: "1%",  width: "30%", height: "50%" },
-  log:       { x: "42%", y: "70%", width: "57%", height: "29%" },
-};
 
 
 function loadState(id) {
@@ -110,14 +102,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     log:       { minwidth: 280, minheight: 120 },
   };
   const lastGeometry = {};
-  for (const key of Object.keys(DEFAULT_LAYOUT)) {
+  for (const key of Object.keys(MIN_SIZES)) {
     const s = savedState?.[key];
     const ms = MIN_SIZES[key];
     lastGeometry[key] = s
       ? { x: s.x, y: s.y, width: s.width, height: s.height }
-      : ms
-        ? { x: "center", y: "center", width: `${ms.minwidth}px`, height: `${ms.minheight}px` }
-        : { ...DEFAULT_LAYOUT[key] };
+      : null;
   }
   let detail = null;
   const eventLog = [];
@@ -219,7 +209,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const extra = EXTRA_CLASS[key] ? ` ${EXTRA_CLASS[key]}` : "";
     const wb = new WinBox({
       title, mount: body, top, left, min, max,
-      x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height,
+      ...(cfg ? { x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height } : {}),
       class: `sturddle-wb no-full${extra}`,
       ...MIN_SIZES[key],
     });
