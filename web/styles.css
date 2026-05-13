@@ -1854,7 +1854,8 @@ wa-dialog::part(body) {
    by absence of chrome); proxy-id windows get a brighter gray border
    (the default #2e3138 is too dark to register on this theme) so
    they read as a secondary/debug surface. */
-.winbox.sturddle-wb.sturddle-wb-live-game  { border-color: #1e4a52; }
+.winbox.sturddle-wb.sturddle-wb-live-game  { border: none; }
+.winbox.sturddle-wb.sturddle-wb-live-game .wb-header { background: var(--wa-color-surface-default); }
 .winbox.sturddle-wb.sturddle-wb-live-proxy { border-color: var(--muted); }
 
 .wb-livegame {

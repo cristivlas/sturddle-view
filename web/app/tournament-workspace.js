@@ -210,6 +210,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     schedule: "sturddle-wb-live-games",
   };
 
+  // Snap reflows around minimized windows; tile restores them forcefully so no reapply needed there.
   const onWbMinimize = () => { if (activeLayout === LAYOUT.SNAP) requestAnimationFrame(reapplyLayout); };
   const onWbRestore = () => { if (activeLayout === LAYOUT.SNAP) requestAnimationFrame(reapplyLayout); };
 
@@ -232,7 +233,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       lastGeometry[key] = wbGeometry(wb);
       windows[key] = null;
       if (Object.values(windows).every((w) => w === null)) tearDown();
-      else requestAnimationFrame(reapplyLayout);
+      else if (activeLayout !== LAYOUT.TIDY) requestAnimationFrame(reapplyLayout);
       return false;
     };
     wb.onminimize = onWbMinimize;
@@ -341,6 +342,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     // Default: standings only; initWorkspace opens more based on tournament status.
     windows.standings = makeBox("standings", windowSpecs.standings.title, standingsBody);
   }
+  requestAnimationFrame(reapplyLayout);
 
   // ---- Rendering --------------------------------------------------------
 
@@ -386,7 +388,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const showPartial = partialPairs > 0 && detail.status !== STATUS.RUNNING;
     const partialRow = showPartial
       ? `<div class="wb-partial-pairs">${partialPairs} incomplete pair${partialPairs === 1 ? "" : "s"} ` +
-        `(one game missing, likely lost when paused)</div>`
+        `(one game missing)</div>`
       : "";
     standingsBody.innerHTML = `
       ${sprtRow}
@@ -881,7 +883,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
   window.addEventListener("sturddle:connection", onReconnect);
   window.addEventListener("sturddle:livegame-closed", refreshWatchButtons);
-  const onLiveGameClosedReapply = () => requestAnimationFrame(reapplyLayout);
+  const onLiveGameClosedReapply = () => { if (activeLayout !== LAYOUT.TIDY) requestAnimationFrame(reapplyLayout); };
   window.addEventListener("sturddle:livegame-closed", onLiveGameClosedReapply);
 
   let resizeTimer = null;
@@ -1274,11 +1276,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     armSubscriptions();
     refresh();
     requestAnimationFrame(() => { try { flashWindow(windows[key]); } catch {} });
+    requestAnimationFrame(reapplyLayout);
   }
 
   function untidy() { setLayout(LAYOUT.NONE); }
   function reapplyLayout() {
-    if (activeLayout === LAYOUT.TILE) tile();
+    if (activeLayout === LAYOUT.TIDY) tidy({ preserveMin: true });
+    else if (activeLayout === LAYOUT.TILE) tile();
     else if (activeLayout === LAYOUT.SNAP) snap();
   }
   function minimizeAll() {

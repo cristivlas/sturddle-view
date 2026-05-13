@@ -43,7 +43,7 @@ export function mountTournaments({ container, api, events, log, token }) {
             <li class="tmb-separator"></li>
             <li><button class="tmb-dd-item tmb-snap">Snap</button></li>
             <li><button class="tmb-dd-item tmb-tile">Tile</button></li>
-            <li><button class="tmb-dd-item tmb-tidy">Keep Tidy</button></li>
+            <li><button class="tmb-dd-item tmb-tidy">Clean</button></li>
             <li class="tmb-separator"></li>
             <li><button class="tmb-dd-item tmb-closeall">Close All</button></li>
           </ul>
