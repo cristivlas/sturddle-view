@@ -666,8 +666,10 @@ export const playPerspective = {
     newGameBtn.addEventListener("click", onNewGame);
     importBtn.addEventListener("click", onImport);
     resignBtn.addEventListener("click", onResign);
-    uciLogBtn?.addEventListener("click", () => openUciLogWindow(ctx.events));
-    pvTableBtn?.addEventListener("click", () => openPvTableWindow(ctx.events, sideHost.querySelector(".game-view-engine")));
+    const onUciLog = () => openUciLogWindow(ctx.events);
+    const onPvTable = () => openPvTableWindow(ctx.events, sideHost.querySelector(".game-view-engine"));
+    uciLogBtn?.addEventListener("click", onUciLog);
+    pvTableBtn?.addEventListener("click", onPvTable);
     restoreDebugWindows(ctx.events, sideHost.querySelector(".game-view-engine"));
     takebackBtn.addEventListener("click", onTakeback);
     switchSidesBtn.addEventListener("click", onSwitchSides);
@@ -721,6 +723,8 @@ export const playPerspective = {
         newGameBtn.removeEventListener("click", onNewGame);
         importBtn.removeEventListener("click", onImport);
         resignBtn.removeEventListener("click", onResign);
+        uciLogBtn?.removeEventListener("click", onUciLog);
+        pvTableBtn?.removeEventListener("click", onPvTable);
         takebackBtn.removeEventListener("click", onTakeback);
         switchSidesBtn.removeEventListener("click", onSwitchSides);
         pauseBtn.removeEventListener("click", onPause);
