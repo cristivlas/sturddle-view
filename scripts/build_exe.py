@@ -162,6 +162,9 @@ def main() -> None:
         print("--- upgrading pip ---")
         _pip(python, "--upgrade", "pip")
 
+        print("--- installing build deps ---")
+        _pip(python, "setuptools", "wheel")
+
         print("--- installing package + desktop deps ---")
         _pip(python, "--no-build-isolation", f"{ROOT}[desktop]")
 
