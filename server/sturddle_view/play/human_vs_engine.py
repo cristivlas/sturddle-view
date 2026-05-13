@@ -1051,12 +1051,22 @@ class HumanVsEngine:
     async def _cancel_think(self) -> None:
         self._think_gen += 1
         if self._engine is not None:
-            try:
-                t = getattr(self._engine, "transport", None)
-                if t is not None:
+            t = getattr(self._engine, "transport", None)
+            stopped_cleanly = False
+            if t is not None and self._think_task and not self._think_task.done():
+                try:
+                    t.write(b"stop\n")
+                    await asyncio.wait_for(asyncio.shield(self._think_task), timeout=0.5)
+                    stopped_cleanly = True
+                    log.info("engine responded to stop")
+                except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                    pass
+            if not stopped_cleanly and t is not None:
+                log.warning("engine did not respond to stop -- terminating")
+                try:
                     t.close()
-            except Exception:
-                log.exception("error tearing down engine")
+                except Exception:
+                    pass
             self._engine = None
         self._uci_log_tasks.clear()
         if self._think_task and not self._think_task.done():
@@ -1189,10 +1199,13 @@ class HumanVsEngine:
                 if best is None:
                     return
         except chess.engine.EngineTerminatedError:
-            log.exception("engine terminated mid-search")
-            await self._bus.publish(
-                Event(kind="system", game_id=game_id, payload={"error": "engine_terminated"})
-            )
+            if self._think_gen == gen:
+                log.error("engine crashed mid-search")
+                await self._bus.publish(
+                    Event(kind="system", game_id=game_id, payload={"error": "engine_terminated"})
+                )
+            else:
+                log.info("engine terminated (takeback or shutdown)")
             return
         except (asyncio.CancelledError, RuntimeError, BrokenPipeError):
             return
