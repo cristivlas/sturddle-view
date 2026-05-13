@@ -54,9 +54,12 @@ def main() -> None:
     if not args.reload:
         lock_path = Path(user_config_dir(APP_NAME, appauthor=False)) / "server.lock"
         if not _acquire_lock(lock_path):
-            logging.getLogger(__name__).error(
-                "Another %s instance is already running. Exiting.", APP_NAME
-            )
+            msg = f"Another {APP_NAME} instance is already running."
+            logging.getLogger(__name__).error("%s Exiting.", msg)
+            print(msg, file=sys.stderr)
+            if args.desktop:
+                from .desktop import show_error
+                show_error(APP_NAME, msg)
             sys.exit(1)
 
     # Push CLI overrides into env so the worker process's Settings() picks them up.
