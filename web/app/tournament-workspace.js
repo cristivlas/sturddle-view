@@ -403,7 +403,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   function attachWatch(btn, attachKey, sourceWindowKey, openOpts) {
     if (DEBUG_WATCH) console.log("[WATCH] click", { attachKey, sourceWindowKey, openOpts });
     // Slot grid is tidy-mode only; tile/snap reflow handles placement.
-    const useSlotsGrid = activeLayout === LAYOUT.NONE || activeLayout === LAYOUT.TIDY;
+    const useSlotsGrid = activeLayout === LAYOUT.TIDY;
     // Claim a slot BEFORE creating the window so the new window's own
     // default position doesn't shadow the slot it would occupy.
     const rawClaim = (useSlotsGrid && !isLiveWindowOpen(attachKey)) ? slotGrid.claim() : null;
@@ -419,7 +419,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       result = openLiveGameWindow({
         ...openOpts, token, tournamentId: tournament.id,
         top, left, boardStyle: boardStyleCached,
-        initialRect: claim ? { x: claim.x, y: claim.y, w: claim.w, h: claim.h } : null,
+        initialRect: claim ? { x: claim.x, y: claim.y, w: claim.w, h: claim.h } : (openOpts.initialRect ?? null),
         getSlotSize: !useSlotsGrid ? null : () => slotGrid.rectAt(0),
         onAfterRestore: !useSlotsGrid ? null : (wb) => {
           const c = slotGrid.claim(wb);
@@ -890,6 +890,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     refresh();
     backfillEvents();
   }
+  const onBeforeUnload = () => saveState(tournament.id, snapshot());
+  window.addEventListener("beforeunload", onBeforeUnload);
   window.addEventListener("sturddle:connection", onReconnect);
   window.addEventListener("sturddle:livegame-closed", refreshWatchButtons);
   const onLiveGameClosedReapply = () => { if (activeLayout !== LAYOUT.TIDY) requestAnimationFrame(reapplyLayout); };
@@ -940,6 +942,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   function finalize() {
     if (finalized) return;
     finalized = true;
+    window.removeEventListener("beforeunload", onBeforeUnload);
     window.removeEventListener("sturddle:connection", onReconnect);
     window.removeEventListener("sturddle:livegame-closed", refreshWatchButtons);
     window.removeEventListener("sturddle:livegame-closed", onLiveGameClosedReapply);

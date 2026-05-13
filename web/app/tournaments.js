@@ -115,6 +115,7 @@ export function mountTournaments({ container, api, events, log, token }) {
   let tournaments = [];
   let activeId = null;
   let selectedId = null;
+  let initialLoad = true;
   let stoppingId = null;
   let startingId = null;
   let settings = null; // { fastchess_path, tournaments_root, default_template, fastchess_detected }
@@ -219,6 +220,11 @@ export function mountTournaments({ container, api, events, log, token }) {
       listEl.appendChild(renderRow(t));
     }
     syncRibbon();
+    if (initialLoad) {
+      initialLoad = false;
+      const t = selectedTournament();
+      if (t && hasSavedWorkspaceState(t.id)) openWorkspace(t);
+    }
   }
 
   function sortedTournaments() {
