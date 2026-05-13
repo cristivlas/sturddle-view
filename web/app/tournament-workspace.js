@@ -612,17 +612,29 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const err = detail?.last_error;
       if (err) {
         const RESUME_SUFFIX = "; press Start to resume.";
+        const FASTCHESS_RESUME_LINE = "To resume the tournament, run:";
         const rawTail = (err.stderr_tail || []).slice(-10);
         const lastIdx = rawTail.length - 1;
-        const hasResume = lastIdx >= 0 && rawTail[lastIdx].endsWith(RESUME_SUFFIX);
-        const tail = (hasResume
-          ? [...rawTail.slice(0, lastIdx), rawTail[lastIdx].slice(0, -RESUME_SUFFIX.length)]
-          : rawTail
-        ).join("\n") || `exit code ${err.rc}`;
+
+        const RESUME_POST = " to resume.";
+        let displayLines = rawTail;
+        let resumePre = null;
+        if (lastIdx >= 0 && rawTail[lastIdx].endsWith(RESUME_SUFFIX)) {
+          displayLines = [...rawTail.slice(0, lastIdx), rawTail[lastIdx].slice(0, -RESUME_SUFFIX.length)];
+          resumePre = "; press ";
+        } else {
+          const i = rawTail.findIndex((l) => l.includes(FASTCHESS_RESUME_LINE));
+          if (i >= 0) {
+            displayLines = rawTail.slice(0, i);
+            resumePre = " -- press ";
+          }
+        }
+
+        const tail = displayLines.join("\n") || `exit code ${err.rc}`;
         banner.innerHTML = `<div class="wb-error-title">Tournament failed (rc=${err.rc})</div><pre>${escapeHtml(tail)}</pre>`;
-        if (hasResume) {
+        if (resumePre) {
           const pre = banner.querySelector("pre");
-          pre.append("; press ");
+          pre.append(resumePre);
           const btn = document.createElement("button");
           btn.type = "button";
           btn.className = "toast-icon-btn";
@@ -634,7 +646,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           btn.addEventListener("click", () => api("POST", `/api/tournaments/${tournament.id}/start`)
             .catch((e) => toast(`Resume failed: ${apiErrorDetail(e)}`, { variant: "danger" })));
           pre.appendChild(btn);
-          pre.append(" to resume.");
+          pre.append(RESUME_POST);
         }
         banner.hidden = false;
       } else {
