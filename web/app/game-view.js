@@ -428,7 +428,11 @@ export function mountGameView(container, opts = {}) {
   function onVisibilityChange() {
     if (!document.hidden) board.cancelAnimations();
   }
+  function onWindowFocus() {
+    board.cancelAnimations();
+  }
   document.addEventListener("visibilitychange", onVisibilityChange);
+  window.addEventListener("focus", onWindowFocus);
 
   let humanWhite = true;
   let gameId = null;
@@ -638,6 +642,7 @@ export function mountGameView(container, opts = {}) {
       window.removeEventListener("resize", recomputeBoardSize);
       window.removeEventListener("sturddle:layout-changed", recomputeBoardSize);
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", onWindowFocus);
       if (recomputeRaf) cancelAnimationFrame(recomputeRaf);
     },
   };
