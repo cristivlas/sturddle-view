@@ -20,6 +20,31 @@ export function mountEngineList(container, api, opts = {}) {
 
   container.innerHTML = `
     <div class="engines-list-host">
+      <div class="engines-body-main">
+        <div class="engines-body-content">
+          <div class="engines-table-wrap">
+            <div class="engines-empty hidden">
+              <p class="empty-message"></p>
+            </div>
+            <table class="engines-table">
+              <colgroup>
+                <col class="engines-col-name">
+                <col class="engines-col-active">
+                <col class="engines-col-path">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>Name<span class="th-grip"></span></th>
+                  <th class="engines-col-active-hdr">Active<span class="th-grip"></span></th>
+                  <th>Path</th>
+                </tr>
+              </thead>
+              <tbody class="engines-list" role="listbox" tabindex="0"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <div class="engines-ribbon" role="toolbar" aria-label="Engine actions">
         <button class="ribbon-btn engines-add" aria-label="Add engine" title="Add engine">
           <wa-icon name="plus"></wa-icon>
@@ -44,31 +69,6 @@ export function mountEngineList(container, api, opts = {}) {
         <button class="ribbon-btn ribbon-btn--danger engines-detail-remove" disabled aria-label="Remove engine" title="Remove engine">
           <wa-icon name="trash"></wa-icon>
         </button>
-      </div>
-
-      <div class="engines-body-main">
-        <div class="engines-body-content">
-          <div class="engines-table-wrap">
-            <div class="engines-empty hidden">
-              <p class="empty-message"></p>
-            </div>
-            <table class="engines-table">
-              <colgroup>
-                <col class="engines-col-name">
-                <col class="engines-col-active">
-                <col class="engines-col-path">
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>Name<span class="th-grip"></span></th>
-                  <th class="engines-col-active-hdr">Active<span class="th-grip"></span></th>
-                  <th>Path</th>
-                </tr>
-              </thead>
-              <tbody class="engines-list" role="listbox" tabindex="0"></tbody>
-            </table>
-          </div>
-        </div>
       </div>
 
       <div class="engines-search-wrap">
@@ -482,14 +482,20 @@ export function mountEngineList(container, api, opts = {}) {
   // inline search bar pushes the layout).
   const wrapEl = container.querySelector(".engines-table-wrap");
   const bodyMainEl = container.querySelector(".engines-body-main");
+  // Ribbon sits below the list, search bar below the ribbon. Size the list
+  // so the panel (list + ribbon + search) fills the dialog body exactly.
+  const ribbonEl = container.querySelector(".engines-ribbon");
+  const searchWrapEl = container.querySelector(".engines-search-wrap");
   function sizeWrap() {
     const dialog = container.closest("wa-dialog");
     const body = dialog?.shadowRoot?.querySelector('[part~="body"]');
     const topAnchor = bodyMainEl.getBoundingClientRect().top;
-    const bottom = body
+    const bodyBottom = body
       ? body.getBoundingClientRect().bottom
       : window.innerHeight - 8;
-    let h = Math.max(120, Math.floor(bottom - topAnchor - 8));
+    const ribbonH = ribbonEl?.offsetHeight || 0;
+    const searchH = searchWrapEl?.offsetHeight || 0;
+    let h = Math.max(120, Math.floor(bodyBottom - topAnchor - ribbonH - searchH - 8));
     wrapEl.style.height = h + "px";
     if (body) {
       const overflow = body.scrollHeight - body.clientHeight;

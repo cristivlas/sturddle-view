@@ -1489,11 +1489,13 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
               visibility 0s;
 }
 
-/* Horizontal ribbon at the top of the panel. */
+/* Horizontal ribbon at the bottom of the panel (between list and search).
+   The top border faces the list above; the active-button accent line
+   appears on the top edge of each button (pointing toward the list). */
 .engines-ribbon {
   display: flex; flex-direction: row; justify-content: flex-start;
   align-items: center; gap: 4px;
-  border-bottom: 1px solid var(--wa-color-border-loud, #353841);
+  border-top: 1px solid var(--wa-color-border-loud, #353841);
   padding: 4px 6px;
 }
 .engines-ribbon .ribbon-sep {
@@ -1502,7 +1504,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   background: var(--wa-color-border-loud, #353841);
 }
 .engines-ribbon .ribbon-btn::before {
-  left: 6px; right: 6px; top: auto; bottom: 0;
+  left: 6px; right: 6px; top: 0; bottom: auto;
   width: auto; height: 2px;
 }
 
