@@ -586,7 +586,7 @@ export function closeDebugWindows() {
 export function restoreDebugWindows(events) {
   const uciOpen = localStorage.getItem(UCI_OPEN_KEY);
   const pvOpen  = localStorage.getItem(PV_OPEN_KEY);
-  // null = never toggled (first visit) => open by default; "0" = user closed.
-  if (uciLogSaved || uciOpen !== "0") toggleUciLogWindow(events);
-  if (pvTableSaved || pvOpen  !== "0") togglePvTableWindow(events);
+  // null = never opened (first visit) => closed; "1" = user opened.
+  if (uciLogSaved || uciOpen === "1") toggleUciLogWindow(events);
+  if (pvTableSaved || pvOpen  === "1") togglePvTableWindow(events);
 }
