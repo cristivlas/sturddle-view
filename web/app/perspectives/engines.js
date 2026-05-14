@@ -1,12 +1,12 @@
-// Engines perspective: tournament configuration / running. Engine roster
-// management lives in Settings -> Engines.
+// Arena perspective: engine-vs-engine tournament configuration / running.
+// Engine roster management lives in Settings -> Engines.
 
 import { mountTournaments } from "../tournaments.js";
 import { getActiveWorkspace } from "../tournament-workspace.js";
 
 export const enginesPerspective = {
   id: "engines",
-  label: "Engines",
+  label: "Arena",
 
   async mount(root, ctx) {
     root.innerHTML = `

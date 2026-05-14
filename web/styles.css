@@ -1066,7 +1066,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
 }
 .engines-list-item td:last-child {
   border-right: 1px solid #2e3138;
-  border-radius: 0 6px 6px 0;
+  border-radius: 0;
 }
 .engines-list-item:hover td { background: var(--nav-btn-bg); }
 .engines-list-item.focused td { background: var(--nav-btn-bg); }

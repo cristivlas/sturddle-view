@@ -738,8 +738,8 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       }
 
       tabs.append(
-        enginesTab, generalTab, playTab, tournamentTab, sprtTab,
-        enginesPanel, generalPanel, playPanel, tournamentPanel, sprtPanel,
+        generalTab, enginesTab, playTab, tournamentTab, sprtTab,
+        generalPanel, enginesPanel, playPanel, tournamentPanel, sprtPanel,
       );
 
       dialog.append(tabs);
