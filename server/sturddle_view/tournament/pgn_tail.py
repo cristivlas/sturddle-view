@@ -99,6 +99,11 @@ class PgnTailer:
         # One-shot guard: avoid logging the oversized-game warning on
         # every poll while the same giant game is in flight.
         self._warned_oversized = False
+        # Finalize mode: set by finalize() to tell the run loop to exit
+        # as soon as it has caught up to file EOF. Used at teardown
+        # when the writer process is known to be gone -- no more data
+        # will ever arrive, so a clean caught-up state is terminal.
+        self._finalize = False
 
     @property
     def path(self) -> Path:
@@ -124,6 +129,29 @@ class PgnTailer:
             self._run(), name=f"pgn-tail:{self._path.name}",
         )
 
+    async def finalize(self) -> None:
+        """Drain the PGN to EOF and exit. Caller is responsible for
+        ensuring no more data will be written to the file (typically:
+        the writer process has been reaped via ``proc.wait()``).
+
+        Idempotent. Returns when the run loop has exited; if no run
+        loop is active, runs a single ``poll_once`` to drain anything
+        the gated tailer missed while paused, then returns."""
+        if not self.is_running():
+            # Tailer was paused (no subscribers). Drain in one shot
+            # from the caller's context -- the gate kept us off so
+            # nothing is in flight from the run loop.
+            try:
+                await self.poll_once()
+                while self._has_more:
+                    await self.poll_once()
+            except Exception:
+                log.exception("PgnTailer finalize (paused) failed")
+            return
+        self._finalize = True
+        task, self._task = self._task, None
+        await task
+
     async def stop(self) -> None:
         if self._stop_event is not None:
             self._stop_event.set()
@@ -147,6 +175,8 @@ class PgnTailer:
             await self.poll_once()
         except Exception:
             log.exception("PgnTailer initial poll failed for %s", self._path)
+        if self._finalize and not self._has_more:
+            return
         while not self._stop_event.is_set():
             if self._has_more:
                 # Backlog pending from a capped poll: yield once so other
@@ -167,6 +197,11 @@ class PgnTailer:
             except Exception:
                 # Parse error must not kill the tailer.
                 log.exception("PgnTailer poll failed for %s", self._path)
+            # In finalize mode the writer is gone -- once we've caught
+            # up to the current EOF (``not _has_more``) no further data
+            # will arrive, so exit cleanly.
+            if self._finalize and not self._has_more:
+                return
 
     async def poll_once(self) -> int:
         """Run one tail pass; return number of records newly emitted."""

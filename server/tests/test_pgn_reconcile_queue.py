@@ -211,28 +211,6 @@ def test_clear_drops_everything():
     assert q.pending_count == 0 and q.pgn_buffer_count == 0
 
 
-def test_try_match_now_hits_buffered_pgn():
-    """Terminal-teardown path: PGN was already buffered, dissolution
-    fires with `terminal=True`, one-shot match succeeds without
-    parking the entry."""
-    q = ReconciliationQueue()
-    captured = list(_ENOUGH)
-    pgn_full = list(_ENOUGH) + ["b1c3"]
-    assert q.add_pgn_record(_record(moves=pgn_full)) is None
-    m = q.try_match_now(_pending(moves=captured))
-    assert m is not None
-    assert q.pending_count == 0
-    assert q.pgn_buffer_count == 0
-
-
-def test_try_match_now_misses_does_not_park():
-    """No PGN buffered (game never finished) -- one-shot returns
-    None and the entry is *not* parked for later."""
-    q = ReconciliationQueue()
-    assert q.try_match_now(_pending()) is None
-    assert q.pending_count == 0
-
-
 def test_queue_max_evicts_oldest():
     """Bounded deques drop the oldest on overflow. With a sane cap and
     realistic tournament size we never see this in practice; here just

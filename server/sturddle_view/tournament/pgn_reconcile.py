@@ -143,14 +143,6 @@ class ReconciliationQueue:
         self._pending.append(entry)
         return None
 
-    def try_match_now(self, entry: PendingMatch) -> ReconciledMatch | None:
-        """One-shot match against the buffered PGN side; do *not*
-        park the entry on miss. Used at terminal teardown when no
-        further PGN records will arrive."""
-        if len(entry.uci_moves) < self._min_plies:
-            return None
-        return self._try_match_pending(entry)
-
     def add_pgn_record(self, record: PgnGameRecord) -> ReconciledMatch | None:
         """Register a parsed PGN record; return a match if a pending
         dissolution matches, else park it in the ring buffer."""

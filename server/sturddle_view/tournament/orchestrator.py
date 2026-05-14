@@ -576,20 +576,22 @@ class Orchestrator:
                 except Exception:
                     log.exception("failed to persist terminal status for %s", active_id)
                 finally:
-                    self._active_id = None
                     self._proxy_secret = None
-                    # Final PGN poll *before* dissolve so any game
-                    # fastchess flushed just before exit lands in the
-                    # buffer; terminal dissolves then try a one-shot
-                    # match against it via try_match_now.
+                    # Dissolve pairs first so their pending entries are
+                    # parked in the reconcile queue. Then drive the
+                    # tailer to EOF: it reads the remaining PGN, fires
+                    # _on_pgn_record per game, which matches the parked
+                    # entries and emits ``game_reconciled``. Fastchess
+                    # has been reaped via proc.wait() so the file is
+                    # complete and bounded -- no timeout needed.
+                    await self._dissolve_all_pairs()
                     if self._pgn_tailer is not None:
                         try:
-                            await self._pgn_tailer.poll_once()
+                            await self._pgn_tailer.finalize()
                         except Exception:
-                            log.exception("final PGN poll failed")
-                        await self._pgn_tailer.stop()
+                            log.exception("PGN tailer finalize failed")
                         self._pgn_tailer = None
-                    await self._dissolve_all_pairs()
+                    self._active_id = None
                     self._reset_pairing_state()
                     self._close_all_proxy_subscribers()
 
@@ -1111,10 +1113,6 @@ class Orchestrator:
         )
         reconciled: ReconciledMatch | None = None
         if moves:
-            # On terminal teardown, try a one-shot match against the
-            # PGN buffer (the last in-flight game may have flushed
-            # before fastchess exited) but never park the entry --
-            # there'll be nothing to match against later.
             entry = PendingMatch(
                 pair_id=pair_id,
                 white_proxy=white_pid,
@@ -1123,10 +1121,11 @@ class Orchestrator:
                 black_engine=self._proxy_engine_names.get(black_pid),
                 uci_moves=moves,
             )
-            if terminal:
-                reconciled = self._reconcile_queue.try_match_now(entry)
-            else:
-                reconciled = self._reconcile_queue.add_pending(entry)
+            # Park the entry on both terminal and non-terminal paths.
+            # Terminal teardown finalizes the tailer after dissolves,
+            # so parked entries get a chance to match the freshly-read
+            # PGN before _reset_pairing_state wipes the queue.
+            reconciled = self._reconcile_queue.add_pending(entry)
         game_subs = self._game_subscribers.pop(pair_id, None)
         # Try the stop transition; the helper re-checks subs+pending at
         # task run time. Skip in terminal mode -- teardown owns its own
@@ -1173,10 +1172,11 @@ class Orchestrator:
             await self._emit_reconciled(reconciled)
 
     async def _dissolve_all_pairs(self) -> None:
-        """Dissolve every confirmed pair on terminal runner events.
-        ``terminal=True`` tells _dissolve_pair to skip the reconcile
-        queue push -- those games never finished in the PGN."""
+        """Dissolve any pair still open at terminal teardown. Normally
+        empty -- remaining pairs mean fastchess exited mid-game."""
         pending_ids = list(self._pair_ids.values())
+        if pending_ids:
+            log.warning("terminal teardown found %d undissolved pair(s)", len(pending_ids))
         for pair_id in pending_ids:
             await self._dissolve_pair(
                 pair_id, _RESULT_UNKNOWN, _TERMINATION_UNKNOWN,
