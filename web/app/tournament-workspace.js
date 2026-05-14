@@ -770,14 +770,14 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   function addLogEntry(evt) {
     const seq = evt.payload?._seq;
+    // `game_reconciled` doesn't go into eventLog (it upgrades a prior
+    // game_finished row in pushEvent); duplicates are idempotent there
+    // so we don't need to track its seq at all.
+    if (evt.payload?.kind === KIND.GAME_RECONCILED) return false;
     if (seq != null) {
       if (seenSeqs.has(seq)) return false;
       seenSeqs.add(seq);
     }
-    // `game_reconciled` upgrades an existing game_finished row in place
-    // (see pushEvent) -- don't surface a second row for the same game.
-    // Still mark seq seen above so backfill replays are deduped.
-    if (evt.payload?.kind === KIND.GAME_RECONCILED) return false;
     const tsRaw = evt.payload?._ts;
     const ts = (tsRaw ? new Date(tsRaw) : new Date())
       .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
@@ -785,7 +785,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     // Keep ordered by seq so backfill items slot in before any live
     // events that arrived during the REST round-trip.
     eventLog.sort((a, b) => (a._seq ?? 0) - (b._seq ?? 0));
-    while (eventLog.length > EVENT_LOG_LIMIT) eventLog.shift();
+    // Cap eventLog and keep seenSeqs in lockstep so it can't outgrow
+    // the visible log -- the dedup only needs to cover items we'd
+    // otherwise re-render.
+    while (eventLog.length > EVENT_LOG_LIMIT) {
+      const evicted = eventLog.shift();
+      if (evicted?._seq != null) seenSeqs.delete(evicted._seq);
+    }
     return true;
   }
 
