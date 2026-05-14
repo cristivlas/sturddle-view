@@ -472,7 +472,7 @@ export function mountTournaments({ container, api, events, log, token }) {
       await api("DELETE", `/api/tournaments/${t.id}`);
       if (getActiveWorkspace()?.tournamentId === t.id) getActiveWorkspace().close();
       clearWorkspaceState(t.id);
-      toast(`Removed "${t.name}"`, { variant: "success" });
+      toast(`Removed tournament "${t.name}"`, { variant: "success" });
     } catch (e) {
       reportError({ log }, `Removing "${t.name}" failed`, e);
       return;
@@ -849,7 +849,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     if (!result) return;
     try {
       await api("POST", "/api/tournaments", result);
-      toast(`Created "${result.name}"`, { variant: "success" });
+      toast(`Created new tournament "${result.name}"`, { variant: "success" });
     } catch (e) {
       reportError({ log }, "Creating tournament failed", e);
       return;
