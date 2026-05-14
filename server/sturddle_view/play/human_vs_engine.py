@@ -1052,10 +1052,15 @@ class HumanVsEngine:
         self._think_gen += 1
         if self._engine is not None:
             t = getattr(self._engine, "transport", None)
-            stopped_cleanly = False
-            if t is not None and self._think_task and not self._think_task.done():
+            stopped_cleanly = True
+            try:
+                self._engine.send_line("stop")
+            except Exception as e:
+                log.warning("failed to send stop to engine: %s", e)
+                stopped_cleanly = False
+            if self._think_task and not self._think_task.done():
+                stopped_cleanly = False
                 try:
-                    t.write(b"stop\n")
                     await asyncio.wait_for(asyncio.shield(self._think_task), timeout=0.5)
                     stopped_cleanly = True
                     log.info("engine responded to stop")
