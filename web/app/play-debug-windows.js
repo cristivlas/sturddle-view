@@ -262,9 +262,9 @@ function _openUciLogFloat() {
   const uciW = uciGeo?.width ?? rightColumnWidth(480);
   const uciX = uciGeo?.x ?? "right";
   const uciY = uciGeo?.y ?? (() => {
-    const clockBottom = document.querySelector(".clock-row.clock-bottom");
-    const clockTop = clockBottom ? Math.round(clockBottom.getBoundingClientRect().top) : window.innerHeight;
-    return clockTop - uciH - WIN_MARGIN;
+    const clockBot = document.querySelector(".clock-row.clock-bottom");
+    const botTop = clockBot ? Math.round(clockBot.getBoundingClientRect().top) : window.innerHeight;
+    return botTop - uciH - WIN_MARGIN;
   })();
   uciLogSaved = null;
   uciLogWb = new WinBox({
@@ -284,17 +284,20 @@ function _destroyUciLog() {
   uciLogBody = null;
 }
 
+function _teardownUciLogSlot() {
+  if (!uciLogSlot) return;
+  uciLogSlot.querySelector(".dock-slot-body").removeChild(uciLogBody);
+  uciLogSlot.remove();
+  uciLogSlot = null;
+  if (uciLogOff) { uciLogOff(); uciLogOff = null; }
+  uciLogBody = null;
+}
+
 function _closeUciLog() {
   localStorage.setItem(UCI_OPEN_KEY, "0");
   if (uciLogWb) { uciLogWb.close(); return; }
-  if (uciLogSlot) {
-    uciLogSlot.querySelector(".dock-slot-body").removeChild(uciLogBody);
-    uciLogSlot.remove();
-    uciLogSlot = null;
-    if (uciLogOff) { uciLogOff(); uciLogOff = null; }
-    uciLogBody = null;
-    _syncDockVisibility();
-  }
+  _teardownUciLogSlot();
+  _syncDockVisibility();
 }
 
 export function toggleUciLogWindow(events) {
@@ -493,9 +496,8 @@ function _dockPvTable() {
   setDocked(PV_DOCKED_KEY, true);
   pvTableSlot = _makeDockSlot("Search Lines", pvTableBody, _undockPvTable);
   // Search Lines goes above UCI log when both are docked.
-  const uciSlot = uciLogSlot;
-  if (uciSlot) {
-    _dockEl.insertBefore(pvTableSlot, uciSlot);
+  if (uciLogSlot) {
+    _dockEl.insertBefore(pvTableSlot, uciLogSlot);
   } else {
     _dockEl.appendChild(pvTableSlot);
   }
@@ -536,17 +538,20 @@ function _destroyPvTable() {
   pvTableBody = null;
 }
 
+function _teardownPvTableSlot() {
+  if (!pvTableSlot) return;
+  pvTableSlot.querySelector(".dock-slot-body").removeChild(pvTableBody);
+  pvTableSlot.remove();
+  pvTableSlot = null;
+  if (pvTableOff) { pvTableOff(); pvTableOff = null; }
+  pvTableBody = null;
+}
+
 function _closePvTable() {
   localStorage.setItem(PV_OPEN_KEY, "0");
   if (pvTableWb) { pvTableWb.close(); return; }
-  if (pvTableSlot) {
-    pvTableSlot.querySelector(".dock-slot-body").removeChild(pvTableBody);
-    pvTableSlot.remove();
-    pvTableSlot = null;
-    if (pvTableOff) { pvTableOff(); pvTableOff = null; }
-    pvTableBody = null;
-    _syncDockVisibility();
-  }
+  _teardownPvTableSlot();
+  _syncDockVisibility();
 }
 
 export function togglePvTableWindow(events) {
@@ -566,20 +571,8 @@ export function closeDebugWindows() {
   if (uciLogWb)   { uciLogSaved = wbGeometry(uciLogWb); uciLogWb.close(); }
   if (pvTableWb)  { pvTableSaved = wbGeometry(pvTableWb); pvTableWb.close(); }
   // Tear down docked windows too (perspective navigating away).
-  if (uciLogSlot) {
-    uciLogSlot.querySelector(".dock-slot-body").removeChild(uciLogBody);
-    uciLogSlot.remove();
-    uciLogSlot = null;
-    if (uciLogOff) { uciLogOff(); uciLogOff = null; }
-    uciLogBody = null;
-  }
-  if (pvTableSlot) {
-    pvTableSlot.querySelector(".dock-slot-body").removeChild(pvTableBody);
-    pvTableSlot.remove();
-    pvTableSlot = null;
-    if (pvTableOff) { pvTableOff(); pvTableOff = null; }
-    pvTableBody = null;
-  }
+  _teardownUciLogSlot();
+  _teardownPvTableSlot();
   _syncDockVisibility();
 }
 
