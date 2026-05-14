@@ -7,8 +7,7 @@ on `(white_name, black_name) + N`. Fills in the `result` /
 are always `*` / `unknown` / `null`. As a bonus, the captured move
 list enables in-app replay of any watched game.
 
-Status: design accepted, not yet implemented. Branch to be cut at
-implementation start.
+Status: shipped. This doc describes current behavior.
 
 ## Problem
 
@@ -130,26 +129,42 @@ microseconds.
 
 ### Eviction / abandonment
 
-- Pending entries older than `RECONCILE_TIMEOUT_S = 60` (PGN flush
-  is non-deterministic; 60s is generous) are dropped from the
-  queue with a `game_reconciled` emission carrying the original
-  `*` / `unknown` / `null` (or simply: no event -- current
-  behavior is preserved).
+- **Pending side:** entries older than `RECONCILE_TIMEOUT_S = 60`
+  are dropped (PGN never arrived -- likely a fastchess crash). One
+  INFO log per drop.
+- **PGN side:** never swept by time. End-of-slot pairs (engines
+  that completed their last assigned game) stay alive without
+  `ucinewgame` until tournament teardown -- the matching PGN flush
+  is then arbitrarily older than 60s when the pair finally
+  dissolves. The deque cap (`queue_max = 256`) bounds memory.
 - `_pair_moves[pair_id]` is dropped in `_dissolve_pair` after the
-  list is captured into the pending entry (move list lives on in
-  the queue, not in the pair table).
-- On terminal runner events: the orchestrator runs a final PGN
-  poll *before* `_dissolve_all_pairs` so any game fastchess flushed
-  just before exit lands in the buffer; terminal dissolves then
-  pass `terminal=True` and use `try_match_now` (one-shot match
-  against the buffered PGN, no parking). Aborted mid-game pairs
-  produce no pending -- there's no PGN counterpart to match.
-- On proxy session end: existing teardown paths cover this.
-  `_reset_pairing_state` drops `_pair_moves` and clears the queue
-  alongside the tailer task.
+  list is captured into the pending entry.
+- **Terminal teardown.** Order: `_dissolve_all_pairs` (parks any
+  surviving pairs via `add_pending`), then `tailer.finalize()`
+  drains the PGN to EOF. Finalize runs the existing run loop in
+  "exit on EOF" mode; since fastchess has been reaped via
+  `proc.wait()`, the file is complete and the loop terminates
+  deterministically (no timeout). Records read during the drain
+  fire `_on_pgn_record`, which matches against the just-parked
+  entries. `_reset_pairing_state` then wipes any remaining state.
 - WS close (user closes window): does **not** affect pending
-  entries -- those are tournament-scoped, not viewer-scoped. The
-  existing per-pair WS subscriber teardown is unchanged.
+  entries -- tournament-scoped, not viewer-scoped.
+
+### Tailer subscriber gate
+
+The tailer runs only while at least one WS client is subscribed to
+a game in the tournament (`_game_subscribers` non-empty). 0->1
+transition starts the run loop; 1->0 transition stops it, unless
+pending entries are still awaiting a PGN match (in which case the
+post-record drain check stops it once the queue empties). When
+nobody is watching, no 1Hz stat+parse work runs.
+
+Reconciliation correctness across pause/resume: the tailer's file
+offset is instance state and survives stop/start, so a resumed
+tailer reads the delta accumulated during the pause. At teardown,
+`finalize()` works whether the tailer is currently running or
+paused (the paused branch drains via `poll_once` from the
+caller's context).
 
 ### Min-plies floor
 
@@ -281,7 +296,7 @@ constraint is lifted.
      plies) into the pending queue.
    - On every tailer wake, run the match loop, emit
      `game_reconciled` for hits.
-   - Timeout sweep at 60s.
+   - Pending-side timeout sweep at 60s (PGN-side never times out).
    - Tests: end-to-end with synthetic UCI ingest + synthesized
      PGN file, assert event ordering and payloads.
 
@@ -319,7 +334,7 @@ constraint is lifted.
    the user's last Play TC or expose a TC selector at the
    play-from-here moment. Resolve during impl.
 
-Slices 1-3 ship together; slice 4 is its own follow-up.
+Slices 1-3 shipped together; slice 4 (Replay) shipped as a follow-up.
 
 ### Slice 4 caveats
 
@@ -394,10 +409,6 @@ when both `--debug` is set *and* the env flag is set:
 - per tailer delta: `PgnTailer parsed delta=<B>B games=<N>
   new_offset=<O>` -- one line per parse pass with non-empty delta.
   Useful for sanity-checking what the tailer is doing under load.
-- `reconcile pgn_buffer evicted` -- buffered PGN record timed out
-  without matching any pending dissolution. Mostly noise from
-  pre-existing PGN bytes the tailer parsed before live state
-  caught up; signal only if it fires for *current-run* games.
 
 **When to enable.** Ask the user explicitly to set
 `SV_DEBUG_RECONCILE=1` before reproducing a reconciliation issue.
@@ -428,11 +439,6 @@ exercised in practice.
   only the event-log row is missing. Mitigation if needed: bump
   ring size, or expose a "reconciled summary by pair_id" REST
   endpoint computed from the PGN at request time.
-- **Stop button vs trailing PGN flush.** The orchestrator's final
-  PGN poll on terminal events catches in-flight flushes, but a
-  flush landing *after* that poll completes (and after the queue
-  is wiped) leaves that game's row at `*` permanently. Acceptable
-  per spec; could be revisited if users complain.
 - **Multi-tournament scoping.** All reconciliation state is held
   flat (one queue, one tailer, one `_pair_moves`). If/when the
   single-active invariant is lifted (see `tournament-spec.md`
@@ -440,11 +446,9 @@ exercised in practice.
   tournament id, and proxies would need to carry a tournament tag
   in their broadcast payload so `ingest_proxy_lines` routes to the
   right instance. Same shape, just keyed.
-- **PGN buffering vs reconcile timeout.** `RECONCILE_TIMEOUT_S =
-  60s` assumes fastchess flushes per-game (sub-second). We don't
-  control that: fastchess argv tweaks, OS-level disk buffering,
-  or future runner changes could batch flushes. If real-game
-  `reconcile timeout` lines start appearing under load, bump the
-  constant before assuming a logic bug. The
-  `RECONCILE_LATE_WARNING_S = 5s` log line emits before any
-  timeout fires, so drift can be spotted early.
+- **Pending-side timeout latency.** `RECONCILE_TIMEOUT_S = 60s`
+  bounds how long we wait for a missing PGN flush before logging
+  `reconcile timeout`. If real-game timeouts start appearing under
+  load (slow disk, batched flushes), bump the constant. The
+  `RECONCILE_LATE_WARNING_S = 5s` log emits before any timeout
+  fires, so drift can be spotted early.
