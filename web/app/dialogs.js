@@ -440,8 +440,11 @@ export function toast(message, { variant = "neutral", duration = 4000 } = {}) {
     stack.setAttribute("popover", "manual");
     host.appendChild(stack);
   }
-  if (stack.showPopover && !stack.matches?.(":popover-open")) {
-    try { stack.showPopover(); } catch { /* unsupported / already open */ }
+  if (stack.showPopover) {
+    try {
+      if (stack.matches?.(':popover-open')) stack.hidePopover();
+      stack.showPopover();
+    } catch { /* unsupported */ }
   }
   const t = document.createElement("div");
   t.className = `toast toast-${variant}`;

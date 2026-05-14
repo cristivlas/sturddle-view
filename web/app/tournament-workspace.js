@@ -220,9 +220,14 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       return;
     }
     if (activeLayout === LAYOUT.TIDY) {
-      // On restore: place into next free slot; if grid full, cascade across the
-      // top rather than re-minimizing -- the user explicitly asked to see the window.
+      // slotGrid only positions live (watcher) windows. System windows
+      // (engines/standings/schedule/log) belong to the TIDY region grid
+      // -- reflow the whole layout to place them correctly.
       if (isRestore) {
+        if (!getLiveWindows().includes(wb)) {
+          requestAnimationFrame(reapplyLayout);
+          return;
+        }
         const c = slotGrid.claim(wb);
         if (c) {
           wb.resize(c.w, c.h).move(c.x, c.y);

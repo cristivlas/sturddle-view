@@ -122,7 +122,7 @@ function buildField(name, entry, current, ctx) {
       input.textContent = "Send";
       input.addEventListener("click", () => {
         ctx.buttonsClicked.push(name);
-        toast(`${name} queued for next session`, { variant: "neutral" });
+        toast(`${name} queued for next session`, { variant: "success" });
       });
       break;
     }
