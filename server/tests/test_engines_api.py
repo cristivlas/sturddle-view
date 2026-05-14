@@ -314,10 +314,10 @@ def test_locked_engine_refresh_schema_409(tmp_path, exe_a):
     assert "T1" in r.json()["detail"]
 
 
-def test_locked_engine_list_includes_tourney_info(tmp_path, exe_a):
-    c, _eid = _make_client_with_tourney(tmp_path, exe_a, STATUS_RUNNING)
-    body = c.get("/engines").json()
-    locked = body["engines"][0]["locked"]
+def test_locked_engine_get_includes_tourney_info(tmp_path, exe_a):
+    c, eid = _make_client_with_tourney(tmp_path, exe_a, STATUS_RUNNING)
+    body = c.get(f"/engines/{eid}").json()
+    locked = body["locked"]
     assert len(locked) == 1
     assert locked[0]["name"] == "T1"
     assert locked[0]["status"] == STATUS_RUNNING
