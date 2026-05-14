@@ -191,7 +191,11 @@ def test_timeout_drops_pending(monkeypatch):
     assert q.pending_count == 0
 
 
-def test_timeout_drops_pgn_buffer(monkeypatch):
+def test_sweep_does_not_drop_pgn_records(monkeypatch):
+    """PGN-side records must persist regardless of age: when a slot
+    finishes all its assigned games, the pair stays alive (no
+    ucinewgame follows) for the rest of the tournament. The matching
+    dissolution can arrive arbitrarily long after the PGN flush."""
     q = ReconciliationQueue(timeout_s=0.5)
     q.add_pgn_record(_record())
     assert q.pgn_buffer_count == 1
@@ -199,7 +203,7 @@ def test_timeout_drops_pgn_buffer(monkeypatch):
     real = time.monotonic()
     monkeypatch.setattr(time, "monotonic", lambda: real + 1.0)
     q.sweep()
-    assert q.pgn_buffer_count == 0
+    assert q.pgn_buffer_count == 1
 
 
 def test_clear_drops_everything():

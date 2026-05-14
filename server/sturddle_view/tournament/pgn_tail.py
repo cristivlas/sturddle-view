@@ -124,6 +124,9 @@ class PgnTailer:
         if self.is_running():
             log.warning("PgnTailer already running for %s", self._path)
             return
+        # Reset the finalize flag so a tailer reused across runs
+        # doesn't exit on its first poll because of a stale flag.
+        self._finalize = False
         self._stop_event = asyncio.Event()
         self._task = asyncio.create_task(
             self._run(), name=f"pgn-tail:{self._path.name}",

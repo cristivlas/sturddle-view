@@ -560,3 +560,98 @@ async def test_records_flow_only_while_subscribed(orch, tmp_path, emitted):
     assert len(_events_of(emitted, "game_reconciled")) == 1
     orch.unsubscribe_from_game(pair_id, q)
     await _wait_for(lambda: not orch._pgn_tailer.is_running())
+
+
+# ---------------------------------------------------------------------------
+# Terminal teardown: dissolve parks entries; finalize drains PGN; matches.
+# ---------------------------------------------------------------------------
+
+
+_PGN_GAME_TEMPLATE = """\
+[Event "Test"]
+[Site "?"]
+[Round "1"]
+[White "{white}"]
+[Black "{black}"]
+[Result "{result}"]
+[Termination "{termination}"]
+
+{movetext} {result}
+
+"""
+
+
+def _write_pgn_for_long_moves(pgn_path, white="Engine A", black="Engine B",
+                              result="1-0", termination="normal") -> None:
+    """Write a PGN file containing one game whose movetext matches
+    _LONG_MOVES (Ruy Lopez Berlin, 12 plies)."""
+    # SAN equivalent of _LONG_MOVES, hand-derived.
+    movetext = (
+        "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Bxa6 Nf6 "
+        "5. O-O Be7 6. Re1 d6"
+    )
+    pgn_path.write_text(
+        _PGN_GAME_TEMPLATE.format(
+            white=white, black=black, result=result,
+            termination=termination, movetext=movetext,
+        ),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.asyncio
+async def test_terminal_teardown_reconciles_inflight_game(orch, tmp_path, emitted):
+    """The bug this commit fixes: at tournament end (runner emits
+    `done`), a pair that hadn't dissolved via ucinewgame must still
+    reconcile against the PGN that fastchess flushed before exit.
+
+    Drives the runner-event handler directly. Setup: confirmed pair,
+    PGN file with a matching game already on disk (simulating
+    fastchess having flushed before exit). No subscriber, so the
+    tailer is paused -- teardown must finalize() it anyway.
+    """
+    pair_id = await _drive_pair_to(orch, _LONG_MOVES)
+    pgn_path = tmp_path / "games.pgn"
+    _write_pgn_for_long_moves(pgn_path)
+    orch._pgn_tailer = PgnTailer(pgn_path, orch._on_pgn_record, poll_interval=0.01)
+    assert not orch._pgn_tailer.is_running()  # no subscribers
+
+    # Drive the runner-event handler with the terminal `done` event.
+    # Store update will log an error (no real tournament), but the
+    # finally block executes the teardown sequence unchanged.
+    await orch._on_runner_event("done", {"rc": 0})
+
+    # The pair must have been dissolved and reconciled against the
+    # PGN drained by tailer.finalize().
+    reconciled = _events_of(emitted, "game_reconciled")
+    assert len(reconciled) == 1
+    assert reconciled[0]["pair_id"] == pair_id
+    assert reconciled[0]["result"] == "1-0"
+    assert reconciled[0]["termination"] == "normal"
+    # Tailer was finalized and dropped.
+    assert orch._pgn_tailer is None
+
+
+@pytest.mark.asyncio
+async def test_terminal_teardown_with_running_tailer(orch, tmp_path, emitted):
+    """Same teardown path, but with a watcher attached so the tailer
+    was already running. finalize() must still drive it to EOF and
+    exit cleanly."""
+    pair_id = await _drive_pair_to(orch, _LONG_MOVES)
+    pgn_path = tmp_path / "games.pgn"
+    pgn_path.touch()
+    orch._pgn_tailer = PgnTailer(pgn_path, orch._on_pgn_record, poll_interval=0.05)
+
+    q = orch.subscribe_to_game(pair_id)
+    await _wait_for(orch._pgn_tailer.is_running)
+
+    # Now the PGN flush lands (fastchess writes the game).
+    _write_pgn_for_long_moves(pgn_path)
+
+    await orch._on_runner_event("done", {"rc": 0})
+
+    reconciled = _events_of(emitted, "game_reconciled")
+    assert len(reconciled) == 1
+    assert reconciled[0]["pair_id"] == pair_id
+    assert orch._pgn_tailer is None
+    orch.unsubscribe_from_game(pair_id, q)

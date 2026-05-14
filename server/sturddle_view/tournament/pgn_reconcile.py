@@ -161,10 +161,10 @@ class ReconciliationQueue:
         return None
 
     def sweep(self) -> list[PendingMatch]:
-        """Drop entries older than ``timeout_s`` from both queues.
-        Pending-side timeouts log at INFO (real games unmatched =
-        actionable); PGN-side evictions log at DEBUG only (mostly
-        pre-existing PGN bytes from prior runs)."""
+        """Drop pending entries older than ``timeout_s`` (PGN never
+        arrived -- likely a fastchess crash). PGN-side is not swept:
+        idle end-of-slot pairs may wait until teardown. ``queue_max``
+        bounds memory."""
         now = time.monotonic()
         dropped: list[PendingMatch] = []
         while self._pending and (now - self._pending[0].enqueued_at) > self._timeout_s:
@@ -175,13 +175,6 @@ class ReconciliationQueue:
                 now - entry.enqueued_at,
             )
             dropped.append(entry)
-        while self._pgn and (now - self._pgn[0][1]) > self._timeout_s:
-            rec, ts = self._pgn.popleft()
-            if _DEBUG:
-                log.debug(
-                    "reconcile pgn_buffer evicted n=%d plies=%d age=%.1fs",
-                    rec.game_n, len(rec.uci_moves), now - ts,
-                )
         return dropped
 
     def clear(self) -> None:

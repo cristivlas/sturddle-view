@@ -355,3 +355,77 @@ def _bump_mtime(path: Path) -> None:
     import os
     st = path.stat()
     os.utime(path, ns=(st.st_atime_ns + 10_000_000, st.st_mtime_ns + 10_000_000))
+
+
+# ---------------------------------------------------------------------------
+# finalize(): teardown-mode drain to EOF
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_finalize_paused_drains_existing_pgn(pgn_path):
+    """Tailer that was never started (gated off, no subscribers): finalize
+    runs poll_once from the caller's context to catch everything fastchess
+    wrote during the pause."""
+    pgn_path.write_text(_ONE_GAME + _SECOND_GAME, encoding="utf-8")
+    records, cb = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+    assert not tailer.is_running()
+
+    await tailer.finalize()
+
+    assert len(records) == 2
+    assert records[0].white == "Engine A"
+    assert records[1].white == "Engine B"
+    assert tailer.offset == pgn_path.stat().st_size
+
+
+@pytest.mark.asyncio
+async def test_finalize_running_exits_after_eof(pgn_path):
+    """Running tailer + finalize: run loop exits cleanly once caught up
+    to EOF. No external stop signal needed."""
+    pgn_path.write_text(_ONE_GAME, encoding="utf-8")
+    records, cb = _records_collector()
+    tailer = PgnTailer(pgn_path, cb, poll_interval=0.05)
+    await tailer.start()
+    # Wait for the initial poll to fire so the run loop is in steady state.
+    for _ in range(50):
+        if records:
+            break
+        await asyncio.sleep(0.01)
+    assert tailer.is_running()
+
+    await tailer.finalize()
+
+    assert not tailer.is_running()
+    assert len(records) == 1
+
+
+@pytest.mark.asyncio
+async def test_finalize_running_drains_capped_backlog(pgn_path, monkeypatch):
+    """With the per-poll cap forced small, a multi-game file requires
+    several poll iterations to drain. Finalize must keep going until
+    EOF, not exit on the first cap-truncated pass."""
+    from sturddle_view.tournament import pgn_tail as pt_mod
+    monkeypatch.setattr(pt_mod, "_MAX_DELTA_BYTES_PER_POLL", 200)
+
+    pgn_path.write_text(_ONE_GAME + _SECOND_GAME, encoding="utf-8")
+    records, cb = _records_collector()
+    tailer = PgnTailer(pgn_path, cb, poll_interval=0.05)
+    await tailer.start()
+
+    await tailer.finalize()
+
+    assert not tailer.is_running()
+    assert len(records) == 2
+    assert tailer.offset == pgn_path.stat().st_size
+
+
+@pytest.mark.asyncio
+async def test_finalize_paused_no_file_is_noop(pgn_path):
+    """No file written, no run loop: finalize should not raise."""
+    records, cb = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+    await tailer.finalize()
+    assert records == []
+    assert tailer.offset == 0
