@@ -404,6 +404,7 @@ export const playPerspective = {
             // Restore the user's prior flip preference on entry into view mode.
             if (!wasViewing) view.setHumanWhite(!viewFlipped);
           } else {
+            if (wasViewing) restoreDebugWindows(ctx.events);
             resignAvailable = true;
           }
           // Notify the perspective router so the nav label can swap
