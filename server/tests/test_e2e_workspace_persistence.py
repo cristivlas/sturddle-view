@@ -737,3 +737,122 @@ async def test_idle_to_running_transition_auto_opens_live_games(server_app, brow
         _assert_no_errors(errors)
     finally:
         await ctx.close()
+
+
+# ---- Frozen-window rehydration on workspace reopen -------------------------
+# Snapshot entries with `resolved` are reopened as frozen windows that fetch
+# the PGN; unresolved entries for ended games surface a toast. The PGN file
+# is the canonical source for engine names + final position.
+
+_FROZEN_ONE_GAME_PGN = """[Event "g1"]
+[White "engine-A"]
+[Black "engine-B"]
+[Result "1-0"]
+[Termination "checkmate"]
+
+1. f3 e5 2. g4 Qh4# 1-0
+"""
+
+
+def _seed_pgn(app, tournament_id: str, pgn_text: str) -> None:
+    pgn_path = app.state.tournament_store.pgn_path(tournament_id)
+    pgn_path.parent.mkdir(parents=True, exist_ok=True)
+    pgn_path.write_text(pgn_text, encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_TFROZEN1_resolved_snapshot_rehydrates_frozen_window(server_app, browser):
+    """Snapshot with a resolved live entry -> reopen creates a frozen window
+    that fetches the PGN and paints the result banner."""
+    if browser is None:
+        pytest.skip("chromium not installed")
+    base, app = server_app
+    tids = [t.id for t in app.state.tournament_store.list()]
+    tid = tids[0]
+    _seed_pgn(app, tid, _FROZEN_ONE_GAME_PGN)
+
+    ctx, page, errors = await _new_page(browser)
+    try:
+        await _goto_app(page, base)
+        # Pre-seed: standings open + one resolved live window for a
+        # synthetic pair_id, gameN=1 in the PGN above.
+        await _set_saved_state(page, tid, {
+            "_closed": False,
+            "standings": {"open": True, "x": "100px", "y": "100px",
+                          "width": "500px", "height": "300px",
+                          "min": False, "max": False, "z": 1},
+            "schedule": {"open": False},
+            "engines": {"open": False},
+            "log": {"open": False},
+            "live": [{
+                "proxyId": "proxy-a", "gameId": "pair-1",
+                "label": "engine-A vs engine-B", "engineName": "engine-A",
+                "x": "200px", "y": "200px", "width": "320px", "height": "560px",
+                "min": False, "max": False, "z": 2,
+                "resolved": {"gameN": 1, "result": "1-0", "termination": "checkmate"},
+            }],
+        })
+        await _click_row(page, 0)
+        await _open_workspace_via_ribbon(page)
+        # Two windows: Standings + the frozen game window.
+        await _wait_wb_count(page, 2)
+        # Frozen variant class is added by openFrozenGameWindow.
+        await page.wait_for_selector(".winbox.sturddle-wb-live-frozen", timeout=5000)
+        # Banner painted with the result from the snapshot (also matches PGN).
+        await page.wait_for_function(
+            """() => {
+                const el = document.querySelector('.winbox.sturddle-wb-live-frozen .lg-result-score');
+                return el && el.textContent.trim() === '1-0';
+            }""",
+            timeout=5000,
+        )
+        _assert_no_errors(errors)
+    finally:
+        await ctx.close()
+
+
+@pytest.mark.asyncio
+async def test_TFROZEN2_unresolved_snapshot_non_running_shows_toast(server_app, browser):
+    """Snapshot with an unresolved live entry on a non-RUNNING tournament:
+    no window is restored for that entry, and the 'ended while away' toast
+    surfaces."""
+    if browser is None:
+        pytest.skip("chromium not installed")
+    base, app = server_app
+    tids = [t.id for t in app.state.tournament_store.list()]
+    tid = tids[0]
+    # Force terminal status so the restore loop takes the drop branch.
+    app.state.tournament_store.update_status(tid, "done")
+
+    ctx, page, errors = await _new_page(browser)
+    try:
+        await _goto_app(page, base)
+        await _set_saved_state(page, tid, {
+            "_closed": False,
+            "standings": {"open": True, "x": "100px", "y": "100px",
+                          "width": "500px", "height": "300px",
+                          "min": False, "max": False, "z": 1},
+            "schedule": {"open": False},
+            "engines": {"open": False},
+            "log": {"open": False},
+            "live": [{
+                "proxyId": "proxy-a", "gameId": "pair-1",
+                "label": "engine-A vs engine-B", "engineName": "engine-A",
+                "x": "200px", "y": "200px", "width": "320px", "height": "560px",
+                "min": False, "max": False, "z": 2,
+                # No `resolved` key -- the close-time gap case.
+            }],
+        })
+        await _click_row(page, 0)
+        await _open_workspace_via_ribbon(page)
+        # Only Standings should restore; the unresolved entry is dropped.
+        await _wait_wb_count(page, 1)
+        # Toast surfaces with the "ended while away" copy.
+        await page.wait_for_function(
+            """() => [...document.querySelectorAll('.toast')]
+                       .some(t => /ended while away/.test(t.textContent))""",
+            timeout=5000,
+        )
+        _assert_no_errors(errors)
+    finally:
+        await ctx.close()
