@@ -1045,29 +1045,34 @@ class HumanVsEngine:
         """
         self._think_gen += 1
         think_task = self._think_task
+        analysis = self._analysis
         self._think_task = None
         self._analysis = None
-        if self._engine is not None:
-            try:
-                self._engine.send_line("stop")
-            except Exception as e:
-                log.warning("failed to send stop to engine: %s", e)
-            if think_task and not think_task.done():
-                try:
-                    await asyncio.wait_for(asyncio.shield(think_task), timeout=0.5)
-                    log.info("engine responded to stop")
-                except asyncio.TimeoutError:
-                    log.warning("engine did not respond to stop -- terminating")
-                    transport = getattr(self._engine, "transport", None)
-                    if transport is not None:
-                        try:
-                            transport.close()
-                        except (BrokenPipeError, OSError) as e:
-                            log.warning("failed to close engine transport: %s", e)
-                    self._engine = None
-                except (asyncio.CancelledError, Exception):
-                    pass
         if think_task and not think_task.done():
+            if analysis is not None:
+                try:
+                    analysis.stop()  # transitions protocol command to CANCELLING; prevents double stop
+                except Exception as e:
+                    log.warning("failed to stop analysis: %s", e)
+            elif self._engine is not None:
+                try:
+                    self._engine.send_line("stop")
+                except Exception as e:
+                    log.warning("failed to send stop to engine: %s", e)
+            try:
+                await asyncio.wait_for(asyncio.shield(think_task), timeout=0.5)
+                log.info("engine responded to stop")
+            except asyncio.TimeoutError:
+                log.warning("engine did not respond to stop -- terminating")
+                transport = getattr(self._engine, "transport", None)
+                if transport is not None:
+                    try:
+                        transport.close()
+                    except (BrokenPipeError, OSError) as e:
+                        log.warning("failed to close engine transport: %s", e)
+                self._engine = None
+            except (asyncio.CancelledError, Exception):
+                pass
             think_task.cancel()
 
     async def _quit_engine(self) -> None:
