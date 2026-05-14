@@ -415,7 +415,7 @@ export function mountEngineList(container, api, opts = {}) {
 
     const wrapEl = container.querySelector(".engines-table-wrap");
     const tableEl = container.querySelector(".engines-table");
-    const minPct = 5;
+    const minPct = 8;
 
     container.querySelectorAll(".engines-table .th-grip").forEach((grip, gripIdx) => {
       grip.addEventListener("pointerdown", (eDown) => {
@@ -434,10 +434,14 @@ export function mountEngineList(container, api, opts = {}) {
         wrapEl.appendChild(rightLine);
         wrapEl.appendChild(leftLine);
 
-        function placeLines(clientX) {
+        // Clamp the cursor-tracking line to the actual resulting column
+        // boundary so the visual matches what's happening to the columns
+        // (otherwise the line floats off into the void while the columns
+        // silently refuse to follow).
+        function placeLines(boundaryX) {
           const wrapLeft = wrapEl.getBoundingClientRect().left;
           const thLeft = tableEl.querySelectorAll("thead th")[gripIdx].getBoundingClientRect().left;
-          rightLine.style.left = (clientX - wrapLeft) + "px";
+          rightLine.style.left = (boundaryX - wrapLeft) + "px";
           rightLine.style.height = leftLine.style.height = wrapEl.scrollHeight + "px";
           leftLine.style.left = (thLeft - wrapLeft) + "px";
         }
@@ -450,7 +454,13 @@ export function mountEngineList(container, api, opts = {}) {
           if (b < minPct) { a -= minPct - b; b = minPct; }
           colPcts[gripIdx] = a; colPcts[gripIdx + 1] = b;
           applyColPcts();
-          placeLines(e.clientX);
+          // Compute the resulting boundary (in clientX) from the clamped
+          // column widths instead of using raw cursor X.
+          const tableLeft = tableEl.getBoundingClientRect().left;
+          let boundaryPct = 0;
+          for (let i = 0; i <= gripIdx; i++) boundaryPct += colPcts[i];
+          const boundaryX = tableLeft + (boundaryPct / 100) * tableW;
+          placeLines(boundaryX);
         }
         let done = false;
         function onUp() {

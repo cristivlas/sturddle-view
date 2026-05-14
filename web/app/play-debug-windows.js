@@ -506,10 +506,13 @@ function buildPvTableBody(events, { setOff }) {
       body.appendChild(rightLine);
       body.appendChild(leftLine);
 
-      function placeLines(clientX) {
+      // Clamp the cursor-tracking line to the actual resulting column
+      // boundary so dragging past the min width stops the line at the
+      // column's edge instead of floating off (matches engines table).
+      function placeLines(boundaryX) {
         const bodyLeft = body.getBoundingClientRect().left;
         const thLeft = tableEl.querySelectorAll("thead th")[gripIdx].getBoundingClientRect().left;
-        rightLine.style.left = (clientX - bodyLeft) + "px";
+        rightLine.style.left = (boundaryX - bodyLeft) + "px";
         rightLine.style.height = leftLine.style.height = body.scrollHeight + "px";
         leftLine.style.left = (thLeft - bodyLeft) + "px";
       }
@@ -526,7 +529,11 @@ function buildPvTableBody(events, { setOff }) {
           colWidths[gripIdx + 1] = b;
         }
         applyColWidths();
-        placeLines(e.clientX);
+        // Compute the resulting boundary from clamped widths.
+        const tableLeft = tableEl.getBoundingClientRect().left;
+        let boundaryPx = 0;
+        for (let i = 0; i <= gripIdx; i++) boundaryPx += colWidths[i];
+        placeLines(tableLeft + boundaryPx);
       }
       let done = false;
       function onUp() {

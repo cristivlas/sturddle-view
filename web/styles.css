@@ -1050,7 +1050,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  border-bottom: 2px solid rgba(255, 255, 255, 0.45);
+  border-bottom: 2px solid var(--accent-line);
   overflow: hidden;
   white-space: nowrap;
   user-select: none;
@@ -1075,8 +1075,12 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
 }
 .engines-list-item:hover td { background: var(--nav-btn-bg); }
 .engines-list-item.focused td { background: var(--nav-btn-bg); }
-.engines-list-item.focused td:first-child {
-  box-shadow: inset 3px 0 0 var(--accent-line);
+.engines-list-item.focused td:last-child {
+  /* Muted amber: same hue as the perspective/tab indicator, but the
+     saturation difference (--accent-line is dimmer than --accent) keeps
+     the visual hierarchy clear. Right edge so it doesn't sit next to
+     the perspective tab indicator on the dialog's left rail. */
+  box-shadow: inset -3px 0 0 var(--accent-line);
 }
 .engines-list-item.active .engines-list-name { font-weight: 600; }
 .engines-list-name-text {
