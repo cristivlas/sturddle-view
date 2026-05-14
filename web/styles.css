@@ -799,7 +799,6 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   flex-direction: column;
   min-height: 60vh;
 }
-#engines-perspective wa-tab-panel { padding: 16px 0; }
 #engines-perspective .placeholder {
   display: flex;
   flex-direction: column;
@@ -810,100 +809,13 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 }
 #engines-perspective .placeholder p { margin: 4px 0; }
 #engines-perspective .placeholder .muted { font-size: 0.75rem; }
-.engines-roster-host { width: 100%; }
-
 pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-size: 0.75rem; }
 
-/* ---------- Engines tab: ribbon + stacked body ---------- */
-.engines-panel {
-  display: flex; gap: 12px;
-  min-width: 0;
-  flex: 1; min-height: 0;
-}
-.engines-body-main {
-  flex: 1; min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(8px, 1fr) minmax(0, var(--engines-content-w, 860px)) minmax(8px, 1fr);
-  padding-left: 50px;
-  padding-right: 50px;
-}
-.engines-body-content {
-  grid-column: 2;
-  display: flex; flex-direction: column; gap: 8px;
-  min-width: 0;
-}
-.engines-ribbon {
-  display: flex; flex-direction: column; align-items: center;
-  gap: 4px; padding: 4px 0;
-  border-right: 1px solid var(--wa-color-border-loud, #353841);
-  position: fixed;
-  left: 0; top: 50%; transform: translateY(-50%);
-  z-index: 10;
-}
-@media (max-width: 800px), (max-height: 600px) {
-  #engines-perspective wa-tab-panel { padding: 0; }
-  .engines-panel { flex-direction: column; gap: 0; }
-  .engines-ribbon {
-    position: static; transform: none;
-    flex-direction: row; justify-content: center;
-    border-right: 0; border-bottom: 1px solid var(--wa-color-border-loud, #353841);
-    padding: 6px 0;
-  }
-  .engines-ribbon .ribbon-sep {
-    width: 1px; height: 18px;
-    margin: 0 4px;
-  }
-  .engines-body-main { padding-left: 0; padding-right: 0; }
-  .engines-ribbon .ribbon-btn::before {
-    left: 6px; right: 6px; top: auto; bottom: 0;
-    width: auto; height: 2px;
-  }
-  .th-grip { display: none !important; }
-}
+/* Engines list/ribbon styles for the Settings dialog Engines tab.
+   The horizontal ribbon, drop-up search bar, and list-host modifiers
+   are defined further down (see "Settings dialog Engines tab" section). */
+.engines-body-content { display: flex; flex-direction: column; min-width: 0; }
 .engines-search { width: 100%; --wa-focus-ring-width: 0px; }
-.engines-search-wrap {
-  position: fixed;
-  z-index: 200;
-  display: flex;
-  align-items: center;
-  overflow: hidden;
-  width: 0;
-  padding: 0;
-  opacity: 0;
-  background: #1e2026;
-  border: 1px solid var(--wa-color-border-loud, #353841);
-  border-left: none;
-  border-radius: 0 4px 4px 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition: width 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94),
-              opacity 0.25s ease-out,
-              visibility 0s 0.35s;
-}
-.engines-search-wrap.open {
-  width: 480px;
-  padding: 6px 10px;
-  opacity: 1;
-  pointer-events: auto;
-  visibility: visible;
-  transition: width 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94),
-              opacity 0.2s ease-out,
-              visibility 0s;
-}
-@media (max-width: 800px), (max-height: 600px) {
-  .engines-search-btn { display: none !important; }
-  .engines-search-wrap {
-    display: none !important;
-    position: static !important;
-    clip-path: none !important;
-    transition: none !important;
-    pointer-events: auto !important;
-    background: none;
-    border: none;
-    border-radius: 0;
-    padding: 0;
-  }
-}
 
 .engine-opt-row { display: contents; }
 .engine-opt-label {
@@ -1109,10 +1021,8 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
 
 .engines-table-wrap {
   position: relative;
-  border: 1px solid #34373d;
-  border-radius: 6px;
-  height: calc(100vh - 268px);
-  min-height: 200px;
+  border-top: 1px solid #34373d;
+  min-height: 120px;
   overflow-y: auto;
   font-size: 0.8125rem;
 }
@@ -1419,9 +1329,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .fs-entry wa-icon { font-size: 0.875rem; flex: 0 0 auto; }
 .fs-entry .fs-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* ---------- Tournaments tab ---------- */
-#engines-perspective wa-tab-panel:has(.tournaments-panel) { padding-top: 0; }
-#engines-perspective wa-tab-panel:has(.tournaments-panel)::part(base) { padding-top: 0; }
+/* ---------- Tournaments panel ---------- */
 .tournaments-panel { display: flex; flex-direction: column; gap: 12px; min-height: 50vh; }
 
 .tournaments-menubar {
@@ -1552,33 +1460,26 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel::part(base) {
 wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   max-width: none;
 }
-.engines-list-host--minimal .engines-body-main { padding: 0; }
-.engines-list-host--minimal .engines-body-content { gap: 0; }
-.engines-list-host--minimal .engines-table-wrap {
-  border-radius: 0; border-left: none; border-right: none; border-bottom: none;
-  /* height is set by JS at mount time + on resize */
-}
-.engines-list-host--minimal .engines-list-item td:last-child { border-radius: 0; }
+.engines-list-host { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.engines-body-main { padding: 0; }
 
-/* Inline search bar: drops down below the horizontal ribbon. Overrides
-   the floating fixed-position search used in the roster page. Animates
-   max-height + opacity for a smooth open/close. */
-.engines-search-wrap--inline {
-  position: static; z-index: auto;
-  display: block; width: 100% !important;
+/* Inline drop-up search bar at the bottom of the panel. JS pre-shrinks
+   the list before .open is toggled so the body never overflows during
+   the height transition. */
+.engines-search-wrap {
+  display: block; width: 100%;
   max-height: 0; padding: 0 10px;
   opacity: 0; visibility: hidden;
   pointer-events: none;
   background: #1e2026;
-  border: 0; border-top: 1px solid var(--wa-color-border-loud, #353841);
-  border-radius: 0;
+  border-top: 1px solid var(--wa-color-border-loud, #353841);
   overflow: hidden; box-sizing: border-box;
   transition: max-height 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94),
               padding 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94),
               opacity 0.2s ease-out,
               visibility 0s 0.25s;
 }
-.engines-search-wrap--inline.open {
+.engines-search-wrap.open {
   max-height: 48px; padding: 6px 10px;
   opacity: 1; visibility: visible;
   pointer-events: auto;
@@ -1587,22 +1488,20 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
               opacity 0.2s ease-out,
               visibility 0s;
 }
-/* Undo the responsive "hide search" rule for inline mode. */
-@media (max-width: 800px), (max-height: 600px) {
-  .engines-list-host--minimal .engines-search-btn { display: inline-flex !important; }
-  .engines-search-wrap--inline { display: block !important; position: static !important; }
-}
-.engines-ribbon--horizontal {
-  position: static; transform: none;
-  flex-direction: row; justify-content: flex-start;
-  border-right: 0; border-bottom: 1px solid var(--wa-color-border-loud, #353841);
+
+/* Horizontal ribbon at the top of the panel. */
+.engines-ribbon {
+  display: flex; flex-direction: row; justify-content: flex-start;
+  align-items: center; gap: 4px;
+  border-bottom: 1px solid var(--wa-color-border-loud, #353841);
   padding: 4px 6px;
 }
-.engines-ribbon--horizontal .ribbon-sep {
+.engines-ribbon .ribbon-sep {
   width: 1px; height: 18px;
   margin: 0 4px;
+  background: var(--wa-color-border-loud, #353841);
 }
-.engines-ribbon--horizontal .ribbon-btn::before {
+.engines-ribbon .ribbon-btn::before {
   left: 6px; right: 6px; top: auto; bottom: 0;
   width: auto; height: 2px;
 }

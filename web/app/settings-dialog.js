@@ -159,7 +159,6 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         if (ev.detail?.name !== "engines" || enginesMounted) return;
         enginesMounted = true;
         mountEngineList(enginesHost, api, {
-          minimal: true,
           colPctsKey: "sturddle.engines.settings.colPcts3",
         });
       });
@@ -734,7 +733,6 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       if (startTab === enginesTab) {
         enginesMounted = true;
         mountEngineList(enginesHost, api, {
-          minimal: true,
           colPctsKey: "sturddle.engines.settings.colPcts3",
         });
       }

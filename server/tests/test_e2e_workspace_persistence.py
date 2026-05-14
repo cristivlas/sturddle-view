@@ -98,7 +98,6 @@ async def _goto_app(page, base):
     await page.goto(base + "/")
     await page.wait_for_selector("#play-perspective", timeout=5000)
     await page.click('button[data-perspective="engines"]')
-    await page.click('#engines-perspective wa-tab[panel="tournaments"]')
     await page.wait_for_selector(ROW_SEL, timeout=5000)
 
 
