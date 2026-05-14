@@ -667,7 +667,10 @@ export function openFrozenGameWindow({
       return res.json();
     })
     .then((rec) => {
-      if (!liveWindows.has(windowKey)) return; // closed mid-flight
+      // Identity check, not just .has(): rapid close/reopen of the same
+      // windowKey would otherwise paint into a new window via captured
+      // refs that point at the old (detached) DOM nodes.
+      if (liveWindows.get(windowKey) !== wb) return;
       const fen = rec.final_fen;
       const lastMove = rec.last_move || null;
       // Engine that was watched live is the one whose label matched

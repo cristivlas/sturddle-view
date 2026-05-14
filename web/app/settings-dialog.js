@@ -7,6 +7,8 @@ import { mountEngineList } from "./engines.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
 
+const SETTINGS_ENGINES_COL_PCTS_KEY = "sturddle.engines.settings.colPcts3";
+
 // Persisted unit is always seconds (float). The UI picks the most natural
 // display unit on load (largest unit with no fractional remainder) and
 // converts back to seconds on save. UCI/cutechess/fastchess all support
@@ -159,7 +161,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         if (ev.detail?.name !== "engines" || enginesMounted) return;
         enginesMounted = true;
         mountEngineList(enginesHost, api, {
-          colPctsKey: "sturddle.engines.settings.colPcts3",
+          colPctsKey: SETTINGS_ENGINES_COL_PCTS_KEY,
         });
       });
 
@@ -733,7 +735,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       if (startTab === enginesTab) {
         enginesMounted = true;
         mountEngineList(enginesHost, api, {
-          colPctsKey: "sturddle.engines.settings.colPcts3",
+          colPctsKey: SETTINGS_ENGINES_COL_PCTS_KEY,
         });
       }
 

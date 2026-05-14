@@ -814,7 +814,7 @@ async def test_TFROZEN1_resolved_snapshot_rehydrates_frozen_window(server_app, b
 @pytest.mark.asyncio
 async def test_TFROZEN2_unresolved_snapshot_non_running_shows_toast(server_app, browser):
     """Snapshot with an unresolved live entry on a non-RUNNING tournament:
-    no window is restored for that entry, and the 'ended while away' toast
+    no window is restored for that entry, and the 'finished while away' toast
     surfaces."""
     if browser is None:
         pytest.skip("chromium not installed")
@@ -847,10 +847,10 @@ async def test_TFROZEN2_unresolved_snapshot_non_running_shows_toast(server_app, 
         await _open_workspace_via_ribbon(page)
         # Only Standings should restore; the unresolved entry is dropped.
         await _wait_wb_count(page, 1)
-        # Toast surfaces with the "ended while away" copy.
+        # Toast surfaces with the "finished while away" copy.
         await page.wait_for_function(
             """() => [...document.querySelectorAll('.toast')]
-                       .some(t => /ended while away/.test(t.textContent))""",
+                       .some(t => /finished while away/.test(t.textContent))""",
             timeout=5000,
         )
         _assert_no_errors(errors)

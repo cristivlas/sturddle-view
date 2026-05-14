@@ -998,8 +998,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       }
       if (endedWhileAway > 0) {
         const msg = endedWhileAway === 1
-          ? "1 watched game ended while away."
-          : `${endedWhileAway} watched games ended while away.`;
+          ? "1 watched game finished while away."
+          : `${endedWhileAway} watched games finished while away.`;
         toast(msg, { variant: "warning", duration: 7000 });
       }
       requestAnimationFrame(reapplyLayout);
