@@ -3,6 +3,7 @@
 // text fields). No Save button. The X just closes.
 
 import { pickFile, showDialog, toast } from "./dialogs.js";
+import { mountEngineList } from "./engines.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
 
@@ -142,6 +143,26 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const isNarrow = matchMedia("(max-width: 480px)").matches;
       tabs.placement = isNarrow ? "top" : "start";
       tabs.classList.add("dialog-side-tabs", "settings-tabs");
+
+      // --- Engines tab ---
+      const enginesTab = document.createElement("wa-tab");
+      enginesTab.panel = "engines";
+      enginesTab.textContent = "Engines";
+      const enginesPanel = document.createElement("wa-tab-panel");
+      enginesPanel.name = "engines";
+      enginesPanel.classList.add("settings-engines-panel");
+      const enginesHost = document.createElement("div");
+      enginesHost.className = "settings-engines-host";
+      enginesPanel.appendChild(enginesHost);
+      let enginesMounted = false;
+      tabs.addEventListener("wa-tab-show", (ev) => {
+        if (ev.detail?.name !== "engines" || enginesMounted) return;
+        enginesMounted = true;
+        mountEngineList(enginesHost, api, {
+          minimal: true,
+          colPctsKey: "sturddle.engines.settings.colPcts3",
+        });
+      });
 
       // --- Common tab (PGN + global engine defaults) ---
       // PGN autosave is implicit: a non-empty pgn_dir enables it; Clear
@@ -706,13 +727,21 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       sprtPanel.addEventListener("change", () => { validateSprtDefaults(); persistSprt(); });
       validateSprtDefaults();
 
-      const tabByName = { general: generalTab, play: playTab, tournament: tournamentTab, sprt: sprtTab };
+      const tabByName = { engines: enginesTab, general: generalTab, play: playTab, tournament: tournamentTab, sprt: sprtTab };
       const startTab = tabByName[initialTab] || generalTab;
       startTab.setAttribute("active", "");
+      // If the Engines tab is the starting tab, mount immediately.
+      if (startTab === enginesTab) {
+        enginesMounted = true;
+        mountEngineList(enginesHost, api, {
+          minimal: true,
+          colPctsKey: "sturddle.engines.settings.colPcts3",
+        });
+      }
 
       tabs.append(
-        generalTab, playTab, tournamentTab, sprtTab,
-        generalPanel, playPanel, tournamentPanel, sprtPanel,
+        enginesTab, generalTab, playTab, tournamentTab, sprtTab,
+        enginesPanel, generalPanel, playPanel, tournamentPanel, sprtPanel,
       );
 
       dialog.append(tabs);

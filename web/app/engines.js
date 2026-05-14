@@ -1,15 +1,54 @@
-// Engines panel: search + scrollable list with a left-side vertical
-// ribbon mirroring the Play and Tournaments perspectives. Ribbon
-// holds Add, sort A→Z / Z→A, and the row-targeted Use / Options /
-// Remove actions (which act on the focused list row).
+// Engine list + CRUD logic shared by two hosts:
+//   - Roster page (mountEngines):  vertical floating ribbon on the left,
+//     floating search slide-out, fixed-page layout.
+//   - Settings dialog Engines tab (mountEngineList with minimal: true):
+//     horizontal ribbon at the top, inline drop-up search at the bottom,
+//     list height sized to fit the dialog body via JS measurement.
+// Sort/search/CRUD/column-resize behavior is identical between the two
+// modes; only the chrome and the sizing strategy differ.
 
 import { apiErrorDetail, confirm, pickFile, reportError, toast } from "./dialogs.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 
+const COL_PCTS_KEY = "sturddle.engines.colPcts3";
+const DEFAULT_PCTS = [20, 12, 68];
 
-export function mountEngines({ container, api }) {
+// Shared engine list + CRUD logic. Used by both the Roster page (with
+// sort/search chrome) and the Settings Engines tab (toolbar-only mode).
+// opts.minimal=true suppresses sort/search; opts.colPctsKey overrides
+// the localStorage key so each host keeps independent column widths.
+export function mountEngineList(container, api, opts = {}) {
+  const { minimal = false, colPctsKey = COL_PCTS_KEY } = opts;
+
   container.innerHTML = `
-    <div class="engines-panel">
+    <div class="engines-list-host${minimal ? " engines-list-host--minimal" : ""}">
+      ${minimal ? `
+      <div class="engines-ribbon engines-ribbon--horizontal" role="toolbar" aria-label="Engine actions">
+        <button class="ribbon-btn engines-add" aria-label="Add engine" title="Add engine">
+          <wa-icon name="plus"></wa-icon>
+        </button>
+        <button class="ribbon-btn engines-detail-use" disabled aria-label="Use as active engine" title="Use as active engine">
+          <wa-icon name="check"></wa-icon>
+        </button>
+        <button class="ribbon-btn engines-detail-options" disabled aria-label="Engine settings" title="Engine settings">
+          <wa-icon name="sliders"></wa-icon>
+        </button>
+        <span class="ribbon-sep" aria-hidden="true"></span>
+        <button class="ribbon-btn engines-search-btn" aria-label="Search engines" title="Search engines">
+          <wa-icon name="magnifying-glass"></wa-icon>
+        </button>
+        <button class="ribbon-btn engines-sort-asc" aria-label="Sort A-Z" title="Sort A-Z">
+          <wa-icon name="arrow-down-a-z"></wa-icon>
+        </button>
+        <button class="ribbon-btn engines-sort-desc" aria-label="Sort Z-A" title="Sort Z-A">
+          <wa-icon name="arrow-down-z-a"></wa-icon>
+        </button>
+        <span class="ribbon-sep" aria-hidden="true"></span>
+        <button class="ribbon-btn ribbon-btn--danger engines-detail-remove" disabled aria-label="Remove engine" title="Remove engine">
+          <wa-icon name="trash"></wa-icon>
+        </button>
+      </div>
+      ` : `
       <div class="engines-ribbon" role="toolbar" aria-label="Engine actions">
         <button class="ribbon-btn engines-add" aria-label="Add engine" title="Add engine">
           <wa-icon name="plus"></wa-icon>
@@ -24,10 +63,10 @@ export function mountEngines({ container, api }) {
         <button class="ribbon-btn engines-search-btn" aria-label="Search engines" title="Search engines">
           <wa-icon name="magnifying-glass"></wa-icon>
         </button>
-        <button class="ribbon-btn engines-sort-asc" aria-label="Sort A→Z" title="Sort A→Z">
+        <button class="ribbon-btn engines-sort-asc" aria-label="Sort A-Z" title="Sort A-Z">
           <wa-icon name="arrow-down-a-z"></wa-icon>
         </button>
-        <button class="ribbon-btn engines-sort-desc" aria-label="Sort Z→A" title="Sort Z→A">
+        <button class="ribbon-btn engines-sort-desc" aria-label="Sort Z-A" title="Sort Z-A">
           <wa-icon name="arrow-down-z-a"></wa-icon>
         </button>
         <span class="ribbon-sep" aria-hidden="true"></span>
@@ -35,12 +74,15 @@ export function mountEngines({ container, api }) {
           <wa-icon name="trash"></wa-icon>
         </button>
       </div>
+      `}
 
       <div class="engines-body-main">
         <div class="engines-body-content">
+          ${!minimal ? `
           <div class="engines-search-wrap">
-            <wa-input class="engines-search" size="small" placeholder="Search engines…" clearable autocomplete="off"></wa-input>
+            <wa-input class="engines-search" size="small" placeholder="Search engines..." clearable autocomplete="off"></wa-input>
           </div>
+          ` : ""}
 
           <div class="engines-table-wrap">
             <div class="engines-empty hidden">
@@ -64,6 +106,11 @@ export function mountEngines({ container, api }) {
           </div>
         </div>
       </div>
+      ${minimal ? `
+      <div class="engines-search-wrap engines-search-wrap--inline">
+        <wa-input class="engines-search" size="small" placeholder="Search engines..." clearable autocomplete="off"></wa-input>
+      </div>
+      ` : ""}
     </div>
   `;
 
@@ -71,18 +118,12 @@ export function mountEngines({ container, api }) {
   const detailRemoveBtn = container.querySelector(".engines-detail-remove");
   const detailOptionsBtn = container.querySelector(".engines-detail-options");
   const addBtn = container.querySelector(".engines-add");
-  const sortAscBtn = container.querySelector(".engines-sort-asc");
-  const sortDescBtn = container.querySelector(".engines-sort-desc");
-  const searchBtn = container.querySelector(".engines-search-btn");
-  const searchWrap = container.querySelector(".engines-search-wrap");
-  const searchInput = container.querySelector(".engines-search");
   const list = container.querySelector(".engines-list");
   const emptyEl = container.querySelector(".engines-empty");
   const emptyMsg = emptyEl.querySelector(".empty-message");
 
   const SORT_KEY_LS = "sturddle.engines.sortOrder";
   let engines = [];
-
   const inflightEngineChecks = new Map();
 
   function getEngineFresh(id) {
@@ -91,6 +132,7 @@ export function mountEngines({ container, api }) {
     inflightEngineChecks.set(id, p);
     return p;
   }
+
   let selectedDetailId = null;
   let activeId = null;
   let filterText = "";
@@ -170,6 +212,7 @@ export function mountEngines({ container, api }) {
       const nameText = document.createElement("span");
       nameText.className = "engines-list-name-text";
       nameText.textContent = e.name;
+      nameTd.title = e.name;
       nameTd.appendChild(nameText);
 
       const activeTd = document.createElement("td");
@@ -184,6 +227,7 @@ export function mountEngines({ container, api }) {
       const pathTd = document.createElement("td");
       pathTd.className = "engines-list-path";
       pathTd.textContent = e.path || "";
+      if (e.path) pathTd.title = e.path;
 
       tr.appendChild(nameTd);
       tr.appendChild(activeTd);
@@ -209,49 +253,9 @@ export function mountEngines({ container, api }) {
     detailUseBtn.disabled = !has || (e && e.id === activeId);
   }
 
-  searchInput.addEventListener("input", () => {
-    filterText = searchInput.value || "";
-    searchBtn.classList.toggle("is-active", !!filterText);
-    renderList();
-  });
-
-  function closeSearch() {
-    searchWrap.classList.remove("open");
-    searchBtn.classList.remove("is-active");
-    searchInput.value = "";
-    filterText = "";
-    renderList();
-    document.removeEventListener("pointerdown", onOutsideClick);
-    document.removeEventListener("keydown", onSearchKey);
-  }
-
-  function onOutsideClick(e) {
-    if (!searchWrap.contains(e.target) && !searchBtn.contains(e.target)) closeSearch();
-  }
-
-  function onSearchKey(e) {
-    if (e.key === "Escape") { closeSearch(); e.preventDefault(); }
-  }
-
-  searchBtn.addEventListener("click", () => {
-    const opening = !searchWrap.classList.contains("open");
-    if (opening) {
-      const btnRect = searchBtn.getBoundingClientRect();
-      const ribbonRect = searchBtn.closest(".engines-ribbon").getBoundingClientRect();
-      searchWrap.style.left = ribbonRect.right + "px";
-      searchWrap.style.top = (btnRect.top + btnRect.height / 2) + "px";
-      searchWrap.style.transform = "translateY(-50%)";
-      searchWrap.offsetWidth; // force reflow so position is committed before transition starts
-      searchWrap.classList.add("open");
-      searchBtn.classList.add("is-active");
-      searchInput.focus();
-      document.addEventListener("pointerdown", onOutsideClick);
-      document.addEventListener("keydown", onSearchKey);
-    } else {
-      closeSearch();
-    }
-  });
-
+  // Sort -- wired in both modes (both ribbons have the sort buttons).
+  const sortAscBtn = container.querySelector(".engines-sort-asc");
+  const sortDescBtn = container.querySelector(".engines-sort-desc");
   function syncSortButtons() {
     sortAscBtn.classList.toggle("is-active", sortOrder === "asc");
     sortDescBtn.classList.toggle("is-active", sortOrder === "desc");
@@ -265,6 +269,96 @@ export function mountEngines({ container, api }) {
   sortAscBtn.addEventListener("click", () => setSort("asc"));
   sortDescBtn.addEventListener("click", () => setSort("desc"));
   syncSortButtons();
+
+  // Holds the sizeWrap function reference in minimal mode so the search
+  // open/close handlers can trigger a re-measure (the inline search bar
+  // changes the height available to the list).
+  let sizeWrapRef = null;
+
+  // Search -- wired in both modes. Open animation differs: roster uses
+  // a floating slide-out anchored to the vertical ribbon; settings tab
+  // uses an inline drop-down below the horizontal ribbon.
+  {
+    const searchBtn = container.querySelector(".engines-search-btn");
+    const searchWrap = container.querySelector(".engines-search-wrap");
+    const searchInput = container.querySelector(".engines-search");
+
+    searchInput.addEventListener("input", () => {
+      filterText = searchInput.value || "";
+      searchBtn.classList.toggle("is-active", !!filterText);
+      renderList();
+    });
+
+    // Reserved height for the inline search bar; matches the CSS .open
+    // max-height. We pre-shrink/grow the list wrap by this amount before
+    // toggling the .open class so the body never overflows mid-animation
+    // (a scrollbar would flash and we'd get jitter).
+    const INLINE_SEARCH_RESERVED_PX = 48;
+
+    // Re-run sizeWrap once the search-wrap max-height transition ends
+    // OR is canceled (rapid toggles cancel the previous transition
+    // without firing transitionend). Filtered on max-height so the
+    // sibling padding/opacity transitions don't trigger duplicate work.
+    if (minimal) {
+      const onMaxHeightSettled = (ev) => {
+        if (ev.propertyName !== "max-height") return;
+        if (sizeWrapRef) sizeWrapRef();
+      };
+      searchWrap.addEventListener("transitionend", onMaxHeightSettled);
+      searchWrap.addEventListener("transitioncancel", onMaxHeightSettled);
+    }
+
+    function closeSearch() {
+      searchWrap.classList.remove("open");
+      searchBtn.classList.remove("is-active");
+      searchInput.value = "";
+      filterText = "";
+      renderList();
+      document.removeEventListener("pointerdown", onOutsideClick);
+      document.removeEventListener("keydown", onSearchKey);
+      // The wrap will grow back when the search-wrap's max-height
+      // transitionend fires (handler above).
+    }
+
+    function onOutsideClick(e) {
+      if (!searchWrap.contains(e.target) && !searchBtn.contains(e.target)) closeSearch();
+    }
+
+    function onSearchKey(e) {
+      if (e.key === "Escape") { closeSearch(); e.preventDefault(); }
+    }
+
+    searchBtn.addEventListener("click", () => {
+      const opening = !searchWrap.classList.contains("open");
+      if (opening) {
+        if (!minimal) {
+          const btnRect = searchBtn.getBoundingClientRect();
+          const ribbonRect = searchBtn.closest(".engines-ribbon").getBoundingClientRect();
+          searchWrap.style.left = ribbonRect.right + "px";
+          searchWrap.style.top = (btnRect.top + btnRect.height / 2) + "px";
+          searchWrap.style.transform = "translateY(-50%)";
+          searchWrap.offsetWidth;
+        }
+        // Pre-shrink the wrap by the search bar's reserved height BEFORE
+        // adding .open. The body stays under its max-height for the whole
+        // open animation, so no scrollbar flash.
+        if (minimal && sizeWrapRef) {
+          const w = container.querySelector(".engines-table-wrap");
+          const cur = parseFloat(w.style.height) || w.offsetHeight;
+          w.style.height = Math.max(120, cur - INLINE_SEARCH_RESERVED_PX) + "px";
+        }
+        searchWrap.classList.add("open");
+        searchBtn.classList.add("is-active");
+        searchInput.focus();
+        document.addEventListener("pointerdown", onOutsideClick);
+        document.addEventListener("keydown", onSearchKey);
+        // sub-pixel correction runs via the transitionend handler above.
+      } else {
+        closeSearch();
+      }
+    });
+
+  }
 
   async function activateSelected() {
     if (!selectedDetailId) return;
@@ -314,10 +408,8 @@ export function mountEngines({ container, api }) {
     try { engine = await getEngineFresh(selectedDetailId); } catch (err) { reportError(null, "edit", err); return; }
     const locked = engine.locked?.length ? engine.locked.map((t) => `${t.name} (${t.status})`).join(", ") : null;
     if (locked) { toast(`Cannot edit ${engine.name}: in use by ${locked}`, { variant: "warning" }); return; }
-    // If we have no cached UCI options, try one auto re-probe before
-    // opening — heals the case where the original add-time probe failed
-    // (e.g. transient spawn error) so the user doesn't see an empty dialog
-    // and have to click Refresh themselves.
+    // Auto re-probe on first open if UCI options are empty -- heals transient
+    // spawn errors from add-time so the user doesn't see an empty dialog.
     let probeError = null;
     if (engine && !Object.keys(engine.option_schema || {}).length) {
       try {
@@ -328,7 +420,7 @@ export function mountEngines({ container, api }) {
     }
     while (engine) {
       const result = await showEngineOptionsDialog({ engine, api, probeError });
-      if (result === null) break; // dismissed without saving
+      if (result === null) break;
       if (result?.__refresh || result?.__reopen) {
         engine = result.engine;
         probeError = null;
@@ -350,8 +442,6 @@ export function mountEngines({ container, api }) {
     try {
       const created = await api("POST", "/engines", { path });
       if (created.probe_error) {
-        // Engine row was created but the UCI probe failed — warn so the
-        // user knows why the per-engine options dialog will be empty.
         toast(
           `Added ${created.name}, but UCI probe failed: ${created.probe_error}`,
           { variant: "warning" },
@@ -366,82 +456,168 @@ export function mountEngines({ container, api }) {
     }
   });
 
-  // Column resize (same pattern as dashboard)
-  const COL_PCTS_KEY = "sturddle.engines.colPcts3";
-  const colEls = Array.from(container.querySelectorAll(".engines-table col"));
-  const DEFAULT_PCTS = [20, 8, 72];
-  let colPcts = DEFAULT_PCTS.slice();
+  // Column resize.
+  {
+    const colEls = Array.from(container.querySelectorAll(".engines-table col"));
+    let colPcts = DEFAULT_PCTS.slice();
 
-  function applyColPcts() {
-    colEls.forEach((c, i) => { c.style.width = colPcts[i] + "%"; });
-  }
-  try {
-    const saved = JSON.parse(localStorage.getItem(COL_PCTS_KEY));
-    if (Array.isArray(saved) && saved.length === 3) colPcts = saved;
-  } catch (e) { /* use defaults */ }
-  applyColPcts();
+    function applyColPcts() {
+      colEls.forEach((c, i) => { c.style.width = colPcts[i] + "%"; });
+    }
+    try {
+      const saved = JSON.parse(localStorage.getItem(colPctsKey));
+      if (Array.isArray(saved) && saved.length === 3) colPcts = saved;
+    } catch (e) { /* use defaults */ }
+    applyColPcts();
 
-  const wrapEl = container.querySelector(".engines-table-wrap");
-  const tableEl = container.querySelector(".engines-table");
-  const minPct = 5;
+    const wrapEl = container.querySelector(".engines-table-wrap");
+    const tableEl = container.querySelector(".engines-table");
+    const minPct = 5;
 
-  container.querySelectorAll(".engines-table .th-grip").forEach((grip, gripIdx) => {
-    grip.addEventListener("pointerdown", (eDown) => {
-      if (eDown.button !== 0) return;
-      eDown.preventDefault();
-      grip.setPointerCapture(eDown.pointerId);
-      grip.classList.add("dragging");
-      const startX = eDown.clientX;
-      const startA = colPcts[gripIdx], startB = colPcts[gripIdx + 1];
-      const tableW = tableEl.getBoundingClientRect().width || 1;
+    container.querySelectorAll(".engines-table .th-grip").forEach((grip, gripIdx) => {
+      grip.addEventListener("pointerdown", (eDown) => {
+        if (eDown.button !== 0) return;
+        eDown.preventDefault();
+        grip.setPointerCapture(eDown.pointerId);
+        grip.classList.add("dragging");
+        const startX = eDown.clientX;
+        const startA = colPcts[gripIdx], startB = colPcts[gripIdx + 1];
+        const tableW = tableEl.getBoundingClientRect().width || 1;
 
-      const rightLine = document.createElement("div");
-      const leftLine = document.createElement("div");
-      rightLine.className = leftLine.className = "col-drag-line";
-      rightLine.style.top = leftLine.style.top = "0";
-      wrapEl.appendChild(rightLine);
-      wrapEl.appendChild(leftLine);
+        const rightLine = document.createElement("div");
+        const leftLine = document.createElement("div");
+        rightLine.className = leftLine.className = "col-drag-line";
+        rightLine.style.top = leftLine.style.top = "0";
+        wrapEl.appendChild(rightLine);
+        wrapEl.appendChild(leftLine);
 
-      function placeLines(clientX) {
-        const wrapLeft = wrapEl.getBoundingClientRect().left;
-        const thLeft = tableEl.querySelectorAll("thead th")[gripIdx].getBoundingClientRect().left;
-        rightLine.style.left = (clientX - wrapLeft) + "px";
-        rightLine.style.height = leftLine.style.height = wrapEl.scrollHeight + "px";
-        leftLine.style.left = (thLeft - wrapLeft) + "px";
-      }
-      placeLines(eDown.clientX);
+        function placeLines(clientX) {
+          const wrapLeft = wrapEl.getBoundingClientRect().left;
+          const thLeft = tableEl.querySelectorAll("thead th")[gripIdx].getBoundingClientRect().left;
+          rightLine.style.left = (clientX - wrapLeft) + "px";
+          rightLine.style.height = leftLine.style.height = wrapEl.scrollHeight + "px";
+          leftLine.style.left = (thLeft - wrapLeft) + "px";
+        }
+        placeLines(eDown.clientX);
 
-      function onMove(e) {
-        const dPct = ((e.clientX - startX) / tableW) * 100;
-        let a = startA + dPct, b = startB - dPct;
-        if (a < minPct) { b -= minPct - a; a = minPct; }
-        if (b < minPct) { a -= minPct - b; b = minPct; }
-        colPcts[gripIdx] = a; colPcts[gripIdx + 1] = b;
-        applyColPcts();
-        placeLines(e.clientX);
-      }
-      let done = false;
-      function onUp() {
-        if (done) return;
-        done = true;
-        grip.classList.remove("dragging");
-        rightLine.remove();
-        leftLine.remove();
-        localStorage.setItem(COL_PCTS_KEY, JSON.stringify(colPcts));
-        grip.removeEventListener("pointermove", onMove);
-        grip.removeEventListener("pointerup", onUp);
-        grip.removeEventListener("pointercancel", onUp);
-        document.removeEventListener("pointerup", onUp);
-        document.removeEventListener("pointercancel", onUp);
-      }
-      grip.addEventListener("pointermove", onMove);
-      grip.addEventListener("pointerup", onUp);
-      grip.addEventListener("pointercancel", onUp);
-      document.addEventListener("pointerup", onUp);
-      document.addEventListener("pointercancel", onUp);
+        function onMove(e) {
+          const dPct = ((e.clientX - startX) / tableW) * 100;
+          let a = startA + dPct, b = startB - dPct;
+          if (a < minPct) { b -= minPct - a; a = minPct; }
+          if (b < minPct) { a -= minPct - b; b = minPct; }
+          colPcts[gripIdx] = a; colPcts[gripIdx + 1] = b;
+          applyColPcts();
+          placeLines(e.clientX);
+        }
+        let done = false;
+        function onUp() {
+          if (done) return;
+          done = true;
+          grip.classList.remove("dragging");
+          rightLine.remove();
+          leftLine.remove();
+          localStorage.setItem(colPctsKey, JSON.stringify(colPcts));
+          grip.removeEventListener("pointermove", onMove);
+          grip.removeEventListener("pointerup", onUp);
+          grip.removeEventListener("pointercancel", onUp);
+          document.removeEventListener("pointerup", onUp);
+          document.removeEventListener("pointercancel", onUp);
+        }
+        grip.addEventListener("pointermove", onMove);
+        grip.addEventListener("pointerup", onUp);
+        grip.addEventListener("pointercancel", onUp);
+        document.addEventListener("pointerup", onUp);
+        document.addEventListener("pointercancel", onUp);
+      });
     });
-  });
+  }
+
+  // Minimal mode: size the table-wrap explicitly so the LIST scrolls
+  // internally instead of the dialog body. We measure the actual rendered
+  // tab-panel content area (top of ribbon to bottom of dialog body) and
+  // subtract the ribbon to get the available wrap height.
+  if (minimal) {
+    const wrapEl = container.querySelector(".engines-table-wrap");
+    // Top anchor for the list: top of .engines-body-main. The wrap is
+    // sized as (dialog-body-bottom - topAnchor) minus a safety margin.
+    // The empirical second-pass overflow correction below handles any
+    // mismatch (e.g. when the inline search bar pushes the layout).
+    const bodyMainEl = container.querySelector(".engines-body-main");
+    function sizeWrap() {
+      const dialog = container.closest("wa-dialog");
+      const body = dialog?.shadowRoot?.querySelector('[part~="body"]');
+      const topAnchor = bodyMainEl.getBoundingClientRect().top;
+      const bottom = body
+        ? body.getBoundingClientRect().bottom
+        : window.innerHeight - 8;
+      let h = Math.max(120, Math.floor(bottom - topAnchor - 8));
+      wrapEl.style.height = h + "px";
+      if (body) {
+        const overflow = body.scrollHeight - body.clientHeight;
+        if (overflow > 0) {
+          h = Math.max(120, h - overflow);
+          wrapEl.style.height = h + "px";
+        }
+      }
+    }
+    sizeWrap();
+    requestAnimationFrame(sizeWrap);
+    sizeWrapRef = sizeWrap;
+
+    // Coalesce rapid resize bursts (e.g. window drag fires per pixel)
+    // into one measurement per animation frame. sizeWrap reads layout,
+    // so unbatched it would force a sync reflow on every pixel.
+    let resizeRaf = 0;
+    function scheduleSizeWrap() {
+      if (resizeRaf) return;
+      resizeRaf = requestAnimationFrame(() => {
+        resizeRaf = 0;
+        sizeWrap();
+      });
+    }
+
+    const dialog = container.closest("wa-dialog");
+    const tabGroup = container.closest("wa-tab-group");
+    const ro = (typeof ResizeObserver !== "undefined" && dialog)
+      ? new ResizeObserver(scheduleSizeWrap) : null;
+    if (ro) {
+      ro.observe(dialog);
+      // Also observe bodyMain so future panel content changes (added
+      // rows, font-size shifts) trigger a re-measure automatically.
+      // sizeWrap only mutates a child (engines-table-wrap), so observing
+      // bodyMainEl can't cause a feedback loop.
+      ro.observe(bodyMainEl);
+    }
+
+    // Re-measure when switching back to the engines tab: other tabs are
+    // content-sized so the body's scrollHeight may have changed.
+    const onTabShow = (ev) => {
+      if (ev.detail?.name === container.closest("wa-tab-panel")?.name) {
+        scheduleSizeWrap();
+      }
+    };
+    if (tabGroup) tabGroup.addEventListener("wa-tab-show", onTabShow);
+
+    window.addEventListener("resize", scheduleSizeWrap);
+
+    // Cleanup on dialog close so listeners and observers don't leak across
+    // repeated open/close cycles.
+    if (dialog) {
+      dialog.addEventListener("wa-after-hide", function cleanup(ev) {
+        if (ev.target !== dialog) return;
+        if (resizeRaf) cancelAnimationFrame(resizeRaf);
+        window.removeEventListener("resize", scheduleSizeWrap);
+        if (tabGroup) tabGroup.removeEventListener("wa-tab-show", onTabShow);
+        if (ro) ro.disconnect();
+        dialog.removeEventListener("wa-after-hide", cleanup);
+      });
+    }
+  }
 
   refresh();
   return { refresh };
+}
+
+export function mountEngines({ container, api }) {
+  return mountEngineList(container, api, { minimal: false });
 }

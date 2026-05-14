@@ -1537,6 +1537,76 @@ wa-dialog::part(body) {
 }
 .engines-empty .empty-message { pointer-events: auto; }
 .engines-empty.hidden { display: none; }
+
+/* Settings dialog Engines tab -- horizontal ribbon + full-width scrollable list.
+   The engines panel sizes itself via JS (mountEngineList sets an explicit
+   pixel height on .engines-table-wrap that fits the available dialog body
+   space). That keeps the dialog body chain untouched -- no overflow hacks,
+   no height inheritance through wa-tab-panel slot wrappers. */
+.settings-engines-panel { padding: 0 !important; }
+/* override the .settings-tabs ::part(base) 6px vertical padding and the
+   > * 480px max-width for this panel only */
+wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel::part(base) {
+  padding: 0;
+}
+wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
+  max-width: none;
+}
+.engines-list-host--minimal .engines-body-main { padding: 0; }
+.engines-list-host--minimal .engines-body-content { gap: 0; }
+.engines-list-host--minimal .engines-table-wrap {
+  border-radius: 0; border-left: none; border-right: none; border-bottom: none;
+  /* height is set by JS at mount time + on resize */
+}
+.engines-list-host--minimal .engines-list-item td:last-child { border-radius: 0; }
+
+/* Inline search bar: drops down below the horizontal ribbon. Overrides
+   the floating fixed-position search used in the roster page. Animates
+   max-height + opacity for a smooth open/close. */
+.engines-search-wrap--inline {
+  position: static; z-index: auto;
+  display: block; width: 100% !important;
+  max-height: 0; padding: 0 10px;
+  opacity: 0; visibility: hidden;
+  pointer-events: none;
+  background: #1e2026;
+  border: 0; border-top: 1px solid var(--wa-color-border-loud, #353841);
+  border-radius: 0;
+  overflow: hidden; box-sizing: border-box;
+  transition: max-height 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+              padding 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+              opacity 0.2s ease-out,
+              visibility 0s 0.25s;
+}
+.engines-search-wrap--inline.open {
+  max-height: 48px; padding: 6px 10px;
+  opacity: 1; visibility: visible;
+  pointer-events: auto;
+  transition: max-height 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+              padding 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+              opacity 0.2s ease-out,
+              visibility 0s;
+}
+/* Undo the responsive "hide search" rule for inline mode. */
+@media (max-width: 800px), (max-height: 600px) {
+  .engines-list-host--minimal .engines-search-btn { display: inline-flex !important; }
+  .engines-search-wrap--inline { display: block !important; position: static !important; }
+}
+.engines-ribbon--horizontal {
+  position: static; transform: none;
+  flex-direction: row; justify-content: flex-start;
+  border-right: 0; border-bottom: 1px solid var(--wa-color-border-loud, #353841);
+  padding: 4px 6px;
+}
+.engines-ribbon--horizontal .ribbon-sep {
+  width: 1px; height: 18px;
+  margin: 0 4px;
+}
+.engines-ribbon--horizontal .ribbon-btn::before {
+  left: 6px; right: 6px; top: auto; bottom: 0;
+  width: auto; height: 2px;
+}
+
 .settings-deeplink {
   color: inherit; text-decoration: underline; cursor: pointer;
 }
