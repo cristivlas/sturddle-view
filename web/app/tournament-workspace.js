@@ -13,7 +13,7 @@
 //   Periodic GET while running         -> reconcile standings.
 
 import {
-  closeAllLiveGames, closeStaleLiveGames, getLiveWindows,
+  closeAllLiveGames, getLiveWindows,
   isLiveWindowOpen, openLiveGameWindow,
   LIVE_MIN_WIDTH, LIVE_MIN_HEIGHT, DEBUG_WATCH,
 } from "./tournament-live-game.js";
@@ -859,13 +859,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       refresh();
     }
 
-    // Tournament terminal state: close all live windows (result is
-    // always UNKNOWN, nothing to review post-game).
     if (
       evt.kind === EVT.STATUS &&
-      [STATUS.STOPPED, STATUS.DONE, STATUS.FAILED].includes(evt.payload?.status)
+      [STATUS.STOPPED, STATUS.FAILED].includes(evt.payload?.status)
     ) {
-      closeStaleLiveGames();
+      closeAllLiveGames();
     }
     // Tournament started: auto-open Live Games so the user sees
     // pairings as they form. Skip if restoring a saved desktop state --
@@ -1052,7 +1050,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         windows[k] = null;
       }
     }
-    closeStaleLiveGames();
+    closeAllLiveGames();
     tearDown();
   }
 

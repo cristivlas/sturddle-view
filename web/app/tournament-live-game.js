@@ -594,11 +594,3 @@ export function closeAllLiveGames() {
   liveWindows.clear();
 }
 
-// Close all live windows on terminal/switch. Result/termination is
-// always UNKNOWN today, so there's nothing to review post-game.
-export function closeStaleLiveGames() {
-  for (const [key, wb] of [...liveWindows.entries()]) {
-    try { wb.close(true); } catch { /* */ }
-    liveWindows.delete(key);
-  }
-}
