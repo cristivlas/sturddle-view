@@ -6,6 +6,7 @@
 // grid (.play-dock-left). Dock state is persisted in localStorage.
 
 import { toast } from "./dialogs.js";
+import { makeSplitter } from "./splitter.js";
 
 const UCI_LOG_MAX_LINES = 1000;
 // Once the buffer overflows, trim this many lines in one go instead of
@@ -17,6 +18,9 @@ const WIN_MARGIN = 8; // gap between window edge and WinBox
 // Set by play.js on perspective mount/unmount.
 let dockEl = null;
 let dockResizeObs = null;
+let dockGrip = null;
+
+const DOCK_SPLIT_KEY = "sturddle:play:dockSplit";
 
 function isMobileLayout() {
   return window.innerWidth <= 800 || window.innerHeight <= 700;
@@ -105,8 +109,30 @@ function setOpen(key, val) {
 
 function syncDockVisibility() {
   if (!dockEl) return;
-  const hasSlots = dockEl.querySelector(".dock-slot") !== null;
-  dockEl.classList.toggle("dock-empty", !hasSlots);
+  const slots = dockEl.querySelectorAll(".dock-slot");
+  dockEl.classList.toggle("dock-empty", slots.length === 0);
+  const bothDocked = slots.length === 2;
+  dockEl.classList.toggle("dock-single", !bothDocked);
+  if (bothDocked && !dockGrip) {
+    dockGrip = document.createElement("div");
+    dockGrip.className = "dock-grip";
+    // Insert between the two slots (after first, before second).
+    const [first, second] = slots;
+    dockEl.insertBefore(dockGrip, second);
+    makeSplitter({
+      handle: dockGrip,
+      container: dockEl,
+      orientation: "vertical",
+      cssVar: "--dock-split-ratio",
+      storageKey: DOCK_SPLIT_KEY,
+      defaultRatio: 0.5,
+      minBeforePx: 120,
+      minAfterPx: 120,
+    });
+  } else if (!bothDocked && dockGrip) {
+    dockGrip.remove();
+    dockGrip = null;
+  }
 }
 
 function makeDockSlot(title, bodyEl, onUndock) {
@@ -141,14 +167,18 @@ function addDockButton(wb, onDock) {
 const instances = [];
 
 function createDockableWindow(config) {
-  const { title, className, geoKey, dockedKey, openKey, defaultW, defaultH, defaultY, build, dockOrder } = config;
+  const { title, className, geoKey, winStateKey, dockedKey, openKey, defaultW, defaultH, defaultY, build, dockOrder } = config;
 
   let wb = null;
   let slot = null;
   let body = null;
   let off = null;
   let saved = null;
-  let docking = false; // set while transitioning float -> dock; onclose checks it
+  let docking = false;  // float -> dock transition; onclose skips destroy
+  let navAway = false;  // nav detach; onclose skips destroy
+
+  function loadWinState() { return localStorage.getItem(winStateKey); }
+  function saveWinState(v) { if (v) localStorage.setItem(winStateKey, v); else localStorage.removeItem(winStateKey); }
 
   function setOff(fn) { off = fn; }
 
@@ -200,14 +230,20 @@ function createDockableWindow(config) {
       onclose() {
         if (wb) saveGeo(geoKey, wb);
         wb = null;
-        if (docking) return; // body lives on in the dock slot
+        if (docking || navAway) return; // body lives on
         if (off) { off(); off = null; }
         body = null;
       },
-      onmove()   { saveGeo(geoKey, wb); },
-      onresize() { saveGeo(geoKey, wb); },
+      onminimize() { saveWinState("min"); },
+      onmaximize() { saveWinState("max"); },
+      onrestore()  { saveWinState(null); },
+      onmove()     { saveGeo(geoKey, wb); },
+      onresize()   { saveGeo(geoKey, wb); },
     });
     addDockButton(wb, dock);
+    const ws = loadWinState();
+    if (ws === "min") wb.minimize();
+    else if (ws === "max") wb.maximize();
   }
 
   function teardownSlot() {
@@ -217,6 +253,13 @@ function createDockableWindow(config) {
     slot = null;
     if (off) { off(); off = null; }
     body = null;
+  }
+
+  function detachSlotForNav() {
+    if (!slot) return;
+    detachBody(slot, body);
+    slot.remove();
+    slot = null;
   }
 
   function close() {
@@ -229,7 +272,7 @@ function createDockableWindow(config) {
   function toggle(events) {
     if (wb || slot) { close(); return; }
     setOpen(openKey, true);
-    body = build(events, { setOff });
+    if (!body) body = build(events, { setOff });
     if (isDocked(dockedKey) && dockEl) {
       dock();
     } else {
@@ -238,13 +281,13 @@ function createDockableWindow(config) {
   }
 
   function closeForNav() {
-    if (wb) { saved = wbGeometry(wb); wb.close(); }
-    teardownSlot();
+    if (wb) { saved = wbGeometry(wb); navAway = true; wb.close(); navAway = false; }
+    detachSlotForNav();
   }
 
   function restore(events) {
     if (wb || slot) return; // already open from a prior call
-    if (saved || isOpen(openKey)) toggle(events);
+    if (body || saved || isOpen(openKey)) toggle(events);
   }
 
   const inst = {
@@ -261,7 +304,10 @@ export function setDockContainer(el) {
   if (dockResizeObs) { dockResizeObs.disconnect(); dockResizeObs = null; }
   window.removeEventListener("resize", updateDockBounds);
   // Defensive: tear down any leftover slots when detaching.
-  if (!el) instances.forEach(i => i.teardownSlot());
+  if (!el) {
+    instances.forEach(i => i.teardownSlot());
+    dockGrip = null;
+  }
   dockEl = el;
   if (el) {
     const board = document.querySelector(".play-board-host");
@@ -277,9 +323,10 @@ export function setDockContainer(el) {
 
 // -- UCI log body ------------------------------------------------------------
 
-const UCI_GEO_KEY    = "sturddle.ucilog.geo";
-const UCI_DOCKED_KEY = "sturddle.ucilog.docked";
-const UCI_OPEN_KEY   = "sturddle.ucilog.open";
+const UCI_GEO_KEY       = "sturddle.ucilog.geo";
+const UCI_WIN_STATE_KEY = "sturddle.ucilog.winstate";
+const UCI_DOCKED_KEY    = "sturddle.ucilog.docked";
+const UCI_OPEN_KEY      = "sturddle.ucilog.open";
 
 function buildUciLogBody(events, { setOff }) {
   const body = document.createElement("div");
@@ -343,6 +390,7 @@ const uciLog = createDockableWindow({
   title: "UCI Log",
   className: "sturddle-wb-uci-log",
   geoKey: UCI_GEO_KEY,
+  winStateKey: UCI_WIN_STATE_KEY,
   dockedKey: UCI_DOCKED_KEY,
   openKey: UCI_OPEN_KEY,
   defaultW: () => rightColumnWidth(480),
@@ -358,9 +406,10 @@ const uciLog = createDockableWindow({
 
 // -- Search Lines body -------------------------------------------------------
 
-const PV_GEO_KEY     = "sturddle.pvtable.geo";
-const PV_DOCKED_KEY  = "sturddle.pvtable.docked";
-const PV_OPEN_KEY    = "sturddle.pvtable.open";
+const PV_GEO_KEY       = "sturddle.pvtable.geo";
+const PV_WIN_STATE_KEY = "sturddle.pvtable.winstate";
+const PV_DOCKED_KEY    = "sturddle.pvtable.docked";
+const PV_OPEN_KEY      = "sturddle.pvtable.open";
 
 function fmtScore(score) {
   if (!score) return "";
@@ -531,6 +580,7 @@ const pvTable = createDockableWindow({
   title: "Search Lines",
   className: "sturddle-wb-pvtable",
   geoKey: PV_GEO_KEY,
+  winStateKey: PV_WIN_STATE_KEY,
   dockedKey: PV_DOCKED_KEY,
   openKey: PV_OPEN_KEY,
   defaultW: () => rightColumnWidth(560),

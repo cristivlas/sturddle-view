@@ -408,24 +408,38 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   position: fixed;
   left: calc(var(--ribbon-w) + 1px);
   /* top, bottom, width set dynamically in JS to align with clock rows and board */
-  display: flex;
-  flex-direction: column;
+  --dock-split-size: 5px;
+  --dock-split-ratio: 0.5;
+  display: grid;
+  grid-template-rows:
+    calc(var(--dock-split-ratio) * 100% - var(--dock-split-size) / 2)
+    var(--dock-split-size)
+    calc((1 - var(--dock-split-ratio)) * 100% - var(--dock-split-size) / 2);
   overflow: hidden;
   z-index: 9; /* below ribbon (z-index:10) */
 }
 .play-dock-left.dock-empty { visibility: hidden; }
 .play-dock-left:not(.dock-empty) { border: 1px solid #454952; }
+/* When only one slot is docked the grip row is absent; collapse to single row. */
+.play-dock-left.dock-single {
+  display: flex;
+  flex-direction: column;
+}
 .dock-slot {
   display: flex;
   flex-direction: column;
-  flex: 1 1 0;
+  flex: 1 1 0; /* fills container in single-slot (flex) mode */
   min-height: 0;
   border: 1px solid #2e3138;
   background: var(--panel);
 }
-.dock-slot + .dock-slot {
-  border-top: none;
+.play-dock-left:not(.dock-single) .dock-slot { overflow: hidden; }
+.dock-grip {
+  cursor: row-resize;
+  background: transparent;
+  z-index: 1;
 }
+.dock-grip:hover, .dock-grip.dragging { background: var(--nav-btn-bg-active); }
 .dock-slot-header {
   display: flex;
   align-items: center;

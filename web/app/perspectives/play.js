@@ -713,8 +713,8 @@ export const playPerspective = {
 
     return {
       unmount() {
-        setDockContainer(null);
         closeDebugWindows();
+        setDockContainer(null);
         dismissAnalysisToast?.();
         dismissAnalysisToast = null;
         pausedBadge?.classList.add("hidden");
