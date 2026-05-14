@@ -112,7 +112,7 @@ export const playPerspective = {
             <button id="uci-log-btn" class="ribbon-btn desktop-only" aria-label="UCI log" title="UCI log">
               <wa-icon name="terminal"></wa-icon>
             </button>
-            <button id="pv-table-btn" class="ribbon-btn desktop-only" aria-label="PV table" title="PV table">
+            <button id="pv-table-btn" class="ribbon-btn desktop-only" aria-label="Search Lines" title="Search Lines">
               <wa-icon name="table-list"></wa-icon>
             </button>
           </div>

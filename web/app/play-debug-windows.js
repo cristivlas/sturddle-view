@@ -1,6 +1,6 @@
 // Debug windows for play mode (desktop only).
 // 1. UCI log: raw lines flowing between python-chess and the engine.
-// 2. PV table: per-iteration principal variation, cutechess-style.
+// 2. Search Lines: per-iteration principal variation, cutechess-style.
 
 import { toast } from "./dialogs.js";
 import { flashWindow } from "./wb-utils.js";
@@ -37,8 +37,20 @@ function winboxBase(title, className, width, height, x, y) {
 
 // -- saved geometry for navigation-away restore ------------------------------
 
+const UCI_GEO_KEY = "sturddle.ucilog.geo";
+const PV_GEO_KEY  = "sturddle.pvtable.geo";
+
 function wbGeometry(wb) {
   return { x: wb.x, y: wb.y, width: wb.width, height: wb.height };
+}
+
+function loadGeo(key) {
+  try { return JSON.parse(localStorage.getItem(key)) || null; } catch { return null; }
+}
+
+function saveGeo(key, wb) {
+  if (!wb) return;
+  localStorage.setItem(key, JSON.stringify(wbGeometry(wb)));
 }
 
 let uciLogSaved = null;
@@ -109,10 +121,11 @@ export function openUciLogWindow(events) {
     if (pinned) scroller.scrollTop = scroller.scrollHeight;
   });
 
-  const uciH = uciLogSaved?.height ?? 320;
-  const uciW = uciLogSaved?.width ?? rightColumnWidth(480);
-  const uciX = uciLogSaved?.x ?? "right";
-  const uciY = uciLogSaved?.y ?? (() => {
+  const uciGeo = uciLogSaved ?? loadGeo(UCI_GEO_KEY);
+  const uciH = uciGeo?.height ?? 320;
+  const uciW = uciGeo?.width ?? rightColumnWidth(480);
+  const uciX = uciGeo?.x ?? "right";
+  const uciY = uciGeo?.y ?? (() => {
     const clockBottom = document.querySelector(".clock-row.clock-bottom");
     const clockTop = clockBottom ? Math.round(clockBottom.getBoundingClientRect().top) : window.innerHeight;
     return clockTop - uciH - WIN_MARGIN;
@@ -121,11 +134,13 @@ export function openUciLogWindow(events) {
   uciLogWb = new WinBox({
     ...winboxBase("UCI Log", "sturddle-wb-uci-log", uciW, uciH, uciX, uciY),
     mount: body,
-    onclose() { offEvent(); uciLogWb = null; },
+    onclose() { offEvent(); saveGeo(UCI_GEO_KEY, uciLogWb); uciLogWb = null; },
+    onmove()   { saveGeo(UCI_GEO_KEY, uciLogWb); },
+    onresize() { saveGeo(UCI_GEO_KEY, uciLogWb); },
   });
 }
 
-// -- PV table window ---------------------------------------------------------
+// -- Search Lines window -----------------------------------------------------
 
 let pvTableWb = null;
 
@@ -154,9 +169,20 @@ export function openPvTableWindow(events, anchor = null) {
   body.className = "wb-pvtable";
   body.innerHTML = `
     <table class="wb-table wb-pvtable-tbl">
+      <colgroup>
+        <col class="wb-pvtable-col-depth">
+        <col class="wb-pvtable-col-score">
+        <col class="wb-pvtable-col-nodes">
+        <col class="wb-pvtable-col-nps">
+        <col class="wb-pvtable-col-pv">
+      </colgroup>
       <thead>
         <tr>
-          <th>Depth</th><th>Score</th><th>Nodes</th><th>NPS</th><th>PV</th>
+          <th>Depth<span class="th-grip"></span></th>
+          <th>Eval<span class="th-grip"></span></th>
+          <th>Nodes<span class="th-grip"></span></th>
+          <th>NPS<span class="th-grip"></span></th>
+          <th>PV</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -164,6 +190,79 @@ export function openPvTableWindow(events, anchor = null) {
   `;
 
   const tbody = body.querySelector("tbody");
+  const tableEl = body.querySelector(".wb-pvtable-tbl");
+  const colEls = Array.from(body.querySelectorAll("col"));
+  const COL_PCTS_KEY = "sturddle.pvtable.colPcts";
+  const DEFAULT_PCTS = [9, 12, 12, 12, 55];
+  let colPcts = DEFAULT_PCTS.slice();
+  try {
+    const saved = JSON.parse(localStorage.getItem(COL_PCTS_KEY));
+    if (Array.isArray(saved) && saved.length === 5) colPcts = saved;
+  } catch (e) { /* use defaults */ }
+
+  function applyColPcts() {
+    colEls.forEach((c, i) => { c.style.width = colPcts[i] + "%"; });
+  }
+  applyColPcts();
+
+  const minPct = 5;
+  body.querySelectorAll(".th-grip").forEach((grip, gripIdx) => {
+    grip.addEventListener("pointerdown", (eDown) => {
+      if (eDown.button !== 0) return;
+      eDown.preventDefault();
+      grip.setPointerCapture(eDown.pointerId);
+      grip.classList.add("dragging");
+      const startX = eDown.clientX;
+      const startA = colPcts[gripIdx], startB = colPcts[gripIdx + 1];
+      const tableW = tableEl.getBoundingClientRect().width || 1;
+
+      const rightLine = document.createElement("div");
+      const leftLine = document.createElement("div");
+      rightLine.className = leftLine.className = "col-drag-line";
+      rightLine.style.top = leftLine.style.top = "0";
+      body.appendChild(rightLine);
+      body.appendChild(leftLine);
+
+      function placeLines(clientX) {
+        const bodyLeft = body.getBoundingClientRect().left;
+        const thLeft = tableEl.querySelectorAll("thead th")[gripIdx].getBoundingClientRect().left;
+        rightLine.style.left = (clientX - bodyLeft) + "px";
+        rightLine.style.height = leftLine.style.height = body.scrollHeight + "px";
+        leftLine.style.left = (thLeft - bodyLeft) + "px";
+      }
+      placeLines(eDown.clientX);
+
+      function onMove(e) {
+        const dPct = ((e.clientX - startX) / tableW) * 100;
+        let a = startA + dPct, b = startB - dPct;
+        if (a < minPct) { b -= minPct - a; a = minPct; }
+        if (b < minPct) { a -= minPct - b; b = minPct; }
+        colPcts[gripIdx] = a; colPcts[gripIdx + 1] = b;
+        applyColPcts();
+        placeLines(e.clientX);
+      }
+      let done = false;
+      function onUp() {
+        if (done) return;
+        done = true;
+        grip.classList.remove("dragging");
+        rightLine.remove();
+        leftLine.remove();
+        localStorage.setItem(COL_PCTS_KEY, JSON.stringify(colPcts));
+        grip.removeEventListener("pointermove", onMove);
+        grip.removeEventListener("pointerup", onUp);
+        grip.removeEventListener("pointercancel", onUp);
+        document.removeEventListener("pointerup", onUp);
+        document.removeEventListener("pointercancel", onUp);
+      }
+      grip.addEventListener("pointermove", onMove);
+      grip.addEventListener("pointerup", onUp);
+      grip.addEventListener("pointercancel", onUp);
+      document.addEventListener("pointerup", onUp);
+      document.addEventListener("pointercancel", onUp);
+    });
+  });
+
   // depth -> <tr>
   const rowMap = new Map();
   let maxDepth = 0;
@@ -206,15 +305,18 @@ export function openPvTableWindow(events, anchor = null) {
     if (pv?.[0]) tr.cells[4].textContent = pv[0];
   });
 
-  const pvH = pvTableSaved?.height ?? 260;
-  const pvW = pvTableSaved?.width ?? rightColumnWidth(560);
-  const pvX = pvTableSaved?.x ?? "right";
-  const pvY = pvTableSaved?.y ?? (anchor ? Math.round(anchor.getBoundingClientRect().top) : HEADER_H);
+  const pvGeo = pvTableSaved ?? loadGeo(PV_GEO_KEY);
+  const pvH = pvGeo?.height ?? 260;
+  const pvW = pvGeo?.width ?? rightColumnWidth(560);
+  const pvX = pvGeo?.x ?? "right";
+  const pvY = pvGeo?.y ?? (anchor ? Math.round(anchor.getBoundingClientRect().top) : HEADER_H);
   pvTableSaved = null;
   pvTableWb = new WinBox({
-    ...winboxBase("PV Table", "sturddle-wb-pvtable", pvW, pvH, pvX, pvY),
+    ...winboxBase("Search Lines", "sturddle-wb-pvtable", pvW, pvH, pvX, pvY),
     mount: body,
-    onclose() { offEvent(); pvTableWb = null; },
+    onclose() { offEvent(); saveGeo(PV_GEO_KEY, pvTableWb); pvTableWb = null; },
+    onmove()   { saveGeo(PV_GEO_KEY, pvTableWb); },
+    onresize() { saveGeo(PV_GEO_KEY, pvTableWb); },
   });
 }
 

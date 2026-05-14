@@ -1450,8 +1450,8 @@ wa-dialog::part(body) {
 }
 .settings-deeplink:hover { color: var(--accent, #4a9eff); }
 .about-dialog { text-align: center; padding: 8px 0 16px; }
-.about-name { font-size: 1.125rem; font-weight: 600; margin-bottom: 12px; }
-.about-meta { font-size: 0.75rem; color: var(--muted); line-height: 1.6; }
+.about-name { font-size: 1.125rem; font-weight: 600; margin-bottom: 36px; }
+.about-meta { font-size: 0.8125rem; color: var(--muted); line-height: 1.6; }
 .tournaments-list {
   list-style: none; padding: 0; margin: 0;
   display: flex; flex-direction: column; gap: 8px;
@@ -1974,9 +1974,16 @@ wa-dialog::part(body) {
 .wb-uci-log-line.uci-out { color: #7ec8e3; }
 .wb-uci-log-line.uci-in  { color: #a8e6a3; }
 
-/* PV table window. The PV cell scrolls horizontally (no ellipsis) so the
-   user can read full variations; wb-table sets table-layout:auto by
-   default so we don't need to constrain the cell width. */
-.wb-pvtable-pv {
-  white-space: nowrap; overflow-x: auto; max-width: 100%;
+/* Search Lines window. Fixed layout with user-resizable columns.
+   The PV cell scrolls horizontally so full variations are readable. */
+.wb-pvtable { position: relative; }
+.wb-pvtable-tbl { table-layout: fixed; }
+.wb-pvtable-tbl thead th {
+  position: relative; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; user-select: none;
 }
+.wb-pvtable-tbl thead th:hover {
+  background: #252830;
+  box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
+}
+.wb-pvtable-tbl td { overflow: hidden; text-overflow: ellipsis; }
+.wb-pvtable-pv { white-space: nowrap; overflow-x: auto; text-overflow: clip; }

@@ -11,7 +11,7 @@ export async function openAboutDialog({ api }) {
   }
 
   await showDialog({
-    label: "About SturddleView",
+    // label: "About SturddleView",
     width: "min(300px, 90vw)",
     body: (_resolve, dialog) => {
       const wrap = document.createElement("div");
