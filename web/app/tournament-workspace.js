@@ -1309,6 +1309,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       try { wb.show(); } catch { /* */ }
     }
     attachResizeListeners();
+    requestAnimationFrame(reapplyLayout);
   }
 
   function isHidden() {
