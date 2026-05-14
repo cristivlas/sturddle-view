@@ -1657,7 +1657,8 @@ wa-dialog::part(body) {
 .ne-pane {
   background: var(--bg);
   border: 1px solid #2e3138; border-radius: 4px;
-  display: flex; flex-direction: column; min-height: 180px;
+  display: flex; flex-direction: column;
+  min-height: 180px; max-height: 180px;
 }
 .ne-pane-title {
   padding: 6px 10px; font-size: 0.6875rem; color: var(--muted);
