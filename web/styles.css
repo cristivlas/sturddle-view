@@ -513,7 +513,9 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 }
 
 @media (max-width: 800px), (max-height: 700px) {
-  .play-dock-left { display: none; }
+  /* !important needed: .play-dock-left.dock-single below has higher
+     specificity than the bare class selector and would otherwise win. */
+  .play-dock-left { display: none !important; }
   #play-perspective { display: block; }
   .play-grid {
     display: flex;

@@ -4,6 +4,15 @@
 //
 // Each window can float (WinBox) or dock into the left column of the play
 // grid (.play-dock-left). Dock state is persisted in localStorage.
+//
+// Narrow-viewport behavior: at <=800px width / <=700px height, CSS hides
+// .play-dock-left. The JS still creates dock slots into the (hidden)
+// container on restore/toggle. This is intentional: it's slightly wasteful
+// (a few DOM nodes + listeners) but gives free recovery when the user
+// resizes back to desktop -- their docked windows reappear with content
+// intact. Short-circuiting toggle()/restore() at narrow widths was
+// considered but rejected for the UX regressions (broken toggle buttons,
+// no resize-back recovery, divergent localStorage state).
 
 import { toast } from "./dialogs.js";
 import { makeSplitter } from "./splitter.js";
@@ -237,6 +246,9 @@ function createDockableWindow(config) {
         if (wb) saveGeo(geoKey, wb);
         wb = null;
         if (docking || navAway) return; // body lives on
+        // User-initiated close (WinBox X). Persist the closed state so a
+        // hard refresh doesn't reopen the window.
+        setOpen(openKey, false);
         if (off) { off(); off = null; }
         body = null;
       },
