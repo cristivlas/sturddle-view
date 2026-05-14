@@ -1,9 +1,11 @@
 // Debug windows for play mode (desktop only).
 // 1. UCI log: raw lines flowing between python-chess and the engine.
 // 2. Search Lines: per-iteration principal variation, cutechess-style.
+//
+// Each window can float (WinBox) or dock into the left column of the play
+// grid (.play-dock-left). Dock state is persisted in localStorage.
 
 import { toast } from "./dialogs.js";
-import { flashWindow } from "./wb-utils.js";
 
 const UCI_LOG_MAX_LINES = 1000;
 // Once the buffer overflows, trim this many lines in one go instead of
@@ -11,6 +13,50 @@ const UCI_LOG_MAX_LINES = 1000;
 const UCI_LOG_TRIM_CHUNK = 100;
 const HEADER_H = 44; // px -- approximate nav header height
 const WIN_MARGIN = 8; // gap between window edge and WinBox
+
+// Set by play.js on perspective mount/unmount.
+let _dockEl = null;
+let _dockResizeObs = null;
+
+export function setDockContainer(el) {
+  if (_dockResizeObs) { _dockResizeObs.disconnect(); _dockResizeObs = null; }
+  window.removeEventListener("resize", _updateDockBounds);
+  _dockEl = el;
+  if (el) {
+    const board = document.querySelector(".play-board-host");
+    if (board) {
+      _dockResizeObs = new ResizeObserver(_updateDockBounds);
+      _dockResizeObs.observe(board);
+    }
+    window.addEventListener("resize", _updateDockBounds);
+    _updateDockBounds();
+  }
+  _syncDockVisibility();
+}
+
+function _isMobileLayout() {
+  return window.innerWidth <= 800 || window.innerHeight <= 700;
+}
+
+function _updateDockBounds() {
+  if (!_dockEl || _isMobileLayout()) return;
+  const board = document.querySelector(".play-board-host");
+  if (!board) return;
+  const boardLeft = Math.round(board.getBoundingClientRect().left);
+  const ribbonW = parseInt(getComputedStyle(_dockEl.closest(".play-grid") ?? document.documentElement)
+    .getPropertyValue("--ribbon-w")) || 36;
+  _dockEl.style.width = (boardLeft - ribbonW - 9) + "px";
+
+  const clockTop = document.querySelector(".clock-row.clock-top");
+  const clockBot = document.querySelector(".clock-row.clock-bottom");
+  if (clockTop && clockBot) {
+    const top = Math.round(clockTop.getBoundingClientRect().top);
+    const bot = Math.round(clockBot.getBoundingClientRect().bottom);
+    _dockEl.style.top    = top + "px";
+    _dockEl.style.bottom = (window.innerHeight - bot) + "px";
+    _dockEl.style.height = "";
+  }
+}
 
 // Width that fits in the space to the right of the board, with fallback.
 function rightColumnWidth(fallback = 480) {
@@ -37,8 +83,12 @@ function winboxBase(title, className, width, height, x, y) {
 
 // -- saved geometry for navigation-away restore ------------------------------
 
-const UCI_GEO_KEY = "sturddle.ucilog.geo";
-const PV_GEO_KEY  = "sturddle.pvtable.geo";
+const UCI_GEO_KEY    = "sturddle.ucilog.geo";
+const PV_GEO_KEY     = "sturddle.pvtable.geo";
+const UCI_DOCKED_KEY = "sturddle.ucilog.docked";
+const PV_DOCKED_KEY  = "sturddle.pvtable.docked";
+const UCI_OPEN_KEY   = "sturddle.ucilog.open";
+const PV_OPEN_KEY    = "sturddle.pvtable.open";
 
 function wbGeometry(wb) {
   return { x: wb.x, y: wb.y, width: wb.width, height: wb.height };
@@ -53,21 +103,79 @@ function saveGeo(key, wb) {
   localStorage.setItem(key, JSON.stringify(wbGeometry(wb)));
 }
 
-let uciLogSaved = null;
-let pvTableSaved = null;
+function isDocked(key) {
+  const v = localStorage.getItem(key);
+  return v === null ? true : v === "1"; // default: docked
+}
+
+function setDocked(key, val) {
+  localStorage.setItem(key, val ? "1" : "0");
+}
+
+// -- dock container ----------------------------------------------------------
+
+// Each docked window gets a .dock-slot child inside _dockEl.
+// slot structure:
+//   .dock-slot
+//     .dock-slot-header  (title + undock button)
+//     .dock-slot-body    (the window's body div, transplanted here)
+
+function _syncDockVisibility() {
+  if (!_dockEl) return;
+  const hasSlots = _dockEl.querySelector(".dock-slot") !== null;
+  _dockEl.classList.toggle("dock-empty", !hasSlots);
+}
+
+function _makeDockSlot(title, bodyEl, onUndock) {
+  const slot = document.createElement("div");
+  slot.className = "dock-slot";
+
+  const header = document.createElement("div");
+  header.className = "dock-slot-header";
+
+  const titleSpan = document.createElement("span");
+  titleSpan.className = "dock-slot-title";
+  titleSpan.textContent = title;
+
+  const undockBtn = document.createElement("button");
+  undockBtn.type = "button";
+  undockBtn.className = "dock-slot-undock";
+  undockBtn.title = "Undock";
+  undockBtn.setAttribute("aria-label", "Undock");
+  undockBtn.innerHTML = `<wa-icon name="arrow-up-right-from-square"></wa-icon>`;
+  undockBtn.addEventListener("click", onUndock);
+
+  header.append(titleSpan, undockBtn);
+
+  const bodyWrap = document.createElement("div");
+  bodyWrap.className = "dock-slot-body";
+  bodyWrap.appendChild(bodyEl);
+
+  slot.append(header, bodyWrap);
+  return slot;
+}
+
+function _addDockButton(wb, onDock) {
+  wb.addControl({ class: "wb-dock-ctrl", index: 0, click: onDock });
+}
 
 // -- UCI log window ----------------------------------------------------------
 
-let uciLogWb = null;
+let uciLogWb   = null;
+let uciLogSlot = null; // .dock-slot element when docked
+let uciLogBody = null; // the persistent body div (shared between float/dock)
+let uciLogOff  = null; // event unsubscribe fn
+let uciLogSaved = null;
 
-export function openUciLogWindow(events) {
-  if (uciLogWb) {
-    if (uciLogWb.min) uciLogWb.restore();
-    uciLogWb.focus();
-    flashWindow(uciLogWb);
-    return;
-  }
+function _uciLogScrollContainer() {
+  // When floating, WinBox owns the scroll (wb.body); when docked the
+  // .dock-slot-body div is the scroller.
+  if (uciLogWb) return uciLogWb.body;
+  if (uciLogSlot) return uciLogSlot.querySelector(".dock-slot-body");
+  return null;
+}
 
+function _buildUciLogBody(events) {
   const body = document.createElement("div");
   body.className = "wb-uci-log";
   body.innerHTML = `
@@ -87,7 +195,6 @@ export function openUciLogWindow(events) {
   let paused = false;
 
   copyBtn.disabled = true;
-
   pauseChk.addEventListener("change", () => { paused = pauseChk.checked; });
   copyBtn.addEventListener("click", () => {
     const text = Array.from(lines.children).map(d => d.textContent).join("\n");
@@ -97,15 +204,14 @@ export function openUciLogWindow(events) {
   });
   clearBtn.addEventListener("click", () => { lines.textContent = ""; lineCount = 0; copyBtn.disabled = true; });
 
-  // Autoscroll only when the user is already pinned to the bottom; otherwise
-  // they're inspecting earlier output and new lines must not yank them away.
   const AUTOSCROLL_SLACK_PX = 4;
-  const offEvent = events.on((evt) => {
+  uciLogOff = events.on((evt) => {
     if (evt.kind !== "uci_log" || paused) return;
     const { dir, line } = evt.payload;
-    const scroller = uciLogWb.body;
-    const pinned = scroller.scrollTop + scroller.clientHeight
-      >= scroller.scrollHeight - AUTOSCROLL_SLACK_PX;
+    const scroller = _uciLogScrollContainer();
+    const pinned = scroller
+      ? scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - AUTOSCROLL_SLACK_PX
+      : false;
     const div = document.createElement("div");
     div.className = `wb-uci-log-line ${dir === ">" ? "uci-out" : "uci-in"}`;
     div.textContent = `${dir} ${line}`;
@@ -118,9 +224,39 @@ export function openUciLogWindow(events) {
         lineCount--;
       }
     }
-    if (pinned) scroller.scrollTop = scroller.scrollHeight;
+    if (pinned && scroller) scroller.scrollTop = scroller.scrollHeight;
   });
 
+  return body;
+}
+
+function _dockUciLog() {
+  if (!_dockEl) return;
+  if (uciLogWb) {
+    saveGeo(UCI_GEO_KEY, uciLogWb);
+    uciLogWb.body.removeChild(uciLogBody);
+    const wb = uciLogWb;
+    uciLogWb = null; // null first so onclose skips _destroyUciLog
+    wb.close();
+  }
+  setDocked(UCI_DOCKED_KEY, true);
+  uciLogSlot = _makeDockSlot("UCI Log", uciLogBody, _undockUciLog);
+  _dockEl.appendChild(uciLogSlot);
+  _syncDockVisibility();
+}
+
+function _undockUciLog() {
+  if (!uciLogSlot) return;
+  // Detach body from dock slot before removing the slot.
+  uciLogSlot.querySelector(".dock-slot-body").removeChild(uciLogBody);
+  uciLogSlot.remove();
+  uciLogSlot = null;
+  setDocked(UCI_DOCKED_KEY, false);
+  _syncDockVisibility();
+  _openUciLogFloat();
+}
+
+function _openUciLogFloat() {
   const uciGeo = uciLogSaved ?? loadGeo(UCI_GEO_KEY);
   const uciH = uciGeo?.height ?? 320;
   const uciW = uciGeo?.width ?? rightColumnWidth(480);
@@ -133,16 +269,52 @@ export function openUciLogWindow(events) {
   uciLogSaved = null;
   uciLogWb = new WinBox({
     ...winboxBase("UCI Log", "sturddle-wb-uci-log", uciW, uciH, uciX, uciY),
-    mount: body,
-    onclose() { offEvent(); saveGeo(UCI_GEO_KEY, uciLogWb); uciLogWb = null; },
+    mount: uciLogBody,
+    onclose() { saveGeo(UCI_GEO_KEY, uciLogWb); _destroyUciLog(); },
     onmove()   { saveGeo(UCI_GEO_KEY, uciLogWb); },
     onresize() { saveGeo(UCI_GEO_KEY, uciLogWb); },
   });
+  _addDockButton(uciLogWb, _dockUciLog);
+}
+
+function _destroyUciLog() {
+  if (!uciLogWb) return; // already cleared (docking path)
+  if (uciLogOff) { uciLogOff(); uciLogOff = null; }
+  uciLogWb   = null;
+  uciLogBody = null;
+}
+
+function _closeUciLog() {
+  localStorage.setItem(UCI_OPEN_KEY, "0");
+  if (uciLogWb) { uciLogWb.close(); return; }
+  if (uciLogSlot) {
+    uciLogSlot.querySelector(".dock-slot-body").removeChild(uciLogBody);
+    uciLogSlot.remove();
+    uciLogSlot = null;
+    if (uciLogOff) { uciLogOff(); uciLogOff = null; }
+    uciLogBody = null;
+    _syncDockVisibility();
+  }
+}
+
+export function toggleUciLogWindow(events) {
+  if (uciLogWb || uciLogSlot) { _closeUciLog(); return; }
+  localStorage.setItem(UCI_OPEN_KEY, "1");
+  uciLogBody = _buildUciLogBody(events);
+  if (isDocked(UCI_DOCKED_KEY) && _dockEl) {
+    _dockUciLog();
+  } else {
+    _openUciLogFloat();
+  }
 }
 
 // -- Search Lines window -----------------------------------------------------
 
-let pvTableWb = null;
+let pvTableWb   = null;
+let pvTableSlot = null;
+let pvTableBody = null;
+let pvTableOff  = null;
+let pvTableSaved = null;
 
 function fmtScore(score) {
   if (!score) return "";
@@ -157,14 +329,7 @@ function fmtK(n) {
   return String(n);
 }
 
-export function openPvTableWindow(events, anchor = null) {
-  if (pvTableWb) {
-    if (pvTableWb.min) pvTableWb.restore();
-    pvTableWb.focus();
-    flashWindow(pvTableWb);
-    return;
-  }
-
+function _buildPvTableBody(events) {
   const body = document.createElement("div");
   body.className = "wb-pvtable";
   body.innerHTML = `
@@ -272,7 +437,6 @@ export function openPvTableWindow(events, anchor = null) {
     });
   });
 
-  // depth -> <tr>
   const rowMap = new Map();
   let maxDepth = 0;
 
@@ -282,7 +446,7 @@ export function openPvTableWindow(events, anchor = null) {
     maxDepth = 0;
   }
 
-  const offEvent = events.on((evt) => {
+  pvTableOff = events.on((evt) => {
     if (evt.kind !== "engine_info") return;
     const { depth, score, nodes, nps, pv } = evt.payload;
     if (depth == null) return;
@@ -314,27 +478,115 @@ export function openPvTableWindow(events, anchor = null) {
     if (pv?.[0]) tr.cells[4].textContent = pv[0];
   });
 
+  return body;
+}
+
+function _dockPvTable() {
+  if (!_dockEl) return;
+  if (pvTableWb) {
+    saveGeo(PV_GEO_KEY, pvTableWb);
+    pvTableWb.body.removeChild(pvTableBody);
+    const wb = pvTableWb;
+    pvTableWb = null; // null first so onclose skips _destroyPvTable
+    wb.close();
+  }
+  setDocked(PV_DOCKED_KEY, true);
+  pvTableSlot = _makeDockSlot("Search Lines", pvTableBody, _undockPvTable);
+  // Search Lines goes above UCI log when both are docked.
+  const uciSlot = uciLogSlot;
+  if (uciSlot) {
+    _dockEl.insertBefore(pvTableSlot, uciSlot);
+  } else {
+    _dockEl.appendChild(pvTableSlot);
+  }
+  _syncDockVisibility();
+}
+
+function _undockPvTable() {
+  if (!pvTableSlot) return;
+  pvTableSlot.querySelector(".dock-slot-body").removeChild(pvTableBody);
+  pvTableSlot.remove();
+  pvTableSlot = null;
+  setDocked(PV_DOCKED_KEY, false);
+  _syncDockVisibility();
+  _openPvTableFloat();
+}
+
+function _openPvTableFloat() {
   const pvGeo = pvTableSaved ?? loadGeo(PV_GEO_KEY);
   const pvH = pvGeo?.height ?? 260;
   const pvW = pvGeo?.width ?? rightColumnWidth(560);
   const pvX = pvGeo?.x ?? "right";
-  const pvY = pvGeo?.y ?? (anchor ? Math.round(anchor.getBoundingClientRect().top) : HEADER_H);
+  const pvY = pvGeo?.y ?? HEADER_H;
   pvTableSaved = null;
   pvTableWb = new WinBox({
     ...winboxBase("Search Lines", "sturddle-wb-pvtable", pvW, pvH, pvX, pvY),
-    mount: body,
-    onclose() { offEvent(); saveGeo(PV_GEO_KEY, pvTableWb); pvTableWb = null; },
+    mount: pvTableBody,
+    onclose() { saveGeo(PV_GEO_KEY, pvTableWb); _destroyPvTable(); },
     onmove()   { saveGeo(PV_GEO_KEY, pvTableWb); },
     onresize() { saveGeo(PV_GEO_KEY, pvTableWb); },
   });
+  _addDockButton(pvTableWb, _dockPvTable);
 }
+
+function _destroyPvTable() {
+  if (!pvTableWb) return; // already cleared (docking path)
+  if (pvTableOff) { pvTableOff(); pvTableOff = null; }
+  pvTableWb   = null;
+  pvTableBody = null;
+}
+
+function _closePvTable() {
+  localStorage.setItem(PV_OPEN_KEY, "0");
+  if (pvTableWb) { pvTableWb.close(); return; }
+  if (pvTableSlot) {
+    pvTableSlot.querySelector(".dock-slot-body").removeChild(pvTableBody);
+    pvTableSlot.remove();
+    pvTableSlot = null;
+    if (pvTableOff) { pvTableOff(); pvTableOff = null; }
+    pvTableBody = null;
+    _syncDockVisibility();
+  }
+}
+
+export function togglePvTableWindow(events) {
+  if (pvTableWb || pvTableSlot) { _closePvTable(); return; }
+  localStorage.setItem(PV_OPEN_KEY, "1");
+  pvTableBody = _buildPvTableBody(events);
+  if (isDocked(PV_DOCKED_KEY) && _dockEl) {
+    _dockPvTable();
+  } else {
+    _openPvTableFloat();
+  }
+}
+
+// -- lifecycle ---------------------------------------------------------------
 
 export function closeDebugWindows() {
-  if (uciLogWb) { uciLogSaved = wbGeometry(uciLogWb); uciLogWb.close(); }
-  if (pvTableWb) { pvTableSaved = wbGeometry(pvTableWb); pvTableWb.close(); }
+  if (uciLogWb)   { uciLogSaved = wbGeometry(uciLogWb); uciLogWb.close(); }
+  if (pvTableWb)  { pvTableSaved = wbGeometry(pvTableWb); pvTableWb.close(); }
+  // Tear down docked windows too (perspective navigating away).
+  if (uciLogSlot) {
+    uciLogSlot.querySelector(".dock-slot-body").removeChild(uciLogBody);
+    uciLogSlot.remove();
+    uciLogSlot = null;
+    if (uciLogOff) { uciLogOff(); uciLogOff = null; }
+    uciLogBody = null;
+  }
+  if (pvTableSlot) {
+    pvTableSlot.querySelector(".dock-slot-body").removeChild(pvTableBody);
+    pvTableSlot.remove();
+    pvTableSlot = null;
+    if (pvTableOff) { pvTableOff(); pvTableOff = null; }
+    pvTableBody = null;
+  }
+  _syncDockVisibility();
 }
 
-export function restoreDebugWindows(events, anchor = null) {
-  if (uciLogSaved) openUciLogWindow(events);
-  if (pvTableSaved) openPvTableWindow(events, anchor);
+export function restoreDebugWindows(events) {
+  const uciOpen = localStorage.getItem(UCI_OPEN_KEY);
+  const pvOpen  = localStorage.getItem(PV_OPEN_KEY);
+  // null = never toggled (first visit) => open by default; "0" = user closed.
+  if (uciLogSaved || uciOpen !== "0") toggleUciLogWindow(events);
+  if (pvTableSaved || pvOpen  !== "0") togglePvTableWindow(events);
 }

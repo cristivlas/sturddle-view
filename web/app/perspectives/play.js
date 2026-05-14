@@ -5,7 +5,7 @@
 import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog } from "../import-position-dialog.js";
-import { openUciLogWindow, openPvTableWindow, closeDebugWindows, restoreDebugWindows } from "../play-debug-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, restoreDebugWindows, setDockContainer } from "../play-debug-windows.js";
 
 // Module-scope mirror of "user has a live human-vs-engine game running"
 // so other modules (e.g. tournament Replay button) can decide whether
@@ -82,6 +82,7 @@ export const playPerspective = {
     root.innerHTML = `
       <section id="play-perspective">
         <div class="play-grid">
+          <div class="play-dock-left"></div>
           <div class="play-board-host"></div>
 
           <div id="board-controls" class="board-ribbon">
@@ -109,11 +110,11 @@ export const playPerspective = {
               <wa-icon name="flag"></wa-icon>
             </button>
             <span class="ribbon-sep ribbon-sep--push desktop-only" aria-hidden="true"></span>
-            <button id="uci-log-btn" class="ribbon-btn desktop-only" aria-label="UCI log" title="UCI log">
-              <wa-icon name="terminal"></wa-icon>
-            </button>
             <button id="pv-table-btn" class="ribbon-btn desktop-only" aria-label="Search Lines" title="Search Lines">
               <wa-icon name="table-list"></wa-icon>
+            </button>
+            <button id="uci-log-btn" class="ribbon-btn desktop-only" aria-label="UCI log" title="UCI log">
+              <wa-icon name="terminal"></wa-icon>
             </button>
           </div>
 
@@ -155,7 +156,9 @@ export const playPerspective = {
     `;
 
     const boardHost = root.querySelector(".play-board-host");
+    const dockLeft = root.querySelector(".play-dock-left");
     const sideHost = root.querySelector(".play-side-host");
+    setDockContainer(dockLeft);
     boardHost.classList.add("board-idle");
     const newGameBtn = root.querySelector("#new-game");
     const importBtn = root.querySelector("#import-pos");
@@ -666,11 +669,11 @@ export const playPerspective = {
     newGameBtn.addEventListener("click", onNewGame);
     importBtn.addEventListener("click", onImport);
     resignBtn.addEventListener("click", onResign);
-    const onUciLog = () => openUciLogWindow(ctx.events);
-    const onPvTable = () => openPvTableWindow(ctx.events, sideHost.querySelector(".game-view-engine"));
+    const onUciLog = () => toggleUciLogWindow(ctx.events);
+    const onPvTable = () => togglePvTableWindow(ctx.events);
     uciLogBtn?.addEventListener("click", onUciLog);
     pvTableBtn?.addEventListener("click", onPvTable);
-    restoreDebugWindows(ctx.events, sideHost.querySelector(".game-view-engine"));
+    restoreDebugWindows(ctx.events);
     takebackBtn.addEventListener("click", onTakeback);
     switchSidesBtn.addEventListener("click", onSwitchSides);
     pauseBtn.addEventListener("click", onPause);
@@ -710,6 +713,7 @@ export const playPerspective = {
 
     return {
       unmount() {
+        setDockContainer(null);
         closeDebugWindows();
         dismissAnalysisToast?.();
         dismissAnalysisToast = null;

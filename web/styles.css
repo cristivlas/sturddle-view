@@ -399,6 +399,82 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   display: flex;
   flex-direction: column;
 }
+/* Left dock: occupies the grid's first (left-gap) column, full board height.
+   Hidden when empty; the column width is unchanged so the board stays put. */
+.play-dock-left {
+  grid-column: 1;
+  grid-row: 1;
+  /* Fixed so it aligns with the ribbon regardless of grid centering. */
+  position: fixed;
+  left: calc(var(--ribbon-w) + 1px);
+  /* top, bottom, width set dynamically in JS to align with clock rows and board */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 9; /* below ribbon (z-index:10) */
+}
+.play-dock-left.dock-empty { visibility: hidden; }
+.play-dock-left:not(.dock-empty) { border: 1px solid #454952; }
+.dock-slot {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  border: 1px solid #2e3138;
+  background: var(--panel);
+}
+.dock-slot + .dock-slot {
+  border-top: none;
+}
+.dock-slot-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 0 8px;
+  height: 28px;
+  flex: 0 0 auto;
+  background: var(--nav-btn-bg);
+  border-bottom: 1px solid #2e3138;
+  user-select: none;
+}
+.dock-slot-title {
+  flex: 1 1 auto;
+  font-size: 0.75rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dock-slot-undock {
+  flex: 0 0 auto;
+  width: 22px; height: 22px;
+  padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: 3px;
+  color: var(--muted); cursor: pointer;
+  font-size: 0.75rem;
+}
+.dock-slot-undock:hover { color: var(--fg); background: var(--nav-btn-bg-hover); }
+.dock-slot-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 12px;
+  /* UCI log needs horizontal scroll; pvtable needs it too */
+  overflow-x: auto;
+}
+.wb-dock-ctrl {
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/down-left-and-up-right-to-center.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/down-left-and-up-right-to-center.svg);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: 12px;
+  mask-size: 12px;
+  background-color: rgba(255,255,255,0.9) !important;
+  background-image: none !important;
+}
 /* The board area inside the host gets all available height. */
 .play-board-host .game-view-board {
   flex: 1 1 auto;
@@ -422,6 +498,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 }
 
 @media (max-width: 800px), (max-height: 700px) {
+  .play-dock-left { display: none; }
   #play-perspective { display: block; }
   .play-grid {
     display: flex;
