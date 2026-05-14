@@ -302,6 +302,21 @@ class HumanVsEngine:
         engine.send_line = _send
         engine.line_received = _recv
 
+    def _engine_color(self) -> chess.Color:
+        return chess.BLACK if self._human_white else chess.WHITE
+
+    def _reset_view_state(self) -> None:
+        self._view_full_moves = []
+        self._view_clock_history = []
+        self._view_final_white = None
+        self._view_final_black = None
+        self._view_white_name = None
+        self._view_black_name = None
+        self._view_eval_history = None
+        self._view_pgn_result = None
+        self._view_pgn_termination = None
+        self._view_cursor = 0
+
     def _eval_pov(self, stm: chess.Color = chess.WHITE) -> chess.Color:
         """Resolve play_eval_pov setting → chess.Color for serialization."""
         mode = getattr(self._settings, "play_eval_pov", "white") if self._settings else "white"
@@ -361,16 +376,7 @@ class HumanVsEngine:
             await self._cancel_think()
             await self._cancel_tick()
             self._viewing = False
-            self._view_full_moves = []
-            self._view_clock_history = []
-            self._view_final_white = None
-            self._view_final_black = None
-            self._view_white_name = None
-            self._view_black_name = None
-            self._view_eval_history = None
-            self._view_pgn_result = None
-            self._view_pgn_termination = None
-            self._view_cursor = 0
+            self._reset_view_state()
             self._ensure_tablebase()
             engine = await self._ensure_engine()
             engine.send_line("ucinewgame")
@@ -429,8 +435,7 @@ class HumanVsEngine:
             await self._publish_board()
             await self._publish_clock()
         self._start_tick()
-        engine_color = chess.BLACK if human_white else chess.WHITE
-        if self._board.turn == engine_color:
+        if self._board.turn == self._engine_color():
             await self._engine_to_move()
         return self._game_id
 
@@ -498,8 +503,7 @@ class HumanVsEngine:
             ):
                 self._turn_started_at = time.monotonic()
                 self._start_tick()
-                engine_color = chess.BLACK if self._human_white else chess.WHITE
-                if self._board.turn == engine_color and self._think_task is None:
+                if self._board.turn == self._engine_color() and self._think_task is None:
                     kick_engine = True
             await self._publish_board()
             await self._publish_clock()
@@ -589,8 +593,7 @@ class HumanVsEngine:
             await self._publish_clock()
             # Don't kick the engine while paused — resume() handles that.
             if not self._paused:
-                engine_color = chess.BLACK if self._human_white else chess.WHITE
-                if self._board.turn == engine_color:
+                if self._board.turn == self._engine_color():
                     kick_engine = True
         if kick_engine:
             await self._engine_to_move()
@@ -670,9 +673,8 @@ class HumanVsEngine:
             self._start_tick()
             await self._publish_clock()
             if not self._board.is_game_over():
-                engine_color = chess.BLACK if self._human_white else chess.WHITE
                 if (
-                    self._board.turn == engine_color
+                    self._board.turn == self._engine_color()
                     and self._think_task is None
                 ):
                     kick_engine = True
@@ -887,16 +889,7 @@ class HumanVsEngine:
             # Exit view mode before the new_game call (which re-acquires
             # the lock). Clear viewer state so new_game starts clean.
             self._viewing = False
-            self._view_full_moves = []
-            self._view_clock_history = []
-            self._view_final_white = None
-            self._view_final_black = None
-            self._view_white_name = None
-            self._view_black_name = None
-            self._view_eval_history = None
-            self._view_pgn_result = None
-            self._view_pgn_termination = None
-            self._view_cursor = 0
+            self._reset_view_state()
         return await self.new_game(
             human_white=human_white,
             tc=tc,
@@ -920,13 +913,13 @@ class HumanVsEngine:
             await self._cancel_analysis()
             self._analysis_mode = False
             await self._cancel_think()
+            await self._quit_engine()
             self._engine_path = path
             self._engine_name = None
             if self._board is not None and self._game_id is not None:
                 await self._publish_board()
                 if not self._board.is_game_over() and not self._paused:
-                    engine_color = chess.BLACK if self._human_white else chess.WHITE
-                    if self._board.turn == engine_color:
+                    if self._board.turn == self._engine_color():
                         kick_engine = True
         if kick_engine:
             await self._engine_to_move()
@@ -937,13 +930,7 @@ class HumanVsEngine:
             self._analysis_mode = False
             await self._cancel_think()
             await self._cancel_tick()
-            if self._engine is not None:
-                try:
-                    await self._engine.quit()
-                except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
-                    pass
-                self._engine = None
-            self._uci_log_tasks.clear()
+            await self._quit_engine()
             if self._tb is not None:
                 self._tb.close()
                 self._tb = None
@@ -1049,35 +1036,49 @@ class HumanVsEngine:
         return base
 
     async def _cancel_think(self) -> None:
+        """Stop the current search; keep the engine alive for reuse.
+
+        Tears down the transport only when the engine fails to acknowledge
+        `stop` within the grace period (wedged/crashed). Callers that need
+        the subprocess gone (swap, shutdown) must follow up with
+        `_quit_engine`.
+        """
         self._think_gen += 1
+        think_task = self._think_task
+        self._think_task = None
+        self._analysis = None
         if self._engine is not None:
-            t = getattr(self._engine, "transport", None)
-            stopped_cleanly = True
             try:
                 self._engine.send_line("stop")
             except Exception as e:
                 log.warning("failed to send stop to engine: %s", e)
-                stopped_cleanly = False
-            if self._think_task and not self._think_task.done():
-                stopped_cleanly = False
+            if think_task and not think_task.done():
                 try:
-                    await asyncio.wait_for(asyncio.shield(self._think_task), timeout=0.5)
-                    stopped_cleanly = True
+                    await asyncio.wait_for(asyncio.shield(think_task), timeout=0.5)
                     log.info("engine responded to stop")
-                except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                except asyncio.TimeoutError:
+                    log.warning("engine did not respond to stop -- terminating")
+                    transport = getattr(self._engine, "transport", None)
+                    if transport is not None:
+                        try:
+                            transport.close()
+                        except (BrokenPipeError, OSError) as e:
+                            log.warning("failed to close engine transport: %s", e)
+                    self._engine = None
+                except (asyncio.CancelledError, Exception):
                     pass
-            if not stopped_cleanly and t is not None:
-                log.warning("engine did not respond to stop -- terminating")
-                try:
-                    t.close()
-                except Exception:
-                    pass
+        if think_task and not think_task.done():
+            think_task.cancel()
+
+    async def _quit_engine(self) -> None:
+        """Gracefully terminate the engine subprocess. Call after `_cancel_think`."""
+        if self._engine is not None:
+            try:
+                await self._engine.quit()
+            except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
+                pass
             self._engine = None
         self._uci_log_tasks.clear()
-        if self._think_task and not self._think_task.done():
-            self._think_task.cancel()
-        self._think_task = None
-        self._analysis = None
 
     async def _cancel_analysis(self) -> None:
         """Stop the infinite-analysis loop gracefully.
@@ -1204,6 +1205,8 @@ class HumanVsEngine:
                 if best is None:
                     return
         except chess.engine.EngineTerminatedError:
+            if self._engine is engine:
+                self._engine = None
             if self._think_gen == gen:
                 log.error("engine crashed mid-search")
                 await self._cancel_tick()
