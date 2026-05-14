@@ -202,6 +202,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // successful slot claim so the cascade restarts from the left edge.
   let overflowRestoreCount = 0;
 
+  function setShadow(wb, on) {
+    wb.g?.classList.toggle("no-shadow", !on);
+  }
+
   // pageX recorded on mousedown of a maximized window's header; used by onReflow
   // to reposition the window so the cursor stays proportionally on the title bar.
   let pendingDragX = null;
@@ -230,7 +234,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         }
         const c = slotGrid.claim(wb);
         if (c) {
+          wb._justRestored = true;
           wb.resize(c.w, c.h).move(c.x, c.y);
+          setShadow(wb, false);
           overflowRestoreCount = 0;
         } else {
           const x = Math.min(
@@ -238,6 +244,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
             Math.max(left, window.innerWidth - wb.width),
           );
           wb.move(x, top);
+          setShadow(wb, true);
           overflowRestoreCount++;
         }
       }
@@ -254,7 +261,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       if (wb.max) {
         pendingDragX = e.pageX;
         window.addEventListener("mouseup", () => { pendingDragX = null; }, { once: true });
+      } else if (!wb._justRestored) {
+        // Any header mousedown (click or drag) shows shadow; reapplyLayout clears it.
+        setShadow(wb, true);
       }
+      wb._justRestored = false;
     }, { capture: true });
   }
 
@@ -1080,8 +1091,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // Reserved strip at the bottom so minimized WinBoxes have a place to dock.
   const MINIMIZE_FOOTER_H = 36;
   // Visual gap between tiled/snapped windows; also absorbs WinBox rounding.
-  const TILE_MARGIN = 1;
-  const TIDY_GAP = 1;
+  const TILE_MARGIN = 0;
+  const TIDY_GAP = 0;
 
   // wbsIn: explicit list (snap fallback -- skip minimized, don't unminimize).
   function tile(wbsIn, { reserveDock = false, preserveMin = false } = {}) {
@@ -1116,6 +1127,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const x = Math.max(left, Math.min(left + col * w, left + availW - ww));
       const y = Math.max(top,  Math.min(top  + row * h, top  + availH - hh));
       wb.resize(ww, hh).move(x, y);
+      setShadow(wb, false);
     });
     zOrder(wbs);
   }
@@ -1155,8 +1167,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           unminimize(wb);
           const r = slotGrid.rectAt(slot++);
           wb.resize(r.w, r.h).move(r.x, r.y);
+          setShadow(wb, false);
         } else {
           try { wb.minimize(); } catch { /* */ }
+          setShadow(wb, true);
         }
       });
       for (const k of keys) {
@@ -1190,6 +1204,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       if (!wb) continue;
       unminimize(wb);
       wb.resize(w, h).move(x, y);
+      setShadow(wb, false);
     }
     if (!preserveMin) zOrder(openWindows().filter(wb => !wb.min));
   }
@@ -1279,6 +1294,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     for (const it of items) {
       const r = it.rect;
       it.wb.resize(r.w - TILE_MARGIN, r.h - TILE_MARGIN).move(r.x, r.y);
+      setShadow(it.wb, false);
     }
     zOrder(wbs);
   }
@@ -1339,7 +1355,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     requestAnimationFrame(reapplyLayout);
   }
 
-  function untidy() { setLayout(LAYOUT.NONE); }
+  function untidy() {
+    setLayout(LAYOUT.NONE);
+    for (const wb of openWindows()) setShadow(wb, true);
+  }
   function reapplyLayout() {
     //console.log("[reapplyLayout] layout=", LAYOUT_NAME[activeLayout], "windows=", openWindows().length);
     if (activeLayout === LAYOUT.TIDY) tidy({ preserveMin: true });

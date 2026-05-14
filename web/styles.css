@@ -2,6 +2,7 @@
   --bg: #1d1f24;
   --fg: #e8e8e8;
   --muted: #888;
+  --wb-outline: rgba(136, 136, 136, 0.4);
   --accent: #f59e0b;
   --accent-rgb: 245, 158, 11;
   /* TODO: revisit unifying --accent and --accent-line into a single token. */
@@ -1868,7 +1869,7 @@ wa-dialog::part(body) {
   background: var(--panel);
   color: var(--fg);
   border: none;
-  outline: 1px solid var(--muted);
+  outline: 1px solid var(--wb-outline);
   opacity: 1 !important;
 }
 @keyframes wb-attention {
