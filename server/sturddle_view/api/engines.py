@@ -143,13 +143,10 @@ async def _ensure_schema(reg: EngineRegistry, e: Engine) -> Engine:
 @router.get("")
 async def list_engines(request: Request) -> dict:
     reg = _registry(request)
-    locks = _engine_locks(request)
     out = []
     for e in reg.list():
         e = await _ensure_schema(reg, e)
-        d = _serialize(e)
-        d["locked"] = locks.get(e.id, [])
-        out.append(d)
+        out.append(_serialize(e))
     return {
         "engines": out,
         "selected_id": reg.selected_id,
@@ -190,6 +187,19 @@ async def add_engine(payload: EngineCreate, request: Request) -> dict:
         # without this, the per-engine dialog would silently look "empty".
         body["probe_error"] = probe_error
     return body
+
+
+@router.get("/{engine_id}")
+def get_engine(engine_id: str, request: Request) -> dict:
+    reg = _registry(request)
+    try:
+        e = reg.get(engine_id)
+    except EngineNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="engine not found") from exc
+    locks = _engine_locks(request)
+    d = _serialize(e)
+    d["locked"] = locks.get(engine_id, [])
+    return d
 
 
 @router.patch("/{engine_id}")

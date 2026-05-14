@@ -82,6 +82,15 @@ export function mountEngines({ container, api }) {
 
   const SORT_KEY_LS = "sturddle.engines.sortOrder";
   let engines = [];
+
+  const inflightEngineChecks = new Map();
+
+  function getEngineFresh(id) {
+    if (inflightEngineChecks.has(id)) return inflightEngineChecks.get(id);
+    const p = api("GET", `/engines/${id}`).finally(() => inflightEngineChecks.delete(id));
+    inflightEngineChecks.set(id, p);
+    return p;
+  }
   let selectedDetailId = null;
   let activeId = null;
   let filterText = "";
@@ -192,12 +201,6 @@ export function mountEngines({ container, api }) {
     }
   }
 
-  function lockedMsg(e, action) {
-    if (!e?.locked?.length) return null;
-    const list = e.locked.map((t) => `${t.name} (${t.status})`).join(", ");
-    return `Cannot ${action} ${e.name}: in use by ${list}`;
-  }
-
   function syncDetailButtons() {
     const e = engines.find((x) => x.id === selectedDetailId);
     const has = !!e;
@@ -284,10 +287,10 @@ export function mountEngines({ container, api }) {
 
   detailRemoveBtn.addEventListener("click", async () => {
     if (!selectedDetailId) return;
-    const e = engines.find((x) => x.id === selectedDetailId);
-    if (!e) return;
-    const msg = lockedMsg(e, "remove");
-    if (msg) { toast(msg, { variant: "warning" }); return; }
+    let e;
+    try { e = await getEngineFresh(selectedDetailId); } catch (err) { reportError(null, "remove", err); return; }
+    const locked = e.locked?.length ? e.locked.map((t) => `${t.name} (${t.status})`).join(", ") : null;
+    if (locked) { toast(`Cannot remove ${e.name}: in use by ${locked}`, { variant: "warning" }); return; }
     const ok = await confirm({
       title: "Remove engine",
       message: `Remove ${e.name}?`,
@@ -307,9 +310,10 @@ export function mountEngines({ container, api }) {
 
   async function openOptionsForSelected() {
     if (!selectedDetailId) return;
-    let engine = engines.find((x) => x.id === selectedDetailId);
-    const msg = lockedMsg(engine, "edit");
-    if (msg) { toast(msg, { variant: "warning" }); return; }
+    let engine;
+    try { engine = await getEngineFresh(selectedDetailId); } catch (err) { reportError(null, "edit", err); return; }
+    const locked = engine.locked?.length ? engine.locked.map((t) => `${t.name} (${t.status})`).join(", ") : null;
+    if (locked) { toast(`Cannot edit ${engine.name}: in use by ${locked}`, { variant: "warning" }); return; }
     // If we have no cached UCI options, try one auto re-probe before
     // opening — heals the case where the original add-time probe failed
     // (e.g. transient spawn error) so the user doesn't see an empty dialog
