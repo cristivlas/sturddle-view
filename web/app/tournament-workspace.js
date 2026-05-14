@@ -264,7 +264,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const wb = new WinBox({
       title, mount: body, top, left, min, max,
       ...(cfg ? { x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height } : {}),
-      class: `sturddle-wb no-full${extra}`,
+      class: `sturddle-wb no-full no-shadow${extra}`,
       ...MIN_SIZES[key],
     });
     // Stash so tile()/snap() can read the effective min size from the

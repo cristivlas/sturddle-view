@@ -1867,7 +1867,8 @@ wa-dialog::part(body) {
 .winbox.sturddle-wb {
   background: var(--panel);
   color: var(--fg);
-  border: 1px solid #2e3138;
+  border: none;
+  outline: 1px solid var(--muted);
   opacity: 1 !important;
 }
 @keyframes wb-attention {
@@ -1946,14 +1947,7 @@ wa-dialog::part(body) {
   white-space: pre-wrap; max-height: 8em; overflow: auto;
 }
 
-/* Live game window (Slice 9c). Border encodes attach type:
-   game-id windows are borderless (the "primary" surface, identified
-   by absence of chrome); proxy-id windows get a brighter gray border
-   (the default #2e3138 is too dark to register on this theme) so
-   they read as a secondary/debug surface. */
-.winbox.sturddle-wb.sturddle-wb-live-game  { border: none; }
 .winbox.sturddle-wb.sturddle-wb-live-game .wb-header { background: var(--wa-color-surface-default); }
-.winbox.sturddle-wb.sturddle-wb-live-proxy { border-color: var(--muted); }
 
 .wb-livegame {
   display: flex; flex-direction: column; gap: 4px;
