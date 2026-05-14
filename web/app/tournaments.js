@@ -11,7 +11,7 @@ import { apiErrorDetail, confirm, reportError, showDialog, toast } from "./dialo
 import { openSettingsDialog } from "./settings-dialog.js";
 import { EVT, KIND, STATUS } from "./tournament-events.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
-import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasAnyDesktopState, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
+import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 
 export function mountTournaments({ container, api, events, log, token }) {
   container.innerHTML = `
@@ -330,15 +330,11 @@ export function mountTournaments({ container, api, events, log, token }) {
     }
     syncRibbon();
     const t = selectedTournament();
-    if (t) {
-      if (hasSavedWorkspaceState(t.id)) {
-        // Saved state with open windows -- always restore.
-        openWorkspace(t);
-      } else if (hadWorkspace && !hasAnyDesktopState(t.id)) {
-        // No saved state at all (brand-new tournament) -- continue workspace mode.
-        openWorkspace(t);
-      }
-      // All-closed saved state: workspace was explicitly dismissed, don't reopen.
+    if (t && hasSavedWorkspaceState(t.id)) {
+      // Only auto-open when the tournament has saved workspace state with
+      // open windows. Brand-new or explicitly-dismissed tournaments stay
+      // closed -- the user can open them manually.
+      openWorkspace(t);
     }
     return true;
   }
