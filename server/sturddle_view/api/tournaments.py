@@ -36,7 +36,7 @@ from ..tournament.pgn_stats import (
     compute_sprt,
     compute_standings,
     count_partial_pairs,
-    read_game_pgn,
+    read_game_record,
 )
 from ..tournament.store import (
     CorruptStateError,
@@ -315,7 +315,12 @@ def get_tournament_game_pgn(
     game_n: Annotated[int, FastApiPath(ge=1)],
     request: Request,
 ) -> dict:
-    """Return the PGN text of the Nth completed game (1-based)."""
+    """Return PGN + final-position metadata for the Nth completed game.
+
+    Replay uses ``pgn``; frozen-window rehydration uses ``final_fen``,
+    ``last_move``, ``engine_white``, ``engine_black``, ``result``,
+    ``termination``.
+    """
     s = _store(request)
     try:
         s.get(tournament_id)
@@ -326,10 +331,10 @@ def get_tournament_game_pgn(
     pgn_path = s.pgn_path(tournament_id)
     if not pgn_path.exists():
         raise HTTPException(status_code=404, detail="no games recorded")
-    pgn = read_game_pgn(pgn_path, game_n)
-    if pgn is None:
+    record = read_game_record(pgn_path, game_n)
+    if record is None:
         raise HTTPException(status_code=404, detail="game not found")
-    return {"pgn": pgn}
+    return record
 
 
 @router.post("/api/tournaments/{tournament_id}/start")

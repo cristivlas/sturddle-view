@@ -230,6 +230,17 @@ def read_game_pgn(pgn_path: Path, game_n: int) -> str | None:
     ``game_n`` so a Replay click resolves to the same game the
     reconciliation event identified.
     """
+    record = read_game_record(pgn_path, game_n)
+    return record["pgn"] if record else None
+
+
+def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
+    """Return PGN + final-position metadata for the Nth completed game.
+
+    Result keys: ``pgn``, ``final_fen``, ``last_move`` (uci or None),
+    ``engine_white``, ``engine_black``, ``result``, ``termination``.
+    Used to rehydrate a frozen tournament game window with no live WS.
+    """
     if game_n < 1:
         return None
     import chess.pgn
@@ -246,7 +257,22 @@ def read_game_pgn(pgn_path: Path, game_n: int) -> str | None:
             if seen == game_n:
                 f.seek(offset)
                 game = chess.pgn.read_game(f)
-                return str(game) if game is not None else None
+                if game is None:
+                    return None
+                board = game.board()
+                last_move_uci: str | None = None
+                for move in game.mainline_moves():
+                    last_move_uci = move.uci()
+                    board.push(move)
+                return {
+                    "pgn": str(game),
+                    "final_fen": board.fen(),
+                    "last_move": last_move_uci,
+                    "engine_white": game.headers.get("White", ""),
+                    "engine_black": game.headers.get("Black", ""),
+                    "result": game.headers.get("Result", "*"),
+                    "termination": game.headers.get("Termination", ""),
+                }
 
 
 def _needs_rewrite(pgn_path: Path) -> bool:

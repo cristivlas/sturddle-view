@@ -280,7 +280,7 @@ svg.cm-chessboard {
   transition: opacity 0.2s, transform 0.2s;
 }
 .toast-success { border-color: #6c6; }
-.toast-warning { border-color: #cc6; }
+.toast-warning { border-color: #e08e0b; }
 .toast-danger { border-color: #c66; }
 .toast-hide { opacity: 0; transform: translateY(8px); }
 
