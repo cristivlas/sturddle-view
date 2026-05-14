@@ -103,23 +103,17 @@ function avoidOverlap(wb, avoid, top, left, cascade = 0) {
   }
 }
 
-export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, flash = true }) {
-  if (DEBUG_WATCH) console.log("[WATCH] openLiveGameWindow", { proxyId, gameId, windowKey, label });
-  if (!windowKey) {
-    console.error("[WATCH] no windowKey -- need at least one of proxyId/gameId", { proxyId, gameId });
-    return;
-  }
-  // If a window for this key is already open, focus it instead of
-  // opening a duplicate.
-  const existing = liveWindows.get(windowKey);
-  if (existing) {
-    if (DEBUG_WATCH) console.log("[WATCH] window already open -- focusing", { windowKey });
-    if (existing.min) existing.restore();
-    existing.focus();
-    flashWindow(existing);
-    return { wb: existing, alreadyOpen: true };
-  }
+// Fixed-row totals are used by the onresize clamp + board sizing in
+// constrainAndResize. Compact mode drops the .lg-pv rows.
+const FIXED_FULL = LIVE_PV_H * 2 + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 6;
+const FIXED_COMPACT = LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 4;
 
+// Shared construction for live + frozen windows. Builds DOM, mounts the
+// board, creates the WinBox, wires the result-overlay/replay-button
+// machinery, registers in `liveWindows`. Caller adds WS (live) or
+// final-state painting (frozen) and assigns a real `wb.onclose` that
+// cleans up its own resources after invoking `disposeShared`.
+function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token, tournamentId, top, left, boardStyle, avoidRect, initialRect, min, flash, variantClass }) {
   const body = document.createElement("div");
   body.className = "wb-livegame";
   body.innerHTML = `
@@ -185,6 +179,9 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   const initialWidth = initialRect?.w
     ?? Math.max(Math.round(window.innerWidth * 0.20), LIVE_MIN_WIDTH);
   const initialHeight = initialRect?.h ?? null;
+  const defaultClass = gameId
+    ? "sturddle-wb sturddle-wb-live sturddle-wb-live-game no-full no-shadow"
+    : "sturddle-wb sturddle-wb-live sturddle-wb-live-proxy no-full no-shadow";
   const wb = new WinBox({
     title: titleWithTag,
     width: initialWidth,
@@ -197,9 +194,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     left,
     min,
     mount: body,
-    class: gameId
-      ? "sturddle-wb sturddle-wb-live sturddle-wb-live-game no-full no-shadow"
-      : "sturddle-wb sturddle-wb-live sturddle-wb-live-proxy no-full no-shadow",
+    class: variantClass ? `${defaultClass} ${variantClass}` : defaultClass,
   });
   wb._watchOpts = { proxyId, gameId, label, engineName };
 
@@ -257,13 +252,6 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   // host's measured size during a resize creates a feedback loop with
   // cm-chessboard's internal SVG sizing, which is what produced the
   // narrow-board-after-restore bug.
-  //
-  // Fixed (non-board) rows: 2x pv, 2x eval, 2x clock + 6 gaps (7 children total).
-  // In compact mode (body.clientHeight < 280) the .lg-pv rows are
-  // display:none, so those drop out.
-  const FIXED_FULL = LIVE_PV_H * 2 + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 6;
-  const FIXED_COMPACT = LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 4;
-
   function constrainAndResize() {
     const compact = body.clientHeight < 280;
     body.classList.toggle("lg-compact", compact);
@@ -281,6 +269,75 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   ro.observe(body);
   requestAnimationFrame(constrainAndResize);
 
+  // Result banner. Late "*" downgrades after a real result are ignored
+  // (per-pair WS + game_reconciled can arrive in either order).
+  let resultPainted = false;
+  function showResult(result, termination) {
+    const isReal = result && result !== "*";
+    if (resultPainted && !isReal) return;
+    if (isReal) resultPainted = true;
+    const score = isReal ? result : "game ended";
+    const term = (termination && termination !== "unknown") ? termination : "";
+    resultScoreEl.textContent = score;
+    resultTerminationEl.textContent = term;
+    resultOverlayEl.hidden = false;
+  }
+
+  function disposeShared() {
+    ro.disconnect();
+    if (gameId) window.removeEventListener("sturddle:reconciled", onReconciled);
+    liveWindows.delete(windowKey);
+    window.dispatchEvent(new CustomEvent("sturddle:livegame-closed"));
+  }
+
+  return {
+    wb, body, board, boardHost,
+    refs: {
+      evalScoreEl, evalDepthEl, evalTbhitsEl, pvEl,
+      oppEvalScoreEl, oppEvalDepthEl, oppEvalTbhitsEl, oppPvEl,
+      clockTopEl, clockBottomEl,
+      topNameEl, bottomNameEl, topTimeEl, bottomTimeEl,
+      resultOverlayEl, resultScoreEl, resultTerminationEl, replayBtnEl,
+    },
+    showResult,
+    setReplayGameN(n) {
+      if (n != null && tournamentId) {
+        reconciledGameN = n;
+        replayBtnEl.hidden = false;
+      }
+    },
+    disposeShared,
+  };
+}
+
+export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, flash = true }) {
+  if (DEBUG_WATCH) console.log("[WATCH] openLiveGameWindow", { proxyId, gameId, windowKey, label });
+  if (!windowKey) {
+    console.error("[WATCH] no windowKey -- need at least one of proxyId/gameId", { proxyId, gameId });
+    return;
+  }
+  const existing = liveWindows.get(windowKey);
+  if (existing) {
+    if (DEBUG_WATCH) console.log("[WATCH] window already open -- focusing", { windowKey });
+    if (existing.min) existing.restore();
+    existing.focus();
+    flashWindow(existing);
+    return { wb: existing, alreadyOpen: true };
+  }
+
+  const built = buildLiveGameBox({
+    windowKey, gameId, proxyId, label, engineName, token, tournamentId,
+    top, left, boardStyle, avoidRect, initialRect, min, flash,
+    variantClass: null,
+  });
+  const { wb, body, board, refs, showResult, disposeShared } = built;
+  const {
+    evalScoreEl, evalDepthEl, evalTbhitsEl, pvEl,
+    oppEvalScoreEl, oppEvalDepthEl, oppEvalTbhitsEl, oppPvEl,
+    clockTopEl, clockBottomEl,
+    topNameEl, bottomNameEl, topTimeEl, bottomTimeEl,
+  } = refs;
+
   let ws = null;
   let engineColor = null;
   let opponentName = null;
@@ -296,10 +353,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     wbClosed = true;
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
     if (ws) try { ws.close(); } catch { /* */ }
-    ro.disconnect();
-    if (gameId) window.removeEventListener("sturddle:reconciled", onReconciled);
-    liveWindows.delete(windowKey);
-    window.dispatchEvent(new CustomEvent("sturddle:livegame-closed"));
+    disposeShared();
     return false;
   };
 
@@ -486,23 +540,6 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     }
   }
 
-  let resultPainted = false;
-  function showResult(result, termination) {
-    // result is "1-0" | "0-1" | "1/2-1/2" | "*" | null/undefined.
-    // The per-pair WS sentinel and the tournament-wide game_reconciled
-    // arrive in nondeterministic order; if real values landed first,
-    // ignore a subsequent "*" downgrade.
-    const isReal = result && result !== "*";
-    if (resultPainted && !isReal) return;
-    if (isReal) resultPainted = true;
-    const score = isReal ? result : "game ended";
-    const term = (termination && termination !== "unknown") ? termination : "";
-    resultScoreEl.textContent = score;
-    resultTerminationEl.textContent = term;
-    resultOverlayEl.hidden = false;
-  }
-
-
   function pvArrowMove(p) {
     if (!p.pv || !p.pv.length) return null;
     if (!p.time || p.time < ARROW_MIN_TIME_MS) return null;
@@ -576,6 +613,88 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       try { wb.close(); } catch { /* */ }
     },
   };
+}
+
+
+// Frozen rehydration of a finished tournament game. Same window
+// look/feel as the live variant but no WebSocket; final position and
+// result come from the per-game PGN endpoint. Used when reopening a
+// workspace whose snapshot has resolved game entries.
+export function openFrozenGameWindow({
+  proxyId, gameId, windowKey = gameId, label, engineName,
+  token, tournamentId, gameN, result, termination,
+  top = 0, left = 0, boardStyle = null, initialRect = null, min = false, flash = true,
+}) {
+  if (!windowKey) {
+    console.error("[FROZEN] no windowKey", { proxyId, gameId });
+    return;
+  }
+  const existing = liveWindows.get(windowKey);
+  if (existing) {
+    if (existing.min) existing.restore();
+    existing.focus();
+    flashWindow(existing);
+    return { wb: existing, alreadyOpen: true };
+  }
+  if (gameN == null || !tournamentId) {
+    console.error("[FROZEN] missing gameN/tournamentId -- cannot rehydrate", { gameN, tournamentId });
+    return;
+  }
+
+  const built = buildLiveGameBox({
+    windowKey, gameId, proxyId, label, engineName, token, tournamentId,
+    top, left, boardStyle, avoidRect: null, initialRect, min, flash,
+    variantClass: "sturddle-wb-live-frozen",
+  });
+  const { wb, board, refs, showResult, setReplayGameN, disposeShared } = built;
+  const { topNameEl, bottomNameEl, clockTopEl, clockBottomEl } = refs;
+
+  wb.onclose = () => {
+    disposeShared();
+    return false;
+  };
+
+  // Paint result immediately so the user sees state even before the
+  // PGN fetch returns; refined once headers are in.
+  showResult(result, termination);
+  setReplayGameN(gameN);
+
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  fetch(`/api/tournaments/${encodeURIComponent(tournamentId)}/games/${gameN}/pgn`, { headers })
+    .then(async (res) => {
+      if (!res.ok) throw new Error(`fetch pgn -> ${res.status}`);
+      return res.json();
+    })
+    .then((rec) => {
+      // Identity check, not just .has(): rapid close/reopen of the same
+      // windowKey would otherwise paint into a new window via captured
+      // refs that point at the old (detached) DOM nodes.
+      if (liveWindows.get(windowKey) !== wb) return;
+      const fen = rec.final_fen;
+      const lastMove = rec.last_move || null;
+      // Engine that was watched live is the one whose label matched
+      // engineName. Fall back to bottom = engineName side.
+      const engineIsWhite = engineName && rec.engine_white === engineName;
+      const color = engineIsWhite ? "white" : "black";
+      const oppColor = engineIsWhite ? "black" : "white";
+      board.setSide(color);
+      if (fen) board.setPosition(fen, lastMove);
+      board.clearArrows();
+      bottomNameEl.textContent = engineName || (engineIsWhite ? rec.engine_white : rec.engine_black) || "?";
+      topNameEl.textContent = engineIsWhite ? rec.engine_black : rec.engine_white;
+      clockBottomEl.dataset.color = color;
+      clockTopEl.dataset.color = oppColor;
+      // Refine banner from PGN headers if the snapshot was stale.
+      showResult(rec.result, rec.termination);
+    })
+    .catch((e) => {
+      // 404 = game pruned/missing. Close silently per the agreed policy.
+      console.warn("[FROZEN] pgn fetch failed; closing", e);
+      try { wb.close(); } catch { /* */ }
+    });
+
+  return { wb, alreadyOpen: false };
 }
 
 

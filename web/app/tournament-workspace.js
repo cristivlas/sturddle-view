@@ -14,7 +14,7 @@
 
 import {
   closeAllLiveGames, getLiveWindows,
-  isLiveWindowOpen, openLiveGameWindow,
+  isLiveWindowOpen, openLiveGameWindow, openFrozenGameWindow,
   LIVE_MIN_WIDTH, LIVE_MIN_HEIGHT, DEBUG_WATCH,
 } from "./tournament-live-game.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
@@ -129,6 +129,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // proxy_id -> { pairId, proxyA, engineA, sideA, proxyB, engineB, sideB }
   // Both proxies in a pair map to the same info object.
   const livePairings = new Map();
+  // pair_id -> { gameN, result, termination }. Populated from
+  // game_reconciled so snapshotLive() can mark resolved windows for
+  // frozen-rehydration on a later workspace re-open.
+  const resolvedGames = new Map();
 
   // Board style is fetched once per workspace open and reused for every
   // watch click. Avoids a /settings round-trip on each click and keeps
@@ -311,7 +315,15 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   function snapshotLive() {
     return getLiveWindows()
       .filter(wb => wb._watchOpts)
-      .map(wb => ({ ...wb._watchOpts, ...wbGeometry(wb), min: !!wb.min, max: !!wb.max, z: wb.index ?? 0 }));
+      .map(wb => {
+        const resolved = wb._watchOpts.gameId ? resolvedGames.get(wb._watchOpts.gameId) : null;
+        return {
+          ...wb._watchOpts,
+          ...wbGeometry(wb),
+          min: !!wb.min, max: !!wb.max, z: wb.index ?? 0,
+          ...(resolved ? { resolved } : {}),
+        };
+      });
   }
 
   function snapshot() {
@@ -758,14 +770,14 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
 
   function addLogEntry(evt) {
     const seq = evt.payload?._seq;
+    // `game_reconciled` doesn't go into eventLog (it upgrades a prior
+    // game_finished row in pushEvent); duplicates are idempotent there
+    // so we don't need to track its seq at all.
+    if (evt.payload?.kind === KIND.GAME_RECONCILED) return false;
     if (seq != null) {
       if (seenSeqs.has(seq)) return false;
       seenSeqs.add(seq);
     }
-    // `game_reconciled` upgrades an existing game_finished row in place
-    // (see pushEvent) -- don't surface a second row for the same game.
-    // Still mark seq seen above so backfill replays are deduped.
-    if (evt.payload?.kind === KIND.GAME_RECONCILED) return false;
     const tsRaw = evt.payload?._ts;
     const ts = (tsRaw ? new Date(tsRaw) : new Date())
       .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
@@ -773,7 +785,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     // Keep ordered by seq so backfill items slot in before any live
     // events that arrived during the REST round-trip.
     eventLog.sort((a, b) => (a._seq ?? 0) - (b._seq ?? 0));
-    while (eventLog.length > EVENT_LOG_LIMIT) eventLog.shift();
+    // Cap eventLog and keep seenSeqs in lockstep so it can't outgrow
+    // the visible log -- the dedup only needs to cover items we'd
+    // otherwise re-render.
+    while (eventLog.length > EVENT_LOG_LIMIT) {
+      const evicted = eventLog.shift();
+      if (evicted?._seq != null) seenSeqs.delete(evicted._seq);
+    }
     return true;
   }
 
@@ -816,6 +834,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       // separate row. One game = one log entry.
       const pid = evt.payload?.pair_id;
       if (pid) {
+        if (evt.payload.game_n != null) {
+          resolvedGames.set(pid, {
+            gameN: evt.payload.game_n,
+            result: evt.payload.result,
+            termination: evt.payload.termination,
+          });
+        }
         for (let i = eventLog.length - 1; i >= 0; i--) {
           const ent = eventLog[i];
           if (ent.payload?.kind === KIND.GAME_FINISHED && ent.payload?.pair_id === pid) {
@@ -923,16 +948,59 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       if (detail?.status === STATUS.RUNNING) openSystemWindow("schedule", { flash: false });
       if (eventLog.length > 0 || detail?.status === STATUS.RUNNING) openSystemWindow("log", { flash: false });
     }
-    if (detail?.status === STATUS.RUNNING && Array.isArray(savedState?.live)) {
+    if (Array.isArray(savedState?.live) && savedState.live.length > 0) {
       const sorted = [...savedState.live].sort((a, b) => (a.z ?? 0) - (b.z ?? 0));
+      const running = detail?.status === STATUS.RUNNING;
+      let endedWhileAway = 0;
       for (const s of sorted) {
-        attachWatch(null, s.gameId ?? s.proxyId, null, {
-          proxyId: s.proxyId, gameId: s.gameId ?? null,
-          label: s.label, engineName: s.engineName,
-          // Don't restore minimized-window geometry -- it's the dock position, not the pre-minimize rect.
-          initialRect: s.min ? null : { x: s.x, y: s.y, w: s.width, h: s.height },
-          min: !!s.min, flash: false,
-        });
+        // Don't restore minimized-window geometry -- it's the dock
+        // position, not the pre-minimize rect.
+        const rect = s.min ? null : { x: s.x, y: s.y, w: s.width, h: s.height };
+        if (s.resolved) {
+          // Resolved at snapshot time -- rehydrate from PGN, no WS.
+          // Seed resolvedGames so subsequent snapshotLive() calls can
+          // re-persist `resolved` (frozen windows don't produce live
+          // game_reconciled events that would refill the map).
+          if (s.gameId) resolvedGames.set(s.gameId, s.resolved);
+          openFrozenGameWindow({
+            proxyId: s.proxyId, gameId: s.gameId,
+            label: s.label, engineName: s.engineName,
+            token, tournamentId: tournament.id,
+            gameN: s.resolved.gameN,
+            result: s.resolved.result,
+            termination: s.resolved.termination,
+            top, left, boardStyle: boardStyleCached,
+            initialRect: rect, min: !!s.min, flash: false,
+          });
+        } else if (running) {
+          // Live-reattach only if the server still considers this pair
+          // alive; otherwise the WS would auto-close on first {ended}
+          // and the user would see a window flash and vanish.
+          const stillLive = s.gameId
+            ? livePairings.get(s.proxyId)?.pairId === s.gameId
+            : activeProxies.has(s.proxyId);
+          if (stillLive) {
+            attachWatch(null, s.gameId ?? s.proxyId, null, {
+              proxyId: s.proxyId, gameId: s.gameId ?? null,
+              label: s.label, engineName: s.engineName,
+              initialRect: rect,
+              min: !!s.min, flash: false,
+            });
+          } else {
+            endedWhileAway++;
+          }
+        }
+        else {
+          // Not resolved, not running -- game ended while we had no
+          // way to capture its resolution. Drop, count for toast.
+          endedWhileAway++;
+        }
+      }
+      if (endedWhileAway > 0) {
+        const msg = endedWhileAway === 1
+          ? "1 watched game finished while away."
+          : `${endedWhileAway} watched games finished while away.`;
+        toast(msg, { variant: "warning", duration: 7000 });
       }
       requestAnimationFrame(reapplyLayout);
     }

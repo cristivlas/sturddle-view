@@ -280,7 +280,7 @@ svg.cm-chessboard {
   transition: opacity 0.2s, transform 0.2s;
 }
 .toast-success { border-color: #6c6; }
-.toast-warning { border-color: #cc6; }
+.toast-warning { border-color: #e08e0b; }
 .toast-danger { border-color: #c66; }
 .toast-hide { opacity: 0; transform: translateY(8px); }
 
@@ -513,7 +513,9 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 }
 
 @media (max-width: 800px), (max-height: 700px) {
-  .play-dock-left { display: none; }
+  /* !important needed: .play-dock-left.dock-single below has higher
+     specificity than the bare class selector and would otherwise win. */
+  .play-dock-left { display: none !important; }
   #play-perspective { display: block; }
   .play-grid {
     display: flex;
@@ -799,7 +801,6 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   flex-direction: column;
   min-height: 60vh;
 }
-#engines-perspective wa-tab-panel { padding: 16px 0; }
 #engines-perspective .placeholder {
   display: flex;
   flex-direction: column;
@@ -810,100 +811,13 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 }
 #engines-perspective .placeholder p { margin: 4px 0; }
 #engines-perspective .placeholder .muted { font-size: 0.75rem; }
-.engines-roster-host { width: 100%; }
-
 pre { margin: 0; white-space: pre-wrap; max-height: 200px; overflow: auto; font-size: 0.75rem; }
 
-/* ---------- Engines tab: ribbon + stacked body ---------- */
-.engines-panel {
-  display: flex; gap: 12px;
-  min-width: 0;
-  flex: 1; min-height: 0;
-}
-.engines-body-main {
-  flex: 1; min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(8px, 1fr) minmax(0, var(--engines-content-w, 860px)) minmax(8px, 1fr);
-  padding-left: 50px;
-  padding-right: 50px;
-}
-.engines-body-content {
-  grid-column: 2;
-  display: flex; flex-direction: column; gap: 8px;
-  min-width: 0;
-}
-.engines-ribbon {
-  display: flex; flex-direction: column; align-items: center;
-  gap: 4px; padding: 4px 0;
-  border-right: 1px solid var(--wa-color-border-loud, #353841);
-  position: fixed;
-  left: 0; top: 50%; transform: translateY(-50%);
-  z-index: 10;
-}
-@media (max-width: 800px), (max-height: 600px) {
-  #engines-perspective wa-tab-panel { padding: 0; }
-  .engines-panel { flex-direction: column; gap: 0; }
-  .engines-ribbon {
-    position: static; transform: none;
-    flex-direction: row; justify-content: center;
-    border-right: 0; border-bottom: 1px solid var(--wa-color-border-loud, #353841);
-    padding: 6px 0;
-  }
-  .engines-ribbon .ribbon-sep {
-    width: 1px; height: 18px;
-    margin: 0 4px;
-  }
-  .engines-body-main { padding-left: 0; padding-right: 0; }
-  .engines-ribbon .ribbon-btn::before {
-    left: 6px; right: 6px; top: auto; bottom: 0;
-    width: auto; height: 2px;
-  }
-  .th-grip { display: none !important; }
-}
+/* Engines list/ribbon styles for the Settings dialog Engines tab.
+   The horizontal ribbon, drop-up search bar, and list-host modifiers
+   are defined further down (see "Settings dialog Engines tab" section). */
+.engines-body-content { display: flex; flex-direction: column; min-width: 0; }
 .engines-search { width: 100%; --wa-focus-ring-width: 0px; }
-.engines-search-wrap {
-  position: fixed;
-  z-index: 200;
-  display: flex;
-  align-items: center;
-  overflow: hidden;
-  width: 0;
-  padding: 0;
-  opacity: 0;
-  background: #1e2026;
-  border: 1px solid var(--wa-color-border-loud, #353841);
-  border-left: none;
-  border-radius: 0 4px 4px 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition: width 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94),
-              opacity 0.25s ease-out,
-              visibility 0s 0.35s;
-}
-.engines-search-wrap.open {
-  width: 480px;
-  padding: 6px 10px;
-  opacity: 1;
-  pointer-events: auto;
-  visibility: visible;
-  transition: width 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94),
-              opacity 0.2s ease-out,
-              visibility 0s;
-}
-@media (max-width: 800px), (max-height: 600px) {
-  .engines-search-btn { display: none !important; }
-  .engines-search-wrap {
-    display: none !important;
-    position: static !important;
-    clip-path: none !important;
-    transition: none !important;
-    pointer-events: auto !important;
-    background: none;
-    border: none;
-    border-radius: 0;
-    padding: 0;
-  }
-}
 
 .engine-opt-row { display: contents; }
 .engine-opt-label {
@@ -1109,10 +1023,8 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
 
 .engines-table-wrap {
   position: relative;
-  border: 1px solid #34373d;
-  border-radius: 6px;
-  height: calc(100vh - 268px);
-  min-height: 200px;
+  border-top: 1px solid #34373d;
+  min-height: 120px;
   overflow-y: auto;
   font-size: 0.8125rem;
 }
@@ -1121,7 +1033,10 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   table-layout: fixed;
   width: 100%;
   border-collapse: separate;
-  border-spacing: 0 6px;
+  /* No vertical spacing -- a non-zero border-spacing leaves a gap above
+     the sticky thead that scrolls with the content. Row breathing room
+     is provided by td padding instead. */
+  border-spacing: 0;
 }
 .engines-table thead th {
   position: sticky;
@@ -1135,7 +1050,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  border-bottom: 2px solid rgba(255, 255, 255, 0.45);
+  border-bottom: 2px solid var(--accent-line);
   overflow: hidden;
   white-space: nowrap;
   user-select: none;
@@ -1146,7 +1061,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
 }
 .engines-list-item { cursor: pointer; user-select: none; }
 .engines-list-item td {
-  padding: 10px 12px;
+  padding: 12px 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1156,12 +1071,16 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
 }
 .engines-list-item td:last-child {
   border-right: 1px solid #2e3138;
-  border-radius: 0 6px 6px 0;
+  border-radius: 0;
 }
 .engines-list-item:hover td { background: var(--nav-btn-bg); }
 .engines-list-item.focused td { background: var(--nav-btn-bg); }
-.engines-list-item.focused td:first-child {
-  box-shadow: inset 3px 0 0 var(--accent-line);
+.engines-list-item.focused td:last-child {
+  /* Muted amber: same hue as the perspective/tab indicator, but the
+     saturation difference (--accent-line is dimmer than --accent) keeps
+     the visual hierarchy clear. Right edge so it doesn't sit next to
+     the perspective tab indicator on the dialog's left rail. */
+  box-shadow: inset -3px 0 0 var(--accent-line);
 }
 .engines-list-item.active .engines-list-name { font-weight: 600; }
 .engines-list-name-text {
@@ -1419,9 +1338,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .fs-entry wa-icon { font-size: 0.875rem; flex: 0 0 auto; }
 .fs-entry .fs-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* ---------- Tournaments tab ---------- */
-#engines-perspective wa-tab-panel:has(.tournaments-panel) { padding-top: 0; }
-#engines-perspective wa-tab-panel:has(.tournaments-panel)::part(base) { padding-top: 0; }
+/* ---------- Tournaments panel ---------- */
 .tournaments-panel { display: flex; flex-direction: column; gap: 12px; min-height: 50vh; }
 
 .tournaments-menubar {
@@ -1537,6 +1454,69 @@ wa-dialog::part(body) {
 }
 .engines-empty .empty-message { pointer-events: auto; }
 .engines-empty.hidden { display: none; }
+
+/* Settings dialog Engines tab -- horizontal ribbon + full-width scrollable list.
+   The engines panel sizes itself via JS (mountEngineList sets an explicit
+   pixel height on .engines-table-wrap that fits the available dialog body
+   space). That keeps the dialog body chain untouched -- no overflow hacks,
+   no height inheritance through wa-tab-panel slot wrappers. */
+.settings-engines-panel { padding: 0 !important; }
+/* override the .settings-tabs ::part(base) 6px vertical padding and the
+   > * 480px max-width for this panel only */
+wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel::part(base) {
+  padding: 0;
+}
+wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
+  max-width: none;
+}
+.engines-list-host { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.engines-body-main { padding: 0; }
+
+/* Inline drop-up search bar at the bottom of the panel. JS pre-shrinks
+   the list before .open is toggled so the body never overflows during
+   the height transition. */
+.engines-search-wrap {
+  display: block; width: 100%;
+  max-height: 0; padding: 0 10px;
+  opacity: 0; visibility: hidden;
+  pointer-events: none;
+  background: #1e2026;
+  border-top: 1px solid var(--wa-color-border-loud, #353841);
+  overflow: hidden; box-sizing: border-box;
+  transition: max-height 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+              padding 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+              opacity 0.2s ease-out,
+              visibility 0s 0.25s;
+}
+.engines-search-wrap.open {
+  max-height: 48px; padding: 6px 10px;
+  opacity: 1; visibility: visible;
+  pointer-events: auto;
+  transition: max-height 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+              padding 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+              opacity 0.2s ease-out,
+              visibility 0s;
+}
+
+/* Horizontal ribbon at the bottom of the panel (between list and search).
+   The top border faces the list above; the active-button accent line
+   appears on the top edge of each button (pointing toward the list). */
+.engines-ribbon {
+  display: flex; flex-direction: row; justify-content: flex-start;
+  align-items: center; gap: 4px;
+  border-top: 1px solid var(--wa-color-border-loud, #353841);
+  padding: 4px 6px;
+}
+.engines-ribbon .ribbon-sep {
+  width: 1px; height: 18px;
+  margin: 0 4px;
+  background: var(--wa-color-border-loud, #353841);
+}
+.engines-ribbon .ribbon-btn::before {
+  left: 6px; right: 6px; top: 0; bottom: auto;
+  width: auto; height: 2px;
+}
+
 .settings-deeplink {
   color: inherit; text-decoration: underline; cursor: pointer;
 }

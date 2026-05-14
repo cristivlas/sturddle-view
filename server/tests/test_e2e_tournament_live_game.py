@@ -137,7 +137,6 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, brows
                 await page.goto(f"{base}/")
                 await page.wait_for_selector("#play-perspective", timeout=5000)
                 await page.click('button[data-perspective="engines"]')
-                await page.click('#engines-perspective wa-tab[panel="tournaments"]')
                 await page.wait_for_selector(".tournament-row", timeout=5000)
 
                 # Open workspace. Default opens 3 windows
