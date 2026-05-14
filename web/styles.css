@@ -1646,6 +1646,11 @@ wa-dialog::part(body) {
 /* New Tournament dialog */
 .new-tournament-form { display: flex; flex-direction: column; gap: 12px; }
 .new-tournament-form .nt-section { display: flex; flex-direction: column; gap: 6px; }
+.new-tournament-form wa-input::part(form-control-label) {
+  font-size: 0.75rem;
+  font-weight: normal;
+  color: var(--muted);
+}
 
 /* Two-pane engine builder */
 .ne-panes {
