@@ -192,20 +192,25 @@ export function openPvTableWindow(events, anchor = null) {
   const tbody = body.querySelector("tbody");
   const tableEl = body.querySelector(".wb-pvtable-tbl");
   const colEls = Array.from(body.querySelectorAll("col"));
-  const COL_PCTS_KEY = "sturddle.pvtable.colPcts";
-  const DEFAULT_PCTS = [9, 12, 12, 12, 55];
-  let colPcts = DEFAULT_PCTS.slice();
+  const COL_WIDTHS_KEY = "sturddle.pvtable.colWidths";
+  const DEFAULT_WIDTHS = [50, 65, 65, 65];
+  let colWidths = DEFAULT_WIDTHS.slice();
   try {
-    const saved = JSON.parse(localStorage.getItem(COL_PCTS_KEY));
-    if (Array.isArray(saved) && saved.length === 5) colPcts = saved;
+    const saved = JSON.parse(localStorage.getItem(COL_WIDTHS_KEY));
+    if (Array.isArray(saved) && saved.length === 4) colWidths = saved;
   } catch (e) { /* use defaults */ }
 
-  function applyColPcts() {
-    colEls.forEach((c, i) => { c.style.width = colPcts[i] + "%"; });
+  function applyColWidths() {
+    // First 4 cols are fixed px; last col (PV) is auto to fill remaining space.
+    colEls.slice(0, 4).forEach((c, i) => { c.style.width = colWidths[i] + "px"; });
+    colEls[4].style.width = "auto";
+    const fixedW = colWidths.reduce((s, w) => s + w, 0);
+    tableEl.style.width = "100%";
+    tableEl.style.minWidth = fixedW + "px";
   }
-  applyColPcts();
+  applyColWidths();
 
-  const minPct = 5;
+  const minPx = 30;
   body.querySelectorAll(".th-grip").forEach((grip, gripIdx) => {
     grip.addEventListener("pointerdown", (eDown) => {
       if (eDown.button !== 0) return;
@@ -213,8 +218,8 @@ export function openPvTableWindow(events, anchor = null) {
       grip.setPointerCapture(eDown.pointerId);
       grip.classList.add("dragging");
       const startX = eDown.clientX;
-      const startA = colPcts[gripIdx], startB = colPcts[gripIdx + 1];
-      const tableW = tableEl.getBoundingClientRect().width || 1;
+      const startA = colWidths[gripIdx];
+      const startB = gripIdx + 1 < colWidths.length ? colWidths[gripIdx + 1] : null;
 
       const rightLine = document.createElement("div");
       const leftLine = document.createElement("div");
@@ -233,12 +238,16 @@ export function openPvTableWindow(events, anchor = null) {
       placeLines(eDown.clientX);
 
       function onMove(e) {
-        const dPct = ((e.clientX - startX) / tableW) * 100;
-        let a = startA + dPct, b = startB - dPct;
-        if (a < minPct) { b -= minPct - a; a = minPct; }
-        if (b < minPct) { a -= minPct - b; b = minPct; }
-        colPcts[gripIdx] = a; colPcts[gripIdx + 1] = b;
-        applyColPcts();
+        const d = e.clientX - startX;
+        let a = startA + d;
+        if (a < minPx) a = minPx;
+        colWidths[gripIdx] = a;
+        if (startB !== null) {
+          let b = startB - d;
+          if (b < minPx) b = minPx;
+          colWidths[gripIdx + 1] = b;
+        }
+        applyColWidths();
         placeLines(e.clientX);
       }
       let done = false;
@@ -248,7 +257,7 @@ export function openPvTableWindow(events, anchor = null) {
         grip.classList.remove("dragging");
         rightLine.remove();
         leftLine.remove();
-        localStorage.setItem(COL_PCTS_KEY, JSON.stringify(colPcts));
+        localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(colWidths.slice(0, 4)));
         grip.removeEventListener("pointermove", onMove);
         grip.removeEventListener("pointerup", onUp);
         grip.removeEventListener("pointercancel", onUp);

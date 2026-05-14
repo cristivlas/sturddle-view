@@ -1977,6 +1977,7 @@ wa-dialog::part(body) {
 /* Search Lines window. Fixed layout with user-resizable columns.
    The PV cell scrolls horizontally so full variations are readable. */
 .wb-pvtable { position: relative; }
+.sturddle-wb-pvtable .wb-body { overflow-x: auto; }
 .wb-pvtable-tbl { table-layout: fixed; }
 .wb-pvtable-tbl thead th {
   position: relative; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; user-select: none;
@@ -1986,4 +1987,6 @@ wa-dialog::part(body) {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
 .wb-pvtable-tbl td { overflow: hidden; text-overflow: ellipsis; }
-.wb-pvtable-pv { white-space: nowrap; overflow-x: auto; text-overflow: clip; }
+.wb-pvtable-tbl td.wb-pvtable-pv { overflow: visible; text-overflow: clip; }
+.wb-pvtable-col-pv { min-width: 200px; }
+.wb-pvtable-pv { white-space: nowrap; }
