@@ -495,10 +495,11 @@ class Orchestrator:
             self._store.update_status(t.id, STATUS_STOPPED, stopped_at=_now())
             raise
 
-        # PGN tailer for reconciliation. Spawned after the runner is
-        # up so a runner_start failure doesn't orphan it.
+        # PGN tailer for reconciliation. Constructed here but its poll
+        # loop is gated on _game_subscribers: started on first watcher,
+        # stopped when the last watcher leaves. Saves 1Hz file I/O +
+        # SAN->UCI parse when no one is watching individual games.
         self._pgn_tailer = PgnTailer(spec.pgn_path, self._on_pgn_record)
-        await self._pgn_tailer.start()
 
         return updated
 
@@ -995,6 +996,47 @@ class Orchestrator:
         reconciled = self._reconcile_queue.add_pgn_record(record)
         if reconciled is not None:
             await self._emit_reconciled(reconciled)
+        # Drain check: if no watchers and the pending queue cleared,
+        # stop the tailer. This is the deferred stop the dissolution
+        # gate skipped while pending was non-empty.
+        self._schedule_tailer_stop("pending queue drained, no watchers")
+
+    async def _maybe_start_tailer(self, reason: str) -> None:
+        """Start the tailer if conditions still hold. Re-checks at task
+        run time so a stop scheduled by an earlier transition that
+        hasn't executed yet doesn't leave a subscriber tailer-less."""
+        if (
+            self._game_subscribers
+            and self._pgn_tailer is not None
+            and not self._pgn_tailer.is_running()
+        ):
+            log.info("PGN tailer starting: %s", reason)
+            try:
+                await self._pgn_tailer.start()
+            except Exception:
+                log.exception("PGN tailer start failed")
+
+    async def _maybe_stop_tailer(self, reason: str) -> None:
+        """Stop the tailer if conditions still hold. Re-checks at task
+        run time so a subscribe that arrived between schedule and run
+        keeps the tailer alive."""
+        if (
+            not self._game_subscribers
+            and self._reconcile_queue.pending_count == 0
+            and self._pgn_tailer is not None
+            and self._pgn_tailer.is_running()
+        ):
+            log.info("PGN tailer stopping: %s", reason)
+            try:
+                await self._pgn_tailer.stop()
+            except Exception:
+                log.exception("PGN tailer stop failed")
+
+    def _schedule_tailer_start(self, reason: str) -> None:
+        asyncio.create_task(self._maybe_start_tailer(reason))
+
+    def _schedule_tailer_stop(self, reason: str) -> None:
+        asyncio.create_task(self._maybe_stop_tailer(reason))
 
     async def _emit_reconciled(self, m: ReconciledMatch) -> None:
         log.info(
@@ -1086,6 +1128,11 @@ class Orchestrator:
             else:
                 reconciled = self._reconcile_queue.add_pending(entry)
         game_subs = self._game_subscribers.pop(pair_id, None)
+        # Try the stop transition; the helper re-checks subs+pending at
+        # task run time. Skip in terminal mode -- teardown owns its own
+        # explicit poll_once()+stop() sequence.
+        if not terminal:
+            self._schedule_tailer_stop("last watched pair dissolved")
         if _DEBUG_PAIRING:
             log.debug(
                 "pair dissolved tag=%s result=%s termination=%s game_subs=%d",
@@ -1260,6 +1307,11 @@ class Orchestrator:
             })
             return q
         self._game_subscribers.setdefault(pair_id, set()).add(q)
+        # Wake the tailer so reconciliation is live while a watcher is
+        # attached. The helper re-checks at task run time, so a stop
+        # task scheduled by a prior unsubscribe in the same tick won't
+        # leave us tailer-less.
+        self._schedule_tailer_start("game subscriber attached")
         # Replay snapshot for both proxies so a late subscriber gets
         # instant board state without waiting for the next UCI event.
         for pid in proxies:
@@ -1282,6 +1334,7 @@ class Orchestrator:
             subs.discard(queue)
             if not subs:
                 self._game_subscribers.pop(pair_id, None)
+        self._schedule_tailer_stop("last game subscriber detached")
         queue.cancel_timers()
 
     def _close_all_proxy_subscribers(self) -> None:
