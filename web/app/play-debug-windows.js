@@ -119,6 +119,10 @@ function syncDockVisibility() {
     // Insert between the two slots (after first, before second).
     const [first, second] = slots;
     dockEl.insertBefore(dockGrip, second);
+    // slots[0] = top (lower dockOrder), slots[1] = bottom (higher dockOrder).
+    const [topSlot, botSlot] = slots;
+    const topInst = instances.find(i => i.slot === topSlot);
+    const botInst = instances.find(i => i.slot === botSlot);
     makeSplitter({
       handle: dockGrip,
       container: dockEl,
@@ -126,8 +130,10 @@ function syncDockVisibility() {
       cssVar: "--dock-split-ratio",
       storageKey: DOCK_SPLIT_KEY,
       defaultRatio: 0.5,
-      minBeforePx: 120,
-      minAfterPx: 120,
+      onCollapse(side) {
+        if (side === "before" && topInst) topInst.close();
+        else if (side === "after" && botInst) botInst.close();
+      },
     });
   } else if (!bothDocked && dockGrip) {
     dockGrip.remove();

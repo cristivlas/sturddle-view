@@ -13,42 +13,21 @@ function clamp01(v) {
 
 // orientation: "horizontal" -> column splitter, drag on X.
 //              "vertical"   -> row splitter, drag on Y.
-//
-// minBeforePx / minAfterPx: minimum pixels each pane retains. Pane can
-// shrink to this stub but never below, so the splitter handle stays
-// reachable (no full-collapse).
+// collapseThreshold: ratio below this fires onCollapse("before");
+//   above (1-threshold) fires onCollapse("after"). Ratio resets to defaultRatio.
 export function makeSplitter({
   handle, container, orientation, cssVar, storageKey,
   defaultRatio = 0.5,
-  minBeforePx = 1,
-  minAfterPx = 1,
+  collapseThreshold = 0.02,
+  onCollapse = null,
 }) {
-  function clampRatio(r, sizePx) {
-    r = clamp01(r);
-    if (sizePx > 0) {
-      const minR = minBeforePx / sizePx;
-      const maxR = 1 - (minAfterPx / sizePx);
-      // If sizePx is so small that minR > maxR, fall back to mid.
-      if (minR > maxR) return 0.5;
-      r = Math.max(minR, Math.min(maxR, r));
-    }
-    return r;
-  }
-  function setRatio(r, sizePx = 0) {
-    container.style.setProperty(cssVar, clampRatio(r, sizePx).toFixed(4));
+  function setRatio(r) {
+    container.style.setProperty(cssVar, clamp01(r).toFixed(4));
   }
 
-  // Initial value from storage, fall back to default.
   const saved = parseFloat(localStorage.getItem(storageKey));
   const initial = Number.isFinite(saved) ? saved : defaultRatio;
   setRatio(initial);
-  // Re-clamp once the container has been laid out so a previously-saved
-  // collapse ratio respects the min-px floor under the new sizing rules.
-  requestAnimationFrame(() => {
-    const rect = container.getBoundingClientRect();
-    const sizePx = orientation === "horizontal" ? rect.width : rect.height;
-    setRatio(initial, sizePx);
-  });
 
   handle.addEventListener("pointerdown", (eDown) => {
     if (eDown.button !== 0) return;
@@ -58,19 +37,30 @@ export function makeSplitter({
 
     const onMove = (e) => {
       const rect = container.getBoundingClientRect();
-      const sizePx = orientation === "horizontal" ? rect.width : rect.height;
       const ratio = orientation === "horizontal"
         ? (e.clientX - rect.left) / rect.width
         : (e.clientY - rect.top) / rect.height;
-      setRatio(ratio, sizePx);
+      setRatio(ratio);
     };
     const onUp = () => {
       handle.classList.remove("dragging");
       const v = parseFloat(getComputedStyle(container).getPropertyValue(cssVar)) || 0;
-      try { localStorage.setItem(storageKey, v.toFixed(4)); } catch { /* */ }
       handle.removeEventListener("pointermove", onMove);
       handle.removeEventListener("pointerup", onUp);
       handle.removeEventListener("pointercancel", onUp);
+      if (onCollapse && v < collapseThreshold) {
+        setRatio(defaultRatio);
+        try { localStorage.setItem(storageKey, defaultRatio.toFixed(4)); } catch { /* */ }
+        onCollapse("before");
+        return;
+      }
+      if (onCollapse && v > 1 - collapseThreshold) {
+        setRatio(defaultRatio);
+        try { localStorage.setItem(storageKey, defaultRatio.toFixed(4)); } catch { /* */ }
+        onCollapse("after");
+        return;
+      }
+      try { localStorage.setItem(storageKey, v.toFixed(4)); } catch { /* */ }
     };
     handle.addEventListener("pointermove", onMove);
     handle.addEventListener("pointerup", onUp);
