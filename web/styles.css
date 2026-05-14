@@ -1986,6 +1986,12 @@ wa-dialog::part(body) {
   background: #252830;
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
+.wb-pvtable-tbl thead th:first-child:hover {
+  box-shadow: inset -2px 0 0 var(--wa-color-border-loud, #353841);
+}
+.wb-pvtable-tbl thead th:last-child:hover {
+  box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841);
+}
 .wb-pvtable-tbl td { overflow: hidden; text-overflow: ellipsis; }
 .wb-pvtable-tbl td.wb-pvtable-pv { overflow: visible; text-overflow: clip; }
 .wb-pvtable-col-pv { min-width: 200px; }
