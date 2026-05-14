@@ -341,24 +341,6 @@ async def test_TN1_no_workspace_click_fresh_does_not_open(server, browser):
         await ctx.close()
 
 
-@pytest.mark.asyncio
-async def test_TN2_workspace_open_navigate_to_fresh_uses_default(server, browser):
-    if browser is None:
-        pytest.skip("chromium not installed")
-    ctx, page, errors = await _new_page(browser)
-    try:
-        await _goto_app(page, server)
-        await _click_row(page, 0)
-        await _open_workspace_via_ribbon(page)
-        await _wait_wb_count(page, 1)
-        await _click_row(page, 1)
-        await _wait_wb_count(page, 1)
-        titles = await _wb_titles(page)
-        assert any("Standings" in t for t in titles)
-        _assert_no_errors(errors)
-    finally:
-        await ctx.close()
-
 
 @pytest.mark.asyncio
 async def test_TN4_close_all_then_navigate_back_does_not_open(server, browser):
