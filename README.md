@@ -21,7 +21,12 @@ playwright install chromium  # one-time, for end-to-end tests
 sturddle-view --reload
 ```
 
-The server prints an auth token at startup and redirects `/` to `/ui/?token=...`.
+The server binds to `127.0.0.1` by default and prints an `/auth?token=...`
+URL at startup. Open it once; the server sets an `HttpOnly` cookie and
+redirects to `/ui/`. To expose the server on the LAN/tailnet, pass
+`--host 0.0.0.0` (token still required, or add `--no-auth` if you trust
+the network). To serve over TLS, supply `--cert PATH --key PATH`. See
+[docs/spec.md#security](docs/spec.md#security) for the full model.
 
 ### Submodules
 

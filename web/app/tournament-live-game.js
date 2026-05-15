@@ -21,7 +21,6 @@ async function replayTournamentGame({ tournamentId, gameN, token }) {
     if (!ok) return;
   }
   const headers = { "Content-Type": "application/json" };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
   let pgn;
   try {
     const res = await fetch(`/api/tournaments/${encodeURIComponent(tournamentId)}/games/${gameN}/pgn`, { headers });
@@ -357,13 +356,12 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     return false;
   };
 
-  // Open WS subscription.
+  // Open WS subscription. Auth carried by cookie.
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const tokenQ = token ? `?token=${encodeURIComponent(token)}` : "";
   const wsTarget = gameId
     ? `game/${encodeURIComponent(gameId)}`
     : `proxy/${encodeURIComponent(proxyId)}`;
-  const url = `${proto}//${location.host}/ws/tournament/${wsTarget}${tokenQ}`;
+  const url = `${proto}//${location.host}/ws/tournament/${wsTarget}`;
   if (DEBUG_WATCH) console.log("[WATCH] ws connect", { windowKey, url });
   ws = new WebSocket(url);
 
@@ -458,7 +456,6 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     const gen = positionGen;
     try {
       const headers = { "Content-Type": "application/json" };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
       const res = await fetch("/api/chess/apply-move", {
         method: "POST",
         headers,
@@ -660,7 +657,6 @@ export function openFrozenGameWindow({
   setReplayGameN(gameN);
 
   const headers = { "Content-Type": "application/json" };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
   fetch(`/api/tournaments/${encodeURIComponent(tournamentId)}/games/${gameN}/pgn`, { headers })
     .then(async (res) => {
       if (!res.ok) throw new Error(`fetch pgn -> ${res.status}`);

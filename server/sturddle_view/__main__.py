@@ -39,6 +39,8 @@ def main() -> None:
         action="store_true",
         help="Disable token auth (dev convenience; do not use on untrusted networks)",
     )
+    parser.add_argument("--cert", default=None, help="TLS cert (PEM). Requires --key.")
+    parser.add_argument("--key", default=None, help="TLS key (PEM). Requires --cert.")
     parser.add_argument("--debug", action="store_true",
                         help="Verbose (DEBUG) logging for the app (sturddle_view)")
     parser.add_argument("--server-debug", action="store_true",
@@ -62,6 +64,26 @@ def main() -> None:
                 show_error(APP_NAME, msg)
             sys.exit(1)
 
+    # Validate CLI combos before any environment is touched.
+    if (args.cert is None) != (args.key is None):
+        print("--cert and --key must be provided together.", file=sys.stderr)
+        sys.exit(2)
+    if args.cert and args.desktop:
+        print("--cert/--key are not supported with --desktop "
+              "(loopback HTTP is already a secure context).", file=sys.stderr)
+        sys.exit(2)
+    if args.cert:
+        for label, p in (("--cert", args.cert), ("--key", args.key)):
+            if not Path(p).is_file():
+                print(f"{label} file not found: {p}", file=sys.stderr)
+                sys.exit(2)
+    if args.no_auth and args.host and args.host != "127.0.0.1":
+        # Explicit, intentional combo: warn loudly but allow (tailscale / trusted LAN).
+        logging.getLogger(__name__).warning(
+            "AUTH DISABLED on non-loopback bind %s -- anyone reachable on the network "
+            "can control this server. Use only on a trusted network.", args.host,
+        )
+
     # Push CLI overrides into env so the worker process's Settings() picks them up.
     if args.engine:
         os.environ["STURDDLE_ENGINE_PATH"] = args.engine
@@ -71,6 +93,9 @@ def main() -> None:
         os.environ["STURDDLE_PORT"] = str(args.port)
     if args.no_auth:
         os.environ["STURDDLE_AUTH_DISABLED"] = "1"
+    if args.cert:
+        os.environ["STURDDLE_TLS_CERT"] = args.cert
+        os.environ["STURDDLE_TLS_KEY"] = args.key
 
     settings = Settings()
     host = settings.host
@@ -107,6 +132,8 @@ def main() -> None:
         # and re-enable per-request access lines we already silenced.
         log_config=None,
         access_log=False,
+        ssl_certfile=args.cert,
+        ssl_keyfile=args.key,
     )
 
 

@@ -204,25 +204,120 @@ Client-side (localStorage, server-agnostic):
 
 ---
 
-## Authentication
+## Security
 
-Single shared secret token, generated at server startup or via config:
+### Threat model
 
-```
-ws://hostname:port/ws?token=<secret>
-http://hostname:port/ui?token=<secret>
-```
+Single-user app. Two intended deployment modes:
 
-- No user accounts or session management
-- Local same-machine PyWebView mode: token auto-filled, effectively transparent
-- Share URL+token to allow remote peek access
-- `--no-auth` CLI flag disables token check entirely (trusted-LAN dev convenience).
-  Banner makes this explicit at startup. **Never use on untrusted networks.**
+1. **Local-only** (default and desktop): server bound to `127.0.0.1`. No
+   network surface; the only attacker model is local malware running as
+   the same user, against which TLS and auth tokens are not defenses.
+2. **Trusted LAN / tailnet** (explicit opt-in): user passes `--host
+   0.0.0.0` to expose the port. The token must keep unauthorized peers
+   out; optionally TLS protects against on-wire sniffing.
 
-When the WebSocket disconnects, the client visibly disables the Settings gear
-and the Engines perspective nav button. If the user is on Engines when the
-connection drops, they are auto-routed back to Play. Play remains usable for
-last-known state inspection.
+Not in scope: public internet exposure, multi-user isolation, role-based
+access, rate limiting, audit logging.
+
+### Bind policy
+
+Default `--host` is `127.0.0.1`. `--no-auth` alone does **not** widen
+the bind. Opening the server to the network requires an explicit
+`--host` argument. The unsafe combo `--host 0.0.0.0 --no-auth` is
+permitted (the tailscale / trusted-LAN case) but logs a startup warning.
+
+### Authentication
+
+Single shared-secret token, generated at startup via
+`secrets.token_urlsafe(24)`. The token is presented two ways:
+
+- **Cookie** (`sv_auth`, `HttpOnly`, `SameSite=Lax`, `Secure` when TLS is
+  on). Set by a one-shot `GET /auth?token=<secret>` handshake that
+  validates the token and 303s to `/ui/`. The token never appears in the
+  rendered page URL, browser history, or `Referer` headers.
+- **`Authorization: Bearer <token>`** for non-browser clients (CLI,
+  tests). Equivalent security to the cookie.
+
+The `?token=` URL query fallback was removed. Only the `/auth` handshake
+accepts the token in the URL, and only to convert it into a cookie.
+
+`SameSite=Lax` was chosen over `Strict` because `Strict` breaks the 303
+redirect in some embedded webviews. Lax still strips the cookie from
+cross-site POSTs, which is what defeats CSRF.
+
+`--no-auth` disables the token check entirely. The startup banner makes
+this explicit. Combined with a non-loopback `--host`, the warning is
+escalated.
+
+### Origin enforcement
+
+`_OriginMiddleware` rejects non-`GET`/`HEAD`/`OPTIONS` requests whose
+`Origin` header doesn't match `Host`. Missing `Origin` is allowed —
+browsers always send it on cross-origin requests, so this defeats CSRF
+and DNS-rebinding from a malicious page on the same machine. Non-browser
+clients (curl, `TestClient`, Python `requests`) don't send `Origin` and
+pass through unchanged.
+
+The same check runs on every WebSocket upgrade.
+
+### Security headers
+
+Applied by `_SecurityHeadersMiddleware`:
+
+- `X-Frame-Options: DENY` — no embedding.
+- `Referrer-Policy: no-referrer` — prevent token leakage via outbound
+  links (defense-in-depth; the token isn't in URLs anymore).
+- `Content-Security-Policy` — `default-src 'self'`; `connect-src` allows
+  `data:` and `ws:`/`wss:` (component libraries fetch inline-SVG icon
+  payloads); `frame-ancestors 'none'`.
+
+### TLS
+
+User-supplied cert and key via `--cert PATH --key PATH`. Both are
+required together; otherwise the server exits 2 with a clear message.
+Files must exist and be readable; missing files fail before uvicorn
+starts.
+
+Self-signed cert generation is **not supported**. The recommended
+workflows are:
+
+- A self-signed cert generated with `openssl` for local dev:
+
+  ```
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem \
+    -days 30 -subj "/CN=localhost" \
+    -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+  ```
+
+  Browsers will warn once; click through.
+- A real cert (Let's Encrypt, tailscale serve, etc.) for stable hosts.
+
+`--cert/--key` is rejected with `--desktop`. Loopback HTTP is already a
+[secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts)
+in modern browsers, and PyWebView/Chromium can't easily be made to
+trust a per-app self-signed cert without intrusive system-cert-store
+changes.
+
+When TLS is on, the cookie is marked `Secure`; the banner advertises
+`https://` and `wss://`; the orchestrator's internal proxy URL is also
+served over `https`.
+
+#### Windows proactor caveat
+
+`_install_proactor_accept_resilience` (in `app.py`) overrides
+`asyncio.proactor_events.BaseProactorEventLoop._start_serving` to re-arm
+`AcceptEx` on transient `WinError` codes. Its accept loop must call
+`_make_ssl_transport` when `sslcontext is not None` — falling back to
+`_make_socket_transport` produces `ERR_SSL_PROTOCOL_ERROR` on the
+client and `Invalid HTTP request received` on the server.
+
+### Disconnect UX
+
+When the WebSocket disconnects, the client visibly disables the Settings
+gear and the Engines perspective nav button. If the user is on Engines
+when the connection drops, they are auto-routed back to Play. Play
+remains usable for last-known state inspection.
 
 ---
 

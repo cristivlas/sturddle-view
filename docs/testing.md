@@ -68,6 +68,24 @@ stores. Files: `test_tournaments_api.py`, `test_tournament_proxy_api.py`,
 `test_engines_api.py`, `test_settings_api.py`, `test_pause_api.py`,
 `test_fs_api.py`.
 
+Auth in tests: the server accepts the token via `HttpOnly` cookie (browser
+path) or `Authorization: Bearer` header (CLI / tests). The `?token=` query
+fallback was removed. Tests that exercise authenticated endpoints either
+set `auth_disabled=True` on `Settings` or attach the header on the client:
+
+```python
+settings = Settings(token="test-token")
+with TestClient(create_app(settings)) as c:
+    c.headers["Authorization"] = "Bearer test-token"
+    ...
+```
+
+Origin enforcement: `_OriginMiddleware` rejects non-GET requests with an
+`Origin` header that doesn't match `Host`. Missing `Origin` is allowed
+(Python `TestClient`, curl, and other non-browser clients don't send one;
+browsers always do on cross-origin requests). Tests therefore need no
+special handling.
+
 #### End-to-end (Playwright)
 
 Files named `test_e2e_*.py`. Spawn a real uvicorn server on a random port,
@@ -113,6 +131,57 @@ pure-data helpers, internal closures, or bookkeeping invariants.
 
 The web/vendor directory contains third-party packages with their own
 `package.json` files, but those are not part of our test infrastructure.
+
+### Security: manual smoke tests
+
+The auth, bind-policy, and TLS code paths are not covered by automated
+tests. Re-run these manually whenever any of the following change:
+`auth.py`, `app.py` (middlewares / `/auth` route), `__main__.py` flag
+validation, `desktop.py` startup, or the cookie/Bearer code in the
+frontend.
+
+1. Default loopback bind. `python -m sturddle_view`. Banner prints
+   `bound on 127.0.0.1:8765` and `open: http://127.0.0.1:8765/auth?token=...`.
+   Browser lands on `/ui/` with no token in the URL; status dot turns
+   green. From a second machine, the port is unreachable (connection
+   refused) -- loopback only.
+
+2. Desktop mode. `python -m sturddle_view --desktop`. PyWebView window
+   opens, hits `/auth?token=...`, lands on `/ui/`, WS connects. Token is
+   pinned via `STURDDLE_TOKEN` so the uvicorn worker's `create_app()`
+   sees the same value the window was opened with.
+
+3. Tailscale / trusted-LAN open. `python -m sturddle_view --host 0.0.0.0
+   --no-auth`. Startup logs a warning (`AUTH DISABLED on non-loopback
+   bind ...`). LAN peers can hit `http://<lan-ip>:8765/` and load
+   `/ui/` without a token. `--no-auth` alone (no `--host`) must NOT
+   widen the bind -- it stays on `127.0.0.1`.
+
+4. Rejected flag combinations (each exits with code 2, no traceback):
+   - `--cert foo.pem` -> `--cert and --key must be provided together.`
+   - `--key foo.key` -> same.
+   - `--desktop --cert ... --key ...` -> `--cert/--key are not
+     supported with --desktop ...`
+   - `--cert nonexistent.pem --key nonexistent.key` -> `--cert file
+     not found: ...`
+
+5. TLS (BYO cert). Generate a cert+key, e.g.:
+   ```
+   openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem \
+     -days 30 -subj "/CN=localhost" \
+     -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+   ```
+   Run `python -m sturddle_view --cert cert.pem --key key.pem`. Banner
+   shows `https://...`. `curl -vk https://127.0.0.1:8765/healthz` returns
+   `{"ok":true}`. Browser accepts the self-signed warning once, then app
+   loads; cookie is set with `Secure`.
+
+   The Windows proactor accept-resilience patch (`app.py`,
+   `_install_proactor_accept_resilience`) must call `_make_ssl_transport`
+   when `sslcontext is not None`. If it falls back to
+   `_make_socket_transport` for TLS connections, browsers and curl see
+   `ERR_SSL_PROTOCOL_ERROR` while uvicorn logs `Invalid HTTP request
+   received` (TLS ClientHello bytes parsed as HTTP).
 
 ## Future ideas
 

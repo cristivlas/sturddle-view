@@ -1,8 +1,9 @@
 // Minimal WebSocket client with exponential-backoff reconnect.
 
-export function connect({ token, onOpen, onClose, onEvent }) {
+export function connect({ onOpen, onClose, onEvent }) {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const url = `${proto}//${location.host}/ws?token=${encodeURIComponent(token)}`;
+  // Auth carried by HttpOnly cookie set during /auth handshake.
+  const url = `${proto}//${location.host}/ws`;
 
   let backoff = 500;
   const maxBackoff = 15000;

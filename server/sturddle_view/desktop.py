@@ -1,6 +1,7 @@
 """PyWebView wrapper. Runs uvicorn in a background thread, then opens a native window."""
 from __future__ import annotations
 
+import os
 import threading
 import time
 
@@ -34,6 +35,9 @@ def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> N
         raise SystemExit("PyWebView is not installed. Install with: pip install '.[desktop]'") from exc
 
     settings = Settings(host=host, port=port)
+    # Pin the token so the uvicorn-spawned create_app() picks up the same
+    # value via Settings() (rather than rolling a new random one).
+    os.environ.setdefault("STURDDLE_TOKEN", settings.token)
 
     config = uvicorn.Config(
         "sturddle_view.app:create_app",
@@ -55,7 +59,9 @@ def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> N
         time.sleep(0.05)
 
     window_host = "127.0.0.1" if host == "0.0.0.0" else host
-    url = f"http://{window_host}:{port}/?token={settings.token}"
+    # Use the cookie handshake: /auth validates the token, sets an HttpOnly
+    # cookie, then 303s to /ui/. The window's history never holds the token.
+    url = f"http://{window_host}:{port}/auth?token={settings.token}"
     webview.create_window("sturddle-view", url, width=width, height=height)
     webview.start(private_mode=False, storage_path=user_data_dir(APP_NAME, appauthor=False))
 

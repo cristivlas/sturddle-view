@@ -18,7 +18,6 @@ from fastapi import (
     Depends,
     HTTPException,
     Path as FastApiPath,
-    Query,
     Request,
     WebSocket,
     WebSocketDisconnect,
@@ -26,7 +25,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field, field_validator
 
-from ..auth import require_token
+from ..auth import AUTH_COOKIE, check_token_value, origin_ok, require_token
 from ..engines import InvalidLaunchProfileError, validate_launch_profile
 from ..tournament.fastchess import FastchessRunner
 from ..tournament.orchestrator import Orchestrator, TournamentBusyError, wrap_event_for_bus
@@ -51,9 +50,21 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["tournaments"], dependencies=[Depends(require_token)])
 
-# Internal router: no user-token auth. Authenticated via per-tournament
-# secret (proxy posts) or via the standard token (?token=) for the WS.
+# Internal router: no user-token auth on REST (proxy uses a per-tournament
+# secret). WS endpoints are authenticated by cookie / Bearer / ?token= and
+# must pass the Origin check.
 internal_router = APIRouter(tags=["tournaments-internal"])
+
+
+def _check_ws_auth(websocket: WebSocket, settings) -> bool:
+    if not origin_ok(websocket):
+        return False
+    presented = websocket.cookies.get(AUTH_COOKIE)
+    if not presented:
+        auth = websocket.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            presented = auth.split(None, 1)[1].strip()
+    return check_token_value(settings, presented)
 
 
 class EngineRef(BaseModel):
@@ -506,7 +517,6 @@ async def ingest_proxy(payload: ProxyBatch, request: Request) -> None:
 async def proxy_subscribe(
     websocket: WebSocket,
     proxy_id: str,
-    token: str = Query(default=""),
 ) -> None:
     """WS endpoint that streams one proxy's UCI lines to a subscriber.
 
@@ -521,11 +531,9 @@ async def proxy_subscribe(
       ``{"proxy_id": ..., "ended": true}``
     """
     settings = websocket.app.state.settings
-    if not settings.auth_disabled:
-        import hmac
-        if not hmac.compare_digest(token, settings.token):
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
+    if not _check_ws_auth(websocket, settings):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
 
     await websocket.accept()
     orch: Orchestrator = websocket.app.state.tournament_orch
@@ -579,18 +587,15 @@ async def proxy_subscribe(
 async def game_subscribe(
     websocket: WebSocket,
     pair_id: str,
-    token: str = Query(default=""),
 ) -> None:
     """WS endpoint scoped to a confirmed game pair (pair_id = UUID).
 
     Same frame format as ``/ws/tournament/proxy/{proxy_id}`` but the
     stream closes automatically when the pairing dissolves."""
     settings = websocket.app.state.settings
-    if not settings.auth_disabled:
-        import hmac
-        if not hmac.compare_digest(token, settings.token):
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
+    if not _check_ws_auth(websocket, settings):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
 
     await websocket.accept()
     orch: Orchestrator = websocket.app.state.tournament_orch

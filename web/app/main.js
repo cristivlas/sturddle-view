@@ -5,17 +5,15 @@ import { enginesPerspective } from "./perspectives/engines.js";
 import { openSettingsDialog } from "./settings-dialog.js";
 import { openAboutDialog } from "./about-dialog.js";
 
-const params = new URLSearchParams(location.search);
-const token = params.get("token") || "";
+// Auth is carried by the HttpOnly cookie set during the /auth handshake.
+const token = "";
 
 const conn = document.getElementById("conn-status");
 const nav = document.getElementById("perspective-nav");
 const root = document.getElementById("perspective-root");
 
 async function api(method, path, body) {
-  const sep = path.includes("?") ? "&" : "?";
-  const url = token ? `${path}${sep}token=${encodeURIComponent(token)}` : path;
-  const r = await fetch(url, {
+  const r = await fetch(path, {
     method,
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,

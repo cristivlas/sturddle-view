@@ -7,13 +7,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import chess.engine
+import hmac
 import psutil
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import __version__
+from .auth import AUTH_COOKIE, origin_ok
 from .api import agent as agent_api
 from .api import chess_utils as chess_api
 from .api import engines as engines_api
@@ -47,6 +49,37 @@ class _NoCacheUIMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    # Same-origin app: lock framing, strip Referer, restrict resource origins.
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        # connect-src includes data: so component libraries that fetch
+        # inline-SVG icon payloads (e.g. webawesome) work without warnings.
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; "
+            "img-src 'self' data:; "
+            "style-src 'self' 'unsafe-inline'; "
+            "connect-src 'self' data: ws: wss:; "
+            "frame-ancestors 'none'",
+        )
+        return response
+
+
+class _OriginMiddleware(BaseHTTPMiddleware):
+    # CSRF / DNS-rebinding mitigation: state-changing REST must come from
+    # an Origin matching the server's own. Same-origin browser fetches and
+    # loopback CLI tools (no Origin header) are unaffected.
+    SAFE = {"GET", "HEAD", "OPTIONS"}
+
+    async def dispatch(self, request: Request, call_next):
+        if request.method not in self.SAFE and not origin_ok(request):
+            return PlainTextResponse("bad origin", status_code=403)
+        return await call_next(request)
+
+
 # WinError codes asyncio-on-Windows mishandles on the listener socket
 # when a Job-killed proxy aborts mid-AcceptEx. Stock cpython closes the
 # listener — we re-arm instead and silence the orphan-task trace.
@@ -70,8 +103,16 @@ def _install_proactor_accept_resilience() -> None:
                 if f is not None:
                     conn, addr = f.result()
                     protocol = protocol_factory()
-                    self._make_socket_transport(conn, protocol,
-                                                waiter=None, server=server)
+                    if sslcontext is not None:
+                        self._make_ssl_transport(
+                            conn, protocol, sslcontext,
+                            waiter=None, server_side=True, server=server,
+                            ssl_handshake_timeout=ssl_handshake_timeout,
+                            ssl_shutdown_timeout=ssl_shutdown_timeout,
+                        )
+                    else:
+                        self._make_socket_transport(conn, protocol,
+                                                    waiter=None, server=server)
                 f = self._proactor.accept(sock)
             except OSError as exc:
                 winerr = getattr(exc, "winerror", None)
@@ -237,7 +278,8 @@ def create_app(
 
     # Slice 9b: tell the orchestrator where the proxy should POST.
     # The proxy runs as a subprocess on this same host; loopback only.
-    proxy_url = f"http://127.0.0.1:{settings.port}/internal/proxy"
+    proxy_scheme = "https" if settings.tls_cert else "http"
+    proxy_url = f"{proxy_scheme}://127.0.0.1:{settings.port}/internal/proxy"
     app.state.tournament_orch.set_proxy_broadcast_url(proxy_url)
     # Live settings reference so each tournament start picks up the
     # current Defaults-tab values without needing a restart.
@@ -259,8 +301,34 @@ def create_app(
 
     @app.get("/", include_in_schema=False)
     def root() -> RedirectResponse:
-        target = "/ui/" if settings.auth_disabled else f"/ui/?token={settings.token}"
-        return RedirectResponse(url=target)
+        # Token-less redirect; client carries the cookie set by /auth.
+        return RedirectResponse(url="/ui/")
+
+    @app.get("/auth", include_in_schema=False)
+    def auth_handshake(request: Request, token: str = "") -> RedirectResponse:
+        """One-shot handshake: validate ?token=, set HttpOnly cookie, redirect
+        to a token-less URL so the token never appears in history or Referer.
+        """
+        if not settings.auth_disabled:
+            if not token or not hmac.compare_digest(token, settings.token):
+                return PlainTextResponse("invalid token", status_code=401)
+        resp = RedirectResponse(url="/ui/", status_code=303)
+        if not settings.auth_disabled:
+            secure = request.url.scheme == "https"
+            # SameSite=Lax: still defeats CSRF (cross-site POSTs strip the
+            # cookie) but lets top-level GET navigations (including the 303
+            # from /auth) carry it. Strict breaks the handshake in some
+            # embedded webviews.
+            resp.set_cookie(
+                AUTH_COOKIE,
+                settings.token,
+                httponly=True,
+                samesite="lax",
+                secure=secure,
+                path="/",
+                max_age=60 * 60 * 24 * 7,
+            )
+        return resp
 
     if settings.web_dir.is_dir():
         app.mount("/ui", StaticFiles(directory=settings.web_dir, html=True), name="ui")
@@ -268,6 +336,8 @@ def create_app(
         log.warning("web_dir %s does not exist; UI will not be served", settings.web_dir)
 
     app.add_middleware(_NoCacheUIMiddleware)
+    app.add_middleware(_SecurityHeadersMiddleware)
+    app.add_middleware(_OriginMiddleware)
 
     _print_banner(settings)
     return app
@@ -300,8 +370,9 @@ def _reachable_hosts(bind: str) -> list[str]:
 
 def _print_banner(settings: Settings) -> None:
     hosts = _reachable_hosts(settings.host)
+    scheme = "https" if settings.tls_cert else "http"
     log.info("bound on %s:%d%s", settings.host, settings.port,
              " (auth DISABLED)" if settings.auth_disabled else "")
     for h in hosts:
-        suffix = "" if settings.auth_disabled else f"?token={settings.token}"
-        log.info("  open: http://%s:%d/%s", h, settings.port, suffix)
+        path = "/" if settings.auth_disabled else f"/auth?token={settings.token}"
+        log.info("  open: %s://%s:%d%s", scheme, h, settings.port, path)

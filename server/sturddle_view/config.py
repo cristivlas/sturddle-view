@@ -58,7 +58,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8765
     token: str = Field(default_factory=lambda: secrets.token_urlsafe(24))
     web_dir: Path = WEB_DIR
@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     pgn_dir: Path | None = None
     engine_path: Path | None = None
     auth_disabled: bool = False
+    # TLS: paths set via CLI (--cert/--key). Both must be present or both None.
+    tls_cert: Path | None = None
+    tls_key: Path | None = None
 
     tc_initial_seconds: float = 300.0
     tc_increment_seconds: float = 0.0
