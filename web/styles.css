@@ -11,6 +11,9 @@
   --nav-btn-bg: #2a2d33;
   --nav-btn-bg-hover: #32353c;
   --nav-btn-bg-active: #3a3d44;
+  --row-bg: #32353c;
+  --row-bg-hover: #4a4e58;
+  --row-bg-selected: #2a3a4a;
 
   /* Status callouts (used by import dialog and similar). Pinned because
      webawesome's --wa-color-{success,danger}-50 tokens are dark-mode
@@ -1027,6 +1030,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   min-height: 120px;
   overflow-y: auto;
   font-size: 0.8125rem;
+  padding-left: 5px;
 }
 .engines-list:focus { outline: none; }
 .engines-table {
@@ -1059,28 +1063,26 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   background: #252830;
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
-.engines-list-item { cursor: pointer; user-select: none; }
+.engines-list-item {
+  cursor: pointer; user-select: none;
+  background: linear-gradient(to right, var(--row-bg), var(--bg) 75%);
+}
 .engines-list-item td {
   padding: 12px 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  background: var(--panel);
+  background: transparent;
   border-top: 1px solid #2e3138;
   border-bottom: 1px solid #2e3138;
 }
 .engines-list-item td:last-child {
-  border-right: 1px solid #2e3138;
-  border-radius: 0;
+  border-right: none;
 }
-.engines-list-item:hover td { background: var(--nav-btn-bg); }
-.engines-list-item.focused td { background: var(--nav-btn-bg); }
-.engines-list-item.focused td:last-child {
-  /* Muted amber: same hue as the perspective/tab indicator, but the
-     saturation difference (--accent-line is dimmer than --accent) keeps
-     the visual hierarchy clear. Right edge so it doesn't sit next to
-     the perspective tab indicator on the dialog's left rail. */
-  box-shadow: inset -3px 0 0 var(--accent-line);
+.engines-list-item:hover { background: linear-gradient(to right, var(--row-bg-hover), var(--bg) 75%); }
+.engines-list-item.focused { background: linear-gradient(to right, var(--row-bg-selected), var(--bg) 75%); }
+.engines-list-item.focused td:first-child {
+  box-shadow: inset 3px 0 0 #5a6070;
 }
 .engines-list-item.active .engines-list-name { font-weight: 600; }
 .engines-list-name-text {
@@ -1095,7 +1097,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   font-size: 0.875rem;
 }
 .engines-list-path {
-  color: var(--muted);
+  color: var(--text);
   font-size: 0.75rem;
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
@@ -1557,16 +1559,17 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .tournament-row {
   display: flex; align-items: center; gap: 8px;
-  background: var(--panel);
-  border: 1px solid #2e3138;
-  border-radius: 0 6px 6px 0;
+  background: linear-gradient(to right, var(--row-bg), var(--bg) 75%);
+  border: none;
+  border-left: 1px solid #2e3138;
+  border-radius: 0;
   padding: 8px 12px;
   cursor: pointer;
   min-width: 0;
 }
-.tournament-row:hover { background: var(--nav-btn-bg); }
+.tournament-row:hover { background: linear-gradient(to right, var(--row-bg-hover), var(--bg) 75%); }
 .tournament-row.selected {
-  background: var(--nav-btn-bg);
+  background: linear-gradient(to right, var(--row-bg-selected), var(--bg) 75%);
   box-shadow: inset 3px 0 0 0 var(--accent-line);
 }
 .tournament-row-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
@@ -1653,7 +1656,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .tournament-progress-label {
   flex: 0 0 auto;
   font-size: 0.75rem;
-  color: var(--muted);
+  color: var(--text);
   white-space: nowrap;
   letter-spacing: 0.3px;
 }
