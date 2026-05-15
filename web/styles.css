@@ -81,6 +81,13 @@ wa-input, wa-number-field { --wa-color-brand-fill-quiet: var(--bg); }
 }
 *::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.32); }
 *::-webkit-scrollbar-corner { background: transparent; }
+/* `*` doesn't pierce shadow DOM, so wa-select's listbox keeps the
+   chunky default scrollbar. Reach into its part to apply the same
+   theme. (Firefox honors scrollbar-* via the part selector too.) */
+wa-select::part(listbox) {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
 body {
   margin: 0;
   font: 0.875rem/1.4 system-ui, -apple-system, Segoe UI, sans-serif;

@@ -30,6 +30,7 @@ from .events import Event, EventBus
 from .openings import OpeningBook
 from .play.game_store import GameStore
 from .play.human_vs_engine import HumanVsEngine
+from .recent_imports import RecentImports
 from .tournament.fastchess import FastchessRunner
 from .tournament.orchestrator import Orchestrator, wrap_event_for_bus
 from .tournament.store import TournamentStore, default_root
@@ -250,6 +251,7 @@ def create_app(
     app.state.ws_tasks = set()
     app.state.engines = engine_registry or EngineRegistry()
     app.state.game_store = game_store or GameStore()
+    app.state.recent_imports = RecentImports.load()
     app.state.openings = OpeningBook.load()
     log.info("loaded %d opening lines", len(app.state.openings))
 

@@ -140,6 +140,10 @@ async def import_game(payload: dict, request: Request) -> dict:
     The user inspects via /game/view/* navigation; exit view by calling
     /game/view/play-from-here, which seeds a fresh play game from the
     cursor with the configured/payload TC.
+
+    Side effect: a successful import is recorded in the recent-imports
+    store (server-side history of opened positions). The hash is
+    returned so the client can cache it as a metadata-only pointer.
     """
     parsed = _parse_import_payload(payload)
     hve = await _get_hve(request)
@@ -159,7 +163,61 @@ async def import_game(payload: dict, request: Request) -> dict:
         )
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    return {"game_id": game_id, "viewing": True}
+    # Record in recent-imports. Use the format detected by the parser
+    # (matters for auto: it's "fen" or "pgn" by now).
+    recents = getattr(request.app.state, "recent_imports", None)
+    h: str | None = None
+    if recents is not None:
+        h = await recents.save(
+            fmt=parsed["detected_format"],
+            text=payload.get("text", ""),
+            summary=parsed.get("summary") or "",
+        )
+    return {"game_id": game_id, "viewing": True, "hash": h, "summary": parsed.get("summary")}
+
+
+@router.get("/recent-imports")
+async def list_recent_imports(request: Request) -> dict:
+    """Return the recent-imports index sorted by ts desc.
+
+    No blobs are returned -- callers GET /game/recent-imports/{hash} to
+    fetch the text of an entry. Behind the same auth token as the rest
+    of /game/*."""
+    recents = getattr(request.app.state, "recent_imports", None)
+    if recents is None:
+        return {"entries": []}
+    return {"entries": recents.list()}
+
+
+@router.get("/recent-imports/{h}")
+async def get_recent_import(h: str, request: Request) -> dict:
+    """Return the full text + metadata for a single recent import.
+
+    Side effect: bumps ``ts`` so frequently revisited entries stay at
+    the top of the recents list (the dropdown shows newest first and
+    eviction drops oldest). See docs/recent-imports.md for the
+    GET-with-side-effect trade-off."""
+    recents = getattr(request.app.state, "recent_imports", None)
+    if recents is None:
+        raise HTTPException(status_code=404, detail="not found")
+    got = recents.get(h)
+    if got is None:
+        raise HTTPException(status_code=404, detail="not found")
+    row, text = got
+    await recents.touch(h)
+    return {"hash": h, "format": row["format"], "summary": row["summary"], "ts": row["ts"], "text": text}
+
+
+@router.delete("/recent-imports/{h}")
+async def delete_recent_import(h: str, request: Request) -> dict:
+    """Remove a single entry from the recent-imports store."""
+    recents = getattr(request.app.state, "recent_imports", None)
+    if recents is None:
+        raise HTTPException(status_code=404, detail="not found")
+    removed = await recents.remove(h)
+    if not removed:
+        raise HTTPException(status_code=404, detail="not found")
+    return {"ok": True}
 
 
 @router.post("/view/first")
