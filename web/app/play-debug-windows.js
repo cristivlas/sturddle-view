@@ -641,6 +641,11 @@ export function closeDebugWindows() {
   syncDockVisibility();
 }
 
+export function closeDebugWindowsPersist() {
+  instances.forEach(i => i.close());
+  syncDockVisibility();
+}
+
 export function restoreDebugWindows(events) {
   instances.forEach(i => i.restore(events));
 }

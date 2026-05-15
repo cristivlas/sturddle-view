@@ -5,7 +5,7 @@
 import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog } from "../import-position-dialog.js";
-import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, restoreDebugWindows, setDockContainer } from "../play-debug-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, setDockContainer } from "../play-debug-windows.js";
 
 // Module-scope mirror of "user has a live human-vs-engine game running"
 // so other modules (e.g. tournament Replay button) can decide whether
@@ -458,6 +458,7 @@ export const playPerspective = {
             if (!analyzing) {
               dismissAnalysisToast?.();
               dismissAnalysisToast = null;
+              if (viewing) closeDebugWindowsPersist();
             } else if (!dismissAnalysisToast) {
               // Server reports analysis active but no toast exists -- we
               // were re-mounted (e.g. user navigated to another
@@ -478,6 +479,7 @@ export const playPerspective = {
           analyzing = false;
           dismissAnalysisToast?.();
           dismissAnalysisToast = null;
+          if (viewing) closeDebugWindowsPersist();
           resignAvailable = false;
           setDisabled(newGameBtn, false);
           boardHost.classList.add("board-idle");
@@ -649,23 +651,29 @@ export const playPerspective = {
     // onAnalyze (user toggle) and from the board_update handler so the
     // toast restores itself when the perspective remounts (navigate away
     // and back) and the server re-emits analyzing: true.
+    function makeToastIconBtn(iconName, label, onClick) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "toast-icon-btn";
+      btn.setAttribute("aria-label", label);
+      btn.setAttribute("title", label);
+      const ic = document.createElement("wa-icon");
+      ic.setAttribute("name", iconName);
+      btn.appendChild(ic);
+      btn.addEventListener("click", onClick);
+      return btn;
+    }
+
     function showAnalysisToast() {
       dismissAnalysisToast?.();
       const msg = document.createElement("span");
       msg.style.display = "inline-flex";
       msg.style.alignItems = "center";
       msg.style.gap = "6px";
-      msg.append("Analysis mode on -- ");
-      const stopBtn = document.createElement("button");
-      stopBtn.type = "button";
-      stopBtn.className = "toast-icon-btn";
-      stopBtn.setAttribute("aria-label", "Stop analysis");
-      stopBtn.setAttribute("title", "Stop analysis");
-      const ic = document.createElement("wa-icon");
-      ic.setAttribute("name", "magnifying-glass");
-      stopBtn.appendChild(ic);
-      stopBtn.addEventListener("click", onAnalyze);
-      msg.append(stopBtn, " to stop.");
+      msg.append("Analysis mode on");
+      msg.append(makeToastIconBtn("table-list", "Search Lines", onPvTable));
+      msg.append(makeToastIconBtn("terminal", "UCI log", onUciLog));
+      msg.append(makeToastIconBtn("magnifying-glass", "Stop analysis", onAnalyze));
       dismissAnalysisToast = toast(msg, {
         variant: "neutral",
         duration: 0,
