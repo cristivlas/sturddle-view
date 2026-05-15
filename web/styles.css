@@ -14,6 +14,7 @@
   --row-bg: #32353c;
   --row-bg-hover: #4a4e58;
   --row-bg-selected: #2a3a4a;
+  --border-subtle: #2e3138;
 
   /* Status callouts (used by import dialog and similar). Pinned because
      webawesome's --wa-color-{success,danger}-50 tokens are dark-mode
@@ -434,7 +435,7 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   flex-direction: column;
   flex: 1 1 0; /* fills container in single-slot (flex) mode */
   min-height: 0;
-  border: 1px solid #2e3138;
+  border: 1px solid var(--border-subtle);
   background: var(--panel);
 }
 .play-dock-left:not(.dock-single) .dock-slot { overflow: hidden; }
@@ -452,7 +453,7 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   height: 28px;
   flex: 0 0 auto;
   background: var(--nav-btn-bg);
-  border-bottom: 1px solid #2e3138;
+  border-bottom: 1px solid var(--border-subtle);
   user-select: none;
 }
 .dock-slot-title {
@@ -1073,8 +1074,8 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   text-overflow: ellipsis;
   white-space: nowrap;
   background: transparent;
-  border-top: 1px solid #2e3138;
-  border-bottom: 1px solid #2e3138;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
 }
 .engines-list-item td:last-child {
   border-right: none;
@@ -1561,7 +1562,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   display: flex; align-items: center; gap: 8px;
   background: linear-gradient(to right, var(--row-bg), var(--bg) 75%);
   border: none;
-  border-left: 1px solid #2e3138;
+  border-left: 1px solid var(--border-subtle);
   border-radius: 0;
   padding: 8px 12px;
   cursor: pointer;
@@ -1630,7 +1631,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   padding: 1px 0;
   border: 1px solid transparent;
   border-radius: 8px;
-  background: #2e3138;
+  background: var(--border-subtle);
   color: #c8ccd6;
 }
 .tournament-status.status-idle {
@@ -1736,14 +1737,14 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .ne-pane {
   background: var(--bg);
-  border: 1px solid #2e3138; border-radius: 4px;
+  border: 1px solid var(--border-subtle); border-radius: 4px;
   display: flex; flex-direction: column;
   min-height: 180px; max-height: 180px;
 }
 .ne-pane-title {
   padding: 6px 10px; font-size: 0.6875rem; color: var(--muted);
   text-transform: uppercase; letter-spacing: 0.05em;
-  border-bottom: 1px solid #2e3138;
+  border-bottom: 1px solid var(--border-subtle);
 }
 .ne-order-hint { text-transform: none; letter-spacing: 0; font-size: 0.6875rem; }
 .ne-list {
@@ -1762,7 +1763,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .ne-reorder {
   flex-direction: row; padding: 4px;
-  border-top: 1px solid #2e3138;
+  border-top: 1px solid var(--border-subtle);
 }
 
 /* Tournament template form (reusable component) */
@@ -1865,7 +1866,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .winbox.sturddle-wb .wb-header {
   background: var(--nav-btn-bg);
   color: var(--fg);
-  border-bottom: 1px solid #2e3138;
+  border-bottom: 1px solid var(--border-subtle);
 }
 .winbox.sturddle-wb .wb-body {
   background: var(--panel);
@@ -1878,11 +1879,11 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .winbox.sturddle-wb-live-games .wb-body { scrollbar-gutter: stable; }
 .wb-empty { color: var(--muted); padding: 12px; text-align: center; }
 .wb-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
-.wb-table th, .wb-table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid #2e3138; white-space: nowrap; }
+.wb-table th, .wb-table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid var(--border-subtle); white-space: nowrap; }
 .wb-table th { color: var(--muted); font-weight: normal; font-size: 0.6875rem; text-transform: uppercase; }
 .wb-table .wb-eng-name { font-weight: 500; }
 .wb-sprt {
-  background: var(--bg); border: 1px solid #2e3138; border-radius: 4px;
+  background: var(--bg); border: 1px solid var(--border-subtle); border-radius: 4px;
   padding: 6px 8px; margin-bottom: 0; font-size: 0.75rem;
 }
 .wb-sprt--h1 { border-color: #2d6a3f; }
@@ -1904,7 +1905,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   background-color: rgba(255,255,255,0.9) !important;
   background-image: none !important;
 }
-.wb-sched-list li { padding: 3px 0; font-size: 0.8125rem; border-bottom: 1px solid #2e3138; }
+.wb-sched-list li { padding: 3px 0; font-size: 0.8125rem; border-bottom: 1px solid var(--border-subtle); }
 .wb-sched-icon { display: inline-block; width: 18px; color: var(--accent); }
 .wb-sched-result {
   font-family: var(--wa-font-family-code); color: var(--muted); margin-left: 8px;
@@ -2009,7 +2010,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .wb-sched-attach-btn {
   background: var(--nav-btn-bg); color: var(--fg);
-  border: 1px solid #2e3138; border-radius: 3px;
+  border: 1px solid var(--border-subtle); border-radius: 3px;
   padding: 2px 6px; cursor: pointer; font-size: 0.6875rem;
 }
 .wb-sched-attach-btn:hover { background: var(--nav-btn-bg-hover); border-color: var(--accent); }
@@ -2026,12 +2027,12 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-uci-log-toolbar {
   display: flex; align-items: center; gap: 12px;
   padding: 4px 8px; margin: -8px -12px 8px;
-  border-bottom: 1px solid #2e3138; font-size: 0.8125rem;
+  border-bottom: 1px solid var(--border-subtle); font-size: 0.8125rem;
   position: sticky; top: -8px; background: var(--panel); z-index: 1;
 }
 .wb-uci-log-toolbar button {
   background: var(--nav-btn-bg); color: var(--fg);
-  border: 1px solid #2e3138; border-radius: 3px;
+  border: 1px solid var(--border-subtle); border-radius: 3px;
   padding: 2px 8px; cursor: pointer; font-size: 0.75rem;
 }
 .wb-uci-log-toolbar button:hover { background: var(--nav-btn-bg-hover); }
@@ -2061,7 +2062,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-pvtable-tbl thead th:last-child:hover {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841);
 }
-.wb-pvtable-tbl td { overflow: hidden; text-overflow: ellipsis; text-align: right; }
+.wb-pvtable-tbl td { overflow: hidden; text-overflow: ellipsis; text-align: right; border-right: 1px solid rgba(255, 255, 255, 0.10); }
+.wb-pvtable-tbl td:last-child { border-right: none; }
 .wb-pvtable-tbl th { text-align: center; }
 .wb-pvtable-tbl td.wb-pvtable-pv,
 .wb-pvtable-tbl th:last-child { text-align: left; }

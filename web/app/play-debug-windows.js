@@ -485,6 +485,7 @@ function buildPvTableBody(events, { setOff }) {
     const fixedW = colWidths.reduce((s, w) => s + w, 0);
     tableEl.style.width = "100%";
     tableEl.style.minWidth = fixedW + "px";
+    fitTableToPvContent();
   }
   applyColWidths();
 
@@ -513,7 +514,8 @@ function buildPvTableBody(events, { setOff }) {
         const bodyLeft = body.getBoundingClientRect().left;
         const thLeft = tableEl.querySelectorAll("thead th")[gripIdx].getBoundingClientRect().left;
         rightLine.style.left = (boundaryX - bodyLeft) + "px";
-        rightLine.style.height = leftLine.style.height = body.scrollHeight + "px";
+        const fullH = Math.max(body.scrollHeight, body.parentElement?.clientHeight ?? 0);
+        rightLine.style.height = leftLine.style.height = fullH + "px";
         leftLine.style.left = (thLeft - bodyLeft) + "px";
       }
       placeLines(eDown.clientX);
@@ -596,7 +598,21 @@ function buildPvTableBody(events, { setOff }) {
     if (nodes != null) tr.cells[2].textContent = fmtK(nodes);
     if (nps != null) tr.cells[3].textContent = fmtK(nps);
     if (pv?.[0]) tr.cells[4].textContent = pv[0];
+    fitTableToPvContent();
   }));
+
+  // PV cell uses overflow:visible so long lines extend past the cell's
+  // logical width. Grow the table to match so row borders and column
+  // dividers extend to the right edge of the visible/scrollable content.
+  function fitTableToPvContent() {
+    let pvMax = 0;
+    for (const row of tbody.rows) {
+      const cell = row.cells[4];
+      if (cell && cell.scrollWidth > pvMax) pvMax = cell.scrollWidth;
+    }
+    const fixedW = colWidths.reduce((s, w) => s + w, 0);
+    tableEl.style.minWidth = (fixedW + pvMax) + "px";
+  }
 
   return body;
 }
