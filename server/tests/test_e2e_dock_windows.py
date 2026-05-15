@@ -99,10 +99,10 @@ async def _snapshot(page):
           dockEmpty: dock?.classList.contains('dock-empty') ?? null,
           slots,
           wbs,
-          ucilogOpen: localStorage.getItem('sturddle.ucilog.open'),
-          pvtableOpen: localStorage.getItem('sturddle.pvtable.open'),
-          ucilogDocked: localStorage.getItem('sturddle.ucilog.docked'),
-          pvtableDocked: localStorage.getItem('sturddle.pvtable.docked'),
+          ucilogOpen: localStorage.getItem('sturddle:ucilog:open'),
+          pvtableOpen: localStorage.getItem('sturddle:pvtable:open'),
+          ucilogDocked: localStorage.getItem('sturddle:ucilog:docked'),
+          pvtableDocked: localStorage.getItem('sturddle:pvtable:docked'),
         };
       }
     """)
