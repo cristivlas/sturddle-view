@@ -999,12 +999,14 @@ export function mountTournaments({ container, api, events, log, token }) {
       if (!sortToastHidden) {
         sortToastHiddenWbs = ws.minimizeAll();
         sortToastToggleBtn.classList.replace("toast-ws-minimize", "toast-ws-restore");
+        sortToastHidden = true;
       } else {
+        // Restore is the toast's terminal action: once the user has
+        // un-minimized the windows they minimized, the toast has served
+        // its purpose. Dismissing avoids a stale "sorted by..." linger.
         ws.restoreWindows(sortToastHiddenWbs);
-        sortToastHiddenWbs = [];
-        sortToastToggleBtn.classList.replace("toast-ws-restore", "toast-ws-minimize");
+        dismissSortToastNow();
       }
-      sortToastHidden = !sortToastHidden;
     });
     const closeBtn = document.createElement("button");
     closeBtn.className = "toast-action-btn toast-close-btn";

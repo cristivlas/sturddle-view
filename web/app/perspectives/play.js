@@ -458,6 +458,12 @@ export const playPerspective = {
             if (!analyzing) {
               dismissAnalysisToast?.();
               dismissAnalysisToast = null;
+            } else if (!dismissAnalysisToast) {
+              // Server reports analysis active but no toast exists -- we
+              // were re-mounted (e.g. user navigated to another
+              // perspective and came back). Restore the toast so the
+              // user can still see and dismiss it.
+              showAnalysisToast();
             }
           }
           boardHost.classList.remove("board-idle");
@@ -642,6 +648,33 @@ export const playPerspective = {
       }
     };
 
+    // Show the persistent "Analysis mode on" toast. Called both from
+    // onAnalyze (user toggle) and from the board_update handler so the
+    // toast restores itself when the perspective remounts (navigate away
+    // and back) and the server re-emits analyzing: true.
+    function showAnalysisToast() {
+      dismissAnalysisToast?.();
+      const msg = document.createElement("span");
+      msg.style.display = "inline-flex";
+      msg.style.alignItems = "center";
+      msg.style.gap = "6px";
+      msg.append("Analysis mode on -- ");
+      const stopBtn = document.createElement("button");
+      stopBtn.type = "button";
+      stopBtn.className = "toast-icon-btn";
+      stopBtn.setAttribute("aria-label", "Stop analysis");
+      stopBtn.setAttribute("title", "Stop analysis");
+      const ic = document.createElement("wa-icon");
+      ic.setAttribute("name", "magnifying-glass");
+      stopBtn.appendChild(ic);
+      stopBtn.addEventListener("click", onAnalyze);
+      msg.append(stopBtn, " to stop.");
+      dismissAnalysisToast = toast(msg, {
+        variant: "neutral",
+        duration: 0,
+      });
+    }
+
     const onAnalyze = async () => {
       const wasAnalyzing = analyzing;
       try {
@@ -654,26 +687,7 @@ export const playPerspective = {
           dismissAnalysisToast?.();
           dismissAnalysisToast = null;
         } else {
-          dismissAnalysisToast?.();
-          const msg = document.createElement("span");
-          msg.style.display = "inline-flex";
-          msg.style.alignItems = "center";
-          msg.style.gap = "6px";
-          msg.append("Analysis mode on — ");
-          const stopBtn = document.createElement("button");
-          stopBtn.type = "button";
-          stopBtn.className = "toast-icon-btn";
-          stopBtn.setAttribute("aria-label", "Stop analysis");
-          stopBtn.setAttribute("title", "Stop analysis");
-          const ic = document.createElement("wa-icon");
-          ic.setAttribute("name", "magnifying-glass");
-          stopBtn.appendChild(ic);
-          stopBtn.addEventListener("click", onAnalyze);
-          msg.append(stopBtn, " to stop.");
-          dismissAnalysisToast = toast(msg, {
-            variant: "neutral",
-            duration: 0,
-          });
+          showAnalysisToast();
         }
       } catch (e) {
         reportError(
