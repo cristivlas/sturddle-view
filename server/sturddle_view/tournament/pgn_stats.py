@@ -158,13 +158,10 @@ def _iter_games(pgn_path: Path):
     Skips games with a missing or non-decisive result tag (`*` etc).
     Tolerates an empty/missing file (yields nothing).
 
-    Dedup: when two games share the same ``(Round, White, Black)`` key,
-    only the *last* one is yielded. This handles the at-most-one
-    duplicate game produced by fastchess's resume mechanism when SIGKILL
-    lands between PGN-append and cfg.json-save (see Resume design in
-    docs/tournament-spec.md). Games without a ``[Round]`` header bypass
-    dedup (no key to collide on) — fastchess always emits Round, so the
-    fallback only matters for hand-crafted PGNs.
+    Every decisive game is yielded in file order; no dedup. See
+    docs/pgn-pair-identity.md -- ``Round`` is not a reliable pair ID,
+    so we trust the PGN as written and let pair-formation
+    (``_form_pairs``) decide what's an orphan vs a complete pair.
     """
     for _round, white, black, result in _iter_games_keyed(pgn_path):
         yield (white, black, result)
@@ -172,28 +169,27 @@ def _iter_games(pgn_path: Path):
 
 def _iter_games_uncached(pgn_path: Path):
     # Header-only scan: standings/games/SPRT only need White/Black/Result/Round.
-    # Avoids ``chess.pgn.read_game``'s full move-tree parse (>50× slower on
+    # Avoids ``chess.pgn.read_game``'s full move-tree parse (>50x slower on
     # multi-MB PGNs). Section boundary = a non-tag line after we've seen at
     # least one tag in the current game; lines before any tag are skipped.
-    # NOTE: trade-off — a `;`-comment line between tag block and moves
+    # NOTE: trade-off -- a `;`-comment line between tag block and moves
     # would emit early. fastchess never emits those.
-    entries: list[tuple[tuple[str, str, str] | None, tuple[str, str, str, str]]] = []
     cur: dict[str, str] = {}
     in_tags = False
 
-    def emit() -> None:
+    def emit():
         if not cur:
-            return
+            return None
         result = cur.get("Result", "*")
         if result == _WHITE_WIN or result == _BLACK_WIN or result in _DRAW_VALUES:
             white = cur.get("White", "?")
             black = cur.get("Black", "?")
             round_tag = cur.get("Round", "")
             value = (round_tag, white, black, result)
-            has_round = round_tag and round_tag != "?"
-            key = (round_tag, white, black) if has_round else None
-            entries.append((key, value))
+            cur.clear()
+            return value
         cur.clear()
+        return None
 
     with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
         for line in f:
@@ -204,23 +200,95 @@ def _iter_games_uncached(pgn_path: Path):
                 if name in _WANTED_TAGS:
                     cur[name] = m.group(2)
             elif in_tags:
-                emit()
+                v = emit()
+                if v is not None:
+                    yield v
                 in_tags = False
-        emit()
-
-    last_value: dict[tuple[str, str, str], tuple[str, str, str, str]] = {
-        k: v for k, v in entries if k is not None
-    }
-    emitted: set[tuple[str, str, str]] = set()
-    for key, value in entries:
-        if key is None:
-            yield value
-        elif key not in emitted:
-            emitted.add(key)
-            yield last_value[key]
+        v = emit()
+        if v is not None:
+            yield v
 
 
 _DECISIVE_RESULTS = frozenset({_WHITE_WIN, _BLACK_WIN, *_DRAW_VALUES})
+
+
+# Indices into the 4-tuples yielded by ``_iter_games_keyed`` (round, white,
+# black, result). Used by ``_form_pairs`` callers that also need the
+# original index back into the input sequence.
+def _form_pairs(
+    keyed: list[tuple[str, str, str, str]],
+    *,
+    paired: bool = True,
+) -> tuple[list[tuple[int, int]], list[int]]:
+    """Identify color-flipped pairs and orphans by structure, not by Round.
+
+    Input: list of (round, white, black, result) entries in file order
+    (no dedup -- see ``_iter_games_uncached``).
+
+    Bucketing: each entry lands in a bucket keyed by
+    ``(round, frozenset({white, black}))``. Within each bucket, games are
+    paired greedily by color-flip -- each ``A-as-white`` game claims one
+    unmatched ``B-as-white`` game in its bucket.
+
+    Returns ``(pairs, orphans)`` where:
+    - ``pairs`` is a list of ``(i_first_color, i_second_color)`` index
+      tuples into the input. Earlier entry in the input is ``i_first_color``.
+    - ``orphans`` is a list of input indices that did not pair.
+
+    Entries with no Round tag (or ``Round == "?"``) cannot be bucketed
+    and are reported as orphans.
+
+    If ``paired=False`` the function returns ``([], [])``: single-game
+    tours have no pair concept, so no game is an orphan. Callers that
+    need to drop unpaired games must not invoke this with ``paired=False``.
+    """
+    if not paired or not keyed:
+        return [], []
+
+    # Bucket entries by (round, engine-set); preserve file-order within
+    # each bucket so the matching is deterministic.
+    buckets: dict[tuple[str, frozenset[str]], list[int]] = {}
+    no_round: list[int] = []
+    for i, (round_tag, white, black, _result) in enumerate(keyed):
+        if not round_tag or round_tag == "?":
+            no_round.append(i)
+            continue
+        key = (round_tag, frozenset((white, black)))
+        buckets.setdefault(key, []).append(i)
+
+    pairs: list[tuple[int, int]] = []
+    orphans: list[int] = list(no_round)
+
+    for indices in buckets.values():
+        # Within a bucket, split by which engine is White. Pair greedily:
+        # the i-th `A-as-white` game pairs with the i-th `B-as-white` game,
+        # in file order. Surplus from either side becomes orphans.
+        if len(indices) == 1:
+            orphans.append(indices[0])
+            continue
+        # Use the first entry's white name as the partition pivot. Any
+        # third name would mean the bucket key is wrong -- impossible by
+        # construction (the frozenset has at most 2 members).
+        first_white = keyed[indices[0]][1]
+        side_a: list[int] = []  # games where first_white is White
+        side_b: list[int] = []  # games where the other engine is White
+        for i in indices:
+            if keyed[i][1] == first_white:
+                side_a.append(i)
+            else:
+                side_b.append(i)
+        n = min(len(side_a), len(side_b))
+        for k in range(n):
+            ia, ib = side_a[k], side_b[k]
+            # Earlier file-order index first, for stable downstream behavior.
+            if ia < ib:
+                pairs.append((ia, ib))
+            else:
+                pairs.append((ib, ia))
+        orphans.extend(side_a[n:])
+        orphans.extend(side_b[n:])
+
+    return pairs, orphans
 
 
 def read_game_pgn(pgn_path: Path, game_n: int) -> str | None:
@@ -275,86 +343,64 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
                 }
 
 
-def _needs_rewrite(pgn_path: Path) -> bool:
-    """Header-only scan: True if the PGN has partial pairs or resume dups."""
-    seen: set[tuple[str, str, str]] = set()
-    pair_counts: dict[tuple[str, frozenset[str]], int] = {}
-    cur: dict[str, str] = {}
-    in_tags = False
+def _needs_rewrite(pgn_path: Path, *, paired: bool = True) -> bool:
+    """True iff the PGN contains any orphan (a game with no color-flip
+    partner in its ``(round, engine-set)`` bucket).
 
-    def consume() -> bool:
-        """Returns True if a duplicate is detected (caller should bail early)."""
-        if not cur:
-            return False
-        result = cur.get("Result", "*")
-        if result == _WHITE_WIN or result == _BLACK_WIN or result in _DRAW_VALUES:
-            white = cur.get("White", "?")
-            black = cur.get("Black", "?")
-            round_tag = cur.get("Round", "")
-            if round_tag and round_tag != "?":
-                key = (round_tag, white, black)
-                if key in seen:
-                    return True  # duplicate
-                seen.add(key)
-                pkey = (round_tag, frozenset((white, black)))
-                pair_counts[pkey] = pair_counts.get(pkey, 0) + 1
-        cur.clear()
+    Single-game tours (``paired=False``) never have orphans by
+    definition, so this always returns False in that mode.
+    """
+    if not paired:
         return False
-
-    with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
-        for line in f:
-            m = _TAG_RE.match(line)
-            if m is not None:
-                in_tags = True
-                name = m.group(1)
-                if name in _WANTED_TAGS:
-                    cur[name] = m.group(2)
-            elif in_tags:
-                if consume():
-                    return True
-                in_tags = False
-        if consume():
-            return True
-
-    return any(n == 1 for n in pair_counts.values())
+    keyed = list(_iter_games_keyed(pgn_path))
+    if not keyed:
+        return False
+    _pairs, orphans = _form_pairs(keyed, paired=True)
+    return bool(orphans)
 
 
 def rewrite_drop_partial_pairs(
     pgn_path: Path,
     config_path: Path | None = None,
     ts: datetime | None = None,
+    *,
+    paired: bool = True,
 ) -> tuple[int, dict[str, dict[str, int]]]:
-    """Drop games belonging to partial pairs (and resume duplicates).
+    """Drop orphan games -- games whose ``(round, engine-set)`` bucket has
+    no color-flip partner.
 
-    Two distinct failure modes are handled here:
+    Replaces a previous scheme that also dedup'd by ``(round, white,
+    black)``. That dedup conflated true resume duplicates with
+    legitimate distinct games that happened to share a Round number
+    (fastchess can reuse Round values across Pause/Resume), silently
+    destroying real games. See docs/pgn-pair-identity.md.
 
-    1. Partial pairs: Stop killed fastchess after game-1 of a pair but
-       before game-2 was written. The lone game is dropped from the PGN
-       and subtracted from config.json (via ``patch_config_json``) so
-       fastchess replays the full pair on resume.
+    The new rule: identify pairs structurally via color-flip on the
+    same engine set within a Round bucket; drop only games that fail
+    to pair. True resume duplicates (one extra game in a bucket that
+    already has both colors) appear as orphans here and get dropped --
+    same outcome as before, narrower trigger.
 
-    2. Resume duplicates: fastchess wrote a game to the PGN but was
-       killed before updating config.json. On resume it replays the
-       round, producing a second PGN entry. The config patch does NOT
-       cover this case (config already under-counts; we must not subtract
-       further). Last-wins dedup in this function removes the stale copy;
-       no config change is needed.
+    If ``config_path`` is given and games are dropped, ``patch_config_json``
+    is called in the same thread to subtract the orphan W/L/D from
+    fastchess's running stats, keeping its resume counter consistent.
 
-    If ``config_path`` is given and a rewrite occurs, ``patch_config_json``
-    is called in the same thread to keep fastchess's resume counter in sync
-    for case 1 only.
+    Single-game tours (``paired=False``) skip the rewrite entirely:
+    every game stands alone, no orphan concept.
 
     Returns ``(dropped_count, deltas)`` where ``deltas`` maps each
     fastchess pair key (``"White vs Black"``) to a dict of
     ``{"wins": N, "losses": N, "draws": N}`` tallied from the dropped
-    games.  If ``dropped_count == 0`` the file is untouched, no backup is
-    written, and ``deltas`` is empty.
+    orphan games. If ``dropped_count == 0`` the file is untouched, no
+    backup is written, and ``deltas`` is empty.
     """
     if not pgn_path.exists():
         return 0, {}
+    if not paired:
+        return 0, {}
     # Fast pre-check via header-only scan (~50x faster than chess.pgn).
-    # Skip the expensive full-parse below if the file is already clean.
-    if not _needs_rewrite(pgn_path):
+    # Skip the expensive full-parse below if the file has no orphans.
+    if not _needs_rewrite(pgn_path, paired=True):
         return 0, {}
 
     # Split the PGN into per-game text blocks via line scan -- avoids
@@ -381,87 +427,69 @@ def rewrite_drop_partial_pairs(
     if current:
         blocks.append("".join(current))
 
-    games: list[tuple[str, str, str, str, str]] = []
-    for block in blocks:
+    # Build keyed entries in file order; remember the source block index
+    # for each so we can re-emit kept games verbatim. Non-decisive blocks
+    # (Result "*", missing, or malformed) are excluded from the rewrite
+    # output -- they have no place in a stats-driving PGN, and fastchess
+    # never re-reads its own emitted ``*`` games on resume.
+    keyed: list[tuple[str, str, str, str]] = []
+    block_of: list[int] = []  # block index for each keyed entry
+    nondecisive_blocks: set[int] = set()
+    for bi, block in enumerate(blocks):
         headers = dict(_TAG_RE_BLOCK.findall(block))
         result = headers.get("Result", "*")
-        if result not in (_WHITE_WIN, _BLACK_WIN, *_DRAW_VALUES):
+        if result not in _DECISIVE_RESULTS:
+            nondecisive_blocks.add(bi)
             continue
-        games.append((
+        keyed.append((
             headers.get("Round", ""),
             headers.get("White", "?"),
             headers.get("Black", "?"),
             result,
-            block,
         ))
+        block_of.append(bi)
 
-    # Dedup pass: for each (round, white, black), keep only the last index.
-    last_idx: dict[tuple[str, str, str], int] = {}
-    for i, (rd, w, b, _r, _bl) in enumerate(games):
-        if rd and rd != "?":
-            last_idx[(rd, w, b)] = i
-
-    keep: set[int] = set()
-    for i, (rd, w, b, _r, _bl) in enumerate(games):
-        if not rd or rd == "?":
-            keep.add(i)
-        elif last_idx[(rd, w, b)] == i:
-            keep.add(i)
-
-    pair_counts: dict[tuple[str, frozenset[str]], int] = {}
-    for i in keep:
-        rd, w, b, _r, _bl = games[i]
-        if not rd or rd == "?":
-            continue
-        key = (rd, frozenset((w, b)))
-        pair_counts[key] = pair_counts.get(key, 0) + 1
-
-    final_keep: set[int] = set()
-    for i in keep:
-        rd, w, b, _r, _bl = games[i]
-        if rd and rd != "?":
-            key = (rd, frozenset((w, b)))
-            if pair_counts[key] == 1:
-                continue
-        final_keep.add(i)
-
-    dropped = len(games) - len(final_keep)
-    if dropped == 0:
+    _pairs, orphans = _form_pairs(keyed, paired=True)
+    if not orphans and not nondecisive_blocks:
         return 0, {}
 
-    # Tally W/L/D for each dropped game, keyed by fastchess pair key
+    drop_set = set(orphans)
+
+    # Tally W/L/D for each dropped orphan game, keyed by fastchess pair key
     # ("White vs Black") so the caller can patch config.json stats.
     deltas: dict[str, dict[str, int]] = {}
-    for i in range(len(games)):
-        if i not in final_keep:
-            _rd, w, b, result, _bl = games[i]
-            key = f"{w} vs {b}"
-            entry = deltas.setdefault(key, {"wins": 0, "losses": 0, "draws": 0})
-            if result == _WHITE_WIN:
-                entry["wins"] += 1
-            elif result == _BLACK_WIN:
-                entry["losses"] += 1
-            else:
-                entry["draws"] += 1
+    for i in orphans:
+        _rd, w, b, result = keyed[i]
+        key = f"{w} vs {b}"
+        entry = deltas.setdefault(key, {"wins": 0, "losses": 0, "draws": 0})
+        if result == _WHITE_WIN:
+            entry["wins"] += 1
+        elif result == _BLACK_WIN:
+            entry["losses"] += 1
+        else:
+            entry["draws"] += 1
 
     ts = ts or datetime.now()
     stamp = ts.strftime("%Y-%m-%dT%H-%M-%S")
     backup = pgn_path.with_name(pgn_path.name + f".{stamp}.bak.gz")
     with pgn_path.open("rb") as src, gzip.open(backup, "wb") as dst:
         shutil.copyfileobj(src, dst)
+
+    # Blocks to skip on re-emit: orphan-decisive blocks + non-decisive (*) blocks.
+    dropped_block_indices = {block_of[i] for i in drop_set} | nondecisive_blocks
     tmp = pgn_path.with_suffix(pgn_path.suffix + ".tmp")
     with tmp.open("w", encoding="utf-8", newline="\n") as f:
-        for i in range(len(games)):
-            if i in final_keep:
-                block = games[i][4]
-                f.write(block)
-                if not block.endswith("\n\n"):
-                    f.write("\n" if block.endswith("\n") else "\n\n")
+        for bi, block in enumerate(blocks):
+            if bi in dropped_block_indices:
+                continue
+            f.write(block)
+            if not block.endswith("\n\n"):
+                f.write("\n" if block.endswith("\n") else "\n\n")
     os.replace(tmp, pgn_path)
     _iter_games_cache.pop(pgn_path, None)
     if config_path is not None:
         patch_config_json(config_path, deltas, ts=ts)
-    return dropped, deltas
+    return len(orphans), deltas
 
 
 def patch_config_json(
@@ -524,24 +552,31 @@ def patch_config_json(
     os.replace(tmp, config_path)
 
 
-def count_partial_pairs(pgn_path: Path) -> int:
-    """Number of (round, engine pair) instances missing one color-flipped game.
+def count_partial_pairs(pgn_path: Path, *, paired: bool = True) -> int:
+    """Number of orphan games -- games in the PGN whose ``(round, engine-set)``
+    bucket has no color-flip partner.
 
-    A complete pair has both `(round, A vs B)` and `(round, B vs A)` in
-    the PGN. A partial pair has one of the two; this typically results
-    from an interrupted Stop on Windows (KILL_ON_JOB_CLOSE has no grace
-    period) where game 1 made it to disk but game 2 was in flight.
+    The historical "partial pair" name persists for API stability; the
+    semantic is now per-orphan, not per-(round, engine-pair). For the
+    common case (one orphan = one missing color in one round) the count
+    matches the old definition. Multi-orphan rounds (e.g. two games of
+    the same color in one bucket) are counted once per orphan, not once
+    per round.
 
-    Counted post-dedup, so resume duplicates do not inflate the count.
-    Games with no Round tag are skipped (no key to pair on).
+    Typically caused by an interrupted Stop on Windows
+    (KILL_ON_JOB_CLOSE has no grace period) where game 1 made it to
+    disk but game 2 was in flight.
+
+    Single-game tours (``paired=False``) have no pair concept and
+    always return 0.
     """
-    counts: dict[tuple[str, frozenset[str]], int] = {}
-    for round_, white, black, _result in _iter_games_keyed(pgn_path):
-        if not round_ or round_ == "?":
-            continue
-        key = (round_, frozenset((white, black)))
-        counts[key] = counts.get(key, 0) + 1
-    return sum(1 for n in counts.values() if n == 1)
+    if not paired:
+        return 0
+    keyed = list(_iter_games_keyed(pgn_path))
+    if not keyed:
+        return 0
+    _pairs, orphans = _form_pairs(keyed, paired=True)
+    return len(orphans)
 
 
 def compute_games_list(pgn_path: Path) -> list[dict]:
@@ -687,18 +722,16 @@ def _iter_pairs(
     engine_a: str,
     engine_b: str,
 ) -> list[tuple[str, str, float]]:
-    """Group games into color-flipped paired matches keyed by Round tag.
+    """Identify color-flipped paired matches via ``_form_pairs``.
 
-    fastchess assigns the same Round to a pair's two color-flipped games
-    (A-vs-B and B-vs-A on the same opening). Under ``-concurrency > 1``
-    pair-mates are written in completion order, so they are not adjacent
-    in the PGN -- grouping by consecutive index would mispair them.
-    Grouping by Round is order-independent.
+    ``Round`` alone is not a reliable pair ID (it can be reused across a
+    Pause/Resume boundary), so pairing is structural: games are bucketed
+    by ``(round, frozenset({white, black}))`` and matched within each
+    bucket by color-flip. See docs/pgn-pair-identity.md.
 
-    A round qualifies if it contains exactly two games, both involving
-    the {A, B} engine set, with opposite colors. Partial pairs (one
-    game), pre-resume duplicates, and rounds whose two games don't
-    color-flip are dropped.
+    Only buckets whose engine set is exactly ``{engine_a, engine_b}``
+    contribute pairs here. Buckets from other match-ups in a gauntlet
+    PGN are ignored.
 
     ``engine_a`` is the candidate (the "new" engine being tested) and
     ``engine_b`` is the baseline. Both are taken from the tournament
@@ -706,59 +739,43 @@ def _iter_pairs(
     under concurrency the first-completed game may be from any round.
 
     Returns ``[(engine_a, engine_b, a_score_in_pair), ...]`` in
-    first-seen Round order.
+    ``_form_pairs`` order (first-seen Round, then first-seen file index
+    within a bucket).
     """
     keyed = list(_iter_games_keyed(pgn_path))
     if not keyed:
         return []
+
+    pair_indices, orphans = _form_pairs(keyed, paired=True)
     a_name, b_name = engine_a, engine_b
     engines = {a_name, b_name}
 
-    # Group by Round, preserving first-seen order. Games with no Round
-    # tag are skipped: there's no key to pair on.
-    round_order: list[str] = []
-    by_round: dict[str, list[tuple[str, str, str]]] = {}
-    for round_tag, white, black, result in keyed:
-        if not round_tag or round_tag == "?":
-            log.debug(
-                "SPRT %s: game without Round tag skipped (no key to pair on)",
-                pgn_path.name,
-            )
+    for oi in orphans:
+        rd, w, b, _r = keyed[oi]
+        if {w, b} != engines:
+            # Orphan from a different match-up (gauntlet): not our problem,
+            # not a partial we should warn about for the A-vs-B SPRT.
             continue
-        if round_tag not in by_round:
-            by_round[round_tag] = []
-            round_order.append(round_tag)
-        by_round[round_tag].append((white, black, result))
+        log.debug(
+            "SPRT %s: round %s has orphan game (expected 2-game color-flipped "
+            "pair) -- skipped",
+            pgn_path.name, rd or "?",
+        )
 
     pairs: list[tuple[str, str, float]] = []
-    for round_tag in round_order:
-        games = by_round[round_tag]
-        if len(games) != 2:
-            log.debug(
-                "SPRT %s: round %s has %d game(s), expected 2 -- skipped",
-                pgn_path.name, round_tag, len(games),
-            )
-            continue
-        (w1, b1, _r1), (w2, b2, _r2) = games
-        if {w1, b1} != engines or {w2, b2} != engines:
+    for i, j in pair_indices:
+        _rdi, wi, bi, ri = keyed[i]
+        _rdj, wj, bj, rj = keyed[j]
+        if {wi, bi} != engines:
+            # Different engine set (e.g. another match-up in a gauntlet).
             log.warning(
-                "SPRT %s: round %s skipped "
-                "(engines %s vs %s / %s vs %s, expected %s vs %s)",
-                pgn_path.name, round_tag, w1, b1, w2, b2, a_name, b_name,
-            )
-            continue
-        if w1 == w2:
-            # Unreachable from real PGN input: _iter_games_uncached dedups
-            # on (round, white, black), so same-color games in one round
-            # collapse to one entry (caught by the len != 2 check above).
-            # Kept as a guard against future dedup-key changes.
-            log.debug(
-                "SPRT %s: round %s skipped (both games same color)",
-                pgn_path.name, round_tag,
+                "SPRT %s: round %s skipped (engines %s vs %s, "
+                "expected %s vs %s)",
+                pgn_path.name, _rdi or "?", wi, bi, a_name, b_name,
             )
             continue
         score = 0.0
-        for white, black, result in games:
+        for white, black, result in ((wi, bi, ri), (wj, bj, rj)):
             if result == _WHITE_WIN:
                 score += 1.0 if white == a_name else 0.0
             elif result == _BLACK_WIN:

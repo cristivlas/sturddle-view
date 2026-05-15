@@ -13,6 +13,7 @@ Web-agnostic: takes ids + a broadcast callback, so the CLI wrapper can reuse it.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 import secrets
@@ -451,8 +452,19 @@ class Orchestrator:
                     )
                 t0 = time.monotonic()
                 ts = datetime.now()
+                # Paired mode: any tour with games_per_round != 1 (default
+                # is 2 -- color-flipped pairs). Single-game tours have no
+                # pair concept, so the rewrite is a no-op.
+                games_per_round = (t.template or {}).get("games_per_round", 2)
+                paired = games_per_round != 1
                 dropped, _deltas = await asyncio.to_thread(
-                    rewrite_drop_partial_pairs, spec.pgn_path, spec.config_path, ts,
+                    functools.partial(
+                        rewrite_drop_partial_pairs,
+                        spec.pgn_path,
+                        spec.config_path,
+                        ts,
+                        paired=paired,
+                    ),
                 )
                 elapsed = time.monotonic() - t0
                 if dropped:

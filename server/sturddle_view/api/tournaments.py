@@ -159,8 +159,12 @@ def _serialize(
         standings["tournament_type"] = tournament_type
         out["standings"] = standings
     if with_stats and store is not None:
+        games_per_round = (t.template or {}).get("games_per_round", 2)
+        paired = games_per_round != 1
         try:
-            out["partial_pairs"] = count_partial_pairs(store.pgn_path(t.id))
+            out["partial_pairs"] = count_partial_pairs(
+                store.pgn_path(t.id), paired=paired,
+            )
         except FileNotFoundError:
             out["partial_pairs"] = 0
         try:

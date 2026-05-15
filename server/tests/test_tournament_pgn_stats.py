@@ -126,24 +126,23 @@ def test_standings_skips_unfinished_games(tmp_path):
     assert s.games == 2  # the * game was skipped
 
 
-def test_standings_dedups_resume_duplicate_keeps_last(tmp_path):
-    # Simulates a resume duplicate: round 2 (A vs B) appears twice — the
-    # first entry was the killed-mid-pair game whose result fastchess never
-    # recorded in cfg.json, so it replayed it on resume. Standings must
-    # count the *last* one only.
+def test_standings_counts_every_decisive_game(tmp_path):
+    # Standings tally every decisive entry in file order; no dedup by
+    # (Round, White, Black). See docs/pgn-pair-identity.md -- Round is
+    # not a reliable pair ID, so anything in the PGN is real.
     body = (
         _game_round("1", "A", "B", "1-0")
-        + _game_round("2", "A", "B", "1-0")  # killed; result superseded
-        + _game_round("2", "A", "B", "0-1")  # resume replay; this counts
-        + _game_round("2", "B", "A", "1/2-1/2")  # other side of pair
+        + _game_round("2", "A", "B", "1-0")
+        + _game_round("2", "A", "B", "0-1")  # second A-as-white in round 2
+        + _game_round("2", "B", "A", "1/2-1/2")
     )
     p = _write_pgn(tmp_path, body)
     s = compute_standings(p)
-    assert s.games == 3
+    assert s.games == 4
     by = {e.name: e for e in s.engines}
-    # A: 1 win (R1) + 1 loss (R2) + 1 draw (R2 reverse) = W1 L1 D1
-    assert (by["A"].wins, by["A"].losses, by["A"].draws) == (1, 1, 1)
-    assert (by["B"].wins, by["B"].losses, by["B"].draws) == (1, 1, 1)
+    # A: 2 wins (R1, R2 first), 1 loss (R2 second), 1 draw (R2 reverse)
+    assert (by["A"].wins, by["A"].losses, by["A"].draws) == (2, 1, 1)
+    assert (by["B"].wins, by["B"].losses, by["B"].draws) == (1, 2, 1)
 
 
 def test_standings_no_dedup_when_round_absent(tmp_path):
@@ -494,6 +493,19 @@ def test_sprt_warns_on_engine_mismatch(tmp_path, caplog):
         r = _sprt(p, _params())
     assert r.pairs == 2
     assert any("round 2 skipped" in m for m in caplog.messages)
+
+
+def test_sprt_round_collision_counts_both_pairs(tmp_path):
+    # Round 1 contains two complete color-flipped pairs of {A, B} (the
+    # Pause/Resume Round-reuse case). SPRT must see both as pairs, not
+    # collapse them via Round-as-pair-ID.
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("1", "A", "B", "1/2-1/2") + _game_round("1", "B", "A", "1/2-1/2")
+    )
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params())
+    assert r.pairs == 2
 
 
 def test_sprt_unimplemented_model_raises(tmp_path):
@@ -850,16 +862,18 @@ def test_count_partial_pairs_one_partial(tmp_path):
     assert count_partial_pairs(p) == 1
 
 
-def test_count_partial_pairs_resume_dups_dont_count(tmp_path):
-    # Round 1 has 3 raw records (resume wrote game1 twice). Dedup leaves
-    # 2 -- one per color. Should NOT count as partial.
+def test_count_partial_pairs_resume_dup_is_orphan(tmp_path):
+    # Round 1 has 3 records on the same engine set: two A-as-white and
+    # one B-as-white. The new scheme pairs one (A-as-white, B-as-white)
+    # and reports the surplus A-as-white as an orphan. This is the
+    # honest count -- the third game has no color-flip partner.
     body = (
         _game_round("1", "A", "B", "1-0")
-        + _game_round("1", "A", "B", "1-0")  # duplicate
+        + _game_round("1", "A", "B", "1-0")  # surplus A-as-white
         + _game_round("1", "B", "A", "0-1")
     )
     p = _write_pgn(tmp_path, body)
-    assert count_partial_pairs(p) == 0
+    assert count_partial_pairs(p) == 1
 
 
 def test_count_partial_pairs_multi_engine(tmp_path):
@@ -870,6 +884,29 @@ def test_count_partial_pairs_multi_engine(tmp_path):
     )
     p = _write_pgn(tmp_path, body)
     assert count_partial_pairs(p) == 1
+
+
+def test_count_partial_pairs_round_collision_two_complete_pairs(tmp_path):
+    # Round 1 contains TWO complete color-flipped pairs of the same engine
+    # set -- the Round-number-reuse case from a Pause/Resume boundary. The
+    # bucket has 4 games (2 of each color) which all pair, so 0 orphans.
+    # This is the case the old (round, white, black) dedup mis-handled.
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("1", "A", "B", "0-1") + _game_round("1", "B", "A", "1-0")
+    )
+    p = _write_pgn(tmp_path, body)
+    assert count_partial_pairs(p) == 0
+    # And standings should count all 4 games.
+    assert compute_standings(p).games == 4
+
+
+def test_count_partial_pairs_paired_false_returns_zero(tmp_path):
+    # Single-game tours (paired=False): no pair concept, no orphans
+    # even if the PGN looks like it has partial pairs.
+    body = _game_round("1", "A", "B", "1-0")
+    p = _write_pgn(tmp_path, body)
+    assert count_partial_pairs(p, paired=False) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1015,6 +1052,60 @@ def test_rewrite_skips_ongoing_results(tmp_path):
     assert '[Result "*"]' not in after
     assert '[Round "3"]' not in after  # partial dropped
     assert '[Round "1"]' in after
+
+
+def test_rewrite_preserves_round_collision_with_two_complete_pairs(tmp_path):
+    # Round 1 has two distinct color-flipped pairs sharing the same Round
+    # number (Pause/Resume Round-reuse). All 4 games pair cleanly, so the
+    # rewrite must keep all 4 -- this was the silent-data-loss bug.
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("1", "A", "B", "0-1") + _game_round("1", "B", "A", "1-0")
+        + _game_round("2", "A", "B", "1/2-1/2")  # partial -> triggers rewrite
+    )
+    p = _write_pgn(tmp_path, body)
+    n, deltas = rewrite_drop_partial_pairs(p)
+    # Only the round-2 partial is dropped; all 4 round-1 games stay.
+    assert n == 1
+    assert deltas == {"A vs B": {"wins": 0, "losses": 0, "draws": 1}}
+    assert compute_standings(p).games == 4
+
+
+def test_rewrite_paired_false_is_no_op(tmp_path):
+    # Single-game tours never drop anything, even apparent partials.
+    body = (
+        _game_round("1", "A", "B", "1-0")
+        + _game_round("2", "A", "B", "0-1")
+        + _game_round("3", "A", "B", "1/2-1/2")
+    )
+    p = _write_pgn(tmp_path, body)
+    before = p.read_bytes()
+    n, deltas = rewrite_drop_partial_pairs(p, paired=False)
+    assert n == 0
+    assert deltas == {}
+    assert p.read_bytes() == before
+    assert _find_bak_gz(p) is None
+
+
+def test_rewrite_gauntlet_distinct_match_ups_unaffected(tmp_path):
+    # Gauntlet PGN: leader L plays C1 and C2. Each match-up's pair lives in
+    # its own (round, engine-set) bucket. A partial in one match-up does
+    # not leak into the other.
+    body = (
+        # Round 1: L vs C1 complete pair.
+        _game_round("1", "L", "C1", "1-0") + _game_round("1", "C1", "L", "0-1")
+        # Round 2: L vs C2 partial (missing C2-as-white).
+        + _game_round("2", "L", "C2", "1-0")
+        # Round 3: L vs C1 complete pair.
+        + _game_round("3", "L", "C1", "1/2-1/2") + _game_round("3", "C1", "L", "1/2-1/2")
+    )
+    p = _write_pgn(tmp_path, body)
+    n, deltas = rewrite_drop_partial_pairs(p)
+    assert n == 1
+    assert deltas == {"L vs C2": {"wins": 1, "losses": 0, "draws": 0}}
+    # L vs C1 unaffected: 4 games (2 complete pairs) stay.
+    s = compute_standings(p)
+    assert s.games == 4
 
 
 # ---------------------------------------------------------------------------
