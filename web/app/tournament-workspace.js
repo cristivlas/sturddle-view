@@ -257,6 +257,14 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
   };
 
+  // Reflow + header wiring needed for any game window (live or frozen)
+  // to participate in TIDY/TILE/SNAP layouts and slot-grid placement.
+  function wireLayoutHandlers(wb) {
+    wb.onminimize = () => onReflow(wb, false);
+    wb.onrestore = () => onReflow(wb, true);
+    wireHeader(wb);
+  }
+
   // Wire the drag-unmaximize repositioning on a window's header.
   function wireHeader(wb) {
     const dragEl = wb.g?.querySelector(".wb-drag");
@@ -508,12 +516,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       try { result.wb.minimize(); } catch { /* */ }
     }
     if (result?.wb && !result.alreadyOpen && !result.wb.min) requestAnimationFrame(reapplyLayout);
-    if (result?.wb && !result.alreadyOpen) {
-      const wb = result.wb;
-      wb.onminimize = () => onReflow(wb, false);
-      wb.onrestore = () => onReflow(wb, true);
-      wireHeader(wb);
-    }
+    if (result?.wb && !result.alreadyOpen) wireLayoutHandlers(result.wb);
     const isLive = isLiveWindowOpen(attachKey);
     if (DEBUG_WATCH) console.log("[WATCH] post-open", { attachKey, isLive, slotted: !!claim });
     btn?.classList.toggle("wb-sched-attach-btn--live", isLive);
@@ -962,7 +965,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           // re-persist `resolved` (frozen windows don't produce live
           // game_reconciled events that would refill the map).
           if (s.gameId) resolvedGames.set(s.gameId, s.resolved);
-          openFrozenGameWindow({
+          const fres = openFrozenGameWindow({
             proxyId: s.proxyId, gameId: s.gameId,
             label: s.label, engineName: s.engineName,
             token, tournamentId: tournament.id,
@@ -972,6 +975,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
             top, left, boardStyle: boardStyleCached,
             initialRect: rect, min: !!s.min, flash: false,
           });
+          if (fres?.wb && !fres.alreadyOpen) wireLayoutHandlers(fres.wb);
         } else if (running) {
           // Live-reattach only if the server still considers this pair
           // alive; otherwise the WS would auto-close on first {ended}
