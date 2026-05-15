@@ -602,6 +602,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 .game-view-engine.is-empty { display: none; }
 @media (min-width: 801px) and (min-height: 701px) {
   .game-view-engine { min-height: 220px; }
+  .game-view-engine.no-pv { min-height: 0; }
 }
 .engine-stat {
   display: flex;
@@ -691,6 +692,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   white-space: normal;
   overflow-wrap: break-word;
 }
+.game-view-engine .engine-pv.hidden { display: none; }
 
 .game-view-meta {
   display: flex;

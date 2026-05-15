@@ -497,6 +497,8 @@ export function mountGameView(container, opts = {}) {
     switch (evt.kind) {
       case "board_update":
         viewing = !!evt.payload.view;
+        if (enginePv) enginePv.classList.toggle("hidden", viewing);
+        if (engineSection) engineSection.classList.toggle("no-pv", viewing);
         if (evt.payload.engine_name) {
           engineName = evt.payload.engine_name;
           if (interactive) setNames({ top: engineName });
@@ -540,6 +542,7 @@ export function mountGameView(container, opts = {}) {
         // info panel so scrubbing through the game shows per-ply scores.
         if (showEngineInfo && evt.payload.view) {
           const ev = evt.payload.view.eval;
+          const hasAnyEval = !!evt.payload.view.has_eval;
           if (ev) {
             engineSection?.classList.remove("is-empty");
             if (engineScore) engineScore.textContent = fmtScore(ev);
@@ -550,10 +553,20 @@ export function mountGameView(container, opts = {}) {
             if (engineTbhits) engineTbhits.textContent = "";
             if (engineHashfull) engineHashfull.textContent = "";
             if (enginePv) { enginePv.textContent = ""; enginePv.removeAttribute("title"); }
-          } else {
-            // No eval at this cursor (e.g., ply 0): clear the panel.
+          } else if (!hasAnyEval) {
+            // PGN has no eval anywhere -- hide the panel so subsequent
+            // imports of bare PGNs don't inherit visibility from a prior
+            // import that had evals.
             if (engineScore) engineScore.textContent = "";
             if (engineDepth) engineDepth.textContent = "";
+            engineSection?.classList.add("is-empty");
+          } else {
+            // PGN has evals elsewhere but this specific ply doesn't
+            // (e.g. last move of a fastchess game tends to lack an
+            // eval). Keep the panel visible so it doesn't disappear
+            // when scrubbing across plies, and unhide it on initial
+            // mount so landing on a no-eval ply still shows the area.
+            engineSection?.classList.remove("is-empty");
           }
         }
         if (interactive) board.enableInput(true);
@@ -587,6 +600,8 @@ export function mountGameView(container, opts = {}) {
           enginePv.textContent = full;
           enginePv.setAttribute("title", full);
         }
+        if (enginePv) enginePv.classList.toggle("hidden", viewing);
+        if (engineSection) engineSection.classList.toggle("no-pv", viewing);
         if (evt.payload.pv_uci && evt.payload.pv_uci.length > 0) {
           const m = evt.payload.pv_uci[0];
           if (m && m.length >= 4) {

@@ -1354,12 +1354,17 @@ class HumanVsEngine:
                 and 0 < self._view_cursor <= len(self._view_eval_history)
             ):
                 eval_at_cursor = self._view_eval_history[self._view_cursor - 1]
+            has_any_eval = (
+                self._view_eval_history is not None
+                and any(e is not None for e in self._view_eval_history)
+            )
             view_payload = {
                 "cursor": self._view_cursor,
                 "total_plies": len(self._view_full_moves),
                 "white_name": self._view_white_name,
                 "black_name": self._view_black_name,
                 "eval": eval_at_cursor,
+                "has_eval": has_any_eval,
                 # UI disables Play-from-here when the cursor lands on a
                 # finished position (mirror of the backend guard).
                 # game_over is true for forced endings AND claimable draws
