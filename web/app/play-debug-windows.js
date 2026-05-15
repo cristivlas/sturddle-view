@@ -471,7 +471,7 @@ function buildPvTableBody(events, { setOff }) {
   const tableEl = body.querySelector(".wb-pvtable-tbl");
   const colEls = Array.from(body.querySelectorAll("col"));
   const COL_WIDTHS_KEY = "sturddle.pvtable.colWidths";
-  const DEFAULT_WIDTHS = [50, 65, 65, 65];
+  const DEFAULT_WIDTHS = [50, 50, 55, 45];
   let colWidths = DEFAULT_WIDTHS.slice();
   try {
     const saved = JSON.parse(localStorage.getItem(COL_WIDTHS_KEY));
