@@ -7,11 +7,13 @@
 // look and feel. Clicking a row selects it; ribbon actions target the
 // selected tournament. New / Sort / Window remain in the top menubar.
 
-import { apiErrorDetail, confirm, reportError, showDialog, toast } from "./dialogs.js";
+import { apiErrorDetail, buildToastWithActions, confirm, OPEN_ENGINES_ACTION, reportError, showDialog, toast } from "./dialogs.js";
 import { openSettingsDialog } from "./settings-dialog.js";
 import { EVT, KIND, STATUS } from "./tournament-events.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
+
+const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
 
 export function mountTournaments({ container, api, events, log, token }) {
   container.innerHTML = `
@@ -834,7 +836,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     }
     const available = registry.engines || [];
     if (available.length < 2) {
-      toast("Register at least 2 engines first.", { variant: "danger" });
+      toast(buildToastWithActions(NEED_TWO_ENGINES_MSG, [OPEN_ENGINES_ACTION]), { variant: "danger" });
       return;
     }
 
@@ -882,7 +884,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     }
     const available = registry.engines || [];
     if (available.length < 2) {
-      toast("Register at least 2 engines first.", { variant: "danger" });
+      toast(buildToastWithActions(NEED_TWO_ENGINES_MSG, [OPEN_ENGINES_ACTION]), { variant: "danger" });
       return;
     }
 

@@ -102,6 +102,11 @@ export function mountEngineList(container, api, opts = {}) {
   let sortOrder = ["asc", "desc", "none"].includes(localStorage.getItem(SORT_KEY_LS))
     ? localStorage.getItem(SORT_KEY_LS) : "none";
 
+  // Last (count, activeId) pair we broadcast on sturddle:engines-changed.
+  // Tracks across refreshes so the initial mount doesn't fire spuriously
+  // if state matches what listeners (e.g. Play) already fetched.
+  let lastBroadcast = { count: -1, activeId: undefined };
+
   async function refresh() {
     try {
       const body = await api("GET", "/engines");
@@ -114,6 +119,12 @@ export function mountEngineList(container, api, opts = {}) {
         selectedDetailId = activeId || (engines[0]?.id ?? null);
       }
       renderAll();
+      if (engines.length !== lastBroadcast.count || activeId !== lastBroadcast.activeId) {
+        lastBroadcast = { count: engines.length, activeId };
+        window.dispatchEvent(new CustomEvent("sturddle:engines-changed", {
+          detail: { count: engines.length, activeId },
+        }));
+      }
     } catch (e) {
       reportError(null, "engines", e);
     }

@@ -118,6 +118,14 @@ document.getElementById("about-btn").addEventListener("click", () => {
 document.getElementById("settings-btn").addEventListener("click", () => {
   openSettingsDialog({ api, getActivePerspective: () => router.activeId() });
 });
+// Allow any module to deep-link into the Settings dialog without
+// threading the `api` reference through call chains. detail.tab opens
+// the named tab (e.g. "engines"). Used by the Play empty-state CTA and
+// the no-engine error toast.
+window.addEventListener("sturddle:open-settings", (e) => {
+  const tab = e.detail?.tab;
+  openSettingsDialog({ api, initialTab: tab, getActivePerspective: () => router.activeId() });
+});
 
 window.addEventListener("sturddle:connection", async (e) => {
   if (e.detail.connected) return;

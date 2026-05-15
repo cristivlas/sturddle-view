@@ -731,11 +731,19 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const tabByName = { engines: enginesTab, general: generalTab, play: playTab, tournament: tournamentTab, sprt: sprtTab };
       const startTab = tabByName[initialTab] || generalTab;
       startTab.setAttribute("active", "");
-      // If the Engines tab is the starting tab, mount immediately.
+      // Eager mount when Engines is the starting tab: defer until the
+      // dialog is actually in the document so mountEngineList can measure
+      // its surroundings (it reads getBoundingClientRect on the dialog
+      // body to size the table-wrap). Doing it inline here would leave
+      // the host detached and yield a collapsed list.
       if (startTab === enginesTab) {
         enginesMounted = true;
-        mountEngineList(enginesHost, api, {
-          colPctsKey: SETTINGS_ENGINES_COL_PCTS_KEY,
+        dialog.addEventListener("wa-after-show", function once(ev) {
+          if (ev.target !== dialog) return;
+          dialog.removeEventListener("wa-after-show", once);
+          mountEngineList(enginesHost, api, {
+            colPctsKey: SETTINGS_ENGINES_COL_PCTS_KEY,
+          });
         });
       }
 

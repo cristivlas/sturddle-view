@@ -327,15 +327,44 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   height: 100%;
   min-height: 0;
 }
+.no-engine-banner {
+  grid-area: banner;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: rgba(120, 144, 168, 0.10);
+  border: 1px solid rgba(120, 144, 168, 0.35);
+  border-radius: 4px;
+  color: var(--wa-color-neutral-text-loud, #e6e8eb);
+  font-size: 0.875rem;
+}
+.no-engine-banner.hidden { display: none; }
+.no-engine-banner__msg { flex: 1; }
+.no-engine-banner__btn {
+  background: rgba(120, 144, 168, 0.22);
+  border: 1px solid rgba(120, 144, 168, 0.5);
+  border-radius: 4px;
+  padding: 3px 10px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+.no-engine-banner__btn:hover {
+  background: rgba(120, 144, 168, 0.38);
+  border-color: rgba(120, 144, 168, 0.7);
+}
 .play-grid {
   --rail-w: 240px;
   --grid-gap: 16px;
   display: grid;
   --ribbon-w: 36px;
   grid-template-columns: calc(var(--rail-w) - var(--ribbon-w)) var(--board-col-px, minmax(320px, 1fr)) var(--rail-w);
-  grid-template-rows: auto;
-  grid-template-areas: ". board side";
-  gap: 12px var(--grid-gap);
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    ". banner ."
+    ". board  side";
+  gap: 8px var(--grid-gap);
   justify-content: center;
   align-content: start;
   min-height: 0;

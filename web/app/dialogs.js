@@ -418,10 +418,98 @@ export function apiErrorDetail(error) {
   }
 }
 
-/** Report an error: toast + ctx.log(). `action` is a verb phrase. */
-export function reportError(ctx, action, error) {
+/** Like apiErrorDetail but returns the structured detail object when the
+ *  server provided one (e.g. {code, message}). Returns null for non-API
+ *  errors or unstructured detail. */
+export function apiErrorObject(error) {
   const message = (error && error.message) || String(error);
-  toast(`${action}: ${apiErrorDetail(error)}`, { variant: "danger" });
+  const m = message.match(/^[A-Z]+\s+\/\S+\s+->\s+\d+\s+(.*)$/s);
+  if (!m) return null;
+  try {
+    const parsed = JSON.parse(m[1]);
+    const detail = parsed.detail;
+    return (detail && typeof detail === "object") ? detail : null;
+  } catch {
+    return null;
+  }
+}
+
+const OPEN_SETTINGS_EVENT = "sturddle:open-settings";
+const SETTINGS_TAB_ENGINES = "engines";
+
+/** Dispatch the deep-link event that opens the Settings dialog at
+ *  `tab` (e.g. "engines"). Main wires up the actual open in main.js. */
+export function openSettings(tab) {
+  window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT, { detail: { tab } }));
+}
+
+// Map of well-known server error codes to inline toast actions.
+// Centralized here so every reportError call site picks up the same
+// remediation affordance (e.g. removing the active engine mid-session
+// surfaces "no_engine_configured" through many endpoints, not just
+// /game/new).
+const ERROR_CODE_ACTIONS = {
+  no_engine_configured: [{
+    icon: "gear",
+    ariaLabel: "Open engine settings",
+    onClick: () => openSettings(SETTINGS_TAB_ENGINES),
+  }],
+};
+
+/** Canonical "open the Engines settings tab" toast action. Use this in
+ *  client-side guards that want the same affordance as the server-side
+ *  no_engine_configured handler. */
+export const OPEN_ENGINES_ACTION = {
+  icon: "gear",
+  ariaLabel: "Open engine settings",
+  onClick: () => openSettings(SETTINGS_TAB_ENGINES),
+};
+
+/** Build a single inline toast action button. `action` is
+ *  {icon|label, ariaLabel?, onClick}. */
+export function buildToastActionButton(action) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "toast-action-btn";
+  if (action.icon) {
+    const ic = document.createElement("wa-icon");
+    ic.setAttribute("name", action.icon);
+    btn.appendChild(ic);
+    const al = action.ariaLabel || action.label || "";
+    if (al) {
+      btn.setAttribute("aria-label", al);
+      btn.setAttribute("title", al);
+    }
+  } else {
+    btn.textContent = action.label;
+  }
+  btn.addEventListener("click", action.onClick);
+  return btn;
+}
+
+/** Compose a toast message Node from leading text plus action buttons. */
+export function buildToastWithActions(text, actions) {
+  const node = document.createElement("span");
+  node.append(document.createTextNode(text + " "));
+  for (const a of actions) node.appendChild(buildToastActionButton(a));
+  return node;
+}
+
+/** Report an error: toast + ctx.log(). `action` is a verb phrase.
+ *  Optional `opts.actions`: [{label|icon, ariaLabel?, onClick}] adds
+ *  inline buttons to the toast. Well-known server error codes (see
+ *  ERROR_CODE_ACTIONS) attach their canonical action automatically. */
+export function reportError(ctx, action, error, opts = {}) {
+  const message = (error && error.message) || String(error);
+  const detailText = apiErrorDetail(error);
+  const detailObj = apiErrorObject(error);
+  const codeActions = detailObj?.code ? ERROR_CODE_ACTIONS[detailObj.code] : null;
+  const actions = [...(opts.actions || []), ...(codeActions || [])];
+  if (actions.length) {
+    toast(buildToastWithActions(`${action}: ${detailText}`, actions), { variant: "danger" });
+  } else {
+    toast(`${action}: ${detailText}`, { variant: "danger" });
+  }
   ctx?.log?.(`${action}: ${message}`);
 }
 

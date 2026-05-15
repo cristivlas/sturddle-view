@@ -16,10 +16,10 @@ async def _get_hve(request: Request) -> HumanVsEngine:
     if launch.path is None:
         raise HTTPException(
             status_code=400,
-            detail=(
-                "no engine configured; register one via POST /engines and "
-                "POST /engines/{id}/select, or start with --engine <path>"
-            ),
+            detail={
+                "code": "no_engine_configured",
+                "message": "No engine configured. Add one in Settings > Engines.",
+            },
         )
     if s.hve is not None and s.hve.engine_path != launch.path:
         # Swap in-place to preserve the active game across engine changes.

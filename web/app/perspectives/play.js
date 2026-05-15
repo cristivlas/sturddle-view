@@ -3,7 +3,7 @@
 // Resign).
 
 import { mountGameView } from "../game-view.js";
-import { alert as showAlert, confirm, reportError, toast } from "../dialogs.js";
+import { alert as showAlert, confirm, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, restoreDebugWindows, setDockContainer } from "../play-debug-windows.js";
 
@@ -83,6 +83,12 @@ export const playPerspective = {
       <section id="play-perspective">
         <div class="play-grid">
           <div class="play-dock-left"></div>
+          <div id="no-engine-banner" class="no-engine-banner hidden" role="status">
+            <span class="no-engine-banner__msg">No engine configured.</span>
+            <button type="button" class="no-engine-banner__btn" aria-label="Open engine settings" title="Open engine settings">
+              <wa-icon name="gear"></wa-icon>
+            </button>
+          </div>
           <div class="play-board-host"></div>
 
           <div id="board-controls" class="board-ribbon">
@@ -181,6 +187,31 @@ export const playPerspective = {
     const viewFlipBtn = root.querySelector("#view-flip");
     const viewAnalyzeBtn = root.querySelector("#view-analyze");
     const viewPlayFromHereBtn = root.querySelector("#view-play-from-here");
+    const noEngineBanner = root.querySelector("#no-engine-banner");
+    const noEngineBannerBtn = noEngineBanner.querySelector(".no-engine-banner__btn");
+
+    // Visible whenever the server has no engine configured. Hides the
+    // "no engine" failure mode behind a single visible CTA instead of
+    // waiting for the user to click New game and see an error toast.
+    function setNoEngine(noEngine) {
+      noEngineBanner.classList.toggle("hidden", !noEngine);
+    }
+    async function checkEngines() {
+      try {
+        const r = await ctx.api("GET", "/engines");
+        setNoEngine(!r.selected_id);
+      } catch {
+        // Network/auth failure: leave banner hidden -- a hidden banner
+        // is preferable to a spurious one when we can't verify state.
+        setNoEngine(false);
+      }
+    }
+    noEngineBannerBtn.addEventListener("click", () => openSettings("engines"));
+    const onEnginesChanged = (e) => {
+      setNoEngine(!e.detail?.activeId);
+    };
+    window.addEventListener("sturddle:engines-changed", onEnginesChanged);
+    checkEngines();
 
     // Fetch settings before mount so the board picks up the saved style.
     let initialBoardStyle = null;
@@ -724,6 +755,7 @@ export const playPerspective = {
         offEvent();
         view.unmount();
         window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
+        window.removeEventListener("sturddle:engines-changed", onEnginesChanged);
         window.removeEventListener("keydown", onKeydown);
         newGameBtn.removeEventListener("click", onNewGame);
         importBtn.removeEventListener("click", onImport);
