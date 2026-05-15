@@ -463,7 +463,7 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   async function removeOne(t) {
     const ok = await confirm({
-      message: `Remove "${t.name}"? This deletes its entire directory and games.`,
+      message: `Remove "${t.name}"? All games and data will be permanently deleted.`,
       okLabel: "Remove",
       destructive: true,
     });
