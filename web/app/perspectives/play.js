@@ -573,16 +573,13 @@ export const playPerspective = {
       }
       const result = await showImportPositionDialog({ api: ctx.api });
       if (!result) return;
-      try {
-        const r = await ctx.api("POST", "/game/import", result);
-        view.setGameId(r.game_id);
-        // Import lands in view mode; the board_update event drives the
-        // ribbon swap and disables interactivity. Sync to fetch the
-        // imported board state.
-        ctx.api("POST", "/game/sync", {}).catch(() => {});
-      } catch (e) {
-        reportError(ctx, "Import failed", e);
-      }
+      // The dialog already POSTed /game/import (so it could surface
+      // parse errors inline). Just consume the response.
+      view.setGameId(result.response.game_id);
+      // Import lands in view mode; the board_update event drives the
+      // ribbon swap and disables interactivity. Sync to fetch the
+      // imported board state.
+      ctx.api("POST", "/game/sync", {}).catch(() => {});
     };
 
     const onSwitchSides = async () => {

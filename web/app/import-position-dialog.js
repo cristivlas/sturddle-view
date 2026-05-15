@@ -1,7 +1,9 @@
 // Import a position into a new HVE game from FEN or PGN text.
-// Validates against the server on input change; the Start button stays
-// disabled until a parse succeeds (no `*` markers, no native `required`,
-// per the modern-dialog convention used elsewhere).
+// Stateless: no debounced validate; Open submits to /game/import and the
+// response is the parse result. Errors surface in the status label.
+// Recents (previously imported texts) are served by the server; the
+// localStorage cache is metadata-only and used to render the dropdown
+// before the server responds.
 
 import { apiErrorDetail, showDialog } from "./dialogs.js";
 
@@ -13,33 +15,32 @@ const EMPTY_PROMPT = {
   fen: "Paste a FEN to begin.",
   pgn: "Paste a PGN to begin.",
 };
-const TEXTAREA_ROWS = 8; // same on both tabs so the dialog doesn't resize
+const TEXTAREA_ROWS = 8;
 
-const RECENTS_KEY = "sturddle:import:recent";
-const RECENTS_MAX = 5;
+const RECENTS_CACHE_KEY = "sturddle:import:recent";
+const RECENTS_DISPLAY_CAP = 10;
 
-function loadRecents() {
+function loadRecentsCache() {
   try {
-    const v = JSON.parse(localStorage.getItem(RECENTS_KEY) || "[]");
-    return Array.isArray(v) ? v : [];
+    const v = JSON.parse(localStorage.getItem(RECENTS_CACHE_KEY) || "[]");
+    return Array.isArray(v) ? v.filter((e) => e && e.hash) : [];
   } catch {
     return [];
   }
 }
 
-function saveRecent(entry) {
-  // entry: { format, text, summary, ts }
-  // Trim on save AND compare so a trailing-newline edit doesn't create a dupe
-  // (and stored entries are canonical going forward).
-  const trimmed = { ...entry, text: (entry.text || "").trim() };
-  const cur = loadRecents().filter(
-    (e) => !(e.format === trimmed.format && (e.text || "").trim() === trimmed.text),
-  );
-  cur.unshift(trimmed);
+function saveRecentsCache(entries) {
+  // Metadata only -- never stash the full text here.
+  const lean = entries.map((e) => ({
+    hash: e.hash,
+    format: e.format,
+    summary: e.summary,
+    ts: e.ts,
+  }));
   try {
-    localStorage.setItem(RECENTS_KEY, JSON.stringify(cur.slice(0, RECENTS_MAX)));
+    localStorage.setItem(RECENTS_CACHE_KEY, JSON.stringify(lean));
   } catch {
-    // localStorage may be disabled — silently skip
+    // localStorage may be disabled -- silently skip
   }
 }
 
@@ -50,22 +51,17 @@ function detectFormatFromName(name) {
   return null;
 }
 
-/** Show import dialog; resolves to /game/import payload or null on cancel.
- *  Caller is responsible for POSTing the payload. */
+/** Show import dialog; resolves to /game/import response on success or
+ *  null on cancel. The dialog itself POSTs /game/import (so it can
+ *  surface errors inline) and returns the parsed response to the
+ *  caller, which just needs to act on the success. */
 export function showImportPositionDialog({ api }) {
   return showDialog({
     label: "Open position",
     width: "560px",
     body: (resolve, dialog) => {
       let format = "fen";
-      let lastValid = null;
-      let validateSeq = 0;
-      let validateTimer = null;
-      function cancelPendingValidate() {
-        clearTimeout(validateTimer);
-        validateTimer = null;
-        validateSeq++;
-      }
+      let submitting = false;
 
       const wrap = document.createElement("div");
       wrap.className = "import-pos-form";
@@ -91,20 +87,19 @@ export function showImportPositionDialog({ api }) {
         ta.style.width = "100%";
         ta.addEventListener("input", () => {
           if (format !== name) return;
-          clearTimeout(validateTimer);
-          validateTimer = setTimeout(validate, 200);
+          syncSubmitEnabled();
         });
         tabs.querySelector(`wa-tab-panel[name="${name}"]`).appendChild(ta);
         textareas[name] = ta;
       }
 
-      // Toolbar row: From file… + Recent dropdown.
+      // Toolbar row: From file + Recent dropdown.
       const toolbar = document.createElement("div");
       toolbar.className = "import-pos-toolbar";
 
       const fileBtn = document.createElement("wa-button");
       fileBtn.size = "small";
-      fileBtn.innerHTML = `<wa-icon slot="start" name="upload"></wa-icon>From file…`;
+      fileBtn.innerHTML = `<wa-icon slot="start" name="upload"></wa-icon>From file...`;
       const fileInput = document.createElement("input");
       fileInput.type = "file";
       fileInput.accept = ".fen,.pgn,.epd,text/plain";
@@ -120,28 +115,48 @@ export function showImportPositionDialog({ api }) {
 
       const recentSel = document.createElement("wa-select");
       recentSel.size = "small";
-      recentSel.placeholder = "Recent…";
+      recentSel.placeholder = "Recent...";
       recentSel.style.minWidth = "180px";
-      let recentsCache = loadRecents();
-      function refreshRecents() {
-        recentsCache = loadRecents();
-        recentSel.innerHTML = recentsCache
+      let recentsCache = loadRecentsCache();
+      function renderRecents() {
+        const shown = recentsCache.slice(0, RECENTS_DISPLAY_CAP);
+        recentSel.innerHTML = shown
           .map((e, i) => {
-            const label = (e.summary || e.text.slice(0, 40)).replace(/"/g, "&quot;");
-            return `<wa-option value="${i}">${e.format.toUpperCase()} — ${label}</wa-option>`;
+            const label = (e.summary || e.hash.slice(0, 12)).replace(/"/g, "&quot;");
+            return `<wa-option value="${i}">${e.format.toUpperCase()} -- ${label}</wa-option>`;
           })
           .join("");
-        recentSel.style.visibility = recentsCache.length ? "" : "hidden";
+        recentSel.style.visibility = shown.length ? "" : "hidden";
       }
-      recentSel.addEventListener("change", () => {
+      recentSel.addEventListener("change", async () => {
         const entry = recentsCache[Number(recentSel.value)];
-        if (!entry) return;
-        if (entry.format !== format) selectTab(entry.format);
-        textareas[entry.format].value = entry.text;
         recentSel.value = "";
-        validate();
+        if (!entry) return;
+        try {
+          const r = await api("GET", `/game/recent-imports/${entry.hash}`);
+          const targetFormat = r.format || entry.format;
+          if (targetFormat !== format) selectTab(targetFormat);
+          textareas[targetFormat].value = r.text || "";
+          syncSubmitEnabled();
+          setStatus(r.summary || "Loaded from history.", "ok");
+        } catch (e) {
+          setStatus(apiErrorDetail(e), "err");
+        }
       });
-      refreshRecents();
+      renderRecents();
+      // Fire-and-forget refresh from the server. Renders happen
+      // immediately from the local cache, then again when the server
+      // responds so the user sees the freshest list without delay.
+      (async () => {
+        try {
+          const r = await api("GET", "/game/recent-imports");
+          recentsCache = r.entries || [];
+          saveRecentsCache(recentsCache);
+          renderRecents();
+        } catch {
+          // Offline / unauthenticated: keep the local cache as-is.
+        }
+      })();
       toolbar.appendChild(recentSel);
 
       wrap.appendChild(toolbar);
@@ -159,18 +174,7 @@ export function showImportPositionDialog({ api }) {
       start.variant = "brand";
       start.textContent = "Open";
       start.setAttribute("disabled", "");
-      start.addEventListener("click", () => {
-        if (!lastValid) return;
-        cancelPendingValidate();
-        const text = textareas[format].value || "";
-        saveRecent({
-          format,
-          text,
-          summary: lastValid.summary,
-          ts: Date.now(),
-        });
-        resolve({ format, text });
-      });
+      start.addEventListener("click", submit);
       dialog.appendChild(start);
 
       function setStatus(msg, kind) {
@@ -182,61 +186,62 @@ export function showImportPositionDialog({ api }) {
       function selectTab(name) {
         if (typeof tabs.show === "function") tabs.show(name);
         format = name;
+        if (!textareas[format].value.trim()) {
+          setStatus(EMPTY_PROMPT[format], "muted");
+        }
+        syncSubmitEnabled();
       }
 
-      // Read a File, ask the server to auto-detect its format, switch to
-      // that tab and load the text. Falls back to the filename hint and
-      // finally to the currently-active tab if everything fails to parse.
+      function syncSubmitEnabled() {
+        const has = (textareas[format].value || "").trim().length > 0;
+        if (has && !submitting) start.removeAttribute("disabled");
+        else start.setAttribute("disabled", "");
+      }
+
+      async function submit() {
+        if (submitting) return;
+        const text = textareas[format].value || "";
+        if (!text.trim()) return;
+        submitting = true;
+        start.setAttribute("disabled", "");
+        setStatus("Importing...", "muted");
+        try {
+          const r = await api("POST", "/game/import", { format, text });
+          // Update the local recents cache from the server's response
+          // so subsequent opens of the dialog see the new entry. The
+          // freshest order comes from the next GET; this is just an
+          // immediate-write so the user doesn't see their just-imported
+          // entry missing.
+          if (r.hash) {
+            recentsCache = [
+              { hash: r.hash, format, summary: r.summary || "", ts: Date.now() },
+              ...recentsCache.filter((e) => e.hash !== r.hash),
+            ];
+            saveRecentsCache(recentsCache);
+          }
+          resolve({ format, text, hash: r.hash, response: r });
+        } catch (e) {
+          submitting = false;
+          setStatus(apiErrorDetail(e), "err");
+          syncSubmitEnabled();
+        }
+      }
+
+      // Reading a file just stuffs its text into the matching tab. No
+      // pre-validation -- the user clicks Open to find out if it parses.
       async function ingestFile(f) {
         const text = await f.text();
-        const hint = detectFormatFromName(f.name);
-        let target = hint ?? format;
-        try {
-          const r = await api("POST", "/game/import/validate", {
-            format: hint ?? "auto",
-            text,
-          });
-          if (r.detected_format === "fen" || r.detected_format === "pgn") {
-            target = r.detected_format;
-          }
-        } catch {
-          // server rejected — drop into the hinted/active tab and let the
-          // normal validate() show the error.
-        }
-        if (target !== format) selectTab(target);
-        textareas[target].value = text;
-        validate();
-      }
-
-      async function validate() {
-        const seq = ++validateSeq;
-        const text = textareas[format].value || "";
-        if (!text.trim()) {
-          lastValid = null;
-          start.setAttribute("disabled", "");
-          setStatus(EMPTY_PROMPT[format], "muted");
-          return;
-        }
-        try {
-          const r = await api("POST", "/game/import/validate", { format, text });
-          if (seq !== validateSeq) return;
-          lastValid = r;
-          start.removeAttribute("disabled");
-          setStatus(r.summary, "ok");
-        } catch (e) {
-          if (seq !== validateSeq) return;
-          lastValid = null;
-          start.setAttribute("disabled", "");
-          setStatus(apiErrorDetail(e), "err");
-        }
+        const hint = detectFormatFromName(f.name) ?? format;
+        if (hint !== format) selectTab(hint);
+        textareas[hint].value = text;
+        syncSubmitEnabled();
+        setStatus(`Loaded ${f.name}. Click Open to parse.`, "muted");
       }
 
       tabs.addEventListener("wa-tab-show", (ev) => {
         const name = ev.detail?.name;
         if (name !== "fen" && name !== "pgn") return;
-        cancelPendingValidate();
-        format = name;
-        validate();
+        selectTab(name);
       });
 
       // Drag-and-drop a .fen / .pgn file anywhere on the dialog body.

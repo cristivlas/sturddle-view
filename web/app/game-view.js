@@ -439,6 +439,11 @@ export function mountGameView(container, opts = {}) {
   let engineName = "Engine";
   let names = { top: "—", bottom: "—" };
   let viewing = false;
+  // Analysis mode: streams PV from a dedicated engine even while
+  // viewing. PV row should hide when "view-only" (viewing && !analyzing)
+  // and show otherwise -- play mode has PV from the play engine,
+  // analysis mode has PV from the analysis engine.
+  let analyzing = false;
   // Cached PGN names so flipping the board in view mode can re-swap
   // top/bottom without waiting for a fresh board_update.
   let viewWhiteName = null;
@@ -447,6 +452,14 @@ export function mountGameView(container, opts = {}) {
   function _truncName(s, max = 24) {
     if (!s) return s;
     return s.length > max ? s.slice(0, max - 1) + "…" : s;
+  }
+  // PV row hides only in pure view mode (navigating an imported game
+  // with no engine running). Play mode and analysis mode both produce
+  // a meaningful PV.
+  function syncPvVisibility() {
+    const hidePv = viewing && !analyzing;
+    if (enginePv) enginePv.classList.toggle("hidden", hidePv);
+    if (engineSection) engineSection.classList.toggle("no-pv", hidePv);
   }
   function setNames({ top, bottom } = {}) {
     if (top !== undefined) {
@@ -497,8 +510,10 @@ export function mountGameView(container, opts = {}) {
     switch (evt.kind) {
       case "board_update":
         viewing = !!evt.payload.view;
-        if (enginePv) enginePv.classList.toggle("hidden", viewing);
-        if (engineSection) engineSection.classList.toggle("no-pv", viewing);
+        if (typeof evt.payload.analyzing === "boolean") {
+          analyzing = evt.payload.analyzing;
+        }
+        syncPvVisibility();
         if (evt.payload.engine_name) {
           engineName = evt.payload.engine_name;
           if (interactive) setNames({ top: engineName });
@@ -600,8 +615,7 @@ export function mountGameView(container, opts = {}) {
           enginePv.textContent = full;
           enginePv.setAttribute("title", full);
         }
-        if (enginePv) enginePv.classList.toggle("hidden", viewing);
-        if (engineSection) engineSection.classList.toggle("no-pv", viewing);
+        syncPvVisibility();
         if (evt.payload.pv_uci && evt.payload.pv_uci.length > 0) {
           const m = evt.payload.pv_uci[0];
           if (m && m.length >= 4) {
