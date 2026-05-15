@@ -1924,6 +1924,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-table th, .wb-table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid var(--border-subtle); white-space: nowrap; }
 .wb-table th { color: var(--muted); font-weight: normal; font-size: 0.6875rem; text-transform: uppercase; }
 .wb-table .wb-eng-name { font-weight: 500; }
+.wb-elo-ordo { color: var(--muted); font-size: 0.75rem; }
 .wb-sprt {
   background: var(--bg); border: 1px solid var(--border-subtle); border-radius: 4px;
   padding: 6px 8px; margin-bottom: 0; font-size: 0.75rem;

@@ -437,7 +437,18 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
     const sprt = detail.sprt;
     const rows = standings.engines
-      .map((e) => `
+      .map((e) => {
+        const eloCell = e.elo == null
+          ? "--"
+          : (e.elo >= 0 ? "+" : "") + e.elo.toFixed(1) +
+            (e.elo_margin_95 == null ? "" : ` +/- ${e.elo_margin_95.toFixed(1)}`);
+        const ordoCell = e.elo_ordo == null
+          ? ""
+          : ` <span class="wb-elo-ordo">(` +
+            `${(e.elo_ordo >= 0 ? "+" : "") + e.elo_ordo.toFixed(1)}` +
+            (e.elo_ordo_margin_95 == null ? "" : ` +/- ${e.elo_ordo_margin_95.toFixed(1)}`) +
+            ` ordo)</span>`;
+        return `
         <tr>
           <td class="wb-eng-name">${escapeHtml(e.name)}</td>
           <td>${e.games}</td>
@@ -445,8 +456,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           <td>${e.losses}</td>
           <td>${e.draws}</td>
           <td>${(e.score_pct * 100).toFixed(1)}%</td>
-          <td>${e.elo == null ? "--" : (e.elo >= 0 ? "+" : "") + e.elo.toFixed(1) + (e.elo_margin_95 == null ? "" : ` +/- ${e.elo_margin_95.toFixed(1)}`)}</td>
-        </tr>`)
+          <td>${eloCell}${ordoCell}</td>
+        </tr>`;
+      })
       .join("");
     let sprtRow = "";
     if (sprt) {

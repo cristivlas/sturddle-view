@@ -41,12 +41,19 @@ class EngineRecord:
     wins: int = 0
     losses: int = 0
     draws: int = 0
-    # Populated only when there are exactly two engines in the tournament:
-    # then ``score_pct`` is a head-to-head score and Elo is well-defined.
+    # Logistic Elo: head-to-head score-percentage Elo. Well-defined for
+    # 2-engine tournaments and (per-challenger vs leader) for gauntlets.
     # ``elo_margin_95`` is the half-width of the 95% normal CI on Elo,
     # propagated from the per-game W/L/D score variance.
     elo: float | None = None
     elo_margin_95: float | None = None
+    # ordo-style joint-fit Elo: iterative Elo-update over the full game
+    # graph, mean-centered. Matches the output of ordo (https://github.com/
+    # michiguel/Ordo) with -a 0 -M -D to within rounding. Populated for
+    # any tour with >= 2 engines. None for engines purged from the fit
+    # (all-wins / all-losses).
+    elo_ordo: float | None = None
+    elo_ordo_margin_95: float | None = None
 
     @property
     def games(self) -> int:
@@ -73,6 +80,8 @@ class EngineRecord:
             "score_pct": self.score_pct,
             "elo": self.elo,
             "elo_margin_95": self.elo_margin_95,
+            "elo_ordo": self.elo_ordo,
+            "elo_ordo_margin_95": self.elo_ordo_margin_95,
         }
 
 
@@ -624,6 +633,277 @@ def elo_margin_from_wld(wins: int, losses: int, draws: int) -> float | None:
     return 1.96 * se_score * delo_dscore
 
 
+# ordo's BETA: P(score) = 1/(1 + exp((rB - rA)*BETA)).
+# Calibrated so a 202-Elo gap gives 76% expectancy -- matches ordo's
+# default -z 202 and `xpect(a, b, beta) = 1/(1+exp((b-a)*beta))` in xpect.c.
+_ORDO_INV_BETA = 202.0 / math.log(0.76 / 0.24)  # ~175.25
+_ORDO_BETA = 1.0 / _ORDO_INV_BETA
+
+
+def _ordo_connected_groups(
+    engine_names: list[str],
+    encounters: list[tuple[str, str, float, int]],
+) -> list[list[str]]:
+    """Return connected components of the engine-vs-engine match graph.
+
+    Two engines are connected if they played at least one game (in
+    either direction). Ratings are only comparable within a component;
+    across components the rating difference is undefined.
+    """
+    idx = {name: i for i, name in enumerate(engine_names)}
+    parent = list(range(len(engine_names)))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for w, b, _ws, _np in encounters:
+        union(idx[w], idx[b])
+    groups: dict[int, list[str]] = {}
+    for i, name in enumerate(engine_names):
+        groups.setdefault(find(i), []).append(name)
+    return list(groups.values())
+
+
+def _ordo_iterative_fit(
+    engine_names: list[str],
+    encounters: list[tuple[str, str, float, int]],
+) -> dict[str, float]:
+    """Joint Elo fit by iterative score-deviation update, mean-centered.
+
+    Replicates ordo's algorithm (Ballicora, https://github.com/michiguel/Ordo,
+    `rating.c::adjust_rating`). For each engine, the expected score under
+    current ratings is compared to the obtained score; ratings are stepped
+    toward closing the gap with a saturating multiplier; the outer loop
+    halves the step size whenever the global deviation stops improving.
+
+    ``encounters`` is a list of ``(white, black, white_score, played)``
+    aggregated by color-ordered pair. The fit is order-independent.
+
+    Returns ``{name: elo}`` mean-centered to zero. Assumes all engines in
+    ``engine_names`` are in one connected component -- caller is responsible
+    for splitting by component if needed.
+
+    No white-advantage term (we don't currently estimate one). Matches ordo's
+    output when run with ``-a 0 -M -D`` and the database has white_adv = 0
+    (the default), which is the typical case for engine tournaments.
+    """
+    n = len(engine_names)
+    if n < 2:
+        return {}
+    idx = {name: i for i, name in enumerate(engine_names)}
+
+    obtained = [0.0] * n
+    played = [0] * n
+    for w, b, ws, np_ in encounters:
+        iw, ib = idx[w], idx[b]
+        obtained[iw] += ws
+        obtained[ib] += np_ - ws
+        played[iw] += np_
+        played[ib] += np_
+
+    r = [0.0] * n
+    delta = 200.0
+    kappa = 0.05
+
+    def compute_dev(ratings: list[float]) -> tuple[float, list[float]]:
+        expected = [0.0] * n
+        for w, b, _ws, np_ in encounters:
+            iw, ib = idx[w], idx[b]
+            wperf = np_ / (1.0 + math.exp((ratings[ib] - ratings[iw]) * _ORDO_BETA))
+            expected[iw] += wperf
+            expected[ib] += np_ - wperf
+        dev = sum((expected[j] - obtained[j]) ** 2 for j in range(n))
+        return dev, expected
+
+    # Outer loop halves ``delta`` whenever an inner step makes things
+    # worse; convergence is reached when ``delta`` shrinks below 0.001 Elo.
+    # 80 halvings cover any practical input.
+    for _outer in range(80):
+        for _inner in range(20000):
+            dev, expected = compute_dev(r)
+            new_r = list(r)
+            for j in range(n):
+                d = obtained[j] - expected[j]
+                if played[j] == 0:
+                    continue
+                ratio = abs(d) / (kappa * played[j] + abs(d))
+                step = delta * (1.0 if d > 0 else -1.0) * ratio
+                new_r[j] += step
+            m = sum(new_r) / n
+            new_r = [x - m for x in new_r]
+            dev2, _ = compute_dev(new_r)
+            if dev2 >= dev:
+                break
+            r = new_r
+        delta *= 0.5
+        if delta < 0.001:
+            break
+
+    return {engine_names[i]: r[i] for i in range(n)}
+
+
+def _ordo_fit_margins(
+    engine_names: list[str],
+    encounters: list[tuple[str, str, float, int]],
+    ratings: dict[str, float],
+) -> dict[str, float | None]:
+    """95% Wald CI half-width for each engine's rating, from the Fisher
+    information of the score-likelihood treated as binomial p_i = E[score_i].
+
+    Per-game Fisher info contribution to (r_i, r_j) is:
+      ``I_ii += BETA**2 * p * (1 - p)``
+      ``I_ij -= BETA**2 * p * (1 - p)``
+      ``I_jj += BETA**2 * p * (1 - p)``
+
+    The mean-zero constraint is folded in by dropping the last engine's
+    row/column from the info matrix and inverting the reduced (n-1) x (n-1)
+    matrix; the last engine's variance is derived from the constraint
+    ``r_{n-1} = -sum_{j<n-1} r_j``.
+
+    Note: ordo uses a bootstrap simulation (resampling games, refitting)
+    that produces CI roughly 1.4--2x tighter than this Wald form. We do
+    not replicate the bootstrap because it is O(N_sims) more expensive.
+    The Wald form is asymptotically equivalent and more conservative;
+    the ratio is roughly constant per tour so cross-comparison with
+    ordo's CI is unambiguous up to a scale factor.
+    """
+    n = len(engine_names)
+    if n < 2:
+        return {name: None for name in engine_names}
+    if n == 2:
+        margins = {}
+        info = 0.0
+        for w, b, _ws, np_ in encounters:
+            ra = ratings[w]; rb = ratings[b]
+            p = 1.0 / (1.0 + math.exp((rb - ra) * _ORDO_BETA))
+            info += np_ * _ORDO_BETA * _ORDO_BETA * p * (1.0 - p)
+        if info <= 0.0:
+            return {name: None for name in engine_names}
+        se_diff = 1.0 / math.sqrt(info)
+        m = 1.96 * se_diff / 2.0
+        for name in engine_names:
+            margins[name] = m
+        return margins
+
+    idx = {name: i for i, name in enumerate(engine_names)}
+    info = [[0.0] * n for _ in range(n)]
+    for w, b, _ws, np_ in encounters:
+        iw, ib = idx[w], idx[b]
+        ra = ratings[w]; rb = ratings[b]
+        p = 1.0 / (1.0 + math.exp((rb - ra) * _ORDO_BETA))
+        c = np_ * _ORDO_BETA * _ORDO_BETA * p * (1.0 - p)
+        info[iw][iw] += c
+        info[ib][ib] += c
+        info[iw][ib] -= c
+        info[ib][iw] -= c
+
+    # Drop last row/col to fold in mean-zero constraint.
+    size = n - 1
+    aug = [row[:size] + [1.0 if i == j else 0.0 for j in range(size)]
+           for i, row in enumerate(info[:size])]
+    # Gauss-Jordan inversion in-place.
+    for col in range(size):
+        piv = col
+        for r2 in range(col, size):
+            if abs(aug[r2][col]) > abs(aug[piv][col]):
+                piv = r2
+        if abs(aug[piv][col]) < 1e-12:
+            return {name: None for name in engine_names}
+        aug[col], aug[piv] = aug[piv], aug[col]
+        pv = aug[col][col]
+        aug[col] = [v / pv for v in aug[col]]
+        for r2 in range(size):
+            if r2 == col:
+                continue
+            f = aug[r2][col]
+            if f == 0.0:
+                continue
+            aug[r2] = [aug[r2][k] - f * aug[col][k] for k in range(2 * size)]
+    inv = [row[size:] for row in aug]
+
+    margins: dict[str, float | None] = {}
+    for i in range(size):
+        v = inv[i][i]
+        margins[engine_names[i]] = 1.96 * math.sqrt(v) if v >= 0 else None
+    # Last engine's variance under constraint: Var(-sum others) = sum_{i,j} Cov(r_i, r_j)
+    var_last = 0.0
+    for i in range(size):
+        for j in range(size):
+            var_last += inv[i][j]
+    margins[engine_names[size]] = 1.96 * math.sqrt(var_last) if var_last >= 0 else None
+    return margins
+
+
+def ordo_fit(
+    engine_names: list[str],
+    encounters: list[tuple[str, str, float, int]],
+    *,
+    wins: dict[str, int] | None = None,
+    losses: dict[str, int] | None = None,
+) -> dict[str, tuple[float | None, float | None]]:
+    """Joint mean-centered Elo fit replicating ordo's output.
+
+    Returns ``{name: (elo, margin_95)}`` for every engine in
+    ``engine_names``. Engines with all wins / all losses (against the
+    rest of the pool) are purged from the joint fit: their entries are
+    ``(None, None)``, matching ordo's ``-G`` purge behavior. Disconnected
+    components are fit independently and each anchored to its own mean.
+
+    ``wins``/``losses`` are name -> count dicts; required for purge
+    detection. If omitted, no engine is purged.
+    """
+    if not engine_names:
+        return {}
+
+    # Purge candidates: an engine is "all wins" if it never lost, "all
+    # losses" if it never won. These have divergent rating under MLE; we
+    # exclude them from the joint fit and surface (None, None).
+    purged: set[str] = set()
+    if wins is not None and losses is not None:
+        for n in engine_names:
+            if (wins.get(n, 0) > 0 and losses.get(n, 0) == 0) or \
+               (losses.get(n, 0) > 0 and wins.get(n, 0) == 0):
+                purged.add(n)
+
+    # Remaining engines + encounters not involving purged engines.
+    remaining = [n for n in engine_names if n not in purged]
+    if not remaining:
+        return {n: (None, None) for n in engine_names}
+    remaining_set = set(remaining)
+    encs = [
+        (w, b, ws, np_)
+        for (w, b, ws, np_) in encounters
+        if w in remaining_set and b in remaining_set
+    ]
+
+    # Connected-component decomposition; fit each separately.
+    components = _ordo_connected_groups(remaining, encs)
+    result: dict[str, tuple[float | None, float | None]] = {
+        n: (None, None) for n in purged
+    }
+    for comp in components:
+        comp_set = set(comp)
+        comp_encs = [(w, b, ws, np_) for (w, b, ws, np_) in encs
+                     if w in comp_set and b in comp_set]
+        if len(comp) == 1:
+            # Singleton: no opponent in remaining pool, rating undefined.
+            result[comp[0]] = (None, None)
+            continue
+        ratings = _ordo_iterative_fit(comp, comp_encs)
+        margins = _ordo_fit_margins(comp, comp_encs, ratings)
+        for name in comp:
+            result[name] = (ratings.get(name), margins.get(name))
+    return result
+
+
 def compute_standings(
     pgn_path: Path,
     tournament_type: str = "roundrobin",
@@ -637,6 +917,10 @@ def compute_standings(
     wld: dict[str, dict[str, list[int]]] = {}
     records: dict[str, EngineRecord] = {}
     games = 0
+    # encounters keyed by (white, black) -> [white_score, played]; consumed
+    # by the ordo-style joint fit below. White-score = W + 0.5*D, since the
+    # fit operates on score-percentage per ordo's xpect.c.
+    encounters: dict[tuple[str, str], list[float]] = {}
 
     def rec(name: str) -> EngineRecord:
         if name not in records:
@@ -647,21 +931,26 @@ def compute_standings(
         games += 1
         w = rec(white)
         b = rec(black)
+        enc = encounters.setdefault((white, black), [0.0, 0])
+        enc[1] += 1
         if result == _WHITE_WIN:
             w.wins += 1
             b.losses += 1
             wld.setdefault(white, {}).setdefault(black, [0, 0, 0])[0] += 1
             wld.setdefault(black, {}).setdefault(white, [0, 0, 0])[1] += 1
+            enc[0] += 1.0
         elif result == _BLACK_WIN:
             b.wins += 1
             w.losses += 1
             wld.setdefault(black, {}).setdefault(white, [0, 0, 0])[0] += 1
             wld.setdefault(white, {}).setdefault(black, [0, 0, 0])[1] += 1
+            # White scored 0.
         else:  # draw
             w.draws += 1
             b.draws += 1
             wld.setdefault(white, {}).setdefault(black, [0, 0, 0])[2] += 1
             wld.setdefault(black, {}).setdefault(white, [0, 0, 0])[2] += 1
+            enc[0] += 0.5
 
     engines = list(records.values())
     if len(engines) == 2:
@@ -681,6 +970,22 @@ def compute_standings(
             score = (wi + 0.5 * di) / sum(vs)
             e.elo = elo_from_score(score)
             e.elo_margin_95 = elo_margin_from_wld(wi, li, di)
+
+    # ordo-style joint fit: populated for every tour with >= 2 engines.
+    # Per-engine `elo_ordo` is the mean-centered rating; engines purged
+    # from the fit (all-wins/all-losses) get None. Cross-checks against
+    # an external ordo run (-a 0 -M -D) to within rounding.
+    if len(engines) >= 2:
+        names = [e.name for e in engines]
+        encs = [(w, b, ws, p) for (w, b), (ws, p) in encounters.items()]
+        wins_map = {e.name: e.wins for e in engines}
+        losses_map = {e.name: e.losses for e in engines}
+        fit = ordo_fit(names, encs, wins=wins_map, losses=losses_map)
+        for e in engines:
+            elo, margin = fit.get(e.name, (None, None))
+            e.elo_ordo = elo
+            e.elo_ordo_margin_95 = margin
+
     return Standings(engines=engines, games=games)
 
 

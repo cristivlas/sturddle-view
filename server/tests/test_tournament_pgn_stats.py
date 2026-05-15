@@ -21,6 +21,7 @@ from sturddle_view.tournament.pgn_stats import (
     count_partial_pairs,
     elo_from_score,
     elo_margin_from_wld,
+    ordo_fit,
     patch_config_json,
     read_game_pgn,
     rewrite_drop_partial_pairs,
@@ -291,6 +292,116 @@ def test_elo_from_score_known_values():
     assert elo_from_score(10 / 11) == pytest.approx(400.0, abs=0.5)
     # -400 Elo ⇨ score 1/11
     assert elo_from_score(1 / 11) == pytest.approx(-400.0, abs=0.5)
+
+
+# ---------------------------------------------------------------------------
+# ordo-style joint Elo fit
+# ---------------------------------------------------------------------------
+
+
+def test_ordo_fit_two_engines_balanced(tmp_path):
+    # 71 games: 17W 16L 38D from A's perspective. Hand-verified against
+    # ordo -p tou3r.pgn -a 0 -M -D: +2.5 / -2.5.
+    encs = [("A", "B", 17 + 0.5 * 19, 36),  # half white, half black (idealization)
+            ("B", "A", 16 + 0.5 * 19, 35)]
+    fit = ordo_fit(["A", "B"], encs,
+                   wins={"A": 17, "B": 16}, losses={"A": 16, "B": 17})
+    a_elo, _ = fit["A"]
+    b_elo, _ = fit["B"]
+    assert a_elo == pytest.approx(-b_elo, abs=0.01)  # mean-centered
+    assert a_elo == pytest.approx(2.47, abs=0.5)
+
+
+def test_ordo_fit_two_engines_equal_score_gives_zero():
+    # Both engines score 50% -- ratings collapse to 0.
+    encs = [("A", "B", 5.0, 10), ("B", "A", 5.0, 10)]
+    fit = ordo_fit(["A", "B"], encs,
+                   wins={"A": 5, "B": 5}, losses={"A": 5, "B": 5})
+    assert fit["A"][0] == pytest.approx(0.0, abs=0.5)
+    assert fit["B"][0] == pytest.approx(0.0, abs=0.5)
+
+
+def test_ordo_fit_purges_all_wins_engine():
+    # C beat A once, never lost; A and B played a normal pair.
+    # C is purged (all-wins); A and B get a proper fit.
+    encs = [
+        ("A", "B", 1.0, 1), ("B", "A", 1.0, 1),
+        ("C", "A", 1.0, 1),
+    ]
+    fit = ordo_fit(["A", "B", "C"], encs,
+                   wins={"A": 1, "B": 1, "C": 1},
+                   losses={"A": 1, "B": 1, "C": 0})
+    assert fit["C"] == (None, None)
+    # A and B form their own component (post-purge), both score 1/2.
+    assert fit["A"][0] == pytest.approx(0.0, abs=0.5)
+    assert fit["B"][0] == pytest.approx(0.0, abs=0.5)
+
+
+def test_ordo_fit_purges_all_losses_engine():
+    encs = [
+        ("A", "B", 1.0, 1), ("B", "A", 1.0, 1),
+        ("C", "A", 0.0, 1),
+    ]
+    fit = ordo_fit(["A", "B", "C"], encs,
+                   wins={"A": 2, "B": 1, "C": 0},
+                   losses={"A": 0, "B": 1, "C": 1})
+    # A is "all wins" -- C never beat A and A never lost overall.
+    assert fit["A"] == (None, None)
+    assert fit["C"] == (None, None)
+
+
+def test_ordo_fit_disconnected_components_fit_independently():
+    # {A, B} played each other; {C, D} played each other; A never met C/D.
+    encs = [
+        ("A", "B", 6.0, 10), ("B", "A", 4.0, 10),
+        ("C", "D", 4.0, 10), ("D", "C", 6.0, 10),
+    ]
+    fit = ordo_fit(["A", "B", "C", "D"], encs,
+                   wins={"A": 6, "B": 4, "C": 4, "D": 6},
+                   losses={"A": 4, "B": 6, "C": 6, "D": 4})
+    # Each pair is mean-centered within its own component.
+    assert fit["A"][0] == pytest.approx(-fit["B"][0], abs=0.5)
+    assert fit["C"][0] == pytest.approx(-fit["D"][0], abs=0.5)
+    # A and D both scored 60% vs their only opponent -- same rating.
+    assert fit["A"][0] == pytest.approx(fit["D"][0], abs=0.5)
+
+
+def test_ordo_fit_returns_mean_zero():
+    # Three engines, rock-paper-scissors-ish. Ratings must sum to (approximately) 0.
+    encs = [
+        ("A", "B", 1.0, 1), ("B", "C", 1.0, 1), ("C", "A", 1.0, 1),
+    ]
+    fit = ordo_fit(["A", "B", "C"], encs,
+                   wins={"A": 1, "B": 1, "C": 1},
+                   losses={"A": 1, "B": 1, "C": 1})
+    elos = [fit[n][0] for n in ("A", "B", "C") if fit[n][0] is not None]
+    if elos:
+        assert sum(elos) == pytest.approx(0.0, abs=0.01)
+
+
+def test_standings_populates_elo_ordo_for_two_engines(tmp_path):
+    # 1 win, 1 loss, 1 draw each = 50% score -> ordo Elo ~ 0.
+    body = (
+        _game("A", "B", "1-0")
+        + _game("A", "B", "0-1")
+        + _game("A", "B", "1/2-1/2")
+    )
+    p = _write_pgn(tmp_path, body)
+    s = compute_standings(p)
+    by = {e.name: e for e in s.engines}
+    assert by["A"].elo_ordo is not None
+    assert by["B"].elo_ordo is not None
+    assert by["A"].elo_ordo == pytest.approx(0.0, abs=0.5)
+    assert by["A"].elo_ordo == pytest.approx(-by["B"].elo_ordo, abs=0.01)
+
+
+def test_standings_elo_ordo_serializes_to_dict():
+    e_dict = compute_standings  # just sanity-check the import; details below
+    from sturddle_view.tournament.pgn_stats import EngineRecord
+    r = EngineRecord(name="x", elo_ordo=12.3, elo_ordo_margin_95=4.5)
+    d = r.to_dict()
+    assert d["elo_ordo"] == 12.3
+    assert d["elo_ordo_margin_95"] == 4.5
 
 
 # ---------------------------------------------------------------------------

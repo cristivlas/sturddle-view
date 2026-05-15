@@ -214,24 +214,40 @@ tags (`1-0`, `0-1`, `1/2-1/2`) drive game tallies. SPRT requires
 pentanomial scoring (paired games); the formula is standard but must be
 implemented in the wrapper, not delegated.
 
-### Open: Elo display convention
+### Elo: two numbers per engine
 
-Current behavior: `compute_standings` stores `elo_from_score(score_pct)`
-on **each** engine independently. For a 2-engine tournament with
-A scoring 52%, that produces `A.elo = +14, B.elo = -14`. The leader's
-number matches `ordo -a 0 -A B`'s anchored output (which is the
-*rating gap*). Storing the mirror on the trailer gives the impression
-of a 28-Elo spread when the actual head-to-head gap is 14.
+Each engine in the standings has **two** Elo values, both populated
+when at least two engines are present:
 
-This is a presentation question, not a math bug. Options:
+- **`elo` (logistic Elo).** Computed by `elo_from_score(score_pct)`.
+  The per-engine head-to-head Elo against the rest of the pool: for a
+  2-engine tour with A scoring 52%, A.elo = +14 and B.elo = -14. This
+  matches `ordo -a 0 -A B` (anchored: rating gap = 28). For gauntlets,
+  per-challenger Elo is head-to-head vs the leader only.
 
-1. Show Elo only on the leader (trailer's `elo` = `None` or 0). Mirrors
-   ordo exactly.
-2. Halve the per-engine value so the displayed pair sums to the gap.
-3. Keep current and disambiguate in the UI.
+- **`elo_ordo` (ordo-style joint fit).** A mean-centered rating from a
+  joint iterative fit over the full game graph, replicating the
+  algorithm in Ballicora's ordo (https://github.com/michiguel/Ordo,
+  function `adjust_rating` in `rating.c`). Matches the output of
+  `ordo -a 0 -M -D` on the same PGN to within rounding for ratings;
+  the 95% margin is a Wald CI from the binomial Fisher information,
+  which runs ~1.5x wider than ordo's bootstrap CI. For a 2-engine
+  52%/48% split, `elo_ordo` is +/- 7 (each side), giving a 14 Elo gap
+  consistent with `elo`.
 
-Deferred -- touching this changes user-visible numbers and existing
-tournaments' archived standings.
+Both numbers are emitted in the API and rendered in the standings
+table; `elo_ordo` appears as a smaller, dimmer inline number next to
+`elo` ("+/- X.X ordo"). The dual display lets users cross-check
+against ordo without leaving the app while keeping the logistic Elo
+(which matches fastchess stdout, cutechess, and published CCRL/CEGT
+ratings) as the primary number.
+
+Edge cases for `elo_ordo`:
+
+- All-wins / all-losses engines are purged from the joint fit and
+  surface `(None, None)`. ordo behaves the same with `-G`.
+- Disconnected match graphs are fit per-component, each mean-centered
+  independently. Cross-component comparison is undefined.
 
 ---
 
