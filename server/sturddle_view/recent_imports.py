@@ -64,6 +64,10 @@ class RecentImports:
         self._index: dict[str, dict] = {}
         self._lock = asyncio.Lock()
 
+    @property
+    def root(self) -> Path:
+        return self._root
+
     @classmethod
     def load(cls, root: Path | None = None, cap: int = DEFAULT_CAP) -> "RecentImports":
         root = root or default_imports_dir()

@@ -1,6 +1,7 @@
 # Recent Imports — Design Sketch
 
-Status: draft. To be folded into `spec.md` once implemented and shaken out.
+Status: implemented (v0.1.5). To be folded into `spec.md` once shaken
+out in real use.
 
 ## Problem
 

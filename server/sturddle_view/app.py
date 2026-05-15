@@ -252,6 +252,11 @@ def create_app(
     app.state.engines = engine_registry or EngineRegistry()
     app.state.game_store = game_store or GameStore()
     app.state.recent_imports = RecentImports.load()
+    log.info(
+        "recent imports: %d entries at %s",
+        len(app.state.recent_imports.list()),
+        app.state.recent_imports.root,
+    )
     app.state.openings = OpeningBook.load()
     log.info("loaded %d opening lines", len(app.state.openings))
 
