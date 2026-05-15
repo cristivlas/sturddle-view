@@ -14,6 +14,7 @@
 // considered but rejected for the UX regressions (broken toggle buttons,
 // no resize-back recovery, divergent localStorage state).
 
+import { attachColumnResize } from "./col-resize.js";
 import { toast } from "./dialogs.js";
 import { makeSplitter } from "./splitter.js";
 
@@ -472,91 +473,39 @@ function buildPvTableBody(events, { setOff }) {
   const colEls = Array.from(body.querySelectorAll("col"));
   const COL_WIDTHS_KEY = "sturddle:pvtable:colWidths";
   const DEFAULT_WIDTHS = [50, 50, 55, 45];
-  let colWidths = DEFAULT_WIDTHS.slice();
-  try {
-    const saved = JSON.parse(localStorage.getItem(COL_WIDTHS_KEY));
-    if (Array.isArray(saved) && saved.length === 4) colWidths = saved;
-  } catch (e) { /* use defaults */ }
-
-  function applyColWidths() {
-    // First 4 cols are fixed px; last col (PV) is auto to fill remaining space.
-    colEls.slice(0, 4).forEach((c, i) => { c.style.width = colWidths[i] + "px"; });
-    colEls[4].style.width = "auto";
-    const fixedW = colWidths.reduce((s, w) => s + w, 0);
-    tableEl.style.width = "100%";
-    tableEl.style.minWidth = fixedW + "px";
-    fitTableToPvContent();
-  }
-  applyColWidths();
-
   const minPx = 30;
-  body.querySelectorAll(".th-grip").forEach((grip, gripIdx) => {
-    grip.addEventListener("pointerdown", (eDown) => {
-      if (eDown.button !== 0) return;
-      eDown.preventDefault();
-      grip.setPointerCapture(eDown.pointerId);
-      grip.classList.add("dragging");
-      const startX = eDown.clientX;
-      const startA = colWidths[gripIdx];
-      const startB = gripIdx + 1 < colWidths.length ? colWidths[gripIdx + 1] : null;
+  const grips = Array.from(body.querySelectorAll(".th-grip"));
+  const colWidths = DEFAULT_WIDTHS.slice();
 
-      const rightLine = document.createElement("div");
-      const leftLine = document.createElement("div");
-      rightLine.className = leftLine.className = "col-drag-line";
-      rightLine.style.top = leftLine.style.top = "0";
-      body.appendChild(rightLine);
-      body.appendChild(leftLine);
-
-      // Clamp the cursor-tracking line to the actual resulting column
-      // boundary so dragging past the min width stops the line at the
-      // column's edge instead of floating off (matches engines table).
-      function placeLines(boundaryX) {
-        const bodyLeft = body.getBoundingClientRect().left;
-        const thLeft = tableEl.querySelectorAll("thead th")[gripIdx].getBoundingClientRect().left;
-        rightLine.style.left = (boundaryX - bodyLeft) + "px";
-        const fullH = Math.max(body.scrollHeight, body.parentElement?.clientHeight ?? 0);
-        rightLine.style.height = leftLine.style.height = fullH + "px";
-        leftLine.style.left = (thLeft - bodyLeft) + "px";
-      }
-      placeLines(eDown.clientX);
-
-      function onMove(e) {
-        const d = e.clientX - startX;
-        let a = startA + d;
+  attachColumnResize({
+    table: tableEl,
+    grips,
+    overlayHost: body,
+    storageKey: COL_WIDTHS_KEY,
+    sizes: colWidths,
+    unit: "px",
+    dragLineHeight: () => Math.max(body.scrollHeight, body.parentElement?.clientHeight ?? 0),
+    applySizes(sizes, ctx) {
+      if (ctx) {
+        const { deltaFrac, tableWidth, startSizes, gripIdx } = ctx;
+        const d = deltaFrac * tableWidth;
+        let a = startSizes[gripIdx] + d;
         if (a < minPx) a = minPx;
-        colWidths[gripIdx] = a;
-        if (startB !== null) {
-          let b = startB - d;
+        sizes[gripIdx] = a;
+        if (gripIdx + 1 < sizes.length) {
+          let b = startSizes[gripIdx + 1] - d;
           if (b < minPx) b = minPx;
-          colWidths[gripIdx + 1] = b;
+          sizes[gripIdx + 1] = b;
         }
-        applyColWidths();
-        // Compute the resulting boundary from clamped widths.
-        const tableLeft = tableEl.getBoundingClientRect().left;
-        let boundaryPx = 0;
-        for (let i = 0; i <= gripIdx; i++) boundaryPx += colWidths[i];
-        placeLines(tableLeft + boundaryPx);
       }
-      let done = false;
-      function onUp() {
-        if (done) return;
-        done = true;
-        grip.classList.remove("dragging");
-        rightLine.remove();
-        leftLine.remove();
-        localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(colWidths.slice(0, 4)));
-        grip.removeEventListener("pointermove", onMove);
-        grip.removeEventListener("pointerup", onUp);
-        grip.removeEventListener("pointercancel", onUp);
-        document.removeEventListener("pointerup", onUp);
-        document.removeEventListener("pointercancel", onUp);
-      }
-      grip.addEventListener("pointermove", onMove);
-      grip.addEventListener("pointerup", onUp);
-      grip.addEventListener("pointercancel", onUp);
-      document.addEventListener("pointerup", onUp);
-      document.addEventListener("pointercancel", onUp);
-    });
+      // First 4 cols are fixed px; last col (PV) is auto to fill remaining space.
+      colEls.slice(0, 4).forEach((c, i) => { c.style.width = sizes[i] + "px"; });
+      colEls[4].style.width = "auto";
+      const fixedW = sizes.reduce((s, w) => s + w, 0);
+      tableEl.style.width = "100%";
+      tableEl.style.minWidth = fixedW + "px";
+      fitTableToPvContent();
+    },
   });
 
   const rowMap = new Map();

@@ -3,6 +3,7 @@
 // Remove), an inline drop-up search bar at the bottom, and a list whose
 // height is sized to fit the dialog body via JS measurement.
 
+import { attachColumnResize } from "./col-resize.js";
 import { apiErrorDetail, confirm, pickFile, reportError, toast } from "./dialogs.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 
@@ -404,86 +405,32 @@ export function mountEngineList(container, api, opts = {}) {
   // Column resize.
   {
     const colEls = Array.from(container.querySelectorAll(".engines-table col"));
-    let colPcts = DEFAULT_PCTS.slice();
-
-    function applyColPcts() {
-      colEls.forEach((c, i) => { c.style.width = colPcts[i] + "%"; });
-    }
-    try {
-      const saved = JSON.parse(localStorage.getItem(colPctsKey));
-      if (Array.isArray(saved) && saved.length === 3) colPcts = saved;
-    } catch (e) { /* use defaults */ }
-    applyColPcts();
-
     const wrapEl = container.querySelector(".engines-table-wrap");
     const tableEl = container.querySelector(".engines-table");
+    const grips = Array.from(container.querySelectorAll(".engines-table .th-grip"));
     const minPct = 8;
+    const colPcts = DEFAULT_PCTS.slice();
 
-    container.querySelectorAll(".engines-table .th-grip").forEach((grip, gripIdx) => {
-      grip.addEventListener("pointerdown", (eDown) => {
-        if (eDown.button !== 0) return;
-        eDown.preventDefault();
-        grip.setPointerCapture(eDown.pointerId);
-        grip.classList.add("dragging");
-        const startX = eDown.clientX;
-        const startA = colPcts[gripIdx], startB = colPcts[gripIdx + 1];
-        const tableW = tableEl.getBoundingClientRect().width || 1;
-
-        const rightLine = document.createElement("div");
-        const leftLine = document.createElement("div");
-        rightLine.className = leftLine.className = "col-drag-line";
-        rightLine.style.top = leftLine.style.top = "0";
-        wrapEl.appendChild(rightLine);
-        wrapEl.appendChild(leftLine);
-
-        // Clamp the cursor-tracking line to the actual resulting column
-        // boundary so the visual matches what's happening to the columns
-        // (otherwise the line floats off into the void while the columns
-        // silently refuse to follow).
-        function placeLines(boundaryX) {
-          const wrapLeft = wrapEl.getBoundingClientRect().left;
-          const thLeft = tableEl.querySelectorAll("thead th")[gripIdx].getBoundingClientRect().left;
-          rightLine.style.left = (boundaryX - wrapLeft) + "px";
-          rightLine.style.height = leftLine.style.height = wrapEl.scrollHeight + "px";
-          leftLine.style.left = (thLeft - wrapLeft) + "px";
-        }
-        placeLines(eDown.clientX);
-
-        function onMove(e) {
-          const dPct = ((e.clientX - startX) / tableW) * 100;
-          let a = startA + dPct, b = startB - dPct;
+    attachColumnResize({
+      table: tableEl,
+      grips,
+      overlayHost: wrapEl,
+      storageKey: colPctsKey,
+      sizes: colPcts,
+      unit: "pct",
+      applySizes(sizes, ctx) {
+        if (ctx) {
+          const { deltaFrac, startSizes, gripIdx } = ctx;
+          const dPct = deltaFrac * 100;
+          let a = startSizes[gripIdx] + dPct;
+          let b = startSizes[gripIdx + 1] - dPct;
           if (a < minPct) { b -= minPct - a; a = minPct; }
           if (b < minPct) { a -= minPct - b; b = minPct; }
-          colPcts[gripIdx] = a; colPcts[gripIdx + 1] = b;
-          applyColPcts();
-          // Compute the resulting boundary (in clientX) from the clamped
-          // column widths instead of using raw cursor X.
-          const tableLeft = tableEl.getBoundingClientRect().left;
-          let boundaryPct = 0;
-          for (let i = 0; i <= gripIdx; i++) boundaryPct += colPcts[i];
-          const boundaryX = tableLeft + (boundaryPct / 100) * tableW;
-          placeLines(boundaryX);
+          sizes[gripIdx] = a;
+          sizes[gripIdx + 1] = b;
         }
-        let done = false;
-        function onUp() {
-          if (done) return;
-          done = true;
-          grip.classList.remove("dragging");
-          rightLine.remove();
-          leftLine.remove();
-          localStorage.setItem(colPctsKey, JSON.stringify(colPcts));
-          grip.removeEventListener("pointermove", onMove);
-          grip.removeEventListener("pointerup", onUp);
-          grip.removeEventListener("pointercancel", onUp);
-          document.removeEventListener("pointerup", onUp);
-          document.removeEventListener("pointercancel", onUp);
-        }
-        grip.addEventListener("pointermove", onMove);
-        grip.addEventListener("pointerup", onUp);
-        grip.addEventListener("pointercancel", onUp);
-        document.addEventListener("pointerup", onUp);
-        document.addEventListener("pointercancel", onUp);
-      });
+        colEls.forEach((c, i) => { c.style.width = sizes[i] + "%"; });
+      },
     });
   }
 
