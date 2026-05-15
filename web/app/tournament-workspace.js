@@ -18,11 +18,14 @@ import {
   LIVE_MIN_WIDTH, LIVE_MIN_HEIGHT, DEBUG_WATCH,
 } from "./tournament-live-game.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
+import { attachColumnResize } from "./col-resize.js";
 import { apiErrorDetail, toast } from "./dialogs.js";
 import { escapeHtml, flashWindow } from "./wb-utils.js";
 import { createSlotGrid, SLOT_GAP } from "./workspace-slot-grid.js";
 
 const STORAGE_KEY_PREFIX = "sturddle:workspace:";
+const STANDINGS_COL_PCTS_KEY = "sturddle:tournaments:standingsColPcts";
+const STANDINGS_DEFAULT_PCTS = [22, 5, 5, 5, 5, 8, 25, 25];
 const POLL_INTERVAL_MS = 5000;
 const EVENT_LOG_LIMIT = 500;
 
@@ -164,7 +167,58 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   function makeStandingsBody() {
     const el = document.createElement("div");
     el.className = "wb-standings";
-    el.innerHTML = `<div class="wb-empty">Loading...</div>`;
+    el.innerHTML = `
+      <div class="wb-sprt-slot"></div>
+      <div class="wb-partial-slot"></div>
+      <div class="wb-empty wb-standings-empty">Loading...</div>
+      <div class="wb-standings-table-wrap" hidden>
+        <table class="wb-table wb-standings-tbl">
+          <colgroup>
+            <col><col><col><col><col><col><col><col>
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Engine<span class="th-grip"></span></th>
+              <th>G<span class="th-grip"></span></th>
+              <th>W<span class="th-grip"></span></th>
+              <th>L<span class="th-grip"></span></th>
+              <th>D<span class="th-grip"></span></th>
+              <th>%<span class="th-grip"></span></th>
+              <th>Elo<span class="th-grip"></span></th>
+              <th>Ordo</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    `;
+    const wrapEl = el.querySelector(".wb-standings-table-wrap");
+    const tableEl = el.querySelector(".wb-standings-tbl");
+    const colEls = Array.from(el.querySelectorAll(".wb-standings-tbl col"));
+    const grips = Array.from(el.querySelectorAll(".wb-standings-tbl .th-grip"));
+    const colPcts = STANDINGS_DEFAULT_PCTS.slice();
+    const minPct = 4;
+    attachColumnResize({
+      table: tableEl,
+      grips,
+      overlayHost: wrapEl,
+      storageKey: STANDINGS_COL_PCTS_KEY,
+      sizes: colPcts,
+      unit: "pct",
+      applySizes(sizes, ctx) {
+        if (ctx) {
+          const { deltaFrac, startSizes, gripIdx } = ctx;
+          const dPct = deltaFrac * 100;
+          let a = startSizes[gripIdx] + dPct;
+          let b = startSizes[gripIdx + 1] - dPct;
+          if (a < minPct) { b -= minPct - a; a = minPct; }
+          if (b < minPct) { a -= minPct - b; b = minPct; }
+          sizes[gripIdx] = a;
+          sizes[gripIdx + 1] = b;
+        }
+        colEls.forEach((c, i) => { c.style.width = sizes[i] + "%"; });
+      },
+    });
     return el;
   }
   function makeScheduleBody() {
@@ -430,24 +484,33 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // ---- Rendering --------------------------------------------------------
 
   function renderStandings() {
+    const sprtSlot = standingsBody.querySelector(".wb-sprt-slot");
+    const partialSlot = standingsBody.querySelector(".wb-partial-slot");
+    const emptyEl = standingsBody.querySelector(".wb-standings-empty");
+    const wrapEl = standingsBody.querySelector(".wb-standings-table-wrap");
+    const tbody = standingsBody.querySelector(".wb-standings-tbl tbody");
     const standings = detail?.standings;
     if (!standings || standings.engines.length === 0) {
-      standingsBody.innerHTML = `<div class="wb-empty">No games played yet.</div>`;
+      emptyEl.textContent = "No games played yet.";
+      emptyEl.hidden = false;
+      wrapEl.hidden = true;
+      sprtSlot.innerHTML = "";
+      partialSlot.innerHTML = "";
       return;
     }
+    emptyEl.hidden = true;
+    wrapEl.hidden = false;
     const sprt = detail.sprt;
-    const rows = standings.engines
+    tbody.innerHTML = standings.engines
       .map((e) => {
         const eloCell = e.elo == null
           ? "--"
           : (e.elo >= 0 ? "+" : "") + e.elo.toFixed(1) +
             (e.elo_margin_95 == null ? "" : ` +/- ${e.elo_margin_95.toFixed(1)}`);
         const ordoCell = e.elo_ordo == null
-          ? ""
-          : ` <span class="wb-elo-ordo">(` +
-            `${(e.elo_ordo >= 0 ? "+" : "") + e.elo_ordo.toFixed(1)}` +
-            (e.elo_ordo_margin_95 == null ? "" : ` +/- ${e.elo_ordo_margin_95.toFixed(1)}`) +
-            ` ordo)</span>`;
+          ? "--"
+          : (e.elo_ordo >= 0 ? "+" : "") + e.elo_ordo.toFixed(1) +
+            (e.elo_ordo_margin_95 == null ? "" : ` +/- ${e.elo_ordo_margin_95.toFixed(1)}`);
         return `
         <tr>
           <td class="wb-eng-name">${escapeHtml(e.name)}</td>
@@ -456,11 +519,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           <td>${e.losses}</td>
           <td>${e.draws}</td>
           <td>${(e.score_pct * 100).toFixed(1)}%</td>
-          <td>${eloCell}${ordoCell}</td>
+          <td>${eloCell}</td>
+          <td>${ordoCell}</td>
         </tr>`;
       })
       .join("");
-    let sprtRow = "";
     if (sprt) {
       const lo = sprt.lower_bound, hi = sprt.upper_bound, llr = sprt.llr;
       const concluded = sprt.status !== "continue";
@@ -472,29 +535,21 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         : sprt.status === "H0"
           ? `H0 (no significant difference)`
           : sprt.status;
-      sprtRow = `<div class="wb-sprt${colorMod}">` +
+      sprtSlot.innerHTML = `<div class="wb-sprt${colorMod}">` +
         `SPRT ${candidate} [${sprt.elo0}, ${sprt.elo1}] * LLR=${llr.toFixed(2)} [${lo.toFixed(2)}, ${hi.toFixed(2)}]` +
         `${pairsText} * ${statusText}` +
         `</div>`;
+    } else {
+      sprtSlot.innerHTML = "";
     }
     const partialPairs = detail.partial_pairs ?? 0;
     // Hide during RUNNING -- a fresh game-1 always sits alone in the
     // PGN until game-2 of the pair finishes; that's normal, not data loss.
     const showPartial = partialPairs > 0 && detail.status !== STATUS.RUNNING;
-    const partialRow = showPartial
+    partialSlot.innerHTML = showPartial
       ? `<div class="wb-partial-pairs">${partialPairs} incomplete pair${partialPairs === 1 ? "" : "s"} ` +
         `(one game missing)</div>`
       : "";
-    standingsBody.innerHTML = `
-      ${sprtRow}
-      ${partialRow}
-      <table class="wb-table">
-        <thead>
-          <tr><th>Engine</th><th>G</th><th>W</th><th>L</th><th>D</th><th>%</th><th>Elo</th></tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    `;
   }
 
   function attachWatch(btn, attachKey, sourceWindowKey, openOpts) {

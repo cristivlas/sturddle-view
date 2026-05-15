@@ -15,7 +15,7 @@ export function attachColumnResize({
   applySizes,
   dragLineHeight,  // optional () => number; defaults to overlayHost.scrollHeight
 }) {
-  const persistArity = grips.length;
+  const persistArity = sizes.length;
 
   try {
     const saved = JSON.parse(localStorage.getItem(storageKey));

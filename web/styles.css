@@ -1932,6 +1932,20 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-table th { color: var(--muted); font-weight: normal; font-size: 0.6875rem; text-transform: uppercase; }
 .wb-table .wb-eng-name { font-weight: 500; }
 .wb-elo-ordo { color: var(--muted); font-size: 0.75rem; }
+.wb-standings-table-wrap { position: relative; }
+.wb-standings-tbl { table-layout: fixed; }
+.wb-standings-tbl th { position: relative; }
+.wb-standings-tbl td { overflow: hidden; text-overflow: ellipsis; }
+.wb-standings-tbl thead th:hover {
+  background: #252830;
+  box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
+}
+.wb-standings-tbl thead th:first-child:hover {
+  box-shadow: inset -2px 0 0 var(--wa-color-border-loud, #353841);
+}
+.wb-standings-tbl thead th:last-child:hover {
+  box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841);
+}
 .wb-sprt {
   background: var(--bg); border: 1px solid var(--border-subtle); border-radius: 4px;
   padding: 6px 8px; margin-bottom: 0; font-size: 0.75rem;
