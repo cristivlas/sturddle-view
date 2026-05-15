@@ -420,7 +420,6 @@ export const playPerspective = {
           viewingGameId = evt.game_id ?? null;
           viewing = !!v;
           if (viewing) {
-            if (!wasViewing) closeDebugWindows();
             if (!wasViewing || viewingGameId !== prevGameId) viewGameOverAlertShown = false;
             viewCursor = v.cursor ?? 0;
             viewTotalPlies = v.total_plies ?? 0;
