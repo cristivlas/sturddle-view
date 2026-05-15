@@ -328,6 +328,13 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .import-pos-status.muted { background: transparent; color: var(--muted); }
 .import-pos-playas { display: flex; align-items: center; gap: 12px; }
 .import-pos-playas-label { font-size: 0.9rem; color: var(--wa-color-neutral-700, #555); }
+/* Trash-x in each recents <wa-option>. Subtle until hovered. */
+button.recent-del {
+  appearance: none; background: transparent; border: 0; padding: 0 4px;
+  color: var(--muted); cursor: pointer; display: inline-flex;
+  align-items: center; font-size: 0.9em; line-height: 1;
+}
+button.recent-del:hover { color: var(--status-err-fg, #d33); }
 
 #play-perspective {
   display: block;

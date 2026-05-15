@@ -240,6 +240,7 @@ def create_app(
     *,
     engine_registry: EngineRegistry | None = None,
     game_store: GameStore | None = None,
+    recent_imports: RecentImports | None = None,
 ) -> FastAPI:
     settings = settings or Settings()
     settings.apply_persisted()
@@ -251,7 +252,7 @@ def create_app(
     app.state.ws_tasks = set()
     app.state.engines = engine_registry or EngineRegistry()
     app.state.game_store = game_store or GameStore()
-    app.state.recent_imports = RecentImports.load()
+    app.state.recent_imports = recent_imports or RecentImports.load()
     log.info(
         "recent imports: %d entries at %s",
         len(app.state.recent_imports.list()),

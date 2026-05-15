@@ -118,14 +118,43 @@ export function showImportPositionDialog({ api }) {
       recentSel.placeholder = "Recent...";
       recentSel.style.minWidth = "180px";
       let recentsCache = loadRecentsCache();
+      function makeOption(entry, i) {
+        const opt = document.createElement("wa-option");
+        opt.value = String(i);
+        opt.dataset.hash = entry.hash;
+        const label = (entry.summary || entry.hash.slice(0, 12)).replace(/"/g, "&quot;");
+        opt.innerHTML = `${entry.format.toUpperCase()} -- ${label}` +
+          `<button slot="end" class="recent-del" title="Remove from history" aria-label="Remove">` +
+          `<wa-icon name="trash"></wa-icon></button>`;
+        const btn = opt.querySelector("button.recent-del");
+        // wa-select listens for `mouseup` on the listbox container and
+        // routes it through handleOptionClick -> hide(). Stop both phases
+        // so the listbox stays open.
+        const stop = (ev) => ev.stopPropagation();
+        btn.addEventListener("mousedown", stop);
+        btn.addEventListener("mouseup", stop);
+        btn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          ev.preventDefault();
+          // Optimistic: remove from cache + DOM immediately so the
+          // dropdown feels snappy. Roll back on server failure.
+          const removed = entry;
+          recentsCache = recentsCache.filter((x) => x.hash !== removed.hash);
+          saveRecentsCache(recentsCache);
+          opt.remove();
+          if (!recentsCache.length) recentSel.style.visibility = "hidden";
+          api("DELETE", `/game/recent-imports/${removed.hash}`).catch((e) => {
+            recentsCache = [removed, ...recentsCache];
+            saveRecentsCache(recentsCache);
+            renderRecents();
+            setStatus(apiErrorDetail(e), "err");
+          });
+        });
+        return opt;
+      }
       function renderRecents() {
         const shown = recentsCache.slice(0, RECENTS_DISPLAY_CAP);
-        recentSel.innerHTML = shown
-          .map((e, i) => {
-            const label = (e.summary || e.hash.slice(0, 12)).replace(/"/g, "&quot;");
-            return `<wa-option value="${i}">${e.format.toUpperCase()} -- ${label}</wa-option>`;
-          })
-          .join("");
+        recentSel.replaceChildren(...shown.map((e, i) => makeOption(e, i)));
         recentSel.style.visibility = shown.length ? "" : "hidden";
       }
       recentSel.addEventListener("change", async () => {
