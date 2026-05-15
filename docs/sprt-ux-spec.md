@@ -131,8 +131,7 @@ sprt.status ("continue" | "H0" | "H1"), sprt.pairs
 ## Out of scope
 
 - SPRT for gauntlet tournaments.
-- Path B resume completion for partial SPRT pairs (already deferred in
-  pgn-stats-audit.md).
+- Path B resume completion for partial SPRT pairs (deferred).
 - Per-engine SPRT (only 2-engine tournaments supported).
 - Bayesian SPRT (fastchess supports it; the local recompute path does not).
 

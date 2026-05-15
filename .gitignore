@@ -22,3 +22,6 @@ dist/
 .vscode/
 node_modules/
 .claude/
+scripts/probe_*.py
+docs/pause-info-click-drop.md
+docs/pgn-stats-audit.md
