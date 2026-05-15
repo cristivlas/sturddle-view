@@ -1547,7 +1547,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    The top border faces the list above; the active-button accent line
    appears on the top edge of each button (pointing toward the list). */
 .engines-ribbon {
-  display: flex; flex-direction: row; justify-content: flex-start;
+  display: flex; flex-direction: row; justify-content: center;
   align-items: center; gap: 4px;
   border-top: 1px solid var(--wa-color-border-loud, #353841);
   padding: 4px 6px;
@@ -1974,7 +1974,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   white-space: pre-wrap; max-height: 8em; overflow: auto;
 }
 
-.winbox.sturddle-wb.sturddle-wb-live-game .wb-header { background: var(--wa-color-surface-default); }
+/* .winbox.sturddle-wb.sturddle-wb-live-game .wb-header { background: var(--wa-color-surface-default); } */
+.winbox.sturddle-wb.sturddle-wb-live-game .wb-header { background: var(--row-bg-selected); }
 
 .wb-livegame {
   display: flex; flex-direction: column; gap: 4px;
