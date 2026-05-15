@@ -147,6 +147,12 @@ class HumanVsEngine:
         # with normal play; toggled via start_analysis/stop_analysis.
         self._analysis_mode: bool = False
         self._analysis_task: asyncio.Task | None = None
+        # Most recent engine_info payload published during analysis. Kept
+        # so /game/sync can re-emit it after a client remount (e.g. user
+        # navigated away and back); without this the board arrow stays
+        # gone until the engine ships its next info line, which can take
+        # seconds at higher depths.
+        self._last_analysis_info: dict | None = None
         # View mode: cursor-based playback of an imported / loaded game.
         # _board is rebuilt from _view_full_moves[:_view_cursor] on every
         # navigation, so analyze sees the right position automatically.
@@ -495,6 +501,7 @@ class HumanVsEngine:
             if self._viewing:
                 await self._publish_board()
                 await self._publish_clock()
+                await self._republish_last_analysis_info()
                 return
             if (
                 self._turn_started_at is None
@@ -507,8 +514,24 @@ class HumanVsEngine:
                     kick_engine = True
             await self._publish_board()
             await self._publish_clock()
+            await self._republish_last_analysis_info()
         if kick_engine:
             await self._engine_to_move()
+
+    async def _republish_last_analysis_info(self) -> None:
+        """Re-emit the most recent analysis info payload so a freshly
+        mounted client can restore the board arrow without waiting for
+        the engine's next info line. No-op when not analyzing or when
+        no info has been captured yet (engine hasn't produced one)."""
+        if not self._analysis_mode or self._last_analysis_info is None:
+            return
+        await self._bus.publish(
+            Event(
+                kind="engine_info",
+                game_id=self._game_id,
+                payload=self._last_analysis_info,
+            )
+        )
 
     def snapshot_events(self) -> list[Event]:
         if self._board is None or self._game_id is None:
@@ -1111,6 +1134,7 @@ class HumanVsEngine:
                 pass
         self._analysis_task = None
         self._analysis = None
+        self._last_analysis_info = None
 
     async def _cancel_tick(self) -> None:
         if self._tick_task and not self._tick_task.done():
@@ -1271,11 +1295,13 @@ class HumanVsEngine:
                 self._analysis = analysis
                 async for info in analysis:
                     if "pv" in info or "depth" in info or "score" in info:
+                        payload = _serialize_info(info, board, self._eval_pov(board.turn))
+                        self._last_analysis_info = payload
                         await self._bus.publish(
                             Event(
                                 kind="engine_info",
                                 game_id=game_id,
-                                payload=_serialize_info(info, board, self._eval_pov(board.turn)),
+                                payload=payload,
                             )
                         )
         except chess.engine.EngineTerminatedError:
