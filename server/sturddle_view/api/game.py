@@ -1,11 +1,25 @@
 from __future__ import annotations
 
+import logging
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..auth import require_token
 from ..engines import resolve_selected
 from ..play.human_vs_engine import HumanVsEngine, TimeControl
 from ..play.import_position import PositionImportError, parse_fen, parse_pgn
+
+log = logging.getLogger(__name__)
+
+# Sanity cap on /game/import payload size. Real PGNs (even a 1000-game
+# Megabase chunk) are well under 2 MB; this just stops a runaway paste
+# or malicious LAN client from filling disk via the recent-imports
+# store. Override at import time via SV_MAX_IMPORT_BYTES (used by
+# tests to exercise the limit without large fixtures).
+MAX_IMPORT_TEXT_BYTES = int(
+    os.environ.get("SV_MAX_IMPORT_BYTES", 2 * 1024 * 1024)
+)
 
 router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_token)])
 
@@ -80,6 +94,13 @@ def _parse_import_payload(payload: dict) -> dict:
         )
     if not isinstance(text, str):
         raise HTTPException(status_code=400, detail="missing 'text'")
+    size = len(text.encode("utf-8"))
+    if size > MAX_IMPORT_TEXT_BYTES:
+        log.warning("rejected oversized import: %d bytes (cap %d)", size, MAX_IMPORT_TEXT_BYTES)
+        raise HTTPException(
+            status_code=400,
+            detail=f"text too large ({size} bytes; max {MAX_IMPORT_TEXT_BYTES})",
+        )
     parsed = None
     detected = fmt
     if fmt == "fen":
@@ -165,14 +186,11 @@ async def import_game(payload: dict, request: Request) -> dict:
         raise HTTPException(status_code=400, detail=str(e)) from e
     # Record in recent-imports. Use the format detected by the parser
     # (matters for auto: it's "fen" or "pgn" by now).
-    recents = getattr(request.app.state, "recent_imports", None)
-    h: str | None = None
-    if recents is not None:
-        h = await recents.save(
-            fmt=parsed["detected_format"],
-            text=payload.get("text", ""),
-            summary=parsed.get("summary") or "",
-        )
+    h = await request.app.state.recent_imports.save(
+        fmt=parsed["detected_format"],
+        text=payload.get("text", ""),
+        summary=parsed.get("summary") or "",
+    )
     return {"game_id": game_id, "viewing": True, "hash": h, "summary": parsed.get("summary")}
 
 
@@ -183,10 +201,7 @@ async def list_recent_imports(request: Request) -> dict:
     No blobs are returned -- callers GET /game/recent-imports/{hash} to
     fetch the text of an entry. Behind the same auth token as the rest
     of /game/*."""
-    recents = getattr(request.app.state, "recent_imports", None)
-    if recents is None:
-        return {"entries": []}
-    return {"entries": recents.list()}
+    return {"entries": request.app.state.recent_imports.list()}
 
 
 @router.get("/recent-imports/{h}")
@@ -197,9 +212,7 @@ async def get_recent_import(h: str, request: Request) -> dict:
     the top of the recents list (the dropdown shows newest first and
     eviction drops oldest). See docs/recent-imports.md for the
     GET-with-side-effect trade-off."""
-    recents = getattr(request.app.state, "recent_imports", None)
-    if recents is None:
-        raise HTTPException(status_code=404, detail="not found")
+    recents = request.app.state.recent_imports
     got = recents.get(h)
     if got is None:
         raise HTTPException(status_code=404, detail="not found")
@@ -211,10 +224,7 @@ async def get_recent_import(h: str, request: Request) -> dict:
 @router.delete("/recent-imports/{h}")
 async def delete_recent_import(h: str, request: Request) -> dict:
     """Remove a single entry from the recent-imports store."""
-    recents = getattr(request.app.state, "recent_imports", None)
-    if recents is None:
-        raise HTTPException(status_code=404, detail="not found")
-    removed = await recents.remove(h)
+    removed = await request.app.state.recent_imports.remove(h)
     if not removed:
         raise HTTPException(status_code=404, detail="not found")
     return {"ok": True}

@@ -9,7 +9,7 @@
   keys.forEach(k => localStorage.removeItem(k));
 
   // Server-side: list every recent-import and DELETE it. Auth is via
-  // the session cookie set by /auth/login, so credentials: "include"
+  // the session cookie set by /auth, so credentials: "include"
   // is all we need.
   try {
     const list = await fetch("/game/recent-imports", { credentials: "include" }).then(r => r.json());

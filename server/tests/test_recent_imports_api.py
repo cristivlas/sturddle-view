@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from sturddle_view.api import game as game_api
 from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
@@ -131,6 +132,16 @@ def test_failed_import_does_not_record(client):
     r = client.post("/game/import", json={"format": "pgn", "text": "this is not a pgn"})
     assert r.status_code == 400
     # No recents recorded.
+    assert client.get("/game/recent-imports").json()["entries"] == []
+
+
+def test_import_rejects_oversized_text(client, monkeypatch):
+    monkeypatch.setattr(game_api, "MAX_IMPORT_TEXT_BYTES", 32)
+    big = "1. e4 e5 " * 100
+    r = client.post("/game/import", json={"format": "pgn", "text": big})
+    assert r.status_code == 400
+    assert "too large" in r.json()["detail"]
+    # And nothing was recorded.
     assert client.get("/game/recent-imports").json()["entries"] == []
 
 

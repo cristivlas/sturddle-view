@@ -23,7 +23,7 @@ const RECENTS_DISPLAY_CAP = 10;
 function loadRecentsCache() {
   try {
     const v = JSON.parse(localStorage.getItem(RECENTS_CACHE_KEY) || "[]");
-    return Array.isArray(v) ? v : [];
+    return Array.isArray(v) ? v.filter((e) => e && e.hash) : [];
   } catch {
     return [];
   }

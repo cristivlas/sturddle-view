@@ -119,8 +119,7 @@ Cap: 50, constant for now. Re-evaluate after dogfooding.
 
 - localStorage `sturddle:import:recent` becomes a metadata-only cache:
   `[{hash, format, summary, ts}, ...]`. Used to render the dropdown
-  before the server responds (offline-tolerant) and as a migration
-  source on first run.
+  before the server responds (offline-tolerant).
 - Drop debounced validation. The textarea no longer pings the server
   on input. Import button enables on non-empty text. Errors surface
   in the status label only after Import is clicked.
@@ -133,10 +132,11 @@ Cap: 50, constant for now. Re-evaluate after dogfooding.
   The user can then edit and click Import as usual.
 - On import-success: cache the `{hash, format, summary, ts}` from the
   response. No separate POST needed.
-- Migration: if any localStorage entries carry a `text` field, POST
-  each to `/game/import` once (server records them as recents), then
-  strip `text` from the cache. Migration runs lazily on next dialog
-  open.
+
+No migration from pre-0.1.5 localStorage entries (which inlined the
+full `text`): the project is unreleased, so any stale rows just fall
+out of the cache on next dialog open when the server's
+metadata-only list overwrites it.
 
 Display cap (how many rows the dropdown shows) becomes independent
 from the server cap. Start at 10; the dropdown is a `wa-select`, so

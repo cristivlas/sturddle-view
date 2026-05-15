@@ -106,15 +106,15 @@ class RecentImports:
 
     def get(self, h: str) -> tuple[dict, str] | None:
         """Return (row, text) for ``h`` or None if not present. The text is
-        read from the blob on disk."""
+        read from the blob on disk. Orphaned index rows (blob deleted
+        out-of-band) return None and are cleaned up at next load()."""
         row = self._index.get(h)
         if row is None:
             return None
         try:
             text = (self._root / row["file"]).read_text(encoding="utf-8")
         except OSError:
-            log.warning("recent-imports blob missing for %s; dropping entry", h)
-            self._index.pop(h, None)
+            log.warning("recent-imports blob missing for %s", h)
             return None
         return dict(row), text
 
