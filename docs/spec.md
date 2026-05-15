@@ -640,6 +640,12 @@ TODO: not yet implemented. Plan:
 - Theme integration for board annotations: when themes (dark/light) are
   wired up, the engine "considered move" arrow color must derive from the
   active theme rather than the cm-chessboard default green.
+- Multi-select on the engines list (Settings > Engines). Engine testers
+  curate large libraries (hundreds of UCI binaries); single-select with
+  one-engine-at-a-time Remove makes housekeeping tedious. Wants:
+  Shift/Ctrl click and Shift+Up/Down to extend selection, ribbon
+  Remove acting on the set, and a confirm dialog summarizing the count.
+  Activation (Use) stays single-select.
 - Auto-claim draws (3-fold repetition, 50-move rule). Currently the
   engine plays on at claimable positions; tournament games called as
   draws by fastchess become playable in play-from-here. Surface area

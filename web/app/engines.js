@@ -9,10 +9,9 @@ import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 const COL_PCTS_KEY = "sturddle:engines:colPcts3";
 const DEFAULT_PCTS = [20, 12, 68];
 const SORT_KEY_LS = "sturddle:engines:sortOrder";
-// Reserved height for the inline search bar; matches the CSS .open
-// max-height. We pre-shrink/grow the list wrap by this amount before
-// toggling the .open class so the body never overflows mid-animation
-// (a scrollbar would flash and we'd get jitter).
+// Height of the overlaid search bar; matches the CSS rule. Added as
+// bottom padding on the list while open so the last row stays visible
+// above the bar.
 const INLINE_SEARCH_RESERVED_PX = 48;
 
 export function mountEngineList(container, api, opts = {}) {
@@ -95,6 +94,8 @@ export function mountEngineList(container, api, opts = {}) {
     return p;
   }
 
+  // TODO: multi-select for bulk Remove (large engine libraries from
+  // tester users). See docs/spec.md "Open / Deferred".
   let selectedDetailId = null;
   let activeId = null;
   let filterText = "";
@@ -232,16 +233,14 @@ export function mountEngineList(container, api, opts = {}) {
   sortDescBtn.addEventListener("click", () => setSort("desc"));
   syncSortButtons();
 
-  // Holds the sizeWrap function reference so the search open/close
-  // handlers can trigger a re-measure (the inline search bar changes
-  // the height available to the list).
-  let sizeWrapRef = null;
-
-  // Search.
+  // Search. The search-wrap is positioned absolutely over the bottom of
+  // the panel and slides up from below, so no surrounding layout changes
+  // when it opens/closes.
   {
     const searchBtn = container.querySelector(".engines-search-btn");
     const searchWrap = container.querySelector(".engines-search-wrap");
     const searchInput = container.querySelector(".engines-search");
+    const tableWrap = container.querySelector(".engines-table-wrap");
 
     searchInput.addEventListener("input", () => {
       filterText = searchInput.value || "";
@@ -249,54 +248,46 @@ export function mountEngineList(container, api, opts = {}) {
       renderList();
     });
 
-    // Re-run sizeWrap once the search-wrap max-height transition ends
-    // OR is canceled (rapid toggles cancel the previous transition
-    // without firing transitionend). Filtered on max-height so the
-    // sibling padding/opacity transitions don't trigger duplicate work.
-    const onMaxHeightSettled = (ev) => {
-      if (ev.propertyName !== "max-height") return;
-      if (sizeWrapRef) sizeWrapRef();
-    };
-    searchWrap.addEventListener("transitionend", onMaxHeightSettled);
-    searchWrap.addEventListener("transitioncancel", onMaxHeightSettled);
-
     function closeSearch() {
       searchWrap.classList.remove("open");
       searchBtn.classList.remove("is-active");
+      tableWrap.style.paddingBottom = "";
       searchInput.value = "";
       filterText = "";
       renderList();
       document.removeEventListener("pointerdown", onOutsideClick);
-      document.removeEventListener("keydown", onSearchKey);
-      // The wrap will grow back when the search-wrap's max-height
-      // transitionend fires (handler above).
+      document.removeEventListener("keydown", onSearchKey, true);
     }
 
     function onOutsideClick(e) {
-      if (!searchWrap.contains(e.target) && !searchBtn.contains(e.target)) closeSearch();
+      // Clicks on filtered list rows must not close search: closing would
+      // re-render the unfiltered list before the click resolved and the
+      // user would hit a different row than the one they aimed at.
+      if (searchWrap.contains(e.target)) return;
+      if (searchBtn.contains(e.target)) return;
+      if (tableWrap.contains(e.target)) return;
+      closeSearch();
     }
 
     function onSearchKey(e) {
-      if (e.key === "Escape") { closeSearch(); e.preventDefault(); }
+      if (e.key === "Escape") {
+        closeSearch();
+        e.preventDefault();
+        e.stopPropagation();
+      }
     }
 
     searchBtn.addEventListener("click", () => {
       const opening = !searchWrap.classList.contains("open");
       if (opening) {
-        // Pre-shrink the wrap by the search bar's reserved height BEFORE
-        // adding .open. The body stays under its max-height for the whole
-        // open animation, so no scrollbar flash.
-        if (sizeWrapRef) {
-          const w = container.querySelector(".engines-table-wrap");
-          const cur = parseFloat(w.style.height) || w.offsetHeight;
-          w.style.height = Math.max(120, cur - INLINE_SEARCH_RESERVED_PX) + "px";
-        }
         searchWrap.classList.add("open");
         searchBtn.classList.add("is-active");
+        // Reserve scrollable space inside the list so the bottom row is
+        // not covered by the overlaid search bar.
+        tableWrap.style.paddingBottom = INLINE_SEARCH_RESERVED_PX + "px";
         searchInput.focus();
         document.addEventListener("pointerdown", onOutsideClick);
-        document.addEventListener("keydown", onSearchKey);
-        // sub-pixel correction runs via the transitionend handler above.
+        document.addEventListener("keydown", onSearchKey, true);
       } else {
         closeSearch();
       }
@@ -486,16 +477,12 @@ export function mountEngineList(container, api, opts = {}) {
   }
 
   // Size the table-wrap explicitly so the LIST scrolls internally instead
-  // of the dialog body. We measure the actual rendered tab-panel content
-  // area (top of body-main to bottom of dialog body). The empirical
-  // second-pass overflow correction handles any mismatch (e.g. when the
-  // inline search bar pushes the layout).
+  // of the dialog body. The search bar is positioned absolutely over the
+  // bottom of the panel and does not occupy flow space, so the list
+  // height only needs to account for the ribbon.
   const wrapEl = container.querySelector(".engines-table-wrap");
   const bodyMainEl = container.querySelector(".engines-body-main");
-  // Ribbon sits below the list, search bar below the ribbon. Size the list
-  // so the panel (list + ribbon + search) fills the dialog body exactly.
   const ribbonEl = container.querySelector(".engines-ribbon");
-  const searchWrapEl = container.querySelector(".engines-search-wrap");
   function sizeWrap() {
     const dialog = container.closest("wa-dialog");
     const body = dialog?.shadowRoot?.querySelector('[part~="body"]');
@@ -504,9 +491,11 @@ export function mountEngineList(container, api, opts = {}) {
       ? body.getBoundingClientRect().bottom
       : window.innerHeight - 8;
     const ribbonH = ribbonEl?.offsetHeight || 0;
-    const searchH = searchWrapEl?.offsetHeight || 0;
-    let h = Math.max(120, Math.floor(bodyBottom - topAnchor - ribbonH - searchH - 8));
+    let h = Math.max(120, Math.floor(bodyBottom - topAnchor - ribbonH - 8));
     wrapEl.style.height = h + "px";
+    // Expose ribbon height so the absolute search-wrap can anchor above
+    // the ribbon.
+    container.style.setProperty("--engines-ribbon-h", ribbonH + "px");
     if (body) {
       const overflow = body.scrollHeight - body.clientHeight;
       if (overflow > 0) {
@@ -517,7 +506,6 @@ export function mountEngineList(container, api, opts = {}) {
   }
   sizeWrap();
   requestAnimationFrame(sizeWrap);
-  sizeWrapRef = sizeWrap;
 
   // Coalesce rapid resize bursts into one measurement per frame.
   let resizeRaf = 0;
