@@ -144,7 +144,7 @@ export function prompt({
   });
 }
 
-const LAST_DIR_KEY_PREFIX = "fs-picker:last:";
+const LAST_DIR_KEY_PREFIX = "sturddle:fs-picker:last:";
 
 function recallLastDir(key) {
   try {

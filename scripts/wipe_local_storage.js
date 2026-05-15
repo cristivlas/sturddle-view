@@ -3,7 +3,7 @@
 // repopulates from scratch.
 (() => {
   const keys = Object.keys(localStorage).filter(
-    k => k.startsWith("sturddle") || k.startsWith("sturddle-view")
+    k => k.startsWith("sturddle") || k.startsWith("sturddle-view") || k.startsWith("fs-picker:")
   );
   console.log("Removing", keys.length, "keys:", keys);
   keys.forEach(k => localStorage.removeItem(k));
