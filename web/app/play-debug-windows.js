@@ -568,7 +568,7 @@ function buildPvTableBody(events, { setOff }) {
 
   setOff(events.on((evt) => {
     if (evt.kind !== "engine_info") return;
-    const { depth, score, nodes, nps, pv } = evt.payload;
+    const { depth, seldepth, score, nodes, nps, pv } = evt.payload;
     if (depth == null) return;
     // depth === 1 after maxDepth > 1 signals a new search (single-PV assumption;
     // MultiPV > 1 can emit low-depth lines mid-search and would false-trigger).
@@ -591,7 +591,7 @@ function buildPvTableBody(events, { setOff }) {
       }
       if (!inserted) tbody.appendChild(tr);
     }
-    tr.cells[0].textContent = depth;
+    tr.cells[0].textContent = seldepth != null ? `${depth}/${seldepth}` : depth;
     if (score) tr.cells[1].textContent = fmtScore(score);
     if (nodes != null) tr.cells[2].textContent = fmtK(nodes);
     if (nps != null) tr.cells[3].textContent = fmtK(nps);
