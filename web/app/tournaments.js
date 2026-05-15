@@ -105,8 +105,8 @@ export function mountTournaments({ container, api, events, log, token }) {
   const ribbonEditBtn = container.querySelector(".t-edit");
   const ribbonRemoveBtn = container.querySelector(".t-remove");
 
-  const SORT_KEY_LS = "sturddle.tournaments.sortBy";
-  const SORT_ASC_LS = "sturddle.tournaments.sortAsc";
+  const SORT_KEY_LS = "sturddle:tournaments:sortBy";
+  const SORT_ASC_LS = "sturddle:tournaments:sortAsc";
   const VALID_SORTS = new Set(["name", "status", "created_at", "started_at"]);
   let sortBy = VALID_SORTS.has(localStorage.getItem(SORT_KEY_LS))
     ? localStorage.getItem(SORT_KEY_LS) : "created_at";

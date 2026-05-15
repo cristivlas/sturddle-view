@@ -441,6 +441,23 @@ TODO: Play/Analyze from a FEN. Two pieces:
   side; New Game semantics do not apply. Probably a top-level Play/Analyze
   toggle within the Play perspective, or a sibling perspective.
 
+### Storage conventions
+
+Both `localStorage` keys and `CustomEvent` names use a colon-delimited
+namespace: `sturddle:<area>:<key>`. Areas correspond to modules or features
+(`engines`, `tournaments`, `pvtable`, `ucilog`, `workspace`, `play`, etc.).
+Sub-namespaces use further colons (`sturddle:engines:settings:colPcts3`).
+
+Third-party namespaces (e.g. `fs-picker:last:*` used by the file picker
+module) keep their own prefix and are not folded into `sturddle:`.
+
+No migration is performed when keys are renamed; users wipe their local
+state with a one-liner in DevTools:
+
+```js
+Object.keys(localStorage).filter(k => k.startsWith("sturddle")).forEach(k => localStorage.removeItem(k));
+```
+
 ### Phasing
 
 - **Phase 1**: Play perspective fully working with engine management, settings dialog, file picker dialog, message/confirm/toast primitives. Observe perspective with at least one live tournament displayed in WinBox windows. No agents.

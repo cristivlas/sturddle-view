@@ -7,7 +7,7 @@ import { mountEngineList } from "./engines.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
 
-const SETTINGS_ENGINES_COL_PCTS_KEY = "sturddle.engines.settings.colPcts3";
+const SETTINGS_ENGINES_COL_PCTS_KEY = "sturddle:engines:settings:colPcts3";
 
 // Persisted unit is always seconds (float). The UI picks the most natural
 // display unit on load (largest unit with no fractional remainder) and

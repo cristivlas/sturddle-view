@@ -5,7 +5,7 @@
 // perspectives calls the previous controller's `unmount` (if any), clears the
 // root, and mounts the next.
 
-const STORAGE_KEY = "sturddle-view:active-perspective";
+const STORAGE_KEY = "sturddle:active-perspective";
 
 export class PerspectiveRouter {
   constructor({ root, ctx }) {

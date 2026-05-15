@@ -6,9 +6,9 @@
 import { apiErrorDetail, confirm, pickFile, reportError, toast } from "./dialogs.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 
-const COL_PCTS_KEY = "sturddle.engines.colPcts3";
+const COL_PCTS_KEY = "sturddle:engines:colPcts3";
 const DEFAULT_PCTS = [20, 12, 68];
-const SORT_KEY_LS = "sturddle.engines.sortOrder";
+const SORT_KEY_LS = "sturddle:engines:sortOrder";
 // Reserved height for the inline search bar; matches the CSS .open
 // max-height. We pre-shrink/grow the list wrap by this amount before
 // toggling the .open class so the body never overflows mid-animation

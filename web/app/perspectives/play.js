@@ -369,7 +369,7 @@ export const playPerspective = {
     // View-mode flip is purely visual (no backend state; the user isn't
     // playing yet so "which side am I" is meaningless). Persisted so it
     // survives perspective remounts; applied on each entry into view mode.
-    const VIEW_FLIP_KEY = "sturddle-view:view-flipped";
+    const VIEW_FLIP_KEY = "sturddle:view:flipped";
     let viewFlipped = false;
     try { viewFlipped = localStorage.getItem(VIEW_FLIP_KEY) === "1"; } catch { /* */ }
 

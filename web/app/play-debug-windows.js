@@ -341,10 +341,10 @@ export function setDockContainer(el) {
 
 // -- UCI log body ------------------------------------------------------------
 
-const UCI_GEO_KEY       = "sturddle.ucilog.geo";
-const UCI_WIN_STATE_KEY = "sturddle.ucilog.winstate";
-const UCI_DOCKED_KEY    = "sturddle.ucilog.docked";
-const UCI_OPEN_KEY      = "sturddle.ucilog.open";
+const UCI_GEO_KEY       = "sturddle:ucilog:geo";
+const UCI_WIN_STATE_KEY = "sturddle:ucilog:winstate";
+const UCI_DOCKED_KEY    = "sturddle:ucilog:docked";
+const UCI_OPEN_KEY      = "sturddle:ucilog:open";
 
 function buildUciLogBody(events, { setOff }) {
   const body = document.createElement("div");
@@ -424,10 +424,10 @@ const uciLog = createDockableWindow({
 
 // -- Search Lines body -------------------------------------------------------
 
-const PV_GEO_KEY       = "sturddle.pvtable.geo";
-const PV_WIN_STATE_KEY = "sturddle.pvtable.winstate";
-const PV_DOCKED_KEY    = "sturddle.pvtable.docked";
-const PV_OPEN_KEY      = "sturddle.pvtable.open";
+const PV_GEO_KEY       = "sturddle:pvtable:geo";
+const PV_WIN_STATE_KEY = "sturddle:pvtable:winstate";
+const PV_DOCKED_KEY    = "sturddle:pvtable:docked";
+const PV_OPEN_KEY      = "sturddle:pvtable:open";
 
 function fmtScore(score) {
   if (!score) return "";
@@ -470,7 +470,7 @@ function buildPvTableBody(events, { setOff }) {
   const tbody = body.querySelector("tbody");
   const tableEl = body.querySelector(".wb-pvtable-tbl");
   const colEls = Array.from(body.querySelectorAll("col"));
-  const COL_WIDTHS_KEY = "sturddle.pvtable.colWidths";
+  const COL_WIDTHS_KEY = "sturddle:pvtable:colWidths";
   const DEFAULT_WIDTHS = [50, 50, 55, 45];
   let colWidths = DEFAULT_WIDTHS.slice();
   try {

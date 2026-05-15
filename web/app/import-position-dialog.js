@@ -15,7 +15,7 @@ const EMPTY_PROMPT = {
 };
 const TEXTAREA_ROWS = 8; // same on both tabs so the dialog doesn't resize
 
-const RECENTS_KEY = "sturddle.import.recent";
+const RECENTS_KEY = "sturddle:import:recent";
 const RECENTS_MAX = 5;
 
 function loadRecents() {
