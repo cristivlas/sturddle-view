@@ -110,15 +110,10 @@ async def update_settings(payload: dict, request: Request) -> dict:
         raw = payload["pgn_dir"]
         if raw:
             p = Path(raw).expanduser()
-            try:
-                p.mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                raise HTTPException(
-                    status_code=400, detail=f"pgn_dir not creatable: {e}",
-                ) from e
             if not p.is_dir():
                 raise HTTPException(
-                    status_code=400, detail=f"pgn_dir is not a directory: {p}",
+                    status_code=400,
+                    detail=f"pgn_dir does not exist or is not a directory: {p}",
                 )
             probe = p / ".sv-write-probe"
             try:
@@ -126,7 +121,7 @@ async def update_settings(payload: dict, request: Request) -> dict:
                 probe.unlink()
             except OSError as e:
                 raise HTTPException(
-                    status_code=400, detail=f"pgn_dir not writable: {e}",
+                    status_code=400, detail=f"pgn_dir is not writable: {e}",
                 ) from e
             s.pgn_dir = p
         else:

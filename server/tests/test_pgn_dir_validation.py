@@ -50,13 +50,16 @@ def test_pgn_dir_existing_writable_accepted(client, tmp_path):
     assert r.json()["pgn_dir"] == str(good)
 
 
-def test_pgn_dir_missing_created(client, tmp_path):
-    """Non-existent path under a writable parent is auto-created."""
-    target = tmp_path / "newly" / "made"
+def test_pgn_dir_missing_rejected(client, tmp_path):
+    """Non-existent path is rejected. User must create or pick an
+    existing directory via the file picker -- the server does not
+    create dirs on the user's behalf."""
+    target = tmp_path / "does" / "not" / "exist"
     assert not target.exists()
     r = client.put("/settings", json={"pgn_dir": str(target)})
-    assert r.status_code == 200
-    assert target.is_dir()
+    assert r.status_code == 400
+    assert "pgn_dir" in r.text.lower()
+    assert not target.exists()
 
 
 def test_pgn_dir_points_at_file_rejected(client, tmp_path):
@@ -70,19 +73,21 @@ def test_pgn_dir_points_at_file_rejected(client, tmp_path):
     assert "pgn_dir" in r.text.lower()
 
 
-def test_pgn_dir_unwritable_path_rejected(client, tmp_path, monkeypatch):
-    """If mkdir / probe-write fails, the field is rejected. Simulated by
-    monkeypatching Path.mkdir to raise so the test works on every OS."""
-    target = tmp_path / "would_be_bad"
+def test_pgn_dir_unwritable_rejected(client, tmp_path, monkeypatch):
+    """Existing directory that fails the probe-write is rejected.
+    Simulated by monkeypatching Path.write_text so the test works
+    portably (POSIX perms vs Windows ACLs)."""
+    target = tmp_path / "exists_but_readonly"
+    target.mkdir()
 
-    orig_mkdir = Path.mkdir
+    orig_write = Path.write_text
 
-    def fake_mkdir(self, *args, **kwargs):
-        if str(self) == str(target):
-            raise PermissionError("simulated: cannot create")
-        return orig_mkdir(self, *args, **kwargs)
+    def fake_write(self, *args, **kwargs):
+        if self.parent == target:
+            raise PermissionError("simulated: read-only")
+        return orig_write(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "mkdir", fake_mkdir)
+    monkeypatch.setattr(Path, "write_text", fake_write)
     r = client.put("/settings", json={"pgn_dir": str(target)})
     assert r.status_code == 400
     assert "pgn_dir" in r.text.lower()
