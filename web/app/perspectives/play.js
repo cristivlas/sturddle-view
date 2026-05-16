@@ -98,6 +98,9 @@ export const playPerspective = {
             <button id="import-pos" class="ribbon-btn desktop-only" aria-label="Open position from FEN or PGN" title="Open">
               <wa-icon name="folder-open"></wa-icon>
             </button>
+            <button id="edit-pos" class="ribbon-btn" aria-label="Edit position" title="Edit position">
+              <wa-icon name="pencil"></wa-icon>
+            </button>
             <span class="ribbon-sep" aria-hidden="true"></span>
             <button id="takeback" class="ribbon-btn" disabled aria-label="Take back" title="Take back">
               <wa-icon name="rotate-left"></wa-icon>
@@ -131,6 +134,9 @@ export const playPerspective = {
             <button id="view-import" class="ribbon-btn desktop-only" aria-label="Open another position" title="Open">
               <wa-icon name="folder-open"></wa-icon>
             </button>
+            <button id="view-edit" class="ribbon-btn" aria-label="Edit position" title="Edit position">
+              <wa-icon name="pencil"></wa-icon>
+            </button>
             <span class="ribbon-sep" aria-hidden="true"></span>
             <button id="view-first" class="ribbon-btn" aria-label="First move" title="First move">
               <wa-icon name="backward-fast"></wa-icon>
@@ -153,6 +159,42 @@ export const playPerspective = {
             </button>
             <button id="view-play-from-here" class="ribbon-btn" aria-label="Play from here" title="Play from here">
               <wa-icon name="play"></wa-icon>
+            </button>
+          </div>
+
+          <div id="edit-controls" class="board-ribbon" style="display: none">
+            <div class="side-popover-wrap">
+              <button id="edit-side" class="ribbon-btn" aria-label="Side to move" title="Side to move" aria-haspopup="true" aria-expanded="false">
+                <wa-icon name="chess-king"></wa-icon>
+              </button>
+              <div id="edit-side-popover" class="side-popover hidden" role="dialog" aria-label="Side to move">
+                <button type="button" id="edit-side-toggle" class="castle-pill side-toggle-pill" aria-pressed="true">White to move</button>
+              </div>
+            </div>
+            <span class="ribbon-sep" aria-hidden="true"></span>
+            <div class="castle-popover-wrap">
+              <button id="edit-castle-btn" class="ribbon-btn" aria-label="Castling rights" title="Castling rights" aria-haspopup="true" aria-expanded="false">
+                <wa-icon name="chess-rook"></wa-icon>
+              </button>
+              <div id="edit-castle-popover" class="castle-popover hidden" role="dialog" aria-label="Castling rights">
+                <div class="castle-row" data-color="white">
+                  <span class="castle-row-label">White</span>
+                  <button type="button" id="edit-castle-cb-wk" class="castle-pill" aria-pressed="false">O-O</button>
+                  <button type="button" id="edit-castle-cb-wq" class="castle-pill" aria-pressed="false">O-O-O</button>
+                </div>
+                <div class="castle-row" data-color="black">
+                  <span class="castle-row-label">Black</span>
+                  <button type="button" id="edit-castle-cb-bk" class="castle-pill" aria-pressed="false">O-O</button>
+                  <button type="button" id="edit-castle-cb-bq" class="castle-pill" aria-pressed="false">O-O-O</button>
+                </div>
+              </div>
+            </div>
+            <span class="ribbon-sep ribbon-sep--push" aria-hidden="true"></span>
+            <button id="edit-confirm" class="ribbon-btn" aria-label="Confirm position" title="Confirm">
+              <wa-icon name="check"></wa-icon>
+            </button>
+            <button id="edit-cancel" class="ribbon-btn" aria-label="Cancel editing" title="Cancel">
+              <wa-icon name="xmark"></wa-icon>
             </button>
           </div>
 
@@ -187,6 +229,22 @@ export const playPerspective = {
     const viewFlipBtn = root.querySelector("#view-flip");
     const viewAnalyzeBtn = root.querySelector("#view-analyze");
     const viewPlayFromHereBtn = root.querySelector("#view-play-from-here");
+    const viewEditBtn = root.querySelector("#view-edit");
+    const editPosBtn = root.querySelector("#edit-pos");
+    const editRibbon = root.querySelector("#edit-controls");
+    const editSideBtn = root.querySelector("#edit-side");
+    const editSidePopover = root.querySelector("#edit-side-popover");
+    const editSideTogglePill = root.querySelector("#edit-side-toggle");
+    const editCastleBtn = root.querySelector("#edit-castle-btn");
+    const editCastlePopover = root.querySelector("#edit-castle-popover");
+    const editCastleCb = {
+      wK: root.querySelector("#edit-castle-cb-wk"),
+      wQ: root.querySelector("#edit-castle-cb-wq"),
+      bK: root.querySelector("#edit-castle-cb-bk"),
+      bQ: root.querySelector("#edit-castle-cb-bq"),
+    };
+    const editConfirmBtn = root.querySelector("#edit-confirm");
+    const editCancelBtn = root.querySelector("#edit-cancel");
     const noEngineBanner = root.querySelector("#no-engine-banner");
     const noEngineBannerBtn = noEngineBanner.querySelector(".no-engine-banner__btn");
 
@@ -317,6 +375,9 @@ export const playPerspective = {
     let viewGameOver = false;
     let viewGameOverAlertShown = false;
     let viewingGameId = null;
+    let editing = false;
+    let editSideToMove = "w";
+    let preEditFen = null;
     const pausedBadge = document.getElementById("paused-badge");
     const finishedBadge = document.getElementById("finished-badge");
     function syncPausedUi() {
@@ -341,11 +402,27 @@ export const playPerspective = {
       else btn.removeAttribute("disabled");
     }
     function refreshButtons() {
-      // Swap ribbons based on mode. View ribbon is visible only when the
-      // backend reports viewing=true; play ribbon takes back over after
-      // play_from_here.
-      playRibbon.style.display = viewing ? "none" : "";
-      viewRibbon.style.display = viewing ? "" : "none";
+      // Swap ribbons: edit overrides view, which overrides play.
+      playRibbon.style.display = (viewing || editing) ? "none" : "";
+      viewRibbon.style.display = (viewing && !editing) ? "" : "none";
+      editRibbon.style.display = editing ? "" : "none";
+      if (editing) {
+        const isWhite = editSideToMove === "w";
+        editSideBtn.setAttribute("aria-label", `Side to move: ${isWhite ? "White" : "Black"}`);
+        editSideBtn.setAttribute("title", `Side to move: ${isWhite ? "White" : "Black"}`);
+        editSideBtn.classList.toggle("is-active", !isWhite);
+        editSideTogglePill.textContent = isWhite ? "White to move" : "Black to move";
+        editSideTogglePill.classList.toggle("is-black", !isWhite);
+        editSideTogglePill.setAttribute("aria-pressed", isWhite ? "false" : "true");
+        const rights = view.getCastlingRights();
+        for (const [k, btn] of Object.entries(editCastleCb)) {
+          btn.setAttribute("aria-pressed", rights[k] ? "true" : "false");
+          btn.classList.toggle("is-active", rights[k]);
+        }
+        const anyRight = rights.wK || rights.wQ || rights.bK || rights.bQ;
+        editCastleBtn.classList.toggle("is-active", anyRight);
+        return;
+      }
       if (viewing) {
         const atStart = viewCursor === 0;
         const atEnd = viewCursor === viewTotalPlies;
@@ -599,6 +676,158 @@ export const playPerspective = {
       }
     };
 
+    // Build FEN from current board position + edit side/castling state.
+    // Editing forgets move history: ep target, halfmove and fullmove counters
+    // reset to "-", 0, 1. Acceptable because the user is setting up a fresh
+    // position; any prior move context is no longer meaningful.
+    function _buildEditFen() {
+      const fen = view.getPosition();
+      const parts = fen.split(" ");
+      const rights = view.getCastlingRights();
+      const castling = [
+        rights.wK ? "K" : "",
+        rights.wQ ? "Q" : "",
+        rights.bK ? "k" : "",
+        rights.bQ ? "q" : "",
+      ].join("") || "-";
+      parts[1] = editSideToMove;
+      parts[2] = castling;
+      parts[3] = "-";
+      parts[4] = "0";
+      parts[5] = "1";
+      return parts.join(" ");
+    }
+
+    const STARTPOS_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+    function _enterEditMode(savedFen) {
+      if (editing) return;
+      editing = true;
+      editSideToMove = "w";
+      preEditFen = savedFen ?? null;
+      view.enterEditMode(() => refreshButtons());
+      refreshButtons();
+    }
+
+    function _exitEditMode(restoreFen) {
+      if (!editing) return;
+      editing = false;
+      view.exitEditMode();
+      if (restoreFen && preEditFen) {
+        ctx.api("POST", "/game/import", { format: "fen", text: preEditFen })
+          .then((r) => {
+            view.setGameId(r.game_id);
+            ctx.api("POST", "/game/sync", {}).catch(() => {});
+          })
+          .catch((e) => reportError(ctx, "Restore position failed", e));
+      }
+      preEditFen = null;
+      refreshButtons();
+    }
+
+    const onEditPosition = async () => {
+      // From play mode: confirm cancel, import current position into view, enter edit.
+      let savedFen = view.getPosition() ?? STARTPOS_FEN;
+      if (!viewing) {
+        if (movesPlayed > 0 && !gameOver) {
+          const ok = await confirm({
+            message: "Cancel the game in progress and edit the position?",
+            okLabel: "Edit position",
+            cancelLabel: "Keep playing",
+            destructive: true,
+          });
+          if (!ok) return;
+        }
+        try {
+          const r = await ctx.api("POST", "/game/import", { format: "fen", text: savedFen });
+          view.setGameId(r.game_id);
+          await ctx.api("POST", "/game/sync", {});
+        } catch (e) {
+          reportError(ctx, "Edit position failed", e);
+          return;
+        }
+      }
+      if (analyzing) {
+        try { await ctx.api("POST", "/game/analysis/stop", {}); } catch { /* */ }
+      }
+      _enterEditMode(savedFen);
+    };
+
+    const onViewEditPosition = async () => {
+      if (analyzing) {
+        try { await ctx.api("POST", "/game/analysis/stop", {}); } catch { /* */ }
+      }
+      const currentFen = view.getPosition() ?? STARTPOS_FEN;
+      _enterEditMode(currentFen);
+    };
+
+    function _closeSidePopover() {
+      editSidePopover.classList.add("hidden");
+      editSideBtn.setAttribute("aria-expanded", "false");
+    }
+    const onEditSide = (ev) => {
+      ev.stopPropagation();
+      const isOpen = !editSidePopover.classList.contains("hidden");
+      if (isOpen) {
+        _closeSidePopover();
+      } else {
+        editSidePopover.classList.remove("hidden");
+        editSideBtn.setAttribute("aria-expanded", "true");
+      }
+    };
+    const onEditSideToggle = () => {
+      editSideToMove = editSideToMove === "w" ? "b" : "w";
+      refreshButtons();
+    };
+
+    const onEditCastleCb = (right) => () => {
+      view.toggleCastlingRight(right);
+      refreshButtons();
+    };
+
+    function _closeCastlePopover() {
+      editCastlePopover.classList.add("hidden");
+      editCastleBtn.setAttribute("aria-expanded", "false");
+    }
+    const onEditCastleBtn = (ev) => {
+      ev.stopPropagation();
+      const isOpen = !editCastlePopover.classList.contains("hidden");
+      if (isOpen) {
+        _closeCastlePopover();
+      } else {
+        editCastlePopover.classList.remove("hidden");
+        editCastleBtn.setAttribute("aria-expanded", "true");
+      }
+    };
+    const onDocClickClosePopover = (ev) => {
+      if (!editing) return;
+      if (!editCastlePopover.classList.contains("hidden") &&
+          !editCastlePopover.contains(ev.target) && !editCastleBtn.contains(ev.target)) {
+        _closeCastlePopover();
+      }
+      if (!editSidePopover.classList.contains("hidden") &&
+          !editSidePopover.contains(ev.target) && !editSideBtn.contains(ev.target)) {
+        _closeSidePopover();
+      }
+    };
+
+    const onEditConfirm = async () => {
+      const fen = _buildEditFen();
+      try {
+        const validated = await ctx.api("POST", "/api/chess/validate-fen", { fen });
+        const r = await ctx.api("POST", "/game/import", { format: "fen", text: validated.fen });
+        view.setGameId(r.game_id);
+        _exitEditMode(false);
+        ctx.api("POST", "/game/sync", {}).catch(() => {});
+      } catch (e) {
+        reportError(ctx, "Invalid position", e);
+      }
+    };
+
+    const onEditCancel = () => {
+      _exitEditMode(true);
+    };
+
     const onViewNav = (endpoint) => async () => {
       try {
         await ctx.api("POST", endpoint, {});
@@ -718,6 +947,7 @@ export const playPerspective = {
 
     newGameBtn.addEventListener("click", onNewGame);
     importBtn.addEventListener("click", onImport);
+    editPosBtn?.addEventListener("click", onEditPosition);
     resignBtn.addEventListener("click", onResign);
     const onUciLog = () => toggleUciLogWindow(ctx.events);
     const onPvTable = () => togglePvTableWindow(ctx.events);
@@ -736,7 +966,22 @@ export const playPerspective = {
     viewLastBtn.addEventListener("click", onViewLast);
     viewFlipBtn.addEventListener("click", onViewFlip);
     viewAnalyzeBtn.addEventListener("click", onAnalyze);
+    viewEditBtn.addEventListener("click", onViewEditPosition);
     viewPlayFromHereBtn.addEventListener("click", onPlayFromHere);
+    editSideBtn.addEventListener("click", onEditSide);
+    editSideTogglePill.addEventListener("click", onEditSideToggle);
+    editCastleBtn.addEventListener("click", onEditCastleBtn);
+    const onCastleWK = onEditCastleCb("wK");
+    const onCastleWQ = onEditCastleCb("wQ");
+    const onCastleBK = onEditCastleCb("bK");
+    const onCastleBQ = onEditCastleCb("bQ");
+    editCastleCb.wK.addEventListener("click", onCastleWK);
+    editCastleCb.wQ.addEventListener("click", onCastleWQ);
+    editCastleCb.bK.addEventListener("click", onCastleBK);
+    editCastleCb.bQ.addEventListener("click", onCastleBQ);
+    document.addEventListener("click", onDocClickClosePopover);
+    editConfirmBtn.addEventListener("click", onEditConfirm);
+    editCancelBtn.addEventListener("click", onEditCancel);
 
     function showEngineCrashToast() {
       const msg = document.createElement("span");
@@ -763,6 +1008,7 @@ export const playPerspective = {
 
     return {
       unmount() {
+        if (editing) view.exitEditMode();
         closeDebugWindows();
         setDockContainer(null);
         dismissAnalysisToast?.();
@@ -792,7 +1038,19 @@ export const playPerspective = {
         viewLastBtn.removeEventListener("click", onViewLast);
         viewFlipBtn.removeEventListener("click", onViewFlip);
         viewAnalyzeBtn.removeEventListener("click", onAnalyze);
+        viewEditBtn.removeEventListener("click", onViewEditPosition);
         viewPlayFromHereBtn.removeEventListener("click", onPlayFromHere);
+        editPosBtn?.removeEventListener("click", onEditPosition);
+        editSideBtn.removeEventListener("click", onEditSide);
+        editSideTogglePill.removeEventListener("click", onEditSideToggle);
+        editCastleBtn.removeEventListener("click", onEditCastleBtn);
+        editCastleCb.wK.removeEventListener("click", onCastleWK);
+        editCastleCb.wQ.removeEventListener("click", onCastleWQ);
+        editCastleCb.bK.removeEventListener("click", onCastleBK);
+        editCastleCb.bQ.removeEventListener("click", onCastleBQ);
+        document.removeEventListener("click", onDocClickClosePopover);
+        editConfirmBtn.removeEventListener("click", onEditConfirm);
+        editCancelBtn.removeEventListener("click", onEditCancel);
       },
     };
   },

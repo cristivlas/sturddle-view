@@ -11,6 +11,7 @@ import {
   PROMOTION_DIALOG_RESULT_TYPE,
   PromotionDialog,
 } from "../vendor/cm-chessboard/src/extensions/promotion-dialog/PromotionDialog.js";
+import { PositionEditor } from "../vendor/cm-chessboard-position-editor/src/PositionEditor.js";
 import { resolveBoardStyle } from "./board-styles.js";
 
 export function mountBoard({ element, onMove, styleId }) {
@@ -118,6 +119,74 @@ export function mountBoard({ element, onMove, styleId }) {
     if (typeof board.removeArrows === "function") board.removeArrows();
   }
 
+  // Castling-corner squares (rook start squares) for highlight markers.
+  const CASTLING_SQUARES = { wK: "h1", wQ: "a1", bK: "h8", bQ: "a8" };
+
+  let editMode = false;
+  let castlingRights = { wK: false, wQ: false, bK: false, bQ: false };
+  let editPositionChangeCb = null;
+  let positionEditorLoaded = false;
+
+  function _applyCastlingMarkers() {
+    board.removeMarkers(MARKER_TYPE.dot);
+    for (const [right, square] of Object.entries(CASTLING_SQUARES)) {
+      if (castlingRights[right]) {
+        board.addMarker(MARKER_TYPE.dot, square);
+      }
+    }
+  }
+
+  function enterEditMode(onPositionChange) {
+    if (editMode) return;
+    editMode = true;
+    editPositionChangeCb = onPositionChange ?? null;
+    board.disableMoveInput();
+    board.removeMarkers();
+    if (!positionEditorLoaded) {
+      positionEditorLoaded = true;
+      // addExtension calls PositionEditor constructor which calls enableMoveInput.
+      board.addExtension(PositionEditor, {
+        autoSpecialMoves: false,
+        onPositionChange: () => {
+          if (!editMode) return;
+          _applyCastlingMarkers();
+          editPositionChangeCb?.();
+        },
+      });
+    } else {
+      const ext = board.getExtension(PositionEditor);
+      ext.props.enabled = true;
+      board.enableMoveInput(ext.moveInputHandler);
+    }
+    _applyCastlingMarkers();
+  }
+
+  function exitEditMode() {
+    if (!editMode) return;
+    editMode = false;
+    editPositionChangeCb = null;
+    castlingRights = { wK: false, wQ: false, bK: false, bQ: false };
+    board.removeMarkers(MARKER_TYPE.dot);
+    board.disableMoveInput();
+    if (positionEditorLoaded) {
+      board.getExtension(PositionEditor).props.enabled = false;
+    }
+  }
+
+  function toggleCastlingRight(right) {
+    if (!editMode) return;
+    castlingRights[right] = !castlingRights[right];
+    _applyCastlingMarkers();
+  }
+
+  function getCastlingRights() {
+    return { ...castlingRights };
+  }
+
+  function getPosition() {
+    return board.getPosition();
+  }
+
   function cancelAnimations() {
     board.positionAnimationsQueue.destroy();
     board.positionAnimationsQueue = new PositionAnimationsQueue(board);
@@ -136,5 +205,9 @@ export function mountBoard({ element, onMove, styleId }) {
     }
   }
 
-  return { setSide, setPosition, enableInput, forceResize, cancelAnimations, setArrow, setOpponentArrow, clearArrows };
+  return {
+    setSide, setPosition, enableInput, forceResize, cancelAnimations,
+    setArrow, setOpponentArrow, clearArrows,
+    enterEditMode, exitEditMode, toggleCastlingRight, getCastlingRights, getPosition,
+  };
 }

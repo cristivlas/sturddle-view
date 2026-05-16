@@ -22,6 +22,10 @@ class ApplyMoveRequest(BaseModel):
     move: str  # UCI, e.g. "e2e4" or "a7a8q"
 
 
+class ValidateFenRequest(BaseModel):
+    fen: str
+
+
 @router.post("/apply-move")
 def apply_move(body: ApplyMoveRequest) -> dict:
     try:
@@ -39,4 +43,25 @@ def apply_move(body: ApplyMoveRequest) -> dict:
         log.warning("apply-move late bestmove %r (fen=%r)", body.move, body.fen)
         return Response(status_code=204)
     board.push(move)
+    return {"fen": board.fen()}
+
+
+def _explain_invalid(board: chess.Board) -> str:
+    status = board.status()
+    if status == chess.STATUS_VALID:
+        return "illegal position"
+    reasons = [s.name.lower().replace("_", " ") for s in chess.Status if s != chess.STATUS_VALID and status & s]
+    return ", ".join(reasons) if reasons else "illegal position"
+
+
+@router.post("/validate-fen")
+def validate_fen(body: ValidateFenRequest) -> dict:
+    """Validate a FEN string and return its canonical form."""
+    try:
+        board = chess.Board(body.fen)
+    except ValueError as e:
+        msg = str(e).split(":", 1)[0] if ":" in str(e) else str(e)
+        raise HTTPException(status_code=400, detail=f"invalid FEN: {msg}") from e
+    if not board.is_valid():
+        raise HTTPException(status_code=400, detail=_explain_invalid(board))
     return {"fen": board.fen()}

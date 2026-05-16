@@ -436,6 +436,70 @@ button.recent-del:hover { color: var(--status-err-fg, #d33); }
 .ribbon-btn--danger:hover:not(:disabled)::before {
   background: var(--wa-color-danger-fill-loud, #d65a5a);
 }
+.castle-popover-wrap,
+.side-popover-wrap { position: relative; display: inline-flex; align-items: center; }
+.castle-popover,
+.side-popover {
+  position: absolute;
+  left: 100%; top: 0;
+  margin-left: 8px;
+  z-index: 1000;
+  background: var(--wa-color-surface-raised, #2a2a2a);
+  border: 1px solid var(--wa-color-surface-border, #444);
+  border-radius: 6px;
+  padding: 10px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.45);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.castle-popover.hidden,
+.side-popover.hidden { display: none; }
+.castle-row {
+  display: flex; align-items: center; gap: 6px;
+}
+.castle-row-label {
+  width: 44px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg, #e6e6e6);
+}
+.castle-row[data-color="black"] .castle-row-label { opacity: 0.75; }
+.castle-pill {
+  background: transparent;
+  border: 1px solid var(--wa-color-surface-border, #555);
+  color: var(--fg, #e6e6e6);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.castle-pill:hover {
+  border-color: var(--wa-color-brand-fill-loud, #b45309);
+}
+.castle-pill.is-active {
+  background: var(--wa-color-brand-fill-loud, #b45309);
+  border-color: var(--wa-color-brand-fill-loud, #b45309);
+  color: #fff;
+}
+.castle-pill:focus-visible {
+  outline: 2px solid var(--wa-color-focus, var(--wa-color-brand-60));
+  outline-offset: 2px;
+}
+.side-toggle-pill {
+  min-width: 130px;
+  text-align: center;
+  background: #f0f0f0;
+  color: #1a1a1a;
+  border-color: #aaa;
+}
+.side-toggle-pill.is-black {
+  background: #1a1a1a;
+  color: #f0f0f0;
+  border-color: #555;
+}
 .ribbon-sep {
   width: 22px; height: 1px;
   background: var(--wa-color-border-loud, #353841);
@@ -581,12 +645,26 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   .ribbon-btn { width: 44px; height: 44px; }
   .ribbon-btn wa-icon { font-size: 1.125rem; }
   .ribbon-btn::before {
-    left: 6px; right: 6px; top: 0; bottom: auto;
+    left: 6px; right: 6px; bottom: -1px; top: auto;
     width: auto; height: 2px;
   }
   .ribbon-sep {
     width: 1px; height: 18px;
     margin: 0 4px;
+  }
+  /* Horizontal ribbon: collapse the push spacer (it creates a gap that
+     reads as dead space on mobile). */
+  .board-ribbon .ribbon-sep--push {
+    flex: 0 0 auto;
+    width: 1px; height: 18px;
+    margin: 0 4px;
+  }
+  /* Horizontal ribbon: popovers open above the button (ribbon sits at
+     bottom of the page on mobile). */
+  .castle-popover,
+  .side-popover {
+    left: 0; top: auto; bottom: 100%;
+    margin-left: 0; margin-bottom: 8px;
   }
   /* Display order: board first, then ribbon below. */
   .play-board-host { order: 1; }

@@ -439,6 +439,7 @@ export function mountGameView(container, opts = {}) {
   let engineName = "Engine";
   let names = { top: "—", bottom: "—" };
   let viewing = false;
+  let boardEditing = false;
   // Analysis mode: streams PV from a dedicated engine even while
   // viewing. PV row should hide when "view-only" (viewing && !analyzing)
   // and show otherwise -- play mode has PV from the play engine,
@@ -534,9 +535,11 @@ export function mountGameView(container, opts = {}) {
           if (humanWhite) setNames({ bottom: w, top: b });
           else setNames({ bottom: b, top: w });
         }
-        board.setPosition(evt.payload.fen, evt.payload.last_move);
+        if (!boardEditing) {
+          board.setPosition(evt.payload.fen, evt.payload.last_move);
+        }
         setFen(evt.payload.fen);
-        board.clearArrows();
+        if (!boardEditing) board.clearArrows();
         if (showMoves && moveListEl) {
           // View mode highlights the cursor's ply (cursor-1 = last played
           // move; cursor=0 means initial position → no highlight) and lets
@@ -584,7 +587,7 @@ export function mountGameView(container, opts = {}) {
             engineSection?.classList.remove("is-empty");
           }
         }
-        if (interactive) board.enableInput(true);
+        if (interactive && !boardEditing) board.enableInput(true);
         break;
       case "clock_tick":
         setClock(evt.payload);
@@ -665,7 +668,25 @@ export function mountGameView(container, opts = {}) {
       setTablebase(null);
       setFen(INITIAL_FEN);
     },
+    enterEditMode(onPositionChange) {
+      boardEditing = true;
+      board.enterEditMode(onPositionChange);
+    },
+    exitEditMode() {
+      boardEditing = false;
+      board.exitEditMode();
+    },
+    toggleCastlingRight(right) {
+      board.toggleCastlingRight(right);
+    },
+    getCastlingRights() {
+      return board.getCastlingRights();
+    },
+    getPosition() {
+      return board.getPosition();
+    },
     unmount() {
+      boardEditing = false;
       off?.();
       try { ro.disconnect(); } catch {}
       window.removeEventListener("resize", recomputeBoardSize);
