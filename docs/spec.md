@@ -358,13 +358,7 @@ remains usable for last-known state inspection.
 - Headless mode: skip PyWebView, point any browser at the server URL
 - Same server and client code for both modes
 
-### Install (Windows 11)
-
-```
-pip install pywebview python-chess <package-name>
-```
-
-No additional runtime required on Windows 11 (WebView2 ships with OS).
+See README for install steps.
 
 ---
 

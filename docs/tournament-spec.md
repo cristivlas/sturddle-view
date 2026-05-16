@@ -27,13 +27,19 @@ Out of scope for Phase 1:
 - Queue / scheduling of tournaments (Phase 2).
 - Attaching to a tournament started outside the GUI ("peek" / headless
   attach). The orchestrator is factored so this can be added later.
-
-Pause/Resume is implemented: stopping a running tournament transitions
-it to ``stopped``; starting it again resumes from where it left off
-(per-tournament state survives across runs).
 - Connecting to remote machines running tournaments.
 - Multiple tournaments running concurrently on the same server (enforced
   single-active; see "Concurrency policy" below).
+
+## Terminology: UI labels vs. code states
+
+The UI surfaces tournament lifecycle as **Start / Pause / Resume**;
+the code's state machine uses **`idle / running / stopped / done`**
+(no `paused` state). The Pause button transitions `running -> stopped`;
+the Resume button starts a `stopped` tournament again, picking up from
+fastchess's persisted `config.json`. This split is deliberate -- the UI
+verbs read naturally to users, the code keeps a minimal state set --
+and the rest of this spec uses the code names.
 
 ---
 
@@ -164,14 +170,10 @@ States: `idle` -> `running` -> (`stopped` | `done`).
 - **Done**: fastchess exits cleanly (all rounds completed, or SPRT
   decided), transitions `running -> done`.
 
-There is **no Pause/Resume verb** in Phase 1. Rationale: simpler state
-machine, identical behavior on all platforms, no chunked-loop runner
-complexity, no signal-handling asymmetry between POSIX (SIGTERM) and
-Windows (TerminateProcess is hard-kill anyway). If a Resume verb is
-later requested, fastchess's `-config file=...` mechanism makes it
-trivially addable without changing the existing state machine -- Resume
-becomes "Start with `-config` pointing at the prior tournament's
-artifacts." See **Resume after Stop** below for the concrete plan.
+The state machine has **no `paused` state**: the UI's Pause button
+maps to Stop (`running -> stopped`) and Resume maps to Start on a
+`stopped` row, picking up from fastchess's persisted `config.json`
+(see **Resume after Stop** below).
 
 ### Cross-platform process control
 
