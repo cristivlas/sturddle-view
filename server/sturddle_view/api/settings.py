@@ -108,7 +108,29 @@ async def update_settings(payload: dict, request: Request) -> dict:
         s.pgn_autosave = bool(payload["pgn_autosave"])
     if "pgn_dir" in payload:
         raw = payload["pgn_dir"]
-        s.pgn_dir = Path(raw) if raw else None
+        if raw:
+            p = Path(raw).expanduser()
+            try:
+                p.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                raise HTTPException(
+                    status_code=400, detail=f"pgn_dir not creatable: {e}",
+                ) from e
+            if not p.is_dir():
+                raise HTTPException(
+                    status_code=400, detail=f"pgn_dir is not a directory: {p}",
+                )
+            probe = p / ".sv-write-probe"
+            try:
+                probe.write_text("")
+                probe.unlink()
+            except OSError as e:
+                raise HTTPException(
+                    status_code=400, detail=f"pgn_dir not writable: {e}",
+                ) from e
+            s.pgn_dir = p
+        else:
+            s.pgn_dir = None
 
     if "tc_initial_seconds" in payload:
         try:
