@@ -518,6 +518,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     showDialog({
       label: detailed.name,
       width: "520px",
+      height: "min(720px, 92vh)",
       body: (resolve, dialog) => {
         const wrap = document.createElement("div");
         wrap.className = "tournament-info";
