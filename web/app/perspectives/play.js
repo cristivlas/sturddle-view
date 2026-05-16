@@ -748,6 +748,15 @@ export const playPerspective = {
           return;
         }
       }
+      if (analyzing) {
+        const ok = await confirm({
+          message: "Stop analysis and edit the position?",
+          okLabel: "Edit position",
+          cancelLabel: "Keep analyzing",
+          destructive: true,
+        });
+        if (!ok) return;
+      }
       try {
         await ctx.api("POST", "/game/edit/start", {});
       } catch (e) {
