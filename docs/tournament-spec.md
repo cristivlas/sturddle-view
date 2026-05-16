@@ -148,9 +148,6 @@ status flips to `failed`, `last_error.stderr_tail` carries the message,
 and `last_error.rescheck` carries the structured detail
 (`{reason, cpu_load, ram_load_mb, ...}`).
 
-See [docs/tournament-concurrency-plan.md](tournament-concurrency-plan.md)
-for the working notes (deferred slices, empirical findings).
-
 ---
 
 ## Lifecycle and state machine
@@ -512,8 +509,7 @@ row-click suffices), eval graphs (Phase 2).
 
 This section captures the design for live game viewing -- the part of
 the workspace that was deferred when Slice 8 shipped. Implementing it
-involves three independently-shippable pieces (see
-`docs/tournament-plan.md` for the slice breakdown).
+involves three independently-shippable pieces.
 
 #### Two pieces, well-bounded
 

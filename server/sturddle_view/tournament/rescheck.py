@@ -1,8 +1,8 @@
 """Resource sanity checks for tournament starts.
 
-See ``docs/tournament-concurrency-plan.md`` Slice 3. Pure: no orchestrator
-state, no I/O. Called from the create-time rescheck endpoint and from
-``Orchestrator.start()``.
+Pure: no orchestrator state, no I/O. Called from the create-time
+rescheck endpoint and from ``Orchestrator.start()``. See
+``docs/tournament-spec.md`` # "Resource sanity checks" for the design.
 """
 from __future__ import annotations
 

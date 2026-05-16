@@ -1106,8 +1106,8 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   // Resolve worst-case threading + hash from the picked engines and the
   // global engine_default_* override. Mirrors the formula in
-  // docs/tournament-concurrency-plan.md so the rescheck endpoint sees
-  // the same numbers the user is committing to.
+  // docs/tournament-spec.md so the rescheck endpoint sees the same
+  // numbers the user is committing to.
   function resolveResourceParams(template, pickedRegistry, globalDefaults) {
     function resolvedFor(engine, optName, fallback) {
       const opt = engine.options && engine.options[optName];
