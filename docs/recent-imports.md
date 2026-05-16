@@ -152,18 +152,3 @@ Display cap (how many rows the dropdown shows) becomes independent
 from the server cap. Start at 10; the dropdown is a `wa-select`, so
 scrolling more is cheap.
 
-## Open questions
-
-- Server cap value (currently 50). Re-evaluate after dogfooding.
-- Whether the no-live-validate trade-off feels worse in practice than
-  on paper. If it does, the validate endpoint can come back without
-  changing the import-side design (validate would only parse + return
-  summary, no save).
-
-## Out of scope (for this iteration)
-
-- Cross-device sync.
-- Search / tagging / pinning of history entries.
-- Diffing two imports.
-- A dedicated "history" perspective. The dialog dropdown stays the
-  only entry point for now.

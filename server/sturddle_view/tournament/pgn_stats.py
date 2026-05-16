@@ -168,7 +168,7 @@ def _iter_games(pgn_path: Path):
     Tolerates an empty/missing file (yields nothing).
 
     Every decisive game is yielded in file order; no dedup. See
-    docs/pgn-pair-identity.md -- ``Round`` is not a reliable pair ID,
+    docs/pgn-reconciliation.md # "Pair identity in stored PGN" -- ``Round`` is not a reliable pair ID,
     so we trust the PGN as written and let pair-formation
     (``_form_pairs``) decide what's an orphan vs a complete pair.
     """
@@ -382,7 +382,7 @@ def rewrite_drop_partial_pairs(
     black)``. That dedup conflated true resume duplicates with
     legitimate distinct games that happened to share a Round number
     (fastchess can reuse Round values across Pause/Resume), silently
-    destroying real games. See docs/pgn-pair-identity.md.
+    destroying real games. See docs/pgn-reconciliation.md # "Pair identity in stored PGN".
 
     The new rule: identify pairs structurally via color-flip on the
     same engine set within a Round bucket; drop only games that fail
@@ -1032,7 +1032,7 @@ def _iter_pairs(
     ``Round`` alone is not a reliable pair ID (it can be reused across a
     Pause/Resume boundary), so pairing is structural: games are bucketed
     by ``(round, frozenset({white, black}))`` and matched within each
-    bucket by color-flip. See docs/pgn-pair-identity.md.
+    bucket by color-flip. See docs/pgn-reconciliation.md # "Pair identity in stored PGN".
 
     Only buckets whose engine set is exactly ``{engine_a, engine_b}``
     contribute pairs here. Buckets from other match-ups in a gauntlet

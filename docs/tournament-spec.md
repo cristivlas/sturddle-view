@@ -551,45 +551,18 @@ What you give up: the **opponent engine's** internal eval/PV/depth.
 That's available from the opponent's proxy if the user attaches a
 second window to it.
 
-#### Schedule rows = proxies (single-side; pairing deferred)
+#### Schedule rows = proxies (single-side)
 
-Originally specified as automatic pair detection on the server (a
-`pair_index` matching proxies by shared move list). **Tried and
-removed.** What we shipped: one Schedule row per active proxy
-(engine process), labeled with its engine name, with a "watch"
-button that opens a single-engine live window.
+Shipped model: one Schedule row per active proxy (engine process),
+labeled with its engine name, with a "watch" button that opens a
+single-engine live window. Move-list-based pair detection runs in the
+orchestrator for end-of-game reconciliation (see
+`pgn-reconciliation.md`) but is not exposed in the Schedule UI.
 
-Why pairing turned out untenable in Phase 1:
-
-- **Same-opening overlap under concurrency.** With `-concurrency > 1`
-  fastchess runs the same opening line in parallel game-slots
-  (book-driven, intentionally; SPRT pairs play each opening twice
-  with colors swapped). All four proxies briefly hold the same
-  `(move_list, ply)` state. Strict same-key matching produces
-  ambiguity; prefix-relaxed matching produces phantom cross-pairs
-  (e.g. two processes of the *same engine* from different slots
-  paired with each other).
-- **No end-of-game UCI signal.** Engine processes are reused across
-  rounds (UCI has no `endgame`; just `ucinewgame` for the next).
-  A locked pair stays locked even after fastchess re-pairs the
-  engines for the next round; the index silently keeps stale
-  partnerships.
-- **Strict ply-difference checks flap.** Forcing `|ply_a - ply_b| <= 1`
-  to guarantee opposite side-to-move yields constant
-  observe / dissolve flapping under normal batching, because one
-  side often races ahead by several plies before the other catches up.
-
-We tried strict pairing, prefix pairing, and uniqueness-disambiguated
-pairing. All three failed in different ways. The path forward
-(documented; not in scope for Phase 1) is **deterministic** pairing:
-vendor a fastchess fork, emit an `extended UCI` announcement at
-game-start (`sturddle game-start slot=N white=X black=Y`), have the
-proxy intercept and forward to the orchestrator. With authoritative
-pairings, the dual-PV window described in the original "Attach to
-engine, not to game" trade-off becomes trivial.
-
-Until then we ship the simple model: one row per proxy, one window
-per click. To see both sides of a game the user opens two windows.
+To see both sides of a game the user opens two windows. A future
+deterministic-pairing scheme (vendoring a fastchess fork to emit an
+extended-UCI game-start announcement) could enable dual-PV windows; not
+in scope until somebody asks.
 
 #### Volume & high-concurrency considerations
 
@@ -1050,39 +1023,14 @@ Future work (not part of the resume effort):
 
 ---
 
-## Cross-proxy bestmove race: approach history
+## Cross-proxy bestmove race
 
-### The race
-
-Each engine runs as a separate proxy process. Both POST their UCI traffic
-independently. Within one proxy events are ordered (position then bestmove
-for that turn), but between proxies the POSTs race: after black plays,
-fastchess immediately feeds white its new position. White's position POST
-and black's bestmove POST can arrive in either order.
-
-If the client receives a bestmove before its position, it calls
-`/api/chess/apply-move` against a stale FEN and gets an error response.
-
-### Attempted fix: server-side reorder buffer (reverted)
-
-Per-pair queues held each proxy's events and drained them in canonical
-(color, ply) order before fanning out to game subscribers. This guaranteed
-the client always saw position-before-bestmove.
-
-Downsides that led to reverting:
-- Added ~150 lines of orchestrator state and logic.
-- `go` events (clock updates) were held in the buffer during the race
-  window, so clock display could lag.
-- Buffered `info` lines for the stalled turn were all flushed to
-  `_fanout` in a tight synchronous loop. Because `CoalescingQueue`
-  uses latest-wins per-proxy coalescing, only the last `info` of the
-  batch survived -- earlier depth/score updates from that turn were
-  silently dropped.
-
-### Current approach: client-side graceful skip
-
-`/api/chess/apply-move` returns **204** (instead of 400) when the move
-is illegal (i.e. applied against a stale FEN). The client logs a
-`console.warn` and returns early. The next `position` event self-corrects
-the board. No server buffering, no lost `info` lines, no clock lag.
-Tradeoff: the move animation is skipped for the affected half-move.
+Each engine runs as a separate proxy process and POSTs UCI traffic
+independently, so between proxies a `position` and the prior turn's
+`bestmove` can arrive in either order. The client handles this
+gracefully: `/api/chess/apply-move` returns **204** on a stale-FEN
+illegal move, the client logs a `console.warn` and skips, and the next
+`position` event self-corrects the board. Tradeoff: the move animation
+is skipped for the affected half-move. A server-side reorder buffer was
+tried and reverted (held clock updates and silently coalesced
+mid-turn `info` lines).
