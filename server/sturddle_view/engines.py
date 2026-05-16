@@ -35,11 +35,34 @@ def default_registry_path() -> Path:
 _HIDDEN_OPTIONS = {"multipv", "ponder", "uci_chess960", "uci_variant", "uci_analysemode"}
 
 
+def _classify_probe_exception(exc: BaseException) -> dict:
+    """Map a spawn/handshake exception to a {code, message} pair, cross-platform.
+
+    Classification is by exception type so the caller never has to parse
+    platform-specific text like "WinError 193" or "Exec format error" --
+    both reach us as plain OSError.
+    """
+    if isinstance(exc, FileNotFoundError):
+        return {"code": "engine_path_not_found",
+                "message": "Engine file not found."}
+    if isinstance(exc, PermissionError):
+        return {"code": "engine_permission_denied",
+                "message": "Permission denied launching the engine."}
+    if isinstance(exc, chess.engine.EngineError):
+        return {"code": "engine_not_uci",
+                "message": "Engine did not respond as a UCI engine."}
+    if isinstance(exc, OSError):
+        return {"code": "engine_not_launchable",
+                "message": "Could not launch engine (file is not a runnable program for this system)."}
+    return {"code": "engine_probe_failed",
+            "message": "Could not probe engine."}
+
+
 async def probe_engine(
     engine_path: str,
     args: list[str] | None = None,
     env: dict[str, str] | None = None,
-) -> tuple[str | None, dict[str, dict], str | None]:
+) -> tuple[str | None, dict[str, dict], dict | None]:
     """Briefly spawn the engine; return (uci_id_name, option_schema, error).
 
     `args` and `env` mirror the launch settings stored on the engine — we
@@ -51,11 +74,10 @@ async def probe_engine(
     `option_schema` is a {name: {type, default, min?, max?, vars?}} dict,
     skipping engine-managed options (multipv, ponder, etc.). `uci_id_name`
     is what the engine announces via UCI `id name`, or None if unavailable.
-    `error` is None on success, or a short human-readable failure reason —
-    callers can surface it to the UI so a half-broken registry entry is
-    not silently presented as "engine reported no options".
-    Best-effort: on any failure logs and returns (None, {}, error) so the
-    engine can still be registered.
+    `error` is None on success, or a structured ``{code, message}`` dict
+    with a short user-facing reason -- callers surface ``message`` to the
+    UI directly. Classification is by exception type, not platform text.
+    Best-effort: on any failure logs and returns (None, {}, error).
     """
     command: str | list[str] = [engine_path, *args] if args else engine_path
     popen_kwargs: dict = {}
@@ -67,7 +89,7 @@ async def probe_engine(
         transport, engine = await chess.engine.popen_uci(command, **popen_kwargs)
     except Exception as e:
         log.exception("could not spawn %s for probe", engine_path)
-        return None, {}, f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        return None, {}, _classify_probe_exception(e)
     try:
         uci_name = engine.id.get("name") or None
         schema: dict[str, dict] = {}

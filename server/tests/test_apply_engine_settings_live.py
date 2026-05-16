@@ -142,15 +142,30 @@ def api_client(tmp_path, monkeypatch):
 
 
 def _add_engine(client, tmp_path, name="A"):
-    """Register a stub engine binary that exists + is executable."""
+    """Register a probeable stub UCI engine binary."""
     import stat
     import sys
 
-    p = tmp_path / f"engine_{name}"
-    p.write_text("#!/bin/sh\nexit 0\n")
-    if not sys.platform.startswith("win"):
-        p.chmod(p.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    r = client.post("/engines", json={"name": name, "path": str(p)})
+    py = tmp_path / f"engine_{name}.py"
+    py.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "while True:\n"
+        "    line = sys.stdin.readline()\n"
+        "    if not line: break\n"
+        "    line = line.strip()\n"
+        f"    if line == 'uci': sys.stdout.write('id name {name}\\nuciok\\n'); sys.stdout.flush()\n"
+        "    elif line == 'isready': sys.stdout.write('readyok\\n'); sys.stdout.flush()\n"
+        "    elif line == 'quit': break\n"
+    )
+    if sys.platform.startswith("win"):
+        wrapper = tmp_path / f"engine_{name}.cmd"
+        wrapper.write_text(f'@"{sys.executable}" "{py}" %*\r\n')
+        path = str(wrapper)
+    else:
+        py.chmod(py.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        path = str(py)
+    r = client.post("/engines", json={"name": name, "path": path})
     assert r.status_code == 201, r.text
     return r.json()["id"]
 

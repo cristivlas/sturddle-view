@@ -387,14 +387,7 @@ export function mountEngineList(container, api, opts = {}) {
     if (!path) return;
     try {
       const created = await api("POST", "/engines", { path });
-      if (created.probe_error) {
-        toast(
-          `Added ${created.name}, but UCI probe failed: ${created.probe_error}`,
-          { variant: "warning" },
-        );
-      } else {
-        toast(`Added ${created.name}`, { variant: "success" });
-      }
+      toast(`Added ${created.name}`, { variant: "success" });
       selectedDetailId = created.id;
       refresh();
     } catch (e) {

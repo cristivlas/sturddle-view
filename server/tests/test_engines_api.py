@@ -107,12 +107,14 @@ def client(tmp_path):
 
 @pytest.fixture
 def exe_a(tmp_path):
-    return _make_exec(tmp_path / "a")
+    # Probeable UCI binary so /engines POST succeeds; tests that exercise
+    # probe-failure behavior monkeypatch ``probe_engine`` to override.
+    return _make_fake_uci(tmp_path / "a", "EngineA")
 
 
 @pytest.fixture
 def exe_b(tmp_path):
-    return _make_exec(tmp_path / "b")
+    return _make_fake_uci(tmp_path / "b", "EngineB")
 
 
 def test_list_empty(client):
@@ -122,7 +124,7 @@ def test_list_empty(client):
 
 
 def test_add_then_list(client, exe_a):
-    r = client.post("/engines", json={"name": "Stockfish", "path": exe_a})
+    r = client.post("/engines", json={"name": "MyEngine", "path": exe_a})
     assert r.status_code == 201
     eid = r.json()["id"]
 
@@ -225,14 +227,6 @@ def test_add_defaults_name_to_uci_id(client, tmp_path):
     assert r.json()["name"] == "FakeEngine 1.2"
 
 
-def test_add_falls_back_to_basename_when_probe_fails(client, exe_a):
-    """A non-UCI binary still registers; name falls back to the basename."""
-    r = client.post("/engines", json={"path": exe_a})
-    assert r.status_code == 201
-    # exe_a fixture creates the file at tmp_path / "a"
-    assert r.json()["name"] == "a"
-
-
 def test_explicit_name_overrides_uci_id(client, tmp_path):
     """An explicit name in the payload wins over the engine's UCI announcement."""
     exe = _make_fake_uci(tmp_path / "engine", "FakeEngine 1.2")
@@ -251,7 +245,7 @@ def test_first_add_auto_selects(client, exe_a, exe_b):
 
 
 async def test_probe_engine_returns_error_when_spawn_fails(monkeypatch, exe_a):
-    """probe_engine surfaces the spawn failure as a string instead of swallowing it."""
+    """probe_engine surfaces the spawn failure as a structured {code, message} dict."""
     import chess.engine
 
     from sturddle_view.engines import probe_engine
@@ -263,7 +257,52 @@ async def test_probe_engine_returns_error_when_spawn_fails(monkeypatch, exe_a):
     uci_name, schema, error = await probe_engine(exe_a)
     assert uci_name is None
     assert schema == {}
-    assert error and "NotImplementedError" in error and "nope" in error
+    assert isinstance(error, dict)
+    assert error["code"] == "engine_probe_failed"
+    assert error["message"]
+    # Raw exception type names must not leak into the user-facing message.
+    assert "NotImplementedError" not in error["message"]
+
+
+@pytest.mark.parametrize("exc,expected_code", [
+    (FileNotFoundError(2, "No such file or directory"), "engine_path_not_found"),
+    (PermissionError(13, "Permission denied"), "engine_permission_denied"),
+    # OSError covers WinError 193 ("not a valid Win32 application") on Windows
+    # and ENOEXEC ("Exec format error") on POSIX -- both reach probe_engine
+    # as a plain OSError when the file exists but is not runnable.
+    (OSError(8, "Exec format error"), "engine_not_launchable"),
+    (RuntimeError("something weird"), "engine_probe_failed"),
+])
+async def test_probe_engine_classifies_spawn_errors(monkeypatch, exe_a, exc, expected_code):
+    """probe_engine classifies spawn-time exceptions by type, cross-platform."""
+    import chess.engine
+
+    from sturddle_view.engines import probe_engine
+
+    async def boom(*_a, **_kw):
+        raise exc
+
+    monkeypatch.setattr(chess.engine, "popen_uci", boom)
+    _name, _schema, error = await probe_engine(exe_a)
+    assert isinstance(error, dict)
+    assert error["code"] == expected_code
+    assert error["message"]
+    assert type(exc).__name__ not in error["message"]
+
+
+async def test_probe_engine_classifies_non_uci_engine(monkeypatch, exe_a):
+    """A spawned process that doesn't speak UCI maps to engine_not_uci."""
+    import chess.engine
+
+    from sturddle_view.engines import probe_engine
+
+    async def boom(*_a, **_kw):
+        raise chess.engine.EngineError("did not respond to uci")
+
+    monkeypatch.setattr(chess.engine, "popen_uci", boom)
+    _name, _schema, error = await probe_engine(exe_a)
+    assert isinstance(error, dict)
+    assert error["code"] == "engine_not_uci"
 
 
 # -- engine lock tests --------------------------------------------------------
@@ -323,21 +362,34 @@ def test_locked_engine_get_includes_tourney_info(tmp_path, exe_a):
     assert locked[0]["status"] == STATUS_RUNNING
 
 
-def test_add_includes_probe_error_when_probe_fails(client, monkeypatch, exe_a):
-    """A failing probe still registers the engine, but tags the response so the UI can warn."""
+def test_add_rejects_when_probe_fails(client, monkeypatch, exe_a):
+    """A failing probe rejects the add: 400 with structured detail, registry untouched."""
     async def fake_probe(_path, args=None, env=None):
-        return None, {}, "NotImplementedError: spawn unsupported"
+        return None, {}, {"code": "engine_not_launchable", "message": "Could not launch engine (file is not a runnable program for this system)."}
 
     monkeypatch.setattr("sturddle_view.api.engines.probe_engine", fake_probe)
     r = client.post("/engines", json={"path": exe_a})
-    assert r.status_code == 201
-    body = r.json()
-    assert body["probe_error"] == "NotImplementedError: spawn unsupported"
-    assert body["option_schema"] == {}
-    # Engine is in the registry and was auto-selected as the first add.
+    assert r.status_code == 400
+    detail = r.json()["detail"]
+    assert isinstance(detail, dict)
+    assert detail["code"] == "engine_not_launchable"
+    assert detail["message"]
+    # Registry untouched.
     listed = client.get("/engines").json()
-    assert [e["id"] for e in listed["engines"]] == [body["id"]]
-    assert listed["selected_id"] == body["id"]
+    assert listed["engines"] == []
+    assert listed["selected_id"] is None
+
+
+def test_add_rejects_non_uci_engine(client, monkeypatch, exe_a):
+    """Engine that spawns but does not speak UCI is rejected (not silently added)."""
+    async def fake_probe(_path, args=None, env=None):
+        return None, {}, {"code": "engine_not_uci", "message": "Engine did not respond as a UCI engine."}
+
+    monkeypatch.setattr("sturddle_view.api.engines.probe_engine", fake_probe)
+    r = client.post("/engines", json={"path": exe_a})
+    assert r.status_code == 400
+    assert r.json()["detail"]["code"] == "engine_not_uci"
+    assert client.get("/engines").json()["engines"] == []
 
 
 def test_add_omits_probe_error_on_success(client, monkeypatch, exe_a):
@@ -359,12 +411,12 @@ def test_refresh_schema_502_includes_probe_error_in_detail(client, monkeypatch, 
     eid = client.post("/engines", json={"path": exe_a}).json()["id"]
 
     async def fake_probe(_path, args=None, env=None):
-        return None, {}, "NotImplementedError: spawn unsupported"
+        return None, {}, {"code": "engine_probe_failed", "message": "Could not probe engine."}
 
     monkeypatch.setattr("sturddle_view.api.engines.probe_engine", fake_probe)
     r = client.post(f"/engines/{eid}/refresh-schema")
     assert r.status_code == 502
-    assert "NotImplementedError: spawn unsupported" in r.json()["detail"]
+    assert "Could not probe engine" in r.json()["detail"]
 
 
 # -- Launch profile (args + env) ---------------------------------------------
