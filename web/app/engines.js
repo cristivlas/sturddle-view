@@ -364,6 +364,26 @@ export function mountEngineList(container, api, opts = {}) {
         probeError = apiErrorDetail(e);
       }
     }
+    // Probe still failing -> the Options form has nothing useful to show
+    // (broken executable, moved binary, etc). Offer to remove the entry
+    // rather than open a torn-up dialog the user can't meaningfully edit.
+    if (probeError) {
+      const ok = await confirm({
+        message: `Engine "${engine.name}" cannot be launched: ${probeError} Remove it from your engines?`,
+        okLabel: "Remove",
+        destructive: true,
+      });
+      if (!ok) return;
+      try {
+        await api("DELETE", `/engines/${engine.id}`);
+        toast(`Removed ${engine.name}`, { variant: "success" });
+        selectedDetailId = null;
+        refresh();
+      } catch (err) {
+        reportError(null, "remove", err);
+      }
+      return;
+    }
     while (engine) {
       const result = await showEngineOptionsDialog({ engine, api, probeError });
       if (result === null) break;

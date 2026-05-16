@@ -390,6 +390,9 @@ export function showEngineOptionsDialog({ engine, api, probeError = null }) {
       if (names.length === 0) {
         const note = document.createElement("p");
         note.className = "muted";
+        // Form is a 2-col grid (display: contents on rows); span both
+        // columns so the note wraps instead of squashing the Name input.
+        note.style.gridColumn = "1 / -1";
         note.textContent = probeError
           ? `UCI probe failed: ${probeError} (Click Refresh to retry.)`
           : "This engine reported no UCI options. (Click Refresh to re-query.)";

@@ -74,10 +74,12 @@ export function confirm({
   okLabel = "OK",
   cancelLabel = "Cancel",
   destructive = false,
+  width = "min(440px, 92vw)",
 } = {}) {
   return showDialog({
     label: "",
     defaultValue: false,
+    width,
     body: (resolve, dialog) => {
       dialog.setAttribute("no-header", "");
 
