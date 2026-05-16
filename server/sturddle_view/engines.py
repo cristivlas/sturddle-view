@@ -34,6 +34,22 @@ def default_registry_path() -> Path:
 # either pointless or actively harmful. Lower-case for case-insensitive match.
 _HIDDEN_OPTIONS = {"multipv", "ponder", "uci_chess960", "uci_variant", "uci_analysemode"}
 
+# Same-host UCI handshakes complete in well under 100ms in practice. A
+# bounded wait protects GET /engines from hanging forever on a binary
+# that spawns but never replies (e.g. python.exe in a botched probe).
+_DEFAULT_PROBE_TIMEOUT_SEC = 0.5
+_PROBE_TIMEOUT_ENV = "SV_ENGINE_PROBE_TIMEOUT_SEC"
+
+
+def _probe_timeout_sec() -> float:
+    raw = os.environ.get(_PROBE_TIMEOUT_ENV)
+    if not raw:
+        return _DEFAULT_PROBE_TIMEOUT_SEC
+    try:
+        return max(float(raw), 0.05)
+    except ValueError:
+        return _DEFAULT_PROBE_TIMEOUT_SEC
+
 
 def _classify_probe_exception(exc: BaseException) -> dict:
     """Map a spawn/handshake exception to a {code, message} pair, cross-platform.
@@ -85,8 +101,21 @@ async def probe_engine(
         popen_kwargs["env"] = {**os.environ, **env}
     if sys.platform == "win32":
         popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    timeout = _probe_timeout_sec()
     try:
-        transport, engine = await chess.engine.popen_uci(command, **popen_kwargs)
+        transport, engine = await asyncio.wait_for(
+            chess.engine.popen_uci(command, **popen_kwargs), timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        # Process spawned but never completed the UCI handshake. wait_for
+        # has already cancelled the inner task; python-chess kills the
+        # subprocess on cancellation. Return a friendly classification
+        # instead of hanging the caller.
+        log.warning("probe handshake timed out for %s (%.2fs)", engine_path, timeout)
+        return None, {}, {
+            "code": "engine_not_uci",
+            "message": "Engine did not respond to UCI handshake (timeout).",
+        }
     except Exception as e:
         err = _classify_probe_exception(e)
         # Classified failures are routine: legacy broken entries get re-probed

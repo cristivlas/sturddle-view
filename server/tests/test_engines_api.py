@@ -340,6 +340,39 @@ async def test_probe_engine_logs_unclassified_failures_at_error(monkeypatch, exe
     assert any(r.exc_info for r in error_records)
 
 
+async def test_probe_engine_times_out_on_hanging_handshake(tmp_path, monkeypatch):
+    """A spawned process that never replies to ``uci`` must not block the probe.
+
+    Without a handshake timeout, ``GET /engines`` would hang forever on any
+    binary that opens stdin and waits silently (e.g. python.exe).
+    """
+    import time
+
+    from sturddle_view.engines import probe_engine
+
+    # Fast bound so the test stays snappy; classification is what matters.
+    monkeypatch.setenv("SV_ENGINE_PROBE_TIMEOUT_SEC", "0.1")
+
+    # A tiny "engine" that opens stdin and never replies to anything.
+    py = tmp_path / "hang.py"
+    py.write_text("import sys\nsys.stdin.read()\n")
+    if sys.platform.startswith("win"):
+        wrapper = tmp_path / "hang.cmd"
+        wrapper.write_text(f'@"{sys.executable}" "{py}" %*\r\n')
+        exe = str(wrapper)
+    else:
+        py.chmod(py.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        exe = str(py)
+
+    t0 = time.monotonic()
+    _name, schema, error = await probe_engine(exe)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 1.0, f"probe should time out fast, took {elapsed:.2f}s"
+    assert schema == {}
+    assert isinstance(error, dict)
+    assert error["code"] == "engine_not_uci"
+
+
 async def test_probe_engine_classifies_non_uci_engine(monkeypatch, exe_a):
     """A spawned process that doesn't speak UCI maps to engine_not_uci."""
     import chess.engine
