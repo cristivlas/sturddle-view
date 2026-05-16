@@ -93,8 +93,15 @@ def get_settings(request: Request) -> dict:
     return _serialize(request.app.state.settings)
 
 
+_LIVE_ENGINE_KEYS = (
+    "engine_default_threads",
+    "engine_default_hash_mb",
+    "engine_default_syzygy_path",
+)
+
+
 @router.put("")
-def update_settings(payload: dict, request: Request) -> dict:
+async def update_settings(payload: dict, request: Request) -> dict:
     s = request.app.state.settings
 
     if "pgn_autosave" in payload:
@@ -186,5 +193,13 @@ def update_settings(payload: dict, request: Request) -> dict:
         s.save_persisted()
     except OSError:
         pass
+
+    # Live-apply: only globals that flow into _spawn_engine's option layering
+    # (Threads/Hash/SyzygyPath). Other fields (PGN, eval POV, board style)
+    # are read at use time and don't need an engine respawn.
+    if any(k in payload for k in _LIVE_ENGINE_KEYS):
+        hve = getattr(request.app.state, "hve", None)
+        if hve is not None:
+            await hve.apply_engine_settings_live()
 
     return _serialize(s)

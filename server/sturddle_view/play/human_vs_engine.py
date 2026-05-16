@@ -1038,6 +1038,34 @@ class HumanVsEngine:
             seed_final_black_time=seed_final_b,
         )
 
+    async def apply_engine_settings_live(self) -> None:
+        """Force the play engine to respawn so the latest options/args/env
+        and global defaults take effect on the next move.
+
+        Skipped during analysis -- the analysis engine is a throwaway and
+        respawns per session anyway; clobbering it would interrupt the user.
+        Caller is expected to have already updated _engine_options /
+        _engine_args / _engine_env via the setters; this just discards the
+        live process so _ensure_engine respawns with the new layering.
+        """
+        kick_engine = False
+        async with self._lock:
+            if self._analysis_mode:
+                return
+            await self._cancel_think()
+            await self._quit_engine()
+            if (
+                self._board is not None
+                and self._game_id is not None
+                and not self._viewing
+                and not self._paused
+                and not self._board.is_game_over()
+                and self._board.turn == self._engine_color()
+            ):
+                kick_engine = True
+        if kick_engine:
+            await self._engine_to_move()
+
     async def swap_engine(self, path: str) -> None:
         """Replace the engine binary; preserves the active game.
 
