@@ -518,6 +518,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     showDialog({
       label: detailed.name,
       width: "520px",
+      height: "min(720px, 92vh)",
       body: (resolve, dialog) => {
         const wrap = document.createElement("div");
         wrap.className = "tournament-info";
@@ -1285,23 +1286,56 @@ function mountEngineBuilder({ host, available, initial = [] }) {
   const upBtn = host.querySelector(".ne-up");
   const downBtn = host.querySelector(".ne-down");
 
-  let availableSelectedId = null;
-  let pickedSelectedId = null;
+  // Multi-select state per pane: Set of selected IDs + the last clicked
+  // "anchor" (used as the start of a Shift+Click range). Anchors live in
+  // {id} wrappers so handleListClick can mutate them.
+  const availableSelected = new Set();
+  const pickedSelected = new Set();
+  const availableAnchor = { id: null };
+  const pickedAnchor = { id: null };
+
+  function visibleAvailableIds() {
+    return available.filter((e) => !pickedIds.includes(e.id)).map((e) => e.id);
+  }
+
+  function handleListClick(ev, id, selected, anchorRef, idsInOrder) {
+    if (ev.shiftKey && anchorRef.id != null) {
+      // Range select from anchor to id (inclusive), in display order.
+      const ids = idsInOrder();
+      const a = ids.indexOf(anchorRef.id);
+      const b = ids.indexOf(id);
+      if (a >= 0 && b >= 0) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        selected.clear();
+        for (let i = lo; i <= hi; i++) selected.add(ids[i]);
+      }
+    } else if (ev.ctrlKey || ev.metaKey) {
+      // Toggle this row in/out; keep anchor on the toggled row.
+      if (selected.has(id)) selected.delete(id);
+      else selected.add(id);
+      anchorRef.id = id;
+    } else {
+      // Plain click: collapse to just this row.
+      selected.clear();
+      selected.add(id);
+      anchorRef.id = id;
+    }
+  }
 
   function render() {
     availableList.innerHTML = "";
     for (const e of available) {
       if (pickedIds.includes(e.id)) continue;
       const li = document.createElement("li");
-      li.className = "ne-item" + (e.id === availableSelectedId ? " selected" : "");
+      li.className = "ne-item" + (availableSelected.has(e.id) ? " selected" : "");
       li.dataset.id = e.id;
       li.textContent = e.name;
       li.title = e.name;
-      li.addEventListener("click", () => {
-        availableSelectedId = e.id;
+      li.addEventListener("click", (ev) => {
+        handleListClick(ev, e.id, availableSelected, availableAnchor, visibleAvailableIds);
         render();
       });
-      li.addEventListener("dblclick", () => doAdd(e.id));
+      li.addEventListener("dblclick", () => doAdd([e.id]));
       availableList.appendChild(li);
     }
 
@@ -1310,46 +1344,65 @@ function mountEngineBuilder({ host, available, initial = [] }) {
       const e = byId.get(id);
       if (!e) continue;
       const li = document.createElement("li");
-      li.className = "ne-item" + (id === pickedSelectedId ? " selected" : "");
+      li.className = "ne-item" + (pickedSelected.has(id) ? " selected" : "");
       li.dataset.id = id;
       li.textContent = e.name;
-      li.addEventListener("click", () => {
-        pickedSelectedId = id;
+      li.addEventListener("click", (ev) => {
+        handleListClick(ev, id, pickedSelected, pickedAnchor, () => [...pickedIds]);
         render();
       });
-      li.addEventListener("dblclick", () => doRemove(id));
+      li.addEventListener("dblclick", () => doRemove([id]));
       pickedList.appendChild(li);
     }
 
-    addBtn.disabled = !availableSelectedId;
-    removeBtn.disabled = !pickedSelectedId;
-    const idx = pickedSelectedId ? pickedIds.indexOf(pickedSelectedId) : -1;
-    upBtn.disabled = idx <= 0;
-    downBtn.disabled = idx < 0 || idx >= pickedIds.length - 1;
+    addBtn.disabled = availableSelected.size === 0;
+    removeBtn.disabled = pickedSelected.size === 0;
+    // Reorder needs a single anchor row; multi-row moves are out of scope.
+    const onlyOne = pickedSelected.size === 1;
+    const soloIdx = onlyOne ? pickedIds.indexOf([...pickedSelected][0]) : -1;
+    upBtn.disabled = !onlyOne || soloIdx <= 0;
+    downBtn.disabled = !onlyOne || soloIdx < 0 || soloIdx >= pickedIds.length - 1;
   }
 
-  function doAdd(id) {
-    if (!id || pickedIds.includes(id)) return;
-    pickedIds.push(id);
-    pickedSelectedId = id;
-    availableSelectedId = null;
+  function doAdd(ids) {
+    if (!ids || !ids.length) return;
+    // Preserve the available-pane display order when appending.
+    const order = visibleAvailableIds();
+    const toAdd = order.filter((id) => ids.includes(id) && !pickedIds.includes(id));
+    if (!toAdd.length) return;
+    pickedIds.push(...toAdd);
+    availableSelected.clear();
+    pickedSelected.clear();
+    for (const id of toAdd) pickedSelected.add(id);
+    pickedAnchor.id = toAdd[toAdd.length - 1];
+    availableAnchor.id = null;
     render();
     notify();
   }
 
-  function doRemove(id) {
-    if (!id) return;
-    const idx = pickedIds.indexOf(id);
-    if (idx < 0) return;
-    pickedIds.splice(idx, 1);
-    pickedSelectedId = pickedIds[Math.min(idx, pickedIds.length - 1)] || null;
+  function doRemove(ids) {
+    if (!ids || !ids.length) return;
+    const removed = new Set(ids);
+    const firstRemovedIdx = pickedIds.findIndex((id) => removed.has(id));
+    pickedIds = pickedIds.filter((id) => !removed.has(id));
+    pickedSelected.clear();
+    // Surface a sensible new anchor: the row that slid up into the first
+    // removed position, or the new last row if we removed the tail.
+    if (pickedIds.length) {
+      const next = pickedIds[Math.min(firstRemovedIdx, pickedIds.length - 1)];
+      pickedSelected.add(next);
+      pickedAnchor.id = next;
+    } else {
+      pickedAnchor.id = null;
+    }
     render();
     notify();
   }
 
   function move(delta) {
-    if (!pickedSelectedId) return;
-    const idx = pickedIds.indexOf(pickedSelectedId);
+    if (pickedSelected.size !== 1) return;
+    const id = [...pickedSelected][0];
+    const idx = pickedIds.indexOf(id);
     const target = idx + delta;
     if (target < 0 || target >= pickedIds.length) return;
     [pickedIds[idx], pickedIds[target]] = [pickedIds[target], pickedIds[idx]];
@@ -1357,8 +1410,8 @@ function mountEngineBuilder({ host, available, initial = [] }) {
     notify();
   }
 
-  addBtn.addEventListener("click", () => doAdd(availableSelectedId));
-  removeBtn.addEventListener("click", () => doRemove(pickedSelectedId));
+  addBtn.addEventListener("click", () => doAdd([...availableSelected]));
+  removeBtn.addEventListener("click", () => doRemove([...pickedSelected]));
   upBtn.addEventListener("click", () => move(-1));
   downBtn.addEventListener("click", () => move(1));
 

@@ -83,3 +83,46 @@ def test_auth_required(tmp_path):
     app = create_app(settings=settings, engine_registry=registry)
     with TestClient(app) as c:
         assert c.get(f"/fs?path={tmp_path}").status_code == 401
+
+
+# -- Windows executable detection -------------------------------------------
+
+@pytest.mark.parametrize("name,expected", [
+    ("foo.exe", True),
+    ("foo.EXE", True),
+    ("foo.cmd", True),
+    ("foo.bat", True),
+    ("foo.com", True),
+    ("LICENSE", False),
+    ("Makefile", False),
+    ("README.md", False),
+    (".clang-format", False),
+    ("man.md", False),
+    ("foo.txt", False),
+])
+def test_entry_is_executable_windows(monkeypatch, tmp_path, name, expected):
+    """On Windows, is_executable is decided by PATHEXT, not os.access(X_OK)."""
+    from sturddle_view.api import fs as fs_mod
+
+    monkeypatch.setattr(fs_mod.sys, "platform", "win32")
+    monkeypatch.setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+    p = tmp_path / name
+    p.write_text("x")
+    entry = fs_mod._entry_for(p)
+    assert entry["is_file"]
+    assert entry["is_executable"] is expected
+
+
+def test_entry_is_executable_windows_honors_pathext(monkeypatch, tmp_path):
+    """Non-default PATHEXT entries (e.g. .PS1) are recognized."""
+    from sturddle_view.api import fs as fs_mod
+
+    monkeypatch.setattr(fs_mod.sys, "platform", "win32")
+    monkeypatch.setenv("PATHEXT", ".EXE;.PS1")
+    ps1 = tmp_path / "tool.ps1"
+    ps1.write_text("x")
+    assert fs_mod._entry_for(ps1)["is_executable"] is True
+    bat = tmp_path / "tool.bat"
+    bat.write_text("x")
+    # .BAT is NOT in our PATHEXT for this test, so it should not count.
+    assert fs_mod._entry_for(bat)["is_executable"] is False

@@ -1069,6 +1069,12 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   gap: 4px;
   min-width: 0;
 }
+.engine-probe-banner {
+  margin: 0 0 8px 0; padding: 8px 10px;
+  background: #2a1414; border: 1px solid #6b1f1f; border-radius: 4px;
+  color: #ffd7d7;
+  font-size: 0.8125rem;
+}
 .engine-opt-form {
   /* Grid layout the row class relies on (lives inside this form via
      display: contents). */
@@ -1187,6 +1193,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   border-bottom: 2px solid var(--accent-line);
   overflow: hidden;
   white-space: nowrap;
+  text-overflow: ellipsis;
   user-select: none;
 }
 .engines-table thead th:hover {
@@ -1816,7 +1823,14 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .tournament-id-row .tournament-id { flex: 1; min-width: 0; }
 .tournament-info-reveal-btn { flex-shrink: 0; background: none; border: none; padding: 2px; cursor: pointer; color: var(--muted); line-height: 1; }
 .tournament-info-reveal-btn:hover { color: var(--wa-color-neutral-950); }
-.tournament-info-engines { margin: 0; padding: 0; list-style: none; }
+.tournament-info-engines {
+  margin: 0; padding: 0; list-style: none;
+  /* Cap the engines list so a long roster scrolls in place instead of
+     stretching the info dialog past the viewport and forcing the user
+     to scroll past unrelated rows to see Status/Games/etc. */
+  max-height: 6em;
+  overflow-y: auto;
+}
 .tournament-info-engines li { margin: 0; padding: 1px 0; }
 .tournament-status.status-running {
   background: var(--accent);

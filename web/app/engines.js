@@ -364,12 +364,35 @@ export function mountEngineList(container, api, opts = {}) {
         probeError = apiErrorDetail(e);
       }
     }
+    // Probe still failing -> the Options form has nothing useful to show
+    // (broken executable, moved binary, etc). Offer to remove the entry
+    // rather than open a torn-up dialog the user can't meaningfully edit.
+    if (probeError) {
+      const ok = await confirm({
+        message: `Engine "${engine.name}" cannot be launched: ${probeError} Remove it from your engines?`,
+        okLabel: "Remove",
+        destructive: true,
+      });
+      if (!ok) return;
+      try {
+        await api("DELETE", `/engines/${engine.id}`);
+        toast(`Removed ${engine.name}`, { variant: "success" });
+        selectedDetailId = null;
+        refresh();
+      } catch (err) {
+        reportError(null, "remove", err);
+      }
+      return;
+    }
     while (engine) {
       const result = await showEngineOptionsDialog({ engine, api, probeError });
       if (result === null) break;
       if (result?.__refresh || result?.__reopen) {
         engine = result.engine;
-        probeError = null;
+        // Re-open carries forward the probe outcome: __refresh sets
+        // result.probeError when the in-dialog probe failed; __reopen
+        // (post-save) has no probe and should clear any prior note.
+        probeError = result.probeError ?? null;
         continue;
       }
       refresh();
@@ -387,14 +410,7 @@ export function mountEngineList(container, api, opts = {}) {
     if (!path) return;
     try {
       const created = await api("POST", "/engines", { path });
-      if (created.probe_error) {
-        toast(
-          `Added ${created.name}, but UCI probe failed: ${created.probe_error}`,
-          { variant: "warning" },
-        );
-      } else {
-        toast(`Added ${created.name}`, { variant: "success" });
-      }
+      toast(`Added ${created.name}`, { variant: "success" });
       selectedDetailId = created.id;
       refresh();
     } catch (e) {

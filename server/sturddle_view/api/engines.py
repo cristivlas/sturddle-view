@@ -161,6 +161,10 @@ async def add_engine(payload: EngineCreate, request: Request) -> dict:
     uci_name, schema, probe_error = await probe_engine(
         resolved_path, args=list(payload.args), env=dict(payload.env),
     )
+    if probe_error:
+        # Reject unprobeable engines outright -- a half-broken registry
+        # entry would just trip the user up later when they try to use it.
+        raise HTTPException(status_code=400, detail=probe_error)
     user_supplied = bool((payload.name or "").strip())
     name = (payload.name or "").strip() or uci_name or Path(resolved_path).name
     try:
@@ -180,13 +184,7 @@ async def add_engine(payload: EngineCreate, request: Request) -> dict:
     # alone.
     if reg.selected_id is None:
         reg.select(e.id)
-    body = _serialize(e)
-    if probe_error:
-        # Surface the probe failure so the UI can warn the user. The engine
-        # is still registered (best-effort), but with no UCI options known —
-        # without this, the per-engine dialog would silently look "empty".
-        body["probe_error"] = probe_error
-    return body
+    return _serialize(e)
 
 
 @router.get("/{engine_id}")
@@ -285,7 +283,7 @@ async def refresh_engine_schema(engine_id: str, request: Request) -> dict:
     if not schema:
         detail = "could not capture options from engine"
         if probe_error:
-            detail = f"{detail}: {probe_error}"
+            detail = f"{detail}: {probe_error['message']}"
         raise HTTPException(status_code=502, detail=detail)
     try:
         e = reg.update(engine_id, option_schema=schema)

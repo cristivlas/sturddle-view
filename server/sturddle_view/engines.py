@@ -34,12 +34,51 @@ def default_registry_path() -> Path:
 # either pointless or actively harmful. Lower-case for case-insensitive match.
 _HIDDEN_OPTIONS = {"multipv", "ponder", "uci_chess960", "uci_variant", "uci_analysemode"}
 
+# Same-host UCI handshakes complete in well under 100ms in practice. A
+# bounded wait protects GET /engines from hanging forever on a binary
+# that spawns but never replies (e.g. python.exe in a botched probe).
+_DEFAULT_PROBE_TIMEOUT_SEC = 0.5
+_PROBE_TIMEOUT_ENV = "SV_ENGINE_PROBE_TIMEOUT_SEC"
+
+
+def _probe_timeout_sec() -> float:
+    raw = os.environ.get(_PROBE_TIMEOUT_ENV)
+    if not raw:
+        return _DEFAULT_PROBE_TIMEOUT_SEC
+    try:
+        return max(float(raw), 0.05)
+    except ValueError:
+        return _DEFAULT_PROBE_TIMEOUT_SEC
+
+
+def _classify_probe_exception(exc: BaseException) -> dict:
+    """Map a spawn/handshake exception to a {code, message} pair, cross-platform.
+
+    Classification is by exception type so the caller never has to parse
+    platform-specific text like "WinError 193" or "Exec format error" --
+    both reach us as plain OSError.
+    """
+    if isinstance(exc, FileNotFoundError):
+        return {"code": "engine_path_not_found",
+                "message": "Engine file not found."}
+    if isinstance(exc, PermissionError):
+        return {"code": "engine_permission_denied",
+                "message": "Permission denied launching the engine."}
+    if isinstance(exc, chess.engine.EngineError):
+        return {"code": "engine_not_uci",
+                "message": "Engine did not respond as a UCI engine."}
+    if isinstance(exc, OSError):
+        return {"code": "engine_not_launchable",
+                "message": "Could not launch engine (file is not a runnable program for this system)."}
+    return {"code": "engine_probe_failed",
+            "message": "Could not probe engine."}
+
 
 async def probe_engine(
     engine_path: str,
     args: list[str] | None = None,
     env: dict[str, str] | None = None,
-) -> tuple[str | None, dict[str, dict], str | None]:
+) -> tuple[str | None, dict[str, dict], dict | None]:
     """Briefly spawn the engine; return (uci_id_name, option_schema, error).
 
     `args` and `env` mirror the launch settings stored on the engine — we
@@ -51,11 +90,10 @@ async def probe_engine(
     `option_schema` is a {name: {type, default, min?, max?, vars?}} dict,
     skipping engine-managed options (multipv, ponder, etc.). `uci_id_name`
     is what the engine announces via UCI `id name`, or None if unavailable.
-    `error` is None on success, or a short human-readable failure reason —
-    callers can surface it to the UI so a half-broken registry entry is
-    not silently presented as "engine reported no options".
-    Best-effort: on any failure logs and returns (None, {}, error) so the
-    engine can still be registered.
+    `error` is None on success, or a structured ``{code, message}`` dict
+    with a short user-facing reason -- callers surface ``message`` to the
+    UI directly. Classification is by exception type, not platform text.
+    Best-effort: on any failure logs and returns (None, {}, error).
     """
     command: str | list[str] = [engine_path, *args] if args else engine_path
     popen_kwargs: dict = {}
@@ -63,11 +101,31 @@ async def probe_engine(
         popen_kwargs["env"] = {**os.environ, **env}
     if sys.platform == "win32":
         popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    timeout = _probe_timeout_sec()
     try:
-        transport, engine = await chess.engine.popen_uci(command, **popen_kwargs)
+        transport, engine = await asyncio.wait_for(
+            chess.engine.popen_uci(command, **popen_kwargs), timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        # Process spawned but never completed the UCI handshake. wait_for
+        # has already cancelled the inner task; python-chess kills the
+        # subprocess on cancellation. Return a friendly classification
+        # instead of hanging the caller.
+        log.warning("probe handshake timed out for %s (%.2fs)", engine_path, timeout)
+        return None, {}, {
+            "code": "engine_not_uci",
+            "message": "Engine did not respond to UCI handshake (timeout).",
+        }
     except Exception as e:
-        log.exception("could not spawn %s for probe", engine_path)
-        return None, {}, f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        err = _classify_probe_exception(e)
+        # Classified failures are routine: legacy broken entries get re-probed
+        # on every GET /engines, full tracebacks just spam the log. Unknown
+        # exception types stay at ERROR -- those are real bug signals.
+        if err["code"] == "engine_probe_failed":
+            log.exception("could not spawn %s for probe", engine_path)
+        else:
+            log.warning("probe failed for %s: %s", engine_path, err["message"])
+        return None, {}, err
     try:
         uci_name = engine.id.get("name") or None
         schema: dict[str, dict] = {}
