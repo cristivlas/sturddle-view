@@ -1193,6 +1193,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   border-bottom: 2px solid var(--accent-line);
   overflow: hidden;
   white-space: nowrap;
+  text-overflow: ellipsis;
   user-select: none;
 }
 .engines-table thead th:hover {
