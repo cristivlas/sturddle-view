@@ -1359,6 +1359,12 @@ class HumanVsEngine:
             white_inc=self._tc.increment_seconds,
             black_inc=self._tc.increment_seconds,
         )
+        # Clear the live engine panel at search start; real info events will
+        # repopulate it. Book moves return bestmove without info, leaving it
+        # blank -- which is the signal we want.
+        await self._bus.publish(
+            Event(kind="engine_search_start", game_id=game_id, payload={})
+        )
         try:
             with await engine.analysis(board, limit=limit) as analysis:
                 self._analysis = analysis
@@ -1433,6 +1439,9 @@ class HumanVsEngine:
         except Exception:
             log.exception("could not start engine for analysis")
             return
+        await self._bus.publish(
+            Event(kind="engine_search_start", game_id=game_id, payload={})
+        )
         try:
             with await engine.analysis(board) as analysis:
                 self._analysis = analysis

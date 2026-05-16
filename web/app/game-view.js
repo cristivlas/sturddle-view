@@ -606,6 +606,16 @@ export function mountGameView(container, opts = {}) {
       case "clock_tick":
         setClock(evt.payload);
         break;
+      case "engine_search_start":
+        if (!showEngineInfo) break;
+        if (engineDepth) engineDepth.textContent = "";
+        if (engineScore) engineScore.textContent = "";
+        if (engineNodes) engineNodes.textContent = "";
+        if (engineNps) engineNps.textContent = "";
+        if (engineTbhits) engineTbhits.textContent = "";
+        if (engineHashfull) engineHashfull.textContent = "";
+        if (enginePv) { enginePv.textContent = ""; enginePv.removeAttribute("title"); }
+        break;
       case "engine_info":
         if (!showEngineInfo) break;
         engineSection?.classList.remove("is-empty");
