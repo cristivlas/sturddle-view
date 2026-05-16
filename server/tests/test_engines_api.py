@@ -290,6 +290,56 @@ async def test_probe_engine_classifies_spawn_errors(monkeypatch, exe_a, exc, exp
     assert type(exc).__name__ not in error["message"]
 
 
+async def test_probe_engine_logs_classified_failures_at_warning(monkeypatch, exe_a, caplog):
+    """Known failure classes log a one-liner WARNING, not an ERROR + stacktrace.
+
+    A broken legacy engine entry gets probed on every GET /engines; pumping
+    a full traceback into the server log on each list call is just noise.
+    """
+    import logging
+
+    import chess.engine
+
+    from sturddle_view.engines import probe_engine
+
+    async def boom(*_a, **_kw):
+        raise OSError(8, "Exec format error")
+
+    monkeypatch.setattr(chess.engine, "popen_uci", boom)
+    with caplog.at_level(logging.DEBUG, logger="sturddle_view.engines"):
+        await probe_engine(exe_a)
+    records = [r for r in caplog.records if r.name == "sturddle_view.engines"]
+    assert records, "expected at least one log record from probe_engine"
+    # No ERROR-level records, no exception info attached.
+    for r in records:
+        assert r.levelno < logging.ERROR, (
+            f"classified failure should not log at ERROR (got {r.levelname}: {r.getMessage()})"
+        )
+        assert r.exc_info is None, "stacktrace should not be attached for classified failures"
+
+
+async def test_probe_engine_logs_unclassified_failures_at_error(monkeypatch, exe_a, caplog):
+    """Unknown exception classes keep the full stacktrace -- that's a real bug signal."""
+    import logging
+
+    import chess.engine
+
+    from sturddle_view.engines import probe_engine
+
+    async def boom(*_a, **_kw):
+        raise RuntimeError("something nobody expected")
+
+    monkeypatch.setattr(chess.engine, "popen_uci", boom)
+    with caplog.at_level(logging.DEBUG, logger="sturddle_view.engines"):
+        await probe_engine(exe_a)
+    error_records = [
+        r for r in caplog.records
+        if r.name == "sturddle_view.engines" and r.levelno >= logging.ERROR
+    ]
+    assert error_records, "unclassified failure should log at ERROR with traceback"
+    assert any(r.exc_info for r in error_records)
+
+
 async def test_probe_engine_classifies_non_uci_engine(monkeypatch, exe_a):
     """A spawned process that doesn't speak UCI maps to engine_not_uci."""
     import chess.engine

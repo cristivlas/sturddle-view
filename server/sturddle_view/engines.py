@@ -88,8 +88,15 @@ async def probe_engine(
     try:
         transport, engine = await chess.engine.popen_uci(command, **popen_kwargs)
     except Exception as e:
-        log.exception("could not spawn %s for probe", engine_path)
-        return None, {}, _classify_probe_exception(e)
+        err = _classify_probe_exception(e)
+        # Classified failures are routine: legacy broken entries get re-probed
+        # on every GET /engines, full tracebacks just spam the log. Unknown
+        # exception types stay at ERROR -- those are real bug signals.
+        if err["code"] == "engine_probe_failed":
+            log.exception("could not spawn %s for probe", engine_path)
+        else:
+            log.warning("probe failed for %s: %s", engine_path, err["message"])
+        return None, {}, err
     try:
         uci_name = engine.id.get("name") or None
         schema: dict[str, dict] = {}
