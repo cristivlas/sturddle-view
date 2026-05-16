@@ -263,13 +263,6 @@ export function mountGameView(container, opts = {}) {
     tbLine.classList.remove("is-empty");
   }
 
-  // Hide the whole game-view column (clocks + board + meta) until the
-  // first board_update arrives, so the user never sees the cm-chessboard
-  // default startpos flash or the clock bars rendering ahead of the
-  // board. Fades in together via CSS (.is-pending opacity:0 + transition)
-  // when the class is removed in applyEvent.
-  const boardCol = container.querySelector(".game-view-board") || container;
-  boardCol.classList.add("is-pending");
   const board = mountBoard({
     element: boardEl,
     styleId: boardStyle,
@@ -281,6 +274,7 @@ export function mountGameView(container, opts = {}) {
   // cm-chessboard sizes its SVG off boardEl.clientWidth (squared), ignoring
   // height. We compute a square that fits the column width AND the viewport
   // height, then drive cm-chessboard's measurement.
+  const boardCol = container.querySelector(".game-view-board") || container;
 
   function sumSiblingsBelow(node, gap) {
     // Only count siblings that are visually below `node` (greater top).
@@ -447,9 +441,13 @@ export function mountGameView(container, opts = {}) {
   let viewing = false;
   let editing = false;
   // First board_update after (re)mount: snap pieces to position instead
-  // of animating from startpos. Otherwise the user sees a distracting
-  // setup animation every time they return to this perspective.
+  // of animating from startpos, and resolve the `ready` Promise so the
+  // PerspectiveRouter can reveal the perspective. Otherwise the user
+  // sees clocks/side-rail render before the board, and pieces animate
+  // from cm-chessboard's default startpos to the real FEN.
   let firstBoardUpdate = true;
+  let resolveReady;
+  const ready = new Promise((r) => { resolveReady = r; });
   // Edit-mode side-to-move ("w"|"b"). Authoritative while editing; play.js
   // mirrors it for its ribbon UI but defers to setEditSide for writes.
   let editStm = "w";
@@ -563,8 +561,8 @@ export function mountGameView(container, opts = {}) {
           board.setPosition(evt.payload.fen, evt.payload.last_move, !firstBoardUpdate);
         }
         if (firstBoardUpdate) {
-          boardCol.classList.remove("is-pending");
           firstBoardUpdate = false;
+          resolveReady();
         }
         setFen(evt.payload.fen);
         if (!editing) board.clearArrows();
@@ -677,6 +675,7 @@ export function mountGameView(container, opts = {}) {
   }
 
   return {
+    ready,
     setGameId(id) {
       gameId = id;
     },

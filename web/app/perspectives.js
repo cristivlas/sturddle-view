@@ -5,10 +5,19 @@
 // perspectives calls the previous controller's `unmount` (if any), clears the
 // root, and mounts the next.
 //
-// Optional controller hook: `canUnmount() -> Promise<bool>`. Called before
-// unmount; if it resolves to false, the switch is aborted (controller stays
-// mounted). Lets a perspective guard against losing in-progress work (e.g.
-// confirm before discarding an open editor).
+// Optional controller hooks:
+// - `canUnmount() -> Promise<bool>`: called before unmount; resolving to
+//   false aborts the switch (controller stays mounted). Lets a perspective
+//   guard against losing in-progress work.
+// - `ready: Promise<void>`: resolves when the perspective has rendered its
+//   real content (e.g. first server payload landed). The router keeps the
+//   root faded out until this resolves, so the user doesn't see half-loaded
+//   UI flashing before the real state. Capped at READY_TIMEOUT_MS so a
+//   perspective that forgets to signal doesn't stay invisible forever.
+
+const READY_TIMEOUT_MS = 500;
+// Must match the opacity transition on #perspective-root in styles.css.
+const FADE_MS = 80;
 
 const STORAGE_KEY = "sturddle:active-perspective";
 
@@ -45,6 +54,14 @@ export class PerspectiveRouter {
         console.error(`canUnmount(${this._active}) failed`, e);
       }
     }
+    // Phase 1: fade the current perspective out (if any) before tearing
+    // it down, so the user doesn't see a hard cut from old content to
+    // blank space.
+    if (this._activeController) {
+      this._root.classList.add("is-pending");
+      await new Promise((r) => setTimeout(r, FADE_MS));
+    }
+
     if (this._activeController?.unmount) {
       try {
         await this._activeController.unmount();
@@ -54,6 +71,10 @@ export class PerspectiveRouter {
     }
     this._activeController = null;
     this._root.innerHTML = "";
+    // Keep is-pending applied (or apply it for the first-load case where
+    // there was no prior controller) so the new content is invisible
+    // while it mounts and waits for `ready`.
+    this._root.classList.add("is-pending");
 
     const persp = this._registry.get(id);
     this._active = id;
@@ -63,6 +84,13 @@ export class PerspectiveRouter {
       // localStorage may be unavailable; non-fatal.
     }
     this._activeController = (await persp.mount(this._root, this._ctx)) ?? null;
+    if (this._activeController?.ready) {
+      await Promise.race([
+        this._activeController.ready,
+        new Promise((r) => setTimeout(r, READY_TIMEOUT_MS)),
+      ]);
+    }
+    this._root.classList.remove("is-pending");
     return true;
   }
 

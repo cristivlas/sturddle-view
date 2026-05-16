@@ -991,6 +991,7 @@ export const playPerspective = {
     });
 
     return {
+      ready: view.ready,
       async canUnmount() {
         if (!editing) return true;
         return await confirm({
