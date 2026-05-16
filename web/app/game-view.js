@@ -263,6 +263,13 @@ export function mountGameView(container, opts = {}) {
     tbLine.classList.remove("is-empty");
   }
 
+  // Hide the whole game-view column (clocks + board + meta) until the
+  // first board_update arrives, so the user never sees the cm-chessboard
+  // default startpos flash or the clock bars rendering ahead of the
+  // board. Fades in together via CSS (.is-pending opacity:0 + transition)
+  // when the class is removed in applyEvent.
+  const boardCol = container.querySelector(".game-view-board") || container;
+  boardCol.classList.add("is-pending");
   const board = mountBoard({
     element: boardEl,
     styleId: boardStyle,
@@ -274,7 +281,6 @@ export function mountGameView(container, opts = {}) {
   // cm-chessboard sizes its SVG off boardEl.clientWidth (squared), ignoring
   // height. We compute a square that fits the column width AND the viewport
   // height, then drive cm-chessboard's measurement.
-  const boardCol = container.querySelector(".game-view-board") || container;
 
   function sumSiblingsBelow(node, gap) {
     // Only count siblings that are visually below `node` (greater top).
@@ -440,6 +446,10 @@ export function mountGameView(container, opts = {}) {
   let names = { top: "—", bottom: "—" };
   let viewing = false;
   let editing = false;
+  // First board_update after (re)mount: snap pieces to position instead
+  // of animating from startpos. Otherwise the user sees a distracting
+  // setup animation every time they return to this perspective.
+  let firstBoardUpdate = true;
   // Edit-mode side-to-move ("w"|"b"). Authoritative while editing; play.js
   // mirrors it for its ribbon UI but defers to setEditSide for writes.
   let editStm = "w";
@@ -550,7 +560,11 @@ export function mountGameView(container, opts = {}) {
           else setNames({ bottom: b, top: w });
         }
         if (!editing) {
-          board.setPosition(evt.payload.fen, evt.payload.last_move);
+          board.setPosition(evt.payload.fen, evt.payload.last_move, !firstBoardUpdate);
+        }
+        if (firstBoardUpdate) {
+          boardCol.classList.remove("is-pending");
+          firstBoardUpdate = false;
         }
         setFen(evt.payload.fen);
         if (!editing) board.clearArrows();

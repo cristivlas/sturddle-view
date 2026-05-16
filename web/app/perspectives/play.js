@@ -991,6 +991,15 @@ export const playPerspective = {
     });
 
     return {
+      async canUnmount() {
+        if (!editing) return true;
+        return await confirm({
+          message: "Leaving will cancel your position edit. Continue?",
+          okLabel: "Leave",
+          cancelLabel: "Stay",
+          destructive: true,
+        });
+      },
       unmount() {
         if (editing) {
           // Fire-and-forget cancel so the server doesn't stay stuck in

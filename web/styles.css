@@ -736,6 +736,12 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   width: var(--board-max-px, 100%);
   align-self: center;
 }
+.game-view-board {
+  transition: opacity 16ms linear;
+}
+.game-view-board.is-pending {
+  opacity: 0;
+}
 .game-view-board .board {
   background: #2a2a2a;
   border: 1px solid #333;

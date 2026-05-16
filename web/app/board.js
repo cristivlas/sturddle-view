@@ -38,8 +38,8 @@ export function mountBoard({ element, onMove, styleId }) {
     }
   }
 
-  function setPosition(fen, lastMoveUci) {
-    board.setPosition(fen, true);
+  function setPosition(fen, lastMoveUci, animate = true) {
+    board.setPosition(fen, animate);
     board.removeMarkers();
     if (lastMoveUci && lastMoveUci.length >= 4) {
       const from = lastMoveUci.slice(0, 2);

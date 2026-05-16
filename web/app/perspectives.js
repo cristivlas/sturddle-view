@@ -4,6 +4,11 @@
 // `mount` populates the root element and returns a controller. Switching
 // perspectives calls the previous controller's `unmount` (if any), clears the
 // root, and mounts the next.
+//
+// Optional controller hook: `canUnmount() -> Promise<bool>`. Called before
+// unmount; if it resolves to false, the switch is aborted (controller stays
+// mounted). Lets a perspective guard against losing in-progress work (e.g.
+// confirm before discarding an open editor).
 
 const STORAGE_KEY = "sturddle:active-perspective";
 
@@ -29,9 +34,17 @@ export class PerspectiveRouter {
   }
 
   async activate(id) {
-    if (id === this._active) return;
+    if (id === this._active) return true;
     if (!this._registry.has(id)) throw new Error(`unknown perspective: ${id}`);
 
+    if (this._activeController?.canUnmount) {
+      try {
+        const ok = await this._activeController.canUnmount();
+        if (!ok) return false;
+      } catch (e) {
+        console.error(`canUnmount(${this._active}) failed`, e);
+      }
+    }
     if (this._activeController?.unmount) {
       try {
         await this._activeController.unmount();
@@ -50,6 +63,7 @@ export class PerspectiveRouter {
       // localStorage may be unavailable; non-fatal.
     }
     this._activeController = (await persp.mount(this._root, this._ctx)) ?? null;
+    return true;
   }
 
   /** Activate the last-used perspective if known, else the first registered. */
