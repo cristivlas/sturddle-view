@@ -15,9 +15,20 @@
 //   UI flashing before the real state. Capped at READY_TIMEOUT_MS so a
 //   perspective that forgets to signal doesn't stay invisible forever.
 
-const READY_TIMEOUT_MS = 500;
-// Must match the opacity transition on #perspective-root in styles.css.
-const FADE_MS = 80;
+// Upper bound on how long the router waits for a perspective's `ready`
+// before revealing anyway. Short enough that a slow backend doesn't make
+// perspective switches feel laggy; long enough to usually hide first-render
+// flashes (e.g. cm-chessboard going from startpos to the real FEN).
+const READY_TIMEOUT_MS = 100;
+
+// Parse a CSS time string ("80ms" / "0.08s") to milliseconds. Multi-value
+// lists fall back to the first entry.
+function _cssMs(value) {
+  const first = (value || "").split(",")[0].trim();
+  if (first.endsWith("ms")) return parseFloat(first) || 0;
+  if (first.endsWith("s")) return (parseFloat(first) || 0) * 1000;
+  return 0;
+}
 
 const STORAGE_KEY = "sturddle:active-perspective";
 
@@ -56,10 +67,11 @@ export class PerspectiveRouter {
     }
     // Phase 1: fade the current perspective out (if any) before tearing
     // it down, so the user doesn't see a hard cut from old content to
-    // blank space.
+    // blank space. Duration comes from the CSS transition on the root.
     if (this._activeController) {
+      const fadeMs = _cssMs(getComputedStyle(this._root).transitionDuration);
       this._root.classList.add("is-pending");
-      await new Promise((r) => setTimeout(r, FADE_MS));
+      if (fadeMs > 0) await new Promise((r) => setTimeout(r, fadeMs));
     }
 
     if (this._activeController?.unmount) {

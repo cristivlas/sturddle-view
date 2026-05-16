@@ -16,6 +16,12 @@ export function isPlayInProgress() {
   return _playInProgress;
 }
 
+// Last board_update seen by this perspective. Survives unmount so the
+// next mount can render the cached state synchronously and resolve
+// view.ready before /sync round-trips. The /sync response then
+// overrides if anything changed server-side.
+let _cachedBoardUpdate = null;
+
 // Reduce a game_result payload to the canonical chess result string for
 // the header badge. resign/timeout don't carry "1-0"/"0-1" in the payload
 // so we derive it from who lost (only human can resign today).
@@ -352,11 +358,7 @@ export const playPerspective = {
     window.addEventListener("sturddle:settings-changed", onSettingsChanged);
 
     // Ask server to re-emit current state so the freshly-mounted view syncs.
-    // Delay slightly so the GameView's first recompute and board mount have
-    // settled before we apply the snapshot.
-    setTimeout(() => {
-      ctx.api("POST", "/game/sync", {}).catch(() => {});
-    }, 200);
+    ctx.api("POST", "/game/sync", {}).catch(() => {});
 
     // Track whether the current game is in progress (any moves played and
     // not yet ended). Drives New Game enable + confirm semantics.
@@ -484,6 +486,7 @@ export const playPerspective = {
     const offEvent = ctx.events.on((evt) => {
       switch (evt.kind) {
         case "board_update": {
+          _cachedBoardUpdate = evt;
           movesPlayed = evt.payload.moves_san?.length ?? 0;
           gameOver = false;
           showFinishedBadge("");
@@ -582,6 +585,16 @@ export const playPerspective = {
           break;
       }
     });
+
+    // Replay the last seen board_update (from a previous mount of this
+    // perspective) so the view renders synchronously at the cached
+    // position. Both subscribers (game-view's applyEvent, the offEvent
+    // above) are now wired; emit dispatches them in this call stack. The
+    // /sync POST above still fires and the fresh board_update will
+    // override if anything changed server-side.
+    if (_cachedBoardUpdate) {
+      ctx.events.emit(_cachedBoardUpdate);
+    }
 
     const onNewGame = async () => {
       if (!viewing && movesPlayed > 0 && !gameOver) {
