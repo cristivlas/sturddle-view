@@ -183,6 +183,10 @@ class HumanVsEngine:
         # Per-ply post-move eval (white POV) parsed from PGN comments.
         # None when the PGN had no recognizable eval annotations.
         self._view_eval_history: list[dict | None] | None = None
+        # PGN [Result]/[Termination] from the imported game (None when
+        # not in view mode). Read by _board_event's view payload.
+        self._view_pgn_result: str | None = None
+        self._view_pgn_termination: str | None = None
         self._tb: TablebaseProber | None = None
         self._lock = asyncio.Lock()
         # Pending uci_log publish tasks; held to keep them from being GC'd
