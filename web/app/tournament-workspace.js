@@ -324,9 +324,24 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const dragEl = wb.g?.querySelector(".wb-drag");
     if (!dragEl) return;
     dragEl.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
       if (wb.max) {
-        pendingDragX = e.pageX;
-        window.addEventListener("mouseup", () => { pendingDragX = null; }, { once: true });
+        // Arm on first mousemove rather than mousedown: if WinBox restores via
+        // dblclick the restore fires before the 2nd mousedown, so we can't know
+        // on mousedown alone whether a drag or dblclick will follow.
+        wb._armX = e.pageX;
+        const onMove = () => {
+          if (wb._armX !== null) {
+            pendingDragX = wb._armX;
+            wb._armX = null;
+          }
+        };
+        window.addEventListener("mousemove", onMove, { once: true });
+        window.addEventListener("mouseup", () => {
+          window.removeEventListener("mousemove", onMove);
+          wb._armX = null;
+          pendingDragX = null;
+        }, { once: true });
       } else if (!wb._justRestored) {
         // Any header mousedown (click or drag) shows shadow; reapplyLayout clears it.
         setShadow(wb, true);
