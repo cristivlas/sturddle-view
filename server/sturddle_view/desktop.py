@@ -37,7 +37,7 @@ def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> N
     settings = Settings(host=host, port=port)
     # Pin the token so the uvicorn-spawned create_app() picks up the same
     # value via Settings() (rather than rolling a new random one).
-    os.environ.setdefault("STURDDLE_TOKEN", settings.token)
+    os.environ.setdefault("SV_TOKEN", settings.token)
 
     config = uvicorn.Config(
         "sturddle_view.app:create_app",

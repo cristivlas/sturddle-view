@@ -86,16 +86,16 @@ def main() -> None:
 
     # Push CLI overrides into env so the worker process's Settings() picks them up.
     if args.engine:
-        os.environ["STURDDLE_ENGINE_PATH"] = args.engine
+        os.environ["SV_ENGINE_PATH"] = args.engine
     if args.host:
-        os.environ["STURDDLE_HOST"] = args.host
+        os.environ["SV_HOST"] = args.host
     if args.port:
-        os.environ["STURDDLE_PORT"] = str(args.port)
+        os.environ["SV_PORT"] = str(args.port)
     if args.no_auth:
-        os.environ["STURDDLE_AUTH_DISABLED"] = "1"
+        os.environ["SV_AUTH_DISABLED"] = "1"
     if args.cert:
-        os.environ["STURDDLE_TLS_CERT"] = args.cert
-        os.environ["STURDDLE_TLS_KEY"] = args.key
+        os.environ["SV_TLS_CERT"] = args.cert
+        os.environ["SV_TLS_KEY"] = args.key
 
     settings = Settings()
     host = settings.host

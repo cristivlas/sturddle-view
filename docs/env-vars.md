@@ -4,6 +4,23 @@ Runtime configuration knobs and debug toggles. All recognized
 variables use the `SV_` prefix. Defaults are sized for typical
 tournaments; override only when telemetry justifies it.
 
+## Core
+
+Override CLI defaults or pin values for desktop-mode subprocesses.
+Any field on `Settings` is also implicitly readable as
+`SV_<UPPER_FIELD_NAME>` -- the table lists only those set explicitly
+by the CLI or by `desktop.py`.
+
+| Var | Source | Effect |
+|---|---|---|
+| `SV_HOST` | `--host` | Bind address. Default `127.0.0.1`. |
+| `SV_PORT` | `--port` | Bind port. Default `8765`. |
+| `SV_TOKEN` | random / `desktop.py` | Shared-secret auth token. |
+| `SV_AUTH_DISABLED` | `--no-auth` | Disable token auth. |
+| `SV_TLS_CERT` | `--cert` | TLS certificate path. Requires `SV_TLS_KEY`. |
+| `SV_TLS_KEY` | `--key` | TLS private key path. Requires `SV_TLS_CERT`. |
+| `SV_ENGINE_PATH` | `--engine` | Fallback engine when registry has no selection. |
+
 ## Debug flags
 
 Boolean: `0` (default) or `1`. Output is gated on `--debug` (i.e. the
