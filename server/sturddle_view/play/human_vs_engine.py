@@ -1075,10 +1075,9 @@ class HumanVsEngine:
     async def swap_engine(self, path: str) -> None:
         """Replace the engine binary; preserves the active game.
 
-        Per-engine ``args``/``env`` are picked up via the existing
-        ``set_engine_args``/``set_engine_env`` setters that the API layer
-        already calls on every fetch — they apply to the next spawn after
-        the swap, so we don't need to thread them through here.
+        Per-engine UCI options / args / env from the previous binary are
+        cleared so they don't leak into the new spawn. The API layer
+        re-seeds them from the registry on the next fetch.
         """
         kick_engine = False
         async with self._lock:
@@ -1088,6 +1087,9 @@ class HumanVsEngine:
             await self._quit_engine()
             self._engine_path = path
             self._engine_name = None
+            self._engine_options = {}
+            self._engine_args = []
+            self._engine_env = {}
             if self._board is not None and self._game_id is not None:
                 await self._publish_board()
                 if not self._board.is_game_over() and not self._paused:
