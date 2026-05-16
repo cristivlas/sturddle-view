@@ -230,6 +230,27 @@ async def delete_recent_import(h: str, request: Request) -> dict:
     return {"ok": True}
 
 
+@router.post("/view/start")
+async def view_start(request: Request) -> dict:
+    """Enter view mode at the current play-mode position.
+
+    State flip only: no parsing, no recents write. Intended as the
+    play -> view transition for clients that want to reach view mode
+    (e.g. as a precondition to edit mode) without going through
+    `/game/import`, which has the side effect of saving to the
+    recent-imports store.
+    """
+    hve = await _get_hve(request)
+    fen = hve.current_fen()
+    try:
+        game_id = await hve.enter_view_mode(
+            start_fen=fen, moves_uci=[], clock_history=None,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"game_id": game_id, "viewing": True}
+
+
 @router.post("/view/first")
 async def view_first(request: Request) -> dict:
     hve = await _get_hve(request)
@@ -322,7 +343,15 @@ async def edit_commit(payload: dict, request: Request) -> dict:
         game_id = await hve.commit_edit(fen)
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    return {"game_id": game_id}
+    # Defensible save: a successful commit means the user deliberately
+    # accepted this position. Cancel never reaches here, so cancelled
+    # edits are not persisted. commit_edit already validated the FEN, so
+    # parse_fen will not raise.
+    summary = parse_fen(fen).summary
+    h = await request.app.state.recent_imports.save(
+        fmt="fen", text=fen, summary=summary,
+    )
+    return {"game_id": game_id, "hash": h, "summary": summary}
 
 
 @router.post("/edit/cancel")

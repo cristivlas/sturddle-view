@@ -782,6 +782,11 @@ class HumanVsEngine:
 
     # ----- view mode -----
 
+    def current_fen(self) -> str | None:
+        """Snapshot of the current board's full FEN, or None if no game
+        is set up yet. Read-only; does not acquire the lock."""
+        return self._board.fen() if self._board is not None else None
+
     async def enter_view_mode(
         self,
         *,

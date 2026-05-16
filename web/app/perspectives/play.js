@@ -711,8 +711,9 @@ export const playPerspective = {
     }
 
     async function _enterEditFromCurrentMode() {
-      // Server requires view mode before edit; import current FEN into
-      // view mode if we're in play mode.
+      // Server requires view mode before edit. From play mode, flip into
+      // view via /game/view/start (no recents write); /game/import would
+      // pollute the recents history with the current play position.
       if (!viewing) {
         if (movesPlayed > 0 && !gameOver) {
           const ok = await confirm({
@@ -724,7 +725,7 @@ export const playPerspective = {
           if (!ok) return;
         }
         try {
-          const r = await ctx.api("POST", "/game/import", { format: "fen", text: view.getFen() });
+          const r = await ctx.api("POST", "/game/view/start", {});
           view.setGameId(r.game_id);
           await ctx.api("POST", "/game/sync", {});
         } catch (e) {
