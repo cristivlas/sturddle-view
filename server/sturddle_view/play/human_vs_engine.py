@@ -589,8 +589,9 @@ class HumanVsEngine:
                 wt, bt = self._clock_history.pop()
             self._white_time = wt
             self._black_time = bt
-            self._turn_started_at = time.monotonic()
-            self._paused = False
+            # Preserve pause state across takeback: undoing should not
+            # silently resume the clock.
+            self._turn_started_at = None if self._paused else time.monotonic()
             await self._persist()
             await self._publish_board()
             await self._publish_clock()

@@ -122,6 +122,17 @@ async def test_takeback_with_no_moves_raises(hve):
         await hve.takeback()
 
 
+async def test_takeback_while_paused_stays_paused(hve):
+    await hve.new_game(human_white=True, tc=TimeControl(60.0, 0.0))
+    await hve.submit_move("e2e4")
+    await _engine_reply(hve, "e7e5")
+    await hve.pause()
+    assert hve.is_paused
+    await hve.takeback()
+    assert hve.is_paused
+    assert hve._board.move_stack == []
+
+
 async def test_takeback_after_pgn_seeded_game(hve):
     # Regression: seeding plies via start_moves_uci must populate _clock_history
     # so takeback's pop() doesn't IndexError. Reproduces the import-PGN-then-undo

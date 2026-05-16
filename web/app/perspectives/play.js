@@ -451,7 +451,7 @@ export const playPerspective = {
       pauseBtn.setAttribute("title", paused ? "Resume" : "Pause");
       setDisabled(
         takebackBtn,
-        paused || analyzing || gameOver || !allowTakeback || movesPlayed === 0,
+        analyzing || gameOver || !allowTakeback || movesPlayed === 0,
       );
       setDisabled(switchSidesBtn, analyzing || gameOver || !resignAvailable);
       setDisabled(resignBtn, paused || analyzing || gameOver || !resignAvailable);
