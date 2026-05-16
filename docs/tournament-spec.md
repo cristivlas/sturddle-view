@@ -27,13 +27,19 @@ Out of scope for Phase 1:
 - Queue / scheduling of tournaments (Phase 2).
 - Attaching to a tournament started outside the GUI ("peek" / headless
   attach). The orchestrator is factored so this can be added later.
-
-Pause/Resume is implemented: stopping a running tournament transitions
-it to ``stopped``; starting it again resumes from where it left off
-(per-tournament state survives across runs).
 - Connecting to remote machines running tournaments.
 - Multiple tournaments running concurrently on the same server (enforced
   single-active; see "Concurrency policy" below).
+
+## Terminology: UI labels vs. code states
+
+The UI surfaces tournament lifecycle as **Start / Pause / Resume**;
+the code's state machine uses **`idle / running / stopped / done`**
+(no `paused` state). The Pause button transitions `running -> stopped`;
+the Resume button starts a `stopped` tournament again, picking up from
+fastchess's persisted `config.json`. This split is deliberate -- the UI
+verbs read naturally to users, the code keeps a minimal state set --
+and the rest of this spec uses the code names.
 
 ---
 
@@ -148,9 +154,6 @@ status flips to `failed`, `last_error.stderr_tail` carries the message,
 and `last_error.rescheck` carries the structured detail
 (`{reason, cpu_load, ram_load_mb, ...}`).
 
-See [docs/tournament-concurrency-plan.md](tournament-concurrency-plan.md)
-for the working notes (deferred slices, empirical findings).
-
 ---
 
 ## Lifecycle and state machine
@@ -167,14 +170,10 @@ States: `idle` -> `running` -> (`stopped` | `done`).
 - **Done**: fastchess exits cleanly (all rounds completed, or SPRT
   decided), transitions `running -> done`.
 
-There is **no Pause/Resume verb** in Phase 1. Rationale: simpler state
-machine, identical behavior on all platforms, no chunked-loop runner
-complexity, no signal-handling asymmetry between POSIX (SIGTERM) and
-Windows (TerminateProcess is hard-kill anyway). If a Resume verb is
-later requested, fastchess's `-config file=...` mechanism makes it
-trivially addable without changing the existing state machine -- Resume
-becomes "Start with `-config` pointing at the prior tournament's
-artifacts." See **Resume after Stop** below for the concrete plan.
+The state machine has **no `paused` state**: the UI's Pause button
+maps to Stop (`running -> stopped`) and Resume maps to Start on a
+`stopped` row, picking up from fastchess's persisted `config.json`
+(see **Resume after Stop** below).
 
 ### Cross-platform process control
 
@@ -512,8 +511,7 @@ row-click suffices), eval graphs (Phase 2).
 
 This section captures the design for live game viewing -- the part of
 the workspace that was deferred when Slice 8 shipped. Implementing it
-involves three independently-shippable pieces (see
-`docs/tournament-plan.md` for the slice breakdown).
+involves three independently-shippable pieces.
 
 #### Two pieces, well-bounded
 
@@ -553,45 +551,18 @@ What you give up: the **opponent engine's** internal eval/PV/depth.
 That's available from the opponent's proxy if the user attaches a
 second window to it.
 
-#### Schedule rows = proxies (single-side; pairing deferred)
+#### Schedule rows = proxies (single-side)
 
-Originally specified as automatic pair detection on the server (a
-`pair_index` matching proxies by shared move list). **Tried and
-removed.** What we shipped: one Schedule row per active proxy
-(engine process), labeled with its engine name, with a "watch"
-button that opens a single-engine live window.
+Shipped model: one Schedule row per active proxy (engine process),
+labeled with its engine name, with a "watch" button that opens a
+single-engine live window. Move-list-based pair detection runs in the
+orchestrator for end-of-game reconciliation (see
+`pgn-reconciliation.md`) but is not exposed in the Schedule UI.
 
-Why pairing turned out untenable in Phase 1:
-
-- **Same-opening overlap under concurrency.** With `-concurrency > 1`
-  fastchess runs the same opening line in parallel game-slots
-  (book-driven, intentionally; SPRT pairs play each opening twice
-  with colors swapped). All four proxies briefly hold the same
-  `(move_list, ply)` state. Strict same-key matching produces
-  ambiguity; prefix-relaxed matching produces phantom cross-pairs
-  (e.g. two processes of the *same engine* from different slots
-  paired with each other).
-- **No end-of-game UCI signal.** Engine processes are reused across
-  rounds (UCI has no `endgame`; just `ucinewgame` for the next).
-  A locked pair stays locked even after fastchess re-pairs the
-  engines for the next round; the index silently keeps stale
-  partnerships.
-- **Strict ply-difference checks flap.** Forcing `|ply_a - ply_b| <= 1`
-  to guarantee opposite side-to-move yields constant
-  observe / dissolve flapping under normal batching, because one
-  side often races ahead by several plies before the other catches up.
-
-We tried strict pairing, prefix pairing, and uniqueness-disambiguated
-pairing. All three failed in different ways. The path forward
-(documented; not in scope for Phase 1) is **deterministic** pairing:
-vendor a fastchess fork, emit an `extended UCI` announcement at
-game-start (`sturddle game-start slot=N white=X black=Y`), have the
-proxy intercept and forward to the orchestrator. With authoritative
-pairings, the dual-PV window described in the original "Attach to
-engine, not to game" trade-off becomes trivial.
-
-Until then we ship the simple model: one row per proxy, one window
-per click. To see both sides of a game the user opens two windows.
+To see both sides of a game the user opens two windows. A future
+deterministic-pairing scheme (vendoring a fastchess fork to emit an
+extended-UCI game-start announcement) could enable dual-PV windows; not
+in scope until somebody asks.
 
 #### Volume & high-concurrency considerations
 
@@ -1052,39 +1023,14 @@ Future work (not part of the resume effort):
 
 ---
 
-## Cross-proxy bestmove race: approach history
+## Cross-proxy bestmove race
 
-### The race
-
-Each engine runs as a separate proxy process. Both POST their UCI traffic
-independently. Within one proxy events are ordered (position then bestmove
-for that turn), but between proxies the POSTs race: after black plays,
-fastchess immediately feeds white its new position. White's position POST
-and black's bestmove POST can arrive in either order.
-
-If the client receives a bestmove before its position, it calls
-`/api/chess/apply-move` against a stale FEN and gets an error response.
-
-### Attempted fix: server-side reorder buffer (reverted)
-
-Per-pair queues held each proxy's events and drained them in canonical
-(color, ply) order before fanning out to game subscribers. This guaranteed
-the client always saw position-before-bestmove.
-
-Downsides that led to reverting:
-- Added ~150 lines of orchestrator state and logic.
-- `go` events (clock updates) were held in the buffer during the race
-  window, so clock display could lag.
-- Buffered `info` lines for the stalled turn were all flushed to
-  `_fanout` in a tight synchronous loop. Because `CoalescingQueue`
-  uses latest-wins per-proxy coalescing, only the last `info` of the
-  batch survived -- earlier depth/score updates from that turn were
-  silently dropped.
-
-### Current approach: client-side graceful skip
-
-`/api/chess/apply-move` returns **204** (instead of 400) when the move
-is illegal (i.e. applied against a stale FEN). The client logs a
-`console.warn` and returns early. The next `position` event self-corrects
-the board. No server buffering, no lost `info` lines, no clock lag.
-Tradeoff: the move animation is skipped for the affected half-move.
+Each engine runs as a separate proxy process and POSTs UCI traffic
+independently, so between proxies a `position` and the prior turn's
+`bestmove` can arrive in either order. The client handles this
+gracefully: `/api/chess/apply-move` returns **204** on a stale-FEN
+illegal move, the client logs a `console.warn` and skips, and the next
+`position` event self-corrects the board. Tradeoff: the move animation
+is skipped for the affected half-move. A server-side reorder buffer was
+tried and reverted (held clock updates and silently coalesced
+mid-turn `info` lines).

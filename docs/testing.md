@@ -148,7 +148,7 @@ frontend.
 
 2. Desktop mode. `python -m sturddle_view --desktop`. PyWebView window
    opens, hits `/auth?token=...`, lands on `/ui/`, WS connects. Token is
-   pinned via `STURDDLE_TOKEN` so the uvicorn worker's `create_app()`
+   pinned via `SV_TOKEN` so the uvicorn worker's `create_app()`
    sees the same value the window was opened with.
 
 3. Tailscale / trusted-LAN open. `python -m sturddle_view --host 0.0.0.0

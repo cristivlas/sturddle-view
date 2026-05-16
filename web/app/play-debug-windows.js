@@ -484,7 +484,11 @@ function buildPvTableBody(events, { setOff }) {
     storageKey: COL_WIDTHS_KEY,
     sizes: colWidths,
     unit: "px",
-    dragLineHeight: () => Math.max(body.scrollHeight, body.parentElement?.clientHeight ?? 0),
+    dragLineHeight: () => {
+      const tr = tableEl.getBoundingClientRect();
+      const br = body.getBoundingClientRect();
+      return Math.max(0, tr.bottom - br.top);
+    },
     applySizes(sizes, ctx) {
       if (ctx) {
         const { deltaFrac, tableWidth, startSizes, gripIdx } = ctx;

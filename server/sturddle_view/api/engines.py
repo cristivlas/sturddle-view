@@ -203,7 +203,7 @@ def get_engine(engine_id: str, request: Request) -> dict:
 
 
 @router.patch("/{engine_id}")
-def update_engine(engine_id: str, payload: EngineUpdate, request: Request) -> dict:
+async def update_engine(engine_id: str, payload: EngineUpdate, request: Request) -> dict:
     _check_engine_locked(engine_id, request)
     reg = _registry(request)
     new_path = _validate_engine_path(payload.path) if payload.path is not None else None
@@ -221,6 +221,17 @@ def update_engine(engine_id: str, payload: EngineUpdate, request: Request) -> di
         raise HTTPException(status_code=404, detail="engine not found") from exc
     except DuplicateEngineError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # If the edited engine is the one currently driving HvE, push the new
+    # launch profile to the live instance so the next move uses it.
+    s = request.app.state
+    hve = getattr(s, "hve", None)
+    if hve is not None and reg.selected_id == engine_id:
+        launch = resolve_selected(s.engines, s.settings)
+        hve.set_engine_name(launch.name)
+        hve.set_engine_options(launch.options)
+        hve.set_engine_args(launch.args)
+        hve.set_engine_env(launch.env)
+        await hve.apply_engine_settings_live()
     return _serialize(e)
 
 

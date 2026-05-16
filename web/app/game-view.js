@@ -438,7 +438,21 @@ export function mountGameView(container, opts = {}) {
   let gameId = null;
   let engineName = "Engine";
   let names = { top: "—", bottom: "—" };
+  let lastTurn = "white";
+  let lastClockRunning = false;
   let viewing = false;
+  let editing = false;
+  // First board_update after (re)mount: snap pieces to position instead
+  // of animating from startpos, and resolve the `ready` Promise so the
+  // PerspectiveRouter can reveal the perspective. Otherwise the user
+  // sees clocks/side-rail render before the board, and pieces animate
+  // from cm-chessboard's default startpos to the real FEN.
+  let firstBoardUpdate = true;
+  let resolveReady;
+  const ready = new Promise((r) => { resolveReady = r; });
+  // Edit-mode side-to-move ("w"|"b"). Authoritative while editing; play.js
+  // mirrors it for its ribbon UI but defers to setEditSide for writes.
+  let editStm = "w";
   // Analysis mode: streams PV from a dedicated engine even while
   // viewing. PV row should hide when "view-only" (viewing && !analyzing)
   // and show otherwise -- play mode has PV from the play engine,
@@ -483,25 +497,51 @@ export function mountGameView(container, opts = {}) {
       if (humanWhite) setNames({ bottom: viewWhiteName, top: viewBlackName });
       else setNames({ bottom: viewBlackName, top: viewWhiteName });
     }
+    // Re-apply clock colors and active state: clock_tick won't fire until
+    // the next server event, so do it eagerly here for both edit and view.
+    if (showClocks) {
+      _applyClockColors();
+      if (editing) {
+        _applyClockActive(editStm === "b" ? "black" : "white", true);
+      } else {
+        _applyClockActive(lastTurn, lastClockRunning);
+      }
+    }
   }
   setHumanWhite(humanWhite);
 
+  function _bottomIsWhite() {
+    // In Observe (non-interactive) the bottom row is always white. In Play
+    // the bottom is the human's side.
+    return interactive ? humanWhite : true;
+  }
+
+  function _applyClockActive(turn, active) {
+    const bottomIsWhite = _bottomIsWhite();
+    const bottomToMove =
+      (turn === "white" && bottomIsWhite) || (turn === "black" && !bottomIsWhite);
+    clockBottomRow?.classList.toggle("active", active && bottomToMove);
+    clockTopRow?.classList.toggle("active", active && !bottomToMove);
+  }
+
+  function _applyClockColors() {
+    if (!showClocks) return;
+    const bottomIsWhite = _bottomIsWhite();
+    if (clockBottomRow) clockBottomRow.dataset.color = bottomIsWhite ? "white" : "black";
+    if (clockTopRow) clockTopRow.dataset.color = bottomIsWhite ? "black" : "white";
+  }
+
   function setClock({ white_time, black_time, turn, running, viewing }) {
     if (!showClocks) return;
-    // bottom = humanWhite ? white : black; in observe, bottom = white, top = black
-    const bottomIsWhite = interactive ? humanWhite : true;
+    lastTurn = turn || "white";
+    lastClockRunning = running || !!viewing;
+    const bottomIsWhite = _bottomIsWhite();
     const bottomTime = bottomIsWhite ? white_time : black_time;
     const topTime = bottomIsWhite ? black_time : white_time;
     if (clockBottomTime) clockBottomTime.textContent = fmtClock(bottomTime);
     if (clockTopTime) clockTopTime.textContent = fmtClock(topTime);
-
-    if (clockBottomRow) clockBottomRow.dataset.color = bottomIsWhite ? "white" : "black";
-    if (clockTopRow) clockTopRow.dataset.color = bottomIsWhite ? "black" : "white";
-    const bottomToMove =
-      (turn === "white" && bottomIsWhite) || (turn === "black" && !bottomIsWhite);
-    const active = running || !!viewing;
-    clockBottomRow?.classList.toggle("active", active && bottomToMove);
-    clockTopRow?.classList.toggle("active", active && !bottomToMove);
+    _applyClockColors();
+    _applyClockActive(lastTurn, lastClockRunning);
   }
 
   function applyEvent(evt) {
@@ -510,6 +550,11 @@ export function mountGameView(container, opts = {}) {
     switch (evt.kind) {
       case "board_update":
         viewing = !!evt.payload.view;
+        if (typeof evt.payload.editing === "boolean") {
+          const wasEditing = editing;
+          editing = evt.payload.editing;
+          if (editing && !wasEditing) board.clearArrows();
+        }
         if (typeof evt.payload.analyzing === "boolean") {
           analyzing = evt.payload.analyzing;
         }
@@ -534,9 +579,15 @@ export function mountGameView(container, opts = {}) {
           if (humanWhite) setNames({ bottom: w, top: b });
           else setNames({ bottom: b, top: w });
         }
-        board.setPosition(evt.payload.fen, evt.payload.last_move);
+        if (!editing) {
+          board.setPosition(evt.payload.fen, evt.payload.last_move, !firstBoardUpdate);
+        }
+        if (firstBoardUpdate) {
+          firstBoardUpdate = false;
+          resolveReady();
+        }
         setFen(evt.payload.fen);
-        board.clearArrows();
+        if (!editing) board.clearArrows();
         if (showMoves && moveListEl) {
           // View mode highlights the cursor's ply (cursor-1 = last played
           // move; cursor=0 means initial position → no highlight) and lets
@@ -584,10 +635,20 @@ export function mountGameView(container, opts = {}) {
             engineSection?.classList.remove("is-empty");
           }
         }
-        if (interactive) board.enableInput(true);
+        if (interactive && !editing) board.enableInput(true);
         break;
       case "clock_tick":
         setClock(evt.payload);
+        break;
+      case "engine_search_start":
+        if (!showEngineInfo) break;
+        if (engineDepth) engineDepth.textContent = "";
+        if (engineScore) engineScore.textContent = "";
+        if (engineNodes) engineNodes.textContent = "";
+        if (engineNps) engineNps.textContent = "";
+        if (engineTbhits) engineTbhits.textContent = "";
+        if (engineHashfull) engineHashfull.textContent = "";
+        if (enginePv) { enginePv.textContent = ""; enginePv.removeAttribute("title"); }
         break;
       case "engine_info":
         if (!showEngineInfo) break;
@@ -616,7 +677,7 @@ export function mountGameView(container, opts = {}) {
           enginePv.setAttribute("title", full);
         }
         syncPvVisibility();
-        if (evt.payload.pv_uci && evt.payload.pv_uci.length > 0) {
+        if (!editing && evt.payload.pv_uci && evt.payload.pv_uci.length > 0) {
           const m = evt.payload.pv_uci[0];
           if (m && m.length >= 4) {
             board.setArrow(m.slice(0, 2), m.slice(2, 4));
@@ -624,8 +685,8 @@ export function mountGameView(container, opts = {}) {
         }
         break;
       case "game_result":
-        if (interactive) board.enableInput(false);
-        board.cancelAnimations();
+        if (interactive && !editing) board.enableInput(false);
+        if (!editing) board.cancelAnimations();
         break;
     }
   }
@@ -636,6 +697,7 @@ export function mountGameView(container, opts = {}) {
   }
 
   return {
+    ready,
     setGameId(id) {
       gameId = id;
     },
@@ -665,7 +727,54 @@ export function mountGameView(container, opts = {}) {
       setTablebase(null);
       setFen(INITIAL_FEN);
     },
+    enterEditMode(onPositionChange, seed) {
+      board.enterEditMode(onPositionChange, seed);
+      this.setEditSide(seed?.stm);
+    },
+    setEditSide(stm) {
+      // Authoritative setter for the in-edit STM. Updates clock-active
+      // styling immediately since the server isn't ticking during edit.
+      editStm = stm === "b" ? "b" : "w";
+      if (showClocks) {
+        _applyClockActive(editStm === "b" ? "black" : "white", true);
+      }
+    },
+    getEditSide() {
+      return editStm;
+    },
+    exitEditMode() {
+      board.exitEditMode();
+      // Clear .active so the stale STM highlight doesn't persist past the
+      // edit; the next clock_tick from a real board_update re-applies it.
+      if (showClocks) _applyClockActive("white", false);
+    },
+    toggleCastlingRight(right) {
+      board.toggleCastlingRight(right);
+    },
+    getCastlingRights() {
+      return board.getCastlingRights();
+    },
+    getFen() {
+      // Full server-emitted FEN (with STM/castling/ep/clocks). The canonical
+      // "what does the server think the position is" accessor.
+      return currentFen;
+    },
+    getEditFen() {
+      // FEN reflecting the in-flight edit: live piece placement + the
+      // user-chosen STM + castling rights. ep/halfmove/fullmove reset
+      // because edits forget move history.
+      const pieces = board.getPiecePlacement();
+      const rights = board.getCastlingRights();
+      const castling = [
+        rights.wK ? "K" : "",
+        rights.wQ ? "Q" : "",
+        rights.bK ? "k" : "",
+        rights.bQ ? "q" : "",
+      ].join("") || "-";
+      return `${pieces} ${editStm} ${castling} - 0 1`;
+    },
     unmount() {
+      editing = false;
       off?.();
       try { ro.disconnect(); } catch {}
       window.removeEventListener("resize", recomputeBoardSize);

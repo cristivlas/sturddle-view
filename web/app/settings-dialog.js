@@ -2,7 +2,7 @@
 // every toggle / input commits to the server immediately (debounced for
 // text fields). No Save button. The X just closes.
 
-import { pickFile, showDialog, toast } from "./dialogs.js";
+import { apiErrorDetail, pickFile, showDialog, toast } from "./dialogs.js";
 import { mountEngineList } from "./engines.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
@@ -127,7 +127,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
           await api("PUT", "/settings", patch);
           window.dispatchEvent(new CustomEvent("sturddle:settings-changed"));
         } catch (e) {
-          toast(`Save failed: ${e.message}`, { variant: "danger" });
+          toast(`Save failed: ${apiErrorDetail(e)}`, { variant: "danger" });
         }
       };
       const putSettingsDebounced = debounce(putSettings, 400);
@@ -137,7 +137,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
           tournamentInitial = await api("PUT", "/api/tournament-settings", patch);
           window.dispatchEvent(new CustomEvent("sturddle:settings-changed"));
         } catch (e) {
-          toast(`Save failed: ${e.message}`, { variant: "danger" });
+          toast(`Save failed: ${apiErrorDetail(e)}`, { variant: "danger" });
         }
       };
 
@@ -399,6 +399,11 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
           field.addEventListener("input", () => {
             onPick((field.value || "").trim(), { typing: true });
           });
+          // Commit on blur / Enter -- typing-time callbacks can debounce or
+          // skip; this is the "user is done editing" signal.
+          field.addEventListener("change", () => {
+            onPick((field.value || "").trim());
+          });
         } else {
           field.setAttribute("readonly", "");
           field.placeholder = "(not set)";
@@ -507,9 +512,11 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
           "Pick PGN directory",
           (p, ctx) => {
             // Non-empty path implicitly enables autosave; Clear ("" path) disables it.
-            const payload = { pgn_dir: p, pgn_autosave: !!p };
-            if (ctx?.typing) putSettingsDebounced(payload);
-            else putSettings(payload);
+            // pgn_dir is validated server-side (must exist + be writable),
+            // so we only PUT on picker-commit / blur -- never on every
+            // keystroke. ctx.typing skips the PUT entirely.
+            if (ctx?.typing) return;
+            putSettings({ pgn_dir: p, pgn_autosave: !!p });
           },
           { editable: true, placeholder: "/path/to/pgn (empty = no autosave)" },
         ),

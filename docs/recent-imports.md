@@ -94,11 +94,21 @@ All under `/game/recent-imports`, behind the same auth token as other
   history" UI)*. Removes the index row and the blob.
 
 There is **no standalone `POST /game/recent-imports`** — saving is a
-side effect of a successful `/game/import`. Migration (importing
-existing localStorage entries from older clients) goes through
-`/game/import` per entry; the server treats each as a normal import
-that happens not to enter view mode (or simply re-imports them once
-each — the cost is bounded by the small migration set).
+side effect of two endpoints:
+
+- `POST /game/import` — records the imported text (PGN or FEN).
+- `POST /game/edit/commit` — records the accepted FEN. A committed
+  edit means the user deliberately built a position they may want
+  later; cancel never writes. The pre-edit position is unrelated and
+  may or may not already be in recents (it is iff the user reached
+  view mode via `/game/import`; the play -> view -> edit path uses
+  `/game/view/start`, which is a pure state flip with no save).
+
+Migration (importing existing localStorage entries from older clients)
+goes through `/game/import` per entry; the server treats each as a
+normal import that happens not to enter view mode (or simply
+re-imports them once each — the cost is bounded by the small
+migration set).
 
 ## Concurrency
 
@@ -142,18 +152,3 @@ Display cap (how many rows the dropdown shows) becomes independent
 from the server cap. Start at 10; the dropdown is a `wa-select`, so
 scrolling more is cheap.
 
-## Open questions
-
-- Server cap value (currently 50). Re-evaluate after dogfooding.
-- Whether the no-live-validate trade-off feels worse in practice than
-  on paper. If it does, the validate endpoint can come back without
-  changing the import-side design (validate would only parse + return
-  summary, no save).
-
-## Out of scope (for this iteration)
-
-- Cross-device sync.
-- Search / tagging / pinning of history entries.
-- Diffing two imports.
-- A dedicated "history" perspective. The dialog dropdown stays the
-  only entry point for now.

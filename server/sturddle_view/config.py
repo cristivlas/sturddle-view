@@ -50,10 +50,10 @@ PERSISTED_FIELDS = (
 
 
 class Settings(BaseSettings):
-    """Process-level config. Read from env (STURDDLE_*) or .env at repo root."""
+    """Process-level config. Read from env (SV_*) or .env at repo root."""
 
     model_config = SettingsConfigDict(
-        env_prefix="STURDDLE_",
+        env_prefix="SV_",
         env_file=str(REPO_ROOT / ".env"),
         extra="ignore",
     )

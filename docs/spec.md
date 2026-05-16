@@ -140,7 +140,7 @@ Tournament:
 - `tournament_default_template` — default tournament config template
 
 Excluded from persistence: `token`, `host`, `port`, `auth_disabled`, `web_dir`.
-These come from CLI flags / env vars (`STURDDLE_*` prefix or `.env` at repo root).
+These come from CLI flags / env vars (`SV_*` prefix or `.env` at repo root).
 
 Client-side (localStorage, server-agnostic):
 - Active perspective, per-perspective layout (window positions, sizes)
@@ -358,13 +358,7 @@ remains usable for last-known state inspection.
 - Headless mode: skip PyWebView, point any browser at the server URL
 - Same server and client code for both modes
 
-### Install (Windows 11)
-
-```
-pip install pywebview python-chess <package-name>
-```
-
-No additional runtime required on Windows 11 (WebView2 ships with OS).
+See README for install steps.
 
 ---
 

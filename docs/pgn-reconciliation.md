@@ -227,6 +227,40 @@ this work -- kept `null` per spec. The reconciled `game_n` lives
 on the new event so consumers don't need to reason about
 "updated" `game_finished` payloads.
 
+## Pair identity in stored PGN (`pgn_stats`)
+
+Separate from live reconciliation, `pgn_stats` identifies pairs
+**structurally** in `games.pgn` for standings / SPRT / orphan-drop.
+This avoids treating `[Round]` as a globally-unique pair ID -- which
+it isn't: fastchess can reassign `[Round]` values across a
+Pause/Resume boundary, and pre-config-patch PGNs may contain
+collisions where the same Round value appears on multiple distinct
+color-flipped pairs.
+
+The scheme:
+
+1. Group games by `(Round, frozenset({White, Black}))`. Two games
+   with the same Round value but different engine sets (gauntlet)
+   land in different buckets.
+2. Within each bucket, greedily match color-flips:
+   `(A-white, B-black)` pairs with one unmatched
+   `(B-white, A-black)`.
+3. Paired games count in standings and in the SPRT pair-list.
+   Unmatched games (**orphans**) still count in standings W/L/D
+   but are excluded from SPRT pairs and become drop candidates
+   for `rewrite_drop_partial_pairs`.
+
+Single-game tours (`paired=False`) disable pair formation entirely:
+every game stands alone, no orphan detection, no rewrites, SPRT
+uses the logistic (trinomial) model only.
+
+Gauntlet `[Round]` convention (verified on a 3-engine live run):
+fastchess increments `[Round]` per `(opening, challenger)` match-up,
+so each Round contains exactly 2 games of one engine set,
+color-flipped. The `(round, engine-set)` bucket key handles this
+trivially -- the engine-set component is the same for both games in
+the bucket.
+
 ## Risks and mitigations
 
 - **Move-list ambiguity.** Two distinct games producing identical
@@ -273,85 +307,20 @@ constraint is lifted.
 - **Disk**: none (read-only tail of an existing file).
 - **Network**: none (proxy POST traffic unchanged).
 
-## Implementation slices
+## Replay UX caveats
 
-1. **Move-list capture in orchestrator.**
-   - Add `_pair_moves: dict[str, list[str]]`.
-   - Init on pair confirmation, update on `position` ingest for
-     confirmed pairs only, drop on `_reset_pairing_state`.
-   - Tests: confirm, play moves, dissolve -- list captured + freed.
+Replay (`GET /api/tournaments/{id}/games/{game_n}/pgn`) is wired
+through the Play perspective's view mode via `POST /game/import`. The
+Replay button appears on a Live game window's result banner once
+`game_reconciled` lands -- without `game_n` the PGN slice isn't
+addressable, so unreconciled games (rare) show no Replay button.
 
-2. **PGN tailer task per tournament.**
-   - Spawn on tournament start (in `Orchestrator.start` after
-     runner start), cancel on terminal runner event.
-   - Public method `_tail_pgn_loop` running 1Hz `stat()`.
-   - Parse delta into `(white, black, result, termination, uci_moves,
-     game_n)` records. Reuse `pgn_stats._iter_games_uncached`-style
-     header scan; add a movetext SAN->UCI replay for the new records.
-   - Tests: append PGN game to a fixture file, assert tailer parses
-     and yields the expected record.
-
-3. **Match queue + `game_reconciled` event.**
-   - On `_dissolve_pair`, snapshot the `_pair_moves` entry (if >=12
-     plies) into the pending queue.
-   - On every tailer wake, run the match loop, emit
-     `game_reconciled` for hits.
-   - Pending-side timeout sweep at 60s (PGN-side never times out).
-   - Tests: end-to-end with synthetic UCI ingest + synthesized
-     PGN file, assert event ordering and payloads.
-
-4. **Replay surface.** Reuse the Play perspective's existing view
-   mode rather than building a separate replay window.
-
-   **Source:** the PGN file is authoritative. New REST endpoint
-   `GET /api/tournaments/{id}/games/{game_n}/pgn` returns the
-   single-game PGN text. Implementation re-scans the file at
-   request time (a Replay click is rare; no need to cache byte
-   ranges in memory).
-
-   **Trigger:** "Replay" button on the Live game window's result
-   banner (visible once `game_reconciled` lands, since `game_n` is
-   what addresses the PGN). The Schedule window only shows live
-   pairings, so there is no finished-row surface to attach to.
-
-   **Action on click:**
-   1. If a human-vs-engine game is in progress in the Play
-      perspective, prompt with a confirm dialog ("Discard your
-      current game and view the tournament game?"). View-mode and
-      idle Play states need no confirm.
-   2. `POST /game/import` with the fetched PGN. The endpoint
-      already enters view mode, drives the ribbon swap, and seeds
-      board state. No Play-side changes required.
-   3. Switch active perspective to Play. The tournament workspace
-      and any open Live windows survive (they're not perspective-
-      coupled), so the user can navigate back via the perspective
-      ribbon and Replay another game.
-
-   **TC caveat for play-from-here.** View mode lets the user resume
-   the position against the engine via `play-from-here`. The
-   tournament's TC (e.g. 120+2) is unplayable for a human; the
-   import endpoint already takes a payload TC, so we either pass
-   the user's last Play TC or expose a TC selector at the
-   play-from-here moment. Resolve during impl.
-
-Slices 1-3 shipped together; slice 4 (Replay) shipped as a follow-up.
-
-### Slice 4 caveats
-
-- Re-importing a PGN replaces whatever was loaded in Play. The
-  confirm dialog only protects against discarding an in-progress
-  game vs engine; consecutive Replays of different tournament
-  games silently swap.
-- The PGN file lives forever (per-tournament directory), so any
-  reconciled game is replayable after restart. Unreconciled games
-  (rare; see "Stop button vs trailing PGN flush" in Future revisit)
-  show no Replay button -- without `game_n` we can't address the
-  PGN slice.
+- Re-importing a PGN replaces whatever was loaded in Play. The confirm
+  dialog only protects against discarding an in-progress vs-engine
+  game; consecutive Replays silently swap.
 - `play-from-here` from a tournament position picks up
-  engine-vs-human, not engine-vs-engine. If the user wants to see
-  what their engine would do differently, they get the analytical
-  branch; reproducing the original tournament game would require
-  a separate "rerun this matchup" feature outside scope.
+  engine-vs-human, not engine-vs-engine -- the user gets the analytical
+  branch, not a rerun of the original matchup.
 
 ## Open questions
 

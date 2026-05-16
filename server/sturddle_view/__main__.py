@@ -47,6 +47,21 @@ def main() -> None:
                         help="Verbose (DEBUG) logging for uvicorn (independent of --debug)")
     args = parser.parse_args()
 
+    # Validate CLI combos before any side effects (logging dir, lockfile,
+    # env mutations). Bad flags should exit cleanly without touching state.
+    if (args.cert is None) != (args.key is None):
+        print("--cert and --key must be provided together.", file=sys.stderr)
+        sys.exit(2)
+    if args.cert and args.desktop:
+        print("--cert/--key are not supported with --desktop "
+              "(loopback HTTP is already a secure context).", file=sys.stderr)
+        sys.exit(2)
+    if args.cert:
+        for label, p in (("--cert", args.cert), ("--key", args.key)):
+            if not Path(p).is_file():
+                print(f"{label} file not found: {p}", file=sys.stderr)
+                sys.exit(2)
+
     log_file = configure_logging(
         level=logging.DEBUG if args.debug else logging.INFO,
         server_level=logging.DEBUG if args.server_debug else logging.WARNING,
@@ -64,19 +79,6 @@ def main() -> None:
                 show_error(APP_NAME, msg)
             sys.exit(1)
 
-    # Validate CLI combos before any environment is touched.
-    if (args.cert is None) != (args.key is None):
-        print("--cert and --key must be provided together.", file=sys.stderr)
-        sys.exit(2)
-    if args.cert and args.desktop:
-        print("--cert/--key are not supported with --desktop "
-              "(loopback HTTP is already a secure context).", file=sys.stderr)
-        sys.exit(2)
-    if args.cert:
-        for label, p in (("--cert", args.cert), ("--key", args.key)):
-            if not Path(p).is_file():
-                print(f"{label} file not found: {p}", file=sys.stderr)
-                sys.exit(2)
     if args.no_auth and args.host and args.host != "127.0.0.1":
         # Explicit, intentional combo: warn loudly but allow (tailscale / trusted LAN).
         logging.getLogger(__name__).warning(
@@ -86,16 +88,16 @@ def main() -> None:
 
     # Push CLI overrides into env so the worker process's Settings() picks them up.
     if args.engine:
-        os.environ["STURDDLE_ENGINE_PATH"] = args.engine
+        os.environ["SV_ENGINE_PATH"] = args.engine
     if args.host:
-        os.environ["STURDDLE_HOST"] = args.host
+        os.environ["SV_HOST"] = args.host
     if args.port:
-        os.environ["STURDDLE_PORT"] = str(args.port)
+        os.environ["SV_PORT"] = str(args.port)
     if args.no_auth:
-        os.environ["STURDDLE_AUTH_DISABLED"] = "1"
+        os.environ["SV_AUTH_DISABLED"] = "1"
     if args.cert:
-        os.environ["STURDDLE_TLS_CERT"] = args.cert
-        os.environ["STURDDLE_TLS_KEY"] = args.key
+        os.environ["SV_TLS_CERT"] = args.cert
+        os.environ["SV_TLS_KEY"] = args.key
 
     settings = Settings()
     host = settings.host

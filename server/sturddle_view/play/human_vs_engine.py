@@ -24,6 +24,7 @@ import chess.pgn
 from .._atomic import atomic_write_text
 from ..events import Event, EventBus
 from .game_store import GameState, GameStore
+from .import_position import explain_invalid
 from .tablebase import TablebaseProber
 
 log = logging.getLogger(__name__)
@@ -159,6 +160,12 @@ class HumanVsEngine:
         # Autosave, submit_move, engine thinking, and clocks are all gated
         # off while viewing. Exits via play_from_here.
         self._viewing: bool = False
+        # Edit mode: server-authoritative position editor session. While
+        # _editing is True, play/analysis/view-nav endpoints reject. Entered
+        # from view mode only; commit imports the new FEN, cancel restores
+        # the pre-edit FEN. Snapshotted by enter_edit_mode.
+        self._editing: bool = False
+        self._edit_pre_fen: str | None = None
         self._view_cursor: int = 0  # 0..len(_view_full_moves) inclusive
         self._view_full_moves: list[chess.Move] = []
         # Per-ply pre-move (white, black) snapshots from the imported PGN's
@@ -176,6 +183,10 @@ class HumanVsEngine:
         # Per-ply post-move eval (white POV) parsed from PGN comments.
         # None when the PGN had no recognizable eval annotations.
         self._view_eval_history: list[dict | None] | None = None
+        # PGN [Result]/[Termination] from the imported game (None when
+        # not in view mode). Read by _board_event's view payload.
+        self._view_pgn_result: str | None = None
+        self._view_pgn_termination: str | None = None
         self._tb: TablebaseProber | None = None
         self._lock = asyncio.Lock()
         # Pending uci_log publish tasks; held to keep them from being GC'd
@@ -193,6 +204,10 @@ class HumanVsEngine:
     @property
     def is_analyzing(self) -> bool:
         return self._analysis_mode
+
+    @property
+    def is_editing(self) -> bool:
+        return self._editing
 
     def set_engine_options(self, options: dict | None) -> None:
         """Set the UCI options to apply on the next engine launch.
@@ -377,6 +392,8 @@ class HumanVsEngine:
         to `tc.initial_seconds`.
         """
         async with self._lock:
+            if self._editing:
+                raise RuntimeError("edit mode is on")
             await self._cancel_analysis()
             self._analysis_mode = False
             await self._cancel_think()
@@ -449,6 +466,8 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
+            if self._editing:
+                raise RuntimeError("edit mode is on")
             if self._viewing:
                 raise RuntimeError("view mode is on")
             if self._paused:
@@ -550,6 +569,8 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
+            if self._editing:
+                raise RuntimeError("edit mode is on")
             if self._viewing:
                 raise RuntimeError("view mode is on")
             if self._analysis_mode:
@@ -572,8 +593,9 @@ class HumanVsEngine:
                 wt, bt = self._clock_history.pop()
             self._white_time = wt
             self._black_time = bt
-            self._turn_started_at = time.monotonic()
-            self._paused = False
+            # Preserve pause state across takeback: undoing should not
+            # silently resume the clock.
+            self._turn_started_at = None if self._paused else time.monotonic()
             await self._persist()
             await self._publish_board()
             await self._publish_clock()
@@ -592,6 +614,8 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
+            if self._editing:
+                raise RuntimeError("edit mode is on")
             if self._viewing:
                 raise RuntimeError("view mode is on")
             if self._board.is_game_over():
@@ -623,6 +647,8 @@ class HumanVsEngine:
 
     async def resign(self) -> None:
         async with self._lock:
+            if self._editing:
+                raise RuntimeError("edit mode is on")
             if self._viewing:
                 raise RuntimeError("view mode is on")
             await self._cancel_analysis()
@@ -656,6 +682,8 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
+            if self._editing:
+                raise RuntimeError("edit mode is on")
             if self._viewing:
                 raise RuntimeError("view mode is on")
             if self._board.is_game_over():
@@ -683,6 +711,8 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
+            if self._editing:
+                raise RuntimeError("edit mode is on")
             if self._viewing:
                 raise RuntimeError("view mode is on")
             if not self._paused:
@@ -713,6 +743,8 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
+            if self._editing:
+                raise RuntimeError("edit mode is on")
             if self._board.is_game_over():
                 raise RuntimeError("game is over")
             if self._analysis_mode:
@@ -754,6 +786,11 @@ class HumanVsEngine:
 
     # ----- view mode -----
 
+    def current_fen(self) -> str | None:
+        """Snapshot of the current board's full FEN, or None if no game
+        is set up yet. Read-only; does not acquire the lock."""
+        return self._board.fen() if self._board is not None else None
+
     async def enter_view_mode(
         self,
         *,
@@ -776,6 +813,8 @@ class HumanVsEngine:
         Exit via play_from_here, which seeds a fresh play game.
         """
         async with self._lock:
+            if self._editing:
+                raise RuntimeError("edit mode is on")
             await self._cancel_analysis()
             self._analysis_mode = False
             await self._cancel_think()
@@ -827,6 +866,8 @@ class HumanVsEngine:
         """Move the view cursor to ``ply`` (0..len(full_moves)). Rebuilds
         the board by replaying from start. Rejected during analysis."""
         async with self._lock:
+            if self._editing:
+                raise RuntimeError("edit mode is on")
             if not self._viewing:
                 raise RuntimeError("not in view mode")
             if self._analysis_mode:
@@ -861,6 +902,88 @@ class HumanVsEngine:
     async def view_last(self) -> None:
         await self.view_goto(len(self._view_full_moves))
 
+    async def enter_edit_mode(self) -> str:
+        """Enter board editing. Must be in view mode; live play rejects.
+        Stops analysis if running. Snapshots the current FEN so cancel
+        can restore it. Returns the snapshotted FEN.
+        """
+        async with self._lock:
+            if self._editing:
+                raise RuntimeError("already in edit mode")
+            if not self._viewing:
+                raise RuntimeError("enter view mode before editing")
+            if self._board is None:
+                raise RuntimeError("no position")
+            need_cancel_analysis = self._analysis_mode
+            self._analysis_mode = False
+            pre_fen = self._board.fen()
+            self._edit_pre_fen = pre_fen
+            self._editing = True
+        if need_cancel_analysis:
+            await self._cancel_analysis()
+        async with self._lock:
+            await self._publish_board()
+        return pre_fen
+
+    async def commit_edit(self, fen: str) -> str:
+        """Apply the edited FEN as a fresh view-mode position. On any
+        failure (FEN parse, illegality, or replay error), leaves edit mode
+        intact so the user can fix and retry. Returns the new game_id.
+        """
+        async with self._lock:
+            if not self._editing:
+                raise RuntimeError("not in edit mode")
+            try:
+                board = chess.Board(fen)
+            except ValueError as e:
+                raise RuntimeError(f"invalid FEN: {e}") from e
+            if not board.is_valid():
+                raise RuntimeError(explain_invalid(board))
+            target_fen = board.fen()
+        # Drop _editing only for the duration of the view-mode transition.
+        # On failure, the caller stays in edit mode with the original snapshot.
+        async with self._lock:
+            self._editing = False
+        try:
+            game_id = await self.enter_view_mode(
+                start_fen=target_fen,
+                moves_uci=[],
+                clock_history=None,
+            )
+        except Exception:
+            async with self._lock:
+                self._editing = True
+            raise
+        async with self._lock:
+            self._edit_pre_fen = None
+        return game_id
+
+    async def cancel_edit(self) -> str:
+        """Leave edit mode; re-enter view mode at the pre-edit FEN."""
+        async with self._lock:
+            if not self._editing:
+                raise RuntimeError("not in edit mode")
+            pre = self._edit_pre_fen
+            if not pre:
+                # Defensive: enter_edit_mode always sets this. Reaching here
+                # implies state corruption; clear and abort.
+                self._editing = False
+                raise RuntimeError("no pre-edit snapshot to restore")
+            self._editing = False
+        try:
+            game_id = await self.enter_view_mode(
+                start_fen=pre,
+                moves_uci=[],
+                clock_history=None,
+            )
+        except Exception:
+            async with self._lock:
+                self._editing = True
+            raise
+        async with self._lock:
+            self._edit_pre_fen = None
+        return game_id
+
     async def play_from_here(self, tc: TimeControl, inherit_clocks: bool = False) -> str:
         """Exit view mode by starting a fresh play game seeded with plies
         0..cursor. New game_id, new autosave file. Side-to-play is whoever
@@ -871,6 +994,8 @@ class HumanVsEngine:
         clocks reset to ``tc.initial_seconds``.
         """
         async with self._lock:
+            if self._editing:
+                raise RuntimeError("edit mode is on")
             if not self._viewing:
                 raise RuntimeError("not in view mode")
             if self._analysis_mode:
@@ -923,13 +1048,40 @@ class HumanVsEngine:
             seed_final_black_time=seed_final_b,
         )
 
+    async def apply_engine_settings_live(self) -> None:
+        """Force the play engine to respawn so the latest options/args/env
+        and global defaults take effect on the next move.
+
+        Skipped during analysis -- the analysis engine is a throwaway and
+        respawns per session anyway; clobbering it would interrupt the user.
+        Caller is expected to have already updated _engine_options /
+        _engine_args / _engine_env via the setters; this just discards the
+        live process so _ensure_engine respawns with the new layering.
+        """
+        kick_engine = False
+        async with self._lock:
+            if self._analysis_mode:
+                return
+            await self._cancel_think()
+            await self._quit_engine()
+            if (
+                self._board is not None
+                and self._game_id is not None
+                and not self._viewing
+                and not self._paused
+                and not self._board.is_game_over()
+                and self._board.turn == self._engine_color()
+            ):
+                kick_engine = True
+        if kick_engine:
+            await self._engine_to_move()
+
     async def swap_engine(self, path: str) -> None:
         """Replace the engine binary; preserves the active game.
 
-        Per-engine ``args``/``env`` are picked up via the existing
-        ``set_engine_args``/``set_engine_env`` setters that the API layer
-        already calls on every fetch — they apply to the next spawn after
-        the swap, so we don't need to thread them through here.
+        Per-engine UCI options / args / env from the previous binary are
+        cleared so they don't leak into the new spawn. The API layer
+        re-seeds them from the registry on the next fetch.
         """
         kick_engine = False
         async with self._lock:
@@ -939,6 +1091,9 @@ class HumanVsEngine:
             await self._quit_engine()
             self._engine_path = path
             self._engine_name = None
+            self._engine_options = {}
+            self._engine_args = []
+            self._engine_env = {}
             if self._board is not None and self._game_id is not None:
                 await self._publish_board()
                 if not self._board.is_game_over() and not self._paused:
@@ -1216,6 +1371,12 @@ class HumanVsEngine:
             white_inc=self._tc.increment_seconds,
             black_inc=self._tc.increment_seconds,
         )
+        # Clear the live engine panel at search start; real info events will
+        # repopulate it. Book moves return bestmove without info, leaving it
+        # blank -- which is the signal we want.
+        await self._bus.publish(
+            Event(kind="engine_search_start", game_id=game_id, payload={})
+        )
         try:
             with await engine.analysis(board, limit=limit) as analysis:
                 self._analysis = analysis
@@ -1290,6 +1451,9 @@ class HumanVsEngine:
         except Exception:
             log.exception("could not start engine for analysis")
             return
+        await self._bus.publish(
+            Event(kind="engine_search_start", game_id=game_id, payload={})
+        )
         try:
             with await engine.analysis(board) as analysis:
                 self._analysis = analysis
@@ -1416,6 +1580,7 @@ class HumanVsEngine:
                     **(self._tb.probe(self._board) or {} if self._tb else {}),
                 },
                 "analyzing": self._analysis_mode,
+                "editing": self._editing,
                 "view": view_payload,
             },
         )

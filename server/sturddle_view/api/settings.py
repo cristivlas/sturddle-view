@@ -93,15 +93,39 @@ def get_settings(request: Request) -> dict:
     return _serialize(request.app.state.settings)
 
 
+_LIVE_ENGINE_KEYS = (
+    "engine_default_threads",
+    "engine_default_hash_mb",
+    "engine_default_syzygy_path",
+)
+
+
 @router.put("")
-def update_settings(payload: dict, request: Request) -> dict:
+async def update_settings(payload: dict, request: Request) -> dict:
     s = request.app.state.settings
 
     if "pgn_autosave" in payload:
         s.pgn_autosave = bool(payload["pgn_autosave"])
     if "pgn_dir" in payload:
         raw = payload["pgn_dir"]
-        s.pgn_dir = Path(raw) if raw else None
+        if raw:
+            p = Path(raw).expanduser()
+            if not p.is_dir():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"pgn_dir does not exist or is not a directory: {p}",
+                )
+            probe = p / ".sv-write-probe"
+            try:
+                probe.write_text("")
+                probe.unlink()
+            except OSError as e:
+                raise HTTPException(
+                    status_code=400, detail=f"pgn_dir is not writable: {e}",
+                ) from e
+            s.pgn_dir = p
+        else:
+            s.pgn_dir = None
 
     if "tc_initial_seconds" in payload:
         try:
@@ -186,5 +210,13 @@ def update_settings(payload: dict, request: Request) -> dict:
         s.save_persisted()
     except OSError:
         pass
+
+    # Live-apply: only globals that flow into _spawn_engine's option layering
+    # (Threads/Hash/SyzygyPath). Other fields (PGN, eval POV, board style)
+    # are read at use time and don't need an engine respawn.
+    if any(k in payload for k in _LIVE_ENGINE_KEYS):
+        hve = getattr(request.app.state, "hve", None)
+        if hve is not None:
+            await hve.apply_engine_settings_live()
 
     return _serialize(s)

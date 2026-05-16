@@ -4,11 +4,28 @@ from __future__ import annotations
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
 
 from sturddle_view._instance_lock import acquire
+
+
+def _acquire_with_retry(path: Path, timeout: float = 5.0) -> bool:
+    """Poll acquire() for up to ``timeout`` seconds.
+
+    Windows releases an msvcrt lock when the kernel closes the file handle,
+    which can lag a few hundred ms behind TerminateProcess returning. Without
+    the retry the crash-release test flakes.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        if acquire(path):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
 
 
 HOLDER = textwrap.dedent("""\
@@ -62,4 +79,4 @@ def test_lock_released_after_crash(lock_path: Path, tmp_path: Path) -> None:
     proc.kill()
     proc.wait()
     # After the holder dies the OS releases the lock; we must be able to acquire it.
-    assert acquire(lock_path), "lock not released after subprocess death"
+    assert _acquire_with_retry(lock_path), "lock not released after subprocess death"
