@@ -2211,5 +2211,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-pvtable-tbl td.wb-pvtable-pv,
 .wb-pvtable-tbl th:last-child { text-align: left; }
 .wb-pvtable-tbl td.wb-pvtable-pv { overflow: visible; text-overflow: clip; }
+.winbox.sturddle-wb-pvtable .wb-body,
+.dock-slot-body:has(> .wb-pvtable) { padding-left: 0; padding-right: 0; }
 .wb-pvtable-col-pv { min-width: 200px; }
 .wb-pvtable-pv { white-space: nowrap; }
