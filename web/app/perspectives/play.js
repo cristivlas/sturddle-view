@@ -601,16 +601,23 @@ export const playPerspective = {
       ctx.events.emit(_cachedBoardUpdate);
     }
 
+    // Prompt before discarding an active play game. Returns true if the
+    // caller should proceed (no active game, or user confirmed).
+    async function _confirmDiscardActiveGame({ message, okLabel }) {
+      if (viewing || gameOver) return true;
+      return await confirm({
+        message,
+        okLabel,
+        cancelLabel: "Keep playing",
+        destructive: true,
+      });
+    }
+
     const onNewGame = async () => {
-      if (!viewing && movesPlayed > 0 && !gameOver) {
-        const ok = await confirm({
-          message: "Cancel the game in progress and start a new one?",
-          okLabel: "New game",
-          cancelLabel: "Keep playing",
-          destructive: true,
-        });
-        if (!ok) return;
-      }
+      if (!await _confirmDiscardActiveGame({
+        message: "Cancel the game in progress and start a new one?",
+        okLabel: "New game",
+      })) return;
       try {
         view.setGameId(null);
         const r = await ctx.api("POST", "/game/new", {});
@@ -662,15 +669,10 @@ export const playPerspective = {
     };
 
     const onImport = async () => {
-      if (movesPlayed > 0 && !gameOver && !viewing) {
-        const ok = await confirm({
-          message: "Cancel the game in progress and import a new position?",
-          okLabel: "Import",
-          cancelLabel: "Keep playing",
-          destructive: true,
-        });
-        if (!ok) return;
-      }
+      if (!await _confirmDiscardActiveGame({
+        message: "Cancel the game in progress and import a new position?",
+        okLabel: "Import",
+      })) return;
       const result = await showImportPositionDialog({ api: ctx.api });
       if (!result) return;
       // The dialog already POSTed /game/import (so it could surface
@@ -733,15 +735,10 @@ export const playPerspective = {
       // view via /game/view/start (no recents write); /game/import would
       // pollute the recents history with the current play position.
       if (!viewing) {
-        if (movesPlayed > 0 && !gameOver) {
-          const ok = await confirm({
-            message: "Cancel the game in progress and edit the position?",
-            okLabel: "Edit position",
-            cancelLabel: "Keep playing",
-            destructive: true,
-          });
-          if (!ok) return;
-        }
+        if (!await _confirmDiscardActiveGame({
+          message: "Cancel the game in progress and edit the position?",
+          okLabel: "Edit position",
+        })) return;
         try {
           const r = await ctx.api("POST", "/game/view/start", {});
           view.setGameId(r.game_id);
