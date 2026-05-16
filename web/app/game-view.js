@@ -440,6 +440,9 @@ export function mountGameView(container, opts = {}) {
   let names = { top: "—", bottom: "—" };
   let viewing = false;
   let editing = false;
+  // Edit-mode side-to-move ("w"|"b"). Authoritative while editing; play.js
+  // mirrors it for its ribbon UI but defers to setEditSide for writes.
+  let editStm = "w";
   // Analysis mode: streams PV from a dedicated engine even while
   // viewing. PV row should hide when "view-only" (viewing && !analyzing)
   // and show otherwise -- play mode has PV from the play engine,
@@ -487,22 +490,30 @@ export function mountGameView(container, opts = {}) {
   }
   setHumanWhite(humanWhite);
 
+  function _bottomIsWhite() {
+    // In Observe (non-interactive) the bottom row is always white. In Play
+    // the bottom is the human's side.
+    return interactive ? humanWhite : true;
+  }
+
+  function _applyClockActive(turn, active) {
+    const bottomIsWhite = _bottomIsWhite();
+    const bottomToMove =
+      (turn === "white" && bottomIsWhite) || (turn === "black" && !bottomIsWhite);
+    clockBottomRow?.classList.toggle("active", active && bottomToMove);
+    clockTopRow?.classList.toggle("active", active && !bottomToMove);
+  }
+
   function setClock({ white_time, black_time, turn, running, viewing }) {
     if (!showClocks) return;
-    // bottom = humanWhite ? white : black; in observe, bottom = white, top = black
-    const bottomIsWhite = interactive ? humanWhite : true;
+    const bottomIsWhite = _bottomIsWhite();
     const bottomTime = bottomIsWhite ? white_time : black_time;
     const topTime = bottomIsWhite ? black_time : white_time;
     if (clockBottomTime) clockBottomTime.textContent = fmtClock(bottomTime);
     if (clockTopTime) clockTopTime.textContent = fmtClock(topTime);
-
     if (clockBottomRow) clockBottomRow.dataset.color = bottomIsWhite ? "white" : "black";
     if (clockTopRow) clockTopRow.dataset.color = bottomIsWhite ? "black" : "white";
-    const bottomToMove =
-      (turn === "white" && bottomIsWhite) || (turn === "black" && !bottomIsWhite);
-    const active = running || !!viewing;
-    clockBottomRow?.classList.toggle("active", active && bottomToMove);
-    clockTopRow?.classList.toggle("active", active && !bottomToMove);
+    _applyClockActive(turn, running || !!viewing);
   }
 
   function applyEvent(evt) {
@@ -671,11 +682,26 @@ export function mountGameView(container, opts = {}) {
       setTablebase(null);
       setFen(INITIAL_FEN);
     },
-    enterEditMode(onPositionChange) {
-      board.enterEditMode(onPositionChange);
+    enterEditMode(onPositionChange, seed) {
+      board.enterEditMode(onPositionChange, seed);
+      this.setEditSide(seed?.stm);
+    },
+    setEditSide(stm) {
+      // Authoritative setter for the in-edit STM. Updates clock-active
+      // styling immediately since the server isn't ticking during edit.
+      editStm = stm === "b" ? "b" : "w";
+      if (showClocks) {
+        _applyClockActive(editStm === "b" ? "black" : "white", true);
+      }
+    },
+    getEditSide() {
+      return editStm;
     },
     exitEditMode() {
       board.exitEditMode();
+      // Clear .active so the stale STM highlight doesn't persist past the
+      // edit; the next clock_tick from a real board_update re-applies it.
+      if (showClocks) _applyClockActive("white", false);
     },
     toggleCastlingRight(right) {
       board.toggleCastlingRight(right);
@@ -683,8 +709,24 @@ export function mountGameView(container, opts = {}) {
     getCastlingRights() {
       return board.getCastlingRights();
     },
-    getPosition() {
-      return board.getPosition();
+    getFen() {
+      // Full server-emitted FEN (with STM/castling/ep/clocks). The canonical
+      // "what does the server think the position is" accessor.
+      return currentFen;
+    },
+    getEditFen() {
+      // FEN reflecting the in-flight edit: live piece placement + the
+      // user-chosen STM + castling rights. ep/halfmove/fullmove reset
+      // because edits forget move history.
+      const pieces = board.getPiecePlacement();
+      const rights = board.getCastlingRights();
+      const castling = [
+        rights.wK ? "K" : "",
+        rights.wQ ? "Q" : "",
+        rights.bK ? "k" : "",
+        rights.bQ ? "q" : "",
+      ].join("") || "-";
+      return `${pieces} ${editStm} ${castling} - 0 1`;
     },
     unmount() {
       editing = false;

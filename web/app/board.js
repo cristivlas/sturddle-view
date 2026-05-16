@@ -136,10 +136,13 @@ export function mountBoard({ element, onMove, styleId }) {
     }
   }
 
-  function enterEditMode(onPositionChange) {
+  function enterEditMode(onPositionChange, seed) {
     if (editMode) return;
     editMode = true;
     editPositionChangeCb = onPositionChange ?? null;
+    if (seed && seed.castling) {
+      castlingRights = { ...seed.castling };
+    }
     board.disableMoveInput();
     board.removeMarkers();
     if (!positionEditorLoaded) {
@@ -183,7 +186,10 @@ export function mountBoard({ element, onMove, styleId }) {
     return { ...castlingRights };
   }
 
-  function getPosition() {
+  // cm-chessboard's getPosition() returns ONLY the piece-placement field
+  // ("rnbqkbnr/..."). The full 6-field FEN (with STM, castling, etc.) lives
+  // in the server payload upstream.
+  function getPiecePlacement() {
     return board.getPosition();
   }
 
@@ -208,6 +214,6 @@ export function mountBoard({ element, onMove, styleId }) {
   return {
     setSide, setPosition, enableInput, forceResize, cancelAnimations,
     setArrow, setOpponentArrow, clearArrows,
-    enterEditMode, exitEditMode, toggleCastlingRight, getCastlingRights, getPosition,
+    enterEditMode, exitEditMode, toggleCastlingRight, getCastlingRights, getPiecePlacement,
   };
 }

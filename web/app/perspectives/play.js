@@ -376,7 +376,6 @@ export const playPerspective = {
     let viewGameOverAlertShown = false;
     let viewingGameId = null;
     let editing = false;
-    let editSideToMove = "w";
     const pausedBadge = document.getElementById("paused-badge");
     const finishedBadge = document.getElementById("finished-badge");
     function syncPausedUi() {
@@ -406,7 +405,7 @@ export const playPerspective = {
       viewRibbon.style.display = (viewing && !editing) ? "" : "none";
       editRibbon.style.display = editing ? "" : "none";
       if (editing) {
-        const isWhite = editSideToMove === "w";
+        const isWhite = view.getEditSide() === "w";
         editSideBtn.setAttribute("aria-label", `Side to move: ${isWhite ? "White" : "Black"}`);
         editSideBtn.setAttribute("title", `Side to move: ${isWhite ? "White" : "Black"}`);
         editSideBtn.classList.toggle("is-active", !isWhite);
@@ -681,36 +680,28 @@ export const playPerspective = {
       }
     };
 
-    // Build FEN from current board position + edit side/castling state.
-    // Editing forgets move history: ep target, halfmove and fullmove counters
-    // reset to "-", 0, 1. Acceptable because the user is setting up a fresh
-    // position; any prior move context is no longer meaningful.
-    function _buildEditFen() {
-      const fen = view.getPosition();
-      const parts = fen.split(" ");
-      const rights = view.getCastlingRights();
-      const castling = [
-        rights.wK ? "K" : "",
-        rights.wQ ? "Q" : "",
-        rights.bK ? "k" : "",
-        rights.bQ ? "q" : "",
-      ].join("") || "-";
-      parts[1] = editSideToMove;
-      parts[2] = castling;
-      parts[3] = "-";
-      parts[4] = "0";
-      parts[5] = "1";
-      return parts.join(" ");
+    // Parse FEN fields: side-to-move letter and a {wK,wQ,bK,bQ} castling map.
+    function _seedFromFen(fen) {
+      const parts = (fen || "").split(" ");
+      const stm = parts[1] === "b" ? "b" : "w";
+      const rights = parts[2] || "";
+      return {
+        stm,
+        castling: {
+          wK: rights.includes("K"),
+          wQ: rights.includes("Q"),
+          bK: rights.includes("k"),
+          bQ: rights.includes("q"),
+        },
+      };
     }
-
-    const STARTPOS_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
     // Server is authoritative for edit state. We start editing by POSTing
     // /game/edit/start; the resulting board_update flips `editing` true,
     // and we then enable the client-side board editor extension.
     function _onServerEditingStart() {
-      editSideToMove = "w";
-      view.enterEditMode(() => refreshButtons());
+      const seed = _seedFromFen(view.getFen());
+      view.enterEditMode(() => refreshButtons(), seed);
       refreshButtons();
     }
 
@@ -732,9 +723,8 @@ export const playPerspective = {
           });
           if (!ok) return;
         }
-        const fen = view.getPosition() ?? STARTPOS_FEN;
         try {
-          const r = await ctx.api("POST", "/game/import", { format: "fen", text: fen });
+          const r = await ctx.api("POST", "/game/import", { format: "fen", text: view.getFen() });
           view.setGameId(r.game_id);
           await ctx.api("POST", "/game/sync", {});
         } catch (e) {
@@ -767,7 +757,7 @@ export const playPerspective = {
       }
     };
     const onEditSideToggle = () => {
-      editSideToMove = editSideToMove === "w" ? "b" : "w";
+      view.setEditSide(view.getEditSide() === "w" ? "b" : "w");
       refreshButtons();
     };
 
@@ -803,7 +793,7 @@ export const playPerspective = {
     };
 
     const onEditConfirm = async () => {
-      const fen = _buildEditFen();
+      const fen = view.getEditFen();
       try {
         const r = await ctx.api("POST", "/game/edit/commit", { fen });
         view.setGameId(r.game_id);
