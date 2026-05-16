@@ -438,6 +438,8 @@ export function mountGameView(container, opts = {}) {
   let gameId = null;
   let engineName = "Engine";
   let names = { top: "—", bottom: "—" };
+  let lastTurn = "white";
+  let lastClockRunning = false;
   let viewing = false;
   let editing = false;
   // First board_update after (re)mount: snap pieces to position instead
@@ -495,6 +497,16 @@ export function mountGameView(container, opts = {}) {
       if (humanWhite) setNames({ bottom: viewWhiteName, top: viewBlackName });
       else setNames({ bottom: viewBlackName, top: viewWhiteName });
     }
+    // Re-apply clock colors and active state: clock_tick won't fire until
+    // the next server event, so do it eagerly here for both edit and view.
+    if (showClocks) {
+      _applyClockColors();
+      if (editing) {
+        _applyClockActive(editStm === "b" ? "black" : "white", true);
+      } else {
+        _applyClockActive(lastTurn, lastClockRunning);
+      }
+    }
   }
   setHumanWhite(humanWhite);
 
@@ -512,16 +524,24 @@ export function mountGameView(container, opts = {}) {
     clockTopRow?.classList.toggle("active", active && !bottomToMove);
   }
 
+  function _applyClockColors() {
+    if (!showClocks) return;
+    const bottomIsWhite = _bottomIsWhite();
+    if (clockBottomRow) clockBottomRow.dataset.color = bottomIsWhite ? "white" : "black";
+    if (clockTopRow) clockTopRow.dataset.color = bottomIsWhite ? "black" : "white";
+  }
+
   function setClock({ white_time, black_time, turn, running, viewing }) {
     if (!showClocks) return;
+    lastTurn = turn || "white";
+    lastClockRunning = running || !!viewing;
     const bottomIsWhite = _bottomIsWhite();
     const bottomTime = bottomIsWhite ? white_time : black_time;
     const topTime = bottomIsWhite ? black_time : white_time;
     if (clockBottomTime) clockBottomTime.textContent = fmtClock(bottomTime);
     if (clockTopTime) clockTopTime.textContent = fmtClock(topTime);
-    if (clockBottomRow) clockBottomRow.dataset.color = bottomIsWhite ? "white" : "black";
-    if (clockTopRow) clockTopRow.dataset.color = bottomIsWhite ? "black" : "white";
-    _applyClockActive(turn, running || !!viewing);
+    _applyClockColors();
+    _applyClockActive(lastTurn, lastClockRunning);
   }
 
   function applyEvent(evt) {
@@ -531,7 +551,9 @@ export function mountGameView(container, opts = {}) {
       case "board_update":
         viewing = !!evt.payload.view;
         if (typeof evt.payload.editing === "boolean") {
+          const wasEditing = editing;
           editing = evt.payload.editing;
+          if (editing && !wasEditing) board.clearArrows();
         }
         if (typeof evt.payload.analyzing === "boolean") {
           analyzing = evt.payload.analyzing;

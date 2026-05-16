@@ -195,6 +195,10 @@ export const playPerspective = {
                 </div>
               </div>
             </div>
+            <span class="ribbon-sep" aria-hidden="true"></span>
+            <button id="edit-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
+              <wa-icon name="arrow-right-arrow-left"></wa-icon>
+            </button>
             <span class="ribbon-sep ribbon-sep--push" aria-hidden="true"></span>
             <button id="edit-confirm" class="ribbon-btn" aria-label="Confirm position" title="Confirm">
               <wa-icon name="check"></wa-icon>
@@ -233,6 +237,7 @@ export const playPerspective = {
     const viewForwardBtn = root.querySelector("#view-forward");
     const viewLastBtn = root.querySelector("#view-last");
     const viewFlipBtn = root.querySelector("#view-flip");
+    const editFlipBtn = root.querySelector("#edit-flip");
     const viewAnalyzeBtn = root.querySelector("#view-analyze");
     const viewPlayFromHereBtn = root.querySelector("#view-play-from-here");
     const viewEditBtn = root.querySelector("#view-edit");
@@ -962,6 +967,7 @@ export const playPerspective = {
     viewForwardBtn.addEventListener("click", onViewForward);
     viewLastBtn.addEventListener("click", onViewLast);
     viewFlipBtn.addEventListener("click", onViewFlip);
+    editFlipBtn.addEventListener("click", onViewFlip);
     viewAnalyzeBtn.addEventListener("click", onAnalyze);
     viewEditBtn.addEventListener("click", onViewEditPosition);
     viewPlayFromHereBtn.addEventListener("click", onPlayFromHere);
@@ -1049,6 +1055,7 @@ export const playPerspective = {
         viewForwardBtn.removeEventListener("click", onViewForward);
         viewLastBtn.removeEventListener("click", onViewLast);
         viewFlipBtn.removeEventListener("click", onViewFlip);
+        editFlipBtn.removeEventListener("click", onViewFlip);
         viewAnalyzeBtn.removeEventListener("click", onAnalyze);
         viewEditBtn.removeEventListener("click", onViewEditPosition);
         viewPlayFromHereBtn.removeEventListener("click", onPlayFromHere);
