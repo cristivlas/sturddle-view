@@ -36,12 +36,31 @@ def _home() -> Path:
     return Path.home()
 
 
+_DEFAULT_WIN_PATHEXT = ".COM;.EXE;.BAT;.CMD"
+
+
+def _is_executable(p: Path, is_file: bool) -> bool:
+    """Cross-platform executability check.
+
+    POSIX: honor the X bit via ``os.access``. Windows: ``os.access(X_OK)``
+    returns True for any readable file, so use the suffix-against-PATHEXT
+    test that the shell itself uses to decide what counts as a program.
+    """
+    if not is_file:
+        return False
+    if sys.platform.startswith("win"):
+        exts = os.environ.get("PATHEXT", _DEFAULT_WIN_PATHEXT).split(";")
+        wanted = {e.strip().lower() for e in exts if e.strip()}
+        return p.suffix.lower() in wanted
+    return os.access(p, os.X_OK)
+
+
 def _entry_for(p: Path) -> dict:
     try:
         st = p.stat()
         is_dir = p.is_dir()
         is_file = p.is_file()
-        is_exec = bool(is_file and os.access(p, os.X_OK))
+        is_exec = _is_executable(p, is_file)
         size = st.st_size if is_file else None
         return {
             "name": p.name or str(p),
