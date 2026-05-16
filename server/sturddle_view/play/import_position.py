@@ -13,6 +13,18 @@ import chess
 import chess.pgn
 
 
+def explain_invalid(board: chess.Board) -> str:
+    """Return a human-readable reason for an invalid board.status(), or
+    'illegal position' if no flags are set."""
+    status = board.status()
+    if status == chess.STATUS_VALID:
+        return "illegal position"
+    reasons = [s.name.lower().replace("_", " ")
+               for s in chess.Status if s != chess.STATUS_VALID and status & s]
+    return ", ".join(reasons) if reasons else "illegal position"
+
+
+
 @dataclass
 class ImportedPosition:
     # None when the import begins at the standard startpos (no PGN FEN header);

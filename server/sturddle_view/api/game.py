@@ -302,6 +302,39 @@ async def view_play_from_here(payload: dict, request: Request) -> dict:
     return {"game_id": game_id, "viewing": False}
 
 
+@router.post("/edit/start")
+async def edit_start(request: Request) -> dict:
+    hve = await _get_hve(request)
+    try:
+        fen = await hve.enter_edit_mode()
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"fen": fen}
+
+
+@router.post("/edit/commit")
+async def edit_commit(payload: dict, request: Request) -> dict:
+    hve = await _get_hve(request)
+    fen = payload.get("fen")
+    if not isinstance(fen, str) or not fen:
+        raise HTTPException(status_code=400, detail="missing 'fen'")
+    try:
+        game_id = await hve.commit_edit(fen)
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"game_id": game_id}
+
+
+@router.post("/edit/cancel")
+async def edit_cancel(request: Request) -> dict:
+    hve = await _get_hve(request)
+    try:
+        game_id = await hve.cancel_edit()
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"game_id": game_id}
+
+
 @router.post("/move")
 async def submit_move(payload: dict, request: Request) -> dict:
     hve = await _get_hve(request)

@@ -377,7 +377,6 @@ export const playPerspective = {
     let viewingGameId = null;
     let editing = false;
     let editSideToMove = "w";
-    let preEditFen = null;
     const pausedBadge = document.getElementById("paused-badge");
     const finishedBadge = document.getElementById("finished-badge");
     function syncPausedUi() {
@@ -489,6 +488,12 @@ export const playPerspective = {
           movesPlayed = evt.payload.moves_san?.length ?? 0;
           gameOver = false;
           showFinishedBadge("");
+          // Server-authoritative edit state. Transitions drive the client
+          // editor extension on/off; the ribbon UI follows `editing`.
+          const wasEditing = editing;
+          editing = !!evt.payload.editing;
+          if (editing && !wasEditing) _onServerEditingStart();
+          else if (!editing && wasEditing) _onServerEditingStop();
           // View mode swaps the ribbon and suppresses play-mode signals
           // (resignAvailable, etc.) — the user isn't playing yet.
           const v = evt.payload.view;
@@ -700,34 +705,23 @@ export const playPerspective = {
 
     const STARTPOS_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-    function _enterEditMode(savedFen) {
-      if (editing) return;
-      editing = true;
+    // Server is authoritative for edit state. We start editing by POSTing
+    // /game/edit/start; the resulting board_update flips `editing` true,
+    // and we then enable the client-side board editor extension.
+    function _onServerEditingStart() {
       editSideToMove = "w";
-      preEditFen = savedFen ?? null;
       view.enterEditMode(() => refreshButtons());
       refreshButtons();
     }
 
-    function _exitEditMode(restoreFen) {
-      if (!editing) return;
-      editing = false;
+    function _onServerEditingStop() {
       view.exitEditMode();
-      if (restoreFen && preEditFen) {
-        ctx.api("POST", "/game/import", { format: "fen", text: preEditFen })
-          .then((r) => {
-            view.setGameId(r.game_id);
-            ctx.api("POST", "/game/sync", {}).catch(() => {});
-          })
-          .catch((e) => reportError(ctx, "Restore position failed", e));
-      }
-      preEditFen = null;
       refreshButtons();
     }
 
-    const onEditPosition = async () => {
-      // From play mode: confirm cancel, import current position into view, enter edit.
-      let savedFen = view.getPosition() ?? STARTPOS_FEN;
+    async function _enterEditFromCurrentMode() {
+      // Server requires view mode before edit; import current FEN into
+      // view mode if we're in play mode.
       if (!viewing) {
         if (movesPlayed > 0 && !gameOver) {
           const ok = await confirm({
@@ -738,8 +732,9 @@ export const playPerspective = {
           });
           if (!ok) return;
         }
+        const fen = view.getPosition() ?? STARTPOS_FEN;
         try {
-          const r = await ctx.api("POST", "/game/import", { format: "fen", text: savedFen });
+          const r = await ctx.api("POST", "/game/import", { format: "fen", text: fen });
           view.setGameId(r.game_id);
           await ctx.api("POST", "/game/sync", {});
         } catch (e) {
@@ -747,19 +742,15 @@ export const playPerspective = {
           return;
         }
       }
-      if (analyzing) {
-        try { await ctx.api("POST", "/game/analysis/stop", {}); } catch { /* */ }
+      try {
+        await ctx.api("POST", "/game/edit/start", {});
+      } catch (e) {
+        reportError(ctx, "Edit position failed", e);
       }
-      _enterEditMode(savedFen);
-    };
+    }
 
-    const onViewEditPosition = async () => {
-      if (analyzing) {
-        try { await ctx.api("POST", "/game/analysis/stop", {}); } catch { /* */ }
-      }
-      const currentFen = view.getPosition() ?? STARTPOS_FEN;
-      _enterEditMode(currentFen);
-    };
+    const onEditPosition = _enterEditFromCurrentMode;
+    const onViewEditPosition = _enterEditFromCurrentMode;
 
     function _closeSidePopover() {
       editSidePopover.classList.add("hidden");
@@ -814,18 +805,20 @@ export const playPerspective = {
     const onEditConfirm = async () => {
       const fen = _buildEditFen();
       try {
-        const validated = await ctx.api("POST", "/api/chess/validate-fen", { fen });
-        const r = await ctx.api("POST", "/game/import", { format: "fen", text: validated.fen });
+        const r = await ctx.api("POST", "/game/edit/commit", { fen });
         view.setGameId(r.game_id);
-        _exitEditMode(false);
-        ctx.api("POST", "/game/sync", {}).catch(() => {});
       } catch (e) {
         reportError(ctx, "Invalid position", e);
       }
     };
 
-    const onEditCancel = () => {
-      _exitEditMode(true);
+    const onEditCancel = async () => {
+      try {
+        const r = await ctx.api("POST", "/game/edit/cancel", {});
+        if (r?.game_id) view.setGameId(r.game_id);
+      } catch (e) {
+        reportError(ctx, "Cancel edit failed", e);
+      }
     };
 
     const onViewNav = (endpoint) => async () => {
@@ -1008,7 +1001,12 @@ export const playPerspective = {
 
     return {
       unmount() {
-        if (editing) view.exitEditMode();
+        if (editing) {
+          // Fire-and-forget cancel so the server doesn't stay stuck in
+          // edit mode if the user navigates away.
+          ctx.api("POST", "/game/edit/cancel", {}).catch(() => {});
+          view.exitEditMode();
+        }
         closeDebugWindows();
         setDockContainer(null);
         dismissAnalysisToast?.();

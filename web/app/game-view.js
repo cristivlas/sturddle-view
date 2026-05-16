@@ -439,7 +439,7 @@ export function mountGameView(container, opts = {}) {
   let engineName = "Engine";
   let names = { top: "—", bottom: "—" };
   let viewing = false;
-  let boardEditing = false;
+  let editing = false;
   // Analysis mode: streams PV from a dedicated engine even while
   // viewing. PV row should hide when "view-only" (viewing && !analyzing)
   // and show otherwise -- play mode has PV from the play engine,
@@ -511,6 +511,9 @@ export function mountGameView(container, opts = {}) {
     switch (evt.kind) {
       case "board_update":
         viewing = !!evt.payload.view;
+        if (typeof evt.payload.editing === "boolean") {
+          editing = evt.payload.editing;
+        }
         if (typeof evt.payload.analyzing === "boolean") {
           analyzing = evt.payload.analyzing;
         }
@@ -535,11 +538,11 @@ export function mountGameView(container, opts = {}) {
           if (humanWhite) setNames({ bottom: w, top: b });
           else setNames({ bottom: b, top: w });
         }
-        if (!boardEditing) {
+        if (!editing) {
           board.setPosition(evt.payload.fen, evt.payload.last_move);
         }
         setFen(evt.payload.fen);
-        if (!boardEditing) board.clearArrows();
+        if (!editing) board.clearArrows();
         if (showMoves && moveListEl) {
           // View mode highlights the cursor's ply (cursor-1 = last played
           // move; cursor=0 means initial position → no highlight) and lets
@@ -587,7 +590,7 @@ export function mountGameView(container, opts = {}) {
             engineSection?.classList.remove("is-empty");
           }
         }
-        if (interactive && !boardEditing) board.enableInput(true);
+        if (interactive && !editing) board.enableInput(true);
         break;
       case "clock_tick":
         setClock(evt.payload);
@@ -619,7 +622,7 @@ export function mountGameView(container, opts = {}) {
           enginePv.setAttribute("title", full);
         }
         syncPvVisibility();
-        if (evt.payload.pv_uci && evt.payload.pv_uci.length > 0) {
+        if (!editing && evt.payload.pv_uci && evt.payload.pv_uci.length > 0) {
           const m = evt.payload.pv_uci[0];
           if (m && m.length >= 4) {
             board.setArrow(m.slice(0, 2), m.slice(2, 4));
@@ -627,8 +630,8 @@ export function mountGameView(container, opts = {}) {
         }
         break;
       case "game_result":
-        if (interactive) board.enableInput(false);
-        board.cancelAnimations();
+        if (interactive && !editing) board.enableInput(false);
+        if (!editing) board.cancelAnimations();
         break;
     }
   }
@@ -669,11 +672,9 @@ export function mountGameView(container, opts = {}) {
       setFen(INITIAL_FEN);
     },
     enterEditMode(onPositionChange) {
-      boardEditing = true;
       board.enterEditMode(onPositionChange);
     },
     exitEditMode() {
-      boardEditing = false;
       board.exitEditMode();
     },
     toggleCastlingRight(right) {
@@ -686,7 +687,7 @@ export function mountGameView(container, opts = {}) {
       return board.getPosition();
     },
     unmount() {
-      boardEditing = false;
+      editing = false;
       off?.();
       try { ro.disconnect(); } catch {}
       window.removeEventListener("resize", recomputeBoardSize);
