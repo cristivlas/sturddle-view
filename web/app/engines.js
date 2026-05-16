@@ -389,7 +389,10 @@ export function mountEngineList(container, api, opts = {}) {
       if (result === null) break;
       if (result?.__refresh || result?.__reopen) {
         engine = result.engine;
-        probeError = null;
+        // Re-open carries forward the probe outcome: __refresh sets
+        // result.probeError when the in-dialog probe failed; __reopen
+        // (post-save) has no probe and should clear any prior note.
+        probeError = result.probeError ?? null;
         continue;
       }
       refresh();

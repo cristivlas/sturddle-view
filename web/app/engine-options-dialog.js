@@ -362,6 +362,13 @@ export function showEngineOptionsDialog({ engine, api, probeError = null }) {
       launchPanel.setAttribute("name", "launch");
 
       // Options tab body -----------------------------------------------
+      // Probe failure shows as a panel-wide error banner above the form.
+      if (probeError) {
+        const banner = document.createElement("div");
+        banner.className = "engine-probe-banner";
+        banner.textContent = `UCI probe failed: ${probeError}`;
+        optionsPanel.appendChild(banner);
+      }
       const form = document.createElement("div");
       form.className = "engine-opt-form";
 
@@ -387,15 +394,13 @@ export function showEngineOptionsDialog({ engine, api, probeError = null }) {
 
       const fields = new Map();
       const names = Object.keys(schema).sort((a, b) => a.localeCompare(b));
-      if (names.length === 0) {
+      if (names.length === 0 && !probeError) {
         const note = document.createElement("p");
         note.className = "muted";
         // Form is a 2-col grid (display: contents on rows); span both
         // columns so the note wraps instead of squashing the Name input.
         note.style.gridColumn = "1 / -1";
-        note.textContent = probeError
-          ? `UCI probe failed: ${probeError} (Click Refresh to retry.)`
-          : "This engine reported no UCI options. (Click Refresh to re-query.)";
+        note.textContent = "This engine reported no UCI options. (Click Refresh to re-query.)";
         form.appendChild(note);
       }
       for (const name of names) {
