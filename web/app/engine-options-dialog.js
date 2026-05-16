@@ -441,7 +441,7 @@ export function showEngineOptionsDialog({ engine, api, probeError = null }) {
               args: launchState.args,
               env: launchState.env,
             },
-            probeError: probed.probe_error || null,
+            probeError: probed.probe_error ? probed.probe_error.message : null,
           });
         } catch (e) {
           reportError(null, "Refresh failed", e);
