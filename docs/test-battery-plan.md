@@ -6,7 +6,7 @@ phase is sized to fit one PR / one Claude Code session. Future
 sessions pick up from the status header and execute the next pending
 phase.
 
-Last updated: 2026-05-17 (P0, P1, P2, P3, P4, P5, P6 done).
+Last updated: 2026-05-17 (P0, P1, P2, P3, P4, P5, P6 done; perf bench infra retro-audit complete).
 
 Related docs:
 - [server-chess-audit.md](server-chess-audit.md) -- the spec.
@@ -643,6 +643,45 @@ Phases adding new perf benches that are NOT comparisons (P0 smoke,
 P4 "DO NOT TOUCH" locks for `pgn_stats` line-scan paths) can baseline
 and bench in the same PR -- the bench protects against future
 regressions, not against this refactor.
+
+### Perf bench infra retro-audit (2026-05-17)
+
+After P6 landed, a full suite re-run revealed flake on small benches
+under suite ordering. A retro-audit traced the cause to two things:
+
+1. **Stale 1k-fixture baselines**: commit 2507ede swapped
+   `perf_1k_games.pgn` from synthetic random-walk games to real games
+   (4.9MB) but did not re-capture baselines for the three line-scan
+   benches (`iter_games_keyed_1k`, `iter_games_uncached_1k`,
+   `rewrite_partial_pairs_1k`). Bench failures had been latent since
+   that commit.
+2. **Harness noise**: `timeit_best_of` (raw `timeit.repeat`)
+   delivered ~20% flake on sub-100ms benches under shared-machine
+   load, masking real signal.
+
+Resolution (no production code touched):
+- Migrated bench harness to `pytest-benchmark` (auto-calibration,
+  warmup, large round counts, outlier rejection). Smoke tests keep
+  the bare `timeit` shim.
+- Switched compare metric from `min` to `median` of round samples
+  (more robust against single-round noise).
+- Added `INNER_LOOPS=1000` wrapper on sub-microsecond ops
+  (`board_from`) so each timed round sits above `perf_counter`
+  resolution.
+- Re-rebased every baseline against the earliest valid pre-refactor
+  commit per bench (board_from at d285ada, line-scan + parse at
+  2507ede, build_pgn at 28223a3, spawn/cancel at 00de7a6) via git
+  worktrees with overlaid migrated bench files.
+- `board_from_startpos` gets a 15% tolerance (others 10%) because
+  even with INNER_LOOPS=1000 its measurement sits close to the OS
+  scheduler noise floor on this dev machine.
+
+Outcome: 5/5 clean full-suite runs against rebased baselines. No P5
+or P6 regressions found.
+
+Memory rule established (`feedback_no_perf_flake_excuse.md`): never
+write off perf failures as tolerance/load flake. Bisect and find the
+real cause.
 
 ### Project rules reminder
 

@@ -11,9 +11,6 @@ import chess
 import chess.pgn
 import pytest
 
-from tests.perf._bench import timeit_best_of
-
-ITERATIONS = 200
 TOLERANCE = 0.10
 
 _PGN_PATH = (
@@ -58,6 +55,6 @@ def _build_via_inline():
 
 
 @pytest.mark.perf
-def test_bench_build_pgn_100_ply_game(bench_compare):
-    elapsed = timeit_best_of(_build_via_inline, ITERATIONS)
-    bench_compare("build_pgn_100_ply_inline", elapsed, tolerance=TOLERANCE)
+def test_bench_build_pgn_100_ply_game(benchmark, bench_compare):
+    benchmark(_build_via_inline)
+    bench_compare("build_pgn_100_ply_inline", benchmark.stats.stats.median, tolerance=TOLERANCE)

@@ -17,10 +17,8 @@ from sturddle_view.tournament.pgn_stats import (
     _iter_games_uncached,
     rewrite_drop_partial_pairs,
 )
-from tests.perf._bench import timeit_best_of
 
 FIXTURE = pathlib.Path(__file__).parent.parent / "fixtures" / "perf_1k_games.pgn"
-ITERATIONS = 5
 TOLERANCE = 0.10
 
 
@@ -45,18 +43,18 @@ def _bench_rewrite():
 
 
 @pytest.mark.perf
-def test_bench_iter_games_keyed_1k_games(bench_compare):
-    elapsed = timeit_best_of(_bench_keyed, ITERATIONS)
-    bench_compare("iter_games_keyed_1k", elapsed, tolerance=TOLERANCE)
+def test_bench_iter_games_keyed_1k_games(benchmark, bench_compare):
+    benchmark(_bench_keyed)
+    bench_compare("iter_games_keyed_1k", benchmark.stats.stats.median, tolerance=TOLERANCE)
 
 
 @pytest.mark.perf
-def test_bench_iter_games_uncached_1k_games(bench_compare):
-    elapsed = timeit_best_of(_bench_uncached, ITERATIONS)
-    bench_compare("iter_games_uncached_1k", elapsed, tolerance=TOLERANCE)
+def test_bench_iter_games_uncached_1k_games(benchmark, bench_compare):
+    benchmark(_bench_uncached)
+    bench_compare("iter_games_uncached_1k", benchmark.stats.stats.median, tolerance=TOLERANCE)
 
 
 @pytest.mark.perf
-def test_bench_rewrite_partial_pairs_1k_games(bench_compare):
-    elapsed = timeit_best_of(_bench_rewrite, ITERATIONS)
-    bench_compare("rewrite_partial_pairs_1k", elapsed, tolerance=TOLERANCE)
+def test_bench_rewrite_partial_pairs_1k_games(benchmark, bench_compare):
+    benchmark(_bench_rewrite)
+    bench_compare("rewrite_partial_pairs_1k", benchmark.stats.stats.median, tolerance=TOLERANCE)

@@ -6,10 +6,8 @@ import pathlib
 import pytest
 
 from sturddle_view.tournament.pgn_stats import read_game_record
-from tests.perf._bench import timeit_best_of
 
 FIXTURE = pathlib.Path(__file__).parent.parent / "fixtures" / "perf_200_games.pgn"
-ITERATIONS = 3
 TOLERANCE = 0.10
 
 
@@ -22,9 +20,12 @@ def _bench_mid():
 
 
 @pytest.mark.perf
-def test_bench_read_game_record(bench_compare):
-    elapsed_first = timeit_best_of(_bench_first, ITERATIONS)
-    bench_compare("read_game_record_first", elapsed_first, tolerance=TOLERANCE)
+def test_bench_read_game_record_first(benchmark, bench_compare):
+    benchmark(_bench_first)
+    bench_compare("read_game_record_first", benchmark.stats.stats.median, tolerance=TOLERANCE)
 
-    elapsed_mid = timeit_best_of(_bench_mid, ITERATIONS)
-    bench_compare("read_game_record_mid", elapsed_mid, tolerance=TOLERANCE)
+
+@pytest.mark.perf
+def test_bench_read_game_record_mid(benchmark, bench_compare):
+    benchmark(_bench_mid)
+    bench_compare("read_game_record_mid", benchmark.stats.stats.median, tolerance=TOLERANCE)

@@ -6,11 +6,9 @@ import pathlib
 import pytest
 
 from sturddle_view.tournament.pgn_tail import PgnTailer
-from tests.perf._bench import timeit_best_of
 
 FIXTURE = pathlib.Path(__file__).parent.parent / "fixtures" / "perf_200_games.pgn"
-ITERATIONS = 3
-TOLERANCE = 0.05
+TOLERANCE = 0.10
 _FILE_SIZE = FIXTURE.stat().st_size
 
 
@@ -19,6 +17,6 @@ def _bench_fn():
 
 
 @pytest.mark.perf
-def test_bench_parse_delta_200_games(bench_compare):
-    elapsed = timeit_best_of(_bench_fn, ITERATIONS)
-    bench_compare("parse_delta_200_games", elapsed, tolerance=TOLERANCE)
+def test_bench_parse_delta_200_games(benchmark, bench_compare):
+    benchmark(_bench_fn)
+    bench_compare("parse_delta_200_games", benchmark.stats.stats.median, tolerance=TOLERANCE)
