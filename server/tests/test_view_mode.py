@@ -146,8 +146,8 @@ async def test_play_from_here_at_last_ply_uses_imported_final_clocks(hve):
     ))
     await h.view_last()
     await h.play_from_here(tc=TimeControl(300, 0), inherit_clocks=True)
-    assert h._white_time == 4 * 60 + 48
-    assert h._black_time == 4 * 60 + 50
+    assert h._clock.white_time == 4 * 60 + 48
+    assert h._clock.black_time == 4 * 60 + 50
 
 
 async def test_play_from_here_mid_game_derives_clocks_from_history(hve):
@@ -168,8 +168,8 @@ async def test_play_from_here_mid_game_derives_clocks_from_history(hve):
     await h.view_back()
     assert h._view_cursor == 2
     await h.play_from_here(tc=TimeControl(300, 0), inherit_clocks=True)
-    assert h._white_time == 4 * 60 + 55
-    assert h._black_time == 4 * 60 + 50
+    assert h._clock.white_time == 4 * 60 + 55
+    assert h._clock.black_time == 4 * 60 + 50
 
 
 async def test_play_from_here_at_finished_position_keeps_view_mode(hve):
@@ -215,7 +215,7 @@ async def test_flag_fall_does_not_trample_game_installed_during_publish(hve):
     h, _ = hve
     await h.new_game(human_white=True, tc=TimeControl(60, 0))
     # Force flag-fall: zero white's clock; it's white's turn.
-    h._white_time = 0.0
+    h._clock.white_time = 0.0
 
     # Substitute a publish that, on the game_result event (between the
     # two _handle_flag_fall lock sections), supersedes the game with a

@@ -50,7 +50,7 @@ async def _engine_reply(h: HumanVsEngine, uci: str) -> None:
     """
     move = chess.Move.from_uci(uci)
     async with h._lock:
-        h._clock_history.append((h._white_time, h._black_time))
+        h._clock.history.append((h._clock.white_time, h._clock.black_time))
         h._consume_turn_time()
         h._board.push(move)
         await h._publish_board()
@@ -64,25 +64,25 @@ async def test_takeback_restores_both_clocks_after_engine_reply(hve):
     # Spend ~0.05s on white's move, then submit.
     await asyncio.sleep(0.05)
     await hve.submit_move("e2e4")
-    white_after_human = hve._white_time
-    black_after_human = hve._black_time
+    white_after_human = hve._clock.white_time
+    black_after_human = hve._clock.black_time
     assert white_after_human < 60.0  # human consumed time
     assert black_after_human == pytest.approx(60.0, abs=1e-6)
 
     # Engine "thinks" 0.05s and replies.
     await asyncio.sleep(0.05)
     await _engine_reply(hve, "e7e5")
-    white_after_engine = hve._white_time
-    black_after_engine = hve._black_time
+    white_after_engine = hve._clock.white_time
+    black_after_engine = hve._clock.black_time
     assert black_after_engine < 60.0  # engine consumed time
 
     # Take-back: should restore to BEFORE human played e2e4.
     await hve.takeback()
-    assert hve._white_time == pytest.approx(60.0, abs=1e-6)
-    assert hve._black_time == pytest.approx(60.0, abs=1e-6)
+    assert hve._clock.white_time == pytest.approx(60.0, abs=1e-6)
+    assert hve._clock.black_time == pytest.approx(60.0, abs=1e-6)
     # Move stack and history are empty again.
     assert hve._board.move_stack == []
-    assert hve._clock_history == []
+    assert hve._clock.history == []
 
 
 async def test_takeback_after_only_human_move_restores(hve):
@@ -91,11 +91,11 @@ async def test_takeback_after_only_human_move_restores(hve):
     await hve.new_game(human_white=True, tc=TimeControl(30.0, 0.0))
     await asyncio.sleep(0.05)
     await hve.submit_move("d2d4")
-    assert hve._white_time < 30.0
+    assert hve._clock.white_time < 30.0
 
     await hve.takeback()
-    assert hve._white_time == pytest.approx(30.0, abs=1e-6)
-    assert hve._black_time == pytest.approx(30.0, abs=1e-6)
+    assert hve._clock.white_time == pytest.approx(30.0, abs=1e-6)
+    assert hve._clock.black_time == pytest.approx(30.0, abs=1e-6)
     assert hve._board.move_stack == []
 
 
@@ -106,14 +106,14 @@ async def test_takeback_with_increment_does_not_double_credit(hve):
     await asyncio.sleep(0.05)
     await hve.submit_move("e2e4")
     # After consume_turn_time: white_time = max(0, 30 - 0.05) + 5 ≈ 34.95
-    assert hve._white_time > 30.0  # increment applied
+    assert hve._clock.white_time > 30.0  # increment applied
 
     await asyncio.sleep(0.05)
     await _engine_reply(hve, "e7e5")
     await hve.takeback()
     # Both clocks back to the pristine 30.0.
-    assert hve._white_time == pytest.approx(30.0, abs=1e-6)
-    assert hve._black_time == pytest.approx(30.0, abs=1e-6)
+    assert hve._clock.white_time == pytest.approx(30.0, abs=1e-6)
+    assert hve._clock.black_time == pytest.approx(30.0, abs=1e-6)
 
 
 async def test_takeback_with_no_moves_raises(hve):
@@ -143,10 +143,10 @@ async def test_takeback_after_pgn_seeded_game(hve):
         start_moves_uci=["e2e4", "c7c5", "g1f3"],
     )
     assert len(hve._board.move_stack) == 3
-    assert len(hve._clock_history) == 3  # invariant: one per ply
+    assert len(hve._clock.history) == 3  # invariant: one per ply
 
     await hve.takeback()
     # Black to move after Nf3 → engine-thinking branch: pop just the last ply.
     assert [m.uci() for m in hve._board.move_stack] == ["e2e4", "c7c5"]
-    assert hve._white_time == pytest.approx(60.0, abs=1e-6)
-    assert hve._black_time == pytest.approx(60.0, abs=1e-6)
+    assert hve._clock.white_time == pytest.approx(60.0, abs=1e-6)
+    assert hve._clock.black_time == pytest.approx(60.0, abs=1e-6)

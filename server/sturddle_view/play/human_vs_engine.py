@@ -23,6 +23,7 @@ from ..chess.board import board_from, moves_san as _moves_san, side_to_move
 from ..chess.pgn_build import build_pgn
 from ..chess.results import DRAW, loser_result, winner_result
 from ..events import Event, EventBus
+from .chess_clock import ChessClock, TimeControl
 from .engine_supervisor import EngineSupervisor
 from .game_store import GameState, GameStore
 from .import_position import explain_invalid
@@ -31,12 +32,6 @@ from .tablebase import TablebaseProber
 log = logging.getLogger(__name__)
 
 CLOCK_TICK_INTERVAL = 0.25  # seconds
-
-
-@dataclass
-class TimeControl:
-    initial_seconds: float
-    increment_seconds: float = 0.0
 
 
 @dataclass
@@ -142,16 +137,7 @@ class HumanVsEngine:
         # filenames across per-move autosaves and end-of-game finalization.
         self._game_started_wall: float | None = None
         self._human_white: bool = True
-        self._tc: TimeControl = TimeControl(300.0, 0.0)
-        self._white_time: float = 0.0
-        self._black_time: float = 0.0
-        # Wall-clock timestamp when the side to move started thinking.
-        # Used to compute remaining time on each tick.
-        self._turn_started_at: float | None = None
-        # Per-ply snapshot of (white_time, black_time) BEFORE the move at that
-        # ply was played. Used to restore clocks on take-back.
-        # Index = ply number (length of move_stack).
-        self._clock_history: list[tuple[float, float]] = []
+        self._clock: ChessClock = ChessClock(TimeControl(300.0, 0.0))
         self._think_task: asyncio.Task | None = None
         self._analysis = None  # active chess.engine.AnalysisResult, if any
         self._think_gen: int = 0  # search generation; bumped on cancel
@@ -420,37 +406,14 @@ class HumanVsEngine:
             self._board = board
             self._start_fen = start_fen  # None for startpos games
             self._human_white = human_white
-            self._tc = tc
-            self._turn_started_at = time.monotonic()
-            # Seed _clock_history with one snapshot per ply (invariant for
-            # takeback). Use the parsed PGN values when available; otherwise
-            # synthesize (initial, initial) — clocks are unknown for the
-            # seeded plies but the invariant still holds.
-            n_plies = len(board.move_stack)
-            if seed_clock_history is not None and len(seed_clock_history) == n_plies:
-                self._clock_history = [
-                    (
-                        w if w is not None else tc.initial_seconds,
-                        b if b is not None else tc.initial_seconds,
-                    )
-                    for (w, b) in seed_clock_history
-                ]
-            else:
-                self._clock_history = [
-                    (tc.initial_seconds, tc.initial_seconds) for _ in range(n_plies)
-                ]
-            # Live clocks: use PGN-derived final values when available so the
-            # next move continues from the imported state.
-            self._white_time = (
-                seed_final_white_time
-                if seed_final_white_time is not None
-                else tc.initial_seconds
+            self._clock = ChessClock(tc)
+            self._clock.reseed_from_pgn(
+                n_plies=len(board.move_stack),
+                seed_history=seed_clock_history,
+                final_w=seed_final_white_time,
+                final_b=seed_final_black_time,
             )
-            self._black_time = (
-                seed_final_black_time
-                if seed_final_black_time is not None
-                else tc.initial_seconds
-            )
+            self._clock.start_turn()
             self._paused = False
             self._game_id = uuid.uuid4().hex[:12]
             self._game_started_wall = time.time()
@@ -484,7 +447,7 @@ class HumanVsEngine:
                 raise RuntimeError(f"illegal move: {uci}")
             # Snapshot clocks BEFORE consuming, so take-back restores the state
             # at the start of this turn.
-            self._clock_history.append((self._white_time, self._black_time))
+            self._clock.append_snapshot()
             self._consume_turn_time()
             self._board.push(move)
             await self._persist()
@@ -523,11 +486,11 @@ class HumanVsEngine:
                 await self._republish_last_analysis_info()
                 return
             if (
-                self._turn_started_at is None
+                self._clock.turn_started_at is None
                 and not self._paused
                 and not self._board.is_game_over()
             ):
-                self._turn_started_at = time.monotonic()
+                self._clock.start_turn()
                 self._start_tick()
                 if self._board.turn == self._engine_color() and self._think_task is None:
                     kick_engine = True
@@ -582,20 +545,21 @@ class HumanVsEngine:
                 if len(self._board.move_stack) < 2:
                     raise RuntimeError("nothing to take back")
                 self._board.pop()
-                self._clock_history.pop()
+                self._clock.pop_snapshot()
                 self._board.pop()
-                wt, bt = self._clock_history.pop()
+                self._clock.pop_snapshot()
             else:
                 # Engine was thinking; pop the human's last move.
                 if len(self._board.move_stack) < 1:
                     raise RuntimeError("nothing to take back")
                 self._board.pop()
-                wt, bt = self._clock_history.pop()
-            self._white_time = wt
-            self._black_time = bt
+                self._clock.pop_snapshot()
             # Preserve pause state across takeback: undoing should not
             # silently resume the clock.
-            self._turn_started_at = None if self._paused else time.monotonic()
+            if self._paused:
+                self._clock.stop_turn()
+            else:
+                self._clock.start_turn()
             await self._persist()
             await self._publish_board()
             await self._publish_clock()
@@ -627,13 +591,7 @@ class HumanVsEngine:
             # crediting the increment (no move was completed). Then restart
             # the timer so the new thinker's clock starts fresh from now.
             # While paused, the clock isn't running so neither step applies.
-            if self._turn_started_at is not None:
-                elapsed = time.monotonic() - self._turn_started_at
-                if self._board.turn == chess.WHITE:
-                    self._white_time = max(0.0, self._white_time - elapsed)
-                else:
-                    self._black_time = max(0.0, self._black_time - elapsed)
-                self._turn_started_at = time.monotonic()
+            self._clock.snap_for_switch(self._board.turn)
             self._human_white = not self._human_white
             await self._persist()
             await self._publish_board()
@@ -694,13 +652,7 @@ class HumanVsEngine:
                 raise RuntimeError("can only pause on your turn")
             if self._paused:
                 return
-            if self._turn_started_at is not None:
-                elapsed = time.monotonic() - self._turn_started_at
-                if self._board.turn == chess.WHITE:
-                    self._white_time = max(0.0, self._white_time - elapsed)
-                else:
-                    self._black_time = max(0.0, self._black_time - elapsed)
-            self._turn_started_at = None
+            self._clock.pause(self._board.turn)
             self._paused = True
             await self._persist()
             await self._cancel_tick()
@@ -718,7 +670,7 @@ class HumanVsEngine:
             if not self._paused:
                 return
             self._paused = False
-            self._turn_started_at = time.monotonic()
+            self._clock.resume()
             await self._persist()
             # Start the tick under the lock so a racing pause() cannot land
             # between unlock and _start_tick (which would leave the loop
@@ -779,7 +731,7 @@ class HumanVsEngine:
             # to freeze and play_from_here is the canonical exit.
             if not self._viewing:
                 self._paused = True
-            self._turn_started_at = None
+            self._clock.stop_turn()
             await self._persist()
             await self._publish_board()
             await self._publish_clock()
@@ -801,9 +753,9 @@ class HumanVsEngine:
         return (
             self._start_fen,
             moves,
-            list(self._clock_history),
-            self._white_time,
-            self._black_time,
+            list(self._clock.history),
+            self._clock.white_time,
+            self._clock.black_time,
         )
 
     async def enter_view_mode(self, params: ViewModeParams) -> str:
@@ -855,10 +807,7 @@ class HumanVsEngine:
             self._game_id = uuid.uuid4().hex[:12]
             self._game_started_wall = None  # not a play game; no autosave
             # Clocks frozen — irrelevant in view mode but keep types sane.
-            self._white_time = 0.0
-            self._black_time = 0.0
-            self._turn_started_at = None
-            self._clock_history = []
+            self._clock = ChessClock(TimeControl(0.0, 0.0))
             self._paused = False
             await self._publish_board()
             await self._publish_clock()
@@ -1174,13 +1123,13 @@ class HumanVsEngine:
         state = GameState(
             game_id=self._game_id,
             human_white=self._human_white,
-            tc_initial_seconds=self._tc.initial_seconds,
-            tc_increment_seconds=self._tc.increment_seconds,
-            white_time=self._white_time,
-            black_time=self._black_time,
+            tc_initial_seconds=self._clock.tc.initial_seconds,
+            tc_increment_seconds=self._clock.tc.increment_seconds,
+            white_time=self._clock.white_time,
+            black_time=self._clock.black_time,
             paused=self._paused,
             moves_uci=[m.uci() for m in self._board.move_stack],
-            clock_history=[[w, b] for (w, b) in self._clock_history],
+            clock_history=[[w, b] for (w, b) in self._clock.history],
             start_fen=self._start_fen,
             game_started_wall=self._game_started_wall,
         )
@@ -1215,47 +1164,34 @@ class HumanVsEngine:
         # autosave behavior, just renames the file going forward.
         self._game_started_wall = state.game_started_wall or time.time()
         self._human_white = state.human_white
-        self._tc = TimeControl(
+        self._clock = ChessClock(TimeControl(
             initial_seconds=state.tc_initial_seconds,
             increment_seconds=state.tc_increment_seconds,
-        )
-        self._white_time = state.white_time
-        self._black_time = state.black_time
-        self._paused = state.paused
-        self._clock_history = [(w, b) for (w, b) in state.clock_history]
+        ))
+        self._clock.white_time = state.white_time
+        self._clock.black_time = state.black_time
+        self._clock.history = [(w, b) for (w, b) in state.clock_history]
         # Marker: turn hasn't started ticking yet. republish_state() sets it.
-        self._turn_started_at = None
+        self._clock.stop_turn()
+        self._paused = state.paused
 
     # ----- internals -----
 
     def _consume_turn_time(self) -> None:
-        """Subtract elapsed wall time from the side that just moved; add increment."""
-        if self._turn_started_at is None or self._board is None:
+        """Debit elapsed from side-just-moved (board.turn pre-push), add increment."""
+        if self._board is None:
             return
-        elapsed = time.monotonic() - self._turn_started_at
-        # `board.turn` here is the side that JUST moved (we haven't pushed yet
-        # when called from submit_move; for engine moves, _think_and_play
-        # calls this just before push too).
-        side_just_moved = self._board.turn
-        if side_just_moved == chess.WHITE:
-            self._white_time = max(0.0, self._white_time - elapsed) + self._tc.increment_seconds
-        else:
-            self._black_time = max(0.0, self._black_time - elapsed) + self._tc.increment_seconds
-        self._turn_started_at = time.monotonic()
+        self._clock.consume_turn(self._board.turn)
 
     def _remaining(self, side: chess.Color) -> float:
-        """Live remaining time for `side`, accounting for ticking-down on the
-        side currently thinking."""
-        base = self._white_time if side == chess.WHITE else self._black_time
-        if (
-            self._board is not None
-            and not self._board.is_game_over()
-            and not self._paused
-            and self._board.turn == side
-            and self._turn_started_at is not None
-        ):
-            base = max(0.0, base - (time.monotonic() - self._turn_started_at))
-        return base
+        """Live remaining for `side`, ticking down only on its turn."""
+        if self._board is None:
+            return self._clock.white_time if side == chess.WHITE else self._clock.black_time
+        return self._clock.remaining(
+            side,
+            stm=self._board.turn,
+            game_over=self._paused or self._board.is_game_over(),
+        )
 
     async def _cancel_think(self) -> None:
         """Stop the current search; keep the engine alive for reuse.
@@ -1403,8 +1339,8 @@ class HumanVsEngine:
         limit = chess.engine.Limit(
             white_clock=white_clock,
             black_clock=black_clock,
-            white_inc=self._tc.increment_seconds,
-            black_inc=self._tc.increment_seconds,
+            white_inc=self._clock.tc.increment_seconds,
+            black_inc=self._clock.tc.increment_seconds,
         )
         # Clear the live engine panel at search start; real info events will
         # repopulate it. Book moves return bestmove without info, leaving it
@@ -1445,7 +1381,7 @@ class HumanVsEngine:
             ):
                 # Search was cancelled; ignore its bestmove.
                 return
-            self._clock_history.append((self._white_time, self._black_time))
+            self._clock.append_snapshot()
             self._consume_turn_time()
             self._board.push(best)
             await self._persist()
@@ -1739,14 +1675,14 @@ class HumanVsEngine:
                 opening = (hit.eco, hit.name)
 
         tc = None
-        if self._tc.initial_seconds:
-            tc = (int(self._tc.initial_seconds), int(self._tc.increment_seconds))
+        if self._clock.tc.initial_seconds:
+            tc = (int(self._clock.tc.initial_seconds), int(self._clock.tc.increment_seconds))
 
         pgn_text = build_pgn(
             start_fen=self._start_fen,
             moves_uci=[m.uci() for m in self._board.move_stack],
-            clock_history=list(self._clock_history),
-            final_clocks=(self._white_time, self._black_time),
+            clock_history=list(self._clock.history),
+            final_clocks=(self._clock.white_time, self._clock.black_time),
             headers=headers,
             opening=opening,
             result=result,

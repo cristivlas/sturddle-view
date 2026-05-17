@@ -11,5 +11,6 @@
   "read_game_record_mid": 0.01617385001736693,
   "build_pgn_100_ply_inline": 4.9099966417998075e-05,
   "spawn_engine_median": 0.0479386,
-  "cancel_think_grace_period": 0.5039291
+  "cancel_think_grace_period": 0.5039291,
+  "clock_remaining_inline": 0.004441400000359863
 }

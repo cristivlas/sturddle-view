@@ -68,10 +68,10 @@ async def test_hve_consume_turn_subtracts_elapsed_and_adds_increment(hve):
     """_consume_turn_time debits elapsed and credits increment to side-to-move."""
     await hve.new_game(human_white=True, tc=TC)
     # Simulate 1 second elapsed on white's turn.
-    hve._turn_started_at = time.monotonic() - 1.0
-    before = hve._white_time
+    hve._clock.turn_started_at = time.monotonic() - 1.0
+    before = hve._clock.white_time
     hve._consume_turn_time()
-    after = hve._white_time
+    after = hve._clock.white_time
     # Lost ~1s, gained INCREMENT.
     delta = after - before
     assert abs(delta - (INCREMENT - 1.0)) < 0.05
@@ -80,23 +80,23 @@ async def test_hve_consume_turn_subtracts_elapsed_and_adds_increment(hve):
 async def test_hve_clock_history_one_entry_per_ply(hve):
     """_clock_history must have exactly len(move_stack) entries at all times."""
     await hve.new_game(human_white=True, tc=TC)
-    assert len(hve._clock_history) == len(hve._board.move_stack)
+    assert len(hve._clock.history) == len(hve._board.move_stack)
     await hve.submit_move("e2e4")
-    assert len(hve._clock_history) == len(hve._board.move_stack)
+    assert len(hve._clock.history) == len(hve._board.move_stack)
 
 
 async def test_hve_clock_pop_on_takeback_restores_prior_clocks(hve):
     """Takeback must restore both clocks to the snapshot before the move."""
     await hve.new_game(human_white=True, tc=TC_NO_INC)
-    white_before = hve._white_time
-    black_before = hve._black_time
+    white_before = hve._clock.white_time
+    black_before = hve._clock.black_time
 
     await hve.submit_move("e2e4")
     # Engine stub doesn't play; board.turn==BLACK (engine's turn). Pop one ply.
     await hve.takeback()
 
-    assert abs(hve._white_time - white_before) < 0.1
-    assert abs(hve._black_time - black_before) < 0.1
+    assert abs(hve._clock.white_time - white_before) < 0.1
+    assert abs(hve._clock.black_time - black_before) < 0.1
 
 
 async def test_hve_clock_pause_freezes_no_increment(hve):
@@ -105,7 +105,7 @@ async def test_hve_clock_pause_freezes_no_increment(hve):
     await asyncio.sleep(0.05)
     await hve.pause()
 
-    frozen = hve._white_time
+    frozen = hve._clock.white_time
     assert frozen < INITIAL  # elapsed was deducted, no increment
 
     r1 = hve._remaining(chess.WHITE)
@@ -123,7 +123,7 @@ async def test_hve_clock_seed_from_pgn_pads_missing_with_initial(hve):
         start_moves_uci=["e2e4", "e7e5"],
         seed_clock_history=seed_history,
     )
-    assert len(hve._clock_history) == 2
-    for w, b in hve._clock_history:
+    assert len(hve._clock.history) == 2
+    for w, b in hve._clock.history:
         assert w == TC.initial_seconds
         assert b == TC.initial_seconds

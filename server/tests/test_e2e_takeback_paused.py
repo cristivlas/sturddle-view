@@ -80,7 +80,7 @@ async def test_takeback_button_enabled_while_paused(server, browser):
     # which is required by pause().
     import chess
     async with hve._lock:
-        hve._clock_history.append((hve._white_time, hve._black_time))
+        hve._clock.append_snapshot()
         hve._consume_turn_time()
         hve._board.push(chess.Move.from_uci("e7e5"))
         await hve._publish_board()

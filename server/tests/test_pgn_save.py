@@ -149,7 +149,7 @@ async def test_pgn_includes_clk_annotations(hve):
     await h.submit_move("e2e4")
     # Inject Black's reply (engine mocked).
     async with h._lock:
-        h._clock_history.append((h._white_time, h._black_time))
+        h._clock.append_snapshot()
         h._consume_turn_time()
         h._board.push(chess.Move.from_uci("e7e5"))
     await h.resign()
@@ -171,7 +171,7 @@ async def test_pgn_includes_opening_header_for_known_line(hve):
     # 1.e4 c5 — the opening book recognizes this as the Sicilian Defense.
     await h.submit_move("e2e4")
     async with h._lock:
-        h._clock_history.append((h._white_time, h._black_time))
+        h._clock.append_snapshot()
         h._consume_turn_time()
         h._board.push(chess.Move.from_uci("c7c5"))
     await h.resign()
@@ -192,7 +192,7 @@ async def test_pgn_no_opening_header_for_fen_imported_game(hve):
     fen = "rnbqkbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
     await h.new_game(human_white=True, tc=TimeControl(60, 0), start_fen=fen)
     async with h._lock:
-        h._clock_history.append((h._white_time, h._black_time))
+        h._clock.append_snapshot()
         h._consume_turn_time()
         h._board.push(chess.Move.from_uci("d7d6"))
     await h.resign()
@@ -210,10 +210,10 @@ async def test_round_trip_save_then_reimport_clocks(hve):
     await h.new_game(human_white=True, tc=TimeControl(60, 0))
     await h.submit_move("e2e4")
     async with h._lock:
-        h._clock_history.append((h._white_time, h._black_time))
+        h._clock.append_snapshot()
         h._consume_turn_time()
         h._board.push(chess.Move.from_uci("e7e5"))
-    saved_black = h._black_time
+    saved_black = h._clock.black_time
     # Trigger one more autosave to write the latest %clk values.
     await h.submit_move("g1f3")
 
@@ -222,7 +222,7 @@ async def test_round_trip_save_then_reimport_clocks(hve):
     assert parsed.clock_history is not None
     assert len(parsed.clock_history) == 3
     # Re-imported live clocks should round-trip (post-Nf3 state).
-    assert parsed.final_white_time == pytest.approx(h._white_time, abs=0.5)
+    assert parsed.final_white_time == pytest.approx(h._clock.white_time, abs=0.5)
     # Black hasn't moved since e7e5; their clock from the PGN matches.
     assert parsed.final_black_time == pytest.approx(saved_black, abs=0.5)
 
@@ -266,11 +266,11 @@ async def test_filename_stable_across_restore(hve, tmp_path):
         human_white=True,
         tc_initial_seconds=60.0,
         tc_increment_seconds=0.0,
-        white_time=h._white_time,
-        black_time=h._black_time,
+        white_time=h._clock.white_time,
+        black_time=h._clock.black_time,
         paused=False,
         moves_uci=["e2e4"],
-        clock_history=[[w, b] for (w, b) in h._clock_history],
+        clock_history=[[w, b] for (w, b) in h._clock.history],
         start_fen=None,
         game_started_wall=h._game_started_wall,
     )
