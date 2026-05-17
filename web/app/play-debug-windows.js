@@ -500,6 +500,7 @@ const uciLog = createDockableWindow({
   },
   build: buildUciLogBody,
   dockOrder: 20, // below Search Lines
+  closable: true,
 });
 
 // -- Search Lines body -------------------------------------------------------
@@ -661,6 +662,7 @@ const pvTable = createDockableWindow({
   defaultY: () => HEADER_H,
   build: buildPvTableBody,
   dockOrder: 10, // above UCI log
+  closable: true,
 });
 
 // -- public API --------------------------------------------------------------
