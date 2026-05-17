@@ -867,6 +867,10 @@ export const playPerspective = {
 
     const onEditConfirm = async () => {
       const fen = view.getEditFen();
+      // Server mints a fresh game_id on a real position change. Clear the
+      // filter so the board_update SSE (which races the POST response) isn't
+      // dropped for not matching our stale id.
+      view.setGameId(null);
       try {
         const r = await ctx.api("POST", "/game/edit/commit", { fen });
         view.setGameId(r.game_id);
