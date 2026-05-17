@@ -382,6 +382,14 @@ These hold for every phase. Violations are blockers, not nits.
   - HVE LoC dropped (note before/after in PR body).
 - **Out of scope**: clock extraction (P7); mode FSM (P8); info
   schema (P9).
+- **Notes**:
+  - Supervisor surface narrowed from the audit's R3 (no `play_search` /
+    `analysis_search`). Search loops stay in HVE; supervisor owns
+    process lifecycle (spawn/configure/cancel/quit/swap/log) only.
+    `_think_and_play` and `_run_analysis` share a new HVE-private
+    `_pump_engine_info(analysis, game_id, board)` helper for their
+    common filter+serialize+publish loop. Full rationale in
+    server-chess-audit.md section 3 R3.
 
 ## P7 -- R4 ChessClock extraction
 

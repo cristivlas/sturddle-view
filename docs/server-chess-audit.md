@@ -321,6 +321,16 @@ HVE shrinks from 1841 -> ~1200 LoC, and the new module is unit-testable
 with a stub `UciProtocol`. Co-locates the duplicated process-spawn
 logic with `engines.probe_engine` via the shared `_popen_kwargs`.
 
+**P6 scope (2026-05-17):** `play_search` / `analysis_search` dropped from
+the surface. Search loops stay in HVE; supervisor owns process lifecycle
+only. Rationale: `on_info` callbacks would leak event-shape coupling
+(eval_pov, bus, game_id, event kinds) into a UCI-only module. Audit
+section 7 R3 tests and section 8.2 perf gates already target only the
+narrower surface, so the deviation is self-consistent with the rest of
+the audit. Real duplication in the two search loops is fixed by an
+HVE-private `_pump_engine_info` helper. HVE lands at ~1500 LoC after P6;
+the original 1200 target requires P7+P8+P11 to land as well.
+
 ### R4 (medium ROI, medium risk) -- extract `ChessClock` from HVE
 
 A `play/chess_clock.py` (~150 LoC) holding `tc`, white/black times,
@@ -928,6 +938,8 @@ Verified against the working tree (branch `server/refactor`, post-`136cf28`).
   HVE as part of P2 cleanup (11-arg `enter_view_mode` sprawl).
 - P5: R6b `chess/pgn_build.py` -- done; `build_pgn` pure function added;
   `HVE._maybe_save_pgn` reduced to a ~15-line wrapper (was 74 lines).
+- P6 design (pending): R3 narrowed to process lifecycle only;
+  `play_search` / `analysis_search` dropped. See section 3 R3 notes.
 
 **Structural findings are correct.** All identified bugs, patterns, and
 recommendations are confirmed:
