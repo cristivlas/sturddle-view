@@ -639,12 +639,15 @@ export const playPerspective = {
 
     // Replay the last seen board_update (from a previous mount of this
     // perspective) so the view renders synchronously at the cached
-    // position. Both subscribers (game-view's applyEvent, the offEvent
-    // above) are now wired; emit dispatches them in this call stack. The
-    // /sync POST above still fires and the fresh board_update will
-    // override if anything changed server-side.
+    // position. Sent directly to the board renderer -- NOT through the
+    // bus -- because play.js's bus handler has side effects (e.g.
+    // syncCommentsVisibility issuing /view/goto) that would POST against
+    // the current server game using stale cursor data when an external
+    // import (tournament Replay) changed the active game while this
+    // perspective was unmounted. The /sync POST above still fires and
+    // the fresh board_update overrides if anything changed server-side.
     if (_cachedBoardUpdate) {
-      ctx.events.emit(_cachedBoardUpdate);
+      view.applyEvent(_cachedBoardUpdate);
     }
 
     // Prompt before discarding an active play game. Returns true if the
