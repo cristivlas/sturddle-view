@@ -550,7 +550,7 @@ These hold for every phase. Violations are blockers, not nits.
 
 ## P10 -- R8 /api/chess/apply-move audit
 
-- **State**: done (pending merge SHA)
+- **State**: done (bb513cc)
 - **Depends on**: none (independent; can land anywhere after P0)
 - **Goal**: Confirm caller status; delete or pin.
 - **Files to create / modify**:
