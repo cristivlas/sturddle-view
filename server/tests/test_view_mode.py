@@ -37,7 +37,7 @@ def hve(tmp_path):
     return h, tmp_path
 
 
-async def test_enter_view_mode_lands_at_last_ply(hve):
+async def test_enter_view_mode_lands_at_first_ply(hve):
     h, _ = hve
     await h.enter_view_mode(
         start_fen=None,
@@ -45,8 +45,8 @@ async def test_enter_view_mode_lands_at_last_ply(hve):
         clock_history=None,
     )
     assert h._viewing is True
-    assert h._view_cursor == 3
-    assert h._board.fen().startswith("rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2")
+    assert h._view_cursor == 0
+    assert h._board.fen() == chess.STARTING_FEN
 
 
 async def test_view_navigation_back_forward_first_last(hve):
@@ -56,6 +56,8 @@ async def test_view_navigation_back_forward_first_last(hve):
         moves_uci=["e2e4", "e7e5", "g1f3"],
         clock_history=None,
     )
+    # Land at 0; jump to last to exercise back/forward from a non-boundary.
+    await h.view_last()
     await h.view_back()
     assert h._view_cursor == 2
     assert h._board.fen().startswith("rnbqkbnr/pppp1ppp/8/4p3/4P3/8")  # after e5
@@ -119,6 +121,7 @@ async def test_play_from_here_seeds_new_game_at_cursor(hve):
         moves_uci=["e2e4", "e7e5", "g1f3", "b8c6"],
         clock_history=None,
     )
+    await h.view_last()
     await h.view_back()  # cursor at ply 3 (after Nf3 — Black to move)
     assert h._view_cursor == 3
     pre_view_id = h._game_id
@@ -141,6 +144,7 @@ async def test_play_from_here_at_last_ply_uses_imported_final_clocks(hve):
         final_white_time=4 * 60 + 48,
         final_black_time=4 * 60 + 50,
     )
+    await h.view_last()
     await h.play_from_here(tc=TimeControl(300, 0), inherit_clocks=True)
     assert h._white_time == 4 * 60 + 48
     assert h._black_time == 4 * 60 + 50
@@ -160,6 +164,7 @@ async def test_play_from_here_mid_game_derives_clocks_from_history(hve):
     )
     # Cursor at ply 2 (after c5 — White to move). Post-c5 clocks = pre-Nf3
     # snapshot = view_clock_history[2] = (4:55, 4:50).
+    await h.view_last()
     await h.view_back()
     assert h._view_cursor == 2
     await h.play_from_here(tc=TimeControl(300, 0), inherit_clocks=True)
@@ -178,6 +183,7 @@ async def test_play_from_here_at_finished_position_keeps_view_mode(hve):
         moves_uci=["e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7"],
         clock_history=None,
     )
+    await h.view_last()
     assert h._board.is_checkmate()
     with pytest.raises(RuntimeError, match="game is over|already over"):
         await h.play_from_here(tc=TimeControl(60, 0))
@@ -278,6 +284,7 @@ async def test_view_payload_includes_result_from_pgn_headers_on_threefold(hve):
         pgn_result="1/2-1/2",
         pgn_termination="threefold_repetition",
     )
+    await h.view_last()
     evt = h._board_event()
     view = evt.payload["view"]
     assert view["game_over"] is True
@@ -296,6 +303,7 @@ async def test_normal_termination_enriched_to_threefold(hve):
         pgn_result="1/2-1/2",
         pgn_termination="normal",
     )
+    await h.view_last()
     evt = h._board_event()
     view = evt.payload["view"]
     assert view["termination"] == "threefold_repetition"
@@ -311,6 +319,7 @@ async def test_view_payload_result_from_board_on_checkmate(hve):
         moves_uci=_FOOLS_MATE_MOVES,
         clock_history=None,
     )
+    await h.view_last()
     evt = h._board_event()
     view = evt.payload["view"]
     assert view["game_over"] is True
@@ -347,3 +356,118 @@ async def test_game_over_false_at_mid_game_ply_despite_pgn_result(hve):
     evt = h._board_event()
     view = evt.payload["view"]
     assert view["game_over"] is False
+
+
+# -- comment_nav tests -------------------------------------------------------
+# 5-ply game; comments at plies 2 and 4 (1-based), root comment at ply 0.
+_CN_MOVES = ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4"]
+_CN_COMMENTS = [None, "Nice move.", None, "Strong reply.", None]
+_CN_ROOT = "Opening remarks."
+
+
+async def _cn_hve(hve, *, root=None):
+    h, _ = hve
+    await h.enter_view_mode(
+        start_fen=None,
+        moves_uci=_CN_MOVES,
+        clock_history=None,
+        comments=_CN_COMMENTS,
+        root_comment=root,
+    )
+    return h
+
+
+async def test_comment_nav_from_start(hve):
+    """At ply 0 with no root comment: prev=None, next=first commented ply."""
+    h = await _cn_hve(hve)
+    result = h._comment_nav(0)
+    assert result == {"prev_comment": None, "next_comment": 2}
+
+
+async def test_comment_nav_from_start_with_root(hve):
+    """At ply 0 with root comment: prev=None (already at root), next=2."""
+    h = await _cn_hve(hve, root=_CN_ROOT)
+    result = h._comment_nav(0)
+    assert result == {"prev_comment": None, "next_comment": 2}
+
+
+async def test_comment_nav_before_first_comment(hve):
+    """At ply 1 (no comment): prev=None, next=2."""
+    h = await _cn_hve(hve)
+    result = h._comment_nav(1)
+    assert result == {"prev_comment": None, "next_comment": 2}
+
+
+async def test_comment_nav_at_first_comment(hve):
+    """At ply 2 (has comment): prev=None, next=4."""
+    h = await _cn_hve(hve)
+    result = h._comment_nav(2)
+    assert result == {"prev_comment": None, "next_comment": 4}
+
+
+async def test_comment_nav_between_comments(hve):
+    """At ply 3 (no comment): prev=2, next=4."""
+    h = await _cn_hve(hve)
+    result = h._comment_nav(3)
+    assert result == {"prev_comment": 2, "next_comment": 4}
+
+
+async def test_comment_nav_at_last_comment(hve):
+    """At ply 4 (has comment): prev=2, next=None."""
+    h = await _cn_hve(hve)
+    result = h._comment_nav(4)
+    assert result == {"prev_comment": 2, "next_comment": None}
+
+
+async def test_comment_nav_at_end(hve):
+    """At ply 5 (end, no comment): prev=4, next=None."""
+    h = await _cn_hve(hve)
+    result = h._comment_nav(5)
+    assert result == {"prev_comment": 4, "next_comment": None}
+
+
+async def test_comment_nav_root_as_prev(hve):
+    """Root comment is reachable as prev from ply 1."""
+    h = await _cn_hve(hve, root=_CN_ROOT)
+    result = h._comment_nav(1)
+    assert result["prev_comment"] == 0
+
+
+async def test_comment_nav_no_comments(hve):
+    """Game with no comments at all: both directions None."""
+    h, _ = hve
+    await h.enter_view_mode(
+        start_fen=None,
+        moves_uci=_CN_MOVES,
+        clock_history=None,
+    )
+    result = h._comment_nav(3)
+    assert result == {"prev_comment": None, "next_comment": None}
+
+
+async def test_comment_nav_returned_by_view_goto(hve):
+    """view_goto returns comment nav when include_comment_nav=True."""
+    h = await _cn_hve(hve)
+    result = await h.view_goto(3, include_comment_nav=True)
+    assert result == {"prev_comment": 2, "next_comment": 4}
+
+
+async def test_comment_nav_not_returned_by_default(hve):
+    """view_goto returns empty dict by default (no overhead)."""
+    h = await _cn_hve(hve)
+    result = await h.view_goto(3)
+    assert result == {}
+
+
+async def test_comment_nav_via_convenience_methods(hve):
+    """view_first/back/forward/last all forward include_comment_nav."""
+    h = await _cn_hve(hve)
+    await h.view_goto(3)  # land at ply 3
+    r = await h.view_back(include_comment_nav=True)
+    assert r == {"prev_comment": None, "next_comment": 4}  # now at ply 2
+    r = await h.view_forward(include_comment_nav=True)
+    assert r == {"prev_comment": 2, "next_comment": 4}  # now at ply 3
+    r = await h.view_first(include_comment_nav=True)
+    assert r == {"prev_comment": None, "next_comment": 2}  # now at ply 0
+    r = await h.view_last(include_comment_nav=True)
+    assert r == {"prev_comment": 4, "next_comment": None}  # now at ply 5

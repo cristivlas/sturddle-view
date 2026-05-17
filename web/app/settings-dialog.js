@@ -2,10 +2,11 @@
 // every toggle / input commits to the server immediately (debounced for
 // text fields). No Save button. The X just closes.
 
-import { apiErrorDetail, pickFile, showDialog, toast } from "./dialogs.js";
+import { apiErrorDetail, inlineSvgIcon, pickFile, showDialog, toast } from "./dialogs.js";
 import { mountEngineList } from "./engines.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
+import { CHESS_CLOCK_SVG_INNER } from "./icons.js";
 
 const SETTINGS_ENGINES_COL_PCTS_KEY = "sturddle:engines:settings:colPcts3";
 
@@ -182,6 +183,13 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const playPanel = document.createElement("wa-tab-panel");
       playPanel.name = "play";
 
+      // --- Display tab (visual / presentation preferences) ---
+      const displayTab = document.createElement("wa-tab");
+      displayTab.panel = "display";
+      displayTab.textContent = "Display";
+      const displayPanel = document.createElement("wa-tab-panel");
+      displayPanel.name = "display";
+
       const tcInitialRow = makeDurationRow({
         label: "Initial time",
         seconds: initial.tc_initial_seconds ?? 300,
@@ -240,18 +248,24 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const inheritClocks = document.createElement("wa-switch");
       inheritClocks.size = "small";
       inheritClocks.checked = !!initial.inherit_pgn_clocks;
-      inheritClocks.textContent = "Inherit PGN clocks";
+      inheritClocks.textContent = "Resume clocks from imported PGN";
       inheritClocks.addEventListener("change", () => {
         putSettings({ inherit_pgn_clocks: inheritClocks.checked });
       });
-      const inheritClocksRow = document.createElement("div");
-      inheritClocksRow.className = "settings-row";
-      inheritClocksRow.append(inheritClocks);
+
+      const showComments = document.createElement("wa-switch");
+      showComments.size = "small";
+      showComments.checked = initial.view_show_pgn_comments !== false;
+      showComments.textContent = "PGN comments";
+      showComments.title = "Display sanitized move comments in the left column while viewing a game (desktop only)";
+      showComments.addEventListener("change", () => {
+        putSettings({ view_show_pgn_comments: showComments.checked });
+      });
 
       const allowTakeback = document.createElement("wa-switch");
       allowTakeback.size = "small";
       allowTakeback.checked = initial.allow_takeback !== false;
-      allowTakeback.textContent = "Allow Undo (take back)";
+      allowTakeback.textContent = "Allow Undo";
       allowTakeback.addEventListener("change", () => {
         putSettings({ allow_takeback: allowTakeback.checked });
       });
@@ -263,16 +277,22 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       autoClaimDraws.addEventListener("change", () => {
         putSettings({ auto_claim_draws: autoClaimDraws.checked });
       });
-      const takebackRow = document.createElement("div");
-      takebackRow.className = "settings-row";
-      takebackRow.style.cssText = "display:flex; flex-wrap:wrap; gap:16px; align-items:center;";
-      takebackRow.append(allowTakeback, autoClaimDraws);
+
+      // Inherit PGN clocks is a view->play transition setting; keep it on
+      // its own row. Allow Undo + Auto-claim draws are end-of-game rules
+      // and pair naturally in a 2-toggle grid.
+      const inheritClocksRow = document.createElement("div");
+      inheritClocksRow.className = "settings-row settings-row-spaced";
+      inheritClocksRow.append(inheritClocks);
+      const togglesRow = document.createElement("div");
+      togglesRow.className = "settings-row settings-toggles-grid";
+      togglesRow.append(allowTakeback, autoClaimDraws);
 
       // Board style: single preset picker + live preview swatch reusing
       // cm-chessboard's CSS class + sprite so the preview matches the
       // real board exactly.
       const boardStyleRow = document.createElement("div");
-      boardStyleRow.className = "settings-row";
+      boardStyleRow.className = "settings-row settings-row-spaced";
       const boardStyleLabel = document.createElement("label");
       boardStyleLabel.textContent = "Board style";
       const boardStyleSelect = document.createElement("wa-select");
@@ -358,13 +378,47 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       });
       boardStyleRow.append(boardStyleLabel, boardStyleSelect, previewWrap);
 
-      // Pair Human plays as + Eval display on a single row to save
-      // vertical space (both narrow selects, semantically related —
-      // both about how the player sees their game).
-      const humanEvalRow = document.createElement("div");
-      humanEvalRow.className = "settings-pair-row";
-      humanEvalRow.append(humanSideRow, evalPovRow);
-      playPanel.append(tcInitialRow, tcIncrementRow, inheritClocksRow, humanEvalRow, takebackRow, boardStyleRow);
+      const makeDivider = () => {
+        const hr = document.createElement("hr");
+        hr.className = "settings-divider";
+        return hr;
+      };
+      const makeSection = (iconEl, ariaLabel, ...children) => {
+        const fs = document.createElement("fieldset");
+        fs.className = "settings-section";
+        const lg = document.createElement("legend");
+        lg.setAttribute("aria-label", ariaLabel);
+        lg.append(iconEl);
+        fs.append(lg, ...children);
+        return fs;
+      };
+      const tcSection = makeSection(
+        inlineSvgIcon(CHESS_CLOCK_SVG_INNER, { ariaLabel: "Time control" }),
+        "Time control",
+        tcInitialRow, tcIncrementRow,
+      );
+      const playCol = document.createElement("div");
+      playCol.className = "settings-panel-col";
+      playCol.append(
+        tcSection, inheritClocksRow,
+        makeDivider(),
+        humanSideRow,
+        makeDivider(),
+        togglesRow,
+      );
+      playPanel.append(playCol);
+      // Display tab: presentation-only preferences (no gameplay effect).
+      const showCommentsDisplayRow = document.createElement("div");
+      showCommentsDisplayRow.className = "settings-row";
+      showCommentsDisplayRow.append(showComments);
+      const displayCol = document.createElement("div");
+      displayCol.className = "settings-panel-col";
+      displayCol.append(
+        evalPovRow, boardStyleRow,
+        makeDivider(),
+        showCommentsDisplayRow,
+      );
+      displayPanel.append(displayCol);
 
       // Path-row helper used by Common + Tournament tabs.
       // Layout: label on top, [path-field][Browse][Clear] on a row underneath.
@@ -394,21 +448,6 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         field.setAttribute("autocomplete", "off");
         field.classList.add("path-field");
         field.value = value || "";
-        if (editable) {
-          if (placeholder) field.placeholder = placeholder;
-          field.addEventListener("input", () => {
-            onPick((field.value || "").trim(), { typing: true });
-          });
-          // Commit on blur / Enter -- typing-time callbacks can debounce or
-          // skip; this is the "user is done editing" signal.
-          field.addEventListener("change", () => {
-            onPick((field.value || "").trim());
-          });
-        } else {
-          field.setAttribute("readonly", "");
-          field.placeholder = "(not set)";
-        }
-
         const inner_actions = document.createElement("div");
         inner_actions.className = "settings-row-actions";
         const browse = document.createElement("wa-button");
@@ -418,12 +457,6 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         const browseIcon = document.createElement("wa-icon");
         browseIcon.setAttribute("name", "folder-open");
         browse.appendChild(browseIcon);
-        browse.addEventListener("click", async () => {
-          const path = await pickFile({ api, mode, title: pickerTitle });
-          if (!path) return;
-          field.value = path;
-          onPick(path);
-        });
         const clear = document.createElement("wa-button");
         clear.size = "small";
         clear.title = "Clear";
@@ -431,10 +464,39 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         const clearIcon = document.createElement("wa-icon");
         clearIcon.setAttribute("name", "xmark");
         clear.appendChild(clearIcon);
+        const syncClear = () => {
+          clear.disabled = !(field.value || "").trim();
+        };
+
+        if (editable) {
+          if (placeholder) field.placeholder = placeholder;
+          field.addEventListener("input", () => {
+            syncClear();
+            onPick((field.value || "").trim(), { typing: true });
+          });
+          // Commit on blur / Enter -- typing-time callbacks can debounce or
+          // skip; this is the "user is done editing" signal.
+          field.addEventListener("change", () => {
+            syncClear();
+            onPick((field.value || "").trim());
+          });
+        } else {
+          field.setAttribute("readonly", "");
+          field.placeholder = "(not set)";
+        }
+        browse.addEventListener("click", async () => {
+          const path = await pickFile({ api, mode, title: pickerTitle });
+          if (!path) return;
+          field.value = path;
+          syncClear();
+          onPick(path);
+        });
         clear.addEventListener("click", () => {
           field.value = "";
+          syncClear();
           onPick("");
         });
+        syncClear();
         inner_actions.append(browse, clear);
         inner.append(field, inner_actions);
         row.append(lbl, inner);
@@ -755,8 +817,8 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       }
 
       tabs.append(
-        generalTab, enginesTab, playTab, tournamentTab, sprtTab,
-        generalPanel, enginesPanel, playPanel, tournamentPanel, sprtPanel,
+        generalTab, enginesTab, playTab, displayTab, tournamentTab, sprtTab,
+        generalPanel, enginesPanel, playPanel, displayPanel, tournamentPanel, sprtPanel,
       );
 
       dialog.append(tabs);

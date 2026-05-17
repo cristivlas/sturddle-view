@@ -531,12 +531,68 @@ button.recent-del:hover { color: var(--status-err-fg, #d33); }
   z-index: 9; /* below ribbon (z-index:10) */
 }
 .play-dock-left.dock-empty { visibility: hidden; }
-.play-dock-left:not(.dock-empty) { border: 1px solid #454952; }
-/* When only one slot is docked the grip row is absent; collapse to single row. */
-.play-dock-left.dock-single {
+
+/* PGN commentary panel: a parallel dock container occupying the same left
+   column area as .play-dock-left. Holds at most one .dock-slot (commentary).
+   Visibility toggled via the .dock-empty class set by play-debug-windows.js. */
+.play-comments-host {
+  grid-column: 1;
+  grid-row: 1;
+  position: fixed;
+  left: calc(var(--ribbon-w) + 1px);
+  /* top/bottom/width set dynamically in JS to align with the board. */
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  z-index: 8;
 }
+.pgn-comments-body {
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: var(--fg);
+  outline: none;
+}
+.pgn-comments-body p {
+  margin: 0 0 0.6em;
+  white-space: pre-wrap;
+}
+.pgn-comments-body p:last-child { margin-bottom: 0; }
+.pgn-comments-body.is-empty {
+  color: var(--muted);
+  font-style: italic;
+}
+.pgn-comments-nav {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.pgn-comments-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1rem;
+}
+.pgn-comments-nav-btn:not([disabled]):hover {
+  color: var(--fg);
+  background: var(--nav-btn-bg-hover);
+}
+.pgn-comments-nav-btn[disabled] {
+  opacity: 0.35;
+  cursor: default;
+}
+.play-dock-left:not(.dock-empty),
+.play-comments-host:not(.dock-empty) { border: 1px solid #454952; }
+.play-comments-host.dock-empty { visibility: hidden; }
+/* When only one slot is docked the grip row is absent; collapse to single row. */
+.play-dock-left.dock-single { display: flex; flex-direction: column; }
 .dock-slot {
   display: flex;
   flex-direction: column;
@@ -546,6 +602,7 @@ button.recent-del:hover { color: var(--status-err-fg, #d33); }
   background: var(--panel);
 }
 .play-dock-left:not(.dock-single) .dock-slot { overflow: hidden; }
+.play-comments-host .dock-slot { overflow: hidden; }
 .dock-grip {
   cursor: row-resize;
   background: transparent;
@@ -571,7 +628,8 @@ button.recent-del:hover { color: var(--status-err-fg, #d33); }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.dock-slot-undock {
+.dock-slot-undock,
+.dock-slot-close {
   flex: 0 0 auto;
   width: 22px; height: 22px;
   padding: 0;
@@ -580,7 +638,8 @@ button.recent-del:hover { color: var(--status-err-fg, #d33); }
   color: var(--muted); cursor: pointer;
   font-size: 0.75rem;
 }
-.dock-slot-undock:hover { color: var(--fg); background: var(--nav-btn-bg-hover); }
+.dock-slot-undock:hover,
+.dock-slot-close:hover { color: var(--fg); background: var(--nav-btn-bg-hover); }
 .dock-slot-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -627,6 +686,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   /* !important needed: .play-dock-left.dock-single below has higher
      specificity than the bare class selector and would otherwise win. */
   .play-dock-left { display: none !important; }
+  .play-comments-host { display: none !important; }
   #play-perspective { display: block; }
   .play-grid {
     display: flex;
@@ -1359,6 +1419,77 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 
 /* Form-style rows (label + input) inside a panel. */
 .settings-row { max-width: 360px; }
+/* Toggles grid: 4 switches in a fixed 2-column grid, collapsing to one
+   column only on mobile-width dialogs. Widened past the standard 360px
+   .settings-row cap so the longest label ("Allow Undo (take back)") fits
+   on a single line. */
+.settings-toggles-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 24px;
+  align-items: center;
+  max-width: 460px;
+}
+@media (max-width: 480px) {
+  .settings-toggles-grid { grid-template-columns: 1fr; }
+}
+/* Vertical rhythm tokens for settings panels: group/row gaps share these
+   so the three-different-magic-numbers problem stays out of the markup. */
+:root {
+  --settings-group-gap: 20px;
+  --settings-row-gap: 12px;
+  --settings-section-pad: 14px;
+}
+/* Hairline separator between conceptual groups in a settings panel.
+   Matches the wa-tab-group rail (same track-color, same 0.125rem width)
+   so the dialog reads as one visual system with the tab nav rail. */
+.settings-divider {
+  border: 0;
+  border-top: 0.125rem solid var(--wa-color-neutral-fill-normal);
+  margin: var(--settings-group-gap) 0;
+}
+/* Subtle bordered card around a related-controls group; legend inset on
+   the top border (fieldset-style). Uses the same neutral-fill-normal
+   rail color as .settings-divider for consistency. */
+.settings-section {
+  border: 1px solid var(--wa-color-neutral-fill-normal);
+  border-radius: var(--wa-border-radius-m, 4px);
+  padding: var(--settings-section-pad);
+  margin: 4px 0 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.settings-section legend {
+  padding: 0 6px;
+  color: var(--wa-color-brand-50);
+  display: inline-flex;
+  align-items: center;
+}
+/* Legend hosts a single icon; size it explicitly so it isn't subject to
+   the surrounding legend default. Applies to wa-icon AND our custom
+   inlineSvgIcon, which sizes off em. */
+.settings-section legend wa-icon,
+.settings-section legend svg { font-size: 1.5rem; width: 1.5em; height: 1.5em; }
+.settings-section > .settings-row { margin: 0; }
+.settings-section > .settings-row + .settings-row { margin-top: var(--settings-row-gap); }
+/* Centered, fixed-width column for a settings tab content. All direct
+   children share this width so the section box, the standalone rows and
+   the dividers line up visually. */
+.settings-panel-col {
+  width: 360px;
+  max-width: 100%;
+  margin: 0 auto;
+}
+.settings-panel-col .settings-row,
+.settings-panel-col .settings-divider,
+.settings-panel-col .settings-toggles-grid {
+  max-width: none;
+  width: 100%;
+}
+/* Extra headroom on a row that sits below a select/input within the same
+   conceptual group (e.g. a switch after a dropdown). Avoids ad-hoc inline
+   margins on .settings-row elements. */
+.settings-row-spaced { margin-top: var(--settings-row-gap); }
 .settings-row label {
   display: block;
   color: var(--muted);

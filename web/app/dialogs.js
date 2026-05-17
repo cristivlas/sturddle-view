@@ -445,6 +445,31 @@ export function openSettings(tab) {
   window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT, { detail: { tab } }));
 }
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+/** Mount an inline SVG icon that follows the parent's color and font-size,
+ *  matching wa-icon's behavior closely enough to drop in alongside it.
+ *
+ *  `innerSvg` is the raw inner markup of the icon (no outer <svg> wrapper).
+ *  `viewBox` defaults to Font Awesome's 512x512 grid so paths lifted from
+ *  FA-style sources work without rescaling. Pass `ariaLabel` to expose a
+ *  meaningful name, or leave undefined for purely decorative icons. */
+export function inlineSvgIcon(innerSvg, { viewBox = "0 0 512 512", ariaLabel } = {}) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", viewBox);
+  svg.setAttribute("fill", "currentColor");
+  svg.setAttribute("width", "1em");
+  svg.setAttribute("height", "1em");
+  if (ariaLabel) {
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", ariaLabel);
+  } else {
+    svg.setAttribute("aria-hidden", "true");
+  }
+  svg.innerHTML = innerSvg;
+  return svg;
+}
+
 // Map of well-known server error codes to inline toast actions.
 // Centralized here so every reportError call site picks up the same
 // remediation affordance (e.g. removing the active engine mid-session

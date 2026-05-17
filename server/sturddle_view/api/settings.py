@@ -37,6 +37,7 @@ def _serialize(s) -> dict:
         "inherit_pgn_clocks": s.inherit_pgn_clocks,
         "board_style": s.board_style,
         "play_eval_pov": s.play_eval_pov,
+        "view_show_pgn_comments": s.view_show_pgn_comments,
         "engine_default_threads": s.engine_default_threads,
         "engine_default_analysis_threads": s.engine_default_analysis_threads,
         "engine_default_hash_mb": s.engine_default_hash_mb,
@@ -180,6 +181,9 @@ async def update_settings(payload: dict, request: Request) -> dict:
                 detail=f"play_eval_pov must be one of {sorted(_VALID_EVAL_POV)}",
             )
         s.play_eval_pov = pov
+
+    if "view_show_pgn_comments" in payload:
+        s.view_show_pgn_comments = bool(payload["view_show_pgn_comments"])
 
     for key, min_v in (
         ("engine_default_threads", 1),

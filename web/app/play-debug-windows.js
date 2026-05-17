@@ -1,9 +1,15 @@
-// Debug windows for play mode (desktop only).
+// Dockable windows for play mode (desktop only).
 // 1. UCI log: raw lines flowing between python-chess and the engine.
 // 2. Search Lines: per-iteration principal variation, cutechess-style.
 //
 // Each window can float (WinBox) or dock into the left column of the play
-// grid (.play-dock-left). Dock state is persisted in localStorage.
+// grid (.play-dock-left, aka the "UCI dock"). Dock state is persisted in
+// localStorage.
+//
+// The exported createDockableWindow factory is reused by play-commentary-
+// window.js, which supplies its own dock container (.play-comments-host)
+// via getDockEl. Such instances are flagged !sharesUciDock so debug-dock
+// lifecycle helpers (closeDebugWindows, restoreDebugWindows) skip them.
 //
 // Narrow-viewport behavior: at <=800px width / <=700px height, CSS hides
 // .play-dock-left. The JS still creates dock slots into the (hidden)
@@ -29,31 +35,45 @@ const WIN_MARGIN = 8; // gap between window edge and WinBox
 let dockEl = null;
 let dockResizeObs = null;
 let dockGrip = null;
+// Additional, independent dock containers (e.g. commentary). Each entry:
+//   { el, resizeObs }
+// These get the same bounds-tracking treatment as the debug dock but do
+// NOT participate in slot/splitter accounting -- they are owned by their
+// respective window factories via createDockableWindow's `getDockEl`.
+const extraDocks = new Map();
 
 const DOCK_SPLIT_KEY = "sturddle:play:dockSplit";
 
-function isMobileLayout() {
-  return window.innerWidth <= 800 || window.innerHeight <= 700;
+export const MOBILE_MAX_W_PX = 800;
+export const MOBILE_MAX_H_PX = 700;
+
+export function isMobileLayout() {
+  return window.innerWidth <= MOBILE_MAX_W_PX || window.innerHeight <= MOBILE_MAX_H_PX;
 }
 
-function updateDockBounds() {
-  if (!dockEl || isMobileLayout()) return;
+function applyDockBounds(el) {
+  if (!el || isMobileLayout()) return;
   const board = document.querySelector(".play-board-host");
   if (!board) return;
   const boardLeft = Math.round(board.getBoundingClientRect().left);
-  const ribbonW = parseInt(getComputedStyle(dockEl.closest(".play-grid") ?? document.documentElement)
+  const ribbonW = parseInt(getComputedStyle(el.closest(".play-grid") ?? document.documentElement)
     .getPropertyValue("--ribbon-w")) || 36;
-  dockEl.style.width = (boardLeft - ribbonW - 9) + "px";
+  el.style.width = (boardLeft - ribbonW - 9) + "px";
 
   const clockTop = document.querySelector(".clock-row.clock-top");
   const clockBot = document.querySelector(".clock-row.clock-bottom");
   if (clockTop && clockBot) {
     const top = Math.round(clockTop.getBoundingClientRect().top);
     const bot = Math.round(clockBot.getBoundingClientRect().bottom);
-    dockEl.style.top    = top + "px";
-    dockEl.style.bottom = (window.innerHeight - bot) + "px";
-    dockEl.style.height = "";
+    el.style.top    = top + "px";
+    el.style.bottom = (window.innerHeight - bot) + "px";
+    el.style.height = "";
   }
+}
+
+function updateDockBounds() {
+  applyDockBounds(dockEl);
+  for (const { el } of extraDocks.values()) applyDockBounds(el);
 }
 
 // Width that fits in the space to the right of the board, with fallback.
@@ -117,7 +137,14 @@ function setOpen(key, val) {
 //     .dock-slot-header  (title + undock button)
 //     .dock-slot-body    (the window's body div, transplanted here)
 
+function syncExtraDocksVisibility() {
+  for (const { el } of extraDocks.values()) {
+    el.classList.toggle("dock-empty", el.querySelectorAll(".dock-slot").length === 0);
+  }
+}
+
 function syncDockVisibility() {
+  syncExtraDocksVisibility();
   if (!dockEl) return;
   const slots = dockEl.querySelectorAll(".dock-slot");
   dockEl.classList.toggle("dock-empty", slots.length === 0);
@@ -151,20 +178,26 @@ function syncDockVisibility() {
   }
 }
 
-function makeDockSlot(title, bodyEl, onUndock) {
+function makeDockSlot(title, bodyEl, onUndock, onClose) {
   const slot = document.createElement("div");
   slot.className = "dock-slot";
+  const closeBtnHtml = onClose
+    ? `<button type="button" class="dock-slot-close" title="Close" aria-label="Close">
+         <wa-icon name="xmark"></wa-icon>
+       </button>` : "";
   slot.innerHTML = `
     <div class="dock-slot-header">
       <span class="dock-slot-title"></span>
       <button type="button" class="dock-slot-undock" title="Undock" aria-label="Undock">
         <wa-icon name="arrow-up-right-from-square"></wa-icon>
       </button>
+      ${closeBtnHtml}
     </div>
     <div class="dock-slot-body"></div>
   `;
   slot.querySelector(".dock-slot-title").textContent = title;
   slot.querySelector(".dock-slot-undock").addEventListener("click", onUndock);
+  if (onClose) slot.querySelector(".dock-slot-close").addEventListener("click", onClose);
   slot.querySelector(".dock-slot-body").appendChild(bodyEl);
   return slot;
 }
@@ -182,8 +215,14 @@ function addDockButton(wb, onDock) {
 // Registry of instances so lifecycle helpers can iterate without naming them.
 const instances = [];
 
-function createDockableWindow(config) {
-  const { title, className, geoKey, winStateKey, dockedKey, openKey, defaultW, defaultH, defaultY, build, dockOrder } = config;
+export function createDockableWindow(config) {
+  const {
+    title, className, geoKey, winStateKey, dockedKey, openKey,
+    defaultW, defaultH, defaultY, build, dockOrder,
+    getDockEl = () => dockEl,
+    onUserClose,
+    closable = false,
+  } = config;
 
   let wb = null;
   let slot = null;
@@ -192,14 +231,21 @@ function createDockableWindow(config) {
   let saved = null;
   let docking = false;  // float -> dock transition; onclose skips destroy
   let navAway = false;  // nav detach; onclose skips destroy
+  let programmaticClose = false; // close() -> wb.close(); onclose skips onUserClose
 
   function loadWinState() { return localStorage.getItem(winStateKey); }
   function saveWinState(v) { if (v) localStorage.setItem(winStateKey, v); else localStorage.removeItem(winStateKey); }
 
   function setOff(fn) { off = fn; }
 
+  function userClose() {
+    close();
+    if (onUserClose) onUserClose();
+  }
+
   function dock() {
-    if (!dockEl) return;
+    const container = getDockEl();
+    if (!container) return;
     if (wb) {
       saveGeo(geoKey, wb);
       wb.body.removeChild(body);
@@ -208,19 +254,20 @@ function createDockableWindow(config) {
       docking = false;
     }
     setDocked(dockedKey, true);
-    slot = makeDockSlot(title, body, undock);
+    slot = makeDockSlot(title, body, undock, closable ? userClose : null);
     // Insert in dockOrder ascending; lower order goes on top.
     let inserted = false;
     for (const other of instances) {
       if (other === inst) continue;
-      if (other.slot && other.dockOrder > dockOrder) {
-        dockEl.insertBefore(slot, other.slot);
+      if (other.slot && other.slot.parentElement === container && other.dockOrder > dockOrder) {
+        container.insertBefore(slot, other.slot);
         inserted = true;
         break;
       }
     }
-    if (!inserted) dockEl.appendChild(slot);
+    if (!inserted) container.appendChild(slot);
     syncDockVisibility();
+    applyDockBounds(container);
   }
 
   function undock() {
@@ -247,11 +294,13 @@ function createDockableWindow(config) {
         if (wb) saveGeo(geoKey, wb);
         wb = null;
         if (docking || navAway) return; // body lives on
-        // User-initiated close (WinBox X). Persist the closed state so a
-        // hard refresh doesn't reopen the window.
+        // User-initiated close (WinBox X) when not flagged programmatic.
+        // Persist the closed state so a hard refresh doesn't reopen.
+        const userInitiated = !programmaticClose;
         setOpen(openKey, false);
         if (off) { off(); off = null; }
         body = null;
+        if (userInitiated && onUserClose) onUserClose();
       },
       onminimize() { saveWinState("min"); },
       onmaximize() { saveWinState("max"); },
@@ -283,7 +332,12 @@ function createDockableWindow(config) {
 
   function close() {
     setOpen(openKey, false);
-    if (wb) { wb.close(); return; }
+    if (wb) {
+      programmaticClose = true;
+      wb.close();
+      programmaticClose = false;
+      return;
+    }
     teardownSlot();
     syncDockVisibility();
   }
@@ -292,7 +346,7 @@ function createDockableWindow(config) {
     if (wb || slot) { close(); return; }
     setOpen(openKey, true);
     if (!body) body = build(events, { setOff });
-    if (isDocked(dockedKey) && dockEl) {
+    if (isDocked(dockedKey) && getDockEl()) {
       dock();
     } else {
       openFloat();
@@ -313,7 +367,9 @@ function createDockableWindow(config) {
     toggle, close, teardownSlot, closeForNav, restore,
     get wb() { return wb; },
     get slot() { return slot; },
+    get body() { return body; },
     dockOrder,
+    sharesUciDock: !config.getDockEl,
   };
   instances.push(inst);
   return inst;
@@ -323,8 +379,10 @@ export function setDockContainer(el) {
   if (dockResizeObs) { dockResizeObs.disconnect(); dockResizeObs = null; }
   window.removeEventListener("resize", updateDockBounds);
   // Defensive: tear down any leftover slots when detaching.
+  // Only debug-window instances (default getDockEl -> module dockEl) are torn
+  // down here; extra-dock owners (e.g. commentary) manage their own lifecycle.
   if (!el) {
-    instances.forEach(i => i.teardownSlot());
+    instances.forEach(i => { if (i.sharesUciDock) i.teardownSlot(); });
     dockGrip = null;
   }
   dockEl = el;
@@ -338,6 +396,31 @@ export function setDockContainer(el) {
     updateDockBounds();
   }
   syncDockVisibility();
+}
+
+// Register an extra dock container so it gets the same bounds-tracking
+// (resize observer + window resize listener) as the debug dock. Returns an
+// unregister function. Independent of slot/splitter accounting.
+export function registerExtraDock(el) {
+  if (!el) return () => {};
+  const board = document.querySelector(".play-board-host");
+  const entry = { el, resizeObs: null };
+  if (board) {
+    entry.resizeObs = new ResizeObserver(updateDockBounds);
+    entry.resizeObs.observe(board);
+  }
+  extraDocks.set(el, entry);
+  window.addEventListener("resize", updateDockBounds);
+  applyDockBounds(el);
+  el.classList.toggle("dock-empty", el.querySelectorAll(".dock-slot").length === 0);
+  return () => {
+    const e = extraDocks.get(el);
+    if (e?.resizeObs) e.resizeObs.disconnect();
+    extraDocks.delete(el);
+    if (!dockEl && extraDocks.size === 0) {
+      window.removeEventListener("resize", updateDockBounds);
+    }
+  };
 }
 
 // -- UCI log body ------------------------------------------------------------
@@ -421,6 +504,7 @@ const uciLog = createDockableWindow({
   },
   build: buildUciLogBody,
   dockOrder: 20, // below Search Lines
+  closable: true,
 });
 
 // -- Search Lines body -------------------------------------------------------
@@ -582,6 +666,7 @@ const pvTable = createDockableWindow({
   defaultY: () => HEADER_H,
   build: buildPvTableBody,
   dockOrder: 10, // above UCI log
+  closable: true,
 });
 
 // -- public API --------------------------------------------------------------
@@ -590,15 +675,15 @@ export function toggleUciLogWindow(events) { uciLog.toggle(events); }
 export function togglePvTableWindow(events) { pvTable.toggle(events); }
 
 export function closeDebugWindows() {
-  instances.forEach(i => i.closeForNav());
+  instances.forEach(i => { if (i.sharesUciDock) i.closeForNav(); });
   syncDockVisibility();
 }
 
 export function closeDebugWindowsPersist() {
-  instances.forEach(i => i.close());
+  instances.forEach(i => { if (i.sharesUciDock) i.close(); });
   syncDockVisibility();
 }
 
 export function restoreDebugWindows(events) {
-  instances.forEach(i => i.restore(events));
+  instances.forEach(i => { if (i.sharesUciDock) i.restore(events); });
 }

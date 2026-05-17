@@ -38,6 +38,26 @@ class TimeControl:
     increment_seconds: float = 0.0
 
 
+@dataclass
+class _ViewSnapshot:
+    """All view-mode state captured at enter_edit_mode for lossless restore.
+    Adding a view-mode field? Add it here too -- single source of truth."""
+    start_fen: str | None
+    board: chess.Board
+    cursor: int
+    full_moves: list[chess.Move]
+    clock_history: list[tuple[float, float]]
+    final_white: float | None
+    final_black: float | None
+    white_name: str | None
+    black_name: str | None
+    eval_history: list[dict | None] | None
+    comments: list[str | None] | None
+    root_comment: str | None
+    pgn_result: str | None
+    pgn_termination: str | None
+
+
 def _serialize_info(
     info: chess.engine.InfoDict, board: chess.Board,
     eval_pov: chess.Color = chess.WHITE,
@@ -166,6 +186,7 @@ class HumanVsEngine:
         # the pre-edit FEN. Snapshotted by enter_edit_mode.
         self._editing: bool = False
         self._edit_pre_fen: str | None = None
+        self._edit_view_snapshot: _ViewSnapshot | None = None
         self._view_cursor: int = 0  # 0..len(_view_full_moves) inclusive
         self._view_full_moves: list[chess.Move] = []
         # Per-ply pre-move (white, black) snapshots from the imported PGN's
@@ -183,6 +204,11 @@ class HumanVsEngine:
         # Per-ply post-move eval (white POV) parsed from PGN comments.
         # None when the PGN had no recognizable eval annotations.
         self._view_eval_history: list[dict | None] | None = None
+        # Per-ply sanitized PGN comments (machine annotations stripped).
+        # None when the PGN had no commentary at all.
+        self._view_comments: list[str | None] | None = None
+        # Pre-game / Annotator commentary, sanitized. Shown at cursor==0.
+        self._view_root_comment: str | None = None
         # PGN [Result]/[Termination] from the imported game (None when
         # not in view mode). Read by _board_event's view payload.
         self._view_pgn_result: str | None = None
@@ -334,6 +360,8 @@ class HumanVsEngine:
         self._view_white_name = None
         self._view_black_name = None
         self._view_eval_history = None
+        self._view_comments = None
+        self._view_root_comment = None
         self._view_pgn_result = None
         self._view_pgn_termination = None
         self._view_cursor = 0
@@ -791,6 +819,21 @@ class HumanVsEngine:
         is set up yet. Read-only; does not acquire the lock."""
         return self._board.fen() if self._board is not None else None
 
+    def play_game_snapshot(
+        self,
+    ) -> tuple[str | None, list[str], list[tuple[float, float]], float, float]:
+        """Return (start_fen, moves_uci, clock_history, white_time, black_time)
+        from the current play-mode game. Safe to call without the lock."""
+        board = self._board
+        moves = [m.uci() for m in board.move_stack] if board else []
+        return (
+            self._start_fen,
+            moves,
+            list(self._clock_history),
+            self._white_time,
+            self._black_time,
+        )
+
     async def enter_view_mode(
         self,
         *,
@@ -802,6 +845,8 @@ class HumanVsEngine:
         white_name: str | None = None,
         black_name: str | None = None,
         eval_history: list[dict | None] | None = None,
+        comments: list[str | None] | None = None,
+        root_comment: str | None = None,
         pgn_result: str | None = None,
         pgn_termination: str | None = None,
     ) -> str:
@@ -847,9 +892,11 @@ class HumanVsEngine:
             self._view_eval_history = (
                 list(eval_history) if eval_history else None
             )
-            self._view_cursor = len(full_moves)  # land at last ply
+            self._view_comments = list(comments) if comments else None
+            self._view_root_comment = root_comment or None
+            self._view_cursor = 0  # land at start; avoid end-of-game modal
             self._start_fen = start_fen
-            self._board = replay  # already at the final position
+            self._board = start_board
             self._game_id = uuid.uuid4().hex[:12]
             self._game_started_wall = None  # not a play game; no autosave
             # Clocks frozen — irrelevant in view mode but keep types sane.
@@ -862,7 +909,25 @@ class HumanVsEngine:
             await self._publish_clock()
         return self._game_id
 
-    async def view_goto(self, ply: int) -> None:
+    def _comment_nav(self, cursor: int) -> dict:
+        """Return prev/next ply indices (0..n) that have a comment, nearest first."""
+        # Build a flat lookup: ply 0 -> root comment, ply i -> _view_comments[i-1].
+        def has_comment(ply: int) -> bool:
+            if ply == 0:
+                return self._view_root_comment is not None
+            comments = self._view_comments
+            return bool(comments and (i := ply - 1) < len(comments) and comments[i] is not None)
+
+        n = len(self._view_full_moves)
+        prev_c = next(
+            (i for i in range(cursor - 1, -1, -1) if has_comment(i)), None
+        )
+        next_c = next(
+            (i for i in range(cursor + 1, n + 1) if has_comment(i)), None
+        )
+        return {"prev_comment": prev_c, "next_comment": next_c}
+
+    async def view_goto(self, ply: int, *, include_comment_nav: bool = False) -> dict:
         """Move the view cursor to ``ply`` (0..len(full_moves)). Rebuilds
         the board by replaying from start. Rejected during analysis."""
         async with self._lock:
@@ -885,22 +950,23 @@ class HumanVsEngine:
             await self._publish_board()
             # Clock display reflects historical clocks at the cursor.
             await self._publish_clock()
+            return self._comment_nav(ply) if include_comment_nav else {}
 
-    async def view_first(self) -> None:
-        await self.view_goto(0)
+    async def view_first(self, *, include_comment_nav: bool = False) -> dict:
+        return await self.view_goto(0, include_comment_nav=include_comment_nav)
 
-    async def view_back(self) -> None:
+    async def view_back(self, *, include_comment_nav: bool = False) -> dict:
         async with self._lock:
             target = max(0, self._view_cursor - 1)
-        await self.view_goto(target)
+        return await self.view_goto(target, include_comment_nav=include_comment_nav)
 
-    async def view_forward(self) -> None:
+    async def view_forward(self, *, include_comment_nav: bool = False) -> dict:
         async with self._lock:
             target = min(len(self._view_full_moves), self._view_cursor + 1)
-        await self.view_goto(target)
+        return await self.view_goto(target, include_comment_nav=include_comment_nav)
 
-    async def view_last(self) -> None:
-        await self.view_goto(len(self._view_full_moves))
+    async def view_last(self, *, include_comment_nav: bool = False) -> dict:
+        return await self.view_goto(len(self._view_full_moves), include_comment_nav=include_comment_nav)
 
     async def enter_edit_mode(self) -> str:
         """Enter board editing. Must be in view mode; live play rejects.
@@ -918,12 +984,45 @@ class HumanVsEngine:
             self._analysis_mode = False
             pre_fen = self._board.fen()
             self._edit_pre_fen = pre_fen
+            self._edit_view_snapshot = _ViewSnapshot(
+                start_fen=self._start_fen,
+                board=self._board.copy(),
+                cursor=self._view_cursor,
+                full_moves=list(self._view_full_moves),
+                clock_history=list(self._view_clock_history),
+                final_white=self._view_final_white,
+                final_black=self._view_final_black,
+                white_name=self._view_white_name,
+                black_name=self._view_black_name,
+                eval_history=list(self._view_eval_history) if self._view_eval_history is not None else None,
+                comments=list(self._view_comments) if self._view_comments is not None else None,
+                root_comment=self._view_root_comment,
+                pgn_result=self._view_pgn_result,
+                pgn_termination=self._view_pgn_termination,
+            )
             self._editing = True
         if need_cancel_analysis:
             await self._cancel_analysis()
         async with self._lock:
             await self._publish_board()
         return pre_fen
+
+    def _restore_view_snapshot(self, snap: _ViewSnapshot) -> None:
+        """Apply a snapshot taken by enter_edit_mode directly to view state."""
+        self._start_fen = snap.start_fen
+        self._board = snap.board
+        self._view_cursor = snap.cursor
+        self._view_full_moves = snap.full_moves
+        self._view_clock_history = snap.clock_history
+        self._view_final_white = snap.final_white
+        self._view_final_black = snap.final_black
+        self._view_white_name = snap.white_name
+        self._view_black_name = snap.black_name
+        self._view_eval_history = snap.eval_history
+        self._view_comments = snap.comments
+        self._view_root_comment = snap.root_comment
+        self._view_pgn_result = snap.pgn_result
+        self._view_pgn_termination = snap.pgn_termination
 
     async def commit_edit(self, fen: str) -> str:
         """Apply the edited FEN as a fresh view-mode position. On any
@@ -940,10 +1039,19 @@ class HumanVsEngine:
             if not board.is_valid():
                 raise RuntimeError(explain_invalid(board))
             target_fen = board.fen()
-        # Drop _editing only for the duration of the view-mode transition.
-        # On failure, the caller stays in edit mode with the original snapshot.
-        async with self._lock:
+            pre_epd = chess.Board(self._edit_pre_fen).epd() if self._edit_pre_fen else None
+            unchanged = pre_epd is not None and board.epd() == pre_epd
+            snap = self._edit_view_snapshot
             self._editing = False
+        if unchanged and snap is not None:
+            async with self._lock:
+                self._restore_view_snapshot(snap)
+                self._edit_pre_fen = None
+                self._edit_view_snapshot = None
+                await self._publish_board()
+                await self._publish_clock()
+            return self._game_id
+        # FEN changed -- drop history, enter fresh view at new position.
         try:
             game_id = await self.enter_view_mode(
                 start_fen=target_fen,
@@ -956,33 +1064,26 @@ class HumanVsEngine:
             raise
         async with self._lock:
             self._edit_pre_fen = None
+            self._edit_view_snapshot = None
         return game_id
 
     async def cancel_edit(self) -> str:
-        """Leave edit mode; re-enter view mode at the pre-edit FEN."""
+        """Leave edit mode; restore view state from pre-edit snapshot."""
         async with self._lock:
             if not self._editing:
                 raise RuntimeError("not in edit mode")
-            pre = self._edit_pre_fen
-            if not pre:
-                # Defensive: enter_edit_mode always sets this. Reaching here
-                # implies state corruption; clear and abort.
+            snap = self._edit_view_snapshot
+            if snap is None:
+                # Defensive: enter_edit_mode always sets this.
                 self._editing = False
                 raise RuntimeError("no pre-edit snapshot to restore")
             self._editing = False
-        try:
-            game_id = await self.enter_view_mode(
-                start_fen=pre,
-                moves_uci=[],
-                clock_history=None,
-            )
-        except Exception:
-            async with self._lock:
-                self._editing = True
-            raise
-        async with self._lock:
+            self._restore_view_snapshot(snap)
             self._edit_pre_fen = None
-        return game_id
+            self._edit_view_snapshot = None
+            await self._publish_board()
+            await self._publish_clock()
+        return self._game_id
 
     async def play_from_here(self, tc: TimeControl, inherit_clocks: bool = False) -> str:
         """Exit view mode by starting a fresh play game seeded with plies
@@ -1522,6 +1623,21 @@ class HumanVsEngine:
                 self._view_eval_history is not None
                 and any(e is not None for e in self._view_eval_history)
             )
+            comment_at_cursor: str | None = None
+            if self._view_cursor == 0:
+                comment_at_cursor = self._view_root_comment
+            elif (
+                self._view_comments is not None
+                and 0 < self._view_cursor <= len(self._view_comments)
+            ):
+                comment_at_cursor = self._view_comments[self._view_cursor - 1]
+            has_any_comment = (
+                self._view_root_comment is not None
+                or (
+                    self._view_comments is not None
+                    and any(c is not None for c in self._view_comments)
+                )
+            )
             view_payload = {
                 "cursor": self._view_cursor,
                 "total_plies": len(self._view_full_moves),
@@ -1529,6 +1645,8 @@ class HumanVsEngine:
                 "black_name": self._view_black_name,
                 "eval": eval_at_cursor,
                 "has_eval": has_any_eval,
+                "comment": comment_at_cursor,
+                "has_comment": has_any_comment,
                 # UI disables Play-from-here when the cursor lands on a
                 # finished position (mirror of the backend guard).
                 # game_over is true for forced endings AND claimable draws

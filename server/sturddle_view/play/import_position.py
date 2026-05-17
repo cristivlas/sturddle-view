@@ -49,6 +49,13 @@ class ImportedPosition:
     # carries no recognizable eval. Whole field is None when the PGN has no
     # evals at all. Each entry: {"cp": int} or {"mate": int}, optional "depth".
     eval_history: list[dict | None] | None = None
+    # Per-ply sanitized PGN comments (machine annotations stripped). None
+    # entries when a ply has no human-readable commentary. Whole field is
+    # None when the PGN carries no commentary at all.
+    comments: list[str | None] | None = None
+    # Root annotation: pre-game commentary (game.comment) plus the Annotator
+    # header, sanitized. None when neither is present.
+    root_comment: str | None = None
 
 
 class PositionImportError(ValueError):
@@ -98,6 +105,46 @@ _CUTECHESS_EVAL_RE = re.compile(
 # comma. Mate is "#N" or "-#N" (sign optional). Disambiguation is by comma:
 # present -- integer-cp STM-POV; absent -- float-pawn white-POV.
 _BRACKET_EVAL_RE = re.compile(r"\[%eval\s+(?P<body>[^\]]+)\]")
+
+# Strip any [%key ...] bracket annotation (clk, emt, eval, cal, csl, ...).
+_BRACKET_TAG_RE = re.compile(r"\[%[^\]]*\]")
+# Strip parenthesized inline variations. Non-greedy; nested parens are rare
+# in PGN comments -- python-chess parses RAVs as sibling nodes, not text.
+_PAREN_VAR_RE = re.compile(r"\([^()]*\)")
+_WS_RE = re.compile(r"\s+")
+
+
+def _sanitize_comment(comment: str | None) -> str | None:
+    """Strip machine annotations from a PGN comment, leaving human prose.
+    Removes [%...] bracket tags, parenthesized variations, and the
+    cutechess "<eval>/<depth> <time>" trailing token. Returns None when
+    nothing readable remains."""
+    if not comment:
+        return None
+    s = _BRACKET_TAG_RE.sub(" ", comment)
+    s = _CUTECHESS_EVAL_RE.sub(" ", s)
+    # Repeatedly strip innermost parens so adjacent variations all go.
+    while True:
+        new = _PAREN_VAR_RE.sub(" ", s)
+        if new == s:
+            break
+        s = new
+    # Preserve paragraph breaks (blank lines) for rendering, collapse other
+    # whitespace runs within each paragraph.
+    paragraphs = [_WS_RE.sub(" ", p).strip() for p in re.split(r"\n\s*\n", s)]
+    paragraphs = [p for p in paragraphs if p]
+    if not paragraphs:
+        return None
+    # Stripping a leading [%clk]/[%eval]/etc often exposes a lowercase first
+    # word ("best move"); capitalize it. Only the first paragraph, and only
+    # when the first alpha char is currently lowercase.
+    first = paragraphs[0]
+    for i, ch in enumerate(first):
+        if ch.isalpha():
+            if ch.islower():
+                paragraphs[0] = first[:i] + ch.upper() + first[i + 1:]
+            break
+    return "\n\n".join(paragraphs)
 
 
 def _cutechess_time_seconds(comment: str | None) -> float | None:
@@ -356,6 +403,24 @@ def parse_pgn(text: str) -> ImportedPosition:
     eval_history: list[dict | None] | None = (
         eval_per_ply if any(e is not None for e in eval_per_ply) else None
     )
+    # Per-ply sanitized comments (run AFTER eval extraction so the bracket
+    # tags are still parseable above). Comments are independent of clock
+    # branches above -- they apply to every node walked.
+    comments_per_ply = [_sanitize_comment(n.comment) for n in nodes]
+    comments: list[str | None] | None = (
+        comments_per_ply if any(c is not None for c in comments_per_ply) else None
+    )
+    # Root comment: pre-game prose plus the Annotator header, sanitized.
+    annotator = headers.get("Annotator", "").strip()
+    pieces = []
+    if annotator and annotator != "?":
+        pieces.append(f"Annotator: {annotator}")
+    root_raw = (game.comment or "").strip()
+    if root_raw:
+        cleaned = _sanitize_comment(root_raw)
+        if cleaned:
+            pieces.append(cleaned)
+    root_comment = "\n\n".join(pieces) if pieces else None
     return ImportedPosition(
         start_fen=start_fen_header if start_fen_header else None,
         moves_uci=moves_uci,
@@ -368,4 +433,6 @@ def parse_pgn(text: str) -> ImportedPosition:
         final_white_time=final_white,
         final_black_time=final_black,
         eval_history=eval_history,
+        comments=comments,
+        root_comment=root_comment,
     )

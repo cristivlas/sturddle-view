@@ -5,7 +5,17 @@
 import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog } from "../import-position-dialog.js";
-import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, setDockContainer } from "../play-debug-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, setDockContainer, isMobileLayout } from "../play-debug-windows.js";
+import {
+  setCommentaryDockContainer,
+  setOnUserCloseCommentary,
+  openCommentary,
+  closeCommentary,
+  setCommentaryText,
+  setCommentaryNavHandlers,
+  setCommentaryNavState,
+  isCommentaryOpen,
+} from "../play-commentary-window.js";
 
 // Module-scope mirror of "user has a live human-vs-engine game running"
 // so other modules (e.g. tournament Replay button) can decide whether
@@ -25,10 +35,14 @@ let _cachedBoardUpdate = null;
 // Reduce a game_result payload to the canonical chess result string for
 // the header badge. resign/timeout don't carry "1-0"/"0-1" in the payload
 // so we derive it from who lost (only human can resign today).
+function resultBadge(result) {
+  return result === "1/2-1/2" ? "½-½" : result;
+}
+
 function formatResult(payload, humanWhite) {
   const { result, by, loser } = payload;
   if (result === "1-0" || result === "0-1") return result;
-  if (result === "1/2-1/2") return "½-½";
+  if (result === "1/2-1/2") return resultBadge(result);
   if (result === "resign") {
     const humanLost = by === "human";
     const whiteWins = humanLost ? !humanWhite : humanWhite;
@@ -89,6 +103,7 @@ export const playPerspective = {
       <section id="play-perspective">
         <div class="play-grid">
           <div class="play-dock-left"></div>
+          <aside class="play-comments-host dock-empty" aria-label="PGN commentary"></aside>
           <div id="no-engine-banner" class="no-engine-banner hidden" role="status">
             <span class="no-engine-banner__msg">No engine configured.</span>
             <button type="button" class="no-engine-banner__btn" aria-label="Open engine settings" title="Open engine settings">
@@ -306,17 +321,41 @@ export const playPerspective = {
       },
       // Click on a move in the list (view mode only) → jump cursor to
       // the position AFTER that move, i.e. ply = plyIndex + 1.
-      onMoveJump: async (plyIndex) => {
-        try {
-          await ctx.api("POST", "/game/view/goto", { ply: plyIndex + 1 });
-        } catch (e) {
-          reportError(ctx, "Navigation failed", e);
-        }
-      },
+      onMoveJump: (plyIndex) => doViewNav("/game/view/goto", { ply: plyIndex + 1 }),
     });
 
     // Settings cache (refreshed on settings-changed).
     let allowTakeback = true;
+    let showPgnComments = true; // view-mode commentary window
+    const commentsHost = root.querySelector(".play-comments-host");
+    setCommentaryDockContainer(commentsHost);
+    let lastViewComment = null;
+    // X on the commentary window (dock slot or float) -> clear setting.
+    setOnUserCloseCommentary(() => {
+      showPgnComments = false;
+      ctx.api("PUT", "/settings", { view_show_pgn_comments: false })
+        .catch((e) => reportError(ctx, "Failed to save setting", e));
+    });
+    function syncCommentsVisibility() {
+      if (!commentsHost) return;
+      const shouldShow = viewing && showPgnComments && !isMobileLayout();
+      const open = isCommentaryOpen();
+      if (shouldShow) {
+        const wasOpen = open;
+        if (!open) openCommentary();
+        setCommentaryText(lastViewComment);
+        if (!wasOpen) {
+          // Populate comment nav state on first open.
+          doViewNav("/game/view/goto", { ply: viewCursor });
+        }
+      } else if (open) {
+        commentNavPrev = null;
+        commentNavNext = null;
+        closeCommentary();
+      }
+    }
+    const onCommentsResize = () => { syncCommentsVisibility(); };
+    window.addEventListener("resize", onCommentsResize);
     // Snapshot of TC fields used at the start of the current game; lets
     // us tell the user "applies on next game" if they edit TC mid-play.
     let gameTcInitial = null;
@@ -325,6 +364,8 @@ export const playPerspective = {
       try {
         const s = await ctx.api("GET", "/settings");
         allowTakeback = s.allow_takeback !== false;
+        showPgnComments = s.view_show_pgn_comments !== false;
+        syncCommentsVisibility();
         if (notifyOnDrift && !gameOver && resignAvailable) {
           const drift = [];
           // Side: settings.human_side is "white"|"black"|"random". Only
@@ -513,6 +554,9 @@ export const playPerspective = {
             viewCursor = v.cursor ?? 0;
             viewTotalPlies = v.total_plies ?? 0;
             viewGameOver = !!v.game_over;
+            lastViewComment = v.comment ?? null;
+            syncCommentsVisibility();
+            if (v.result) showFinishedBadge(resultBadge(v.result));
             if (viewGameOver && viewCursor === viewTotalPlies && v.result && !viewGameOverAlertShown) {
               viewGameOverAlertShown = true;
               showAlert({ message: formatViewGameOver(v), messageClass: "game-over-message" });
@@ -523,6 +567,8 @@ export const playPerspective = {
             // Restore the user's prior flip preference on entry into view mode.
             if (!wasViewing) view.setHumanWhite(!viewFlipped);
           } else {
+            lastViewComment = null;
+            syncCommentsVisibility();
             if (wasViewing) restoreDebugWindows(ctx.events);
             resignAvailable = true;
           }
@@ -593,12 +639,15 @@ export const playPerspective = {
 
     // Replay the last seen board_update (from a previous mount of this
     // perspective) so the view renders synchronously at the cached
-    // position. Both subscribers (game-view's applyEvent, the offEvent
-    // above) are now wired; emit dispatches them in this call stack. The
-    // /sync POST above still fires and the fresh board_update will
-    // override if anything changed server-side.
+    // position. Sent directly to the board renderer -- NOT through the
+    // bus -- because play.js's bus handler has side effects (e.g.
+    // syncCommentsVisibility issuing /view/goto) that would POST against
+    // the current server game using stale cursor data when an external
+    // import (tournament Replay) changed the active game while this
+    // perspective was unmounted. The /sync POST above still fires and
+    // the fresh board_update overrides if anything changed server-side.
     if (_cachedBoardUpdate) {
-      ctx.events.emit(_cachedBoardUpdate);
+      view.applyEvent(_cachedBoardUpdate);
     }
 
     // Prompt before discarding an active play game. Returns true if the
@@ -670,7 +719,7 @@ export const playPerspective = {
 
     const onImport = async () => {
       if (!await _confirmDiscardActiveGame({
-        message: "Cancel the game in progress and import a new position?",
+        message: "Cancel the current game and import a new game or position?",
         okLabel: "Import",
       })) return;
       const result = await showImportPositionDialog({ api: ctx.api });
@@ -819,6 +868,10 @@ export const playPerspective = {
 
     const onEditConfirm = async () => {
       const fen = view.getEditFen();
+      // Server mints a fresh game_id on a real position change. Clear the
+      // filter so the board_update SSE (which races the POST response) isn't
+      // dropped for not matching our stale id.
+      view.setGameId(null);
       try {
         const r = await ctx.api("POST", "/game/edit/commit", { fen });
         view.setGameId(r.game_id);
@@ -836,13 +889,26 @@ export const playPerspective = {
       }
     };
 
-    const onViewNav = (endpoint) => async () => {
+    let commentNavPrev = null;
+    let commentNavNext = null;
+
+    async function doViewNav(endpoint, payload = {}) {
       try {
-        await ctx.api("POST", endpoint, {});
+        const body = isCommentaryOpen()
+          ? { ...payload, include_comment_nav: true }
+          : payload;
+        const res = await ctx.api("POST", endpoint, body);
+        if (isCommentaryOpen() && "prev_comment" in res) {
+          commentNavPrev = res.prev_comment ?? null;
+          commentNavNext = res.next_comment ?? null;
+          setCommentaryNavState(commentNavPrev, commentNavNext);
+        }
       } catch (e) {
         reportError(ctx, "Navigation failed", e);
       }
-    };
+    }
+
+    const onViewNav = (endpoint) => () => doViewNav(endpoint);
     const onViewFlip = () => {
       viewFlipped = !viewFlipped;
       try { localStorage.setItem(VIEW_FLIP_KEY, viewFlipped ? "1" : "0"); } catch { /* */ }
@@ -853,6 +919,11 @@ export const playPerspective = {
     const onViewBack = onViewNav("/game/view/back");
     const onViewForward = onViewNav("/game/view/forward");
     const onViewLast = onViewNav("/game/view/last");
+
+    setCommentaryNavHandlers(
+      () => { if (commentNavPrev != null) doViewNav("/game/view/goto", { ply: commentNavPrev }); },
+      () => { if (commentNavNext != null) doViewNav("/game/view/goto", { ply: commentNavNext }); },
+    );
 
     let playFromHereInflight = false;
     const onPlayFromHere = async () => {
@@ -1035,6 +1106,9 @@ export const playPerspective = {
         }
         closeDebugWindows();
         setDockContainer(null);
+        closeCommentary();
+        setCommentaryDockContainer(null);
+        setOnUserCloseCommentary(null);
         dismissAnalysisToast?.();
         dismissAnalysisToast = null;
         pausedBadge?.classList.add("hidden");
@@ -1044,6 +1118,7 @@ export const playPerspective = {
         view.unmount();
         window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
         window.removeEventListener("sturddle:engines-changed", onEnginesChanged);
+        window.removeEventListener("resize", onCommentsResize);
         window.removeEventListener("keydown", onKeydown);
         newGameBtn.removeEventListener("click", onNewGame);
         importBtn.removeEventListener("click", onImport);
