@@ -12,6 +12,7 @@ from typing import Any
 import chess
 
 from ..chess.board import board_from, side_to_move
+from ..chess.engine_info import parse_info_tokens
 
 
 def parse_uci_line(line: str) -> dict[str, Any] | None:
@@ -89,53 +90,36 @@ def _parse_position(rest: str) -> dict[str, Any] | None:
 
 
 def _parse_info(rest: str) -> dict[str, Any] | None:
-    """A subset of UCI ``info`` fields we care about for the live
-    view. We skip the mainline-spamming garbage and surface depth /
-    score / pv / time / nodes / nps."""
-    out: dict[str, Any] = {"kind": "info"}
-    tokens = rest.split()
-    i = 0
+    """Parse a UCI ``info`` line tail into the unified engine-info schema,
+    then layer legacy aliases for web tournament-live-game.js.
 
-    def take_int(j: int) -> tuple[int, int] | None:
-        if j >= len(tokens):
-            return None
-        try:
-            return int(tokens[j]), j + 1
-        except ValueError:
-            return None
-
-    while i < len(tokens):
-        tok = tokens[i]
-        i += 1
-        if tok in ("depth", "seldepth", "time", "nodes", "nps", "hashfull", "tbhits", "multipv"):
-            taken = take_int(i)
-            if taken:
-                out[tok], i = taken
-        elif tok == "score":
-            if i < len(tokens) and tokens[i] == "cp":
-                taken = take_int(i + 1)
-                if taken:
-                    out["score_cp"], i = taken
-            elif i < len(tokens) and tokens[i] == "mate":
-                taken = take_int(i + 1)
-                if taken:
-                    out["score_mate"], i = taken
-            else:
-                # unknown score type — skip
-                i += 1
-        elif tok == "pv":
-            out["pv"] = tokens[i:]
-            i = len(tokens)
-        else:
-            # Unknown token — skip its argument heuristically (most
-            # info fields are <name> <int>).
-            i += 1
-
-    # An info line with nothing useful (e.g. ``info string ...``) is
-    # not worth surfacing.
-    if len(out) == 1:
+    TODO: drop ``_add_legacy_aliases`` once the web tournament view migrates
+    to read ``score.cp`` / ``score.mate`` / ``pv_uci`` directly. The
+    underlying ``parse_info_tokens`` already produces the unified shape.
+    """
+    parsed = parse_info_tokens(rest)
+    if parsed is None:
         return None
-    return out
+    parsed["kind"] = "info"
+    return _add_legacy_aliases(parsed)
+
+
+def _add_legacy_aliases(parsed: dict[str, Any]) -> dict[str, Any]:
+    """Add pre-R7 keys (``score_cp``/``score_mate``/``pv``) the web
+    tournament view still reads. Removed when web migrates."""
+    score = parsed.get("score")
+    if score is not None:
+        if "cp" in score:
+            parsed["score_cp"] = score["cp"]
+        elif "mate" in score:
+            parsed["score_mate"] = score["mate"]
+    # Guard: do not clobber an already-present ``pv`` (e.g. SAN list a
+    # future tournament-side board reconstruction might supply).
+    if "pv" not in parsed:
+        pv_uci = parsed.get("pv_uci")
+        if pv_uci is not None:
+            parsed["pv"] = pv_uci
+    return parsed
 
 
 def _parse_bestmove(rest: str) -> dict[str, Any]:

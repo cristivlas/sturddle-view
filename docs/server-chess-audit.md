@@ -951,10 +951,13 @@ recommendations are confirmed:
 - The `1/2-1/2` vs `½-½` divergence between `pgn_tail` and `pgn_stats`
   (section 2.2) was a real bug -- fixed by P3.
 - Duplicated `popen_uci`/`CREATE_NO_WINDOW` construction confirmed in
-  `engines.probe_engine` and `HVE._spawn_engine` -- still pending (R3/P6).
-- Both UCI info schema shapes (section 2.5) confirmed as described -- still pending (R7/P9).
-- HVE constructor: 47 instance attributes (well above the stated "30+") -- still pending
-  (R3/P6 and R4/P7 will reduce this).
+  `engines.probe_engine` and `HVE._spawn_engine` -- fixed by P6.
+- Both UCI info schema shapes (section 2.5) confirmed as described -- server-side
+  unification landed in P9 (`chess/engine_info.py`); web tournament view still
+  reads legacy keys via a `tournament/uci_parse.py` compat shim. Web migration
+  is a follow-up PR.
+- HVE constructor: 47 instance attributes (well above the stated "30+") -- reduced
+  by P6 (EngineSupervisor) and P7 (ChessClock).
 - `_board_event` mixes four payload sources; confirmed ~119 lines -- still pending (R9/P11).
 - PGN walk duplication across four sites confirmed -- still pending (R6a/P4).
 - Result literals as inline strings -- fixed by P3.

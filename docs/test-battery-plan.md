@@ -6,7 +6,7 @@ phase is sized to fit one PR / one Claude Code session. Future
 sessions pick up from the status header and execute the next pending
 phase.
 
-Last updated: 2026-05-17 (P0, P1, P2, P3, P4, P5, P6, P7 done; perf bench infra retro-audit complete).
+Last updated: 2026-05-17 (P0..P7, P9 done; P8 deferred; perf bench infra retro-audit complete).
 
 Related docs:
 - [server-chess-audit.md](server-chess-audit.md) -- the spec.
@@ -26,8 +26,8 @@ bottom for the exact ritual.
 - [x] P5  R6b -- chess/pgn_build.py producer and autosave swap
 - [x] P6  R3 -- EngineSupervisor extraction
 - [x] P7  R4 -- ChessClock extraction
-- [ ] P8  R5 -- Mode FSM and typed conflict error
-- [ ] P9  R7 -- unified UCI info schema
+- [~] P8  R5 -- Mode FSM and typed conflict error (deferred; pick up later)
+- [x] P9  R7 -- unified UCI info schema
 - [ ] P10 R8 -- /api/chess/apply-move audit
 - [ ] P11 R9 -- _board_event payload split
 
@@ -439,7 +439,11 @@ These hold for every phase. Violations are blockers, not nits.
 
 ## P8 -- R5 Mode FSM and typed conflict error
 
-- **State**: pending
+- **State**: deferred (pick up later; not required by P9/P10/P11)
+- **Why deferred**: Reassessed mid-battery as low ROI -- the 4-bool ->
+  Mode enum migration is pure structural cleanup with no behavior /
+  perf / testability unlock. Subsequent phases (P9, P10, P11) carry no
+  hard dependency on it. Can be picked up later as standalone cleanup.
 - **Depends on**: P2
 - **Goal**: Replace 4 booleans (`_viewing`, `_editing`, `_paused`,
   `_analysis_mode`) with one `Mode` enum + per-operation allowed
@@ -490,7 +494,7 @@ These hold for every phase. Violations are blockers, not nits.
 
 ## P9 -- R7 unified UCI info schema
 
-- **State**: pending
+- **State**: done (pending merge SHA)
 - **Depends on**: P6 (`_serialize_info` is easier to test once it
   is reachable through `EngineSupervisor`)
 - **Goal**: Single `EngineInfo` schema serialized by both paths.
@@ -521,6 +525,28 @@ These hold for every phase. Violations are blockers, not nits.
     the renderer can be unified in a follow-up).
   - Perf bench within 10%.
 - **Out of scope**: web renderer unification.
+- **Notes**:
+  - Unified module landed at `server/sturddle_view/chess/engine_info.py`
+    (not `play/engine_supervisor.py` as originally drafted) -- pure
+    leaf module imported by both HVE and tournament. No layering
+    violation, no need to route through supervisor.
+  - Tournament path keeps a compat shim `_add_legacy_aliases` in
+    `tournament/uci_parse.py` that re-exports `score_cp` /
+    `score_mate` / `pv` (UCI list) alongside the unified
+    `score.cp` / `score.mate` / `pv_uci` keys. Web tournament
+    `tournament-live-game.js` still reads the legacy keys; shim
+    deletes when web migrates. Marked with TODO at the shim site.
+  - HVE schema continues to emit `pv` (single-element SAN list) when
+    a board is provided, so web `game-view.js` is unchanged. Tournament
+    has no board -> shim aliases `pv_uci` -> `pv` (UCI tokens) to keep
+    the legacy wire shape.
+  - Follow-up (separate PR, when web is in scope): rename
+    `tournament-live-game.js` reads (`p.score_cp` -> `p.score.cp`,
+    `p.score_mate` -> `p.score.mate`, `p.pv` -> `p.pv_uci`) and delete
+    `_add_legacy_aliases`.
+  - Perf baseline captured via stash/restore (P7 pattern): pre-refactor
+    44.1ms median (1k inner loops), post-refactor 44.0ms -- well within
+    10% tolerance.
 
 ## P10 -- R8 /api/chess/apply-move audit
 

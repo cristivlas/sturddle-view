@@ -12,5 +12,6 @@
   "build_pgn_100_ply_inline": 4.9099966417998075e-05,
   "spawn_engine_median": 0.0479386,
   "cancel_think_grace_period": 0.5039291,
-  "clock_remaining_inline": 0.004441400000359863
+  "clock_remaining_inline": 0.004441400000359863,
+  "serialize_info_typical": 0.04414579999865964
 }

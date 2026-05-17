@@ -20,6 +20,7 @@ import chess.pgn
 
 from .._atomic import atomic_write_text
 from ..chess.board import board_from, moves_san as _moves_san, side_to_move
+from ..chess.engine_info import serialize_info
 from ..chess.pgn_build import build_pgn
 from ..chess.results import DRAW, loser_result, winner_result
 from ..events import Event, EventBus
@@ -68,42 +69,6 @@ class ViewModeParams:
     root_comment: str | None = None
     pgn_result: str | None = None
     pgn_termination: str | None = None
-
-
-def _serialize_info(
-    info: chess.engine.InfoDict, board: chess.Board,
-    eval_pov: chess.Color = chess.WHITE,
-) -> dict:
-    out: dict = {}
-    if "depth" in info:
-        out["depth"] = info["depth"]
-    if "seldepth" in info:
-        out["seldepth"] = info["seldepth"]
-    if "nodes" in info:
-        out["nodes"] = info["nodes"]
-    if "nps" in info:
-        out["nps"] = info["nps"]
-    if "tbhits" in info:
-        out["tbhits"] = info["tbhits"]
-    if "hashfull" in info:
-        out["hashfull"] = info["hashfull"]
-    if "time" in info:
-        out["time"] = info["time"]
-    score = info.get("score")
-    if score is not None:
-        pov = score.pov(eval_pov)
-        if pov.is_mate():
-            out["score"] = {"mate": pov.mate()}
-        else:
-            out["score"] = {"cp": pov.score()}
-    pv = info.get("pv")
-    if pv:
-        try:
-            out["pv"] = [board.variation_san(pv)]
-        except (ValueError, AssertionError):
-            out["pv"] = [m.uci() for m in pv]
-        out["pv_uci"] = [m.uci() for m in pv]
-    return out
 
 
 class HumanVsEngine:
@@ -1314,7 +1279,7 @@ class HumanVsEngine:
         """
         async for info in analysis:
             if "pv" in info or "depth" in info or "score" in info:
-                payload = _serialize_info(info, board, self._eval_pov(board.turn))
+                payload = serialize_info(info, board=board, pov=self._eval_pov(board.turn))
                 if cache_payload:
                     self._last_analysis_info = payload
                 await self._bus.publish(
