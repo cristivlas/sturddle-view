@@ -580,7 +580,7 @@ These hold for every phase. Violations are blockers, not nits.
 
 ## P11 -- R9 _board_event payload split
 
-- **State**: done (pending merge SHA)
+- **State**: done (adc5375)
 - **Depends on**: P1 (board_event snapshots), P8 (Mode enum makes
   dispatch natural)
 - **Goal**: Extract `_view_payload()` and `_play_payload()` from
