@@ -40,6 +40,19 @@ _SECOND_GAME = """\
 
 """
 
+_ILLEGAL_MOVE_GAME = """\
+[Event "My Tournament"]
+[Site "?"]
+[Round "3"]
+[White "Engine A"]
+[Black "Engine B"]
+[Result "1-0"]
+[Termination "normal"]
+
+1. e4 e5 2. Qh8 1-0
+
+"""
+
 _PARTIAL_GAME = """\
 [Event "My Tournament"]
 [Site "?"]
@@ -145,6 +158,23 @@ async def test_two_games_appended_over_two_polls(pgn_path):
     assert records[1].game_n == 2
     assert records[1].result == "0-1"
     assert records[1].white == "Engine B"
+
+
+@pytest.mark.asyncio
+async def test_illegal_move_game_skipped_valid_game_emitted(pgn_path):
+    """A game with an illegal SAN is skipped; the following valid game is
+    still emitted with the correct game_n and the offset advances past both."""
+    pgn_path.write_text(_ILLEGAL_MOVE_GAME + _SECOND_GAME, encoding="utf-8")
+    records, cb = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    n = await tailer.poll_once()
+
+    assert n == 1
+    assert len(records) == 1
+    assert records[0].game_n == 1
+    assert records[0].result == "0-1"
+    assert tailer.offset == pgn_path.stat().st_size
 
 
 @pytest.mark.asyncio

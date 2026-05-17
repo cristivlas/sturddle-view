@@ -18,7 +18,6 @@ from typing import Awaitable, Callable
 import chess
 import chess.pgn
 
-from ..chess.pgn_walk import walk_mainline
 from ..chess.results import DECISIVE_RESULTS
 
 log = logging.getLogger(__name__)
@@ -349,17 +348,14 @@ class PgnTailer:
                 # `*` = in-flight bytes; retry this region next pass.
                 break
 
-            uci_moves: list[str] = []
-            try:
-                for node, _, _ in walk_mainline(game):
-                    uci_moves.append(node.move.uci())
-            except (ValueError, chess.IllegalMoveError, chess.InvalidMoveError):
+            if game.errors:
                 log.warning(
                     "PgnTailer: illegal move in PGN game_n~=%d; skipping",
                     self._game_n + len(records) + 1,
                 )
                 last_complete_bytes += advance_bytes()
                 continue
+            uci_moves: list[str] = [node.move.uci() for node in game.mainline()]
 
             records.append(PgnGameRecord(
                 white=game.headers.get("White", "?"),
