@@ -6,7 +6,7 @@ phase is sized to fit one PR / one Claude Code session. Future
 sessions pick up from the status header and execute the next pending
 phase.
 
-Last updated: 2026-05-17 (P0, P1, P2, P3, P4, P5, P6 done; perf bench infra retro-audit complete).
+Last updated: 2026-05-17 (P0, P1, P2, P3, P4, P5, P6, P7 done; perf bench infra retro-audit complete).
 
 Related docs:
 - [server-chess-audit.md](server-chess-audit.md) -- the spec.
@@ -25,7 +25,7 @@ bottom for the exact ritual.
 - [x] P4  R6a -- chess/pgn_walk.py iterator and consumer migration
 - [x] P5  R6b -- chess/pgn_build.py producer and autosave swap
 - [x] P6  R3 -- EngineSupervisor extraction
-- [ ] P7  R4 -- ChessClock extraction
+- [x] P7  R4 -- ChessClock extraction
 - [ ] P8  R5 -- Mode FSM and typed conflict error
 - [ ] P9  R7 -- unified UCI info schema
 - [ ] P10 R8 -- /api/chess/apply-move audit
@@ -393,7 +393,7 @@ These hold for every phase. Violations are blockers, not nits.
 
 ## P7 -- R4 ChessClock extraction
 
-- **State**: pending
+- **State**: done (673cb26)
 - **Depends on**: P1 (clock characterization snapshots), P2
 - **Goal**: Clock + take-back invariant in one class with one
   internal assertion site.
@@ -430,6 +430,12 @@ These hold for every phase. Violations are blockers, not nits.
   - Perf bench within 10% of baseline.
 - **Out of scope**: mode FSM (P8); engine work (P6); payload split
   (P11).
+- **Notes**:
+  - Single commit (user override of red/green two-commit protocol).
+    Baseline captured via stash/restore: old impl ~4.44ms, post-refactor
+    ~4.28ms (-3.6%, within 10% tolerance).
+  - parse_delta full-suite flake (~533ms vs 484ms baseline) is
+    pre-existing; unrelated to ChessClock. Parked for separate rebase.
 
 ## P8 -- R5 Mode FSM and typed conflict error
 
