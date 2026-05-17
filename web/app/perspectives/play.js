@@ -715,7 +715,7 @@ export const playPerspective = {
 
     const onImport = async () => {
       if (!await _confirmDiscardActiveGame({
-        message: "Cancel the game in progress and import a new position?",
+        message: "Cancel the current game and import a new game or position?",
         okLabel: "Import",
       })) return;
       const result = await showImportPositionDialog({ api: ctx.api });
