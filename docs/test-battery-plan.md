@@ -43,9 +43,10 @@ These hold for every phase. Violations are blockers, not nits.
 - Once P3 (R2) lands, no inline result literals (`"1-0"`, `"0-1"`,
   `"1/2-1/2"`) remain anywhere under `server/sturddle_view/`. The R2
   PR migrates every existing site.
-- Every new test must fail in isolation before the corresponding
-  refactor lands. Commit the red, then commit the green. Two commits
-  minimum per refactor phase.
+- Every new test must fail in isolation against the unrefactored code
+  (verify locally via stash/restore or a throwaway worktree). DO NOT
+  commit red tests. The refactor + its tests land together in a single
+  green commit. Project rule: never commit broken/red tests.
 - Perf benches that compare against pre-refactor behavior MUST be
   added and baselined against the OLD implementation FIRST, in a
   separate commit, before any refactor code lands. See "Perf
@@ -649,14 +650,16 @@ list. Do not reorder existing phases. Do not silently absorb new
 work into an existing phase that has already been partially
 executed.
 
-### Red-then-green discipline
+### Test-first discipline (no red commits)
 
-Every refactor phase must commit the failing tests first
-(passing only the trivial path or skipped via xfail with a
-ticket-style comment), then the implementation. Two commits per
-refactor phase, minimum. This protects against accidentally
-writing a test that already passes against the unrefactored code
-and therefore tests nothing.
+Every refactor phase must VERIFY new tests fail against the unrefactored
+code BEFORE they go in. Verify locally via `git stash` or a throwaway
+worktree -- do NOT commit red tests. Tests and their implementation land
+together in a single green commit.
+
+This protects against accidentally writing a test that already passes
+against the unrefactored code (and therefore tests nothing) while still
+honoring the project rule: never commit broken/red tests.
 
 ### Perf benches
 
@@ -674,26 +677,28 @@ and therefore tests nothing.
 ### Perf baseline capture protocol
 
 Phases that swap behavior (P4, P5, P6, P7, P9, P11) must NOT
-baseline the new implementation against itself. Sequence:
+baseline the new implementation against itself. Sequence (single
+green commit -- no red commits per project rule):
 
-1. **Commit A** (baseline capture): add the bench file pointing at
-   the CURRENT, unrefactored implementation. Run
-   `SV_RUN_PERF_BENCHES=1 pytest --update-perf-baselines <file>` and
-   commit `baselines.json` together with the bench. Commit message:
-   `perf: baseline <name> before <phase-id> refactor`. No production
-   code touched.
-2. **Commit B** (red tests): add the unit tests for the new module;
-   they fail because the new module does not exist yet.
-3. **Commit C** (green refactor): land the refactor. Re-run the perf
-   bench WITHOUT `--update-perf-baselines`; it must stay within
-   tolerance of the baseline captured in Commit A. If it drifts
-   beyond tolerance, do not update the baseline -- investigate the
-   regression (audit section 8.4).
-4. If the perf bench cannot be written against the OLD
-   implementation because the bench input shape only exists after
-   the refactor (rare; flag in PR), document the deviation in the
-   phase body under `**Notes**:` and capture an alternative pre/post
-   timing in the PR description.
+1. **Capture baseline locally** against the CURRENT, unrefactored
+   implementation: write the bench file targeting the old code path
+   (use `hasattr` shims or `git stash` so the bench can run pre-refactor),
+   then `SV_RUN_PERF_BENCHES=1 pytest --update-perf-baselines <file>`.
+   Hold `baselines.json` in the working tree -- do not commit yet.
+2. **Verify new tests fail** against the unrefactored code (stash the
+   refactor, run the new unit tests, confirm they fail, then pop).
+   This proves the tests aren't accidentally vacuous. Do not commit
+   the red state -- this is a local verification only.
+3. **Land everything in one green commit**: the refactor + new tests +
+   new bench + updated `baselines.json`. Re-run the perf bench WITHOUT
+   `--update-perf-baselines`; it must stay within tolerance of the
+   captured baseline. If it drifts beyond tolerance, do not update the
+   baseline -- investigate the regression (audit section 8.4).
+4. If the perf bench cannot be written against the OLD implementation
+   because the bench input shape only exists after the refactor (rare;
+   flag in PR), document the deviation in the phase body under
+   `**Notes**:` and capture an alternative pre/post timing in the
+   PR description.
 
 Phases adding new perf benches that are NOT comparisons (P0 smoke,
 P4 "DO NOT TOUCH" locks for `pgn_stats` line-scan paths) can baseline
