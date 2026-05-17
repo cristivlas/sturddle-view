@@ -494,7 +494,7 @@ These hold for every phase. Violations are blockers, not nits.
 
 ## P9 -- R7 unified UCI info schema
 
-- **State**: done (pending merge SHA)
+- **State**: done (76f517b)
 - **Depends on**: P6 (`_serialize_info` is easier to test once it
   is reachable through `EngineSupervisor`)
 - **Goal**: Single `EngineInfo` schema serialized by both paths.
