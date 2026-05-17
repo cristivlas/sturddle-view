@@ -337,9 +337,11 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
                 if game is None:
                     return None
                 last_move_uci: str | None = None
-                board = game.board()
+                board: chess.Board | None = None
                 for node, board, _ in walk_mainline(game):
                     last_move_uci = node.move.uci()
+                if board is None:
+                    board = game.board()
                 return {
                     "pgn": str(game),
                     "final_fen": board.fen(),

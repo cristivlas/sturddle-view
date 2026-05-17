@@ -318,7 +318,7 @@ def parse_pgn(text: str) -> ImportedPosition:
     if start_fen_header and not start_board.is_valid():
         raise PositionImportError("PGN has illegal starting position in FEN header")
     moves_uci: list[str] = []
-    board = start_board.copy()
+    board: chess.Board | None = None
     nodes: list[chess.pgn.ChildNode] = []
     movers_white: list[bool] = []
     try:
@@ -328,6 +328,8 @@ def parse_pgn(text: str) -> ImportedPosition:
             movers_white.append(mover_white)
     except chess.IllegalMoveError as e:
         raise PositionImportError(f"illegal move in PGN at ply {len(moves_uci) + 1}: {e}") from e
+    if board is None:
+        board = start_board.copy()
     # python-chess's PGN parser is lenient: arbitrary text yields a valid
     # game with no moves and a startpos board. Reject that — an "import"
     # that just gets you to startpos is the New Game button.

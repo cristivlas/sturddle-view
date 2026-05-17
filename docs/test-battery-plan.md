@@ -190,6 +190,11 @@ These hold for every phase. Violations are blockers, not nits.
   - All existing tests still green.
 - **Out of scope**: results constants (P3); pgn walk (P4); any HVE
   decomposition.
+- **Notes**:
+  - Approved scope addition: `enter_view_mode` signature collapsed
+    into a `ViewModeParams` dataclass; defensive `RuntimeError` for a
+    missing edit snapshot in `cancel_edit` replaced with an `assert`.
+    Both landed in eaa7112 with reviewer sign-off; not a deviation.
 
 ## P3 -- R2 chess/results.py constants
 
