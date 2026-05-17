@@ -1450,7 +1450,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 }
 .settings-section legend {
   padding: 0 6px;
-  color: var(--muted);
+  color: var(--wa-color-brand-50);
   display: inline-flex;
   align-items: center;
 }

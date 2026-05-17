@@ -470,21 +470,6 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         field.setAttribute("autocomplete", "off");
         field.classList.add("path-field");
         field.value = value || "";
-        if (editable) {
-          if (placeholder) field.placeholder = placeholder;
-          field.addEventListener("input", () => {
-            onPick((field.value || "").trim(), { typing: true });
-          });
-          // Commit on blur / Enter -- typing-time callbacks can debounce or
-          // skip; this is the "user is done editing" signal.
-          field.addEventListener("change", () => {
-            onPick((field.value || "").trim());
-          });
-        } else {
-          field.setAttribute("readonly", "");
-          field.placeholder = "(not set)";
-        }
-
         const inner_actions = document.createElement("div");
         inner_actions.className = "settings-row-actions";
         const browse = document.createElement("wa-button");
@@ -494,12 +479,6 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         const browseIcon = document.createElement("wa-icon");
         browseIcon.setAttribute("name", "folder-open");
         browse.appendChild(browseIcon);
-        browse.addEventListener("click", async () => {
-          const path = await pickFile({ api, mode, title: pickerTitle });
-          if (!path) return;
-          field.value = path;
-          onPick(path);
-        });
         const clear = document.createElement("wa-button");
         clear.size = "small";
         clear.title = "Clear";
@@ -507,10 +486,39 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         const clearIcon = document.createElement("wa-icon");
         clearIcon.setAttribute("name", "xmark");
         clear.appendChild(clearIcon);
+        const syncClear = () => {
+          clear.disabled = !(field.value || "").trim();
+        };
+
+        if (editable) {
+          if (placeholder) field.placeholder = placeholder;
+          field.addEventListener("input", () => {
+            syncClear();
+            onPick((field.value || "").trim(), { typing: true });
+          });
+          // Commit on blur / Enter -- typing-time callbacks can debounce or
+          // skip; this is the "user is done editing" signal.
+          field.addEventListener("change", () => {
+            syncClear();
+            onPick((field.value || "").trim());
+          });
+        } else {
+          field.setAttribute("readonly", "");
+          field.placeholder = "(not set)";
+        }
+        browse.addEventListener("click", async () => {
+          const path = await pickFile({ api, mode, title: pickerTitle });
+          if (!path) return;
+          field.value = path;
+          syncClear();
+          onPick(path);
+        });
         clear.addEventListener("click", () => {
           field.value = "";
+          syncClear();
           onPick("");
         });
+        syncClear();
         inner_actions.append(browse, clear);
         inner.append(field, inner_actions);
         row.append(lbl, inner);
