@@ -5,8 +5,17 @@ import pytest
 import pytest_asyncio
 
 
+SNAPSHOT_UPDATE_FLAG = "--snapshot-update"
+
+
 def pytest_addoption(parser):
     parser.addoption("--syzygy-path", default=None, help="Path to Syzygy tablebase files")
+    parser.addoption(
+        SNAPSHOT_UPDATE_FLAG,
+        action="store_true",
+        default=False,
+        help="Overwrite committed snapshot fixtures with current output.",
+    )
 
 
 @pytest_asyncio.fixture(scope="session")

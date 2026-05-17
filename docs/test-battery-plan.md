@@ -6,7 +6,7 @@ phase is sized to fit one PR / one Claude Code session. Future
 sessions pick up from the status header and execute the next pending
 phase.
 
-Last updated: 2026-05-17 (P0 done).
+Last updated: 2026-05-17 (P0, P1 done).
 
 Related docs:
 - [server-chess-audit.md](server-chess-audit.md) -- the spec.
@@ -19,7 +19,7 @@ Mark a phase done by checking the box, flipping its **State** line to
 bottom for the exact ritual.
 
 - [x] P0  Perf infrastructure and fixtures
-- [ ] P1  Pre-extraction characterization snapshots
+- [x] P1  Pre-extraction characterization snapshots
 - [ ] P2  R1 -- chess/board.py helpers
 - [ ] P3  R2 -- chess/results.py constants
 - [ ] P4  R6a -- chess/pgn_walk.py iterator and consumer migration
@@ -107,7 +107,7 @@ These hold for every phase. Violations are blockers, not nits.
 
 ## P1 -- Pre-extraction characterization snapshots
 
-- **State**: pending
+- **State**: done (pending merge SHA)
 - **Depends on**: P0
 - **Goal**: Pin current behavior of HVE clock and PGN autosave so
   later extractions are byte-comparable. Closes audit section 10

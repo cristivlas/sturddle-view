@@ -1,0 +1,31 @@
+{
+  "analyzing": false,
+  "editing": true,
+  "engine_name": null,
+  "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+  "human_white": null,
+  "last_move": null,
+  "moves_san": [
+    "e4",
+    "e5",
+    "Nf3",
+    "Nc6"
+  ],
+  "opening": null,
+  "ply": 0,
+  "tablebase": {
+    "halfmove_clock": 0
+  },
+  "turn": "white",
+  "view": {
+    "black_name": null,
+    "comment": null,
+    "cursor": 0,
+    "eval": null,
+    "game_over": false,
+    "has_comment": false,
+    "has_eval": false,
+    "total_plies": 4,
+    "white_name": null
+  }
+}
