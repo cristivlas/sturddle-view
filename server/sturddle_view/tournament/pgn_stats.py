@@ -23,7 +23,6 @@ log = logging.getLogger(__name__)
 from ..chess.results import (
     BLACK_WIN as _BLACK_WIN,
     DECISIVE_RESULTS,
-    DRAW_VARIANTS as _DRAW_VALUES,
     WHITE_WIN as _WHITE_WIN,
 )
 
@@ -193,7 +192,7 @@ def _iter_games_uncached(pgn_path: Path):
         if not cur:
             return None
         result = cur.get("Result", "*")
-        if result == _WHITE_WIN or result == _BLACK_WIN or result in _DRAW_VALUES:
+        if result in _DECISIVE_RESULTS:
             white = cur.get("White", "?")
             black = cur.get("Black", "?")
             round_tag = cur.get("Round", "")

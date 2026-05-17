@@ -4,8 +4,7 @@ from __future__ import annotations
 WHITE_WIN = "1-0"
 BLACK_WIN = "0-1"
 DRAW = "1/2-1/2"
-DRAW_VARIANTS = frozenset({DRAW, "½-½"})
-DECISIVE_RESULTS = frozenset({WHITE_WIN, BLACK_WIN, *DRAW_VARIANTS})
+DECISIVE_RESULTS = frozenset({WHITE_WIN, BLACK_WIN, DRAW})
 
 
 def winner_result(winner_white: bool) -> str:

@@ -28,6 +28,15 @@ spawn -- at or below current latency. Where a refactor touches a
 known hot path, a perf regression test is required (see section 8).
 "It's idiomatic Python now" is not a defense if a bench gets slower.
 
+**Tournament paths are perf-supercritical.** `pgn_tail` runs at 1 Hz
+on growing tournament files; `pgn_stats` is recomputed on every poll.
+Neither may regress under any circumstance. Any PR touching these paths
+must include a perf bench showing no regression. If a bench cannot be
+written first (see P4 "DO NOT TOUCH" locks), the PR is blocked until one
+is added. The `_iter_games_uncached`, `_iter_games_keyed`, and
+`rewrite_drop_partial_pairs` line-scan paths must never be replaced with
+`chess.pgn.read_game` -- that would regress by ~50x.
+
 ## 1. Module map
 
 | Module | LoC | Role | Chess-dep surface |

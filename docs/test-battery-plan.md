@@ -61,6 +61,10 @@ These hold for every phase. Violations are blockers, not nits.
 - Propose before coding non-trivial changes; ask before committing.
 - Do not introduce `chess/` -> `play/` or `chess/` -> `tournament/`
   imports. `chess/` is a leaf package.
+- Tournament paths (`pgn_tail`, `pgn_stats`) are perf-supercritical.
+  Neither may regress under any circumstance. `_iter_games_uncached`,
+  `_iter_games_keyed`, and `rewrite_drop_partial_pairs` must stay as
+  regex/line-scan -- never replace with `chess.pgn.read_game`.
 
 ## P0 -- Perf infrastructure and fixtures
 
