@@ -35,10 +35,14 @@ let _cachedBoardUpdate = null;
 // Reduce a game_result payload to the canonical chess result string for
 // the header badge. resign/timeout don't carry "1-0"/"0-1" in the payload
 // so we derive it from who lost (only human can resign today).
+function resultBadge(result) {
+  return result === "1/2-1/2" ? "½-½" : result;
+}
+
 function formatResult(payload, humanWhite) {
   const { result, by, loser } = payload;
   if (result === "1-0" || result === "0-1") return result;
-  if (result === "1/2-1/2") return "½-½";
+  if (result === "1/2-1/2") return resultBadge(result);
   if (result === "resign") {
     const humanLost = by === "human";
     const whiteWins = humanLost ? !humanWhite : humanWhite;
@@ -561,6 +565,7 @@ export const playPerspective = {
           }
           syncCommentsVisibility();
           if (viewing) {
+            if (v.result) showFinishedBadge(resultBadge(v.result));
             if (viewGameOver && viewCursor === viewTotalPlies && v.result && !viewGameOverAlertShown) {
               viewGameOverAlertShown = true;
               showAlert({ message: formatViewGameOver(v), messageClass: "game-over-message" });
