@@ -18,6 +18,7 @@ from typing import Awaitable, Callable
 import chess
 import chess.pgn
 
+from ..chess.pgn_walk import walk_mainline
 from ..chess.results import DECISIVE_RESULTS
 
 log = logging.getLogger(__name__)
@@ -349,11 +350,9 @@ class PgnTailer:
                 break
 
             uci_moves: list[str] = []
-            board = game.board()
             try:
-                for node in game.mainline():
+                for node, _, _ in walk_mainline(game):
                     uci_moves.append(node.move.uci())
-                    board.push(node.move)
             except (ValueError, chess.IllegalMoveError, chess.InvalidMoveError):
                 log.warning(
                     "PgnTailer: illegal move in PGN game_n~=%d; skipping",

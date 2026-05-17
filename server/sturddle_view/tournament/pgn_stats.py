@@ -320,6 +320,7 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
     if game_n < 1:
         return None
     import chess.pgn
+    from ..chess.pgn_walk import walk_mainline
     seen = 0
     with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
         while True:
@@ -335,11 +336,10 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
                 game = chess.pgn.read_game(f)
                 if game is None:
                     return None
-                board = game.board()
                 last_move_uci: str | None = None
-                for move in game.mainline_moves():
-                    last_move_uci = move.uci()
-                    board.push(move)
+                board = game.board()
+                for node, board, _ in walk_mainline(game):
+                    last_move_uci = node.move.uci()
                 return {
                     "pgn": str(game),
                     "final_fen": board.fen(),
