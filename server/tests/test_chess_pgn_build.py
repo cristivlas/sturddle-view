@@ -175,9 +175,10 @@ def test_build_timecontrol_header_formats_int_seconds():
     text = build_pgn(
         start_fen=None,
         moves_uci=[],
-        headers={"Event": "T", "TimeControl": "300+2"},
+        headers={"Event": "T"},
         result="*",
         termination="unterminated",
+        time_control=(300, 2),
     )
     assert "[TimeControl \"300+2\"]" in text
 

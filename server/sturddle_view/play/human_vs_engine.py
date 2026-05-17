@@ -23,6 +23,7 @@ import chess.pgn
 
 from .._atomic import atomic_write_text
 from ..chess.board import board_from, moves_san as _moves_san, side_to_move
+from ..chess.pgn_build import build_pgn
 from ..chess.results import DRAW, loser_result, winner_result
 from ..events import Event, EventBus
 from .game_store import GameState, GameStore
@@ -1769,11 +1770,11 @@ class HumanVsEngine:
         if self._board is None or self._game_id is None:
             return None
         if self._viewing:
-            return None  # not a play game; autosave is play-mode only
+            return None
         if self._settings is None or not getattr(self._settings, "pgn_autosave", False):
             return None
         if not self._board.move_stack:
-            return None  # nothing worth saving
+            return None
 
         raw = getattr(self._settings, "pgn_dir", None)
         if not raw:
@@ -1785,47 +1786,39 @@ class HumanVsEngine:
             log.exception("could not create PGN dir %s", pgn_dir)
             return None
 
-        game = chess.pgn.Game.from_board(self._board)
         engine_label = self._engine_name or Path(self._engine_path).name
         white = "Human" if self._human_white else engine_label
         black = engine_label if self._human_white else "Human"
-        game.headers["Event"] = "Sturddle View — Human vs Engine"
-        game.headers["Site"] = "Sturddle View"
-        game.headers["Date"] = datetime.date.today().strftime("%Y.%m.%d")
-        game.headers["White"] = white
-        game.headers["Black"] = black
-        game.headers["Result"] = result
-        game.headers["Termination"] = termination
-        if self._tc.initial_seconds:
-            game.headers["TimeControl"] = (
-                f"{int(self._tc.initial_seconds)}+{int(self._tc.increment_seconds)}"
-            )
+        headers = {
+            "Event": "Sturddle View — Human vs Engine",
+            "Site": "Sturddle View",
+            "Date": datetime.date.today().strftime("%Y.%m.%d"),
+            "White": white,
+            "Black": black,
+        }
 
-        # Opening header: longest registered prefix wins (sticky across
-        # transpositions and out-of-book moves). Skipped for FEN-imported
-        # games — lookup keys on move history from startpos.
+        opening = None
         if self._openings is not None and self._start_fen is None:
             ucis = [m.uci() for m in self._board.move_stack]
             hit = self._openings.lookup(ucis)
             if hit is not None:
-                game.headers["ECO"] = hit.eco
-                game.headers["Opening"] = hit.name
+                opening = (hit.eco, hit.name)
 
-        # Per-ply [%clk] annotations. _clock_history[i] is (white, black)
-        # BEFORE ply i; the mover's clock AFTER ply i is _clock_history[i+1]
-        # for that side, or the live clock if i is the most recent ply.
-        # Mover is taken from the replay board (handles non-startpos games
-        # where ply 0 may be Black to move).
-        replay = board_from(self._start_fen)
-        nodes = list(game.mainline())
-        for i, node in enumerate(nodes):
-            mover_white = (replay.turn == chess.WHITE)
-            replay.push(self._board.move_stack[i])
-            if i + 1 < len(self._clock_history):
-                w_after, b_after = self._clock_history[i + 1]
-            else:
-                w_after, b_after = self._white_time, self._black_time
-            node.set_clock(w_after if mover_white else b_after)
+        tc = None
+        if self._tc.initial_seconds:
+            tc = (int(self._tc.initial_seconds), int(self._tc.increment_seconds))
+
+        pgn_text = build_pgn(
+            start_fen=self._start_fen,
+            moves_uci=[m.uci() for m in self._board.move_stack],
+            clock_history=list(self._clock_history),
+            final_clocks=(self._white_time, self._black_time),
+            headers=headers,
+            opening=opening,
+            result=result,
+            termination=termination,
+            time_control=tc,
+        )
 
         # Game-start timestamp keeps the path stable across per-move autosaves
         # and the final end-of-game write, so the file is overwritten in place.
@@ -1833,7 +1826,7 @@ class HumanVsEngine:
         ts = datetime.datetime.fromtimestamp(wall).strftime("%Y%m%d-%H%M%S")
         path = pgn_dir / f"{ts}-{self._game_id}.pgn"
         try:
-            atomic_write_text(path, f"{game}\n\n")
+            atomic_write_text(path, pgn_text)
         except OSError:
             log.exception("could not write PGN to %s", path)
             return None

@@ -6,7 +6,7 @@ phase is sized to fit one PR / one Claude Code session. Future
 sessions pick up from the status header and execute the next pending
 phase.
 
-Last updated: 2026-05-17 (P0, P1, P2, P3, P4 done).
+Last updated: 2026-05-17 (P0, P1, P2, P3, P4, P5 done).
 
 Related docs:
 - [server-chess-audit.md](server-chess-audit.md) -- the spec.
@@ -23,7 +23,7 @@ bottom for the exact ritual.
 - [x] P2  R1 -- chess/board.py helpers
 - [x] P3  R2 -- chess/results.py constants
 - [x] P4  R6a -- chess/pgn_walk.py iterator and consumer migration
-- [ ] P5  R6b -- chess/pgn_build.py producer and autosave swap
+- [x] P5  R6b -- chess/pgn_build.py producer and autosave swap
 - [ ] P6  R3 -- EngineSupervisor extraction
 - [ ] P7  R4 -- ChessClock extraction
 - [ ] P8  R5 -- Mode FSM and typed conflict error
@@ -286,7 +286,7 @@ These hold for every phase. Violations are blockers, not nits.
 
 ## P5 -- R6b chess/pgn_build.py producer and autosave swap
 
-- **State**: pending
+- **State**: done (fbb9c94 red; green pending commit SHA)
 - **Depends on**: P1 (autosave characterization snapshots), P2, P3,
   P4
 - **Goal**: Producer primitive landed; HVE autosave reduced to a

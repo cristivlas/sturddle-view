@@ -917,7 +917,7 @@ before merging.
 
 Verified against the working tree (branch `server/refactor`, post-`136cf28`).
 
-**Battery status (2026-05-17):** P0-P3 complete.
+**Battery status (2026-05-17):** P0-P5 complete.
 
 - P0: perf infrastructure (`tests/perf/`, fixtures, fake UCI engine) -- done.
 - P1: pre-extraction characterization snapshots (clock, autosave, board_event) -- done.
@@ -926,6 +926,8 @@ Verified against the working tree (branch `server/refactor`, post-`136cf28`).
   `½-½` divergence between `pgn_tail` and `pgn_stats` closed; inline result literals
   removed from `HVE`, `pgn_tail`, `pgn_stats`. `ViewModeParams` dataclass also added to
   HVE as part of P2 cleanup (11-arg `enter_view_mode` sprawl).
+- P5: R6b `chess/pgn_build.py` -- done; `build_pgn` pure function added;
+  `HVE._maybe_save_pgn` reduced to a ~15-line wrapper (was 74 lines).
 
 **Structural findings are correct.** All identified bugs, patterns, and
 recommendations are confirmed:
