@@ -12,6 +12,8 @@ import {
   openCommentary,
   closeCommentary,
   setCommentaryText,
+  setCommentaryNavHandlers,
+  setCommentaryNavState,
   isCommentaryOpen,
 } from "../play-commentary-window.js";
 
@@ -315,13 +317,7 @@ export const playPerspective = {
       },
       // Click on a move in the list (view mode only) → jump cursor to
       // the position AFTER that move, i.e. ply = plyIndex + 1.
-      onMoveJump: async (plyIndex) => {
-        try {
-          await ctx.api("POST", "/game/view/goto", { ply: plyIndex + 1 });
-        } catch (e) {
-          reportError(ctx, "Navigation failed", e);
-        }
-      },
+      onMoveJump: (plyIndex) => doViewNav("/game/view/goto", { ply: plyIndex + 1 }),
     });
 
     // Settings cache (refreshed on settings-changed).
@@ -346,9 +342,16 @@ export const playPerspective = {
       const shouldShow = viewing && showPgnComments && !narrow;
       const open = isCommentaryOpen();
       if (shouldShow) {
+        const wasOpen = open;
         if (!open) openCommentary();
         setCommentaryText(lastViewComment);
+        if (!wasOpen) {
+          // Populate comment nav state on first open.
+          doViewNav("/game/view/goto", { ply: viewCursor });
+        }
       } else if (open) {
+        commentNavPrev = null;
+        commentNavNext = null;
         closeCommentary();
       }
     }
@@ -881,13 +884,26 @@ export const playPerspective = {
       }
     };
 
-    const onViewNav = (endpoint) => async () => {
+    let commentNavPrev = null;
+    let commentNavNext = null;
+
+    async function doViewNav(endpoint, payload = {}) {
       try {
-        await ctx.api("POST", endpoint, {});
+        const body = isCommentaryOpen()
+          ? { ...payload, include_comment_nav: true }
+          : payload;
+        const res = await ctx.api("POST", endpoint, body);
+        if (isCommentaryOpen() && "prev_comment" in res) {
+          commentNavPrev = res.prev_comment ?? null;
+          commentNavNext = res.next_comment ?? null;
+          setCommentaryNavState(commentNavPrev, commentNavNext);
+        }
       } catch (e) {
         reportError(ctx, "Navigation failed", e);
       }
-    };
+    }
+
+    const onViewNav = (endpoint) => () => doViewNav(endpoint);
     const onViewFlip = () => {
       viewFlipped = !viewFlipped;
       try { localStorage.setItem(VIEW_FLIP_KEY, viewFlipped ? "1" : "0"); } catch { /* */ }
@@ -898,6 +914,11 @@ export const playPerspective = {
     const onViewBack = onViewNav("/game/view/back");
     const onViewForward = onViewNav("/game/view/forward");
     const onViewLast = onViewNav("/game/view/last");
+
+    setCommentaryNavHandlers(
+      () => { if (commentNavPrev != null) doViewNav("/game/view/goto", { ply: commentNavPrev }); },
+      () => { if (commentNavNext != null) doViewNav("/game/view/goto", { ply: commentNavNext }); },
+    );
 
     let playFromHereInflight = false;
     const onPlayFromHere = async () => {

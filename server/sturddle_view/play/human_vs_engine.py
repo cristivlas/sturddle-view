@@ -873,7 +873,25 @@ class HumanVsEngine:
             await self._publish_clock()
         return self._game_id
 
-    async def view_goto(self, ply: int) -> None:
+    def _comment_nav(self, cursor: int) -> dict:
+        """Return prev/next ply indices (0..n) that have a comment, nearest first."""
+        # Build a flat lookup: ply 0 -> root comment, ply i -> _view_comments[i-1].
+        def has_comment(ply: int) -> bool:
+            if ply == 0:
+                return self._view_root_comment is not None
+            comments = self._view_comments
+            return bool(comments and (i := ply - 1) < len(comments) and comments[i] is not None)
+
+        n = len(self._view_full_moves)
+        prev_c = next(
+            (i for i in range(cursor - 1, -1, -1) if has_comment(i)), None
+        )
+        next_c = next(
+            (i for i in range(cursor + 1, n + 1) if has_comment(i)), None
+        )
+        return {"prev_comment": prev_c, "next_comment": next_c}
+
+    async def view_goto(self, ply: int, *, include_comment_nav: bool = False) -> dict:
         """Move the view cursor to ``ply`` (0..len(full_moves)). Rebuilds
         the board by replaying from start. Rejected during analysis."""
         async with self._lock:
@@ -896,22 +914,23 @@ class HumanVsEngine:
             await self._publish_board()
             # Clock display reflects historical clocks at the cursor.
             await self._publish_clock()
+            return self._comment_nav(ply) if include_comment_nav else {}
 
-    async def view_first(self) -> None:
-        await self.view_goto(0)
+    async def view_first(self, *, include_comment_nav: bool = False) -> dict:
+        return await self.view_goto(0, include_comment_nav=include_comment_nav)
 
-    async def view_back(self) -> None:
+    async def view_back(self, *, include_comment_nav: bool = False) -> dict:
         async with self._lock:
             target = max(0, self._view_cursor - 1)
-        await self.view_goto(target)
+        return await self.view_goto(target, include_comment_nav=include_comment_nav)
 
-    async def view_forward(self) -> None:
+    async def view_forward(self, *, include_comment_nav: bool = False) -> dict:
         async with self._lock:
             target = min(len(self._view_full_moves), self._view_cursor + 1)
-        await self.view_goto(target)
+        return await self.view_goto(target, include_comment_nav=include_comment_nav)
 
-    async def view_last(self) -> None:
-        await self.view_goto(len(self._view_full_moves))
+    async def view_last(self, *, include_comment_nav: bool = False) -> dict:
+        return await self.view_goto(len(self._view_full_moves), include_comment_nav=include_comment_nav)
 
     async def enter_edit_mode(self) -> str:
         """Enter board editing. Must be in view mode; live play rejects.

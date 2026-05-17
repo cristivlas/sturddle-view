@@ -561,6 +561,33 @@ button.recent-del:hover { color: var(--status-err-fg, #d33); }
   color: var(--muted);
   font-style: italic;
 }
+.pgn-comments-nav {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.pgn-comments-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1rem;
+}
+.pgn-comments-nav-btn:not([disabled]):hover {
+  color: var(--fg);
+  background: var(--nav-btn-bg-hover);
+}
+.pgn-comments-nav-btn[disabled] {
+  opacity: 0.35;
+  cursor: default;
+}
 .play-dock-left:not(.dock-empty),
 .play-comments-host:not(.dock-empty) { border: 1px solid #454952; }
 .play-comments-host.dock-empty { visibility: hidden; }
