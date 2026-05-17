@@ -6,6 +6,14 @@ import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, setDockContainer } from "../play-debug-windows.js";
+import {
+  setCommentaryDockContainer,
+  setOnUserCloseCommentary,
+  openCommentary,
+  closeCommentary,
+  setCommentaryText,
+  isCommentaryOpen,
+} from "../play-commentary-window.js";
 
 // Module-scope mirror of "user has a live human-vs-engine game running"
 // so other modules (e.g. tournament Replay button) can decide whether
@@ -89,10 +97,7 @@ export const playPerspective = {
       <section id="play-perspective">
         <div class="play-grid">
           <div class="play-dock-left"></div>
-          <aside class="play-comments-host" aria-label="PGN commentary" hidden>
-            <header class="pgn-comments-header">Commentary</header>
-            <div class="pgn-comments-body" tabindex="0"></div>
-          </aside>
+          <aside class="play-comments-host dock-empty" aria-label="PGN commentary"></aside>
           <div id="no-engine-banner" class="no-engine-banner hidden" role="status">
             <span class="no-engine-banner__msg">No engine configured.</span>
             <button type="button" class="no-engine-banner__btn" aria-label="Open engine settings" title="Open engine settings">
@@ -321,68 +326,33 @@ export const playPerspective = {
 
     // Settings cache (refreshed on settings-changed).
     let allowTakeback = true;
-    let showPgnComments = true; // view-mode left-column commentary panel
+    let showPgnComments = true; // view-mode commentary window
     const commentsHost = root.querySelector(".play-comments-host");
-    const commentsBody = commentsHost?.querySelector(".pgn-comments-body");
+    setCommentaryDockContainer(commentsHost);
     const COMMENTS_NARROW_PX = 800;
     const COMMENTS_NARROW_H_PX = 700;
-    const COMMENTS_EMPTY_TEXT = "No commentary at this ply.";
     let lastViewComment = null;
-    let lastViewHasComment = false;
-    function updateCommentsBounds() {
-      if (!commentsHost || commentsHost.hidden) return;
-      const board = root.querySelector(".play-board-host");
-      if (!board) return;
-      const boardLeft = Math.round(board.getBoundingClientRect().left);
-      const grid = root.querySelector(".play-grid");
-      const ribbonW = parseInt(getComputedStyle(grid ?? document.documentElement)
-        .getPropertyValue("--ribbon-w")) || 36;
-      commentsHost.style.width = (boardLeft - ribbonW - 9) + "px";
-      const clockTop = root.querySelector(".clock-row.clock-top");
-      const clockBot = root.querySelector(".clock-row.clock-bottom");
-      if (clockTop && clockBot) {
-        const top = Math.round(clockTop.getBoundingClientRect().top);
-        const bot = Math.round(clockBot.getBoundingClientRect().bottom);
-        commentsHost.style.top = top + "px";
-        commentsHost.style.bottom = (window.innerHeight - bot) + "px";
-      }
-    }
-    function renderCommentsBody(text) {
-      if (!commentsBody) return;
-      commentsBody.innerHTML = "";
-      if (text) {
-        commentsBody.classList.remove("is-empty");
-        for (const para of text.split(/\n{2,}/)) {
-          const p = document.createElement("p");
-          p.textContent = para;
-          commentsBody.append(p);
-        }
-      } else {
-        commentsBody.classList.add("is-empty");
-        const p = document.createElement("p");
-        p.textContent = COMMENTS_EMPTY_TEXT;
-        commentsBody.append(p);
-      }
-    }
+    // X on the commentary window (dock slot or float) -> clear setting.
+    setOnUserCloseCommentary(() => {
+      showPgnComments = false;
+      ctx.api("PUT", "/settings", { view_show_pgn_comments: false })
+        .catch((e) => reportError(ctx, "Failed to save setting", e));
+    });
     function syncCommentsVisibility() {
       if (!commentsHost) return;
       const narrow =
         window.innerWidth <= COMMENTS_NARROW_PX
         || window.innerHeight <= COMMENTS_NARROW_H_PX;
-      const shouldShow =
-        viewing && showPgnComments && !narrow && lastViewHasComment;
-      const wasHidden = commentsHost.hidden;
-      commentsHost.hidden = !shouldShow;
+      const shouldShow = viewing && showPgnComments && !narrow;
+      const open = isCommentaryOpen();
       if (shouldShow) {
-        renderCommentsBody(lastViewComment);
-        if (wasHidden) requestAnimationFrame(updateCommentsBounds);
-        else updateCommentsBounds();
+        if (!open) openCommentary();
+        setCommentaryText(lastViewComment);
+      } else if (open) {
+        closeCommentary();
       }
     }
-    const onCommentsResize = () => {
-      syncCommentsVisibility();
-      updateCommentsBounds();
-    };
+    const onCommentsResize = () => { syncCommentsVisibility(); };
     window.addEventListener("resize", onCommentsResize);
     // Snapshot of TC fields used at the start of the current game; lets
     // us tell the user "applies on next game" if they edit TC mid-play.
@@ -583,10 +553,8 @@ export const playPerspective = {
             viewTotalPlies = v.total_plies ?? 0;
             viewGameOver = !!v.game_over;
             lastViewComment = v.comment ?? null;
-            lastViewHasComment = !!v.has_comment;
           } else {
             lastViewComment = null;
-            lastViewHasComment = false;
           }
           syncCommentsVisibility();
           if (viewing) {
@@ -1112,6 +1080,9 @@ export const playPerspective = {
         }
         closeDebugWindows();
         setDockContainer(null);
+        closeCommentary();
+        setCommentaryDockContainer(null);
+        setOnUserCloseCommentary(null);
         dismissAnalysisToast?.();
         dismissAnalysisToast = null;
         pausedBadge?.classList.add("hidden");

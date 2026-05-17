@@ -420,11 +420,13 @@ def test_import_endpoint_pgn_replays_into_history(client):
         "text": "1. e4 e5 2. Nf3 Nc6 *",
     })
     assert r.status_code == 200, r.text
-    # View mode lands at the last ply with all moves replayed.
+    # View mode lands at ply 0 with all moves replayed in history.
     assert hve._viewing is True
     assert [m.uci() for m in hve._view_full_moves] == [
         "e2e4", "e7e5", "g1f3", "b8c6",
     ]
+    assert hve._view_cursor == 0
+    c.post("/game/view/last")
     assert hve._view_cursor == 4
     hve._engine_to_move.assert_not_called()
 
@@ -454,7 +456,7 @@ def test_view_play_from_here_kicks_engine_when_engine_to_move(client):
 
 def test_import_endpoint_accepts_finished_position(client):
     """Finished games (checkmate, stalemate, draw) are loaded into view
-    mode at the last ply for post-mortem inspection."""
+    mode; navigating to the last ply reveals the terminal position."""
     c, app, engine_path = client
     hve = _patch_hve(app, engine_path)
     r = c.post("/game/import", json={
@@ -464,6 +466,7 @@ def test_import_endpoint_accepts_finished_position(client):
     assert r.status_code == 200, r.text
     assert r.json()["viewing"] is True
     assert hve._viewing is True
+    c.post("/game/view/last")
     assert hve._view_cursor == 7  # 7 plies, cursor at the last
     assert hve._board.is_checkmate()
 
@@ -505,6 +508,7 @@ def test_view_play_from_here_honors_clk_annotations(client):
             "2. Nf3 { [%clk 0:04:48] } *"
         ),
     })
+    c.post("/game/view/last")
     r = c.post("/game/view/play-from-here", json={
         "initial_seconds": 300,
         "increment_seconds": 0,

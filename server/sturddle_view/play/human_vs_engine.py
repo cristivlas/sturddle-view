@@ -858,9 +858,9 @@ class HumanVsEngine:
             )
             self._view_comments = list(comments) if comments else None
             self._view_root_comment = root_comment or None
-            self._view_cursor = len(full_moves)  # land at last ply
+            self._view_cursor = 0  # land at start; avoid end-of-game modal
             self._start_fen = start_fen
-            self._board = replay  # already at the final position
+            self._board = start_board
             self._game_id = uuid.uuid4().hex[:12]
             self._game_started_wall = None  # not a play game; no autosave
             # Clocks frozen — irrelevant in view mode but keep types sane.

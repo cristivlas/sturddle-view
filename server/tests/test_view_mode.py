@@ -37,7 +37,7 @@ def hve(tmp_path):
     return h, tmp_path
 
 
-async def test_enter_view_mode_lands_at_last_ply(hve):
+async def test_enter_view_mode_lands_at_first_ply(hve):
     h, _ = hve
     await h.enter_view_mode(
         start_fen=None,
@@ -45,8 +45,8 @@ async def test_enter_view_mode_lands_at_last_ply(hve):
         clock_history=None,
     )
     assert h._viewing is True
-    assert h._view_cursor == 3
-    assert h._board.fen().startswith("rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2")
+    assert h._view_cursor == 0
+    assert h._board.fen() == chess.STARTING_FEN
 
 
 async def test_view_navigation_back_forward_first_last(hve):
@@ -56,6 +56,8 @@ async def test_view_navigation_back_forward_first_last(hve):
         moves_uci=["e2e4", "e7e5", "g1f3"],
         clock_history=None,
     )
+    # Land at 0; jump to last to exercise back/forward from a non-boundary.
+    await h.view_last()
     await h.view_back()
     assert h._view_cursor == 2
     assert h._board.fen().startswith("rnbqkbnr/pppp1ppp/8/4p3/4P3/8")  # after e5
@@ -119,6 +121,7 @@ async def test_play_from_here_seeds_new_game_at_cursor(hve):
         moves_uci=["e2e4", "e7e5", "g1f3", "b8c6"],
         clock_history=None,
     )
+    await h.view_last()
     await h.view_back()  # cursor at ply 3 (after Nf3 — Black to move)
     assert h._view_cursor == 3
     pre_view_id = h._game_id
@@ -141,6 +144,7 @@ async def test_play_from_here_at_last_ply_uses_imported_final_clocks(hve):
         final_white_time=4 * 60 + 48,
         final_black_time=4 * 60 + 50,
     )
+    await h.view_last()
     await h.play_from_here(tc=TimeControl(300, 0), inherit_clocks=True)
     assert h._white_time == 4 * 60 + 48
     assert h._black_time == 4 * 60 + 50
@@ -160,6 +164,7 @@ async def test_play_from_here_mid_game_derives_clocks_from_history(hve):
     )
     # Cursor at ply 2 (after c5 — White to move). Post-c5 clocks = pre-Nf3
     # snapshot = view_clock_history[2] = (4:55, 4:50).
+    await h.view_last()
     await h.view_back()
     assert h._view_cursor == 2
     await h.play_from_here(tc=TimeControl(300, 0), inherit_clocks=True)
@@ -178,6 +183,7 @@ async def test_play_from_here_at_finished_position_keeps_view_mode(hve):
         moves_uci=["e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7"],
         clock_history=None,
     )
+    await h.view_last()
     assert h._board.is_checkmate()
     with pytest.raises(RuntimeError, match="game is over|already over"):
         await h.play_from_here(tc=TimeControl(60, 0))
@@ -278,6 +284,7 @@ async def test_view_payload_includes_result_from_pgn_headers_on_threefold(hve):
         pgn_result="1/2-1/2",
         pgn_termination="threefold_repetition",
     )
+    await h.view_last()
     evt = h._board_event()
     view = evt.payload["view"]
     assert view["game_over"] is True
@@ -296,6 +303,7 @@ async def test_normal_termination_enriched_to_threefold(hve):
         pgn_result="1/2-1/2",
         pgn_termination="normal",
     )
+    await h.view_last()
     evt = h._board_event()
     view = evt.payload["view"]
     assert view["termination"] == "threefold_repetition"
@@ -311,6 +319,7 @@ async def test_view_payload_result_from_board_on_checkmate(hve):
         moves_uci=_FOOLS_MATE_MOVES,
         clock_history=None,
     )
+    await h.view_last()
     evt = h._board_event()
     view = evt.payload["view"]
     assert view["game_over"] is True

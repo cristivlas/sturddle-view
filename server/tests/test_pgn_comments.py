@@ -140,6 +140,7 @@ async def test_view_payload_exposes_comment_at_cursor(hve):
         clock_history=None,
         comments=["Strong center.", None, "Develops a piece."],
     )
+    await hve.view_last()
     evt = hve._board_event()
     view = evt.payload["view"]
     assert view["cursor"] == 3
