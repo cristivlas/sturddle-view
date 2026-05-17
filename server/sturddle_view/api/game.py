@@ -144,6 +144,8 @@ def _parse_import_payload(payload: dict) -> dict:
         "final_white_time": parsed.final_white_time,
         "final_black_time": parsed.final_black_time,
         "eval_history": parsed.eval_history,
+        "comments": parsed.comments,
+        "root_comment": parsed.root_comment,
         "detected_format": detected,
     }
 
@@ -179,6 +181,8 @@ async def import_game(payload: dict, request: Request) -> dict:
             white_name=headers.get("White"),
             black_name=headers.get("Black"),
             eval_history=parsed.get("eval_history"),
+            comments=parsed.get("comments"),
+            root_comment=parsed.get("root_comment"),
             pgn_result=headers.get("Result"),
             pgn_termination=headers.get("Termination"),
         )

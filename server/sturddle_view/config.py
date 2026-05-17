@@ -35,6 +35,7 @@ PERSISTED_FIELDS = (
     "inherit_pgn_clocks",
     "board_style",
     "play_eval_pov",
+    "view_show_pgn_comments",
     "tournament_fastchess_path",
     "tournament_root",
     "tournament_default_template",
@@ -84,6 +85,9 @@ class Settings(BaseSettings):
     # HVE eval display POV: "white" (default, status quo), "engine"
     # (raw UCI — engine's POV), or "human" (flipped to human's color).
     play_eval_pov: str = "white"
+    # View mode: show sanitized PGN move commentary in the left column
+    # (desktop viewports only). Hidden when False.
+    view_show_pgn_comments: bool = True
 
     # Tournament subsystem settings. None = use platform default / not configured.
     tournament_fastchess_path: str | None = None

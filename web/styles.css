@@ -531,6 +531,54 @@ button.recent-del:hover { color: var(--status-err-fg, #d33); }
   z-index: 9; /* below ribbon (z-index:10) */
 }
 .play-dock-left.dock-empty { visibility: hidden; }
+
+/* PGN commentary panel: occupies the same left column as .play-dock-left.
+   Hidden by default; shown only in view mode when the user setting is on. */
+.play-comments-host {
+  grid-column: 1;
+  grid-row: 1;
+  position: fixed;
+  left: calc(var(--ribbon-w) + 1px);
+  /* top/bottom/width set dynamically in JS to align with the board. */
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  overflow: hidden;
+  z-index: 8;
+}
+.play-comments-host[hidden] { display: none; }
+.pgn-comments-header {
+  flex: 0 0 auto;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  background: var(--nav-btn-bg);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.75rem;
+  color: var(--muted);
+  user-select: none;
+}
+.pgn-comments-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: var(--fg);
+}
+.pgn-comments-body p {
+  margin: 0 0 0.6em;
+  white-space: pre-wrap;
+}
+.pgn-comments-body p:last-child { margin-bottom: 0; }
+.pgn-comments-body.is-empty {
+  color: var(--muted);
+  font-style: italic;
+}
 .play-dock-left:not(.dock-empty) { border: 1px solid #454952; }
 /* When only one slot is docked the grip row is absent; collapse to single row. */
 .play-dock-left.dock-single {
@@ -627,6 +675,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   /* !important needed: .play-dock-left.dock-single below has higher
      specificity than the bare class selector and would otherwise win. */
   .play-dock-left { display: none !important; }
+  .play-comments-host { display: none !important; }
   #play-perspective { display: block; }
   .play-grid {
     display: flex;
@@ -1359,6 +1408,20 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 
 /* Form-style rows (label + input) inside a panel. */
 .settings-row { max-width: 360px; }
+/* Toggles grid: 4 switches in a fixed 2-column grid, collapsing to one
+   column only on mobile-width dialogs. Widened past the standard 360px
+   .settings-row cap so the longest label ("Allow Undo (take back)") fits
+   on a single line. */
+.settings-toggles-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 24px;
+  align-items: center;
+  max-width: 460px;
+}
+@media (max-width: 480px) {
+  .settings-toggles-grid { grid-template-columns: 1fr; }
+}
 .settings-row label {
   display: block;
   color: var(--muted);

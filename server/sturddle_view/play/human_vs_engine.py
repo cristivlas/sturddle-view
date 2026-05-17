@@ -183,6 +183,11 @@ class HumanVsEngine:
         # Per-ply post-move eval (white POV) parsed from PGN comments.
         # None when the PGN had no recognizable eval annotations.
         self._view_eval_history: list[dict | None] | None = None
+        # Per-ply sanitized PGN comments (machine annotations stripped).
+        # None when the PGN had no commentary at all.
+        self._view_comments: list[str | None] | None = None
+        # Pre-game / Annotator commentary, sanitized. Shown at cursor==0.
+        self._view_root_comment: str | None = None
         # PGN [Result]/[Termination] from the imported game (None when
         # not in view mode). Read by _board_event's view payload.
         self._view_pgn_result: str | None = None
@@ -334,6 +339,8 @@ class HumanVsEngine:
         self._view_white_name = None
         self._view_black_name = None
         self._view_eval_history = None
+        self._view_comments = None
+        self._view_root_comment = None
         self._view_pgn_result = None
         self._view_pgn_termination = None
         self._view_cursor = 0
@@ -802,6 +809,8 @@ class HumanVsEngine:
         white_name: str | None = None,
         black_name: str | None = None,
         eval_history: list[dict | None] | None = None,
+        comments: list[str | None] | None = None,
+        root_comment: str | None = None,
         pgn_result: str | None = None,
         pgn_termination: str | None = None,
     ) -> str:
@@ -847,6 +856,8 @@ class HumanVsEngine:
             self._view_eval_history = (
                 list(eval_history) if eval_history else None
             )
+            self._view_comments = list(comments) if comments else None
+            self._view_root_comment = root_comment or None
             self._view_cursor = len(full_moves)  # land at last ply
             self._start_fen = start_fen
             self._board = replay  # already at the final position
@@ -1522,6 +1533,21 @@ class HumanVsEngine:
                 self._view_eval_history is not None
                 and any(e is not None for e in self._view_eval_history)
             )
+            comment_at_cursor: str | None = None
+            if self._view_cursor == 0:
+                comment_at_cursor = self._view_root_comment
+            elif (
+                self._view_comments is not None
+                and 0 < self._view_cursor <= len(self._view_comments)
+            ):
+                comment_at_cursor = self._view_comments[self._view_cursor - 1]
+            has_any_comment = (
+                self._view_root_comment is not None
+                or (
+                    self._view_comments is not None
+                    and any(c is not None for c in self._view_comments)
+                )
+            )
             view_payload = {
                 "cursor": self._view_cursor,
                 "total_plies": len(self._view_full_moves),
@@ -1529,6 +1555,8 @@ class HumanVsEngine:
                 "black_name": self._view_black_name,
                 "eval": eval_at_cursor,
                 "has_eval": has_any_eval,
+                "comment": comment_at_cursor,
+                "has_comment": has_any_comment,
                 # UI disables Play-from-here when the cursor lands on a
                 # finished position (mirror of the backend guard).
                 # game_over is true for forced endings AND claimable draws

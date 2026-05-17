@@ -89,6 +89,10 @@ export const playPerspective = {
       <section id="play-perspective">
         <div class="play-grid">
           <div class="play-dock-left"></div>
+          <aside class="play-comments-host" aria-label="PGN commentary" hidden>
+            <header class="pgn-comments-header">Commentary</header>
+            <div class="pgn-comments-body" tabindex="0"></div>
+          </aside>
           <div id="no-engine-banner" class="no-engine-banner hidden" role="status">
             <span class="no-engine-banner__msg">No engine configured.</span>
             <button type="button" class="no-engine-banner__btn" aria-label="Open engine settings" title="Open engine settings">
@@ -317,6 +321,69 @@ export const playPerspective = {
 
     // Settings cache (refreshed on settings-changed).
     let allowTakeback = true;
+    let showPgnComments = true; // view-mode left-column commentary panel
+    const commentsHost = root.querySelector(".play-comments-host");
+    const commentsBody = commentsHost?.querySelector(".pgn-comments-body");
+    const COMMENTS_NARROW_PX = 800;
+    const COMMENTS_NARROW_H_PX = 700;
+    const COMMENTS_EMPTY_TEXT = "No commentary at this ply.";
+    let lastViewComment = null;
+    let lastViewHasComment = false;
+    function updateCommentsBounds() {
+      if (!commentsHost || commentsHost.hidden) return;
+      const board = root.querySelector(".play-board-host");
+      if (!board) return;
+      const boardLeft = Math.round(board.getBoundingClientRect().left);
+      const grid = root.querySelector(".play-grid");
+      const ribbonW = parseInt(getComputedStyle(grid ?? document.documentElement)
+        .getPropertyValue("--ribbon-w")) || 36;
+      commentsHost.style.width = (boardLeft - ribbonW - 9) + "px";
+      const clockTop = root.querySelector(".clock-row.clock-top");
+      const clockBot = root.querySelector(".clock-row.clock-bottom");
+      if (clockTop && clockBot) {
+        const top = Math.round(clockTop.getBoundingClientRect().top);
+        const bot = Math.round(clockBot.getBoundingClientRect().bottom);
+        commentsHost.style.top = top + "px";
+        commentsHost.style.bottom = (window.innerHeight - bot) + "px";
+      }
+    }
+    function renderCommentsBody(text) {
+      if (!commentsBody) return;
+      commentsBody.innerHTML = "";
+      if (text) {
+        commentsBody.classList.remove("is-empty");
+        for (const para of text.split(/\n{2,}/)) {
+          const p = document.createElement("p");
+          p.textContent = para;
+          commentsBody.append(p);
+        }
+      } else {
+        commentsBody.classList.add("is-empty");
+        const p = document.createElement("p");
+        p.textContent = COMMENTS_EMPTY_TEXT;
+        commentsBody.append(p);
+      }
+    }
+    function syncCommentsVisibility() {
+      if (!commentsHost) return;
+      const narrow =
+        window.innerWidth <= COMMENTS_NARROW_PX
+        || window.innerHeight <= COMMENTS_NARROW_H_PX;
+      const shouldShow =
+        viewing && showPgnComments && !narrow && lastViewHasComment;
+      const wasHidden = commentsHost.hidden;
+      commentsHost.hidden = !shouldShow;
+      if (shouldShow) {
+        renderCommentsBody(lastViewComment);
+        if (wasHidden) requestAnimationFrame(updateCommentsBounds);
+        else updateCommentsBounds();
+      }
+    }
+    const onCommentsResize = () => {
+      syncCommentsVisibility();
+      updateCommentsBounds();
+    };
+    window.addEventListener("resize", onCommentsResize);
     // Snapshot of TC fields used at the start of the current game; lets
     // us tell the user "applies on next game" if they edit TC mid-play.
     let gameTcInitial = null;
@@ -325,6 +392,8 @@ export const playPerspective = {
       try {
         const s = await ctx.api("GET", "/settings");
         allowTakeback = s.allow_takeback !== false;
+        showPgnComments = s.view_show_pgn_comments !== false;
+        syncCommentsVisibility();
         if (notifyOnDrift && !gameOver && resignAvailable) {
           const drift = [];
           // Side: settings.human_side is "white"|"black"|"random". Only
@@ -513,6 +582,14 @@ export const playPerspective = {
             viewCursor = v.cursor ?? 0;
             viewTotalPlies = v.total_plies ?? 0;
             viewGameOver = !!v.game_over;
+            lastViewComment = v.comment ?? null;
+            lastViewHasComment = !!v.has_comment;
+          } else {
+            lastViewComment = null;
+            lastViewHasComment = false;
+          }
+          syncCommentsVisibility();
+          if (viewing) {
             if (viewGameOver && viewCursor === viewTotalPlies && v.result && !viewGameOverAlertShown) {
               viewGameOverAlertShown = true;
               showAlert({ message: formatViewGameOver(v), messageClass: "game-over-message" });
@@ -1044,6 +1121,7 @@ export const playPerspective = {
         view.unmount();
         window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
         window.removeEventListener("sturddle:engines-changed", onEnginesChanged);
+        window.removeEventListener("resize", onCommentsResize);
         window.removeEventListener("keydown", onKeydown);
         newGameBtn.removeEventListener("click", onNewGame);
         importBtn.removeEventListener("click", onImport);

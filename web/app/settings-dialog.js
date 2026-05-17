@@ -244,9 +244,15 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       inheritClocks.addEventListener("change", () => {
         putSettings({ inherit_pgn_clocks: inheritClocks.checked });
       });
-      const inheritClocksRow = document.createElement("div");
-      inheritClocksRow.className = "settings-row";
-      inheritClocksRow.append(inheritClocks);
+
+      const showComments = document.createElement("wa-switch");
+      showComments.size = "small";
+      showComments.checked = initial.view_show_pgn_comments !== false;
+      showComments.textContent = "PGN comments";
+      showComments.title = "Display sanitized move comments in the left column while viewing a game (desktop only)";
+      showComments.addEventListener("change", () => {
+        putSettings({ view_show_pgn_comments: showComments.checked });
+      });
 
       const allowTakeback = document.createElement("wa-switch");
       allowTakeback.size = "small";
@@ -263,10 +269,12 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       autoClaimDraws.addEventListener("change", () => {
         putSettings({ auto_claim_draws: autoClaimDraws.checked });
       });
-      const takebackRow = document.createElement("div");
-      takebackRow.className = "settings-row";
-      takebackRow.style.cssText = "display:flex; flex-wrap:wrap; gap:16px; align-items:center;";
-      takebackRow.append(allowTakeback, autoClaimDraws);
+
+      // All four boolean toggles share a responsive 2-column grid so they
+      // align in columns on wide panels and collapse to one column on narrow.
+      const togglesRow = document.createElement("div");
+      togglesRow.className = "settings-row settings-toggles-grid";
+      togglesRow.append(inheritClocks, showComments, allowTakeback, autoClaimDraws);
 
       // Board style: single preset picker + live preview swatch reusing
       // cm-chessboard's CSS class + sprite so the preview matches the
@@ -364,7 +372,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const humanEvalRow = document.createElement("div");
       humanEvalRow.className = "settings-pair-row";
       humanEvalRow.append(humanSideRow, evalPovRow);
-      playPanel.append(tcInitialRow, tcIncrementRow, inheritClocksRow, humanEvalRow, takebackRow, boardStyleRow);
+      playPanel.append(tcInitialRow, tcIncrementRow, humanEvalRow, togglesRow, boardStyleRow);
 
       // Path-row helper used by Common + Tournament tabs.
       // Layout: label on top, [path-field][Browse][Clear] on a row underneath.
