@@ -6,7 +6,7 @@ import { apiErrorDetail, inlineSvgIcon, pickFile, showDialog, toast } from "./di
 import { mountEngineList } from "./engines.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
-import { CHESS_CLOCK_SVG_INNER } from "./icons.js";
+import { CHESS_CLOCK_SVG_INNER, CHESS_CLOCK_VIEW_BOX } from "./icons.js";
 
 const SETTINGS_ENGINES_COL_PCTS_KEY = "sturddle:engines:settings:colPcts3";
 
@@ -393,7 +393,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         return fs;
       };
       const tcSection = makeSection(
-        inlineSvgIcon(CHESS_CLOCK_SVG_INNER, { ariaLabel: "Time control" }),
+        inlineSvgIcon(CHESS_CLOCK_SVG_INNER, { viewBox: CHESS_CLOCK_VIEW_BOX, ariaLabel: "Time control" }),
         "Time control",
         tcInitialRow, tcIncrementRow,
       );

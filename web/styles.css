@@ -1470,6 +1470,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
    inlineSvgIcon, which sizes off em. */
 .settings-section legend wa-icon,
 .settings-section legend svg { font-size: 1.5rem; width: 1.5em; height: 1.5em; }
+.settings-section legend svg { color: var(--wa-color-neutral-fill-normal); }
 .settings-section > .settings-row { margin: 0; }
 .settings-section > .settings-row + .settings-row { margin-top: var(--settings-row-gap); }
 /* Centered, fixed-width column for a settings tab content. All direct
