@@ -1419,19 +1419,13 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 
 /* Form-style rows (label + input) inside a panel. */
 .settings-row { max-width: 360px; }
-/* Toggles grid: 4 switches in a fixed 2-column grid, collapsing to one
-   column only on mobile-width dialogs. Widened past the standard 360px
-   .settings-row cap so the longest label ("Allow Undo (take back)") fits
-   on a single line. */
+/* Toggles stack: switches stacked vertically, one per row. */
 .settings-toggles-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px 24px;
+  grid-template-columns: 1fr;
+  gap: 6px;
   align-items: center;
   max-width: 460px;
-}
-@media (max-width: 480px) {
-  .settings-toggles-grid { grid-template-columns: 1fr; }
 }
 /* Vertical rhythm tokens for settings panels: group/row gaps share these
    so the three-different-magic-numbers problem stays out of the markup. */
@@ -1445,7 +1439,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
    so the dialog reads as one visual system with the tab nav rail. */
 .settings-divider {
   border: 0;
-  border-top: 0.125rem solid var(--wa-color-neutral-fill-normal);
+  border-top: 1px solid var(--wa-color-neutral-fill-normal);
   margin: var(--settings-group-gap) 0;
 }
 /* Subtle bordered card around a related-controls group; legend inset on
@@ -1470,7 +1464,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
    inlineSvgIcon, which sizes off em. */
 .settings-section legend wa-icon,
 .settings-section legend svg { font-size: 1.5rem; width: 1.5em; height: 1.5em; }
-.settings-section legend svg { color: var(--wa-color-neutral-fill-normal); }
+.settings-section legend svg { color: var(--muted); }
 .settings-section > .settings-row { margin: 0; }
 .settings-section > .settings-row + .settings-row { margin-top: var(--settings-row-gap); }
 /* Centered, fixed-width column for a settings tab content. All direct
@@ -1491,6 +1485,9 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
    conceptual group (e.g. a switch after a dropdown). Avoids ad-hoc inline
    margins on .settings-row elements. */
 .settings-row-spaced { margin-top: var(--settings-row-gap); }
+/* Inset standalone rows by the section's inner padding so toggle labels
+   align with the left edge of inputs inside a .settings-section card. */
+.settings-row-section-inset { padding-left: var(--settings-section-pad); }
 .settings-row label {
   display: block;
   color: var(--muted);

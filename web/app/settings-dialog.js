@@ -272,20 +272,19 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const autoClaimDraws = document.createElement("wa-switch");
       autoClaimDraws.size = "small";
       autoClaimDraws.checked = initial.auto_claim_draws !== false;
-      autoClaimDraws.textContent = "Auto-claim draws";
+      autoClaimDraws.textContent = "Claim draws";
       autoClaimDraws.title = "Automatically end the game on threefold repetition or 50-move rule";
       autoClaimDraws.addEventListener("change", () => {
         putSettings({ auto_claim_draws: autoClaimDraws.checked });
       });
 
-      // Inherit PGN clocks is a view->play transition setting; keep it on
-      // its own row. Allow Undo + Auto-claim draws are end-of-game rules
-      // and pair naturally in a 2-toggle grid.
+      // Inherit PGN clocks is a view->play transition setting; Allow Undo
+      // and Claim draws are end-of-game rules stacked together.
       const inheritClocksRow = document.createElement("div");
-      inheritClocksRow.className = "settings-row settings-row-spaced";
+      inheritClocksRow.className = "settings-row settings-row-spaced settings-row-section-inset";
       inheritClocksRow.append(inheritClocks);
       const togglesRow = document.createElement("div");
-      togglesRow.className = "settings-row settings-toggles-grid";
+      togglesRow.className = "settings-row settings-toggles-grid settings-row-section-inset";
       togglesRow.append(allowTakeback, autoClaimDraws);
 
       // Board style: single preset picker + live preview swatch reusing
@@ -402,9 +401,9 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       playCol.append(
         tcSection, inheritClocksRow,
         makeDivider(),
-        humanSideRow,
-        makeDivider(),
         togglesRow,
+        makeDivider(),
+        humanSideRow,
       );
       playPanel.append(playCol);
       // Display tab: presentation-only preferences (no gameplay effect).
