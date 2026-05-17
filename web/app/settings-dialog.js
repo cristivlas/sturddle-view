@@ -270,7 +270,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const inheritClocks = document.createElement("wa-switch");
       inheritClocks.size = "small";
       inheritClocks.checked = !!initial.inherit_pgn_clocks;
-      inheritClocks.textContent = "Inherit PGN clocks";
+      inheritClocks.textContent = "Resume clocks from imported PGN";
       inheritClocks.addEventListener("change", () => {
         putSettings({ inherit_pgn_clocks: inheritClocks.checked });
       });
