@@ -2,7 +2,30 @@
 // every toggle / input commits to the server immediately (debounced for
 // text fields). No Save button. The X just closes.
 
-import { apiErrorDetail, pickFile, showDialog, toast } from "./dialogs.js";
+import { apiErrorDetail, inlineSvgIcon, pickFile, showDialog, toast } from "./dialogs.js";
+
+// Custom chess-clock icon (not in FA Free). Inner SVG only -- inlineSvgIcon
+// wraps and sizes it. Hand-composed from primitives; close in spirit to the
+// reference, not pixel-faithful.
+const CHESS_CLOCK_SVG_INNER = `
+  <!-- Top plunger (left) and button (right) -->
+  <rect x="80"  y="40" width="100" height="36" rx="18" ry="18"/>
+  <rect x="330" y="40" width="90"  height="32" rx="16" ry="16"/>
+  <!-- Stems connecting tops to body -->
+  <rect x="115" y="70" width="30" height="36"/>
+  <rect x="355" y="68" width="40" height="38"/>
+  <!-- Body -->
+  <rect x="48" y="104" width="416" height="288" rx="40" ry="40"/>
+  <!-- Clock faces (cut out from body via white fill) -->
+  <circle cx="170" cy="248" r="92" fill="#fff"/>
+  <circle cx="342" cy="248" r="92" fill="#fff"/>
+  <!-- Left hand: ~7 o'clock direction -->
+  <rect x="125" y="240" width="60" height="22" rx="11" ry="11"
+        transform="rotate(35 155 251)" fill="currentColor"/>
+  <!-- Right hand: ~2 o'clock direction -->
+  <rect x="330" y="200" width="22" height="80" rx="11" ry="11"
+        fill="currentColor"/>
+`;
 import { mountEngineList } from "./engines.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
@@ -182,6 +205,13 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const playPanel = document.createElement("wa-tab-panel");
       playPanel.name = "play";
 
+      // --- Display tab (visual / presentation preferences) ---
+      const displayTab = document.createElement("wa-tab");
+      displayTab.panel = "display";
+      displayTab.textContent = "Display";
+      const displayPanel = document.createElement("wa-tab-panel");
+      displayPanel.name = "display";
+
       const tcInitialRow = makeDurationRow({
         label: "Initial time",
         seconds: initial.tc_initial_seconds ?? 300,
@@ -257,7 +287,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const allowTakeback = document.createElement("wa-switch");
       allowTakeback.size = "small";
       allowTakeback.checked = initial.allow_takeback !== false;
-      allowTakeback.textContent = "Allow Undo (take back)";
+      allowTakeback.textContent = "Allow Undo";
       allowTakeback.addEventListener("change", () => {
         putSettings({ allow_takeback: allowTakeback.checked });
       });
@@ -270,17 +300,21 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         putSettings({ auto_claim_draws: autoClaimDraws.checked });
       });
 
-      // All four boolean toggles share a responsive 2-column grid so they
-      // align in columns on wide panels and collapse to one column on narrow.
+      // Inherit PGN clocks is a view->play transition setting; keep it on
+      // its own row. Allow Undo + Auto-claim draws are end-of-game rules
+      // and pair naturally in a 2-toggle grid.
+      const inheritClocksRow = document.createElement("div");
+      inheritClocksRow.className = "settings-row settings-row-spaced";
+      inheritClocksRow.append(inheritClocks);
       const togglesRow = document.createElement("div");
       togglesRow.className = "settings-row settings-toggles-grid";
-      togglesRow.append(inheritClocks, showComments, allowTakeback, autoClaimDraws);
+      togglesRow.append(allowTakeback, autoClaimDraws);
 
       // Board style: single preset picker + live preview swatch reusing
       // cm-chessboard's CSS class + sprite so the preview matches the
       // real board exactly.
       const boardStyleRow = document.createElement("div");
-      boardStyleRow.className = "settings-row";
+      boardStyleRow.className = "settings-row settings-row-spaced";
       const boardStyleLabel = document.createElement("label");
       boardStyleLabel.textContent = "Board style";
       const boardStyleSelect = document.createElement("wa-select");
@@ -366,13 +400,47 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       });
       boardStyleRow.append(boardStyleLabel, boardStyleSelect, previewWrap);
 
-      // Pair Human plays as + Eval display on a single row to save
-      // vertical space (both narrow selects, semantically related —
-      // both about how the player sees their game).
-      const humanEvalRow = document.createElement("div");
-      humanEvalRow.className = "settings-pair-row";
-      humanEvalRow.append(humanSideRow, evalPovRow);
-      playPanel.append(tcInitialRow, tcIncrementRow, humanEvalRow, togglesRow, boardStyleRow);
+      const makeDivider = () => {
+        const hr = document.createElement("hr");
+        hr.className = "settings-divider";
+        return hr;
+      };
+      const makeSection = (iconEl, ariaLabel, ...children) => {
+        const fs = document.createElement("fieldset");
+        fs.className = "settings-section";
+        const lg = document.createElement("legend");
+        lg.setAttribute("aria-label", ariaLabel);
+        lg.append(iconEl);
+        fs.append(lg, ...children);
+        return fs;
+      };
+      const tcSection = makeSection(
+        inlineSvgIcon(CHESS_CLOCK_SVG_INNER, { ariaLabel: "Time control" }),
+        "Time control",
+        tcInitialRow, tcIncrementRow,
+      );
+      const playCol = document.createElement("div");
+      playCol.className = "settings-panel-col";
+      playCol.append(
+        tcSection, inheritClocksRow,
+        makeDivider(),
+        humanSideRow,
+        makeDivider(),
+        togglesRow,
+      );
+      playPanel.append(playCol);
+      // Display tab: presentation-only preferences (no gameplay effect).
+      const showCommentsDisplayRow = document.createElement("div");
+      showCommentsDisplayRow.className = "settings-row";
+      showCommentsDisplayRow.append(showComments);
+      const displayCol = document.createElement("div");
+      displayCol.className = "settings-panel-col";
+      displayCol.append(
+        evalPovRow, boardStyleRow,
+        makeDivider(),
+        showCommentsDisplayRow,
+      );
+      displayPanel.append(displayCol);
 
       // Path-row helper used by Common + Tournament tabs.
       // Layout: label on top, [path-field][Browse][Clear] on a row underneath.
@@ -763,8 +831,8 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       }
 
       tabs.append(
-        generalTab, enginesTab, playTab, tournamentTab, sprtTab,
-        generalPanel, enginesPanel, playPanel, tournamentPanel, sprtPanel,
+        generalTab, enginesTab, playTab, displayTab, tournamentTab, sprtTab,
+        generalPanel, enginesPanel, playPanel, displayPanel, tournamentPanel, sprtPanel,
       );
 
       dialog.append(tabs);

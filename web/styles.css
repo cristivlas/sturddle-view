@@ -1422,6 +1422,63 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 @media (max-width: 480px) {
   .settings-toggles-grid { grid-template-columns: 1fr; }
 }
+/* Vertical rhythm tokens for settings panels: group/row gaps share these
+   so the three-different-magic-numbers problem stays out of the markup. */
+:root {
+  --settings-group-gap: 20px;
+  --settings-row-gap: 12px;
+  --settings-section-pad: 14px;
+}
+/* Hairline separator between conceptual groups in a settings panel.
+   Matches the wa-tab-group rail (same track-color, same 0.125rem width)
+   so the dialog reads as one visual system with the tab nav rail. */
+.settings-divider {
+  border: 0;
+  border-top: 0.125rem solid var(--wa-color-neutral-fill-normal);
+  margin: var(--settings-group-gap) 0;
+}
+/* Subtle bordered card around a related-controls group; legend inset on
+   the top border (fieldset-style). Uses the same neutral-fill-normal
+   rail color as .settings-divider for consistency. */
+.settings-section {
+  border: 1px solid var(--wa-color-neutral-fill-normal);
+  border-radius: var(--wa-border-radius-m, 4px);
+  padding: var(--settings-section-pad);
+  margin: 4px 0 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.settings-section legend {
+  padding: 0 6px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+}
+/* Legend hosts a single icon; size it explicitly so it isn't subject to
+   the surrounding legend default. Applies to wa-icon AND our custom
+   inlineSvgIcon, which sizes off em. */
+.settings-section legend wa-icon,
+.settings-section legend svg { font-size: 1.5rem; width: 1.5em; height: 1.5em; }
+.settings-section > .settings-row { margin: 0; }
+.settings-section > .settings-row + .settings-row { margin-top: var(--settings-row-gap); }
+/* Centered, fixed-width column for a settings tab content. All direct
+   children share this width so the section box, the standalone rows and
+   the dividers line up visually. */
+.settings-panel-col {
+  width: 360px;
+  max-width: 100%;
+  margin: 0 auto;
+}
+.settings-panel-col .settings-row,
+.settings-panel-col .settings-divider,
+.settings-panel-col .settings-toggles-grid {
+  max-width: none;
+  width: 100%;
+}
+/* Extra headroom on a row that sits below a select/input within the same
+   conceptual group (e.g. a switch after a dropdown). Avoids ad-hoc inline
+   margins on .settings-row elements. */
+.settings-row-spaced { margin-top: var(--settings-row-gap); }
 .settings-row label {
   display: block;
   color: var(--muted);
