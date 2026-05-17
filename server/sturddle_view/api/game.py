@@ -245,11 +245,16 @@ async def view_start(request: Request) -> dict:
     recent-imports store.
     """
     hve = await _get_hve(request)
-    fen = hve.current_fen()
+    start_fen, moves_uci, clock_history, white_time, black_time = hve.play_game_snapshot()
     try:
         game_id = await hve.enter_view_mode(
-            start_fen=fen, moves_uci=[], clock_history=None,
+            start_fen=start_fen,
+            moves_uci=moves_uci,
+            clock_history=clock_history or None,
+            final_white_time=white_time,
+            final_black_time=black_time,
         )
+        await hve.view_last()
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return {"game_id": game_id, "viewing": True}

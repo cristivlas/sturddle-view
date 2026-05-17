@@ -10,6 +10,7 @@ import pytest
 from sturddle_view.config import Settings
 from sturddle_view.events import EventBus
 from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl
+from sturddle_view.play.import_position import parse_pgn
 
 
 class _StubEngine:
@@ -166,6 +167,236 @@ async def test_enter_edit_mode_rejects_when_already_editing(hve: HumanVsEngine):
     await hve.enter_edit_mode()
     with pytest.raises(RuntimeError, match="already in edit mode"):
         await hve.enter_edit_mode()
+
+
+_MOVES = ["e2e4", "e7e5"]
+_AFTER_MOVES_FEN = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"
+_DIFF_FEN = "4k3/8/8/8/8/8/8/4K3 w - - 0 1"
+
+
+async def _enter_view_with_moves(h: HumanVsEngine) -> None:
+    await h.enter_view_mode(
+        start_fen=None,
+        moves_uci=_MOVES,
+        clock_history=None,
+    )
+
+
+async def test_view_with_moves_populates_move_list(hve: HumanVsEngine):
+    await _enter_view_with_moves(hve)
+    assert [m.uci() for m in hve._view_full_moves] == _MOVES
+
+
+async def test_enter_edit_mode_snapshots_cursor_fen_not_start(hve: HumanVsEngine):
+    await _enter_view_with_moves(hve)
+    await hve.view_last()
+    pre = await hve.enter_edit_mode()
+    assert pre == _AFTER_MOVES_FEN
+    assert hve._edit_pre_fen == _AFTER_MOVES_FEN
+
+
+async def test_view_start_lands_at_last_ply(hve: HumanVsEngine):
+    """play->view transition must land at the last ply, not ply 0."""
+    await _enter_view_with_moves(hve)
+    await hve.view_last()
+    assert hve._view_cursor == len(_MOVES)
+    assert hve._board.fen() == _AFTER_MOVES_FEN
+
+
+async def test_commit_edit_unchanged_fen_preserves_history(hve: HumanVsEngine):
+    await _enter_view_with_moves(hve)
+    await hve.view_last()
+    await hve.enter_edit_mode()
+    await hve.commit_edit(_AFTER_MOVES_FEN)
+    assert [m.uci() for m in hve._view_full_moves] == _MOVES
+
+
+async def test_commit_edit_client_fen_with_reset_clocks_preserves_history(hve: HumanVsEngine):
+    """Client's getEditFen() always emits halfmove=0 fullmove=1. The unchanged
+    check must compare positions, not raw FEN strings."""
+    await _enter_view_with_moves(hve)
+    await hve.view_last()
+    await hve.enter_edit_mode()
+    # Same position, but halfmove/fullmove reset like the client sends.
+    client_fen = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1"
+    await hve.commit_edit(client_fen)
+    assert [m.uci() for m in hve._view_full_moves] == _MOVES
+
+
+async def test_commit_edit_changed_fen_drops_history(hve: HumanVsEngine):
+    await _enter_view_with_moves(hve)
+    await hve.enter_edit_mode()
+    await hve.commit_edit(_DIFF_FEN)
+    assert hve._view_full_moves == []
+
+
+async def test_cancel_edit_preserves_history(hve: HumanVsEngine):
+    await _enter_view_with_moves(hve)
+    await hve.enter_edit_mode()
+    await hve.cancel_edit()
+    assert [m.uci() for m in hve._view_full_moves] == _MOVES
+
+
+async def _enter_view_with_metadata(h: HumanVsEngine) -> None:
+    await h.enter_view_mode(
+        start_fen=None,
+        moves_uci=_MOVES,
+        clock_history=[(60.0, 60.0), (59.0, 59.0)],
+        final_white_time=58.0,
+        final_black_time=58.0,
+        white_name="Alice",
+        black_name="Bob",
+        eval_history=[{"cp": 20}, {"cp": -10}],
+        comments=["good move", None],
+        root_comment="opening",
+        pgn_result="*",
+        pgn_termination="unterminated",
+    )
+
+
+async def test_cancel_edit_preserves_metadata(hve: HumanVsEngine):
+    await _enter_view_with_metadata(hve)
+    await hve.view_last()
+    await hve.enter_edit_mode()
+    await hve.cancel_edit()
+    assert hve._view_white_name == "Alice"
+    assert hve._view_black_name == "Bob"
+    assert hve._view_eval_history == [{"cp": 20}, {"cp": -10}]
+    assert hve._view_comments == ["good move", None]
+    assert hve._view_root_comment == "opening"
+    assert hve._view_pgn_result == "*"
+    assert hve._view_pgn_termination == "unterminated"
+    assert hve._view_final_white == 58.0
+    assert hve._view_final_black == 58.0
+
+
+async def test_commit_edit_unchanged_preserves_metadata(hve: HumanVsEngine):
+    await _enter_view_with_metadata(hve)
+    await hve.view_last()
+    await hve.enter_edit_mode()
+    await hve.commit_edit(_AFTER_MOVES_FEN)
+    assert hve._view_white_name == "Alice"
+    assert hve._view_black_name == "Bob"
+    assert hve._view_eval_history == [{"cp": 20}, {"cp": -10}]
+    assert hve._view_comments == ["good move", None]
+    assert hve._view_root_comment == "opening"
+    assert hve._view_pgn_result == "*"
+    assert hve._view_pgn_termination == "unterminated"
+
+
+async def test_cancel_edit_restores_cursor(hve: HumanVsEngine):
+    await _enter_view_with_moves(hve)
+    await hve.view_goto(1)
+    await hve.enter_edit_mode()
+    await hve.cancel_edit()
+    assert hve._view_cursor == 1
+
+
+async def test_commit_edit_unchanged_restores_cursor(hve: HumanVsEngine):
+    await _enter_view_with_moves(hve)
+    await hve.view_last()
+    await hve.enter_edit_mode()
+    await hve.commit_edit(_AFTER_MOVES_FEN)
+    assert hve._view_cursor == len(_MOVES)
+
+
+# Snippet from a real fastchess export: headers + eval/depth/time comments.
+_ANNOTATED_PGN = """\
+[White "IsaBB NN 4.4"]
+[Black "Sturddle 2.3.1"]
+[Result "1/2-1/2"]
+
+1. e4 {(Book)} e5 {(Book)} 2. Nf3 {(Book)} Nc6 {(Book)} \
+3. Bb5 {(Bb5 a6 Ba4) 0.50/24 14} a6 {(e4 dxc6) -0.76/29 27} \
+4. Ba4 {(Ba4 Nf6) 0.36/25 50} Nf6 {(Nf6 O-O) -0.74/29 28} *
+"""
+
+
+async def test_annotated_pgn_edit_cancel_is_lossless(hve: HumanVsEngine):
+    """edit->cancel must not drop any field from an annotated imported game."""
+    p = parse_pgn(_ANNOTATED_PGN)
+    headers = p.headers or {}
+    await hve.enter_view_mode(
+        start_fen=p.start_fen,
+        moves_uci=p.moves_uci,
+        clock_history=p.clock_history,
+        final_white_time=p.final_white_time,
+        final_black_time=p.final_black_time,
+        white_name=headers.get("White"),
+        black_name=headers.get("Black"),
+        eval_history=p.eval_history,
+        comments=p.comments,
+        root_comment=p.root_comment,
+        pgn_result=headers.get("Result"),
+        pgn_termination=headers.get("Termination"),
+    )
+    await hve.view_last()
+
+    snap_moves = list(hve._view_full_moves)
+    snap_clocks = list(hve._view_clock_history)
+    snap_evals = list(hve._view_eval_history) if hve._view_eval_history is not None else None
+    snap_comments = list(hve._view_comments) if hve._view_comments is not None else None
+    snap_cursor = hve._view_cursor
+
+    await hve.enter_edit_mode()
+    await hve.cancel_edit()
+
+    assert hve._view_white_name == headers.get("White")
+    assert hve._view_black_name == headers.get("Black")
+    assert hve._view_pgn_result == headers.get("Result")
+    assert hve._view_eval_history == snap_evals
+    assert hve._view_comments == snap_comments
+    assert [m.uci() for m in hve._view_full_moves] == [m.uci() for m in snap_moves]
+    assert hve._view_clock_history == snap_clocks
+    assert hve._view_cursor == snap_cursor
+
+
+async def test_cancel_edit_preserves_game_id(hve: HumanVsEngine):
+    await _enter_view_with_moves(hve)
+    gid = hve._game_id
+    await hve.enter_edit_mode()
+    await hve.cancel_edit()
+    assert hve._game_id == gid
+
+
+async def test_commit_edit_unchanged_preserves_game_id(hve: HumanVsEngine):
+    await _enter_view_with_moves(hve)
+    await hve.view_last()
+    gid = hve._game_id
+    await hve.enter_edit_mode()
+    await hve.commit_edit(_AFTER_MOVES_FEN)
+    assert hve._game_id == gid
+
+
+async def test_commit_edit_changed_generates_new_game_id(hve: HumanVsEngine):
+    await _enter_view_with_moves(hve)
+    gid = hve._game_id
+    await hve.enter_edit_mode()
+    await hve.commit_edit(_DIFF_FEN)
+    assert hve._game_id != gid
+
+
+async def test_commit_edit_unchanged_publishes_correct_view_payload(hve: HumanVsEngine):
+    """After unchanged-commit, the board_update event must carry the full
+    move list so the client move-list and nav buttons stay alive."""
+    await _enter_view_with_moves(hve)
+    await hve.view_last()
+    await hve.enter_edit_mode()
+    q = await hve._bus.subscribe()
+    await hve.commit_edit(_AFTER_MOVES_FEN)
+    latest = None
+    while not q.empty():
+        evt = q.get_nowait()
+        if evt.kind == "board_update":
+            latest = evt
+    assert latest is not None
+    payload = latest.payload
+    assert payload.get("moves_san") and len(payload["moves_san"]) == len(_MOVES)
+    v = payload.get("view")
+    assert v is not None
+    assert v["total_plies"] == len(_MOVES)
+    assert v["cursor"] == len(_MOVES)
+    assert payload.get("editing") is False
 
 
 async def test_board_update_payload_includes_editing_flag(hve: HumanVsEngine):

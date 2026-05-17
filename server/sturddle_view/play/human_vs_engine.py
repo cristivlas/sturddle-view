@@ -166,6 +166,7 @@ class HumanVsEngine:
         # the pre-edit FEN. Snapshotted by enter_edit_mode.
         self._editing: bool = False
         self._edit_pre_fen: str | None = None
+        self._edit_view_snapshot: dict | None = None
         self._view_cursor: int = 0  # 0..len(_view_full_moves) inclusive
         self._view_full_moves: list[chess.Move] = []
         # Per-ply pre-move (white, black) snapshots from the imported PGN's
@@ -798,6 +799,21 @@ class HumanVsEngine:
         is set up yet. Read-only; does not acquire the lock."""
         return self._board.fen() if self._board is not None else None
 
+    def play_game_snapshot(
+        self,
+    ) -> tuple[str | None, list[str], list[tuple[float, float]], float, float]:
+        """Return (start_fen, moves_uci, clock_history, white_time, black_time)
+        from the current play-mode game. Safe to call without the lock."""
+        board = self._board
+        moves = [m.uci() for m in board.move_stack] if board else []
+        return (
+            self._start_fen,
+            moves,
+            list(self._clock_history),
+            self._white_time,
+            self._black_time,
+        )
+
     async def enter_view_mode(
         self,
         *,
@@ -948,12 +964,45 @@ class HumanVsEngine:
             self._analysis_mode = False
             pre_fen = self._board.fen()
             self._edit_pre_fen = pre_fen
+            self._edit_view_snapshot = {
+                "start_fen": self._start_fen,
+                "board": self._board.copy(),
+                "cursor": self._view_cursor,
+                "full_moves": list(self._view_full_moves),
+                "clock_history": list(self._view_clock_history),
+                "final_white": self._view_final_white,
+                "final_black": self._view_final_black,
+                "white_name": self._view_white_name,
+                "black_name": self._view_black_name,
+                "eval_history": list(self._view_eval_history) if self._view_eval_history is not None else None,
+                "comments": list(self._view_comments) if self._view_comments is not None else None,
+                "root_comment": self._view_root_comment,
+                "pgn_result": self._view_pgn_result,
+                "pgn_termination": self._view_pgn_termination,
+            }
             self._editing = True
         if need_cancel_analysis:
             await self._cancel_analysis()
         async with self._lock:
             await self._publish_board()
         return pre_fen
+
+    def _restore_view_snapshot(self, snap: dict) -> None:
+        """Apply a snapshot taken by enter_edit_mode directly to view state."""
+        self._start_fen = snap["start_fen"]
+        self._board = snap["board"]
+        self._view_cursor = snap["cursor"]
+        self._view_full_moves = snap["full_moves"]
+        self._view_clock_history = snap["clock_history"]
+        self._view_final_white = snap["final_white"]
+        self._view_final_black = snap["final_black"]
+        self._view_white_name = snap["white_name"]
+        self._view_black_name = snap["black_name"]
+        self._view_eval_history = snap["eval_history"]
+        self._view_comments = snap["comments"]
+        self._view_root_comment = snap["root_comment"]
+        self._view_pgn_result = snap["pgn_result"]
+        self._view_pgn_termination = snap["pgn_termination"]
 
     async def commit_edit(self, fen: str) -> str:
         """Apply the edited FEN as a fresh view-mode position. On any
@@ -970,10 +1019,19 @@ class HumanVsEngine:
             if not board.is_valid():
                 raise RuntimeError(explain_invalid(board))
             target_fen = board.fen()
-        # Drop _editing only for the duration of the view-mode transition.
-        # On failure, the caller stays in edit mode with the original snapshot.
-        async with self._lock:
+            pre_epd = chess.Board(self._edit_pre_fen).epd() if self._edit_pre_fen else None
+            unchanged = pre_epd is not None and board.epd() == pre_epd
+            snap = self._edit_view_snapshot
             self._editing = False
+        if unchanged and snap is not None:
+            async with self._lock:
+                self._restore_view_snapshot(snap)
+                self._edit_pre_fen = None
+                self._edit_view_snapshot = None
+                await self._publish_board()
+                await self._publish_clock()
+            return self._game_id
+        # FEN changed -- drop history, enter fresh view at new position.
         try:
             game_id = await self.enter_view_mode(
                 start_fen=target_fen,
@@ -986,33 +1044,26 @@ class HumanVsEngine:
             raise
         async with self._lock:
             self._edit_pre_fen = None
+            self._edit_view_snapshot = None
         return game_id
 
     async def cancel_edit(self) -> str:
-        """Leave edit mode; re-enter view mode at the pre-edit FEN."""
+        """Leave edit mode; restore view state from pre-edit snapshot."""
         async with self._lock:
             if not self._editing:
                 raise RuntimeError("not in edit mode")
-            pre = self._edit_pre_fen
-            if not pre:
-                # Defensive: enter_edit_mode always sets this. Reaching here
-                # implies state corruption; clear and abort.
+            snap = self._edit_view_snapshot
+            if snap is None:
+                # Defensive: enter_edit_mode always sets this.
                 self._editing = False
                 raise RuntimeError("no pre-edit snapshot to restore")
             self._editing = False
-        try:
-            game_id = await self.enter_view_mode(
-                start_fen=pre,
-                moves_uci=[],
-                clock_history=None,
-            )
-        except Exception:
-            async with self._lock:
-                self._editing = True
-            raise
-        async with self._lock:
+            self._restore_view_snapshot(snap)
             self._edit_pre_fen = None
-        return game_id
+            self._edit_view_snapshot = None
+            await self._publish_board()
+            await self._publish_clock()
+        return self._game_id
 
     async def play_from_here(self, tc: TimeControl, inherit_clocks: bool = False) -> str:
         """Exit view mode by starting a fresh play game seeded with plies
