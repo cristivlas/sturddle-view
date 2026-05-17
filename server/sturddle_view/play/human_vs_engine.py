@@ -23,6 +23,7 @@ import chess.pgn
 
 from .._atomic import atomic_write_text
 from ..chess.board import board_from, moves_san as _moves_san, side_to_move
+from ..chess.results import DRAW, loser_result, winner_result
 from ..events import Event, EventBus
 from .game_store import GameState, GameStore
 from .import_position import explain_invalid
@@ -690,7 +691,7 @@ class HumanVsEngine:
             if self._game_id is None:
                 return
             # Result from human's perspective: human resigned -> engine wins.
-            result = "0-1" if self._human_white else "1-0"
+            result = loser_result(self._human_white)
             self._maybe_save_pgn(result=result, termination="resignation")
             await self._bus.publish(
                 Event(
@@ -1409,7 +1410,7 @@ class HumanVsEngine:
             game_id = self._game_id
             await self._cancel_think()
             # Loser is the side to move when the flag fell.
-            result = "0-1" if loser == "white" else "1-0"
+            result = loser_result(loser == "white")
             self._maybe_save_pgn(result=result, termination="time_forfeit")
         await self._bus.publish(
             Event(
@@ -1752,9 +1753,9 @@ class HumanVsEngine:
             result = outcome.result()
             termination = outcome.termination.name.lower()
         elif self._board.can_claim_threefold_repetition():
-            result, termination = "1/2-1/2", "threefold_repetition"
+            result, termination = DRAW, "threefold_repetition"
         elif self._board.can_claim_fifty_moves():
-            result, termination = "1/2-1/2", "fifty_moves"
+            result, termination = DRAW, "fifty_moves"
         else:
             result, termination = "*", "unknown"
         self._maybe_save_pgn(result=result, termination=termination)

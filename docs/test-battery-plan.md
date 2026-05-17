@@ -6,7 +6,7 @@ phase is sized to fit one PR / one Claude Code session. Future
 sessions pick up from the status header and execute the next pending
 phase.
 
-Last updated: 2026-05-17 (P0, P1, P2 done).
+Last updated: 2026-05-17 (P0, P1, P2, P3 done).
 
 Related docs:
 - [server-chess-audit.md](server-chess-audit.md) -- the spec.
@@ -21,7 +21,7 @@ bottom for the exact ritual.
 - [x] P0  Perf infrastructure and fixtures
 - [x] P1  Pre-extraction characterization snapshots
 - [x] P2  R1 -- chess/board.py helpers
-- [ ] P3  R2 -- chess/results.py constants
+- [x] P3  R2 -- chess/results.py constants
 - [ ] P4  R6a -- chess/pgn_walk.py iterator and consumer migration
 - [ ] P5  R6b -- chess/pgn_build.py producer and autosave swap
 - [ ] P6  R3 -- EngineSupervisor extraction
@@ -189,7 +189,7 @@ These hold for every phase. Violations are blockers, not nits.
 
 ## P3 -- R2 chess/results.py constants
 
-- **State**: pending
+- **State**: done (pending merge SHA)
 - **Depends on**: P2
 - **Goal**: Single source of truth for result strings; close the
   `pgn_tail` vs `pgn_stats` unicode-draw divergence; satisfy the

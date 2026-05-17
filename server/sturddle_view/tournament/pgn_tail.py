@@ -18,11 +18,9 @@ from typing import Awaitable, Callable
 import chess
 import chess.pgn
 
+from ..chess.results import DECISIVE_RESULTS
 
 log = logging.getLogger(__name__)
-
-
-_DECISIVE_RESULTS = frozenset({"1-0", "0-1", "1/2-1/2"})
 
 # Same flag the reconcile queue uses; one opt-in for the whole subsystem.
 _DEBUG = os.environ.get("SV_DEBUG_RECONCILE", "0") == "1"
@@ -346,7 +344,7 @@ class PgnTailer:
             if game is None:
                 break
             result = game.headers.get("Result", "*")
-            if result not in _DECISIVE_RESULTS:
+            if result not in DECISIVE_RESULTS:
                 # `*` = in-flight bytes; retry this region next pass.
                 break
 

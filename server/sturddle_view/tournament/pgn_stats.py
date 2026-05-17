@@ -20,11 +20,14 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 
-# Result tags we recognize. Anything else (`*`, missing, malformed) is
-# treated as "no result" and the game is skipped from tallies.
-_WHITE_WIN = "1-0"
-_BLACK_WIN = "0-1"
-_DRAW_VALUES = frozenset({"1/2-1/2", "½-½"})
+from ..chess.results import (
+    BLACK_WIN as _BLACK_WIN,
+    DECISIVE_RESULTS,
+    DRAW_VARIANTS as _DRAW_VALUES,
+    WHITE_WIN as _WHITE_WIN,
+)
+
+_DECISIVE_RESULTS = DECISIVE_RESULTS
 
 # PGN tag line: [Name "value"]. Non-greedy value match — we don't honor
 # \"-escapes; the four headers we read never contain quotes in fastchess output.
@@ -216,9 +219,6 @@ def _iter_games_uncached(pgn_path: Path):
         v = emit()
         if v is not None:
             yield v
-
-
-_DECISIVE_RESULTS = frozenset({_WHITE_WIN, _BLACK_WIN, *_DRAW_VALUES})
 
 
 # Indices into the 4-tuples yielded by ``_iter_games_keyed`` (round, white,
