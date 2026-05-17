@@ -38,6 +38,26 @@ class TimeControl:
     increment_seconds: float = 0.0
 
 
+@dataclass
+class _ViewSnapshot:
+    """All view-mode state captured at enter_edit_mode for lossless restore.
+    Adding a view-mode field? Add it here too -- single source of truth."""
+    start_fen: str | None
+    board: chess.Board
+    cursor: int
+    full_moves: list[chess.Move]
+    clock_history: list[tuple[float, float]]
+    final_white: float | None
+    final_black: float | None
+    white_name: str | None
+    black_name: str | None
+    eval_history: list[dict | None] | None
+    comments: list[str | None] | None
+    root_comment: str | None
+    pgn_result: str | None
+    pgn_termination: str | None
+
+
 def _serialize_info(
     info: chess.engine.InfoDict, board: chess.Board,
     eval_pov: chess.Color = chess.WHITE,
@@ -166,7 +186,7 @@ class HumanVsEngine:
         # the pre-edit FEN. Snapshotted by enter_edit_mode.
         self._editing: bool = False
         self._edit_pre_fen: str | None = None
-        self._edit_view_snapshot: dict | None = None
+        self._edit_view_snapshot: _ViewSnapshot | None = None
         self._view_cursor: int = 0  # 0..len(_view_full_moves) inclusive
         self._view_full_moves: list[chess.Move] = []
         # Per-ply pre-move (white, black) snapshots from the imported PGN's
@@ -964,22 +984,22 @@ class HumanVsEngine:
             self._analysis_mode = False
             pre_fen = self._board.fen()
             self._edit_pre_fen = pre_fen
-            self._edit_view_snapshot = {
-                "start_fen": self._start_fen,
-                "board": self._board.copy(),
-                "cursor": self._view_cursor,
-                "full_moves": list(self._view_full_moves),
-                "clock_history": list(self._view_clock_history),
-                "final_white": self._view_final_white,
-                "final_black": self._view_final_black,
-                "white_name": self._view_white_name,
-                "black_name": self._view_black_name,
-                "eval_history": list(self._view_eval_history) if self._view_eval_history is not None else None,
-                "comments": list(self._view_comments) if self._view_comments is not None else None,
-                "root_comment": self._view_root_comment,
-                "pgn_result": self._view_pgn_result,
-                "pgn_termination": self._view_pgn_termination,
-            }
+            self._edit_view_snapshot = _ViewSnapshot(
+                start_fen=self._start_fen,
+                board=self._board.copy(),
+                cursor=self._view_cursor,
+                full_moves=list(self._view_full_moves),
+                clock_history=list(self._view_clock_history),
+                final_white=self._view_final_white,
+                final_black=self._view_final_black,
+                white_name=self._view_white_name,
+                black_name=self._view_black_name,
+                eval_history=list(self._view_eval_history) if self._view_eval_history is not None else None,
+                comments=list(self._view_comments) if self._view_comments is not None else None,
+                root_comment=self._view_root_comment,
+                pgn_result=self._view_pgn_result,
+                pgn_termination=self._view_pgn_termination,
+            )
             self._editing = True
         if need_cancel_analysis:
             await self._cancel_analysis()
@@ -987,22 +1007,22 @@ class HumanVsEngine:
             await self._publish_board()
         return pre_fen
 
-    def _restore_view_snapshot(self, snap: dict) -> None:
+    def _restore_view_snapshot(self, snap: _ViewSnapshot) -> None:
         """Apply a snapshot taken by enter_edit_mode directly to view state."""
-        self._start_fen = snap["start_fen"]
-        self._board = snap["board"]
-        self._view_cursor = snap["cursor"]
-        self._view_full_moves = snap["full_moves"]
-        self._view_clock_history = snap["clock_history"]
-        self._view_final_white = snap["final_white"]
-        self._view_final_black = snap["final_black"]
-        self._view_white_name = snap["white_name"]
-        self._view_black_name = snap["black_name"]
-        self._view_eval_history = snap["eval_history"]
-        self._view_comments = snap["comments"]
-        self._view_root_comment = snap["root_comment"]
-        self._view_pgn_result = snap["pgn_result"]
-        self._view_pgn_termination = snap["pgn_termination"]
+        self._start_fen = snap.start_fen
+        self._board = snap.board
+        self._view_cursor = snap.cursor
+        self._view_full_moves = snap.full_moves
+        self._view_clock_history = snap.clock_history
+        self._view_final_white = snap.final_white
+        self._view_final_black = snap.final_black
+        self._view_white_name = snap.white_name
+        self._view_black_name = snap.black_name
+        self._view_eval_history = snap.eval_history
+        self._view_comments = snap.comments
+        self._view_root_comment = snap.root_comment
+        self._view_pgn_result = snap.pgn_result
+        self._view_pgn_termination = snap.pgn_termination
 
     async def commit_edit(self, fen: str) -> str:
         """Apply the edited FEN as a fresh view-mode position. On any

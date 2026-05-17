@@ -25,7 +25,6 @@ let onNavNext = null;
 
 let dockEl = null;
 let unregisterDock = null;
-let body = null;
 let userCloseHandler = null;
 
 function buildBody() {
@@ -89,14 +88,12 @@ const inst = createDockableWindow({
   defaultH: 280,
   defaultY: () => 80,
   build() {
-    body = buildBody();
-    return body;
+    return buildBody();
   },
   dockOrder: 10,
   getDockEl: () => dockEl,
   closable: true,
   onUserClose: () => {
-    body = null;
     if (userCloseHandler) userCloseHandler();
   },
 });
@@ -118,14 +115,11 @@ export function openCommentary() {
 
 export function closeCommentary() {
   inst.close();
-  // Factory clears its internal body ref on close; mirror that so a stale
-  // setCommentaryText() after close doesn't write into a detached node.
-  body = null;
 }
 
 export function setCommentaryText(text) {
-  if (!body) return;
-  setText(body, text);
+  if (!inst.body) return;
+  setText(inst.body, text);
 }
 
 export function setCommentaryNavHandlers(prev, next) {
@@ -134,9 +128,9 @@ export function setCommentaryNavHandlers(prev, next) {
 }
 
 export function setCommentaryNavState(prevPly, nextPly) {
-  if (!body) return;
-  body._prevBtn.disabled = prevPly == null;
-  body._nextBtn.disabled = nextPly == null;
+  if (!inst.body) return;
+  inst.body._prevBtn.disabled = prevPly == null;
+  inst.body._nextBtn.disabled = nextPly == null;
 }
 
 export function isCommentaryOpen() {

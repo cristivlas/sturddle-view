@@ -44,8 +44,11 @@ const extraDocks = new Map();
 
 const DOCK_SPLIT_KEY = "sturddle:play:dockSplit";
 
-function isMobileLayout() {
-  return window.innerWidth <= 800 || window.innerHeight <= 700;
+export const MOBILE_MAX_W_PX = 800;
+export const MOBILE_MAX_H_PX = 700;
+
+export function isMobileLayout() {
+  return window.innerWidth <= MOBILE_MAX_W_PX || window.innerHeight <= MOBILE_MAX_H_PX;
 }
 
 function applyDockBounds(el) {
@@ -364,6 +367,7 @@ export function createDockableWindow(config) {
     toggle, close, teardownSlot, closeForNav, restore,
     get wb() { return wb; },
     get slot() { return slot; },
+    get body() { return body; },
     dockOrder,
     sharesUciDock: !config.getDockEl,
   };

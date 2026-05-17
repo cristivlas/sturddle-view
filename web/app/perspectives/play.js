@@ -5,7 +5,7 @@
 import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog } from "../import-position-dialog.js";
-import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, setDockContainer } from "../play-debug-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, setDockContainer, isMobileLayout } from "../play-debug-windows.js";
 import {
   setCommentaryDockContainer,
   setOnUserCloseCommentary,
@@ -329,8 +329,6 @@ export const playPerspective = {
     let showPgnComments = true; // view-mode commentary window
     const commentsHost = root.querySelector(".play-comments-host");
     setCommentaryDockContainer(commentsHost);
-    const COMMENTS_NARROW_PX = 800;
-    const COMMENTS_NARROW_H_PX = 700;
     let lastViewComment = null;
     // X on the commentary window (dock slot or float) -> clear setting.
     setOnUserCloseCommentary(() => {
@@ -340,10 +338,7 @@ export const playPerspective = {
     });
     function syncCommentsVisibility() {
       if (!commentsHost) return;
-      const narrow =
-        window.innerWidth <= COMMENTS_NARROW_PX
-        || window.innerHeight <= COMMENTS_NARROW_H_PX;
-      const shouldShow = viewing && showPgnComments && !narrow;
+      const shouldShow = viewing && showPgnComments && !isMobileLayout();
       const open = isCommentaryOpen();
       if (shouldShow) {
         const wasOpen = open;
@@ -560,11 +555,7 @@ export const playPerspective = {
             viewTotalPlies = v.total_plies ?? 0;
             viewGameOver = !!v.game_over;
             lastViewComment = v.comment ?? null;
-          } else {
-            lastViewComment = null;
-          }
-          syncCommentsVisibility();
-          if (viewing) {
+            syncCommentsVisibility();
             if (v.result) showFinishedBadge(resultBadge(v.result));
             if (viewGameOver && viewCursor === viewTotalPlies && v.result && !viewGameOverAlertShown) {
               viewGameOverAlertShown = true;
@@ -576,6 +567,8 @@ export const playPerspective = {
             // Restore the user's prior flip preference on entry into view mode.
             if (!wasViewing) view.setHumanWhite(!viewFlipped);
           } else {
+            lastViewComment = null;
+            syncCommentsVisibility();
             if (wasViewing) restoreDebugWindows(ctx.events);
             resignAvailable = true;
           }
