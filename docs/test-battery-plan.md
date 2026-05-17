@@ -6,7 +6,7 @@ phase is sized to fit one PR / one Claude Code session. Future
 sessions pick up from the status header and execute the next pending
 phase.
 
-Last updated: 2026-05-17 (P0, P1, P2, P3 done).
+Last updated: 2026-05-17 (P0, P1, P2, P3, P4 done).
 
 Related docs:
 - [server-chess-audit.md](server-chess-audit.md) -- the spec.
@@ -22,7 +22,7 @@ bottom for the exact ritual.
 - [x] P1  Pre-extraction characterization snapshots
 - [x] P2  R1 -- chess/board.py helpers
 - [x] P3  R2 -- chess/results.py constants
-- [ ] P4  R6a -- chess/pgn_walk.py iterator and consumer migration
+- [x] P4  R6a -- chess/pgn_walk.py iterator and consumer migration
 - [ ] P5  R6b -- chess/pgn_build.py producer and autosave swap
 - [ ] P6  R3 -- EngineSupervisor extraction
 - [ ] P7  R4 -- ChessClock extraction
@@ -231,7 +231,7 @@ These hold for every phase. Violations are blockers, not nits.
 
 ## P4 -- R6a chess/pgn_walk.py iterator and consumer migration
 
-- **State**: pending
+- **State**: done (df87f0a)
 - **Depends on**: P2 (for board helpers used by walk)
 - **Goal**: One iterator replaces four hand-rolled PGN walks; pin the
   read-side performance.
