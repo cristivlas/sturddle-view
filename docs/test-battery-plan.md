@@ -6,7 +6,7 @@ phase is sized to fit one PR / one Claude Code session. Future
 sessions pick up from the status header and execute the next pending
 phase.
 
-Last updated: 2026-05-17 (P0..P7, P9, P10 done; P8 deferred; perf bench infra retro-audit complete).
+Last updated: 2026-05-17 (P0..P7, P9, P10, P11 done; P8 deferred; battery complete except P8).
 
 Related docs:
 - [server-chess-audit.md](server-chess-audit.md) -- the spec.
@@ -29,7 +29,7 @@ bottom for the exact ritual.
 - [~] P8  R5 -- Mode FSM and typed conflict error (deferred; pick up later)
 - [x] P9  R7 -- unified UCI info schema
 - [x] P10 R8 -- /api/chess/apply-move audit
-- [ ] P11 R9 -- _board_event payload split
+- [x] P11 R9 -- _board_event payload split
 
 ## Cross-phase invariants
 
@@ -580,7 +580,7 @@ These hold for every phase. Violations are blockers, not nits.
 
 ## P11 -- R9 _board_event payload split
 
-- **State**: pending
+- **State**: done (pending merge SHA)
 - **Depends on**: P1 (board_event snapshots), P8 (Mode enum makes
   dispatch natural)
 - **Goal**: Extract `_view_payload()` and `_play_payload()` from
@@ -609,6 +609,25 @@ These hold for every phase. Violations are blockers, not nits.
     `test_e2e_perspective_sync.py`, `test_e2e_replay_cursor.py`.
   - Perf benches within 5%.
 - **Out of scope**: further HVE splits (deferred R10).
+- **Notes**:
+  - Pragmatic split: extracted `_view_payload`, `_view_moves_san`,
+    `_opening_payload`. Skipped `_play_payload` (would have been a 2-line
+    method for an inline dict literal; no testability win).
+  - Dispatch keyed on `self._viewing` (not Mode enum -- P8 deferred).
+    End-to-end recon confirmed `_viewing` is the safe seam:
+    `_reset_view_state` zeros view attrs in `play_from_here` before
+    `_viewing` flips on next entry; `_think_and_play` is cancelled in
+    `new_game` so no race window can leak stale view state.
+  - 9 new unit tests landed (8 from plan + 1 transition test
+    `test_view_payload_scrubbed_after_play_from_here` -- guards against
+    future regressions in the view->play transition).
+  - Perf baselines captured via stash/restore (P7 pattern):
+    play 5.96ms -> 6.01ms (+0.7%), view 8.45ms -> 8.59ms (+1.7%) --
+    both well within 5% tolerance.
+  - Future-proofing: extracted helpers are the natural extension points
+    for the planned "history graph / what-if variations" feature -- new
+    variation fields slot into `_view_payload` without touching the
+    assembler.
 
 ## Conventions for future sessions
 

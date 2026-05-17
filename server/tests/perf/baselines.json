@@ -13,5 +13,7 @@
   "spawn_engine_median": 0.0479386,
   "cancel_think_grace_period": 0.5039291,
   "clock_remaining_inline": 0.004441400000359863,
-  "serialize_info_typical": 0.04414579999865964
+  "serialize_info_typical": 0.04414579999865964,
+  "board_event_play_payload": 0.005958600027952343,
+  "board_event_view_payload": 0.008450399967841804
 }

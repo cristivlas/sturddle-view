@@ -1400,101 +1400,108 @@ class HumanVsEngine:
             except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
                 pass
 
+    def _opening_payload(self) -> dict | None:
+        """Opening-book lookup. Keys on the standard starting position; an
+        imported (non-startpos) game can't be classified."""
+        if (
+            self._openings is None
+            or not self._board.move_stack
+            or self._start_fen is not None
+        ):
+            return None
+        ucis = [m.uci() for m in self._board.move_stack]
+        hit = self._openings.lookup(ucis)
+        return {"eco": hit.eco, "name": hit.name} if hit is not None else None
+
+    def _view_moves_san(self) -> list[str]:
+        """Full-game SAN list for view mode (the UI highlights one ply via
+        cursor; in play mode the moves come straight off the live board)."""
+        full_board = board_from(self._start_fen)
+        out: list[str] = []
+        for m in self._view_full_moves:
+            out.append(full_board.san(m))
+            full_board.push(m)
+        return out
+
+    def _view_payload(self) -> dict:
+        """Build the per-event view-mode payload (cursor, eval, comment,
+        game_over, result/termination). Only called when self._viewing is
+        True; reads only view-mode attrs + self._board."""
+        # Eval at the cursor = eval recorded for the last played move.
+        # cursor==0 means initial position, no move yet -> no eval.
+        eval_at_cursor = None
+        if (
+            self._view_eval_history is not None
+            and 0 < self._view_cursor <= len(self._view_eval_history)
+        ):
+            eval_at_cursor = self._view_eval_history[self._view_cursor - 1]
+        has_any_eval = (
+            self._view_eval_history is not None
+            and any(e is not None for e in self._view_eval_history)
+        )
+        comment_at_cursor: str | None = None
+        if self._view_cursor == 0:
+            comment_at_cursor = self._view_root_comment
+        elif (
+            self._view_comments is not None
+            and 0 < self._view_cursor <= len(self._view_comments)
+        ):
+            comment_at_cursor = self._view_comments[self._view_cursor - 1]
+        has_any_comment = (
+            self._view_root_comment is not None
+            or (
+                self._view_comments is not None
+                and any(c is not None for c in self._view_comments)
+            )
+        )
+        outcome = self._board.outcome()
+        # UI disables Play-from-here when the cursor lands on a finished
+        # position (mirror of the backend guard). game_over is true for
+        # forced endings AND claimable draws recorded in the PGN headers.
+        game_over = outcome is not None or (
+            bool(self._view_pgn_result)
+            and self._view_pgn_result != "*"
+            and self._view_cursor == len(self._view_full_moves)
+        )
+        if outcome is not None:
+            result_termination = {
+                "result": outcome.result(),
+                "termination": outcome.termination.name.lower(),
+            }
+        elif self._view_pgn_result and self._view_pgn_result != "*":
+            result_termination = {
+                "result": self._view_pgn_result,
+                "termination": (
+                    "threefold_repetition"
+                    if self._board.can_claim_threefold_repetition()
+                    else "fifty_moves"
+                    if self._board.can_claim_fifty_moves()
+                    else self._view_pgn_termination
+                ) if self._view_pgn_termination == "normal" else self._view_pgn_termination,
+            }
+        else:
+            result_termination = {}
+        return {
+            "cursor": self._view_cursor,
+            "total_plies": len(self._view_full_moves),
+            "white_name": self._view_white_name,
+            "black_name": self._view_black_name,
+            "eval": eval_at_cursor,
+            "has_eval": has_any_eval,
+            "comment": comment_at_cursor,
+            "has_comment": has_any_comment,
+            "game_over": game_over,
+            **result_termination,
+        }
+
     def _board_event(self) -> Event:
         assert self._board is not None and self._game_id is not None
-        opening_payload = None
-        # Opening book lookup keys on UCI moves from the standard starting
-        # position; an imported (non-startpos) game can't be classified.
-        if (
-            self._openings is not None
-            and self._board.move_stack
-            and self._start_fen is None
-        ):
-            ucis = [m.uci() for m in self._board.move_stack]
-            hit = self._openings.lookup(ucis)
-            if hit is not None:
-                opening_payload = {"eco": hit.eco, "name": hit.name}
-        # In view mode, moves_san reflects the FULL game (so the UI can show
-        # the whole list with the cursor highlighting one ply); in play mode
-        # it's just the moves on the live board.
         if self._viewing:
-            full_board = board_from(self._start_fen)
-            moves_san = []
-            for m in self._view_full_moves:
-                moves_san.append(full_board.san(m))
-                full_board.push(m)
+            moves_san = self._view_moves_san()
+            view_payload = self._view_payload()
         else:
             moves_san = _moves_san(self._board, self._start_fen)
-        view_payload = None
-        if self._viewing:
-            # Eval at the cursor = eval recorded for the last played move.
-            # cursor==0 means initial position, no move yet -> no eval.
-            eval_at_cursor = None
-            if (
-                self._view_eval_history is not None
-                and 0 < self._view_cursor <= len(self._view_eval_history)
-            ):
-                eval_at_cursor = self._view_eval_history[self._view_cursor - 1]
-            has_any_eval = (
-                self._view_eval_history is not None
-                and any(e is not None for e in self._view_eval_history)
-            )
-            comment_at_cursor: str | None = None
-            if self._view_cursor == 0:
-                comment_at_cursor = self._view_root_comment
-            elif (
-                self._view_comments is not None
-                and 0 < self._view_cursor <= len(self._view_comments)
-            ):
-                comment_at_cursor = self._view_comments[self._view_cursor - 1]
-            has_any_comment = (
-                self._view_root_comment is not None
-                or (
-                    self._view_comments is not None
-                    and any(c is not None for c in self._view_comments)
-                )
-            )
-            view_payload = {
-                "cursor": self._view_cursor,
-                "total_plies": len(self._view_full_moves),
-                "white_name": self._view_white_name,
-                "black_name": self._view_black_name,
-                "eval": eval_at_cursor,
-                "has_eval": has_any_eval,
-                "comment": comment_at_cursor,
-                "has_comment": has_any_comment,
-                # UI disables Play-from-here when the cursor lands on a
-                # finished position (mirror of the backend guard).
-                # game_over is true for forced endings AND claimable draws
-                # recorded in the PGN headers.
-                "game_over": (outcome := self._board.outcome()) is not None
-                    or (
-                        bool(self._view_pgn_result)
-                        and self._view_pgn_result != "*"
-                        and self._view_cursor == len(self._view_full_moves)
-                    ),
-                **(
-                    {
-                        "result": outcome.result(),
-                        "termination": outcome.termination.name.lower(),
-                    }
-                    if outcome is not None
-                    else (
-                        {
-                            "result": self._view_pgn_result,
-                            "termination": (
-                                "threefold_repetition"
-                                if self._board.can_claim_threefold_repetition()
-                                else "fifty_moves"
-                                if self._board.can_claim_fifty_moves()
-                                else self._view_pgn_termination
-                            ) if self._view_pgn_termination == "normal" else self._view_pgn_termination,
-                        }
-                        if self._view_pgn_result and self._view_pgn_result != "*"
-                        else {}
-                    )
-                ),
-            }
+            view_payload = None
         return Event(
             kind="board_update",
             game_id=self._game_id,
@@ -1508,7 +1515,7 @@ class HumanVsEngine:
                 # playing); omit so the UI's local flip isn't clobbered.
                 "human_white": None if self._viewing else self._human_white,
                 "engine_name": self._engine_name,
-                "opening": opening_payload,
+                "opening": self._opening_payload(),
                 "tablebase": {
                     "halfmove_clock": self._board.halfmove_clock,
                     **(self._tb.probe(self._board) or {} if self._tb else {}),
