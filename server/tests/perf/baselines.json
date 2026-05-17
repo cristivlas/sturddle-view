@@ -8,5 +8,6 @@
   "parse_delta_200_games": 1.4262936000013724,
   "parse_pgn_200_games": 2.39974429999711,
   "read_game_record_first": 0.006780700001399964,
-  "read_game_record_mid": 0.04749290004838258
+  "read_game_record_mid": 0.04749290004838258,
+  "build_pgn_100_ply_inline": 0.009301000041887164
 }
