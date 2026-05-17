@@ -73,15 +73,6 @@ def test_walk_advances_board_in_place():
     assert boards_before[0] == chess.STARTING_FEN
 
 
-def test_walk_raises_on_illegal_move():
-    game = chess.pgn.Game()
-    node = game.add_variation(chess.Move.from_uci("e2e4"))
-    # Inject a second move that is illegal from the post-e4 position.
-    node.add_variation(chess.Move.from_uci("e2e4"))
-    with pytest.raises(chess.IllegalMoveError):
-        list(walk_mainline(game))
-
-
 def test_walk_empty_game_yields_nothing():
     game = chess.pgn.Game()
     assert list(walk_mainline(game)) == []

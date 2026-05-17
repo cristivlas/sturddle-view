@@ -2,11 +2,11 @@
   "_smoke_bench": 0.000492700026370585,
   "board_from_startpos_inline": 0.09293919999618083,
   "board_from_fen_inline": 4.4912075999891385,
-  "parse_delta_1k_games": 0.0031469999812543392,
-  "parse_pgn_1k_games": 9.773563199967612,
-  "read_game_record_first": 0.09184800001094118,
-  "read_game_record_mid": 0.13869739999063313,
   "iter_games_keyed_1k": 2.3799948394298553e-05,
   "iter_games_uncached_1k": 0.017224199953489006,
-  "rewrite_partial_pairs_1k": 0.13838970003416762
+  "rewrite_partial_pairs_1k": 0.13838970003416762,
+  "parse_delta_200_games": 1.4262936000013724,
+  "parse_pgn_200_games": 2.39974429999711,
+  "read_game_record_first": 0.006780700001399964,
+  "read_game_record_mid": 0.04749290004838258
 }

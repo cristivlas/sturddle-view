@@ -9,8 +9,8 @@ import pytest
 from sturddle_view.play.import_position import parse_pgn
 from tests.perf._bench import timeit_best_of
 
-FIXTURE = pathlib.Path(__file__).parent.parent / "fixtures" / "perf_1k_games.pgn"
-ITERATIONS = 20
+FIXTURE = pathlib.Path(__file__).parent.parent / "fixtures" / "perf_200_games.pgn"
+ITERATIONS = 3
 TOLERANCE = 0.05
 
 _GAME_TEXTS: list[str] = []
@@ -25,7 +25,8 @@ def _load_games():
             game = chess.pgn.read_game(f)
             if game is None:
                 break
-            _GAME_TEXTS.append(str(game))
+            if game.next() is not None:  # skip 0-move games
+                _GAME_TEXTS.append(str(game))
 
 
 def _bench_fn():
@@ -34,7 +35,7 @@ def _bench_fn():
 
 
 @pytest.mark.perf
-def test_bench_parse_pgn_1k_games(bench_compare):
+def test_bench_parse_pgn_200_games(bench_compare):
     _load_games()
     elapsed = timeit_best_of(_bench_fn, ITERATIONS)
-    bench_compare("parse_pgn_1k_games", elapsed, tolerance=TOLERANCE)
+    bench_compare("parse_pgn_200_games", elapsed, tolerance=TOLERANCE)

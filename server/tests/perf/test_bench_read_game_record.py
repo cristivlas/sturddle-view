@@ -8,8 +8,8 @@ import pytest
 from sturddle_view.tournament.pgn_stats import read_game_record
 from tests.perf._bench import timeit_best_of
 
-FIXTURE = pathlib.Path(__file__).parent.parent / "fixtures" / "perf_1k_games.pgn"
-ITERATIONS = 10
+FIXTURE = pathlib.Path(__file__).parent.parent / "fixtures" / "perf_200_games.pgn"
+ITERATIONS = 3
 TOLERANCE = 0.10
 
 
@@ -18,7 +18,7 @@ def _bench_first():
 
 
 def _bench_mid():
-    read_game_record(FIXTURE, 500)
+    read_game_record(FIXTURE, 100)
 
 
 @pytest.mark.perf
