@@ -6,7 +6,7 @@ phase is sized to fit one PR / one Claude Code session. Future
 sessions pick up from the status header and execute the next pending
 phase.
 
-Last updated: 2026-05-17 (P0, P1, P2, P3, P4, P5 done).
+Last updated: 2026-05-17 (P0, P1, P2, P3, P4, P5, P6 done).
 
 Related docs:
 - [server-chess-audit.md](server-chess-audit.md) -- the spec.
@@ -24,7 +24,7 @@ bottom for the exact ritual.
 - [x] P3  R2 -- chess/results.py constants
 - [x] P4  R6a -- chess/pgn_walk.py iterator and consumer migration
 - [x] P5  R6b -- chess/pgn_build.py producer and autosave swap
-- [ ] P6  R3 -- EngineSupervisor extraction
+- [x] P6  R3 -- EngineSupervisor extraction
 - [ ] P7  R4 -- ChessClock extraction
 - [ ] P8  R5 -- Mode FSM and typed conflict error
 - [ ] P9  R7 -- unified UCI info schema
@@ -326,7 +326,7 @@ These hold for every phase. Violations are blockers, not nits.
 
 ## P6 -- R3 EngineSupervisor extraction
 
-- **State**: pending
+- **State**: done (pending merge SHA)
 - **Depends on**: P0 (fake UCI engine for spawn bench), P2
 - **Goal**: UCI lifecycle out of HVE; shared `_popen_kwargs` with
   `engines.probe_engine`. Closes audit section 10 gap #2 (stub

@@ -9,9 +9,6 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
-import os
-import subprocess
-import sys
 import time
 import uuid
 from dataclasses import dataclass
@@ -26,6 +23,7 @@ from ..chess.board import board_from, moves_san as _moves_san, side_to_move
 from ..chess.pgn_build import build_pgn
 from ..chess.results import DRAW, loser_result, winner_result
 from ..events import Event, EventBus
+from .engine_supervisor import EngineSupervisor
 from .game_store import GameState, GameStore
 from .import_position import explain_invalid
 from .tablebase import TablebaseProber
@@ -124,24 +122,16 @@ class HumanVsEngine:
         settings=None,
         store: GameStore | None = None,
     ) -> None:
-        self._engine_path = engine_path
         self._bus = bus
         self._openings = openings  # Optional[OpeningBook]
         self._settings = settings  # Optional[Settings]
         self._store = store
-        self._engine: chess.engine.UciProtocol | None = None
-        # Display name shown to the user. Caller may set via set_engine_name()
-        # to override (e.g. with the registry name). Otherwise _ensure_engine
-        # fills it from the engine's UCI `id name`, falling back to basename.
-        self._engine_name: str | None = None
-        # User-overridden UCI options applied at engine launch via setoption.
-        # Updated by the API layer on every fetch from the registry; takes
-        # effect on the next launch (existing process keeps its options).
-        self._engine_options: dict = {}
-        # Extra command-line args / per-engine env. Updated by the API
-        # layer on every fetch; take effect on the next launch.
-        self._engine_args: list[str] = []
-        self._engine_env: dict[str, str] = {}
+        # UCI engine session: spawn/configure/cancel/quit/swap + log fanout.
+        # HVE keeps the search loops (_think_and_play, _run_analysis) and
+        # only delegates process lifecycle.
+        self._supervisor = EngineSupervisor(
+            engine_path=engine_path, bus=bus, settings=settings,
+        )
         self._board: chess.Board | None = None
         # FEN of the board *before* any moves on _board.move_stack — None for
         # games that began at startpos. Persisted so restore_from can rebuild
@@ -221,13 +211,10 @@ class HumanVsEngine:
         self._view_pgn_termination: str | None = None
         self._tb: TablebaseProber | None = None
         self._lock = asyncio.Lock()
-        # Pending uci_log publish tasks; held to keep them from being GC'd
-        # mid-flight (asyncio only keeps weak refs to tasks).
-        self._uci_log_tasks: set[asyncio.Task] = set()
 
     @property
     def engine_path(self) -> str:
-        return self._engine_path
+        return self._supervisor.engine_path
 
     @property
     def is_paused(self) -> bool:
@@ -241,6 +228,58 @@ class HumanVsEngine:
     def is_editing(self) -> bool:
         return self._editing
 
+    # ----- supervisor passthroughs: tests and API layer still poke these
+    # attributes directly on the HVE object; preserve the access pattern
+    # so the supervisor extraction is a no-op at the call site.
+
+    @property
+    def _engine(self) -> chess.engine.UciProtocol | None:
+        return self._supervisor.engine
+
+    @_engine.setter
+    def _engine(self, value: chess.engine.UciProtocol | None) -> None:
+        self._supervisor.engine = value
+
+    @property
+    def _engine_path(self) -> str:
+        return self._supervisor.engine_path
+
+    @_engine_path.setter
+    def _engine_path(self, value: str) -> None:
+        self._supervisor.engine_path = value
+
+    @property
+    def _engine_name(self) -> str | None:
+        return self._supervisor.engine_name
+
+    @_engine_name.setter
+    def _engine_name(self, value: str | None) -> None:
+        self._supervisor.engine_name = value
+
+    @property
+    def _engine_options(self) -> dict:
+        return self._supervisor.options
+
+    @_engine_options.setter
+    def _engine_options(self, value: dict) -> None:
+        self._supervisor.options = value
+
+    @property
+    def _engine_args(self) -> list[str]:
+        return self._supervisor.args
+
+    @_engine_args.setter
+    def _engine_args(self, value: list[str]) -> None:
+        self._supervisor.args = value
+
+    @property
+    def _engine_env(self) -> dict[str, str]:
+        return self._supervisor.env
+
+    @_engine_env.setter
+    def _engine_env(self, value: dict[str, str]) -> None:
+        self._supervisor.env = value
+
     def set_engine_options(self, options: dict | None) -> None:
         """Set the UCI options to apply on the next engine launch.
 
@@ -248,112 +287,39 @@ class HumanVsEngine:
         calls this on every fetch from the registry so registry edits
         propagate to the next game.
         """
-        self._engine_options = dict(options or {})
+        self._supervisor.options = options or {}
 
     def set_engine_args(self, args: list[str] | None) -> None:
         """Set the extra argv passed on the next engine launch."""
-        self._engine_args = list(args or [])
+        self._supervisor.args = args or []
 
     def set_engine_env(self, env: dict[str, str] | None) -> None:
         """Set the per-engine env overlay applied on the next launch."""
-        self._engine_env = dict(env or {})
+        self._supervisor.env = env or {}
 
     def set_engine_name(self, name: str | None) -> None:
         """Override the display name shown to the user.
 
         Called by the API layer with the engine-registry name so the clock
-        label matches the Engines list. A None/empty value is ignored — it
+        label matches the Engines list. A None/empty value is ignored -- it
         does not clear a previously-resolved name (otherwise a fallback
         fetch after the registry entry is removed would wipe the label).
         """
         if name:
-            self._engine_name = name
+            self._supervisor.engine_name = name
 
     async def _ensure_engine(self) -> chess.engine.UciProtocol:
-        if self._engine is None:
-            self._engine = await self._spawn_engine()
-            if not self._engine_name:
-                self._engine_name = (
-                    self._engine.id.get("name") or Path(self._engine_path).name
-                )
-        return self._engine
+        return await self._supervisor.ensure(
+            global_defaults=self._global_engine_defaults(),
+        )
 
     async def _spawn_engine(
         self, overrides: dict | None = None,
     ) -> chess.engine.UciProtocol:
-        """Launch a fresh engine process and apply per-engine + global options.
-
-        `overrides` win over both per-engine options and global defaults —
-        used by analysis mode to bump Threads on its own throwaway instance.
-        Skips unknown/managed options instead of failing (engine schema may
-        have drifted since save).
-        """
-        command: str | list[str] = (
-            [self._engine_path, *self._engine_args]
-            if self._engine_args else self._engine_path
+        return await self._supervisor.spawn(
+            overrides=overrides,
+            global_defaults=self._global_engine_defaults(),
         )
-        popen_kwargs: dict = {}
-        if self._engine_env:
-            popen_kwargs["env"] = {**os.environ, **self._engine_env}
-        if sys.platform == "win32":
-            popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-        _transport, engine = await chess.engine.popen_uci(command, **popen_kwargs)
-        rc_future = getattr(engine, "returncode", None)
-        if rc_future is not None:
-            rc_future.add_done_callback(lambda f: f.exception())
-        self._patch_uci_log(engine)
-        accepted: dict = {}
-        for k, v in (self._engine_options or {}).items():
-            if k in engine.options and not engine.options[k].is_managed():
-                accepted[k] = v
-            else:
-                log.warning(
-                    "engine %s: skipping unknown/managed option %s",
-                    self._engine_path, k,
-                )
-        for k, v in self._global_engine_defaults().items():
-            if k in engine.options and not engine.options[k].is_managed():
-                accepted[k] = v
-        for k, v in (overrides or {}).items():
-            if k in engine.options and not engine.options[k].is_managed():
-                accepted[k] = v
-        if accepted:
-            try:
-                await engine.configure(accepted)
-            except chess.engine.EngineError:
-                log.exception("engine refused options %s", accepted)
-        return engine
-
-    def _patch_uci_log(self, engine: chess.engine.UciProtocol) -> None:
-        """Wrap send_line / line_received to emit uci_log events.
-
-        Note: the uci/uciok handshake done by popen_uci runs before this
-        patch, so those lines are not captured. setoption + isready and
-        all subsequent traffic are.
-        """
-        bus = self._bus
-        tasks = self._uci_log_tasks
-        loop = asyncio.get_running_loop()
-        orig_send = engine.send_line
-        orig_recv = engine.line_received
-
-        def _emit(direction: str, line: str) -> None:
-            t = loop.create_task(
-                bus.publish(Event(kind="uci_log", payload={"dir": direction, "line": line}))
-            )
-            tasks.add(t)
-            t.add_done_callback(tasks.discard)
-
-        def _send(line: str) -> None:
-            orig_send(line)
-            _emit(">", line)
-
-        def _recv(line: str) -> None:
-            orig_recv(line)
-            _emit("<", line)
-
-        engine.send_line = _send
-        engine.line_received = _recv
 
     def _engine_color(self) -> chess.Color:
         return chess.BLACK if self._human_white else chess.WHITE
@@ -1171,12 +1137,7 @@ class HumanVsEngine:
             await self._cancel_analysis()
             self._analysis_mode = False
             await self._cancel_think()
-            await self._quit_engine()
-            self._engine_path = path
-            self._engine_name = None
-            self._engine_options = {}
-            self._engine_args = []
-            self._engine_env = {}
+            await self._supervisor.swap(path)
             if self._board is not None and self._game_id is not None:
                 await self._publish_board()
                 if not self._board.is_game_over() and not self._paused:
@@ -1309,42 +1270,11 @@ class HumanVsEngine:
         analysis = self._analysis
         self._think_task = None
         self._analysis = None
-        if think_task and not think_task.done():
-            if analysis is not None:
-                try:
-                    analysis.stop()  # transitions protocol command to CANCELLING; prevents double stop
-                except Exception as e:
-                    log.warning("failed to stop analysis: %s", e)
-            elif self._engine is not None:
-                try:
-                    self._engine.send_line("stop")
-                except Exception as e:
-                    log.warning("failed to send stop to engine: %s", e)
-            try:
-                await asyncio.wait_for(asyncio.shield(think_task), timeout=0.5)
-                log.info("engine responded to stop")
-            except asyncio.TimeoutError:
-                log.warning("engine did not respond to stop -- terminating")
-                transport = getattr(self._engine, "transport", None)
-                if transport is not None:
-                    try:
-                        transport.close()
-                    except (BrokenPipeError, OSError) as e:
-                        log.warning("failed to close engine transport: %s", e)
-                self._engine = None
-            except (asyncio.CancelledError, Exception):
-                pass
-            think_task.cancel()
+        await self._supervisor.cancel(think_task=think_task, analysis=analysis)
 
     async def _quit_engine(self) -> None:
         """Gracefully terminate the engine subprocess. Call after `_cancel_think`."""
-        if self._engine is not None:
-            try:
-                await self._engine.quit()
-            except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
-                pass
-            self._engine = None
-        self._uci_log_tasks.clear()
+        await self._supervisor.quit()
 
     async def _cancel_analysis(self) -> None:
         """Stop the infinite-analysis loop gracefully.
@@ -1433,6 +1363,28 @@ class HumanVsEngine:
     async def _engine_to_move(self) -> None:
         self._think_task = asyncio.create_task(self._think_and_play())
 
+    async def _pump_engine_info(
+        self,
+        analysis,
+        game_id: str,
+        board: chess.Board,
+        cache_payload: bool = False,
+    ) -> None:
+        """Drain analysis info events, serialize + publish, optionally cache.
+
+        Shared by _think_and_play (cache_payload=False) and _run_analysis
+        (cache_payload=True; the cached payload is re-emitted by /game/sync
+        on client remount so the board arrow returns immediately).
+        """
+        async for info in analysis:
+            if "pv" in info or "depth" in info or "score" in info:
+                payload = _serialize_info(info, board, self._eval_pov(board.turn))
+                if cache_payload:
+                    self._last_analysis_info = payload
+                await self._bus.publish(
+                    Event(kind="engine_info", game_id=game_id, payload=payload)
+                )
+
     async def _think_and_play(self) -> None:
         async with self._lock:
             if self._board is None or self._game_id is None:
@@ -1463,15 +1415,7 @@ class HumanVsEngine:
         try:
             with await engine.analysis(board, limit=limit) as analysis:
                 self._analysis = analysis
-                async for info in analysis:
-                    if "pv" in info or "depth" in info or "score" in info:
-                        await self._bus.publish(
-                            Event(
-                                kind="engine_info",
-                                game_id=game_id,
-                                payload=_serialize_info(info, board, self._eval_pov(board.turn)),
-                            )
-                        )
+                await self._pump_engine_info(analysis, game_id, board)
                 result = analysis.wait()  # returns BestMove
                 best_move = await result
                 best = best_move.move
@@ -1540,17 +1484,7 @@ class HumanVsEngine:
         try:
             with await engine.analysis(board) as analysis:
                 self._analysis = analysis
-                async for info in analysis:
-                    if "pv" in info or "depth" in info or "score" in info:
-                        payload = _serialize_info(info, board, self._eval_pov(board.turn))
-                        self._last_analysis_info = payload
-                        await self._bus.publish(
-                            Event(
-                                kind="engine_info",
-                                game_id=game_id,
-                                payload=payload,
-                            )
-                        )
+                await self._pump_engine_info(analysis, game_id, board, cache_payload=True)
         except chess.engine.EngineTerminatedError:
             log.error("engine crashed mid-analysis")
             await self._bus.publish(

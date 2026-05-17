@@ -342,25 +342,16 @@ async def test_apply_settings_live_kills_engine_for_respawn(supervisor, stub_eng
 # ---------------------------------------------------------------------------
 
 
-async def test_uci_log_emits_send_and_recv(bus, supervisor, stub_engine):
-    received: list[dict] = []
-
-    async def listener():
-        async for event in bus.subscribe():
-            if event.kind == "uci_log":
-                received.append(event.payload)
-                if len(received) >= 2:
-                    return
-
-    listen_task = asyncio.create_task(listener())
-    await asyncio.sleep(0)
+async def test_uci_log_emits_send_and_recv(bus, supervisor):
+    queue = await bus.subscribe()
     await supervisor.ensure()
     supervisor.engine.send_line("sent-line")
     supervisor.engine.line_received("recv-line")
-    try:
-        await asyncio.wait_for(listen_task, timeout=1.0)
-    except asyncio.TimeoutError:
-        listen_task.cancel()
+    received: list[dict] = []
+    for _ in range(2):
+        event = await asyncio.wait_for(queue.get(), timeout=1.0)
+        assert event.kind == "uci_log"
+        received.append(event.payload)
     dirs = sorted(p["dir"] for p in received)
     lines = sorted(p["line"] for p in received)
     assert dirs == ["<", ">"]
