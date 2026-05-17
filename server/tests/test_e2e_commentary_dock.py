@@ -85,20 +85,20 @@ def _assert_no_errors(errors):
 
 
 async def _seed_view_mode(app):
-    from sturddle_view.play.human_vs_engine import HumanVsEngine
+    from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
     hve = HumanVsEngine(
         engine_path="/nonexistent/engine",
         bus=app.state.event_bus,
         openings=getattr(app.state, "openings", None),
         settings=app.state.settings,
     )
-    await hve.enter_view_mode(
+    await hve.enter_view_mode(ViewModeParams(
         start_fen=SEED_FEN,
         moves_uci=SEED_MOVES,
         clock_history=None,
         comments=SEED_COMMENTS,
         root_comment=SEED_ROOT_COMMENT,
-    )
+    ))
     app.state.hve = hve
 
 

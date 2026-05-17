@@ -22,6 +22,7 @@ import chess.engine
 import chess.pgn
 
 from .._atomic import atomic_write_text
+from ..chess.board import board_from, moves_san as _moves_san, side_to_move
 from ..events import Event, EventBus
 from .game_store import GameState, GameStore
 from .import_position import explain_invalid
@@ -58,6 +59,22 @@ class _ViewSnapshot:
     pgn_termination: str | None
 
 
+@dataclass
+class ViewModeParams:
+    start_fen: str | None
+    moves_uci: list[str]
+    clock_history: list[tuple[float | None, float | None]] | None
+    final_white_time: float | None = None
+    final_black_time: float | None = None
+    white_name: str | None = None
+    black_name: str | None = None
+    eval_history: list[dict | None] | None = None
+    comments: list[str | None] | None = None
+    root_comment: str | None = None
+    pgn_result: str | None = None
+    pgn_termination: str | None = None
+
+
 def _serialize_info(
     info: chess.engine.InfoDict, board: chess.Board,
     eval_pov: chess.Color = chess.WHITE,
@@ -91,19 +108,6 @@ def _serialize_info(
         except (ValueError, AssertionError):
             out["pv"] = [m.uci() for m in pv]
         out["pv_uci"] = [m.uci() for m in pv]
-    return out
-
-
-def _moves_san(board: chess.Board, start_fen: str | None = None) -> list[str]:
-    """Return the current move stack as SAN strings, replayed from start_fen
-    (or the standard starting position when None)."""
-    if not board.move_stack:
-        return []
-    replay = chess.Board(start_fen) if start_fen else chess.Board()
-    out = []
-    for m in board.move_stack:
-        out.append(replay.san(m))
-        replay.push(m)
     return out
 
 
@@ -432,7 +436,7 @@ class HumanVsEngine:
             engine = await self._ensure_engine()
             engine.send_line("ucinewgame")
             try:
-                board = chess.Board(start_fen) if start_fen else chess.Board()
+                board = board_from(start_fen)
             except ValueError as e:
                 raise RuntimeError(f"invalid FEN: {e}") from e
             for uci in start_moves_uci or []:
@@ -834,22 +838,7 @@ class HumanVsEngine:
             self._black_time,
         )
 
-    async def enter_view_mode(
-        self,
-        *,
-        start_fen: str | None,
-        moves_uci: list[str],
-        clock_history: list[tuple[float | None, float | None]] | None,
-        final_white_time: float | None = None,
-        final_black_time: float | None = None,
-        white_name: str | None = None,
-        black_name: str | None = None,
-        eval_history: list[dict | None] | None = None,
-        comments: list[str | None] | None = None,
-        root_comment: str | None = None,
-        pgn_result: str | None = None,
-        pgn_termination: str | None = None,
-    ) -> str:
+    async def enter_view_mode(self, params: ViewModeParams) -> str:
         """Load a PGN-imported game into view mode at the LAST ply.
 
         Replaces any active live game (the autosave file preserves it for
@@ -866,12 +855,12 @@ class HumanVsEngine:
             await self._cancel_tick()
             self._ensure_tablebase()
             try:
-                start_board = chess.Board(start_fen) if start_fen else chess.Board()
+                start_board = board_from(params.start_fen)
             except ValueError as e:
                 raise RuntimeError(f"invalid FEN: {e}") from e
             full_moves: list[chess.Move] = []
             replay = start_board.copy()
-            for uci in moves_uci:
+            for uci in params.moves_uci:
                 try:
                     move = chess.Move.from_uci(uci)
                 except ValueError as e:
@@ -882,20 +871,18 @@ class HumanVsEngine:
                 replay.push(move)
             self._viewing = True
             self._view_full_moves = full_moves
-            self._view_clock_history = list(clock_history) if clock_history else []
-            self._view_final_white = final_white_time
-            self._view_final_black = final_black_time
-            self._view_white_name = white_name
-            self._view_black_name = black_name
-            self._view_pgn_result = pgn_result
-            self._view_pgn_termination = pgn_termination
-            self._view_eval_history = (
-                list(eval_history) if eval_history else None
-            )
-            self._view_comments = list(comments) if comments else None
-            self._view_root_comment = root_comment or None
+            self._view_clock_history = list(params.clock_history) if params.clock_history else []
+            self._view_final_white = params.final_white_time
+            self._view_final_black = params.final_black_time
+            self._view_white_name = params.white_name
+            self._view_black_name = params.black_name
+            self._view_pgn_result = params.pgn_result
+            self._view_pgn_termination = params.pgn_termination
+            self._view_eval_history = list(params.eval_history) if params.eval_history else None
+            self._view_comments = list(params.comments) if params.comments else None
+            self._view_root_comment = params.root_comment or None
             self._view_cursor = 0  # land at start; avoid end-of-game modal
-            self._start_fen = start_fen
+            self._start_fen = params.start_fen
             self._board = start_board
             self._game_id = uuid.uuid4().hex[:12]
             self._game_started_wall = None  # not a play game; no autosave
@@ -941,9 +928,7 @@ class HumanVsEngine:
             if ply < 0 or ply > n:
                 raise RuntimeError(f"ply out of range: {ply} (0..{n})")
             self._view_cursor = ply
-            board = (
-                chess.Board(self._start_fen) if self._start_fen else chess.Board()
-            )
+            board = board_from(self._start_fen)
             for m in self._view_full_moves[:ply]:
                 board.push(m)
             self._board = board
@@ -1033,13 +1018,13 @@ class HumanVsEngine:
             if not self._editing:
                 raise RuntimeError("not in edit mode")
             try:
-                board = chess.Board(fen)
+                board = board_from(fen)
             except ValueError as e:
                 raise RuntimeError(f"invalid FEN: {e}") from e
             if not board.is_valid():
                 raise RuntimeError(explain_invalid(board))
             target_fen = board.fen()
-            pre_epd = chess.Board(self._edit_pre_fen).epd() if self._edit_pre_fen else None
+            pre_epd = board_from(self._edit_pre_fen).epd() if self._edit_pre_fen else None
             unchanged = pre_epd is not None and board.epd() == pre_epd
             snap = self._edit_view_snapshot
             self._editing = False
@@ -1054,9 +1039,7 @@ class HumanVsEngine:
         # FEN changed -- drop history, enter fresh view at new position.
         try:
             game_id = await self.enter_view_mode(
-                start_fen=target_fen,
-                moves_uci=[],
-                clock_history=None,
+                ViewModeParams(start_fen=target_fen, moves_uci=[], clock_history=None)
             )
         except Exception:
             async with self._lock:
@@ -1073,10 +1056,7 @@ class HumanVsEngine:
             if not self._editing:
                 raise RuntimeError("not in edit mode")
             snap = self._edit_view_snapshot
-            if snap is None:
-                # Defensive: enter_edit_mode always sets this.
-                self._editing = False
-                raise RuntimeError("no pre-edit snapshot to restore")
+            assert snap is not None, "enter_edit_mode always sets _edit_view_snapshot"
             self._editing = False
             self._restore_view_snapshot(snap)
             self._edit_pre_fen = None
@@ -1125,7 +1105,7 @@ class HumanVsEngine:
                     seed_final_w, seed_final_b = nw, nb
             start_fen = self._start_fen
             # Determine side-to-move at the cursor without leaving the lock.
-            board = chess.Board(start_fen) if start_fen else chess.Board()
+            board = board_from(start_fen)
             for m in self._view_full_moves[:cursor]:
                 board.push(m)
             # Refuse if the cursor lands on a finished position — would
@@ -1263,7 +1243,7 @@ class HumanVsEngine:
         `turn_started_at` so the side-to-move's clock isn't charged for the
         gap between boot and connect.
         """
-        self._board = chess.Board(state.start_fen) if state.start_fen else chess.Board()
+        self._board = board_from(state.start_fen)
         self._start_fen = state.start_fen
         for uci in state.moves_uci:
             self._board.push(chess.Move.from_uci(uci))
@@ -1425,7 +1405,7 @@ class HumanVsEngine:
         async with self._lock:
             if self._game_id is None or self._board is None:
                 return
-            loser = "white" if self._board.turn == chess.WHITE else "black"
+            loser = side_to_move(self._board)
             game_id = self._game_id
             await self._cancel_think()
             # Loser is the side to move when the flag fell.
@@ -1601,12 +1581,11 @@ class HumanVsEngine:
         # the whole list with the cursor highlighting one ply); in play mode
         # it's just the moves on the live board.
         if self._viewing:
-            full_board = (
-                chess.Board(self._start_fen) if self._start_fen else chess.Board()
-            )
+            full_board = board_from(self._start_fen)
+            moves_san = []
             for m in self._view_full_moves:
+                moves_san.append(full_board.san(m))
                 full_board.push(m)
-            moves_san = _moves_san(full_board, self._start_fen)
         else:
             moves_san = _moves_san(self._board, self._start_fen)
         view_payload = None
@@ -1684,7 +1663,7 @@ class HumanVsEngine:
             game_id=self._game_id,
             payload={
                 "fen": self._board.fen(),
-                "turn": "white" if self._board.turn else "black",
+                "turn": side_to_move(self._board),
                 "ply": self._board.ply(),
                 "moves_san": moves_san,
                 "last_move": self._board.peek().uci() if self._board.move_stack else None,
@@ -1720,7 +1699,7 @@ class HumanVsEngine:
                 payload={
                     "white_time": wt,
                     "black_time": bt,
-                    "turn": "white" if self._board.turn else "black",
+                    "turn": side_to_move(self._board),
                     "running": False,
                     "paused": False,
                     "analyzing": self._analysis_mode,
@@ -1733,7 +1712,7 @@ class HumanVsEngine:
             payload={
                 "white_time": self._remaining(chess.WHITE),
                 "black_time": self._remaining(chess.BLACK),
-                "turn": "white" if self._board.turn else "black",
+                "turn": side_to_move(self._board),
                 "running": not self._board.is_game_over()
                 and not self._paused
                 and not self._analysis_mode,
@@ -1836,7 +1815,7 @@ class HumanVsEngine:
         # for that side, or the live clock if i is the most recent ply.
         # Mover is taken from the replay board (handles non-startpos games
         # where ply 0 may be Black to move).
-        replay = chess.Board(self._start_fen) if self._start_fen else chess.Board()
+        replay = board_from(self._start_fen)
         nodes = list(game.mainline())
         for i, node in enumerate(nodes):
             mover_white = (replay.turn == chess.WHITE)

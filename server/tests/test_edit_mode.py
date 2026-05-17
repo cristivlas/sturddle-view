@@ -9,7 +9,7 @@ import pytest
 
 from sturddle_view.config import Settings
 from sturddle_view.events import EventBus
-from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl
+from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
 from sturddle_view.play.import_position import parse_pgn
 
 
@@ -39,11 +39,11 @@ def hve(tmp_path):
 
 
 async def _enter_view(h: HumanVsEngine, fen: str | None = None) -> None:
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=fen,
         moves_uci=[],
         clock_history=None,
-    )
+    ))
 
 
 async def test_enter_edit_mode_requires_view_mode(hve: HumanVsEngine):
@@ -97,9 +97,9 @@ async def test_cancel_edit_restores_pre_edit_fen(hve: HumanVsEngine):
 
 
 async def test_editing_blocks_view_nav(hve: HumanVsEngine):
-    await hve.enter_view_mode(
+    await hve.enter_view_mode(ViewModeParams(
         start_fen=None, moves_uci=["e2e4", "e7e5"], clock_history=None,
-    )
+    ))
     await hve.enter_edit_mode()
     with pytest.raises(RuntimeError, match="edit mode is on"):
         await hve.view_first()
@@ -131,7 +131,7 @@ async def test_editing_blocks_import(hve: HumanVsEngine):
     await _enter_view(hve)
     await hve.enter_edit_mode()
     with pytest.raises(RuntimeError, match="edit mode is on"):
-        await hve.enter_view_mode(start_fen=None, moves_uci=[], clock_history=None)
+        await hve.enter_view_mode(ViewModeParams(start_fen=None, moves_uci=[], clock_history=None))
 
 
 async def test_editing_blocks_new_game(hve: HumanVsEngine):
@@ -175,11 +175,11 @@ _DIFF_FEN = "4k3/8/8/8/8/8/8/4K3 w - - 0 1"
 
 
 async def _enter_view_with_moves(h: HumanVsEngine) -> None:
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=_MOVES,
         clock_history=None,
-    )
+    ))
 
 
 async def test_view_with_moves_populates_move_list(hve: HumanVsEngine):
@@ -238,7 +238,7 @@ async def test_cancel_edit_preserves_history(hve: HumanVsEngine):
 
 
 async def _enter_view_with_metadata(h: HumanVsEngine) -> None:
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=_MOVES,
         clock_history=[(60.0, 60.0), (59.0, 59.0)],
@@ -251,7 +251,7 @@ async def _enter_view_with_metadata(h: HumanVsEngine) -> None:
         root_comment="opening",
         pgn_result="*",
         pgn_termination="unterminated",
-    )
+    ))
 
 
 async def test_cancel_edit_preserves_metadata(hve: HumanVsEngine):
@@ -316,7 +316,7 @@ async def test_annotated_pgn_edit_cancel_is_lossless(hve: HumanVsEngine):
     """edit->cancel must not drop any field from an annotated imported game."""
     p = parse_pgn(_ANNOTATED_PGN)
     headers = p.headers or {}
-    await hve.enter_view_mode(
+    await hve.enter_view_mode(ViewModeParams(
         start_fen=p.start_fen,
         moves_uci=p.moves_uci,
         clock_history=p.clock_history,
@@ -329,7 +329,7 @@ async def test_annotated_pgn_edit_cancel_is_lossless(hve: HumanVsEngine):
         root_comment=p.root_comment,
         pgn_result=headers.get("Result"),
         pgn_termination=headers.get("Termination"),
-    )
+    ))
     await hve.view_last()
 
     snap_moves = list(hve._view_full_moves)

@@ -12,6 +12,8 @@ from dataclasses import dataclass
 import chess
 import chess.pgn
 
+from ..chess.board import board_from, side_to_move
+
 
 def explain_invalid(board: chess.Board) -> str:
     """Return a human-readable reason for an invalid board.status(), or
@@ -274,7 +276,7 @@ def parse_fen(text: str) -> ImportedPosition:
             "This looks like a PGN, not a FEN. Switch to the PGN tab."
         )
     try:
-        board = chess.Board(fen)
+        board = board_from(fen)
     except ValueError as e:
         # python-chess embeds the full FEN string in its message; collapse
         # to just the diagnostic so the UI doesn't render a giant blob.
@@ -282,7 +284,7 @@ def parse_fen(text: str) -> ImportedPosition:
         raise PositionImportError(f"invalid FEN: {msg}") from e
     if not board.is_valid():
         raise PositionImportError("illegal position (e.g. adjacent kings, too many pieces, pawns on back rank)")
-    side = "white" if board.turn == chess.WHITE else "black"
+    side = side_to_move(board)
     # Treat the standard startpos as None so opening-book lookup engages
     # on subsequent moves (lookup keys on move history from startpos).
     is_startpos = board.fen() == chess.STARTING_FEN
@@ -309,9 +311,7 @@ def parse_pgn(text: str) -> ImportedPosition:
     # FEN header lets the PGN start from a non-standard position.
     start_fen_header = headers.get("FEN")
     try:
-        start_board = (
-            chess.Board(start_fen_header) if start_fen_header else chess.Board()
-        )
+        start_board = board_from(start_fen_header)
     except ValueError as e:
         raise PositionImportError(f"PGN has invalid starting FEN header: {e}") from e
     if start_fen_header and not start_board.is_valid():
@@ -333,7 +333,7 @@ def parse_pgn(text: str) -> ImportedPosition:
     # that just gets you to startpos is the New Game button.
     if not moves_uci and not start_fen_header:
         raise PositionImportError("PGN contains no moves")
-    side = "white" if board.turn == chess.WHITE else "black"
+    side = side_to_move(board)
     white = headers.get("White", "?")
     black = headers.get("Black", "?")
     summary = (

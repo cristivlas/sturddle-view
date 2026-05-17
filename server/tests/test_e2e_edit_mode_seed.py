@@ -70,7 +70,7 @@ async def test_edit_mode_seeds_stm_and_castling_from_inherited_fen(server, brows
         pytest.skip("chromium not installed")
     base, app = server
 
-    from sturddle_view.play.human_vs_engine import HumanVsEngine
+    from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
 
     hve = HumanVsEngine(
         engine_path="/nonexistent/engine",
@@ -78,11 +78,11 @@ async def test_edit_mode_seeds_stm_and_castling_from_inherited_fen(server, brows
         openings=getattr(app.state, "openings", None),
         settings=app.state.settings,
     )
-    await hve.enter_view_mode(
+    await hve.enter_view_mode(ViewModeParams(
         start_fen=SEED_FEN,
         moves_uci=[],
         clock_history=None,
-    )
+    ))
     app.state.hve = hve
 
     ctx = await browser.new_context()

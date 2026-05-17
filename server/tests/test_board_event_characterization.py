@@ -16,7 +16,7 @@ import chess
 import pytest
 
 from sturddle_view.events import EventBus
-from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl
+from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
 from tests.conftest import SNAPSHOT_UPDATE_FLAG
 
 SNAPSHOTS = pathlib.Path(__file__).parent / "fixtures" / "board_event_snapshots"
@@ -98,11 +98,11 @@ async def test_board_event_snapshot_paused_recorded(hve, request):
 async def test_board_event_snapshot_viewing_at_cursor_recorded(hve, request):
     updating = request.config.getoption(SNAPSHOT_UPDATE_FLAG, default=False)
     moves_uci = [chess.Move.from_uci(u).uci() for u in VIEW_MOVES]
-    await hve.enter_view_mode(
+    await hve.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=moves_uci,
         clock_history=None,
-    )
+    ))
     await hve.view_goto(2)
 
     event = hve._board_event()
@@ -114,11 +114,11 @@ async def test_board_event_snapshot_viewing_at_cursor_recorded(hve, request):
 async def test_board_event_snapshot_editing_recorded(hve, request):
     updating = request.config.getoption(SNAPSHOT_UPDATE_FLAG, default=False)
     moves_uci = [chess.Move.from_uci(u).uci() for u in VIEW_MOVES]
-    await hve.enter_view_mode(
+    await hve.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=moves_uci,
         clock_history=None,
-    )
+    ))
     await hve.enter_edit_mode()
 
     event = hve._board_event()

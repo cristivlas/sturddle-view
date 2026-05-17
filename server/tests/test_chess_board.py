@@ -14,9 +14,11 @@ from sturddle_view.chess.board import (
     side_to_move,
 )
 
-VALID_FEN = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2"
+# FEN after 1.e4 e5 Nf3 -- no ep square, round-trips cleanly.
+VALID_FEN = "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
 INVALID_FEN = "not/a/fen"
-BLACK_TO_MOVE_FEN = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+# FEN after 1.e4 -- no ep square (python-chess strips ep when no capturing pawn exists).
+BLACK_TO_MOVE_FEN = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
 
 
 def test_board_from_none_is_startpos():
@@ -43,7 +45,7 @@ def test_replay_uci_from_startpos():
 
 def test_replay_uci_from_custom_fen():
     b = board_from(VALID_FEN)
-    b2 = replay_uci(b, ["g1f3"])
+    b2 = replay_uci(b, ["b8c6"])  # black to move in VALID_FEN
     assert len(b2.move_stack) == 1
 
 
@@ -74,6 +76,6 @@ def test_moves_san_from_startpos():
 
 def test_moves_san_from_custom_fen():
     b = board_from(VALID_FEN)
-    b.push_uci("g1f3")
+    b.push_uci("b8c6")  # black to move in VALID_FEN
     result = moves_san(b, VALID_FEN)
-    assert result == ["Nf3"]
+    assert result == ["Nc6"]

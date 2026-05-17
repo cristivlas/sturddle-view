@@ -11,6 +11,8 @@ from typing import Any
 
 import chess
 
+from ..chess.board import board_from, side_to_move
+
 
 def parse_uci_line(line: str) -> dict[str, Any] | None:
     """Return a small structured dict for recognized UCI lines, or
@@ -36,7 +38,7 @@ def _parse_position(rest: str) -> dict[str, Any] | None:
     ``{kind: "position", fen: <after-moves-fen>, moves: [...], last_move: ?, ply: N}``.
     """
     if rest.startswith("startpos"):
-        board = chess.Board()
+        board = board_from(None)
         rest = rest[len("startpos"):].strip()
     elif rest.startswith("fen "):
         idx = rest.find(" moves")
@@ -47,8 +49,8 @@ def _parse_position(rest: str) -> dict[str, Any] | None:
             fen_str = rest[len("fen "):idx].strip()
             rest = rest[idx + 1:]
         try:
-            board = chess.Board(fen_str)
-        except (ValueError, chess.InvalidFenError):
+            board = board_from(fen_str)
+        except ValueError:
             return None
     else:
         return None
@@ -82,7 +84,7 @@ def _parse_position(rest: str) -> dict[str, Any] | None:
         "moves": moves,
         "last_move": last_move,
         "ply": len(moves),
-        "side_to_move": "white" if board.turn == chess.WHITE else "black",
+        "side_to_move": side_to_move(board),
     }
 
 
