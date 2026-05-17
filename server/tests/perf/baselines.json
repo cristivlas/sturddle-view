@@ -9,5 +9,7 @@
   "parse_pgn_200_games": 2.39974429999711,
   "read_game_record_first": 0.006780700001399964,
   "read_game_record_mid": 0.04749290004838258,
-  "build_pgn_100_ply_inline": 0.009301000041887164
+  "build_pgn_100_ply_inline": 0.009301000041887164,
+  "spawn_engine_median": 0.0479386,
+  "cancel_think_grace_period": 0.5039291
 }
