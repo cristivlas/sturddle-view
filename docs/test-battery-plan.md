@@ -6,7 +6,7 @@ phase is sized to fit one PR / one Claude Code session. Future
 sessions pick up from the status header and execute the next pending
 phase.
 
-Last updated: 2026-05-17 (P0..P7, P9 done; P8 deferred; perf bench infra retro-audit complete).
+Last updated: 2026-05-17 (P0..P7, P9, P10 done; P8 deferred; perf bench infra retro-audit complete).
 
 Related docs:
 - [server-chess-audit.md](server-chess-audit.md) -- the spec.
@@ -28,7 +28,7 @@ bottom for the exact ritual.
 - [x] P7  R4 -- ChessClock extraction
 - [~] P8  R5 -- Mode FSM and typed conflict error (deferred; pick up later)
 - [x] P9  R7 -- unified UCI info schema
-- [ ] P10 R8 -- /api/chess/apply-move audit
+- [x] P10 R8 -- /api/chess/apply-move audit
 - [ ] P11 R9 -- _board_event payload split
 
 ## Cross-phase invariants
@@ -550,7 +550,7 @@ These hold for every phase. Violations are blockers, not nits.
 
 ## P10 -- R8 /api/chess/apply-move audit
 
-- **State**: pending
+- **State**: done (pending merge SHA)
 - **Depends on**: none (independent; can land anywhere after P0)
 - **Goal**: Confirm caller status; delete or pin.
 - **Files to create / modify**:
@@ -572,6 +572,11 @@ These hold for every phase. Violations are blockers, not nits.
   - Either the four tests are green or the module is gone with all
     other tests still green.
 - **Out of scope**: web client refactors.
+- **Notes**:
+  - Decision: KEEP. Live caller found at
+    `web/app/tournament-live-game.js:459` (called by `applyBestMove`
+    to advance the tournament-live board on bestmove arrival).
+    All four R8 tests landed in `server/tests/test_apply_move_api.py`.
 
 ## P11 -- R9 _board_event payload split
 
