@@ -1,3 +1,5 @@
 {
-  "_smoke_bench": 0.000492700026370585
+  "_smoke_bench": 0.000492700026370585,
+  "board_from_startpos_inline": 0.09293919999618083,
+  "board_from_fen_inline": 4.4912075999891385
 }
