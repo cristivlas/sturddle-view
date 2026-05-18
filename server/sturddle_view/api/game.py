@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 
@@ -22,6 +23,10 @@ MAX_IMPORT_TEXT_BYTES = int(
 )
 
 router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_token)])
+
+
+def _hash_import_text(text: str) -> str:
+    return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
 
 
 async def _get_hve(request: Request) -> HumanVsEngine:
@@ -152,8 +157,13 @@ def _parse_import_payload(payload: dict) -> dict:
 
 @router.post("/import/validate")
 async def import_validate(payload: dict) -> dict:
-    """Parse a FEN/PGN payload and report the resulting position. Read-only."""
-    return _parse_import_payload(payload)
+    """Parse a FEN/PGN payload and report the resulting position. Read-only.
+    Returns ``hash`` (SHA-256 of stripped text) so the caller can compare
+    against the currently viewed game before committing a full import."""
+    parsed = _parse_import_payload(payload)
+    raw_text = payload.get("text", "")
+    parsed["hash"] = _hash_import_text(raw_text)
+    return parsed
 
 
 @router.post("/import")
@@ -171,6 +181,9 @@ async def import_game(payload: dict, request: Request) -> dict:
     parsed = _parse_import_payload(payload)
     hve = await _get_hve(request)
     headers = parsed.get("headers") or {}
+    raw_text = payload.get("text", "")
+    summary = parsed.get("summary") or ""
+    view_hash = _hash_import_text(raw_text)
     try:
         game_id = await hve.enter_view_mode(ViewModeParams(
             start_fen=parsed["start_fen"],
@@ -185,6 +198,8 @@ async def import_game(payload: dict, request: Request) -> dict:
             root_comment=parsed.get("root_comment"),
             pgn_result=headers.get("Result"),
             pgn_termination=headers.get("Termination"),
+            view_hash=view_hash,
+            view_summary=summary,
         ))
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -192,10 +207,10 @@ async def import_game(payload: dict, request: Request) -> dict:
     # (matters for auto: it's "fen" or "pgn" by now).
     h = await request.app.state.recent_imports.save(
         fmt=parsed["detected_format"],
-        text=payload.get("text", ""),
-        summary=parsed.get("summary") or "",
+        text=raw_text,
+        summary=summary,
     )
-    return {"game_id": game_id, "viewing": True, "hash": h, "summary": parsed.get("summary")}
+    return {"game_id": game_id, "viewing": True, "hash": h, "summary": summary}
 
 
 @router.get("/recent-imports")

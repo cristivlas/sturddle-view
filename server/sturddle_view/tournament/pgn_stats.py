@@ -7,6 +7,7 @@ Reads the PGN; results are cached per-path keyed by (mtime, size).
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import logging
 import math
@@ -313,9 +314,11 @@ def read_game_pgn(pgn_path: Path, game_n: int) -> str | None:
 def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
     """Return PGN + final-position metadata for the Nth completed game.
 
-    Result keys: ``pgn``, ``final_fen``, ``last_move`` (uci or None),
+    Result keys: ``pgn``, ``hash``, ``final_fen``, ``last_move`` (uci or None),
     ``engine_white``, ``engine_black``, ``result``, ``termination``.
     Used to rehydrate a frozen tournament game window with no live WS.
+    ``hash`` matches the SHA-256 produced by recent_imports so the client
+    can compare against the currently viewed game's view_hash.
     """
     if game_n < 1:
         return None
@@ -342,8 +345,19 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
                     last_move_uci = node.move.uci()
                 if board is None:
                     board = game.board()
+                pgn_text = str(game)
+                pgn_hash = hashlib.sha256(pgn_text.strip().encode("utf-8")).hexdigest()
+                white = game.headers.get("White", "?")
+                black = game.headers.get("Black", "?")
+                summary = (
+                    f"{white} vs {black}"
+                    if (white != "?" and black != "?")
+                    else None
+                )
                 return {
-                    "pgn": str(game),
+                    "pgn": pgn_text,
+                    "hash": pgn_hash,
+                    "summary": summary,
                     "final_fen": board.fen(),
                     "last_move": last_move_uci,
                     "engine_white": game.headers.get("White", ""),

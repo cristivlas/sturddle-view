@@ -54,6 +54,8 @@ class _ViewSnapshot:
     root_comment: str | None
     pgn_result: str | None
     pgn_termination: str | None
+    view_hash: str | None = None
+    view_summary: str | None = None
 
 
 @dataclass
@@ -70,6 +72,8 @@ class ViewModeParams:
     root_comment: str | None = None
     pgn_result: str | None = None
     pgn_termination: str | None = None
+    view_hash: str | None = None
+    view_summary: str | None = None
 
 
 class HumanVsEngine:
@@ -153,6 +157,10 @@ class HumanVsEngine:
         # not in view mode). Read by _board_event's view payload.
         self._view_pgn_result: str | None = None
         self._view_pgn_termination: str | None = None
+        # SHA-256 hash and human-readable summary of the viewed game's source
+        # text (PGN or FEN). None for play-mode games and view/start transitions.
+        self._view_hash: str | None = None
+        self._view_summary: str | None = None
         self._tb: TablebaseProber | None = None
         self._lock = asyncio.Lock()
 
@@ -307,6 +315,8 @@ class HumanVsEngine:
         self._view_root_comment = None
         self._view_pgn_result = None
         self._view_pgn_termination = None
+        self._view_hash = None
+        self._view_summary = None
         self._view_cursor = 0
 
     def _eval_pov(self, stm: chess.Color = chess.WHITE) -> chess.Color:
@@ -753,6 +763,8 @@ class HumanVsEngine:
             self._view_eval_history = list(params.eval_history) if params.eval_history else None
             self._view_comments = list(params.comments) if params.comments else None
             self._view_root_comment = params.root_comment or None
+            self._view_hash = params.view_hash or None
+            self._view_summary = params.view_summary or None
             self._view_cursor = 0  # land at start; avoid end-of-game modal
             self._start_fen = params.start_fen
             self._board = start_board
@@ -847,6 +859,8 @@ class HumanVsEngine:
                 root_comment=self._view_root_comment,
                 pgn_result=self._view_pgn_result,
                 pgn_termination=self._view_pgn_termination,
+                view_hash=self._view_hash,
+                view_summary=self._view_summary,
             )
             self._mode = Mode.EDITING
         if need_cancel_analysis:
@@ -871,6 +885,8 @@ class HumanVsEngine:
         self._view_root_comment = snap.root_comment
         self._view_pgn_result = snap.pgn_result
         self._view_pgn_termination = snap.pgn_termination
+        self._view_hash = snap.view_hash
+        self._view_summary = snap.view_summary
 
     async def commit_edit(self, fen: str) -> str:
         """Apply the edited FEN as a fresh view-mode position. On any
@@ -1470,6 +1486,8 @@ class HumanVsEngine:
             "comment": comment_at_cursor,
             "has_comment": has_any_comment,
             "game_over": game_over,
+            "view_hash": self._view_hash,
+            "view_summary": self._view_summary,
             **result_termination,
         }
 

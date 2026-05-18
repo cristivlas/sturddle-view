@@ -381,6 +381,45 @@ def test_validate_endpoint_default_format_is_auto(client):
     assert r.json()["detected_format"] == "pgn"
 
 
+def test_validate_endpoint_returns_hash(client):
+    import hashlib
+    c, _app, _ = client
+    text = "1. e4 e5 2. Nf3 Nc6 *"
+    r = c.post("/game/import/validate", json={"format": "pgn", "text": text})
+    assert r.status_code == 200
+    body = r.json()
+    assert "hash" in body
+    expected = hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
+    assert body["hash"] == expected
+
+
+def test_hash_invariant_validate_and_import_agree(client):
+    """validate and import must return the same hash for the same text --
+    this is the invariant the same-game skip in the UI depends on."""
+    c, app, engine_path = client
+    _patch_hve(app, engine_path)
+    text = "1. e4 e5 2. Nf3 Nc6 *"
+    rv = c.post("/game/import/validate", json={"format": "pgn", "text": text})
+    ri = c.post("/game/import", json={"format": "pgn", "text": text})
+    assert rv.status_code == 200
+    assert ri.status_code == 200
+    assert rv.json()["hash"] == ri.json()["hash"]
+
+
+def test_hash_invariant_tournament_replay_roundtrip(client):
+    """read_game_record hash must equal validate hash for the same pgn text --
+    the invariant enabling same-game skip on tournament replay."""
+    import pathlib
+    from sturddle_view.tournament.pgn_stats import read_game_record
+    fixture = pathlib.Path(__file__).parent / "fixtures" / "sample_50.pgn"
+    rec = read_game_record(fixture, 1)
+    assert rec is not None
+    c, _app, _ = client
+    r = c.post("/game/import/validate", json={"format": "pgn", "text": rec["pgn"]})
+    assert r.status_code == 200
+    assert r.json()["hash"] == rec["hash"]
+
+
 def test_import_endpoint_lands_in_view_mode_at_last_ply(client):
     c, app, engine_path = client
     hve = _patch_hve(app, engine_path)

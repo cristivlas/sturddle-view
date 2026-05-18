@@ -26,6 +26,16 @@ export function isPlayInProgress() {
   return _playInProgress;
 }
 
+// SHA-256 hash and summary of the game currently in view (null when in
+// play mode). Used by the tournament replay path to skip confirmation
+// when the game being replayed is already loaded.
+let _viewingHash = null;
+let _viewingSummary = null;
+let _viewing = false;
+export function isViewing() { return _viewing; }
+export function getViewingHash() { return _viewingHash; }
+export function getViewingSummary() { return _viewingSummary; }
+
 // Last board_update seen by this perspective. Survives unmount so the
 // next mount can render the cached state synchronously and resolve
 // view.ready before /sync round-trips. The /sync response then
@@ -565,6 +575,9 @@ export const playPerspective = {
             viewTotalPlies = v.total_plies ?? 0;
             viewGameOver = !!v.game_over;
             lastViewComment = v.comment ?? null;
+            _viewingHash = v.view_hash ?? null;
+            _viewingSummary = v.view_summary ?? null;
+            _viewing = true;
             syncCommentsVisibility();
             if (v.result) showFinishedBadge(resultBadge(v.result));
             if (viewGameOver && viewCursor === viewTotalPlies && v.result && !viewGameOverAlertShown) {
@@ -578,6 +591,9 @@ export const playPerspective = {
             if (!wasViewing) view.setHumanWhite(!viewFlipped);
           } else {
             lastViewComment = null;
+            _viewingHash = null;
+            _viewingSummary = null;
+            _viewing = false;
             syncCommentsVisibility();
             if (wasViewing) restoreDebugWindows(ctx.events);
             resignAvailable = true;
@@ -664,12 +680,27 @@ export const playPerspective = {
     // Prompt before discarding an active play game. Returns true if the
     // caller should proceed (no active game, or user confirmed).
     async function _confirmDiscardActiveGame({ message, okLabel }) {
-      if (viewing || gameOver) return true;
+      if (!_playInProgress) return true;
       return await confirm({
         message,
         okLabel,
         cancelLabel: "Keep playing",
         destructive: true,
+      });
+    }
+
+    // Prompt before replacing the currently viewed game. incomingHash is the
+    // SHA-256 of the game about to be loaded; if it matches the current view
+    // the confirm is skipped silently. Returns true if caller should proceed.
+    async function _confirmReplaceViewedGame({ incomingHash, incomingSummary, okLabel }) {
+      if (!viewing) return true;
+      if (incomingHash && incomingHash === _viewingHash) return true;
+      const current = _viewingSummary ? `"${_viewingSummary}"` : "the current game";
+      const incoming = incomingSummary ? ` with "${incomingSummary}"` : "";
+      return await confirm({
+        message: `Replace ${current}${incoming}?`,
+        okLabel,
+        cancelLabel: "Cancel",
       });
     }
 
@@ -733,15 +764,23 @@ export const playPerspective = {
         message: "Cancel the current game and import a new game or position?",
         okLabel: "Import",
       })) return;
+      // Dialog validates (parse errors surface inline) but does not import.
       const result = await showImportPositionDialog({ api: ctx.api });
       if (!result) return;
-      // The dialog already POSTed /game/import (so it could surface
-      // parse errors inline). Just consume the response.
-      view.setGameId(result.response.game_id);
-      // Import lands in view mode; the board_update event drives the
-      // ribbon swap and disables interactivity. Sync to fetch the
-      // imported board state.
-      ctx.api("POST", "/game/sync", {}).catch(() => {});
+      // Same game already in view -- stay put, no re-import needed.
+      if (viewing && result.hash && result.hash === _viewingHash) {
+        toast("Viewing match.");
+        return;
+      }
+      // Different game while viewing -- confirm before replacing.
+      if (!await _confirmReplaceViewedGame({ incomingHash: result.hash, incomingSummary: result.summary, okLabel: "Open" })) return;
+      try {
+        const r = await ctx.api("POST", "/game/import", { format: result.format, text: result.text });
+        view.setGameId(r.game_id);
+        ctx.api("POST", "/game/sync", {}).catch(() => {});
+      } catch (e) {
+        reportError(ctx, "Import failed", e);
+      }
     };
 
     const onSwitchSides = async () => {

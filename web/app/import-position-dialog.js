@@ -1,9 +1,10 @@
 // Import a position into a new HVE game from FEN or PGN text.
-// Stateless: no debounced validate; Open submits to /game/import and the
-// response is the parse result. Errors surface in the status label.
+// Open validates via /game/import/validate (parse errors surface inline)
+// and resolves with {format, text, hash, summary}; the caller owns the
+// actual /game/import POST so it can do hash comparison first.
 // Recents (previously imported texts) are served by the server; the
 // localStorage cache is metadata-only and used to render the dropdown
-// before the server responds.
+// before the server responds. Cache is updated optimistically on validate.
 
 import { apiErrorDetail, showDialog } from "./dialogs.js";
 
@@ -55,10 +56,10 @@ function detectFormatFromName(name) {
   return null;
 }
 
-/** Show import dialog; resolves to /game/import response on success or
- *  null on cancel. The dialog itself POSTs /game/import (so it can
- *  surface errors inline) and returns the parsed response to the
- *  caller, which just needs to act on the success. */
+/** Show import dialog; resolves to {format, text, hash, summary} on Open,
+ *  or null on cancel. The dialog validates via /game/import/validate (parse
+ *  errors surface inline) but does NOT import -- the caller owns the import
+ *  POST so it can do hash comparison and confirmation first. */
 export function showImportPositionDialog({ api }) {
   return showDialog({
     label: "Open position",
@@ -252,14 +253,9 @@ export function showImportPositionDialog({ api }) {
         if (!text.trim()) return;
         submitting = true;
         start.setAttribute("disabled", "");
-        setStatus("Importing...", "muted");
+        setStatus("Checking...", "muted");
         try {
-          const r = await api("POST", "/game/import", { format, text });
-          // Update the local recents cache from the server's response
-          // so subsequent opens of the dialog see the new entry. The
-          // freshest order comes from the next GET; this is just an
-          // immediate-write so the user doesn't see their just-imported
-          // entry missing.
+          const r = await api("POST", "/game/import/validate", { format, text });
           if (r.hash) {
             recentsCache = [
               { hash: r.hash, format, summary: stripPly(r.summary), ts: Date.now() },
@@ -267,7 +263,7 @@ export function showImportPositionDialog({ api }) {
             ];
             saveRecentsCache(recentsCache);
           }
-          resolve({ format, text, hash: r.hash, response: r });
+          resolve({ format, text, hash: r.hash, summary: r.summary });
         } catch (e) {
           submitting = false;
           setStatus(apiErrorDetail(e), "err");

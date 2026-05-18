@@ -4,31 +4,46 @@
 // this engine's `info`, clocks from `go wtime/btime`, last bestmove highlight.
 
 import { mountBoard } from "./board.js";
-import { confirm, reportError } from "./dialogs.js";
-import { isPlayInProgress } from "./perspectives/play.js";
+import { confirm, reportError, toast } from "./dialogs.js";
+import { isPlayInProgress, isViewing, getViewingHash, getViewingSummary } from "./perspectives/play.js";
 import { flashWindow } from "./wb-utils.js";
 
-const REPLAY_DISCARD_MSG = "Discard your in-progress game and replay this tournament game?";
-
 async function replayTournamentGame({ tournamentId, gameN, token }) {
+  const headers = { "Content-Type": "application/json" };
+  let pgn, pgnHash, pgnSummary;
+  try {
+    const res = await fetch(`/api/tournaments/${encodeURIComponent(tournamentId)}/games/${gameN}/pgn`, { headers });
+    if (!res.ok) throw new Error(`fetch pgn -> ${res.status}`);
+    const rec = await res.json();
+    pgn = rec.pgn;
+    pgnHash = rec.hash ?? null;
+    pgnSummary = rec.summary ?? null;
+  } catch (e) {
+    reportError(null, "Replay: fetch failed", e);
+    return;
+  }
   if (isPlayInProgress()) {
     const ok = await confirm({
-      message: REPLAY_DISCARD_MSG,
+      message: "Discard your in-progress game and replay this tournament game?",
       okLabel: "Replay",
       cancelLabel: "Cancel",
       destructive: true,
     });
     if (!ok) return;
-  }
-  const headers = { "Content-Type": "application/json" };
-  let pgn;
-  try {
-    const res = await fetch(`/api/tournaments/${encodeURIComponent(tournamentId)}/games/${gameN}/pgn`, { headers });
-    if (!res.ok) throw new Error(`fetch pgn -> ${res.status}`);
-    pgn = (await res.json()).pgn;
-  } catch (e) {
-    reportError(null, "Replay: fetch failed", e);
-    return;
+  } else if (isViewing()) {
+    if (pgnHash && pgnHash === getViewingHash()) {
+      toast("Viewing match.");
+      window.dispatchEvent(new CustomEvent("sturddle:activate-perspective", { detail: { id: "play" } }));
+      return;
+    }
+    const current = getViewingSummary() ? `"${getViewingSummary()}"` : "the current game";
+    const incoming = pgnSummary ? ` with "${pgnSummary}"` : "";
+    const ok = await confirm({
+      message: `Replace ${current}${incoming}?`,
+      okLabel: "Replace",
+      cancelLabel: "Cancel",
+    });
+    if (!ok) return;
   }
   try {
     const res = await fetch("/game/import", {

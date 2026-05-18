@@ -24,6 +24,7 @@ from sturddle_view.tournament.pgn_stats import (
     ordo_fit,
     patch_config_json,
     read_game_pgn,
+    read_game_record,
     rewrite_drop_partial_pairs,
 )
 
@@ -1361,3 +1362,19 @@ def test_real_pgn_fixture_leader_elo_matches_ordo():
     s = compute_standings(_FIXTURE)
     by = {e.name: e for e in s.engines}
     assert by["sturddle-2.4.0"].elo == pytest.approx(14.0, abs=0.5)
+
+
+def test_read_game_record_returns_hash_and_summary():
+    import hashlib
+    fixture = Path(__file__).parent / "fixtures" / "sample_50.pgn"
+    rec = read_game_record(fixture, 1)
+    assert rec is not None
+    # hash is SHA-256 of the stripped pgn field -- self-consistent so the
+    # tournament replay client can POST rec["pgn"] to /game/import and get
+    # the same hash back (both sides use python-chess serialized form).
+    expected_hash = hashlib.sha256(rec["pgn"].strip().encode("utf-8")).hexdigest()
+    assert rec["hash"] == expected_hash
+    # summary is "White vs Black" when both headers are present
+    assert rec["summary"] == f"{rec['engine_white']} vs {rec['engine_black']}"
+
+

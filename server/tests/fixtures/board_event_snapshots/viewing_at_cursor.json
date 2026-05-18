@@ -26,6 +26,8 @@
     "has_comment": false,
     "has_eval": false,
     "total_plies": 4,
+    "view_hash": null,
+    "view_summary": null,
     "white_name": null
   }
 }
