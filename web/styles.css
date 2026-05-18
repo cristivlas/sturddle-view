@@ -815,6 +815,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   box-sizing: border-box;
 }
 .game-view-engine .engine-summary {
+  background: var(--wa-color-surface-raised);
   display: grid;
   grid-template-columns: repeat(3, minmax(8ch, auto));
   align-items: start;
@@ -964,7 +965,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   flex-wrap: wrap;
 }
 .move-list {
-  background: transparent;
+  background: var(--wa-color-surface-raised);
   padding: 0;
   max-height: 15rem;
   overflow-y: auto;

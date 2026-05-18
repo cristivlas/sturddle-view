@@ -555,6 +555,10 @@ export const playPerspective = {
           const prevGameId = viewingGameId;
           viewingGameId = evt.game_id ?? null;
           viewing = !!v;
+          // Read analyzing early: syncCommentsVisibility (called below) gates
+          // view/goto on !analyzing; the main analyzing block runs later in
+          // the same event but would be too late.
+          if (typeof evt.payload.analyzing === "boolean") analyzing = evt.payload.analyzing;
           if (viewing) {
             if (!wasViewing || viewingGameId !== prevGameId) viewGameOverAlertShown = false;
             viewCursor = v.cursor ?? 0;
