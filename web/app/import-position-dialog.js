@@ -18,6 +18,82 @@ export function formatSummary(s) {
   return names || outcome || null;
 }
 
+const REPLACE_CURRENT_FALLBACK = "the current game";
+const REPLACE_INCOMING_FALLBACK = "a different game";
+const ANALYSIS_WARNING = "Analysis in progress will be cancelled.";
+
+// Confirm before replacing the game currently shown in the viewer.
+// Skips the prompt (returns true) when the incoming hash matches the current
+// view, or when nothing is being viewed. Resolves false on cancel.
+export function confirmReplaceViewedGame({
+  currentHash,
+  currentSummary,
+  incomingHash,
+  incomingSummary,
+  analysisRunning = false,
+}) {
+  if (incomingHash && currentHash && incomingHash === currentHash) return Promise.resolve(true);
+  const current = formatSummary(currentSummary) || REPLACE_CURRENT_FALLBACK;
+  const incoming = formatSummary(incomingSummary) || REPLACE_INCOMING_FALLBACK;
+  return showDialog({
+    label: "",
+    width: "min(480px, 92vw)",
+    defaultValue: false,
+    body: (resolve, dialog) => {
+      dialog.setAttribute("no-header", "");
+
+      const wrap = document.createElement("div");
+      wrap.className = "replace-view-confirm";
+
+      const title = document.createElement("div");
+      title.className = "replace-view-title";
+      title.textContent = "Replace game in viewer?";
+      wrap.appendChild(title);
+
+      for (const [label, value] of [["Current", current], ["Replace with", incoming]]) {
+        const row = document.createElement("div");
+        row.className = "replace-view-row";
+        const k = document.createElement("div");
+        k.className = "replace-view-label";
+        k.textContent = `${label}:`;
+        const v = document.createElement("div");
+        v.className = "replace-view-summary";
+        v.textContent = value;
+        row.append(k, v);
+        wrap.appendChild(row);
+      }
+
+      if (analysisRunning) {
+        const warn = document.createElement("div");
+        warn.className = "replace-view-warning";
+        warn.textContent = ANALYSIS_WARNING;
+        wrap.appendChild(warn);
+      }
+
+      dialog.appendChild(wrap);
+
+      const cancel = document.createElement("wa-button");
+      cancel.slot = "footer";
+      cancel.size = "small";
+      cancel.textContent = "Cancel";
+      cancel.addEventListener("click", () => resolve(false));
+
+      const ok = document.createElement("wa-button");
+      ok.slot = "footer";
+      ok.size = "small";
+      ok.variant = "brand";
+      ok.textContent = "Replace";
+      ok.addEventListener("click", () => resolve(true));
+
+      dialog.append(cancel, ok);
+
+      // Autofocus OK so Enter activates it natively; Tab to Cancel + Enter
+      // then activates Cancel. Escape is handled by <wa-dialog>.
+      requestAnimationFrame(() => ok.focus?.());
+    },
+  });
+}
+
 const PLACEHOLDERS = {
   fen: "Paste FEN, e.g.\nrnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
   pgn: 'Paste PGN, e.g.\n[Event "?"]\n[White "..."]\n[Black "..."]\n\n1. e4 e5 2. Nf3 Nc6 ...',

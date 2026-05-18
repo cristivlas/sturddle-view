@@ -5,8 +5,8 @@
 
 import { mountBoard } from "./board.js";
 import { confirm, reportError, toast } from "./dialogs.js";
-import { isPlayInProgress, isViewing, getViewingHash, getViewingSummary } from "./perspectives/play.js";
-import { formatSummary } from "./import-position-dialog.js";
+import { isPlayInProgress, isViewing, isAnalyzing, getViewingHash, getViewingSummary } from "./perspectives/play.js";
+import { confirmReplaceViewedGame } from "./import-position-dialog.js";
 import { flashWindow } from "./wb-utils.js";
 
 async function replayTournamentGame({ tournamentId, gameN, token }) {
@@ -37,12 +37,12 @@ async function replayTournamentGame({ tournamentId, gameN, token }) {
       window.dispatchEvent(new CustomEvent("sturddle:activate-perspective", { detail: { id: "play" } }));
       return;
     }
-    const current = formatSummary(getViewingSummary()) ? `"${formatSummary(getViewingSummary())}"` : "the current game";
-    const incoming = formatSummary(pgnSummary) ? ` with "${formatSummary(pgnSummary)}"` : "";
-    const ok = await confirm({
-      message: `Replace ${current}${incoming}?`,
-      okLabel: "Replace",
-      cancelLabel: "Cancel",
+    const ok = await confirmReplaceViewedGame({
+      currentHash: getViewingHash(),
+      currentSummary: getViewingSummary(),
+      incomingHash: pgnHash,
+      incomingSummary: pgnSummary,
+      analysisRunning: isAnalyzing(),
     });
     if (!ok) return;
   }

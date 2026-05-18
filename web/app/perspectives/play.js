@@ -4,7 +4,7 @@
 
 import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, openSettings, reportError, toast } from "../dialogs.js";
-import { showImportPositionDialog, formatSummary } from "../import-position-dialog.js";
+import { showImportPositionDialog, confirmReplaceViewedGame } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, setDockContainer, isMobileLayout } from "../play-debug-windows.js";
 import {
   setCommentaryDockContainer,
@@ -24,6 +24,13 @@ import {
 let _playInProgress = false;
 export function isPlayInProgress() {
   return _playInProgress;
+}
+
+// Mirrors the server-reported `analyzing` flag (board_update.analyzing) so
+// other modules can decide whether to warn before discarding analysis work.
+let _analyzing = false;
+export function isAnalyzing() {
+  return _analyzing;
 }
 
 // SHA-256 hash and summary of the game currently in view (null when in
@@ -426,6 +433,14 @@ export const playPerspective = {
     let turn = "white";
     let paused = false;
     let analyzing = false;
+    // Single sync point: every analyzing write goes through this setter so
+    // the module-scope mirror (_analyzing) used by isAnalyzing() stays
+    // current. Direct `analyzing = ...` writes will drift -- always call
+    // setAnalyzing instead.
+    function setAnalyzing(v) {
+      analyzing = !!v;
+      _analyzing = analyzing;
+    }
     // View mode state (set from board_update.view payload).
     let viewing = false;
     let viewCursor = 0;
@@ -568,7 +583,7 @@ export const playPerspective = {
           // Read analyzing early: syncCommentsVisibility (called below) gates
           // view/goto on !analyzing; the main analyzing block runs later in
           // the same event but would be too late.
-          if (typeof evt.payload.analyzing === "boolean") analyzing = evt.payload.analyzing;
+          if (typeof evt.payload.analyzing === "boolean") setAnalyzing(evt.payload.analyzing);
           if (viewing) {
             if (!wasViewing || viewingGameId !== prevGameId) viewGameOverAlertShown = false;
             viewCursor = v.cursor ?? 0;
@@ -610,7 +625,7 @@ export const playPerspective = {
           }
           if (evt.payload.turn) turn = evt.payload.turn;
           if (typeof evt.payload.analyzing === "boolean") {
-            analyzing = evt.payload.analyzing;
+            setAnalyzing(evt.payload.analyzing);
             // Don't re-enable interactivity in view mode regardless of
             // analysis state.
             if (!viewing) view.setEnabled(!analyzing && !paused);
@@ -637,7 +652,7 @@ export const playPerspective = {
         case "game_result":
           gameOver = true;
           paused = false;
-          analyzing = false;
+          setAnalyzing(false);
           dismissAnalysisToast?.();
           dismissAnalysisToast = null;
           if (viewing) closeDebugWindowsPersist();
@@ -689,18 +704,16 @@ export const playPerspective = {
       });
     }
 
-    // Prompt before replacing the currently viewed game. incomingHash is the
-    // SHA-256 of the game about to be loaded; if it matches the current view
-    // the confirm is skipped silently. Returns true if caller should proceed.
-    async function _confirmReplaceViewedGame({ incomingHash, incomingSummary, okLabel }) {
+    // Prompt before replacing the currently viewed game. Skips when nothing
+    // is being viewed or when the incoming hash matches the current view.
+    async function _confirmReplaceViewedGame({ incomingHash, incomingSummary }) {
       if (!viewing) return true;
-      if (incomingHash && incomingHash === _viewingHash) return true;
-      const current = formatSummary(_viewingSummary) ? `"${formatSummary(_viewingSummary)}"` : "the current game";
-      const incoming = formatSummary(incomingSummary) ? ` with "${formatSummary(incomingSummary)}"` : "";
-      return await confirm({
-        message: `Replace ${current}${incoming}?`,
-        okLabel,
-        cancelLabel: "Cancel",
+      return await confirmReplaceViewedGame({
+        currentHash: _viewingHash,
+        currentSummary: _viewingSummary,
+        incomingHash,
+        incomingSummary,
+        analysisRunning: analyzing,
       });
     }
 
@@ -773,7 +786,7 @@ export const playPerspective = {
         return;
       }
       // Different game while viewing -- confirm before replacing.
-      if (!await _confirmReplaceViewedGame({ incomingHash: result.hash, incomingSummary: result.summary, okLabel: "Open" })) return;
+      if (!await _confirmReplaceViewedGame({ incomingHash: result.hash, incomingSummary: result.summary })) return;
       try {
         const r = await ctx.api("POST", "/game/import", { format: result.format, text: result.text });
         view.setGameId(r.game_id);

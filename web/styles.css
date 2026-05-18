@@ -1353,6 +1353,36 @@ wa-dialog::part(header-actions) { gap: 6px; }
   line-height: 1.5;
   text-align: center;
 }
+.replace-view-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 8px 16px 8px;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+}
+.replace-view-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.replace-view-row {
+  display: grid;
+  grid-template-columns: 6.5rem 1fr;
+  gap: 8px;
+  align-items: baseline;
+}
+.replace-view-label {
+  color: #9aa0a6;
+  font-size: 0.8125rem;
+}
+.replace-view-summary {
+  word-break: break-word;
+}
+.replace-view-warning {
+  margin-top: 4px;
+  color: #d8a43a;
+  font-size: 0.8125rem;
+}
 wa-dialog[no-header] {
   --spacing: var(--wa-space-s);
   --width: fit-content;
