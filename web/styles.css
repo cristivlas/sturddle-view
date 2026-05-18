@@ -373,7 +373,7 @@ button.recent-del:hover { color: var(--status-err-fg, #d33); }
   --grid-gap: 16px;
   display: grid;
   --ribbon-w: 36px;
-  grid-template-columns: calc(var(--left-rail-w, var(--rail-w)) - var(--ribbon-w)) var(--board-col-px, minmax(320px, 1fr)) var(--rail-w);
+  grid-template-columns: var(--left-rail-w, var(--rail-w)) var(--board-col-px, minmax(320px, 1fr)) var(--rail-w);
   grid-template-rows: auto 1fr;
   grid-template-areas:
     ". banner ."
