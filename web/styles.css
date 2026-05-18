@@ -373,7 +373,7 @@ button.recent-del:hover { color: var(--status-err-fg, #d33); }
   --grid-gap: 16px;
   display: grid;
   --ribbon-w: 36px;
-  grid-template-columns: calc(var(--rail-w) - var(--ribbon-w)) var(--board-col-px, minmax(320px, 1fr)) var(--rail-w);
+  grid-template-columns: calc(var(--left-rail-w, var(--rail-w)) - var(--ribbon-w)) var(--board-col-px, minmax(320px, 1fr)) var(--rail-w);
   grid-template-rows: auto 1fr;
   grid-template-areas:
     ". banner ."
@@ -510,6 +510,8 @@ button.recent-del:hover { color: var(--status-err-fg, #d33); }
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: fixed;
+  /* left/top/width/max-height driven by JS on desktop; reset on mobile */
 }
 /* Left dock: occupies the grid's first (left-gap) column, full board height.
    Hidden when empty; the column width is unchanged so the board stays put. */
@@ -729,7 +731,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   /* Display order: board first, then ribbon below. */
   .play-board-host { order: 1; }
   #board-controls { order: 2; }
-  .play-side-host { order: 3; }
+  .play-side-host { order: 3; position: static; }
 }
 .game-view-board {
   display: flex;
