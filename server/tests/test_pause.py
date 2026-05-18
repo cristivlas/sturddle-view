@@ -12,6 +12,7 @@ import pytest
 
 from sturddle_view.events import EventBus
 from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl
+from sturddle_view.play.mode import ModeConflictError
 
 
 class _StubEngine:
@@ -72,7 +73,7 @@ async def test_resume_restarts_clock(hve):
 async def test_submit_move_rejected_while_paused(hve):
     await hve.new_game(human_white=True, tc=TimeControl(30.0, 0.0))
     await hve.pause()
-    with pytest.raises(RuntimeError, match="paused"):
+    with pytest.raises(ModeConflictError):
         await hve.submit_move("e2e4")
 
 

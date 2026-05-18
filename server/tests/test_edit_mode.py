@@ -11,6 +11,7 @@ from sturddle_view.config import Settings
 from sturddle_view.events import EventBus
 from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
 from sturddle_view.play.import_position import parse_pgn
+from sturddle_view.play.mode import Mode, ModeConflictError
 
 
 class _StubEngine:
@@ -47,7 +48,7 @@ async def _enter_view(h: HumanVsEngine, fen: str | None = None) -> None:
 
 
 async def test_enter_edit_mode_requires_view_mode(hve: HumanVsEngine):
-    with pytest.raises(RuntimeError, match="enter view mode"):
+    with pytest.raises(ModeConflictError):
         await hve.enter_edit_mode()
 
 
@@ -101,71 +102,72 @@ async def test_editing_blocks_view_nav(hve: HumanVsEngine):
         start_fen=None, moves_uci=["e2e4", "e7e5"], clock_history=None,
     ))
     await hve.enter_edit_mode()
-    with pytest.raises(RuntimeError, match="edit mode is on"):
+    with pytest.raises(ModeConflictError):
         await hve.view_first()
-    with pytest.raises(RuntimeError, match="edit mode is on"):
+    with pytest.raises(ModeConflictError):
         await hve.view_back()
-    with pytest.raises(RuntimeError, match="edit mode is on"):
+    with pytest.raises(ModeConflictError):
         await hve.view_forward()
-    with pytest.raises(RuntimeError, match="edit mode is on"):
+    with pytest.raises(ModeConflictError):
         await hve.view_last()
-    with pytest.raises(RuntimeError, match="edit mode is on"):
+    with pytest.raises(ModeConflictError):
         await hve.view_goto(0)
 
 
 async def test_editing_blocks_play_from_here(hve: HumanVsEngine):
     await _enter_view(hve)
     await hve.enter_edit_mode()
-    with pytest.raises(RuntimeError, match="edit mode is on"):
+    with pytest.raises(ModeConflictError):
         await hve.play_from_here(tc=TimeControl(initial_seconds=60.0, increment_seconds=0.0))
 
 
 async def test_editing_blocks_analysis(hve: HumanVsEngine):
     await _enter_view(hve)
     await hve.enter_edit_mode()
-    with pytest.raises(RuntimeError, match="edit mode is on"):
+    with pytest.raises(ModeConflictError):
         await hve.start_analysis()
 
 
 async def test_editing_blocks_import(hve: HumanVsEngine):
     await _enter_view(hve)
     await hve.enter_edit_mode()
-    with pytest.raises(RuntimeError, match="edit mode is on"):
+    with pytest.raises(ModeConflictError):
         await hve.enter_view_mode(ViewModeParams(start_fen=None, moves_uci=[], clock_history=None))
 
 
 async def test_editing_blocks_new_game(hve: HumanVsEngine):
     await _enter_view(hve)
     await hve.enter_edit_mode()
-    with pytest.raises(RuntimeError, match="edit mode is on"):
+    with pytest.raises(ModeConflictError):
         await hve.new_game(
             human_white=True,
             tc=TimeControl(initial_seconds=60.0, increment_seconds=0.0),
         )
 
 
-async def test_enter_edit_mode_stops_analysis(hve: HumanVsEngine):
-    """Entering edit mode while analyzing must cancel analysis."""
+async def test_enter_edit_mode_from_viewing_transitions_to_editing(hve: HumanVsEngine):
+    """VIEWING -> EDITING is the valid path; mode must flip correctly."""
     await _enter_view(hve)
-    # Fake analysis active without running the engine task.
-    hve._analysis_mode = True
-    cancel_called = []
-
-    async def fake_cancel():
-        cancel_called.append(True)
-        hve._analysis_mode = False
-
-    hve._cancel_analysis = fake_cancel
+    assert hve._mode == Mode.VIEWING
     await hve.enter_edit_mode()
+    assert hve._mode == Mode.EDITING
     assert hve._editing is True
     assert hve._analysis_mode is False
-    assert cancel_called == [True]
+
+
+async def test_cannot_enter_edit_from_analyzing(hve: HumanVsEngine):
+    """ANALYZING blocks enter_edit_mode; caller must stop_analysis first."""
+    await _enter_view(hve)
+    hve._mode = Mode.ANALYZING
+    with pytest.raises(ModeConflictError) as exc_info:
+        await hve.enter_edit_mode()
+    assert exc_info.value.current is Mode.ANALYZING
 
 
 async def test_enter_edit_mode_rejects_when_already_editing(hve: HumanVsEngine):
     await _enter_view(hve)
     await hve.enter_edit_mode()
-    with pytest.raises(RuntimeError, match="already in edit mode"):
+    with pytest.raises(ModeConflictError):
         await hve.enter_edit_mode()
 
 

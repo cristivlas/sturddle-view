@@ -17,6 +17,7 @@ from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
 from sturddle_view.events import EventBus
 from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl
+from sturddle_view.play.mode import Mode
 
 
 class _StubEngine:
@@ -88,7 +89,7 @@ async def test_live_apply_skipped_during_analysis(hve):
     await hve.pause()
     # Fake analysis mode without actually spawning the analysis task --
     # start_analysis would try to spin up a real engine via _spawn_engine.
-    hve._analysis_mode = True
+    hve._mode = Mode.ANALYZING
     engine = _StubEngine()
     hve._engine = engine
     hve._engine_to_move.reset_mock()

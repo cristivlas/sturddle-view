@@ -10,6 +10,7 @@ import pytest
 from sturddle_view.config import Settings
 from sturddle_view.events import EventBus
 from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
+from sturddle_view.play.mode import Mode, ModeConflictError
 
 
 class _StubEngine:
@@ -88,15 +89,15 @@ async def test_play_modes_rejected_in_view(hve):
     await h.enter_view_mode(ViewModeParams(
         start_fen=None, moves_uci=["e2e4"], clock_history=None,
     ))
-    with pytest.raises(RuntimeError, match="view mode"):
+    with pytest.raises(ModeConflictError):
         await h.submit_move("e7e5")
-    with pytest.raises(RuntimeError, match="view mode"):
+    with pytest.raises(ModeConflictError):
         await h.takeback()
-    with pytest.raises(RuntimeError, match="view mode"):
+    with pytest.raises(ModeConflictError):
         await h.pause()
-    with pytest.raises(RuntimeError, match="view mode"):
+    with pytest.raises(ModeConflictError):
         await h.switch_sides()
-    with pytest.raises(RuntimeError, match="view mode"):
+    with pytest.raises(ModeConflictError):
         await h.resign()
 
 
@@ -200,10 +201,10 @@ async def test_view_nav_rejected_during_analysis(hve):
     await h.enter_view_mode(ViewModeParams(
         start_fen=None, moves_uci=["e2e4", "e7e5"], clock_history=None,
     ))
-    h._analysis_mode = True  # simulate analysis on
-    with pytest.raises(RuntimeError, match="analysis"):
+    h._mode = Mode.ANALYZING
+    with pytest.raises(ModeConflictError):
         await h.view_back()
-    with pytest.raises(RuntimeError, match="analysis"):
+    with pytest.raises(ModeConflictError):
         await h.play_from_here(tc=TimeControl(60, 0))
 
 
