@@ -182,7 +182,7 @@ async def import_game(payload: dict, request: Request) -> dict:
     hve = await _get_hve(request)
     headers = parsed.get("headers") or {}
     raw_text = payload.get("text", "")
-    summary = parsed.get("summary") or ""
+    summary = parsed.get("summary") or {}
     view_hash = _hash_import_text(raw_text)
     try:
         game_id = await hve.enter_view_mode(ViewModeParams(

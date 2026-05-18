@@ -14,6 +14,7 @@ import chess.pgn
 
 from ..chess.board import board_from, side_to_move
 from ..chess.pgn_walk import walk_mainline
+from ..chess.results import DECISIVE_RESULTS
 
 
 def explain_invalid(board: chess.Board) -> str:
@@ -38,7 +39,7 @@ class ImportedPosition:
     final_fen: str  # FEN after replaying moves
     side_to_move: str  # "white" | "black", at the final position
     ply: int  # ply count at the final position
-    summary: str  # short human-readable description
+    summary: dict  # {white, black, result, side_to_move}; client formats
     headers: dict[str, str] | None = None  # PGN headers, when applicable
     # Per-ply pre-move (white, black) clock snapshots reconstructed from
     # [%clk] comments. None when the PGN has no clock annotations at all.
@@ -295,7 +296,7 @@ def parse_fen(text: str) -> ImportedPosition:
         final_fen=board.fen(),
         side_to_move=side,
         ply=board.ply(),
-        summary=f"{side.capitalize()} to move (ply {board.ply()})",
+        summary={"white": None, "black": None, "result": None, "side_to_move": side},
     )
 
 
@@ -338,11 +339,13 @@ def parse_pgn(text: str) -> ImportedPosition:
     side = side_to_move(board)
     white = headers.get("White", "?")
     black = headers.get("Black", "?")
-    summary = (
-        f"{white} vs {black} — {side} to move (ply {board.ply()})"
-        if (white != "?" or black != "?")
-        else f"{side.capitalize()} to move (ply {board.ply()})"
-    )
+    result = headers.get("Result", "*")
+    summary = {
+        "white": white if white != "?" else None,
+        "black": black if black != "?" else None,
+        "result": result if result in DECISIVE_RESULTS else None,
+        "side_to_move": side,
+    }
     # Reconstruct (white, black) pre-move snapshots. Prefer [%clk] (state)
     # since it's authoritative; fall back to [%emt] (per-move elapsed) when
     # only that is present, deriving remaining clocks via initial+increment

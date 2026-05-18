@@ -8,6 +8,16 @@
 
 import { apiErrorDetail, showDialog } from "./dialogs.js";
 
+// Format a summary dict {white, black, result, side_to_move} into a display string.
+// Returns null when there is nothing meaningful to show.
+export function formatSummary(s) {
+  if (!s) return null;
+  const names = s.white && s.black ? `${s.white} vs ${s.black}` : (s.white || s.black || null);
+  const outcome = s.result || (s.side_to_move ? `${s.side_to_move[0].toUpperCase()}${s.side_to_move.slice(1)} to move` : null);
+  if (names && outcome) return `${names}: ${outcome}`;
+  return names || outcome || null;
+}
+
 const PLACEHOLDERS = {
   fen: "Paste FEN, e.g.\nrnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
   pgn: 'Paste PGN, e.g.\n[Event "?"]\n[White "..."]\n[Black "..."]\n\n1. e4 e5 2. Nf3 Nc6 ...',
@@ -20,10 +30,6 @@ const TEXTAREA_ROWS = 8;
 
 const RECENTS_CACHE_KEY = "sturddle:import:recent";
 const RECENTS_DISPLAY_CAP = 10;
-
-function stripPly(summary) {
-  return (summary || "").replace(/\s*\(ply\s+\d+\)/gi, "").trim();
-}
 
 function loadRecentsCache() {
   try {
@@ -39,7 +45,7 @@ function saveRecentsCache(entries) {
   const lean = entries.slice(0, RECENTS_DISPLAY_CAP).map((e) => ({
     hash: e.hash,
     format: e.format,
-    summary: stripPly(e.summary),
+    summary: e.summary,
     ts: e.ts,
   }));
   try {
@@ -127,7 +133,7 @@ export function showImportPositionDialog({ api }) {
         const opt = document.createElement("wa-option");
         opt.value = String(i);
         opt.dataset.hash = entry.hash;
-        const label = (stripPly(entry.summary) || entry.hash.slice(0, 12)).replace(/"/g, "&quot;");
+        const label = (formatSummary(entry.summary) || entry.hash.slice(0, 12)).replace(/"/g, "&quot;");
         opt.innerHTML = `${entry.format.toUpperCase()} -- ${label}` +
           `<button slot="end" class="recent-del" title="Remove from history" aria-label="Remove">` +
           `<wa-icon name="trash"></wa-icon></button>`;
@@ -258,7 +264,7 @@ export function showImportPositionDialog({ api }) {
           const r = await api("POST", "/game/import/validate", { format, text });
           if (r.hash) {
             recentsCache = [
-              { hash: r.hash, format, summary: stripPly(r.summary), ts: Date.now() },
+              { hash: r.hash, format, summary: r.summary, ts: Date.now() },
               ...recentsCache.filter((e) => e.hash !== r.hash),
             ];
             saveRecentsCache(recentsCache);

@@ -55,7 +55,7 @@ class _ViewSnapshot:
     pgn_result: str | None
     pgn_termination: str | None
     view_hash: str | None = None
-    view_summary: str | None = None
+    view_summary: dict | None = None
 
 
 @dataclass
@@ -73,7 +73,7 @@ class ViewModeParams:
     pgn_result: str | None = None
     pgn_termination: str | None = None
     view_hash: str | None = None
-    view_summary: str | None = None
+    view_summary: dict | None = None
 
 
 class HumanVsEngine:
@@ -160,7 +160,7 @@ class HumanVsEngine:
         # SHA-256 hash and human-readable summary of the viewed game's source
         # text (PGN or FEN). None for play-mode games and view/start transitions.
         self._view_hash: str | None = None
-        self._view_summary: str | None = None
+        self._view_summary: dict | None = None
         self._tb: TablebaseProber | None = None
         self._lock = asyncio.Lock()
 

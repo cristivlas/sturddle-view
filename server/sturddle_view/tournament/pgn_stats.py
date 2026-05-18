@@ -377,11 +377,14 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
     pgn_hash = hashlib.sha256(pgn_text.strip().encode("utf-8")).hexdigest()
     white = game.headers.get("White", "?")
     black = game.headers.get("Black", "?")
-    summary = (
-        f"{white} vs {black}"
-        if (white != "?" and black != "?")
-        else None
-    )
+    # _get_game_offsets only indexes decisive games, so Result is always decisive here.
+    result = game.headers["Result"]
+    summary = {
+        "white": white if white != "?" else None,
+        "black": black if black != "?" else None,
+        "result": result,
+        "side_to_move": None,
+    }
     return {
         "pgn": pgn_text,
         "hash": pgn_hash,

@@ -4,7 +4,7 @@
 
 import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, openSettings, reportError, toast } from "../dialogs.js";
-import { showImportPositionDialog } from "../import-position-dialog.js";
+import { showImportPositionDialog, formatSummary } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, setDockContainer, isMobileLayout } from "../play-debug-windows.js";
 import {
   setCommentaryDockContainer,
@@ -695,8 +695,8 @@ export const playPerspective = {
     async function _confirmReplaceViewedGame({ incomingHash, incomingSummary, okLabel }) {
       if (!viewing) return true;
       if (incomingHash && incomingHash === _viewingHash) return true;
-      const current = _viewingSummary ? `"${_viewingSummary}"` : "the current game";
-      const incoming = incomingSummary ? ` with "${incomingSummary}"` : "";
+      const current = formatSummary(_viewingSummary) ? `"${formatSummary(_viewingSummary)}"` : "the current game";
+      const incoming = formatSummary(incomingSummary) ? ` with "${formatSummary(incomingSummary)}"` : "";
       return await confirm({
         message: `Replace ${current}${incoming}?`,
         okLabel,

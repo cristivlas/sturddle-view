@@ -120,7 +120,7 @@ class RecentImports:
 
     # ---- write paths (async) ----
 
-    async def save(self, fmt: str, text: str, summary: str) -> str:
+    async def save(self, fmt: str, text: str, summary: dict) -> str:
         """Upsert an entry for ``text``. Writes the blob if new, updates the
         index, evicts oldest entries past the cap. Returns the hash."""
         trimmed = text.strip()

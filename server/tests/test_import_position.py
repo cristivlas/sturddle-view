@@ -26,7 +26,7 @@ def test_parse_fen_starting_position():
     assert p.side_to_move == "white"
     assert p.ply == 0
     assert p.moves_uci == []
-    assert "White to move" in p.summary
+    assert p.summary["side_to_move"] == "white" and p.summary["result"] is None
 
 
 def test_parse_fen_midgame_black_to_move():
@@ -94,7 +94,7 @@ def test_parse_pgn_basic_mainline():
     assert p.ply == 4
     # Standard startpos PGN → start_fen is None so opening lookup engages.
     assert p.start_fen is None
-    assert "Carlsen" in p.summary and "Nakamura" in p.summary
+    assert p.summary["white"] == "Carlsen" and p.summary["black"] == "Nakamura"
     assert p.headers["White"] == "Carlsen"
 
 
@@ -103,7 +103,7 @@ def test_parse_pgn_no_headers_summary():
     assert p.moves_uci == ["e2e4", "e7e5", "g1f3"]
     assert p.side_to_move == "black"
     # When both players are unknown the summary falls back to side-only.
-    assert "Black to move" in p.summary
+    assert p.summary["side_to_move"] == "black" and p.summary["white"] is None and p.summary["black"] is None
 
 
 def test_parse_pgn_with_starting_fen_header():

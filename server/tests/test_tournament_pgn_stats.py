@@ -1374,7 +1374,10 @@ def test_read_game_record_returns_hash_and_summary():
     # the same hash back (both sides use python-chess serialized form).
     expected_hash = hashlib.sha256(rec["pgn"].strip().encode("utf-8")).hexdigest()
     assert rec["hash"] == expected_hash
-    # summary is "White vs Black" when both headers are present
-    assert rec["summary"] == f"{rec['engine_white']} vs {rec['engine_black']}"
+    # summary is a structured dict; white/black match the engine headers
+    s = rec["summary"]
+    assert s["white"] == rec["engine_white"] and s["black"] == rec["engine_black"]
+    # result mirrors rec; _get_game_offsets only indexes decisive games
+    assert s["result"] == rec["result"]
 
 
