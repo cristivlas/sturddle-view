@@ -205,7 +205,7 @@ def test_build_pgn_matches_startpos_snapshot():
         ],
         final_clocks=(302.0, 300.0),
         headers={
-            "Event": "Sturddle View — Human vs Engine",
+            "Event": "Sturddle View -- Human vs Engine",
             "Site": "Sturddle View",
         },
         result="0-1",
@@ -229,7 +229,7 @@ def test_build_pgn_matches_custom_fen_snapshot():
         ],
         final_clocks=(302.0, 300.0),
         headers={
-            "Event": "Sturddle View — Human vs Engine",
+            "Event": "Sturddle View -- Human vs Engine",
             "Site": "Sturddle View",
         },
         result="0-1",
@@ -256,7 +256,7 @@ def test_build_pgn_matches_seeded_clock_snapshot():
         clock_history=clock_history,
         final_clocks=(299.0, 295.0),
         headers={
-            "Event": "Sturddle View — Human vs Engine",
+            "Event": "Sturddle View -- Human vs Engine",
             "Site": "Sturddle View",
         },
         result="0-1",

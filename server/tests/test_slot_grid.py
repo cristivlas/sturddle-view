@@ -67,7 +67,7 @@ async def _new_page(browser, base):
 # Helper: run a function inside the page that builds a slot grid with
 # the given fake-window list and returns the requested probe.
 PROBE_JS = """
-async ({windows, cellW, cellH, gap, probe}) => {
+async ({windows, cellW, cellH, gap, probe, viewW, viewH}) => {
     const m = await import('/ui/app/workspace-slot-grid.js');
     const grid = m.createSlotGrid({
         top: 0, left: 0,
@@ -75,6 +75,8 @@ async ({windows, cellW, cellH, gap, probe}) => {
         cellHeight: cellH,
         gap,
         getWindows: () => windows,
+        getRight: () => viewW,
+        getBottom: () => viewH,
     });
     if (probe === 'claim') return grid.claim();
     if (probe === 'capacity') return grid.capacity();
@@ -89,7 +91,8 @@ async ({windows, cellW, cellH, gap, probe}) => {
 async def _probe(page, *, windows, probe):
     return await page.evaluate(
         PROBE_JS,
-        {"windows": windows, "cellW": CELL_W, "cellH": CELL_H, "gap": GAP, "probe": probe},
+        {"windows": windows, "cellW": CELL_W, "cellH": CELL_H, "gap": GAP, "probe": probe,
+         "viewW": VIEWPORT["width"], "viewH": VIEWPORT["height"]},
     )
 
 
@@ -220,7 +223,7 @@ async def test_dynamic_cell_width_recomputes_capacity(server, browser):
     ctx, page = await _new_page(browser, server)
     try:
         cap = await page.evaluate(
-            """async () => {
+            """async ([viewW, viewH]) => {
                 const m = await import('/ui/app/workspace-slot-grid.js');
                 let w = 200;
                 const grid = m.createSlotGrid({
@@ -229,12 +232,15 @@ async def test_dynamic_cell_width_recomputes_capacity(server, browser):
                     cellHeight: 150,
                     gap: 8,
                     getWindows: () => [],
+                    getRight: () => viewW,
+                    getBottom: () => viewH,
                 });
                 const cap1 = grid.capacity();
                 w = 400;
                 const cap2 = grid.capacity();
                 return { cap1, cap2 };
-            }"""
+            }""",
+            [VIEWPORT["width"], VIEWPORT["height"]],
         )
         # cap1: floor(1288/208) = 6 cols * 4 rows = 24
         # cap2: floor(1288/408) = 3 cols * 4 rows = 12

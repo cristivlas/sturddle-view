@@ -139,6 +139,9 @@ export const playPerspective = {
             <button id="edit-pos" class="ribbon-btn" aria-label="Edit position" title="Edit position">
               <wa-icon name="pencil"></wa-icon>
             </button>
+            <button id="save-pgn" class="ribbon-btn desktop-only" aria-label="Save game as PGN" title="Save PGN">
+              <wa-icon name="download"></wa-icon>
+            </button>
             <span class="ribbon-sep" aria-hidden="true"></span>
             <button id="takeback" class="ribbon-btn" disabled aria-label="Take back" title="Take back">
               <wa-icon name="rotate-left"></wa-icon>
@@ -174,6 +177,9 @@ export const playPerspective = {
             </button>
             <button id="view-edit" class="ribbon-btn" aria-label="Edit position" title="Edit position">
               <wa-icon name="pencil"></wa-icon>
+            </button>
+            <button id="view-save-pgn" class="ribbon-btn desktop-only" aria-label="Save game as PGN" title="Save PGN">
+              <wa-icon name="download"></wa-icon>
             </button>
             <span class="ribbon-sep" aria-hidden="true"></span>
             <button id="view-first" class="ribbon-btn" aria-label="First move" title="First move">
@@ -273,6 +279,8 @@ export const playPerspective = {
     const viewAnalyzeBtn = root.querySelector("#view-analyze");
     const viewPlayFromHereBtn = root.querySelector("#view-play-from-here");
     const viewEditBtn = root.querySelector("#view-edit");
+    const savePgnBtn = root.querySelector("#save-pgn");
+    const viewSavePgnBtn = root.querySelector("#view-save-pgn");
     const editPosBtn = root.querySelector("#edit-pos");
     const editRibbon = root.querySelector("#edit-controls");
     const editSideBtn = root.querySelector("#edit-side");
@@ -759,6 +767,39 @@ export const playPerspective = {
       }
     };
 
+    const onSavePgn = async () => {
+      const needsPause = !viewing && !paused && !gameOver && resignAvailable;
+      if (needsPause) {
+        try { await ctx.api("POST", "/game/pause", {}); } catch (e) {
+          reportError(ctx, "Save PGN failed", e);
+          return;
+        }
+      }
+      try {
+        const r = await fetch("/game/pgn");
+        if (!r.ok) {
+          const detail = await r.text();
+          throw new Error(`GET /game/pgn -> ${r.status} ${detail}`);
+        }
+        const blob = await r.blob();
+        const cd = r.headers.get("Content-Disposition") || "";
+        const match = cd.match(/filename="([^"]+)"/);
+        const filename = match ? match[1] : "game.pgn";
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        reportError(ctx, "Save PGN failed", e);
+      } finally {
+        if (needsPause) {
+          try { await ctx.api("POST", "/game/resume", {}); } catch (_) { /* best-effort */ }
+        }
+      }
+    };
+
     let takebackPending = false;
     const onTakeback = async () => {
       if (takebackPending) return;
@@ -1112,6 +1153,8 @@ export const playPerspective = {
     editFlipBtn.addEventListener("click", onViewFlip);
     viewAnalyzeBtn.addEventListener("click", onAnalyze);
     viewEditBtn.addEventListener("click", onViewEditPosition);
+    savePgnBtn?.addEventListener("click", onSavePgn);
+    viewSavePgnBtn?.addEventListener("click", onSavePgn);
     viewPlayFromHereBtn.addEventListener("click", onPlayFromHere);
     editSideBtn.addEventListener("click", onEditSide);
     editSideTogglePill.addEventListener("click", onEditSideToggle);

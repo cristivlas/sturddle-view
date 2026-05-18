@@ -339,9 +339,9 @@ remains usable for last-known state inspection.
 
 - Each game is saved as its own file when `pgn_autosave` is enabled.
 - Filename: `YYYYMMDD-HHMMSS-{game_id}.pgn` under `pgn_dir`.
-- One game per file (not appended) — easier to delete/share individually.
+- One game per file (not appended) -- easier to delete/share individually.
   Bulk import to other tools is `cat *.pgn > all.pgn` away.
-- Headers: Event (Sturddle View — Human vs Engine), Site, Date, White, Black,
+- Headers: Event (Sturddle View -- Human vs Engine), Site, Date, White, Black,
   Result, Termination, TimeControl. White/Black are "Human" and the engine's
   UCI-advertised name (falling back to its binary filename), side-correct.
 - Resign produces a result + `Termination=resignation`; flag fall produces

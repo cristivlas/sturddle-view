@@ -56,31 +56,34 @@ from the live board (`chess.pgn.Game.from_board()` plus headers and
 `%clk` annotations). This is exactly what `_maybe_save_pgn` does,
 but currently coupled to disk I/O and to the `pgn_dir` setting.
 
-## Option A — Minimal: Refactor `_maybe_save_pgn`
+## Option A — Implemented
 
-Split into two functions:
+`_maybe_save_pgn` already delegated to the standalone `build_pgn()`
+function in `chess/pgn_build.py`, so no extract-method refactor was
+needed. Instead, a new `get_pgn_text() -> tuple[str, str] | None`
+method was added to `HumanVsEngine`:
 
-- `_build_pgn(result, termination) -> str`: pure builder. Returns
-  the PGN text. No file I/O, no `pgn_dir` dependency. Re-used by
-  the existing autosave path and by the new export endpoint.
-- `_maybe_save_pgn(...)`: thin wrapper that calls `_build_pgn`,
-  resolves `pgn_dir`, and writes the file atomically. Behavior of
-  the autosave feature unchanged.
+- Returns `(pgn_text, suggested_filename)` or `None` (no game / no moves).
+- **View mode with raw text** (`_view_raw_text` set): returns the
+  verbatim original import text -- zero metadata loss.
+- **View mode without raw text** (entered via `/game/view/start`
+  fork, not a direct import): rebuilds from `_view_full_moves` and
+  available headers. This is the one lossy case; annotations on the
+  pre-fork prefix are lost.
+- **Play mode**: builds fresh PGN from the live board with
+  `result="*"` / `termination="unterminated"` for in-progress games.
+- **FEN-only view** (no moves): returns `None`; endpoint replies 409.
 
-Add one new endpoint:
+`ViewModeParams` and `_ViewSnapshot` both carry `view_raw_text`.
+`import_game` passes `raw_text` as `view_raw_text` so the verbatim
+bytes travel with the session for the duration of the view.
 
-- `GET /game/pgn`: play-mode -> `_build_pgn(result="*", termination="unterminated")`
-  if the game is in progress, real result/termination if finished.
-  View-mode FEN -> generated minimal PGN from `_view_full_moves` and
-  available headers (or 400 if the import was FEN-only with no moves).
-  View-mode PGN -> redirect or 409 telling the client to use the
-  recent-imports hash it already has.
+One new endpoint: `GET /game/pgn` -- returns the file with
+`Content-Disposition: attachment`.
 
-Frontend behavior:
-
-- "Save PGN" button. If client knows it's view-mode and has the
-  import hash, fetch `GET /game/recent-imports/{hash}` and download
-  `text`. Otherwise fetch `GET /game/pgn`.
+Frontend: floppy-disk button on both play and view ribbons
+(`desktop-only`). Single `onSavePgn` handler does a plain `fetch`
+and triggers a blob download with the server-supplied filename.
 
 ### Pros
 
@@ -158,17 +161,12 @@ Option B's "completed games show up in recents" is appealing but
 better delivered as an explicit feature with its own store /
 dropdown section, not as a side effect of solving export.
 
-## Open Questions
+## Resolved Questions
 
-1. Mid-game export in play mode: result `*`, termination
-   `unterminated` (matches autosave's mid-game write). OK?
-2. View-mode export when the user is past a `play_from_here` fork
-   and has played additional moves: export the live board (loses
-   the original imported annotations on the prefix). Acceptable, or
-   should we splice?
-3. Filename convention. Suggest:
-   `sturddle-{YYYYMMDD-HHMMSS}-{white}-vs-{black}.pgn`,
-   sanitized for filesystem safety, derived server-side and
-   delivered via `Content-Disposition`.
-4. View-mode FEN export: download a `.fen` file (one-liner) or
-   refuse and tell the user there is no game to export?
+1. Mid-game: `result="*"`, `termination="unterminated"`. Implemented.
+2. Post-`play_from_here` fork: exports the live board; pre-fork
+   annotations are lost. Accepted cost.
+3. Filename: `sturddle-{YYYYMMDD-HHMMSS}-{white}-vs-{black}.pgn`,
+   non-alnum chars replaced with `_`, delivered via
+   `Content-Disposition`. Implemented.
+4. FEN-only view: 409, no download. Implemented.

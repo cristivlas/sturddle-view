@@ -56,6 +56,7 @@ class _ViewSnapshot:
     pgn_termination: str | None
     view_hash: str | None = None
     view_summary: dict | None = None
+    view_raw_text: str | None = None
 
 
 @dataclass
@@ -74,6 +75,9 @@ class ViewModeParams:
     pgn_termination: str | None = None
     view_hash: str | None = None
     view_summary: dict | None = None
+    # Raw import text (verbatim PGN or FEN). When set, get_pgn_text() returns
+    # this directly so no metadata is lost on export.
+    view_raw_text: str | None = None
 
 
 class HumanVsEngine:
@@ -161,6 +165,7 @@ class HumanVsEngine:
         # text (PGN or FEN). None for play-mode games and view/start transitions.
         self._view_hash: str | None = None
         self._view_summary: dict | None = None
+        self._view_raw_text: str | None = None
         self._tb: TablebaseProber | None = None
         self._lock = asyncio.Lock()
 
@@ -317,6 +322,7 @@ class HumanVsEngine:
         self._view_pgn_termination = None
         self._view_hash = None
         self._view_summary = None
+        self._view_raw_text = None
         self._view_cursor = 0
 
     def _eval_pov(self, stm: chess.Color = chess.WHITE) -> chess.Color:
@@ -765,6 +771,7 @@ class HumanVsEngine:
             self._view_root_comment = params.root_comment or None
             self._view_hash = params.view_hash or None
             self._view_summary = params.view_summary or None
+            self._view_raw_text = params.view_raw_text or None
             self._view_cursor = 0  # land at start; avoid end-of-game modal
             self._start_fen = params.start_fen
             self._board = start_board
@@ -861,6 +868,7 @@ class HumanVsEngine:
                 pgn_termination=self._view_pgn_termination,
                 view_hash=self._view_hash,
                 view_summary=self._view_summary,
+                view_raw_text=self._view_raw_text,
             )
             self._mode = Mode.EDITING
         if need_cancel_analysis:
@@ -887,6 +895,7 @@ class HumanVsEngine:
         self._view_pgn_termination = snap.pgn_termination
         self._view_hash = snap.view_hash
         self._view_summary = snap.view_summary
+        self._view_raw_text = snap.view_raw_text
 
     async def commit_edit(self, fen: str) -> str:
         """Apply the edited FEN as a fresh view-mode position. On any
@@ -1605,6 +1614,97 @@ class HumanVsEngine:
         self._board = None
         return game_id, {"result": result, "termination": termination}
 
+    def _make_pgn_filename(self, white: str, black: str) -> str:
+        wall = self._game_started_wall or time.time()
+        ts = datetime.datetime.fromtimestamp(wall).strftime("%Y%m%d-%H%M%S")
+        w_safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in white)
+        b_safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in black)
+        return f"sturddle-{ts}-{w_safe}-vs-{b_safe}.pgn"
+
+    def get_pgn_text(self) -> tuple[str, str] | None:
+        """Return (pgn_text, suggested_filename) for the current game, or None.
+
+        Covers play mode (in-progress or finished) and view mode after a PGN
+        import or a play_from_here fork.  Returns None when there is nothing
+        to export (no board, no moves, or FEN-only view with no game history).
+        """
+        if self._board is None:
+            return None
+
+        if self._viewing and self._view_raw_text:
+            # Verbatim round-trip: return original import bytes unchanged.
+            # Covers zero-move PGNs (headers-only) as well as full games.
+            white = self._view_white_name or "?"
+            black = self._view_black_name or "?"
+            return self._view_raw_text, self._make_pgn_filename(white, black)
+
+        if self._viewing and not self._view_full_moves:
+            return None  # FEN-only view with no verbatim text: nothing to export
+
+        if self._viewing:
+            result = self._view_pgn_result or "*"
+            termination = self._view_pgn_termination or "unterminated"
+            white = self._view_white_name or "?"
+            black = self._view_black_name or "?"
+            # "Sturddle View" (no player label) -- origin unknown after fork/rebuild.
+            headers = {
+                "Event": "Sturddle View",
+                "Site": "Sturddle View",
+                "Date": datetime.date.today().strftime("%Y.%m.%d"),
+                "White": white,
+                "Black": black,
+            }
+            pgn_text = build_pgn(
+                start_fen=self._start_fen,
+                moves_uci=[m.uci() for m in self._view_full_moves],
+                clock_history=list(self._view_clock_history) or None,
+                final_clocks=(
+                    (self._view_final_white, self._view_final_black)
+                    if self._view_final_white is not None and self._view_final_black is not None
+                    else None
+                ),
+                headers=headers,
+                result=result,
+                termination=termination,
+            )
+        else:
+            if not self._board.move_stack:
+                return None
+            result = "*"
+            termination = "unterminated"
+            engine_label = self._engine_name or Path(self._engine_path).name
+            white = "Human" if self._human_white else engine_label
+            black = engine_label if self._human_white else "Human"
+            headers = {
+                "Event": "Sturddle View -- Human vs Engine",
+                "Site": "Sturddle View",
+                "Date": datetime.date.today().strftime("%Y.%m.%d"),
+                "White": white,
+                "Black": black,
+            }
+            opening = None
+            if self._openings is not None and self._start_fen is None:
+                ucis = [m.uci() for m in self._board.move_stack]
+                hit = self._openings.lookup(ucis)
+                if hit is not None:
+                    opening = (hit.eco, hit.name)
+            tc = None
+            if self._clock.tc.initial_seconds:
+                tc = (int(self._clock.tc.initial_seconds), int(self._clock.tc.increment_seconds))
+            pgn_text = build_pgn(
+                start_fen=self._start_fen,
+                moves_uci=[m.uci() for m in self._board.move_stack],
+                clock_history=list(self._clock.history),
+                final_clocks=(self._clock.white_time, self._clock.black_time),
+                headers=headers,
+                opening=opening,
+                result=result,
+                termination=termination,
+                time_control=tc,
+            )
+
+        return pgn_text, self._make_pgn_filename(white, black)
+
     def _maybe_save_pgn(self, *, result: str, termination: str) -> Path | None:
         if self._board is None or self._game_id is None:
             return None
@@ -1629,7 +1729,7 @@ class HumanVsEngine:
         white = "Human" if self._human_white else engine_label
         black = engine_label if self._human_white else "Human"
         headers = {
-            "Event": "Sturddle View — Human vs Engine",
+            "Event": "Sturddle View -- Human vs Engine",
             "Site": "Sturddle View",
             "Date": datetime.date.today().strftime("%Y.%m.%d"),
             "White": white,

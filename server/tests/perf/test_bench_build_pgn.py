@@ -26,7 +26,7 @@ def _load_game() -> chess.pgn.Game:
 _GAME = _load_game()
 _MOVES = [node.move for node in _GAME.mainline()]
 _HEADERS = {
-    "Event": "Sturddle View — Human vs Engine",
+    "Event": "Sturddle View -- Human vs Engine",
     "Site": "Sturddle View",
     "White": "Human",
     "Black": "FakeEngine",

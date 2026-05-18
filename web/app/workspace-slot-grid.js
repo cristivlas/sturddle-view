@@ -7,11 +7,11 @@
 
 export const SLOT_GAP = 1;
 
-export function createSlotGrid({ top, left, getCellWidth, cellHeight, gap = SLOT_GAP, getWindows, getRight = () => window.innerWidth, getMaxRows = () => Infinity }) {
+export function createSlotGrid({ top, left, getCellWidth, cellHeight, gap = SLOT_GAP, getWindows, getRight = () => window.innerWidth, getBottom = () => window.innerHeight, getMaxRows = () => Infinity }) {
   function gridDims() {
     const cw = getCellWidth();
     const availW = Math.max(0, getRight() - left);
-    const availH = Math.max(0, window.innerHeight - top);
+    const availH = Math.max(0, getBottom() - top);
     const cols = Math.max(1, Math.floor((availW + gap) / (cw + gap)));
     const rows = Math.min(getMaxRows(), Math.max(1, Math.floor((availH + gap) / (cellHeight + gap))));
     return { cols, rows, cw };
