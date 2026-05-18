@@ -1415,6 +1415,9 @@ wa-dialog wa-tab-group { min-width: 0; }
    Settings is now form-shaped only, so default WA spacing fits naturally. */
 /* Allow popovers/dropdowns inside dialogs to escape clipping ancestors. */
 wa-dialog::part(body) { overflow: visible !important; }
+/* Suppress focus-visible ring on the scrollable body div; it flashes amber
+   briefly on open (showModal triggers focus before any user gesture). */
+wa-dialog::part(body):focus-visible { outline: none; }
 wa-dialog::part(dialog) {
   overflow: visible !important;
 }
