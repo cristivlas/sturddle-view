@@ -8,12 +8,18 @@
 
 import { apiErrorDetail, showDialog } from "./dialogs.js";
 
-// Format a summary dict {white, black, result, side_to_move} into a display string.
+// Format a summary dict {white, black, result, side_to_move, fen} into a
+// display string. `short: true` returns a compact form for tight UI (e.g.
+// drop-down rows): for FEN imports, only the piece-placement field.
 // Returns null when there is nothing meaningful to show.
-export function formatSummary(s) {
+export function formatSummary(s, { short = false } = {}) {
   if (!s) return null;
   const names = s.white && s.black ? `${s.white} vs ${s.black}` : (s.white || s.black || null);
   const outcome = s.result || (s.side_to_move ? `${s.side_to_move[0].toUpperCase()}${s.side_to_move.slice(1)} to move` : null);
+  // FEN-only imports (no headers, no result) display the FEN itself.
+  // If a future PGN summary ever carries `fen` alongside names/result, the
+  // names/result path still wins.
+  if (s.fen && !names && !s.result) return short ? s.fen.split(" ", 1)[0] : s.fen;
   if (names && outcome) return `${names}: ${outcome}`;
   return names || outcome || null;
 }
@@ -21,6 +27,21 @@ export function formatSummary(s) {
 const REPLACE_CURRENT_FALLBACK = "the current game";
 const REPLACE_INCOMING_FALLBACK = "a different game";
 const ANALYSIS_WARNING = "Analysis in progress will be cancelled.";
+const CONFIRM_TRUNC_MAX = 60;
+const RECENT_TRUNC_MAX = 40;
+const ELLIPSIS = "...";
+
+// Shorten a string by keeping the head + tail with an ellipsis in the
+// middle. Preserves both ends, which matters for FENs (back rank info
+// lives at both extremes). Returns the input unchanged when already short.
+function truncateMiddle(text, max) {
+  if (!text || text.length <= max) return text;
+  if (max <= ELLIPSIS.length) return text.slice(0, Math.max(0, max));
+  const slot = max - ELLIPSIS.length;
+  const head = Math.ceil(slot / 2);
+  const tail = slot - head;
+  return text.slice(0, head) + ELLIPSIS + text.slice(text.length - tail);
+}
 
 // Confirm before replacing the game currently shown in the viewer.
 // Skips the prompt (returns true) when the incoming hash matches the current
@@ -58,7 +79,9 @@ export function confirmReplaceViewedGame({
         k.textContent = `${label}:`;
         const v = document.createElement("div");
         v.className = "replace-view-summary";
-        v.textContent = value;
+        const shown = truncateMiddle(value, CONFIRM_TRUNC_MAX);
+        v.textContent = shown;
+        if (shown !== value) v.title = value;
         row.append(k, v);
         wrap.appendChild(row);
       }
@@ -208,18 +231,31 @@ export function showImportPositionDialog({ api }) {
         const opt = document.createElement("wa-option");
         opt.value = String(i);
         opt.dataset.hash = entry.hash;
-        const label = (formatSummary(entry.summary) || entry.hash.slice(0, 12)).replace(/"/g, "&quot;");
-        opt.innerHTML = `${entry.format.toUpperCase()} -- ${label}` +
-          `<button slot="end" class="recent-del" title="Remove from history" aria-label="Remove">` +
-          `<wa-icon name="trash"></wa-icon></button>`;
-        const btn = opt.querySelector("button.recent-del");
+        const full = formatSummary(entry.summary, { short: true }) || entry.hash.slice(0, 12);
+        const shown = truncateMiddle(full, RECENT_TRUNC_MAX);
+        if (shown !== full) opt.title = full;
+        // textContent on the label (no innerHTML) blocks any HTML-injection
+        // from PGN headers in the summary.
+        const labelEl = document.createElement("span");
+        labelEl.className = "recent-label";
+        labelEl.textContent = shown;
+        opt.append(labelEl);
+        const delBtn = document.createElement("button");
+        delBtn.slot = "end";
+        delBtn.className = "recent-del";
+        delBtn.title = "Remove from history";
+        delBtn.setAttribute("aria-label", "Remove");
+        const delIcon = document.createElement("wa-icon");
+        delIcon.setAttribute("name", "trash");
+        delBtn.append(delIcon);
+        opt.append(delBtn);
         // wa-select listens for `mouseup` on the listbox container and
         // routes it through handleOptionClick -> hide(). Stop both phases
         // so the listbox stays open.
         const stop = (ev) => ev.stopPropagation();
-        btn.addEventListener("mousedown", stop);
-        btn.addEventListener("mouseup", stop);
-        btn.addEventListener("click", (ev) => {
+        delBtn.addEventListener("mousedown", stop);
+        delBtn.addEventListener("mouseup", stop);
+        delBtn.addEventListener("click", (ev) => {
           ev.stopPropagation();
           ev.preventDefault();
           // Optimistic: remove from cache + DOM immediately so the

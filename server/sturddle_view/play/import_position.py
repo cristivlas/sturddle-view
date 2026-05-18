@@ -296,7 +296,13 @@ def parse_fen(text: str) -> ImportedPosition:
         final_fen=board.fen(),
         side_to_move=side,
         ply=board.ply(),
-        summary={"white": None, "black": None, "result": None, "side_to_move": side},
+        summary={
+            "white": None,
+            "black": None,
+            "result": None,
+            "side_to_move": side,
+            "fen": board.fen(),
+        },
     )
 
 

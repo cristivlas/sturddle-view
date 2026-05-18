@@ -27,6 +27,7 @@ def test_parse_fen_starting_position():
     assert p.ply == 0
     assert p.moves_uci == []
     assert p.summary["side_to_move"] == "white" and p.summary["result"] is None
+    assert p.summary["fen"] == "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
 
 def test_parse_fen_midgame_black_to_move():
@@ -104,6 +105,8 @@ def test_parse_pgn_no_headers_summary():
     assert p.side_to_move == "black"
     # When both players are unknown the summary falls back to side-only.
     assert p.summary["side_to_move"] == "black" and p.summary["white"] is None and p.summary["black"] is None
+    # fen field is reserved for FEN imports; PGN summaries omit it.
+    assert "fen" not in p.summary
 
 
 def test_parse_pgn_with_starting_fen_header():
