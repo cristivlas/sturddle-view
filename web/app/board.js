@@ -53,6 +53,9 @@ export function mountBoard({ element, onMove, styleId }) {
     if (yes === inputEnabled) return;
     inputEnabled = yes;
     if (yes) {
+      // Disarm any handler the PositionEditor may have left active so the
+      // library's internal guard doesn't throw "moveInput already enabled".
+      board.disableMoveInput();
       board.enableMoveInput((event) => {
         if (event.type === INPUT_EVENT_TYPE.validateMoveInput) {
           const piece = event.piece || "";
