@@ -97,9 +97,10 @@ def test_enter_view_mode_blocked_only_in_editing():
     assert not _is_allowed(Mode.EDITING, Op.ENTER_VIEW_MODE)
 
 
-def test_enter_edit_mode_allowed_only_in_viewing():
+def test_enter_edit_mode_allowed_in_viewing_and_analyzing():
     assert _is_allowed(Mode.VIEWING, Op.ENTER_EDIT_MODE)
-    for mode in (Mode.PLAY, Mode.PAUSED, Mode.EDITING, Mode.ANALYZING):
+    assert _is_allowed(Mode.ANALYZING, Op.ENTER_EDIT_MODE)
+    for mode in (Mode.PLAY, Mode.PAUSED, Mode.EDITING):
         assert not _is_allowed(mode, Op.ENTER_EDIT_MODE)
 
 

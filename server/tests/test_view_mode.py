@@ -208,6 +208,24 @@ async def test_view_nav_rejected_during_analysis(hve):
         await h.play_from_here(tc=TimeControl(60, 0))
 
 
+async def test_viewing_flag_true_while_analyzing_from_view(hve):
+    """Regression: _viewing must stay True when analysis is entered from view
+    mode, so _clock_event/_board_event keep emitting the view-mode payload."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None, moves_uci=["e2e4", "e7e5"], clock_history=None,
+    ))
+    assert h._viewing is True
+    h._mode = Mode.ANALYZING
+    h._pre_analysis_mode = Mode.VIEWING
+    assert h._viewing is True  # must stay True -- not flip to False
+    assert h._analysis_mode is True
+
+    # When entered from play (PAUSED), _viewing must be False.
+    h._pre_analysis_mode = Mode.PAUSED
+    assert h._viewing is False
+
+
 async def test_flag_fall_does_not_trample_game_installed_during_publish(hve):
     """Race regression: _handle_flag_fall releases the lock between its
     two critical sections to publish the game_result event. If a new_game

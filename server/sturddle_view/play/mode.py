@@ -49,7 +49,7 @@ ALLOWED_MODES_BY_OP: dict[Op, frozenset[Mode]] = {
     Op.RESUME:          frozenset({Mode.PAUSED}),
     Op.START_ANALYSIS:  frozenset({Mode.PAUSED, Mode.VIEWING}),
     Op.ENTER_VIEW_MODE: frozenset({Mode.PLAY, Mode.PAUSED, Mode.VIEWING, Mode.ANALYZING}),
-    Op.ENTER_EDIT_MODE: frozenset({Mode.VIEWING}),
+    Op.ENTER_EDIT_MODE: frozenset({Mode.VIEWING, Mode.ANALYZING}),
     Op.VIEW_GOTO:       frozenset({Mode.VIEWING}),
     Op.PLAY_FROM_HERE:  frozenset({Mode.VIEWING}),
     Op.COMMIT_EDIT:     frozenset({Mode.EDITING}),

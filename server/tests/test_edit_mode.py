@@ -155,13 +155,19 @@ async def test_enter_edit_mode_from_viewing_transitions_to_editing(hve: HumanVsE
     assert hve._analysis_mode is False
 
 
-async def test_cannot_enter_edit_from_analyzing(hve: HumanVsEngine):
-    """ANALYZING blocks enter_edit_mode; caller must stop_analysis first."""
+async def test_enter_edit_from_analyzing_cancels_analysis(hve: HumanVsEngine):
+    """ANALYZING -> EDITING: analysis is cancelled, mode lands in EDITING."""
     await _enter_view(hve)
     hve._mode = Mode.ANALYZING
-    with pytest.raises(ModeConflictError) as exc_info:
-        await hve.enter_edit_mode()
-    assert exc_info.value.current is Mode.ANALYZING
+    cancel_called = []
+
+    async def fake_cancel():
+        cancel_called.append(True)
+
+    hve._cancel_analysis = fake_cancel
+    await hve.enter_edit_mode()
+    assert hve._mode is Mode.EDITING
+    assert cancel_called == [True]
 
 
 async def test_enter_edit_mode_rejects_when_already_editing(hve: HumanVsEngine):

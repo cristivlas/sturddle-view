@@ -161,12 +161,10 @@ class HumanVsEngine:
         return self._supervisor.engine_path
 
     # Derived bool views -- tests and API layer read these directly.
-    # _viewing is True in both VIEWING and EDITING: pre-refactor those two
-    # booleans coexisted (_viewing=True, _editing=True), so every call site
-    # that read self._viewing was already True during edit mode. The 6
-    # production sites (republish_state, apply_engine_settings_live,
-    # _persist, _board_event x2, _maybe_save_pgn) are all correct treating
-    # EDITING the same as VIEWING -- no live game, no autosave, frozen clock.
+    # _viewing is True in VIEWING, EDITING, and ANALYZING-from-view:
+    # pre-refactor _viewing=True was never cleared when analysis started,
+    # so all 6 call sites that read self._viewing must see True whenever
+    # the session originated from a view (no live game, frozen clock).
     _VIEW_MASK = int(Mode.VIEWING | Mode.EDITING)
 
     @property
@@ -179,7 +177,11 @@ class HumanVsEngine:
 
     @property
     def _viewing(self) -> bool:
-        return bool(self._mode & self._VIEW_MASK)
+        if self._mode & self._VIEW_MASK:
+            return True
+        # ANALYZING entered from a view session must still appear as viewing
+        # to _clock_event, _board_event, _persist, etc.
+        return self._mode is Mode.ANALYZING and self._pre_analysis_mode is Mode.VIEWING
 
     @property
     def _editing(self) -> bool:
@@ -825,6 +827,9 @@ class HumanVsEngine:
                 raise ModeConflictError(self._mode, Op.ENTER_EDIT_MODE)
             if self._board is None:
                 raise RuntimeError("no position")
+            need_cancel_analysis = self._mode is Mode.ANALYZING
+            if need_cancel_analysis:
+                self._mode = Mode.VIEWING
             pre_fen = self._board.fen()
             self._edit_pre_fen = pre_fen
             self._edit_view_snapshot = _ViewSnapshot(
@@ -844,6 +849,8 @@ class HumanVsEngine:
                 pgn_termination=self._view_pgn_termination,
             )
             self._mode = Mode.EDITING
+        if need_cancel_analysis:
+            await self._cancel_analysis()
         async with self._lock:
             await self._publish_board()
         return pre_fen
