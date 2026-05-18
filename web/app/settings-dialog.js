@@ -399,11 +399,11 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const playCol = document.createElement("div");
       playCol.className = "settings-panel-col";
       playCol.append(
+        humanSideRow,
+        makeDivider(),
         tcSection, inheritClocksRow,
         makeDivider(),
         togglesRow,
-        makeDivider(),
-        humanSideRow,
       );
       playPanel.append(playCol);
       // Display tab: presentation-only preferences (no gameplay effect).
