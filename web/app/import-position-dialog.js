@@ -27,7 +27,7 @@ export function formatSummary(s, { short = false } = {}) {
 const REPLACE_CURRENT_FALLBACK = "the current game";
 const REPLACE_INCOMING_FALLBACK = "a different game";
 const ANALYSIS_WARNING = "Analysis in progress will be cancelled.";
-const CONFIRM_TRUNC_MAX = 50;
+const CONFIRM_TRUNC_MAX = 46;
 const RECENT_TRUNC_MAX = 40;
 const ELLIPSIS = "...";
 
@@ -54,8 +54,14 @@ export function confirmReplaceViewedGame({
   analysisRunning = false,
 }) {
   if (incomingHash && currentHash && incomingHash === currentHash) return Promise.resolve(true);
-  const current = formatSummary(currentSummary) || REPLACE_CURRENT_FALLBACK;
-  const incoming = formatSummary(incomingSummary) || REPLACE_INCOMING_FALLBACK;
+  const rows = [
+    ["Current",      currentSummary,  REPLACE_CURRENT_FALLBACK],
+    ["Replace with", incomingSummary, REPLACE_INCOMING_FALLBACK],
+  ].map(([label, s, fallback]) => ({
+    label,
+    display: formatSummary(s, { short: true }) || fallback,
+    full:    formatSummary(s) || fallback,
+  }));
   return showDialog({
     label: "",
     width: "min(480px, 92vw)",
@@ -71,7 +77,7 @@ export function confirmReplaceViewedGame({
       title.textContent = "Replace game in viewer?";
       wrap.appendChild(title);
 
-      for (const [label, value] of [["Current", current], ["Replace with", incoming]]) {
+      for (const { label, display, full } of rows) {
         const row = document.createElement("div");
         row.className = "replace-view-row";
         const k = document.createElement("div");
@@ -79,9 +85,8 @@ export function confirmReplaceViewedGame({
         k.textContent = `${label}:`;
         const v = document.createElement("div");
         v.className = "replace-view-summary";
-        const shown = truncateMiddle(value, CONFIRM_TRUNC_MAX);
-        v.textContent = shown;
-        v.title = value;
+        v.textContent = truncateMiddle(display, CONFIRM_TRUNC_MAX);
+        v.title = full;
         row.append(k, v);
         wrap.appendChild(row);
       }
