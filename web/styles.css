@@ -323,7 +323,7 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   line-height: 1.4;
   word-break: break-word;
 }
-.import-pos-status.ok { color: var(--status-ok-fg); background: var(--status-ok-bg); }
+.import-pos-status.ok { color: var(--text); background: var(--row-bg-selected); }
 .import-pos-status.err { color: var(--status-err-fg); background: var(--status-err-bg); }
 .import-pos-status.muted { background: transparent; color: var(--muted); }
 .import-pos-playas { display: flex; align-items: center; gap: 12px; }

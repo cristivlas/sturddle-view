@@ -20,6 +20,10 @@ const TEXTAREA_ROWS = 8;
 const RECENTS_CACHE_KEY = "sturddle:import:recent";
 const RECENTS_DISPLAY_CAP = 10;
 
+function stripPly(summary) {
+  return (summary || "").replace(/\s*\(ply\s+\d+\)/gi, "").trim();
+}
+
 function loadRecentsCache() {
   try {
     const v = JSON.parse(localStorage.getItem(RECENTS_CACHE_KEY) || "[]");
@@ -34,7 +38,7 @@ function saveRecentsCache(entries) {
   const lean = entries.map((e) => ({
     hash: e.hash,
     format: e.format,
-    summary: e.summary,
+    summary: stripPly(e.summary),
     ts: e.ts,
   }));
   try {
@@ -122,7 +126,7 @@ export function showImportPositionDialog({ api }) {
         const opt = document.createElement("wa-option");
         opt.value = String(i);
         opt.dataset.hash = entry.hash;
-        const label = (entry.summary || entry.hash.slice(0, 12)).replace(/"/g, "&quot;");
+        const label = (stripPly(entry.summary) || entry.hash.slice(0, 12)).replace(/"/g, "&quot;");
         opt.innerHTML = `${entry.format.toUpperCase()} -- ${label}` +
           `<button slot="end" class="recent-del" title="Remove from history" aria-label="Remove">` +
           `<wa-icon name="trash"></wa-icon></button>`;
@@ -167,7 +171,7 @@ export function showImportPositionDialog({ api }) {
           if (targetFormat !== format) selectTab(targetFormat);
           textareas[targetFormat].value = r.text || "";
           syncSubmitEnabled();
-          setStatus(r.summary || "Loaded from history.", "ok");
+          setStatus(stripPly(r.summary) || "Loaded from history.", "ok");
         } catch (e) {
           setStatus(apiErrorDetail(e), "err");
         }
@@ -243,7 +247,7 @@ export function showImportPositionDialog({ api }) {
           // entry missing.
           if (r.hash) {
             recentsCache = [
-              { hash: r.hash, format, summary: r.summary || "", ts: Date.now() },
+              { hash: r.hash, format, summary: stripPly(r.summary), ts: Date.now() },
               ...recentsCache.filter((e) => e.hash !== r.hash),
             ];
             saveRecentsCache(recentsCache);
