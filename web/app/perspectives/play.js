@@ -988,7 +988,7 @@ export const playPerspective = {
       msg.style.display = "flex";
       msg.style.alignItems = "center";
       msg.style.gap = "6px";
-      msg.append("Analysis mode on");
+      msg.append("Analysis mode");
       const pvBtn = makeToastIconBtn("table-list", "Search Lines", onPvTable);
       pvBtn.style.marginLeft = "auto";
       msg.append(pvBtn);
