@@ -142,6 +142,11 @@ _iter_games_cache: dict[
     Path, tuple[int, int, tuple[tuple[str, str, str, str], ...]]
 ] = {}
 
+# Byte offsets of decisive games: offsets[i] is the file position of the
+# (i+1)-th decisive game. Keyed by (mtime_ns, size); same invalidation as
+# _iter_games_cache. Lets read_game_record seek directly to game N.
+_game_offsets_cache: dict[Path, tuple[int, int, list[int]]] = {}
+
 
 def _iter_games_keyed(pgn_path: Path):
     """Yield ``(round, white, black, result)`` 4-tuples for each game.
@@ -154,6 +159,7 @@ def _iter_games_keyed(pgn_path: Path):
         st = pgn_path.stat()
     except FileNotFoundError:
         _iter_games_cache.pop(pgn_path, None)
+        _game_offsets_cache.pop(pgn_path, None)
         return
     cached = _iter_games_cache.get(pgn_path)
     if cached is not None and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
@@ -311,6 +317,31 @@ def read_game_pgn(pgn_path: Path, game_n: int) -> str | None:
     return record["pgn"] if record else None
 
 
+def _build_game_offsets(pgn_path: Path, f) -> list[int]:
+    """Scan open text file and return byte offsets of decisive games."""
+    import chess.pgn
+    offsets: list[int] = []
+    f.seek(0)
+    while True:
+        offset = f.tell()
+        headers = chess.pgn.read_headers(f)
+        if headers is None:
+            break
+        if headers.get("Result", "*") in _DECISIVE_RESULTS:
+            offsets.append(offset)
+    return offsets
+
+
+def _get_game_offsets(pgn_path: Path, st) -> list[int]:
+    cached = _game_offsets_cache.get(pgn_path)
+    if cached is not None and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
+        return cached[2]
+    with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
+        offsets = _build_game_offsets(pgn_path, f)
+    _game_offsets_cache[pgn_path] = (st.st_mtime_ns, st.st_size, offsets)
+    return offsets
+
+
 def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
     """Return PGN + final-position metadata for the Nth completed game.
 
@@ -324,47 +355,44 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
         return None
     import chess.pgn
     from ..chess.pgn_walk import walk_mainline
-    seen = 0
+    try:
+        st = pgn_path.stat()
+    except FileNotFoundError:
+        return None
+    offsets = _get_game_offsets(pgn_path, st)
+    if game_n > len(offsets):
+        return None
     with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
-        while True:
-            offset = f.tell()
-            headers = chess.pgn.read_headers(f)
-            if headers is None:
-                return None
-            if headers.get("Result", "*") not in _DECISIVE_RESULTS:
-                continue
-            seen += 1
-            if seen == game_n:
-                f.seek(offset)
-                game = chess.pgn.read_game(f)
-                if game is None:
-                    return None
-                last_move_uci: str | None = None
-                board: chess.Board | None = None
-                for node, board, _ in walk_mainline(game):
-                    last_move_uci = node.move.uci()
-                if board is None:
-                    board = game.board()
-                pgn_text = str(game)
-                pgn_hash = hashlib.sha256(pgn_text.strip().encode("utf-8")).hexdigest()
-                white = game.headers.get("White", "?")
-                black = game.headers.get("Black", "?")
-                summary = (
-                    f"{white} vs {black}"
-                    if (white != "?" and black != "?")
-                    else None
-                )
-                return {
-                    "pgn": pgn_text,
-                    "hash": pgn_hash,
-                    "summary": summary,
-                    "final_fen": board.fen(),
-                    "last_move": last_move_uci,
-                    "engine_white": game.headers.get("White", ""),
-                    "engine_black": game.headers.get("Black", ""),
-                    "result": game.headers.get("Result", "*"),
-                    "termination": game.headers.get("Termination", ""),
-                }
+        f.seek(offsets[game_n - 1])
+        game = chess.pgn.read_game(f)
+    if game is None:
+        return None
+    last_move_uci: str | None = None
+    board: chess.Board | None = None
+    for node, board, _ in walk_mainline(game):
+        last_move_uci = node.move.uci()
+    if board is None:
+        board = game.board()
+    pgn_text = str(game)
+    pgn_hash = hashlib.sha256(pgn_text.strip().encode("utf-8")).hexdigest()
+    white = game.headers.get("White", "?")
+    black = game.headers.get("Black", "?")
+    summary = (
+        f"{white} vs {black}"
+        if (white != "?" and black != "?")
+        else None
+    )
+    return {
+        "pgn": pgn_text,
+        "hash": pgn_hash,
+        "summary": summary,
+        "final_fen": board.fen(),
+        "last_move": last_move_uci,
+        "engine_white": game.headers.get("White", ""),
+        "engine_black": game.headers.get("Black", ""),
+        "result": game.headers.get("Result", "*"),
+        "termination": game.headers.get("Termination", ""),
+    }
 
 
 def _needs_rewrite(pgn_path: Path, *, paired: bool = True) -> bool:
@@ -511,6 +539,7 @@ def rewrite_drop_partial_pairs(
                 f.write("\n" if block.endswith("\n") else "\n\n")
     os.replace(tmp, pgn_path)
     _iter_games_cache.pop(pgn_path, None)
+    _game_offsets_cache.pop(pgn_path, None)
     if config_path is not None:
         patch_config_json(config_path, deltas, ts=ts)
     return len(orphans), deltas
