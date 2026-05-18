@@ -27,7 +27,7 @@ function stripPly(summary) {
 function loadRecentsCache() {
   try {
     const v = JSON.parse(localStorage.getItem(RECENTS_CACHE_KEY) || "[]");
-    return Array.isArray(v) ? v.filter((e) => e && e.hash) : [];
+    return Array.isArray(v) ? v.filter((e) => e && e.hash).slice(0, RECENTS_DISPLAY_CAP) : [];
   } catch {
     return [];
   }
@@ -35,7 +35,7 @@ function loadRecentsCache() {
 
 function saveRecentsCache(entries) {
   // Metadata only -- never stash the full text here.
-  const lean = entries.map((e) => ({
+  const lean = entries.slice(0, RECENTS_DISPLAY_CAP).map((e) => ({
     hash: e.hash,
     format: e.format,
     summary: stripPly(e.summary),
@@ -147,12 +147,27 @@ export function showImportPositionDialog({ api }) {
           saveRecentsCache(recentsCache);
           opt.remove();
           if (!recentsCache.length) recentSel.style.visibility = "hidden";
-          api("DELETE", `/game/recent-imports/${removed.hash}`).catch((e) => {
-            recentsCache = [removed, ...recentsCache];
-            saveRecentsCache(recentsCache);
-            renderRecents();
-            setStatus(apiErrorDetail(e), "err");
-          });
+          api("DELETE", `/game/recent-imports/${removed.hash}`)
+            .then(async () => {
+              if (recentSel.querySelectorAll("wa-option").length >= RECENTS_DISPLAY_CAP) return;
+              try {
+                const r = await api("GET", "/game/recent-imports");
+                const known = new Set(recentsCache.map((c) => c.hash));
+                const fresh = (r.entries || []).filter(
+                  (e) => e.hash !== removed.hash && !known.has(e.hash)
+                );
+                if (!fresh.length) return;
+                recentsCache = [...recentsCache, ...fresh].slice(0, RECENTS_DISPLAY_CAP);
+                saveRecentsCache(recentsCache);
+                renderRecents();
+              } catch (err) { /* offline -- keep current cache */ }
+            })
+            .catch((e) => {
+              recentsCache = [removed, ...recentsCache];
+              saveRecentsCache(recentsCache);
+              renderRecents();
+              setStatus(apiErrorDetail(e), "err");
+            });
         });
         return opt;
       }
@@ -183,7 +198,7 @@ export function showImportPositionDialog({ api }) {
       (async () => {
         try {
           const r = await api("GET", "/game/recent-imports");
-          recentsCache = r.entries || [];
+          recentsCache = (r.entries || []).slice(0, RECENTS_DISPLAY_CAP);
           saveRecentsCache(recentsCache);
           renderRecents();
         } catch {
