@@ -186,7 +186,7 @@ export function showImportPositionDialog({ api }) {
           if (targetFormat !== format) selectTab(targetFormat);
           textareas[targetFormat].value = r.text || "";
           syncSubmitEnabled();
-          setStatus(stripPly(r.summary) || "Loaded from history.", "ok");
+          submit();
         } catch (e) {
           setStatus(apiErrorDetail(e), "err");
         }
