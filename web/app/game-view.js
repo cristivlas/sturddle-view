@@ -3,8 +3,14 @@
 
 import { mountBoard } from "./board.js";
 import { toast } from "./dialogs.js";
+import { isMobileLayout } from "./play-debug-windows.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+// Clock-row name cap: largest value that fits beside the clock on the
+// narrowest desktop board (~400px at the 800px viewport breakpoint).
+const MAX_CLOCK_NAME_DESKTOP = 32;
+const MAX_CLOCK_NAME_MOBILE = 24;
 
 function fmtClock(seconds) {
   if (!Number.isFinite(seconds)) return "—";
@@ -463,8 +469,9 @@ export function mountGameView(container, opts = {}) {
   let viewWhiteName = null;
   let viewBlackName = null;
 
-  function _truncName(s, max = 24) {
+  function _truncName(s) {
     if (!s) return s;
+    const max = isMobileLayout() ? MAX_CLOCK_NAME_MOBILE : MAX_CLOCK_NAME_DESKTOP;
     return s.length > max ? s.slice(0, max - 1) + "…" : s;
   }
   // PV row hides only in pure view mode (navigating an imported game
