@@ -487,6 +487,9 @@ export const playPerspective = {
         viewAnalyzeBtn.setAttribute(
           "title", analyzing ? "Stop analysis" : "Analysis mode",
         );
+        viewAnalyzeBtn.querySelector("wa-icon").setAttribute(
+          "name", analyzing ? "circle-stop" : "magnifying-glass",
+        );
         return;
       }
       const humanToMove = humanWhite ? turn === "white" : turn === "black";
@@ -517,6 +520,9 @@ export const playPerspective = {
       analyzeBtn.setAttribute(
         "title",
         analyzing ? "Stop analysis" : "Analysis mode",
+      );
+      analyzeBtn.querySelector("wa-icon").setAttribute(
+        "name", analyzing ? "circle-stop" : "magnifying-glass",
       );
     }
 
@@ -974,13 +980,15 @@ export const playPerspective = {
     function showAnalysisToast() {
       dismissAnalysisToast?.();
       const msg = document.createElement("span");
-      msg.style.display = "inline-flex";
+      msg.style.display = "flex";
       msg.style.alignItems = "center";
       msg.style.gap = "6px";
       msg.append("Analysis mode on");
-      msg.append(makeToastIconBtn("table-list", "Search Lines", onPvTable));
+      const pvBtn = makeToastIconBtn("table-list", "Search Lines", onPvTable);
+      pvBtn.style.marginLeft = "auto";
+      msg.append(pvBtn);
       msg.append(makeToastIconBtn("terminal", "UCI log", onUciLog));
-      msg.append(makeToastIconBtn("magnifying-glass", "Stop analysis", onAnalyze));
+      msg.append(makeToastIconBtn("circle-stop", "Stop analysis", onAnalyze));
       dismissAnalysisToast = toast(msg, {
         variant: "neutral",
         duration: 0,
