@@ -53,8 +53,8 @@ export class PerspectiveRouter {
     return this._active;
   }
 
-  async activate(id) {
-    if (id === this._active) return true;
+  async activate(id, { force = false } = {}) {
+    if (!force && id === this._active) return true;
     if (!this._registry.has(id)) throw new Error(`unknown perspective: ${id}`);
 
     if (this._activeController?.canUnmount) {

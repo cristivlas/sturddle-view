@@ -31,7 +31,7 @@ export const enginesPerspective = {
     return {
       unmount() {
         tournamentsCtl?.dismissSortToast?.();
-        getActiveWorkspace()?.hide();
+        getActiveWorkspace()?.close();
         tournamentsCtl?.unmount?.();
       },
     };

@@ -97,7 +97,7 @@ function debounce(fn, ms) {
   };
 }
 
-export async function openSettingsDialog({ api, initialTab, getActivePerspective }) {
+export async function openSettingsDialog({ api, initialTab, getActivePerspective, reloadPerspective }) {
   let initial;
   let tournamentInitial;
   try {
@@ -824,12 +824,11 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
     },
   });
 
-  if (boardStyleDirty && getActivePerspective?.() === "play") {
+  if (boardStyleDirty) {
     try { await boardStylePending; } catch {}
-    // Idempotent re-PUT to guarantee the latest value is on disk before
-    // reload — the change-handler PUT is fire-and-forget and could race
-    // a fast dialog close.
+    // Re-PUT guards against the fire-and-forget change-handler racing a fast close.
     try { await api("PUT", "/settings", { board_style: boardStyleFinal }); } catch {}
-    location.reload();
+    if (reloadPerspective) reloadPerspective();
+    else location.reload();
   }
 }
