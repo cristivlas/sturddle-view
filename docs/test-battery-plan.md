@@ -6,7 +6,7 @@ phase is sized to fit one PR / one Claude Code session. Future
 sessions pick up from the status header and execute the next pending
 phase.
 
-Last updated: 2026-05-17 (P0..P7, P9, P10, P11 done; P8 deferred; battery complete except P8).
+Last updated: 2026-05-17 (P0..P11 all done; battery complete).
 
 Related docs:
 - [server-chess-audit.md](server-chess-audit.md) -- the spec.
@@ -26,7 +26,7 @@ bottom for the exact ritual.
 - [x] P5  R6b -- chess/pgn_build.py producer and autosave swap
 - [x] P6  R3 -- EngineSupervisor extraction
 - [x] P7  R4 -- ChessClock extraction
-- [~] P8  R5 -- Mode FSM and typed conflict error (deferred; pick up later)
+- [x] P8  R5 -- Mode FSM and typed conflict error
 - [x] P9  R7 -- unified UCI info schema
 - [x] P10 R8 -- /api/chess/apply-move audit
 - [x] P11 R9 -- _board_event payload split
@@ -440,11 +440,7 @@ These hold for every phase. Violations are blockers, not nits.
 
 ## P8 -- R5 Mode FSM and typed conflict error
 
-- **State**: deferred (pick up later; not required by P9/P10/P11)
-- **Why deferred**: Reassessed mid-battery as low ROI -- the 4-bool ->
-  Mode enum migration is pure structural cleanup with no behavior /
-  perf / testability unlock. Subsequent phases (P9, P10, P11) carry no
-  hard dependency on it. Can be picked up later as standalone cleanup.
+- **State**: done (5fca88a)
 - **Depends on**: P2
 - **Goal**: Replace 4 booleans (`_viewing`, `_editing`, `_paused`,
   `_analysis_mode`) with one `Mode` enum + per-operation allowed
@@ -492,6 +488,17 @@ These hold for every phase. Violations are blockers, not nits.
   - `grep` confirms `_viewing`, `_editing`, `_paused`,
     `_analysis_mode` attributes removed from HVE.
 - **Out of scope**: payload split (P11); engine/clock work.
+- **Notes**:
+  - Mode(IntEnum) with power-of-2 values; Op(Enum) with _mask bitmask
+    computed at module init via object.__setattr__.
+  - HVE guard sites inline `if not (self._mode & Op.X._mask): raise
+    ModeConflictError(...)` rather than calling assert_allowed() --
+    Python fn-call overhead (~8ms/1M) would break the 10% perf gate.
+    assert_allowed() is kept for the matrix test only. Comment in
+    mode.py documents this; bench catches any regression.
+  - _viewing, _editing, _paused, _analysis_mode kept as derived
+    read-only properties for backward compat with test call sites.
+  - Perf: 22.7ms median vs 55.9ms limit (56% under).
 
 ## P9 -- R7 unified UCI info schema
 
