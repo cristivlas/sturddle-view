@@ -27,7 +27,7 @@ export function formatSummary(s, { short = false } = {}) {
 const REPLACE_CURRENT_FALLBACK = "the current game";
 const REPLACE_INCOMING_FALLBACK = "a different game";
 const ANALYSIS_WARNING = "Analysis in progress will be cancelled.";
-const CONFIRM_TRUNC_MAX = 60;
+const CONFIRM_TRUNC_MAX = 50;
 const RECENT_TRUNC_MAX = 40;
 const ELLIPSIS = "...";
 
@@ -81,7 +81,7 @@ export function confirmReplaceViewedGame({
         v.className = "replace-view-summary";
         const shown = truncateMiddle(value, CONFIRM_TRUNC_MAX);
         v.textContent = shown;
-        if (shown !== value) v.title = value;
+        v.title = value;
         row.append(k, v);
         wrap.appendChild(row);
       }

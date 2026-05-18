@@ -1387,6 +1387,7 @@ wa-dialog::part(header-actions) { gap: 6px; }
   font-size: 0.8125rem;
 }
 .replace-view-summary {
+  font-size: 0.8125rem;
   word-break: break-word;
 }
 .replace-view-warning {
