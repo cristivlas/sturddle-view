@@ -595,6 +595,7 @@ export const playPerspective = {
             // analysis state.
             if (!viewing) view.setEnabled(!analyzing && !paused);
             syncPausedUi();
+            setCommentaryNavState(analyzing ? null : commentNavPrev, analyzing ? null : commentNavNext);
             if (!analyzing) {
               dismissAnalysisToast?.();
               dismissAnalysisToast = null;
@@ -907,7 +908,7 @@ export const playPerspective = {
         if (isCommentaryOpen() && "prev_comment" in res) {
           commentNavPrev = res.prev_comment ?? null;
           commentNavNext = res.next_comment ?? null;
-          setCommentaryNavState(commentNavPrev, commentNavNext);
+          setCommentaryNavState(analyzing ? null : commentNavPrev, analyzing ? null : commentNavNext);
         }
       } catch (e) {
         reportError(ctx, "Navigation failed", e);
