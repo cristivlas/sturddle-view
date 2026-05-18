@@ -7,7 +7,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
 from ..auth import require_token
 from ..engines import resolve_selected
-from ..play.human_vs_engine import HumanVsEngine, TimeControl
+from ..play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
 from ..play.import_position import PositionImportError, parse_fen, parse_pgn
 
 log = logging.getLogger(__name__)
@@ -172,7 +172,7 @@ async def import_game(payload: dict, request: Request) -> dict:
     hve = await _get_hve(request)
     headers = parsed.get("headers") or {}
     try:
-        game_id = await hve.enter_view_mode(
+        game_id = await hve.enter_view_mode(ViewModeParams(
             start_fen=parsed["start_fen"],
             moves_uci=parsed["moves_uci"],
             clock_history=parsed["clock_history"],
@@ -185,7 +185,7 @@ async def import_game(payload: dict, request: Request) -> dict:
             root_comment=parsed.get("root_comment"),
             pgn_result=headers.get("Result"),
             pgn_termination=headers.get("Termination"),
-        )
+        ))
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     # Record in recent-imports. Use the format detected by the parser
@@ -247,13 +247,13 @@ async def view_start(request: Request) -> dict:
     hve = await _get_hve(request)
     start_fen, moves_uci, clock_history, white_time, black_time = hve.play_game_snapshot()
     try:
-        game_id = await hve.enter_view_mode(
+        game_id = await hve.enter_view_mode(ViewModeParams(
             start_fen=start_fen,
             moves_uci=moves_uci,
             clock_history=clock_history or None,
             final_white_time=white_time,
             final_black_time=black_time,
-        )
+        ))
         await hve.view_last()
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

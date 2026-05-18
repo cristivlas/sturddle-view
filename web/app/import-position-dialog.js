@@ -20,10 +20,14 @@ const TEXTAREA_ROWS = 8;
 const RECENTS_CACHE_KEY = "sturddle:import:recent";
 const RECENTS_DISPLAY_CAP = 10;
 
+function stripPly(summary) {
+  return (summary || "").replace(/\s*\(ply\s+\d+\)/gi, "").trim();
+}
+
 function loadRecentsCache() {
   try {
     const v = JSON.parse(localStorage.getItem(RECENTS_CACHE_KEY) || "[]");
-    return Array.isArray(v) ? v.filter((e) => e && e.hash) : [];
+    return Array.isArray(v) ? v.filter((e) => e && e.hash).slice(0, RECENTS_DISPLAY_CAP) : [];
   } catch {
     return [];
   }
@@ -31,10 +35,10 @@ function loadRecentsCache() {
 
 function saveRecentsCache(entries) {
   // Metadata only -- never stash the full text here.
-  const lean = entries.map((e) => ({
+  const lean = entries.slice(0, RECENTS_DISPLAY_CAP).map((e) => ({
     hash: e.hash,
     format: e.format,
-    summary: e.summary,
+    summary: stripPly(e.summary),
     ts: e.ts,
   }));
   try {
@@ -60,7 +64,7 @@ export function showImportPositionDialog({ api }) {
     label: "Open position",
     width: "560px",
     body: (resolve, dialog) => {
-      let format = "fen";
+      let format = "pgn";
       let submitting = false;
 
       const wrap = document.createElement("div");
@@ -69,15 +73,15 @@ export function showImportPositionDialog({ api }) {
       const tabs = document.createElement("wa-tab-group");
       tabs.placement = "top";
       tabs.innerHTML = `
-        <wa-tab slot="nav" panel="fen">FEN</wa-tab>
         <wa-tab slot="nav" panel="pgn">PGN</wa-tab>
-        <wa-tab-panel name="fen"></wa-tab-panel>
+        <wa-tab slot="nav" panel="fen">FEN</wa-tab>
         <wa-tab-panel name="pgn"></wa-tab-panel>
+        <wa-tab-panel name="fen"></wa-tab-panel>
       `;
       wrap.appendChild(tabs);
 
       const textareas = {};
-      for (const name of ["fen", "pgn"]) {
+      for (const name of ["pgn", "fen"]) {
         const ta = document.createElement("wa-textarea");
         ta.size = "small";
         ta.resize = "vertical";
@@ -122,7 +126,7 @@ export function showImportPositionDialog({ api }) {
         const opt = document.createElement("wa-option");
         opt.value = String(i);
         opt.dataset.hash = entry.hash;
-        const label = (entry.summary || entry.hash.slice(0, 12)).replace(/"/g, "&quot;");
+        const label = (stripPly(entry.summary) || entry.hash.slice(0, 12)).replace(/"/g, "&quot;");
         opt.innerHTML = `${entry.format.toUpperCase()} -- ${label}` +
           `<button slot="end" class="recent-del" title="Remove from history" aria-label="Remove">` +
           `<wa-icon name="trash"></wa-icon></button>`;
@@ -143,12 +147,27 @@ export function showImportPositionDialog({ api }) {
           saveRecentsCache(recentsCache);
           opt.remove();
           if (!recentsCache.length) recentSel.style.visibility = "hidden";
-          api("DELETE", `/game/recent-imports/${removed.hash}`).catch((e) => {
-            recentsCache = [removed, ...recentsCache];
-            saveRecentsCache(recentsCache);
-            renderRecents();
-            setStatus(apiErrorDetail(e), "err");
-          });
+          api("DELETE", `/game/recent-imports/${removed.hash}`)
+            .then(async () => {
+              if (recentSel.querySelectorAll("wa-option").length >= RECENTS_DISPLAY_CAP) return;
+              try {
+                const r = await api("GET", "/game/recent-imports");
+                const known = new Set(recentsCache.map((c) => c.hash));
+                const fresh = (r.entries || []).filter(
+                  (e) => e.hash !== removed.hash && !known.has(e.hash)
+                );
+                if (!fresh.length) return;
+                recentsCache = [...recentsCache, ...fresh].slice(0, RECENTS_DISPLAY_CAP);
+                saveRecentsCache(recentsCache);
+                renderRecents();
+              } catch (err) { /* offline -- keep current cache */ }
+            })
+            .catch((e) => {
+              recentsCache = [removed, ...recentsCache];
+              saveRecentsCache(recentsCache);
+              renderRecents();
+              setStatus(apiErrorDetail(e), "err");
+            });
         });
         return opt;
       }
@@ -167,7 +186,7 @@ export function showImportPositionDialog({ api }) {
           if (targetFormat !== format) selectTab(targetFormat);
           textareas[targetFormat].value = r.text || "";
           syncSubmitEnabled();
-          setStatus(r.summary || "Loaded from history.", "ok");
+          submit();
         } catch (e) {
           setStatus(apiErrorDetail(e), "err");
         }
@@ -179,7 +198,7 @@ export function showImportPositionDialog({ api }) {
       (async () => {
         try {
           const r = await api("GET", "/game/recent-imports");
-          recentsCache = r.entries || [];
+          recentsCache = (r.entries || []).slice(0, RECENTS_DISPLAY_CAP);
           saveRecentsCache(recentsCache);
           renderRecents();
         } catch {
@@ -192,7 +211,7 @@ export function showImportPositionDialog({ api }) {
 
       const status = document.createElement("div");
       status.className = "import-pos-status muted";
-      status.textContent = EMPTY_PROMPT.fen;
+      status.textContent = EMPTY_PROMPT.pgn;
       wrap.appendChild(status);
 
       dialog.appendChild(wrap);
@@ -243,7 +262,7 @@ export function showImportPositionDialog({ api }) {
           // entry missing.
           if (r.hash) {
             recentsCache = [
-              { hash: r.hash, format, summary: r.summary || "", ts: Date.now() },
+              { hash: r.hash, format, summary: stripPly(r.summary), ts: Date.now() },
               ...recentsCache.filter((e) => e.hash !== r.hash),
             ];
             saveRecentsCache(recentsCache);

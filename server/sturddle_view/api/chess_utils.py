@@ -11,6 +11,7 @@ from pydantic import BaseModel
 import chess
 
 from ..auth import require_token
+from ..chess.board import board_from
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class ApplyMoveRequest(BaseModel):
 @router.post("/apply-move")
 def apply_move(body: ApplyMoveRequest) -> dict:
     try:
-        board = chess.Board(body.fen)
+        board = board_from(body.fen)
     except ValueError:
         log.warning("apply-move rejected: invalid FEN %r", body.fen)
         raise HTTPException(status_code=400, detail="invalid FEN")

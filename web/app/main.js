@@ -115,8 +115,9 @@ connect({
 document.getElementById("about-btn").addEventListener("click", () => {
   openAboutDialog({ api });
 });
+const reloadPerspective = () => router.activate(router.activeId(), { force: true });
 document.getElementById("settings-btn").addEventListener("click", () => {
-  openSettingsDialog({ api, getActivePerspective: () => router.activeId() });
+  openSettingsDialog({ api, getActivePerspective: () => router.activeId(), reloadPerspective });
 });
 // Allow any module to deep-link into the Settings dialog without
 // threading the `api` reference through call chains. detail.tab opens
@@ -124,7 +125,7 @@ document.getElementById("settings-btn").addEventListener("click", () => {
 // the no-engine error toast.
 window.addEventListener("sturddle:open-settings", (e) => {
   const tab = e.detail?.tab;
-  openSettingsDialog({ api, initialTab: tab, getActivePerspective: () => router.activeId() });
+  openSettingsDialog({ api, initialTab: tab, getActivePerspective: () => router.activeId(), reloadPerspective });
 });
 
 window.addEventListener("sturddle:connection", async (e) => {

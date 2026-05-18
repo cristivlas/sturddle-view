@@ -64,7 +64,7 @@ async def test_view_mode_clock_names_after_hard_reload(server, browser):
         pytest.skip("chromium not installed")
     base, app = server
 
-    from sturddle_view.play.human_vs_engine import HumanVsEngine
+    from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
 
     hve = HumanVsEngine(
         engine_path="/nonexistent",
@@ -73,13 +73,13 @@ async def test_view_mode_clock_names_after_hard_reload(server, browser):
         settings=app.state.settings,
     )
     hve._engine_name = ENGINE_NAME
-    await hve.enter_view_mode(
+    await hve.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=["e2e4", "c7c5", "g1f3", "d7d6"],
         clock_history=None,
         white_name=WHITE_NAME,
         black_name=BLACK_NAME,
-    )
+    ))
     app.state.hve = hve
 
     ctx = await browser.new_context()

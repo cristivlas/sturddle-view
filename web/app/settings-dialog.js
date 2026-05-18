@@ -6,7 +6,7 @@ import { apiErrorDetail, inlineSvgIcon, pickFile, showDialog, toast } from "./di
 import { mountEngineList } from "./engines.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
-import { CHESS_CLOCK_SVG_INNER } from "./icons.js";
+import { CHESS_CLOCK_SVG_INNER, CHESS_CLOCK_VIEW_BOX } from "./icons.js";
 
 const SETTINGS_ENGINES_COL_PCTS_KEY = "sturddle:engines:settings:colPcts3";
 
@@ -97,7 +97,7 @@ function debounce(fn, ms) {
   };
 }
 
-export async function openSettingsDialog({ api, initialTab, getActivePerspective }) {
+export async function openSettingsDialog({ api, initialTab, getActivePerspective, reloadPerspective }) {
   let initial;
   let tournamentInitial;
   try {
@@ -265,27 +265,26 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const allowTakeback = document.createElement("wa-switch");
       allowTakeback.size = "small";
       allowTakeback.checked = initial.allow_takeback !== false;
-      allowTakeback.textContent = "Allow Undo";
+      allowTakeback.textContent = "Allow undo";
       allowTakeback.addEventListener("change", () => {
         putSettings({ allow_takeback: allowTakeback.checked });
       });
       const autoClaimDraws = document.createElement("wa-switch");
       autoClaimDraws.size = "small";
       autoClaimDraws.checked = initial.auto_claim_draws !== false;
-      autoClaimDraws.textContent = "Auto-claim draws";
+      autoClaimDraws.textContent = "Claim draws";
       autoClaimDraws.title = "Automatically end the game on threefold repetition or 50-move rule";
       autoClaimDraws.addEventListener("change", () => {
         putSettings({ auto_claim_draws: autoClaimDraws.checked });
       });
 
-      // Inherit PGN clocks is a view->play transition setting; keep it on
-      // its own row. Allow Undo + Auto-claim draws are end-of-game rules
-      // and pair naturally in a 2-toggle grid.
+      // Inherit PGN clocks is a view->play transition setting; Allow Undo
+      // and Claim draws are end-of-game rules stacked together.
       const inheritClocksRow = document.createElement("div");
-      inheritClocksRow.className = "settings-row settings-row-spaced";
+      inheritClocksRow.className = "settings-row settings-row-spaced settings-row-section-inset";
       inheritClocksRow.append(inheritClocks);
       const togglesRow = document.createElement("div");
-      togglesRow.className = "settings-row settings-toggles-grid";
+      togglesRow.className = "settings-row settings-toggles-grid settings-row-section-inset";
       togglesRow.append(allowTakeback, autoClaimDraws);
 
       // Board style: single preset picker + live preview swatch reusing
@@ -393,18 +392,20 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         return fs;
       };
       const tcSection = makeSection(
-        inlineSvgIcon(CHESS_CLOCK_SVG_INNER, { ariaLabel: "Time control" }),
+        inlineSvgIcon(CHESS_CLOCK_SVG_INNER, { viewBox: CHESS_CLOCK_VIEW_BOX, ariaLabel: "Time control" }),
         "Time control",
         tcInitialRow, tcIncrementRow,
       );
       const playCol = document.createElement("div");
       playCol.className = "settings-panel-col";
       playCol.append(
+        //humanSideRow,
+        //makeDivider(),
         tcSection, inheritClocksRow,
         makeDivider(),
-        humanSideRow,
-        makeDivider(),
         togglesRow,
+        makeDivider(),
+        humanSideRow,
       );
       playPanel.append(playCol);
       // Display tab: presentation-only preferences (no gameplay effect).
@@ -825,12 +826,11 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
     },
   });
 
-  if (boardStyleDirty && getActivePerspective?.() === "play") {
+  if (boardStyleDirty) {
     try { await boardStylePending; } catch {}
-    // Idempotent re-PUT to guarantee the latest value is on disk before
-    // reload — the change-handler PUT is fire-and-forget and could race
-    // a fast dialog close.
+    // Re-PUT guards against the fire-and-forget change-handler racing a fast close.
     try { await api("PUT", "/settings", { board_style: boardStyleFinal }); } catch {}
-    location.reload();
+    if (reloadPerspective) reloadPerspective();
+    else location.reload();
   }
 }

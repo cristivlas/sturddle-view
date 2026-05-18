@@ -321,7 +321,7 @@ export const playPerspective = {
       },
       // Click on a move in the list (view mode only) → jump cursor to
       // the position AFTER that move, i.e. ply = plyIndex + 1.
-      onMoveJump: (plyIndex) => doViewNav("/game/view/goto", { ply: plyIndex + 1 }),
+      onMoveJump: (plyIndex) => { if (!analyzing) doViewNav("/game/view/goto", { ply: plyIndex + 1 }); },
     });
 
     // Settings cache (refreshed on settings-changed).
@@ -344,7 +344,7 @@ export const playPerspective = {
         const wasOpen = open;
         if (!open) openCommentary();
         setCommentaryText(lastViewComment);
-        if (!wasOpen) {
+        if (!wasOpen && !analyzing) {
           // Populate comment nav state on first open.
           doViewNav("/game/view/goto", { ply: viewCursor });
         }
@@ -487,6 +487,9 @@ export const playPerspective = {
         viewAnalyzeBtn.setAttribute(
           "title", analyzing ? "Stop analysis" : "Analysis mode",
         );
+        viewAnalyzeBtn.querySelector("wa-icon").setAttribute(
+          "name", analyzing ? "circle-stop" : "magnifying-glass",
+        );
         return;
       }
       const humanToMove = humanWhite ? turn === "white" : turn === "black";
@@ -517,6 +520,9 @@ export const playPerspective = {
       analyzeBtn.setAttribute(
         "title",
         analyzing ? "Stop analysis" : "Analysis mode",
+      );
+      analyzeBtn.querySelector("wa-icon").setAttribute(
+        "name", analyzing ? "circle-stop" : "magnifying-glass",
       );
     }
 
@@ -549,6 +555,10 @@ export const playPerspective = {
           const prevGameId = viewingGameId;
           viewingGameId = evt.game_id ?? null;
           viewing = !!v;
+          // Read analyzing early: syncCommentsVisibility (called below) gates
+          // view/goto on !analyzing; the main analyzing block runs later in
+          // the same event but would be too late.
+          if (typeof evt.payload.analyzing === "boolean") analyzing = evt.payload.analyzing;
           if (viewing) {
             if (!wasViewing || viewingGameId !== prevGameId) viewGameOverAlertShown = false;
             viewCursor = v.cursor ?? 0;
@@ -589,6 +599,7 @@ export const playPerspective = {
             // analysis state.
             if (!viewing) view.setEnabled(!analyzing && !paused);
             syncPausedUi();
+            setCommentaryNavState(analyzing ? null : commentNavPrev, analyzing ? null : commentNavNext);
             if (!analyzing) {
               dismissAnalysisToast?.();
               dismissAnalysisToast = null;
@@ -901,7 +912,7 @@ export const playPerspective = {
         if (isCommentaryOpen() && "prev_comment" in res) {
           commentNavPrev = res.prev_comment ?? null;
           commentNavNext = res.next_comment ?? null;
-          setCommentaryNavState(commentNavPrev, commentNavNext);
+          setCommentaryNavState(analyzing ? null : commentNavPrev, analyzing ? null : commentNavNext);
         }
       } catch (e) {
         reportError(ctx, "Navigation failed", e);
@@ -974,13 +985,15 @@ export const playPerspective = {
     function showAnalysisToast() {
       dismissAnalysisToast?.();
       const msg = document.createElement("span");
-      msg.style.display = "inline-flex";
+      msg.style.display = "flex";
       msg.style.alignItems = "center";
       msg.style.gap = "6px";
-      msg.append("Analysis mode on");
-      msg.append(makeToastIconBtn("table-list", "Search Lines", onPvTable));
+      msg.append("Analysis mode");
+      const pvBtn = makeToastIconBtn("table-list", "Search Lines", onPvTable);
+      pvBtn.style.marginLeft = "auto";
+      msg.append(pvBtn);
       msg.append(makeToastIconBtn("terminal", "UCI log", onUciLog));
-      msg.append(makeToastIconBtn("magnifying-glass", "Stop analysis", onAnalyze));
+      msg.append(makeToastIconBtn("circle-stop", "Stop analysis", onAnalyze));
       dismissAnalysisToast = toast(msg, {
         variant: "neutral",
         duration: 0,

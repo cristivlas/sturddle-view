@@ -516,11 +516,11 @@ def test_view_play_from_here_honors_clk_annotations(client):
     })
     assert r.status_code == 200, r.text
     # Live clocks come from the PGN, not the configured TC initial.
-    assert hve._white_time == 4 * 60 + 48
-    assert hve._black_time == 4 * 60 + 50
+    assert hve._clock.white_time == 4 * 60 + 48
+    assert hve._clock.black_time == 4 * 60 + 50
     # _clock_history has one entry per seeded ply with PGN-derived snapshots
     # (None entries fill from TC initial = 300).
-    assert hve._clock_history == [
+    assert hve._clock.history == [
         (300.0, 300.0),  # ply 0: nobody moved yet
         (4 * 60 + 55, 300.0),  # ply 1: only white moved
         (4 * 60 + 55, 4 * 60 + 50),  # ply 2: both moved
@@ -540,10 +540,10 @@ def test_view_play_from_here_seed_clocks_use_configured_tc(client):
         "increment_seconds": 4.0,
     })
     assert r.status_code == 200, r.text
-    assert hve._tc.initial_seconds == 123.0
-    assert hve._tc.increment_seconds == 4.0
-    assert hve._white_time == 123.0
-    assert hve._black_time == 123.0
+    assert hve._clock.tc.initial_seconds == 123.0
+    assert hve._clock.tc.increment_seconds == 4.0
+    assert hve._clock.white_time == 123.0
+    assert hve._clock.black_time == 123.0
 
 
 def test_view_play_from_here_resets_clocks_when_inherit_disabled(client):
@@ -566,8 +566,8 @@ def test_view_play_from_here_resets_clocks_when_inherit_disabled(client):
     })
     assert r.status_code == 200, r.text
     # Live clocks come from the configured TC, NOT the PGN's residuals.
-    assert hve._white_time == 300.0
-    assert hve._black_time == 300.0
+    assert hve._clock.white_time == 300.0
+    assert hve._clock.black_time == 300.0
 
 
 def test_view_play_from_here_inherit_clocks_safe_without_clk(client):
@@ -585,5 +585,5 @@ def test_view_play_from_here_inherit_clocks_safe_without_clk(client):
         "inherit_pgn_clocks": True,
     })
     assert r.status_code == 200, r.text
-    assert hve._white_time == 60.0
-    assert hve._black_time == 60.0
+    assert hve._clock.white_time == 60.0
+    assert hve._clock.black_time == 60.0

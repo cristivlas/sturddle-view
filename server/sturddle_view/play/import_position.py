@@ -12,6 +12,9 @@ from dataclasses import dataclass
 import chess
 import chess.pgn
 
+from ..chess.board import board_from, side_to_move
+from ..chess.pgn_walk import walk_mainline
+
 
 def explain_invalid(board: chess.Board) -> str:
     """Return a human-readable reason for an invalid board.status(), or
@@ -274,7 +277,7 @@ def parse_fen(text: str) -> ImportedPosition:
             "This looks like a PGN, not a FEN. Switch to the PGN tab."
         )
     try:
-        board = chess.Board(fen)
+        board = board_from(fen)
     except ValueError as e:
         # python-chess embeds the full FEN string in its message; collapse
         # to just the diagnostic so the UI doesn't render a giant blob.
@@ -282,7 +285,7 @@ def parse_fen(text: str) -> ImportedPosition:
         raise PositionImportError(f"invalid FEN: {msg}") from e
     if not board.is_valid():
         raise PositionImportError("illegal position (e.g. adjacent kings, too many pieces, pawns on back rank)")
-    side = "white" if board.turn == chess.WHITE else "black"
+    side = side_to_move(board)
     # Treat the standard startpos as None so opening-book lookup engages
     # on subsequent moves (lookup keys on move history from startpos).
     is_startpos = board.fen() == chess.STARTING_FEN
@@ -309,31 +312,30 @@ def parse_pgn(text: str) -> ImportedPosition:
     # FEN header lets the PGN start from a non-standard position.
     start_fen_header = headers.get("FEN")
     try:
-        start_board = (
-            chess.Board(start_fen_header) if start_fen_header else chess.Board()
-        )
+        start_board = board_from(start_fen_header)
     except ValueError as e:
         raise PositionImportError(f"PGN has invalid starting FEN header: {e}") from e
     if start_fen_header and not start_board.is_valid():
         raise PositionImportError("PGN has illegal starting position in FEN header")
     moves_uci: list[str] = []
-    board = start_board.copy()
+    board: chess.Board | None = None
     nodes: list[chess.pgn.ChildNode] = []
-    for node in game.mainline():
-        move = node.move
-        if move not in board.legal_moves:
-            raise PositionImportError(
-                f"illegal move in PGN at ply {len(moves_uci) + 1}: {move.uci()}"
-            )
-        moves_uci.append(move.uci())
-        board.push(move)
-        nodes.append(node)
+    movers_white: list[bool] = []
+    try:
+        for node, board, mover_white in walk_mainline(game, start_board=start_board.copy()):
+            moves_uci.append(node.move.uci())
+            nodes.append(node)
+            movers_white.append(mover_white)
+    except chess.IllegalMoveError as e:
+        raise PositionImportError(f"illegal move in PGN at ply {len(moves_uci) + 1}: {e}") from e
+    if board is None:
+        board = start_board.copy()
     # python-chess's PGN parser is lenient: arbitrary text yields a valid
     # game with no moves and a startpos board. Reject that — an "import"
     # that just gets you to startpos is the New Game button.
     if not moves_uci and not start_fen_header:
         raise PositionImportError("PGN contains no moves")
-    side = "white" if board.turn == chess.WHITE else "black"
+    side = side_to_move(board)
     white = headers.get("White", "?")
     black = headers.get("Black", "?")
     summary = (
@@ -353,10 +355,8 @@ def parse_pgn(text: str) -> ImportedPosition:
     final_white = final_black = None
     if any(v is not None for v in clk_values):
         clock_history = []
-        replay = start_board.copy()
         last_w = last_b = None  # last known post-move clock per side
-        for i, node in enumerate(nodes):
-            mover_white = (replay.turn == chess.WHITE)
+        for i, (node, mover_white) in enumerate(zip(nodes, movers_white)):
             # Pre-move snapshot for ply i = last known clocks for each side.
             clock_history.append((last_w, last_b))
             after = clk_values[i]
@@ -366,7 +366,6 @@ def parse_pgn(text: str) -> ImportedPosition:
                 else:
                     last_b = after
             eval_per_ply.append(_parse_pgn_eval(node.comment, mover_white))
-            replay.push(node.move)
         final_white, final_black = last_w, last_b
     else:
         emt_values = [n.emt() for n in nodes]
@@ -375,13 +374,11 @@ def parse_pgn(text: str) -> ImportedPosition:
         # Only consulted when %clk and %emt are both absent.
         if not any(v is not None for v in emt_values):
             emt_values = [_cutechess_time_seconds(n.comment) for n in nodes]
-        replay = start_board.copy()
         if any(v is not None for v in emt_values) and tc_initial is not None:
             clock_history = []
             last_w = tc_initial
             last_b = tc_initial
-            for i, node in enumerate(nodes):
-                mover_white = (replay.turn == chess.WHITE)
+            for i, (node, mover_white) in enumerate(zip(nodes, movers_white)):
                 clock_history.append((last_w, last_b))
                 spent = emt_values[i]
                 if spent is not None:
@@ -392,14 +389,11 @@ def parse_pgn(text: str) -> ImportedPosition:
                     else:
                         last_b = new_remaining
                 eval_per_ply.append(_parse_pgn_eval(node.comment, mover_white))
-                replay.push(node.move)
             final_white, final_black = last_w, last_b
         else:
             # No clock info but we still want evals if any are present.
-            for node in nodes:
-                mover_white = (replay.turn == chess.WHITE)
+            for node, mover_white in zip(nodes, movers_white):
                 eval_per_ply.append(_parse_pgn_eval(node.comment, mover_white))
-                replay.push(node.move)
     eval_history: list[dict | None] | None = (
         eval_per_ply if any(e is not None for e in eval_per_ply) else None
     )

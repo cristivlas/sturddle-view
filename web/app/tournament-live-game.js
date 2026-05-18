@@ -216,6 +216,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   // stash them so the workspace's tile() can clamp.
   wb.svMinWidth = LIVE_MIN_WIDTH;
   wb.svMinHeight = LIVE_MIN_HEIGHT;
+  wb.svBoard = board;
   liveWindows.set(windowKey, wb);
   // Result-banner upgrade on game_reconciled (workspace dispatches).
   // Captured here so the Replay button knows which PGN slice to fetch.
@@ -284,6 +285,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
 
   function disposeShared() {
     ro.disconnect();
+    board.destroy();
     if (gameId) window.removeEventListener("sturddle:reconciled", onReconciled);
     liveWindows.delete(windowKey);
     window.dispatchEvent(new CustomEvent("sturddle:livegame-closed"));
@@ -538,9 +540,10 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   }
 
   function pvArrowMove(p) {
-    if (!p.pv || !p.pv.length) return null;
+    const pv = p.pv_uci;
+    if (!pv || !pv.length) return null;
     if (!p.time || p.time < ARROW_MIN_TIME_MS) return null;
-    const m = p.pv[0];
+    const m = pv[0];
     return m && m.length >= 4 ? m : null;
   }
 
@@ -554,39 +557,33 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     if (m) board.setOpponentArrow(m.slice(0, 2), m.slice(2, 4));
   }
 
+  function fmtScore(p) {
+    const score = p.score;
+    if (!score) return "--";
+    if (score.cp != null) return (score.cp >= 0 ? "+" : "") + (score.cp / 100).toFixed(2);
+    if (score.mate != null) return `M${score.mate}`;
+    return "--";
+  }
+
   function renderOpponentEval(p) {
-    let scoreText = "--";
-    if (p.score_cp != null) {
-      const cp = p.score_cp;
-      scoreText = (cp >= 0 ? "+" : "") + (cp / 100).toFixed(2);
-    } else if (p.score_mate != null) {
-      scoreText = `M${p.score_mate}`;
-    }
-    oppEvalScoreEl.textContent = scoreText;
+    oppEvalScoreEl.textContent = fmtScore(p);
     oppEvalDepthEl.textContent = p.depth != null
       ? (p.seldepth != null ? `d${p.depth}/${p.seldepth}` : `d${p.depth}`)
       : "";
     oppEvalTbhitsEl.textContent = p.tbhits ? `tb ${p.tbhits}` : "";
-    if (p.pv && p.pv.length) {
-      oppPvEl.textContent = p.pv.slice(0, 12).join(" ");
-    }
+    const pv = p.pv_uci;
+    if (pv && pv.length) oppPvEl.textContent = pv.slice(0, 12).join(" ");
   }
 
   function renderEval(p) {
-    let scoreText = "--";
-    if (p.score_cp != null) {
-      const cp = p.score_cp;
-      scoreText = (cp >= 0 ? "+" : "") + (cp / 100).toFixed(2);
-    } else if (p.score_mate != null) {
-      scoreText = `M${p.score_mate}`;
-    }
-    evalScoreEl.textContent = scoreText;
+    evalScoreEl.textContent = fmtScore(p);
     evalDepthEl.textContent = p.depth != null
       ? (p.seldepth != null ? `d${p.depth}/${p.seldepth}` : `d${p.depth}`)
       : "";
     evalTbhitsEl.textContent = p.tbhits ? `tb ${p.tbhits}` : "";
-    if (p.pv && p.pv.length) {
-      pvEl.textContent = p.pv.slice(0, 12).join(" ");
+    const pv = p.pv_uci;
+    if (pv && pv.length) {
+      pvEl.textContent = pv.slice(0, 12).join(" ");
       const m = pvArrowMove(p);
       if (m) board.setArrow(m.slice(0, 2), m.slice(2, 4));
     }

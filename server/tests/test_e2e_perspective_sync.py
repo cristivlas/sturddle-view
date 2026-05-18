@@ -62,7 +62,8 @@ async def test_play_perspective_remount_resyncs_state(server, browser):
     # independent of any real UCI engine.
     import chess
     from sturddle_view.events import EventBus
-    from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl
+    from sturddle_view.play.chess_clock import ChessClock, TimeControl
+    from sturddle_view.play.human_vs_engine import HumanVsEngine
 
     hve = HumanVsEngine(
         engine_path="/nonexistent",
@@ -74,11 +75,11 @@ async def test_play_perspective_remount_resyncs_state(server, browser):
     hve._board.push_uci("e2e4")
     hve._board.push_uci("c7c5")
     hve._human_white = False
-    hve._tc = TimeControl(300.0, 0.0)
-    hve._white_time = 290.0
-    hve._black_time = 295.0
+    hve._clock = ChessClock(TimeControl(300.0, 0.0))
+    hve._clock.white_time = 290.0
+    hve._clock.black_time = 295.0
     hve._game_id = "test-game"
-    hve._turn_started_at = time.monotonic()
+    hve._clock.start_turn()
     app.state.hve = hve
 
     expected_fen = hve._board.fen()

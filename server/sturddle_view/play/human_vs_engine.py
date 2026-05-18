@@ -9,9 +9,6 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
-import os
-import subprocess
-import sys
 import time
 import uuid
 from dataclasses import dataclass
@@ -22,20 +19,21 @@ import chess.engine
 import chess.pgn
 
 from .._atomic import atomic_write_text
+from ..chess.board import board_from, moves_san as _moves_san, side_to_move
+from ..chess.engine_info import serialize_info
+from ..chess.pgn_build import build_pgn
+from ..chess.results import DRAW, loser_result, winner_result
 from ..events import Event, EventBus
+from .chess_clock import ChessClock, TimeControl
+from .engine_supervisor import EngineSupervisor
 from .game_store import GameState, GameStore
 from .import_position import explain_invalid
+from .mode import Mode, ModeConflictError, Op
 from .tablebase import TablebaseProber
 
 log = logging.getLogger(__name__)
 
 CLOCK_TICK_INTERVAL = 0.25  # seconds
-
-
-@dataclass
-class TimeControl:
-    initial_seconds: float
-    increment_seconds: float = 0.0
 
 
 @dataclass
@@ -58,53 +56,20 @@ class _ViewSnapshot:
     pgn_termination: str | None
 
 
-def _serialize_info(
-    info: chess.engine.InfoDict, board: chess.Board,
-    eval_pov: chess.Color = chess.WHITE,
-) -> dict:
-    out: dict = {}
-    if "depth" in info:
-        out["depth"] = info["depth"]
-    if "seldepth" in info:
-        out["seldepth"] = info["seldepth"]
-    if "nodes" in info:
-        out["nodes"] = info["nodes"]
-    if "nps" in info:
-        out["nps"] = info["nps"]
-    if "tbhits" in info:
-        out["tbhits"] = info["tbhits"]
-    if "hashfull" in info:
-        out["hashfull"] = info["hashfull"]
-    if "time" in info:
-        out["time"] = info["time"]
-    score = info.get("score")
-    if score is not None:
-        pov = score.pov(eval_pov)
-        if pov.is_mate():
-            out["score"] = {"mate": pov.mate()}
-        else:
-            out["score"] = {"cp": pov.score()}
-    pv = info.get("pv")
-    if pv:
-        try:
-            out["pv"] = [board.variation_san(pv)]
-        except (ValueError, AssertionError):
-            out["pv"] = [m.uci() for m in pv]
-        out["pv_uci"] = [m.uci() for m in pv]
-    return out
-
-
-def _moves_san(board: chess.Board, start_fen: str | None = None) -> list[str]:
-    """Return the current move stack as SAN strings, replayed from start_fen
-    (or the standard starting position when None)."""
-    if not board.move_stack:
-        return []
-    replay = chess.Board(start_fen) if start_fen else chess.Board()
-    out = []
-    for m in board.move_stack:
-        out.append(replay.san(m))
-        replay.push(m)
-    return out
+@dataclass
+class ViewModeParams:
+    start_fen: str | None
+    moves_uci: list[str]
+    clock_history: list[tuple[float | None, float | None]] | None
+    final_white_time: float | None = None
+    final_black_time: float | None = None
+    white_name: str | None = None
+    black_name: str | None = None
+    eval_history: list[dict | None] | None = None
+    comments: list[str | None] | None = None
+    root_comment: str | None = None
+    pgn_result: str | None = None
+    pgn_termination: str | None = None
 
 
 class HumanVsEngine:
@@ -118,24 +83,16 @@ class HumanVsEngine:
         settings=None,
         store: GameStore | None = None,
     ) -> None:
-        self._engine_path = engine_path
         self._bus = bus
         self._openings = openings  # Optional[OpeningBook]
         self._settings = settings  # Optional[Settings]
         self._store = store
-        self._engine: chess.engine.UciProtocol | None = None
-        # Display name shown to the user. Caller may set via set_engine_name()
-        # to override (e.g. with the registry name). Otherwise _ensure_engine
-        # fills it from the engine's UCI `id name`, falling back to basename.
-        self._engine_name: str | None = None
-        # User-overridden UCI options applied at engine launch via setoption.
-        # Updated by the API layer on every fetch from the registry; takes
-        # effect on the next launch (existing process keeps its options).
-        self._engine_options: dict = {}
-        # Extra command-line args / per-engine env. Updated by the API
-        # layer on every fetch; take effect on the next launch.
-        self._engine_args: list[str] = []
-        self._engine_env: dict[str, str] = {}
+        # UCI engine session: spawn/configure/cancel/quit/swap + log fanout.
+        # HVE keeps the search loops (_think_and_play, _run_analysis) and
+        # only delegates process lifecycle.
+        self._supervisor = EngineSupervisor(
+            engine_path=engine_path, bus=bus, settings=settings,
+        )
         self._board: chess.Board | None = None
         # FEN of the board *before* any moves on _board.move_stack — None for
         # games that began at startpos. Persisted so restore_from can rebuild
@@ -146,27 +103,14 @@ class HumanVsEngine:
         # filenames across per-move autosaves and end-of-game finalization.
         self._game_started_wall: float | None = None
         self._human_white: bool = True
-        self._tc: TimeControl = TimeControl(300.0, 0.0)
-        self._white_time: float = 0.0
-        self._black_time: float = 0.0
-        # Wall-clock timestamp when the side to move started thinking.
-        # Used to compute remaining time on each tick.
-        self._turn_started_at: float | None = None
-        # Per-ply snapshot of (white_time, black_time) BEFORE the move at that
-        # ply was played. Used to restore clocks on take-back.
-        # Index = ply number (length of move_stack).
-        self._clock_history: list[tuple[float, float]] = []
+        self._clock: ChessClock = ChessClock(TimeControl(300.0, 0.0))
         self._think_task: asyncio.Task | None = None
         self._analysis = None  # active chess.engine.AnalysisResult, if any
         self._think_gen: int = 0  # search generation; bumped on cancel
         self._tick_task: asyncio.Task | None = None
-        # Pause is only allowed on the human's turn (engine is idle then).
-        # While paused, the tick loop is stopped and submit_move is rejected.
-        self._paused: bool = False
-        # Analysis mode (UCI go infinite): clocks frozen, board read-only,
-        # engine streams info on the current position. Mutually exclusive
-        # with normal play; toggled via start_analysis/stop_analysis.
-        self._analysis_mode: bool = False
+        self._mode: Mode = Mode.PLAY
+        # Mode before entering ANALYZING; restored by stop_analysis().
+        self._pre_analysis_mode: Mode = Mode.PLAY
         self._analysis_task: asyncio.Task | None = None
         # Most recent engine_info payload published during analysis. Kept
         # so /game/sync can re-emit it after a client remount (e.g. user
@@ -179,12 +123,8 @@ class HumanVsEngine:
         # navigation, so analyze sees the right position automatically.
         # Autosave, submit_move, engine thinking, and clocks are all gated
         # off while viewing. Exits via play_from_here.
-        self._viewing: bool = False
-        # Edit mode: server-authoritative position editor session. While
-        # _editing is True, play/analysis/view-nav endpoints reject. Entered
-        # from view mode only; commit imports the new FEN, cancel restores
-        # the pre-edit FEN. Snapshotted by enter_edit_mode.
-        self._editing: bool = False
+        #
+        # Edit mode: entered from view only; commit/cancel return to VIEWING.
         self._edit_pre_fen: str | None = None
         self._edit_view_snapshot: _ViewSnapshot | None = None
         self._view_cursor: int = 0  # 0..len(_view_full_moves) inclusive
@@ -215,25 +155,101 @@ class HumanVsEngine:
         self._view_pgn_termination: str | None = None
         self._tb: TablebaseProber | None = None
         self._lock = asyncio.Lock()
-        # Pending uci_log publish tasks; held to keep them from being GC'd
-        # mid-flight (asyncio only keeps weak refs to tasks).
-        self._uci_log_tasks: set[asyncio.Task] = set()
 
     @property
     def engine_path(self) -> str:
-        return self._engine_path
+        return self._supervisor.engine_path
+
+    # Derived bool views -- tests and API layer read these directly.
+    # _viewing is True in VIEWING, EDITING, and ANALYZING-from-view:
+    # pre-refactor _viewing=True was never cleared when analysis started,
+    # so all 6 call sites that read self._viewing must see True whenever
+    # the session originated from a view (no live game, frozen clock).
+    _VIEW_MASK = int(Mode.VIEWING | Mode.EDITING)
+
+    @property
+    def _paused(self) -> bool:
+        return self._mode is Mode.PAUSED
+
+    @property
+    def _analysis_mode(self) -> bool:
+        return self._mode is Mode.ANALYZING
+
+    @property
+    def _viewing(self) -> bool:
+        if self._mode & self._VIEW_MASK:
+            return True
+        # ANALYZING entered from a view session must still appear as viewing
+        # to _clock_event, _board_event, _persist, etc.
+        return self._mode is Mode.ANALYZING and self._pre_analysis_mode is Mode.VIEWING
+
+    @property
+    def _editing(self) -> bool:
+        return self._mode is Mode.EDITING
 
     @property
     def is_paused(self) -> bool:
-        return self._paused
+        return self._mode is Mode.PAUSED
 
     @property
     def is_analyzing(self) -> bool:
-        return self._analysis_mode
+        return self._mode is Mode.ANALYZING
 
     @property
     def is_editing(self) -> bool:
-        return self._editing
+        return self._mode is Mode.EDITING
+
+    # ----- supervisor passthroughs: tests and API layer still poke these
+    # attributes directly on the HVE object; preserve the access pattern
+    # so the supervisor extraction is a no-op at the call site.
+
+    @property
+    def _engine(self) -> chess.engine.UciProtocol | None:
+        return self._supervisor.engine
+
+    @_engine.setter
+    def _engine(self, value: chess.engine.UciProtocol | None) -> None:
+        self._supervisor.engine = value
+
+    @property
+    def _engine_path(self) -> str:
+        return self._supervisor.engine_path
+
+    @_engine_path.setter
+    def _engine_path(self, value: str) -> None:
+        self._supervisor.engine_path = value
+
+    @property
+    def _engine_name(self) -> str | None:
+        return self._supervisor.engine_name
+
+    @_engine_name.setter
+    def _engine_name(self, value: str | None) -> None:
+        self._supervisor.engine_name = value
+
+    @property
+    def _engine_options(self) -> dict:
+        return self._supervisor.options
+
+    @_engine_options.setter
+    def _engine_options(self, value: dict) -> None:
+        self._supervisor.options = value
+
+    @property
+    def _engine_args(self) -> list[str]:
+        return self._supervisor.args
+
+    @_engine_args.setter
+    def _engine_args(self, value: list[str]) -> None:
+        self._supervisor.args = value
+
+    @property
+    def _engine_env(self) -> dict[str, str]:
+        return self._supervisor.env
+
+    @_engine_env.setter
+    def _engine_env(self, value: dict[str, str]) -> None:
+        self._supervisor.env = value
 
     def set_engine_options(self, options: dict | None) -> None:
         """Set the UCI options to apply on the next engine launch.
@@ -242,112 +258,39 @@ class HumanVsEngine:
         calls this on every fetch from the registry so registry edits
         propagate to the next game.
         """
-        self._engine_options = dict(options or {})
+        self._supervisor.options = options or {}
 
     def set_engine_args(self, args: list[str] | None) -> None:
         """Set the extra argv passed on the next engine launch."""
-        self._engine_args = list(args or [])
+        self._supervisor.args = args or []
 
     def set_engine_env(self, env: dict[str, str] | None) -> None:
         """Set the per-engine env overlay applied on the next launch."""
-        self._engine_env = dict(env or {})
+        self._supervisor.env = env or {}
 
     def set_engine_name(self, name: str | None) -> None:
         """Override the display name shown to the user.
 
         Called by the API layer with the engine-registry name so the clock
-        label matches the Engines list. A None/empty value is ignored — it
+        label matches the Engines list. A None/empty value is ignored -- it
         does not clear a previously-resolved name (otherwise a fallback
         fetch after the registry entry is removed would wipe the label).
         """
         if name:
-            self._engine_name = name
+            self._supervisor.engine_name = name
 
     async def _ensure_engine(self) -> chess.engine.UciProtocol:
-        if self._engine is None:
-            self._engine = await self._spawn_engine()
-            if not self._engine_name:
-                self._engine_name = (
-                    self._engine.id.get("name") or Path(self._engine_path).name
-                )
-        return self._engine
+        return await self._supervisor.ensure(
+            global_defaults=self._global_engine_defaults(),
+        )
 
     async def _spawn_engine(
         self, overrides: dict | None = None,
     ) -> chess.engine.UciProtocol:
-        """Launch a fresh engine process and apply per-engine + global options.
-
-        `overrides` win over both per-engine options and global defaults —
-        used by analysis mode to bump Threads on its own throwaway instance.
-        Skips unknown/managed options instead of failing (engine schema may
-        have drifted since save).
-        """
-        command: str | list[str] = (
-            [self._engine_path, *self._engine_args]
-            if self._engine_args else self._engine_path
+        return await self._supervisor.spawn(
+            overrides=overrides,
+            global_defaults=self._global_engine_defaults(),
         )
-        popen_kwargs: dict = {}
-        if self._engine_env:
-            popen_kwargs["env"] = {**os.environ, **self._engine_env}
-        if sys.platform == "win32":
-            popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-        _transport, engine = await chess.engine.popen_uci(command, **popen_kwargs)
-        rc_future = getattr(engine, "returncode", None)
-        if rc_future is not None:
-            rc_future.add_done_callback(lambda f: f.exception())
-        self._patch_uci_log(engine)
-        accepted: dict = {}
-        for k, v in (self._engine_options or {}).items():
-            if k in engine.options and not engine.options[k].is_managed():
-                accepted[k] = v
-            else:
-                log.warning(
-                    "engine %s: skipping unknown/managed option %s",
-                    self._engine_path, k,
-                )
-        for k, v in self._global_engine_defaults().items():
-            if k in engine.options and not engine.options[k].is_managed():
-                accepted[k] = v
-        for k, v in (overrides or {}).items():
-            if k in engine.options and not engine.options[k].is_managed():
-                accepted[k] = v
-        if accepted:
-            try:
-                await engine.configure(accepted)
-            except chess.engine.EngineError:
-                log.exception("engine refused options %s", accepted)
-        return engine
-
-    def _patch_uci_log(self, engine: chess.engine.UciProtocol) -> None:
-        """Wrap send_line / line_received to emit uci_log events.
-
-        Note: the uci/uciok handshake done by popen_uci runs before this
-        patch, so those lines are not captured. setoption + isready and
-        all subsequent traffic are.
-        """
-        bus = self._bus
-        tasks = self._uci_log_tasks
-        loop = asyncio.get_running_loop()
-        orig_send = engine.send_line
-        orig_recv = engine.line_received
-
-        def _emit(direction: str, line: str) -> None:
-            t = loop.create_task(
-                bus.publish(Event(kind="uci_log", payload={"dir": direction, "line": line}))
-            )
-            tasks.add(t)
-            t.add_done_callback(tasks.discard)
-
-        def _send(line: str) -> None:
-            orig_send(line)
-            _emit(">", line)
-
-        def _recv(line: str) -> None:
-            orig_recv(line)
-            _emit("<", line)
-
-        engine.send_line = _send
-        engine.line_received = _recv
 
     def _engine_color(self) -> chess.Color:
         return chess.BLACK if self._human_white else chess.WHITE
@@ -420,19 +363,17 @@ class HumanVsEngine:
         to `tc.initial_seconds`.
         """
         async with self._lock:
-            if self._editing:
-                raise RuntimeError("edit mode is on")
+            if not (self._mode & Op.NEW_GAME._mask):
+                raise ModeConflictError(self._mode, Op.NEW_GAME)
             await self._cancel_analysis()
-            self._analysis_mode = False
             await self._cancel_think()
             await self._cancel_tick()
-            self._viewing = False
             self._reset_view_state()
             self._ensure_tablebase()
             engine = await self._ensure_engine()
             engine.send_line("ucinewgame")
             try:
-                board = chess.Board(start_fen) if start_fen else chess.Board()
+                board = board_from(start_fen)
             except ValueError as e:
                 raise RuntimeError(f"invalid FEN: {e}") from e
             for uci in start_moves_uci or []:
@@ -448,38 +389,15 @@ class HumanVsEngine:
             self._board = board
             self._start_fen = start_fen  # None for startpos games
             self._human_white = human_white
-            self._tc = tc
-            self._turn_started_at = time.monotonic()
-            # Seed _clock_history with one snapshot per ply (invariant for
-            # takeback). Use the parsed PGN values when available; otherwise
-            # synthesize (initial, initial) — clocks are unknown for the
-            # seeded plies but the invariant still holds.
-            n_plies = len(board.move_stack)
-            if seed_clock_history is not None and len(seed_clock_history) == n_plies:
-                self._clock_history = [
-                    (
-                        w if w is not None else tc.initial_seconds,
-                        b if b is not None else tc.initial_seconds,
-                    )
-                    for (w, b) in seed_clock_history
-                ]
-            else:
-                self._clock_history = [
-                    (tc.initial_seconds, tc.initial_seconds) for _ in range(n_plies)
-                ]
-            # Live clocks: use PGN-derived final values when available so the
-            # next move continues from the imported state.
-            self._white_time = (
-                seed_final_white_time
-                if seed_final_white_time is not None
-                else tc.initial_seconds
+            self._clock = ChessClock(tc)
+            self._clock.reseed_from_pgn(
+                n_plies=len(board.move_stack),
+                seed_history=seed_clock_history,
+                final_w=seed_final_white_time,
+                final_b=seed_final_black_time,
             )
-            self._black_time = (
-                seed_final_black_time
-                if seed_final_black_time is not None
-                else tc.initial_seconds
-            )
-            self._paused = False
+            self._clock.start_turn()
+            self._mode = Mode.PLAY
             self._game_id = uuid.uuid4().hex[:12]
             self._game_started_wall = time.time()
             await self._persist()
@@ -494,14 +412,8 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
-            if self._editing:
-                raise RuntimeError("edit mode is on")
-            if self._viewing:
-                raise RuntimeError("view mode is on")
-            if self._paused:
-                raise RuntimeError("game is paused")
-            if self._analysis_mode:
-                raise RuntimeError("analysis mode is on")
+            if not (self._mode & Op.SUBMIT_MOVE._mask):
+                raise ModeConflictError(self._mode, Op.SUBMIT_MOVE)
             if self._board.turn != (chess.WHITE if self._human_white else chess.BLACK):
                 raise RuntimeError("not human's turn")
             try:
@@ -512,7 +424,7 @@ class HumanVsEngine:
                 raise RuntimeError(f"illegal move: {uci}")
             # Snapshot clocks BEFORE consuming, so take-back restores the state
             # at the start of this turn.
-            self._clock_history.append((self._white_time, self._black_time))
+            self._clock.append_snapshot()
             self._consume_turn_time()
             self._board.push(move)
             await self._persist()
@@ -551,11 +463,11 @@ class HumanVsEngine:
                 await self._republish_last_analysis_info()
                 return
             if (
-                self._turn_started_at is None
+                self._clock.turn_started_at is None
                 and not self._paused
                 and not self._board.is_game_over()
             ):
-                self._turn_started_at = time.monotonic()
+                self._clock.start_turn()
                 self._start_tick()
                 if self._board.turn == self._engine_color() and self._think_task is None:
                     kick_engine = True
@@ -597,12 +509,8 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
-            if self._editing:
-                raise RuntimeError("edit mode is on")
-            if self._viewing:
-                raise RuntimeError("view mode is on")
-            if self._analysis_mode:
-                raise RuntimeError("analysis mode is on")
+            if not (self._mode & Op.TAKEBACK._mask):
+                raise ModeConflictError(self._mode, Op.TAKEBACK)
             await self._cancel_think()
             human_color = chess.WHITE if self._human_white else chess.BLACK
             if self._board.turn == human_color:
@@ -610,20 +518,21 @@ class HumanVsEngine:
                 if len(self._board.move_stack) < 2:
                     raise RuntimeError("nothing to take back")
                 self._board.pop()
-                self._clock_history.pop()
+                self._clock.pop_snapshot()
                 self._board.pop()
-                wt, bt = self._clock_history.pop()
+                self._clock.pop_snapshot()
             else:
                 # Engine was thinking; pop the human's last move.
                 if len(self._board.move_stack) < 1:
                     raise RuntimeError("nothing to take back")
                 self._board.pop()
-                wt, bt = self._clock_history.pop()
-            self._white_time = wt
-            self._black_time = bt
+                self._clock.pop_snapshot()
             # Preserve pause state across takeback: undoing should not
             # silently resume the clock.
-            self._turn_started_at = None if self._paused else time.monotonic()
+            if self._paused:
+                self._clock.stop_turn()
+            else:
+                self._clock.start_turn()
             await self._persist()
             await self._publish_board()
             await self._publish_clock()
@@ -642,26 +551,16 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
-            if self._editing:
-                raise RuntimeError("edit mode is on")
-            if self._viewing:
-                raise RuntimeError("view mode is on")
+            if not (self._mode & Op.SWITCH_SIDES._mask):
+                raise ModeConflictError(self._mode, Op.SWITCH_SIDES)
             if self._board.is_game_over():
                 raise RuntimeError("game is over")
-            if self._analysis_mode:
-                raise RuntimeError("cannot switch sides during analysis")
             await self._cancel_think()
             # Bake elapsed think time into the side-to-move's clock without
             # crediting the increment (no move was completed). Then restart
             # the timer so the new thinker's clock starts fresh from now.
             # While paused, the clock isn't running so neither step applies.
-            if self._turn_started_at is not None:
-                elapsed = time.monotonic() - self._turn_started_at
-                if self._board.turn == chess.WHITE:
-                    self._white_time = max(0.0, self._white_time - elapsed)
-                else:
-                    self._black_time = max(0.0, self._black_time - elapsed)
-                self._turn_started_at = time.monotonic()
+            self._clock.snap_for_switch(self._board.turn)
             self._human_white = not self._human_white
             await self._persist()
             await self._publish_board()
@@ -675,18 +574,16 @@ class HumanVsEngine:
 
     async def resign(self) -> None:
         async with self._lock:
-            if self._editing:
-                raise RuntimeError("edit mode is on")
-            if self._viewing:
-                raise RuntimeError("view mode is on")
+            if not (self._mode & Op.RESIGN._mask):
+                raise ModeConflictError(self._mode, Op.RESIGN)
             await self._cancel_analysis()
-            self._analysis_mode = False
+            self._mode = Mode.PLAY
             await self._cancel_think()
             await self._cancel_tick()
             if self._game_id is None:
                 return
             # Result from human's perspective: human resigned -> engine wins.
-            result = "0-1" if self._human_white else "1-0"
+            result = loser_result(self._human_white)
             self._maybe_save_pgn(result=result, termination="resignation")
             await self._bus.publish(
                 Event(
@@ -710,26 +607,16 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
-            if self._editing:
-                raise RuntimeError("edit mode is on")
-            if self._viewing:
-                raise RuntimeError("view mode is on")
+            if self._mode is Mode.PAUSED:
+                return
+            if not (self._mode & Op.PAUSE._mask):
+                raise ModeConflictError(self._mode, Op.PAUSE)
             if self._board.is_game_over():
                 raise RuntimeError("game is over")
-            if self._analysis_mode:
-                raise RuntimeError("cannot pause during analysis")
             if self._board.turn != (chess.WHITE if self._human_white else chess.BLACK):
                 raise RuntimeError("can only pause on your turn")
-            if self._paused:
-                return
-            if self._turn_started_at is not None:
-                elapsed = time.monotonic() - self._turn_started_at
-                if self._board.turn == chess.WHITE:
-                    self._white_time = max(0.0, self._white_time - elapsed)
-                else:
-                    self._black_time = max(0.0, self._black_time - elapsed)
-            self._turn_started_at = None
-            self._paused = True
+            self._clock.pause(self._board.turn)
+            self._mode = Mode.PAUSED
             await self._persist()
             await self._cancel_tick()
             await self._publish_clock()
@@ -739,14 +626,10 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
-            if self._editing:
-                raise RuntimeError("edit mode is on")
-            if self._viewing:
-                raise RuntimeError("view mode is on")
-            if not self._paused:
+            if self._mode is not Mode.PAUSED:
                 return
-            self._paused = False
-            self._turn_started_at = time.monotonic()
+            self._mode = Mode.PLAY
+            self._clock.resume()
             await self._persist()
             # Start the tick under the lock so a racing pause() cannot land
             # between unlock and _start_tick (which would leave the loop
@@ -771,18 +654,14 @@ class HumanVsEngine:
         async with self._lock:
             if self._board is None or self._game_id is None:
                 raise RuntimeError("no active game")
-            if self._editing:
-                raise RuntimeError("edit mode is on")
+            if self._mode is Mode.ANALYZING:
+                return
+            if not (self._mode & Op.START_ANALYSIS._mask):
+                raise ModeConflictError(self._mode, Op.START_ANALYSIS)
             if self._board.is_game_over():
                 raise RuntimeError("game is over")
-            if self._analysis_mode:
-                return
-            # In play mode the game must be paused first (so no engine
-            # search is running and clocks are frozen). View mode already
-            # satisfies both conditions implicitly.
-            if not self._viewing and not self._paused:
-                raise RuntimeError("pause the game before entering analysis")
-            self._analysis_mode = True
+            self._pre_analysis_mode = self._mode
+            self._mode = Mode.ANALYZING
             # Snapshot game_id + board under the lock so the task doesn't
             # need to re-acquire it for setup (avoids a deadlock window
             # against operations that hold the lock while cancelling us).
@@ -796,18 +675,16 @@ class HumanVsEngine:
         """Leave analysis mode. Game stays paused until the user resumes;
         on resume, the engine kicks off if it's its turn."""
         async with self._lock:
-            if not self._analysis_mode:
+            if self._mode is not Mode.ANALYZING:
                 return
-            self._analysis_mode = False
         await self._cancel_analysis()
         async with self._lock:
             if self._board is None or self._game_id is None:
                 return
-            # Paused-flag is play-mode only; in view mode there's no clock
-            # to freeze and play_from_here is the canonical exit.
-            if not self._viewing:
-                self._paused = True
-            self._turn_started_at = None
+            # In play mode, land in PAUSED (no engine search, clock frozen).
+            # In view mode, restore VIEWING -- no clock to freeze.
+            self._mode = Mode.VIEWING if self._pre_analysis_mode is Mode.VIEWING else Mode.PAUSED
+            self._clock.stop_turn()
             await self._persist()
             await self._publish_board()
             await self._publish_clock()
@@ -829,27 +706,12 @@ class HumanVsEngine:
         return (
             self._start_fen,
             moves,
-            list(self._clock_history),
-            self._white_time,
-            self._black_time,
+            list(self._clock.history),
+            self._clock.white_time,
+            self._clock.black_time,
         )
 
-    async def enter_view_mode(
-        self,
-        *,
-        start_fen: str | None,
-        moves_uci: list[str],
-        clock_history: list[tuple[float | None, float | None]] | None,
-        final_white_time: float | None = None,
-        final_black_time: float | None = None,
-        white_name: str | None = None,
-        black_name: str | None = None,
-        eval_history: list[dict | None] | None = None,
-        comments: list[str | None] | None = None,
-        root_comment: str | None = None,
-        pgn_result: str | None = None,
-        pgn_termination: str | None = None,
-    ) -> str:
+    async def enter_view_mode(self, params: ViewModeParams) -> str:
         """Load a PGN-imported game into view mode at the LAST ply.
 
         Replaces any active live game (the autosave file preserves it for
@@ -858,20 +720,19 @@ class HumanVsEngine:
         Exit via play_from_here, which seeds a fresh play game.
         """
         async with self._lock:
-            if self._editing:
-                raise RuntimeError("edit mode is on")
+            if not (self._mode & Op.ENTER_VIEW_MODE._mask):
+                raise ModeConflictError(self._mode, Op.ENTER_VIEW_MODE)
             await self._cancel_analysis()
-            self._analysis_mode = False
             await self._cancel_think()
             await self._cancel_tick()
             self._ensure_tablebase()
             try:
-                start_board = chess.Board(start_fen) if start_fen else chess.Board()
+                start_board = board_from(params.start_fen)
             except ValueError as e:
                 raise RuntimeError(f"invalid FEN: {e}") from e
             full_moves: list[chess.Move] = []
             replay = start_board.copy()
-            for uci in moves_uci:
+            for uci in params.moves_uci:
                 try:
                     move = chess.Move.from_uci(uci)
                 except ValueError as e:
@@ -880,31 +741,25 @@ class HumanVsEngine:
                     raise RuntimeError(f"illegal move in view: {uci}")
                 full_moves.append(move)
                 replay.push(move)
-            self._viewing = True
+            self._mode = Mode.VIEWING
             self._view_full_moves = full_moves
-            self._view_clock_history = list(clock_history) if clock_history else []
-            self._view_final_white = final_white_time
-            self._view_final_black = final_black_time
-            self._view_white_name = white_name
-            self._view_black_name = black_name
-            self._view_pgn_result = pgn_result
-            self._view_pgn_termination = pgn_termination
-            self._view_eval_history = (
-                list(eval_history) if eval_history else None
-            )
-            self._view_comments = list(comments) if comments else None
-            self._view_root_comment = root_comment or None
+            self._view_clock_history = list(params.clock_history) if params.clock_history else []
+            self._view_final_white = params.final_white_time
+            self._view_final_black = params.final_black_time
+            self._view_white_name = params.white_name
+            self._view_black_name = params.black_name
+            self._view_pgn_result = params.pgn_result
+            self._view_pgn_termination = params.pgn_termination
+            self._view_eval_history = list(params.eval_history) if params.eval_history else None
+            self._view_comments = list(params.comments) if params.comments else None
+            self._view_root_comment = params.root_comment or None
             self._view_cursor = 0  # land at start; avoid end-of-game modal
-            self._start_fen = start_fen
+            self._start_fen = params.start_fen
             self._board = start_board
             self._game_id = uuid.uuid4().hex[:12]
             self._game_started_wall = None  # not a play game; no autosave
-            # Clocks frozen — irrelevant in view mode but keep types sane.
-            self._white_time = 0.0
-            self._black_time = 0.0
-            self._turn_started_at = None
-            self._clock_history = []
-            self._paused = False
+            # Clocks frozen -- irrelevant in view mode but keep types sane.
+            self._clock = ChessClock(TimeControl(0.0, 0.0))
             await self._publish_board()
             await self._publish_clock()
         return self._game_id
@@ -931,19 +786,13 @@ class HumanVsEngine:
         """Move the view cursor to ``ply`` (0..len(full_moves)). Rebuilds
         the board by replaying from start. Rejected during analysis."""
         async with self._lock:
-            if self._editing:
-                raise RuntimeError("edit mode is on")
-            if not self._viewing:
-                raise RuntimeError("not in view mode")
-            if self._analysis_mode:
-                raise RuntimeError("analysis is on; stop it before navigating")
+            if not (self._mode & Op.VIEW_GOTO._mask):
+                raise ModeConflictError(self._mode, Op.VIEW_GOTO)
             n = len(self._view_full_moves)
             if ply < 0 or ply > n:
                 raise RuntimeError(f"ply out of range: {ply} (0..{n})")
             self._view_cursor = ply
-            board = (
-                chess.Board(self._start_fen) if self._start_fen else chess.Board()
-            )
+            board = board_from(self._start_fen)
             for m in self._view_full_moves[:ply]:
                 board.push(m)
             self._board = board
@@ -974,14 +823,13 @@ class HumanVsEngine:
         can restore it. Returns the snapshotted FEN.
         """
         async with self._lock:
-            if self._editing:
-                raise RuntimeError("already in edit mode")
-            if not self._viewing:
-                raise RuntimeError("enter view mode before editing")
+            if not (self._mode & Op.ENTER_EDIT_MODE._mask):
+                raise ModeConflictError(self._mode, Op.ENTER_EDIT_MODE)
             if self._board is None:
                 raise RuntimeError("no position")
-            need_cancel_analysis = self._analysis_mode
-            self._analysis_mode = False
+            need_cancel_analysis = self._mode is Mode.ANALYZING
+            if need_cancel_analysis:
+                self._mode = Mode.VIEWING
             pre_fen = self._board.fen()
             self._edit_pre_fen = pre_fen
             self._edit_view_snapshot = _ViewSnapshot(
@@ -1000,7 +848,7 @@ class HumanVsEngine:
                 pgn_result=self._view_pgn_result,
                 pgn_termination=self._view_pgn_termination,
             )
-            self._editing = True
+            self._mode = Mode.EDITING
         if need_cancel_analysis:
             await self._cancel_analysis()
         async with self._lock:
@@ -1030,19 +878,19 @@ class HumanVsEngine:
         intact so the user can fix and retry. Returns the new game_id.
         """
         async with self._lock:
-            if not self._editing:
-                raise RuntimeError("not in edit mode")
+            if not (self._mode & Op.COMMIT_EDIT._mask):
+                raise ModeConflictError(self._mode, Op.COMMIT_EDIT)
             try:
-                board = chess.Board(fen)
+                board = board_from(fen)
             except ValueError as e:
                 raise RuntimeError(f"invalid FEN: {e}") from e
             if not board.is_valid():
                 raise RuntimeError(explain_invalid(board))
             target_fen = board.fen()
-            pre_epd = chess.Board(self._edit_pre_fen).epd() if self._edit_pre_fen else None
+            pre_epd = board_from(self._edit_pre_fen).epd() if self._edit_pre_fen else None
             unchanged = pre_epd is not None and board.epd() == pre_epd
             snap = self._edit_view_snapshot
-            self._editing = False
+            self._mode = Mode.VIEWING
         if unchanged and snap is not None:
             async with self._lock:
                 self._restore_view_snapshot(snap)
@@ -1054,13 +902,11 @@ class HumanVsEngine:
         # FEN changed -- drop history, enter fresh view at new position.
         try:
             game_id = await self.enter_view_mode(
-                start_fen=target_fen,
-                moves_uci=[],
-                clock_history=None,
+                ViewModeParams(start_fen=target_fen, moves_uci=[], clock_history=None)
             )
         except Exception:
             async with self._lock:
-                self._editing = True
+                self._mode = Mode.EDITING
             raise
         async with self._lock:
             self._edit_pre_fen = None
@@ -1070,14 +916,11 @@ class HumanVsEngine:
     async def cancel_edit(self) -> str:
         """Leave edit mode; restore view state from pre-edit snapshot."""
         async with self._lock:
-            if not self._editing:
-                raise RuntimeError("not in edit mode")
+            if not (self._mode & Op.CANCEL_EDIT._mask):
+                raise ModeConflictError(self._mode, Op.CANCEL_EDIT)
             snap = self._edit_view_snapshot
-            if snap is None:
-                # Defensive: enter_edit_mode always sets this.
-                self._editing = False
-                raise RuntimeError("no pre-edit snapshot to restore")
-            self._editing = False
+            assert snap is not None, "enter_edit_mode always sets _edit_view_snapshot"
+            self._mode = Mode.VIEWING
             self._restore_view_snapshot(snap)
             self._edit_pre_fen = None
             self._edit_view_snapshot = None
@@ -1095,12 +938,8 @@ class HumanVsEngine:
         clocks reset to ``tc.initial_seconds``.
         """
         async with self._lock:
-            if self._editing:
-                raise RuntimeError("edit mode is on")
-            if not self._viewing:
-                raise RuntimeError("not in view mode")
-            if self._analysis_mode:
-                raise RuntimeError("analysis is on; stop it before play_from_here")
+            if not (self._mode & Op.PLAY_FROM_HERE._mask):
+                raise ModeConflictError(self._mode, Op.PLAY_FROM_HERE)
             cursor = self._view_cursor
             seed_moves = [m.uci() for m in self._view_full_moves[:cursor]]
             seed_clocks = (
@@ -1125,7 +964,7 @@ class HumanVsEngine:
                     seed_final_w, seed_final_b = nw, nb
             start_fen = self._start_fen
             # Determine side-to-move at the cursor without leaving the lock.
-            board = chess.Board(start_fen) if start_fen else chess.Board()
+            board = board_from(start_fen)
             for m in self._view_full_moves[:cursor]:
                 board.push(m)
             # Refuse if the cursor lands on a finished position — would
@@ -1137,7 +976,7 @@ class HumanVsEngine:
             human_white = (board.turn == chess.WHITE)
             # Exit view mode before the new_game call (which re-acquires
             # the lock). Clear viewer state so new_game starts clean.
-            self._viewing = False
+            self._mode = Mode.PLAY
             self._reset_view_state()
         return await self.new_game(
             human_white=human_white,
@@ -1187,14 +1026,10 @@ class HumanVsEngine:
         kick_engine = False
         async with self._lock:
             await self._cancel_analysis()
-            self._analysis_mode = False
+            if self._mode is Mode.ANALYZING:
+                self._mode = self._pre_analysis_mode
             await self._cancel_think()
-            await self._quit_engine()
-            self._engine_path = path
-            self._engine_name = None
-            self._engine_options = {}
-            self._engine_args = []
-            self._engine_env = {}
+            await self._supervisor.swap(path)
             if self._board is not None and self._game_id is not None:
                 await self._publish_board()
                 if not self._board.is_game_over() and not self._paused:
@@ -1206,7 +1041,8 @@ class HumanVsEngine:
     async def shutdown(self) -> None:
         async with self._lock:
             await self._cancel_analysis()
-            self._analysis_mode = False
+            if self._mode is Mode.ANALYZING:
+                self._mode = self._pre_analysis_mode
             await self._cancel_think()
             await self._cancel_tick()
             await self._quit_engine()
@@ -1231,13 +1067,13 @@ class HumanVsEngine:
         state = GameState(
             game_id=self._game_id,
             human_white=self._human_white,
-            tc_initial_seconds=self._tc.initial_seconds,
-            tc_increment_seconds=self._tc.increment_seconds,
-            white_time=self._white_time,
-            black_time=self._black_time,
+            tc_initial_seconds=self._clock.tc.initial_seconds,
+            tc_increment_seconds=self._clock.tc.increment_seconds,
+            white_time=self._clock.white_time,
+            black_time=self._clock.black_time,
             paused=self._paused,
             moves_uci=[m.uci() for m in self._board.move_stack],
-            clock_history=[[w, b] for (w, b) in self._clock_history],
+            clock_history=[[w, b] for (w, b) in self._clock.history],
             start_fen=self._start_fen,
             game_started_wall=self._game_started_wall,
         )
@@ -1263,7 +1099,7 @@ class HumanVsEngine:
         `turn_started_at` so the side-to-move's clock isn't charged for the
         gap between boot and connect.
         """
-        self._board = chess.Board(state.start_fen) if state.start_fen else chess.Board()
+        self._board = board_from(state.start_fen)
         self._start_fen = state.start_fen
         for uci in state.moves_uci:
             self._board.push(chess.Move.from_uci(uci))
@@ -1272,47 +1108,34 @@ class HumanVsEngine:
         # autosave behavior, just renames the file going forward.
         self._game_started_wall = state.game_started_wall or time.time()
         self._human_white = state.human_white
-        self._tc = TimeControl(
+        self._clock = ChessClock(TimeControl(
             initial_seconds=state.tc_initial_seconds,
             increment_seconds=state.tc_increment_seconds,
-        )
-        self._white_time = state.white_time
-        self._black_time = state.black_time
-        self._paused = state.paused
-        self._clock_history = [(w, b) for (w, b) in state.clock_history]
+        ))
+        self._clock.white_time = state.white_time
+        self._clock.black_time = state.black_time
+        self._clock.history = [(w, b) for (w, b) in state.clock_history]
         # Marker: turn hasn't started ticking yet. republish_state() sets it.
-        self._turn_started_at = None
+        self._clock.stop_turn()
+        self._mode = Mode.PAUSED if state.paused else Mode.PLAY
 
     # ----- internals -----
 
     def _consume_turn_time(self) -> None:
-        """Subtract elapsed wall time from the side that just moved; add increment."""
-        if self._turn_started_at is None or self._board is None:
+        """Debit elapsed from side-just-moved (board.turn pre-push), add increment."""
+        if self._board is None:
             return
-        elapsed = time.monotonic() - self._turn_started_at
-        # `board.turn` here is the side that JUST moved (we haven't pushed yet
-        # when called from submit_move; for engine moves, _think_and_play
-        # calls this just before push too).
-        side_just_moved = self._board.turn
-        if side_just_moved == chess.WHITE:
-            self._white_time = max(0.0, self._white_time - elapsed) + self._tc.increment_seconds
-        else:
-            self._black_time = max(0.0, self._black_time - elapsed) + self._tc.increment_seconds
-        self._turn_started_at = time.monotonic()
+        self._clock.consume_turn(self._board.turn)
 
     def _remaining(self, side: chess.Color) -> float:
-        """Live remaining time for `side`, accounting for ticking-down on the
-        side currently thinking."""
-        base = self._white_time if side == chess.WHITE else self._black_time
-        if (
-            self._board is not None
-            and not self._board.is_game_over()
-            and not self._paused
-            and self._board.turn == side
-            and self._turn_started_at is not None
-        ):
-            base = max(0.0, base - (time.monotonic() - self._turn_started_at))
-        return base
+        """Live remaining for `side`, ticking down only on its turn."""
+        if self._board is None:
+            return self._clock.white_time if side == chess.WHITE else self._clock.black_time
+        return self._clock.remaining(
+            side,
+            stm=self._board.turn,
+            game_over=self._paused or self._board.is_game_over(),
+        )
 
     async def _cancel_think(self) -> None:
         """Stop the current search; keep the engine alive for reuse.
@@ -1327,42 +1150,11 @@ class HumanVsEngine:
         analysis = self._analysis
         self._think_task = None
         self._analysis = None
-        if think_task and not think_task.done():
-            if analysis is not None:
-                try:
-                    analysis.stop()  # transitions protocol command to CANCELLING; prevents double stop
-                except Exception as e:
-                    log.warning("failed to stop analysis: %s", e)
-            elif self._engine is not None:
-                try:
-                    self._engine.send_line("stop")
-                except Exception as e:
-                    log.warning("failed to send stop to engine: %s", e)
-            try:
-                await asyncio.wait_for(asyncio.shield(think_task), timeout=0.5)
-                log.info("engine responded to stop")
-            except asyncio.TimeoutError:
-                log.warning("engine did not respond to stop -- terminating")
-                transport = getattr(self._engine, "transport", None)
-                if transport is not None:
-                    try:
-                        transport.close()
-                    except (BrokenPipeError, OSError) as e:
-                        log.warning("failed to close engine transport: %s", e)
-                self._engine = None
-            except (asyncio.CancelledError, Exception):
-                pass
-            think_task.cancel()
+        await self._supervisor.cancel(think_task=think_task, analysis=analysis)
 
     async def _quit_engine(self) -> None:
         """Gracefully terminate the engine subprocess. Call after `_cancel_think`."""
-        if self._engine is not None:
-            try:
-                await self._engine.quit()
-            except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
-                pass
-            self._engine = None
-        self._uci_log_tasks.clear()
+        await self._supervisor.quit()
 
     async def _cancel_analysis(self) -> None:
         """Stop the infinite-analysis loop gracefully.
@@ -1425,11 +1217,11 @@ class HumanVsEngine:
         async with self._lock:
             if self._game_id is None or self._board is None:
                 return
-            loser = "white" if self._board.turn == chess.WHITE else "black"
+            loser = side_to_move(self._board)
             game_id = self._game_id
             await self._cancel_think()
             # Loser is the side to move when the flag fell.
-            result = "0-1" if loser == "white" else "1-0"
+            result = loser_result(loser == "white")
             self._maybe_save_pgn(result=result, termination="time_forfeit")
         await self._bus.publish(
             Event(
@@ -1451,6 +1243,28 @@ class HumanVsEngine:
     async def _engine_to_move(self) -> None:
         self._think_task = asyncio.create_task(self._think_and_play())
 
+    async def _pump_engine_info(
+        self,
+        analysis,
+        game_id: str,
+        board: chess.Board,
+        cache_payload: bool = False,
+    ) -> None:
+        """Drain analysis info events, serialize + publish, optionally cache.
+
+        Shared by _think_and_play (cache_payload=False) and _run_analysis
+        (cache_payload=True; the cached payload is re-emitted by /game/sync
+        on client remount so the board arrow returns immediately).
+        """
+        async for info in analysis:
+            if "pv" in info or "depth" in info or "score" in info:
+                payload = serialize_info(info, board=board, pov=self._eval_pov(board.turn))
+                if cache_payload:
+                    self._last_analysis_info = payload
+                await self._bus.publish(
+                    Event(kind="engine_info", game_id=game_id, payload=payload)
+                )
+
     async def _think_and_play(self) -> None:
         async with self._lock:
             if self._board is None or self._game_id is None:
@@ -1469,8 +1283,8 @@ class HumanVsEngine:
         limit = chess.engine.Limit(
             white_clock=white_clock,
             black_clock=black_clock,
-            white_inc=self._tc.increment_seconds,
-            black_inc=self._tc.increment_seconds,
+            white_inc=self._clock.tc.increment_seconds,
+            black_inc=self._clock.tc.increment_seconds,
         )
         # Clear the live engine panel at search start; real info events will
         # repopulate it. Book moves return bestmove without info, leaving it
@@ -1481,15 +1295,7 @@ class HumanVsEngine:
         try:
             with await engine.analysis(board, limit=limit) as analysis:
                 self._analysis = analysis
-                async for info in analysis:
-                    if "pv" in info or "depth" in info or "score" in info:
-                        await self._bus.publish(
-                            Event(
-                                kind="engine_info",
-                                game_id=game_id,
-                                payload=_serialize_info(info, board, self._eval_pov(board.turn)),
-                            )
-                        )
+                await self._pump_engine_info(analysis, game_id, board)
                 result = analysis.wait()  # returns BestMove
                 best_move = await result
                 best = best_move.move
@@ -1519,7 +1325,7 @@ class HumanVsEngine:
             ):
                 # Search was cancelled; ignore its bestmove.
                 return
-            self._clock_history.append((self._white_time, self._black_time))
+            self._clock.append_snapshot()
             self._consume_turn_time()
             self._board.push(best)
             await self._persist()
@@ -1558,17 +1364,7 @@ class HumanVsEngine:
         try:
             with await engine.analysis(board) as analysis:
                 self._analysis = analysis
-                async for info in analysis:
-                    if "pv" in info or "depth" in info or "score" in info:
-                        payload = _serialize_info(info, board, self._eval_pov(board.turn))
-                        self._last_analysis_info = payload
-                        await self._bus.publish(
-                            Event(
-                                kind="engine_info",
-                                game_id=game_id,
-                                payload=payload,
-                            )
-                        )
+                await self._pump_engine_info(analysis, game_id, board, cache_payload=True)
         except chess.engine.EngineTerminatedError:
             log.error("engine crashed mid-analysis")
             await self._bus.publish(
@@ -1583,108 +1379,114 @@ class HumanVsEngine:
             except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
                 pass
 
+    def _opening_payload(self) -> dict | None:
+        """Opening-book lookup. Keys on the standard starting position; an
+        imported (non-startpos) game can't be classified."""
+        if (
+            self._openings is None
+            or not self._board.move_stack
+            or self._start_fen is not None
+        ):
+            return None
+        ucis = [m.uci() for m in self._board.move_stack]
+        hit = self._openings.lookup(ucis)
+        return {"eco": hit.eco, "name": hit.name} if hit is not None else None
+
+    def _view_moves_san(self) -> list[str]:
+        """Full-game SAN list for view mode (the UI highlights one ply via
+        cursor; in play mode the moves come straight off the live board)."""
+        full_board = board_from(self._start_fen)
+        out: list[str] = []
+        for m in self._view_full_moves:
+            out.append(full_board.san(m))
+            full_board.push(m)
+        return out
+
+    def _view_payload(self) -> dict:
+        """Build the per-event view-mode payload (cursor, eval, comment,
+        game_over, result/termination). Only called when self._viewing is
+        True; reads only view-mode attrs + self._board."""
+        # Eval at the cursor = eval recorded for the last played move.
+        # cursor==0 means initial position, no move yet -> no eval.
+        eval_at_cursor = None
+        if (
+            self._view_eval_history is not None
+            and 0 < self._view_cursor <= len(self._view_eval_history)
+        ):
+            eval_at_cursor = self._view_eval_history[self._view_cursor - 1]
+        has_any_eval = (
+            self._view_eval_history is not None
+            and any(e is not None for e in self._view_eval_history)
+        )
+        comment_at_cursor: str | None = None
+        if self._view_cursor == 0:
+            comment_at_cursor = self._view_root_comment
+        elif (
+            self._view_comments is not None
+            and 0 < self._view_cursor <= len(self._view_comments)
+        ):
+            comment_at_cursor = self._view_comments[self._view_cursor - 1]
+        has_any_comment = (
+            self._view_root_comment is not None
+            or (
+                self._view_comments is not None
+                and any(c is not None for c in self._view_comments)
+            )
+        )
+        outcome = self._board.outcome()
+        # UI disables Play-from-here when the cursor lands on a finished
+        # position (mirror of the backend guard). game_over is true for
+        # forced endings AND claimable draws recorded in the PGN headers.
+        game_over = outcome is not None or (
+            bool(self._view_pgn_result)
+            and self._view_pgn_result != "*"
+            and self._view_cursor == len(self._view_full_moves)
+        )
+        if outcome is not None:
+            result_termination = {
+                "result": outcome.result(),
+                "termination": outcome.termination.name.lower(),
+            }
+        elif self._view_pgn_result and self._view_pgn_result != "*":
+            result_termination = {
+                "result": self._view_pgn_result,
+                "termination": (
+                    "threefold_repetition"
+                    if self._board.can_claim_threefold_repetition()
+                    else "fifty_moves"
+                    if self._board.can_claim_fifty_moves()
+                    else self._view_pgn_termination
+                ) if self._view_pgn_termination == "normal" else self._view_pgn_termination,
+            }
+        else:
+            result_termination = {}
+        return {
+            "cursor": self._view_cursor,
+            "total_plies": len(self._view_full_moves),
+            "white_name": self._view_white_name,
+            "black_name": self._view_black_name,
+            "eval": eval_at_cursor,
+            "has_eval": has_any_eval,
+            "comment": comment_at_cursor,
+            "has_comment": has_any_comment,
+            "game_over": game_over,
+            **result_termination,
+        }
+
     def _board_event(self) -> Event:
         assert self._board is not None and self._game_id is not None
-        opening_payload = None
-        # Opening book lookup keys on UCI moves from the standard starting
-        # position; an imported (non-startpos) game can't be classified.
-        if (
-            self._openings is not None
-            and self._board.move_stack
-            and self._start_fen is None
-        ):
-            ucis = [m.uci() for m in self._board.move_stack]
-            hit = self._openings.lookup(ucis)
-            if hit is not None:
-                opening_payload = {"eco": hit.eco, "name": hit.name}
-        # In view mode, moves_san reflects the FULL game (so the UI can show
-        # the whole list with the cursor highlighting one ply); in play mode
-        # it's just the moves on the live board.
         if self._viewing:
-            full_board = (
-                chess.Board(self._start_fen) if self._start_fen else chess.Board()
-            )
-            for m in self._view_full_moves:
-                full_board.push(m)
-            moves_san = _moves_san(full_board, self._start_fen)
+            moves_san = self._view_moves_san()
+            view_payload = self._view_payload()
         else:
             moves_san = _moves_san(self._board, self._start_fen)
-        view_payload = None
-        if self._viewing:
-            # Eval at the cursor = eval recorded for the last played move.
-            # cursor==0 means initial position, no move yet -> no eval.
-            eval_at_cursor = None
-            if (
-                self._view_eval_history is not None
-                and 0 < self._view_cursor <= len(self._view_eval_history)
-            ):
-                eval_at_cursor = self._view_eval_history[self._view_cursor - 1]
-            has_any_eval = (
-                self._view_eval_history is not None
-                and any(e is not None for e in self._view_eval_history)
-            )
-            comment_at_cursor: str | None = None
-            if self._view_cursor == 0:
-                comment_at_cursor = self._view_root_comment
-            elif (
-                self._view_comments is not None
-                and 0 < self._view_cursor <= len(self._view_comments)
-            ):
-                comment_at_cursor = self._view_comments[self._view_cursor - 1]
-            has_any_comment = (
-                self._view_root_comment is not None
-                or (
-                    self._view_comments is not None
-                    and any(c is not None for c in self._view_comments)
-                )
-            )
-            view_payload = {
-                "cursor": self._view_cursor,
-                "total_plies": len(self._view_full_moves),
-                "white_name": self._view_white_name,
-                "black_name": self._view_black_name,
-                "eval": eval_at_cursor,
-                "has_eval": has_any_eval,
-                "comment": comment_at_cursor,
-                "has_comment": has_any_comment,
-                # UI disables Play-from-here when the cursor lands on a
-                # finished position (mirror of the backend guard).
-                # game_over is true for forced endings AND claimable draws
-                # recorded in the PGN headers.
-                "game_over": (outcome := self._board.outcome()) is not None
-                    or (
-                        bool(self._view_pgn_result)
-                        and self._view_pgn_result != "*"
-                        and self._view_cursor == len(self._view_full_moves)
-                    ),
-                **(
-                    {
-                        "result": outcome.result(),
-                        "termination": outcome.termination.name.lower(),
-                    }
-                    if outcome is not None
-                    else (
-                        {
-                            "result": self._view_pgn_result,
-                            "termination": (
-                                "threefold_repetition"
-                                if self._board.can_claim_threefold_repetition()
-                                else "fifty_moves"
-                                if self._board.can_claim_fifty_moves()
-                                else self._view_pgn_termination
-                            ) if self._view_pgn_termination == "normal" else self._view_pgn_termination,
-                        }
-                        if self._view_pgn_result and self._view_pgn_result != "*"
-                        else {}
-                    )
-                ),
-            }
+            view_payload = None
         return Event(
             kind="board_update",
             game_id=self._game_id,
             payload={
                 "fen": self._board.fen(),
-                "turn": "white" if self._board.turn else "black",
+                "turn": side_to_move(self._board),
                 "ply": self._board.ply(),
                 "moves_san": moves_san,
                 "last_move": self._board.peek().uci() if self._board.move_stack else None,
@@ -1692,7 +1494,7 @@ class HumanVsEngine:
                 # playing); omit so the UI's local flip isn't clobbered.
                 "human_white": None if self._viewing else self._human_white,
                 "engine_name": self._engine_name,
-                "opening": opening_payload,
+                "opening": self._opening_payload(),
                 "tablebase": {
                     "halfmove_clock": self._board.halfmove_clock,
                     **(self._tb.probe(self._board) or {} if self._tb else {}),
@@ -1720,7 +1522,7 @@ class HumanVsEngine:
                 payload={
                     "white_time": wt,
                     "black_time": bt,
-                    "turn": "white" if self._board.turn else "black",
+                    "turn": side_to_move(self._board),
                     "running": False,
                     "paused": False,
                     "analyzing": self._analysis_mode,
@@ -1733,7 +1535,7 @@ class HumanVsEngine:
             payload={
                 "white_time": self._remaining(chess.WHITE),
                 "black_time": self._remaining(chess.BLACK),
-                "turn": "white" if self._board.turn else "black",
+                "turn": side_to_move(self._board),
                 "running": not self._board.is_game_over()
                 and not self._paused
                 and not self._analysis_mode,
@@ -1773,9 +1575,9 @@ class HumanVsEngine:
             result = outcome.result()
             termination = outcome.termination.name.lower()
         elif self._board.can_claim_threefold_repetition():
-            result, termination = "1/2-1/2", "threefold_repetition"
+            result, termination = DRAW, "threefold_repetition"
         elif self._board.can_claim_fifty_moves():
-            result, termination = "1/2-1/2", "fifty_moves"
+            result, termination = DRAW, "fifty_moves"
         else:
             result, termination = "*", "unknown"
         self._maybe_save_pgn(result=result, termination=termination)
@@ -1789,11 +1591,11 @@ class HumanVsEngine:
         if self._board is None or self._game_id is None:
             return None
         if self._viewing:
-            return None  # not a play game; autosave is play-mode only
+            return None
         if self._settings is None or not getattr(self._settings, "pgn_autosave", False):
             return None
         if not self._board.move_stack:
-            return None  # nothing worth saving
+            return None
 
         raw = getattr(self._settings, "pgn_dir", None)
         if not raw:
@@ -1805,47 +1607,39 @@ class HumanVsEngine:
             log.exception("could not create PGN dir %s", pgn_dir)
             return None
 
-        game = chess.pgn.Game.from_board(self._board)
         engine_label = self._engine_name or Path(self._engine_path).name
         white = "Human" if self._human_white else engine_label
         black = engine_label if self._human_white else "Human"
-        game.headers["Event"] = "Sturddle View — Human vs Engine"
-        game.headers["Site"] = "Sturddle View"
-        game.headers["Date"] = datetime.date.today().strftime("%Y.%m.%d")
-        game.headers["White"] = white
-        game.headers["Black"] = black
-        game.headers["Result"] = result
-        game.headers["Termination"] = termination
-        if self._tc.initial_seconds:
-            game.headers["TimeControl"] = (
-                f"{int(self._tc.initial_seconds)}+{int(self._tc.increment_seconds)}"
-            )
+        headers = {
+            "Event": "Sturddle View — Human vs Engine",
+            "Site": "Sturddle View",
+            "Date": datetime.date.today().strftime("%Y.%m.%d"),
+            "White": white,
+            "Black": black,
+        }
 
-        # Opening header: longest registered prefix wins (sticky across
-        # transpositions and out-of-book moves). Skipped for FEN-imported
-        # games — lookup keys on move history from startpos.
+        opening = None
         if self._openings is not None and self._start_fen is None:
             ucis = [m.uci() for m in self._board.move_stack]
             hit = self._openings.lookup(ucis)
             if hit is not None:
-                game.headers["ECO"] = hit.eco
-                game.headers["Opening"] = hit.name
+                opening = (hit.eco, hit.name)
 
-        # Per-ply [%clk] annotations. _clock_history[i] is (white, black)
-        # BEFORE ply i; the mover's clock AFTER ply i is _clock_history[i+1]
-        # for that side, or the live clock if i is the most recent ply.
-        # Mover is taken from the replay board (handles non-startpos games
-        # where ply 0 may be Black to move).
-        replay = chess.Board(self._start_fen) if self._start_fen else chess.Board()
-        nodes = list(game.mainline())
-        for i, node in enumerate(nodes):
-            mover_white = (replay.turn == chess.WHITE)
-            replay.push(self._board.move_stack[i])
-            if i + 1 < len(self._clock_history):
-                w_after, b_after = self._clock_history[i + 1]
-            else:
-                w_after, b_after = self._white_time, self._black_time
-            node.set_clock(w_after if mover_white else b_after)
+        tc = None
+        if self._clock.tc.initial_seconds:
+            tc = (int(self._clock.tc.initial_seconds), int(self._clock.tc.increment_seconds))
+
+        pgn_text = build_pgn(
+            start_fen=self._start_fen,
+            moves_uci=[m.uci() for m in self._board.move_stack],
+            clock_history=list(self._clock.history),
+            final_clocks=(self._clock.white_time, self._clock.black_time),
+            headers=headers,
+            opening=opening,
+            result=result,
+            termination=termination,
+            time_control=tc,
+        )
 
         # Game-start timestamp keeps the path stable across per-move autosaves
         # and the final end-of-game write, so the file is overwritten in place.
@@ -1853,7 +1647,7 @@ class HumanVsEngine:
         ts = datetime.datetime.fromtimestamp(wall).strftime("%Y%m%d-%H%M%S")
         path = pgn_dir / f"{ts}-{self._game_id}.pgn"
         try:
-            atomic_write_text(path, f"{game}\n\n")
+            atomic_write_text(path, pgn_text)
         except OSError:
             log.exception("could not write PGN to %s", path)
             return None

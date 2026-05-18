@@ -9,7 +9,8 @@ import pytest
 
 from sturddle_view.config import Settings
 from sturddle_view.events import EventBus
-from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl
+from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
+from sturddle_view.play.mode import Mode, ModeConflictError
 
 
 class _StubEngine:
@@ -39,11 +40,11 @@ def hve(tmp_path):
 
 async def test_enter_view_mode_lands_at_first_ply(hve):
     h, _ = hve
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=["e2e4", "e7e5", "g1f3"],
         clock_history=None,
-    )
+    ))
     assert h._viewing is True
     assert h._view_cursor == 0
     assert h._board.fen() == chess.STARTING_FEN
@@ -51,11 +52,11 @@ async def test_enter_view_mode_lands_at_first_ply(hve):
 
 async def test_view_navigation_back_forward_first_last(hve):
     h, _ = hve
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=["e2e4", "e7e5", "g1f3"],
         clock_history=None,
-    )
+    ))
     # Land at 0; jump to last to exercise back/forward from a non-boundary.
     await h.view_last()
     await h.view_back()
@@ -72,9 +73,9 @@ async def test_view_navigation_back_forward_first_last(hve):
 
 async def test_view_navigation_clamps_at_boundaries(hve):
     h, _ = hve
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None, moves_uci=["e2e4", "e7e5"], clock_history=None,
-    )
+    ))
     await h.view_first()
     await h.view_back()  # already at 0
     assert h._view_cursor == 0
@@ -85,28 +86,28 @@ async def test_view_navigation_clamps_at_boundaries(hve):
 
 async def test_play_modes_rejected_in_view(hve):
     h, _ = hve
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None, moves_uci=["e2e4"], clock_history=None,
-    )
-    with pytest.raises(RuntimeError, match="view mode"):
+    ))
+    with pytest.raises(ModeConflictError):
         await h.submit_move("e7e5")
-    with pytest.raises(RuntimeError, match="view mode"):
+    with pytest.raises(ModeConflictError):
         await h.takeback()
-    with pytest.raises(RuntimeError, match="view mode"):
+    with pytest.raises(ModeConflictError):
         await h.pause()
-    with pytest.raises(RuntimeError, match="view mode"):
+    with pytest.raises(ModeConflictError):
         await h.switch_sides()
-    with pytest.raises(RuntimeError, match="view mode"):
+    with pytest.raises(ModeConflictError):
         await h.resign()
 
 
 async def test_no_autosave_in_view(hve):
     h, tmp_path = hve
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=["e2e4", "e7e5", "g1f3"],
         clock_history=None,
-    )
+    ))
     # Navigate around — none of this should trigger an autosave write.
     await h.view_back()
     await h.view_first()
@@ -116,11 +117,11 @@ async def test_no_autosave_in_view(hve):
 
 async def test_play_from_here_seeds_new_game_at_cursor(hve):
     h, _ = hve
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=["e2e4", "e7e5", "g1f3", "b8c6"],
         clock_history=None,
-    )
+    ))
     await h.view_last()
     await h.view_back()  # cursor at ply 3 (after Nf3 — Black to move)
     assert h._view_cursor == 3
@@ -137,17 +138,17 @@ async def test_play_from_here_at_last_ply_uses_imported_final_clocks(hve):
     """Round-trip with [%clk]: import -- no nav -- play_from_here at last
     ply with inherit_clocks=True must restore live clocks from the PGN."""
     h, _ = hve
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=["e2e4", "c7c5", "g1f3"],
         clock_history=[(None, None), (4 * 60 + 55, None), (4 * 60 + 55, 4 * 60 + 50)],
         final_white_time=4 * 60 + 48,
         final_black_time=4 * 60 + 50,
-    )
+    ))
     await h.view_last()
     await h.play_from_here(tc=TimeControl(300, 0), inherit_clocks=True)
-    assert h._white_time == 4 * 60 + 48
-    assert h._black_time == 4 * 60 + 50
+    assert h._clock.white_time == 4 * 60 + 48
+    assert h._clock.black_time == 4 * 60 + 50
 
 
 async def test_play_from_here_mid_game_derives_clocks_from_history(hve):
@@ -155,21 +156,21 @@ async def test_play_from_here_mid_game_derives_clocks_from_history(hve):
     view_clock_history[cursor] (== pre-move-(cursor+1))."""
     h, _ = hve
     # 3-ply game: e4 (white@4:55) c5 (black@4:50) Nf3 (white@4:48).
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=["e2e4", "c7c5", "g1f3"],
         clock_history=[(None, None), (4 * 60 + 55, None), (4 * 60 + 55, 4 * 60 + 50)],
         final_white_time=4 * 60 + 48,
         final_black_time=4 * 60 + 50,
-    )
+    ))
     # Cursor at ply 2 (after c5 — White to move). Post-c5 clocks = pre-Nf3
     # snapshot = view_clock_history[2] = (4:55, 4:50).
     await h.view_last()
     await h.view_back()
     assert h._view_cursor == 2
     await h.play_from_here(tc=TimeControl(300, 0), inherit_clocks=True)
-    assert h._white_time == 4 * 60 + 55
-    assert h._black_time == 4 * 60 + 50
+    assert h._clock.white_time == 4 * 60 + 55
+    assert h._clock.black_time == 4 * 60 + 50
 
 
 async def test_play_from_here_at_finished_position_keeps_view_mode(hve):
@@ -178,11 +179,11 @@ async def test_play_from_here_at_finished_position_keeps_view_mode(hve):
     half-cleared state where neither view nor play is active."""
     h, _ = hve
     # Scholar's mate: 7 plies ending in #.
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=["e2e4", "e7e5", "d1h5", "b8c6", "f1c4", "g8f6", "h5f7"],
         clock_history=None,
-    )
+    ))
     await h.view_last()
     assert h._board.is_checkmate()
     with pytest.raises(RuntimeError, match="game is over|already over"):
@@ -197,14 +198,32 @@ async def test_play_from_here_at_finished_position_keeps_view_mode(hve):
 
 async def test_view_nav_rejected_during_analysis(hve):
     h, _ = hve
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None, moves_uci=["e2e4", "e7e5"], clock_history=None,
-    )
-    h._analysis_mode = True  # simulate analysis on
-    with pytest.raises(RuntimeError, match="analysis"):
+    ))
+    h._mode = Mode.ANALYZING
+    with pytest.raises(ModeConflictError):
         await h.view_back()
-    with pytest.raises(RuntimeError, match="analysis"):
+    with pytest.raises(ModeConflictError):
         await h.play_from_here(tc=TimeControl(60, 0))
+
+
+async def test_viewing_flag_true_while_analyzing_from_view(hve):
+    """Regression: _viewing must stay True when analysis is entered from view
+    mode, so _clock_event/_board_event keep emitting the view-mode payload."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None, moves_uci=["e2e4", "e7e5"], clock_history=None,
+    ))
+    assert h._viewing is True
+    h._mode = Mode.ANALYZING
+    h._pre_analysis_mode = Mode.VIEWING
+    assert h._viewing is True  # must stay True -- not flip to False
+    assert h._analysis_mode is True
+
+    # When entered from play (PAUSED), _viewing must be False.
+    h._pre_analysis_mode = Mode.PAUSED
+    assert h._viewing is False
 
 
 async def test_flag_fall_does_not_trample_game_installed_during_publish(hve):
@@ -215,7 +234,7 @@ async def test_flag_fall_does_not_trample_game_installed_during_publish(hve):
     h, _ = hve
     await h.new_game(human_white=True, tc=TimeControl(60, 0))
     # Force flag-fall: zero white's clock; it's white's turn.
-    h._white_time = 0.0
+    h._clock.white_time = 0.0
 
     # Substitute a publish that, on the game_result event (between the
     # two _handle_flag_fall lock sections), supersedes the game with a
@@ -227,9 +246,9 @@ async def test_flag_fall_does_not_trample_game_installed_during_publish(hve):
         await real_publish(evt)
         if evt.kind == "game_result" and not superseded["done"]:
             superseded["done"] = True
-            await h.enter_view_mode(
+            await h.enter_view_mode(ViewModeParams(
                 start_fen=None, moves_uci=["d2d4"], clock_history=None,
-            )
+            ))
 
     h._bus.publish = racing_publish
 
@@ -253,9 +272,9 @@ async def test_enter_view_supersedes_active_play_game(hve):
     play_pgn = list(tmp_path.glob("*.pgn"))
     assert len(play_pgn) == 1  # autosaved before view-mode entry
 
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None, moves_uci=["d2d4", "d7d5"], clock_history=None,
-    )
+    ))
     assert h._viewing is True
     # The prior play autosave is still on disk.
     assert list(tmp_path.glob("*.pgn")) == play_pgn
@@ -277,13 +296,13 @@ async def test_view_payload_includes_result_from_pgn_headers_on_threefold(hve):
     view payload must carry result/termination from the headers, not board state
     (board.outcome() is None for claimable draws)."""
     h, _ = hve
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=_THREEFOLD_MOVES,
         clock_history=None,
         pgn_result="1/2-1/2",
         pgn_termination="threefold_repetition",
-    )
+    ))
     await h.view_last()
     evt = h._board_event()
     view = evt.payload["view"]
@@ -296,13 +315,13 @@ async def test_normal_termination_enriched_to_threefold(hve):
     """Termination 'normal' is replaced with 'threefold_repetition' when the
     final board position has a claimable threefold draw."""
     h, _ = hve
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=_THREEFOLD_MOVES,
         clock_history=None,
         pgn_result="1/2-1/2",
         pgn_termination="normal",
-    )
+    ))
     await h.view_last()
     evt = h._board_event()
     view = evt.payload["view"]
@@ -314,11 +333,11 @@ async def test_view_payload_result_from_board_on_checkmate(hve):
     """Forced endings (checkmate) still derive result/termination from the
     board even without PGN headers."""
     h, _ = hve
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=_FOOLS_MATE_MOVES,
         clock_history=None,
-    )
+    ))
     await h.view_last()
     evt = h._board_event()
     view = evt.payload["view"]
@@ -330,11 +349,11 @@ async def test_view_payload_result_from_board_on_checkmate(hve):
 async def test_game_over_false_one_ply_before_checkmate(hve):
     """game_over must be False at the ply just before the mating move."""
     h, _ = hve
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=_FOOLS_MATE_MOVES,
         clock_history=None,
-    )
+    ))
     await h.view_goto(len(_FOOLS_MATE_MOVES) - 1)
     evt = h._board_event()
     assert evt.payload["view"]["game_over"] is False
@@ -344,13 +363,13 @@ async def test_game_over_false_at_mid_game_ply_despite_pgn_result(hve):
     """PGN result header must not mark game_over=True at non-terminal plies.
     Regression: result header previously disabled play-from-here for the whole game."""
     h, _ = hve
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=_THREEFOLD_MOVES,
         clock_history=None,
         pgn_result="1/2-1/2",
         pgn_termination="threefold_repetition",
-    )
+    ))
     # Navigate back to a mid-game ply -- board is not terminal there.
     await h.view_goto(4)
     evt = h._board_event()
@@ -367,13 +386,13 @@ _CN_ROOT = "Opening remarks."
 
 async def _cn_hve(hve, *, root=None):
     h, _ = hve
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=_CN_MOVES,
         clock_history=None,
         comments=_CN_COMMENTS,
         root_comment=root,
-    )
+    ))
     return h
 
 
@@ -436,11 +455,11 @@ async def test_comment_nav_root_as_prev(hve):
 async def test_comment_nav_no_comments(hve):
     """Game with no comments at all: both directions None."""
     h, _ = hve
-    await h.enter_view_mode(
+    await h.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=_CN_MOVES,
         clock_history=None,
-    )
+    ))
     result = h._comment_nav(3)
     assert result == {"prev_comment": None, "next_comment": None}
 

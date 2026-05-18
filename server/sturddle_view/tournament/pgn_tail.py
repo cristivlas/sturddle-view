@@ -18,11 +18,9 @@ from typing import Awaitable, Callable
 import chess
 import chess.pgn
 
+from ..chess.results import DECISIVE_RESULTS
 
 log = logging.getLogger(__name__)
-
-
-_DECISIVE_RESULTS = frozenset({"1-0", "0-1", "1/2-1/2"})
 
 # Same flag the reconcile queue uses; one opt-in for the whole subsystem.
 _DEBUG = os.environ.get("SV_DEBUG_RECONCILE", "0") == "1"
@@ -346,23 +344,18 @@ class PgnTailer:
             if game is None:
                 break
             result = game.headers.get("Result", "*")
-            if result not in _DECISIVE_RESULTS:
+            if result not in DECISIVE_RESULTS:
                 # `*` = in-flight bytes; retry this region next pass.
                 break
 
-            uci_moves: list[str] = []
-            board = game.board()
-            try:
-                for node in game.mainline():
-                    uci_moves.append(node.move.uci())
-                    board.push(node.move)
-            except (ValueError, chess.IllegalMoveError, chess.InvalidMoveError):
+            if game.errors:
                 log.warning(
                     "PgnTailer: illegal move in PGN game_n~=%d; skipping",
                     self._game_n + len(records) + 1,
                 )
                 last_complete_bytes += advance_bytes()
                 continue
+            uci_moves: list[str] = [node.move.uci() for node in game.mainline()]
 
             records.append(PgnGameRecord(
                 white=game.headers.get("White", "?"),

@@ -51,6 +51,21 @@ def _probe_timeout_sec() -> float:
         return _DEFAULT_PROBE_TIMEOUT_SEC
 
 
+def _popen_kwargs(env: dict[str, str] | None) -> dict:
+    """Build popen kwargs shared by probe_engine and EngineSupervisor.spawn.
+
+    Overlays *env* on the parent process environment (never wipes it);
+    adds CREATE_NO_WINDOW on Windows so the engine subprocess does not
+    flash a console window.
+    """
+    out: dict = {}
+    if env:
+        out["env"] = {**os.environ, **env}
+    if sys.platform == "win32":
+        out["creationflags"] = subprocess.CREATE_NO_WINDOW
+    return out
+
+
 def _classify_probe_exception(exc: BaseException) -> dict:
     """Map a spawn/handshake exception to a {code, message} pair, cross-platform.
 
@@ -96,11 +111,7 @@ async def probe_engine(
     Best-effort: on any failure logs and returns (None, {}, error).
     """
     command: str | list[str] = [engine_path, *args] if args else engine_path
-    popen_kwargs: dict = {}
-    if env:
-        popen_kwargs["env"] = {**os.environ, **env}
-    if sys.platform == "win32":
-        popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    popen_kwargs = _popen_kwargs(env)
     timeout = _probe_timeout_sec()
     try:
         transport, engine = await asyncio.wait_for(

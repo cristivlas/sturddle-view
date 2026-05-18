@@ -3,8 +3,14 @@
 
 import { mountBoard } from "./board.js";
 import { toast } from "./dialogs.js";
+import { isMobileLayout } from "./play-debug-windows.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+// Clock-row name cap: largest value that fits beside the clock on the
+// narrowest desktop board (~400px at the 800px viewport breakpoint).
+const MAX_CLOCK_NAME_DESKTOP = 32;
+const MAX_CLOCK_NAME_MOBILE = 24;
 
 function fmtClock(seconds) {
   if (!Number.isFinite(seconds)) return "—";
@@ -378,10 +384,10 @@ export function mountGameView(container, opts = {}) {
       // grid collapses to a vertical flex layout (see CSS).
       if (window.innerWidth > NARROW) {
         grid.style.setProperty("--board-col-px", `${max}px`);
-        grid.style.setProperty("--rail-w", `${railW}px`);
+        grid.style.setProperty("--left-rail-w", `${railW}px`);
       } else {
         grid.style.removeProperty("--board-col-px");
-        grid.style.removeProperty("--rail-w");
+        grid.style.removeProperty("--left-rail-w");
       }
       // Align the side rail's top with the board's top (the grid would
        // otherwise place it next to the top clock row), and cap its height
@@ -390,17 +396,21 @@ export function mountGameView(container, opts = {}) {
       if (sideHost) {
         if (window.innerWidth > NARROW) {
           const boardRect = boardEl.getBoundingClientRect();
-          // Reset margin before measuring so the offset reflects the
-          // grid-natural top, not last frame's adjustment.
-          sideHost.style.marginTop = "0px";
-          const sideRect = sideHost.getBoundingClientRect();
-          const offset = Math.max(0, Math.floor(boardRect.top - sideRect.top));
-          sideHost.style.marginTop = `${offset}px`;
-          const target = Math.max(160, Math.floor(boardRect.height));
-          sideHost.style.setProperty("max-height", `${target}px`);
+          const left = Math.ceil(boardRect.right) + gapW;
+          const top = Math.ceil(boardRect.top);
+          const width = Math.max(0, window.innerWidth - left - 16);
+          const height = Math.max(160, Math.floor(boardRect.height));
+          sideHost.style.left = `${left}px`;
+          sideHost.style.top = `${top}px`;
+          sideHost.style.width = `${width}px`;
+          sideHost.style.setProperty("max-height", `${height}px`);
+          sideHost.style.removeProperty("margin-top");
         } else {
           sideHost.style.removeProperty("max-height");
           sideHost.style.removeProperty("margin-top");
+          sideHost.style.removeProperty("left");
+          sideHost.style.removeProperty("top");
+          sideHost.style.removeProperty("width");
         }
       }
     }
@@ -463,8 +473,9 @@ export function mountGameView(container, opts = {}) {
   let viewWhiteName = null;
   let viewBlackName = null;
 
-  function _truncName(s, max = 24) {
+  function _truncName(s) {
     if (!s) return s;
+    const max = isMobileLayout() ? MAX_CLOCK_NAME_MOBILE : MAX_CLOCK_NAME_DESKTOP;
     return s.length > max ? s.slice(0, max - 1) + "…" : s;
   }
   // PV row hides only in pure view mode (navigating an imported game
@@ -775,6 +786,7 @@ export function mountGameView(container, opts = {}) {
     },
     unmount() {
       editing = false;
+      board.destroy();
       off?.();
       try { ro.disconnect(); } catch {}
       window.removeEventListener("resize", recomputeBoardSize);

@@ -12,6 +12,7 @@ import pytest
 
 from sturddle_view.events import EventBus
 from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl
+from sturddle_view.play.mode import ModeConflictError
 
 
 class _StubEngine:
@@ -43,10 +44,10 @@ async def test_pause_freezes_clock_no_increment(hve):
     await hve.pause()
     assert hve.is_paused is True
     # Pause must NOT credit the increment (only completed moves do).
-    assert hve._white_time < 60.0
-    assert hve._white_time > 55.0  # i.e. didn't gain 5s
+    assert hve._clock.white_time < 60.0
+    assert hve._clock.white_time > 55.0  # i.e. didn't gain 5s
 
-    frozen_white = hve._white_time
+    frozen_white = hve._clock.white_time
     # While paused, _remaining for the side-to-move stays put.
     await asyncio.sleep(0.10)
     assert hve._remaining(chess.WHITE) == pytest.approx(frozen_white, abs=1e-6)
@@ -56,13 +57,13 @@ async def test_resume_restarts_clock(hve):
     await hve.new_game(human_white=True, tc=TimeControl(30.0, 0.0))
     await asyncio.sleep(0.02)
     await hve.pause()
-    paused_at = hve._white_time
+    paused_at = hve._clock.white_time
 
     await asyncio.sleep(0.05)
     await hve.resume()
     assert hve.is_paused is False
     # Stored clock must not have moved during pause.
-    assert hve._white_time == pytest.approx(paused_at, abs=1e-6)
+    assert hve._clock.white_time == pytest.approx(paused_at, abs=1e-6)
 
     # Live remaining starts decreasing again after resume.
     await asyncio.sleep(0.05)
@@ -72,7 +73,7 @@ async def test_resume_restarts_clock(hve):
 async def test_submit_move_rejected_while_paused(hve):
     await hve.new_game(human_white=True, tc=TimeControl(30.0, 0.0))
     await hve.pause()
-    with pytest.raises(RuntimeError, match="paused"):
+    with pytest.raises(ModeConflictError):
         await hve.submit_move("e2e4")
 
 
@@ -92,10 +93,10 @@ async def test_pause_with_no_game_raises(hve):
 async def test_double_pause_is_noop(hve):
     await hve.new_game(human_white=True, tc=TimeControl(30.0, 0.0))
     await hve.pause()
-    paused_at = hve._white_time
+    paused_at = hve._clock.white_time
     # Second pause does not double-bake elapsed.
     await hve.pause()
-    assert hve._white_time == pytest.approx(paused_at, abs=1e-6)
+    assert hve._clock.white_time == pytest.approx(paused_at, abs=1e-6)
 
 
 async def test_set_engine_name_does_not_clear_existing_name(hve):

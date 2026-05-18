@@ -14,6 +14,70 @@ import {
 import { PositionEditor } from "../vendor/cm-chessboard-position-editor/src/PositionEditor.js";
 import { resolveBoardStyle } from "./board-styles.js";
 
+// Pinned cm-chessboard version this patch was verified against. On upgrade,
+// re-verify the queue methods still match the expected shape (see
+// _patchAnimationsQueue) before bumping.
+const CM_CHESSBOARD_PINNED_VERSION = "8.12.7";
+let _patchAssertedOnce = false;
+
+// cm-chessboard's PositionAnimationsQueue schedules a requestAnimationFrame
+// even when `animated=false`, then calls Svg.removeElement on `disappear`
+// elements after one tick. If the host DOM is torn down (perspective unmount,
+// WinBox hide) between the enqueue and the rAF, removeElement logs warnings
+// for every parentless piece. Patch the two enqueue methods to snap
+// synchronously via redrawPieces/redrawBoard when not animated -- no rAF, no
+// post-teardown DOM walk.
+function _patchAnimationsQueue(board) {
+  const q = board.positionAnimationsQueue;
+  if (!_patchAssertedOnce) {
+    _patchAssertedOnce = true;
+    const shapeOk =
+      typeof q.enqueuePositionChange === "function" &&
+      typeof q.enqueueTurnBoard === "function" &&
+      typeof board.view?.redrawPieces === "function" &&
+      typeof board.view?.redrawBoard === "function";
+    if (!shapeOk) {
+      console.warn(
+        `[sturddle] cm-chessboard ${CM_CHESSBOARD_PINNED_VERSION} animation-queue patch: ` +
+        `expected API shape not found. The snap-redraw monkey-patch in board.js ` +
+        `may be stale -- re-verify against the current library version.`
+      );
+      return;
+    }
+  }
+  q.enqueuePositionChange = function (positionFrom, positionTo, animated) {
+    if (positionFrom.getFen() === positionTo.getFen()) {
+      return this.enqueue(() => Promise.resolve());
+    }
+    if (!animated) {
+      return this.enqueue(() => new Promise((resolve) => {
+        if (this.chessboard.view) {
+          this.chessboard.view.redrawPieces(positionTo.squares);
+        }
+        resolve();
+      }));
+    }
+    return PositionAnimationsQueue.prototype.enqueuePositionChange.call(
+      this, positionFrom, positionTo, animated,
+    );
+  };
+  q.enqueueTurnBoard = function (position, color, animated) {
+    if (!animated) {
+      return this.enqueue(() => new Promise((resolve) => {
+        if (this.chessboard.view) {
+          this.chessboard.state.orientation = color;
+          this.chessboard.view.redrawBoard();
+          this.chessboard.view.redrawPieces(position.squares);
+        }
+        resolve();
+      }));
+    }
+    return PositionAnimationsQueue.prototype.enqueueTurnBoard.call(
+      this, position, color, animated,
+    );
+  };
+}
+
 export function mountBoard({ element, onMove, styleId }) {
   const s = resolveBoardStyle(styleId);
   const board = new Chessboard(element, {
@@ -22,6 +86,7 @@ export function mountBoard({ element, onMove, styleId }) {
     style: { cssClass: s.cssClass, showCoordinates: true, pieces: { file: s.piecesFile } },
     extensions: [{ class: Markers }, { class: Arrows }, { class: PromotionDialog }],
   });
+  _patchAnimationsQueue(board);
 
   let myColor = COLOR.white;
   let inputEnabled = false;
@@ -53,6 +118,9 @@ export function mountBoard({ element, onMove, styleId }) {
     if (yes === inputEnabled) return;
     inputEnabled = yes;
     if (yes) {
+      // Disarm any handler the PositionEditor may have left active so the
+      // library's internal guard doesn't throw "moveInput already enabled".
+      board.disableMoveInput();
       board.enableMoveInput((event) => {
         if (event.type === INPUT_EVENT_TYPE.validateMoveInput) {
           const piece = event.piece || "";
@@ -196,7 +264,13 @@ export function mountBoard({ element, onMove, styleId }) {
   function cancelAnimations() {
     board.positionAnimationsQueue.destroy();
     board.positionAnimationsQueue = new PositionAnimationsQueue(board);
+    _patchAnimationsQueue(board);
     board.setPosition(board.getPosition(), false);
+  }
+
+  function destroy() {
+    board.positionAnimationsQueue.destroy();
+    board.destroy();
   }
 
   function forceResize() {
@@ -212,7 +286,7 @@ export function mountBoard({ element, onMove, styleId }) {
   }
 
   return {
-    setSide, setPosition, enableInput, forceResize, cancelAnimations,
+    setSide, setPosition, enableInput, forceResize, cancelAnimations, destroy,
     setArrow, setOpponentArrow, clearArrows,
     enterEditMode, exitEditMode, toggleCastlingRight, getCastlingRights, getPiecePlacement,
   };

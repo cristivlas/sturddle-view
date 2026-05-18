@@ -105,7 +105,7 @@ from unittest.mock import AsyncMock
 
 from sturddle_view.config import Settings
 from sturddle_view.events import EventBus
-from sturddle_view.play.human_vs_engine import HumanVsEngine
+from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
 
 
 class _StubEngine:
@@ -134,12 +134,12 @@ def hve(tmp_path):
 
 
 async def test_view_payload_exposes_comment_at_cursor(hve):
-    await hve.enter_view_mode(
+    await hve.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=["e2e4", "e7e5", "g1f3"],
         clock_history=None,
         comments=["Strong center.", None, "Develops a piece."],
-    )
+    ))
     await hve.view_last()
     evt = hve._board_event()
     view = evt.payload["view"]
@@ -154,13 +154,13 @@ async def test_view_payload_exposes_comment_at_cursor(hve):
 
 
 async def test_view_payload_root_comment_at_cursor_zero(hve):
-    await hve.enter_view_mode(
+    await hve.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=["e2e4", "e7e5"],
         clock_history=None,
         comments=["After e4.", None],
         root_comment="Annotator: Magnus\n\nPre-game thoughts.",
-    )
+    ))
     await hve.view_first()
     view = hve._board_event().payload["view"]
     assert view["cursor"] == 0
@@ -169,11 +169,11 @@ async def test_view_payload_root_comment_at_cursor_zero(hve):
 
 
 async def test_view_payload_has_comment_false_when_no_comments(hve):
-    await hve.enter_view_mode(
+    await hve.enter_view_mode(ViewModeParams(
         start_fen=None,
         moves_uci=["e2e4", "e7e5"],
         clock_history=None,
-    )
+    ))
     view = hve._board_event().payload["view"]
     assert view["comment"] is None
     assert view["has_comment"] is False

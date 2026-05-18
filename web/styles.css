@@ -323,7 +323,7 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   line-height: 1.4;
   word-break: break-word;
 }
-.import-pos-status.ok { color: var(--status-ok-fg); background: var(--status-ok-bg); }
+.import-pos-status.ok { color: var(--text); background: var(--row-bg-selected); }
 .import-pos-status.err { color: var(--status-err-fg); background: var(--status-err-bg); }
 .import-pos-status.muted { background: transparent; color: var(--muted); }
 .import-pos-playas { display: flex; align-items: center; gap: 12px; }
@@ -373,7 +373,7 @@ button.recent-del:hover { color: var(--status-err-fg, #d33); }
   --grid-gap: 16px;
   display: grid;
   --ribbon-w: 36px;
-  grid-template-columns: calc(var(--rail-w) - var(--ribbon-w)) var(--board-col-px, minmax(320px, 1fr)) var(--rail-w);
+  grid-template-columns: var(--left-rail-w, var(--rail-w)) var(--board-col-px, minmax(320px, 1fr)) var(--rail-w);
   grid-template-rows: auto 1fr;
   grid-template-areas:
     ". banner ."
@@ -510,6 +510,8 @@ button.recent-del:hover { color: var(--status-err-fg, #d33); }
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: fixed;
+  /* left/top/width/max-height driven by JS on desktop; reset on mobile */
 }
 /* Left dock: occupies the grid's first (left-gap) column, full board height.
    Hidden when empty; the column width is unchanged so the board stays put. */
@@ -729,7 +731,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   /* Display order: board first, then ribbon below. */
   .play-board-host { order: 1; }
   #board-controls { order: 2; }
-  .play-side-host { order: 3; }
+  .play-side-host { order: 3; position: static; }
 }
 .game-view-board {
   display: flex;
@@ -813,12 +815,14 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   box-sizing: border-box;
 }
 .game-view-engine .engine-summary {
+  background: var(--wa-color-surface-raised);
   display: grid;
   grid-template-columns: repeat(3, minmax(8ch, auto));
   align-items: start;
   gap: 2px 10px;
   font-family: ui-monospace, SFMono-Regular, monospace;
   justify-content: start;
+  padding-left: 18px;
 }
 .game-view-engine .engine-stat { align-items: flex-start; gap: 0; }
 .game-view-engine .engine-summary .engine-stat:nth-child(n+4) {
@@ -961,7 +965,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   flex-wrap: wrap;
 }
 .move-list {
-  background: transparent;
+  background: var(--wa-color-surface-raised);
   padding: 0;
   max-height: 15rem;
   overflow-y: auto;
@@ -1419,19 +1423,12 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 
 /* Form-style rows (label + input) inside a panel. */
 .settings-row { max-width: 360px; }
-/* Toggles grid: 4 switches in a fixed 2-column grid, collapsing to one
-   column only on mobile-width dialogs. Widened past the standard 360px
-   .settings-row cap so the longest label ("Allow Undo (take back)") fits
-   on a single line. */
+/* Toggles stack: switches stacked vertically, one per row. */
 .settings-toggles-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px 24px;
+  display: flex;
+  gap: 24px;
   align-items: center;
   max-width: 460px;
-}
-@media (max-width: 480px) {
-  .settings-toggles-grid { grid-template-columns: 1fr; }
 }
 /* Vertical rhythm tokens for settings panels: group/row gaps share these
    so the three-different-magic-numbers problem stays out of the markup. */
@@ -1445,7 +1442,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
    so the dialog reads as one visual system with the tab nav rail. */
 .settings-divider {
   border: 0;
-  border-top: 0.125rem solid var(--wa-color-neutral-fill-normal);
+  border-top: 1px solid var(--wa-color-neutral-fill-normal);
   margin: var(--settings-group-gap) 0;
 }
 /* Subtle bordered card around a related-controls group; legend inset on
@@ -1469,7 +1466,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
    the surrounding legend default. Applies to wa-icon AND our custom
    inlineSvgIcon, which sizes off em. */
 .settings-section legend wa-icon,
-.settings-section legend svg { font-size: 1.5rem; width: 1.5em; height: 1.5em; }
+.settings-section legend svg { font-size: 1rem; width: 1.5em; height: 1.5em; }
+.settings-section legend svg { color: var(--muted); }
 .settings-section > .settings-row { margin: 0; }
 .settings-section > .settings-row + .settings-row { margin-top: var(--settings-row-gap); }
 /* Centered, fixed-width column for a settings tab content. All direct
@@ -1490,6 +1488,9 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
    conceptual group (e.g. a switch after a dropdown). Avoids ad-hoc inline
    margins on .settings-row elements. */
 .settings-row-spaced { margin-top: var(--settings-row-gap); }
+/* Inset standalone rows by the section's inner padding so toggle labels
+   align with the left edge of inputs inside a .settings-section card. */
+.settings-row-section-inset { padding-left: var(--settings-section-pad); }
 .settings-row label {
   display: block;
   color: var(--muted);

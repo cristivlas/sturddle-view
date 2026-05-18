@@ -12,7 +12,8 @@ from unittest.mock import AsyncMock
 from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
-from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl
+from sturddle_view.play.chess_clock import ChessClock, TimeControl
+from sturddle_view.play.human_vs_engine import HumanVsEngine
 
 
 def _install_active_game(app, *, engine_path: str, human_white: bool = True) -> HumanVsEngine:
@@ -26,11 +27,11 @@ def _install_active_game(app, *, engine_path: str, human_white: bool = True) -> 
     hve._engine_to_move = AsyncMock()
     hve._board = chess.Board()
     hve._human_white = human_white
-    hve._tc = TimeControl(60.0, 0.0)
-    hve._white_time = 60.0
-    hve._black_time = 60.0
+    hve._clock = ChessClock(TimeControl(60.0, 0.0))
+    hve._clock.white_time = 60.0
+    hve._clock.black_time = 60.0
     hve._game_id = "test-game"
-    hve._turn_started_at = time.monotonic()
+    hve._clock.start_turn()
     app.state.hve = hve
     return hve
 

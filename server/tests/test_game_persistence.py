@@ -126,7 +126,7 @@ async def test_persist_on_takeback(tmp_path):
     # Same simulated-engine-reply pattern as test_persist_after_engine_move.
     async def _fake_engine_reply():
         async with hve._lock:
-            hve._clock_history.append((hve._white_time, hve._black_time))
+            hve._clock.append_snapshot()
             hve._board.push(chess.Move.from_uci("e7e5"))
             await hve._persist()
     hve._engine_to_move = _fake_engine_reply
@@ -202,7 +202,7 @@ async def test_persist_after_engine_move(tmp_path):
     # same code path: push a chosen move under the lock and call _persist.
     async def _fake_engine_reply():
         async with hve._lock:
-            hve._clock_history.append((hve._white_time, hve._black_time))
+            hve._clock.append_snapshot()
             hve._board.push(chess.Move.from_uci("e7e5"))
             await hve._persist()
     hve._engine_to_move = _fake_engine_reply
@@ -232,8 +232,8 @@ def test_restore_from_replays_moves_and_clocks(tmp_path):
     hve.restore_from(state)
     assert hve._game_id == "restored"
     assert hve._human_white is False
-    assert hve._white_time == 120.0
-    assert hve._black_time == 180.0
+    assert hve._clock.white_time == 120.0
+    assert hve._clock.black_time == 180.0
     assert hve.is_paused is True
     # Board reflects the three moves; black to move.
     assert hve._board.fullmove_number == 2
@@ -242,7 +242,7 @@ def test_restore_from_replays_moves_and_clocks(tmp_path):
     assert hve._engine is None
     # Tick is deferred until first client subscribes.
     assert hve._tick_task is None
-    assert hve._turn_started_at is None
+    assert hve._clock.turn_started_at is None
 
 
 def test_restore_from_imported_position_with_start_fen(tmp_path):
@@ -284,9 +284,9 @@ async def test_republish_starts_tick_after_restore(tmp_path):
         tc_increment_seconds=0.0, white_time=58.0, black_time=60.0, paused=False,
         moves_uci=[], clock_history=[],
     ))
-    assert hve._turn_started_at is None
+    assert hve._clock.turn_started_at is None
     await hve.republish_state()
-    assert hve._turn_started_at is not None
+    assert hve._clock.turn_started_at is not None
     assert hve._tick_task is not None
     await hve._cancel_tick()  # housekeeping
 

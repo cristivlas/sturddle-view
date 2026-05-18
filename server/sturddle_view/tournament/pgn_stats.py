@@ -20,11 +20,13 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 
-# Result tags we recognize. Anything else (`*`, missing, malformed) is
-# treated as "no result" and the game is skipped from tallies.
-_WHITE_WIN = "1-0"
-_BLACK_WIN = "0-1"
-_DRAW_VALUES = frozenset({"1/2-1/2", "½-½"})
+from ..chess.results import (
+    BLACK_WIN as _BLACK_WIN,
+    DECISIVE_RESULTS,
+    WHITE_WIN as _WHITE_WIN,
+)
+
+_DECISIVE_RESULTS = DECISIVE_RESULTS
 
 # PGN tag line: [Name "value"]. Non-greedy value match — we don't honor
 # \"-escapes; the four headers we read never contain quotes in fastchess output.
@@ -190,7 +192,7 @@ def _iter_games_uncached(pgn_path: Path):
         if not cur:
             return None
         result = cur.get("Result", "*")
-        if result == _WHITE_WIN or result == _BLACK_WIN or result in _DRAW_VALUES:
+        if result in _DECISIVE_RESULTS:
             white = cur.get("White", "?")
             black = cur.get("Black", "?")
             round_tag = cur.get("Round", "")
@@ -216,9 +218,6 @@ def _iter_games_uncached(pgn_path: Path):
         v = emit()
         if v is not None:
             yield v
-
-
-_DECISIVE_RESULTS = frozenset({_WHITE_WIN, _BLACK_WIN, *_DRAW_VALUES})
 
 
 # Indices into the 4-tuples yielded by ``_iter_games_keyed`` (round, white,
@@ -321,6 +320,7 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
     if game_n < 1:
         return None
     import chess.pgn
+    from ..chess.pgn_walk import walk_mainline
     seen = 0
     with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
         while True:
@@ -336,11 +336,12 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
                 game = chess.pgn.read_game(f)
                 if game is None:
                     return None
-                board = game.board()
                 last_move_uci: str | None = None
-                for move in game.mainline_moves():
-                    last_move_uci = move.uci()
-                    board.push(move)
+                board: chess.Board | None = None
+                for node, board, _ in walk_mainline(game):
+                    last_move_uci = node.move.uci()
+                if board is None:
+                    board = game.board()
                 return {
                     "pgn": str(game),
                     "final_fen": board.fen(),
