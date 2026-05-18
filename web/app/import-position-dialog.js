@@ -203,7 +203,6 @@ export function showImportPositionDialog({ api }) {
       const recentSel = document.createElement("wa-select");
       recentSel.size = "small";
       recentSel.placeholder = "Recent...";
-      recentSel.style.minWidth = "180px";
       let recentsCache = loadRecentsCache();
       function makeOption(entry, i) {
         const opt = document.createElement("wa-option");
