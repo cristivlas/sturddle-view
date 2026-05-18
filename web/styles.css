@@ -1421,9 +1421,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .settings-row { max-width: 360px; }
 /* Toggles stack: switches stacked vertically, one per row. */
 .settings-toggles-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 6px;
+  display: flex;
+  gap: 24px;
   align-items: center;
   max-width: 460px;
 }
@@ -1463,7 +1462,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
    the surrounding legend default. Applies to wa-icon AND our custom
    inlineSvgIcon, which sizes off em. */
 .settings-section legend wa-icon,
-.settings-section legend svg { font-size: 1.5rem; width: 1.5em; height: 1.5em; }
+.settings-section legend svg { font-size: 1rem; width: 1.5em; height: 1.5em; }
 .settings-section legend svg { color: var(--muted); }
 .settings-section > .settings-row { margin: 0; }
 .settings-section > .settings-row + .settings-row { margin-top: var(--settings-row-gap); }

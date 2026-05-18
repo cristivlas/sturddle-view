@@ -265,7 +265,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const allowTakeback = document.createElement("wa-switch");
       allowTakeback.size = "small";
       allowTakeback.checked = initial.allow_takeback !== false;
-      allowTakeback.textContent = "Allow Undo";
+      allowTakeback.textContent = "Allow undo";
       allowTakeback.addEventListener("change", () => {
         putSettings({ allow_takeback: allowTakeback.checked });
       });
