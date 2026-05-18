@@ -64,7 +64,7 @@ export function showImportPositionDialog({ api }) {
     label: "Open position",
     width: "560px",
     body: (resolve, dialog) => {
-      let format = "fen";
+      let format = "pgn";
       let submitting = false;
 
       const wrap = document.createElement("div");
@@ -73,15 +73,15 @@ export function showImportPositionDialog({ api }) {
       const tabs = document.createElement("wa-tab-group");
       tabs.placement = "top";
       tabs.innerHTML = `
-        <wa-tab slot="nav" panel="fen">FEN</wa-tab>
         <wa-tab slot="nav" panel="pgn">PGN</wa-tab>
-        <wa-tab-panel name="fen"></wa-tab-panel>
+        <wa-tab slot="nav" panel="fen">FEN</wa-tab>
         <wa-tab-panel name="pgn"></wa-tab-panel>
+        <wa-tab-panel name="fen"></wa-tab-panel>
       `;
       wrap.appendChild(tabs);
 
       const textareas = {};
-      for (const name of ["fen", "pgn"]) {
+      for (const name of ["pgn", "fen"]) {
         const ta = document.createElement("wa-textarea");
         ta.size = "small";
         ta.resize = "vertical";
@@ -211,7 +211,7 @@ export function showImportPositionDialog({ api }) {
 
       const status = document.createElement("div");
       status.className = "import-pos-status muted";
-      status.textContent = EMPTY_PROMPT.fen;
+      status.textContent = EMPTY_PROMPT.pgn;
       wrap.appendChild(status);
 
       dialog.appendChild(wrap);
