@@ -344,7 +344,7 @@ export const playPerspective = {
         const wasOpen = open;
         if (!open) openCommentary();
         setCommentaryText(lastViewComment);
-        if (!wasOpen) {
+        if (!wasOpen && !analyzing) {
           // Populate comment nav state on first open.
           doViewNav("/game/view/goto", { ply: viewCursor });
         }
