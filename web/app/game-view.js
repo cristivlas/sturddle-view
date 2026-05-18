@@ -775,6 +775,7 @@ export function mountGameView(container, opts = {}) {
     },
     unmount() {
       editing = false;
+      board.destroy();
       off?.();
       try { ro.disconnect(); } catch {}
       window.removeEventListener("resize", recomputeBoardSize);

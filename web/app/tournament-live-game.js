@@ -216,6 +216,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   // stash them so the workspace's tile() can clamp.
   wb.svMinWidth = LIVE_MIN_WIDTH;
   wb.svMinHeight = LIVE_MIN_HEIGHT;
+  wb.svBoard = board;
   liveWindows.set(windowKey, wb);
   // Result-banner upgrade on game_reconciled (workspace dispatches).
   // Captured here so the Replay button knows which PGN slice to fetch.
@@ -284,6 +285,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
 
   function disposeShared() {
     ro.disconnect();
+    board.destroy();
     if (gameId) window.removeEventListener("sturddle:reconciled", onReconciled);
     liveWindows.delete(windowKey);
     window.dispatchEvent(new CustomEvent("sturddle:livegame-closed"));
