@@ -4,7 +4,7 @@
 // this engine's `info`, clocks from `go wtime/btime`, last bestmove highlight.
 
 import { mountBoard } from "./board.js";
-import { confirm, reportError, toast } from "./dialogs.js";
+import { confirm, reportError } from "./dialogs.js";
 import { isPlayInProgress, isViewing, isAnalyzing, getViewingHash, getViewingSummary } from "./perspectives/play.js";
 import { confirmReplaceViewedGame } from "./import-position-dialog.js";
 import { flashWindow } from "./wb-utils.js";
@@ -33,8 +33,9 @@ async function replayTournamentGame({ tournamentId, gameN, token }) {
     if (!ok) return;
   } else if (isViewing()) {
     if (pgnHash && pgnHash === getViewingHash()) {
-      toast("Viewing match.");
-      window.dispatchEvent(new CustomEvent("sturddle:activate-perspective", { detail: { id: "play" } }));
+      window.dispatchEvent(new CustomEvent("sturddle:activate-perspective", {
+        detail: { id: "play", toast: { kind: "viewing-match" } },
+      }));
       return;
     }
     const ok = await confirmReplaceViewedGame({
