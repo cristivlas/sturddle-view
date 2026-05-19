@@ -114,7 +114,25 @@ A CSS-only fix would require either:
 3. **Phase 3** -- DONE 2026-05-19. tournament-live-game.js: replaced JS px sizing of board+clocks with CSS aspect-ratio + flex; JS publishes `--lg-board-w` for clock clamp. Reserved eval/pv row heights (1.4em) to eliminate board snap-shrink on first event.
 4. **Phase 4** -- DONE 2026-05-19 (reduced scope). The ambitious form (delete `_recomputeNow` entirely, replace with CSS grid + aspect-ratio) was prototyped and reverted: the chicken-and-egg between board-square width and grid column width broke under zoom/resize. Landed instead: (a) `html { font-size: clamp(14px, 1em, 24px) }` so layout stays usable across the full chrome://settings/fonts range; (b) MIN_BOARD/RAIL_MIN/RAIL_MAX and floor minimums in `_recomputeNow` are now rem-derived; NARROW=640 and WIDE=1500 stay raw CSS-px (they're viewport thresholds matching CSS media queries, not size scales). The `_recomputeNow` measure-write cycle itself remains.
 5. **Phase 5** -- DONE 2026-05-19. play-debug-windows.js `isMobileLayout()` now reads `mqMobile` from breakpoints.js; removed `MOBILE_MAX_W_PX` export.
-6. **Phase 6** (optional) -- DEFERRED. styles.css px-to-rem spacing pass. Lower priority now that root font-size is clamped.
+6. **Phase 6** (optional) -- DEFERRED. styles.css px-to-rem spacing pass. Lower priority now that root font-size is clamped. See *DRY note* below before reviving.
+
+## DRY note on a future spacing pass
+
+A naive `px -> rem` sweep across the ~80 spacing declarations is **not** a DRY win. The current px values aren't duplications of one magic number -- they're ~10 distinct deliberately-tuned values (4, 6, 8, 10, 12, 14, 16, 20, 24, ...). Converting unit-by-unit moves the same count of magic numbers from `px` to fractional `rem` (0.25, 0.375, 0.5, 0.625, ...). No deduplication; same scatter, different unit.
+
+The actual DRY exercise would be to introduce a **spacing scale** as design tokens on `:root`, e.g.:
+
+```css
+--space-xs:  0.25rem;  /* 4px  */
+--space-sm:  0.5rem;   /* 8px  */
+--space-md:  1rem;     /* 16px */
+--space-lg:  1.5rem;   /* 24px */
+...
+```
+
+Then convert call sites to use `var(--space-sm)` etc. *That* is a real DRY win: one place to tune the spacing scale, semantic names at call sites, freedom to adjust the scale globally.
+
+If a spacing pass is ever revived, do it as the **tokens + conversion** combo, not as a bare unit swap. Worth doing on its own merits, not bundled with zoom work.
 
 ## Verification
 
