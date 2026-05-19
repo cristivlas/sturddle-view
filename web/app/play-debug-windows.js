@@ -44,11 +44,10 @@ const extraDocks = new Map();
 
 const DOCK_SPLIT_KEY = "sturddle:play:dockSplit";
 
-export const MOBILE_MAX_W_PX = 800;
-export const MOBILE_MAX_H_PX = 700;
+export const MOBILE_MAX_W_PX = 640;
 
 export function isMobileLayout() {
-  return window.innerWidth <= MOBILE_MAX_W_PX || window.innerHeight <= MOBILE_MAX_H_PX;
+  return window.innerWidth <= MOBILE_MAX_W_PX;
 }
 
 function applyDockBounds(el) {
@@ -75,6 +74,15 @@ function updateDockBounds() {
   applyDockBounds(dockEl);
   for (const { el } of extraDocks.values()) applyDockBounds(el);
 }
+
+// Board horizontal position shifts (e.g. left rail collapsing when the dock
+// empties) don't trigger our ResizeObserver, which only fires on size change.
+// Listen for layout-changed too; defer two frames so game-view's own rAF-driven
+// recompute has settled the board's new left edge before we re-measure.
+window.addEventListener("sturddle:layout-changed", () => {
+  requestAnimationFrame(() =>
+    requestAnimationFrame(updateDockBounds));
+});
 
 // Width that fits in the space to the right of the board, with fallback.
 function rightColumnWidth(fallback = 480) {
@@ -139,15 +147,25 @@ function setOpen(key, val) {
 
 function syncExtraDocksVisibility() {
   for (const { el } of extraDocks.values()) {
-    el.classList.toggle("dock-empty", el.querySelectorAll(".dock-slot").length === 0);
+    const wasEmpty = el.classList.contains("dock-empty");
+    const isEmpty = el.querySelectorAll(".dock-slot").length === 0;
+    el.classList.toggle("dock-empty", isEmpty);
+    if (wasEmpty !== isEmpty) emitLayoutChanged();
   }
+}
+
+function emitLayoutChanged() {
+  window.dispatchEvent(new CustomEvent("sturddle:layout-changed"));
 }
 
 function syncDockVisibility() {
   syncExtraDocksVisibility();
   if (!dockEl) return;
   const slots = dockEl.querySelectorAll(".dock-slot");
-  dockEl.classList.toggle("dock-empty", slots.length === 0);
+  const wasEmpty = dockEl.classList.contains("dock-empty");
+  const isEmpty = slots.length === 0;
+  dockEl.classList.toggle("dock-empty", isEmpty);
+  if (wasEmpty !== isEmpty) emitLayoutChanged();
   const bothDocked = slots.length === 2;
   dockEl.classList.toggle("dock-single", !bothDocked);
   if (bothDocked && !dockGrip) {

@@ -301,10 +301,10 @@ svg.cm-chessboard {
 html, body { height: 100%; }
 body { display: flex; flex-direction: column; }
 main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
-@media (max-width: 800px), (max-height: 700px) {
+@media (max-width: 640px) {
   main { overflow-y: auto; }
 }
-@media (max-width: 800px) {
+@media (max-width: 640px) {
   .desktop-only { display: none !important; }
   header h1 { display: none; }
 }
@@ -695,7 +695,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   filter: grayscale(0.5) brightness(0.85);
 }
 
-@media (max-width: 800px), (max-height: 700px) {
+@media (max-width: 640px) {
   /* !important needed: .play-dock-left.dock-single below has higher
      specificity than the bare class selector and would otherwise win. */
   .play-dock-left { display: none !important; }
@@ -714,6 +714,8 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
     flex-direction: row;
     justify-content: center;
     padding: 6px 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--wa-color-border-loud, #353841);
   }
   .ribbon-btn { width: 44px; height: 44px; }
   .ribbon-btn wa-icon { font-size: 1.125rem; }
@@ -826,7 +828,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   box-sizing: border-box;
 }
 .game-view-engine .engine-summary {
-  background: var(--wa-color-surface-raised);
+  background: transparent;
   display: grid;
   grid-template-columns: repeat(3, minmax(8ch, auto));
   align-items: start;
@@ -976,7 +978,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   flex-wrap: wrap;
 }
 .move-list {
-  background: var(--wa-color-surface-raised);
+  background: transparent;
   padding: 0;
   max-height: 15rem;
   overflow-y: auto;

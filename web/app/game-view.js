@@ -336,7 +336,7 @@ export function mountGameView(container, opts = {}) {
     // and the left filler are the same width, so the board sits dead-center
     // horizontally. Rail width is viewport-driven (not board-driven) to
     // avoid a feedback loop with the board sizing below.
-    const NARROW = 800;
+    const NARROW = 640;
     const MIN_BOARD = 320;
     const RAIL_MIN = 180;
     const RAIL_MAX = 320;
@@ -352,14 +352,24 @@ export function mountGameView(container, opts = {}) {
       : 32;
 
     let railW;
+    let leftRailW;
     let availW;
+    // When the left dock is empty on desktop, shrink the left rail so the
+    // board + right rail shift left as one block instead of being framed
+    // by a wide empty band. Proportional to railW so it scales with width.
+    const LEFT_RAIL_EMPTY_RATIO = window.__leftRailEmptyRatio ?? 0.4;
     if (window.innerWidth <= NARROW || !grid) {
       railW = 0;
+      leftRailW = 0;
       availW = Math.max(160, Math.floor(colRect.width));
     } else {
       const usable = window.innerWidth - sidePad;
       railW = Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.floor(usable * 0.18)));
-      availW = Math.max(160, Math.floor(usable - 2 * railW - 2 * gapW));
+      const leftEmpty =
+        document.querySelector(".play-dock-left")?.classList.contains("dock-empty") !== false
+        && document.querySelector(".play-comments-host")?.classList.contains("dock-empty") !== false;
+      leftRailW = leftEmpty ? Math.floor(railW * LEFT_RAIL_EMPTY_RATIO) : railW;
+      availW = Math.max(160, Math.floor(usable - railW - leftRailW - 2 * gapW));
     }
 
     const max = window.innerWidth <= NARROW
@@ -384,7 +394,7 @@ export function mountGameView(container, opts = {}) {
       // grid collapses to a vertical flex layout (see CSS).
       if (window.innerWidth > NARROW) {
         grid.style.setProperty("--board-col-px", `${max}px`);
-        grid.style.setProperty("--left-rail-w", `${railW}px`);
+        grid.style.setProperty("--left-rail-w", `${leftRailW}px`);
       } else {
         grid.style.removeProperty("--board-col-px");
         grid.style.removeProperty("--left-rail-w");
@@ -398,7 +408,13 @@ export function mountGameView(container, opts = {}) {
           const boardRect = boardEl.getBoundingClientRect();
           const left = Math.ceil(boardRect.right) + gapW;
           const top = Math.ceil(boardRect.top);
-          const width = Math.max(0, window.innerWidth - left - 16);
+          // On wide viewports, cap the right rail at its natural width so it
+          // doesn't stretch all the way to the right edge -- combined with the
+          // shrunken left rail (when dock is empty), this keeps the picture
+          // centered instead of framed by a wide empty left band.
+          const WIDE = 1500;
+          const avail = Math.max(0, window.innerWidth - left - 16);
+          const width = window.innerWidth >= WIDE ? Math.min(railW, avail) : avail;
           const height = Math.max(160, Math.floor(boardRect.height));
           sideHost.style.left = `${left}px`;
           sideHost.style.top = `${top}px`;
