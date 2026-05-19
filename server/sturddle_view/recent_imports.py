@@ -27,6 +27,7 @@ from platformdirs import user_data_dir
 
 from . import APP_NAME
 from ._atomic import atomic_write_json, atomic_write_text
+from .play.canonical_hash import canonical_hash
 
 log = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ class RecentImports:
         """Upsert an entry for ``text``. Writes the blob if new, updates the
         index, evicts oldest entries past the cap. Returns the hash."""
         trimmed = text.strip()
-        h = _hash_text(trimmed)
+        h = canonical_hash(trimmed, fmt)
         async with self._lock:
             fname = f"by-hash/{h}.{_ext_for(fmt)}"
             blob_path = self._root / fname

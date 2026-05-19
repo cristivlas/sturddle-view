@@ -52,13 +52,21 @@ def test_save_trims_whitespace_for_hash(store):
     assert h1 == h2
 
 
+# Distinct legal first moves so canonical hashes differ (canonicalization
+# strips comments/junk, so an integer suffix would collapse to one entry).
+_DISTINCT_PGNS = [
+    "1. e4 *", "1. d4 *", "1. c4 *", "1. Nf3 *",
+    "1. g3 *", "1. b3 *", "1. f4 *",
+]
+
+
 def test_save_evicts_oldest_past_cap(store):
     # cap=5 (from fixture). Save 6 -> first one drops.
     hashes = []
-    for i in range(6):
+    for pgn in _DISTINCT_PGNS[:6]:
         # Pause so ts differs measurably between writes (eviction sorts on ts).
         time.sleep(0.002)
-        hashes.append(_run(store.save(fmt="pgn", text=f"1. e4 e5 {i} *", summary=f"s{i}")))
+        hashes.append(_run(store.save(fmt="pgn", text=pgn, summary="s")))
     rows = store.list()
     assert len(rows) == 5
     kept_hashes = {r["hash"] for r in rows}
@@ -67,11 +75,9 @@ def test_save_evicts_oldest_past_cap(store):
 
 
 def test_evicted_blob_is_deleted(store, tmp_path):
-    paths = []
-    for i in range(6):
+    for pgn in _DISTINCT_PGNS[:6]:
         time.sleep(0.002)
-        _run(store.save(fmt="pgn", text=f"1. e4 e5 {i} *", summary=f"s{i}"))
-        paths.append(list((tmp_path / "imports" / "by-hash").iterdir()))
+        _run(store.save(fmt="pgn", text=pgn, summary="s"))
     # After the 6th save, the oldest blob should be gone.
     remaining = list((tmp_path / "imports" / "by-hash").iterdir())
     assert len(remaining) == 5

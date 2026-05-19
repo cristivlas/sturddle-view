@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 
@@ -9,6 +8,7 @@ from fastapi.responses import Response
 
 from ..auth import require_token
 from ..engines import resolve_selected
+from ..play.canonical_hash import canonical_hash
 from ..play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
 from ..play.import_position import PositionImportError, parse_fen, parse_pgn
 
@@ -26,8 +26,8 @@ MAX_IMPORT_TEXT_BYTES = int(
 router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_token)])
 
 
-def _hash_import_text(text: str) -> str:
-    return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
+def _hash_import_text(text: str, fmt: str) -> str:
+    return canonical_hash(text, fmt)
 
 
 async def _get_hve(request: Request) -> HumanVsEngine:
@@ -163,7 +163,7 @@ async def import_validate(payload: dict) -> dict:
     against the currently viewed game before committing a full import."""
     parsed = _parse_import_payload(payload)
     raw_text = payload.get("text", "")
-    parsed["hash"] = _hash_import_text(raw_text)
+    parsed["hash"] = _hash_import_text(raw_text, parsed["detected_format"])
     return parsed
 
 
@@ -184,7 +184,7 @@ async def import_game(payload: dict, request: Request) -> dict:
     headers = parsed.get("headers") or {}
     raw_text = payload.get("text", "")
     summary = parsed.get("summary") or {}
-    view_hash = _hash_import_text(raw_text)
+    view_hash = _hash_import_text(raw_text, parsed["detected_format"])
     try:
         game_id = await hve.enter_view_mode(ViewModeParams(
             start_fen=parsed["start_fen"],
