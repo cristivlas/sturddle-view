@@ -4,7 +4,7 @@
 
 import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, openSettings, reportError, toast } from "../dialogs.js";
-import { showImportPositionDialog, confirmReplaceViewedGame } from "../import-position-dialog.js";
+import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, setDockContainer, isMobileLayout } from "../play-debug-windows.js";
 import {
   setCommentaryDockContainer,
@@ -726,10 +726,19 @@ export const playPerspective = {
     }
 
     const onNewGame = async () => {
-      if (!await _confirmDiscardActiveGame({
-        message: "Cancel the game in progress and start a new one?",
-        okLabel: "New game",
-      })) return;
+      if (_playInProgress) {
+        if (!await _confirmDiscardActiveGame({
+          message: "Cancel the game in progress and start a new one?",
+          okLabel: "New game",
+        })) return;
+      } else {
+        const ok = await confirmDiscardViewedGame({
+          viewing,
+          currentSummary: _viewingSummary,
+          analysisRunning: analyzing,
+        });
+        if (!ok) return;
+      }
       try {
         view.setGameId(null);
         const r = await ctx.api("POST", "/game/new", {});
@@ -815,7 +824,7 @@ export const playPerspective = {
 
     const onImport = async () => {
       if (!await _confirmDiscardActiveGame({
-        message: "Cancel the current game and import a new game or position?",
+        message: "Cancel the current game and import another?",
         okLabel: "Import",
       })) return;
       // Dialog validates (parse errors surface inline) but does not import.

@@ -43,24 +43,14 @@ function truncateMiddle(text, max) {
   return text.slice(0, head) + ELLIPSIS + text.slice(text.length - tail);
 }
 
-// Confirm before replacing the game currently shown in the viewer.
-// Skips the prompt (returns true) when the incoming hash matches the current
-// view, or when nothing is being viewed. Resolves false on cancel.
-export function confirmReplaceViewedGame({
-  currentHash,
-  currentSummary,
-  incomingHash,
-  incomingSummary,
-  analysisRunning = false,
-}) {
-  if (incomingHash && currentHash && incomingHash === currentHash) return Promise.resolve(true);
-  const rows = [
-    ["Current",      currentSummary,  REPLACE_CURRENT_FALLBACK],
-    ["Replace with", incomingSummary, REPLACE_INCOMING_FALLBACK],
-  ].map(([label, s, fallback]) => ({
+// Shared modal shell for "viewed game" confirms: title, labeled summary rows,
+// optional analysis-cancel warning, Cancel/OK footer. Rows are pre-formatted
+// {label, summary, fallback} entries.
+function _showViewedGameConfirm({ title, rows, analysisRunning, okLabel }) {
+  const formatted = rows.map(({ label, summary, fallback }) => ({
     label,
-    display: formatSummary(s, { short: true }) || fallback,
-    full:    formatSummary(s) || fallback,
+    display: formatSummary(summary, { short: true }) || fallback,
+    full:    formatSummary(summary) || fallback,
   }));
   return showDialog({
     label: "",
@@ -72,12 +62,12 @@ export function confirmReplaceViewedGame({
       const wrap = document.createElement("div");
       wrap.className = "replace-view-confirm";
 
-      const title = document.createElement("div");
-      title.className = "replace-view-title";
-      title.textContent = "Replace game in viewer?";
-      wrap.appendChild(title);
+      const titleEl = document.createElement("div");
+      titleEl.className = "replace-view-title";
+      titleEl.textContent = title;
+      wrap.appendChild(titleEl);
 
-      for (const { label, display, full } of rows) {
+      for (const { label, display, full } of formatted) {
         const row = document.createElement("div");
         row.className = "replace-view-row";
         const k = document.createElement("div");
@@ -110,7 +100,7 @@ export function confirmReplaceViewedGame({
       ok.slot = "footer";
       ok.size = "small";
       ok.variant = "brand";
-      ok.textContent = "Replace";
+      ok.textContent = okLabel;
       ok.addEventListener("click", () => resolve(true));
 
       dialog.append(cancel, ok);
@@ -119,6 +109,44 @@ export function confirmReplaceViewedGame({
       // then activates Cancel. Escape is handled by <wa-dialog>.
       requestAnimationFrame(() => ok.focus?.());
     },
+  });
+}
+
+// Confirm before replacing the game currently shown in the viewer.
+// Skips the prompt (returns true) when the incoming hash matches the current
+// view, or when nothing is being viewed. Resolves false on cancel.
+export function confirmReplaceViewedGame({
+  currentHash,
+  currentSummary,
+  incomingHash,
+  incomingSummary,
+  analysisRunning = false,
+}) {
+  if (incomingHash && currentHash && incomingHash === currentHash) return Promise.resolve(true);
+  return _showViewedGameConfirm({
+    title: "Replace game in viewer?",
+    rows: [
+      { label: "Current",      summary: currentSummary,  fallback: REPLACE_CURRENT_FALLBACK },
+      { label: "Replace with", summary: incomingSummary, fallback: REPLACE_INCOMING_FALLBACK },
+    ],
+    analysisRunning,
+    okLabel: "Replace",
+  });
+}
+
+// Confirm before leaving the currently viewed game (e.g. starting a fresh
+// game from the ribbon). Single "Current" row; same analysis warning when
+// analysis is in flight. Skips the prompt (returns true) when not viewing.
+// Resolves false on cancel.
+export function confirmDiscardViewedGame({ viewing, currentSummary, analysisRunning = false }) {
+  if (!viewing) return Promise.resolve(true);
+  return _showViewedGameConfirm({
+    title: "Leave the viewed game?",
+    rows: [
+      { label: "Current", summary: currentSummary, fallback: REPLACE_CURRENT_FALLBACK },
+    ],
+    analysisRunning,
+    okLabel: "New game",
   });
 }
 
@@ -172,7 +200,7 @@ function detectFormatFromName(name) {
  *  POST so it can do hash comparison and confirmation first. */
 export function showImportPositionDialog({ api }) {
   return showDialog({
-    label: "Open position",
+    label: "Import",
     width: "560px",
     body: (resolve, dialog) => {
       let format = "pgn";
