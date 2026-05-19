@@ -851,7 +851,7 @@ export const playPerspective = {
       if (!result) return;
       // Same game already in view -- stay put, no re-import needed.
       if (viewing && result.hash && result.hash === _viewingHash) {
-        if (viewingGameId) toast(`Viewing ${viewingGameId}.`);
+        if (viewingGameId) toast(`Viewing ${viewingGameId}`);
         return;
       }
       // Different game while viewing -- confirm before replacing.
