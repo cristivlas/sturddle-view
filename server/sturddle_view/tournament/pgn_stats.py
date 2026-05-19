@@ -7,7 +7,6 @@ Reads the PGN; results are cached per-path keyed by (mtime, size).
 from __future__ import annotations
 
 import gzip
-import hashlib
 import json
 import logging
 import math
@@ -21,6 +20,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 
+from ..play.canonical_hash import canonical_hash
 from ..chess.results import (
     BLACK_WIN as _BLACK_WIN,
     DECISIVE_RESULTS,
@@ -374,7 +374,7 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
     if board is None:
         board = game.board()
     pgn_text = str(game)
-    pgn_hash = hashlib.sha256(pgn_text.strip().encode("utf-8")).hexdigest()
+    pgn_hash = canonical_hash(pgn_text, "pgn")
     white = game.headers.get("White", "?")
     black = game.headers.get("Black", "?")
     # _get_game_offsets only indexes decisive games, so Result is always decisive here.
