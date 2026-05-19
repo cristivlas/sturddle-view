@@ -51,6 +51,12 @@
   --wa-color-neutral-fill-loud: #3a3d44;
   --wa-color-neutral-on-loud: #e8e8e8;
   --wa-color-overlay-modal: rgb(0 0 0 / 0.45);
+
+  /* Breakpoints. Expressed in rem so they scale with browser font-size and
+     remain meaningful under zoom. JS reads these via getComputedStyle. */
+  --bp-narrow-dialog: 30rem;  /* 480px @ default font */
+  --bp-mobile:        40rem;  /* 640px @ default font */
+  --bp-wide:          93.75rem; /* 1500px @ default font */
 }
 
 html { font-size: 100%; }
@@ -1757,7 +1763,7 @@ wa-dialog wa-tab-panel > .settings-tournament-tpl-mount { margin-top: 24px; }
    can still escape the clipping ancestors). */
 wa-dialog::part(body) {
   overflow-y: auto !important;
-  max-height: calc(var(--dialog-height, 80vh) - 64px);
+  max-height: calc(var(--dialog-height, 80vh) - 4rem);
 }
 .tournaments-empty {
   display: flex; align-items: center; justify-content: center;
@@ -1849,7 +1855,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .tournaments-list {
   list-style: none; padding: 0; margin: 0;
   display: flex; flex-direction: column; gap: 8px;
-  max-height: calc(100vh - 240px); overflow-y: auto;
+  max-height: calc(100dvh - 15rem); overflow-y: auto;
   padding-right: 4px;
   outline: none;
 }
@@ -2285,12 +2291,25 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-livegame .clock-row .clock-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .wb-livegame.lg-compact .lg-pv { display: none; }
 .wb-livegame .lg-board {
-  flex: 0 0 auto;
+  flex: 1 1 0;
+  min-height: 0;
   align-self: center;
+  aspect-ratio: 1;
+  max-width: 100%;
   display: flex; align-items: center; justify-content: center;
   overflow: hidden;
   position: relative;
 }
+/* Clocks match the board's measured width and center under it; preserves
+   the prior JS-driven behavior. JS publishes --lg-board-w after sizing
+   and removes .lg-measuring once the first measurement has been applied,
+   so clocks don't flash at full body width on initial spawn. */
+.wb-livegame .clock-row {
+  align-self: center;
+  width: 100%;
+  max-width: var(--lg-board-w, 100%);
+}
+.wb-livegame.lg-measuring .clock-row { visibility: hidden; }
 .wb-livegame .lg-result-overlay {
   position: absolute;
   left: 0; right: 0;
@@ -2331,13 +2350,18 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-livegame .lg-eval {
   display: flex; gap: 8px; align-items: baseline;
   font-family: var(--wa-font-family-code); font-size: 0.8125rem;
-  min-height: 1em; flex-shrink: 0;
+  /* Reserve the populated row height so the board doesn't snap-shrink
+     when the first eval event arrives. 1.4 line-height matches the
+     rendered row; line-height auto + padding pushed actual height past
+     a 1em reserve. */
+  min-height: 1.4em; line-height: 1.4; flex-shrink: 0;
 }
 .wb-livegame .lg-eval-score { color: var(--accent); font-weight: 500; }
 .wb-livegame .lg-pv {
   font-family: var(--wa-font-family-code); font-size: 0.6875rem;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  min-height: 1em; flex-shrink: 0;
+  /* Match populated row height -- see .lg-eval note above. */
+  min-height: 1.4em; line-height: 1.4; flex-shrink: 0;
 }
 .wb-livegame .lg-pv-bottom { padding-bottom: 2px; }
 

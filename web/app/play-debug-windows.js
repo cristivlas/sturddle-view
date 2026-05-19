@@ -23,6 +23,7 @@
 import { attachColumnResize } from "./col-resize.js";
 import { toast } from "./dialogs.js";
 import { makeSplitter } from "./splitter.js";
+import { mqMobile } from "./breakpoints.js";
 
 const UCI_LOG_MAX_LINES = 1000;
 // Once the buffer overflows, trim this many lines in one go instead of
@@ -44,10 +45,10 @@ const extraDocks = new Map();
 
 const DOCK_SPLIT_KEY = "sturddle:play:dockSplit";
 
-export const MOBILE_MAX_W_PX = 640;
-
+// Mobile gate. Sourced from the shared --bp-mobile CSS custom property so
+// the breakpoint lives in one place (see styles.css :root + breakpoints.js).
 export function isMobileLayout() {
-  return window.innerWidth <= MOBILE_MAX_W_PX;
+  return mqMobile.matches;
 }
 
 function applyDockBounds(el) {
