@@ -146,6 +146,42 @@ def _install_proactor_accept_resilience() -> None:
     proactor_events.BaseProactorEventLoop._start_serving = _start_serving
 
 
+_ws_shutdown_patched = False
+
+
+def _install_uvicorn_ws_shutdown_state_guard() -> None:
+    """Gate uvicorn's WSProtocol.shutdown on wsproto state.
+
+    Upstream uvicorn's WSProtocol.shutdown() sends CloseConnection(1012)
+    without checking conn.state. When a client cleanly closes right
+    before server shutdown iterates connections, state is already CLOSED
+    and the send raises wsproto LocalProtocolError on the loop thread.
+    Idempotent and applied once per process.
+    """
+    global _ws_shutdown_patched
+    if _ws_shutdown_patched:
+        return
+    try:
+        import wsproto
+        from uvicorn.protocols.websockets import wsproto_impl
+        from wsproto.connection import ConnectionState
+    except ImportError:
+        return
+
+    def _safe_shutdown(self):
+        self.stop_keepalive()
+        if self.handshake_complete and self.conn.state != ConnectionState.CLOSED:
+            self.queue.put_nowait({"type": "websocket.disconnect", "code": 1012})
+            output = self.conn.send(wsproto.events.CloseConnection(code=1012))
+            self.transport.write(output)
+        elif not self.handshake_complete:
+            self.send_500_response()
+        self.transport.close()
+
+    wsproto_impl.WSProtocol.shutdown = _safe_shutdown
+    _ws_shutdown_patched = True
+
+
 def _install_engine_sigkill_filter() -> None:
     # Drop "Future exception was never retrieved" from intentional engine
     # termination on takeback/cancel (transport.close() after failed stop),
@@ -171,6 +207,7 @@ def _install_engine_sigkill_filter() -> None:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     _install_proactor_accept_resilience()
+    _install_uvicorn_ws_shutdown_state_guard()
     _install_engine_sigkill_filter()
     _maybe_restore_game(app)
     # Tournament reconciliation: any 'running' rows on disk are stale.

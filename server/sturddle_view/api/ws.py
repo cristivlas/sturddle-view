@@ -81,7 +81,7 @@ async def ws_endpoint(websocket: WebSocket) -> None:
         recv_task.cancel()
         websocket.app.state.ws_tasks.discard(task)
         await bus.unsubscribe(queue)
-        try:
-            await websocket.close()
-        except Exception:
-            pass
+        # Do not call websocket.close() here. By the time we reach this
+        # block the peer is gone or we were cancelled by lifespan
+        # shutdown; a second close races uvicorn's WSProtocol.shutdown()
+        # and surfaces as wsproto LocalProtocolError on the loop thread.
