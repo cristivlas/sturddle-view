@@ -201,6 +201,10 @@ class HumanVsEngine:
         return self._mode is Mode.EDITING
 
     @property
+    def game_id(self) -> str | None:
+        return self._game_id
+
+    @property
     def is_paused(self) -> bool:
         return self._mode is Mode.PAUSED
 

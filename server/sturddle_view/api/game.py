@@ -389,18 +389,18 @@ async def edit_commit(payload: dict, request: Request) -> dict:
     fen = payload.get("fen")
     if not isinstance(fen, str) or not fen:
         raise HTTPException(status_code=400, detail="missing 'fen'")
+    prev_id = hve.game_id
     try:
         game_id = await hve.commit_edit(fen)
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    # Defensible save: a successful commit means the user deliberately
-    # accepted this position. Cancel never reaches here, so cancelled
-    # edits are not persisted. commit_edit already validated the FEN, so
-    # parse_fen will not raise.
-    summary = parse_fen(fen).summary
-    h = await request.app.state.recent_imports.save(
-        fmt="fen", text=fen, summary=summary,
-    )
+    h = None
+    summary = None
+    if game_id != prev_id:
+        summary = parse_fen(fen).summary
+        h = await request.app.state.recent_imports.save(
+            fmt="fen", text=fen, summary=summary,
+        )
     return {"game_id": game_id, "hash": h, "summary": summary}
 
 
