@@ -441,7 +441,7 @@ export const playPerspective = {
       const t = e.detail.toast;
       if (t?.kind !== "viewing-match") return;
       const gid = viewingGameId ?? _cachedBoardUpdate?.game_id ?? null;
-      if (gid) toast(`Viewing ${gid}.`);
+      if (gid) toast(`Viewing ${gid}`);
     };
     window.addEventListener("sturddle:perspective-activated", onPerspectiveActivated);
 

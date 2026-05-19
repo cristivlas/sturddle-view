@@ -429,7 +429,7 @@ export function showImportPositionDialog({ api }) {
         if (hint !== format) selectTab(hint);
         textareas[hint].value = text;
         syncSubmitEnabled();
-        setStatus(`Loaded ${f.name}. Click Open to parse.`, "muted");
+        setStatus(`Loaded ${f.name}`, "muted");
       }
 
       tabs.addEventListener("wa-tab-show", (ev) => {
