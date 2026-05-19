@@ -111,10 +111,10 @@ A CSS-only fix would require either:
 
 1. **Phase 1** -- DONE 2026-05-19. 480px dedup (added `--bp-narrow-dialog`/`--bp-mobile`/`--bp-wide` to `:root`, created `web/app/breakpoints.js`), styles.css:1760 `64px`->`4rem`, styles.css:1852 `100vh - 240px`->`100dvh - 15rem`. Validated at 100% zoom.
 2. **Phase 2** -- SKIPPED. See [section 3](#3-webappenginesjs----skipped) above. Web Awesome `wa-tab-panel` shadow DOM blocks flex chain; risk outweighs benefit.
-3. **Phase 3** -- PENDING. tournament-live-game.js CSS-driven sizing. Self-contained, one WinBox.
-4. **Phase 4** -- PENDING. game-view.js `_recomputeNow()` rewrite. Highest impact, highest risk. Needs cm-chessboard interaction prototyping first.
-5. **Phase 5** -- PENDING. play-debug-windows.js `isMobileLayout` consolidation. Mostly cosmetic after Phase 1.
-6. **Phase 6** (optional) -- styles.css px-to-rem spacing pass.
+3. **Phase 3** -- DONE 2026-05-19. tournament-live-game.js: replaced JS px sizing of board+clocks with CSS aspect-ratio + flex; JS publishes `--lg-board-w` for clock clamp. Reserved eval/pv row heights (1.4em) to eliminate board snap-shrink on first event.
+4. **Phase 4** -- DONE 2026-05-19 (reduced scope). The ambitious form (delete `_recomputeNow` entirely, replace with CSS grid + aspect-ratio) was prototyped and reverted: the chicken-and-egg between board-square width and grid column width broke under zoom/resize. Landed instead: (a) `html { font-size: clamp(14px, 1em, 24px) }` so layout stays usable across the full chrome://settings/fonts range; (b) MIN_BOARD/RAIL_MIN/RAIL_MAX and floor minimums in `_recomputeNow` are now rem-derived; NARROW=640 and WIDE=1500 stay raw CSS-px (they're viewport thresholds matching CSS media queries, not size scales). The `_recomputeNow` measure-write cycle itself remains.
+5. **Phase 5** -- DONE 2026-05-19. play-debug-windows.js `isMobileLayout()` now reads `mqMobile` from breakpoints.js; removed `MOBILE_MAX_W_PX` export.
+6. **Phase 6** (optional) -- DEFERRED. styles.css px-to-rem spacing pass. Lower priority now that root font-size is clamped.
 
 ## Verification
 

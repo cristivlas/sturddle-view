@@ -59,7 +59,11 @@
   --bp-wide:          93.75rem; /* 1500px @ default font */
 }
 
-html { font-size: 100%; }
+/* Clamp the root font-size so the layout stays usable under extreme
+   browser font-size preferences. `1em` here resolves to the user's
+   browser default (16px unless overridden in chrome://settings/fonts),
+   so the user's preference still flows through within the bounds. */
+html { font-size: clamp(14px, 1em, 24px); }
 :root { --wa-font-size-scale: 1; }
 
 a { color: var(--wa-color-brand-70); }
