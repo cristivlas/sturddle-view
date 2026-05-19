@@ -509,6 +509,7 @@ export const playPerspective = {
         setDisabled(viewBackBtn, analyzing || atStart);
         setDisabled(viewForwardBtn, analyzing || atEnd);
         setDisabled(viewLastBtn, analyzing || atEnd);
+        setDisabled(viewSavePgnBtn, viewTotalPlies === 0);
         // Play-from-here is rejected at game-over plies (checkmate /
         // stalemate / draw). Backed by a backend guard that prevents
         // half-cleared state if the UI is bypassed.
@@ -537,6 +538,7 @@ export const playPerspective = {
         takebackBtn,
         analyzing || gameOver || !allowTakeback || movesPlayed === 0,
       );
+      setDisabled(savePgnBtn, movesPlayed === 0);
       setDisabled(switchSidesBtn, analyzing || gameOver || !resignAvailable);
       setDisabled(resignBtn, paused || analyzing || gameOver || !resignAvailable);
       // Analysis is reachable only from a paused game (and to stop, while
