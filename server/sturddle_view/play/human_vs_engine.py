@@ -418,7 +418,7 @@ class HumanVsEngine:
             )
             self._clock.start_turn()
             self._mode = Mode.PLAY
-            self._game_id = uuid.uuid4().hex[:12]
+            self._game_id = str(uuid.uuid4())
             self._game_started_wall = time.time()
             await self._persist()
             await self._publish_board()
@@ -731,13 +731,23 @@ class HumanVsEngine:
             self._clock.black_time,
         )
 
-    async def enter_view_mode(self, params: ViewModeParams) -> str:
+    async def enter_view_mode(
+        self,
+        params: ViewModeParams,
+        game_id: str | None = None,
+    ) -> str:
         """Load a PGN-imported game into view mode at the LAST ply.
 
         Replaces any active live game (the autosave file preserves it for
         future load-from-history). No clocks tick, no engine thinks, no
         autosave fires. Navigation is via view_first/back/forward/last.
         Exit via play_from_here, which seeds a fresh play game.
+
+        ``game_id`` is an opaque server-side identity for the loaded
+        content. When the caller has one (e.g. import path found the
+        content already in the store), pass it through so the live
+        session and the store agree. When omitted, a fresh uuid4 is
+        minted.
         """
         async with self._lock:
             if not (self._mode & Op.ENTER_VIEW_MODE._mask):
@@ -779,7 +789,7 @@ class HumanVsEngine:
             self._view_cursor = 0  # land at start; avoid end-of-game modal
             self._start_fen = params.start_fen
             self._board = start_board
-            self._game_id = uuid.uuid4().hex[:12]
+            self._game_id = game_id if game_id is not None else str(uuid.uuid4())
             self._game_started_wall = None  # not a play game; no autosave
             # Clocks frozen -- irrelevant in view mode but keep types sane.
             self._clock = ChessClock(TimeControl(0.0, 0.0))

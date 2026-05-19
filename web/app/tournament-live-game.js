@@ -9,7 +9,7 @@ import { isPlayInProgress, isViewing, isAnalyzing, getViewingHash, getViewingSum
 import { confirmReplaceViewedGame } from "./import-position-dialog.js";
 import { flashWindow } from "./wb-utils.js";
 
-async function replayTournamentGame({ tournamentId, gameN, token }) {
+async function replayTournamentGame({ tournamentId, gameN, token, pairId = null }) {
   const headers = { "Content-Type": "application/json" };
   let pgn, pgnHash, pgnSummary;
   try {
@@ -48,10 +48,12 @@ async function replayTournamentGame({ tournamentId, gameN, token }) {
     if (!ok) return;
   }
   try {
+    const body = { text: pgn, format: "pgn" };
+    if (pairId) body.game_id = pairId;
     const res = await fetch("/game/import", {
       method: "POST",
       headers,
-      body: JSON.stringify({ text: pgn, format: "pgn" }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`import -> ${res.status}`);
   } catch (e) {
@@ -255,7 +257,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
       replayInFlight = true;
       replayBtnEl.disabled = true;
       try {
-        await replayTournamentGame({ tournamentId, gameN: reconciledGameN, token });
+        await replayTournamentGame({ tournamentId, gameN: reconciledGameN, token, pairId: gameId });
       } finally {
         replayInFlight = false;
         replayBtnEl.disabled = false;

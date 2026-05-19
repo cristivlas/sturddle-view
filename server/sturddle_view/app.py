@@ -290,6 +290,12 @@ def create_app(
     app.state.engines = engine_registry or EngineRegistry()
     app.state.game_store = game_store or GameStore()
     app.state.recent_imports = recent_imports or RecentImports.load()
+    # Pin the active HVE session's game_id during eviction so the live
+    # game is never dropped from the store. HVE is lazy (created on
+    # first /game/new), so resolve it through app.state on each call.
+    app.state.recent_imports.set_active_game_id_getter(
+        lambda: getattr(app.state.hve, "game_id", None)
+    )
     log.info(
         "recent imports: %d entries at %s",
         len(app.state.recent_imports.list()),
