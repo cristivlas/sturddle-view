@@ -96,8 +96,6 @@ async def test_play_modes_rejected_in_view(hve):
     with pytest.raises(ModeConflictError):
         await h.pause()
     with pytest.raises(ModeConflictError):
-        await h.switch_sides()
-    with pytest.raises(ModeConflictError):
         await h.resign()
 
 

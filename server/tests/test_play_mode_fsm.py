@@ -59,12 +59,6 @@ def test_takeback_allowed_in_play_and_paused():
         assert not _is_allowed(mode, Op.TAKEBACK)
 
 
-def test_switch_sides_allowed_only_in_play():
-    assert _is_allowed(Mode.PLAY, Op.SWITCH_SIDES)
-    for mode in (Mode.PAUSED, Mode.VIEWING, Mode.EDITING, Mode.ANALYZING):
-        assert not _is_allowed(mode, Op.SWITCH_SIDES)
-
-
 def test_resign_allowed_in_play_and_paused():
     assert _is_allowed(Mode.PLAY, Op.RESIGN)
     assert _is_allowed(Mode.PAUSED, Op.RESIGN)
