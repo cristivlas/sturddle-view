@@ -428,23 +428,6 @@ export const playPerspective = {
     };
     window.addEventListener("sturddle:settings-changed", onSettingsChanged);
 
-    // Cross-perspective toast plumbing: callers (e.g. tournament-live-game)
-    // dispatch activate-perspective with detail.toast to ask play to show a
-    // toast that needs play-side state (viewingGameId) to format. Main.js
-    // re-fires as perspective-activated after the activation completes, so
-    // we receive it after mount.
-    // Generalize later as a cleaner inter-perspective comms mechanism (so
-    // callers don't reach into another perspective's module scope or import
-    // its internal state).
-    const onPerspectiveActivated = (e) => {
-      if (e.detail?.id !== "play") return;
-      const t = e.detail.toast;
-      if (t?.kind !== "viewing-match") return;
-      const gid = viewingGameId ?? _cachedBoardUpdate?.game_id ?? null;
-      if (gid) toast(`Viewing ${gid}`);
-    };
-    window.addEventListener("sturddle:perspective-activated", onPerspectiveActivated);
-
     // Ask server to re-emit current state so the freshly-mounted view syncs.
     ctx.api("POST", "/game/sync", {}).catch(() => {});
 
@@ -1254,7 +1237,6 @@ export const playPerspective = {
         view.unmount();
         window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
         window.removeEventListener("sturddle:engines-changed", onEnginesChanged);
-        window.removeEventListener("sturddle:perspective-activated", onPerspectiveActivated);
         window.removeEventListener("resize", onCommentsResize);
         window.removeEventListener("keydown", onKeydown);
         newGameBtn.removeEventListener("click", onNewGame);

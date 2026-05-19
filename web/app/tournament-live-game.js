@@ -4,7 +4,7 @@
 // this engine's `info`, clocks from `go wtime/btime`, last bestmove highlight.
 
 import { mountBoard } from "./board.js";
-import { confirm, reportError } from "./dialogs.js";
+import { confirm, reportError, toast } from "./dialogs.js";
 import { isPlayInProgress, isViewing, isAnalyzing, getViewingHash, getViewingSummary } from "./perspectives/play.js";
 import { confirmReplaceViewedGame } from "./import-position-dialog.js";
 import { flashWindow } from "./wb-utils.js";
@@ -33,9 +33,14 @@ async function replayTournamentGame({ tournamentId, gameN, token, pairId = null 
     if (!ok) return;
   } else if (isViewing()) {
     if (pgnHash && pgnHash === getViewingHash()) {
+      // Same game already viewed: switch perspective and surface a
+      // toast carrying the pair id. The toast doubles as a live
+      // invariant check for the game_id-unification refactor -- if
+      // the value looks wrong, the unification is broken.
       window.dispatchEvent(new CustomEvent("sturddle:activate-perspective", {
-        detail: { id: "play", toast: { kind: "viewing-match" } },
+        detail: { id: "play" },
       }));
+      if (pairId) toast(`Viewing ${pairId}`);
       return;
     }
     const ok = await confirmReplaceViewedGame({
@@ -47,6 +52,7 @@ async function replayTournamentGame({ tournamentId, gameN, token, pairId = null 
     });
     if (!ok) return;
   }
+  let importedGameId = null;
   try {
     const body = { text: pgn, format: "pgn" };
     if (pairId) body.game_id = pairId;
@@ -56,11 +62,25 @@ async function replayTournamentGame({ tournamentId, gameN, token, pairId = null 
       body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`import -> ${res.status}`);
+    const data = await res.json();
+    importedGameId = data?.game_id ?? null;
   } catch (e) {
     reportError(null, "Replay: import failed", e);
     return;
   }
+  // Server-side invariant: when the client supplied a game_id, the
+  // import response must echo it back exactly. Mismatch is a unification
+  // bug, not a race -- surface it loudly.
+  if (pairId && importedGameId && importedGameId !== pairId) {
+    reportError(
+      null,
+      "Replay: server returned game_id != pair_id (unification bug)",
+      new Error(`stored=${importedGameId} pair=${pairId}`),
+    );
+    return;
+  }
   window.dispatchEvent(new CustomEvent("sturddle:activate-perspective", { detail: { id: "play" } }));
+  if (importedGameId) toast(`Viewing ${importedGameId}`);
 }
 
 // Flip to true to re-enable verbose [WATCH] tracing for debugging

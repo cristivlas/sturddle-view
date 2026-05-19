@@ -144,7 +144,6 @@ window.addEventListener("sturddle:activate-perspective", async (e) => {
       await router.activate(id);
       renderNav();
     }
-    window.dispatchEvent(new CustomEvent("sturddle:perspective-activated", { detail: e.detail }));
   } catch (err) {
     console.error(`activate-perspective(${id}) failed`, err);
   }
