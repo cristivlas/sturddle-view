@@ -20,6 +20,43 @@ from ..events import Event, EventBus
 log = logging.getLogger(__name__)
 
 _CANCEL_GRACE_SECONDS = 0.5
+_CLOSE_GRACE_SECONDS = 2.0
+
+
+def _close_and_wait(transport) -> asyncio.Future:
+    """Close ``transport`` and return a future resolved when its protocol's
+    ``connection_lost`` callback fires.
+
+    The proactor schedules close work; ``connection_lost`` is the real
+    done-signal. Already-closing transports and transports without a
+    protocol resolve immediately."""
+    loop = asyncio.get_running_loop()
+    fut: asyncio.Future = loop.create_future()
+    protocol = transport.get_protocol() if hasattr(transport, "get_protocol") else None
+    if protocol is None or transport.is_closing():
+        try:
+            transport.close()
+        except Exception:
+            pass
+        if not fut.done():
+            fut.set_result(None)
+        return fut
+    orig_conn_lost = protocol.connection_lost
+
+    def _chained(exc):
+        try:
+            orig_conn_lost(exc)
+        finally:
+            if not fut.done():
+                fut.set_result(None)
+
+    protocol.connection_lost = _chained
+    try:
+        transport.close()
+    except Exception:
+        if not fut.done():
+            fut.set_result(None)
+    return fut
 
 
 class EngineSupervisor:
@@ -210,8 +247,8 @@ class EngineSupervisor:
         the returncode; it never closes the outer subprocess transport
         or its child stdin/stdout/stderr pipes. On Windows that leaves
         pipe transports whose GC trips ResourceWarning later. Close them
-        explicitly and yield to the loop so the close callbacks complete
-        before we return."""
+        explicitly and await each transport's connection_lost so the
+        proactor's close callbacks complete before we return."""
         if self._engine is not None:
             try:
                 await self._engine.quit()
@@ -219,22 +256,19 @@ class EngineSupervisor:
                 pass
             self._engine = None
         if self._transport is not None:
+            waiters: list[asyncio.Future] = []
             for fd in (0, 1, 2):
                 try:
                     pipe = self._transport.get_pipe_transport(fd)
-                    if pipe is not None:
-                        pipe.close()
                 except Exception:
-                    pass
-            try:
-                self._transport.close()
-            except Exception:
-                pass
+                    pipe = None
+                if pipe is not None:
+                    waiters.append(_close_and_wait(pipe))
+            waiters.append(_close_and_wait(self._transport))
             self._transport = None
-            # Yield enough times for the proactor to process the close
-            # callbacks scheduled above before this coroutine returns.
-            for _ in range(3):
-                await asyncio.sleep(0)
+            # Bound the wait so a wedged proactor cannot hang shutdown
+            # forever; the timeout is a safety net, not the sync primitive.
+            await asyncio.wait(waiters, timeout=_CLOSE_GRACE_SECONDS)
         self._uci_log_tasks.clear()
 
     async def swap(self, path: str) -> None:
