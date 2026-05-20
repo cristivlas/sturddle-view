@@ -6,7 +6,6 @@ import socket
 import stat
 import sys
 import threading
-import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -15,6 +14,8 @@ import pytest_asyncio
 
 
 SNAPSHOT_UPDATE_FLAG = "--snapshot-update"
+_UVICORN_STARTUP_TIMEOUT = 10.0
+_UVICORN_SHUTDOWN_TIMEOUT = 10.0
 
 
 def make_fake_uci(root: Path, name: str) -> str:
@@ -54,31 +55,34 @@ def free_port() -> int:
 def run_uvicorn(app, *, port: int | None = None) -> Iterator[tuple[str, object]]:
     """Run a uvicorn server in a background thread.
 
-    Returns (base_url, server). Mirrors the lifecycle that the 9 e2e
-    test files duplicated before this helper existed -- centralizing
-    DRY without changing teardown semantics. Tests that need stricter
-    teardown (e.g. zero ResourceWarning on Windows) should add that
-    themselves; this helper does not try to be cleverer than uvicorn's
-    own shutdown."""
+    Startup waits on a ``threading.Event`` set by the server inside its
+    own loop -- no sleep-polling. Teardown is best-effort: tests that
+    leak connections at fixture teardown still rely on ``force_exit``
+    plus the daemon thread to clean up at process exit. Tightening this
+    requires hoisting Playwright contexts into fixtures across the e2e
+    suite so teardown is synchronous; tracked separately."""
     import uvicorn
+
+    from sturddle_view._uvicorn_signal import make_signalling_server
 
     if port is None:
         port = free_port()
     config = uvicorn.Config(
         app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto"
     )
-    s = uvicorn.Server(config)
+    s, started = make_signalling_server(config)
     thread = threading.Thread(target=s.run, daemon=True)
     thread.start()
-    deadline = time.time() + 10
-    while time.time() < deadline and not s.started:
-        time.sleep(0.05)
+    if not started.wait(timeout=_UVICORN_STARTUP_TIMEOUT):
+        s.should_exit = True
+        thread.join(timeout=_UVICORN_SHUTDOWN_TIMEOUT)
+        raise RuntimeError("uvicorn did not start within timeout")
     try:
         yield f"http://127.0.0.1:{port}", s
     finally:
         s.should_exit = True
         s.force_exit = True
-        thread.join(timeout=2)
+        thread.join(timeout=_UVICORN_SHUTDOWN_TIMEOUT)
 
 
 def pytest_addoption(parser):
