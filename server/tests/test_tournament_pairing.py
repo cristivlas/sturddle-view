@@ -195,10 +195,9 @@ async def test_info_fans_out_to_paired_subscriber(orch):
     await orch.ingest_proxy_lines("white", [
         "info depth 12 score cp 25 pv g1f3",
     ])
-    # Info coalescing holds the line for _INFO_COALESCE_MS; let it flush.
-    await asyncio.sleep(0.15)
-
-    items = []
+    # Info coalescing flushes onto the queue; await the entry instead
+    # of polling for the timer.
+    items = [await q_black.get()]
     while not q_black.empty():
         items.append(q_black.get_nowait())
 
@@ -221,9 +220,9 @@ async def test_info_does_not_fan_out_when_no_pair(orch):
     await orch.ingest_proxy_lines("white", [
         "info depth 12 score cp 25 pv e2e4",
     ])
-    await asyncio.sleep(0.15)
-
-    items = []
+    # Wait for the coalesce slot to land on the queue rather than
+    # polling for the timer.
+    items = [await q_white.get()]
     while not q_white.empty():
         items.append(q_white.get_nowait())
     # Self-fan-out: info delivered, no ``paired`` flag.

@@ -12,7 +12,6 @@ proxies to confirm a pair and is covered by other tests.
 from __future__ import annotations
 
 import sys
-import time
 
 import pytest
 
@@ -79,13 +78,9 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
             # call happens in uvicorn's event loop (not the test's), so the
             # WS subscriber queue is correctly populated for later lines.
             orch = app.state.tournament_orch
-            deadline = time.time() + 5
-            secret = None
-            while time.time() < deadline:
-                secret = orch.proxy_secret()
-                if secret:
-                    break
-                time.sleep(0.05)
+            # ``await orch.start(t.id)`` (above) has already assigned the
+            # secret synchronously before returning, so no poll is needed.
+            secret = orch.proxy_secret()
             assert secret, "orchestrator must have a secret while running"
 
             async with AsyncClient(base_url=base) as http:
@@ -97,12 +92,8 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
                 })
                 assert r.status_code == 204
 
-            # Confirm the proxy is now active before touching the browser.
-            deadline = time.time() + 2
-            while time.time() < deadline:
-                if orch.engine_name_for("proxy-white") == "Engine A":
-                    break
-                time.sleep(0.02)
+            # The 204 above means proxy_session_started ran in the uvicorn
+            # loop; the proxy is registered before we touch the browser.
             assert orch.engine_name_for("proxy-white") == "Engine A"
 
             _ctx, page = await make_page(viewport={"width": 1400, "height": 900})

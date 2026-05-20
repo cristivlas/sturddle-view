@@ -306,9 +306,10 @@ async def test_info_burst_coalesces_to_latest(orch):
         "info depth 13 score cp 25 pv e2e4",
         "info depth 14 score cp 30 pv e2e4",
     ])
-    await asyncio.sleep(0.15)
-
-    items = []
+    # The coalesce timer puts exactly one entry on the queue; wait
+    # for it instead of polling.
+    first = await q.get()
+    items = [first]
     while not q.empty():
         items.append(q.get_nowait())
     infos = [m for m in items if isinstance(m.get("line"), str)
@@ -329,14 +330,15 @@ async def test_slow_info_flushes_each_through(orch):
     while not q.empty():
         q.get_nowait()
 
+    items: list[dict] = []
     for cp in (10, 20, 30):
         await orch.ingest_proxy_lines(_PROXY_A, [
             f"info depth 12 score cp {cp} pv e2e4",
         ])
-        # Wait past the coalesce window so the slot flushes.
-        await asyncio.sleep(0.15)
+        # Wait for the coalesce slot to flush this single info onto the
+        # queue before sending the next one.
+        items.append(await q.get())
 
-    items = []
     while not q.empty():
         items.append(q.get_nowait())
     infos = [m for m in items if isinstance(m.get("line"), str)
