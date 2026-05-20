@@ -15,7 +15,7 @@ from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 from sturddle_view.tournament.fastchess import FastchessRunner  # noqa: E402
 
-from .conftest import run_uvicorn  # noqa: E402
+from .conftest import run_uvicorn, wait_perspective_ready  # noqa: E402
 
 
 @pytest.fixture
@@ -51,6 +51,7 @@ async def test_tournaments_perspective_smoke(server, make_page):
             if msg.type == "error" else None)
     await page.goto(base + "/")
     await page.wait_for_selector("#play-perspective")
+    await wait_perspective_ready(page)
 
     await page.click('button[data-perspective="engines"]')
     await page.wait_for_selector("#engines-perspective")
@@ -106,6 +107,7 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
         ) if msg.type == "error" else None)
         await page.goto(base + "/")
         await page.wait_for_selector("#play-perspective")
+        await wait_perspective_ready(page)
         await page.click('button[data-perspective="engines"]')
         await page.wait_for_selector(".tournament-row")
 
@@ -206,6 +208,7 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, m
         ) if msg.type == "error" else None)
         await page.goto(base + "/")
         await page.wait_for_selector("#play-perspective")
+        await wait_perspective_ready(page)
         await page.click('button[data-perspective="engines"]')
         await page.wait_for_selector(".tournament-row")
 

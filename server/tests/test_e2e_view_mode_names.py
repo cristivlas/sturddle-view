@@ -9,29 +9,50 @@ isn't available so unit-only test runs aren't blocked.
 """
 from __future__ import annotations
 
+import httpx
 import pytest
 
 pytest.importorskip("playwright.async_api")
 
-from sturddle_view.app import create_app  # noqa: E402
-from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 
-from .conftest import run_uvicorn  # noqa: E402
+from .conftest import run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
 
 WHITE_NAME = "Celeris 2.0 64-bit"
 BLACK_NAME = "Panda 1.1 64-bit"
 ENGINE_NAME = "MyEngine 1.0"
 
+# Import a PGN whose headers carry the names we assert on. The
+# /game/import endpoint plumbs White/Black headers into view-mode params,
+# which is the same field path the production import flow exercises.
+_PGN = (
+    f'[Event "?"]\n'
+    f'[Site "?"]\n'
+    f'[Date "????.??.??"]\n'
+    f'[Round "?"]\n'
+    f'[White "{WHITE_NAME}"]\n'
+    f'[Black "{BLACK_NAME}"]\n'
+    f'[Result "*"]\n\n'
+    f'1. e4 c5 2. Nf3 d6 *\n'
+)
+
 
 @pytest.fixture
 def server(tmp_path):
-    settings = Settings(token="test-token", auth_disabled=True)
-    settings.pgn_dir = tmp_path / "pgn"
-    registry = EngineRegistry(path=tmp_path / "engines.json")
-    app = create_app(settings=settings, engine_registry=registry)
-    with run_uvicorn(app) as (base, _s):
-        yield base, app
+    registry_path = tmp_path / "engines.json"
+    seed = EngineRegistry(path=registry_path)
+    e = seed.add(name=ENGINE_NAME, path="/nonexistent/engine")
+    seed.select(e.id)
+    env = {
+        "SV_PGN_DIR": str(tmp_path / "pgn"),
+        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
+        "SV_ENGINE_REGISTRY_PATH": str(registry_path),
+        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
+        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
+        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
+    }
+    with run_uvicorn_subprocess(env_overrides=env) as base:
+        yield base
 
 
 @pytest.mark.asyncio
@@ -39,28 +60,17 @@ async def test_view_mode_clock_names_after_hard_reload(server, page):
     """In view mode after a hard reload, the clock-area name labels must
     reflect the PGN's White/Black headers, not the play-mode placeholders.
     """
-    base, app = server
+    base = server
 
-    from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
-
-    hve = HumanVsEngine(
-        engine_path="/nonexistent",
-        bus=app.state.event_bus,
-        openings=getattr(app.state, "openings", None),
-        settings=app.state.settings,
+    resp = httpx.post(
+        f"{base}/game/import",
+        json={"text": _PGN, "format": "pgn"},
     )
-    hve._engine_name = ENGINE_NAME
-    await hve.enter_view_mode(ViewModeParams(
-        start_fen=None,
-        moves_uci=["e2e4", "c7c5", "g1f3", "d7d6"],
-        clock_history=None,
-        white_name=WHITE_NAME,
-        black_name=BLACK_NAME,
-    ))
-    app.state.hve = hve
+    resp.raise_for_status()
 
     await page.goto(base + "/")
     await page.wait_for_selector("#play-perspective")
+    await wait_perspective_ready(page)
     # view-controls become visible only after play.js's board_update
     # handler runs (it toggles view-mode UI based on the viewing flag) --
     # which is the same handler that used to clobber the PGN names.

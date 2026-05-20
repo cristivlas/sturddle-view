@@ -7,26 +7,27 @@ from __future__ import annotations
 
 import json
 
+import chess
+import httpx
 import pytest
 
 pytest.importorskip("playwright.async_api")
 
-from sturddle_view.app import create_app  # noqa: E402
-from sturddle_view.config import Settings  # noqa: E402
-from sturddle_view.engines import EngineRegistry  # noqa: E402
-
-from .conftest import run_uvicorn  # noqa: E402
+from .conftest import run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
 
 
 @pytest.fixture
 def server(tmp_path):
-    """Run uvicorn in a thread with isolated registry/settings; yield base URL."""
-    settings = Settings(token="test-token", auth_disabled=True)
-    settings.pgn_dir = tmp_path / "pgn"
-    registry = EngineRegistry(path=tmp_path / "engines.json")
-    app = create_app(settings=settings, engine_registry=registry)
-    with run_uvicorn(app) as (base, _s):
-        yield base, app
+    env = {
+        "SV_PGN_DIR": str(tmp_path / "pgn"),
+        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
+        "SV_ENGINE_REGISTRY_PATH": str(tmp_path / "engines.json"),
+        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
+        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
+        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
+    }
+    with run_uvicorn_subprocess(env_overrides=env) as base:
+        yield base
 
 
 @pytest.mark.asyncio
@@ -34,37 +35,26 @@ async def test_play_perspective_remount_resyncs_state(server, page):
     """Inject a synthetic active game on the server, switch perspectives,
     and verify the remounted Play view receives a board_update with the
     correct FEN."""
-    base, app = server
+    base = server
 
-    # Build a non-trivial game state directly on the HVE so the test is
-    # independent of any real UCI engine.
-    import chess
-    from sturddle_view.events import EventBus
-    from sturddle_view.play.chess_clock import ChessClock, TimeControl
-    from sturddle_view.play.human_vs_engine import HumanVsEngine
-
-    hve = HumanVsEngine(
-        engine_path="/nonexistent",
-        bus=app.state.event_bus,
-        openings=getattr(app.state, "openings", None),
-        settings=app.state.settings,
+    # Build a non-trivial game state through the test-hooks endpoint.
+    install_resp = httpx.post(
+        f"{base}/_test/hve/install",
+        json={
+            "human_white": False,
+            "moves_uci": ["e2e4", "c7c5"],
+            "tc": {"initial_seconds": 300.0, "increment_seconds": 0.0},
+            "white_time": 290.0,
+            "black_time": 295.0,
+            "game_id": "test-game",
+        },
     )
-    hve._board = chess.Board()
-    hve._board.push_uci("e2e4")
-    hve._board.push_uci("c7c5")
-    hve._eval_history = [None, None]
-    hve._human_white = False
-    hve._clock = ChessClock(TimeControl(300.0, 0.0))
-    hve._clock.white_time = 290.0
-    hve._clock.black_time = 295.0
-    hve._game_id = "test-game"
-    hve._clock.start_turn()
-    app.state.hve = hve
-
-    expected_fen = hve._board.fen()
+    install_resp.raise_for_status()
+    expected_fen = install_resp.json()["board_fen"]
 
     await page.goto(base + "/")
     await page.wait_for_selector("#play-perspective")
+    await wait_perspective_ready(page)
 
     await page.evaluate(
         """() => {

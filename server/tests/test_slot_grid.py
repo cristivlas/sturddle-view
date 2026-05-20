@@ -10,11 +10,7 @@ import pytest
 
 pytest.importorskip("playwright.async_api")
 
-from sturddle_view.app import create_app  # noqa: E402
-from sturddle_view.config import Settings  # noqa: E402
-from sturddle_view.engines import EngineRegistry  # noqa: E402
-
-from .conftest import run_uvicorn  # noqa: E402
+from .conftest import run_uvicorn_subprocess  # noqa: E402
 
 
 VIEWPORT = {"width": 1280, "height": 720}
@@ -29,11 +25,15 @@ EXPECTED_CAP = EXPECTED_COLS * EXPECTED_ROWS
 
 @pytest.fixture
 def server(tmp_path):
-    settings = Settings(token="test-token", auth_disabled=True)
-    settings.pgn_dir = tmp_path / "pgn"
-    registry = EngineRegistry(path=tmp_path / "engines.json")
-    app = create_app(settings=settings, engine_registry=registry)
-    with run_uvicorn(app) as (base, _s):
+    env = {
+        "SV_PGN_DIR": str(tmp_path / "pgn"),
+        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
+        "SV_ENGINE_REGISTRY_PATH": str(tmp_path / "engines.json"),
+        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
+        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
+        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
+    }
+    with run_uvicorn_subprocess(env_overrides=env) as base:
         yield base
 
 

@@ -15,7 +15,7 @@ from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 from sturddle_view.tournament.fastchess import FastchessRunner  # noqa: E402
 
-from .conftest import run_uvicorn  # noqa: E402
+from .conftest import run_uvicorn, wait_perspective_ready  # noqa: E402
 
 
 def _build_app(tmp_path, monkeypatch, *, sprt_defaults=None):
@@ -38,6 +38,7 @@ def _build_app(tmp_path, monkeypatch, *, sprt_defaults=None):
 async def _nav_to_tournaments(page, base):
     await page.goto(base + "/")
     await page.wait_for_selector("#play-perspective")
+    await wait_perspective_ready(page)
     await page.click('button[data-perspective="engines"]')
     await page.wait_for_selector(".tournaments-panel")
 
@@ -67,6 +68,7 @@ async def test_sprt_switch_disables_rounds_and_type(tmp_path, monkeypatch, make_
         ) if msg.type == "error" else None)
         await page.goto(base + "/")
         await page.wait_for_selector("#play-perspective")
+        await wait_perspective_ready(page)
         await _open_settings_tournament_tab(page)
 
         # Both should be enabled before toggling SPRT on.
@@ -208,6 +210,7 @@ async def test_sprt_settings_validation_marks_invalid_and_skips_persist(tmp_path
 
         await page.goto(base + "/")
         await page.wait_for_selector("#play-perspective")
+        await wait_perspective_ready(page)
         await page.click("#settings-btn")
         await page.wait_for_function(
             """() => !!document.querySelector('wa-dialog wa-tab[panel="sprt"]')""",

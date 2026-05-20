@@ -16,12 +16,9 @@ import pytest
 
 pytest.importorskip("playwright.async_api")
 
-from sturddle_view.app import create_app  # noqa: E402
-from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
-from sturddle_view.tournament.fastchess import FastchessRunner  # noqa: E402
 
-from .conftest import run_uvicorn  # noqa: E402
+from .conftest import run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
 
 
 ENGINE_NAMES = ["alpha", "beta", "gamma", "delta", "epsilon"]
@@ -49,28 +46,30 @@ def _make_fake_uci(root: Path, id_name: str) -> str:
 
 
 @pytest.fixture
-def server(tmp_path, monkeypatch):
-    # Pretend fastchess is present so the New tournament button is enabled.
-    monkeypatch.setattr(
-        FastchessRunner, "detect_binary",
-        staticmethod(lambda configured: configured),
-    )
-
-    settings = Settings(token="test-token", auth_disabled=True)
-    settings.pgn_dir = tmp_path / "pgn"
-    settings.tournament_root = str(tmp_path / "tournaments")
-    settings.tournament_fastchess_path = sys.executable
-    registry = EngineRegistry(path=tmp_path / "engines.json")
+def server(tmp_path):
+    registry_path = tmp_path / "engines.json"
+    seed = EngineRegistry(path=registry_path)
     for n in ENGINE_NAMES:
-        registry.add(name=n, path=_make_fake_uci(tmp_path, n))
-    app = create_app(settings=settings, engine_registry=registry)
-    with run_uvicorn(app) as (base, _s):
+        seed.add(name=n, path=_make_fake_uci(tmp_path, n))
+    env = {
+        "SV_PGN_DIR": str(tmp_path / "pgn"),
+        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
+        # sys.executable is a real file, so detect_binary picks it up
+        # and the "New tournament" button is enabled.
+        "SV_TOURNAMENT_FASTCHESS_PATH": sys.executable,
+        "SV_ENGINE_REGISTRY_PATH": str(registry_path),
+        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
+        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
+        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
+    }
+    with run_uvicorn_subprocess(env_overrides=env) as base:
         yield base
 
 
 async def _open_new_tournament(page, base):
     await page.goto(base + "/")
     await page.wait_for_selector("#play-perspective")
+    await wait_perspective_ready(page)
     await page.click('button[data-perspective="engines"]')
     await page.wait_for_selector(".tournaments-panel")
     # New tournament button enables once fastchess + registry settle.

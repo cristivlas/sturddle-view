@@ -13,22 +13,21 @@ Two layers of tests:
 from __future__ import annotations
 
 import asyncio
+import stat
 import sys
 
 import chess
+import httpx
 import pytest
-from fastapi.testclient import TestClient
 
-from sturddle_view.app import create_app
-from sturddle_view.config import Settings
-from sturddle_view.tournament import fastchess as fc_mod
-from sturddle_view.tournament.fastchess import FastchessRunner
 from sturddle_view.tournament.orchestrator import (
     Orchestrator,
     OrchestratorConfig,
 )
 from sturddle_view.tournament.runner import RunSpec
 from sturddle_view.tournament.store import TournamentStore
+
+from .conftest import run_uvicorn_subprocess
 
 
 # ---------------------------------------------------------------------------
@@ -258,45 +257,61 @@ async def test_debug_invariants_pass_in_normal_flow(orch, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-FAKE_FASTCHESS = r"""
-import sys, time
-i = 1
-while i < len(sys.argv):
-    a = sys.argv[i]
-    if a == "--sleep":
-        time.sleep(float(sys.argv[i+1])); i += 2
-    else:
-        i += 1
-"""
+def _write_fake_fastchess(tmp_path):
+    """Write a script that pretends to be the fastchess binary: ignores
+    all args and sleeps until killed. Returns the path to invoke."""
+    py = tmp_path / "fake_fastchess.py"
+    py.write_text(
+        "import time\n"
+        "while True:\n"
+        "    time.sleep(60)\n"
+    )
+    if sys.platform.startswith("win"):
+        wrapper = tmp_path / "fake_fastchess.cmd"
+        wrapper.write_text(f'@"{sys.executable}" "{py}" %*\r\n')
+        return str(wrapper)
+    py.chmod(py.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return str(py)
 
 
 @pytest.fixture
-def running_app(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        FastchessRunner, "detect_binary",
-        staticmethod(lambda configured: configured),
-    )
-    monkeypatch.setattr(
-        fc_mod, "build_command",
-        lambda spec: [sys.executable, "-c", FAKE_FASTCHESS, "--sleep", "30"],
-    )
-    s = Settings(auth_disabled=True)
-    s.tournament_root = str(tmp_path / "tournaments")
-    s.tournament_fastchess_path = sys.executable
-    app = create_app(settings=s)
-    with TestClient(app) as c:
-        t = c.post("/api/tournaments", json={
-            "name": "t",
-            "engines": [{"id": "id-A", "name": "A", "cmd": "/bin/A"}, {"id": "id-B", "name": "B", "cmd": "/bin/B"}],
-        }).json()
-        c.post(f"/api/tournaments/{t['id']}/start")
-        yield c, app
-        c.post(f"/api/tournaments/{t['id']}/stop")
+def running_server(tmp_path):
+    fake_fc = _write_fake_fastchess(tmp_path)
+    env = {
+        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
+        "SV_TOURNAMENT_FASTCHESS_PATH": fake_fc,
+        "SV_ENGINE_REGISTRY_PATH": str(tmp_path / "engines.json"),
+        "SV_PGN_DIR": str(tmp_path / "pgn"),
+        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
+        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
+        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
+    }
+    with run_uvicorn_subprocess(env_overrides=env) as base:
+        c = httpx.Client(base_url=base)
+        try:
+            t = c.post("/api/tournaments", json={
+                "name": "t",
+                "engines": [
+                    {"id": "id-A", "name": "A", "cmd": "/bin/A"},
+                    {"id": "id-B", "name": "B", "cmd": "/bin/B"},
+                ],
+            }).json()
+            c.post(f"/api/tournaments/{t['id']}/start")
+            try:
+                yield base, c
+            finally:
+                c.post(f"/api/tournaments/{t['id']}/stop")
+        finally:
+            c.close()
 
 
-def test_e2e_paired_info_reaches_opposite_subscriber(running_app):
-    client, app = running_app
-    secret = app.state.tournament_orch.proxy_secret()
+@pytest.mark.asyncio
+async def test_e2e_paired_info_reaches_opposite_subscriber(running_server):
+    from websockets.asyncio.client import connect as ws_connect
+
+    base, client = running_server
+    secret = client.get("/_test/tournament/proxy_secret").json()["secret"]
+    assert secret, "test server must expose a proxy secret"
 
     # Drive the two proxies to the rendezvous before subscribing, so
     # the WS doesn't have to filter out unrelated snapshot replays.
@@ -313,14 +328,16 @@ def test_e2e_paired_info_reaches_opposite_subscriber(running_app):
         "lines": ["position startpos moves e2e4 c7c5"],
     })
 
-    with client.websocket_connect("/ws/tournament/proxy/black?token=") as ws_b:
+    ws_url = base.replace("http://", "ws://") + "/ws/tournament/proxy/black?token="
+    import json as _json
+    async with ws_connect(ws_url) as ws_b:
         client.post("/internal/proxy", json={
             "proxy_id": "white", "secret": secret,
             "lines": ["info depth 8 score cp 20 pv g1f3"],
         })
         seen_paired = None
-        for _ in range(10):
-            msg = ws_b.receive_json(mode="text")
+        for _ in range(20):
+            msg = _json.loads(await ws_b.recv())
             if msg.get("paired") and msg.get("proxy_id") == "white":
                 seen_paired = msg
                 break

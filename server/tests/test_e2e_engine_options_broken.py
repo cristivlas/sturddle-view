@@ -13,11 +13,9 @@ import pytest
 
 pytest.importorskip("playwright.async_api")
 
-from sturddle_view.app import create_app  # noqa: E402
-from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 
-from .conftest import run_uvicorn  # noqa: E402
+from .conftest import run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
 
 
 BROKEN_NAME = "BrokenEngine"
@@ -25,17 +23,22 @@ BROKEN_NAME = "BrokenEngine"
 
 @pytest.fixture
 def server(tmp_path):
-    settings = Settings(token="test-token", auth_disabled=True)
-    settings.pgn_dir = tmp_path / "pgn"
-    registry = EngineRegistry(path=tmp_path / "engines.json")
-    # Seed a pre-existing broken engine: file exists but is not a runnable
-    # program -- mirrors a registry entry left behind from before the
-    # "reject unprobeable on add" fix.
+    # Seed a pre-existing broken engine entry in the registry file the
+    # subprocess will read via SV_ENGINE_REGISTRY_PATH.
     broken_path = tmp_path / "not-an-engine.txt"
     broken_path.write_text("this is not a UCI engine\n")
-    registry.add(name=BROKEN_NAME, path=str(broken_path))
-    app = create_app(settings=settings, engine_registry=registry)
-    with run_uvicorn(app) as (base, _s):
+    registry_path = tmp_path / "engines.json"
+    seed = EngineRegistry(path=registry_path)
+    seed.add(name=BROKEN_NAME, path=str(broken_path))
+    env = {
+        "SV_PGN_DIR": str(tmp_path / "pgn"),
+        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
+        "SV_ENGINE_REGISTRY_PATH": str(registry_path),
+        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
+        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
+        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
+    }
+    with run_uvicorn_subprocess(env_overrides=env) as base:
         yield base
 
 
@@ -45,6 +48,7 @@ async def test_edit_unlaunchable_engine_offers_removal(server, make_page):
     _ctx, page = await make_page(viewport={"width": 1200, "height": 800})
     await page.goto(server + "/")
     await page.wait_for_selector("#play-perspective")
+    await wait_perspective_ready(page)
 
     # Open Settings dialog directly to the Engines tab.
     await page.evaluate(
