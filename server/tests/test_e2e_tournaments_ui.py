@@ -4,10 +4,7 @@ Skipped if Playwright/Chromium isn't installed.
 """
 from __future__ import annotations
 
-import socket
 import sys
-import threading
-import time
 
 import pytest
 
@@ -18,11 +15,7 @@ from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 from sturddle_view.tournament.fastchess import FastchessRunner  # noqa: E402
 
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+from .conftest import run_uvicorn  # noqa: E402
 
 
 @pytest.fixture
@@ -31,8 +24,6 @@ def server(tmp_path, monkeypatch):
         FastchessRunner, "detect_binary",
         staticmethod(lambda configured: configured),
     )
-
-    import uvicorn
 
     settings = Settings(token="test-token", auth_disabled=True)
     settings.pgn_dir = tmp_path / "pgn"
@@ -45,19 +36,8 @@ def server(tmp_path, monkeypatch):
     registry.add(name="engine-A", path=sys.executable)
     registry.add(name="engine-B", path=sys.executable)
     app = create_app(settings=settings, engine_registry=registry)
-    port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto")
-    s = uvicorn.Server(config)
-
-    thread = threading.Thread(target=s.run, daemon=True)
-    thread.start()
-    deadline = time.time() + 10
-    while time.time() < deadline and not s.started:
-        time.sleep(0.05)
-    yield f"http://127.0.0.1:{port}", app
-    s.should_exit = True
-    s.force_exit = True
-    thread.join(timeout=2)
+    with run_uvicorn(app) as (base, _s):
+        yield base, app
 
 
 @pytest.mark.asyncio
@@ -102,8 +82,6 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
         staticmethod(lambda configured: configured),
     )
 
-    import uvicorn
-
     settings = Settings(token="test-token", auth_disabled=True)
     settings.pgn_dir = tmp_path / "pgn"
     settings.tournament_root = str(tmp_path / "tournaments")
@@ -120,23 +98,14 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
         engines=[{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
     )
 
-    port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto")
-    s = uvicorn.Server(config)
-    thread = threading.Thread(target=s.run, daemon=True)
-    thread.start()
-    deadline = time.time() + 10
-    while time.time() < deadline and not s.started:
-        time.sleep(0.05)
-
-    try:
+    with run_uvicorn(app) as (base, _s):
         _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
         page_errors: list[str] = []
         page.on("pageerror", lambda exc: page_errors.append(str(exc)))
         page.on("console", lambda msg: page_errors.append(
             f"console.{msg.type}: {msg.text}"
         ) if msg.type == "error" else None)
-        await page.goto(f"http://127.0.0.1:{port}/")
+        await page.goto(base + "/")
         await page.wait_for_selector("#play-perspective", timeout=5000)
         await page.click('button[data-perspective="engines"]')
         await page.wait_for_selector(".tournament-row", timeout=5000)
@@ -207,10 +176,6 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
         )
 
         assert page_errors == [], "JS errors during test:\n" + "\n".join(page_errors)
-    finally:
-        s.should_exit = True
-        s.force_exit = True
-        thread.join(timeout=2)
 
 
 @pytest.mark.asyncio
@@ -221,8 +186,6 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, m
         FastchessRunner, "detect_binary",
         staticmethod(lambda configured: configured),
     )
-
-    import uvicorn
 
     settings = Settings(token="test-token", auth_disabled=True)
     settings.pgn_dir = tmp_path / "pgn"
@@ -238,23 +201,14 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, m
         engines=[{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
     )
 
-    port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto")
-    s = uvicorn.Server(config)
-    thread = threading.Thread(target=s.run, daemon=True)
-    thread.start()
-    deadline = time.time() + 10
-    while time.time() < deadline and not s.started:
-        time.sleep(0.05)
-
-    try:
+    with run_uvicorn(app) as (base, _s):
         _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
         page_errors: list[str] = []
         page.on("pageerror", lambda exc: page_errors.append(str(exc)))
         page.on("console", lambda msg: page_errors.append(
             f"console.{msg.type}: {msg.text}"
         ) if msg.type == "error" else None)
-        await page.goto(f"http://127.0.0.1:{port}/")
+        await page.goto(base + "/")
         await page.wait_for_selector("#play-perspective", timeout=5000)
         await page.click('button[data-perspective="engines"]')
         await page.wait_for_selector(".tournament-row", timeout=5000)
@@ -297,7 +251,3 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, m
         )
 
         assert page_errors == [], "JS errors during test:\n" + "\n".join(page_errors)
-    finally:
-        s.should_exit = True
-        s.force_exit = True
-        thread.join(timeout=2)

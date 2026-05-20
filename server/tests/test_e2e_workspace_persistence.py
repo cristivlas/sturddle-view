@@ -5,10 +5,7 @@ asserts the rules in the spec doc. Skipped if Playwright is missing.
 """
 from __future__ import annotations
 
-import socket
 import sys
-import threading
-import time
 
 import pytest
 
@@ -19,6 +16,8 @@ from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 from sturddle_view.tournament.fastchess import FastchessRunner  # noqa: E402
 
+from .conftest import run_uvicorn  # noqa: E402
+
 
 WORKSPACE_KEY_PREFIX = "sturddle:workspace:"
 ROW_SEL = ".tournament-row"
@@ -26,19 +25,11 @@ WB_SEL = ".winbox.sturddle-wb"
 RIBBON_WS = ".tournaments-ribbon .t-workspace"
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _spawn_server(tmp_path, monkeypatch, *, tournaments=("A", "B")):
+def _build_app(tmp_path, monkeypatch, *, tournaments=("A", "B")):
     monkeypatch.setattr(
         FastchessRunner, "detect_binary",
         staticmethod(lambda configured: configured),
     )
-    import uvicorn
-
     settings = Settings(token="test-token", auth_disabled=True)
     settings.pgn_dir = tmp_path / "pgn"
     settings.tournament_root = str(tmp_path / "tournaments")
@@ -62,24 +53,14 @@ def _spawn_server(tmp_path, monkeypatch, *, tournaments=("A", "B")):
             request.app.state.loop = _asyncio.get_running_loop()
         return await call_next(request)
 
-    port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto")
-    s = uvicorn.Server(config)
-    thread = threading.Thread(target=s.run, daemon=True)
-    thread.start()
-    deadline = time.time() + 10
-    while time.time() < deadline and not s.started:
-        time.sleep(0.05)
-    return f"http://127.0.0.1:{port}", s, thread, app
+    return app
 
 
 @pytest.fixture
 def server(tmp_path, monkeypatch):
-    base, s, thread, _app = _spawn_server(tmp_path, monkeypatch)
-    yield base
-    s.should_exit = True
-    s.force_exit = True
-    thread.join(timeout=2)
+    app = _build_app(tmp_path, monkeypatch)
+    with run_uvicorn(app) as (base, _s):
+        yield base
 
 
 @pytest.fixture
@@ -87,11 +68,9 @@ def server_app(tmp_path, monkeypatch):
     """Like ``server`` but also exposes the FastAPI app so tests can pre-seed
     tournament status (and publish into the event bus for transition tests).
     """
-    base, s, thread, app = _spawn_server(tmp_path, monkeypatch)
-    yield base, app
-    s.should_exit = True
-    s.force_exit = True
-    thread.join(timeout=2)
+    app = _build_app(tmp_path, monkeypatch)
+    with run_uvicorn(app) as (base, _s):
+        yield base, app
 
 
 async def _goto_app(page, base):

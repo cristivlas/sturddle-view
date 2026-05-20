@@ -4,10 +4,7 @@ Skipped if Playwright/Chromium isn't installed.
 """
 from __future__ import annotations
 
-import socket
 import sys
-import threading
-import time
 
 import pytest
 
@@ -18,33 +15,14 @@ from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 from sturddle_view.tournament.fastchess import FastchessRunner  # noqa: E402
 
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+from .conftest import run_uvicorn  # noqa: E402
 
 
-def _ignore_wsproto_closed(args):
-    # uvicorn calls connection.shutdown() on already-closed WS connections
-    # during teardown; the resulting LocalProtocolError is harmless.
-    try:
-        from wsproto.utilities import LocalProtocolError
-    except ImportError:
-        pass
-    else:
-        if isinstance(args.exc_value, LocalProtocolError):
-            return
-    threading.__excepthook__(args)
-
-
-def _make_server(tmp_path, monkeypatch, *, sprt_defaults=None):
+def _build_app(tmp_path, monkeypatch, *, sprt_defaults=None):
     monkeypatch.setattr(
         FastchessRunner, "detect_binary",
         staticmethod(lambda configured: configured),
     )
-    import uvicorn
-
     settings = Settings(token="test-token", auth_disabled=True)
     settings.pgn_dir = tmp_path / "pgn"
     settings.tournament_root = str(tmp_path / "tournaments")
@@ -54,18 +32,7 @@ def _make_server(tmp_path, monkeypatch, *, sprt_defaults=None):
     registry = EngineRegistry(path=tmp_path / "engines.json")
     registry.add(name="engine-A", path=sys.executable)
     registry.add(name="engine-B", path=sys.executable)
-    app = create_app(settings=settings, engine_registry=registry)
-    port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto")
-    s = uvicorn.Server(config)
-    prev_excepthook = threading.excepthook
-    threading.excepthook = _ignore_wsproto_closed
-    thread = threading.Thread(target=s.run, daemon=True)
-    thread.start()
-    deadline = time.time() + 10
-    while time.time() < deadline and not s.started:
-        time.sleep(0.05)
-    return s, thread, port, app, prev_excepthook
+    return create_app(settings=settings, engine_registry=registry)
 
 
 async def _nav_to_tournaments(page, base):
@@ -91,9 +58,8 @@ async def _open_settings_tournament_tab(page):
 async def test_sprt_switch_disables_rounds_and_type(tmp_path, monkeypatch, make_page):
     """Toggling the SPRT switch on must disable the Rounds input and
     Tournament Type select; toggling off re-enables them."""
-    s, thread, port, app, prev_hook = _make_server(tmp_path, monkeypatch)
-    base = f"http://127.0.0.1:{port}"
-    try:
+    app = _build_app(tmp_path, monkeypatch)
+    with run_uvicorn(app) as (base, _s):
         _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
         page_errors: list[str] = []
         page.on("pageerror", lambda exc: page_errors.append(str(exc)))
@@ -147,11 +113,6 @@ async def test_sprt_switch_disables_rounds_and_type(tmp_path, monkeypatch, make_
         assert off_state["type_disabled"] is False
 
         assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
-    finally:
-        s.should_exit = True
-        s.force_exit = True
-        thread.join(timeout=2)
-        threading.excepthook = prev_hook
 
 
 @pytest.mark.asyncio
@@ -159,8 +120,7 @@ async def test_sprt_badge_shown_in_tournament_list(tmp_path, monkeypatch, make_p
     """A tournament created with sprt=True in its template shows the
     SPRT badge in the tournament list row."""
     sprt_defaults = {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05, "model": "normalized"}
-    s, thread, port, app, prev_hook = _make_server(tmp_path, monkeypatch, sprt_defaults=sprt_defaults)
-    base = f"http://127.0.0.1:{port}"
+    app = _build_app(tmp_path, monkeypatch, sprt_defaults=sprt_defaults)
 
     # Pre-seed a tournament with resolved SPRT params (as the API would store).
     app.state.tournament_store.create(
@@ -169,7 +129,7 @@ async def test_sprt_badge_shown_in_tournament_list(tmp_path, monkeypatch, make_p
         engines=[{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
     )
 
-    try:
+    with run_uvicorn(app) as (base, _s):
         _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
         page_errors: list[str] = []
         page.on("pageerror", lambda exc: page_errors.append(str(exc)))
@@ -186,11 +146,6 @@ async def test_sprt_badge_shown_in_tournament_list(tmp_path, monkeypatch, make_p
         assert has_badge is True
 
         assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
-    finally:
-        s.should_exit = True
-        s.force_exit = True
-        thread.join(timeout=2)
-        threading.excepthook = prev_hook
 
 
 @pytest.mark.asyncio
@@ -198,8 +153,7 @@ async def test_sprt_info_dialog_shows_params(tmp_path, monkeypatch, make_page):
     """The Info dialog for an SPRT tournament shows 'unlimited (SPRT)'
     for Rounds and lists elo0/elo1/alpha/beta/model."""
     sprt_params = {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05, "model": "normalized"}
-    s, thread, port, app, prev_hook = _make_server(tmp_path, monkeypatch, sprt_defaults=sprt_params)
-    base = f"http://127.0.0.1:{port}"
+    app = _build_app(tmp_path, monkeypatch, sprt_defaults=sprt_params)
 
     app.state.tournament_store.create(
         name="sprt-info",
@@ -207,7 +161,7 @@ async def test_sprt_info_dialog_shows_params(tmp_path, monkeypatch, make_page):
         engines=[{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
     )
 
-    try:
+    with run_uvicorn(app) as (base, _s):
         _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
         page_errors: list[str] = []
         page.on("pageerror", lambda exc: page_errors.append(str(exc)))
@@ -234,11 +188,6 @@ async def test_sprt_info_dialog_shows_params(tmp_path, monkeypatch, make_page):
         assert "model=normalized" in info_text
 
         assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
-    finally:
-        s.should_exit = True
-        s.force_exit = True
-        thread.join(timeout=2)
-        threading.excepthook = prev_hook
 
 
 @pytest.mark.asyncio
@@ -246,9 +195,8 @@ async def test_sprt_settings_validation_marks_invalid_and_skips_persist(tmp_path
     """On the Settings > SPRT tab, invalid inputs (elo0>=elo1, alpha<=0,
     etc.) get the .sprt-invalid class and the PUT is skipped. Fixing the
     fields clears the class and persistence resumes."""
-    s, thread, port, app, prev_hook = _make_server(tmp_path, monkeypatch)
-    base = f"http://127.0.0.1:{port}"
-    try:
+    app = _build_app(tmp_path, monkeypatch)
+    with run_uvicorn(app) as (base, _s):
         _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
         page_errors: list[str] = []
         page.on("pageerror", lambda exc: page_errors.append(str(exc)))
@@ -322,8 +270,3 @@ async def test_sprt_settings_validation_marks_invalid_and_skips_persist(tmp_path
         assert put_count["n"] >= 1, "expected at least one PUT after fields became valid"
 
         assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
-    finally:
-        s.should_exit = True
-        s.force_exit = True
-        thread.join(timeout=2)
-        threading.excepthook = prev_hook
