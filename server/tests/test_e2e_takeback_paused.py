@@ -31,9 +31,7 @@ def server(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_takeback_button_enabled_while_paused(server, browser):
-    if browser is None:
-        pytest.skip("chromium not installed")
+async def test_takeback_button_enabled_while_paused(server, page):
     base, app = server
 
     from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl
@@ -69,20 +67,15 @@ async def test_takeback_button_enabled_while_paused(server, browser):
     assert hve.is_paused
     app.state.hve = hve
 
-    ctx = await browser.new_context()
-    page = await ctx.new_page()
-    try:
-        await page.goto(base + "/")
-        await page.wait_for_selector("#play-perspective", timeout=5000)
-        # First wait for the Resume affordance (icon=forward-step) so we know
-        # the client has applied paused=true. Then assert takeback is enabled.
-        await page.wait_for_function(
-            "() => document.querySelector('#pause wa-icon')?.getAttribute('name') === 'forward-step'",
-            timeout=5000,
-        )
-        disabled = await page.evaluate(
-            "() => document.querySelector('#takeback').disabled"
-        )
-        assert disabled is False, "takeback button must be enabled while paused"
-    finally:
-        await ctx.close()
+    await page.goto(base + "/")
+    await page.wait_for_selector("#play-perspective", timeout=5000)
+    # First wait for the Resume affordance (icon=forward-step) so we know
+    # the client has applied paused=true. Then assert takeback is enabled.
+    await page.wait_for_function(
+        "() => document.querySelector('#pause wa-icon')?.getAttribute('name') === 'forward-step'",
+        timeout=5000,
+    )
+    disabled = await page.evaluate(
+        "() => document.querySelector('#takeback').disabled"
+    )
+    assert disabled is False, "takeback button must be enabled while paused"

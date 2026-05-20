@@ -99,9 +99,10 @@ def pytest_addoption(parser):
 async def browser():
     """One Chromium instance shared across the whole test session.
 
-    Each test must call ``browser.new_context()`` for isolation; closing
-    the context (not the browser) is the test's responsibility.
-    Yields None when Playwright/Chromium is not installed — each e2e
+    Use the ``page`` or ``make_page`` fixtures rather than calling
+    ``browser.new_context()`` directly -- those guarantee synchronous
+    context teardown so the next test starts clean.
+    Yields None when Playwright/Chromium is not installed -- each e2e
     test calls pytest.skip() on None.
     """
     try:
@@ -117,6 +118,43 @@ async def browser():
             return
         yield b
         await b.close()
+
+
+@pytest_asyncio.fixture
+async def make_page(browser):
+    """Factory yielding a (ctx, page) tuple at the requested viewport.
+
+    Tracks every context it creates so teardown closes them all in
+    reverse order before the next test begins -- prevents WS leaks from
+    bleeding into the next test's fixtures."""
+    if browser is None:
+        pytest.skip("chromium not installed")
+    contexts = []
+
+    async def _make(viewport=None, **ctx_kwargs):
+        kwargs = dict(ctx_kwargs)
+        if viewport is not None:
+            kwargs["viewport"] = viewport
+        ctx = await browser.new_context(**kwargs)
+        contexts.append(ctx)
+        page = await ctx.new_page()
+        return ctx, page
+
+    try:
+        yield _make
+    finally:
+        for ctx in reversed(contexts):
+            try:
+                await ctx.close()
+            except Exception:
+                pass
+
+
+@pytest_asyncio.fixture
+async def page(make_page):
+    """Default Playwright page at the test's natural viewport (Playwright default)."""
+    _ctx, p = await make_page()
+    yield p
 
 
 @pytest.fixture(autouse=True)

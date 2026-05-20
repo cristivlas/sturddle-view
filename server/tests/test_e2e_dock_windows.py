@@ -38,9 +38,8 @@ def server(tmp_path):
         yield base
 
 
-async def _new_page(browser):
-    ctx = await browser.new_context(viewport={"width": 1600, "height": 1000})
-    page = await ctx.new_page()
+async def _new_page(make_page):
+    ctx, page = await make_page(viewport={"width": 1600, "height": 1000})
     errors: list[str] = []
     page.on("pageerror", lambda exc: errors.append(str(exc)))
     page.on("console", lambda msg: errors.append(f"console.{msg.type}: {msg.text}")
@@ -106,125 +105,100 @@ async def _click_wb_dock(page, wb_class):
 
 
 @pytest.mark.asyncio
-async def test_default_docked_on_first_open(server, browser):
+async def test_default_docked_on_first_open(server, make_page):
     """Both windows dock by default; Search Lines slot sits above UCI Log."""
-    if browser is None:
-        pytest.skip("chromium not installed")
-    ctx, page, errors = await _new_page(browser)
-    try:
-        await _goto_play(page, server)
-        await page.click(PV_BTN)
-        await page.click(UCI_BTN)
-        await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", timeout=2000)
-        titles = await _slot_titles(page)
-        assert titles == ["Search Lines", "UCI Log"], titles
-        s = await _snapshot(page)
-        assert s["ucilogOpen"] == "1" and s["pvtableOpen"] == "1"
-        assert s["wbs"] == []
-        _assert_no_errors(errors)
-    finally:
-        await ctx.close()
+    _ctx, page, errors = await _new_page(make_page)
+    await _goto_play(page, server)
+    await page.click(PV_BTN)
+    await page.click(UCI_BTN)
+    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", timeout=2000)
+    titles = await _slot_titles(page)
+    assert titles == ["Search Lines", "UCI Log"], titles
+    s = await _snapshot(page)
+    assert s["ucilogOpen"] == "1" and s["pvtableOpen"] == "1"
+    assert s["wbs"] == []
+    _assert_no_errors(errors)
 
 
 @pytest.mark.asyncio
-async def test_undock_via_slot_button(server, browser):
+async def test_undock_via_slot_button(server, make_page):
     """Clicking the slot's undock control opens a WinBox and removes the slot."""
-    if browser is None:
-        pytest.skip("chromium not installed")
-    ctx, page, errors = await _new_page(browser)
-    try:
-        await _goto_play(page, server)
-        await page.click(UCI_BTN)
-        await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", timeout=2000)
-        await _click_slot_undock(page, "UCI Log")
-        await page.wait_for_selector(UCI_WB, timeout=2000)
-        s = await _snapshot(page)
-        assert not any(x["title"] == "UCI Log" for x in s["slots"])
-        assert s["ucilogDocked"] == "0"
-        _assert_no_errors(errors)
-    finally:
-        await ctx.close()
+    _ctx, page, errors = await _new_page(make_page)
+    await _goto_play(page, server)
+    await page.click(UCI_BTN)
+    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", timeout=2000)
+    await _click_slot_undock(page, "UCI Log")
+    await page.wait_for_selector(UCI_WB, timeout=2000)
+    s = await _snapshot(page)
+    assert not any(x["title"] == "UCI Log" for x in s["slots"])
+    assert s["ucilogDocked"] == "0"
+    _assert_no_errors(errors)
 
 
 @pytest.mark.asyncio
-async def test_redock_via_winbox_control(server, browser):
+async def test_redock_via_winbox_control(server, make_page):
     """The WinBox dock control returns the window to its slot in correct order."""
-    if browser is None:
-        pytest.skip("chromium not installed")
-    ctx, page, errors = await _new_page(browser)
-    try:
-        await _goto_play(page, server)
-        await page.click(PV_BTN)
-        await page.click(UCI_BTN)
-        await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", timeout=2000)
-        await _click_slot_undock(page, "UCI Log")
-        await page.wait_for_selector(UCI_WB, timeout=2000)
-        await _click_wb_dock(page, "sturddle-wb-uci-log")
-        await page.wait_for_function(
-            "() => !document.querySelector('.winbox.sturddle-wb-uci-log')",
-            timeout=2000,
-        )
-        titles = await _slot_titles(page)
-        assert titles == ["Search Lines", "UCI Log"], titles
-        s = await _snapshot(page)
-        assert s["ucilogDocked"] == "1"
-        _assert_no_errors(errors)
-    finally:
-        await ctx.close()
+    _ctx, page, errors = await _new_page(make_page)
+    await _goto_play(page, server)
+    await page.click(PV_BTN)
+    await page.click(UCI_BTN)
+    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", timeout=2000)
+    await _click_slot_undock(page, "UCI Log")
+    await page.wait_for_selector(UCI_WB, timeout=2000)
+    await _click_wb_dock(page, "sturddle-wb-uci-log")
+    await page.wait_for_function(
+        "() => !document.querySelector('.winbox.sturddle-wb-uci-log')",
+        timeout=2000,
+    )
+    titles = await _slot_titles(page)
+    assert titles == ["Search Lines", "UCI Log"], titles
+    s = await _snapshot(page)
+    assert s["ucilogDocked"] == "1"
+    _assert_no_errors(errors)
 
 
 @pytest.mark.asyncio
-async def test_close_via_ribbon_tears_down(server, browser):
+async def test_close_via_ribbon_tears_down(server, make_page):
     """Toggling the ribbon button while open closes the window and clears state."""
-    if browser is None:
-        pytest.skip("chromium not installed")
-    ctx, page, errors = await _new_page(browser)
-    try:
-        await _goto_play(page, server)
-        await page.click(PV_BTN)
-        await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", timeout=2000)
-        await page.click(PV_BTN)  # toggle off
-        await page.wait_for_function(
-            f"() => !document.querySelector('{DOCK_LEFT} .dock-slot')",
-            timeout=2000,
-        )
-        s = await _snapshot(page)
-        assert s["slots"] == []
-        assert s["dockEmpty"] is True
-        assert s["pvtableOpen"] == "0"
-        _assert_no_errors(errors)
-    finally:
-        await ctx.close()
+    _ctx, page, errors = await _new_page(make_page)
+    await _goto_play(page, server)
+    await page.click(PV_BTN)
+    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", timeout=2000)
+    await page.click(PV_BTN)  # toggle off
+    await page.wait_for_function(
+        f"() => !document.querySelector('{DOCK_LEFT} .dock-slot')",
+        timeout=2000,
+    )
+    s = await _snapshot(page)
+    assert s["slots"] == []
+    assert s["dockEmpty"] is True
+    assert s["pvtableOpen"] == "0"
+    _assert_no_errors(errors)
 
 
 @pytest.mark.asyncio
-async def test_nav_away_and_back_restores(server, browser):
+async def test_nav_away_and_back_restores(server, make_page):
     """closeDebugWindows on unmount, restoreDebugWindows on remount."""
-    if browser is None:
-        pytest.skip("chromium not installed")
-    ctx, page, errors = await _new_page(browser)
-    try:
-        await _goto_play(page, server)
-        await page.click(PV_BTN)
-        await page.click(UCI_BTN)
-        await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", timeout=2000)
+    _ctx, page, errors = await _new_page(make_page)
+    await _goto_play(page, server)
+    await page.click(PV_BTN)
+    await page.click(UCI_BTN)
+    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", timeout=2000)
 
-        # Nav away to engines -- Play perspective unmounts, dock element gone.
-        await page.click('button[data-perspective="engines"]')
-        await page.wait_for_function(
-            "() => !document.querySelector('.play-dock-left')",
-            timeout=2000,
-        )
-        s = await _snapshot(page)
-        assert s["slots"] == []
-        # open flags remain so restore knows to reopen
-        assert s["ucilogOpen"] == "1" and s["pvtableOpen"] == "1"
+    # Nav away to engines -- Play perspective unmounts, dock element gone.
+    await page.click('button[data-perspective="engines"]')
+    await page.wait_for_function(
+        "() => !document.querySelector('.play-dock-left')",
+        timeout=2000,
+    )
+    s = await _snapshot(page)
+    assert s["slots"] == []
+    # open flags remain so restore knows to reopen
+    assert s["ucilogOpen"] == "1" and s["pvtableOpen"] == "1"
 
-        # Nav back -- both windows restored, docked, in correct order.
-        await page.click('button[data-perspective="play"]')
-        await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", timeout=2000)
-        titles = await _slot_titles(page)
-        assert titles == ["Search Lines", "UCI Log"], titles
-        _assert_no_errors(errors)
-    finally:
-        await ctx.close()
+    # Nav back -- both windows restored, docked, in correct order.
+    await page.click('button[data-perspective="play"]')
+    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", timeout=2000)
+    titles = await _slot_titles(page)
+    assert titles == ["Search Lines", "UCI Log"], titles
+    _assert_no_errors(errors)

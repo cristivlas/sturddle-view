@@ -60,77 +60,70 @@ _PGN_B = """\
 
 
 @pytest.mark.asyncio
-async def test_replay_while_old_cursor_nonzero_does_not_corrupt_new_game(server, browser):
+async def test_replay_while_old_cursor_nonzero_does_not_corrupt_new_game(server, page):
     """Repro the production Replay bug: cursor=N on game A, import game B,
     remount play -- new game's cursor must stay at 0."""
-    if browser is None:
-        pytest.skip("chromium not installed")
     base, app = server
 
-    ctx = await browser.new_context()
-    page = await ctx.new_page()
-    try:
-        await page.goto(base + "/")
-        await page.wait_for_selector("#play-perspective", timeout=5000)
-        await page.wait_for_timeout(500)
+    await page.goto(base + "/")
+    await page.wait_for_selector("#play-perspective", timeout=5000)
+    await page.wait_for_timeout(500)
 
-        # Ensure the failure mode's prerequisite: commentary window is on.
-        # The bug only repros when syncCommentsVisibility() decides to open
-        # the commentary window on board_update.
-        await page.evaluate(
-            "fetch('/settings', {method:'PUT',"
-            " headers:{'Content-Type':'application/json'},"
-            " body: JSON.stringify({view_show_pgn_comments: true})})"
-        )
-        await page.wait_for_timeout(200)
+    # Ensure the failure mode's prerequisite: commentary window is on.
+    # The bug only repros when syncCommentsVisibility() decides to open
+    # the commentary window on board_update.
+    await page.evaluate(
+        "fetch('/settings', {method:'PUT',"
+        " headers:{'Content-Type':'application/json'},"
+        " body: JSON.stringify({view_show_pgn_comments: true})})"
+    )
+    await page.wait_for_timeout(200)
 
-        # Import game A and navigate cursor to a non-zero ply.
-        import_status = await page.evaluate(
-            "async (pgn) => { const r = await fetch('/game/import', {method:'POST',"
-            " headers:{'Content-Type':'application/json'},"
-            " body: JSON.stringify({text: pgn, format: 'pgn'})});"
-            " return { status: r.status, body: await r.text() }; }",
-            _PGN_A,
-        )
-        assert import_status["status"] == 200, f"import A failed: {import_status}"
-        await page.wait_for_timeout(200)
-        # Tell client to sync to the new game id (mirrors normal UI flow).
-        await page.evaluate("fetch('/game/sync', {method:'POST'})")
-        await page.wait_for_timeout(200)
-        goto_status = await page.evaluate(
-            "async () => { const r = await fetch('/game/view/goto', {method:'POST',"
-            " headers:{'Content-Type':'application/json'},"
-            " body: JSON.stringify({ply: 10})});"
-            " return { status: r.status, body: await r.text() }; }"
-        )
-        assert goto_status["status"] == 200, f"goto failed: {goto_status}"
-        await page.wait_for_timeout(300)
-        assert app.state.hve._view_cursor == 10, "precondition: game A cursor at 10"
+    # Import game A and navigate cursor to a non-zero ply.
+    import_status = await page.evaluate(
+        "async (pgn) => { const r = await fetch('/game/import', {method:'POST',"
+        " headers:{'Content-Type':'application/json'},"
+        " body: JSON.stringify({text: pgn, format: 'pgn'})});"
+        " return { status: r.status, body: await r.text() }; }",
+        _PGN_A,
+    )
+    assert import_status["status"] == 200, f"import A failed: {import_status}"
+    await page.wait_for_timeout(200)
+    # Tell client to sync to the new game id (mirrors normal UI flow).
+    await page.evaluate("fetch('/game/sync', {method:'POST'})")
+    await page.wait_for_timeout(200)
+    goto_status = await page.evaluate(
+        "async () => { const r = await fetch('/game/view/goto', {method:'POST',"
+        " headers:{'Content-Type':'application/json'},"
+        " body: JSON.stringify({ply: 10})});"
+        " return { status: r.status, body: await r.text() }; }"
+    )
+    assert goto_status["status"] == 200, f"goto failed: {goto_status}"
+    await page.wait_for_timeout(300)
+    assert app.state.hve._view_cursor == 10, "precondition: game A cursor at 10"
 
-        # Switch away from play (simulates user opening tournament window
-        # while play perspective is unmounted -- as the Replay button does).
-        await page.click('button[data-perspective="engines"]')
-        await page.wait_for_timeout(300)
+    # Switch away from play (simulates user opening tournament window
+    # while play perspective is unmounted -- as the Replay button does).
+    await page.click('button[data-perspective="engines"]')
+    await page.wait_for_timeout(300)
 
-        # Replay: import game B + activate play (mirror tournament-live-game).
-        await page.evaluate(
-            "async (pgn) => {"
-            " await fetch('/game/import', {method:'POST',"
-            "  headers:{'Content-Type':'application/json'},"
-            "  body: JSON.stringify({text: pgn, format: 'pgn'})});"
-            " window.dispatchEvent(new CustomEvent("
-            "  'sturddle:activate-perspective', {detail:{id:'play'}}));"
-            "}",
-            _PGN_B,
-        )
-        # Wait past the mount's /game/sync + any spurious POST.
-        await page.wait_for_timeout(1500)
+    # Replay: import game B + activate play (mirror tournament-live-game).
+    await page.evaluate(
+        "async (pgn) => {"
+        " await fetch('/game/import', {method:'POST',"
+        "  headers:{'Content-Type':'application/json'},"
+        "  body: JSON.stringify({text: pgn, format: 'pgn'})});"
+        " window.dispatchEvent(new CustomEvent("
+        "  'sturddle:activate-perspective', {detail:{id:'play'}}));"
+        "}",
+        _PGN_B,
+    )
+    # Wait past the mount's /game/sync + any spurious POST.
+    await page.wait_for_timeout(1500)
 
-        # Assertion: server's view cursor on game B must be 0. Anything
-        # else means a stale cached board_update from game A fired a
-        # synthetic /view/goto against game B.
-        assert app.state.hve._view_cursor == 0, (
-            f"new game cursor corrupted to {app.state.hve._view_cursor}"
-        )
-    finally:
-        await ctx.close()
+    # Assertion: server's view cursor on game B must be 0. Anything
+    # else means a stale cached board_update from game A fired a
+    # synthetic /view/goto against game B.
+    assert app.state.hve._view_cursor == 0, (
+        f"new game cursor corrupted to {app.state.hve._view_cursor}"
+    )

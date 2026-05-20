@@ -49,9 +49,8 @@ def server(tmp_path):
         yield base, app
 
 
-async def _new_page(browser):
-    ctx = await browser.new_context(viewport={"width": 1600, "height": 1000})
-    page = await ctx.new_page()
+async def _new_page(make_page):
+    ctx, page = await make_page(viewport={"width": 1600, "height": 1000})
     errors: list[str] = []
     page.on("pageerror", lambda exc: errors.append(str(exc)))
     page.on("console", lambda msg: errors.append(f"console.{msg.type}: {msg.text}")
@@ -113,200 +112,165 @@ async def _snapshot(page):
 
 
 @pytest.mark.asyncio
-async def test_commentary_opens_docked_on_view_mode_entry(server, browser):
+async def test_commentary_opens_docked_on_view_mode_entry(server, make_page):
     """Entering view-mode with setting on -> commentary auto-docks and shows root comment."""
-    if browser is None:
-        pytest.skip("chromium not installed")
     base, app = server
     await _seed_view_mode(app)
-    ctx, page, errors = await _new_page(browser)
-    try:
-        await _goto_play_in_view_mode(page, base)
-        await page.wait_for_selector(COMMENTS_SLOT, timeout=3000)
-        s = await _snapshot(page)
-        assert s["slotPresent"]
-        assert s["hostHasDockEmpty"] is False
-        assert s["docked"] == "1"
-        assert s["openFlag"] == "1"
-        assert SEED_ROOT_COMMENT in (s["slotText"] or "")
-        _assert_no_errors(errors)
-    finally:
-        await ctx.close()
+    _ctx, page, errors = await _new_page(make_page)
+    await _goto_play_in_view_mode(page, base)
+    await page.wait_for_selector(COMMENTS_SLOT, timeout=3000)
+    s = await _snapshot(page)
+    assert s["slotPresent"]
+    assert s["hostHasDockEmpty"] is False
+    assert s["docked"] == "1"
+    assert s["openFlag"] == "1"
+    assert SEED_ROOT_COMMENT in (s["slotText"] or "")
+    _assert_no_errors(errors)
 
 
 @pytest.mark.asyncio
-async def test_commentary_survives_debug_window_lifecycle(server, browser):
+async def test_commentary_survives_debug_window_lifecycle(server, make_page):
     """Regression: closeDebugWindowsPersist (triggered on view-mode entry)
     must only close UCI-dock instances, not commentary."""
-    if browser is None:
-        pytest.skip("chromium not installed")
     base, app = server
     await _seed_view_mode(app)
-    ctx, page, errors = await _new_page(browser)
-    try:
-        await _goto_play_in_view_mode(page, base)
-        await page.wait_for_selector(COMMENTS_SLOT, timeout=3000)
-        # Stays open across navigation (which triggers fresh board_update +
-        # the analysis-off code path that previously tore commentary down).
-        await page.evaluate("document.querySelector('#view-forward')?.click()")
-        await page.wait_for_timeout(300)
-        s = await _snapshot(page)
-        assert s["slotPresent"]
-        # And after another navigation step.
-        await page.evaluate("document.querySelector('#view-forward')?.click()")
-        await page.wait_for_timeout(300)
-        s = await _snapshot(page)
-        assert s["slotPresent"]
-        _assert_no_errors(errors)
-    finally:
-        await ctx.close()
+    _ctx, page, errors = await _new_page(make_page)
+    await _goto_play_in_view_mode(page, base)
+    await page.wait_for_selector(COMMENTS_SLOT, timeout=3000)
+    # Stays open across navigation (which triggers fresh board_update +
+    # the analysis-off code path that previously tore commentary down).
+    await page.evaluate("document.querySelector('#view-forward')?.click()")
+    await page.wait_for_timeout(300)
+    s = await _snapshot(page)
+    assert s["slotPresent"]
+    # And after another navigation step.
+    await page.evaluate("document.querySelector('#view-forward')?.click()")
+    await page.wait_for_timeout(300)
+    s = await _snapshot(page)
+    assert s["slotPresent"]
+    _assert_no_errors(errors)
 
 
 @pytest.mark.asyncio
-async def test_commentary_text_updates_per_ply(server, browser):
+async def test_commentary_text_updates_per_ply(server, make_page):
     """Navigating to a no-comment ply shows placeholder; window stays open."""
-    if browser is None:
-        pytest.skip("chromium not installed")
     base, app = server
     await _seed_view_mode(app)
-    ctx, page, errors = await _new_page(browser)
-    try:
-        await _goto_play_in_view_mode(page, base)
-        await page.wait_for_selector(COMMENTS_SLOT, timeout=3000)
+    _ctx, page, errors = await _new_page(make_page)
+    await _goto_play_in_view_mode(page, base)
+    await page.wait_for_selector(COMMENTS_SLOT, timeout=3000)
 
-        # Cursor 0 = root comment.
-        s = await _snapshot(page)
-        assert SEED_ROOT_COMMENT in (s["slotText"] or "")
+    # Cursor 0 = root comment.
+    s = await _snapshot(page)
+    assert SEED_ROOT_COMMENT in (s["slotText"] or "")
 
-        # Cursor 1 = first move comment.
-        await page.evaluate("document.querySelector('#view-forward')?.click()")
-        await page.wait_for_function(
-            f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
-            "?.textContent?.includes('First move comment.')",
-            timeout=2000,
-        )
+    # Cursor 1 = first move comment.
+    await page.evaluate("document.querySelector('#view-forward')?.click()")
+    await page.wait_for_function(
+        f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
+        "?.textContent?.includes('First move comment.')",
+        timeout=2000,
+    )
 
-        # Cursor 2 = no comment -> placeholder.
-        await page.evaluate("document.querySelector('#view-forward')?.click()")
-        await page.wait_for_function(
-            f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
-            "?.textContent?.includes('No commentary at this ply')",
-            timeout=2000,
-        )
-        s = await _snapshot(page)
-        assert s["slotPresent"], "must stay open at no-comment ply"
+    # Cursor 2 = no comment -> placeholder.
+    await page.evaluate("document.querySelector('#view-forward')?.click()")
+    await page.wait_for_function(
+        f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
+        "?.textContent?.includes('No commentary at this ply')",
+        timeout=2000,
+    )
+    s = await _snapshot(page)
+    assert s["slotPresent"], "must stay open at no-comment ply"
 
-        # Cursor 3 = third move comment.
-        await page.evaluate("document.querySelector('#view-forward')?.click()")
-        await page.wait_for_function(
-            f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
-            "?.textContent?.includes('Third move comment.')",
-            timeout=2000,
-        )
-        _assert_no_errors(errors)
-    finally:
-        await ctx.close()
+    # Cursor 3 = third move comment.
+    await page.evaluate("document.querySelector('#view-forward')?.click()")
+    await page.wait_for_function(
+        f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
+        "?.textContent?.includes('Third move comment.')",
+        timeout=2000,
+    )
+    _assert_no_errors(errors)
 
 
 @pytest.mark.asyncio
-async def test_undock_floats_as_winbox(server, browser):
+async def test_undock_floats_as_winbox(server, make_page):
     """Slot undock button moves commentary into a floating WinBox."""
-    if browser is None:
-        pytest.skip("chromium not installed")
     base, app = server
     await _seed_view_mode(app)
-    ctx, page, errors = await _new_page(browser)
-    try:
-        await _goto_play_in_view_mode(page, base)
-        await page.wait_for_selector(COMMENTS_SLOT, timeout=3000)
-        await page.evaluate(
-            f"document.querySelector('{COMMENTS_SLOT} .dock-slot-undock')?.click()"
-        )
-        await page.wait_for_selector(COMMENTS_WB, timeout=2000)
-        s = await _snapshot(page)
-        assert s["wbPresent"]
-        assert not s["slotPresent"]
-        assert s["docked"] == "0"
-        _assert_no_errors(errors)
-    finally:
-        await ctx.close()
+    _ctx, page, errors = await _new_page(make_page)
+    await _goto_play_in_view_mode(page, base)
+    await page.wait_for_selector(COMMENTS_SLOT, timeout=3000)
+    await page.evaluate(
+        f"document.querySelector('{COMMENTS_SLOT} .dock-slot-undock')?.click()"
+    )
+    await page.wait_for_selector(COMMENTS_WB, timeout=2000)
+    s = await _snapshot(page)
+    assert s["wbPresent"]
+    assert not s["slotPresent"]
+    assert s["docked"] == "0"
+    _assert_no_errors(errors)
 
 
 @pytest.mark.asyncio
-async def test_redock_via_winbox_control(server, browser):
+async def test_redock_via_winbox_control(server, make_page):
     """The WinBox dock control returns commentary to a dock slot."""
-    if browser is None:
-        pytest.skip("chromium not installed")
     base, app = server
     await _seed_view_mode(app)
-    ctx, page, errors = await _new_page(browser)
-    try:
-        await _goto_play_in_view_mode(page, base)
-        await page.wait_for_selector(COMMENTS_SLOT, timeout=3000)
-        await page.evaluate(
-            f"document.querySelector('{COMMENTS_SLOT} .dock-slot-undock')?.click()"
-        )
-        await page.wait_for_selector(COMMENTS_WB, timeout=2000)
-        await page.evaluate(
-            f"document.querySelector('{COMMENTS_WB} .wb-dock-ctrl')?.click()"
-        )
-        await page.wait_for_function(
-            f"() => !document.querySelector('{COMMENTS_WB}')",
-            timeout=2000,
-        )
-        s = await _snapshot(page)
-        assert s["slotPresent"]
-        assert not s["wbPresent"]
-        assert s["docked"] == "1"
-        _assert_no_errors(errors)
-    finally:
-        await ctx.close()
+    _ctx, page, errors = await _new_page(make_page)
+    await _goto_play_in_view_mode(page, base)
+    await page.wait_for_selector(COMMENTS_SLOT, timeout=3000)
+    await page.evaluate(
+        f"document.querySelector('{COMMENTS_SLOT} .dock-slot-undock')?.click()"
+    )
+    await page.wait_for_selector(COMMENTS_WB, timeout=2000)
+    await page.evaluate(
+        f"document.querySelector('{COMMENTS_WB} .wb-dock-ctrl')?.click()"
+    )
+    await page.wait_for_function(
+        f"() => !document.querySelector('{COMMENTS_WB}')",
+        timeout=2000,
+    )
+    s = await _snapshot(page)
+    assert s["slotPresent"]
+    assert not s["wbPresent"]
+    assert s["docked"] == "1"
+    _assert_no_errors(errors)
 
 
 @pytest.mark.asyncio
-async def test_slot_close_clears_setting(server, browser):
+async def test_slot_close_clears_setting(server, make_page):
     """Clicking the slot X closes commentary AND clears the server setting."""
-    if browser is None:
-        pytest.skip("chromium not installed")
     base, app = server
     await _seed_view_mode(app)
-    ctx, page, errors = await _new_page(browser)
-    try:
-        await _goto_play_in_view_mode(page, base)
-        await page.wait_for_selector(COMMENTS_SLOT, timeout=3000)
-        await page.evaluate(
-            f"document.querySelector('{COMMENTS_SLOT} .dock-slot-close')?.click()"
-        )
-        await page.wait_for_function(
-            f"() => !document.querySelector('{COMMENTS_SLOT}')",
-            timeout=2000,
-        )
-        v = await page.evaluate(
-            "async () => (await (await fetch('/settings')).json()).view_show_pgn_comments"
-        )
-        assert v is False, f"expected setting cleared after X, got {v}"
-        _assert_no_errors(errors)
-    finally:
-        await ctx.close()
+    _ctx, page, errors = await _new_page(make_page)
+    await _goto_play_in_view_mode(page, base)
+    await page.wait_for_selector(COMMENTS_SLOT, timeout=3000)
+    await page.evaluate(
+        f"document.querySelector('{COMMENTS_SLOT} .dock-slot-close')?.click()"
+    )
+    await page.wait_for_function(
+        f"() => !document.querySelector('{COMMENTS_SLOT}')",
+        timeout=2000,
+    )
+    v = await page.evaluate(
+        "async () => (await (await fetch('/settings')).json()).view_show_pgn_comments"
+    )
+    assert v is False, f"expected setting cleared after X, got {v}"
+    _assert_no_errors(errors)
 
 
 @pytest.mark.asyncio
-async def test_setting_off_keeps_commentary_closed(server, browser):
+async def test_setting_off_keeps_commentary_closed(server, make_page):
     """Entering view mode with setting=false -> no dock slot, no WinBox."""
-    if browser is None:
-        pytest.skip("chromium not installed")
     base, app = server
     # Pre-set the setting off before mounting the perspective.
     app.state.settings.view_show_pgn_comments = False
     await _seed_view_mode(app)
-    ctx, page, errors = await _new_page(browser)
-    try:
-        await _goto_play_in_view_mode(page, base)
-        # Settle then assert.
-        await page.wait_for_timeout(500)
-        s = await _snapshot(page)
-        assert not s["slotPresent"]
-        assert not s["wbPresent"]
-        _assert_no_errors(errors)
-    finally:
-        await ctx.close()
+    _ctx, page, errors = await _new_page(make_page)
+    await _goto_play_in_view_mode(page, base)
+    # Settle then assert.
+    await page.wait_for_timeout(500)
+    s = await _snapshot(page)
+    assert not s["slotPresent"]
+    assert not s["wbPresent"]
+    _assert_no_errors(errors)

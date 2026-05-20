@@ -35,12 +35,10 @@ def server(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_view_mode_clock_names_after_hard_reload(server, browser):
+async def test_view_mode_clock_names_after_hard_reload(server, page):
     """In view mode after a hard reload, the clock-area name labels must
     reflect the PGN's White/Black headers, not the play-mode placeholders.
     """
-    if browser is None:
-        pytest.skip("chromium not installed")
     base, app = server
 
     from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
@@ -61,30 +59,25 @@ async def test_view_mode_clock_names_after_hard_reload(server, browser):
     ))
     app.state.hve = hve
 
-    ctx = await browser.new_context()
-    page = await ctx.new_page()
-    try:
-        await page.goto(base + "/")
-        await page.wait_for_selector("#play-perspective", timeout=5000)
-        # Wait past the auto /game/sync (200ms) and let the play.js
-        # board_update listener run -- that's the one that used to clobber.
-        await page.wait_for_timeout(1500)
+    await page.goto(base + "/")
+    await page.wait_for_selector("#play-perspective", timeout=5000)
+    # Wait past the auto /game/sync (200ms) and let the play.js
+    # board_update listener run -- that's the one that used to clobber.
+    await page.wait_for_timeout(1500)
 
-        names = await page.evaluate(
-            """() => ({
-                top: document.querySelector('.clock-name[data-side="top"]')?.textContent ?? null,
-                bottom: document.querySelector('.clock-name[data-side="bottom"]')?.textContent ?? null,
-            })"""
-        )
-        # Bottom defaults to white when not flipped; top is black.
-        assert names["bottom"] == WHITE_NAME, (
-            f"bottom clock name should be PGN white ({WHITE_NAME!r}), got {names['bottom']!r}"
-        )
-        assert names["top"] == BLACK_NAME, (
-            f"top clock name should be PGN black ({BLACK_NAME!r}), got {names['top']!r}"
-        )
-        # And explicitly NOT the play-mode placeholders.
-        assert names["bottom"] != "Human"
-        assert names["top"] != ENGINE_NAME
-    finally:
-        await ctx.close()
+    names = await page.evaluate(
+        """() => ({
+            top: document.querySelector('.clock-name[data-side="top"]')?.textContent ?? null,
+            bottom: document.querySelector('.clock-name[data-side="bottom"]')?.textContent ?? null,
+        })"""
+    )
+    # Bottom defaults to white when not flipped; top is black.
+    assert names["bottom"] == WHITE_NAME, (
+        f"bottom clock name should be PGN white ({WHITE_NAME!r}), got {names['bottom']!r}"
+    )
+    assert names["top"] == BLACK_NAME, (
+        f"top clock name should be PGN black ({BLACK_NAME!r}), got {names['top']!r}"
+    )
+    # And explicitly NOT the play-mode placeholders.
+    assert names["bottom"] != "Human"
+    assert names["top"] != ENGINE_NAME

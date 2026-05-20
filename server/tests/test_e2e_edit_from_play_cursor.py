@@ -217,118 +217,100 @@ async def _setup_play_with_one_move(page, obs):
 
 
 @pytest.mark.asyncio
-async def test_edit_from_play_lands_at_last_ply_with_comments_on(server, browser):
+async def test_edit_from_play_lands_at_last_ply_with_comments_on(server, make_page):
     """Click 'Edit position' from play with comments on: cursor must be
     at the last ply (the live position), not back at 0."""
-    if browser is None:
-        pytest.skip("chromium not installed")
     base, app = server
 
-    ctx = await browser.new_context(base_url=base)
-    page = await ctx.new_page()
+    _ctx, page = await make_page(base_url=base)
     obs = PageObserver(page)
     # Pre-register /view/goto so any (buggy) request gets counted before
     # we wait for the in-flight queue to drain.
     obs.track("/game/view/goto")
-    try:
-        await _setup_play_with_one_move(page, obs)
-        n_plies = len(app.state.hve._board.move_stack)
-        assert n_plies == 2, f"precondition: 2 plies in play; got {n_plies}"
+    await _setup_play_with_one_move(page, obs)
+    n_plies = len(app.state.hve._board.move_stack)
+    assert n_plies == 2, f"precondition: 2 plies in play; got {n_plies}"
 
-        # Click Edit position; accept the confirm dialog (a wa-button whose
-        # label is "Edit position", distinct from the ribbon button id).
-        await page.click("#edit-pos")
-        await page.wait_for_function(
-            "() => Array.from(document.querySelectorAll('wa-button'))"
-            ".some(b => /Edit position/.test(b.textContent || ''))"
-        )
-        await page.evaluate(
-            "() => Array.from(document.querySelectorAll('wa-button'))"
-            ".find(b => /Edit position/.test(b.textContent || '')).click()"
-        )
-        # Deterministic settle: editing=true has arrived from server AND any
-        # spurious /view/goto the JS may have fired has resolved.
-        await obs.wait_board_update(_editing_started)
-        await obs.wait_quiet("/game/view/goto")
+    # Click Edit position; accept the confirm dialog (a wa-button whose
+    # label is "Edit position", distinct from the ribbon button id).
+    await page.click("#edit-pos")
+    await page.wait_for_function(
+        "() => Array.from(document.querySelectorAll('wa-button'))"
+        ".some(b => /Edit position/.test(b.textContent || ''))"
+    )
+    await page.evaluate(
+        "() => Array.from(document.querySelectorAll('wa-button'))"
+        ".find(b => /Edit position/.test(b.textContent || '')).click()"
+    )
+    # Deterministic settle: editing=true has arrived from server AND any
+    # spurious /view/goto the JS may have fired has resolved.
+    await obs.wait_board_update(_editing_started)
+    await obs.wait_quiet("/game/view/goto")
 
-        assert app.state.hve._view_cursor == n_plies, (
-            f"play->edit landed at cursor={app.state.hve._view_cursor}, "
-            f"expected {n_plies} (last ply)"
-        )
-    finally:
-        await ctx.close()
+    assert app.state.hve._view_cursor == n_plies, (
+        f"play->edit landed at cursor={app.state.hve._view_cursor}, "
+        f"expected {n_plies} (last ply)"
+    )
 
 
 @pytest.mark.asyncio
-async def test_import_lands_at_first_ply_with_comments_on(server, browser):
+async def test_import_lands_at_first_ply_with_comments_on(server, make_page):
     """Adjacent path: explicit PGN import keeps existing behavior --
     cursor starts at 0."""
-    if browser is None:
-        pytest.skip("chromium not installed")
     base, app = server
 
-    ctx = await browser.new_context(base_url=base)
-    page = await ctx.new_page()
+    _ctx, page = await make_page(base_url=base)
     obs = PageObserver(page)
     obs.track("/game/view/goto")
-    try:
-        await page.goto("/")
-        await page.wait_for_selector("#play-perspective")
-        await _enable_comments(page)
+    await page.goto("/")
+    await page.wait_for_selector("#play-perspective")
+    await _enable_comments(page)
 
-        await page.evaluate(
-            "async (pgn) => { const r = await fetch('/game/import', {method:'POST',"
-            " headers:{'Content-Type':'application/json'},"
-            " body: JSON.stringify({text: pgn, format: 'pgn'})});"
-            " if (r.status !== 200) throw new Error('import failed: ' + r.status);"
-            " await fetch('/game/sync', {method:'POST'}); }",
-            _PGN_SIMPLE,
-        )
-        await obs.wait_board_update(_viewing_at_cursor_zero)
-        await obs.wait_quiet("/game/view/goto")
+    await page.evaluate(
+        "async (pgn) => { const r = await fetch('/game/import', {method:'POST',"
+        " headers:{'Content-Type':'application/json'},"
+        " body: JSON.stringify({text: pgn, format: 'pgn'})});"
+        " if (r.status !== 200) throw new Error('import failed: ' + r.status);"
+        " await fetch('/game/sync', {method:'POST'}); }",
+        _PGN_SIMPLE,
+    )
+    await obs.wait_board_update(_viewing_at_cursor_zero)
+    await obs.wait_quiet("/game/view/goto")
 
-        assert app.state.hve._view_cursor == 0, (
-            f"import should land at cursor=0; got {app.state.hve._view_cursor}"
-        )
-    finally:
-        await ctx.close()
+    assert app.state.hve._view_cursor == 0, (
+        f"import should land at cursor=0; got {app.state.hve._view_cursor}"
+    )
 
 
 @pytest.mark.asyncio
-async def test_replay_activation_lands_at_first_ply_with_comments_on(server, browser):
+async def test_replay_activation_lands_at_first_ply_with_comments_on(server, make_page):
     """Adjacent path: tournament Replay (import + activate play perspective)
     keeps existing behavior -- cursor starts at 0."""
-    if browser is None:
-        pytest.skip("chromium not installed")
     base, app = server
 
-    ctx = await browser.new_context(base_url=base)
-    page = await ctx.new_page()
+    _ctx, page = await make_page(base_url=base)
     obs = PageObserver(page)
     obs.track("/game/view/goto")
-    try:
-        await page.goto("/")
-        await page.wait_for_selector("#play-perspective")
-        await _enable_comments(page)
+    await page.goto("/")
+    await page.wait_for_selector("#play-perspective")
+    await _enable_comments(page)
 
-        # Switch off play so the Replay activation is a real transition.
-        await page.click('button[data-perspective="engines"]')
+    # Switch off play so the Replay activation is a real transition.
+    await page.click('button[data-perspective="engines"]')
 
-        await page.evaluate(
-            "async (pgn) => {"
-            " await fetch('/game/import', {method:'POST',"
-            "  headers:{'Content-Type':'application/json'},"
-            "  body: JSON.stringify({text: pgn, format: 'pgn'})});"
-            " window.dispatchEvent(new CustomEvent("
-            "  'sturddle:activate-perspective', {detail:{id:'play'}}));"
-            "}",
-            _PGN_SIMPLE,
-        )
-        await obs.wait_board_update(_viewing_at_cursor_zero)
-        await obs.wait_quiet("/game/view/goto")
+    await page.evaluate(
+        "async (pgn) => {"
+        " await fetch('/game/import', {method:'POST',"
+        "  headers:{'Content-Type':'application/json'},"
+        "  body: JSON.stringify({text: pgn, format: 'pgn'})});"
+        " window.dispatchEvent(new CustomEvent("
+        "  'sturddle:activate-perspective', {detail:{id:'play'}}));"
+        "}",
+        _PGN_SIMPLE,
+    )
+    await obs.wait_board_update(_viewing_at_cursor_zero)
+    await obs.wait_quiet("/game/view/goto")
 
-        assert app.state.hve._view_cursor == 0, (
-            f"replay should land at cursor=0; got {app.state.hve._view_cursor}"
-        )
-    finally:
-        await ctx.close()
+    assert app.state.hve._view_cursor == 0, (
+        f"replay should land at cursor=0; got {app.state.hve._view_cursor}"
+    )

@@ -121,89 +121,61 @@ async def _available_selected_names(page):
 
 
 @pytest.mark.asyncio
-async def test_ctrl_click_toggles_and_add_moves_all(server, browser):
+async def test_ctrl_click_toggles_and_add_moves_all(server, make_page):
     """Ctrl+Click on two distinct rows selects both; Add moves both."""
-    if browser is None:
-        pytest.skip("chromium not installed")
-
-    ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
-    page = await ctx.new_page()
-    try:
-        await _open_new_tournament(page, server)
-        # Plain click first item to seed.
-        await page.locator(".ne-available-list .ne-item", has_text="alpha").click()
-        # Ctrl+Click a non-adjacent third item.
-        await page.locator(".ne-available-list .ne-item", has_text="gamma").click(modifiers=["Control"])
-        names = await _available_selected_names(page)
-        assert set(names) == {"alpha", "gamma"}, f"selection mismatch: {names}"
-        await page.locator(".ne-add").click()
-        picked = await _picked_names(page)
-        assert picked == ["alpha", "gamma"], f"picked order/contents: {picked}"
-    finally:
-        await ctx.close()
+    _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
+    await _open_new_tournament(page, server)
+    # Plain click first item to seed.
+    await page.locator(".ne-available-list .ne-item", has_text="alpha").click()
+    # Ctrl+Click a non-adjacent third item.
+    await page.locator(".ne-available-list .ne-item", has_text="gamma").click(modifiers=["Control"])
+    names = await _available_selected_names(page)
+    assert set(names) == {"alpha", "gamma"}, f"selection mismatch: {names}"
+    await page.locator(".ne-add").click()
+    picked = await _picked_names(page)
+    assert picked == ["alpha", "gamma"], f"picked order/contents: {picked}"
 
 
 @pytest.mark.asyncio
-async def test_shift_click_selects_range(server, browser):
+async def test_shift_click_selects_range(server, make_page):
     """Shift+Click extends selection from the last anchor to the clicked item."""
-    if browser is None:
-        pytest.skip("chromium not installed")
-
-    ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
-    page = await ctx.new_page()
-    try:
-        await _open_new_tournament(page, server)
-        await page.locator(".ne-available-list .ne-item", has_text="beta").click()
-        await page.locator(".ne-available-list .ne-item", has_text="delta").click(modifiers=["Shift"])
-        names = await _available_selected_names(page)
-        # Range beta..delta inclusive in the displayed (registry-add) order.
-        assert names == ["beta", "gamma", "delta"], f"range mismatch: {names}"
-        await page.locator(".ne-add").click()
-        picked = await _picked_names(page)
-        assert picked == ["beta", "gamma", "delta"], f"picked: {picked}"
-    finally:
-        await ctx.close()
+    _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
+    await _open_new_tournament(page, server)
+    await page.locator(".ne-available-list .ne-item", has_text="beta").click()
+    await page.locator(".ne-available-list .ne-item", has_text="delta").click(modifiers=["Shift"])
+    names = await _available_selected_names(page)
+    # Range beta..delta inclusive in the displayed (registry-add) order.
+    assert names == ["beta", "gamma", "delta"], f"range mismatch: {names}"
+    await page.locator(".ne-add").click()
+    picked = await _picked_names(page)
+    assert picked == ["beta", "gamma", "delta"], f"picked: {picked}"
 
 
 @pytest.mark.asyncio
-async def test_plain_click_replaces_selection(server, browser):
+async def test_plain_click_replaces_selection(server, make_page):
     """A plain click without modifiers collapses any prior selection."""
-    if browser is None:
-        pytest.skip("chromium not installed")
-
-    ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
-    page = await ctx.new_page()
-    try:
-        await _open_new_tournament(page, server)
-        await page.locator(".ne-available-list .ne-item", has_text="alpha").click()
-        await page.locator(".ne-available-list .ne-item", has_text="gamma").click(modifiers=["Control"])
-        # Plain click on a fourth row -> only that row is selected.
-        await page.locator(".ne-available-list .ne-item", has_text="epsilon").click()
-        names = await _available_selected_names(page)
-        assert names == ["epsilon"], f"expected only epsilon selected, got {names}"
-    finally:
-        await ctx.close()
+    _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
+    await _open_new_tournament(page, server)
+    await page.locator(".ne-available-list .ne-item", has_text="alpha").click()
+    await page.locator(".ne-available-list .ne-item", has_text="gamma").click(modifiers=["Control"])
+    # Plain click on a fourth row -> only that row is selected.
+    await page.locator(".ne-available-list .ne-item", has_text="epsilon").click()
+    names = await _available_selected_names(page)
+    assert names == ["epsilon"], f"expected only epsilon selected, got {names}"
 
 
 @pytest.mark.asyncio
-async def test_remove_operates_on_multiselect(server, browser):
+async def test_remove_operates_on_multiselect(server, make_page):
     """← Remove takes out every selected picked row at once."""
-    if browser is None:
-        pytest.skip("chromium not installed")
-
-    ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
-    page = await ctx.new_page()
-    try:
-        await _open_new_tournament(page, server)
-        # Pick three engines first.
-        await page.locator(".ne-available-list .ne-item", has_text="alpha").click()
-        await page.locator(".ne-available-list .ne-item", has_text="gamma").click(modifiers=["Shift"])
-        await page.locator(".ne-add").click()
-        # Now multi-select two of the three in the picked pane and remove.
-        await page.locator(".ne-picked-list .ne-item", has_text="alpha").click()
-        await page.locator(".ne-picked-list .ne-item", has_text="gamma").click(modifiers=["Control"])
-        await page.locator(".ne-remove").click()
-        picked = await _picked_names(page)
-        assert picked == ["beta"], f"expected only beta remaining, got {picked}"
-    finally:
-        await ctx.close()
+    _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
+    await _open_new_tournament(page, server)
+    # Pick three engines first.
+    await page.locator(".ne-available-list .ne-item", has_text="alpha").click()
+    await page.locator(".ne-available-list .ne-item", has_text="gamma").click(modifiers=["Shift"])
+    await page.locator(".ne-add").click()
+    # Now multi-select two of the three in the picked pane and remove.
+    await page.locator(".ne-picked-list .ne-item", has_text="alpha").click()
+    await page.locator(".ne-picked-list .ne-item", has_text="gamma").click(modifiers=["Control"])
+    await page.locator(".ne-remove").click()
+    picked = await _picked_names(page)
+    assert picked == ["beta"], f"expected only beta remaining, got {picked}"

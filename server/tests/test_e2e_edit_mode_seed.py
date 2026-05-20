@@ -41,12 +41,10 @@ def server(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_edit_mode_seeds_stm_and_castling_from_inherited_fen(server, browser):
+async def test_edit_mode_seeds_stm_and_castling_from_inherited_fen(server, page):
     """View mode at SEED_FEN -> click edit pencil -> ribbon must show
     'Black to move' and only the wK/bQ castling pills active.
     """
-    if browser is None:
-        pytest.skip("chromium not installed")
     base, app = server
 
     from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
@@ -64,52 +62,47 @@ async def test_edit_mode_seeds_stm_and_castling_from_inherited_fen(server, brows
     ))
     app.state.hve = hve
 
-    ctx = await browser.new_context()
-    page = await ctx.new_page()
-    try:
-        await page.goto(base + "/")
-        await page.wait_for_selector("#play-perspective", timeout=5000)
-        # Let the initial sync settle.
-        await page.wait_for_timeout(800)
-        # Confirm view-mode ribbon is showing (board_update with view payload arrived).
-        await page.wait_for_function(
-            "() => getComputedStyle(document.querySelector('#view-controls')).display !== 'none'",
-            timeout=5000,
-        )
-        # Click the view-mode edit pencil.
-        await page.click("#view-edit")
-        # Edit ribbon should appear; give the board_update -> editing flip
-        # a moment to propagate.
-        await page.wait_for_function(
-            "() => getComputedStyle(document.querySelector('#edit-controls')).display !== 'none'",
-            timeout=5000,
-        )
-        # Open the side popover to read the toggle pill text.
-        await page.click("#edit-side")
-        side_text = await page.text_content("#edit-side-toggle")
-        # Open the castling popover.
-        await page.click("#edit-castle-btn")
-        castle_state = await page.evaluate("""() => ({
-            wK: document.querySelector('#edit-castle-cb-wk').classList.contains('is-active'),
-            wQ: document.querySelector('#edit-castle-cb-wq').classList.contains('is-active'),
-            bK: document.querySelector('#edit-castle-cb-bk').classList.contains('is-active'),
-            bQ: document.querySelector('#edit-castle-cb-bq').classList.contains('is-active'),
-        })""")
-        # Clock-row active class must match STM. With FEN STM=b and the user
-        # not flipped (bottom = white), the TOP row should be active.
-        clock_active = await page.evaluate("""() => ({
-            top: document.querySelector('.clock-top')?.classList.contains('active') ?? false,
-            bottom: document.querySelector('.clock-bottom')?.classList.contains('active') ?? false,
-        })""")
+    await page.goto(base + "/")
+    await page.wait_for_selector("#play-perspective", timeout=5000)
+    # Let the initial sync settle.
+    await page.wait_for_timeout(800)
+    # Confirm view-mode ribbon is showing (board_update with view payload arrived).
+    await page.wait_for_function(
+        "() => getComputedStyle(document.querySelector('#view-controls')).display !== 'none'",
+        timeout=5000,
+    )
+    # Click the view-mode edit pencil.
+    await page.click("#view-edit")
+    # Edit ribbon should appear; give the board_update -> editing flip
+    # a moment to propagate.
+    await page.wait_for_function(
+        "() => getComputedStyle(document.querySelector('#edit-controls')).display !== 'none'",
+        timeout=5000,
+    )
+    # Open the side popover to read the toggle pill text.
+    await page.click("#edit-side")
+    side_text = await page.text_content("#edit-side-toggle")
+    # Open the castling popover.
+    await page.click("#edit-castle-btn")
+    castle_state = await page.evaluate("""() => ({
+        wK: document.querySelector('#edit-castle-cb-wk').classList.contains('is-active'),
+        wQ: document.querySelector('#edit-castle-cb-wq').classList.contains('is-active'),
+        bK: document.querySelector('#edit-castle-cb-bk').classList.contains('is-active'),
+        bQ: document.querySelector('#edit-castle-cb-bq').classList.contains('is-active'),
+    })""")
+    # Clock-row active class must match STM. With FEN STM=b and the user
+    # not flipped (bottom = white), the TOP row should be active.
+    clock_active = await page.evaluate("""() => ({
+        top: document.querySelector('.clock-top')?.classList.contains('active') ?? false,
+        bottom: document.querySelector('.clock-bottom')?.classList.contains('active') ?? false,
+    })""")
 
-        assert side_text.strip() == "Black to move", (
-            f"side pill should read 'Black to move', got {side_text!r}"
-        )
-        assert castle_state == {"wK": True, "wQ": False, "bK": False, "bQ": True}, (
-            f"castling pills mismatch: got {castle_state!r}"
-        )
-        assert clock_active["top"] is True and clock_active["bottom"] is False, (
-            f"top clock should be active (black to move); got {clock_active!r}"
-        )
-    finally:
-        await ctx.close()
+    assert side_text.strip() == "Black to move", (
+        f"side pill should read 'Black to move', got {side_text!r}"
+    )
+    assert castle_state == {"wK": True, "wQ": False, "bK": False, "bQ": True}, (
+        f"castling pills mismatch: got {castle_state!r}"
+    )
+    assert clock_active["top"] is True and clock_active["bottom"] is False, (
+        f"top clock should be active (black to move); got {clock_active!r}"
+    )

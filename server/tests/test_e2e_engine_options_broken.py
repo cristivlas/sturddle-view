@@ -40,48 +40,41 @@ def server(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_edit_unlaunchable_engine_offers_removal(server, browser):
+async def test_edit_unlaunchable_engine_offers_removal(server, make_page):
     """Clicking Edit on a broken engine opens a Remove? confirm, not the Options form."""
-    if browser is None:
-        pytest.skip("chromium not installed")
+    _ctx, page = await make_page(viewport={"width": 1200, "height": 800})
+    await page.goto(server + "/")
+    await page.wait_for_selector("#play-perspective", timeout=5000)
 
-    ctx = await browser.new_context(viewport={"width": 1200, "height": 800})
-    page = await ctx.new_page()
-    try:
-        await page.goto(server + "/")
-        await page.wait_for_selector("#play-perspective", timeout=5000)
+    # Open Settings dialog directly to the Engines tab.
+    await page.evaluate(
+        "window.dispatchEvent(new CustomEvent('sturddle:open-settings', "
+        "{ detail: { tab: 'engines' } }))"
+    )
+    # Wait for the engines list row to render.
+    row = page.locator(".engines-list-item", has_text=BROKEN_NAME)
+    await row.wait_for(timeout=3000)
+    await row.click()
 
-        # Open Settings dialog directly to the Engines tab.
-        await page.evaluate(
-            "window.dispatchEvent(new CustomEvent('sturddle:open-settings', "
-            "{ detail: { tab: 'engines' } }))"
-        )
-        # Wait for the engines list row to render.
-        row = page.locator(".engines-list-item", has_text=BROKEN_NAME)
-        await row.wait_for(timeout=3000)
-        await row.click()
+    # Click Edit (engine settings) -- this triggers auto-refresh-schema
+    # against the broken executable, which fails, which should now
+    # prompt the user to remove the engine.
+    await page.locator(".engines-detail-options").click()
 
-        # Click Edit (engine settings) -- this triggers auto-refresh-schema
-        # against the broken executable, which fails, which should now
-        # prompt the user to remove the engine.
-        await page.locator(".engines-detail-options").click()
+    # The confirm dialog text contains the engine name and "cannot be launched".
+    confirm_dialog = page.locator("wa-dialog", has_text="cannot be launched")
+    await confirm_dialog.wait_for(state="attached", timeout=3000)
+    body_text = await confirm_dialog.inner_text()
+    assert BROKEN_NAME in body_text
+    # The Engine Settings dialog must NOT be open in its place.
+    assert "Refresh" not in body_text, (
+        "Engine Options dialog appeared instead of the Remove? confirm"
+    )
 
-        # The confirm dialog text contains the engine name and "cannot be launched".
-        confirm_dialog = page.locator("wa-dialog", has_text="cannot be launched")
-        await confirm_dialog.wait_for(state="attached", timeout=3000)
-        body_text = await confirm_dialog.inner_text()
-        assert BROKEN_NAME in body_text
-        # The Engine Settings dialog must NOT be open in its place.
-        assert "Refresh" not in body_text, (
-            "Engine Options dialog appeared instead of the Remove? confirm"
-        )
+    # Confirm removal.
+    await confirm_dialog.get_by_role("button", name="Remove").click()
 
-        # Confirm removal.
-        await confirm_dialog.get_by_role("button", name="Remove").click()
-
-        # Engine row should be gone from the list.
-        await page.locator(".engines-list-item", has_text=BROKEN_NAME).wait_for(
-            state="detached", timeout=3000,
-        )
-    finally:
-        await ctx.close()
+    # Engine row should be gone from the list.
+    await page.locator(".engines-list-item", has_text=BROKEN_NAME).wait_for(
+        state="detached", timeout=3000,
+    )
