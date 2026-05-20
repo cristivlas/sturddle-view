@@ -671,9 +671,17 @@ export function mountGameView(container, opts = {}) {
             // PGN has evals elsewhere but this specific ply doesn't
             // (e.g. last move of a fastchess game tends to lack an
             // eval). Keep the panel visible so it doesn't disappear
-            // when scrubbing across plies, and unhide it on initial
-            // mount so landing on a no-eval ply still shows the area.
+            // when scrubbing across plies, but blank the per-ply
+            // fields so stale values from the previous ply don't
+            // leak through.
             engineSection?.classList.remove("is-empty");
+            if (engineScore) engineScore.textContent = "";
+            if (engineDepth) engineDepth.textContent = "";
+            if (engineNodes) engineNodes.textContent = "";
+            if (engineNps) engineNps.textContent = "";
+            if (engineTbhits) engineTbhits.textContent = "";
+            if (engineHashfull) engineHashfull.textContent = "";
+            if (enginePv) { enginePv.textContent = ""; enginePv.removeAttribute("title"); }
           }
         }
         if (interactive && !editing) board.enableInput(true);

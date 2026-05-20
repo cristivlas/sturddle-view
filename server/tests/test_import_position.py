@@ -530,6 +530,7 @@ def test_imported_game_publishes_board_event_after_engine_move(client):
     # Simulate the engine's bestmove being pushed (the part of
     # _think_and_play that runs after the search returns).
     hve._board.push(chess.Move.from_uci("d6d1"))
+    hve._eval_history.append(None)
     # _board_event must not raise.
     evt = hve._board_event()
     assert evt.payload["fen"].startswith("1k1r")

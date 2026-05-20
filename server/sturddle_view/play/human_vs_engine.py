@@ -166,6 +166,10 @@ class HumanVsEngine:
         self._view_hash: str | None = None
         self._view_summary: dict | None = None
         self._view_raw_text: str | None = None
+        # Per-ply engine eval (white POV), one entry per pushed move. None
+        # entries for plies with no engine search (human moves). Matches
+        # move_stack length; pop alongside on take-back. Reset on new game.
+        self._eval_history: list[dict | None] = []
         self._tb: TablebaseProber | None = None
         self._lock = asyncio.Lock()
 
@@ -416,6 +420,7 @@ class HumanVsEngine:
                 final_w=seed_final_white_time,
                 final_b=seed_final_black_time,
             )
+            self._eval_history = [None] * len(board.move_stack)
             self._clock.start_turn()
             self._mode = Mode.PLAY
             self._game_id = str(uuid.uuid4())
@@ -447,6 +452,8 @@ class HumanVsEngine:
             self._clock.append_snapshot()
             self._consume_turn_time()
             self._board.push(move)
+            # Human ply: no engine search, eval slot is None.
+            self._eval_history.append(None)
             await self._persist()
             await self._publish_board()
             await self._publish_clock()
@@ -539,14 +546,17 @@ class HumanVsEngine:
                     raise RuntimeError("nothing to take back")
                 self._board.pop()
                 self._clock.pop_snapshot()
+                self._eval_history.pop()
                 self._board.pop()
                 self._clock.pop_snapshot()
+                self._eval_history.pop()
             else:
                 # Engine was thinking; pop the human's last move.
                 if len(self._board.move_stack) < 1:
                     raise RuntimeError("nothing to take back")
                 self._board.pop()
                 self._clock.pop_snapshot()
+                self._eval_history.pop()
             # Preserve pause state across takeback: undoing should not
             # silently resume the clock.
             if self._paused:
@@ -718,8 +728,8 @@ class HumanVsEngine:
 
     def play_game_snapshot(
         self,
-    ) -> tuple[str | None, list[str], list[tuple[float, float]], float, float]:
-        """Return (start_fen, moves_uci, clock_history, white_time, black_time)
+    ) -> tuple[str | None, list[str], list[tuple[float, float]], float, float, list[dict | None]]:
+        """Return (start_fen, moves_uci, clock_history, white_time, black_time, eval_history)
         from the current play-mode game. Safe to call without the lock."""
         board = self._board
         moves = [m.uci() for m in board.move_stack] if board else []
@@ -729,6 +739,7 @@ class HumanVsEngine:
             list(self._clock.history),
             self._clock.white_time,
             self._clock.black_time,
+            list(self._eval_history),
         )
 
     async def enter_view_mode(
@@ -1113,6 +1124,7 @@ class HumanVsEngine:
             paused=self._paused,
             moves_uci=[m.uci() for m in self._board.move_stack],
             clock_history=[[w, b] for (w, b) in self._clock.history],
+            eval_history=list(self._eval_history),
             start_fen=self._start_fen,
             game_started_wall=self._game_started_wall,
         )
@@ -1156,6 +1168,14 @@ class HumanVsEngine:
         self._clock.history = [(w, b) for (w, b) in state.clock_history]
         # Marker: turn hasn't started ticking yet. republish_state() sets it.
         self._clock.stop_turn()
+        n_plies = len(self._board.move_stack)
+        if len(state.eval_history) == n_plies:
+            self._eval_history = list(state.eval_history)
+        else:
+            # Older save (pre-eval_history persistence) or schema drift: fall
+            # back to all-None so the per-ply invariant holds and subsequent
+            # engine searches can still extend the list.
+            self._eval_history = [None] * n_plies
         self._mode = Mode.PAUSED if state.paused else Mode.PLAY
 
     # ----- internals -----
@@ -1288,18 +1308,34 @@ class HumanVsEngine:
         game_id: str,
         board: chess.Board,
         cache_payload: bool = False,
+        capture_score: dict | None = None,
     ) -> None:
         """Drain analysis info events, serialize + publish, optionally cache.
 
         Shared by _think_and_play (cache_payload=False) and _run_analysis
         (cache_payload=True; the cached payload is re-emitted by /game/sync
         on client remount so the board arrow returns immediately).
+
+        ``capture_score``: when not None, the deepest seen (score, depth) is
+        stored under keys "cp"/"mate" + "depth", white POV, for the caller
+        to read after the search completes.
         """
         async for info in analysis:
             if "pv" in info or "depth" in info or "score" in info:
                 payload = serialize_info(info, board=board, pov=self._eval_pov(board.turn))
                 if cache_payload:
                     self._last_analysis_info = payload
+                if capture_score is not None and "score" in info:
+                    side = info["score"].pov(chess.WHITE)
+                    entry: dict
+                    if side.is_mate():
+                        entry = {"mate": side.mate()}
+                    else:
+                        entry = {"cp": side.score()}
+                    if "depth" in info:
+                        entry["depth"] = info["depth"]
+                    capture_score.clear()
+                    capture_score.update(entry)
                 await self._bus.publish(
                     Event(kind="engine_info", game_id=game_id, payload=payload)
                 )
@@ -1331,10 +1367,11 @@ class HumanVsEngine:
         await self._bus.publish(
             Event(kind="engine_search_start", game_id=game_id, payload={})
         )
+        captured: dict = {}
         try:
             with await engine.analysis(board, limit=limit) as analysis:
                 self._analysis = analysis
-                await self._pump_engine_info(analysis, game_id, board)
+                await self._pump_engine_info(analysis, game_id, board, capture_score=captured)
                 result = analysis.wait()  # returns BestMove
                 best_move = await result
                 best = best_move.move
@@ -1367,6 +1404,7 @@ class HumanVsEngine:
             self._clock.append_snapshot()
             self._consume_turn_time()
             self._board.push(best)
+            self._eval_history.append(captured or None)
             await self._persist()
             await self._publish_board()
             await self._publish_clock()
@@ -1668,6 +1706,11 @@ class HumanVsEngine:
                 "White": white,
                 "Black": black,
             }
+            view_evals = (
+                list(self._view_eval_history)
+                if self._view_eval_history is not None
+                else [None] * len(self._view_full_moves)
+            )
             pgn_text = build_pgn(
                 start_fen=self._start_fen,
                 moves_uci=[m.uci() for m in self._view_full_moves],
@@ -1680,6 +1723,7 @@ class HumanVsEngine:
                 headers=headers,
                 result=result,
                 termination=termination,
+                eval_history=view_evals,
             )
         else:
             if not self._board.move_stack:
@@ -1705,6 +1749,7 @@ class HumanVsEngine:
             tc = None
             if self._clock.tc.initial_seconds:
                 tc = (int(self._clock.tc.initial_seconds), int(self._clock.tc.increment_seconds))
+            play_evals = list(self._eval_history)
             pgn_text = build_pgn(
                 start_fen=self._start_fen,
                 moves_uci=[m.uci() for m in self._board.move_stack],
@@ -1715,6 +1760,7 @@ class HumanVsEngine:
                 result=result,
                 termination=termination,
                 time_control=tc,
+                eval_history=play_evals,
             )
 
         return pgn_text, self._make_pgn_filename(white, black)
@@ -1761,6 +1807,7 @@ class HumanVsEngine:
         if self._clock.tc.initial_seconds:
             tc = (int(self._clock.tc.initial_seconds), int(self._clock.tc.increment_seconds))
 
+        autosave_evals = list(self._eval_history)
         pgn_text = build_pgn(
             start_fen=self._start_fen,
             moves_uci=[m.uci() for m in self._board.move_stack],
@@ -1771,6 +1818,7 @@ class HumanVsEngine:
             result=result,
             termination=termination,
             time_control=tc,
+            eval_history=autosave_evals,
         )
 
         # Game-start timestamp keeps the path stable across per-move autosaves

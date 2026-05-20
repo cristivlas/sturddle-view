@@ -136,29 +136,28 @@ async def test_save_on_flag_fall(hve):
     assert 'Termination "time_forfeit"' in text
 
 
-async def test_pgn_includes_clk_annotations(hve):
-    """Each ply gets a [%clk H:MM:SS] comment with monotonic decrease per side."""
+async def test_pgn_uses_cutechess_time_tokens(hve):
+    """Per-ply elapsed time travels in the cutechess trailing comment token
+    (e.g. ``{1.4s}``); no [%clk] is emitted. Each ply gets its own token."""
     h, _, tmp_path = hve
     await h.new_game(human_white=True, tc=TimeControl(60, 0))
-    # White moves; clocks consume some time. With the engine mocked away,
-    # we drive a second white "move" by directly emulating an engine reply
-    # via the same path test_takeback uses.
     import asyncio as _asyncio
 
     await _asyncio.sleep(0.05)
     await h.submit_move("e2e4")
-    # Inject Black's reply (engine mocked).
     async with h._lock:
         h._clock.append_snapshot()
         h._consume_turn_time()
         h._board.push(chess.Move.from_uci("e7e5"))
+        h._eval_history.append(None)
     await h.resign()
 
     text = list(tmp_path.glob("*.pgn"))[0].read_text()
-    # python-chess writes [%clk H:MM:SS] (no fractional part by default).
-    assert "[%clk" in text
-    # Two plies, two clk annotations.
-    assert text.count("[%clk") == 2
+    assert "[%clk" not in text
+    # Both plies emit a time-only comment token like "{0.1s}".
+    import re
+    tokens = re.findall(r"\{[^}]*\d+\.\d+s[^}]*\}", text)
+    assert len(tokens) >= 2
 
 
 async def test_pgn_includes_opening_header_for_known_line(hve):
@@ -174,6 +173,7 @@ async def test_pgn_includes_opening_header_for_known_line(hve):
         h._clock.append_snapshot()
         h._consume_turn_time()
         h._board.push(chess.Move.from_uci("c7c5"))
+        h._eval_history.append(None)
     await h.resign()
 
     text = list(tmp_path.glob("*.pgn"))[0].read_text()
@@ -195,6 +195,7 @@ async def test_pgn_no_opening_header_for_fen_imported_game(hve):
         h._clock.append_snapshot()
         h._consume_turn_time()
         h._board.push(chess.Move.from_uci("d7d6"))
+        h._eval_history.append(None)
     await h.resign()
 
     text = list(tmp_path.glob("*.pgn"))[0].read_text()
@@ -213,6 +214,7 @@ async def test_round_trip_save_then_reimport_clocks(hve):
         h._clock.append_snapshot()
         h._consume_turn_time()
         h._board.push(chess.Move.from_uci("e7e5"))
+        h._eval_history.append(None)
     saved_black = h._clock.black_time
     # Trigger one more autosave to write the latest %clk values.
     await h.submit_move("g1f3")

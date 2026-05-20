@@ -61,6 +61,7 @@ async def test_takeback_button_enabled_while_paused(server, page):
         hve._clock.append_snapshot()
         hve._consume_turn_time()
         hve._board.push(chess.Move.from_uci("e7e5"))
+        hve._eval_history.append(None)
         await hve._publish_board()
         await hve._publish_clock()
     await hve.pause()

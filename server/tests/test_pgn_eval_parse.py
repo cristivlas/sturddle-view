@@ -127,3 +127,50 @@ def test_mixed_pv_paren_and_bracket_eval():
     # wins (it appears first in our regex order).
     s = _parse_pgn_eval("(Bh4) [%eval 110,24] [%emt 00:00:25]", mover_white=True)
     assert s == {"cp": 110, "depth": 24}
+
+
+# --- Time-only token: must be the entire comment, not prose with a trailing
+# "took 7s" / "spent 2.5s" suffix. Regression for false-matching prose. ---
+
+def test_cutechess_time_only_token_is_parsed_as_time():
+    from sturddle_view.play.import_position import _cutechess_time_seconds
+    # python-chess strips the surrounding braces, so the bare comment we
+    # see is just "1.4s".
+    assert _cutechess_time_seconds("1.4s") == 1.4
+    assert _cutechess_time_seconds("  2s  ") == 2.0
+    assert _cutechess_time_seconds("250ms") == 0.25
+
+
+def test_prose_with_trailing_time_is_not_parsed_as_time():
+    from sturddle_view.play.import_position import _cutechess_time_seconds
+    # Prose comments mentioning seconds must NOT be classified as elapsed-time
+    # tokens; otherwise we silently corrupt imported PGNs with annotated prose.
+    assert _cutechess_time_seconds("took 7s") is None
+    assert _cutechess_time_seconds("spent 2.5s thinking") is None
+    assert _cutechess_time_seconds("Engine searched for 12.4s here") is None
+
+
+def test_prose_with_trailing_time_is_not_stripped_by_sanitize():
+    from sturddle_view.play.import_position import _sanitize_comment
+    # Annotator prose ending in "...7s" must survive sanitize verbatim.
+    assert _sanitize_comment("took 7s") == "Took 7s"
+    assert _sanitize_comment("spent 2.5s thinking") == "Spent 2.5s thinking"
+
+
+def test_bare_time_token_is_stripped_by_sanitize():
+    from sturddle_view.play.import_position import _sanitize_comment
+    # The bare time-only token IS machine annotation and must be removed,
+    # leaving no readable prose.
+    assert _sanitize_comment("1.4s") is None
+    assert _sanitize_comment("  2s  ") is None
+
+
+def test_cutechess_time_only_regex_rejects_prose():
+    from sturddle_view.play.import_position import (
+        _sanitize_comment, _cutechess_time_seconds,
+    )
+    # Prose comment with a trailing "took 7s" must survive sanitize verbatim
+    # (no machine-annotation strip) and must not be misread as elapsed time.
+    prose = "Brilliant move! Took 7s to find"
+    assert _sanitize_comment(prose) == prose
+    assert _cutechess_time_seconds(prose) is None

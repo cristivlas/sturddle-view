@@ -856,8 +856,8 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   font-size: 0.875rem;
   font-weight: 500;
   color: var(--accent);
+  min-height: 1lh;
 }
-.game-view-engine .engine-score:empty { display: none; }
 .game-view-engine .engine-depth,
 .game-view-engine .engine-nodes,
 .game-view-engine .engine-nps,
@@ -866,6 +866,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   font-size: 0.875rem;
   font-weight: 500;
   color: var(--fg);
+  min-height: 1lh;
 }
 .game-view-engine .engine-pv {
   font-family: ui-monospace, SFMono-Regular, monospace;

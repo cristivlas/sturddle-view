@@ -52,6 +52,7 @@ async def test_play_perspective_remount_resyncs_state(server, page):
     hve._board = chess.Board()
     hve._board.push_uci("e2e4")
     hve._board.push_uci("c7c5")
+    hve._eval_history = [None, None]
     hve._human_white = False
     hve._clock = ChessClock(TimeControl(300.0, 0.0))
     hve._clock.white_time = 290.0

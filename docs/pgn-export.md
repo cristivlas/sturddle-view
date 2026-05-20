@@ -176,9 +176,9 @@ dropdown section, not as a side effect of solving export.
      Status tags: [TODO] not started, [WIP] in progress, [DONE] complete.
      =================================================================== -->
 
-## TODO: Engine Evaluations in Exported PGN
+## Engine Evaluations in Exported PGN
 
-Status: **[TODO]** -- design agreed, not implemented.
+Status: **[DONE]**
 
 ### Gap
 
@@ -214,32 +214,55 @@ time in `build_pgn()` on black-to-move plies.
 ### Capture (Play Mode)
 
 Add `_eval_history: list[dict | None]` on HVE, appended once per
-ply, snapshot taken **post-move** (option B: first eval from the
-next search after the move lands). Normalize to white POV at
-capture. Entry shape: `{"cp": int}` or `{"mate": int}`, optionally
-with `"depth": int` -- matches `_view_eval_history`.
+ply, snapshot taken **post-move**. For engine plies, capture the
+deepest score seen during the search that produced the move; for
+human plies, append `None`. Normalize to white POV at capture.
+Entry shape: `{"cp": int}` or `{"mate": int}`, optionally with
+`"depth": int` -- matches `_view_eval_history`.
 
-Missing plies are accepted. No fill, no post-export annotation
-pass. On write, a ply with no eval emits a time-only token
-(e.g. `{1.4s}`) or is skipped entirely; importer already tolerates
-this.
+Take-back pops `_eval_history` alongside `move_stack`; the
+invariant `len(_eval_history) == len(move_stack)` holds at all
+times outside the lock-held push.
+
+### Persistence
+
+`_eval_history` is part of `GameState` and survives server
+restart. Old saves (pre-`eval_history`) are upgraded transparently
+by `restore_from` -- length mismatch falls back to all-None so the
+invariant holds and subsequent engine searches still capture.
+
+Without persistence, a finished game saved across a restart would
+lose every pre-restart engine eval (the in-memory list resets to
+`[None] * n_plies`), defeating the export feature for the most
+common case.
 
 ### Plumbing
 
 - `play_game_snapshot()` includes `eval_history`.
 - `ViewModeParams` / `_ViewSnapshot` carry `eval_history`.
 - `enter_view_mode()` stores into `_view_eval_history` unchanged.
+- `GameState` carries `eval_history`; `_persist` writes it,
+  `restore_from` reads it.
 - `build_pgn()` gains `eval_history: list[dict | None] | None`;
   when present, writes the cutechess token per ply, flipping POV
-  for black-to-move plies.
+  for black-to-move plies, and **drops `[%clk]` entirely** (the
+  per-move elapsed time travels inside the cutechess token).
+- Play-mode export ALWAYS passes `eval_history` (even when every
+  entry is None) so output is uniformly cutechess-formatted: human
+  plies get the time-only `{<time>s}` token, engine plies get the
+  full `{<eval>/<depth> <time>s}` token. There is no fall-back to
+  `[%clk]` on play-mode export.
 - Play-mode `get_pgn_text()` passes `_eval_history`; view-mode
   rebuild branch passes `_view_eval_history`.
 
 ### Read-back
 
-Importer already handles both cutechess trailing tokens and
-Lichess `[%eval ...]` brackets, so saved files round-trip without
-parser changes.
+Importer handles both cutechess trailing tokens (full `<eval>/<depth>
+<time>s` form and time-only `<time>s` form) and Lichess
+`[%eval ...]` brackets, so saved files round-trip. The time-only
+regex was added when the spec moved to "drop `[%clk]` entirely" --
+prior to that, human plies kept their clocks via `[%clk]` and no
+time-only cutechess token was ever emitted.
 
 ### Testing Plan
 

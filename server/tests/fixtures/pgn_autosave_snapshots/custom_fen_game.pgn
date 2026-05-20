@@ -1,0 +1,10 @@
+[Event "Sturddle View -- Human vs Engine"]
+[Site "Sturddle View"]
+[Round "?"]
+[Result "0-1"]
+[FEN "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"]
+[SetUp "1"]
+[Termination "resignation"]
+[TimeControl "300+2"]
+
+2. Nf3 { 2.0s } 2... Nc6 { 2.0s } 3. Bc4 { 0.0s } 0-1

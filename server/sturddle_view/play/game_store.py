@@ -43,6 +43,9 @@ class GameState:
     # that ply. Mirrors HumanVsEngine._clock_history so take-back still
     # restores prior clocks after a server restart.
     clock_history: list[list[float]] = field(default_factory=list)
+    # Per-ply post-move engine eval, white POV. None for plies with no
+    # engine search (human moves). Matches moves_uci length.
+    eval_history: list[dict | None] = field(default_factory=list)
     # FEN of the board BEFORE any moves_uci were played. None means the
     # game began at the standard starting position. Required so restore_from
     # can rebuild a board imported from a non-startpos FEN/PGN.
@@ -89,6 +92,7 @@ class GameStore:
                 paused=bool(data.get("paused", False)),
                 moves_uci=list(data.get("moves_uci", [])),
                 clock_history=[list(p) for p in data.get("clock_history", [])],
+                eval_history=list(data.get("eval_history", [])),
                 start_fen=data.get("start_fen"),
                 game_started_wall=data.get("game_started_wall"),
             )

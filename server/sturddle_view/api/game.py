@@ -360,7 +360,14 @@ async def view_start(request: Request) -> dict:
     recent-imports store.
     """
     hve = await _get_hve(request)
-    start_fen, moves_uci, clock_history, white_time, black_time = hve.play_game_snapshot()
+    (
+        start_fen,
+        moves_uci,
+        clock_history,
+        white_time,
+        black_time,
+        eval_history,
+    ) = hve.play_game_snapshot()
     try:
         game_id = await hve.enter_view_mode(ViewModeParams(
             start_fen=start_fen,
@@ -368,6 +375,7 @@ async def view_start(request: Request) -> dict:
             clock_history=clock_history or None,
             final_white_time=white_time,
             final_black_time=black_time,
+            eval_history=eval_history if any(e is not None for e in eval_history) else None,
         ))
         await hve.view_last()
     except RuntimeError as e:
