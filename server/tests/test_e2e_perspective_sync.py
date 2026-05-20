@@ -73,25 +73,16 @@ async def test_play_perspective_remount_resyncs_state(server, page):
         }"""
     )
 
-    # Switch to Engines perspective.
+    # Switch to Engines perspective; wait for the perspective root to
+    # mount and finish its is-pending transition.
     await page.click('button[data-perspective="engines"]')
-    await page.wait_for_timeout(300)
-    # Switch back; perspective mount calls /game/sync after 200ms.
-    await page.click('button[data-perspective="play"]')
-    await page.wait_for_timeout(1500)
-
-    # Verify the rendered board matches the expected FEN.
-    info = await page.evaluate(
-        """() => {
-            const svg = document.querySelector('.game-view-board .board svg.cm-chessboard');
-            if (!svg) return {missing: true};
-            const pieces = [...svg.querySelectorAll('[data-piece]')]
-              .map(p => p.getAttribute('data-piece') + '@' + p.getAttribute('data-square'))
-              .sort();
-            return { pieces };
-        }"""
+    await page.wait_for_function(
+        "() => !!document.querySelector('#engines-perspective')"
+        " && !document.querySelector('.perspective-root')?.classList.contains('is-pending')",
     )
-    assert not info.get("missing"), "board not mounted after switch back"
+    # Switch back; the play perspective remounts and calls /game/sync.
+    # Wait for the board to render the synthetic game's pieces, which
+    # is exactly the post-sync state the assertion verifies.
     expected_board = chess.Board(expected_fen)
     expected_pieces = sorted(
         f"{('w' if expected_board.color_at(sq) == chess.WHITE else 'b')}"
@@ -100,8 +91,17 @@ async def test_play_perspective_remount_resyncs_state(server, page):
         for sq in chess.SQUARES
         if expected_board.piece_at(sq) is not None
     )
-    assert info["pieces"] == expected_pieces, (
-        f"board state after remount diverges from server.\n"
-        f"  expected: {expected_pieces}\n"
-        f"  actual:   {info['pieces']}"
+    await page.click('button[data-perspective="play"]')
+    # Waiting for the board to render the expected pieces IS the
+    # assertion: the post-/game/sync state matching the synthetic game.
+    await page.wait_for_function(
+        """(expected) => {
+            const svg = document.querySelector('.game-view-board .board svg.cm-chessboard');
+            if (!svg) return false;
+            const pieces = [...svg.querySelectorAll('[data-piece]')]
+              .map(p => p.getAttribute('data-piece') + '@' + p.getAttribute('data-square'))
+              .sort();
+            return JSON.stringify(pieces) === JSON.stringify(expected);
+        }""",
+        arg=expected_pieces,
     )
