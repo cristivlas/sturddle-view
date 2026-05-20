@@ -78,14 +78,60 @@ function _patchAnimationsQueue(board) {
   };
 }
 
+const ASSETS_URL = "./vendor/cm-chessboard/assets/";
+
+// Why: cm-chessboard's <use href="file.svg#wp"> path triggers a Chromium bug
+// where the parsed-symbol shadow tree is reused across sprite files that share
+// fragment IDs (every set defines wp/bk/..). Switching standard <-> staunty
+// leaves stale glyphs until a hard reload. We inject each board's sprite as
+// local <defs> on its own SVG and rewrite <use> to local-ref `#piece`.
+const _spriteCache = new Map(); // piecesFile -> Promise<string defs HTML>
+
+function _loadSpriteDefs(piecesFile) {
+  let p = _spriteCache.get(piecesFile);
+  if (!p) {
+    p = fetch(ASSETS_URL + piecesFile)
+      .then((r) => r.text())
+      .then((text) => {
+        const doc = new DOMParser().parseFromString(text, "image/svg+xml");
+        // Sprite SVGs use top-level <g id="wp">, not <symbol>. Grab any
+        // direct child of <svg> that has an id attribute.
+        const root = doc.documentElement;
+        const defs = Array.from(root.children).filter((el) => el.id);
+        return defs.map((el) => el.outerHTML).join("");
+      });
+    _spriteCache.set(piecesFile, p);
+  }
+  return p;
+}
+
+async function _installLocalSprite(board, piecesFile) {
+  const defsHtml = await _loadSpriteDefs(piecesFile);
+  const svg = board.view?.svg;
+  if (!svg || !svg.isConnected) return;
+  const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+  defs.innerHTML = defsHtml;
+  svg.insertBefore(defs, svg.firstChild);
+  // The library already emits local "#piece" refs under assetsCache=true,
+  // but if a future upgrade changes that, normalize stragglers here.
+  for (const u of svg.querySelectorAll('use[href*=".svg#"]')) {
+    const href = u.getAttribute("href");
+    const hash = href.lastIndexOf("#");
+    if (hash >= 0) u.setAttribute("href", href.slice(hash));
+  }
+  // Future drawPiece calls (animations, edit-mode adds) keep using local refs.
+  board.view.getSpriteUrl = () => "";
+}
+
 export function mountBoard({ element, onMove, styleId }) {
   const s = resolveBoardStyle(styleId);
   const board = new Chessboard(element, {
     position: FEN.start,
-    assetsUrl: "./vendor/cm-chessboard/assets/",
+    assetsUrl: ASSETS_URL,
     style: { cssClass: s.cssClass, showCoordinates: true, pieces: { file: s.piecesFile } },
     extensions: [{ class: Markers }, { class: Arrows }, { class: PromotionDialog }],
   });
+  _installLocalSprite(board, s.piecesFile);
   _patchAnimationsQueue(board);
 
   let myColor = COLOR.white;
