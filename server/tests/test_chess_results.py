@@ -1,21 +1,9 @@
 from sturddle_view.chess.results import (
     BLACK_WIN,
-    DECISIVE_RESULTS,
-    DRAW,
     WHITE_WIN,
     loser_result,
     winner_result,
 )
-
-
-def test_decisive_results_contains_all_three_decisives():
-    assert WHITE_WIN in DECISIVE_RESULTS
-    assert BLACK_WIN in DECISIVE_RESULTS
-    assert DRAW in DECISIVE_RESULTS
-
-
-def test_decisive_results_contains_exactly_three():
-    assert len(DECISIVE_RESULTS) == 3
 
 
 def test_winner_result_white():

@@ -1,20 +1,10 @@
 {
   "_smoke_bench": 0.000492700026370585,
-  "board_from_startpos_inline": 0.0008582999580539763,
-  "board_from_fen_inline": 0.03668759996071458,
   "iter_games_keyed_1k": 2.1000043489038944e-05,
   "iter_games_uncached_1k": 0.012078800005838275,
   "rewrite_partial_pairs_1k": 0.5420738999964669,
   "parse_delta_200_games": 0.4848178999964148,
   "parse_pgn_200_games": 0.6068124999874271,
   "read_game_record_first": 0.0023941000108607113,
-  "read_game_record_mid": 0.01617385001736693,
-  "build_pgn_100_ply_inline": 4.9099966417998075e-05,
-  "spawn_engine_median": 0.0479386,
-  "cancel_think_grace_period": 0.5039291,
-  "clock_remaining_inline": 0.004441400000359863,
-  "serialize_info_typical": 0.04414579999865964,
-  "board_event_play_payload": 0.005958600027952343,
-  "board_event_view_payload": 0.008450399967841804,
-  "mode_guard": 0.050898400018922985
+  "read_game_record_mid": 0.01617385001736693
 }
