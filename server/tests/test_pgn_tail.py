@@ -66,10 +66,16 @@ _PARTIAL_GAME = """\
 
 
 def _records_collector():
+    """Collector + asyncio.Event signalled on every append.
+
+    Tests waiting for "the next record" do ``await event.wait()`` and
+    then ``event.clear()`` before the next batch -- no sleeps."""
     out: list[PgnGameRecord] = []
+    received = asyncio.Event()
     async def cb(rec: PgnGameRecord) -> None:
         out.append(rec)
-    return out, cb
+        received.set()
+    return out, cb, received
 
 
 @pytest.fixture
@@ -84,7 +90,7 @@ def pgn_path(tmp_path) -> Path:
 
 @pytest.mark.asyncio
 async def test_missing_file_is_noop(pgn_path):
-    records, cb = _records_collector()
+    records, cb, _received = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
     n = await tailer.poll_once()
     assert n == 0
@@ -96,7 +102,7 @@ async def test_missing_file_is_noop(pgn_path):
 @pytest.mark.asyncio
 async def test_single_complete_game(pgn_path):
     pgn_path.write_text(_ONE_GAME, encoding="utf-8")
-    records, cb = _records_collector()
+    records, cb, _received = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
 
     n = await tailer.poll_once()
@@ -126,7 +132,7 @@ async def test_partial_game_held_for_next_pass(pgn_path):
     one_game_size = pgn_path.stat().st_size
     pgn_path.write_text(_ONE_GAME + _PARTIAL_GAME, encoding="utf-8")
 
-    records, cb = _records_collector()
+    records, cb, _received = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
 
     n = await tailer.poll_once()
@@ -140,7 +146,7 @@ async def test_partial_game_held_for_next_pass(pgn_path):
 async def test_two_games_appended_over_two_polls(pgn_path):
     """game_n is cumulative across polls, not reset per delta."""
     pgn_path.write_text(_ONE_GAME, encoding="utf-8")
-    records, cb = _records_collector()
+    records, cb, _received = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
 
     n1 = await tailer.poll_once()
@@ -165,7 +171,7 @@ async def test_illegal_move_game_skipped_valid_game_emitted(pgn_path):
     """A game with an illegal SAN is skipped; the following valid game is
     still emitted with the correct game_n and the offset advances past both."""
     pgn_path.write_text(_ILLEGAL_MOVE_GAME + _SECOND_GAME, encoding="utf-8")
-    records, cb = _records_collector()
+    records, cb, _received = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
 
     n = await tailer.poll_once()
@@ -180,7 +186,7 @@ async def test_illegal_move_game_skipped_valid_game_emitted(pgn_path):
 @pytest.mark.asyncio
 async def test_no_change_is_skipped(pgn_path):
     pgn_path.write_text(_ONE_GAME, encoding="utf-8")
-    records, cb = _records_collector()
+    records, cb, _received = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
 
     n1 = await tailer.poll_once()
@@ -197,7 +203,7 @@ async def test_truncation_resets_offset(pgn_path):
     """Defensive: if the file shrinks, reset and reparse from 0. Covers
     test fixtures, manual edits, and a future runner that rotates."""
     pgn_path.write_text(_ONE_GAME + _SECOND_GAME, encoding="utf-8")
-    records, cb = _records_collector()
+    records, cb, _received = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
 
     n1 = await tailer.poll_once()
@@ -222,7 +228,7 @@ async def test_resume_pre_existing_pgn_parses_on_first_poll(pgn_path):
     """A tournament Resume starts the tailer against an existing PGN.
     The first poll must parse the whole file, not wait for an append."""
     pgn_path.write_text(_ONE_GAME + _SECOND_GAME, encoding="utf-8")
-    records, cb = _records_collector()
+    records, cb, _received = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
 
     n = await tailer.poll_once()
@@ -239,7 +245,7 @@ async def test_offset_advances_monotonically(pgn_path):
     just headers. Truncation is the only legal reset path; a normal
     append must never shrink the offset."""
     pgn_path.write_text(_ONE_GAME, encoding="utf-8")
-    records, cb = _records_collector()
+    records, cb, _received = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
 
     await tailer.poll_once()
@@ -280,7 +286,7 @@ async def test_start_and_stop(pgn_path):
     """`start` spawns the task; `stop` cancels and joins. Idempotent on
     both ends."""
     pgn_path.write_text(_ONE_GAME, encoding="utf-8")
-    records, cb = _records_collector()
+    records, cb, received = _records_collector()
     tailer = PgnTailer(pgn_path, cb, poll_interval=0.05)
 
     await tailer.start()
@@ -289,8 +295,8 @@ async def test_start_and_stop(pgn_path):
     await tailer.start()
     assert tailer.is_running()
 
-    # Give the immediate-pass parse a moment to land.
-    await asyncio.sleep(0.1)
+    # Wait for the immediate-pass parse to deliver the first record.
+    await received.wait()
 
     await tailer.stop()
     assert not tailer.is_running()
@@ -307,7 +313,7 @@ async def test_loop_stays_responsive_during_slow_parse(pgn_path):
     import time as _t
 
     pgn_path.write_text(_ONE_GAME, encoding="utf-8")
-    records, cb = _records_collector()
+    records, cb, _received = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
 
     real_parse = tailer._parse_delta
@@ -338,7 +344,7 @@ async def test_parse_runs_off_main_loop_thread(pgn_path):
     import threading
 
     pgn_path.write_text(_ONE_GAME, encoding="utf-8")
-    records, cb = _records_collector()
+    records, cb, _received = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
 
     main_thread = threading.get_ident()
@@ -398,7 +404,7 @@ async def test_finalize_paused_drains_existing_pgn(pgn_path):
     runs poll_once from the caller's context to catch everything fastchess
     wrote during the pause."""
     pgn_path.write_text(_ONE_GAME + _SECOND_GAME, encoding="utf-8")
-    records, cb = _records_collector()
+    records, cb, _received = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
     assert not tailer.is_running()
 
@@ -415,14 +421,12 @@ async def test_finalize_running_exits_after_eof(pgn_path):
     """Running tailer + finalize: run loop exits cleanly once caught up
     to EOF. No external stop signal needed."""
     pgn_path.write_text(_ONE_GAME, encoding="utf-8")
-    records, cb = _records_collector()
+    records, cb, received = _records_collector()
     tailer = PgnTailer(pgn_path, cb, poll_interval=0.05)
     await tailer.start()
-    # Wait for the initial poll to fire so the run loop is in steady state.
-    for _ in range(50):
-        if records:
-            break
-        await asyncio.sleep(0.01)
+    # Wait for the initial poll to deliver the record; the run loop is
+    # in steady state after the first callback fires.
+    await received.wait()
     assert tailer.is_running()
 
     await tailer.finalize()
@@ -440,7 +444,7 @@ async def test_finalize_running_drains_capped_backlog(pgn_path, monkeypatch):
     monkeypatch.setattr(pt_mod, "_MAX_DELTA_BYTES_PER_POLL", 200)
 
     pgn_path.write_text(_ONE_GAME + _SECOND_GAME, encoding="utf-8")
-    records, cb = _records_collector()
+    records, cb, _received = _records_collector()
     tailer = PgnTailer(pgn_path, cb, poll_interval=0.05)
     await tailer.start()
 
@@ -454,7 +458,7 @@ async def test_finalize_running_drains_capped_backlog(pgn_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_finalize_paused_no_file_is_noop(pgn_path):
     """No file written, no run loop: finalize should not raise."""
-    records, cb = _records_collector()
+    records, cb, _received = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
     await tailer.finalize()
     assert records == []

@@ -1,0 +1,47 @@
+[Event "Herceg Novi blitz"]
+[Site "Herceg Novi blitz"]
+[Date "1970.04.08"]
+[EventDate "?"]
+[Round "6.2"]
+[Result "1-0"]
+[White "Robert James Fischer"]
+[Black "Tigran Vartanovich Petrosian"]
+[ECO "C18"]
+[WhiteElo "?"]
+[BlackElo "?"]
+[PlyCount "81"]
+
+1. e4 {Notes by Bobby Fischer.} 1... e6 2. d4 d5 3. Nc3 Bb4 4. e5 c5 5. a3
+Bxc3+ 6. bxc3 Qc7 7. Nf3 {I could have played Qg4 but was influenced against it
+because Petrosian as Black had recently beaten Diez Del Corral at Palma de
+Mallorca in this line.} 7... Ne7 8. a4 Bd7 {An interesting idea, Black plays
+his Bishop to c6 the knight's square and his Knight to d7, the Bishop's
+square.} 9. Bd3 Bc6 10. O-O Nd7 11. Ba3 {To prevent 11...Nb6. But clearly 11
+Ng5! offered excellent prospects on the King's flank for White, ie: 11...h6 12
+Qh5 g6 (or 12...O-O? 13 Nh7 Re8 14 Nf6+ gxf 15 Qh6 f5 16 Bg5! and wins) 13 Qh3
+or Qh4.} 11... h6 12. Re1 b6 13. Nd2 $5 {A standard way of indirectly
+protecting the a-Pawn.} 13... Bxa4 $2 {Risky.} 14. dxc5 {Possible also was 14
+Qg4 and if 14...c4 15 Bxc4! dxc4 16 Bxe7 with advantage to White. But a better
+chance for Black is 14...O-O 15 dxc5 b5 16 c6 Nxc6! 17 Bxf8 Rxf8 with
+compensation for the exchange.} 14... bxc5 $2 {I was afraid of 14. . . Nxe5 
+15.cxb6 axb6  16.Bf1  (White is not without some compensation for the Pawn, but best for Black is
+16. . . Bc6!} 15. Qg4 $1 Bc6 16. Qxg7 Rg8 17. Qxh6 Nxe5 18. Bxc5 $2 {Qf4 was
+crushing as after 18. . . c4! (only move) 19 Bf1 Ne7g6 18 Qg5 Black is
+practically in zugwang and white threatens 19 h4 and h5.} 18... d4 19. Be4 dxc3
+20. Bxc6+ N7xc6 $4 {Of course 20. . . Qxc6! 21 Ne4 Nf3+ 22 Kh1 (22 Kf1 Nd2+ 23
+Nxd2 cxd2 wins a piece) Nxe1 23 Rxe1 O-O-O! and Black should win because 24
+Bxe7 is met by 24. . . Qxe4!! and mate in four moves - For 23 Nf6+ Kd8 24 Bxe7+
+Kxe7 25 Nxg8+ Rxg8 26 f3! Nxf3 27 Rxa7+ Kd6 28 Qf4+ Ne5 and Black should win
+after some more checks. If 26 Ra7+ at once Ke8 27 f3 Qc4 mates quickly} 21. Ne4
+O-O-O {21...Nf3+ 22 Kh1 Nxe1 23 Nf6+ and Nxg8 wins.} 22. Red1 {Many other moves
+were more tenacious.} 22... Ng4 $2 {A pleasant surprise; 22. . . Nf3+ 23 Kh1
+(23 Kf1 Nxh2+ Ke2 Qe5 etc. ) 23. . . Rh8! 24 Bd6 Rh6 25 Bc7 Kc7 26 gxf Rdh8
+with good chances for Black.} 23. Qh4 {White plays on Black's weak d6 square
+and a safe King position. White takes over the initiative.} 23... Rxd1+ 24.
+Rxd1 f5 25. Nd6+ Kb8 26. Nb5 Qg7 {or 26...Qa5 27 Qh7!} 27. Bd6+ Kb7 28. Rb1 Kc8
+29. Qg3 {Bg3! was crushing.} 29... Qb7 $2 {. . . Nf6 gave more chances for
+saving the game.} 30. Nxc3 {Maybe Black was playing for traps, ie: 30 Bf4 Rd8!
+and 31 Nd6+? Rxd6 or 31 h3? Qxb5! or 31 Nxc3? Qxb1+ etc. } 30... Qa6 31. h3 {31
+Qf3!} 31... Nf6 32. Qh4 {Qf3 was better.} 32... Nd7 33. Qh7 Rd8 34. Qf7 Qc4 35.
+Rb3 Qd4 {?? ...Nd4!} 36. Qxe6 {The rest is simple enough.} 36... Qf6 37. Qd5
+Nde5 38. Nb5 Qf7 39. Qc5 Nf3+ 40. Rxf3 Kd7 41. Rd3 1-0

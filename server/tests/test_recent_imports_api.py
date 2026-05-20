@@ -145,6 +145,225 @@ def test_import_rejects_oversized_text(client, monkeypatch):
     assert client.get("/game/recent-imports").json()["entries"] == []
 
 
+# ---- Phase 3: import returns and persists stable game_id ----
+
+def test_import_mints_game_id_first_time(client):
+    """First import of unseen content -> response carries game_id; same
+    id is persisted on the store row and matches the live HVE."""
+    r = client.post("/game/import", json={"format": "pgn", "text": SAMPLE_PGN_A})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["game_id"]
+    entries = client.get("/game/recent-imports").json()["entries"]
+    assert entries[0]["game_id"] == body["game_id"]
+
+
+def test_import_dedupes_returns_stored_game_id(client):
+    """Second import of the same bytes -> same game_id returned and
+    the store still holds a single row with that id."""
+    r1 = client.post("/game/import", json={"format": "pgn", "text": SAMPLE_PGN_A})
+    r2 = client.post("/game/import", json={"format": "pgn", "text": SAMPLE_PGN_A})
+    assert r1.json()["game_id"] == r2.json()["game_id"]
+    entries = client.get("/game/recent-imports").json()["entries"]
+    assert len(entries) == 1
+    assert entries[0]["game_id"] == r1.json()["game_id"]
+
+
+def test_import_supplied_game_id_used_when_hash_new(client):
+    """Client-supplied game_id is honored on first import."""
+    supplied = "11111111-2222-3333-4444-555555555555"
+    r = client.post(
+        "/game/import",
+        json={"format": "pgn", "text": SAMPLE_PGN_A, "game_id": supplied},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["game_id"] == supplied
+    entries = client.get("/game/recent-imports").json()["entries"]
+    assert entries[0]["game_id"] == supplied
+
+
+def test_import_supplied_game_id_matching_stored_ok(client):
+    """Re-import with the same id as stored -> 200, stored id reused."""
+    r1 = client.post("/game/import", json={"format": "pgn", "text": SAMPLE_PGN_A})
+    gid = r1.json()["game_id"]
+    r2 = client.post(
+        "/game/import",
+        json={"format": "pgn", "text": SAMPLE_PGN_A, "game_id": gid},
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["game_id"] == gid
+
+
+def test_import_supplied_game_id_mismatch_409(client):
+    """Re-import with a DIFFERENT id than stored -> 409 with both ids."""
+    r1 = client.post("/game/import", json={"format": "pgn", "text": SAMPLE_PGN_A})
+    stored = r1.json()["game_id"]
+    other = "99999999-8888-7777-6666-555555555555"
+    r2 = client.post(
+        "/game/import",
+        json={"format": "pgn", "text": SAMPLE_PGN_A, "game_id": other},
+    )
+    assert r2.status_code == 409, r2.text
+    body = r2.json()
+    assert body["detail"]["code"] == "game_id_mismatch"
+    assert body["detail"]["stored_game_id"] == stored
+    assert body["detail"]["supplied_game_id"] == other
+
+
+def test_edit_commit_changed_position_mints_new_game_id(tmp_path):
+    """commit_edit on changed FEN -> new game_id, stored on the row."""
+    settings = Settings(token="test-token")
+    registry = EngineRegistry(path=tmp_path / "engines.json")
+    e = registry.add(name="MyEngine", path=str(tmp_path / "fake-engine"))
+    registry.select(e.id)
+    app = create_app(settings=settings, engine_registry=registry)
+    app.state.recent_imports = RecentImports.load(root=tmp_path / "imports", cap=5)
+    app.state.hve = HumanVsEngine(
+        engine_path=str(tmp_path / "fake-engine"),
+        bus=app.state.event_bus,
+        openings=getattr(app.state, "openings", None),
+        settings=app.state.settings,
+    )
+    with TestClient(app) as c:
+        c.headers["Authorization"] = "Bearer test-token"
+        r1 = c.post("/game/import", json={"format": "pgn", "text": SAMPLE_PGN_A})
+        gid_before = r1.json()["game_id"]
+        c.post("/game/edit/start", json={}).raise_for_status()
+        edited = "r3kbnr/ppp1pppp/2n5/3p4/3P4/2N5/PPP1PPPP/R3KBNR b Kq - 0 1"
+        r2 = c.post("/game/edit/commit", json={"fen": edited})
+        assert r2.status_code == 200, r2.text
+        gid_after = r2.json()["game_id"]
+        assert gid_after != gid_before
+        # Stored row carries the new id.
+        entries = c.get("/game/recent-imports").json()["entries"]
+        match = [e for e in entries if e["game_id"] == gid_after]
+        assert len(match) == 1
+        assert match[0]["format"] == "fen"
+
+
+def test_edit_commit_unchanged_position_keeps_game_id(tmp_path):
+    """commit_edit on unchanged FEN -> same game_id; no new row."""
+    settings = Settings(token="test-token")
+    registry = EngineRegistry(path=tmp_path / "engines.json")
+    e = registry.add(name="MyEngine", path=str(tmp_path / "fake-engine"))
+    registry.select(e.id)
+    app = create_app(settings=settings, engine_registry=registry)
+    app.state.recent_imports = RecentImports.load(root=tmp_path / "imports", cap=5)
+    app.state.hve = HumanVsEngine(
+        engine_path=str(tmp_path / "fake-engine"),
+        bus=app.state.event_bus,
+        openings=getattr(app.state, "openings", None),
+        settings=app.state.settings,
+    )
+    with TestClient(app) as c:
+        c.headers["Authorization"] = "Bearer test-token"
+        r1 = c.post("/game/import", json={"format": "fen", "text": SAMPLE_FEN})
+        gid_before = r1.json()["game_id"]
+        c.post("/game/edit/start", json={}).raise_for_status()
+        r2 = c.post("/game/edit/commit", json={"fen": SAMPLE_FEN})
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["game_id"] == gid_before
+        # No second row introduced.
+        entries = c.get("/game/recent-imports").json()["entries"]
+        assert len(entries) == 1
+
+
+# ---- Phase 4: tournament Replay path (game_id == pair_id) ----
+
+PAIR_ID_A = "aaaaaaaa-1111-2222-3333-444444444444"
+PAIR_ID_B = "bbbbbbbb-1111-2222-3333-444444444444"
+
+
+def test_tournament_completion_alone_does_not_touch_recents(client):
+    """The recent-imports store is import-driven only. A freshly-built
+    client has no Replays yet -> store is empty (regression guard
+    against future code paths that try to auto-capture tournament
+    games)."""
+    entries = client.get("/game/recent-imports").json()["entries"]
+    assert entries == []
+
+
+def test_tournament_replay_stores_pair_id_as_game_id(client):
+    """Replay POSTs game_id=pair_id; the store row carries pair_id."""
+    r = client.post(
+        "/game/import",
+        json={"format": "pgn", "text": SAMPLE_PGN_A, "game_id": PAIR_ID_A},
+    )
+    assert r.status_code == 200
+    assert r.json()["game_id"] == PAIR_ID_A
+    entries = client.get("/game/recent-imports").json()["entries"]
+    assert len(entries) == 1
+    assert entries[0]["game_id"] == PAIR_ID_A
+
+
+def test_tournament_replay_twice_idempotent(client):
+    """Two Replays of the same finished tournament game -> single row."""
+    body = {"format": "pgn", "text": SAMPLE_PGN_A, "game_id": PAIR_ID_A}
+    r1 = client.post("/game/import", json=body)
+    r2 = client.post("/game/import", json=body)
+    assert r1.json()["game_id"] == PAIR_ID_A
+    assert r2.json()["game_id"] == PAIR_ID_A
+    assert len(client.get("/game/recent-imports").json()["entries"]) == 1
+
+
+def test_tournament_replay_rematch_same_bytes_first_pair_id_wins(client, caplog):
+    """Rematch produces identical PGN bytes -> hash dedupes -> first
+    pair_id wins; second 409s with both ids surfaced."""
+    client.post(
+        "/game/import",
+        json={"format": "pgn", "text": SAMPLE_PGN_A, "game_id": PAIR_ID_A},
+    ).raise_for_status()
+    with caplog.at_level("WARNING"):
+        r = client.post(
+            "/game/import",
+            json={"format": "pgn", "text": SAMPLE_PGN_A, "game_id": PAIR_ID_B},
+        )
+    assert r.status_code == 409, r.text
+    detail = r.json()["detail"]
+    assert detail["stored_game_id"] == PAIR_ID_A
+    assert detail["supplied_game_id"] == PAIR_ID_B
+    # WARN log emitted at the API layer.
+    assert any("game_id assertion failed" in rec.message for rec in caplog.records)
+
+
+# ---- Phase 5: by-id endpoint + game_id in payloads ----
+
+def test_list_includes_game_id(client):
+    r = client.post("/game/import", json={"format": "pgn", "text": SAMPLE_PGN_A})
+    gid = r.json()["game_id"]
+    entries = client.get("/game/recent-imports").json()["entries"]
+    assert len(entries) == 1
+    assert entries[0]["game_id"] == gid
+
+
+def test_get_by_hash_includes_game_id(client):
+    r = client.post("/game/import", json={"format": "pgn", "text": SAMPLE_PGN_A})
+    gid = r.json()["game_id"]
+    h = r.json()["hash"]
+    body = client.get(f"/game/recent-imports/{h}").json()
+    assert body["game_id"] == gid
+
+
+def test_get_by_id_returns_same_as_hash_route(client):
+    r = client.post("/game/import", json={"format": "pgn", "text": SAMPLE_PGN_A})
+    gid = r.json()["game_id"]
+    h = r.json()["hash"]
+    by_hash = client.get(f"/game/recent-imports/{h}").json()
+    by_id = client.get(f"/game/recent-imports/by-id/{gid}").json()
+    # ts can differ if the two GETs land in different ms; compare the
+    # content-bearing fields.
+    assert by_id["hash"] == by_hash["hash"]
+    assert by_id["game_id"] == by_hash["game_id"]
+    assert by_id["format"] == by_hash["format"]
+    assert by_id["text"] == by_hash["text"]
+    assert by_id["summary"] == by_hash["summary"]
+
+
+def test_get_by_id_404_for_unknown(client):
+    r = client.get("/game/recent-imports/by-id/no-such-id")
+    assert r.status_code == 404
+
+
 def test_endpoints_require_auth(tmp_path):
     app = _make_app(tmp_path)
     with TestClient(app) as c:

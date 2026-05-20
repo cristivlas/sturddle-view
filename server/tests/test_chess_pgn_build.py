@@ -195,6 +195,8 @@ def _load_snapshot(name: str) -> str:
 def test_build_pgn_matches_startpos_snapshot():
     # Matches test_autosave_startpos_short_game_matches_snapshot in P1.
     # Seed: e2e4 e7e5 (engine). Human plays g1f3, then resigns (0-1).
+    # eval_history is all-None: human-only game; cutechess output emits
+    # time-only tokens per ply (and drops [%clk]).
     text = build_pgn(
         start_fen=None,
         moves_uci=["e2e4", "e7e5", "g1f3"],
@@ -205,12 +207,13 @@ def test_build_pgn_matches_startpos_snapshot():
         ],
         final_clocks=(302.0, 300.0),
         headers={
-            "Event": "Sturddle View — Human vs Engine",
+            "Event": "Sturddle View -- Human vs Engine",
             "Site": "Sturddle View",
         },
         result="0-1",
         termination="resignation",
         time_control=(300, 2),
+        eval_history=[None, None, None],
     )
     actual = _strip_run_varying(text)
     expected = _load_snapshot("startpos_short_game.pgn")
@@ -229,12 +232,13 @@ def test_build_pgn_matches_custom_fen_snapshot():
         ],
         final_clocks=(302.0, 300.0),
         headers={
-            "Event": "Sturddle View — Human vs Engine",
+            "Event": "Sturddle View -- Human vs Engine",
             "Site": "Sturddle View",
         },
         result="0-1",
         termination="resignation",
         time_control=(300, 2),
+        eval_history=[None, None, None],
     )
     actual = _strip_run_varying(text)
     expected = _load_snapshot("custom_fen_game.pgn")
@@ -243,11 +247,13 @@ def test_build_pgn_matches_custom_fen_snapshot():
 
 def test_build_pgn_matches_seeded_clock_snapshot():
     # Seed: e2e4 e7e5 g1f3 b8c6. Human plays f1c4 then resigns.
-    # clock_history has 4 seeded entries + one entry from the live move.
+    # clock_history has 4 seeded entries + one snapshot taken before the
+    # live f1c4 move (matches what _maybe_save_pgn sees at autosave time).
     clock_history = [
         (300.0, 300.0),
         (300.0, 298.0),
         (297.0, 298.0),
+        (297.0, 295.0),
         (297.0, 295.0),
     ]
     text = build_pgn(
@@ -256,12 +262,13 @@ def test_build_pgn_matches_seeded_clock_snapshot():
         clock_history=clock_history,
         final_clocks=(299.0, 295.0),
         headers={
-            "Event": "Sturddle View — Human vs Engine",
+            "Event": "Sturddle View -- Human vs Engine",
             "Site": "Sturddle View",
         },
         result="0-1",
         termination="resignation",
         time_control=(300, 2),
+        eval_history=[None] * 5,
     )
     actual = _strip_run_varying(text)
     expected = _load_snapshot("seeded_clock_history_game.pgn")

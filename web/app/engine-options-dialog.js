@@ -6,6 +6,7 @@
 // profile) so the user sees what the new launch profile actually exposes.
 
 import { showDialog, pickFile, toast, reportError } from "./dialogs.js";
+import { mqNarrowDialog } from "./breakpoints.js";
 
 const PATH_NAME_RE = /(Path|File|Dir)$/i;
 const REFRESH_BTN_LABEL = "Refresh";
@@ -342,7 +343,7 @@ export function showEngineOptionsDialog({ engine, api, probeError = null }) {
       const tabs = document.createElement("wa-tab-group");
       // Side tabs on desktop, top tabs on narrow viewports — the rail
       // eats too much horizontal space on phones.
-      const isNarrow = matchMedia("(max-width: 480px)").matches;
+      const isNarrow = mqNarrowDialog.matches;
       tabs.placement = isNarrow ? "top" : "start";
       tabs.classList.add("engine-settings-tabs", "dialog-side-tabs");
 

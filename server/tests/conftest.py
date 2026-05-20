@@ -1,11 +1,87 @@
 """Test isolation: keep tests off the user's real ~/.config files."""
 from __future__ import annotations
 
+import contextlib
+import socket
+import stat
+import sys
+import threading
+from collections.abc import Iterator
+from pathlib import Path
+
 import pytest
 import pytest_asyncio
 
 
 SNAPSHOT_UPDATE_FLAG = "--snapshot-update"
+_UVICORN_STARTUP_TIMEOUT = 10.0
+_UVICORN_SHUTDOWN_TIMEOUT = 10.0
+
+
+def make_fake_uci(root: Path, name: str) -> str:
+    """Write a minimal UCI stub engine to ``root`` and return its path.
+
+    The stub responds to ``uci``/``isready``/``quit`` only; it does NOT
+    play moves. Tests that need a move-playing fake should override
+    locally."""
+    py = root / f"{name}.py"
+    py.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "while True:\n"
+        "    line = sys.stdin.readline()\n"
+        "    if not line: break\n"
+        "    line = line.strip()\n"
+        f"    if line == 'uci': sys.stdout.write('id name {name}\\nuciok\\n'); sys.stdout.flush()\n"
+        "    elif line == 'isready': sys.stdout.write('readyok\\n'); sys.stdout.flush()\n"
+        "    elif line == 'quit': break\n"
+    )
+    if sys.platform.startswith("win"):
+        wrapper = root / f"{name}.cmd"
+        wrapper.write_text(f'@"{sys.executable}" "{py}" %*\r\n')
+        return str(wrapper)
+    py.chmod(py.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return str(py)
+
+
+def free_port() -> int:
+    """Allocate an ephemeral TCP port on localhost."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@contextlib.contextmanager
+def run_uvicorn(app, *, port: int | None = None) -> Iterator[tuple[str, object]]:
+    """Run a uvicorn server in a background thread.
+
+    Startup waits on a ``threading.Event`` set by the server inside its
+    own loop -- no sleep-polling. Teardown signals ``should_exit`` and
+    lets uvicorn run its full lifespan shutdown (so app.state.hve
+    cleanup, etc. actually runs) before the loop is closed. The
+    ``page``/``make_page`` fixtures close Playwright contexts before
+    this teardown runs, so WS connections drain cleanly."""
+    import uvicorn
+
+    from sturddle_view._uvicorn_signal import make_signalling_server
+
+    if port is None:
+        port = free_port()
+    config = uvicorn.Config(
+        app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto"
+    )
+    s, started = make_signalling_server(config)
+    thread = threading.Thread(target=s.run, daemon=True)
+    thread.start()
+    if not started.wait(timeout=_UVICORN_STARTUP_TIMEOUT):
+        s.should_exit = True
+        thread.join(timeout=_UVICORN_SHUTDOWN_TIMEOUT)
+        raise RuntimeError("uvicorn did not start within timeout")
+    try:
+        yield f"http://127.0.0.1:{port}", s
+    finally:
+        s.should_exit = True
+        thread.join(timeout=_UVICORN_SHUTDOWN_TIMEOUT)
 
 
 def pytest_addoption(parser):
@@ -22,9 +98,10 @@ def pytest_addoption(parser):
 async def browser():
     """One Chromium instance shared across the whole test session.
 
-    Each test must call ``browser.new_context()`` for isolation; closing
-    the context (not the browser) is the test's responsibility.
-    Yields None when Playwright/Chromium is not installed — each e2e
+    Use the ``page`` or ``make_page`` fixtures rather than calling
+    ``browser.new_context()`` directly -- those guarantee synchronous
+    context teardown so the next test starts clean.
+    Yields None when Playwright/Chromium is not installed -- each e2e
     test calls pytest.skip() on None.
     """
     try:
@@ -40,6 +117,43 @@ async def browser():
             return
         yield b
         await b.close()
+
+
+@pytest_asyncio.fixture
+async def make_page(browser):
+    """Factory yielding a (ctx, page) tuple at the requested viewport.
+
+    Tracks every context it creates so teardown closes them all in
+    reverse order before the next test begins -- prevents WS leaks from
+    bleeding into the next test's fixtures."""
+    if browser is None:
+        pytest.skip("chromium not installed")
+    contexts = []
+
+    async def _make(viewport=None, **ctx_kwargs):
+        kwargs = dict(ctx_kwargs)
+        if viewport is not None:
+            kwargs["viewport"] = viewport
+        ctx = await browser.new_context(**kwargs)
+        contexts.append(ctx)
+        page = await ctx.new_page()
+        return ctx, page
+
+    try:
+        yield _make
+    finally:
+        for ctx in reversed(contexts):
+            try:
+                await ctx.close()
+            except Exception:
+                pass
+
+
+@pytest_asyncio.fixture
+async def page(make_page):
+    """Default Playwright page at the test's natural viewport (Playwright default)."""
+    _ctx, p = await make_page()
+    yield p
 
 
 @pytest.fixture(autouse=True)

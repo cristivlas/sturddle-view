@@ -9,7 +9,7 @@ import { isPlayInProgress, isViewing, isAnalyzing, getViewingHash, getViewingSum
 import { confirmReplaceViewedGame } from "./import-position-dialog.js";
 import { flashWindow } from "./wb-utils.js";
 
-async function replayTournamentGame({ tournamentId, gameN, token }) {
+async function replayTournamentGame({ tournamentId, gameN, token, pairId = null }) {
   const headers = { "Content-Type": "application/json" };
   let pgn, pgnHash, pgnSummary;
   try {
@@ -33,8 +33,14 @@ async function replayTournamentGame({ tournamentId, gameN, token }) {
     if (!ok) return;
   } else if (isViewing()) {
     if (pgnHash && pgnHash === getViewingHash()) {
-      toast("Viewing match.");
-      window.dispatchEvent(new CustomEvent("sturddle:activate-perspective", { detail: { id: "play" } }));
+      // Same game already viewed: switch perspective and surface a
+      // toast carrying the pair id. The toast doubles as a live
+      // invariant check for the game_id-unification refactor -- if
+      // the value looks wrong, the unification is broken.
+      window.dispatchEvent(new CustomEvent("sturddle:activate-perspective", {
+        detail: { id: "play" },
+      }));
+      if (pairId) toast(`Viewing ${pairId}`);
       return;
     }
     const ok = await confirmReplaceViewedGame({
@@ -46,18 +52,35 @@ async function replayTournamentGame({ tournamentId, gameN, token }) {
     });
     if (!ok) return;
   }
+  let importedGameId = null;
   try {
+    const body = { text: pgn, format: "pgn" };
+    if (pairId) body.game_id = pairId;
     const res = await fetch("/game/import", {
       method: "POST",
       headers,
-      body: JSON.stringify({ text: pgn, format: "pgn" }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`import -> ${res.status}`);
+    const data = await res.json();
+    importedGameId = data?.game_id ?? null;
   } catch (e) {
     reportError(null, "Replay: import failed", e);
     return;
   }
+  // Server-side invariant: when the client supplied a game_id, the
+  // import response must echo it back exactly. Mismatch is a unification
+  // bug, not a race -- surface it loudly.
+  if (pairId && importedGameId && importedGameId !== pairId) {
+    reportError(
+      null,
+      "Replay: server returned game_id != pair_id (unification bug)",
+      new Error(`stored=${importedGameId} pair=${pairId}`),
+    );
+    return;
+  }
   window.dispatchEvent(new CustomEvent("sturddle:activate-perspective", { detail: { id: "play" } }));
+  if (importedGameId) toast(`Viewing ${importedGameId}`);
 }
 
 // Flip to true to re-enable verbose [WATCH] tracing for debugging
@@ -118,10 +141,11 @@ function avoidOverlap(wb, avoid, top, left, cascade = 0) {
   }
 }
 
-// Fixed-row totals are used by the onresize clamp + board sizing in
-// constrainAndResize. Compact mode drops the .lg-pv rows.
+// Total fixed-row height used by the WinBox onresize max-height clamp
+// (keeps the window from growing taller than the board can usefully fill).
 const FIXED_FULL = LIVE_PV_H * 2 + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 6;
-const FIXED_COMPACT = LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 4;
+// Below this body height, drop the pv rows (toggled via .lg-compact).
+const LIVE_COMPACT_THRESHOLD = 280;
 
 // Shared construction for live + frozen windows. Builds DOM, mounts the
 // board, creates the WinBox, wires the result-overlay/replay-button
@@ -130,7 +154,7 @@ const FIXED_COMPACT = LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 4;
 // cleans up its own resources after invoking `disposeShared`.
 function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token, tournamentId, top, left, boardStyle, avoidRect, initialRect, min, flash, variantClass }) {
   const body = document.createElement("div");
-  body.className = "wb-livegame";
+  body.className = "wb-livegame lg-measuring";
   body.innerHTML = `
     <div class="lg-pv lg-pv-top muted"></div>
     <div class="lg-eval lg-eval-top">
@@ -254,7 +278,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
       replayInFlight = true;
       replayBtnEl.disabled = true;
       try {
-        await replayTournamentGame({ tournamentId, gameN: reconciledGameN, token });
+        await replayTournamentGame({ tournamentId, gameN: reconciledGameN, token, pairId: gameId });
       } finally {
         replayInFlight = false;
         replayBtnEl.disabled = false;
@@ -263,27 +287,31 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   }
   if (flash && !min) requestAnimationFrame(() => flashWindow(wb));
 
-  // Compute target board size deterministically from the body's
-  // dimensions and the known fixed-row heights. Reading the board
-  // host's measured size during a resize creates a feedback loop with
-  // cm-chessboard's internal SVG sizing, which is what produced the
-  // narrow-board-after-restore bug.
+  // Compact toggle hides the pv rows when vertical room is tight. The
+  // board itself is sized by CSS (flex: 1 1 0 + aspect-ratio: 1 in
+  // .lg-board); we only read its measured width to publish to cm-chessboard
+  // and to clamp the clock rows below the board. .lg-measuring hides the
+  // clocks until the first real measurement lands.
   function constrainAndResize() {
-    const compact = body.clientHeight < 280;
-    body.classList.toggle("lg-compact", compact);
-    const fixed = compact ? FIXED_COMPACT : FIXED_FULL;
-    const sz = Math.max(0, Math.min(body.clientHeight - fixed, body.clientWidth));
-    boardHost.style.width = `${sz}px`;
-    boardHost.style.height = `${sz}px`;
-    for (const el of [clockTopEl, clockBottomEl]) {
-      el.style.width = `${sz}px`;
-      el.style.margin = "0 auto";
+    body.classList.toggle("lg-compact", body.clientHeight < LIVE_COMPACT_THRESHOLD);
+    const sz = boardHost.clientWidth;
+    if (sz > 0) {
+      body.style.setProperty("--lg-board-w", `${sz}px`);
+      body.classList.remove("lg-measuring");
     }
     board.forceResize();
   }
+  // Observe both: body changes drive compact-mode toggle; boardHost
+  // changes catch shrinks of the board's flex slot. Eval/pv rows
+  // reserve their populated height in CSS so the board doesn't
+  // snap-shrink on the first event.
   const ro = new ResizeObserver(constrainAndResize);
   ro.observe(body);
-  requestAnimationFrame(constrainAndResize);
+  ro.observe(boardHost);
+  // Initial pass synchronously (body is already attached by WinBox.mount)
+  // so --lg-board-w is set before the first paint -- otherwise the clock
+  // rows briefly render at body width before the ResizeObserver fires.
+  constrainAndResize();
 
   // Result banner. Late "*" downgrades after a real result are ignored
   // (per-pair WS + game_reconciled can arrive in either order).

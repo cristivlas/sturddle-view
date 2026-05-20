@@ -38,6 +38,26 @@ def hve(tmp_path):
     return h, tmp_path
 
 
+_UUID_RE = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+
+
+async def test_new_game_assigns_full_uuid_game_id(hve):
+    import re
+    h, _ = hve
+    gid = await h.new_game(human_white=True, tc=TimeControl(60.0, 0.0))
+    assert re.match(_UUID_RE, gid)
+    assert h._game_id == gid
+
+
+async def test_enter_view_mode_assigns_full_uuid_game_id(hve):
+    import re
+    h, _ = hve
+    gid = await h.enter_view_mode(ViewModeParams(
+        start_fen=None, moves_uci=["e2e4"], clock_history=None,
+    ))
+    assert re.match(_UUID_RE, gid)
+
+
 async def test_enter_view_mode_lands_at_first_ply(hve):
     h, _ = hve
     await h.enter_view_mode(ViewModeParams(
@@ -95,8 +115,6 @@ async def test_play_modes_rejected_in_view(hve):
         await h.takeback()
     with pytest.raises(ModeConflictError):
         await h.pause()
-    with pytest.raises(ModeConflictError):
-        await h.switch_sides()
     with pytest.raises(ModeConflictError):
         await h.resign()
 

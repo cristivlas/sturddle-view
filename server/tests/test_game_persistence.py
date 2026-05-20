@@ -128,6 +128,7 @@ async def test_persist_on_takeback(tmp_path):
         async with hve._lock:
             hve._clock.append_snapshot()
             hve._board.push(chess.Move.from_uci("e7e5"))
+            hve._eval_history.append(None)
             await hve._persist()
     hve._engine_to_move = _fake_engine_reply
     await hve.submit_move("e2e4")
@@ -162,8 +163,10 @@ async def test_clear_on_natural_game_over(tmp_path):
             await hve.submit_move(uci)
         else:
             hve._board.push(chess.Move.from_uci(uci))
+            hve._eval_history.append(None)
     # White just played g2g4 — black to move with mate-in-1 available.
     hve._board.push(chess.Move.from_uci("d8h4"))
+    hve._eval_history.append(None)
     assert hve._board.is_checkmate()
     async with hve._lock:
         hve._finalize_game_locked()
@@ -204,6 +207,7 @@ async def test_persist_after_engine_move(tmp_path):
         async with hve._lock:
             hve._clock.append_snapshot()
             hve._board.push(chess.Move.from_uci("e7e5"))
+            hve._eval_history.append(None)
             await hve._persist()
     hve._engine_to_move = _fake_engine_reply
     await hve.submit_move("e2e4")

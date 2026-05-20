@@ -51,9 +51,19 @@
   --wa-color-neutral-fill-loud: #3a3d44;
   --wa-color-neutral-on-loud: #e8e8e8;
   --wa-color-overlay-modal: rgb(0 0 0 / 0.45);
+
+  /* Breakpoints. Expressed in rem so they scale with browser font-size and
+     remain meaningful under zoom. JS reads these via getComputedStyle. */
+  --bp-narrow-dialog: 30rem;  /* 480px @ default font */
+  --bp-mobile:        40rem;  /* 640px @ default font */
+  --bp-wide:          93.75rem; /* 1500px @ default font */
 }
 
-html { font-size: 100%; }
+/* Clamp the root font-size so the layout stays usable under extreme
+   browser font-size preferences. `1em` here resolves to the user's
+   browser default (16px unless overridden in chrome://settings/fonts),
+   so the user's preference still flows through within the bounds. */
+html { font-size: clamp(14px, 1em, 24px); }
 :root { --wa-font-size-scale: 1; }
 
 a { color: var(--wa-color-brand-70); }
@@ -301,10 +311,10 @@ svg.cm-chessboard {
 html, body { height: 100%; }
 body { display: flex; flex-direction: column; }
 main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
-@media (max-width: 800px), (max-height: 700px) {
+@media (max-width: 640px) {
   main { overflow-y: auto; }
 }
-@media (max-width: 800px) {
+@media (max-width: 640px) {
   .desktop-only { display: none !important; }
   header h1 { display: none; }
 }
@@ -695,7 +705,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   filter: grayscale(0.5) brightness(0.85);
 }
 
-@media (max-width: 800px), (max-height: 700px) {
+@media (max-width: 640px) {
   /* !important needed: .play-dock-left.dock-single below has higher
      specificity than the bare class selector and would otherwise win. */
   .play-dock-left { display: none !important; }
@@ -714,6 +724,8 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
     flex-direction: row;
     justify-content: center;
     padding: 6px 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--wa-color-border-loud, #353841);
   }
   .ribbon-btn { width: 44px; height: 44px; }
   .ribbon-btn wa-icon { font-size: 1.125rem; }
@@ -826,7 +838,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   box-sizing: border-box;
 }
 .game-view-engine .engine-summary {
-  background: var(--wa-color-surface-raised);
+  background: transparent;
   display: grid;
   grid-template-columns: repeat(3, minmax(8ch, auto));
   align-items: start;
@@ -844,8 +856,8 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   font-size: 0.875rem;
   font-weight: 500;
   color: var(--accent);
+  min-height: 1lh;
 }
-.game-view-engine .engine-score:empty { display: none; }
 .game-view-engine .engine-depth,
 .game-view-engine .engine-nodes,
 .game-view-engine .engine-nps,
@@ -854,6 +866,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   font-size: 0.875rem;
   font-weight: 500;
   color: var(--fg);
+  min-height: 1lh;
 }
 .game-view-engine .engine-pv {
   font-family: ui-monospace, SFMono-Regular, monospace;
@@ -976,7 +989,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   flex-wrap: wrap;
 }
 .move-list {
-  background: var(--wa-color-surface-raised);
+  background: transparent;
   padding: 0;
   max-height: 15rem;
   overflow-y: auto;
@@ -1387,6 +1400,7 @@ wa-dialog::part(header-actions) { gap: 6px; }
   font-size: 0.8125rem;
 }
 .replace-view-summary {
+  font-size: 0.8125rem;
   word-break: break-word;
 }
 .replace-view-warning {
@@ -1415,6 +1429,9 @@ wa-dialog wa-tab-group { min-width: 0; }
    Settings is now form-shaped only, so default WA spacing fits naturally. */
 /* Allow popovers/dropdowns inside dialogs to escape clipping ancestors. */
 wa-dialog::part(body) { overflow: visible !important; }
+/* Suppress focus-visible ring on the scrollable body div; it flashes amber
+   briefly on open (showModal triggers focus before any user gesture). */
+wa-dialog::part(body):focus-visible { outline: none; }
 wa-dialog::part(dialog) {
   overflow: visible !important;
 }
@@ -1751,7 +1768,7 @@ wa-dialog wa-tab-panel > .settings-tournament-tpl-mount { margin-top: 24px; }
    can still escape the clipping ancestors). */
 wa-dialog::part(body) {
   overflow-y: auto !important;
-  max-height: calc(var(--dialog-height, 80vh) - 64px);
+  max-height: calc(var(--dialog-height, 80vh) - 4rem);
 }
 .tournaments-empty {
   display: flex; align-items: center; justify-content: center;
@@ -1843,7 +1860,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .tournaments-list {
   list-style: none; padding: 0; margin: 0;
   display: flex; flex-direction: column; gap: 8px;
-  max-height: calc(100vh - 240px); overflow-y: auto;
+  max-height: calc(100dvh - 15rem); overflow-y: auto;
   padding-right: 4px;
   outline: none;
 }
@@ -2279,12 +2296,25 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-livegame .clock-row .clock-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .wb-livegame.lg-compact .lg-pv { display: none; }
 .wb-livegame .lg-board {
-  flex: 0 0 auto;
+  flex: 1 1 0;
+  min-height: 0;
   align-self: center;
+  aspect-ratio: 1;
+  max-width: 100%;
   display: flex; align-items: center; justify-content: center;
   overflow: hidden;
   position: relative;
 }
+/* Clocks match the board's measured width and center under it; preserves
+   the prior JS-driven behavior. JS publishes --lg-board-w after sizing
+   and removes .lg-measuring once the first measurement has been applied,
+   so clocks don't flash at full body width on initial spawn. */
+.wb-livegame .clock-row {
+  align-self: center;
+  width: 100%;
+  max-width: var(--lg-board-w, 100%);
+}
+.wb-livegame.lg-measuring .clock-row { visibility: hidden; }
 .wb-livegame .lg-result-overlay {
   position: absolute;
   left: 0; right: 0;
@@ -2325,13 +2355,18 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-livegame .lg-eval {
   display: flex; gap: 8px; align-items: baseline;
   font-family: var(--wa-font-family-code); font-size: 0.8125rem;
-  min-height: 1em; flex-shrink: 0;
+  /* Reserve the populated row height so the board doesn't snap-shrink
+     when the first eval event arrives. 1.4 line-height matches the
+     rendered row; line-height auto + padding pushed actual height past
+     a 1em reserve. */
+  min-height: 1.4em; line-height: 1.4; flex-shrink: 0;
 }
 .wb-livegame .lg-eval-score { color: var(--accent); font-weight: 500; }
 .wb-livegame .lg-pv {
   font-family: var(--wa-font-family-code); font-size: 0.6875rem;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  min-height: 1em; flex-shrink: 0;
+  /* Match populated row height -- see .lg-eval note above. */
+  min-height: 1.4em; line-height: 1.4; flex-shrink: 0;
 }
 .wb-livegame .lg-pv-bottom { padding-bottom: 2px; }
 

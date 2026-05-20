@@ -1365,19 +1365,22 @@ def test_real_pgn_fixture_leader_elo_matches_ordo():
 
 
 def test_read_game_record_returns_hash_and_summary():
-    import hashlib
+    from sturddle_view.play.canonical_hash import canonical_hash
     fixture = Path(__file__).parent / "fixtures" / "sample_50.pgn"
     rec = read_game_record(fixture, 1)
     assert rec is not None
-    # hash is SHA-256 of the stripped pgn field -- self-consistent so the
-    # tournament replay client can POST rec["pgn"] to /game/import and get
-    # the same hash back (both sides use python-chess serialized form).
-    expected_hash = hashlib.sha256(rec["pgn"].strip().encode("utf-8")).hexdigest()
-    assert rec["hash"] == expected_hash
+    # rec["hash"] must equal canonical_hash(rec["pgn"]) so the tournament
+    # replay client can POST rec["pgn"] to /game/import and get the same
+    # hash back. Regression: prior to canonical hashing this used raw
+    # sha256 on both sides; after canonicalization both sides must agree
+    # on the canonical form.
+    assert rec["hash"] == canonical_hash(rec["pgn"], "pgn")
     # summary is a structured dict; white/black match the engine headers
     s = rec["summary"]
     assert s["white"] == rec["engine_white"] and s["black"] == rec["engine_black"]
     # result mirrors rec; _get_game_offsets only indexes decisive games
     assert s["result"] == rec["result"]
+
+
 
 

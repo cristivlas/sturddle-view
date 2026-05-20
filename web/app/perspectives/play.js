@@ -4,7 +4,7 @@
 
 import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, openSettings, reportError, toast } from "../dialogs.js";
-import { showImportPositionDialog, confirmReplaceViewedGame } from "../import-position-dialog.js";
+import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, setDockContainer, isMobileLayout } from "../play-debug-windows.js";
 import {
   setCommentaryDockContainer,
@@ -139,6 +139,9 @@ export const playPerspective = {
             <button id="edit-pos" class="ribbon-btn" aria-label="Edit position" title="Edit position">
               <wa-icon name="pencil"></wa-icon>
             </button>
+            <button id="save-pgn" class="ribbon-btn desktop-only" aria-label="Save game as PGN" title="Save PGN">
+              <wa-icon name="download"></wa-icon>
+            </button>
             <span class="ribbon-sep" aria-hidden="true"></span>
             <button id="takeback" class="ribbon-btn" disabled aria-label="Take back" title="Take back">
               <wa-icon name="rotate-left"></wa-icon>
@@ -174,6 +177,9 @@ export const playPerspective = {
             </button>
             <button id="view-edit" class="ribbon-btn" aria-label="Edit position" title="Edit position">
               <wa-icon name="pencil"></wa-icon>
+            </button>
+            <button id="view-save-pgn" class="ribbon-btn desktop-only" aria-label="Save game as PGN" title="Save PGN">
+              <wa-icon name="download"></wa-icon>
             </button>
             <span class="ribbon-sep" aria-hidden="true"></span>
             <button id="view-first" class="ribbon-btn" aria-label="First move" title="First move">
@@ -273,6 +279,8 @@ export const playPerspective = {
     const viewAnalyzeBtn = root.querySelector("#view-analyze");
     const viewPlayFromHereBtn = root.querySelector("#view-play-from-here");
     const viewEditBtn = root.querySelector("#view-edit");
+    const savePgnBtn = root.querySelector("#save-pgn");
+    const viewSavePgnBtn = root.querySelector("#view-save-pgn");
     const editPosBtn = root.querySelector("#edit-pos");
     const editRibbon = root.querySelector("#edit-controls");
     const editSideBtn = root.querySelector("#edit-side");
@@ -344,6 +352,11 @@ export const playPerspective = {
     // Settings cache (refreshed on settings-changed).
     let allowTakeback = true;
     let showPgnComments = true; // view-mode commentary window
+    // True only while play->view->edit is in flight. Opening the dock
+    // mid-transition fires a seeding /view/goto with the stale (pre-flip)
+    // viewCursor=0, clobbering the live-position cursor the server lands
+    // at via view_last(). Cleared in _onServerEditingStop.
+    let suppressCommentsForEditTransition = false;
     const commentsHost = root.querySelector(".play-comments-host");
     setCommentaryDockContainer(commentsHost);
     let lastViewComment = null;
@@ -355,7 +368,8 @@ export const playPerspective = {
     });
     function syncCommentsVisibility() {
       if (!commentsHost) return;
-      const shouldShow = viewing && showPgnComments && !isMobileLayout();
+      const shouldShow = viewing && showPgnComments && !isMobileLayout()
+        && !suppressCommentsForEditTransition;
       const open = isCommentaryOpen();
       if (shouldShow) {
         const wasOpen = open;
@@ -501,6 +515,7 @@ export const playPerspective = {
         setDisabled(viewBackBtn, analyzing || atStart);
         setDisabled(viewForwardBtn, analyzing || atEnd);
         setDisabled(viewLastBtn, analyzing || atEnd);
+        setDisabled(viewSavePgnBtn, viewTotalPlies === 0);
         // Play-from-here is rejected at game-over plies (checkmate /
         // stalemate / draw). Backed by a backend guard that prevents
         // half-cleared state if the UI is bypassed.
@@ -529,6 +544,7 @@ export const playPerspective = {
         takebackBtn,
         analyzing || gameOver || !allowTakeback || movesPlayed === 0,
       );
+      setDisabled(savePgnBtn, movesPlayed === 0);
       setDisabled(switchSidesBtn, analyzing || gameOver || !resignAvailable);
       setDisabled(resignBtn, paused || analyzing || gameOver || !resignAvailable);
       // Analysis is reachable only from a paused game (and to stop, while
@@ -718,10 +734,19 @@ export const playPerspective = {
     }
 
     const onNewGame = async () => {
-      if (!await _confirmDiscardActiveGame({
-        message: "Cancel the game in progress and start a new one?",
-        okLabel: "New game",
-      })) return;
+      if (_playInProgress) {
+        if (!await _confirmDiscardActiveGame({
+          message: "Cancel the game in progress and start a new one?",
+          okLabel: "New game",
+        })) return;
+      } else {
+        const ok = await confirmDiscardViewedGame({
+          viewing,
+          currentSummary: _viewingSummary,
+          analysisRunning: analyzing,
+        });
+        if (!ok) return;
+      }
       try {
         view.setGameId(null);
         const r = await ctx.api("POST", "/game/new", {});
@@ -759,6 +784,39 @@ export const playPerspective = {
       }
     };
 
+    const onSavePgn = async () => {
+      const needsPause = !viewing && !paused && !gameOver && resignAvailable;
+      if (needsPause) {
+        try { await ctx.api("POST", "/game/pause", {}); } catch (e) {
+          reportError(ctx, "Save PGN failed", e);
+          return;
+        }
+      }
+      try {
+        const r = await fetch("/game/pgn");
+        if (!r.ok) {
+          const detail = await r.text();
+          throw new Error(`GET /game/pgn -> ${r.status} ${detail}`);
+        }
+        const blob = await r.blob();
+        const cd = r.headers.get("Content-Disposition") || "";
+        const match = cd.match(/filename="([^"]+)"/);
+        const filename = match ? match[1] : "game.pgn";
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        reportError(ctx, "Save PGN failed", e);
+      } finally {
+        if (needsPause) {
+          try { await ctx.api("POST", "/game/resume", {}); } catch (_) { /* best-effort */ }
+        }
+      }
+    };
+
     let takebackPending = false;
     const onTakeback = async () => {
       if (takebackPending) return;
@@ -774,7 +832,7 @@ export const playPerspective = {
 
     const onImport = async () => {
       if (!await _confirmDiscardActiveGame({
-        message: "Cancel the current game and import a new game or position?",
+        message: "Cancel the current game and import another?",
         okLabel: "Import",
       })) return;
       // Dialog validates (parse errors surface inline) but does not import.
@@ -782,7 +840,7 @@ export const playPerspective = {
       if (!result) return;
       // Same game already in view -- stay put, no re-import needed.
       if (viewing && result.hash && result.hash === _viewingHash) {
-        toast("Viewing match.");
+        if (viewingGameId) toast(`Viewing ${viewingGameId}`);
         return;
       }
       // Different game while viewing -- confirm before replacing.
@@ -837,8 +895,15 @@ export const playPerspective = {
       refreshButtons();
     }
 
+    function _clearEditTransitionSuppression() {
+      if (!suppressCommentsForEditTransition) return;
+      suppressCommentsForEditTransition = false;
+      syncCommentsVisibility();
+    }
+
     function _onServerEditingStop() {
       view.exitEditMode();
+      _clearEditTransitionSuppression();
       refreshButtons();
     }
 
@@ -851,11 +916,16 @@ export const playPerspective = {
           message: "Cancel the game in progress and edit the position?",
           okLabel: "Edit position",
         })) return;
+        // Suppress the commentary dock for the duration of the transient
+        // play->view->edit flip. Without this, syncCommentsVisibility
+        // races view_last() and resets the cursor to 0.
+        suppressCommentsForEditTransition = true;
         try {
           const r = await ctx.api("POST", "/game/view/start", {});
           view.setGameId(r.game_id);
           await ctx.api("POST", "/game/sync", {});
         } catch (e) {
+          _clearEditTransitionSuppression();
           reportError(ctx, "Edit position failed", e);
           return;
         }
@@ -867,11 +937,15 @@ export const playPerspective = {
           cancelLabel: "Keep analyzing",
           destructive: true,
         });
-        if (!ok) return;
+        if (!ok) {
+          _clearEditTransitionSuppression();
+          return;
+        }
       }
       try {
         await ctx.api("POST", "/game/edit/start", {});
       } catch (e) {
+        _clearEditTransitionSuppression();
         reportError(ctx, "Edit position failed", e);
       }
     }
@@ -1112,6 +1186,8 @@ export const playPerspective = {
     editFlipBtn.addEventListener("click", onViewFlip);
     viewAnalyzeBtn.addEventListener("click", onAnalyze);
     viewEditBtn.addEventListener("click", onViewEditPosition);
+    savePgnBtn?.addEventListener("click", onSavePgn);
+    viewSavePgnBtn?.addEventListener("click", onSavePgn);
     viewPlayFromHereBtn.addEventListener("click", onPlayFromHere);
     editSideBtn.addEventListener("click", onEditSide);
     editSideTogglePill.addEventListener("click", onEditSideToggle);

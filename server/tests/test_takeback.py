@@ -42,17 +42,18 @@ def hve(monkeypatch):
     return h
 
 
-async def _engine_reply(h: HumanVsEngine, uci: str) -> None:
+async def _engine_reply(h: HumanVsEngine, uci: str, score: dict | None = None) -> None:
     """Mimic the post-search portion of _think_and_play for one move.
 
     Real `_think_and_play` snapshots clocks, consumes time, pushes the move,
-    and publishes. We do exactly that.
+    appends to eval_history, and publishes. We do exactly that.
     """
     move = chess.Move.from_uci(uci)
     async with h._lock:
         h._clock.history.append((h._clock.white_time, h._clock.black_time))
         h._consume_turn_time()
         h._board.push(move)
+        h._eval_history.append(score)
         await h._publish_board()
         await h._publish_clock()
 

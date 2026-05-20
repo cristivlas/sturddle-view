@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import os
 import threading
-import time
 
 import uvicorn
 from platformdirs import user_data_dir
 
 from . import APP_NAME
+from ._uvicorn_signal import make_signalling_server
 from .config import Settings
+
+_SERVER_STARTUP_TIMEOUT = 5.0
+_SERVER_SHUTDOWN_TIMEOUT = 5.0
 
 
 def show_error(title: str, message: str) -> None:
@@ -47,16 +50,15 @@ def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> N
         log_config=None,
         access_log=False,
     )
-    server = uvicorn.Server(config)
 
+    server, started = make_signalling_server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
 
-    # Wait briefly for the server to come up before opening the window.
-    for _ in range(50):
-        if server.started:
-            break
-        time.sleep(0.05)
+    if not started.wait(timeout=_SERVER_STARTUP_TIMEOUT):
+        server.should_exit = True
+        thread.join(timeout=_SERVER_SHUTDOWN_TIMEOUT)
+        raise SystemExit("server did not start within timeout")
 
     window_host = "127.0.0.1" if host == "0.0.0.0" else host
     # Use the cookie handshake: /auth validates the token, sets an HttpOnly
@@ -66,4 +68,4 @@ def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> N
     webview.start(private_mode=False, storage_path=user_data_dir(APP_NAME, appauthor=False))
 
     server.should_exit = True
-    thread.join(timeout=5)
+    thread.join(timeout=_SERVER_SHUTDOWN_TIMEOUT)

@@ -106,6 +106,9 @@ async def test_autosave_from_custom_fen_matches_snapshot(hve, request):
         human_white=True, tc=TC,
         start_fen=CUSTOM_FEN,
         start_moves_uci=CUSTOM_FEN_SEED,
+        seed_clock_history=[(300.0, 300.0), (300.0, 300.0)],
+        seed_final_white_time=300.0,
+        seed_final_black_time=300.0,
     )
     await h.submit_move(CUSTOM_FEN_HUMAN_MOVE)
     await h.resign()

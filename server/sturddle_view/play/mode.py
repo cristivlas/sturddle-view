@@ -37,13 +37,14 @@ class ModeConflictError(RuntimeError):
         self.attempted = attempted
 
 
-# Allowed modes per operation, reverse-engineered from HVE guard clauses.
+# Allowed modes per operation.
 # Stored as an integer bitmask on each Op instance (_mask attribute) so
 # assert_allowed reduces to a single bitwise AND -- no dict or set lookup.
 ALLOWED_MODES_BY_OP: dict[Op, frozenset[Mode]] = {
     Op.SUBMIT_MOVE:     frozenset({Mode.PLAY}),
     Op.TAKEBACK:        frozenset({Mode.PLAY, Mode.PAUSED}),
-    Op.SWITCH_SIDES:    frozenset({Mode.PLAY}),
+    # In VIEWING/ANALYZING: flips board orientation only (no play state to swap).
+    Op.SWITCH_SIDES:    frozenset({Mode.ANALYZING, Mode.PLAY, Mode.PAUSED, Mode.VIEWING}),
     Op.RESIGN:          frozenset({Mode.PLAY, Mode.PAUSED}),
     Op.PAUSE:           frozenset({Mode.PLAY}),
     Op.RESUME:          frozenset({Mode.PAUSED}),

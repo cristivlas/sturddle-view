@@ -26,5 +26,7 @@ def acquire(lock_path: Path) -> bool:
     except OSError:
         fh.close()
         return False
+    if _lock_fh is not None:
+        _lock_fh.close()
     _lock_fh = fh  # keep alive
     return True

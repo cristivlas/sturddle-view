@@ -1,0 +1,8 @@
+[Event "Sturddle View -- Human vs Engine"]
+[Site "Sturddle View"]
+[Round "?"]
+[Result "0-1"]
+[Termination "resignation"]
+[TimeControl "300+2"]
+
+1. e4 { 2.0s } 1... e5 { 2.0s } 2. Nf3 { 0.0s } 0-1

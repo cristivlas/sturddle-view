@@ -71,6 +71,8 @@ def test_edit_commit_records_recent(client):
     listed = client.get("/game/recent-imports").json()["entries"]
     assert len(listed) == 1
     assert listed[0]["format"] == "fen"
+    # New row carries the active HVE session's current game_id.
+    assert listed[0]["game_id"] == body["game_id"]
     # Round-trip the text and confirm it's the committed FEN.
     h = listed[0]["hash"]
     text = client.get(f"/game/recent-imports/{h}").json()["text"]

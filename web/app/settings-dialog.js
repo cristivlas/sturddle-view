@@ -7,6 +7,7 @@ import { mountEngineList } from "./engines.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
 import { CHESS_CLOCK_SVG_INNER, CHESS_CLOCK_VIEW_BOX } from "./icons.js";
+import { mqNarrowDialog } from "./breakpoints.js";
 
 const SETTINGS_ENGINES_COL_PCTS_KEY = "sturddle:engines:settings:colPcts3";
 
@@ -120,7 +121,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
     label: "Settings",
     width: "min(690px, 94vw)",
     // Phones get the full vertical share; desktops cap at 580px.
-    height: matchMedia("(max-width: 480px)").matches ? "92vh" : "min(580px, 92vh)",
+    height: mqNarrowDialog.matches ? "92vh" : "min(580px, 92vh)",
     body: (resolve, dialog) => {
       // ---- helper: PUT a partial settings update; toast on failure. ----
       const putSettings = async (patch) => {
@@ -143,7 +144,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       };
 
       const tabs = document.createElement("wa-tab-group");
-      const isNarrow = matchMedia("(max-width: 480px)").matches;
+      const isNarrow = mqNarrowDialog.matches;
       tabs.placement = isNarrow ? "top" : "start";
       tabs.classList.add("dialog-side-tabs", "settings-tabs");
 

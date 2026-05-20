@@ -385,15 +385,14 @@ def test_validate_endpoint_default_format_is_auto(client):
 
 
 def test_validate_endpoint_returns_hash(client):
-    import hashlib
+    from sturddle_view.play.canonical_hash import canonical_hash
     c, _app, _ = client
     text = "1. e4 e5 2. Nf3 Nc6 *"
     r = c.post("/game/import/validate", json={"format": "pgn", "text": text})
     assert r.status_code == 200
     body = r.json()
     assert "hash" in body
-    expected = hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
-    assert body["hash"] == expected
+    assert body["hash"] == canonical_hash(text, "pgn")
 
 
 def test_hash_invariant_validate_and_import_agree(client):
@@ -531,6 +530,7 @@ def test_imported_game_publishes_board_event_after_engine_move(client):
     # Simulate the engine's bestmove being pushed (the part of
     # _think_and_play that runs after the search returns).
     hve._board.push(chess.Move.from_uci("d6d1"))
+    hve._eval_history.append(None)
     # _board_event must not raise.
     evt = hve._board_event()
     assert evt.payload["fen"].startswith("1k1r")

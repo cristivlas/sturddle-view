@@ -336,10 +336,18 @@ export function mountGameView(container, opts = {}) {
     // and the left filler are the same width, so the board sits dead-center
     // horizontally. Rail width is viewport-driven (not board-driven) to
     // avoid a feedback loop with the board sizing below.
-    const NARROW = 800;
-    const MIN_BOARD = 320;
-    const RAIL_MIN = 180;
-    const RAIL_MAX = 320;
+    // Rail/board minimums are derived from root font-size so they honor
+    // the user's browser font-size preference. NARROW stays raw CSS-px:
+    // it must match the CSS `@media (max-width: 640px)` mobile breakpoint
+    // (which is viewport-driven, not font-size-driven) -- otherwise JS
+    // flips to mobile mode while CSS stays desktop, stranding the rail
+    // in the left filler column at large font sizes.
+    const rootFs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    const rem = (n) => Math.round(n * rootFs);
+    const NARROW = 640;
+    const MIN_BOARD = rem(20);   // 320px @ default fs
+    const RAIL_MIN = rem(11.25); // 180px @ default fs
+    const RAIL_MAX = rem(20);    // 320px @ default fs
     const grid = boardCol.closest(".play-grid") || boardCol.closest("#play-perspective");
     const gridStyle = grid ? getComputedStyle(grid) : null;
     const gapW = gridStyle
@@ -352,14 +360,24 @@ export function mountGameView(container, opts = {}) {
       : 32;
 
     let railW;
+    let leftRailW;
     let availW;
+    // When the left dock is empty on desktop, shrink the left rail so the
+    // board + right rail shift left as one block instead of being framed
+    // by a wide empty band. Proportional to railW so it scales with width.
+    const LEFT_RAIL_EMPTY_RATIO = window.__leftRailEmptyRatio ?? 0.4;
     if (window.innerWidth <= NARROW || !grid) {
       railW = 0;
-      availW = Math.max(160, Math.floor(colRect.width));
+      leftRailW = 0;
+      availW = Math.max(rem(10), Math.floor(colRect.width));
     } else {
       const usable = window.innerWidth - sidePad;
       railW = Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.floor(usable * 0.18)));
-      availW = Math.max(160, Math.floor(usable - 2 * railW - 2 * gapW));
+      const leftEmpty =
+        document.querySelector(".play-dock-left")?.classList.contains("dock-empty") !== false
+        && document.querySelector(".play-comments-host")?.classList.contains("dock-empty") !== false;
+      leftRailW = leftEmpty ? Math.floor(railW * LEFT_RAIL_EMPTY_RATIO) : railW;
+      availW = Math.max(rem(10), Math.floor(usable - railW - leftRailW - 2 * gapW));
     }
 
     const max = window.innerWidth <= NARROW
@@ -384,7 +402,7 @@ export function mountGameView(container, opts = {}) {
       // grid collapses to a vertical flex layout (see CSS).
       if (window.innerWidth > NARROW) {
         grid.style.setProperty("--board-col-px", `${max}px`);
-        grid.style.setProperty("--left-rail-w", `${railW}px`);
+        grid.style.setProperty("--left-rail-w", `${leftRailW}px`);
       } else {
         grid.style.removeProperty("--board-col-px");
         grid.style.removeProperty("--left-rail-w");
@@ -398,8 +416,20 @@ export function mountGameView(container, opts = {}) {
           const boardRect = boardEl.getBoundingClientRect();
           const left = Math.ceil(boardRect.right) + gapW;
           const top = Math.ceil(boardRect.top);
-          const width = Math.max(0, window.innerWidth - left - 16);
-          const height = Math.max(160, Math.floor(boardRect.height));
+          // On wide viewports, cap the right rail at its natural width so it
+          // doesn't stretch all the way to the right edge -- combined with the
+          // shrunken left rail (when dock is empty), this keeps the picture
+          // centered instead of framed by a wide empty left band.
+          // Kept as a raw CSS-px threshold (not rem-derived): the
+          // below-WIDE branch lets the rail expand to fill `avail`, and
+          // scaling WIDE up with font-size pushes viewports into that
+          // expanding branch where the rail visibly slides left as the
+          // text grows. The wide-viewport feel is a viewport property,
+          // not a font-size one.
+          const WIDE = 1500;
+          const avail = Math.max(0, window.innerWidth - left - rem(1));
+          const width = window.innerWidth >= WIDE ? Math.min(railW, avail) : avail;
+          const height = Math.max(rem(10), Math.floor(boardRect.height));
           sideHost.style.left = `${left}px`;
           sideHost.style.top = `${top}px`;
           sideHost.style.width = `${width}px`;
@@ -641,9 +671,17 @@ export function mountGameView(container, opts = {}) {
             // PGN has evals elsewhere but this specific ply doesn't
             // (e.g. last move of a fastchess game tends to lack an
             // eval). Keep the panel visible so it doesn't disappear
-            // when scrubbing across plies, and unhide it on initial
-            // mount so landing on a no-eval ply still shows the area.
+            // when scrubbing across plies, but blank the per-ply
+            // fields so stale values from the previous ply don't
+            // leak through.
             engineSection?.classList.remove("is-empty");
+            if (engineScore) engineScore.textContent = "";
+            if (engineDepth) engineDepth.textContent = "";
+            if (engineNodes) engineNodes.textContent = "";
+            if (engineNps) engineNps.textContent = "";
+            if (engineTbhits) engineTbhits.textContent = "";
+            if (engineHashfull) engineHashfull.textContent = "";
+            if (enginePv) { enginePv.textContent = ""; enginePv.removeAttribute("title"); }
           }
         }
         if (interactive && !editing) board.enableInput(true);

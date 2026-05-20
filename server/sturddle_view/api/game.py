@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
+import uuid
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi.responses import Response
 
 from ..auth import require_token
 from ..engines import resolve_selected
+from ..play.canonical_hash import canonical_hash
 from ..play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
 from ..play.import_position import PositionImportError, parse_fen, parse_pgn
 
@@ -25,8 +27,8 @@ MAX_IMPORT_TEXT_BYTES = int(
 router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_token)])
 
 
-def _hash_import_text(text: str) -> str:
-    return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
+def _hash_import_text(text: str, fmt: str) -> str:
+    return canonical_hash(text, fmt)
 
 
 async def _get_hve(request: Request) -> HumanVsEngine:
@@ -50,6 +52,7 @@ async def _get_hve(request: Request) -> HumanVsEngine:
             openings=getattr(s, "openings", None),
             settings=s.settings,
             store=getattr(s, "game_store", None),
+            recents=getattr(s, "recent_imports", None),
         )
     # Refresh display name + UCI options on every fetch so registry edits
     # take effect on the next engine launch without restarting the server.
@@ -155,6 +158,43 @@ def _parse_import_payload(payload: dict) -> dict:
     }
 
 
+def _resolve_game_id_for_import(recents, payload: dict, view_hash: str) -> str:
+    """Pick the game_id for an /game/import call.
+
+    Rules (see docs/game_id_unification.md):
+    - new hash + supplied id  -> use supplied
+    - new hash + no supplied  -> mint uuid4
+    - existing hash + match   -> reuse stored id
+    - existing hash + mismatch -> 409
+    - existing hash + no supplied -> reuse stored id
+
+    Raises HTTPException(409) on mismatch and HTTPException(400) if
+    ``game_id`` in the payload is not a string."""
+    supplied_id = payload.get("game_id") if isinstance(payload, dict) else None
+    if supplied_id is not None and not isinstance(supplied_id, str):
+        raise HTTPException(status_code=400, detail="game_id must be a string")
+    existing = recents.get(view_hash)
+    if existing is not None:
+        stored_id = existing[0].get("game_id")
+        if supplied_id is not None and stored_id is not None and supplied_id != stored_id:
+            log.warning(
+                "import: game_id assertion failed for hash=%s "
+                "stored=%s supplied=%s",
+                view_hash, stored_id, supplied_id,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "game_id_mismatch",
+                    "message": "supplied game_id does not match stored row",
+                    "stored_game_id": stored_id,
+                    "supplied_game_id": supplied_id,
+                },
+            )
+        return stored_id or supplied_id or str(uuid.uuid4())
+    return supplied_id or str(uuid.uuid4())
+
+
 @router.post("/import/validate")
 async def import_validate(payload: dict) -> dict:
     """Parse a FEN/PGN payload and report the resulting position. Read-only.
@@ -162,7 +202,7 @@ async def import_validate(payload: dict) -> dict:
     against the currently viewed game before committing a full import."""
     parsed = _parse_import_payload(payload)
     raw_text = payload.get("text", "")
-    parsed["hash"] = _hash_import_text(raw_text)
+    parsed["hash"] = _hash_import_text(raw_text, parsed["detected_format"])
     return parsed
 
 
@@ -183,32 +223,39 @@ async def import_game(payload: dict, request: Request) -> dict:
     headers = parsed.get("headers") or {}
     raw_text = payload.get("text", "")
     summary = parsed.get("summary") or {}
-    view_hash = _hash_import_text(raw_text)
+    view_hash = _hash_import_text(raw_text, parsed["detected_format"])
+    recents = request.app.state.recent_imports
+    game_id = _resolve_game_id_for_import(recents, payload, view_hash)
     try:
-        game_id = await hve.enter_view_mode(ViewModeParams(
-            start_fen=parsed["start_fen"],
-            moves_uci=parsed["moves_uci"],
-            clock_history=parsed["clock_history"],
-            final_white_time=parsed["final_white_time"],
-            final_black_time=parsed["final_black_time"],
-            white_name=headers.get("White"),
-            black_name=headers.get("Black"),
-            eval_history=parsed.get("eval_history"),
-            comments=parsed.get("comments"),
-            root_comment=parsed.get("root_comment"),
-            pgn_result=headers.get("Result"),
-            pgn_termination=headers.get("Termination"),
-            view_hash=view_hash,
-            view_summary=summary,
-        ))
+        game_id = await hve.enter_view_mode(
+            ViewModeParams(
+                start_fen=parsed["start_fen"],
+                moves_uci=parsed["moves_uci"],
+                clock_history=parsed["clock_history"],
+                final_white_time=parsed["final_white_time"],
+                final_black_time=parsed["final_black_time"],
+                white_name=headers.get("White"),
+                black_name=headers.get("Black"),
+                eval_history=parsed.get("eval_history"),
+                comments=parsed.get("comments"),
+                root_comment=parsed.get("root_comment"),
+                pgn_result=headers.get("Result"),
+                pgn_termination=headers.get("Termination"),
+                view_hash=view_hash,
+                view_summary=summary,
+                view_raw_text=raw_text if parsed["detected_format"] == "pgn" else None,
+            ),
+            game_id=game_id,
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     # Record in recent-imports. Use the format detected by the parser
     # (matters for auto: it's "fen" or "pgn" by now).
-    h = await request.app.state.recent_imports.save(
+    h = await recents.save(
         fmt=parsed["detected_format"],
         text=raw_text,
         summary=summary,
+        game_id=game_id,
     )
     return {"game_id": game_id, "viewing": True, "hash": h, "summary": summary}
 
@@ -221,6 +268,33 @@ async def list_recent_imports(request: Request) -> dict:
     fetch the text of an entry. Behind the same auth token as the rest
     of /game/*."""
     return {"entries": request.app.state.recent_imports.list()}
+
+
+@router.get("/recent-imports/by-id/{game_id}")
+async def get_recent_import_by_id(game_id: str, request: Request) -> dict:
+    """Resolve a recent import by ``game_id`` instead of hash.
+
+    Same payload shape as the hash route and the same side effect
+    (touch). Returns 404 for unknown or evicted ids.
+
+    Registered before ``/recent-imports/{h}`` so the literal ``by-id``
+    segment doesn't get captured as a hash."""
+    recents = request.app.state.recent_imports
+    got = recents.get_by_id(game_id)
+    if got is None:
+        raise HTTPException(status_code=404, detail="not found")
+    row, text = got
+    h = recents.hash_for_id(game_id)
+    if h is not None:
+        await recents.touch(h)
+    return {
+        "hash": h,
+        "game_id": game_id,
+        "format": row["format"],
+        "summary": row["summary"],
+        "ts": row["ts"],
+        "text": text,
+    }
 
 
 @router.get("/recent-imports/{h}")
@@ -237,7 +311,14 @@ async def get_recent_import(h: str, request: Request) -> dict:
         raise HTTPException(status_code=404, detail="not found")
     row, text = got
     await recents.touch(h)
-    return {"hash": h, "format": row["format"], "summary": row["summary"], "ts": row["ts"], "text": text}
+    return {
+        "hash": h,
+        "game_id": row.get("game_id"),
+        "format": row["format"],
+        "summary": row["summary"],
+        "ts": row["ts"],
+        "text": text,
+    }
 
 
 @router.delete("/recent-imports/{h}")
@@ -247,6 +328,26 @@ async def delete_recent_import(h: str, request: Request) -> dict:
     if not removed:
         raise HTTPException(status_code=404, detail="not found")
     return {"ok": True}
+
+
+@router.get("/pgn")
+async def export_pgn(request: Request) -> Response:
+    """Download the current game as a PGN file.
+
+    Works in play mode (in-progress or finished) and in view mode after a
+    PGN import or a play_from_here fork.  Returns 409 for FEN-only view
+    (no game moves to export).
+    """
+    hve = await _get_hve(request)
+    result = hve.get_pgn_text()
+    if result is None:
+        raise HTTPException(status_code=409, detail="no game to export")
+    pgn_text, filename = result
+    return Response(
+        content=pgn_text,
+        media_type="application/x-chess-pgn; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/view/start")
@@ -260,7 +361,14 @@ async def view_start(request: Request) -> dict:
     recent-imports store.
     """
     hve = await _get_hve(request)
-    start_fen, moves_uci, clock_history, white_time, black_time = hve.play_game_snapshot()
+    (
+        start_fen,
+        moves_uci,
+        clock_history,
+        white_time,
+        black_time,
+        eval_history,
+    ) = hve.play_game_snapshot()
     try:
         game_id = await hve.enter_view_mode(ViewModeParams(
             start_fen=start_fen,
@@ -268,6 +376,7 @@ async def view_start(request: Request) -> dict:
             clock_history=clock_history or None,
             final_white_time=white_time,
             final_black_time=black_time,
+            eval_history=eval_history if any(e is not None for e in eval_history) else None,
         ))
         await hve.view_last()
     except RuntimeError as e:
@@ -367,18 +476,18 @@ async def edit_commit(payload: dict, request: Request) -> dict:
     fen = payload.get("fen")
     if not isinstance(fen, str) or not fen:
         raise HTTPException(status_code=400, detail="missing 'fen'")
+    prev_id = hve.game_id
     try:
         game_id = await hve.commit_edit(fen)
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    # Defensible save: a successful commit means the user deliberately
-    # accepted this position. Cancel never reaches here, so cancelled
-    # edits are not persisted. commit_edit already validated the FEN, so
-    # parse_fen will not raise.
-    summary = parse_fen(fen).summary
-    h = await request.app.state.recent_imports.save(
-        fmt="fen", text=fen, summary=summary,
-    )
+    h = None
+    summary = None
+    if game_id != prev_id:
+        summary = parse_fen(fen).summary
+        h = await request.app.state.recent_imports.save(
+            fmt="fen", text=fen, summary=summary, game_id=game_id,
+        )
     return {"game_id": game_id, "hash": h, "summary": summary}
 
 

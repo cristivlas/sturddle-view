@@ -99,6 +99,15 @@ _CUTECHESS_TIME_RE = re.compile(
     r"[+-]?(?:M\d+|\d+(?:\.\d+)?)/\d+\s+(\d+(?:\.\d+)?)\s*(ms|s)?\s*\}?\s*$"
 )
 
+# Bare time-only token: "{<time>s}" with no eval/depth prefix. Emitted on
+# plies with no engine search (e.g. human moves) so clock info still travels
+# under the cutechess convention. python-chess strips the surrounding
+# braces, so what we see here is the bare token. Anchored at both ends to
+# avoid false-matching prose like "took 7s" or "spent 2.5s thinking".
+_CUTECHESS_TIME_ONLY_RE = re.compile(
+    r"^\s*(\d+(?:\.\d+)?)\s*(ms|s)\s*$"
+)
+
 # Cutechess / fastchess full eval+depth capture (eval and depth groups).
 _CUTECHESS_EVAL_RE = re.compile(
     r"(?P<eval>[+-]?(?:M\d+|\d+(?:\.\d+)?))/(?P<depth>\d+)(?:\s+\d+(?:\.\d+)?\s*(?:ms|s)?)?\s*\}?\s*$"
@@ -127,6 +136,7 @@ def _sanitize_comment(comment: str | None) -> str | None:
         return None
     s = _BRACKET_TAG_RE.sub(" ", comment)
     s = _CUTECHESS_EVAL_RE.sub(" ", s)
+    s = _CUTECHESS_TIME_ONLY_RE.sub(" ", s)
     # Repeatedly strip innermost parens so adjacent variations all go.
     while True:
         new = _PAREN_VAR_RE.sub(" ", s)
@@ -153,10 +163,17 @@ def _sanitize_comment(comment: str | None) -> str | None:
 
 def _cutechess_time_seconds(comment: str | None) -> float | None:
     """Best-effort parse of the time-spent field from a cutechess-style
-    comment. Returns seconds or None if no match."""
+    comment. Returns seconds or None if no match.
+
+    Accepts both the full form ``{<eval>/<depth> <time>s}`` and the
+    time-only variant ``{<time>s}`` we emit on plies with no engine
+    search.
+    """
     if not comment:
         return None
     m = _CUTECHESS_TIME_RE.search(comment)
+    if m is None:
+        m = _CUTECHESS_TIME_ONLY_RE.search(comment)
     if not m:
         return None
     try:

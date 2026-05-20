@@ -349,7 +349,7 @@ async def test_uci_log_emits_send_and_recv(bus, supervisor):
     supervisor.engine.line_received("recv-line")
     received: list[dict] = []
     for _ in range(2):
-        event = await asyncio.wait_for(queue.get(), timeout=1.0)
+        event = await queue.get()
         assert event.kind == "uci_log"
         received.append(event.payload)
     dirs = sorted(p["dir"] for p in received)
