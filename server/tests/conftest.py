@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import socket
 import stat
 import sys
@@ -52,6 +53,75 @@ def free_port() -> int:
 
 
 @contextlib.contextmanager
+def run_uvicorn_subprocess(
+    *,
+    port: int | None = None,
+    env_overrides: dict[str, str] | None = None,
+) -> Iterator[str]:
+    """Run uvicorn as a subprocess so the OS owns its lifecycle.
+
+    On teardown the process is killed -- WS/HTTP transports are reclaimed
+    by the OS instantly, with no proactor-cleanup races. Yields the
+    server's base URL.
+
+    Per-test isolation flows through env vars (``SV_*``):
+    ``SV_PGN_DIR``, ``SV_TOURNAMENT_ROOT``, ``SV_ENGINE_REGISTRY_PATH``,
+    ``SV_IMPORTS_DIR``, ``SV_SETTINGS_FILE``, ``SV_GAME_STATE_PATH``,
+    ``SV_TOKEN``, ``SV_AUTH_DISABLED``. Pass them in ``env_overrides``.
+    """
+    import subprocess
+
+    if port is None:
+        port = free_port()
+    env = dict(os.environ)
+    env.setdefault("SV_AUTH_DISABLED", "1")
+    env.setdefault("SV_TOKEN", "test-token")
+    env["SV_HOST"] = "127.0.0.1"
+    env["SV_PORT"] = str(port)
+    env["SV_TEST_MODE"] = "1"
+    if env_overrides:
+        env.update(env_overrides)
+    # Each subprocess gets a private instance-lock so the user's real
+    # lock file doesn't collide with the test run.
+    if "SV_INSTANCE_LOCK_PATH" not in env:
+        import tempfile
+        env["SV_INSTANCE_LOCK_PATH"] = str(
+            Path(tempfile.gettempdir()) / f"sturddle-test-{port}.lock"
+        )
+
+    with subprocess.Popen(
+        [sys.executable, "-m", "sturddle_view", "--no-auth",
+         "--host", "127.0.0.1", "--port", str(port)],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    ) as proc:
+        base = f"http://127.0.0.1:{port}"
+        try:
+            # Wait for the server to bind by attempting a TCP connect.
+            # If the process exits early we surface stdout/stderr.
+            import socket as _socket
+            while True:
+                if proc.poll() is not None:
+                    stdout, stderr = proc.communicate()
+                    raise RuntimeError(
+                        f"uvicorn subprocess exited with code {proc.returncode}\n"
+                        f"STDOUT:\n{stdout.decode(errors='replace')}\n"
+                        f"STDERR:\n{stderr.decode(errors='replace')}"
+                    )
+                with _socket.socket() as s:
+                    try:
+                        s.settimeout(0.1)
+                        s.connect(("127.0.0.1", port))
+                        break
+                    except OSError:
+                        continue
+            yield base
+        finally:
+            proc.kill()
+
+
+@contextlib.contextmanager
 def run_uvicorn(app, *, port: int | None = None) -> Iterator[tuple[str, object]]:
     """Run a uvicorn server in a background thread.
 
@@ -94,9 +164,15 @@ def pytest_addoption(parser):
     )
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def browser():
-    """One Chromium instance shared across the whole test session.
+    """Chromium instance scoped per-test.
+
+    Per-test scope means the browser is killed between tests, which
+    forcibly drops every TCP connection to uvicorn -- the OS sends
+    RST on the leaked WS sockets and uvicorn's shutdown has nothing
+    left to drain. Costs ~500ms per test for relaunch, but eliminates
+    the cross-test ResourceWarning class.
 
     Use the ``page`` or ``make_page`` fixtures rather than calling
     ``browser.new_context()`` directly -- those guarantee synchronous
@@ -154,6 +230,19 @@ async def page(make_page):
     """Default Playwright page at the test's natural viewport (Playwright default)."""
     _ctx, p = await make_page()
     yield p
+
+
+async def wait_perspective_ready(page) -> None:
+    """Wait until the active perspective has finished mounting.
+
+    The play perspective's button click handlers are attached only after
+    its controller resolves ``ready``; before that, ``.perspective-root``
+    carries the ``is-pending`` class. Tests that click ribbon buttons
+    immediately after page.goto MUST await this before clicking, or
+    the click can land on an unbound element and silently do nothing."""
+    await page.wait_for_function(
+        "() => !document.querySelector('.perspective-root')?.classList.contains('is-pending')",
+    )
 
 
 @pytest.fixture(autouse=True)
