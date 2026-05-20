@@ -352,6 +352,11 @@ export const playPerspective = {
     // Settings cache (refreshed on settings-changed).
     let allowTakeback = true;
     let showPgnComments = true; // view-mode commentary window
+    // True only while play->view->edit is in flight. Opening the dock
+    // mid-transition fires a seeding /view/goto with the stale (pre-flip)
+    // viewCursor=0, clobbering the live-position cursor the server lands
+    // at via view_last(). Cleared in _onServerEditingStop.
+    let suppressCommentsForEditTransition = false;
     const commentsHost = root.querySelector(".play-comments-host");
     setCommentaryDockContainer(commentsHost);
     let lastViewComment = null;
@@ -363,7 +368,8 @@ export const playPerspective = {
     });
     function syncCommentsVisibility() {
       if (!commentsHost) return;
-      const shouldShow = viewing && showPgnComments && !isMobileLayout();
+      const shouldShow = viewing && showPgnComments && !isMobileLayout()
+        && !suppressCommentsForEditTransition;
       const open = isCommentaryOpen();
       if (shouldShow) {
         const wasOpen = open;
@@ -889,8 +895,15 @@ export const playPerspective = {
       refreshButtons();
     }
 
+    function _clearEditTransitionSuppression() {
+      if (!suppressCommentsForEditTransition) return;
+      suppressCommentsForEditTransition = false;
+      syncCommentsVisibility();
+    }
+
     function _onServerEditingStop() {
       view.exitEditMode();
+      _clearEditTransitionSuppression();
       refreshButtons();
     }
 
@@ -903,11 +916,16 @@ export const playPerspective = {
           message: "Cancel the game in progress and edit the position?",
           okLabel: "Edit position",
         })) return;
+        // Suppress the commentary dock for the duration of the transient
+        // play->view->edit flip. Without this, syncCommentsVisibility
+        // races view_last() and resets the cursor to 0.
+        suppressCommentsForEditTransition = true;
         try {
           const r = await ctx.api("POST", "/game/view/start", {});
           view.setGameId(r.game_id);
           await ctx.api("POST", "/game/sync", {});
         } catch (e) {
+          _clearEditTransitionSuppression();
           reportError(ctx, "Edit position failed", e);
           return;
         }
@@ -919,11 +937,15 @@ export const playPerspective = {
           cancelLabel: "Keep analyzing",
           destructive: true,
         });
-        if (!ok) return;
+        if (!ok) {
+          _clearEditTransitionSuppression();
+          return;
+        }
       }
       try {
         await ctx.api("POST", "/game/edit/start", {});
       } catch (e) {
+        _clearEditTransitionSuppression();
         reportError(ctx, "Edit position failed", e);
       }
     }

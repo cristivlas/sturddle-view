@@ -9,10 +9,6 @@ Skipped if Playwright / Chromium isn't available.
 """
 from __future__ import annotations
 
-import socket
-import threading
-import time
-
 import pytest
 
 pytest.importorskip("playwright.async_api")
@@ -21,20 +17,14 @@ from sturddle_view.app import create_app  # noqa: E402
 from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 
+from .conftest import run_uvicorn  # noqa: E402
+
 
 BROKEN_NAME = "BrokenEngine"
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 @pytest.fixture
 def server(tmp_path):
-    import uvicorn
-
     settings = Settings(token="test-token", auth_disabled=True)
     settings.pgn_dir = tmp_path / "pgn"
     registry = EngineRegistry(path=tmp_path / "engines.json")
@@ -45,18 +35,8 @@ def server(tmp_path):
     broken_path.write_text("this is not a UCI engine\n")
     registry.add(name=BROKEN_NAME, path=str(broken_path))
     app = create_app(settings=settings, engine_registry=registry)
-    port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto")
-    s = uvicorn.Server(config)
-    thread = threading.Thread(target=s.run, daemon=True)
-    thread.start()
-    deadline = time.time() + 10
-    while time.time() < deadline and not s.started:
-        time.sleep(0.05)
-    yield f"http://127.0.0.1:{port}"
-    s.should_exit = True
-    s.force_exit = True
-    thread.join(timeout=2)
+    with run_uvicorn(app) as (base, _s):
+        yield base
 
 
 @pytest.mark.asyncio

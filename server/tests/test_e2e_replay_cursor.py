@@ -9,13 +9,6 @@ corrupting its cursor to the old value.
 """
 from __future__ import annotations
 
-import socket
-import stat
-import sys
-import threading
-import time
-from pathlib import Path
-
 import pytest
 
 pytest.importorskip("playwright.async_api")
@@ -24,55 +17,19 @@ from sturddle_view.app import create_app  # noqa: E402
 from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _make_fake_uci(root: Path, name: str) -> str:
-    py = root / f"{name}.py"
-    py.write_text(
-        "#!/usr/bin/env python3\n"
-        "import sys\n"
-        "while True:\n"
-        "    line = sys.stdin.readline()\n"
-        "    if not line: break\n"
-        "    line = line.strip()\n"
-        f"    if line == 'uci': sys.stdout.write('id name {name}\\nuciok\\n'); sys.stdout.flush()\n"
-        "    elif line == 'isready': sys.stdout.write('readyok\\n'); sys.stdout.flush()\n"
-        "    elif line == 'quit': break\n"
-    )
-    if sys.platform.startswith("win"):
-        wrapper = root / f"{name}.cmd"
-        wrapper.write_text(f'@"{sys.executable}" "{py}" %*\r\n')
-        return str(wrapper)
-    py.chmod(py.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    return str(py)
+from .conftest import make_fake_uci, run_uvicorn  # noqa: E402
 
 
 @pytest.fixture
 def server(tmp_path):
-    import uvicorn
     settings = Settings(token="test-token", auth_disabled=True)
     settings.pgn_dir = tmp_path / "pgn"
     registry = EngineRegistry(path=tmp_path / "engines.json")
-    eng = registry.add(name="FakeEngine", path=_make_fake_uci(tmp_path, "FakeEngine"))
+    eng = registry.add(name="FakeEngine", path=make_fake_uci(tmp_path, "FakeEngine"))
     registry.select(eng.id)
     app = create_app(settings=settings, engine_registry=registry)
-    port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto")
-    s = uvicorn.Server(config)
-    thread = threading.Thread(target=s.run, daemon=True)
-    thread.start()
-    deadline = time.time() + 10
-    while time.time() < deadline and not s.started:
-        time.sleep(0.05)
-    yield f"http://127.0.0.1:{port}", app
-    s.should_exit = True
-    s.force_exit = True
-    thread.join(timeout=2)
+    with run_uvicorn(app) as (base, _s):
+        yield base, app
 
 
 _PGN_A = """\

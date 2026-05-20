@@ -6,10 +6,7 @@ Skipped if Playwright is missing.
 """
 from __future__ import annotations
 
-import socket
 import sys
-import threading
-import time
 
 import pytest
 
@@ -18,6 +15,8 @@ pytest.importorskip("playwright.async_api")
 from sturddle_view.app import create_app  # noqa: E402
 from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
+
+from .conftest import run_uvicorn  # noqa: E402
 
 
 PLAY_PERSP = "#play-perspective"
@@ -28,38 +27,15 @@ UCI_WB = ".winbox.sturddle-wb-uci-log"
 PV_WB = ".winbox.sturddle-wb-pvtable"
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _spawn_server(tmp_path):
-    import uvicorn
-
+@pytest.fixture
+def server(tmp_path):
     settings = Settings(token="test-token", auth_disabled=True)
     settings.pgn_dir = tmp_path / "pgn"
     settings.tournament_root = str(tmp_path / "tournaments")
     registry = EngineRegistry(path=tmp_path / "engines.json")
     app = create_app(settings=settings, engine_registry=registry)
-    port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto")
-    s = uvicorn.Server(config)
-    thread = threading.Thread(target=s.run, daemon=True)
-    thread.start()
-    deadline = time.time() + 10
-    while time.time() < deadline and not s.started:
-        time.sleep(0.05)
-    return f"http://127.0.0.1:{port}", s, thread
-
-
-@pytest.fixture
-def server(tmp_path):
-    base, s, thread = _spawn_server(tmp_path)
-    yield base
-    s.should_exit = True
-    s.force_exit = True
-    thread.join(timeout=2)
+    with run_uvicorn(app) as (base, _s):
+        yield base
 
 
 async def _new_page(browser):

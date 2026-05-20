@@ -1,11 +1,84 @@
 """Test isolation: keep tests off the user's real ~/.config files."""
 from __future__ import annotations
 
+import contextlib
+import socket
+import stat
+import sys
+import threading
+import time
+from collections.abc import Iterator
+from pathlib import Path
+
 import pytest
 import pytest_asyncio
 
 
 SNAPSHOT_UPDATE_FLAG = "--snapshot-update"
+
+
+def make_fake_uci(root: Path, name: str) -> str:
+    """Write a minimal UCI stub engine to ``root`` and return its path.
+
+    The stub responds to ``uci``/``isready``/``quit`` only; it does NOT
+    play moves. Tests that need a move-playing fake should override
+    locally."""
+    py = root / f"{name}.py"
+    py.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "while True:\n"
+        "    line = sys.stdin.readline()\n"
+        "    if not line: break\n"
+        "    line = line.strip()\n"
+        f"    if line == 'uci': sys.stdout.write('id name {name}\\nuciok\\n'); sys.stdout.flush()\n"
+        "    elif line == 'isready': sys.stdout.write('readyok\\n'); sys.stdout.flush()\n"
+        "    elif line == 'quit': break\n"
+    )
+    if sys.platform.startswith("win"):
+        wrapper = root / f"{name}.cmd"
+        wrapper.write_text(f'@"{sys.executable}" "{py}" %*\r\n')
+        return str(wrapper)
+    py.chmod(py.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return str(py)
+
+
+def free_port() -> int:
+    """Allocate an ephemeral TCP port on localhost."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@contextlib.contextmanager
+def run_uvicorn(app, *, port: int | None = None) -> Iterator[tuple[str, object]]:
+    """Run a uvicorn server in a background thread.
+
+    Returns (base_url, server). Mirrors the lifecycle that the 9 e2e
+    test files duplicated before this helper existed -- centralizing
+    DRY without changing teardown semantics. Tests that need stricter
+    teardown (e.g. zero ResourceWarning on Windows) should add that
+    themselves; this helper does not try to be cleverer than uvicorn's
+    own shutdown."""
+    import uvicorn
+
+    if port is None:
+        port = free_port()
+    config = uvicorn.Config(
+        app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto"
+    )
+    s = uvicorn.Server(config)
+    thread = threading.Thread(target=s.run, daemon=True)
+    thread.start()
+    deadline = time.time() + 10
+    while time.time() < deadline and not s.started:
+        time.sleep(0.05)
+    try:
+        yield f"http://127.0.0.1:{port}", s
+    finally:
+        s.should_exit = True
+        s.force_exit = True
+        thread.join(timeout=2)
 
 
 def pytest_addoption(parser):

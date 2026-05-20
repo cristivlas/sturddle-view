@@ -35,6 +35,7 @@ class EngineSupervisor:
         self._bus = bus
         self._settings = settings
         self._engine: chess.engine.UciProtocol | None = None
+        self._transport: asyncio.SubprocessTransport | None = None
         self._engine_name: str | None = None
         self._options: dict = {}
         self._args: list[str] = []
@@ -113,7 +114,8 @@ class EngineSupervisor:
         command: str | list[str] = (
             [self._engine_path, *self._args] if self._args else self._engine_path
         )
-        _transport, engine = await self._popen_uci(command, **_popen_kwargs(self._env))
+        transport, engine = await self._popen_uci(command, **_popen_kwargs(self._env))
+        self._transport = transport
         rc_future = getattr(engine, "returncode", None)
         if rc_future is not None:
             rc_future.add_done_callback(lambda f: f.exception())
@@ -202,13 +204,37 @@ class EngineSupervisor:
         think_task.cancel()
 
     async def quit(self) -> None:
-        """Gracefully terminate the engine subprocess. Idempotent."""
+        """Gracefully terminate the engine subprocess. Idempotent.
+
+        python-chess's UciProtocol.quit() only sends ``quit`` and awaits
+        the returncode; it never closes the outer subprocess transport
+        or its child stdin/stdout/stderr pipes. On Windows that leaves
+        pipe transports whose GC trips ResourceWarning later. Close them
+        explicitly and yield to the loop so the close callbacks complete
+        before we return."""
         if self._engine is not None:
             try:
                 await self._engine.quit()
             except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
                 pass
             self._engine = None
+        if self._transport is not None:
+            for fd in (0, 1, 2):
+                try:
+                    pipe = self._transport.get_pipe_transport(fd)
+                    if pipe is not None:
+                        pipe.close()
+                except Exception:
+                    pass
+            try:
+                self._transport.close()
+            except Exception:
+                pass
+            self._transport = None
+            # Yield enough times for the proactor to process the close
+            # callbacks scheduled above before this coroutine returns.
+            for _ in range(3):
+                await asyncio.sleep(0)
         self._uci_log_tasks.clear()
 
     async def swap(self, path: str) -> None:
