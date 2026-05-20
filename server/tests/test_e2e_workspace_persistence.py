@@ -91,6 +91,16 @@ async def _click_row(page, idx):
     await page.evaluate(
         "(i) => document.querySelectorAll('.tournament-row')[i].click()", idx
     )
+    # navigateTo() runs synchronously: it sets .selected on the clicked
+    # row, tears down any active workspace, and -- only when the new
+    # tournament has saved state -- calls openWorkspace. Waiting on the
+    # selected class confirms the handler ran; for the no-saved-state
+    # path the wb_count is already final at this point.
+    await page.wait_for_function(
+        "(i) => document.querySelectorAll('.tournament-row')[i]"
+        "?.classList.contains('selected')",
+        arg=idx,
+    )
 
 
 async def _open_workspace_via_ribbon(page):
@@ -281,8 +291,9 @@ async def test_TN1_no_workspace_click_fresh_does_not_open(server, make_page):
     _ctx, page, errors = await _new_page(make_page)
     await _goto_app(page, server)
     await _click_row(page, 0)
-    # Brief settle then assert nothing opened.
-    await page.wait_for_timeout(200)
+    # _click_row already awaits the synchronous navigateTo completing
+    # (selected class set); no auto-open path is taken with no saved
+    # state, so wb_count is final here.
     assert await _wb_count(page) == 0
     _assert_no_errors(errors)
 
@@ -299,11 +310,9 @@ async def test_TN4_close_all_then_navigate_back_does_not_open(server, make_page)
     await _wait_wb_count(page, 0)
     # Navigate to B; A torn down so hadWorkspace=false; B has no saved state -> no open.
     await _click_row(page, 1)
-    await page.wait_for_timeout(200)
     assert await _wb_count(page) == 0
     # Navigate back to A; A has _closed=true -> no open.
     await _click_row(page, 0)
-    await page.wait_for_timeout(200)
     assert await _wb_count(page) == 0
     _assert_no_errors(errors)
 
@@ -356,8 +365,7 @@ async def test_TN6_navigate_to_b_with_closed_flag_does_not_open(server, make_pag
     await _wait_wb_count(page, 1)
     await _click_row(page, 1)
     # Close All on B is gated by _closed=true; A's workspace was closed
-    # by navigation; so no windows should be open after settle.
-    await page.wait_for_timeout(300)
+    # by navigation; so no windows should be open.
     assert await _wb_count(page) == 0
     _assert_no_errors(errors)
 
@@ -482,9 +490,7 @@ async def test_TBUG2_close_all_navigate_away_back_no_reopen(server, make_page):
     await _close_all_via_menu(page)
     await _wait_wb_count(page, 0)
     await _click_row(page, 1)
-    await page.wait_for_timeout(200)
     await _click_row(page, 0)
-    await page.wait_for_timeout(300)
     assert await _wb_count(page) == 0
     _assert_no_errors(errors)
 

@@ -139,12 +139,18 @@ async def test_commentary_survives_debug_window_lifecycle(server, make_page):
     # Stays open across navigation (which triggers fresh board_update +
     # the analysis-off code path that previously tore commentary down).
     await page.evaluate("document.querySelector('#view-forward')?.click()")
-    await page.wait_for_timeout(300)
+    await page.wait_for_function(
+        f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
+        "?.textContent?.includes('First move comment.')",
+    )
     s = await _snapshot(page)
     assert s["slotPresent"]
     # And after another navigation step.
     await page.evaluate("document.querySelector('#view-forward')?.click()")
-    await page.wait_for_timeout(300)
+    await page.wait_for_function(
+        f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
+        "?.textContent?.includes('No commentary at this ply')",
+    )
     s = await _snapshot(page)
     assert s["slotPresent"]
     _assert_no_errors(errors)
@@ -262,8 +268,10 @@ async def test_setting_off_keeps_commentary_closed(server, make_page):
     await _seed_view_mode(app)
     _ctx, page, errors = await _new_page(make_page)
     await _goto_play_in_view_mode(page, base)
-    # Settle then assert.
-    await page.wait_for_timeout(500)
+    # _goto_play_in_view_mode awaits the view-controls becoming visible,
+    # which only fires after the perspective's awaited refreshSettings()
+    # GET resolves and the subsequent board_update runs
+    # syncCommentsVisibility -- so by here the no-open decision is final.
     s = await _snapshot(page)
     assert not s["slotPresent"]
     assert not s["wbPresent"]

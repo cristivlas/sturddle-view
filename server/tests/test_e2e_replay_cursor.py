@@ -72,11 +72,10 @@ async def test_replay_while_old_cursor_nonzero_does_not_corrupt_new_game(server,
     # The bug only repros when syncCommentsVisibility() decides to open
     # the commentary window on board_update.
     await page.evaluate(
-        "fetch('/settings', {method:'PUT',"
+        "async () => { await fetch('/settings', {method:'PUT',"
         " headers:{'Content-Type':'application/json'},"
-        " body: JSON.stringify({view_show_pgn_comments: true})})"
+        " body: JSON.stringify({view_show_pgn_comments: true})}); }"
     )
-    await page.wait_for_timeout(200)
 
     # Import game A and navigate cursor to a non-zero ply.
     import_status = await page.evaluate(
@@ -88,8 +87,9 @@ async def test_replay_while_old_cursor_nonzero_does_not_corrupt_new_game(server,
     )
     assert import_status["status"] == 200, f"import A failed: {import_status}"
     # Tell client to sync to the new game id (mirrors normal UI flow).
-    await page.evaluate("fetch('/game/sync', {method:'POST'})")
-    await page.wait_for_timeout(200)
+    await page.evaluate(
+        "async () => { await fetch('/game/sync', {method:'POST'}); }"
+    )
     goto_status = await page.evaluate(
         "async () => { const r = await fetch('/game/view/goto', {method:'POST',"
         " headers:{'Content-Type':'application/json'},"
@@ -102,7 +102,10 @@ async def test_replay_while_old_cursor_nonzero_does_not_corrupt_new_game(server,
     # Switch away from play (simulates user opening tournament window
     # while play perspective is unmounted -- as the Replay button does).
     await page.click('button[data-perspective="engines"]')
-    await page.wait_for_timeout(300)
+    await page.wait_for_function(
+        "() => !!document.querySelector('#engines-perspective')"
+        " && !document.querySelector('.perspective-root')?.classList.contains('is-pending')",
+    )
 
     # Replay: import game B + activate play (mirror tournament-live-game).
     await page.evaluate(
@@ -115,8 +118,25 @@ async def test_replay_while_old_cursor_nonzero_does_not_corrupt_new_game(server,
         "}",
         _PGN_B,
     )
-    # Wait past the mount's /game/sync + any spurious POST.
-    await page.wait_for_timeout(1500)
+    # Wait for the play perspective to be fully re-mounted.
+    await page.wait_for_function(
+        "() => !!document.querySelector('#play-perspective')"
+        " && !document.querySelector('.perspective-root')?.classList.contains('is-pending')",
+    )
+    # The mount issues POST /game/sync; its board_update is what fires
+    # the buggy synthetic /view/goto. Issue ANOTHER /game/sync and wait
+    # for its server response -- it's enqueued behind any HVE-locked
+    # work the mount triggered, so by the time it resolves any spurious
+    # /view/goto from the bug would already have executed.
+    await page.evaluate(
+        "async () => { await fetch('/game/sync', {method:'POST'}); }"
+    )
+    # One more flush: wait for the resulting board_update to reach the
+    # client (view-controls visible reflects the latest server state).
+    await page.wait_for_function(
+        "() => getComputedStyle(document.querySelector('#view-controls'))"
+        ".display !== 'none'",
+    )
 
     # Assertion: server's view cursor on game B must be 0. Anything
     # else means a stale cached board_update from game A fired a

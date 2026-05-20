@@ -61,9 +61,14 @@ async def test_view_mode_clock_names_after_hard_reload(server, page):
 
     await page.goto(base + "/")
     await page.wait_for_selector("#play-perspective")
-    # Wait past the auto /game/sync (200ms) and let the play.js
-    # board_update listener run -- that's the one that used to clobber.
-    await page.wait_for_timeout(1500)
+    # view-controls become visible only after play.js's board_update
+    # handler runs (it toggles view-mode UI based on the viewing flag) --
+    # which is the same handler that used to clobber the PGN names.
+    # Once it's visible BOTH listeners have run on the first board_update.
+    await page.wait_for_function(
+        "() => getComputedStyle(document.querySelector('#view-controls'))"
+        ".display !== 'none'",
+    )
 
     names = await page.evaluate(
         """() => ({
