@@ -262,6 +262,7 @@ def _write_fake_fastchess(tmp_path):
     all args and sleeps until killed. Returns the path to invoke."""
     py = tmp_path / "fake_fastchess.py"
     py.write_text(
+        f"#!{sys.executable}\n"
         "import time\n"
         "while True:\n"
         "    time.sleep(60)\n"

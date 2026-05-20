@@ -138,6 +138,7 @@ async def test_spawn_includes_overrides_for_analysis(supervisor, stub_engine):
     assert stub_engine.configured == {"Threads": 8}
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows-only creationflag")
 async def test_spawn_uses_windows_creation_flag(supervisor):
     with patch("sturddle_view.engines.sys") as mock_sys:
         mock_sys.platform = "win32"
