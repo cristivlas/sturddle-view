@@ -13,12 +13,16 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import chess
 import chess.engine
 import chess.pgn
 
 from .._atomic import atomic_write_text
+
+if TYPE_CHECKING:
+    from ..recent_imports import RecentImports
 from ..chess.board import board_from, moves_san as _moves_san, side_to_move
 from ..chess.engine_info import serialize_info
 from ..chess.pgn_build import build_pgn
@@ -90,11 +94,16 @@ class HumanVsEngine:
         openings=None,
         settings=None,
         store: GameStore | None = None,
+        recents: "RecentImports | None" = None,
     ) -> None:
         self._bus = bus
         self._openings = openings  # Optional[OpeningBook]
         self._settings = settings  # Optional[Settings]
         self._store = store
+        # Optional RecentImports. When set, finished games are saved into
+        # the imports store on game-end so they survive reloads and appear
+        # in the recents dropdown. Tagged with summary["source"]="play".
+        self._recents = recents
         # UCI engine session: spawn/configure/cancel/quit/swap + log fanout.
         # HVE keeps the search loops (_think_and_play, _run_analysis) and
         # only delegates process lifecycle.
@@ -170,6 +179,11 @@ class HumanVsEngine:
         # entries for plies with no engine search (human moves). Matches
         # move_stack length; pop alongside on take-back. Reset on new game.
         self._eval_history: list[dict | None] = []
+        # Set inside the game-end lock by _stash_recents_payload(); drained
+        # after the lock by _flush_recents_save(). Carries (text, summary,
+        # game_id) for the recent-imports save so the async write happens
+        # outside the critical section.
+        self._pending_recents_save: tuple[str, dict, str] | None = None
         self._tb: TablebaseProber | None = None
         self._lock = asyncio.Lock()
 
@@ -467,6 +481,7 @@ class HumanVsEngine:
             await self._bus.publish(
                 Event(kind="game_result", game_id=end_game_id, payload=end_payload)
             )
+            await self._flush_recents_save()
         else:
             await self._engine_to_move()
 
@@ -615,6 +630,7 @@ class HumanVsEngine:
             # Result from human's perspective: human resigned -> engine wins.
             result = loser_result(self._human_white)
             self._maybe_save_pgn(result=result, termination="resignation")
+            self._stash_recents_payload(result=result, termination="resignation")
             await self._bus.publish(
                 Event(
                     kind="game_result",
@@ -625,6 +641,7 @@ class HumanVsEngine:
             self._game_id = None
             self._board = None
             self._clear_store()
+        await self._flush_recents_save()
 
     async def pause(self) -> None:
         """Pause the clock. Only valid on the human's turn.
@@ -1282,6 +1299,7 @@ class HumanVsEngine:
             # Loser is the side to move when the flag fell.
             result = loser_result(loser == "white")
             self._maybe_save_pgn(result=result, termination="time_forfeit")
+            self._stash_recents_payload(result=result, termination="time_forfeit")
         await self._bus.publish(
             Event(
                 kind="game_result",
@@ -1289,6 +1307,7 @@ class HumanVsEngine:
                 payload={"result": "timeout", "loser": loser},
             )
         )
+        await self._flush_recents_save()
         async with self._lock:
             # Only clear if the same game is still active. A racing
             # new_game / enter_view_mode between the two critical sections
@@ -1418,6 +1437,7 @@ class HumanVsEngine:
             await self._bus.publish(
                 Event(kind="game_result", game_id=end_game_id, payload=end_payload)
             )
+            await self._flush_recents_save()
 
     async def _run_analysis(self, game_id: str, board: chess.Board) -> None:
         """Drive analysis on a dedicated engine instance.
@@ -1660,6 +1680,7 @@ class HumanVsEngine:
         else:
             result, termination = "*", "unknown"
         self._maybe_save_pgn(result=result, termination=termination)
+        self._stash_recents_payload(result=result, termination=termination)
         self._clear_store()
         game_id = self._game_id
         self._game_id = None
@@ -1672,6 +1693,55 @@ class HumanVsEngine:
         w_safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in white)
         b_safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in black)
         return f"sturddle-{ts}-{w_safe}-vs-{b_safe}.pgn"
+
+    def _build_play_game_pgn(
+        self, *, result: str, termination: str,
+    ) -> tuple[str, str, str] | None:
+        """Build a play-mode PGN from the live board, headers, opening,
+        time control, clocks, and eval history. Returns (pgn_text,
+        white, black) or None when there's nothing to build (no game or
+        no moves). Caller is responsible for the lock when serializing
+        with concurrent mutators.
+
+        Shared by ``get_pgn_text`` (download), ``_maybe_save_pgn`` (disk
+        autosave), and ``_stash_recents_payload`` (recent-imports save).
+        """
+        if self._board is None or self._game_id is None:
+            return None
+        if not self._board.move_stack:
+            return None
+        engine_label = self._engine_name or Path(self._engine_path).name
+        white = "Human" if self._human_white else engine_label
+        black = engine_label if self._human_white else "Human"
+        headers = {
+            "Event": "Sturddle View -- Human vs Engine",
+            "Site": "Sturddle View",
+            "Date": datetime.date.today().strftime("%Y.%m.%d"),
+            "White": white,
+            "Black": black,
+        }
+        opening = None
+        if self._openings is not None and self._start_fen is None:
+            ucis = [m.uci() for m in self._board.move_stack]
+            hit = self._openings.lookup(ucis)
+            if hit is not None:
+                opening = (hit.eco, hit.name)
+        tc = None
+        if self._clock.tc.initial_seconds:
+            tc = (int(self._clock.tc.initial_seconds), int(self._clock.tc.increment_seconds))
+        pgn_text = build_pgn(
+            start_fen=self._start_fen,
+            moves_uci=[m.uci() for m in self._board.move_stack],
+            clock_history=list(self._clock.history),
+            final_clocks=(self._clock.white_time, self._clock.black_time),
+            headers=headers,
+            opening=opening,
+            result=result,
+            termination=termination,
+            time_control=tc,
+            eval_history=list(self._eval_history),
+        )
+        return pgn_text, white, black
 
     def get_pgn_text(self) -> tuple[str, str] | None:
         """Return (pgn_text, suggested_filename) for the current game, or None.
@@ -1726,42 +1796,10 @@ class HumanVsEngine:
                 eval_history=view_evals,
             )
         else:
-            if not self._board.move_stack:
+            built = self._build_play_game_pgn(result="*", termination="unterminated")
+            if built is None:
                 return None
-            result = "*"
-            termination = "unterminated"
-            engine_label = self._engine_name or Path(self._engine_path).name
-            white = "Human" if self._human_white else engine_label
-            black = engine_label if self._human_white else "Human"
-            headers = {
-                "Event": "Sturddle View -- Human vs Engine",
-                "Site": "Sturddle View",
-                "Date": datetime.date.today().strftime("%Y.%m.%d"),
-                "White": white,
-                "Black": black,
-            }
-            opening = None
-            if self._openings is not None and self._start_fen is None:
-                ucis = [m.uci() for m in self._board.move_stack]
-                hit = self._openings.lookup(ucis)
-                if hit is not None:
-                    opening = (hit.eco, hit.name)
-            tc = None
-            if self._clock.tc.initial_seconds:
-                tc = (int(self._clock.tc.initial_seconds), int(self._clock.tc.increment_seconds))
-            play_evals = list(self._eval_history)
-            pgn_text = build_pgn(
-                start_fen=self._start_fen,
-                moves_uci=[m.uci() for m in self._board.move_stack],
-                clock_history=list(self._clock.history),
-                final_clocks=(self._clock.white_time, self._clock.black_time),
-                headers=headers,
-                opening=opening,
-                result=result,
-                termination=termination,
-                time_control=tc,
-                eval_history=play_evals,
-            )
+            pgn_text, white, black = built
 
         return pgn_text, self._make_pgn_filename(white, black)
 
@@ -1785,41 +1823,10 @@ class HumanVsEngine:
             log.exception("could not create PGN dir %s", pgn_dir)
             return None
 
-        engine_label = self._engine_name or Path(self._engine_path).name
-        white = "Human" if self._human_white else engine_label
-        black = engine_label if self._human_white else "Human"
-        headers = {
-            "Event": "Sturddle View -- Human vs Engine",
-            "Site": "Sturddle View",
-            "Date": datetime.date.today().strftime("%Y.%m.%d"),
-            "White": white,
-            "Black": black,
-        }
-
-        opening = None
-        if self._openings is not None and self._start_fen is None:
-            ucis = [m.uci() for m in self._board.move_stack]
-            hit = self._openings.lookup(ucis)
-            if hit is not None:
-                opening = (hit.eco, hit.name)
-
-        tc = None
-        if self._clock.tc.initial_seconds:
-            tc = (int(self._clock.tc.initial_seconds), int(self._clock.tc.increment_seconds))
-
-        autosave_evals = list(self._eval_history)
-        pgn_text = build_pgn(
-            start_fen=self._start_fen,
-            moves_uci=[m.uci() for m in self._board.move_stack],
-            clock_history=list(self._clock.history),
-            final_clocks=(self._clock.white_time, self._clock.black_time),
-            headers=headers,
-            opening=opening,
-            result=result,
-            termination=termination,
-            time_control=tc,
-            eval_history=autosave_evals,
-        )
+        built = self._build_play_game_pgn(result=result, termination=termination)
+        if built is None:
+            return None
+        pgn_text, _white, _black = built
 
         # Game-start timestamp keeps the path stable across per-move autosaves
         # and the final end-of-game write, so the file is overwritten in place.
@@ -1833,3 +1840,48 @@ class HumanVsEngine:
             return None
         log.info("saved PGN to %s", path)
         return path
+
+    def _stash_recents_payload(self, *, result: str, termination: str) -> None:
+        """Build the finished-game PGN + summary and stash on
+        ``_pending_recents_save`` for the post-lock async flush.
+
+        Caller MUST hold ``self._lock``. No-op when there's no recents
+        store wired, no active game, no moves, or no game_id. Tagged
+        with ``summary["source"]="play"`` so the UI can distinguish
+        these from user-initiated imports.
+        """
+        assert self._lock.locked(), "_stash_recents_payload called without lock"
+        if self._recents is None:
+            return
+        try:
+            built = self._build_play_game_pgn(result=result, termination=termination)
+        except Exception:
+            log.exception("could not build PGN for recents save")
+            return
+        if built is None:
+            return
+        pgn_text, white, black = built
+        summary = {
+            "white": white,
+            "black": black,
+            "result": result,
+            "side_to_move": "white" if self._board.turn == chess.WHITE else "black",
+            "source": "play",
+        }
+        self._pending_recents_save = (pgn_text, summary, self._game_id)
+
+    async def _flush_recents_save(self) -> None:
+        """Drain the stash set by _stash_recents_payload. Call AFTER
+        releasing self._lock. Best-effort: a failure here must not
+        block game-end signaling."""
+        payload = self._pending_recents_save
+        self._pending_recents_save = None
+        if payload is None or self._recents is None:
+            return
+        text, summary, game_id = payload
+        try:
+            await self._recents.save(
+                fmt="pgn", text=text, summary=summary, game_id=game_id,
+            )
+        except Exception:
+            log.exception("could not save finished game to recents")

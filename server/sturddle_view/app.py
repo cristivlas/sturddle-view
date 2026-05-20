@@ -259,6 +259,7 @@ def _maybe_restore_game(app: FastAPI) -> None:
         openings=s.openings,
         settings=s.settings,
         store=s.game_store,
+        recents=s.recent_imports,
     )
     hve.restore_from(state)
     # Seed name + UCI options from the registry so a client reconnecting

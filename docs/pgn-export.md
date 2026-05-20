@@ -305,20 +305,46 @@ Negative / edge:
 - FEN-only view: unchanged (409).
 - `eval_history` present but all `None`: no eval tokens emitted.
 
-## TODO: Auto-Save Finished Games to `recent_imports`
+## Auto-Save Finished Games to `recent_imports`
 
-Status: **[TODO]** -- optional, not yet decided.
+Status: **[DONE]**
 
-On game end, regardless of the `pgn_autosave` / `pgn_dir` setting,
-call `recent_imports.save(fmt="pgn", text=build_pgn(...))` so the
-finished game is recoverable across reloads and shows up in the
-recents dropdown.
+### Behavior
 
-Open questions:
-- Tag with `fmt="play"` (or similar) to distinguish from
-  user-initiated imports; add a UI filter.
-- Separate cap / eviction policy, or share the existing 50-entry
-  cap.
-- Skip in-progress saves (game-end only) to avoid hash churn.
-- Interaction with existing `pgn_autosave` to disk: independent, or
-  gate one on the other.
+On true game-end (natural outcome via `_finalize_game_locked`,
+resignation, or time forfeit), the finished PGN is written to the
+recent-imports store under `fmt="pgn"` with `summary["source"]="play"`.
+The active session's `game_id` is bound to the row, so the row is
+recoverable across reloads and surfaces in the existing recents
+dropdown via the same `GET /game/recent-imports` path used by
+imports.
+
+### Resolved questions
+
+- **Trigger**: game-end only. Per-move autosave (`result="*"`) is
+  NOT written to recents to avoid hash churn.
+- **Independence from `pgn_autosave`/`pgn_dir`**: orthogonal. Both
+  features fire on game-end; one writes to user-chosen disk dir,
+  the other to the in-app store.
+- **Tag**: `summary["source"]="play"` (no schema bump). Imports
+  omit the field. UI filtering can key on this when wanted.
+- **Cap**: shares the existing 50-entry LRU. Pinned-by-active-session
+  protection already exists. If finished-game accumulation becomes a
+  pain, split caps later.
+- **Empty games**: skipped (no moves -> nothing meaningful to save).
+
+### Plumbing
+
+- `HumanVsEngine.__init__` takes `recents: RecentImports | None`.
+  `None` is a no-op (preserves test isolation; characterization
+  tests don't trip the save path).
+- `_stash_recents_payload(result, termination)` builds the PGN +
+  summary under the lock and stashes on
+  `_pending_recents_save`.
+- `_flush_recents_save()` is awaited after the lock releases.
+  Failures are logged and swallowed; game-end signaling must never
+  block on the recents write.
+- Wired into all three game-end paths: `_finalize_game_locked`,
+  `resign()`, `_handle_flag_fall()`.
+- `create_app` and the lazy `/game/new` HVE ctor both pass
+  `recents=s.recent_imports`.
