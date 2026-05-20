@@ -346,6 +346,10 @@ def create_app(
     app.include_router(tournaments_api.router)
     app.include_router(tournaments_api.internal_router)
     app.include_router(ws_api.router)
+    if settings.test_mode:
+        from .api import test_hooks as test_hooks_api
+        app.include_router(test_hooks_api.router)
+        log.info("test-mode endpoints (/_test/*) mounted")
 
     @app.get("/healthz", include_in_schema=False)
     def healthz() -> dict:

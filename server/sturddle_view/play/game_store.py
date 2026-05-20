@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -26,6 +27,10 @@ SCHEMA_VERSION = 1
 
 
 def default_state_path() -> Path:
+    """Path to the persisted current-game snapshot. ``SV_GAME_STATE_PATH`` overrides."""
+    override = os.environ.get("SV_GAME_STATE_PATH")
+    if override:
+        return Path(override)
     return Path(user_config_dir(APP_NAME, appauthor=False)) / "current_game.json"
 
 
