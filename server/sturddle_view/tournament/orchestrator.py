@@ -299,6 +299,10 @@ class Orchestrator:
         # wins; handed to the reconciliation queue at dissolution.
         self._pair_moves: dict[str, list[str]] = {}
         self._pgn_tailer: PgnTailer | None = None
+        # Scheduled tailer start/stop tasks (fire-and-forget). Tests
+        # await these via _await_pending_tailer_tasks() to remove sleep
+        # polling at lifecycle transitions.
+        self._pending_tailer_tasks: set[asyncio.Task] = set()
         self._reconcile_queue = ReconciliationQueue()
         # Per-tournament secret embedded in the proxy --broadcast-url so
         # only proxies belonging to the active tournament can post.
@@ -1047,10 +1051,24 @@ class Orchestrator:
                 log.exception("PGN tailer stop failed")
 
     def _schedule_tailer_start(self, reason: str) -> None:
-        asyncio.create_task(self._maybe_start_tailer(reason))
+        t = asyncio.create_task(self._maybe_start_tailer(reason))
+        self._pending_tailer_tasks.add(t)
+        t.add_done_callback(self._pending_tailer_tasks.discard)
 
     def _schedule_tailer_stop(self, reason: str) -> None:
-        asyncio.create_task(self._maybe_stop_tailer(reason))
+        t = asyncio.create_task(self._maybe_stop_tailer(reason))
+        self._pending_tailer_tasks.add(t)
+        t.add_done_callback(self._pending_tailer_tasks.discard)
+
+    async def _await_pending_tailer_tasks(self) -> None:
+        """Test-only: await any currently-scheduled tailer lifecycle
+        tasks. Recurses once -- a stop may schedule a follow-up start
+        and vice versa via the re-check in _maybe_*_tailer."""
+        for _ in range(2):
+            tasks = list(self._pending_tailer_tasks)
+            if not tasks:
+                return
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _emit_reconciled(self, m: ReconciledMatch) -> None:
         log.info(

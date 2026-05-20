@@ -354,14 +354,6 @@ def _install_tailer(orch, tmp_path) -> PgnTailer:
     return tailer
 
 
-async def _wait_for(predicate, timeout: float = 1.0) -> None:
-    """Poll a predicate until true or timeout. Used to await the
-    fire-and-forget tailer start/stop tasks the gate kicks off."""
-    deadline = asyncio.get_event_loop().time() + timeout
-    while not predicate():
-        if asyncio.get_event_loop().time() > deadline:
-            raise AssertionError("predicate did not become true within timeout")
-        await asyncio.sleep(0.01)
 
 
 @pytest.mark.asyncio
@@ -382,10 +374,12 @@ async def test_tailer_starts_on_first_subscriber(orch, tmp_path):
 
     q = orch.subscribe_to_game(pair_id)
     try:
-        await _wait_for(tailer.is_running)
+        await orch._await_pending_tailer_tasks()
+        assert tailer.is_running()
     finally:
         orch.unsubscribe_from_game(pair_id, q)
-        await _wait_for(lambda: not tailer.is_running())
+        await orch._await_pending_tailer_tasks()
+        assert not tailer.is_running()
 
 
 @pytest.mark.asyncio
@@ -394,10 +388,12 @@ async def test_tailer_stops_on_last_unsubscribe(orch, tmp_path):
     tailer = _install_tailer(orch, tmp_path)
     pair_id = await _drive_pair_to(orch, _LONG_MOVES)
     q = orch.subscribe_to_game(pair_id)
-    await _wait_for(tailer.is_running)
+    await orch._await_pending_tailer_tasks()
+    assert tailer.is_running()
 
     orch.unsubscribe_from_game(pair_id, q)
-    await _wait_for(lambda: not tailer.is_running())
+    await orch._await_pending_tailer_tasks()
+    assert not tailer.is_running()
 
 
 @pytest.mark.asyncio
@@ -408,16 +404,16 @@ async def test_tailer_keeps_running_while_pending_entry_unmatched(orch, tmp_path
     tailer = _install_tailer(orch, tmp_path)
     pair_id = await _drive_pair_to(orch, _LONG_MOVES)
     q = orch.subscribe_to_game(pair_id)
-    await _wait_for(tailer.is_running)
+    await orch._await_pending_tailer_tasks()
+    assert tailer.is_running()
 
     # Dissolve. Subscriber dict empties, but pending_count > 0.
     # Gate must skip the stop.
     await orch.ingest_proxy_lines(_PROXY_A, ["ucinewgame"])
     assert orch._reconcile_queue.pending_count == 1
     assert not orch._game_subscribers
-    # Give any scheduled stop task a chance to run; the tailer must
-    # remain up regardless.
-    await asyncio.sleep(0.05)
+    # Any scheduled stop task must run and find pending entries -> no-op.
+    await orch._await_pending_tailer_tasks()
     assert tailer.is_running()
 
     # Delivering the matching PGN record drains the queue and the
@@ -428,7 +424,8 @@ async def test_tailer_keeps_running_while_pending_entry_unmatched(orch, tmp_path
         uci_moves=list(_LONG_MOVES), game_n=1, round_tag="1",
     )
     await orch._on_pgn_record(record)
-    await _wait_for(lambda: not tailer.is_running())
+    await orch._await_pending_tailer_tasks()
+    assert not tailer.is_running()
     orch.unsubscribe_from_game(pair_id, q)  # cleanup
 
 
@@ -455,7 +452,8 @@ async def test_tailer_stays_up_until_all_pending_drain(orch, tmp_path, emitted):
     # One confirmed pair via the real subscribe path.
     pair_id = await _drive_pair_to(orch, real_pair_moves)
     q = orch.subscribe_to_game(pair_id)
-    await _wait_for(tailer.is_running)
+    await orch._await_pending_tailer_tasks()
+    assert tailer.is_running()
 
     # Inject a second pending entry as if a second watched pair had
     # just dissolved.
@@ -473,7 +471,7 @@ async def test_tailer_stays_up_until_all_pending_drain(orch, tmp_path, emitted):
     assert not orch._game_subscribers
     assert orch._reconcile_queue.pending_count == 2
 
-    await asyncio.sleep(0.05)
+    await orch._await_pending_tailer_tasks()
     assert tailer.is_running(), "tailer must remain up while pending entries are queued"
 
     # First PGN record matches the real pair, drains one entry; the
@@ -485,7 +483,7 @@ async def test_tailer_stays_up_until_all_pending_drain(orch, tmp_path, emitted):
     )
     await orch._on_pgn_record(rec_real)
     assert orch._reconcile_queue.pending_count == 1
-    await asyncio.sleep(0.05)
+    await orch._await_pending_tailer_tasks()
     assert tailer.is_running(), "tailer must remain up until the last pending entry drains"
 
     # Second record matches the synthetic entry; queue empty, stop.
@@ -496,7 +494,8 @@ async def test_tailer_stays_up_until_all_pending_drain(orch, tmp_path, emitted):
     )
     await orch._on_pgn_record(rec_synth)
     assert orch._reconcile_queue.pending_count == 0
-    await _wait_for(lambda: not tailer.is_running())
+    await orch._await_pending_tailer_tasks()
+    assert not tailer.is_running()
 
     reconciled = _events_of(emitted, "game_reconciled")
     assert len(reconciled) == 2
@@ -519,7 +518,8 @@ async def test_subscribe_during_pending_stop_keeps_tailer_alive(orch, tmp_path):
     tailer = _install_tailer(orch, tmp_path)
     pair_id = await _drive_pair_to(orch, _LONG_MOVES)
     q1 = orch.subscribe_to_game(pair_id)
-    await _wait_for(tailer.is_running)
+    await orch._await_pending_tailer_tasks()
+    assert tailer.is_running()
 
     # Tight race: unsubscribe schedules stop; subscribe scheduled
     # immediately, before any yield. Both stop and start tasks now
@@ -527,16 +527,17 @@ async def test_subscribe_during_pending_stop_keeps_tailer_alive(orch, tmp_path):
     orch.unsubscribe_from_game(pair_id, q1)
     q2 = orch.subscribe_to_game(pair_id)
 
-    # Yield enough times to let both scheduled tasks run.
-    for _ in range(5):
-        await asyncio.sleep(0)
+    # Await BOTH scheduled tasks (stop + start). The re-check inside
+    # _maybe_stop_tailer must make the stop a no-op.
+    await orch._await_pending_tailer_tasks()
 
     assert tailer.is_running(), (
         "tailer must remain up: a new subscriber arrived before the "
         "pending stop ran, so the stop should have re-checked and skipped"
     )
     orch.unsubscribe_from_game(pair_id, q2)
-    await _wait_for(lambda: not tailer.is_running())
+    await orch._await_pending_tailer_tasks()
+    assert not tailer.is_running()
 
 
 @pytest.mark.asyncio
@@ -548,7 +549,8 @@ async def test_records_flow_only_while_subscribed(orch, tmp_path, emitted):
     _install_tailer(orch, tmp_path)
     pair_id = await _drive_pair_to(orch, _LONG_MOVES)
     q = orch.subscribe_to_game(pair_id)
-    await _wait_for(orch._pgn_tailer.is_running)
+    await orch._await_pending_tailer_tasks()
+    assert orch._pgn_tailer.is_running()
     await orch.ingest_proxy_lines(_PROXY_A, ["ucinewgame"])
 
     record = PgnGameRecord(
@@ -559,7 +561,8 @@ async def test_records_flow_only_while_subscribed(orch, tmp_path, emitted):
     await orch._on_pgn_record(record)
     assert len(_events_of(emitted, "game_reconciled")) == 1
     orch.unsubscribe_from_game(pair_id, q)
-    await _wait_for(lambda: not orch._pgn_tailer.is_running())
+    await orch._await_pending_tailer_tasks()
+    assert not orch._pgn_tailer.is_running()
 
 
 # ---------------------------------------------------------------------------
@@ -643,7 +646,8 @@ async def test_terminal_teardown_with_running_tailer(orch, tmp_path, emitted):
     orch._pgn_tailer = PgnTailer(pgn_path, orch._on_pgn_record, poll_interval=0.05)
 
     q = orch.subscribe_to_game(pair_id)
-    await _wait_for(orch._pgn_tailer.is_running)
+    await orch._await_pending_tailer_tasks()
+    assert orch._pgn_tailer.is_running()
 
     # Now the PGN flush lands (fastchess writes the game).
     _write_pgn_for_long_moves(pgn_path)
