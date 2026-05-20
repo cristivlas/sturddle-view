@@ -56,11 +56,11 @@ def run_uvicorn(app, *, port: int | None = None) -> Iterator[tuple[str, object]]
     """Run a uvicorn server in a background thread.
 
     Startup waits on a ``threading.Event`` set by the server inside its
-    own loop -- no sleep-polling. Teardown is best-effort: tests that
-    leak connections at fixture teardown still rely on ``force_exit``
-    plus the daemon thread to clean up at process exit. Tightening this
-    requires hoisting Playwright contexts into fixtures across the e2e
-    suite so teardown is synchronous; tracked separately."""
+    own loop -- no sleep-polling. Teardown signals ``should_exit`` and
+    lets uvicorn run its full lifespan shutdown (so app.state.hve
+    cleanup, etc. actually runs) before the loop is closed. The
+    ``page``/``make_page`` fixtures close Playwright contexts before
+    this teardown runs, so WS connections drain cleanly."""
     import uvicorn
 
     from sturddle_view._uvicorn_signal import make_signalling_server
@@ -81,7 +81,6 @@ def run_uvicorn(app, *, port: int | None = None) -> Iterator[tuple[str, object]]
         yield f"http://127.0.0.1:{port}", s
     finally:
         s.should_exit = True
-        s.force_exit = True
         thread.join(timeout=_UVICORN_SHUTDOWN_TIMEOUT)
 
 
