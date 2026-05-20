@@ -34,10 +34,7 @@ def default_registry_path() -> Path:
 # either pointless or actively harmful. Lower-case for case-insensitive match.
 _HIDDEN_OPTIONS = {"multipv", "ponder", "uci_chess960", "uci_variant", "uci_analysemode"}
 
-# Same-host UCI handshakes complete in well under 100ms in practice. A
-# bounded wait protects GET /engines from hanging forever on a binary
-# that spawns but never replies (e.g. python.exe in a botched probe).
-_DEFAULT_PROBE_TIMEOUT_SEC = 0.5
+_DEFAULT_PROBE_TIMEOUT_SEC = 3.0
 _PROBE_TIMEOUT_ENV = "SV_ENGINE_PROBE_TIMEOUT_SEC"
 
 

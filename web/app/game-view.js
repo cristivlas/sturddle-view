@@ -365,7 +365,7 @@ export function mountGameView(container, opts = {}) {
     // When the left dock is empty on desktop, shrink the left rail so the
     // board + right rail shift left as one block instead of being framed
     // by a wide empty band. Proportional to railW so it scales with width.
-    const LEFT_RAIL_EMPTY_RATIO = window.__leftRailEmptyRatio ?? 0.3;
+    const LEFT_RAIL_EMPTY_RATIO = window.__leftRailEmptyRatio ?? 0.4;
     if (window.innerWidth <= NARROW || !grid) {
       railW = 0;
       leftRailW = 0;
