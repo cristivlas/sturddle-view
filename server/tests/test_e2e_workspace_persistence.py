@@ -229,7 +229,6 @@ async def test_TR3_close_all_then_open_workspace_restores(server, make_page):
     await _wait_wb_count(page, 2)
     await _close_all_via_menu(page)
     await _wait_wb_count(page, 0)
-    await page.wait_for_timeout(100)
     await _open_workspace_via_ribbon(page)
     await _wait_wb_count(page, 2)
     _assert_no_errors(errors)

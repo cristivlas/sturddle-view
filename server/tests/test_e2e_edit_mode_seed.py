@@ -64,9 +64,7 @@ async def test_edit_mode_seeds_stm_and_castling_from_inherited_fen(server, page)
 
     await page.goto(base + "/")
     await page.wait_for_selector("#play-perspective", timeout=5000)
-    # Let the initial sync settle.
-    await page.wait_for_timeout(800)
-    # Confirm view-mode ribbon is showing (board_update with view payload arrived).
+    # View-mode ribbon visible means the board_update with view payload arrived.
     await page.wait_for_function(
         "() => getComputedStyle(document.querySelector('#view-controls')).display !== 'none'",
         timeout=5000,

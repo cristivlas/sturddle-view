@@ -67,7 +67,6 @@ async def test_replay_while_old_cursor_nonzero_does_not_corrupt_new_game(server,
 
     await page.goto(base + "/")
     await page.wait_for_selector("#play-perspective", timeout=5000)
-    await page.wait_for_timeout(500)
 
     # Ensure the failure mode's prerequisite: commentary window is on.
     # The bug only repros when syncCommentsVisibility() decides to open
@@ -88,7 +87,6 @@ async def test_replay_while_old_cursor_nonzero_does_not_corrupt_new_game(server,
         _PGN_A,
     )
     assert import_status["status"] == 200, f"import A failed: {import_status}"
-    await page.wait_for_timeout(200)
     # Tell client to sync to the new game id (mirrors normal UI flow).
     await page.evaluate("fetch('/game/sync', {method:'POST'})")
     await page.wait_for_timeout(200)
@@ -99,7 +97,6 @@ async def test_replay_while_old_cursor_nonzero_does_not_corrupt_new_game(server,
         " return { status: r.status, body: await r.text() }; }"
     )
     assert goto_status["status"] == 200, f"goto failed: {goto_status}"
-    await page.wait_for_timeout(300)
     assert app.state.hve._view_cursor == 10, "precondition: game A cursor at 10"
 
     # Switch away from play (simulates user opening tournament window

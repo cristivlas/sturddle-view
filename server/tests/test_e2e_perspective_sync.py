@@ -64,7 +64,6 @@ async def test_play_perspective_remount_resyncs_state(server, page):
 
     await page.goto(base + "/")
     await page.wait_for_selector("#play-perspective", timeout=5000)
-    await page.wait_for_timeout(500)
 
     await page.evaluate(
         """() => {
