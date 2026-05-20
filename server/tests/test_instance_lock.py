@@ -53,30 +53,28 @@ def test_second_acquire_fails(lock_path: Path, tmp_path: Path) -> None:
     # Spawn a subprocess that holds the lock, then try to acquire it here.
     script = tmp_path / "holder.py"
     script.write_text(HOLDER)
-    proc = subprocess.Popen(
+    with subprocess.Popen(
         [sys.executable, str(script), str(lock_path)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-    )
-    try:
-        out = proc.stdout.read(6)  # "ready\n" (or "ready\r" on Windows)
-        assert out.rstrip(b"\r\n") == b"ready", f"holder did not start: {proc.stderr.read()}"
-        assert not acquire(lock_path), "expected lock to be held by subprocess"
-    finally:
-        proc.kill()
-        proc.wait()
+    ) as proc:
+        try:
+            out = proc.stdout.read(6)  # "ready\n" (or "ready\r" on Windows)
+            assert out.rstrip(b"\r\n") == b"ready", f"holder did not start: {proc.stderr.read()}"
+            assert not acquire(lock_path), "expected lock to be held by subprocess"
+        finally:
+            proc.kill()
 
 
 def test_lock_released_after_crash(lock_path: Path, tmp_path: Path) -> None:
     script = tmp_path / "holder.py"
     script.write_text(HOLDER)
-    proc = subprocess.Popen(
+    with subprocess.Popen(
         [sys.executable, str(script), str(lock_path)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-    )
-    proc.stdout.read(6)  # wait for "ready\n" / "ready\r" on Windows
-    proc.kill()
-    proc.wait()
+    ) as proc:
+        proc.stdout.read(6)  # wait for "ready\n" / "ready\r" on Windows
+        proc.kill()
     # After the holder dies the OS releases the lock; we must be able to acquire it.
     assert _acquire_with_retry(lock_path), "lock not released after subprocess death"
