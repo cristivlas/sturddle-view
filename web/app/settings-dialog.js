@@ -223,6 +223,25 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       humanSideLabel.textContent = "Human plays as";
       humanSideRow.append(humanSideLabel, humanSide);
 
+      const ribbonSide = document.createElement("wa-select");
+      ribbonSide.size = "small";
+      ribbonSide.setAttribute("distance", "4");
+      ribbonSide.value = initial.ribbon_side === "right" ? "right" : "left";
+      for (const [val, label] of [["left", "Left"], ["right", "Right"]]) {
+        const opt = document.createElement("wa-option");
+        opt.value = val;
+        opt.textContent = label;
+        ribbonSide.append(opt);
+      }
+      ribbonSide.addEventListener("change", () => {
+        putSettings({ ribbon_side: ribbonSide.value });
+      });
+      const ribbonSideRow = document.createElement("div");
+      ribbonSideRow.className = "settings-row";
+      const ribbonSideLabel = document.createElement("label");
+      ribbonSideLabel.textContent = "Ribbon side";
+      ribbonSideRow.append(ribbonSideLabel, ribbonSide);
+
       const evalPov = document.createElement("wa-select");
       evalPov.size = "small";
       evalPov.setAttribute("distance", "4");
@@ -416,6 +435,8 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const displayCol = document.createElement("div");
       displayCol.className = "settings-panel-col";
       displayCol.append(
+        ribbonSideRow,
+        makeDivider(),
         evalPovRow, boardStyleRow,
         makeDivider(),
         showCommentsDisplayRow,

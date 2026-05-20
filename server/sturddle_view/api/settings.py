@@ -12,6 +12,7 @@ router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(
 
 _VALID_SIDES = {"white", "black", "random"}
 _VALID_EVAL_POV = {"white", "engine", "human"}
+_VALID_RIBBON_SIDES = {"left", "right"}
 _VALID_BOARD_STYLES = {
     "classic", "classic-staunty",
     "green", "green-staunty",
@@ -38,6 +39,7 @@ def _serialize(s) -> dict:
         "board_style": s.board_style,
         "play_eval_pov": s.play_eval_pov,
         "view_show_pgn_comments": s.view_show_pgn_comments,
+        "ribbon_side": s.ribbon_side,
         "engine_default_threads": s.engine_default_threads,
         "engine_default_analysis_threads": s.engine_default_analysis_threads,
         "engine_default_hash_mb": s.engine_default_hash_mb,
@@ -184,6 +186,15 @@ async def update_settings(payload: dict, request: Request) -> dict:
 
     if "view_show_pgn_comments" in payload:
         s.view_show_pgn_comments = bool(payload["view_show_pgn_comments"])
+
+    if "ribbon_side" in payload:
+        side = payload["ribbon_side"]
+        if side not in _VALID_RIBBON_SIDES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"ribbon_side must be one of {sorted(_VALID_RIBBON_SIDES)}",
+            )
+        s.ribbon_side = side
 
     for key, min_v in (
         ("engine_default_threads", 1),

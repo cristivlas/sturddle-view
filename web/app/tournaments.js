@@ -487,17 +487,19 @@ export function mountTournaments({ container, api, events, log, token }) {
     const ribbon = container.querySelector(".tournaments-ribbon");
     const rect = menubar.getBoundingClientRect();
     const ribbonRect = ribbon ? ribbon.getBoundingClientRect() : null;
-    const ribbonRight = (ribbonRect && ribbonRect.left < 8) ? Math.round(ribbonRect.right) : 0;
+    // Reserve the ribbon's width on BOTH edges regardless of which side
+    // it docks to. Keeps the workspace symmetric and ribbon-side-flips
+    // don't reshape the available area.
+    const ribbonW = ribbonRect ? Math.round(ribbonRect.width) : 0;
     const top = Math.round(rect.bottom);
-    const left = Math.max(Math.round(rect.left), ribbonRight);
-    // Live getter so tidy()/etc. see the current row right edge
-    // even after window resize.
+    const left = Math.max(Math.round(rect.left), ribbonW);
     const getRight = () => {
       const row = document.querySelector(".tournament-row");
-      if (row) return Math.round(row.getBoundingClientRect().right);
+      const rowRight = row ? Math.round(row.getBoundingClientRect().right) : null;
       const list = document.querySelector(".tournaments-list");
-      if (list) return Math.round(list.getBoundingClientRect().right);
-      return window.innerWidth;
+      const listRight = list ? Math.round(list.getBoundingClientRect().right) : null;
+      const base = rowRight ?? listRight ?? window.innerWidth;
+      return Math.min(base, window.innerWidth - ribbonW);
     };
     openTournamentWorkspace({ api, events, log, token, tournament: t, top, left, getRight });
     syncWindowMenu();

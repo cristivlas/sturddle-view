@@ -267,7 +267,10 @@ svg.cm-chessboard {
 
 #toast-stack {
   position: fixed;
-  inset: auto 16px 16px auto;
+  /* Co-located with the ribbon: default is left; right-ribbon override
+     below moves it to the right edge. Inset clears the 36px ribbon plus
+     an 8px gutter so toasts don't overlap ribbon buttons. */
+  inset: auto auto 16px 44px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -275,7 +278,7 @@ svg.cm-chessboard {
   pointer-events: none;
   /* Toast stack uses popover="manual" so it joins the top-layer and
      renders above an open <wa-dialog> backdrop. Strip the UA popover
-     chrome so it stays a transparent column at bottom-right. */
+     chrome so it stays a transparent column. */
   margin: 0;
   padding: 0;
   border: 0;
@@ -751,9 +754,14 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
     left: 0; top: auto; bottom: 100%;
     margin-left: 0; margin-bottom: 8px;
   }
-  /* Display order: board first, then ribbon below. */
-  .play-board-host { order: 1; }
-  #board-controls { order: 2; }
+  /* Display order: ribbon on top, then board, then side panel.
+     The horizontal ribbon's accent line sits at the button bottom
+     (bottom: -1px above), which only reads correctly when the ribbon
+     is above the board. */
+  #board-controls,
+  #view-controls,
+  #edit-controls { order: 1; }
+  .play-board-host { order: 2; }
   .play-side-host { order: 3; position: static; }
 }
 .game-view-board {
@@ -1877,7 +1885,10 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   flex: 1; min-height: 0;
 }
 .tournaments-body-main {
-  grid-column: 2 / 4;
+  /* Span only the middle column so the right gutter (col 3, --ribbon-w)
+     stays clear regardless of which side the ribbon docks to. Keeps
+     tournament rows + their progress bar from running under the ribbon. */
+  grid-column: 2 / 3;
   flex: 1; min-width: 0; display: flex; flex-direction: column;
 }
 .tournaments-ribbon {
@@ -2443,3 +2454,58 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .dock-slot-body:has(> .wb-pvtable) { padding-left: 0; padding-right: 0; }
 .wb-pvtable-col-pv { min-width: 200px; }
 .wb-pvtable-pv { white-space: nowrap; }
+
+/* ------------------------------------------------------------------
+   Ribbon-side mirror: when body[data-ribbon-side="right"], flip the
+   ribbon, board side rail, left dock, comments host, toast stack, and
+   tournament accent to the opposite edge. Mobile (<=640px) already
+   docks the ribbon horizontally and is unaffected.
+   ------------------------------------------------------------------ */
+body[data-ribbon-side="right"] #toast-stack {
+  inset: auto 44px 16px auto;
+}
+@media (max-width: 640px) {
+  /* Ribbon is horizontal at top on mobile, so toasts don't need a side
+     gutter to clear it -- reset to a uniform 16px edge inset. */
+  #toast-stack {
+    inset: auto auto 16px 16px;
+  }
+  body[data-ribbon-side="right"] #toast-stack {
+    inset: auto 16px 16px auto;
+  }
+}
+
+@media (min-width: 641px) {
+  body[data-ribbon-side="right"] .board-ribbon {
+    left: auto;
+    right: 0;
+    border-right: 0;
+    border-left: 1px solid var(--wa-color-border-loud, #353841);
+  }
+  body[data-ribbon-side="right"] .ribbon-btn::before {
+    right: auto;
+    left: -1px;
+  }
+  body[data-ribbon-side="right"] .play-grid {
+    grid-template-columns: var(--rail-w) var(--board-col-px, minmax(320px, 1fr)) var(--left-rail-w, var(--rail-w));
+    grid-template-areas:
+      ". banner ."
+      "side board  .";
+  }
+  body[data-ribbon-side="right"] .play-dock-left,
+  body[data-ribbon-side="right"] .play-comments-host {
+    grid-column: 3;
+    left: auto;
+    right: calc(var(--ribbon-w) + 1px);
+  }
+  body[data-ribbon-side="right"] .tournaments-ribbon {
+    left: auto;
+    right: 0;
+    border-right: 0;
+    border-left: 1px solid var(--wa-color-border-loud, #353841);
+  }
+  body[data-ribbon-side="right"] .tournaments-ribbon .ribbon-btn::before {
+    right: auto;
+    left: -1px;
+  }
+}

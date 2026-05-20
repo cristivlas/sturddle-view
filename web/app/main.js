@@ -69,6 +69,21 @@ function getLogSnapshot() {
 
 const ctx = { api, events, token, log, getLogSnapshot };
 
+// Ribbon side preference: drives CSS via [data-ribbon-side] on <body>.
+// Toast stack and side rail mirror the same attribute.
+async function refreshRibbonSide() {
+  let side = "left";
+  try {
+    const s = await api("GET", "/settings");
+    if (s?.ribbon_side === "right") side = "right";
+  } catch { /* keep default */ }
+  if (document.body.dataset.ribbonSide === side) return;
+  document.body.dataset.ribbonSide = side;
+  window.dispatchEvent(new CustomEvent("sturddle:layout-changed"));
+}
+refreshRibbonSide();
+window.addEventListener("sturddle:settings-changed", refreshRibbonSide);
+
 const router = new PerspectiveRouter({ root, ctx });
 router.register(playPerspective);
 router.register(enginesPerspective);

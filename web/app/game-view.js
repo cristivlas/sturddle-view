@@ -360,6 +360,9 @@ export function mountGameView(container, opts = {}) {
       : 32;
 
     let railW;
+    // leftRailW / --left-rail-w name the dock-side column, not a screen side:
+    // when ribbon_side="right", the mirror swaps grid columns so this width
+    // applies to the right rail. Shrink-when-empty still tracks the dock.
     let leftRailW;
     let availW;
     // When the left dock is empty on desktop, shrink the left rail so the
@@ -414,26 +417,40 @@ export function mountGameView(container, opts = {}) {
       if (sideHost) {
         if (window.innerWidth > NARROW) {
           const boardRect = boardEl.getBoundingClientRect();
-          const left = Math.ceil(boardRect.right) + gapW;
+          const ribbonRight = document.body.dataset.ribbonSide === "right";
           const top = Math.ceil(boardRect.top);
-          // On wide viewports, cap the right rail at its natural width so it
-          // doesn't stretch all the way to the right edge -- combined with the
-          // shrunken left rail (when dock is empty), this keeps the picture
-          // centered instead of framed by a wide empty left band.
+          // On wide viewports, cap the side rail at its natural width so it
+          // doesn't stretch all the way to the edge -- combined with the
+          // shrunken opposite rail (when dock is empty), this keeps the
+          // picture centered instead of framed by a wide empty band.
           // Kept as a raw CSS-px threshold (not rem-derived): the
           // below-WIDE branch lets the rail expand to fill `avail`, and
           // scaling WIDE up with font-size pushes viewports into that
-          // expanding branch where the rail visibly slides left as the
-          // text grows. The wide-viewport feel is a viewport property,
-          // not a font-size one.
+          // expanding branch where the rail visibly slides as the text
+          // grows. The wide-viewport feel is a viewport property, not a
+          // font-size one.
           const WIDE = 1500;
-          const avail = Math.max(0, window.innerWidth - left - rem(1));
-          const width = window.innerWidth >= WIDE ? Math.min(railW, avail) : avail;
-          const height = Math.max(rem(10), Math.floor(boardRect.height));
-          sideHost.style.left = `${left}px`;
-          sideHost.style.top = `${top}px`;
-          sideHost.style.width = `${width}px`;
-          sideHost.style.setProperty("max-height", `${height}px`);
+          let left;
+          let avail;
+          if (ribbonRight) {
+            avail = Math.max(0, Math.ceil(boardRect.left) - gapW - rem(1));
+            const width = window.innerWidth >= WIDE ? Math.min(railW, avail) : avail;
+            left = Math.max(rem(1), Math.ceil(boardRect.left) - gapW - width);
+            const height = Math.max(rem(10), Math.floor(boardRect.height));
+            sideHost.style.left = `${left}px`;
+            sideHost.style.top = `${top}px`;
+            sideHost.style.width = `${width}px`;
+            sideHost.style.setProperty("max-height", `${height}px`);
+          } else {
+            left = Math.ceil(boardRect.right) + gapW;
+            avail = Math.max(0, window.innerWidth - left - rem(1));
+            const width = window.innerWidth >= WIDE ? Math.min(railW, avail) : avail;
+            const height = Math.max(rem(10), Math.floor(boardRect.height));
+            sideHost.style.left = `${left}px`;
+            sideHost.style.top = `${top}px`;
+            sideHost.style.width = `${width}px`;
+            sideHost.style.setProperty("max-height", `${height}px`);
+          }
           sideHost.style.removeProperty("margin-top");
         } else {
           sideHost.style.removeProperty("max-height");

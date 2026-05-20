@@ -36,6 +36,7 @@ PERSISTED_FIELDS = (
     "board_style",
     "play_eval_pov",
     "view_show_pgn_comments",
+    "ribbon_side",
     "tournament_fastchess_path",
     "tournament_root",
     "tournament_default_template",
@@ -88,6 +89,9 @@ class Settings(BaseSettings):
     # View mode: show sanitized PGN move commentary in the left column
     # (desktop viewports only). Hidden when False.
     view_show_pgn_comments: bool = True
+    # Side of the screen the board ribbon docks to. Toast stack and side
+    # rail mirror to match.
+    ribbon_side: str = "left"
 
     # Tournament subsystem settings. None = use platform default / not configured.
     tournament_fastchess_path: str | None = None

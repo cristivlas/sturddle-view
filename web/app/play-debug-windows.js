@@ -55,10 +55,15 @@ function applyDockBounds(el) {
   if (!el || isMobileLayout()) return;
   const board = document.querySelector(".play-board-host");
   if (!board) return;
-  const boardLeft = Math.round(board.getBoundingClientRect().left);
+  const rect = board.getBoundingClientRect();
   const ribbonW = parseInt(getComputedStyle(el.closest(".play-grid") ?? document.documentElement)
     .getPropertyValue("--ribbon-w")) || 36;
-  el.style.width = (boardLeft - ribbonW - 9) + "px";
+  const ribbonSide = document.body.dataset.ribbonSide === "right" ? "right" : "left";
+  if (ribbonSide === "right") {
+    el.style.width = (window.innerWidth - Math.round(rect.right) - ribbonW - 9) + "px";
+  } else {
+    el.style.width = (Math.round(rect.left) - ribbonW - 9) + "px";
+  }
 
   const clockTop = document.querySelector(".clock-row.clock-top");
   const clockBot = document.querySelector(".clock-row.clock-bottom");
