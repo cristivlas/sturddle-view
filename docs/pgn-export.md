@@ -170,3 +170,132 @@ dropdown section, not as a side effect of solving export.
    non-alnum chars replaced with `_`, delivered via
    `Content-Disposition`. Implemented.
 4. FEN-only view: 409, no download. Implemented.
+
+<!-- ===================================================================
+     TODO sections below. Search "TODO:" to find actionable items.
+     Status tags: [TODO] not started, [WIP] in progress, [DONE] complete.
+     =================================================================== -->
+
+## TODO: Engine Evaluations in Exported PGN
+
+Status: **[TODO]** -- design agreed, not implemented.
+
+### Gap
+
+Saved games carry no engine evaluations. Two layers:
+
+- `build_pgn()` has no `eval_history` parameter; there is no path to
+  serialize per-ply scores even when they exist.
+- Play mode never accumulates per-ply evals. `_pump_engine_info()`
+  streams scores to the WebSocket for UI only; nothing is retained.
+- The play->view transition (`view_start()` ->
+  `play_game_snapshot()` -> `enter_view_mode()`) uses a direct state
+  copy that mirrors the same gap: moves and clocks only.
+
+View-mode imports already populate `_view_eval_history` (white POV)
+via `_parse_pgn_eval`, so the read side is solved; the write side
+and the play-mode capture are not.
+
+### Output Format Decision
+
+Use cutechess/fastchess convention end-to-end. No backward compat
+constraint in this project.
+
+- Per-ply trailing comment token: `{<eval>/<depth> <time>s}`.
+- Eval: float pawns (`+0.34`) or `M<n>` / `-M<n>` for mate.
+- POV: STM (engine's own score for the side that just moved).
+- Time: elapsed for that move, in seconds.
+- Drop `[%clk]`; per-move elapsed time is in the same token.
+
+Memory representation stays white POV (matches the existing
+importer and `_view_eval_history` shape). POV flip happens at write
+time in `build_pgn()` on black-to-move plies.
+
+### Capture (Play Mode)
+
+Add `_eval_history: list[dict | None]` on HVE, appended once per
+ply, snapshot taken **post-move** (option B: first eval from the
+next search after the move lands). Normalize to white POV at
+capture. Entry shape: `{"cp": int}` or `{"mate": int}`, optionally
+with `"depth": int` -- matches `_view_eval_history`.
+
+Missing plies are accepted. No fill, no post-export annotation
+pass. On write, a ply with no eval emits a time-only token
+(e.g. `{1.4s}`) or is skipped entirely; importer already tolerates
+this.
+
+### Plumbing
+
+- `play_game_snapshot()` includes `eval_history`.
+- `ViewModeParams` / `_ViewSnapshot` carry `eval_history`.
+- `enter_view_mode()` stores into `_view_eval_history` unchanged.
+- `build_pgn()` gains `eval_history: list[dict | None] | None`;
+  when present, writes the cutechess token per ply, flipping POV
+  for black-to-move plies.
+- Play-mode `get_pgn_text()` passes `_eval_history`; view-mode
+  rebuild branch passes `_view_eval_history`.
+
+### Read-back
+
+Importer already handles both cutechess trailing tokens and
+Lichess `[%eval ...]` brackets, so saved files round-trip without
+parser changes.
+
+### Testing Plan
+
+Unit (`pgn_build`):
+- White-to-move ply with `{"cp": 34}` writes `+0.34/<depth>` (no flip).
+- Black-to-move ply with `{"cp": 34}` writes `-0.34/<depth>` (POV flip).
+- Mate scores: `{"mate": 5}` on white -> `M5`; on black -> `-M5`.
+- Missing eval on a ply emits time-only token; no bare `/<depth>`.
+- `eval_history=None` produces identical output to today (no token,
+  no `[%clk]`).
+- Length mismatch (eval_history shorter/longer than moves): defined
+  behavior -- truncate or raise, pick one and assert it.
+
+Round-trip (`pgn_build` -> `_parse_pgn_eval`):
+- Build a game with mixed cp/mate/missing entries (white POV in
+  memory), serialize, re-parse via `_parse_pgn_eval`, assert the
+  re-parsed white-POV values equal the originals. Critical for the
+  sign-flip path on black plies.
+
+Play-mode capture (HVE):
+- After N engine moves, `_eval_history` has N entries, white POV,
+  shape matches `_view_eval_history`.
+- Human ply with no engine search recorded -> `None` entry.
+- `play_game_snapshot()` carries `eval_history`; `enter_view_mode()`
+  populates `_view_eval_history` from it; values unchanged.
+
+Transition + export:
+- Play a few moves, click edit, export from view mode: PGN contains
+  the captured evals. Compare to `_eval_history` snapshot pre-transition.
+- Play -> finish -> export directly from play mode: same evals.
+
+Imported PGN round-trip:
+- Import a cutechess PGN with evals, export, re-import. Assert
+  `_view_eval_history` equal across both imports.
+- Same for a Lichess `[%eval]` PGN (mixed-format read, cutechess
+  write).
+
+Negative / edge:
+- Empty game (no moves): export still succeeds, no eval tokens.
+- FEN-only view: unchanged (409).
+- `eval_history` present but all `None`: no eval tokens emitted.
+
+## TODO: Auto-Save Finished Games to `recent_imports`
+
+Status: **[TODO]** -- optional, not yet decided.
+
+On game end, regardless of the `pgn_autosave` / `pgn_dir` setting,
+call `recent_imports.save(fmt="pgn", text=build_pgn(...))` so the
+finished game is recoverable across reloads and shows up in the
+recents dropdown.
+
+Open questions:
+- Tag with `fmt="play"` (or similar) to distinguish from
+  user-initiated imports; add a UI filter.
+- Separate cap / eviction policy, or share the existing 50-entry
+  cap.
+- Skip in-progress saves (game-end only) to avoid hash churn.
+- Interaction with existing `pgn_autosave` to disk: independent, or
+  gate one on the other.
