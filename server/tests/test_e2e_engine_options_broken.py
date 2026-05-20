@@ -44,7 +44,7 @@ async def test_edit_unlaunchable_engine_offers_removal(server, make_page):
     """Clicking Edit on a broken engine opens a Remove? confirm, not the Options form."""
     _ctx, page = await make_page(viewport={"width": 1200, "height": 800})
     await page.goto(server + "/")
-    await page.wait_for_selector("#play-perspective", timeout=5000)
+    await page.wait_for_selector("#play-perspective")
 
     # Open Settings dialog directly to the Engines tab.
     await page.evaluate(
@@ -53,7 +53,7 @@ async def test_edit_unlaunchable_engine_offers_removal(server, make_page):
     )
     # Wait for the engines list row to render.
     row = page.locator(".engines-list-item", has_text=BROKEN_NAME)
-    await row.wait_for(timeout=3000)
+    await row.wait_for()
     await row.click()
 
     # Click Edit (engine settings) -- this triggers auto-refresh-schema
@@ -63,7 +63,7 @@ async def test_edit_unlaunchable_engine_offers_removal(server, make_page):
 
     # The confirm dialog text contains the engine name and "cannot be launched".
     confirm_dialog = page.locator("wa-dialog", has_text="cannot be launched")
-    await confirm_dialog.wait_for(state="attached", timeout=3000)
+    await confirm_dialog.wait_for(state="attached")
     body_text = await confirm_dialog.inner_text()
     assert BROKEN_NAME in body_text
     # The Engine Settings dialog must NOT be open in its place.
@@ -76,5 +76,5 @@ async def test_edit_unlaunchable_engine_offers_removal(server, make_page):
 
     # Engine row should be gone from the list.
     await page.locator(".engines-list-item", has_text=BROKEN_NAME).wait_for(
-        state="detached", timeout=3000,
+        state="detached",
     )

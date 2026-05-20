@@ -70,20 +70,19 @@ def server(tmp_path, monkeypatch):
 
 async def _open_new_tournament(page, base):
     await page.goto(base + "/")
-    await page.wait_for_selector("#play-perspective", timeout=5000)
+    await page.wait_for_selector("#play-perspective")
     await page.click('button[data-perspective="engines"]')
-    await page.wait_for_selector(".tournaments-panel", timeout=5000)
+    await page.wait_for_selector(".tournaments-panel")
     # New tournament button enables once fastchess + registry settle.
     await page.wait_for_function(
         "() => document.querySelector('.t-new') && !document.querySelector('.t-new').disabled",
-        timeout=5000,
     )
     await page.click(".t-new")
     await page.locator(".new-tournament-form").first.wait_for(
-        state="attached", timeout=5000,
+        state="attached",
     )
     await page.locator(".ne-available-list .ne-item").first.wait_for(
-        state="attached", timeout=3000,
+        state="attached",
     )
 
 

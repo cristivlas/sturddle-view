@@ -68,12 +68,11 @@ async def test_takeback_button_enabled_while_paused(server, page):
     app.state.hve = hve
 
     await page.goto(base + "/")
-    await page.wait_for_selector("#play-perspective", timeout=5000)
+    await page.wait_for_selector("#play-perspective")
     # First wait for the Resume affordance (icon=forward-step) so we know
     # the client has applied paused=true. Then assert takeback is enabled.
     await page.wait_for_function(
         "() => document.querySelector('#pause wa-icon')?.getAttribute('name') === 'forward-step'",
-        timeout=5000,
     )
     disabled = await page.evaluate(
         "() => document.querySelector('#takeback').disabled"

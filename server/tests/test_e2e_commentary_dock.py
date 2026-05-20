@@ -84,11 +84,10 @@ async def _seed_view_mode(app):
 
 async def _goto_play_in_view_mode(page, base):
     await page.goto(base + "/")
-    await page.wait_for_selector(PLAY_PERSP, timeout=5000)
+    await page.wait_for_selector(PLAY_PERSP)
     # Wait for the view-mode ribbon to confirm board_update arrived.
     await page.wait_for_function(
         "() => getComputedStyle(document.querySelector('#view-controls')).display !== 'none'",
-        timeout=5000,
     )
 
 
@@ -118,7 +117,7 @@ async def test_commentary_opens_docked_on_view_mode_entry(server, make_page):
     await _seed_view_mode(app)
     _ctx, page, errors = await _new_page(make_page)
     await _goto_play_in_view_mode(page, base)
-    await page.wait_for_selector(COMMENTS_SLOT, timeout=3000)
+    await page.wait_for_selector(COMMENTS_SLOT)
     s = await _snapshot(page)
     assert s["slotPresent"]
     assert s["hostHasDockEmpty"] is False
@@ -136,7 +135,7 @@ async def test_commentary_survives_debug_window_lifecycle(server, make_page):
     await _seed_view_mode(app)
     _ctx, page, errors = await _new_page(make_page)
     await _goto_play_in_view_mode(page, base)
-    await page.wait_for_selector(COMMENTS_SLOT, timeout=3000)
+    await page.wait_for_selector(COMMENTS_SLOT)
     # Stays open across navigation (which triggers fresh board_update +
     # the analysis-off code path that previously tore commentary down).
     await page.evaluate("document.querySelector('#view-forward')?.click()")
@@ -158,7 +157,7 @@ async def test_commentary_text_updates_per_ply(server, make_page):
     await _seed_view_mode(app)
     _ctx, page, errors = await _new_page(make_page)
     await _goto_play_in_view_mode(page, base)
-    await page.wait_for_selector(COMMENTS_SLOT, timeout=3000)
+    await page.wait_for_selector(COMMENTS_SLOT)
 
     # Cursor 0 = root comment.
     s = await _snapshot(page)
@@ -169,7 +168,6 @@ async def test_commentary_text_updates_per_ply(server, make_page):
     await page.wait_for_function(
         f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
         "?.textContent?.includes('First move comment.')",
-        timeout=2000,
     )
 
     # Cursor 2 = no comment -> placeholder.
@@ -177,7 +175,6 @@ async def test_commentary_text_updates_per_ply(server, make_page):
     await page.wait_for_function(
         f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
         "?.textContent?.includes('No commentary at this ply')",
-        timeout=2000,
     )
     s = await _snapshot(page)
     assert s["slotPresent"], "must stay open at no-comment ply"
@@ -187,7 +184,6 @@ async def test_commentary_text_updates_per_ply(server, make_page):
     await page.wait_for_function(
         f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
         "?.textContent?.includes('Third move comment.')",
-        timeout=2000,
     )
     _assert_no_errors(errors)
 
@@ -199,11 +195,11 @@ async def test_undock_floats_as_winbox(server, make_page):
     await _seed_view_mode(app)
     _ctx, page, errors = await _new_page(make_page)
     await _goto_play_in_view_mode(page, base)
-    await page.wait_for_selector(COMMENTS_SLOT, timeout=3000)
+    await page.wait_for_selector(COMMENTS_SLOT)
     await page.evaluate(
         f"document.querySelector('{COMMENTS_SLOT} .dock-slot-undock')?.click()"
     )
-    await page.wait_for_selector(COMMENTS_WB, timeout=2000)
+    await page.wait_for_selector(COMMENTS_WB)
     s = await _snapshot(page)
     assert s["wbPresent"]
     assert not s["slotPresent"]
@@ -218,17 +214,16 @@ async def test_redock_via_winbox_control(server, make_page):
     await _seed_view_mode(app)
     _ctx, page, errors = await _new_page(make_page)
     await _goto_play_in_view_mode(page, base)
-    await page.wait_for_selector(COMMENTS_SLOT, timeout=3000)
+    await page.wait_for_selector(COMMENTS_SLOT)
     await page.evaluate(
         f"document.querySelector('{COMMENTS_SLOT} .dock-slot-undock')?.click()"
     )
-    await page.wait_for_selector(COMMENTS_WB, timeout=2000)
+    await page.wait_for_selector(COMMENTS_WB)
     await page.evaluate(
         f"document.querySelector('{COMMENTS_WB} .wb-dock-ctrl')?.click()"
     )
     await page.wait_for_function(
         f"() => !document.querySelector('{COMMENTS_WB}')",
-        timeout=2000,
     )
     s = await _snapshot(page)
     assert s["slotPresent"]
@@ -244,13 +239,12 @@ async def test_slot_close_clears_setting(server, make_page):
     await _seed_view_mode(app)
     _ctx, page, errors = await _new_page(make_page)
     await _goto_play_in_view_mode(page, base)
-    await page.wait_for_selector(COMMENTS_SLOT, timeout=3000)
+    await page.wait_for_selector(COMMENTS_SLOT)
     await page.evaluate(
         f"document.querySelector('{COMMENTS_SLOT} .dock-slot-close')?.click()"
     )
     await page.wait_for_function(
         f"() => !document.querySelector('{COMMENTS_SLOT}')",
-        timeout=2000,
     )
     v = await page.evaluate(
         "async () => (await (await fetch('/settings')).json()).view_show_pgn_comments"

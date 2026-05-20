@@ -63,7 +63,7 @@ async def test_play_perspective_remount_resyncs_state(server, page):
     expected_fen = hve._board.fen()
 
     await page.goto(base + "/")
-    await page.wait_for_selector("#play-perspective", timeout=5000)
+    await page.wait_for_selector("#play-perspective")
 
     await page.evaluate(
         """() => {

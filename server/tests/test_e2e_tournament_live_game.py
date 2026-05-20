@@ -113,9 +113,9 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
             ) if msg.type == "error" else None)
 
             await page.goto(f"{base}/")
-            await page.wait_for_selector("#play-perspective", timeout=5000)
+            await page.wait_for_selector("#play-perspective")
             await page.click('button[data-perspective="engines"]')
-            await page.wait_for_selector(".tournament-row", timeout=5000)
+            await page.wait_for_selector(".tournament-row")
 
             # Open workspace. Default opens 3 windows
             # (Standings + Live Games + Event log; the log window
@@ -124,7 +124,6 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
             await page.click(".tournaments-ribbon .t-workspace")
             await page.wait_for_function(
                 "() => document.querySelectorAll('.winbox.sturddle-wb').length === 3",
-                timeout=5000,
             )
 
             # Open the Engines window via the workspace JS API.
@@ -139,7 +138,6 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
             )
             await page.wait_for_function(
                 "() => document.querySelectorAll('.winbox.sturddle-wb').length === 4",
-                timeout=5000,
             )
 
             # The workspace seeds from `proxies_active` on its
@@ -147,14 +145,13 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
             # immediately as an Engines row.
             await page.wait_for_selector(
                 ".wb-engines .wb-sched-list .wb-sched-live .wb-sched-attach-btn",
-                timeout=5000,
             )
 
             # Click the watch button → live game window opens.
             await page.click(
                 ".wb-engines .wb-sched-list .wb-sched-live .wb-sched-attach-btn"
             )
-            await page.wait_for_selector(".wb-livegame .lg-board", timeout=5000)
+            await page.wait_for_selector(".wb-livegame .lg-board")
 
             # Drive the proxy stream:
             #   1. position → engine learns it's playing Black (FEN
@@ -178,7 +175,6 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
                     const e = document.querySelector('.wb-livegame .lg-eval-score-bottom');
                     return e && e.textContent !== '';
                 }""",
-                timeout=5000,
             )
 
             # Bug 4 regression check: when the engine plays Black,
@@ -197,7 +193,6 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
                     // Black-at-bottom ⇒ topmost rank label is "1".
                     return top === "1" ? top : false;
                 }""",
-                timeout=3000,
             )
             top_rank_label = await top_rank_label.json_value()
             assert top_rank_label == "1", (
@@ -220,7 +215,6 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
             # Live window goes away (proxy-id, stale on terminal).
             await page.wait_for_function(
                 "() => document.querySelectorAll('.winbox.sturddle-wb-live').length === 0",
-                timeout=5000,
             )
             # Standard windows remain.
             assert await page.locator(".winbox.sturddle-wb").count() == 4

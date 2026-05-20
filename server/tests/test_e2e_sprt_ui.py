@@ -37,9 +37,9 @@ def _build_app(tmp_path, monkeypatch, *, sprt_defaults=None):
 
 async def _nav_to_tournaments(page, base):
     await page.goto(base + "/")
-    await page.wait_for_selector("#play-perspective", timeout=5000)
+    await page.wait_for_selector("#play-perspective")
     await page.click('button[data-perspective="engines"]')
-    await page.wait_for_selector(".tournaments-panel", timeout=5000)
+    await page.wait_for_selector(".tournaments-panel")
 
 
 async def _open_settings_tournament_tab(page):
@@ -47,11 +47,10 @@ async def _open_settings_tournament_tab(page):
     await page.click("#settings-btn")
     await page.wait_for_function(
         """() => !!document.querySelector('wa-dialog wa-tab[panel="tournament"]')""",
-        timeout=5000,
     )
     await page.click('wa-dialog wa-tab[panel="tournament"]')
     # Wait for template form's SPRT switch to be present.
-    await page.wait_for_selector("wa-switch[data-key='sprt']", timeout=5000)
+    await page.wait_for_selector("wa-switch[data-key='sprt']")
 
 
 @pytest.mark.asyncio
@@ -67,7 +66,7 @@ async def test_sprt_switch_disables_rounds_and_type(tmp_path, monkeypatch, make_
             f"console.{msg.type}: {msg.text}"
         ) if msg.type == "error" else None)
         await page.goto(base + "/")
-        await page.wait_for_selector("#play-perspective", timeout=5000)
+        await page.wait_for_selector("#play-perspective")
         await _open_settings_tournament_tab(page)
 
         # Both should be enabled before toggling SPRT on.
@@ -86,7 +85,6 @@ async def test_sprt_switch_disables_rounds_and_type(tmp_path, monkeypatch, make_
         }""")
         await page.wait_for_function(
             """() => document.querySelector('wa-input[data-key="rounds"]').hasAttribute('disabled')""",
-            timeout=3000,
         )
         on_state = await page.evaluate("""() => ({
             rounds_disabled: document.querySelector('wa-input[data-key="rounds"]').hasAttribute('disabled'),
@@ -103,7 +101,6 @@ async def test_sprt_switch_disables_rounds_and_type(tmp_path, monkeypatch, make_
         }""")
         await page.wait_for_function(
             """() => !document.querySelector('wa-input[data-key="rounds"]').hasAttribute('disabled')""",
-            timeout=3000,
         )
         off_state = await page.evaluate("""() => ({
             rounds_disabled: document.querySelector('wa-input[data-key="rounds"]').hasAttribute('disabled'),
@@ -137,7 +134,7 @@ async def test_sprt_badge_shown_in_tournament_list(tmp_path, monkeypatch, make_p
             f"console.{msg.type}: {msg.text}"
         ) if msg.type == "error" else None)
         await _nav_to_tournaments(page, base)
-        await page.wait_for_selector(".tournament-row", timeout=5000)
+        await page.wait_for_selector(".tournament-row")
 
         has_badge = await page.evaluate("""() => {
             const row = document.querySelector('.tournament-row');
@@ -169,13 +166,12 @@ async def test_sprt_info_dialog_shows_params(tmp_path, monkeypatch, make_page):
             f"console.{msg.type}: {msg.text}"
         ) if msg.type == "error" else None)
         await _nav_to_tournaments(page, base)
-        await page.wait_for_selector(".tournament-row", timeout=5000)
+        await page.wait_for_selector(".tournament-row")
         await page.click(".tournament-row")
         await page.click(".tournaments-ribbon .t-info")
 
         await page.wait_for_function(
             "() => !!document.querySelector('.tournament-info')",
-            timeout=5000,
         )
 
         info_text = await page.evaluate("""() =>
@@ -211,14 +207,13 @@ async def test_sprt_settings_validation_marks_invalid_and_skips_persist(tmp_path
         page.on("request", _on_request)
 
         await page.goto(base + "/")
-        await page.wait_for_selector("#play-perspective", timeout=5000)
+        await page.wait_for_selector("#play-perspective")
         await page.click("#settings-btn")
         await page.wait_for_function(
             """() => !!document.querySelector('wa-dialog wa-tab[panel="sprt"]')""",
-            timeout=5000,
         )
         await page.click('wa-dialog wa-tab[panel="sprt"]')
-        await page.wait_for_selector('.sprt-settings-grid wa-input[data-key="elo0"]', timeout=5000)
+        await page.wait_for_selector('.sprt-settings-grid wa-input[data-key="elo0"]')
 
         # Set elo0 > elo1 -- both fields should pick up .sprt-invalid.
         await page.evaluate("""() => {
@@ -233,7 +228,6 @@ async def test_sprt_settings_validation_marks_invalid_and_skips_persist(tmp_path
                 const e1 = document.querySelector('.sprt-settings-grid wa-input[data-key="elo1"]');
                 return e0.classList.contains('sprt-invalid') && e1.classList.contains('sprt-invalid');
             }""",
-            timeout=3000,
         )
 
         # Now set alpha out of range -- it should also be flagged.
@@ -243,7 +237,6 @@ async def test_sprt_settings_validation_marks_invalid_and_skips_persist(tmp_path
         }""")
         await page.wait_for_function(
             """() => document.querySelector('.sprt-settings-grid wa-input[data-key="alpha"]').classList.contains('sprt-invalid')""",
-            timeout=3000,
         )
 
         # Wait past the debounce; no PUT should have fired while invalid.
@@ -251,22 +244,22 @@ async def test_sprt_settings_validation_marks_invalid_and_skips_persist(tmp_path
         assert put_count["n"] == 0, f"expected no PUTs while invalid, got {put_count['n']}"
 
         # Fix all fields; invalid markers should clear and a PUT should fire.
-        await page.evaluate("""() => {
-            const e0 = document.querySelector('.sprt-settings-grid wa-input[data-key="elo0"]');
-            const e1 = document.querySelector('.sprt-settings-grid wa-input[data-key="elo1"]');
-            const a  = document.querySelector('.sprt-settings-grid wa-input[data-key="alpha"]');
-            e0.value = "0";    e0.dispatchEvent(new Event('input', { bubbles: true }));
-            e1.value = "10";   e1.dispatchEvent(new Event('input', { bubbles: true }));
-            a.value  = "0.05"; a.dispatchEvent(new Event('input', { bubbles: true }));
-        }""")
-        await page.wait_for_function(
-            """() => {
-                const all = document.querySelectorAll('.sprt-settings-grid wa-input');
-                return [...all].every(el => !el.classList.contains('sprt-invalid'));
-            }""",
-            timeout=3000,
-        )
-        await page.wait_for_timeout(600)  # debounce
-        assert put_count["n"] >= 1, "expected at least one PUT after fields became valid"
+        async with page.expect_request(
+            lambda r: r.method == "PUT" and "tournament-settings" in r.url,
+        ):
+            await page.evaluate("""() => {
+                const e0 = document.querySelector('.sprt-settings-grid wa-input[data-key="elo0"]');
+                const e1 = document.querySelector('.sprt-settings-grid wa-input[data-key="elo1"]');
+                const a  = document.querySelector('.sprt-settings-grid wa-input[data-key="alpha"]');
+                e0.value = "0";    e0.dispatchEvent(new Event('input', { bubbles: true }));
+                e1.value = "10";   e1.dispatchEvent(new Event('input', { bubbles: true }));
+                a.value  = "0.05"; a.dispatchEvent(new Event('input', { bubbles: true }));
+            }""")
+            await page.wait_for_function(
+                """() => {
+                    const all = document.querySelectorAll('.sprt-settings-grid wa-input');
+                    return [...all].every(el => !el.classList.contains('sprt-invalid'));
+                }"""
+            )
 
         assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)

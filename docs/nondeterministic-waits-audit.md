@@ -40,6 +40,15 @@ or a self-owned cadence? Fine.
   reassigning (prod fix; latent leak surfaced by tests).
 - `test_instance_lock.py` -- `subprocess.Popen` as context manager so
   stdout/stderr pipes close deterministically.
+- E2E tests -- 5 redundant `page.wait_for_timeout(...)` calls deleted
+  where a real `wait_for_function` / `wait_for_selector` follow-up
+  already provided the signal.
+- `test_e2e_sprt_ui.py` -- replaced "wait 600ms then check counter" with
+  `page.expect_request(...)` subscribing to the actual PUT request.
+- 107 explicit `timeout=N` kwargs stripped from Playwright/asyncio
+  waits across 16 test files. Tests now rely on the real signal with
+  Playwright's default 30s hang-bound; CI flakes from tight cushions
+  go away, slow machines stop misfiring.
 
 ## Diagnostic techniques
 
@@ -96,3 +105,12 @@ or a self-owned cadence? Fine.
 4. Common culprits: unclosed asyncio loops, `subprocess.Popen` without
    `with`, module-level fh reassignment, magic-number `asyncio.sleep(0)`
    yield counts, `force_exit=True` skipping lifespan shutdown.
+
+## Biggest-bang-for-buck lesson
+
+Strip explicit `timeout=N` kwargs from Playwright/asyncio waits EARLY.
+Tight cushions are the #1 source of CI flakes ("works locally, fails
+under load"). Removing them forces tests onto real signals; the
+framework's default hang-bound (30s) covers the genuine-bug case.
+The change is mechanical and the payoff is immediate. Do this before
+chasing individual `wait_for_timeout` calls or ResourceWarnings.

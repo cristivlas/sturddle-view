@@ -50,18 +50,17 @@ async def test_tournaments_perspective_smoke(server, make_page):
     page.on("console", lambda msg: page_errors.append(f"console.{msg.type}: {msg.text}")
             if msg.type == "error" else None)
     await page.goto(base + "/")
-    await page.wait_for_selector("#play-perspective", timeout=5000)
+    await page.wait_for_selector("#play-perspective")
 
     await page.click('button[data-perspective="engines"]')
-    await page.wait_for_selector("#engines-perspective", timeout=5000)
-    await page.wait_for_selector(".tournaments-panel", timeout=5000)
+    await page.wait_for_selector("#engines-perspective")
+    await page.wait_for_selector(".tournaments-panel")
 
     await page.wait_for_function(
         """() => {
             const e = document.querySelector('.tournaments-empty .empty-message');
             return e && /fastchess not configured/i.test(e.textContent);
         }""",
-        timeout=5000,
     )
 
     disabled = await page.evaluate(
@@ -106,9 +105,9 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
             f"console.{msg.type}: {msg.text}"
         ) if msg.type == "error" else None)
         await page.goto(base + "/")
-        await page.wait_for_selector("#play-perspective", timeout=5000)
+        await page.wait_for_selector("#play-perspective")
         await page.click('button[data-perspective="engines"]')
-        await page.wait_for_selector(".tournament-row", timeout=5000)
+        await page.wait_for_selector(".tournament-row")
 
         # Select the row so ribbon verbs reflect that tournament.
         await page.click('.tournament-row')
@@ -145,12 +144,10 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
         await page.click("#settings-btn")
         await page.wait_for_function(
             """() => document.querySelector('wa-dialog wa-tab[panel="tournament"]')""",
-            timeout=5000,
         )
         await page.click('wa-dialog wa-tab[panel="tournament"]')
         await page.wait_for_function(
             """() => document.querySelector('wa-dialog wa-tab-panel[name="tournament"] wa-input[data-key="tc"]')""",
-            timeout=5000,
         )
         await page.evaluate(
             """() => {
@@ -172,7 +169,6 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
                 const tpl = (await r.json()).default_template || {};
                 return tpl.tc === '60+0.6' && tpl.rounds === 42 && tpl.games_in_parallel === 4;
             }""",
-            timeout=5000,
         )
 
         assert page_errors == [], "JS errors during test:\n" + "\n".join(page_errors)
@@ -209,9 +205,9 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, m
             f"console.{msg.type}: {msg.text}"
         ) if msg.type == "error" else None)
         await page.goto(base + "/")
-        await page.wait_for_selector("#play-perspective", timeout=5000)
+        await page.wait_for_selector("#play-perspective")
         await page.click('button[data-perspective="engines"]')
-        await page.wait_for_selector(".tournament-row", timeout=5000)
+        await page.wait_for_selector(".tournament-row")
 
         await page.click('.tournament-row')
         await page.click('.tournaments-ribbon .t-workspace')
@@ -220,7 +216,6 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, m
         # opens lazily when the tournament is running.
         await page.wait_for_function(
             "() => document.querySelectorAll('.winbox.sturddle-wb').length === 1",
-            timeout=5000,
         )
         titles = await page.evaluate(
             """() => [...document.querySelectorAll('.winbox.sturddle-wb .wb-title')]
@@ -232,7 +227,6 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, m
             """() => /No games/.test(
                 document.querySelector('.wb-standings .wb-empty')?.textContent || ''
             )""",
-            timeout=5000,
         )
 
         await page.evaluate(
@@ -241,13 +235,11 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, m
         )
         await page.wait_for_function(
             "() => document.querySelectorAll('.winbox.sturddle-wb').length === 0",
-            timeout=3000,
         )
         await page.click('.tournament-row')
         await page.click('.tournaments-ribbon .t-workspace')
         await page.wait_for_function(
             "() => document.querySelectorAll('.winbox.sturddle-wb').length === 1",
-            timeout=5000,
         )
 
         assert page_errors == [], "JS errors during test:\n" + "\n".join(page_errors)

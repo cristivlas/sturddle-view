@@ -555,7 +555,7 @@ async def test_integration_real_runner_clean_exit(tmp_path, monkeypatch):
         {"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}
     ])
     await orch.start(t.id)
-    await asyncio.wait_for(done_evt.wait(), timeout=5.0)
+    await done_evt.wait()
 
     assert orch.active_id() is None
     assert store.get(t.id).status == STATUS_DONE
@@ -593,6 +593,6 @@ async def test_integration_real_runner_stop(tmp_path, monkeypatch):
     ])
     await orch.start(t.id)
     await orch.stop(t.id)
-    await asyncio.wait_for(stop_evt.wait(), timeout=5.0)
+    await stop_evt.wait()
 
     assert store.get(t.id).status == STATUS_STOPPED

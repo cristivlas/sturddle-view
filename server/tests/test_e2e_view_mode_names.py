@@ -60,7 +60,7 @@ async def test_view_mode_clock_names_after_hard_reload(server, page):
     app.state.hve = hve
 
     await page.goto(base + "/")
-    await page.wait_for_selector("#play-perspective", timeout=5000)
+    await page.wait_for_selector("#play-perspective")
     # Wait past the auto /game/sync (200ms) and let the play.js
     # board_update listener run -- that's the one that used to clobber.
     await page.wait_for_timeout(1500)

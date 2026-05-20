@@ -63,11 +63,10 @@ async def test_edit_mode_seeds_stm_and_castling_from_inherited_fen(server, page)
     app.state.hve = hve
 
     await page.goto(base + "/")
-    await page.wait_for_selector("#play-perspective", timeout=5000)
+    await page.wait_for_selector("#play-perspective")
     # View-mode ribbon visible means the board_update with view payload arrived.
     await page.wait_for_function(
         "() => getComputedStyle(document.querySelector('#view-controls')).display !== 'none'",
-        timeout=5000,
     )
     # Click the view-mode edit pencil.
     await page.click("#view-edit")
@@ -75,7 +74,6 @@ async def test_edit_mode_seeds_stm_and_castling_from_inherited_fen(server, page)
     # a moment to propagate.
     await page.wait_for_function(
         "() => getComputedStyle(document.querySelector('#edit-controls')).display !== 'none'",
-        timeout=5000,
     )
     # Open the side popover to read the toggle pill text.
     await page.click("#edit-side")

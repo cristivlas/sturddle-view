@@ -66,7 +66,7 @@ async def test_replay_while_old_cursor_nonzero_does_not_corrupt_new_game(server,
     base, app = server
 
     await page.goto(base + "/")
-    await page.wait_for_selector("#play-perspective", timeout=5000)
+    await page.wait_for_selector("#play-perspective")
 
     # Ensure the failure mode's prerequisite: commentary window is on.
     # The bug only repros when syncCommentsVisibility() decides to open

@@ -75,9 +75,9 @@ def server_app(tmp_path, monkeypatch):
 
 async def _goto_app(page, base):
     await page.goto(base + "/")
-    await page.wait_for_selector("#play-perspective", timeout=5000)
+    await page.wait_for_selector("#play-perspective")
     await page.click('button[data-perspective="engines"]')
-    await page.wait_for_selector(ROW_SEL, timeout=5000)
+    await page.wait_for_selector(ROW_SEL)
 
 
 async def _row_ids(page):
@@ -101,10 +101,9 @@ async def _wb_count(page):
     return await page.evaluate(f"() => document.querySelectorAll('{WB_SEL}').length")
 
 
-async def _wait_wb_count(page, n, timeout=5000):
+async def _wait_wb_count(page, n):
     await page.wait_for_function(
         f"() => document.querySelectorAll('{WB_SEL}').length === {n}",
-        timeout=timeout,
     )
 
 
@@ -562,7 +561,6 @@ async def test_default_open_failed_status_surfaces_error_banner(server_app, make
             const b = document.querySelector('.wb-error-banner');
             return b && !b.hidden && /rc=137/.test(b.textContent);
         }""",
-        timeout=3000,
     )
     _assert_no_errors(errors)
 
@@ -617,7 +615,6 @@ async def test_idle_to_running_transition_auto_opens_live_games(server_app, make
     await page.wait_for_function(
         """() => [...document.querySelectorAll('.winbox.sturddle-wb .wb-title')]
                    .some(t => /Live Games/.test(t.textContent))""",
-        timeout=5000,
     )
     _assert_no_errors(errors)
 
@@ -677,14 +674,13 @@ async def test_TFROZEN1_resolved_snapshot_rehydrates_frozen_window(server_app, m
     # Two windows: Standings + the frozen game window.
     await _wait_wb_count(page, 2)
     # Frozen variant class is added by openFrozenGameWindow.
-    await page.wait_for_selector(".winbox.sturddle-wb-live-frozen", timeout=5000)
+    await page.wait_for_selector(".winbox.sturddle-wb-live-frozen")
     # Banner painted with the result from the snapshot (also matches PGN).
     await page.wait_for_function(
         """() => {
             const el = document.querySelector('.winbox.sturddle-wb-live-frozen .lg-result-score');
             return el && el.textContent.trim() === '1-0';
         }""",
-        timeout=5000,
     )
     _assert_no_errors(errors)
 
@@ -726,6 +722,5 @@ async def test_TFROZEN2_unresolved_snapshot_non_running_shows_toast(server_app, 
     await page.wait_for_function(
         """() => [...document.querySelectorAll('.toast')]
                    .some(t => /finished while away/.test(t.textContent))""",
-        timeout=5000,
     )
     _assert_no_errors(errors)

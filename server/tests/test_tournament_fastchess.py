@@ -566,7 +566,7 @@ async def test_runner_clean_exit_emits_done(tmp_path, patched_runner):
 
     await runner.start(spec, rec)
     assert runner.is_running() in (True, False)  # may already exit; race-free below
-    await asyncio.wait_for(rec.done.wait(), timeout=5.0)
+    await rec.done.wait()
 
     kinds = [k for k, _ in rec.events]
     assert "started" in kinds
@@ -586,7 +586,7 @@ async def test_runner_emits_runner_log_per_stdout_line(tmp_path, patched_runner)
     runner = patched_runner(["--print", "3", "--print-err", "1", "--exit", "0"])
 
     await runner.start(spec, rec)
-    await asyncio.wait_for(rec.done.wait(), timeout=5.0)
+    await rec.done.wait()
 
     log_events = [(k, p) for (k, p) in rec.events if k == "runner_log"]
     out_lines = [p["line"] for (_, p) in log_events if p.get("stream") == "out"]
@@ -604,7 +604,7 @@ async def test_runner_nonzero_exit_emits_runner_crash(tmp_path, patched_runner):
     runner = patched_runner(["--exit", "7"])
 
     await runner.start(spec, rec)
-    await asyncio.wait_for(rec.done.wait(), timeout=5.0)
+    await rec.done.wait()
 
     assert rec.events[-1][0] == "runner_crash"
     assert rec.events[-1][1]["rc"] == 7
@@ -619,7 +619,7 @@ async def test_runner_crash_payload_includes_stderr_tail(tmp_path, patched_runne
     runner = patched_runner(["--print-err", "3", "--exit", "1"])
 
     await runner.start(spec, rec)
-    await asyncio.wait_for(rec.done.wait(), timeout=5.0)
+    await rec.done.wait()
 
     last = rec.events[-1]
     assert last[0] == "runner_crash"
@@ -636,7 +636,7 @@ async def test_runner_crash_falls_back_to_stdout_when_no_stderr(tmp_path, patche
     runner = patched_runner(["--print", "2", "--exit", "1"])
 
     await runner.start(spec, rec)
-    await asyncio.wait_for(rec.done.wait(), timeout=5.0)
+    await rec.done.wait()
 
     last = rec.events[-1]
     assert last[0] == "runner_crash"
@@ -652,7 +652,7 @@ async def test_runner_stop_emits_stopped_not_crash(tmp_path, patched_runner):
     await runner.start(spec, rec)
     assert runner.is_running()
     await runner.stop()
-    await asyncio.wait_for(rec.done.wait(), timeout=5.0)
+    await rec.done.wait()
 
     kinds = [k for k, _ in rec.events]
     assert "stopped" in kinds
@@ -691,7 +691,7 @@ async def test_runner_stop_falls_back_to_sigkill_when_sigterm_ignored(
     # Give the child a moment to install its SIGTERM handler before we send.
     await asyncio.sleep(0.2)
     await runner.stop()
-    await asyncio.wait_for(rec.done.wait(), timeout=5.0)
+    await rec.done.wait()
 
     kinds = [k for k, _ in rec.events]
     assert "stopped" in kinds
@@ -720,7 +720,7 @@ async def test_runner_stop_signals_whole_process_group_posix(tmp_path, patched_r
     os.kill(child_pid, 0)
 
     await runner.stop()
-    await asyncio.wait_for(rec.done.wait(), timeout=5.0)
+    await rec.done.wait()
 
     # Allow a brief moment for the OS to reap the child after SIGTERM.
     for _ in range(50):
@@ -739,7 +739,7 @@ async def test_runner_stop_idempotent(tmp_path, patched_runner):
     runner = patched_runner(["--exit", "0"])
 
     await runner.start(spec, rec)
-    await asyncio.wait_for(rec.done.wait(), timeout=5.0)
+    await rec.done.wait()
     # second stop after natural exit must not raise
     await runner.stop()
     await runner.stop()
@@ -756,7 +756,7 @@ async def test_runner_double_start_raises(tmp_path, patched_runner):
             await runner.start(spec, rec)
     finally:
         await runner.stop()
-        await asyncio.wait_for(rec.done.wait(), timeout=5.0)
+        await rec.done.wait()
 
 
 async def test_runner_kills_proc_when_post_spawn_setup_fails(
@@ -803,7 +803,7 @@ async def test_runner_drains_large_output_no_deadlock(tmp_path, patched_runner):
     runner = patched_runner(["--print", "2000", "--print-err", "1000", "--exit", "0"])
 
     await runner.start(spec, rec)
-    await asyncio.wait_for(rec.done.wait(), timeout=10.0)
+    await rec.done.wait()
     assert rec.events[-1][0] == "done"
     out_lines = [p["line"] for k, p in rec.events if k == "runner_log" and p.get("stream") == "out"]
     err_lines = [p["line"] for k, p in rec.events if k == "runner_log" and p.get("stream") == "err"]

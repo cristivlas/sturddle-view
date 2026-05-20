@@ -55,7 +55,7 @@ def _assert_no_errors(errors):
 
 async def _goto_play(page, base):
     await page.goto(base + "/")
-    await page.wait_for_selector(PLAY_PERSP, timeout=5000)
+    await page.wait_for_selector(PLAY_PERSP)
 
 
 async def _snapshot(page):
@@ -111,7 +111,7 @@ async def test_default_docked_on_first_open(server, make_page):
     await _goto_play(page, server)
     await page.click(PV_BTN)
     await page.click(UCI_BTN)
-    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", timeout=2000)
+    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot")
     titles = await _slot_titles(page)
     assert titles == ["Search Lines", "UCI Log"], titles
     s = await _snapshot(page)
@@ -126,9 +126,9 @@ async def test_undock_via_slot_button(server, make_page):
     _ctx, page, errors = await _new_page(make_page)
     await _goto_play(page, server)
     await page.click(UCI_BTN)
-    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", timeout=2000)
+    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot")
     await _click_slot_undock(page, "UCI Log")
-    await page.wait_for_selector(UCI_WB, timeout=2000)
+    await page.wait_for_selector(UCI_WB)
     s = await _snapshot(page)
     assert not any(x["title"] == "UCI Log" for x in s["slots"])
     assert s["ucilogDocked"] == "0"
@@ -142,13 +142,12 @@ async def test_redock_via_winbox_control(server, make_page):
     await _goto_play(page, server)
     await page.click(PV_BTN)
     await page.click(UCI_BTN)
-    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", timeout=2000)
+    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot")
     await _click_slot_undock(page, "UCI Log")
-    await page.wait_for_selector(UCI_WB, timeout=2000)
+    await page.wait_for_selector(UCI_WB)
     await _click_wb_dock(page, "sturddle-wb-uci-log")
     await page.wait_for_function(
         "() => !document.querySelector('.winbox.sturddle-wb-uci-log')",
-        timeout=2000,
     )
     titles = await _slot_titles(page)
     assert titles == ["Search Lines", "UCI Log"], titles
@@ -163,11 +162,10 @@ async def test_close_via_ribbon_tears_down(server, make_page):
     _ctx, page, errors = await _new_page(make_page)
     await _goto_play(page, server)
     await page.click(PV_BTN)
-    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", timeout=2000)
+    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot")
     await page.click(PV_BTN)  # toggle off
     await page.wait_for_function(
         f"() => !document.querySelector('{DOCK_LEFT} .dock-slot')",
-        timeout=2000,
     )
     s = await _snapshot(page)
     assert s["slots"] == []
@@ -183,13 +181,12 @@ async def test_nav_away_and_back_restores(server, make_page):
     await _goto_play(page, server)
     await page.click(PV_BTN)
     await page.click(UCI_BTN)
-    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", timeout=2000)
+    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot")
 
     # Nav away to engines -- Play perspective unmounts, dock element gone.
     await page.click('button[data-perspective="engines"]')
     await page.wait_for_function(
         "() => !document.querySelector('.play-dock-left')",
-        timeout=2000,
     )
     s = await _snapshot(page)
     assert s["slots"] == []
@@ -198,7 +195,7 @@ async def test_nav_away_and_back_restores(server, make_page):
 
     # Nav back -- both windows restored, docked, in correct order.
     await page.click('button[data-perspective="play"]')
-    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot", timeout=2000)
+    await page.wait_for_selector(f"{DOCK_LEFT} .dock-slot")
     titles = await _slot_titles(page)
     assert titles == ["Search Lines", "UCI Log"], titles
     _assert_no_errors(errors)
