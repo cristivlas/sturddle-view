@@ -8,6 +8,7 @@ import { confirm, reportError, toast } from "./dialogs.js";
 import { isPlayInProgress, isViewing, isAnalyzing, getViewingHash, getViewingSummary } from "./perspectives/play.js";
 import { confirmReplaceViewedGame } from "./import-position-dialog.js";
 import { flashWindow } from "./wb-utils.js";
+import { terminationPhrase } from "./format-termination.js";
 
 async function replayTournamentGame({ tournamentId, gameN, token, pairId = null }) {
   const headers = { "Content-Type": "application/json" };
@@ -321,7 +322,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     if (resultPainted && !isReal) return;
     if (isReal) resultPainted = true;
     const score = isReal ? result : "game ended";
-    const term = (termination && termination !== "unknown") ? termination : "";
+    const term = (termination && termination !== "unknown") ? terminationPhrase(termination) : "";
     resultScoreEl.textContent = score;
     resultTerminationEl.textContent = term;
     resultOverlayEl.hidden = false;

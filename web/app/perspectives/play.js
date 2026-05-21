@@ -16,6 +16,7 @@ import {
   setCommentaryNavState,
   isCommentaryOpen,
 } from "../play-commentary-window.js";
+import { terminationLabel } from "../format-termination.js";
 
 // Module-scope mirror of "user has a live human-vs-engine game running"
 // so other modules (e.g. tournament Replay button) can decide whether
@@ -71,23 +72,8 @@ function formatResult(payload, humanWhite) {
   return "";
 }
 
-const TERMINATION_REASONS = {
-  checkmate: "Checkmate",
-  stalemate: "stalemate",
-  insufficient_material: "insufficient material",
-  seventyfive_moves: "75-move rule",
-  fivefold_repetition: "fivefold repetition",
-  fifty_moves: "50-move rule",
-  threefold_repetition: "threefold repetition",
-};
-
-function _reason(termination) {
-  const s = TERMINATION_REASONS[termination] ?? (termination ?? "Game over");
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
 function formatViewGameOver({ result, termination }) {
-  const reason = _reason(termination);
+  const reason = terminationLabel(termination);
   if (result === "1-0") return `${reason} -- White wins.`;
   if (result === "0-1") return `${reason} -- Black wins.`;
   if (result === "1/2-1/2") return `${reason} -- Draw.`;
@@ -103,7 +89,7 @@ function formatGameOver(payload, humanWhite) {
     const humanLost = (loser === "white") === humanWhite;
     return humanLost ? "You lost on time." : "Engine lost on time.";
   }
-  const reason = _reason(termination);
+  const reason = terminationLabel(termination);
   if (result === "1-0" || result === "0-1") {
     const humanWon = (result === "1-0") === humanWhite;
     return `${reason} -- ${humanWon ? "you win" : "engine wins"}.`;
