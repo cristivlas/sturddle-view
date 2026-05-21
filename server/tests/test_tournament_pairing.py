@@ -229,6 +229,128 @@ async def test_info_does_not_fan_out_when_no_pair(orch):
     assert not any(m.get("paired") for m in items)
 
 
+# ---------------------------------------------------------------------------
+# _recompute_groups -- direct unit tests on bucket -> pair confirmation
+# ---------------------------------------------------------------------------
+
+
+def _seed_proxy(orch, pid: str, engine: str) -> None:
+    """Register an engine name as proxy_session_started would."""
+    orch._proxy_engine_names[pid] = engine
+
+
+def test_recompute_singleton_bucket_does_not_promote(orch):
+    """Bucket of size 1 must NOT become a group. Catches `len(bucket) >= 2`
+    flipped to `<= 2` (admits singletons) or `== 2` boundary issues."""
+    _seed_proxy(orch, "white", "A")
+    fen = chess.Board().fen()
+    orch._pairing_register("white", fen, "white")  # 1 entry
+    assert orch._current_groups == set()
+    assert orch._confirmed_pairs == {}
+
+
+def test_recompute_two_bucket_confirms_pair(orch):
+    """Standard 2-engine rendezvous: a group is created, pair confirmed,
+    and `_pair_white` points to the white-side proxy. Catches the color
+    selection at L860 (`state_a[1] == "white"`)."""
+    _seed_proxy(orch, "white", "A")
+    _seed_proxy(orch, "black", "B")
+    fen = chess.Board().fen()
+    orch._pairing_register("white", fen, "white")
+    new_pairs, orphaned = orch._pairing_register("black", fen, "black")
+
+    assert len(new_pairs) == 1
+    assert orphaned == set()
+    group = next(iter(new_pairs))
+    pair_id = orch._pair_ids[group]
+    assert orch._pair_white[pair_id] == "white"
+    assert orch._confirmed_pairs == {"white": "black", "black": "white"}
+
+
+def test_recompute_two_bucket_pair_white_when_black_registers_first(orch):
+    """Order-independence: same as above but the black-side proxy
+    registers first. `_pair_white` still points to white. Catches the
+    "white"-string comparison at L860 being flipped (e.g. -> "black")."""
+    _seed_proxy(orch, "white", "A")
+    _seed_proxy(orch, "black", "B")
+    fen = chess.Board().fen()
+    orch._pairing_register("black", fen, "black")
+    new_pairs, _ = orch._pairing_register("white", fen, "white")
+
+    assert len(new_pairs) == 1
+    group = next(iter(new_pairs))
+    pair_id = orch._pair_ids[group]
+    assert orch._pair_white[pair_id] == "white"
+
+
+def test_recompute_same_color_bucket_does_not_confirm(orch):
+    """Two same-color proxies at the same FEN must NOT confirm a pair.
+    Catches L850 `state_a[1] != state_b[1]` flipped to `==`."""
+    _seed_proxy(orch, "p1", "A")
+    _seed_proxy(orch, "p2", "B")
+    fen = chess.Board().fen()
+    orch._pairing_register("p1", fen, "white")
+    new_pairs, _ = orch._pairing_register("p2", fen, "white")
+
+    # Group exists (size 2 of same color) but pair is NOT confirmed.
+    assert new_pairs == set()
+    assert orch._confirmed_pairs == {}
+    assert orch._pair_proxies == {}
+
+
+def test_recompute_three_bucket_does_not_confirm(orch):
+    """Ambiguous 3-way bucket must not be promoted to a pair (len != 2
+    fails). Catches L837 `len(group) == 2` flipped to `>=` etc."""
+    _seed_proxy(orch, "p1", "A")
+    _seed_proxy(orch, "p2", "B")
+    _seed_proxy(orch, "p3", "C")
+    fen = chess.Board().fen()
+    orch._pairing_register("p1", fen, "white")
+    orch._pairing_register("p2", fen, "black")
+    new_pairs, _ = orch._pairing_register("p3", fen, "white")
+
+    # The group changed from {p1,p2} (size 2) to {p1,p2,p3} (size 3).
+    # Old pair was confirmed in the prior step; we just check the new
+    # *3-way* group is not promoted as a fresh pair.
+    assert all(len(g) == 2 for g in new_pairs)  # no size-3 group promoted
+
+
+def test_recompute_orphans_when_proxy_session_ends(orch):
+    """When one proxy leaves _pairing_state entirely (session ended),
+    the surviving proxy is reported as orphaned. Catches L894
+    `if pid not in self._pairing_state` flipped (AddNot)."""
+    _seed_proxy(orch, "white", "A")
+    _seed_proxy(orch, "black", "B")
+    fen = chess.Board().fen()
+    orch._pairing_register("white", fen, "white")
+    orch._pairing_register("black", fen, "black")
+    # Both still registered -> no orphans yet.
+
+    # Tear down "white" entirely (session ended path).
+    orch._pairing_unregister("white")
+    new_pairs, orphaned = orch._recompute_groups()
+    assert new_pairs == set()
+    assert orphaned == {"white"}  # absent from _pairing_state
+
+
+def test_recompute_no_orphan_when_proxy_just_moved_fen(orch):
+    """Between-move re-registration keeps the proxy in _pairing_state at
+    a new FEN. The old group is removed but the proxy is NOT orphaned."""
+    _seed_proxy(orch, "white", "A")
+    _seed_proxy(orch, "black", "B")
+    fen1 = chess.Board().fen()
+    orch._pairing_register("white", fen1, "white")
+    orch._pairing_register("black", fen1, "black")
+
+    # White moves to a new FEN (different bucket). Old group dissolves
+    # but white is still registered somewhere.
+    b = chess.Board(); b.push_uci("e2e4")
+    fen2 = b.fen()
+    _, orphaned = orch._pairing_register("white", fen2, "white")
+    assert orphaned == set()
+    assert "white" in orch._pairing_state
+
+
 @pytest.mark.asyncio
 async def test_debug_invariants_pass_in_normal_flow(orch, monkeypatch):
     """With debug asserts on, a typical two-proxy handoff sequence
