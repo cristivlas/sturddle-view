@@ -2007,5 +2007,82 @@ def test_read_game_record_returns_hash_and_summary():
     assert s["result"] == rec["result"]
 
 
+def test_read_game_record_missing_file_returns_none(tmp_path):
+    """Nonexistent PGN path → return None (not raise). Kills
+    ExceptionReplacer on the `FileNotFoundError` catch (replacing with
+    a non-parent exception class would let the error propagate)."""
+    p = tmp_path / "absent.pgn"
+    assert read_game_record(p, 1) is None
+
+
+def test_read_game_record_out_of_range_returns_none(tmp_path):
+    """game_n past end of file → None. Kills NotEq/Gt mutations on
+    the `game_n > len(offsets)` bounds check."""
+    body = _game("A", "B", "1-0")
+    p = _write_pgn(tmp_path, body)
+    assert read_game_record(p, 2) is None
+    assert read_game_record(p, 99) is None
+
+
+def test_read_game_record_zero_or_negative_game_n_returns_none(tmp_path):
+    """game_n < 1 → None. Pins the `< 1` guard."""
+    body = _game("A", "B", "1-0")
+    p = _write_pgn(tmp_path, body)
+    assert read_game_record(p, 0) is None
+    assert read_game_record(p, -1) is None
+
+
+def test_read_game_record_seeks_to_correct_game_for_n_greater_than_two(tmp_path):
+    """Reading game 3 must return game 3, not game 1 (`game_n - 1`
+    indexing into offsets). Kills `-` → `>>` mutation: `3 - 1 = 2`
+    but `3 >> 1 = 1`, which would re-read game 2."""
+    body = (
+        _game("AAA", "BBB", "1-0")  # game 1
+        + _game("CCC", "DDD", "0-1")  # game 2
+        + _game("EEE", "FFF", "1/2-1/2")  # game 3
+    )
+    p = _write_pgn(tmp_path, body)
+    rec = read_game_record(p, 3)
+    assert rec is not None
+    assert rec["engine_white"] == "EEE"
+    assert rec["engine_black"] == "FFF"
+    assert rec["result"] == "1/2-1/2"
+
+
+def test_read_game_record_final_fen_reflects_played_moves(tmp_path):
+    """final_fen must reflect the position AFTER the last move was played
+    (board iteration over mainline). Kills ZeroIterationForLoop on the
+    walk_mainline loop (would leave board=None → final_fen=initial pos)
+    and IsNot mutation on the `if board is None:` reset guard
+    (would overwrite the iterated board with the initial one)."""
+    body = _game("A", "B", "1-0")  # contains `1. e4 e5 1-0`
+    p = _write_pgn(tmp_path, body)
+    rec = read_game_record(p, 1)
+    assert rec is not None
+    # Initial position FEN; final_fen must NOT equal this.
+    initial_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    assert rec["final_fen"] != initial_fen
+    # last_move must be set (loop iterated at least once).
+    assert rec["last_move"] is not None
+
+
+def test_read_game_record_summary_question_mark_names_become_none(tmp_path):
+    """White or Black tag value of '?' (the PGN unknown sentinel) must
+    map to None in the summary dict. Kills `!=`→`is`/`>`/`>=` mutations
+    on the `white != '?'` / `black != '?'` checks."""
+    # Build a game with explicit "?" tags (override _game helper).
+    body = (
+        '[Event "x"]\n[White "?"]\n[Black "?"]\n'
+        '[Result "1-0"]\n\n1. e4 e5 1-0\n\n'
+    )
+    p = _write_pgn(tmp_path, body)
+    rec = read_game_record(p, 1)
+    assert rec is not None
+    assert rec["summary"]["white"] is None
+    assert rec["summary"]["black"] is None
+    # Engine-level headers fall back to "?" themselves (not None).
+    assert rec["engine_white"] == "?" and rec["engine_black"] == "?"
+
+
 
 
