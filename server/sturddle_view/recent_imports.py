@@ -255,6 +255,104 @@ class RecentImports:
             self._persist_locked()
         return h
 
+    async def replace_at(
+        self,
+        old_hash: str | None,
+        fmt: str,
+        text: str,
+        summary: dict,
+        game_id: str,
+        precomputed_hash: str | None = None,
+    ) -> str:
+        """Atomically swap content for a preserved ``game_id``.
+
+        Under one lock acquisition:
+        - If ``old_hash`` is given and present, evict that row + blob.
+        - Insert/upsert the new ``(fmt, text, summary)`` row, binding
+          ``game_id`` to the new hash.
+
+        Returns the new hash.
+
+        Use cases:
+        - Annotation edit on a game already in recents: pass the
+          pre-edit hash as ``old_hash``; the row is replaced in place
+          with the same ``game_id``.
+        - Annotation edit on a game NOT yet in recents (e.g. play ->
+          view -> edit -> annotate flow): pass ``old_hash=None`` and
+          the game is promoted to recents.
+
+        ``old_hash == new_hash`` (content unchanged) collapses to a
+        summary/ts refresh -- effectively the same as ``save`` upsert.
+
+        ``old_hash`` present but bound to a DIFFERENT game_id is a
+        programming bug and asserts (same uniqueness contract as
+        ``_bind_id_locked``).
+
+        ``new_hash`` already present with a different game_id (cross-
+        game hash collision: ~2^-256, won't happen in practice) is
+        logged loudly; the stored row's game_id is kept and the
+        incoming binding is dropped. The old row at ``old_hash`` is
+        still evicted, so the caller's game effectively vanishes from
+        recents -- acceptable given the probability.
+        """
+        trimmed = text.strip()
+        new_hash = precomputed_hash if precomputed_hash is not None else canonical_hash(trimmed, fmt)
+        async with self._lock:
+            if old_hash is not None and old_hash != new_hash:
+                old_row = self._index.get(old_hash)
+                if old_row is not None:
+                    bound_id = old_row.get("game_id")
+                    if bound_id is not None and bound_id != game_id:
+                        raise AssertionError(
+                            f"replace_at refusing to evict hash={old_hash} "
+                            f"bound to a different game_id={bound_id} "
+                            f"(caller passed game_id={game_id})"
+                        )
+                    self._index.pop(old_hash, None)
+                    if bound_id is not None:
+                        self._by_id.pop(bound_id, None)
+                    self._delete_blob(old_row.get("file"))
+
+            existing = self._index.get(new_hash)
+            if existing is not None:
+                # Already present (either old_hash == new_hash, or a
+                # prior unrelated insert at this content). Refresh
+                # summary/ts and rebind game_id when free.
+                stored_id = existing.get("game_id")
+                if stored_id is not None and stored_id != game_id:
+                    log.warning(
+                        "recent-imports hash collision in replace_at: "
+                        "hash=%s stored_game_id=%s incoming_game_id=%s; "
+                        "keeping stored id",
+                        new_hash, stored_id, game_id,
+                    )
+                else:
+                    if stored_id is None:
+                        self._bind_id_locked(game_id, new_hash, existing)
+                existing["summary"] = summary
+                existing["ts"] = int(time.time() * 1000)
+                self._persist_locked()
+                return new_hash
+
+            # Fresh insert at new_hash.
+            fname = f"by-hash/{new_hash}.{_ext_for(fmt)}"
+            blob_path = self._root / fname
+            if not blob_path.exists():
+                atomic_write_text(blob_path, trimmed)
+            row = {
+                "format": fmt,
+                "summary": summary,
+                "ts": int(time.time() * 1000),
+                "file": fname,
+                "game_id": None,
+                "refs": [],
+            }
+            self._index[new_hash] = row
+            self._bind_id_locked(game_id, new_hash, row)
+            self._evict_locked()
+            self._persist_locked()
+        return new_hash
+
     def _bind_id_locked(self, game_id: str, h: str, row: dict) -> None:
         """Attach ``game_id`` to ``row`` (hash=``h``) and the reverse
         index. Asserts the id is free (or already bound to this hash).
