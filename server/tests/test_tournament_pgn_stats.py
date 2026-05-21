@@ -390,7 +390,7 @@ def test_elo_margin_from_wld_all_draws_returns_zero():
 # _ordo_fit_margins — pin numeric output to kill formula-operator survivors
 # ---------------------------------------------------------------------------
 
-from sturddle_view.tournament.pgn_stats import _ordo_fit_margins, _ordo_iterative_fit  # noqa: E402
+from sturddle_view.tournament.pgn_stats import _form_pairs, _ordo_fit_margins, _ordo_iterative_fit  # noqa: E402
 
 
 def test_ordo_fit_margins_one_engine_returns_none():
@@ -517,6 +517,109 @@ def test_ordo_iterative_fit_50_pct_collapses_to_zero():
     )
     assert r["A"] == pytest.approx(0.0, abs=0.01)
     assert r["B"] == pytest.approx(0.0, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# _form_pairs — exercise directly (only used via callers in prod)
+# ---------------------------------------------------------------------------
+
+
+def test_form_pairs_default_paired_true():
+    """Default `paired=True` keyword applies when omitted. Kills
+    `True`→`False` mutation on the default value (which would force
+    callers using the default to receive ([], [])."""
+    keyed = [
+        ("1", "A", "B", "1-0"),
+        ("1", "B", "A", "0-1"),
+    ]
+    pairs, orphans = _form_pairs(keyed)  # no paired= kwarg
+    assert pairs == [(0, 1)]
+    assert orphans == []
+
+
+def test_form_pairs_unpaired_returns_empty_for_nonempty_input():
+    """`paired=False` with non-empty keyed must short-circuit to ([], []).
+    Kills `or`→`and` on the early-return guard (which would let processing
+    continue and emit pairs/orphans for a non-paired tour)."""
+    keyed = [
+        ("1", "A", "B", "1-0"),
+        ("1", "B", "A", "0-1"),
+    ]
+    assert _form_pairs(keyed, paired=False) == ([], [])
+
+
+def test_form_pairs_empty_round_tag_becomes_orphan():
+    """An entry with empty Round tag is orphaned (not bucketed). Kills
+    `or`→`and` on the round-tag guard."""
+    keyed = [("", "A", "B", "1-0")]
+    pairs, orphans = _form_pairs(keyed, paired=True)
+    assert pairs == []
+    assert orphans == [0]
+
+
+def test_form_pairs_question_mark_round_becomes_orphan():
+    """Round=='?' is treated as no-round and orphaned. Kills `==`→`>`/`is`
+    mutations on the `round_tag == '?'` comparison."""
+    keyed = [("?", "A", "B", "1-0")]
+    pairs, orphans = _form_pairs(keyed, paired=True)
+    assert pairs == []
+    assert orphans == [0]
+
+
+def test_form_pairs_no_round_continue_processes_subsequent_entries():
+    """An entry with no round must `continue` (not `break`): later
+    entries with real rounds must still be bucketed and paired. Kills
+    ReplaceContinueWithBreak in the no-round branch."""
+    keyed = [
+        ("", "A", "B", "1-0"),                # no round → orphan
+        ("1", "A", "B", "1-0"),               # paired with next
+        ("1", "B", "A", "0-1"),
+    ]
+    pairs, orphans = _form_pairs(keyed, paired=True)
+    assert pairs == [(1, 2)]
+    assert sorted(orphans) == [0]
+
+
+def test_form_pairs_singleton_bucket_becomes_orphan():
+    """A bucket with one game (no color-flip partner) is orphaned."""
+    keyed = [("1", "A", "B", "1-0")]
+    pairs, orphans = _form_pairs(keyed, paired=True)
+    assert pairs == []
+    assert orphans == [0]
+
+
+def test_form_pairs_pair_order_uses_lower_file_index_first():
+    """When the i-th `A-white` game is at a later file index than the
+    i-th `B-white` game, the pair tuple lists the *lower* index first.
+    Kills `<` → other comparison mutations on the tuple-order normalizer."""
+    # B-white at index 0, A-white at index 1 → pair should be (0, 1).
+    keyed = [
+        ("1", "B", "A", "0-1"),  # B as white
+        ("1", "A", "B", "1-0"),  # A as white
+    ]
+    pairs, orphans = _form_pairs(keyed, paired=True)
+    assert pairs == [(0, 1)]
+    assert orphans == []
+
+
+def test_form_pairs_partition_by_first_white():
+    """Bucket entries are split by which engine is white (per the first
+    entry's white). Asymmetric counts → surplus side becomes orphans.
+    Kills `==`→`!=`/Is/IsNot mutations on the partitioning predicate
+    and NumberReplacers on the `keyed[idx][1]` white-name lookup."""
+    # 3 A-as-white + 1 B-as-white in same bucket → 1 pair + 2 orphans (extra A).
+    keyed = [
+        ("1", "A", "B", "1-0"),  # A white
+        ("1", "A", "B", "1-0"),  # A white
+        ("1", "A", "B", "1-0"),  # A white
+        ("1", "B", "A", "0-1"),  # B white
+    ]
+    pairs, orphans = _form_pairs(keyed, paired=True)
+    assert len(pairs) == 1
+    # The single pair pairs one A-white with the one B-white.
+    assert pairs[0] == (0, 3)
+    # The two surplus A-whites are orphans.
+    assert sorted(orphans) == [1, 2]
 
 
 def test_elo_from_score_perfect_score_is_none():
