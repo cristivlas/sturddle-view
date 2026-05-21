@@ -351,6 +351,89 @@ def test_recompute_no_orphan_when_proxy_just_moved_fen(orch):
     assert "white" in orch._pairing_state
 
 
+# ---------------------------------------------------------------------------
+# _update_pair_moves
+# ---------------------------------------------------------------------------
+
+
+def _setup_confirmed_pair(orch) -> tuple[str, str, str]:
+    """Register two proxies at the same FEN so a pair is confirmed.
+    Returns (proxy_a, proxy_b, pair_id)."""
+    _seed_proxy(orch, "pa", "A")
+    _seed_proxy(orch, "pb", "B")
+    fen = chess.Board().fen()
+    orch._pairing_register("pa", fen, "white")
+    orch._pairing_register("pb", fen, "black")
+    pair_id = orch._pair_ids[frozenset(("pa", "pb"))]
+    return "pa", "pb", pair_id
+
+
+def test_update_pair_moves_ignores_non_position_kind(orch):
+    """parsed['kind'] != 'position' → no update. Kills `!= 'position'`→`== 'position'`
+    and `or`→`and` mutations on L1095."""
+    _setup_confirmed_pair(orch)
+    pa, pb, pair_id = "pa", "pb", orch._pair_ids[frozenset(("pa", "pb"))]
+    orch._update_pair_moves("pa", {"kind": "bestmove", "moves": ["e2e4"]})
+    assert orch._pair_moves[pair_id] == []
+
+
+def test_update_pair_moves_ignores_none_parsed(orch):
+    """parsed is None → return immediately. Kills AddNot on `parsed is None`."""
+    _setup_confirmed_pair(orch)
+    pa, pb, pair_id = "pa", "pb", orch._pair_ids[frozenset(("pa", "pb"))]
+    orch._update_pair_moves("pa", None)
+    assert orch._pair_moves[pair_id] == []
+
+
+def test_update_pair_moves_ignores_non_list_moves(orch):
+    """moves is not a list → return. Kills `not isinstance` AddNot on L1098."""
+    _setup_confirmed_pair(orch)
+    pair_id = orch._pair_ids[frozenset(("pa", "pb"))]
+    orch._update_pair_moves("pa", {"kind": "position", "moves": "e2e4"})
+    assert orch._pair_moves[pair_id] == []
+
+
+def test_update_pair_moves_ignores_unknown_proxy(orch):
+    """proxy not in _confirmed_pairs → return. Kills IsNot→Is on L1101."""
+    _setup_confirmed_pair(orch)
+    pair_id = orch._pair_ids[frozenset(("pa", "pb"))]
+    orch._update_pair_moves("ghost", {"kind": "position", "moves": ["e2e4"]})
+    assert orch._pair_moves[pair_id] == []
+
+
+def test_update_pair_moves_extends_on_longer_prefix(orch):
+    """Longer list that extends current → stored. Core happy-path.
+    Kills `>`→`>=` and `==`→`!=` on L1110."""
+    pa, pb, pair_id = _setup_confirmed_pair(orch)
+    orch._pair_moves[pair_id] = ["e2e4"]
+    orch._update_pair_moves("pa", {"kind": "position", "moves": ["e2e4", "e7e5"]})
+    assert orch._pair_moves[pair_id] == ["e2e4", "e7e5"]
+
+
+def test_update_pair_moves_keeps_current_on_equal_length(orch):
+    """Equal-length list → keep current (no update). Kills `>`→`>=` mutation."""
+    pa, pb, pair_id = _setup_confirmed_pair(orch)
+    orch._pair_moves[pair_id] = ["e2e4", "e7e5"]
+    orch._update_pair_moves("pa", {"kind": "position", "moves": ["e2e4", "e7e5"]})
+    assert orch._pair_moves[pair_id] == ["e2e4", "e7e5"]
+
+
+def test_update_pair_moves_keeps_current_on_shorter_list(orch):
+    """Shorter list → keep current. Kills `>`→`<` mutation."""
+    pa, pb, pair_id = _setup_confirmed_pair(orch)
+    orch._pair_moves[pair_id] = ["e2e4", "e7e5"]
+    orch._update_pair_moves("pa", {"kind": "position", "moves": ["e2e4"]})
+    assert orch._pair_moves[pair_id] == ["e2e4", "e7e5"]
+
+
+def test_update_pair_moves_rejects_non_prefix_extension(orch):
+    """Longer but divergent list must not update. Kills `and`→`or` on L1110."""
+    pa, pb, pair_id = _setup_confirmed_pair(orch)
+    orch._pair_moves[pair_id] = ["e2e4"]
+    orch._update_pair_moves("pa", {"kind": "position", "moves": ["d2d4", "d7d5"]})
+    assert orch._pair_moves[pair_id] == ["e2e4"]
+
+
 @pytest.mark.asyncio
 async def test_debug_invariants_pass_in_normal_flow(orch, monkeypatch):
     """With debug asserts on, a typical two-proxy handoff sequence
