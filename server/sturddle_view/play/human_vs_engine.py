@@ -179,6 +179,13 @@ class HumanVsEngine:
         # entries for plies with no engine search (human moves). Matches
         # move_stack length; pop alongside on take-back. Reset on new game.
         self._eval_history: list[dict | None] = []
+        # Play-side PGN comments. Populated only when the play game was
+        # seeded from a view-mode position (play_from_here) that carried
+        # commentary -- otherwise None. Used by _build_play_game_pgn so
+        # imported annotations survive the view -> play fork into recents
+        # and exports. Live play does not mutate these today.
+        self._play_comments: list[str | None] | None = None
+        self._play_root_comment: str | None = None
         # Set inside the game-end lock by _stash_recents_payload(); drained
         # after the lock by _flush_recents_save(). Carries (text, summary,
         # game_id) for the recent-imports save so the async write happens
@@ -391,6 +398,8 @@ class HumanVsEngine:
         seed_clock_history: list[tuple[float | None, float | None]] | None = None,
         seed_final_white_time: float | None = None,
         seed_final_black_time: float | None = None,
+        seed_comments: list[str | None] | None = None,
+        seed_root_comment: str | None = None,
     ) -> str:
         """Start a fresh game.
 
@@ -399,6 +408,11 @@ class HumanVsEngine:
         a PGN with [%clk] comments), per-ply clocks are restored and
         take-back can undo into the seeded plies. None entries fall back
         to `tc.initial_seconds`.
+
+        `seed_comments` / `seed_root_comment` populate the play-side
+        comment storage when forking from a view game (play_from_here),
+        so imported annotations survive into the eventual PGN export and
+        recents save.
         """
         async with self._lock:
             if not (self._mode & Op.NEW_GAME._mask):
@@ -435,6 +449,17 @@ class HumanVsEngine:
                 final_b=seed_final_black_time,
             )
             self._eval_history = [None] * len(board.move_stack)
+            # Seed play-side comments from a forking caller (play_from_here).
+            # Truncate/pad the seed to match move_stack length so subsequent
+            # take-back can shrink alongside it.
+            n_plies = len(board.move_stack)
+            if seed_comments is not None:
+                seeded = list(seed_comments[:n_plies])
+                seeded.extend([None] * (n_plies - len(seeded)))
+                self._play_comments = seeded if any(c is not None for c in seeded) else None
+            else:
+                self._play_comments = None
+            self._play_root_comment = seed_root_comment or None
             self._clock.start_turn()
             self._mode = Mode.PLAY
             self._game_id = str(uuid.uuid4())
@@ -554,24 +579,27 @@ class HumanVsEngine:
             if not (self._mode & Op.TAKEBACK._mask):
                 raise ModeConflictError(self._mode, Op.TAKEBACK)
             await self._cancel_think()
+            def _pop_one() -> None:
+                self._board.pop()
+                self._clock.pop_snapshot()
+                self._eval_history.pop()
+                if self._play_comments is not None:
+                    self._play_comments.pop()
+                    if not any(c is not None for c in self._play_comments):
+                        self._play_comments = None
+
             human_color = chess.WHITE if self._human_white else chess.BLACK
             if self._board.turn == human_color:
                 # Pop engine's reply, then human's last.
                 if len(self._board.move_stack) < 2:
                     raise RuntimeError("nothing to take back")
-                self._board.pop()
-                self._clock.pop_snapshot()
-                self._eval_history.pop()
-                self._board.pop()
-                self._clock.pop_snapshot()
-                self._eval_history.pop()
+                _pop_one()
+                _pop_one()
             else:
                 # Engine was thinking; pop the human's last move.
                 if len(self._board.move_stack) < 1:
                     raise RuntimeError("nothing to take back")
-                self._board.pop()
-                self._clock.pop_snapshot()
-                self._eval_history.pop()
+                _pop_one()
             # Preserve pause state across takeback: undoing should not
             # silently resume the clock.
             if self._paused:
@@ -1029,6 +1057,13 @@ class HumanVsEngine:
                 elif cursor < len(self._view_clock_history):
                     nw, nb = self._view_clock_history[cursor]
                     seed_final_w, seed_final_b = nw, nb
+            # Snapshot view-mode commentary slice before _reset_view_state wipes it.
+            seed_comments = (
+                list(self._view_comments[:cursor])
+                if self._view_comments is not None
+                else None
+            )
+            seed_root_comment = self._view_root_comment
             start_fen = self._start_fen
             # Determine side-to-move at the cursor without leaving the lock.
             board = board_from(start_fen)
@@ -1053,6 +1088,8 @@ class HumanVsEngine:
             seed_clock_history=seed_clocks,
             seed_final_white_time=seed_final_w,
             seed_final_black_time=seed_final_b,
+            seed_comments=seed_comments,
+            seed_root_comment=seed_root_comment,
         )
 
     async def apply_engine_settings_live(self) -> None:
@@ -1729,6 +1766,16 @@ class HumanVsEngine:
         tc = None
         if self._clock.tc.initial_seconds:
             tc = (int(self._clock.tc.initial_seconds), int(self._clock.tc.increment_seconds))
+        # Comments slice must match move_stack length. _play_comments is
+        # maintained in lockstep with the board by new_game (seed) and
+        # take_back (pop), so just clip defensively in case the lengths
+        # ever drift.
+        n_plies = len(self._board.move_stack)
+        comments = (
+            list(self._play_comments[:n_plies])
+            if self._play_comments is not None
+            else None
+        )
         pgn_text = build_pgn(
             start_fen=self._start_fen,
             moves_uci=[m.uci() for m in self._board.move_stack],
@@ -1740,6 +1787,8 @@ class HumanVsEngine:
             termination=termination,
             time_control=tc,
             eval_history=list(self._eval_history),
+            comments=comments,
+            root_comment=self._play_root_comment,
         )
         return pgn_text, white, black
 

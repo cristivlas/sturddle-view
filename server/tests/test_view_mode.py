@@ -508,3 +508,106 @@ async def test_comment_nav_via_convenience_methods(hve):
     assert r == {"prev_comment": None, "next_comment": 2}  # now at ply 0
     r = await h.view_last(include_comment_nav=True)
     assert r == {"prev_comment": 4, "next_comment": None}  # now at ply 5
+
+
+# ---------------------------------------------------------------------------
+# play_from_here carries imported comments into the forked play game
+# (Phase 2 of the annotation-edit work: view-mode commentary survives the
+# view -> play fork so the eventual recents save / PGN export retain it).
+# ---------------------------------------------------------------------------
+
+
+async def test_play_from_here_carries_root_and_per_ply_comments(hve):
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5", "g1f3", "b8c6"],
+        clock_history=None,
+        comments=["c1", None, "c3", None],
+        root_comment="pre-game thoughts",
+    ))
+    await h.view_last()
+    await h.view_back()  # cursor at ply 3
+    await h.play_from_here(tc=TimeControl(60, 0))
+    assert h._play_root_comment == "pre-game thoughts"
+    assert h._play_comments == ["c1", None, "c3"]
+
+
+async def test_play_from_here_no_view_comments_leaves_play_side_none(hve):
+    """When the imported PGN had no commentary, no synthesis happens."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5"],
+        clock_history=None,
+    ))
+    await h.view_last()
+    await h.play_from_here(tc=TimeControl(60, 0))
+    assert h._play_comments is None
+    assert h._play_root_comment is None
+
+
+async def test_play_from_here_at_ply_zero_keeps_only_root_comment(hve):
+    """Cursor at ply 0 -> seed_comments is an empty slice; the forked
+    play game still inherits the root comment but has no per-ply ones."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5"],
+        clock_history=None,
+        comments=["c1", "c2"],
+        root_comment="pre-game",
+    ))
+    # cursor stays at 0 (no view_last / view_forward)
+    await h.play_from_here(tc=TimeControl(60, 0))
+    assert h._play_comments is None  # collapsed because slice was empty
+    assert h._play_root_comment == "pre-game"
+
+
+async def test_take_back_pops_play_comments_in_lockstep(hve):
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5", "g1f3", "b8c6"],
+        clock_history=None,
+        comments=["c1", "c2", "c3", "c4"],
+    ))
+    await h.view_last()
+    await h.play_from_here(tc=TimeControl(60, 0))
+    # After play_from_here at last ply: 4 plies on the board, 4 comments.
+    assert len(h._board.move_stack) == 4
+    assert h._play_comments == ["c1", "c2", "c3", "c4"]
+    # Takeback drops engine reply + human's last (2 plies).
+    # Side-to-move at ply 4 is White; human side is determined at fork.
+    # We pop two if human is to move; otherwise one. Don't assume; just
+    # check post-state is consistent.
+    pre_n = len(h._board.move_stack)
+    await h.takeback()
+    post_n = len(h._board.move_stack)
+    assert post_n < pre_n
+    assert len(h._play_comments) == post_n
+
+
+async def test_play_from_here_pgn_export_preserves_comments(hve):
+    """End-to-end: import with comments -> play_from_here at last ply ->
+    PGN built via the play-mode path carries the seeded user prose."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5", "g1f3"],
+        clock_history=None,
+        comments=["king pawn", "symmetric", "knight develops"],
+        root_comment="study line",
+    ))
+    await h.view_last()
+    await h.play_from_here(tc=TimeControl(60, 0))
+    # _build_play_game_pgn is the shared workhorse driven by autosave,
+    # game-end recents save, and download. Exercises the same path that
+    # users see on game-end.
+    built = h._build_play_game_pgn(result="0-1", termination="resignation")
+    assert built is not None
+    pgn_text, _white, _black = built
+    assert "study line" in pgn_text
+    assert "king pawn" in pgn_text
+    assert "symmetric" in pgn_text
+    assert "knight develops" in pgn_text
