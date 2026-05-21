@@ -1861,14 +1861,31 @@ class HumanVsEngine:
         if built is None:
             return
         pgn_text, white, black = built
-        summary = {
+        summary = self._play_summary(white=white, black=black, result=result)
+        self._pending_recents_save = (pgn_text, summary, self._game_id)
+
+    def _play_summary(
+        self, *, white: str, black: str, result: str | None,
+    ) -> dict:
+        return {
             "white": white,
             "black": black,
             "result": result,
             "side_to_move": "white" if self._board.turn == chess.WHITE else "black",
             "source": "play",
         }
-        self._pending_recents_save = (pgn_text, summary, self._game_id)
+
+    def play_game_summary(self) -> dict | None:
+        """Minimal summary dict for the in-flight play game, matching the
+        shape stashed for recents on game-end. Returns None when there's
+        no live play game with moves. Used by /game/view/start to label
+        the play->view clone."""
+        if self._board is None or self._game_id is None or not self._board.move_stack:
+            return None
+        engine_label = self._engine_name or Path(self._engine_path).name
+        white = "Human" if self._human_white else engine_label
+        black = engine_label if self._human_white else "Human"
+        return self._play_summary(white=white, black=black, result=None)
 
     async def _flush_recents_save(self) -> None:
         """Drain the stash set by _stash_recents_payload. Call AFTER
