@@ -352,6 +352,52 @@ def test_recompute_no_orphan_when_proxy_just_moved_fen(orch):
 
 
 # ---------------------------------------------------------------------------
+# _pairing_apply_bestmove
+# ---------------------------------------------------------------------------
+
+
+def test_apply_bestmove_no_state_returns_empty(orch):
+    """proxy_id not in _pairing_state → (set(), set()). Kills AddNot on
+    `state is None` (L939 left operand)."""
+    new_pairs, orphaned = orch._pairing_apply_bestmove(
+        "ghost", {"move": "e2e4"}
+    )
+    assert new_pairs == set() and orphaned == set()
+
+
+def test_apply_bestmove_none_parsed_returns_empty(orch):
+    """parsed=None with valid state → (set(), set()). Kills `or`→`and`
+    on L939 so both sides of the guard are covered."""
+    _seed_proxy(orch, "pa", "A")
+    fen = chess.Board().fen()
+    orch._pairing_state["pa"] = (fen, "white")
+    new_pairs, orphaned = orch._pairing_apply_bestmove("pa", None)
+    assert new_pairs == set() and orphaned == set()
+
+
+def test_apply_bestmove_none_move_returns_empty(orch):
+    """parsed has no 'move' key → (set(), set()). Kills `or`→`and`
+    on L942 left operand."""
+    _seed_proxy(orch, "pa", "A")
+    fen = chess.Board().fen()
+    orch._pairing_state["pa"] = (fen, "white")
+    new_pairs, orphaned = orch._pairing_apply_bestmove("pa", {"kind": "bestmove"})
+    assert new_pairs == set() and orphaned == set()
+
+
+def test_apply_bestmove_none_move_string_returns_empty(orch):
+    """move == '(none)' → (set(), set()). Kills `==`→`!=` / `Is` and
+    `or`→`and` on L942."""
+    _seed_proxy(orch, "pa", "A")
+    fen = chess.Board().fen()
+    orch._pairing_state["pa"] = (fen, "white")
+    new_pairs, orphaned = orch._pairing_apply_bestmove(
+        "pa", {"move": "(none)"}
+    )
+    assert new_pairs == set() and orphaned == set()
+
+
+# ---------------------------------------------------------------------------
 # _white_black_for_group
 # ---------------------------------------------------------------------------
 
