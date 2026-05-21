@@ -5,7 +5,7 @@
 import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
-import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, setDockContainer, isMobileLayout } from "../play-debug-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, isMobileLayout } from "../play-debug-windows.js";
 import {
   setCommentaryDockContainer,
   setOnUserCloseCommentary,
@@ -1157,6 +1157,7 @@ export const playPerspective = {
 
     const onAnalyze = async () => {
       const wasAnalyzing = analyzing;
+      if (wasAnalyzing) snapshotViewAnalysisState();
       try {
         await ctx.api(
           "POST",
@@ -1167,6 +1168,7 @@ export const playPerspective = {
           dismissAnalysisToast?.();
           dismissAnalysisToast = null;
         } else {
+          restoreViewAnalysisWindows(ctx.events);
           showAnalysisToast();
         }
       } catch (e) {

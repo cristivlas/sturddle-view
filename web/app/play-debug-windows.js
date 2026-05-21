@@ -695,6 +695,9 @@ const pvTable = createDockableWindow({
 
 // -- public API --------------------------------------------------------------
 
+const VIEW_UCI_OPEN_KEY = "sturddle:view:ucilog:open";
+const VIEW_PV_OPEN_KEY  = "sturddle:view:pvtable:open";
+
 export function toggleUciLogWindow(events) { uciLog.toggle(events); }
 export function togglePvTableWindow(events) { pvTable.toggle(events); }
 
@@ -710,4 +713,21 @@ export function closeDebugWindowsPersist() {
 
 export function restoreDebugWindows(events) {
   instances.forEach(i => { if (i.sharesUciDock) i.restore(events); });
+}
+
+// Save open state of debug windows as of the last view-mode analysis session.
+export function snapshotViewAnalysisState() {
+  setOpen(VIEW_UCI_OPEN_KEY, !!(uciLog.wb || uciLog.slot));
+  setOpen(VIEW_PV_OPEN_KEY,  !!(pvTable.wb || pvTable.slot));
+}
+
+// Open debug windows based on the last view-mode analysis snapshot.
+// Falls back to the shared open key on first use (before any snapshot exists).
+export function restoreViewAnalysisWindows(events) {
+  const uciShouldOpen = localStorage.getItem(VIEW_UCI_OPEN_KEY) !== null
+    ? isOpen(VIEW_UCI_OPEN_KEY) : isOpen(UCI_OPEN_KEY);
+  const pvShouldOpen  = localStorage.getItem(VIEW_PV_OPEN_KEY) !== null
+    ? isOpen(VIEW_PV_OPEN_KEY)  : isOpen(PV_OPEN_KEY);
+  if (uciShouldOpen && !uciLog.wb && !uciLog.slot) uciLog.toggle(events);
+  if (pvShouldOpen  && !pvTable.wb && !pvTable.slot) pvTable.toggle(events);
 }
