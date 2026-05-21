@@ -1267,6 +1267,96 @@ def test_sprt_logistic_model_reported_in_result(tmp_path):
     assert r.model == "logistic"
 
 
+def test_sprt_logistic_exact_llr_three_wins_one_loss_one_draw(tmp_path):
+    """Hand-computed logistic LLR for w=3 l=1 d=1, elo0=0, elo1=10. Pins:
+      - `d_obs = d / n` ratio
+      - `s = 1 / (1 + 10**(-elo/400))` Elo-to-score formula
+      - `pw = s - d_obs/2`, `pl = 1 - s - d_obs/2` trinomial probabilities
+      - `LLR = w * log(pw1/pw0) + l * log(pl1/pl0)` summation
+    Reference value (pure Python): 0.06937790251627435."""
+    body = (
+        _game("A", "B", "1-0") * 3       # 3 A-wins (white)
+        + _game("A", "B", "0-1")         # 1 A-loss (B white-win? No, A is white losing)
+        + _game("A", "B", "1/2-1/2")     # 1 draw
+    )
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params(elo0=0.0, elo1=10.0, model="logistic"))
+    assert r.pairs == 5
+    assert r.llr == pytest.approx(0.0693779, abs=1e-7)
+
+
+def test_sprt_logistic_only_mismatched_games_returns_zero_llr(tmp_path):
+    """All games involve a 3rd engine → n=0 → returns LLR=0, pairs=0.
+    Kills NumberReplacer on the `llr=0.0` in the n==0 logistic branch."""
+    body = _game("A", "C", "1-0") + _game("C", "B", "1-0")  # neither is A-vs-B
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params(model="logistic"))
+    assert r.pairs == 0
+    assert r.status == "continue"
+    assert r.llr == 0.0
+
+
+def test_sprt_logistic_white_win_routes_by_color_to_a_or_b(tmp_path):
+    """A wins twice as white → A's w counter += 2; B wins once as white →
+    A's l counter += 1 (B winning means A lost). Pins the `if white ==
+    a_name` slot-routing inside the `result == _WHITE_WIN` branch."""
+    body = (
+        _game("A", "B", "1-0")           # A white, A wins → A.w += 1
+        + _game("A", "B", "1-0")         # A white, A wins → A.w += 1
+        + _game("B", "A", "1-0")         # B white, B wins → A.l += 1
+    )
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params(elo0=0.0, elo1=10.0, model="logistic"))
+    # w=2, l=1, d=0, n=3, d_obs=0.
+    # s0=0.5, s1=0.5143871841659987
+    # pw0=0.5, pl0=0.5; pw1=0.5143871, pl1=0.4856128
+    # LLR = 2*log(pw1/pw0) + 1*log(pl1/pl0)
+    import math as _m
+    s0, s1 = 0.5, 1.0 / (1.0 + 10.0 ** (-10.0 / 400.0))
+    pw0, pl0 = s0, 1.0 - s0
+    pw1, pl1 = s1, 1.0 - s1
+    expected = 2 * _m.log(pw1 / pw0) + 1 * _m.log(pl1 / pl0)
+    assert r.pairs == 3
+    assert r.llr == pytest.approx(expected, abs=1e-9)
+
+
+def test_sprt_logistic_black_win_routes_by_color_to_a_or_b(tmp_path):
+    """A wins as black; B wins as black. Pins the `if black == a_name`
+    slot-routing inside the `result == _BLACK_WIN` branch."""
+    body = (
+        _game("B", "A", "0-1")           # A black, A wins → A.w += 1
+        + _game("B", "A", "0-1")         # A black, A wins → A.w += 1
+        + _game("A", "B", "0-1")         # B black, B wins → A.l += 1
+    )
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params(elo0=0.0, elo1=10.0, model="logistic"))
+    # Same W/L/D as the previous test → identical LLR.
+    import math as _m
+    s0, s1 = 0.5, 1.0 / (1.0 + 10.0 ** (-10.0 / 400.0))
+    expected = 2 * _m.log(s1 / s0) + 1 * _m.log((1 - s1) / (1 - s0))
+    assert r.pairs == 3
+    assert r.llr == pytest.approx(expected, abs=1e-9)
+
+
+def test_sprt_logistic_engine_identity_via_long_names(tmp_path):
+    """Use multi-word engine names to rule out CPython short-string
+    interning: `==` comparisons must still distinguish A from B when the
+    strings are not interned. Pins `==`→`is` mutations on the
+    `white == a_name` / `black == a_name` color-routing checks."""
+    long_a, long_b = "engine-alpha-v1", "engine-beta-v2"
+    body = (
+        _game(long_a, long_b, "1-0")     # long_a wins as white
+        + _game(long_b, long_a, "1-0")   # long_b wins as white (long_a loses)
+    )
+    p = _write_pgn(tmp_path, body)
+    r = compute_sprt(p, _params(elo0=0.0, elo1=10.0, model="logistic"),
+                     engine_a=long_a, engine_b=long_b)
+    assert r.pairs == 2
+    # With `==`→`is` mutation and non-interned strings, both games would
+    # be misrouted → w=l=0 instead of w=1,l=1 → LLR=0.
+    assert r.llr != 0.0
+
+
 def test_sprt_logistic_skips_engine_mismatch(tmp_path, caplog):
     body = (
         _game("A", "B", "1-0")
