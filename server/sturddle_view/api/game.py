@@ -9,7 +9,7 @@ from fastapi.responses import Response
 
 from ..auth import require_token
 from ..engines import resolve_selected
-from ..play.canonical_hash import canonical_hash
+from ..play.canonical_hash import canonical_hash, canonical_hash_from_game
 from ..play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
 from ..play.import_position import PositionImportError, parse_fen, parse_pgn
 
@@ -27,8 +27,12 @@ MAX_IMPORT_TEXT_BYTES = int(
 router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_token)])
 
 
-def _hash_import_text(text: str, fmt: str) -> str:
-    return canonical_hash(text, fmt)
+def _hash_parsed(parsed: dict, raw_text: str) -> str:
+    """Hash from the already-parsed game if available; else fall back to text."""
+    game = parsed.get("_parsed_game")
+    if game is not None:
+        return canonical_hash_from_game(game)
+    return canonical_hash(raw_text, parsed["detected_format"])
 
 
 async def _get_hve(request: Request) -> HumanVsEngine:
@@ -155,6 +159,7 @@ def _parse_import_payload(payload: dict) -> dict:
         "comments": parsed.comments,
         "root_comment": parsed.root_comment,
         "detected_format": detected,
+        "_parsed_game": parsed.parsed_game,
     }
 
 
@@ -202,7 +207,8 @@ async def import_validate(payload: dict) -> dict:
     against the currently viewed game before committing a full import."""
     parsed = _parse_import_payload(payload)
     raw_text = payload.get("text", "")
-    parsed["hash"] = _hash_import_text(raw_text, parsed["detected_format"])
+    parsed["hash"] = _hash_parsed(parsed, raw_text)
+    parsed.pop("_parsed_game", None)
     return parsed
 
 
@@ -223,7 +229,7 @@ async def import_game(payload: dict, request: Request) -> dict:
     headers = parsed.get("headers") or {}
     raw_text = payload.get("text", "")
     summary = parsed.get("summary") or {}
-    view_hash = _hash_import_text(raw_text, parsed["detected_format"])
+    view_hash = _hash_parsed(parsed, raw_text)
     recents = request.app.state.recent_imports
     game_id = _resolve_game_id_for_import(recents, payload, view_hash)
     try:
@@ -256,6 +262,7 @@ async def import_game(payload: dict, request: Request) -> dict:
         text=raw_text,
         summary=summary,
         game_id=game_id,
+        precomputed_hash=view_hash,
     )
     return {"game_id": game_id, "viewing": True, "hash": h, "summary": summary}
 

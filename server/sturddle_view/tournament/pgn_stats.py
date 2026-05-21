@@ -20,7 +20,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 
-from ..play.canonical_hash import canonical_hash
+from ..play.canonical_hash import canonical_hash_from_game
 from ..chess.results import (
     BLACK_WIN as _BLACK_WIN,
     DECISIVE_RESULTS,
@@ -373,8 +373,8 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
         last_move_uci = node.move.uci()
     if board is None:
         board = game.board()
+    pgn_hash = canonical_hash_from_game(game)
     pgn_text = str(game)
-    pgn_hash = canonical_hash(pgn_text, "pgn")
     white = game.headers.get("White", "?")
     black = game.headers.get("Black", "?")
     # _get_game_offsets only indexes decisive games, so Result is always decisive here.
