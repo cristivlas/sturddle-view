@@ -486,6 +486,43 @@ async def test_can_start_again_after_stop(store, runner, orch):
 
 
 # ---------------------------------------------------------------------------
+# verify_proxy_secret
+# ---------------------------------------------------------------------------
+
+
+def test_verify_proxy_secret_matches(orch):
+    """Correct secret → True."""
+    orch._proxy_secret = "correct"
+    assert orch.verify_proxy_secret("correct") is True
+
+
+def test_verify_proxy_secret_wrong(orch):
+    """Wrong secret → False."""
+    orch._proxy_secret = "correct"
+    assert orch.verify_proxy_secret("wrong") is False
+
+
+def test_verify_proxy_secret_none_secret_returns_false(orch):
+    """_proxy_secret is None (no active tournament) → False regardless of
+    what is presented. Kills L714 `or`→`and` (left side) and L715
+    `False`→`True` mutations."""
+    orch._proxy_secret = None
+    assert orch.verify_proxy_secret("anything") is False
+
+
+def test_verify_proxy_secret_none_presented_returns_false(orch):
+    """presented is None → False. Kills L714 `or`→`and` (right side)."""
+    orch._proxy_secret = "set"
+    assert orch.verify_proxy_secret(None) is False
+
+
+def test_verify_proxy_secret_both_none_returns_false(orch):
+    """Both None → False."""
+    orch._proxy_secret = None
+    assert orch.verify_proxy_secret(None) is False
+
+
+# ---------------------------------------------------------------------------
 # reconciliation
 # ---------------------------------------------------------------------------
 
