@@ -359,6 +359,35 @@ async def test_runner_crash_marks_failed_with_last_error(store, runner, orch):
     assert final.last_error["at"]
 
 
+async def test_terminal_event_finalizes_and_clears_tailer(store, runner, orch, tmp_path):
+    """_pgn_tailer is not None on terminal event → finalize() called and
+    tailer set to None. Kills L604 `is not None`→`is None` mutation."""
+    from sturddle_view.tournament.pgn_tail import PgnTailer
+
+    tid = _create(store)
+    await orch.start(tid)
+
+    pgn_path = tmp_path / "games.pgn"
+    pgn_path.touch()
+    orch._pgn_tailer = PgnTailer(pgn_path, orch._on_pgn_record, poll_interval=0.01)
+
+    await runner.finish("done")
+
+    assert orch._pgn_tailer is None
+    assert orch.active_id() is None
+
+
+async def test_terminal_event_no_tailer_does_not_crash(store, runner, orch):
+    """_pgn_tailer explicitly None → terminal event skips finalize, no crash.
+    Paired with above to pin both branches of the tailer-is-not-None guard."""
+    tid = _create(store)
+    await orch.start(tid)
+    orch._pgn_tailer = None  # simulate: tailer never wired or already torn down
+
+    await runner.finish("done")
+    assert orch.active_id() is None
+
+
 def _patch_specs(monkeypatch, *, logical=4, physical=2, total_ram_mb=8192):
     monkeypatch.setattr(
         "sturddle_view.tournament.rescheck.host_specs",
