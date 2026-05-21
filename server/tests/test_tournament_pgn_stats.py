@@ -280,6 +280,40 @@ def test_elo_margin_from_wld_shrinks_with_more_games():
     assert large < small
 
 
+def test_elo_margin_from_wld_exact_symmetric(pytest_approx=None):
+    """5W5L0D at 50% → known value. Pins the variance formula (L675)
+    and the Elo propagation constants (L679-L680)."""
+    result = elo_margin_from_wld(5, 5, 0)
+    assert result == pytest.approx(226.99, abs=0.01)
+
+
+def test_elo_margin_from_wld_exact_with_draws():
+    """3W1L2D → known value. Draws contribute (0.5-s)² term; pins
+    the draw term coefficient in the variance formula."""
+    result = elo_margin_from_wld(3, 1, 2)
+    assert result == pytest.approx(255.37, abs=0.01)
+
+
+def test_elo_margin_from_wld_exact_asymmetric():
+    """1W9L0D (low score) → known value. Pins (0-s)² loss term and
+    the dElo/dscore denominator at non-0.5 score."""
+    result = elo_margin_from_wld(1, 9, 0)
+    assert result == pytest.approx(378.32, abs=0.01)
+
+
+def test_elo_margin_from_wld_exact_with_wins_and_draws():
+    """10W0L10D (s=0.75) → known value. Pins the win+draw combination."""
+    result = elo_margin_from_wld(10, 0, 10)
+    assert result == pytest.approx(104.15, abs=0.01)
+
+
+def test_elo_margin_from_wld_all_draws_returns_zero():
+    """All draws → var=0 → returns 0.0 exactly. Kills L677 NumberReplacer
+    on the `return 0.0` branch."""
+    assert elo_margin_from_wld(0, 0, 5) == 0.0
+    assert elo_margin_from_wld(0, 0, 10) == 0.0
+
+
 def test_elo_from_score_perfect_score_is_none():
     assert elo_from_score(1.0) is None
     assert elo_from_score(0.0) is None
