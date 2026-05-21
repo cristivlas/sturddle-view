@@ -487,19 +487,39 @@ async def edit_commit(payload: dict, request: Request) -> dict:
     fen = payload.get("fen")
     if not isinstance(fen, str) or not fen:
         raise HTTPException(status_code=400, detail="missing 'fen'")
+    apply_comment = bool(payload.get("apply_comment", False))
+    comment_text = payload.get("comment_text", "")
+    if not isinstance(comment_text, str):
+        raise HTTPException(status_code=400, detail="'comment_text' must be a string")
     prev_id = hve.game_id
+    prev_hash = request.app.state.recent_imports.hash_for_id(prev_id) if prev_id else None
     try:
-        game_id = await hve.commit_edit(fen)
+        result = await hve.commit_edit(
+            fen, apply_comment=apply_comment, comment_text=comment_text,
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    h = None
+    recents = request.app.state.recent_imports
+    h: str | None = None
     summary = None
-    if game_id != prev_id:
+    if result["changed"] == "fen":
         summary = parse_fen(fen).summary
-        h = await request.app.state.recent_imports.save(
-            fmt="fen", text=fen, summary=summary, game_id=game_id,
+        h = await recents.save(
+            fmt="fen", text=fen, summary=summary, game_id=result["game_id"],
         )
-    return {"game_id": game_id, "hash": h, "summary": summary}
+    elif result["changed"] == "comment":
+        # Annotation-only commit: same game_id, content hash changed.
+        # Replace the pre-edit recents row (if any) with the new PGN.
+        summary = result["summary"]
+        h = await recents.replace_at(
+            old_hash=prev_hash,
+            fmt="pgn",
+            text=result["pgn_text"],
+            summary=summary or {},
+            game_id=result["game_id"],
+            precomputed_hash=result["hash"],
+        )
+    return {"game_id": result["game_id"], "hash": h, "summary": summary}
 
 
 @router.post("/edit/cancel")
