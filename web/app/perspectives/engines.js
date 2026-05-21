@@ -9,15 +9,11 @@ export const enginesPerspective = {
   label: "Arena",
 
   async mount(root, ctx) {
-    root.innerHTML = `
-      <section id="engines-perspective">
-        <div class="tournaments-host"></div>
-      </section>
-    `;
+    root.innerHTML = `<section id="engines-perspective"></section>`;
 
-    const tournamentsHost = root.querySelector(".tournaments-host");
+    const host = root.querySelector("#engines-perspective");
     const tournamentsCtl = mountTournaments({
-      container: tournamentsHost,
+      container: host,
       api: ctx.api,
       events: ctx.events,
       log: ctx.log,

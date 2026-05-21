@@ -1869,7 +1869,6 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   list-style: none; padding: 0; margin: 0;
   display: flex; flex-direction: column; gap: 8px;
   max-height: calc(100dvh - 15rem); overflow-y: auto;
-  padding-right: 4px;
   outline: none;
 }
 .tmb-sort-opt[data-dir]::before {
@@ -1880,16 +1879,13 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .tmb-sort-opt[data-dir="desc"]::before { content: "▼"; }
 .tournaments-body {
   --ribbon-w: 36px;
-  display: grid;
-  grid-template-columns: var(--ribbon-w) 1fr var(--ribbon-w);
+  display: flex;
   flex: 1; min-height: 0;
 }
 .tournaments-body-main {
-  /* Span only the middle column so the right gutter (col 3, --ribbon-w)
-     stays clear regardless of which side the ribbon docks to. Keeps
-     tournament rows + their progress bar from running under the ribbon. */
-  grid-column: 2 / 3;
-  flex: 1; min-width: 0; display: flex; flex-direction: column;
+  width: calc(100vw - 2 * var(--ribbon-w));
+  margin-left: auto; margin-right: auto;
+  display: flex; flex-direction: column;
 }
 .tournaments-ribbon {
   display: flex; flex-direction: column; align-items: center;
@@ -1906,6 +1902,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   border-left: 1px solid var(--border-subtle);
   border-radius: 0;
   padding: 8px 12px;
+  margin: 0;
   cursor: pointer;
   min-width: 0;
 }
