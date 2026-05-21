@@ -366,7 +366,15 @@ export const playPerspective = {
         const wasOpen = open;
         if (!open) openCommentary();
         setCommentaryText(lastViewComment);
-        if (!wasOpen && !analyzing) {
+        // Skip the seeding /view/goto in edit mode: view_goto is FSM-gated
+        // to VIEWING, not EDITING, and would 400. Nav state stays whatever
+        // it was before edit; refreshes on exit when this re-runs.
+        // Alternative considered: hide the commentary dock entirely while
+        // editing (parallel to the play->edit transient-suppress flag
+        // documented at suppressCommentsForEditTransition, see commit
+        // 7158076). Rejected: too aggressive -- user loses passive view
+        // of the comment they're about to annotate.
+        if (!wasOpen && !analyzing && !editing) {
           // Populate comment nav state on first open.
           doViewNav("/game/view/goto", { ply: viewCursor });
         }
