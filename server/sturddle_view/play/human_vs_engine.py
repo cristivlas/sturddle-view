@@ -79,8 +79,10 @@ class ViewModeParams:
     pgn_termination: str | None = None
     view_hash: str | None = None
     view_summary: dict | None = None
-    # Raw import text (verbatim PGN or FEN). When set, get_pgn_text() returns
-    # this directly so no metadata is lost on export.
+    # Verbatim import text (PGN or FEN). When set, get_pgn_text() can
+    # return this directly to avoid any re-serialization loss. Treated as
+    # a write-once import fossil on the HVE side -- see _view_raw_text
+    # for the freeze contract.
     view_raw_text: str | None = None
 
 
@@ -174,6 +176,14 @@ class HumanVsEngine:
         # text (PGN or FEN). None for play-mode games and view/start transitions.
         self._view_hash: str | None = None
         self._view_summary: dict | None = None
+        # Frozen import artifact: the original bytes the user pasted, set
+        # once in enter_view_mode and never updated thereafter. Annotation
+        # editing and any other in-place mutator MUST NOT write to this --
+        # it stays as a faithful copy of the imported text so we can serve
+        # it on export when structured state hasn't diverged, and (future)
+        # offer revert-to-imported. Reset to None on _reset_view_state and
+        # restored from snapshot on edit-cancel are not mutations of the
+        # loaded game -- they correspond to game-load transitions.
         self._view_raw_text: str | None = None
         # Per-ply engine eval (white POV), one entry per pushed move. None
         # entries for plies with no engine search (human moves). Matches
