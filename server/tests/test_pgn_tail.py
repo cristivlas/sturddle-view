@@ -183,6 +183,70 @@ async def test_illegal_move_game_skipped_valid_game_emitted(pgn_path):
     assert tailer.offset == pgn_path.stat().st_size
 
 
+def test_snap_to_boundary_returns_exact_offset(pgn_path):
+    """When a `\\n\\n[` separator is found in the window, snap returns the
+    offset *just after* the separator's blank line (start + sep + 2)."""
+    pgn_path.write_text(_ONE_GAME + _SECOND_GAME, encoding="utf-8")
+    records, cb, _ = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    file_size = pgn_path.stat().st_size
+    boundary = tailer._snap_to_boundary(0, file_size, file_size)
+
+    blob = pgn_path.read_bytes()
+    # The snapped offset must land at a `[` (start of a tag line),
+    # confirming start + sep + 2 hit the right spot.
+    assert 0 < boundary < file_size
+    assert blob[boundary:boundary + 1] == b"["
+    # And it must be the LAST such boundary (rfind), i.e. the start of game 2.
+    assert boundary == blob.rfind(b"\n\n[") + 2
+
+
+def test_snap_to_boundary_no_boundary_returns_file_size_and_warns(pgn_path):
+    """Window with no `\\n\\n[`: fallback to file_size and flip the
+    one-shot warned-oversized flag to True."""
+    # A blob with NO `\n\n[` anywhere -- a single oversized "game".
+    pgn_path.write_bytes(b"[Event \"x\"]\n1. e4 e5 *  (no boundary here)\n")
+    records, cb, _ = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    assert tailer._warned_oversized is False
+    file_size = pgn_path.stat().st_size
+    out = tailer._snap_to_boundary(0, file_size, file_size)
+    assert out == file_size
+    assert tailer._warned_oversized is True
+
+
+def test_snap_to_boundary_resets_warned_flag_when_boundary_returns(pgn_path):
+    """After a fallback (warned=True), the next successful snap must
+    clear _warned_oversized back to False so a later regression warns again."""
+    records, cb, _ = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+    # Force the flag set as if a prior poll hit the fallback path.
+    tailer._warned_oversized = True
+
+    pgn_path.write_text(_ONE_GAME + _SECOND_GAME, encoding="utf-8")
+    file_size = pgn_path.stat().st_size
+    tailer._snap_to_boundary(0, file_size, file_size)
+    assert tailer._warned_oversized is False
+
+
+def test_snap_to_boundary_oserror_returns_end(pgn_path, monkeypatch):
+    """A read failure during snap falls back to `end` (best-effort);
+    the caller will then re-attempt and the parser will skip mid-game garbage."""
+    pgn_path.write_text(_ONE_GAME, encoding="utf-8")
+    records, cb, _ = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    def boom(self, *_a, **_kw):
+        raise OSError("disk gone")
+    monkeypatch.setattr(Path, "open", boom)
+
+    file_size = pgn_path.stat().st_size
+    out = tailer._snap_to_boundary(0, file_size, file_size)
+    assert out == file_size  # `end` is what was passed in; both match here
+
+
 def test_parse_delta_returns_empty_on_oserror(pgn_path, monkeypatch):
     """A read failure on the PGN file must be swallowed: empty records,
     offset unchanged, no exception escapes."""
