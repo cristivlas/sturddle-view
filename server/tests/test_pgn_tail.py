@@ -183,6 +183,41 @@ async def test_illegal_move_game_skipped_valid_game_emitted(pgn_path):
     assert tailer.offset == pgn_path.stat().st_size
 
 
+def test_parse_delta_returns_empty_on_oserror(pgn_path, monkeypatch):
+    """A read failure on the PGN file must be swallowed: empty records,
+    offset unchanged, no exception escapes."""
+    pgn_path.write_text(_ONE_GAME, encoding="utf-8")
+    records, cb, _received = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    def boom(self, *_a, **_kw):
+        raise OSError("disk gone")
+    monkeypatch.setattr(Path, "open", boom)
+
+    out, new_offset = tailer._parse_delta(0, pgn_path.stat().st_size)
+    assert out == []
+    assert new_offset == 0  # offset must NOT advance on read failure
+
+
+def test_parse_delta_returns_empty_on_read_game_exception(pgn_path, monkeypatch):
+    """If chess.pgn.read_game raises, the tailer logs and breaks out --
+    it does not advance the offset or surface the exception."""
+    pgn_path.write_text(_ONE_GAME, encoding="utf-8")
+    records, cb, _received = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    import chess.pgn as pgn_mod
+
+    def boom(*_a, **_kw):
+        raise RuntimeError("parser exploded")
+    monkeypatch.setattr(pgn_mod, "read_game", boom)
+
+    out, new_offset = tailer._parse_delta(0, pgn_path.stat().st_size)
+    assert out == []
+    # Offset must NOT advance: no game was successfully parsed.
+    assert new_offset == 0
+
+
 @pytest.mark.asyncio
 async def test_no_change_is_skipped(pgn_path):
     pgn_path.write_text(_ONE_GAME, encoding="utf-8")
