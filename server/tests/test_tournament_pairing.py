@@ -755,3 +755,59 @@ async def test_ingest_game_subs_get_thinking_side_from_state(orch):
     await orch.ingest_proxy_lines("pa", ["go movetime 100"])
     msg = game_q.get_nowait()
     assert msg.get("thinking_side") == "white"
+
+
+# ---------------------------------------------------------------------------
+# subscribe_to_proxy: snapshot replay
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_subscribe_to_proxy_replays_all_snapshot_keys(orch):
+    """Snapshot with position + go + info → all 3 replayed on subscribe.
+    Kills L1298 ZeroIterationForLoop (loop body never runs)."""
+    _seed_proxy(orch, "pa", "A")
+    await orch.ingest_proxy_lines("pa", [
+        "position startpos",
+        "go movetime 100",
+        "info depth 5 score cp 10 pv e2e4",
+    ])
+    q = orch.subscribe_to_proxy("pa")
+    # info goes into the coalescing slot; flush it before draining.
+    q._flush_all_slots()
+    lines = []
+    while not q.empty():
+        lines.append(q.get_nowait()["line"])
+    assert any("position" in l for l in lines)
+    assert any("go" in l for l in lines)
+    assert any("info" in l for l in lines)
+
+
+@pytest.mark.asyncio
+async def test_subscribe_to_proxy_skips_missing_snap_key_continues(orch):
+    """Snapshot with go but no position → continue skips None, go still
+    replayed. Kills L1301 ReplaceContinueWithBreak."""
+    _seed_proxy(orch, "pa", "A")
+    await orch.ingest_proxy_lines("pa", ["go movetime 100"])
+    # position is not in snap (never ingested)
+    assert "position" not in orch._proxy_snapshot.get("pa", {})
+
+    q = orch.subscribe_to_proxy("pa")
+    lines = [q.get_nowait()["line"] for _ in range(q._q.qsize())]
+    # go must be replayed even though position was None
+    assert any("go" in l for l in lines)
+
+
+@pytest.mark.asyncio
+async def test_subscribe_to_proxy_info_replayed_via_put_info(orch):
+    """info snapshot uses put_info (coalescing slot), not put_other.
+    Kills L1305 `== 'info'`→`!= 'info'` mutations: put_other would flush
+    into the queue immediately; put_info parks in the slot."""
+    _seed_proxy(orch, "pa", "A")
+    await orch.ingest_proxy_lines("pa", [
+        "info depth 5 score cp 10 pv e2e4",
+    ])
+    q = orch.subscribe_to_proxy("pa")
+    # put_info parks in _slots; put_other would have put it in the queue.
+    assert "pa" in q._slots, "info must be in coalescing slot, not queue"
+    assert q.empty(), "queue must be empty (info is in slot, not queue)"
