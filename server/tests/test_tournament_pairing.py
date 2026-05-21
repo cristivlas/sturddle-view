@@ -672,3 +672,86 @@ async def test_e2e_paired_info_reaches_opposite_subscriber(running_server):
         assert seen_paired is not None
         assert seen_paired["thinking_side"] == "white"
         assert "info " in seen_paired["line"]
+
+
+# ---------------------------------------------------------------------------
+# ingest_proxy_lines: specific guard branches
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ingest_position_missing_fen_skips_pairing_register(orch):
+    """parsed without 'fen' must not call _pairing_register. Kills L741
+    `and`→`or` mutation (guards combined with `in parsed`)."""
+    _seed_proxy(orch, "pa", "A")
+    # A position line that parse_uci_line returns without 'fen'
+    # (malformed; parse returns None for garbage, so we use a valid
+    # 'position' that yields parsed but with no fen key by patching).
+    import sturddle_view.tournament.orchestrator as _mod
+    orig = _mod.parse_uci_line
+    _mod.parse_uci_line = lambda line: {"kind": "position"}  # no fen
+    try:
+        await orch.ingest_proxy_lines("pa", ["position startpos"])
+    finally:
+        _mod.parse_uci_line = orig
+    assert orch._pairing_map == {}
+
+
+@pytest.mark.asyncio
+async def test_ingest_ucinewgame_without_confirmed_pair_is_noop(orch):
+    """ucinewgame when not confirmed (peer_before is None) → no dissolve.
+    Kills L753 `IsNot`→`Is` and AddNot mutations."""
+    _seed_proxy(orch, "pa", "A")
+    # Registered but not confirmed.
+    await orch.ingest_proxy_lines("pa", ["position startpos"])
+    assert "pa" not in orch._confirmed_pairs
+    # Should not raise and pairing state simply clears.
+    await orch.ingest_proxy_lines("pa", ["ucinewgame"])
+    assert orch._pair_proxies == {}
+
+
+@pytest.mark.asyncio
+async def test_ingest_info_pv_only_updates_snap(orch):
+    """info with only 'pv' (no 'score') still updates snap['info']. Kills
+    L772 `or`→`and` mutation."""
+    _seed_proxy(orch, "pa", "A")
+    await orch.ingest_proxy_lines("pa", ["position startpos"])
+    snap = orch._proxy_snapshot.get("pa", {})
+    await orch.ingest_proxy_lines("pa", ["info depth 5 pv e2e4"])
+    assert "info" in orch._proxy_snapshot["pa"]
+
+
+@pytest.mark.asyncio
+async def test_ingest_go_line_fans_out_without_parsed(orch):
+    """go line has no parsed dict; fan-out must still land (parsed=None
+    branch). Kills L782 `IsNot`→`Is` on `if parsed is not None`."""
+    _seed_proxy(orch, "pa", "A")
+    subs: list = []
+    q = orch.subscribe_to_proxy("pa")
+    subs.append(q)
+
+    await orch.ingest_proxy_lines("pa", ["go movetime 100"])
+    # Drain the queue; must receive the line without a 'parsed' key.
+    msg = q.get_nowait()
+    assert msg["line"] == "go movetime 100"
+    assert "parsed" not in msg
+
+
+@pytest.mark.asyncio
+async def test_ingest_game_subs_get_thinking_side_from_state(orch):
+    """game subscriber payload must include thinking_side from _pairing_state.
+    Kills L805 NumberReplacer (state[1] index)."""
+    _seed_proxy(orch, "pa", "A")
+    _seed_proxy(orch, "pb", "B")
+    fen = chess.Board().fen()
+    orch._pairing_register("pa", fen, "white")
+    orch._pairing_register("pb", fen, "black")
+    pair_id = orch._pair_ids[frozenset(("pa", "pb"))]
+
+    game_q = orch.subscribe_to_game(pair_id)
+    while not game_q.empty():
+        game_q.get_nowait()
+
+    await orch.ingest_proxy_lines("pa", ["go movetime 100"])
+    msg = game_q.get_nowait()
+    assert msg.get("thinking_side") == "white"
