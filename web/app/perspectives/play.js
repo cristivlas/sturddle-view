@@ -1017,6 +1017,13 @@ export const playPerspective = {
       const result = await editAnnotation({ currentText: preload });
       if (result?.apply) {
         pendingAnnotation = result.text;
+        // Optimistically reflect the staged text in the commentary dock
+        // so the user sees their pending change. Lives until edit-commit
+        // (server then makes it real) or edit-cancel (we restore the
+        // pre-edit text from lastViewComment).
+        if (isCommentaryOpen()) {
+          setCommentaryText(pendingAnnotation || null);
+        }
       }
     };
 
