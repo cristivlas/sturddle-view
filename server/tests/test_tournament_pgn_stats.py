@@ -301,7 +301,7 @@ def test_gauntlet_standings_n_engines_branch_runs_for_four(tmp_path):
 
 def test_single_engine_standings_no_elo_no_ordo(tmp_path):
     """1 engine → none of the Elo branches run. Kills `== 2`→`<= 2`
-    on L1003 head-to-head guard and `>= 2`→`>= 1` on L1025 ordo guard."""
+    on the head-to-head guard and `>= 2`→`>= 1` on the ordo guard."""
     # PGN with a single engine playing itself (white==black) is degenerate,
     # so build one with only one EngineRecord by using same name twice.
     # _iter_games would still record both white and black as the same name.
@@ -977,6 +977,67 @@ def test_sprt_invalid_params_raise(tmp_path, overrides):
     p = _write_pgn(tmp_path, "")
     with pytest.raises(ValueError):
         _sprt(p, _params(**overrides))
+
+
+def test_sprt_alpha_beta_defaults_accept_valid_params(tmp_path):
+    """Omit alpha/beta from params → defaults (0.05) must be valid.
+    Kills NumberReplacers on the default values (e.g. `1.05`, `-0.95`)
+    which would trip the (0, 1) range guard and raise ValueError."""
+    p = _write_pgn(tmp_path, "")
+    # No alpha/beta keys → exercise the .get(..., 0.05) defaults.
+    r = compute_sprt(p, {"elo0": 0.0, "elo1": 5.0},
+                     engine_a="A", engine_b="B")
+    assert r.status == "continue"
+    # Bounds computed from default alpha=0.05, beta=0.05.
+    assert r.lower_bound == pytest.approx(math.log(0.05 / 0.95))
+    assert r.upper_bound == pytest.approx(math.log(0.95 / 0.05))
+
+
+def test_sprt_pentanomial_alias_accepted(tmp_path):
+    """model='pentanomial' is the UI alias for 'normalized' and must be
+    accepted (and reported back as 'normalized'). Kills `==` mutations
+    on the alias-rewrite branch."""
+    rc = _RoundCounter()
+    body = "".join(_pair(rc, "A", "B", "1-0", "0-1") for _ in range(3))
+    p = _write_pgn(tmp_path, body)
+    r_alias = _sprt(p, _params(model="pentanomial"))
+    r_canon = _sprt(p, _params(model="normalized"))
+    assert r_alias.model == "normalized"  # rewritten internally
+    assert r_alias.status == r_canon.status
+    assert r_alias.llr == pytest.approx(r_canon.llr, abs=1e-12)
+
+
+def test_sprt_single_pair_returns_zero_llr(tmp_path):
+    """n=1 pair → variance ill-defined → returns LLR=0 / continue. Kills
+    NumberReplacer on `llr=0.0` in the n<2 branch (mutating to 1.0/-1.0
+    would change the asserted LLR)."""
+    rc = _RoundCounter()
+    body = _pair(rc, "A", "B", "1-0", "0-1")
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params())
+    assert r.pairs == 1
+    assert r.status == "continue"
+    assert r.llr == 0.0
+
+
+def test_sprt_exact_llr_three_pairs(tmp_path):
+    """Hand-computed LLR for 3 pairs with scores [2.0, 1.0, 0.0]
+    (A wins both / draw / B wins both). Pins:
+      - `s / 2.0` per-pair normalization
+      - `(s - mu) ** 2` variance numerator
+      - `/ (n - 1)` Bessel-corrected denominator
+      - the full Gaussian LLR formula
+    Reference: LLR = 3 * (s1-s0) * (0.5 - (s0+s1)/2) / 0.25 ≈ -3.107e-4."""
+    rc = _RoundCounter()
+    body = (
+        _pair(rc, "A", "B", "1-0", "0-1")          # pair score 2.0 (A swept)
+        + _pair(rc, "A", "B", "1/2-1/2", "1/2-1/2")  # pair score 1.0 (drawn)
+        + _pair(rc, "A", "B", "0-1", "1-0")          # pair score 0.0 (B swept)
+    )
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params(elo0=0.0, elo1=5.0))
+    assert r.pairs == 3
+    assert r.llr == pytest.approx(-3.1065809e-4, abs=1e-9)
 
 
 def test_sprt_to_dict_round_trip(tmp_path):
