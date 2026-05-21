@@ -183,6 +183,60 @@ async def test_illegal_move_game_skipped_valid_game_emitted(pgn_path):
     assert tailer.offset == pgn_path.stat().st_size
 
 
+@pytest.mark.asyncio
+async def test_poll_once_has_more_true_when_delta_capped(pgn_path, monkeypatch):
+    """When _snap_to_boundary caps the delta below file_size, poll_once
+    must set _has_more=True so the run loop polls again without sleeping."""
+    from sturddle_view.tournament import pgn_tail as pt_mod
+    # Force a tiny cap so two games can't both fit in one poll.
+    monkeypatch.setattr(pt_mod, "_MAX_DELTA_BYTES_PER_POLL", 200)
+
+    pgn_path.write_text(_ONE_GAME + _SECOND_GAME, encoding="utf-8")
+    records, cb, _ = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    n = await tailer.poll_once()
+    assert n == 1                # only the first game fit
+    assert tailer._has_more is True   # signals the run loop to keep going
+    assert tailer.offset < pgn_path.stat().st_size
+
+
+@pytest.mark.asyncio
+async def test_poll_once_has_more_false_when_delta_fully_consumed(pgn_path):
+    """When the whole file is consumed in one poll, _has_more=False so
+    the run loop sleeps before polling again."""
+    pgn_path.write_text(_ONE_GAME, encoding="utf-8")
+    records, cb, _ = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    n = await tailer.poll_once()
+    assert n == 1
+    assert tailer._has_more is False
+    assert tailer.offset == pgn_path.stat().st_size
+
+
+@pytest.mark.asyncio
+async def test_poll_once_size_equals_offset_clears_has_more(pgn_path):
+    """File size == consumed offset but fast-skip didn't trigger (mtime
+    bumped without new bytes): must clear _has_more and return 0."""
+    import os
+    pgn_path.write_text(_ONE_GAME, encoding="utf-8")
+    records, cb, _ = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    n1 = await tailer.poll_once()
+    assert n1 == 1
+    tailer._has_more = True  # pretend a prior caller set it
+
+    # Touch mtime without changing size to skip past the fast-skip predicate.
+    st = pgn_path.stat()
+    os.utime(pgn_path, ns=(st.st_atime_ns + 1, st.st_mtime_ns + 1))
+
+    n2 = await tailer.poll_once()
+    assert n2 == 0
+    assert tailer._has_more is False
+
+
 def test_snap_to_boundary_returns_exact_offset(pgn_path):
     """When a `\\n\\n[` separator is found in the window, snap returns the
     offset *just after* the separator's blank line (start + sep + 2)."""
