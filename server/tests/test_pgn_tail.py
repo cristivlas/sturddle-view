@@ -83,6 +83,16 @@ def pgn_path(tmp_path) -> Path:
     return tmp_path / "games.pgn"
 
 
+def _write_pgn_text(path: Path, text: str) -> None:
+    """Write PGN text with explicit `\\n`-only line endings.
+
+    `Path.write_text` on Windows translates `\\n` to `\\r\\n` via the
+    default newline handler, which breaks any test that inspects byte
+    offsets or scans for the `\\n\\n[` game-boundary separator. Use
+    this helper whenever the test cares about on-disk byte layout."""
+    path.write_bytes(text.encode("utf-8"))
+
+
 # ---------------------------------------------------------------------------
 # Parse correctness
 # ---------------------------------------------------------------------------
@@ -191,7 +201,9 @@ async def test_poll_once_has_more_true_when_delta_capped(pgn_path, monkeypatch):
     # Force a tiny cap so two games can't both fit in one poll.
     monkeypatch.setattr(pt_mod, "_MAX_DELTA_BYTES_PER_POLL", 200)
 
-    pgn_path.write_text(_ONE_GAME + _SECOND_GAME, encoding="utf-8")
+    # write_bytes (not write_text) so Windows doesn't translate \n -> \r\n;
+    # the snap-to-boundary `\n\n[` separator must match what's on disk.
+    _write_pgn_text(pgn_path, _ONE_GAME + _SECOND_GAME)
     records, cb, _ = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
 
@@ -219,18 +231,17 @@ async def test_poll_once_has_more_false_when_delta_fully_consumed(pgn_path):
 async def test_poll_once_size_equals_offset_clears_has_more(pgn_path):
     """File size == consumed offset but fast-skip didn't trigger (mtime
     bumped without new bytes): must clear _has_more and return 0."""
-    import os
-    pgn_path.write_text(_ONE_GAME, encoding="utf-8")
+    _write_pgn_text(pgn_path, _ONE_GAME)
     records, cb, _ = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
 
     n1 = await tailer.poll_once()
     assert n1 == 1
     tailer._has_more = True  # pretend a prior caller set it
-
-    # Touch mtime without changing size to skip past the fast-skip predicate.
-    st = pgn_path.stat()
-    os.utime(pgn_path, ns=(st.st_atime_ns + 1, st.st_mtime_ns + 1))
+    # Force the fast-skip predicate to fail by invalidating the cached
+    # mtime directly. Bumping mtime via os.utime is unreliable across
+    # platforms (NTFS may round nanoseconds; FAT has 2s resolution).
+    tailer._last_mtime_ns = 0
 
     n2 = await tailer.poll_once()
     assert n2 == 0
@@ -240,7 +251,7 @@ async def test_poll_once_size_equals_offset_clears_has_more(pgn_path):
 def test_snap_to_boundary_returns_exact_offset(pgn_path):
     """When a `\\n\\n[` separator is found in the window, snap returns the
     offset *just after* the separator's blank line (start + sep + 2)."""
-    pgn_path.write_text(_ONE_GAME + _SECOND_GAME, encoding="utf-8")
+    _write_pgn_text(pgn_path, _ONE_GAME + _SECOND_GAME)
     records, cb, _ = _records_collector()
     tailer = PgnTailer(pgn_path, cb)
 
@@ -279,7 +290,7 @@ def test_snap_to_boundary_resets_warned_flag_when_boundary_returns(pgn_path):
     # Force the flag set as if a prior poll hit the fallback path.
     tailer._warned_oversized = True
 
-    pgn_path.write_text(_ONE_GAME + _SECOND_GAME, encoding="utf-8")
+    _write_pgn_text(pgn_path, _ONE_GAME + _SECOND_GAME)
     file_size = pgn_path.stat().st_size
     tailer._snap_to_boundary(0, file_size, file_size)
     assert tailer._warned_oversized is False
