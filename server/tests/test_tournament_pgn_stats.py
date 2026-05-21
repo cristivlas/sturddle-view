@@ -262,6 +262,78 @@ def test_gauntlet_standings_elo_per_engine(tmp_path):
     assert by["C"]["elo"] is not None and by["C"]["elo"] == pytest.approx(0.0, abs=1.0)
 
 
+def test_gauntlet_standings_exact_challenger_elo_and_margin(tmp_path):
+    """Pin exact challenger Elo and margin against the leader. Kills
+    NumberReplacers on the wld `[0, 0, 0]` initializers and the
+    index access `[0]`/`[1]`/`[2]` (W/L/D slot routing)."""
+    # B vs leader A: 2 wins, 1 loss, 1 draw → score 0.625.
+    # Color-flipped so all 4 are leader-vs-challenger pairs.
+    body = (
+        _game("A", "B", "0-1") + _game("B", "A", "1-0")  # 2× B wins
+        + _game("A", "B", "1-0")  # A wins
+        + _game("A", "B", "1/2-1/2")  # draw
+    )
+    p = _write_pgn(tmp_path, body)
+    d = compute_standings(p, tournament_type="gauntlet").to_dict()
+    by = {e["name"]: e for e in d["engines"]}
+    # B: 2W 1L 1D vs A → exact head-to-head Elo and margin.
+    assert by["B"]["elo"] == pytest.approx(88.7395, abs=0.01)
+    assert by["B"]["elo_margin_95"] == pytest.approx(347.7241, abs=0.01)
+
+
+def test_gauntlet_standings_n_engines_branch_runs_for_four(tmp_path):
+    """4-engine gauntlet with non-perfect challenger scores → challenger
+    gets a real Elo. Kills `>= 3`→`== 3` mutation (which would skip the
+    gauntlet branch for n=4 and leave elo None)."""
+    body = (
+        _game("A", "B", "1/2-1/2") + _game("B", "A", "1/2-1/2")  # B: 0W 0L 2D vs A
+        + _game("A", "C", "1-0") + _game("C", "A", "0-1")  # C: 0W 2L 0D
+        + _game("A", "D", "1-0") + _game("D", "A", "0-1")
+    )
+    p = _write_pgn(tmp_path, body)
+    d = compute_standings(p, tournament_type="gauntlet").to_dict()
+    by = {e["name"]: e for e in d["engines"]}
+    # B drew both vs A → score 0.5 → elo 0.0 exactly. If `== 3` mutation
+    # is applied, the gauntlet branch is skipped → B.elo stays None.
+    assert by["B"]["elo"] is not None
+    assert by["B"]["elo"] == pytest.approx(0.0, abs=0.01)
+
+
+def test_single_engine_standings_no_elo_no_ordo(tmp_path):
+    """1 engine → none of the Elo branches run. Kills `== 2`→`<= 2`
+    on L1003 head-to-head guard and `>= 2`→`>= 1` on L1025 ordo guard."""
+    # PGN with a single engine playing itself (white==black) is degenerate,
+    # so build one with only one EngineRecord by using same name twice.
+    # _iter_games would still record both white and black as the same name.
+    body = _game("A", "A", "1-0")
+    p = _write_pgn(tmp_path, body)
+    s = compute_standings(p)
+    assert len(s.engines) == 1
+    e = s.engines[0]
+    # Head-to-head Elo branch is for len==2 only.
+    assert e.elo is None
+    assert e.elo_margin_95 is None
+    # ordo branch is for len>=2 only.
+    assert e.elo_ordo is None
+    assert e.elo_ordo_margin_95 is None
+
+
+def test_two_engine_standings_populates_ordo_margin(tmp_path):
+    """2 engines with 4 games (2W 2L from A's side) → ordo margin is a
+    finite number (not None). Pins `enc[1] += 1` played-counter increment:
+    a NumberReplacer `+= 1`→`+= 0` would leave np_=0 → margin None."""
+    body = (
+        _game("A", "B", "1-0") + _game("B", "A", "1-0")
+        + _game("A", "B", "1-0") + _game("B", "A", "1-0")
+    )
+    p = _write_pgn(tmp_path, body)
+    s = compute_standings(p)
+    by = {e.name: e for e in s.engines}
+    # Both engines went 2-2 → ordo Elo ~ 0, margin finite.
+    assert by["A"].elo_ordo_margin_95 is not None
+    assert by["A"].elo_ordo_margin_95 > 0
+
+
 def test_elo_margin_from_wld_perfect_score_is_none():
     assert elo_margin_from_wld(5, 0, 0) is None
     assert elo_margin_from_wld(0, 5, 0) is None
