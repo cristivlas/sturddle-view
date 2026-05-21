@@ -637,7 +637,12 @@ export function mountGameView(container, opts = {}) {
           if (humanWhite) setNames({ bottom: w, top: b });
           else setNames({ bottom: b, top: w });
         }
-        if (!editing) {
+        // Skip setPosition during edit so the user's in-progress board
+        // edits aren't clobbered by server state. Exception: cold mount
+        // mid-edit (firstBoardUpdate) -- there are no in-progress edits
+        // yet, and the board is at the cm-chessboard default startpos;
+        // we must seed it from the server's authoritative FEN.
+        if (!editing || firstBoardUpdate) {
           board.setPosition(evt.payload.fen, evt.payload.last_move, !firstBoardUpdate);
         }
         if (firstBoardUpdate) {
