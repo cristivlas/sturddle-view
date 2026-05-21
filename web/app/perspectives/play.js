@@ -17,6 +17,7 @@ import {
   isCommentaryOpen,
 } from "../play-commentary-window.js";
 import { terminationLabel } from "../format-termination.js";
+import { editAnnotation } from "../annotation-dialog.js";
 
 // Module-scope mirror of "user has a live human-vs-engine game running"
 // so other modules (e.g. tournament Replay button) can decide whether
@@ -223,6 +224,9 @@ export const playPerspective = {
             <button id="edit-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
               <wa-icon name="arrow-right-arrow-left"></wa-icon>
             </button>
+            <button id="edit-annotate" class="ribbon-btn" aria-label="Edit annotation" title="Edit annotation">
+              <wa-icon name="align-left"></wa-icon>
+            </button>
             <span class="ribbon-sep ribbon-sep--push" aria-hidden="true"></span>
             <button id="edit-confirm" class="ribbon-btn" aria-label="Confirm position" title="Confirm">
               <wa-icon name="check"></wa-icon>
@@ -262,6 +266,7 @@ export const playPerspective = {
     const viewLastBtn = root.querySelector("#view-last");
     const viewFlipBtn = root.querySelector("#view-flip");
     const editFlipBtn = root.querySelector("#edit-flip");
+    const editAnnotateBtn = root.querySelector("#edit-annotate");
     const viewAnalyzeBtn = root.querySelector("#view-analyze");
     const viewPlayFromHereBtn = root.querySelector("#view-play-from-here");
     const viewEditBtn = root.querySelector("#view-edit");
@@ -449,6 +454,12 @@ export const playPerspective = {
     let viewGameOverAlertShown = false;
     let viewingGameId = null;
     let editing = false;
+    // Annotation staged by the user via the edit-mode annotation modal.
+    // null  -> no pending change; /edit/commit goes with apply_comment=false.
+    // ""    -> user explicitly cleared; server treats as delete.
+    // "text"-> set/replace at the edit-entry ply.
+    // Reset on every entry to edit mode and on /edit/cancel.
+    let pendingAnnotation = null;
     const pausedBadge = document.getElementById("paused-badge");
     const finishedBadge = document.getElementById("finished-badge");
     function syncPausedUi() {
@@ -878,6 +889,7 @@ export const playPerspective = {
     function _onServerEditingStart() {
       const seed = _seedFromFen(view.getFen());
       view.enterEditMode(() => refreshButtons(), seed);
+      pendingAnnotation = null;
       refreshButtons();
     }
 
@@ -890,6 +902,7 @@ export const playPerspective = {
     function _onServerEditingStop() {
       view.exitEditMode();
       _clearEditTransitionSuppression();
+      pendingAnnotation = null;
       refreshButtons();
     }
 
@@ -989,14 +1002,29 @@ export const playPerspective = {
       }
     };
 
+    const onEditAnnotate = async () => {
+      // Preload from pendingAnnotation (if user already staged something
+      // this edit session) or fall back to the server's current comment.
+      const preload = pendingAnnotation ?? (lastViewComment ?? "");
+      const result = await editAnnotation({ currentText: preload });
+      if (result?.apply) {
+        pendingAnnotation = result.text;
+      }
+    };
+
     const onEditConfirm = async () => {
       const fen = view.getEditFen();
       // Server mints a fresh game_id on a real position change. Clear the
       // filter so the board_update SSE (which races the POST response) isn't
       // dropped for not matching our stale id.
       view.setGameId(null);
+      const payload = { fen };
+      if (pendingAnnotation !== null) {
+        payload.apply_comment = true;
+        payload.comment_text = pendingAnnotation;
+      }
       try {
-        const r = await ctx.api("POST", "/game/edit/commit", { fen });
+        const r = await ctx.api("POST", "/game/edit/commit", payload);
         view.setGameId(r.game_id);
       } catch (e) {
         reportError(ctx, "Invalid position", e);
@@ -1187,6 +1215,7 @@ export const playPerspective = {
     editCastleCb.bK.addEventListener("click", onCastleBK);
     editCastleCb.bQ.addEventListener("click", onCastleBQ);
     document.addEventListener("click", onDocClickClosePopover);
+    editAnnotateBtn.addEventListener("click", onEditAnnotate);
     editConfirmBtn.addEventListener("click", onEditConfirm);
     editCancelBtn.addEventListener("click", onEditCancel);
 
@@ -1264,6 +1293,7 @@ export const playPerspective = {
         viewLastBtn.removeEventListener("click", onViewLast);
         viewFlipBtn.removeEventListener("click", onViewFlip);
         editFlipBtn.removeEventListener("click", onViewFlip);
+        editAnnotateBtn.removeEventListener("click", onEditAnnotate);
         viewAnalyzeBtn.removeEventListener("click", onAnalyze);
         viewEditBtn.removeEventListener("click", onViewEditPosition);
         viewPlayFromHereBtn.removeEventListener("click", onPlayFromHere);
