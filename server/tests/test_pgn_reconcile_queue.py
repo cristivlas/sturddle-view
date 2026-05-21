@@ -191,6 +191,56 @@ def test_timeout_drops_pending(monkeypatch):
     assert q.pending_count == 0
 
 
+def test_sweep_does_not_drop_when_age_below_timeout(monkeypatch):
+    """When (now - enqueued_at) < timeout_s, sweep keeps the entry.
+    Pin now ~= enqueued_at so the *subtraction* yields a tiny number;
+    a buggy `+` or `*` substitute would produce a huge age and over-drop."""
+    q = ReconciliationQueue(timeout_s=0.5)
+    entry = _pending()
+    # Force enqueued_at to a known large value matching `now`.
+    entry.enqueued_at = 1_000_000.0
+    q._pending.append(entry)
+
+    monkeypatch.setattr(time, "monotonic", lambda: 1_000_000.0 + 0.1)  # age=0.1s
+    dropped = q.sweep()
+    assert dropped == []
+    assert q.pending_count == 1
+
+
+def test_sweep_does_not_drop_at_exact_timeout(monkeypatch):
+    """Age equal to timeout_s is NOT dropped (strict `>`).
+    Catches Gt -> GtE / NotEq / IsNot mutations on the comparison."""
+    q = ReconciliationQueue(timeout_s=0.5)
+    entry = _pending()
+    entry.enqueued_at = 1_000.0
+    q._pending.append(entry)
+
+    monkeypatch.setattr(time, "monotonic", lambda: 1_000.0 + 0.5)  # age == timeout
+    dropped = q.sweep()
+    assert dropped == []
+    assert q.pending_count == 1
+
+
+def test_sweep_two_entries_drops_only_old(monkeypatch):
+    """Pin the FIFO order: first entry expired, second fresh. Sweep stops
+    at the second. Kills index-mutations on `_pending[0]` (item[1]/[-1]
+    would point at the wrong entry's enqueued_at)."""
+    q = ReconciliationQueue(timeout_s=0.5)
+    old = _pending(pair_id="old")
+    old.enqueued_at = 1_000.0
+    fresh = _pending(pair_id="fresh")
+    fresh.enqueued_at = 1_100.0  # 100s newer
+    q._pending.append(old)
+    q._pending.append(fresh)
+
+    # now = 1_000 + 1.0  -> old.age=1.0 (drop), fresh.age=-99.0 (keep)
+    monkeypatch.setattr(time, "monotonic", lambda: 1_000.0 + 1.0)
+    dropped = q.sweep()
+    assert len(dropped) == 1
+    assert dropped[0].pair_id == "old"
+    assert q.pending_count == 1
+
+
 def test_sweep_does_not_drop_pgn_records(monkeypatch):
     """PGN-side records must persist regardless of age: when a slot
     finishes all its assigned games, the pair stays alive (no
