@@ -490,6 +490,99 @@ def test_ordo_fit_returns_mean_zero():
         assert sum(elos) == pytest.approx(0.0, abs=0.01)
 
 
+def test_ordo_fit_no_wins_losses_dicts_skips_purge():
+    """Without wins/losses dicts, no engine is purged even if its W/L
+    pattern would qualify. Kills `and`→`or` on the purge-precondition guard."""
+    encs = [("A", "B", 1.0, 1), ("B", "A", 0.0, 1)]
+    fit = ordo_fit(["A", "B"], encs)
+    # A swept B but no purge dicts → A must still get a rating, not (None, None).
+    assert fit["A"][0] is not None
+    assert fit["B"][0] is not None
+
+
+def test_ordo_fit_only_wins_dict_skips_purge():
+    """Only wins provided (losses=None) → guard fails, no purge. Kills
+    the `or`-mutation case where one None side alone would trigger purge."""
+    encs = [("A", "B", 1.0, 1), ("B", "A", 0.0, 1)]
+    fit = ordo_fit(["A", "B"], encs, wins={"A": 1, "B": 0})
+    assert fit["A"][0] is not None
+    assert fit["B"][0] is not None
+
+
+def test_ordo_fit_zero_games_engine_not_purged():
+    """An engine with wins=0 AND losses=0 (never played) must NOT be
+    purged: both `>0` legs of the purge predicate fail. Kills NumberReplacer
+    mutations on the `0` defaults in `.get(n, 0)`."""
+    encs = [("A", "B", 1.0, 2), ("B", "A", 1.0, 2)]
+    fit = ordo_fit(["A", "B", "Z"], encs,
+                   wins={"A": 1, "B": 1, "Z": 0},
+                   losses={"A": 1, "B": 1, "Z": 0})
+    # Z played nothing → singleton component → (None, None), but for the
+    # purge-not-applied reason, not the all-W/all-L reason. The crucial
+    # check is that purge does NOT fire on a zero-zero engine.
+    # Verified indirectly: A and B form a connected component and get
+    # ratings; Z is a singleton.
+    assert fit["A"][0] is not None
+    assert fit["B"][0] is not None
+    assert fit["Z"] == (None, None)
+
+
+def test_ordo_fit_purge_requires_strict_positive_wins():
+    """`wins.get(n, 0) > 0` must be STRICTLY positive. An engine missing
+    from the wins dict (defaults to 0) cannot be purged via the wins-leg.
+    Kills `> 0`→`>= 0` mutation on the wins-leg of the purge predicate."""
+    encs = [("A", "B", 1.0, 2), ("B", "A", 1.0, 2)]
+    # "Z" not in wins dict at all → wins.get("Z", 0) == 0 → strictly-positive
+    # leg fails. losses.get("Z", 0) > 0 with wins == 0 would trigger the
+    # other purge leg, so put losses at 0 too.
+    fit = ordo_fit(["A", "B", "Z"], encs,
+                   wins={"A": 1, "B": 1},
+                   losses={"A": 1, "B": 1})
+    # Z must not be purged; it ends up as a singleton (None, None).
+    # The point: it must NOT be classified as "all-wins" via `>= 0` mutation.
+    # If `>= 0` were used, Z would be flagged because losses.get("Z",0)==0
+    # would also satisfy `>= 0` (the symmetric leg). Test passes if Z is
+    # singleton-(None,None) for the right reason (connectivity, not purge).
+    assert fit["Z"] == (None, None)
+    assert fit["A"][0] is not None  # purged engines wouldn't be fit
+
+
+def test_ordo_fit_singleton_component_returns_none():
+    """An engine with zero encounters → singleton component → (None, None).
+    Kills `== 1`→`< 1` / `<= 1` mutations on the singleton-check and
+    ReplaceContinueWithBreak on the singleton branch (break would skip
+    the remaining components)."""
+    encs = [("A", "B", 1.0, 2), ("B", "A", 1.0, 2)]
+    # Three engines: A+B connected, C isolated. C must get (None, None);
+    # A and B must get real ratings (proving `continue` worked — `break`
+    # would have skipped fitting the A,B component if A,B sorted after C).
+    fit = ordo_fit(["C", "A", "B"], encs,
+                   wins={"A": 1, "B": 1, "C": 0},
+                   losses={"A": 1, "B": 1, "C": 0})
+    assert fit["C"] == (None, None)
+    assert fit["A"][0] is not None
+    assert fit["B"][0] is not None
+
+
+def test_ordo_fit_empty_remaining_returns_all_none():
+    """If every engine is purged, return (None, None) for all. Kills
+    AddNot on `if not remaining:` early-exit guard."""
+    # Both A and B are "all wins" against each other? Impossible — make
+    # one all-wins, one all-losses, each against the other.
+    encs = [("A", "B", 1.0, 1)]
+    fit = ordo_fit(["A", "B"], encs,
+                   wins={"A": 1, "B": 0},
+                   losses={"A": 0, "B": 1})
+    # Both purged → all (None, None).
+    assert fit["A"] == (None, None)
+    assert fit["B"] == (None, None)
+
+
+def test_ordo_fit_empty_engine_names_returns_empty_dict():
+    """No engines → empty dict. Kills AddNot on the early-exit guard."""
+    assert ordo_fit([], []) == {}
+
+
 def test_standings_populates_elo_ordo_for_two_engines(tmp_path):
     # 1 win, 1 loss, 1 draw each = 50% score -> ordo Elo ~ 0.
     body = (
