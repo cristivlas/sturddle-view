@@ -136,6 +136,31 @@ def test_internal_divergence_does_not_match():
     assert q.add_pgn_record(_record(moves=pgn)) is None
 
 
+def test_overrun_by_one_with_divergence_in_compared_range_does_not_match():
+    """Captured overruns PGN by 1 ply AND has a real divergence inside
+    the compared range. Must NOT match. Pins the precedence of
+    `cmp_end = n - 1 - max(0, overrun)` against `>>` mutations that
+    parse as `(n - 1) >> max(0, overrun)`, which would shrink cmp_end
+    enough to skip past the divergence."""
+    captured = list(_ENOUGH) + ["b1c3"]  # 13 plies (overrun by 1)
+    pgn = list(_ENOUGH)                    # 12 plies
+    pgn[7] = "XXXX"                        # divergence at index 7
+    q = ReconciliationQueue()
+    q.add_pending(_pending(moves=captured))
+    assert q.add_pgn_record(_record(moves=pgn)) is None
+
+
+def test_divergence_at_index_zero_does_not_match():
+    """First-ply divergence is caught by the backwards walk. Pins the
+    range stop value `-1` against `-0`/`+1` NumberReplacer mutations
+    that would change the range to exclude index 0."""
+    captured = ["XXXX"] + _ENOUGH[1:]
+    pgn = list(_ENOUGH)
+    q = ReconciliationQueue()
+    q.add_pending(_pending(moves=captured))
+    assert q.add_pgn_record(_record(moves=pgn)) is None
+
+
 def test_below_min_plies_does_not_match():
     """Short games skip reconciliation entirely. The pending side is
     silently dropped (no entry queued); a too-short PGN record is also
