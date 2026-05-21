@@ -659,3 +659,69 @@ async def test_terminal_teardown_with_running_tailer(orch, tmp_path, emitted):
     assert reconciled[0]["pair_id"] == pair_id
     assert orch._pgn_tailer is None
     orch.unsubscribe_from_game(pair_id, q)
+
+
+# ---------------------------------------------------------------------------
+# _maybe_stop_tailer: each guard condition independently keeps tailer alive
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_maybe_stop_tailer_keeps_alive_when_subscriber_present(orch, tmp_path):
+    """game_subscribers non-empty → tailer must not stop. Kills L1042
+    `not _game_subscribers` AddNot/Delete-Not mutations."""
+    tailer = _install_tailer(orch, tmp_path)
+    await tailer.start()
+    assert tailer.is_running()
+
+    pair_id = await _drive_pair_to(orch, _LONG_MOVES)
+    q = orch.subscribe_to_game(pair_id)
+
+    await orch._maybe_stop_tailer("test")
+    assert tailer.is_running()
+    orch.unsubscribe_from_game(pair_id, q)
+    await tailer.stop()
+
+
+@pytest.mark.asyncio
+async def test_maybe_stop_tailer_keeps_alive_when_pending_reconcile(orch, tmp_path):
+    """reconcile_queue.pending_count > 0 → tailer must not stop. Kills
+    L1043 `== 0`→`!= 0` / `Gt`/`GtE` comparison mutations."""
+    from sturddle_view.tournament.pgn_reconcile import PendingMatch
+
+    tailer = _install_tailer(orch, tmp_path)
+    await tailer.start()
+    assert tailer.is_running()
+
+    # Park a pending entry so pending_count == 1.
+    moves = ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6",
+             "b5a6", "g8f6", "e1g1", "f8e7", "f1e1", "d7d6"]
+    entry = PendingMatch(
+        pair_id="p1", white_proxy="w", black_proxy="b",
+        white_engine="A", black_engine="B", uci_moves=moves,
+    )
+    orch._reconcile_queue.add_pending(entry)
+    assert orch._reconcile_queue.pending_count == 1
+
+    await orch._maybe_stop_tailer("test")
+    assert tailer.is_running()
+    await tailer.stop()
+
+
+@pytest.mark.asyncio
+async def test_maybe_stop_tailer_noop_when_tailer_is_none(orch):
+    """_pgn_tailer is None → function is a no-op (no crash). Kills L1044
+    `is not None`→`is None` mutation."""
+    assert orch._pgn_tailer is None
+    await orch._maybe_stop_tailer("test")  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_maybe_stop_tailer_noop_when_tailer_not_running(orch, tmp_path):
+    """tailer exists but not running → no stop call. Kills L1045
+    `is_running()`→`not is_running()` / `ReplaceAndWithOr` mutations."""
+    tailer = _install_tailer(orch, tmp_path)
+    assert not tailer.is_running()
+
+    await orch._maybe_stop_tailer("test")
+    assert not tailer.is_running()  # still not running (was never started)
