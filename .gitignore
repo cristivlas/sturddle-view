@@ -23,5 +23,8 @@ dist/
 node_modules/
 .claude/
 scripts/probe_*.py
+cosmic-ray-runs/
+cr-session.sqlite
+cr-report.html
 docs/pause-info-click-drop.md
 docs/pgn-stats-audit.md
