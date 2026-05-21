@@ -657,7 +657,7 @@ export function mountGameView(container, opts = {}) {
           // the user jump by clicking a move in the list.
           let currentIdx = null;
           let clickHandler = null;
-          if (evt.payload.view) {
+          if (evt.payload.view && !editing) {
             currentIdx = (evt.payload.view.cursor ?? 0) - 1;
             clickHandler = onMoveJump;
           }
