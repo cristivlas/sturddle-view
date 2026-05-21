@@ -618,7 +618,7 @@ export const playPerspective = {
             if (v.result) showFinishedBadge(resultBadge(v.result));
             if (viewGameOver && viewCursor === viewTotalPlies && v.result && !viewGameOverAlertShown) {
               viewGameOverAlertShown = true;
-              showAlert({ message: formatViewGameOver(v), messageClass: "game-over-message" });
+              toast(formatViewGameOver(v), { variant: "neutral", duration: 6000 });
             }
             resignAvailable = false;
             // Board is read-only in view mode; the user navigates via ribbon.
