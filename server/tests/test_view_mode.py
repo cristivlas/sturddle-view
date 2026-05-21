@@ -533,6 +533,24 @@ async def test_play_from_here_carries_root_and_per_ply_comments(hve):
     assert h._play_comments == ["c1", None, "c3"]
 
 
+async def test_play_game_comments_helper(hve):
+    """Exposes _play_comments + _play_root_comment so /game/view/start
+    can re-seed a view game with them, closing the round trip."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5"],
+        clock_history=None,
+        comments=["c1", "c2"],
+        root_comment="pre",
+    ))
+    await h.view_last()
+    await h.play_from_here(tc=TimeControl(60, 0))
+    c, root = h.play_game_comments()
+    assert c == ["c1", "c2"]
+    assert root == "pre"
+
+
 async def test_play_from_here_no_view_comments_leaves_play_side_none(hve):
     """When the imported PGN had no commentary, no synthesis happens."""
     h, _ = hve
@@ -759,6 +777,40 @@ async def test_commit_edit_unchanged_no_annotation_returns_none(hve):
     fen = await h.enter_edit_mode()
     result = await h.commit_edit(fen)  # no apply_comment
     assert result["changed"] == "none"
+
+
+async def test_play_to_view_via_edit_round_trip_preserves_comments(hve):
+    """Repro for the user-reported bug:
+       import w/ comments -> play_from_here -> enter_view_mode (the play
+       -> view flip used by /game/view/start) -> enter edit -> cancel.
+    The restored view must still have the imported comments."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5", "g1f3"],
+        clock_history=None,
+        comments=["c1", "c2", "c3"],
+        root_comment="pre",
+    ))
+    await h.view_last()
+    await h.play_from_here(tc=TimeControl(60, 0))
+    # Simulate /game/view/start: snapshot play state + comments, enter view.
+    start_fen, moves, _, _, _, _ = h.play_game_snapshot()
+    comments, root = h.play_game_comments()
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=start_fen,
+        moves_uci=moves,
+        clock_history=None,
+        comments=comments,
+        root_comment=root,
+    ))
+    assert h._view_comments == ["c1", "c2", "c3"]
+    assert h._view_root_comment == "pre"
+    # Now enter edit then cancel -- the post-cancel view must still see them.
+    await h.enter_edit_mode()
+    await h.cancel_edit()
+    assert h._view_comments == ["c1", "c2", "c3"]
+    assert h._view_root_comment == "pre"
 
 
 async def test_play_from_here_pgn_export_preserves_comments(hve):

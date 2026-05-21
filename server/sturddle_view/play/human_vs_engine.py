@@ -798,6 +798,16 @@ class HumanVsEngine:
             list(self._eval_history),
         )
 
+    def play_game_comments(self) -> tuple[list[str | None] | None, str | None]:
+        """Return (comments, root_comment) from the current play-mode game.
+
+        Populated only when the play game was seeded from a view fork
+        (play_from_here) that carried commentary. Used by /game/view/start
+        so the play -> view clone preserves imported annotations through
+        an edit-mode round trip."""
+        comments = list(self._play_comments) if self._play_comments is not None else None
+        return comments, self._play_root_comment
+
     async def enter_view_mode(
         self,
         params: ViewModeParams,

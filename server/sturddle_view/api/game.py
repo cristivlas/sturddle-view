@@ -377,6 +377,7 @@ async def view_start(request: Request) -> dict:
         eval_history,
     ) = hve.play_game_snapshot()
     summary = hve.play_game_summary()
+    comments, root_comment = hve.play_game_comments()
     try:
         game_id = await hve.enter_view_mode(ViewModeParams(
             start_fen=start_fen,
@@ -388,6 +389,8 @@ async def view_start(request: Request) -> dict:
             white_name=summary["white"] if summary else None,
             black_name=summary["black"] if summary else None,
             view_summary=summary,
+            comments=comments,
+            root_comment=root_comment,
         ))
         await hve.view_last()
     except RuntimeError as e:
