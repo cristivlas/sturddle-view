@@ -390,7 +390,7 @@ def test_elo_margin_from_wld_all_draws_returns_zero():
 # _ordo_fit_margins — pin numeric output to kill formula-operator survivors
 # ---------------------------------------------------------------------------
 
-from sturddle_view.tournament.pgn_stats import _ordo_fit_margins  # noqa: E402
+from sturddle_view.tournament.pgn_stats import _ordo_fit_margins, _ordo_iterative_fit  # noqa: E402
 
 
 def test_ordo_fit_margins_one_engine_returns_none():
@@ -459,6 +459,64 @@ def test_ordo_fit_margins_three_engines_symmetric():
     # A and B (reduced matrix entries) must be equal by symmetry;
     # C (last engine, constraint formula) may differ.
     assert result["A"] == pytest.approx(result["B"], abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# _ordo_iterative_fit — pin numeric output to kill formula-operator survivors
+# ---------------------------------------------------------------------------
+
+
+def test_ordo_iterative_fit_under_two_engines_returns_empty():
+    """n<2 → return {}. Kills NumberReplacer on the `< 2` guard."""
+    assert _ordo_iterative_fit([], []) == {}
+    assert _ordo_iterative_fit(["solo"], []) == {}
+
+
+def test_ordo_iterative_fit_two_engines_balanced_exact():
+    """A scores 6/10 (white) + B scores 4/10 (reverse) at 50% gap. Pins
+    the score-deviation update formula (obtained - expected, step ratio,
+    kappa = 0.05, delta halving) to a converged value."""
+    r = _ordo_iterative_fit(
+        ["A", "B"],
+        [("A", "B", 6.0, 10), ("B", "A", 4.0, 10)],
+    )
+    assert r["A"] == pytest.approx(35.5276, abs=0.01)
+    assert r["B"] == pytest.approx(-35.5276, abs=0.01)
+
+
+def test_ordo_iterative_fit_two_engines_one_sided_exact():
+    """A scores 7/10, single-color encounter. Pins the single-encounter
+    branch of the obtained accumulation and the kappa/step formula."""
+    r = _ordo_iterative_fit(["A", "B"], [("A", "B", 7.0, 10)])
+    assert r["A"] == pytest.approx(74.2419, abs=0.01)
+    assert r["B"] == pytest.approx(-74.2419, abs=0.01)
+
+
+def test_ordo_iterative_fit_three_engines_exact():
+    """3-engine joint fit, asymmetric scores. Pins mean-centering
+    (`m = sum(new_r) / n`, `new_r = [x - m for x in new_r]`) and the
+    convergence-improvement test (`if dev2 >= dev: break`)."""
+    r = _ordo_iterative_fit(
+        ["A", "B", "C"],
+        [("A", "B", 6.0, 10), ("A", "C", 7.0, 10), ("B", "C", 5.0, 10)],
+    )
+    assert r["A"] == pytest.approx(72.4049, abs=0.01)
+    assert r["B"] == pytest.approx(-24.1432, abs=0.01)
+    assert r["C"] == pytest.approx(-48.2616, abs=0.01)
+    # Mean must be exactly zero (mean-centering invariant).
+    assert sum(r.values()) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_ordo_iterative_fit_50_pct_collapses_to_zero():
+    """Both engines score 50% over many games → ratings collapse to 0.0
+    exactly. Kills mutations that bias the step (Sub→Add on
+    `obtained - expected`, USub→Not on the sign multiplier)."""
+    r = _ordo_iterative_fit(
+        ["A", "B"],
+        [("A", "B", 5.0, 10), ("B", "A", 5.0, 10)],
+    )
+    assert r["A"] == pytest.approx(0.0, abs=0.01)
+    assert r["B"] == pytest.approx(0.0, abs=0.01)
 
 
 def test_elo_from_score_perfect_score_is_none():
