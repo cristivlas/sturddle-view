@@ -141,7 +141,7 @@ export const playPerspective = {
               <wa-icon name="magnifying-glass"></wa-icon>
             </button>
             <button id="switch-sides" class="ribbon-btn" disabled aria-label="Switch sides" title="Switch sides">
-              <wa-icon name="arrow-right-arrow-left"></wa-icon>
+              <wa-icon name="arrows-rotate"></wa-icon>
             </button>
             <button id="resign" class="ribbon-btn ribbon-btn--danger" disabled aria-label="Resign" title="Resign">
               <wa-icon name="flag"></wa-icon>
@@ -186,7 +186,7 @@ export const playPerspective = {
               <wa-icon name="magnifying-glass"></wa-icon>
             </button>
             <button id="view-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
-              <wa-icon name="arrow-right-arrow-left"></wa-icon>
+              <wa-icon name="arrows-rotate"></wa-icon>
             </button>
             <button id="view-play-from-here" class="ribbon-btn" aria-label="Play from here" title="Play from here">
               <wa-icon name="play"></wa-icon>
@@ -196,7 +196,7 @@ export const playPerspective = {
           <div id="edit-controls" class="board-ribbon" style="display: none">
             <div class="side-popover-wrap">
               <button id="edit-side" class="ribbon-btn" aria-label="Side to move" title="Side to move" aria-haspopup="true" aria-expanded="false">
-                <wa-icon name="chess-king"></wa-icon>
+                <wa-icon name="circle-half-stroke"></wa-icon>
               </button>
               <div id="edit-side-popover" class="side-popover hidden" role="dialog" aria-label="Side to move">
                 <button type="button" id="edit-side-toggle" class="castle-pill side-toggle-pill" aria-pressed="true">White to move</button>
@@ -222,7 +222,7 @@ export const playPerspective = {
             </div>
             <span class="ribbon-sep" aria-hidden="true"></span>
             <button id="edit-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
-              <wa-icon name="arrow-right-arrow-left"></wa-icon>
+              <wa-icon name="arrows-rotate"></wa-icon>
             </button>
             <button id="edit-annotate" class="ribbon-btn" aria-label="Edit annotation" title="Edit annotation">
               <wa-icon name="align-left"></wa-icon>
