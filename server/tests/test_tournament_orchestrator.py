@@ -260,6 +260,61 @@ async def test_start_falls_back_to_live_settings_for_legacy_tournaments(store, r
     assert spec.engine_default_hash_mb == 512
 
 
+async def test_start_busy_when_runner_running_without_active_id(store, runner, orch):
+    """L375: `_runner.is_running()` alone (no active_id) must still reject.
+    Kills `or`→`and` mutation on the busy guard."""
+    runner._running = True  # simulate orphaned runner
+    tid = _create(store)
+    with pytest.raises(TournamentBusyError):
+        await orch.start(tid)
+
+
+async def test_start_busy_when_active_id_set_but_store_raises(store, runner, orch):
+    """L380: active_id is set but store.get() raises → busy without name.
+    Kills AddNot on `if active:` branch."""
+    orch._active_id = "ghost-id"  # stale id not in store
+    tid = _create(store)
+    with pytest.raises(TournamentBusyError):
+        await orch.start(tid)
+
+
+async def test_start_passes_paired_false_for_single_game_tournament(store, runner, monkeypatch):
+    """L462/463: games_per_round=1 → paired=False passed to rewrite.
+    Kills `!= 1`→`!= 2` / AddNot mutations."""
+    calls = []
+
+    def fake_rewrite(pgn_path, config_path, ts, *, paired):
+        calls.append(paired)
+        return (0, {})
+
+    monkeypatch.setattr(
+        "sturddle_view.tournament.orchestrator.rewrite_drop_partial_pairs",
+        fake_rewrite,
+    )
+    orch = Orchestrator(store, runner)
+    tid = _create(store, template={"games_per_round": 1})
+    await orch.start(tid)
+    assert calls == [False]
+
+
+async def test_start_passes_paired_true_for_default_tournament(store, runner, monkeypatch):
+    """L462/463: games_per_round defaults to 2 → paired=True."""
+    calls = []
+
+    def fake_rewrite(pgn_path, config_path, ts, *, paired):
+        calls.append(paired)
+        return (0, {})
+
+    monkeypatch.setattr(
+        "sturddle_view.tournament.orchestrator.rewrite_drop_partial_pairs",
+        fake_rewrite,
+    )
+    orch = Orchestrator(store, runner)
+    tid = _create(store, template={})  # no games_per_round → default 2
+    await orch.start(tid)
+    assert calls == [True]
+
+
 # ---------------------------------------------------------------------------
 # stop + terminal events
 # ---------------------------------------------------------------------------
