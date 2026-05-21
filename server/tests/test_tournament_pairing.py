@@ -352,6 +352,82 @@ def test_recompute_no_orphan_when_proxy_just_moved_fen(orch):
 
 
 # ---------------------------------------------------------------------------
+# _white_black_for_group
+# ---------------------------------------------------------------------------
+
+
+def test_white_black_for_group_uses_pair_white_cache(orch):
+    """pair_white cache → white returned first. Kills L1005 AddNot and
+    L1006 `==`→`!=` / `Is` mutations."""
+    _seed_proxy(orch, "pa", "A")
+    _seed_proxy(orch, "pb", "B")
+    fen = chess.Board().fen()
+    orch._pairing_register("pa", fen, "white")
+    orch._pairing_register("pb", fen, "black")
+    group = frozenset(("pa", "pb"))
+    w, b = orch._white_black_for_group(group)
+    assert w == "pa" and b == "pb"
+
+
+def test_white_black_for_group_black_registered_first(orch):
+    """When black registers before white, pair_white still resolves
+    correctly. Kills L1006 `white == pid_a` comparison mutations."""
+    _seed_proxy(orch, "pa", "A")
+    _seed_proxy(orch, "pb", "B")
+    fen = chess.Board().fen()
+    orch._pairing_register("pb", fen, "black")  # black first
+    orch._pairing_register("pa", fen, "white")
+    group = frozenset(("pa", "pb"))
+    w, b = orch._white_black_for_group(group)
+    assert w == "pa" and b == "pb"
+
+
+def test_white_black_for_group_falls_back_to_pairing_state(orch):
+    """No pair_id cached → fallback to _pairing_state side. Kills L1007
+    `or`→`and` and L1008 `== 'white'`→`!= 'white'` mutations."""
+    # Manually inject a group without confirming via _recompute_groups
+    _seed_proxy(orch, "pa", "A")
+    _seed_proxy(orch, "pb", "B")
+    fen = chess.Board().fen()
+    orch._pairing_state["pa"] = (fen, "white")
+    orch._pairing_state["pb"] = (fen, "black")
+    group = frozenset(("pa", "pb"))
+    # No _pair_ids entry for this group → falls back to pairing_state
+    w, b = orch._white_black_for_group(group)
+    assert w == "pa" and b == "pb"
+
+
+def test_white_black_for_group_fallback_black_first_in_state(orch):
+    """When _pairing_state shows side_a is not white, swap. Kills
+    L1008 `== 'white'`→`IsNot/Gt` comparison mutations."""
+    _seed_proxy(orch, "pa", "A")
+    _seed_proxy(orch, "pb", "B")
+    fen = chess.Board().fen()
+    orch._pairing_state["pa"] = (fen, "black")   # pa is black
+    orch._pairing_state["pb"] = (fen, "white")
+    group = frozenset(("pa", "pb"))
+    w, b = orch._white_black_for_group(group)
+    # pb should be white
+    assert b == "pa" and w == "pb"
+
+
+def test_white_black_for_group_size_one_fallback(orch):
+    """Group of size 1 returns (pid, '') without crashing. Kills L1000
+    `!= 2`→`== 2` mutation."""
+    group = frozenset(("solo",))
+    w, b = orch._white_black_for_group(group)
+    assert w == "solo"
+    assert b == ""
+
+
+def test_white_black_for_group_empty_fallback(orch):
+    """Empty group returns ('', ''). Kills L1001 index mutations."""
+    group = frozenset()
+    w, b = orch._white_black_for_group(group)
+    assert w == "" and b == ""
+
+
+# ---------------------------------------------------------------------------
 # _update_pair_moves
 # ---------------------------------------------------------------------------
 
