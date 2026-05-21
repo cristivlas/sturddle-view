@@ -2136,13 +2136,12 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .tournament-template-form .ttf-grid {
   display: grid;
-  /* TC + numeric inputs are narrow; tournament type (and seeds) get the slack. */
-  grid-template-columns: 9em 6em minmax(6em, 1fr) 12em minmax(0, 1fr);
+  grid-template-columns: repeat(3, 1fr) 11em 1fr;
   gap: 8px;
   align-items: end;
 }
 .tournament-template-form .ttf-grid.ttf-grid--no-seeds {
-  grid-template-columns: 9em 6em minmax(6em, 1fr) 12em;
+  grid-template-columns: repeat(3, 1fr) 11em;
 }
 .tournament-template-form .ttf-grid > * { min-width: 0; }
 /* Narrow viewports: collapse the 5-column row (TC, parallel, rounds,
