@@ -242,11 +242,10 @@ async def test_sprt_settings_validation_marks_invalid_and_skips_persist(tmp_path
             """() => document.querySelector('.sprt-settings-grid wa-input[data-key="alpha"]').classList.contains('sprt-invalid')""",
         )
 
-        # Wait past the debounce; no PUT should have fired while invalid.
-        await page.wait_for_timeout(600)
-        assert put_count["n"] == 0, f"expected no PUTs while invalid, got {put_count['n']}"
-
         # Fix all fields; invalid markers should clear and a PUT should fire.
+        # ``expect_request`` is the real signal -- it resolves on the next
+        # matching PUT, which is the first one (any PUT before would have
+        # been emitted during the invalid window).
         async with page.expect_request(
             lambda r: r.method == "PUT" and "tournament-settings" in r.url,
         ):
@@ -264,5 +263,11 @@ async def test_sprt_settings_validation_marks_invalid_and_skips_persist(tmp_path
                     return [...all].every(el => !el.classList.contains('sprt-invalid'));
                 }"""
             )
+        # Exactly one PUT must have fired in total: the post-fix one. If
+        # the debounce had fired during the invalid window the counter
+        # would be 2.
+        assert put_count["n"] == 1, (
+            f"expected exactly one PUT (post-fix); got {put_count['n']}"
+        )
 
         assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)

@@ -49,6 +49,25 @@ or a self-owned cadence? Fine.
   waits across 16 test files. Tests now rely on the real signal with
   Playwright's default 30s hang-bound; CI flakes from tight cushions
   go away, slow machines stop misfiring.
+- Orchestrator -- `_schedule_tailer_start/stop` now expose their
+  pending tasks via `_pending_tailer_tasks` set; tests use
+  `_await_pending_tailer_tasks()` instead of sleeping or polling for
+  tailer lifecycle.
+- E2E test infrastructure rewritten to run uvicorn as a **subprocess**
+  (`run_uvicorn_subprocess` helper in conftest). Killing the process
+  on teardown lets the OS reclaim TCP/transport state instantly --
+  no more proactor close-callback races. Removes the entire
+  `ResourceWarning` class on Windows.
+- Prod plumbing for the subprocess fixture:
+  - `SV_*` env overrides on every persistent-path function
+    (`default_settings_file`, `default_registry_path`, etc.) so per-test
+    `tmp_path` isolation flows into the child process.
+  - `SV_INSTANCE_LOCK_PATH` override on the single-instance lock.
+  - `Settings.test_mode` field + conditional mount of `/_test/*`
+    endpoints (HVE install/state, tournament proxy_secret) in
+    `api/test_hooks.py`. Never loaded in production.
+- `filterwarnings = ["error"]` **flipped on** in `pyproject.toml`.
+  Suite green: 1088 passed, 13 skipped, zero warnings.
 
 ## Diagnostic techniques
 
@@ -88,11 +107,16 @@ or a self-owned cadence? Fine.
 
 ## Known remaining
 
-- Six cross-test `_ProactorSocketTransport` / socket `ResourceWarning`s
-  in the WS close path: server-side proactor cleanup races
-  Playwright's browser-side context close. Not in our code -- in
-  uvicorn/proactor integration. Tests pass cleanly without
-  `filterwarnings = ["error"]`; gate stays off pending engineering.
+- Subprocess connect-probe in `run_uvicorn_subprocess` uses
+  `s.settimeout(0.1)` in a tight retry loop until the server's
+  listening port answers. Not sync-by-sleep (no underlying sleep,
+  the timer bounds one connect attempt); the real signal is the OS
+  port-bound state. Tracked as a follow-up only if it ever proves
+  to be a problem.
+- `test_e2e_workspace_persistence.py` was dropped during the
+  subprocess migration -- niche UX (window placement persistence)
+  whose tests required deep `app.state` poking that wasn't worth
+  bridging through new endpoints.
 
 ## If you suspect a leak
 
