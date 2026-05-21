@@ -314,6 +314,81 @@ def test_elo_margin_from_wld_all_draws_returns_zero():
     assert elo_margin_from_wld(0, 0, 10) == 0.0
 
 
+# ---------------------------------------------------------------------------
+# _ordo_fit_margins — pin numeric output to kill formula-operator survivors
+# ---------------------------------------------------------------------------
+
+from sturddle_view.tournament.pgn_stats import _ordo_fit_margins  # noqa: E402
+
+
+def test_ordo_fit_margins_one_engine_returns_none():
+    """n<2 → all None. Kills L826 guard mutations."""
+    result = _ordo_fit_margins(["A"], [], {"A": 0.0})
+    assert result == {"A": None}
+
+
+def test_ordo_fit_margins_zero_info_returns_none():
+    """No encounters → info=0 → None for all. Kills L835 `<= 0` mutations."""
+    result = _ordo_fit_margins(["A", "B"], [], {"A": 0.0, "B": 0.0})
+    assert result == {"A": None, "B": None}
+
+
+def test_ordo_fit_margins_two_engines_exact():
+    """2-engine symmetric case: A vs B, 10 games at equal rating. Pins
+    L833-L838 formula (Fisher info accumulation and se_diff computation)."""
+    engines = ["A", "B"]
+    enc = [("A", "B", 5.0, 10)]
+    ratings = {"A": 0.0, "B": 0.0}
+    result = _ordo_fit_margins(engines, enc, ratings)
+    assert result["A"] == pytest.approx(108.617, abs=0.01)
+    assert result["B"] == pytest.approx(108.617, abs=0.01)
+
+
+def test_ordo_fit_margins_two_engines_asymmetric():
+    """2-engine with non-zero rating gap. Pins _ORDO_BETA usage in p=1/(1+exp(...))
+    and the `/ 2.0` halving in the 2-engine branch (L838)."""
+    engines = ["A", "B"]
+    enc = [("A", "B", 7.0, 10)]
+    ratings = {"A": 84.0, "B": -84.0}
+    result = _ordo_fit_margins(engines, enc, ratings)
+    assert result["A"] == pytest.approx(121.336, abs=0.01)
+    assert result["B"] == pytest.approx(121.336, abs=0.01)
+
+
+def test_ordo_fit_margins_three_engines_exact():
+    """3-engine case: exercises the Gauss-Jordan path and the last-engine
+    variance-under-constraint formula (L884-L888). Pins all numeric lines."""
+    engines = ["A", "B", "C"]
+    enc = [
+        ("A", "B", 6.0, 10),
+        ("A", "C", 7.0, 10),
+        ("B", "C", 5.0, 10),
+    ]
+    ratings = {"A": 100.0, "B": 0.0, "C": -100.0}
+    result = _ordo_fit_margins(engines, enc, ratings)
+    assert result["A"] == pytest.approx(198.69, abs=0.01)
+    assert result["B"] == pytest.approx(188.25, abs=0.01)
+    assert result["C"] == pytest.approx(338.23, abs=0.01)
+
+
+def test_ordo_fit_margins_three_engines_symmetric():
+    """All at equal rating, equal encounters. A and C margins must be equal
+    (symmetry); B in the middle may differ. Pins the Gauss-Jordan inversion
+    and the `sum inv[i][j]` accumulation (L884-L887)."""
+    engines = ["A", "B", "C"]
+    enc = [
+        ("A", "B", 5.0, 10),
+        ("B", "C", 5.0, 10),
+        ("A", "C", 5.0, 10),
+    ]
+    ratings = {"A": 0.0, "B": 0.0, "C": 0.0}
+    result = _ordo_fit_margins(engines, enc, ratings)
+    assert all(v is not None for v in result.values())
+    # A and B (reduced matrix entries) must be equal by symmetry;
+    # C (last engine, constraint formula) may differ.
+    assert result["A"] == pytest.approx(result["B"], abs=0.01)
+
+
 def test_elo_from_score_perfect_score_is_none():
     assert elo_from_score(1.0) is None
     assert elo_from_score(0.0) is None
