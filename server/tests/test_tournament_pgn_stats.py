@@ -1650,6 +1650,45 @@ def test_rewrite_skips_ongoing_results(tmp_path):
     assert '[Round "1"]' in after
 
 
+def test_rewrite_output_blocks_end_with_exactly_one_blank_line(tmp_path):
+    """Each kept game in the rewritten PGN ends with exactly one trailing
+    blank line (`\\n\\n`), never more. Kills `not block.endswith("\\n\\n")`
+    Delete_Not/AddNot mutations on the trailing-newline normalizer
+    (which would append extra newlines and produce `\\n\\n\\n` runs)."""
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("2", "A", "B", "1-0")  # partial → triggers rewrite
+    )
+    p = _write_pgn(tmp_path, body)
+    rewrite_drop_partial_pairs(p)
+    after = p.read_bytes()
+    # No 3-newline runs anywhere in the output.
+    assert b"\n\n\n" not in after
+    # File ends with exactly one blank line.
+    assert after.endswith(b"\n\n")
+    assert not after.endswith(b"\n\n\n")
+
+
+def test_rewrite_normalizes_block_without_trailing_blank_line(tmp_path):
+    """A kept block missing its trailing blank line still ends with exactly
+    `\\n\\n` after rewrite. Kills AddNot on the
+    `"\\n" if block.endswith("\\n") else "\\n\\n"` ternary, which would
+    pick the wrong newline count for a single-newline-ending block."""
+    # Last kept block ends with a single `\n` (no trailing blank line).
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("2", "A", "B", "1-0")  # partial → dropped
+    )
+    # Strip the trailing blank line from the last (now-kept) game.
+    body = body.rstrip("\n") + "\n"  # ends with exactly one \n
+    p = _write_pgn(tmp_path, body)
+    rewrite_drop_partial_pairs(p)
+    after = p.read_bytes()
+    # No 3-newline run anywhere.
+    assert b"\n\n\n" not in after
+    assert after.endswith(b"\n\n")
+
+
 def test_rewrite_preserves_round_collision_with_two_complete_pairs(tmp_path):
     # Round 1 has two distinct color-flipped pairs sharing the same Round
     # number (Pause/Resume Round-reuse). All 4 games pair cleanly, so the
