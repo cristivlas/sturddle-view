@@ -269,7 +269,7 @@ async def test_dissolve_all_pairs_drains_open_pairs(orch, emitted):
 
 @pytest.mark.asyncio
 async def test_dissolve_terminal_skips_tailer_stop(orch, emitted):
-    """terminal=True must not call _schedule_tailer_stop. Kills L1163
+    """terminal=True must not call _schedule_tailer_stop. Kills
     `not terminal`→`terminal` / AddNot mutations."""
     await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
     await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
@@ -303,7 +303,7 @@ async def test_dissolve_non_terminal_schedules_tailer_stop(orch, emitted):
 @pytest.mark.asyncio
 async def test_dissolve_with_no_moves_skips_reconcile_push(orch, emitted):
     """Pair dissolved with zero moves must not push a PendingMatch.
-    Kills L1145 `if moves:`→`if not moves:` mutation."""
+    Kills `if moves:`→`if not moves:` mutation."""
     await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
     await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
     await _confirm_pair(orch, _PROXY_A, _PROXY_B)

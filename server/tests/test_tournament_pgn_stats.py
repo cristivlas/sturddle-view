@@ -281,8 +281,8 @@ def test_elo_margin_from_wld_shrinks_with_more_games():
 
 
 def test_elo_margin_from_wld_exact_symmetric(pytest_approx=None):
-    """5W5L0D at 50% → known value. Pins the variance formula (L675)
-    and the Elo propagation constants (L679-L680)."""
+    """5W5L0D at 50% → known value. Pins the variance formula
+    and the Elo propagation constants."""
     result = elo_margin_from_wld(5, 5, 0)
     assert result == pytest.approx(226.99, abs=0.01)
 
@@ -308,7 +308,7 @@ def test_elo_margin_from_wld_exact_with_wins_and_draws():
 
 
 def test_elo_margin_from_wld_all_draws_returns_zero():
-    """All draws → var=0 → returns 0.0 exactly. Kills L677 NumberReplacer
+    """All draws → var=0 → returns 0.0 exactly. Kills NumberReplacer
     on the `return 0.0` branch."""
     assert elo_margin_from_wld(0, 0, 5) == 0.0
     assert elo_margin_from_wld(0, 0, 10) == 0.0
@@ -322,20 +322,20 @@ from sturddle_view.tournament.pgn_stats import _ordo_fit_margins  # noqa: E402
 
 
 def test_ordo_fit_margins_one_engine_returns_none():
-    """n<2 → all None. Kills L826 guard mutations."""
+    """n<2 → all None. Kills guard mutations."""
     result = _ordo_fit_margins(["A"], [], {"A": 0.0})
     assert result == {"A": None}
 
 
 def test_ordo_fit_margins_zero_info_returns_none():
-    """No encounters → info=0 → None for all. Kills L835 `<= 0` mutations."""
+    """No encounters → info=0 → None for all. Kills `<= 0` mutations."""
     result = _ordo_fit_margins(["A", "B"], [], {"A": 0.0, "B": 0.0})
     assert result == {"A": None, "B": None}
 
 
 def test_ordo_fit_margins_two_engines_exact():
     """2-engine symmetric case: A vs B, 10 games at equal rating. Pins
-    L833-L838 formula (Fisher info accumulation and se_diff computation)."""
+    the Fisher info accumulation and se_diff computation."""
     engines = ["A", "B"]
     enc = [("A", "B", 5.0, 10)]
     ratings = {"A": 0.0, "B": 0.0}
@@ -346,7 +346,7 @@ def test_ordo_fit_margins_two_engines_exact():
 
 def test_ordo_fit_margins_two_engines_asymmetric():
     """2-engine with non-zero rating gap. Pins _ORDO_BETA usage in p=1/(1+exp(...))
-    and the `/ 2.0` halving in the 2-engine branch (L838)."""
+    and the `/ 2.0` halving in the 2-engine branch."""
     engines = ["A", "B"]
     enc = [("A", "B", 7.0, 10)]
     ratings = {"A": 84.0, "B": -84.0}
@@ -357,7 +357,7 @@ def test_ordo_fit_margins_two_engines_asymmetric():
 
 def test_ordo_fit_margins_three_engines_exact():
     """3-engine case: exercises the Gauss-Jordan path and the last-engine
-    variance-under-constraint formula (L884-L888). Pins all numeric lines."""
+    variance-under-constraint formula. Pins all numeric output."""
     engines = ["A", "B", "C"]
     enc = [
         ("A", "B", 6.0, 10),
@@ -374,7 +374,7 @@ def test_ordo_fit_margins_three_engines_exact():
 def test_ordo_fit_margins_three_engines_symmetric():
     """All at equal rating, equal encounters. A and C margins must be equal
     (symmetry); B in the middle may differ. Pins the Gauss-Jordan inversion
-    and the `sum inv[i][j]` accumulation (L884-L887)."""
+    and the `sum inv[i][j]` accumulation."""
     engines = ["A", "B", "C"]
     enc = [
         ("A", "B", 5.0, 10),

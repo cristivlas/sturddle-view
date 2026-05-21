@@ -668,7 +668,7 @@ async def test_terminal_teardown_with_running_tailer(orch, tmp_path, emitted):
 
 @pytest.mark.asyncio
 async def test_maybe_stop_tailer_keeps_alive_when_subscriber_present(orch, tmp_path):
-    """game_subscribers non-empty → tailer must not stop. Kills L1042
+    """game_subscribers non-empty → tailer must not stop. Kills
     `not _game_subscribers` AddNot/Delete-Not mutations."""
     tailer = _install_tailer(orch, tmp_path)
     await tailer.start()
@@ -686,7 +686,7 @@ async def test_maybe_stop_tailer_keeps_alive_when_subscriber_present(orch, tmp_p
 @pytest.mark.asyncio
 async def test_maybe_stop_tailer_keeps_alive_when_pending_reconcile(orch, tmp_path):
     """reconcile_queue.pending_count > 0 → tailer must not stop. Kills
-    L1043 `== 0`→`!= 0` / `Gt`/`GtE` comparison mutations."""
+    `== 0`→`!= 0` / `Gt`/`GtE` comparison mutations."""
     from sturddle_view.tournament.pgn_reconcile import PendingMatch
 
     tailer = _install_tailer(orch, tmp_path)
@@ -710,7 +710,7 @@ async def test_maybe_stop_tailer_keeps_alive_when_pending_reconcile(orch, tmp_pa
 
 @pytest.mark.asyncio
 async def test_maybe_stop_tailer_noop_when_tailer_is_none(orch):
-    """_pgn_tailer is None → function is a no-op (no crash). Kills L1044
+    """_pgn_tailer is None → function is a no-op (no crash). Kills
     `is not None`→`is None` mutation."""
     assert orch._pgn_tailer is None
     await orch._maybe_stop_tailer("test")  # must not raise
@@ -718,7 +718,7 @@ async def test_maybe_stop_tailer_noop_when_tailer_is_none(orch):
 
 @pytest.mark.asyncio
 async def test_maybe_stop_tailer_noop_when_tailer_not_running(orch, tmp_path):
-    """tailer exists but not running → no stop call. Kills L1045
+    """tailer exists but not running → no stop call. Kills
     `is_running()`→`not is_running()` / `ReplaceAndWithOr` mutations."""
     tailer = _install_tailer(orch, tmp_path)
     assert not tailer.is_running()

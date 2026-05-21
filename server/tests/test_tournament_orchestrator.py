@@ -261,7 +261,7 @@ async def test_start_falls_back_to_live_settings_for_legacy_tournaments(store, r
 
 
 async def test_start_busy_when_runner_running_without_active_id(store, runner, orch):
-    """L375: `_runner.is_running()` alone (no active_id) must still reject.
+    """`_runner.is_running()` alone (no active_id) must still reject.
     Kills `or`→`and` mutation on the busy guard."""
     runner._running = True  # simulate orphaned runner
     tid = _create(store)
@@ -270,7 +270,7 @@ async def test_start_busy_when_runner_running_without_active_id(store, runner, o
 
 
 async def test_start_busy_when_active_id_set_but_store_raises(store, runner, orch):
-    """L380: active_id is set but store.get() raises → busy without name.
+    """active_id is set but store.get() raises → busy without name.
     Kills AddNot on `if active:` branch."""
     orch._active_id = "ghost-id"  # stale id not in store
     tid = _create(store)
@@ -279,7 +279,7 @@ async def test_start_busy_when_active_id_set_but_store_raises(store, runner, orc
 
 
 async def test_start_passes_paired_false_for_single_game_tournament(store, runner, monkeypatch):
-    """L462/463: games_per_round=1 → paired=False passed to rewrite.
+    """games_per_round=1 → paired=False passed to rewrite.
     Kills `!= 1`→`!= 2` / AddNot mutations."""
     calls = []
 
@@ -298,7 +298,7 @@ async def test_start_passes_paired_false_for_single_game_tournament(store, runne
 
 
 async def test_start_passes_paired_true_for_default_tournament(store, runner, monkeypatch):
-    """L462/463: games_per_round defaults to 2 → paired=True."""
+    """games_per_round defaults to 2 → paired=True."""
     calls = []
 
     def fake_rewrite(pgn_path, config_path, ts, *, paired):
@@ -361,7 +361,7 @@ async def test_runner_crash_marks_failed_with_last_error(store, runner, orch):
 
 async def test_terminal_event_finalizes_and_clears_tailer(store, runner, orch, tmp_path):
     """_pgn_tailer is not None on terminal event → finalize() called and
-    tailer set to None. Kills L604 `is not None`→`is None` mutation."""
+    tailer set to None. Kills `is not None`→`is None` mutation."""
     from sturddle_view.tournament.pgn_tail import PgnTailer
 
     tid = _create(store)
@@ -533,14 +533,14 @@ def test_verify_proxy_secret_wrong(orch):
 
 def test_verify_proxy_secret_none_secret_returns_false(orch):
     """_proxy_secret is None (no active tournament) → False regardless of
-    what is presented. Kills L714 `or`→`and` (left side) and L715
-    `False`→`True` mutations."""
+    what is presented. Kills `or`→`and` (left side) and `False`→`True`
+    mutations on the secret-presence guard."""
     orch._proxy_secret = None
     assert orch.verify_proxy_secret("anything") is False
 
 
 def test_verify_proxy_secret_none_presented_returns_false(orch):
-    """presented is None → False. Kills L714 `or`→`and` (right side)."""
+    """presented is None → False. Kills `or`→`and` (right side) on the secret-presence guard."""
     orch._proxy_secret = "set"
     assert orch.verify_proxy_secret(None) is False
 
