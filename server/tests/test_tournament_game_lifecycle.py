@@ -263,6 +263,60 @@ async def test_dissolve_all_pairs_drains_open_pairs(orch, emitted):
 
 
 # ---------------------------------------------------------------------------
+# _dissolve_pair edge cases
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dissolve_terminal_skips_tailer_stop(orch, emitted):
+    """terminal=True must not call _schedule_tailer_stop. Kills L1163
+    `not terminal`→`terminal` / AddNot mutations."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+    pair_id = next(iter(orch._pair_proxies))
+
+    calls = []
+    orch._schedule_tailer_stop = lambda reason: calls.append(reason)
+
+    await orch._dissolve_pair(pair_id, "*", None, terminal=True)
+    assert calls == [], "terminal=True must not schedule a tailer stop"
+    assert len(_events_of(emitted, "game_finished")) == 1
+
+
+@pytest.mark.asyncio
+async def test_dissolve_non_terminal_schedules_tailer_stop(orch, emitted):
+    """terminal=False (default) must schedule tailer stop. Paired with the
+    above test it pins both branches of the not-terminal guard."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+    pair_id = next(iter(orch._pair_proxies))
+
+    calls = []
+    orch._schedule_tailer_stop = lambda reason: calls.append(reason)
+
+    await orch._dissolve_pair(pair_id, "*", None, terminal=False)
+    assert calls != [], "terminal=False must schedule a tailer stop"
+
+
+@pytest.mark.asyncio
+async def test_dissolve_with_no_moves_skips_reconcile_push(orch, emitted):
+    """Pair dissolved with zero moves must not push a PendingMatch.
+    Kills L1145 `if moves:`→`if not moves:` mutation."""
+    await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
+    await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
+    await _confirm_pair(orch, _PROXY_A, _PROXY_B)
+    pair_id = next(iter(orch._pair_proxies))
+    # Wipe captured moves so pair has zero.
+    orch._pair_moves[pair_id] = []
+
+    before = orch._reconcile_queue.pending_count
+    await orch._dissolve_pair(pair_id, "*", None)
+    assert orch._reconcile_queue.pending_count == before
+
+
+# ---------------------------------------------------------------------------
 # Subscriber edge cases
 # ---------------------------------------------------------------------------
 
