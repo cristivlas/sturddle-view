@@ -280,6 +280,79 @@ def test_gauntlet_standings_exact_challenger_elo_and_margin(tmp_path):
     assert by["B"]["elo_margin_95"] == pytest.approx(347.7241, abs=0.01)
 
 
+def test_gauntlet_first_contact_white_win_pins_wld_init(tmp_path):
+    """First game between leader (A) and challenger (B) is B-as-white
+    winning. This makes line `setdefault(B, {}).setdefault(A, [0,0,0])`
+    in the WHITE_WIN branch the FIRST writer of wld[B][A]. Add 2 more
+    games where A wins as white so the final score is non-degenerate
+    (1W 2L for B), pinning both the init AND the increment count via
+    the resulting Elo."""
+    body = (
+        _game("B", "A", "1-0")   # B-as-white wins (FIRST B-vs-A contact, white-win-branch init lives)
+        + _game("A", "B", "1-0")  # A wins
+        + _game("A", "B", "1-0")  # A wins
+        + _game("A", "C", "1-0")  # leader pad
+        + _game("C", "A", "0-1")  # leader pad
+    )
+    p = _write_pgn(tmp_path, body)
+    d = compute_standings(p, tournament_type="gauntlet").to_dict()
+    by = {e["name"]: e for e in d["engines"]}
+    # B vs A: 1W 2L 0D -> score 1/3 -> elo ~= -191.
+    import math
+    expected_elo = -400 * math.log10((1 - 1/3) / (1/3))
+    assert by["B"]["elo"] == pytest.approx(expected_elo, abs=0.01)
+    from sturddle_view.tournament.pgn_stats import elo_margin_from_wld
+    assert by["B"]["elo_margin_95"] == pytest.approx(
+        elo_margin_from_wld(1, 2, 0), abs=0.01,
+    )
+
+
+def test_gauntlet_first_contact_draw_pins_wld_init(tmp_path):
+    """First game between leader and challenger is a draw. Pins the
+    `[0, 0, 0]` init in the DRAW branch (line writing wld[white][black]
+    and wld[black][white]) against NumberReplacer mutations."""
+    body = (
+        _game("A", "B", "1/2-1/2")  # draw (FIRST B-vs-A contact, draw-branch init lives)
+        + _game("A", "B", "1-0")    # A wins
+        + _game("B", "A", "0-1")    # A wins
+        + _game("A", "C", "1-0")    # leader pad
+        + _game("C", "A", "0-1")    # leader pad
+    )
+    p = _write_pgn(tmp_path, body)
+    d = compute_standings(p, tournament_type="gauntlet").to_dict()
+    by = {e["name"]: e for e in d["engines"]}
+    # B vs A: 0W 2L 1D -> score 0.5/3 = 1/6 -> elo ~= -279.
+    import math
+    expected_elo = -400 * math.log10((1 - 1/6) / (1/6))
+    assert by["B"]["elo"] == pytest.approx(expected_elo, abs=0.01)
+    from sturddle_view.tournament.pgn_stats import elo_margin_from_wld
+    assert by["B"]["elo_margin_95"] == pytest.approx(
+        elo_margin_from_wld(0, 2, 1), abs=0.01,
+    )
+
+
+def test_three_engine_roundrobin_does_not_compute_per_engine_elo(tmp_path):
+    """3-engine roundrobin with non-degenerate scores must NOT produce
+    per-engine head-to-head Elo. Kills `and` -> `or` mutation on the
+    gauntlet branch guard `len(engines) >= 3 and tournament_type ==
+    'gauntlet'` (which would let the gauntlet branch fire for any 3+
+    engine tour regardless of tournament_type)."""
+    # Asymmetric scores so the gauntlet branch WOULD produce non-None
+    # Elo if it mistakenly fired. The existing 3-engine test has A
+    # sweeping both opponents -> elo=None even from gauntlet branch.
+    body = (
+        _game("A", "B", "1-0") + _game("B", "A", "0-1")
+        + _game("A", "C", "1/2-1/2") + _game("C", "A", "1/2-1/2")
+        + _game("B", "C", "1-0")
+    )
+    p = _write_pgn(tmp_path, body)
+    d = compute_standings(p, tournament_type="roundrobin").to_dict()
+    for e in d["engines"]:
+        # Per-engine Elo only makes sense head-to-head; suppress in RR.
+        assert e["elo"] is None, f"{e['name']} got elo={e['elo']}"
+        assert e["elo_margin_95"] is None
+
+
 def test_gauntlet_standings_n_engines_branch_runs_for_four(tmp_path):
     """4-engine gauntlet with non-perfect challenger scores → challenger
     gets a real Elo. Kills `>= 3`→`== 3` mutation (which would skip the
