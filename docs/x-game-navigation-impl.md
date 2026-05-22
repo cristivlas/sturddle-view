@@ -284,6 +284,10 @@ Running list. Items prefixed B# survive context resets.
   not yet tested visually.
 - **B7** — *(open UX consideration)* Possibly show a short
   parent-summary label on the glyph hover, not just a count.
+- **B8** — Import dialog renders the raw 409 JSON body when a delete
+  is blocked by live refs (e.g. trying to delete a parent that has
+  forked children). Should be a friendly toast: "Cannot delete: this
+  game has N forked variation(s)."
 
 ## Course corrections
 

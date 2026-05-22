@@ -234,6 +234,19 @@ async def import_game(payload: dict, request: Request) -> dict:
     view_hash = _hash_parsed(parsed, raw_text)
     recents = request.app.state.recent_imports
     game_id = _resolve_game_id_for_import(recents, payload, view_hash)
+    # Optional: caller can request the view cursor land at a specific
+    # ply directly (no follow-up /view/goto). Used by x-game nav to
+    # open parent/child at the fork ply in a single round-trip, which
+    # avoids an animation flicker when the FEN at the target ply is
+    # identical to what was on screen.
+    land_at_ply = payload.get("land_at_ply")
+    if land_at_ply is not None:
+        try:
+            land_at_ply = int(land_at_ply)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="land_at_ply must be int")
+        if land_at_ply < 0:
+            raise HTTPException(status_code=400, detail="land_at_ply must be >= 0")
     try:
         game_id = await hve.enter_view_mode(
             ViewModeParams(
@@ -254,6 +267,7 @@ async def import_game(payload: dict, request: Request) -> dict:
                 view_raw_text=raw_text if parsed["detected_format"] == "pgn" else None,
             ),
             game_id=game_id,
+            land_at_ply=land_at_ply,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e

@@ -377,9 +377,16 @@ export const playPerspective = {
       },
       // Glyph click: same nav as the cell click PLUS clear the
       // per-game dismiss flag so the banner re-fires at this ply.
+      // Skip the server round-trip when we're already at this ply --
+      // a re-import would re-animate cm-chessboard to the same
+      // position (visible flicker).
       onForkClick: (plyIndex) => {
         if (analyzing) return;
         xgame.childBannerDismissed = false;
+        if (viewCursor === plyIndex + 1) {
+          refreshXgameBanner();  // banner re-shows without nav
+          return;
+        }
         doViewNav("/game/view/goto", { ply: plyIndex + 1 });
       },
     });
@@ -481,6 +488,15 @@ export const playPerspective = {
     // active ribbon is mounted in the WinBox (or unhidden from the DOM).
     const onLayoutChanged = () => { refreshButtons(); };
     window.addEventListener("sturddle:layout-changed", onLayoutChanged);
+
+    // sturddle:recents-changed fires when another perspective (e.g. the
+    // import dialog) mutated the recents store. Re-fetch x-game info
+    // for the currently-viewed game so the fork glyph + banner reflect
+    // the new state (B3: glyph stale after a child was deleted).
+    const onRecentsChanged = () => {
+      if (viewing && viewingGameId) fetchXgameInfo(viewingGameId);
+    };
+    window.addEventListener("sturddle:recents-changed", onRecentsChanged);
 
     // Ask server to re-emit current state so the freshly-mounted view syncs.
     ctx.api("POST", "/game/sync", {}).catch(() => {});
@@ -630,23 +646,37 @@ export const playPerspective = {
       // import (server-side enter_view_mode swap). Mirrors the path
       // used by the import dialog's "select a recent" affordance.
       // ``landAtPly``: optional cursor ply to navigate to after the
-      // import lands; used by "Open parent" (Q2: land at parent's
-      // fork_ply). For "Open child" (Q1: ply 0) the default already
-      // matches (import lands at cursor 0).
+      // import lands; used for both directions (land at fork_ply --
+      // see x-game-navigation.md, Q1/Q2 revised 2026-05-22).
       const landAtPly = opts.landAtPly ?? null;
+      // Short-circuit: already viewing this game at the target ply.
+      // A re-import would re-animate cm-chessboard to the same
+      // position (visible flicker for the user).
+      if (
+        viewing
+        && viewingGameId === gameId
+        && (landAtPly === null || viewCursor === landAtPly)
+      ) {
+        return;
+      }
       try {
         const target = await ctx.api(
           "GET", `/game/recent-imports/by-id/${encodeURIComponent(gameId)}`,
         );
-        await ctx.api("POST", "/game/import", {
-          format: target.format,
-          text: target.text,
-        });
+        // Pass land_at_ply in the import payload so the server enters
+        // view mode at the target ply in a SINGLE transaction. This
+        // emits one board_update (not two) and avoids the animation
+        // flicker that happened when the import landed at ply 0 first
+        // and the client then called /view/goto to land at fork_ply.
+        const importPayload = { format: target.format, text: target.text };
         if (landAtPly !== null && landAtPly > 0) {
-          // Use the precise nav so a banner can fire if the landed ply
-          // is itself a fork ply in the newly-opened game.
-          await doViewNav("/game/view/goto", { ply: landAtPly });
+          importPayload.land_at_ply = landAtPly;
+          // Match doViewNav's bookkeeping: the trigger is a precise
+          // landing on the fork ply, so any banner that depends on
+          // precise nav can fire on the resulting board_update.
+          lastViewNavKind = "precise";
         }
+        await ctx.api("POST", "/game/import", importPayload);
         // After import lands, the new game's board_update arrives via
         // events and fetchXgameInfo runs again for the new game_id.
       } catch (e) {
@@ -1525,6 +1555,7 @@ export const playPerspective = {
         window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
         window.removeEventListener("sturddle:layout-changed", onLayoutChanged);
         window.removeEventListener("sturddle:engines-changed", onEnginesChanged);
+        window.removeEventListener("sturddle:recents-changed", onRecentsChanged);
         window.removeEventListener("resize", onCommentsResize);
         window.removeEventListener("keydown", onKeydown);
         newGameBtn.removeEventListener("click", onNewGame);

@@ -300,6 +300,13 @@ export function showImportPositionDialog({ api }) {
           if (!recentsCache.length) recentSel.style.visibility = "hidden";
           api("DELETE", `/game/recent-imports/${removed.hash}`)
             .then(async () => {
+              // Notify other perspectives that recents changed so they
+              // can refresh derived state (e.g. play.js x-game info,
+              // for the fork glyph + banner). Bus-style decoupling so
+              // the dialog stays unaware of who is listening.
+              window.dispatchEvent(new CustomEvent("sturddle:recents-changed", {
+                detail: { deletedHash: removed.hash },
+              }));
               if (recentSel.querySelectorAll("wa-option").length >= RECENTS_DISPLAY_CAP) return;
               try {
                 const r = await api("GET", "/game/recent-imports");

@@ -678,7 +678,13 @@ export function mountGameView(container, opts = {}) {
         // yet, and the board is at the cm-chessboard default startpos;
         // we must seed it from the server's authoritative FEN.
         if (!editing || firstBoardUpdate) {
-          board.setPosition(evt.payload.fen, evt.payload.last_move, !firstBoardUpdate);
+          // Suppress animation when the incoming FEN matches the
+          // current one. cm-chessboard otherwise re-runs its 200ms
+          // animation queue on a no-op move (visible flicker), e.g.
+          // when x-game nav opens the parent at the same fork ply.
+          const sameFen = !firstBoardUpdate && currentFen === evt.payload.fen;
+          const animate = !firstBoardUpdate && !sameFen;
+          board.setPosition(evt.payload.fen, evt.payload.last_move, animate);
         }
         if (firstBoardUpdate) {
           firstBoardUpdate = false;

@@ -839,6 +839,7 @@ class HumanVsEngine:
         params: ViewModeParams,
         game_id: str | None = None,
         fork_link: tuple[str, int] | None = None,
+        land_at_ply: int | None = None,
     ) -> str:
         """Load a PGN-imported game into view mode at the LAST ply.
 
@@ -903,9 +904,21 @@ class HumanVsEngine:
             self._view_hash = params.view_hash or None
             self._view_summary = params.view_summary or None
             self._view_raw_text = params.view_raw_text or None
-            self._view_cursor = 0  # land at start; avoid end-of-game modal
+            # Default: land at start so the user is not greeted with the
+            # end-of-game modal. Callers (e.g. x-game nav) can request a
+            # specific ply so the first published board_update is already
+            # at the target position -- avoids an animation flicker when
+            # the cursor is then re-targeted from the client.
+            if land_at_ply is not None and 0 < land_at_ply <= len(full_moves):
+                self._view_cursor = land_at_ply
+                replay = start_board.copy()
+                for m in full_moves[:land_at_ply]:
+                    replay.push(m)
+                self._board = replay
+            else:
+                self._view_cursor = 0
+                self._board = start_board
             self._start_fen = params.start_fen
-            self._board = start_board
             self._game_id = game_id if game_id is not None else str(uuid.uuid4())
             self._game_started_wall = None  # not a play game; no autosave
             # Clocks frozen -- irrelevant in view mode but keep types sane.
