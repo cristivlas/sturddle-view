@@ -8,6 +8,7 @@ import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
 import { CHESS_CLOCK_SVG_INNER, CHESS_CLOCK_VIEW_BOX } from "./icons.js";
 import { mqMobile, mqNarrowDialog } from "./breakpoints.js";
+import { RIBBON_SIDE_KEY } from "./ribbon-window.js";
 
 const SETTINGS_ENGINES_COL_PCTS_KEY = "sturddle:engines:settings:colPcts3";
 
@@ -226,20 +227,28 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const ribbonSide = document.createElement("wa-select");
       ribbonSide.size = "small";
       ribbonSide.setAttribute("distance", "4");
-      ribbonSide.value = initial.ribbon_side === "right" ? "right" : "left";
-      for (const [val, label] of [["left", "Left"], ["right", "Right"]]) {
+      ribbonSide.value = localStorage.getItem(RIBBON_SIDE_KEY) || initial.ribbon_side || "left";
+      for (const [val, label] of [["left", "Left"], ["right", "Right"], ["float", "Floating"]]) {
         const opt = document.createElement("wa-option");
         opt.value = val;
         opt.textContent = label;
         ribbonSide.append(opt);
       }
       ribbonSide.addEventListener("change", () => {
-        putSettings({ ribbon_side: ribbonSide.value });
+        const val = ribbonSide.value;
+        localStorage.setItem(RIBBON_SIDE_KEY, val);
+        if (val === "float") {
+          // Float is client-only -- no server PUT, so we must dispatch ourselves.
+          window.dispatchEvent(new CustomEvent("sturddle:settings-changed"));
+        } else {
+          // putSettings dispatches sturddle:settings-changed after the PUT resolves.
+          putSettings({ ribbon_side: val });
+        }
       });
       const ribbonSideRow = document.createElement("div");
       ribbonSideRow.className = "settings-row";
       const ribbonSideLabel = document.createElement("label");
-      ribbonSideLabel.textContent = "Ribbon side";
+      ribbonSideLabel.textContent = "Controls";
       ribbonSideRow.append(ribbonSideLabel, ribbonSide);
       ribbonSideRow.hidden = mqMobile.matches;
       mqMobile.addEventListener("change", e => { ribbonSideRow.hidden = e.matches; });

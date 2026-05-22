@@ -420,6 +420,12 @@ export const playPerspective = {
     };
     window.addEventListener("sturddle:settings-changed", onSettingsChanged);
 
+    // sturddle:layout-changed fires when ribbon_float toggled in main.js or
+    // when the user closes the ribbon WinBox. Re-run refreshButtons so the
+    // active ribbon is mounted in the WinBox (or unhidden from the DOM).
+    const onLayoutChanged = () => { refreshButtons(); };
+    window.addEventListener("sturddle:layout-changed", onLayoutChanged);
+
     // Ask server to re-emit current state so the freshly-mounted view syncs.
     ctx.api("POST", "/game/sync", {}).catch(() => {});
 
@@ -480,9 +486,11 @@ export const playPerspective = {
     }
     function refreshButtons() {
       // Swap ribbons: edit overrides view, which overrides play.
+      const activeRibbon = editing ? editRibbon : viewing ? viewRibbon : playRibbon;
       playRibbon.style.display = (viewing || editing) ? "none" : "";
       viewRibbon.style.display = (viewing && !editing) ? "" : "none";
       editRibbon.style.display = editing ? "" : "none";
+      window.dispatchEvent(new CustomEvent("sturddle:ribbon-active", { detail: { el: activeRibbon } }));
       if (editing) {
         const isWhite = view.getEditSide() === "w";
         editSideBtn.setAttribute("aria-label", `Side to move: ${isWhite ? "White" : "Black"}`);
@@ -1276,6 +1284,8 @@ export const playPerspective = {
           view.exitEditMode();
         }
         closeDebugWindows();
+        // Announce no active ribbon so the global float manager unmounts it.
+        window.dispatchEvent(new CustomEvent("sturddle:ribbon-active", { detail: { el: null } }));
         setDockContainer(null);
         closeCommentary();
         setCommentaryDockContainer(null);
@@ -1288,6 +1298,7 @@ export const playPerspective = {
         offEvent();
         view.unmount();
         window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
+        window.removeEventListener("sturddle:layout-changed", onLayoutChanged);
         window.removeEventListener("sturddle:engines-changed", onEnginesChanged);
         window.removeEventListener("resize", onCommentsResize);
         window.removeEventListener("keydown", onKeydown);

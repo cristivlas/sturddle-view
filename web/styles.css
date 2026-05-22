@@ -425,6 +425,11 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
   z-index: 10;
   border-right: 1px solid var(--wa-color-border-loud, #353841);
 }
+/* Floating mode: hide ribbons still in their original DOM position. */
+body[data-ribbon-float] .play-grid .board-ribbon,
+body[data-ribbon-float] .tournaments-ribbon {
+  display: none !important;
+}
 .ribbon-btn {
   width: 36px; height: 36px;
   padding: 0; box-sizing: border-box;
@@ -2199,6 +2204,63 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   border: none;
   outline: 1px solid var(--wb-outline);
   opacity: 1 !important;
+}
+.winbox.sturddle-wb-ribbon {
+  border: 1px solid var(--wa-color-border-loud, #353841);
+  outline: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+  z-index: 2147483000 !important; /* always above other WinBoxes / dock content */
+}
+.winbox.sturddle-wb-ribbon .wb-header {
+  padding: 0 4px 0 6px;
+  font-size: 0.7rem;
+  min-height: 20px;
+  height: 20px;
+  line-height: 20px;
+  background: var(--row-bg-selected) !important;
+  border-left: 2px solid var(--accent);
+  color: var(--fg);
+}
+.winbox.sturddle-wb-ribbon .wb-title {
+  font-size: 0.7rem;
+  line-height: 20px;
+  color: var(--fg);
+}
+.winbox.sturddle-wb-ribbon .wb-body {
+  padding: 0 !important;
+  overflow: hidden !important;
+  top: 20px !important; /* match thin title bar height instead of default 35px */
+  contain: none !important;
+  background: var(--panel) !important;
+}
+/* Ribbon inside WinBox: horizontal row, static positioning.
+   !important wins over body[data-ribbon-float] .ribbon { display: none !important }. */
+.winbox.sturddle-wb-ribbon .wb-body .board-ribbon,
+.winbox.sturddle-wb-ribbon .wb-body .tournaments-ribbon {
+  display: flex !important;
+  flex-direction: row;
+  position: static;
+  transform: none;
+  border-right: 0;
+  border-bottom: 1px solid var(--wa-color-border-loud, #353841);
+  padding: 4px 0;
+  justify-content: center;
+  width: max-content;
+}
+.winbox.sturddle-wb-ribbon .wb-body .ribbon-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+}
+.winbox.sturddle-wb-ribbon .wb-body .ribbon-sep--push {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+}
+.winbox.sturddle-wb-ribbon .wb-body .ribbon-btn::before {
+  left: 6px; right: 6px; bottom: -1px; top: auto;
+  width: auto; height: 2px;
 }
 @keyframes wb-attention {
   0%, 40% { outline: 2px solid var(--accent); outline-offset: -1px; }

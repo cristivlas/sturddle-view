@@ -4,6 +4,7 @@ import { playPerspective } from "./perspectives/play.js";
 import { enginesPerspective } from "./perspectives/engines.js";
 import { openSettingsDialog } from "./settings-dialog.js";
 import { openAboutDialog } from "./about-dialog.js";
+import { openRibbonWindow, closeRibbonWindow, mountRibbonElement, isRibbonFloating, RIBBON_SIDE_KEY } from "./ribbon-window.js";
 
 // Auth is carried by the HttpOnly cookie set during the /auth handshake.
 const token = "";
@@ -69,20 +70,70 @@ function getLogSnapshot() {
 
 const ctx = { api, events, token, log, getLogSnapshot };
 
-// Ribbon side preference: drives CSS via [data-ribbon-side] on <body>.
-// Toast stack and side rail mirror the same attribute.
+// Ribbon side: stored in localStorage, drives [data-ribbon-side] and
+// [data-ribbon-float] on <body>. "left"/"right" dock; "float" opens a WinBox.
+let lastDockedSide = "left";
+
+function applyRibbonSide(side) {
+  const isFloat = side === "float";
+  if (!isFloat) lastDockedSide = side;
+  let changed = false;
+  const wantSide = isFloat ? lastDockedSide : side;
+  if (document.body.dataset.ribbonSide !== wantSide) {
+    document.body.dataset.ribbonSide = wantSide;
+    changed = true;
+  }
+  const floatAttr = isFloat ? "1" : "";
+  if ((document.body.dataset.ribbonFloat ?? "") !== floatAttr) {
+    if (isFloat) document.body.dataset.ribbonFloat = "1";
+    else delete document.body.dataset.ribbonFloat;
+    changed = true;
+  }
+  if (changed) window.dispatchEvent(new CustomEvent("sturddle:layout-changed"));
+}
+
 async function refreshRibbonSide() {
-  let side = "left";
+  const stored = localStorage.getItem(RIBBON_SIDE_KEY);
+  let side = stored || "left";
+  // Always fetch the server's ribbon_side so lastDockedSide reflects the
+  // user's left/right preference even when float is the current mode.
   try {
     const s = await api("GET", "/settings");
-    if (s?.ribbon_side === "right") side = "right";
-  } catch { /* keep default */ }
-  if (document.body.dataset.ribbonSide === side) return;
-  document.body.dataset.ribbonSide = side;
-  window.dispatchEvent(new CustomEvent("sturddle:layout-changed"));
+    if (s?.ribbon_side === "right" || s?.ribbon_side === "left") {
+      lastDockedSide = s.ribbon_side;
+      if (side !== "float") side = s.ribbon_side;
+    }
+  } catch { /* keep defaults */ }
+  applyRibbonSide(side);
 }
 refreshRibbonSide();
 window.addEventListener("sturddle:settings-changed", refreshRibbonSide);
+
+// Global float manager. Each perspective dispatches sturddle:ribbon-active
+// with detail.el = the active ribbon element (or null on unmount). The
+// manager mounts that element into the WinBox when data-ribbon-float is set.
+let activeRibbon = null;
+function syncFloatState() {
+  const wantFloat = !!document.body.dataset.ribbonFloat;
+  if (wantFloat && activeRibbon) {
+    if (!isRibbonFloating()) openRibbonWindow(activeRibbon);
+    else mountRibbonElement(activeRibbon);
+  } else if (isRibbonFloating()) {
+    closeRibbonWindow();
+  }
+}
+window.addEventListener("sturddle:ribbon-active", (e) => {
+  activeRibbon = e.detail?.el ?? null;
+  syncFloatState();
+});
+window.addEventListener("sturddle:layout-changed", syncFloatState);
+
+// When the user closes the floating ribbon WinBox, revert to last docked side.
+window.addEventListener("sturddle:ribbon-float-closed", () => {
+  localStorage.setItem(RIBBON_SIDE_KEY, lastDockedSide);
+  delete document.body.dataset.ribbonFloat;
+  window.dispatchEvent(new CustomEvent("sturddle:layout-changed"));
+});
 
 const router = new PerspectiveRouter({ root, ctx });
 router.register(playPerspective);

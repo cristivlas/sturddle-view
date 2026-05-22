@@ -14,6 +14,9 @@ import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
+// Fallback ribbon width when the docked ribbon is unavailable (floating mode);
+// matches the `--ribbon-w` CSS var on .tournaments-body.
+const RIBBON_W_FALLBACK_PX = 36;
 
 export function mountTournaments({ container, api, events, log, token }) {
   container.innerHTML = `
@@ -488,9 +491,16 @@ export function mountTournaments({ container, api, events, log, token }) {
     const rect = menubar.getBoundingClientRect();
     const ribbonRect = ribbon ? ribbon.getBoundingClientRect() : null;
     // Reserve the ribbon's width on BOTH edges regardless of which side
-    // it docks to. Keeps the workspace symmetric and ribbon-side-flips
-    // don't reshape the available area.
-    const ribbonW = ribbonRect ? Math.round(ribbonRect.width) : 0;
+    // it docks to (or whether it's floating). Keeps the workspace symmetric
+    // and ribbon-side-flips don't reshape the available area.
+    let ribbonW = ribbonRect ? Math.round(ribbonRect.width) : 0;
+    if (ribbonW === 0) {
+      // Floating: ribbon is detached. Fall back to the --ribbon-w CSS var,
+      // then to the hardcoded default if the var is unavailable.
+      const body = container.querySelector(".tournaments-body");
+      const v = body && parseInt(getComputedStyle(body).getPropertyValue("--ribbon-w"));
+      ribbonW = v > 0 ? v : RIBBON_W_FALLBACK_PX;
+    }
     const top = Math.round(rect.bottom);
     const left = Math.max(Math.round(rect.left), ribbonW);
     const getRight = () => window.innerWidth - ribbonW;
