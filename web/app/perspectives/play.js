@@ -921,9 +921,13 @@ export const playPerspective = {
           if (viewing) {
             if (!wasViewing || viewingGameId !== prevGameId) {
               viewGameOverAlertShown = false;
-              // Game switched (or first entry into view). Refresh
-              // x-game nav state -- parent/children/fork_ply. Best
-              // effort: a 404 (game not in recents yet) just clears.
+              // Game switched (or first entry into view). Clear stale
+              // x-game state synchronously and close any live toasts
+              // BEFORE the in-band refreshXgameToasts (called later
+              // in this handler) so it doesn't fire with stale data
+              // from the prior game. fetchXgameInfo then populates
+              // and re-renders.
+              resetXgame();
               fetchXgameInfo(viewingGameId);
             }
             viewCursor = v.cursor ?? 0;

@@ -1069,8 +1069,10 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding-bottom: 6px;
-  margin-bottom: 6px;
+  /* Inner padding gives focus rings on the first/leftmost items room
+     to breathe without getting clipped by the toast box. */
+  padding: 4px 4px 6px 4px;
+  margin-bottom: 2px;
   border-bottom: 1px solid var(--wa-color-border-loud, #353841);
   max-height: 200px;
   overflow-y: auto;
