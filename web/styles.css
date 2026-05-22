@@ -2233,34 +2233,73 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   contain: none !important;
   background: var(--panel) !important;
 }
-/* Ribbon inside WinBox: horizontal row, static positioning.
-   !important wins over body[data-ribbon-float] .ribbon { display: none !important }. */
+/* Center the ribbon child inside the body without making the body a flex
+   container (that would constrain ribbon scrollWidth during orientation
+   toggles, breaking fitToContent). */
+.winbox.sturddle-wb-ribbon .wb-body > .board-ribbon,
+.winbox.sturddle-wb-ribbon .wb-body > .tournaments-ribbon {
+  margin: 0 auto;
+}
+/* Ribbon inside WinBox: static positioning, no edge border.
+   !important wins over body[data-ribbon-float] .ribbon { display: none !important }.
+   flex-direction + width are set inline by ribbon-window.js so they can
+   switch between horizontal and vertical orientations. */
 .winbox.sturddle-wb-ribbon .wb-body .board-ribbon,
 .winbox.sturddle-wb-ribbon .wb-body .tournaments-ribbon {
   display: flex !important;
-  flex-direction: row;
   position: static;
   transform: none;
   border-right: 0;
-  border-bottom: 1px solid var(--wa-color-border-loud, #353841);
+  border-bottom: 0;
   padding: 4px 0;
   justify-content: center;
-  width: max-content;
 }
-.winbox.sturddle-wb-ribbon .wb-body .ribbon-sep {
+/* Vertical mode: hide the title text (no room next to the rotate ctrl) and
+   don't let the title text reserve width. */
+.winbox.sturddle-wb-ribbon.ribbon-vertical .wb-title {
+  display: none;
+}
+/* Rotate-orientation control button. Uses mask-image like other custom
+   WinBox controls (see .wb-log-copy-ctrl). */
+.wb-ribbon-rotate-ctrl {
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: 11px;
+  mask-size: 11px;
+  background-color: rgba(255,255,255,0.85) !important;
+  background-image: none !important;
+}
+/* Horizontal mode (default): vertical separators between buttons. */
+.winbox.sturddle-wb-ribbon.ribbon-horizontal .wb-body .ribbon-sep,
+.winbox.sturddle-wb-ribbon.ribbon-horizontal .wb-body .ribbon-sep--push {
   width: 1px;
   height: 18px;
   margin: 0 4px;
 }
-.winbox.sturddle-wb-ribbon .wb-body .ribbon-sep--push {
+.winbox.sturddle-wb-ribbon.ribbon-horizontal .wb-body .ribbon-sep--push {
   flex: 0 0 auto;
-  width: 1px;
-  height: 18px;
-  margin: 0 4px;
 }
-.winbox.sturddle-wb-ribbon .wb-body .ribbon-btn::before {
+.winbox.sturddle-wb-ribbon.ribbon-horizontal .wb-body .ribbon-btn::before {
   left: 6px; right: 6px; bottom: -1px; top: auto;
   width: auto; height: 2px;
+}
+/* Vertical mode: horizontal separators between rows. */
+.winbox.sturddle-wb-ribbon.ribbon-vertical .wb-body .ribbon-sep,
+.winbox.sturddle-wb-ribbon.ribbon-vertical .wb-body .ribbon-sep--push {
+  width: 18px;
+  height: 1px;
+  margin: 4px 0;
+}
+.winbox.sturddle-wb-ribbon.ribbon-vertical .wb-body .ribbon-sep--push {
+  flex: 0 0 auto;
+}
+.winbox.sturddle-wb-ribbon.ribbon-vertical .wb-body .ribbon-btn::before {
+  top: 6px; bottom: 6px; right: -1px; left: auto;
+  height: auto; width: 2px;
 }
 @keyframes wb-attention {
   0%, 40% { outline: 2px solid var(--accent); outline-offset: -1px; }
