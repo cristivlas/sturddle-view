@@ -2334,5 +2334,79 @@ def test_read_game_record_summary_question_mark_names_become_none(tmp_path):
     assert rec["engine_white"] == "?" and rec["engine_black"] == "?"
 
 
+def test_read_game_record_cache_invalidates_when_size_grows(tmp_path):
+    """Cache-validity predicate `cached[0] == st.st_mtime_ns AND
+    cached[1] == st.st_size` must reject a stale cache when the file
+    grew. Forcing st_mtime_ns equality while the file actually grew
+    isolates the size-check half of the AND: kills `==` -> `<=`/`<`
+    mutations on `cached[1] == st.st_size` which would stale-hit and
+    return outdated offsets."""
+    from sturddle_view.tournament import pgn_stats as _mod
+
+    body1 = _game("A", "B", "1-0")
+    p = _write_pgn(tmp_path, body1)
+    rec1 = read_game_record(p, 1)
+    assert rec1 is not None
+    # Capture the cached mtime so we can re-stamp it after the rewrite.
+    cached_mtime = _mod._game_offsets_cache[p][0]
+
+    # Append a 2nd game and force-restore the mtime so the size check
+    # is the only differing predicate.
+    import os
+    body2 = body1 + _game("C", "D", "0-1")
+    p.write_text(body2, encoding="utf-8")
+    # Patch the cache entry: pretend the cached mtime equals the new file
+    # mtime (so only the size check could falsely accept it).
+    new_st = p.stat()
+    _mod._game_offsets_cache[p] = (new_st.st_mtime_ns,
+                                   _mod._game_offsets_cache[p][1],
+                                   _mod._game_offsets_cache[p][2])
+
+    # Size differs, mtime matches -> cache must miss via size check.
+    rec2 = read_game_record(p, 2)
+    assert rec2 is not None
+    assert rec2["engine_white"] == "C"
+    assert rec2["engine_black"] == "D"
 
 
+def test_read_game_record_cache_invalidates_when_mtime_changes(tmp_path):
+    """Force cached size to match the new file size while mtime really
+    differs. Replace the file content but keep the byte layout such that
+    the cached offsets WOULD return a different game from offset 0
+    than the recomputed offsets do. Kills `==` -> `<=`/`<` mutations on
+    `cached[0] == st.st_mtime_ns`."""
+    from sturddle_view.tournament import pgn_stats as _mod
+    import time as _time
+
+    g1 = _game("A", "B", "1-0")
+    p = _write_pgn(tmp_path, g1)
+    rec1 = read_game_record(p, 1)
+    assert rec1 is not None
+    assert rec1["engine_white"] == "A"
+
+    # body2: same total length, but with a *non-decisive* first game
+    # (Result "*"). Recomputed offsets would have zero entries (the
+    # `*` game is skipped); stale-hit cached offsets still report [0]
+    # and would return the new game's headers ("X" / "Y").
+    g_ongoing = (
+        '[Event "x"]\n[White "X"]\n[Black "Y"]\n'
+        '[Result "*"]\n\n1. e4 e5 *\n\n'
+    )
+    pad_len = len(g1) - len(g_ongoing)
+    assert pad_len >= 0
+    g_padded = g_ongoing + " " * pad_len  # exactly len(g1) bytes
+    assert len(g_padded) == len(g1)
+
+    _time.sleep(0.01)
+    p.write_text(g_padded, encoding="utf-8")
+    new_st = p.stat()
+    _mod._game_offsets_cache[p] = (_mod._game_offsets_cache[p][0],
+                                   new_st.st_size,
+                                   _mod._game_offsets_cache[p][2])
+
+    # Recomputed offsets = [] (the only game has Result "*"). game_n=1
+    # is out of range -> None. With stale-hit (mutated mtime check),
+    # cached offsets [0] would seek to 0 and read the "*"-result game
+    # -> non-None (engine_white="X").
+    rec2 = read_game_record(p, 1)
+    assert rec2 is None
