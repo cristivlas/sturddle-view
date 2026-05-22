@@ -303,6 +303,12 @@ Running list. Items prefixed B# survive context resets.
   initial_seconds on takeback into seeded territory). Pinned by 6
   matrix tests covering parent {no/full/partial}-clk x
   {no/full/partial}-comments.
+- **B10** — *(fixed 2026-05-22)* After an annotation-only edit-commit
+  that promoted an unsaved fork child into recents (lazy commit), the
+  move list did not refresh the fork glyph until page reload. Cause:
+  game_id was unchanged so the board_update did not trigger
+  fetchXgameInfo. Fix: call fetchXgameInfo explicitly after a
+  successful /edit/commit response.
 
 ## Course corrections
 

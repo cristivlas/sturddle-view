@@ -1380,6 +1380,11 @@ export const playPerspective = {
       try {
         const r = await ctx.api("POST", "/game/edit/commit", payload);
         view.setGameId(r.game_id);
+        // Annotation-only commit can promote an unsaved fork child to
+        // recents (xgame nav "lazy commit"). Game_id is unchanged so
+        // the board_update doesn't trigger fetchXgameInfo -- refetch
+        // explicitly so the fork glyph + banner state catch up.
+        if (r.game_id) fetchXgameInfo(r.game_id);
       } catch (e) {
         reportError(ctx, "Invalid position", e);
       }
