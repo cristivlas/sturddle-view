@@ -12,6 +12,7 @@ from ..engines import resolve_selected
 from ..play.canonical_hash import canonical_hash, canonical_hash_from_game
 from ..play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
 from ..play.import_position import PositionImportError, parse_fen, parse_pgn
+from ..recent_imports import RemoveStatus
 
 log = logging.getLogger(__name__)
 
@@ -330,10 +331,23 @@ async def get_recent_import(h: str, request: Request) -> dict:
 
 @router.delete("/recent-imports/{h}")
 async def delete_recent_import(h: str, request: Request) -> dict:
-    """Remove a single entry from the recent-imports store."""
-    removed = await request.app.state.recent_imports.remove(h)
-    if not removed:
+    """Remove a single entry from the recent-imports store.
+
+    Returns 409 with a ``children`` list if the row has live forked
+    children (refs non-empty); the row is pinned in that case and not
+    deleted.
+    """
+    result = await request.app.state.recent_imports.remove(h)
+    if result.status is RemoveStatus.NOT_FOUND:
         raise HTTPException(status_code=404, detail="not found")
+    if result.status is RemoveStatus.BLOCKED_BY_REFS:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "has_children",
+                "children": result.children,
+            },
+        )
     return {"ok": True}
 
 

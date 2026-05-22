@@ -3,7 +3,9 @@
 Storage layout under ``<user_data_dir>/imports/``::
 
     imports/
-      index.json                # {hash: {format, summary, ts, file, game_id, refs}}
+      index.json                # {hash: {format, summary, ts, file,
+                                #         game_id, refs,
+                                #         parent_game_id?, fork_ply?}}
       by-hash/
         <sha256>.pgn             # raw text of the imported PGN (or .fen)
 
@@ -11,8 +13,14 @@ Storage layout under ``<user_data_dir>/imports/``::
 addressed so re-importing the same text dedupes naturally.
 
 Each row carries a ``game_id`` (server-assigned, opaque string) and a
-``refs`` list of game_ids referencing this row. ``refs`` is reserved
-for cross-game annotations; populated as ``[]`` today.
+``refs`` list of dicts ``{game_id, fork_ply}`` referencing children
+forked off this row.
+
+Fork-link fields (optional, set only when the row is a child of another):
+
+- ``parent_game_id``: the parent's game_id.
+- ``fork_ply``: the ply in the parent at which this child was forked
+  (>= 1; ply 0 forks are treated as plain new games, no link).
 
 Mutations go through ``RecentImports.save`` / ``.touch`` / ``.remove``
 which serialize on an asyncio lock; reads (``list``, ``get``,
@@ -26,6 +34,8 @@ import json
 import logging
 import os
 import time
+from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Callable
 
@@ -38,6 +48,39 @@ from .play.canonical_hash import canonical_hash
 log = logging.getLogger(__name__)
 
 DEFAULT_CAP = 50
+
+# Row + ref field keys (no inline string literals at call sites).
+ROW_GAME_ID = "game_id"
+ROW_REFS = "refs"
+ROW_PARENT_GAME_ID = "parent_game_id"
+ROW_FORK_PLY = "fork_ply"
+ROW_FORMAT = "format"
+ROW_SUMMARY = "summary"
+ROW_TS = "ts"
+ROW_FILE = "file"
+
+REF_GAME_ID = "game_id"
+REF_FORK_PLY = "fork_ply"
+
+
+class RemoveStatus(Enum):
+    DELETED = "deleted"
+    NOT_FOUND = "not_found"
+    BLOCKED_BY_REFS = "blocked_by_refs"
+
+
+@dataclass(frozen=True)
+class RemoveResult:
+    """Outcome of ``RecentImports.remove``.
+
+    - ``DELETED``: row + blob gone; if the row had a ``parent_game_id``
+      the matching entry was scrubbed from the parent's ``refs``.
+    - ``NOT_FOUND``: no such hash.
+    - ``BLOCKED_BY_REFS``: row has live children. ``children`` lists
+      them as ``{game_id, fork_ply, summary}`` for caller-side messaging.
+    """
+    status: RemoveStatus
+    children: list[dict] = field(default_factory=list)
 
 
 def default_imports_dir() -> Path:
@@ -125,7 +168,7 @@ class RecentImports:
                 for h, row in raw.items():
                     if not isinstance(row, dict):
                         continue
-                    fname = row.get("file")
+                    fname = row.get(ROW_FILE)
                     if not fname:
                         continue
                     if not (root / fname).exists():
@@ -133,8 +176,8 @@ class RecentImports:
                     # Backfill missing fields so older on-disk indexes
                     # (pre-game_id) load cleanly. New imports will be
                     # written with both fields populated.
-                    row.setdefault("game_id", None)
-                    row.setdefault("refs", [])
+                    row.setdefault(ROW_GAME_ID, None)
+                    row.setdefault(ROW_REFS, [])
                     cleaned[h] = row
                 inst._index = cleaned
                 inst._rebuild_by_id_locked()
@@ -152,7 +195,7 @@ class RecentImports:
         rows (active session, non-empty refs) may push the total past
         the cap."""
         rows = [{"hash": h, **v} for h, v in self._index.items()]
-        rows.sort(key=lambda r: r.get("ts", 0), reverse=True)
+        rows.sort(key=lambda r: r.get(ROW_TS, 0), reverse=True)
         return rows
 
     def get(self, h: str) -> tuple[dict, str] | None:
@@ -163,7 +206,7 @@ class RecentImports:
         if row is None:
             return None
         try:
-            text = (self._root / row["file"]).read_text(encoding="utf-8")
+            text = (self._root / row[ROW_FILE]).read_text(encoding="utf-8")
         except OSError:
             log.warning("recent-imports blob missing for %s", h)
             return None
@@ -190,6 +233,8 @@ class RecentImports:
         summary: dict,
         game_id: str | None = None,
         precomputed_hash: str | None = None,
+        parent_game_id: str | None = None,
+        fork_ply: int | None = None,
     ) -> str:
         """Upsert an entry for ``text``. Writes the blob if new, updates the
         index, evicts oldest entries past the cap. Returns the hash.
@@ -202,7 +247,24 @@ class RecentImports:
           and orphaned (no store row).
         - Collision: supplied id matches an existing reverse-index
           entry but for a *different* hash -> programming bug, assert.
+
+        Fork link (optional): pass ``parent_game_id`` AND ``fork_ply``
+        together to mark this row as a child of an existing row. The
+        parent's ``refs`` is appended with ``{game_id, fork_ply}`` in
+        the same atomic persist. Asserts both-or-neither and
+        ``fork_ply >= 1`` (ply-0 forks are plain new games, link-free).
+        On re-save of an already-stored hash, the link is ignored
+        (first-save-wins matches game_id semantics).
         """
+        if (parent_game_id is None) != (fork_ply is None):
+            raise AssertionError(
+                "parent_game_id and fork_ply must be supplied together"
+            )
+        if fork_ply is not None and fork_ply < 1:
+            raise AssertionError(
+                f"fork_ply must be >= 1 (got {fork_ply}); "
+                "ply-0 forks are not links"
+            )
         trimmed = text.strip()
         h = precomputed_hash if precomputed_hash is not None else canonical_hash(trimmed, fmt)
         async with self._lock:
@@ -211,7 +273,7 @@ class RecentImports:
                 # First save wins. Keep original game_id; warn if the
                 # caller passed a different one (hash collision across
                 # game_ids -- normal play should not trigger this).
-                stored_id = existing.get("game_id")
+                stored_id = existing.get(ROW_GAME_ID)
                 if (
                     game_id is not None
                     and stored_id is not None
@@ -227,8 +289,8 @@ class RecentImports:
                 # Both "game_id" and "refs" keys are guaranteed present
                 # by load()'s setdefault backfill, so no key-existence
                 # check is needed here.
-                existing["summary"] = summary
-                existing["ts"] = int(time.time() * 1000)
+                existing[ROW_SUMMARY] = summary
+                existing[ROW_TS] = int(time.time() * 1000)
                 # Backfill game_id if missing (legacy row from pre-Phase-1).
                 if stored_id is None and game_id is not None:
                     self._bind_id_locked(game_id, h, existing)
@@ -240,17 +302,25 @@ class RecentImports:
             blob_path = self._root / fname
             if not blob_path.exists():
                 atomic_write_text(blob_path, trimmed)
-            row = {
-                "format": fmt,
-                "summary": summary,
-                "ts": int(time.time() * 1000),
-                "file": fname,
-                "game_id": None,
-                "refs": [],
+            row: dict = {
+                ROW_FORMAT: fmt,
+                ROW_SUMMARY: summary,
+                ROW_TS: int(time.time() * 1000),
+                ROW_FILE: fname,
+                ROW_GAME_ID: None,
+                ROW_REFS: [],
             }
+            if parent_game_id is not None:
+                row[ROW_PARENT_GAME_ID] = parent_game_id
+                row[ROW_FORK_PLY] = fork_ply
             self._index[h] = row
             if game_id is not None:
                 self._bind_id_locked(game_id, h, row)
+            # Append to parent's refs (atomic with child write).
+            if parent_game_id is not None:
+                self._append_parent_ref_locked(
+                    parent_game_id, game_id, fork_ply,
+                )
             self._evict_locked()
             self._persist_locked()
         return h
@@ -298,10 +368,25 @@ class RecentImports:
         trimmed = text.strip()
         new_hash = precomputed_hash if precomputed_hash is not None else canonical_hash(trimmed, fmt)
         async with self._lock:
+            # Capture fork-link fields from the old row so non-lossy
+            # edits (the intent of replace_at) carry parent_game_id /
+            # fork_ply across content changes. ``refs`` on the old row
+            # also carry over since the children still point at this
+            # game_id (their ``parent_game_id`` is unchanged).
+            preserved_parent_id: str | None = None
+            preserved_fork_ply: int | None = None
+            preserved_refs: list[dict] = []
+            if old_hash is not None:
+                old_row = self._index.get(old_hash)
+                if old_row is not None:
+                    preserved_parent_id = old_row.get(ROW_PARENT_GAME_ID)
+                    preserved_fork_ply = old_row.get(ROW_FORK_PLY)
+                    preserved_refs = list(old_row.get(ROW_REFS) or [])
+
             if old_hash is not None and old_hash != new_hash:
                 old_row = self._index.get(old_hash)
                 if old_row is not None:
-                    bound_id = old_row.get("game_id")
+                    bound_id = old_row.get(ROW_GAME_ID)
                     if bound_id is not None and bound_id != game_id:
                         raise AssertionError(
                             f"replace_at refusing to evict hash={old_hash} "
@@ -311,14 +396,14 @@ class RecentImports:
                     self._index.pop(old_hash, None)
                     if bound_id is not None:
                         self._by_id.pop(bound_id, None)
-                    self._delete_blob(old_row.get("file"))
+                    self._delete_blob(old_row.get(ROW_FILE))
 
             existing = self._index.get(new_hash)
             if existing is not None:
                 # Already present (either old_hash == new_hash, or a
                 # prior unrelated insert at this content). Refresh
                 # summary/ts and rebind game_id when free.
-                stored_id = existing.get("game_id")
+                stored_id = existing.get(ROW_GAME_ID)
                 if stored_id is not None and stored_id != game_id:
                     log.warning(
                         "recent-imports hash collision in replace_at: "
@@ -329,8 +414,18 @@ class RecentImports:
                 else:
                     if stored_id is None:
                         self._bind_id_locked(game_id, new_hash, existing)
-                existing["summary"] = summary
-                existing["ts"] = int(time.time() * 1000)
+                existing[ROW_SUMMARY] = summary
+                existing[ROW_TS] = int(time.time() * 1000)
+                # Preserve fork-link on the surviving row when it wasn't
+                # already set (old_hash == new_hash leaves it intact).
+                if (
+                    preserved_parent_id is not None
+                    and ROW_PARENT_GAME_ID not in existing
+                ):
+                    existing[ROW_PARENT_GAME_ID] = preserved_parent_id
+                    existing[ROW_FORK_PLY] = preserved_fork_ply
+                if preserved_refs and not existing.get(ROW_REFS):
+                    existing[ROW_REFS] = preserved_refs
                 self._persist_locked()
                 return new_hash
 
@@ -339,14 +434,17 @@ class RecentImports:
             blob_path = self._root / fname
             if not blob_path.exists():
                 atomic_write_text(blob_path, trimmed)
-            row = {
-                "format": fmt,
-                "summary": summary,
-                "ts": int(time.time() * 1000),
-                "file": fname,
-                "game_id": None,
-                "refs": [],
+            row: dict = {
+                ROW_FORMAT: fmt,
+                ROW_SUMMARY: summary,
+                ROW_TS: int(time.time() * 1000),
+                ROW_FILE: fname,
+                ROW_GAME_ID: None,
+                ROW_REFS: preserved_refs,
             }
+            if preserved_parent_id is not None:
+                row[ROW_PARENT_GAME_ID] = preserved_parent_id
+                row[ROW_FORK_PLY] = preserved_fork_ply
             self._index[new_hash] = row
             self._bind_id_locked(game_id, new_hash, row)
             self._evict_locked()
@@ -371,21 +469,189 @@ class RecentImports:
             row["ts"] = int(time.time() * 1000)
             self._persist_locked()
 
-    async def remove(self, h: str) -> bool:
-        """Delete ``h`` (index row + blob). Returns True if anything was
-        removed."""
+    async def remove(self, h: str) -> RemoveResult:
+        """Delete ``h`` (index row + blob).
+
+        Returns:
+        - ``RemoveResult(NOT_FOUND)`` if ``h`` is unknown.
+        - ``RemoveResult(BLOCKED_BY_REFS, children=[...])`` if the row
+          has live children. Nothing is deleted. The returned list
+          mirrors what ``children_of`` would surface so the caller can
+          message the user.
+        - ``RemoveResult(DELETED)`` on success. If the deleted row
+          carried a ``parent_game_id``, the matching entry in the
+          parent's ``refs`` is scrubbed in the same atomic persist.
+          A dangling parent (id not resolvable) is warn-logged and
+          treated as a soft success.
+        """
         async with self._lock:
-            row = self._index.pop(h, None)
+            row = self._index.get(h)
+            if row is None:
+                return RemoveResult(RemoveStatus.NOT_FOUND)
+
+            refs = row.get(ROW_REFS) or []
+            if refs:
+                children = self._children_summary_locked(refs)
+                log.info(
+                    "xgame.delete_blocked hash=%s game_id=%s refs=%d",
+                    h, row.get(ROW_GAME_ID), len(refs),
+                )
+                return RemoveResult(
+                    RemoveStatus.BLOCKED_BY_REFS,
+                    children=children,
+                )
+
+            # Detach from parent (if any) before removing.
+            parent_id = row.get(ROW_PARENT_GAME_ID)
+            child_gid = row.get(ROW_GAME_ID)
+            if parent_id is not None:
+                self._detach_from_parent_locked(parent_id, child_gid)
+
+            self._index.pop(h, None)
+            if child_gid is not None:
+                self._by_id.pop(child_gid, None)
+            self._delete_blob(row.get(ROW_FILE))
+            self._persist_locked()
+            if parent_id is not None:
+                log.info(
+                    "xgame.child_deleted parent=%s child=%s ply=%s",
+                    parent_id, child_gid, row.get(ROW_FORK_PLY),
+                )
+            return RemoveResult(RemoveStatus.DELETED)
+
+    def children_of(self, game_id: str) -> list[dict]:
+        """Return live children of ``game_id`` as
+        ``[{game_id, fork_ply, summary, ts}, ...]`` sorted by fork_ply
+        asc. Dangling ref entries (child id not resolvable) are dropped
+        from the result and warn-logged; the parent's ``refs`` list is
+        not mutated here (scrubbed lazily on subsequent writes)."""
+        h = self._by_id.get(game_id)
+        if h is None:
+            return []
+        row = self._index.get(h)
+        if row is None:
+            return []
+        refs = row.get(ROW_REFS) or []
+        return self._children_summary_locked(refs)
+
+    async def scrub_dangling_parent(self, game_id: str) -> bool:
+        """If the row identified by ``game_id`` carries a
+        ``parent_game_id`` that no longer resolves, drop the fork-link
+        fields and persist. Returns True if a scrub happened."""
+        async with self._lock:
+            h = self._by_id.get(game_id)
+            if h is None:
+                return False
+            row = self._index.get(h)
             if row is None:
                 return False
-            gid = row.get("game_id")
-            if gid is not None:
-                self._by_id.pop(gid, None)
-            self._delete_blob(row.get("file"))
+            parent_id = row.get(ROW_PARENT_GAME_ID)
+            if parent_id is None:
+                return False
+            if parent_id in self._by_id:
+                return False
+            log.warning(
+                "xgame.dangling_parent child=%s missing_parent=%s",
+                game_id, parent_id,
+            )
+            row.pop(ROW_PARENT_GAME_ID, None)
+            row.pop(ROW_FORK_PLY, None)
             self._persist_locked()
             return True
 
     # ---- internals (must hold the lock) ----
+
+    def _append_parent_ref_locked(
+        self,
+        parent_game_id: str,
+        child_game_id: str | None,
+        fork_ply: int,
+    ) -> None:
+        """Append ``{game_id, fork_ply}`` to the parent's ``refs``. The
+        parent row is mutated in place; the surrounding caller is
+        responsible for the atomic persist. Missing parent is logged
+        and treated as a no-op (dangling forward reference)."""
+        if child_game_id is None:
+            raise AssertionError(
+                "fork-link requires a bound child game_id"
+            )
+        h = self._by_id.get(parent_game_id)
+        if h is None:
+            log.warning(
+                "xgame.fork_parent_missing parent=%s child=%s ply=%d",
+                parent_game_id, child_game_id, fork_ply,
+            )
+            return
+        row = self._index.get(h)
+        if row is None:
+            log.warning(
+                "xgame.fork_parent_missing parent=%s child=%s ply=%d",
+                parent_game_id, child_game_id, fork_ply,
+            )
+            return
+        refs = row.setdefault(ROW_REFS, [])
+        refs.append({REF_GAME_ID: child_game_id, REF_FORK_PLY: fork_ply})
+        log.info(
+            "xgame.fork_created parent=%s child=%s ply=%d",
+            parent_game_id, child_game_id, fork_ply,
+        )
+
+    def _detach_from_parent_locked(
+        self,
+        parent_game_id: str,
+        child_game_id: str | None,
+    ) -> None:
+        """Remove the entry for ``child_game_id`` from the parent's
+        ``refs``. Dangling parent is warn-logged and treated as a
+        no-op."""
+        if child_game_id is None:
+            return
+        h = self._by_id.get(parent_game_id)
+        if h is None:
+            log.warning(
+                "xgame.dangling_parent_on_remove child=%s parent=%s",
+                child_game_id, parent_game_id,
+            )
+            return
+        row = self._index.get(h)
+        if row is None:
+            return
+        refs = row.get(ROW_REFS) or []
+        row[ROW_REFS] = [
+            r for r in refs if r.get(REF_GAME_ID) != child_game_id
+        ]
+
+    def _children_summary_locked(self, refs: list[dict]) -> list[dict]:
+        """Resolve a parent's ``refs`` to child summaries. Dangling
+        entries are dropped + warn-logged."""
+        out: list[dict] = []
+        for ref in refs:
+            child_id = ref.get(REF_GAME_ID)
+            fork_ply = ref.get(REF_FORK_PLY)
+            if child_id is None:
+                continue
+            child_hash = self._by_id.get(child_id)
+            if child_hash is None:
+                log.warning(
+                    "xgame.dangling_ref child=%s ply=%s",
+                    child_id, fork_ply,
+                )
+                continue
+            child_row = self._index.get(child_hash)
+            if child_row is None:
+                log.warning(
+                    "xgame.dangling_ref child=%s ply=%s",
+                    child_id, fork_ply,
+                )
+                continue
+            out.append({
+                REF_GAME_ID: child_id,
+                REF_FORK_PLY: fork_ply,
+                ROW_SUMMARY: child_row.get(ROW_SUMMARY),
+                ROW_TS: child_row.get(ROW_TS),
+            })
+        out.sort(key=lambda d: d.get(REF_FORK_PLY) or 0)
+        return out
 
     def _assert_id_free_or_self(self, game_id: str, h: str) -> None:
         """Programming-bug check: ``game_id`` must not already map to a
@@ -415,22 +681,22 @@ class RecentImports:
         # eviction candidates (oldest first).
         ranked = sorted(
             self._index.items(),
-            key=lambda kv: kv[1].get("ts", 0),
+            key=lambda kv: kv[1].get(ROW_TS, 0),
             reverse=True,
         )
         candidates = list(reversed(ranked[self._cap:]))
         drop_target = len(candidates)
         dropped = 0
         for h, row in candidates:
-            if row.get("refs"):
+            if row.get(ROW_REFS):
                 continue
-            if active_gid is not None and row.get("game_id") == active_gid:
+            if active_gid is not None and row.get(ROW_GAME_ID) == active_gid:
                 continue
             self._index.pop(h, None)
-            gid = row.get("game_id")
+            gid = row.get(ROW_GAME_ID)
             if gid is not None:
                 self._by_id.pop(gid, None)
-            self._delete_blob(row.get("file"))
+            self._delete_blob(row.get(ROW_FILE))
             dropped += 1
         if dropped < drop_target:
             log.warning(
@@ -455,7 +721,7 @@ class RecentImports:
         Called from :meth:`load`."""
         by_id: dict[str, str] = {}
         for h, row in self._index.items():
-            gid = row.get("game_id")
+            gid = row.get(ROW_GAME_ID)
             if gid is None:
                 continue
             if gid in by_id:
