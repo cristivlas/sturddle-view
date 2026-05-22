@@ -60,6 +60,10 @@ class ImportedPosition:
     # Root annotation: pre-game commentary (game.comment) plus the Annotator
     # header, sanitized. None when neither is present.
     root_comment: str | None = None
+    # The parsed game tree, kept so downstream hash sites can use
+    # canonical_hash_from_game and skip a second chess.pgn.read_game pass.
+    # None for FEN imports. Not serialized.
+    parsed_game: chess.pgn.Game | None = None
 
 
 class PositionImportError(ValueError):
@@ -455,4 +459,5 @@ def parse_pgn(text: str) -> ImportedPosition:
         eval_history=eval_history,
         comments=comments,
         root_comment=root_comment,
+        parsed_game=game,
     )

@@ -23,15 +23,14 @@ import stat
 import sys
 from pathlib import Path
 
+import httpx
 import pytest
 
 pytest.importorskip("playwright.async_api")
 
-from sturddle_view.app import create_app  # noqa: E402
-from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 
-from .conftest import run_uvicorn  # noqa: E402
+from .conftest import run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
 
 
 class PageObserver:
@@ -147,14 +146,28 @@ def _make_fake_uci(root: Path, name: str) -> str:
 
 @pytest.fixture
 def server(tmp_path):
-    settings = Settings(token="test-token", auth_disabled=True)
-    settings.pgn_dir = tmp_path / "pgn"
-    registry = EngineRegistry(path=tmp_path / "engines.json")
-    eng = registry.add(name="FakeEngine", path=_make_fake_uci(tmp_path, "FakeEngine"))
-    registry.select(eng.id)
-    app = create_app(settings=settings, engine_registry=registry)
-    with run_uvicorn(app) as (base, _s):
-        yield base, app
+    registry_path = tmp_path / "engines.json"
+    seed = EngineRegistry(path=registry_path)
+    eng = seed.add(name="FakeEngine", path=_make_fake_uci(tmp_path, "FakeEngine"))
+    seed.select(eng.id)
+    env = {
+        "SV_PGN_DIR": str(tmp_path / "pgn"),
+        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
+        "SV_ENGINE_REGISTRY_PATH": str(registry_path),
+        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
+        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
+        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
+    }
+    with run_uvicorn_subprocess(env_overrides=env) as base:
+        yield base
+
+
+def _view_cursor(base: str) -> int:
+    return httpx.get(f"{base}/_test/hve/state").json()["view_cursor"]
+
+
+def _n_plies(base: str) -> int:
+    return httpx.get(f"{base}/_test/hve/state").json()["n_plies"]
 
 
 _PGN_SIMPLE = """\
@@ -200,6 +213,7 @@ async def _setup_play_with_one_move(page, obs):
     reply so we have a 2-ply position before the bug-triggering click."""
     await page.goto("/")
     await page.wait_for_selector("#play-perspective")
+    await wait_perspective_ready(page)
     await _enable_comments(page)
     await page.evaluate(
         "() => fetch('/game/new', {method:'POST',"
@@ -220,7 +234,7 @@ async def _setup_play_with_one_move(page, obs):
 async def test_edit_from_play_lands_at_last_ply_with_comments_on(server, make_page):
     """Click 'Edit position' from play with comments on: cursor must be
     at the last ply (the live position), not back at 0."""
-    base, app = server
+    base = server
 
     _ctx, page = await make_page(base_url=base)
     obs = PageObserver(page)
@@ -228,7 +242,7 @@ async def test_edit_from_play_lands_at_last_ply_with_comments_on(server, make_pa
     # we wait for the in-flight queue to drain.
     obs.track("/game/view/goto")
     await _setup_play_with_one_move(page, obs)
-    n_plies = len(app.state.hve._board.move_stack)
+    n_plies = _n_plies(base)
     assert n_plies == 2, f"precondition: 2 plies in play; got {n_plies}"
 
     # Click Edit position; accept the confirm dialog (a wa-button whose
@@ -247,8 +261,9 @@ async def test_edit_from_play_lands_at_last_ply_with_comments_on(server, make_pa
     await obs.wait_board_update(_editing_started)
     await obs.wait_quiet("/game/view/goto")
 
-    assert app.state.hve._view_cursor == n_plies, (
-        f"play->edit landed at cursor={app.state.hve._view_cursor}, "
+    cursor = _view_cursor(base)
+    assert cursor == n_plies, (
+        f"play->edit landed at cursor={cursor}, "
         f"expected {n_plies} (last ply)"
     )
 
@@ -257,13 +272,14 @@ async def test_edit_from_play_lands_at_last_ply_with_comments_on(server, make_pa
 async def test_import_lands_at_first_ply_with_comments_on(server, make_page):
     """Adjacent path: explicit PGN import keeps existing behavior --
     cursor starts at 0."""
-    base, app = server
+    base = server
 
     _ctx, page = await make_page(base_url=base)
     obs = PageObserver(page)
     obs.track("/game/view/goto")
     await page.goto("/")
     await page.wait_for_selector("#play-perspective")
+    await wait_perspective_ready(page)
     await _enable_comments(page)
 
     await page.evaluate(
@@ -277,8 +293,9 @@ async def test_import_lands_at_first_ply_with_comments_on(server, make_page):
     await obs.wait_board_update(_viewing_at_cursor_zero)
     await obs.wait_quiet("/game/view/goto")
 
-    assert app.state.hve._view_cursor == 0, (
-        f"import should land at cursor=0; got {app.state.hve._view_cursor}"
+    cursor = _view_cursor(base)
+    assert cursor == 0, (
+        f"import should land at cursor=0; got {cursor}"
     )
 
 
@@ -286,13 +303,14 @@ async def test_import_lands_at_first_ply_with_comments_on(server, make_page):
 async def test_replay_activation_lands_at_first_ply_with_comments_on(server, make_page):
     """Adjacent path: tournament Replay (import + activate play perspective)
     keeps existing behavior -- cursor starts at 0."""
-    base, app = server
+    base = server
 
     _ctx, page = await make_page(base_url=base)
     obs = PageObserver(page)
     obs.track("/game/view/goto")
     await page.goto("/")
     await page.wait_for_selector("#play-perspective")
+    await wait_perspective_ready(page)
     await _enable_comments(page)
 
     # Switch off play so the Replay activation is a real transition.
@@ -311,6 +329,7 @@ async def test_replay_activation_lands_at_first_ply_with_comments_on(server, mak
     await obs.wait_board_update(_viewing_at_cursor_zero)
     await obs.wait_quiet("/game/view/goto")
 
-    assert app.state.hve._view_cursor == 0, (
-        f"replay should land at cursor=0; got {app.state.hve._view_cursor}"
+    cursor = _view_cursor(base)
+    assert cursor == 0, (
+        f"replay should land at cursor=0; got {cursor}"
     )

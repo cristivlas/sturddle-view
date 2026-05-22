@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 from pathlib import Path
 
@@ -18,6 +19,12 @@ WEB_DIR = REPO_ROOT / "web"
 
 
 def default_settings_file() -> Path:
+    """Path to persisted user settings.
+
+    ``SV_SETTINGS_FILE`` overrides the default."""
+    override = os.environ.get("SV_SETTINGS_FILE")
+    if override:
+        return Path(override)
     return Path(user_config_dir(APP_NAME, appauthor=False)) / "settings.json"
 
 
@@ -63,6 +70,9 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8765
     token: str = Field(default_factory=lambda: secrets.token_urlsafe(24))
+    # Enables /_test/* endpoints (HVE install/state) used by the e2e
+    # test subprocess fixture. Never set in production.
+    test_mode: bool = False
     web_dir: Path = WEB_DIR
     pgn_autosave: bool = False
     pgn_dir: Path | None = None

@@ -11,7 +11,7 @@ from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
 from sturddle_view.events import EventBus
-from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
+from sturddle_view.play.human_vs_engine import HumanVsEngine, Mode, TimeControl, ViewModeParams
 from sturddle_view.play.import_position import parse_pgn
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -140,6 +140,32 @@ async def test_view_without_hash_falls_back_to_rebuilt_pgn(hve):
     assert filename.endswith(".pgn")
 
 
+async def test_view_export_emits_final_clock(hve):
+    """View mode with final_white/black_time set: the trailing [%clk]
+    annotation must reach the rebuilt PGN. Guards against the
+    final_clocks tuple being dropped before reaching build_pgn."""
+    await hve.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5"],
+        clock_history=[(60.0, 60.0), (58.0, 60.0)],
+        final_white_time=58.0,
+        final_black_time=55.0,
+        white_name="W",
+        black_name="B",
+        pgn_result="*",
+        view_hash=None,
+        view_raw_text=None,
+    ))
+    result = hve.get_pgn_text()
+    assert result is not None
+    pgn_text, _ = result
+    # The final ply (1... e5) belongs to Black. With final_black_time=55s
+    # and clock_history[1] = (_, 60s), Black's elapsed = 60 - 55 = 5.0s.
+    # If final_clocks were dropped (the mutation we're guarding), the
+    # token degrades to 0s or absent.
+    assert "1... e5 { 5.0s }" in pgn_text
+
+
 async def test_view_raw_text_survives_edit_cancel(hve):
     """view_raw_text must be restored after entering and cancelling edit mode."""
     raw = _load_fixture("Fischer vs Bolbochan, Stockholm 1962.pgn")
@@ -246,6 +272,106 @@ def api_client(tmp_path):
     with TestClient(app) as c:
         app.state.hve = hve
         yield c
+
+
+# --- _maybe_save_pgn (autosave-to-disk) ----------------------------------
+
+
+async def _setup_autosave_game(hve, tmp_path):
+    """Start a play game with autosave enabled and one move on the board."""
+    hve._settings.pgn_autosave = True
+    hve._settings.pgn_dir = tmp_path
+    await hve.new_game(human_white=True, tc=TimeControl(60, 0))
+    await hve.submit_move("e2e4")
+
+
+async def test_maybe_save_pgn_no_board_returns_none(hve, tmp_path):
+    hve._settings.pgn_autosave = True
+    hve._settings.pgn_dir = tmp_path
+    assert hve._maybe_save_pgn(result="*", termination="unterminated") is None
+
+
+async def test_maybe_save_pgn_viewing_returns_none(hve, tmp_path):
+    await _setup_autosave_game(hve, tmp_path)
+    hve._mode = Mode.VIEWING
+    assert hve._maybe_save_pgn(result="*", termination="unterminated") is None
+
+
+async def test_maybe_save_pgn_autosave_disabled_returns_none(hve, tmp_path):
+    await _setup_autosave_game(hve, tmp_path)
+    hve._settings.pgn_autosave = False
+    assert hve._maybe_save_pgn(result="*", termination="unterminated") is None
+
+
+async def test_maybe_save_pgn_no_moves_returns_none(hve, tmp_path):
+    hve._settings.pgn_autosave = True
+    hve._settings.pgn_dir = tmp_path
+    await hve.new_game(human_white=True, tc=TimeControl(60, 0))
+    # No moves yet.
+    assert hve._maybe_save_pgn(result="*", termination="unterminated") is None
+
+
+async def test_maybe_save_pgn_missing_dir_returns_none(hve, tmp_path):
+    await _setup_autosave_game(hve, tmp_path)
+    hve._settings.pgn_dir = None
+    assert hve._maybe_save_pgn(result="*", termination="unterminated") is None
+
+
+async def test_maybe_save_pgn_mkdir_failure_returns_none(hve, tmp_path, monkeypatch):
+    await _setup_autosave_game(hve, tmp_path)
+
+    def boom(self, *_a, **_kw):
+        raise OSError("mkdir nope")
+    monkeypatch.setattr(Path, "mkdir", boom)
+    assert hve._maybe_save_pgn(result="*", termination="unterminated") is None
+
+
+async def test_maybe_save_pgn_write_failure_returns_none(hve, tmp_path, monkeypatch):
+    await _setup_autosave_game(hve, tmp_path)
+
+    import sturddle_view.play.human_vs_engine as mod
+
+    def boom(*_a, **_kw):
+        raise OSError("write nope")
+    monkeypatch.setattr(mod, "atomic_write_text", boom)
+    assert hve._maybe_save_pgn(result="*", termination="unterminated") is None
+
+
+async def test_maybe_save_pgn_happy_path_writes_file(hve, tmp_path):
+    await _setup_autosave_game(hve, tmp_path)
+
+    out = hve._maybe_save_pgn(result="1-0", termination="checkmate")
+    assert out is not None
+    assert out.exists()
+    assert out.parent == tmp_path
+    assert out.suffix == ".pgn"
+    assert hve._game_id in out.name
+    body = out.read_text(encoding="utf-8")
+    assert "1. e4" in body
+    assert '[Result "1-0"]' in body
+    assert '[Termination "checkmate"]' in body
+
+
+async def test_maybe_save_pgn_filename_stable_across_calls(hve, tmp_path):
+    """Per-move autosaves and the final save MUST share one path so the
+    file is overwritten in place, not duplicated."""
+    await _setup_autosave_game(hve, tmp_path)
+    p1 = hve._maybe_save_pgn(result="*", termination="unterminated")
+    p2 = hve._maybe_save_pgn(result="*", termination="unterminated")
+    assert p1 is not None and p2 is not None
+    assert p1 == p2
+    assert list(tmp_path.glob("*.pgn")) == [p1]
+
+
+async def test_maybe_save_pgn_creates_missing_dir(hve, tmp_path):
+    """pgn_dir does not exist yet: mkdir parents=True should create it."""
+    target = tmp_path / "a" / "b" / "pgns"
+    await _setup_autosave_game(hve, tmp_path)
+    hve._settings.pgn_dir = target
+    out = hve._maybe_save_pgn(result="*", termination="unterminated")
+    assert out is not None
+    assert out.parent == target
+    assert out.exists()
 
 
 def test_export_pgn_endpoint_import_then_get(api_client):

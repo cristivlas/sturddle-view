@@ -13,22 +13,21 @@ Two layers of tests:
 from __future__ import annotations
 
 import asyncio
+import stat
 import sys
 
 import chess
+import httpx
 import pytest
-from fastapi.testclient import TestClient
 
-from sturddle_view.app import create_app
-from sturddle_view.config import Settings
-from sturddle_view.tournament import fastchess as fc_mod
-from sturddle_view.tournament.fastchess import FastchessRunner
 from sturddle_view.tournament.orchestrator import (
     Orchestrator,
     OrchestratorConfig,
 )
 from sturddle_view.tournament.runner import RunSpec
 from sturddle_view.tournament.store import TournamentStore
+
+from .conftest import run_uvicorn_subprocess
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +229,333 @@ async def test_info_does_not_fan_out_when_no_pair(orch):
     assert not any(m.get("paired") for m in items)
 
 
+# ---------------------------------------------------------------------------
+# _recompute_groups -- direct unit tests on bucket -> pair confirmation
+# ---------------------------------------------------------------------------
+
+
+def _seed_proxy(orch, pid: str, engine: str) -> None:
+    """Register an engine name as proxy_session_started would."""
+    orch._proxy_engine_names[pid] = engine
+
+
+def test_recompute_singleton_bucket_does_not_promote(orch):
+    """Bucket of size 1 must NOT become a group. Catches `len(bucket) >= 2`
+    flipped to `<= 2` (admits singletons) or `== 2` boundary issues."""
+    _seed_proxy(orch, "white", "A")
+    fen = chess.Board().fen()
+    orch._pairing_register("white", fen, "white")  # 1 entry
+    assert orch._current_groups == set()
+    assert orch._confirmed_pairs == {}
+
+
+def test_recompute_two_bucket_confirms_pair(orch):
+    """Standard 2-engine rendezvous: a group is created, pair confirmed,
+    and `_pair_white` points to the white-side proxy. Catches the color
+    selection (`state_a[1] == "white"`)."""
+    _seed_proxy(orch, "white", "A")
+    _seed_proxy(orch, "black", "B")
+    fen = chess.Board().fen()
+    orch._pairing_register("white", fen, "white")
+    new_pairs, orphaned = orch._pairing_register("black", fen, "black")
+
+    assert len(new_pairs) == 1
+    assert orphaned == set()
+    group = next(iter(new_pairs))
+    pair_id = orch._pair_ids[group]
+    assert orch._pair_white[pair_id] == "white"
+    assert orch._confirmed_pairs == {"white": "black", "black": "white"}
+
+
+def test_recompute_two_bucket_pair_white_when_black_registers_first(orch):
+    """Order-independence: same as above but the black-side proxy
+    registers first. `_pair_white` still points to white. Catches the
+    "white"-string comparison being flipped (e.g. -> "black")."""
+    _seed_proxy(orch, "white", "A")
+    _seed_proxy(orch, "black", "B")
+    fen = chess.Board().fen()
+    orch._pairing_register("black", fen, "black")
+    new_pairs, _ = orch._pairing_register("white", fen, "white")
+
+    assert len(new_pairs) == 1
+    group = next(iter(new_pairs))
+    pair_id = orch._pair_ids[group]
+    assert orch._pair_white[pair_id] == "white"
+
+
+def test_recompute_same_color_bucket_does_not_confirm(orch):
+    """Two same-color proxies at the same FEN must NOT confirm a pair.
+    Catches `state_a[1] != state_b[1]` flipped to `==`."""
+    _seed_proxy(orch, "p1", "A")
+    _seed_proxy(orch, "p2", "B")
+    fen = chess.Board().fen()
+    orch._pairing_register("p1", fen, "white")
+    new_pairs, _ = orch._pairing_register("p2", fen, "white")
+
+    # Group exists (size 2 of same color) but pair is NOT confirmed.
+    assert new_pairs == set()
+    assert orch._confirmed_pairs == {}
+    assert orch._pair_proxies == {}
+
+
+def test_recompute_three_bucket_does_not_confirm(orch):
+    """Ambiguous 3-way bucket must not be promoted to a pair (len != 2
+    fails). Catches `len(group) == 2` flipped to `>=` etc."""
+    _seed_proxy(orch, "p1", "A")
+    _seed_proxy(orch, "p2", "B")
+    _seed_proxy(orch, "p3", "C")
+    fen = chess.Board().fen()
+    orch._pairing_register("p1", fen, "white")
+    orch._pairing_register("p2", fen, "black")
+    new_pairs, _ = orch._pairing_register("p3", fen, "white")
+
+    # The group changed from {p1,p2} (size 2) to {p1,p2,p3} (size 3).
+    # Old pair was confirmed in the prior step; we just check the new
+    # *3-way* group is not promoted as a fresh pair.
+    assert all(len(g) == 2 for g in new_pairs)  # no size-3 group promoted
+
+
+def test_recompute_orphans_when_proxy_session_ends(orch):
+    """When one proxy leaves _pairing_state entirely (session ended),
+    the surviving proxy is reported as orphaned. Catches
+    `if pid not in self._pairing_state` flipped (AddNot)."""
+    _seed_proxy(orch, "white", "A")
+    _seed_proxy(orch, "black", "B")
+    fen = chess.Board().fen()
+    orch._pairing_register("white", fen, "white")
+    orch._pairing_register("black", fen, "black")
+    # Both still registered -> no orphans yet.
+
+    # Tear down "white" entirely (session ended path).
+    orch._pairing_unregister("white")
+    new_pairs, orphaned = orch._recompute_groups()
+    assert new_pairs == set()
+    assert orphaned == {"white"}  # absent from _pairing_state
+
+
+def test_recompute_no_orphan_when_proxy_just_moved_fen(orch):
+    """Between-move re-registration keeps the proxy in _pairing_state at
+    a new FEN. The old group is removed but the proxy is NOT orphaned."""
+    _seed_proxy(orch, "white", "A")
+    _seed_proxy(orch, "black", "B")
+    fen1 = chess.Board().fen()
+    orch._pairing_register("white", fen1, "white")
+    orch._pairing_register("black", fen1, "black")
+
+    # White moves to a new FEN (different bucket). Old group dissolves
+    # but white is still registered somewhere.
+    b = chess.Board(); b.push_uci("e2e4")
+    fen2 = b.fen()
+    _, orphaned = orch._pairing_register("white", fen2, "white")
+    assert orphaned == set()
+    assert "white" in orch._pairing_state
+
+
+# ---------------------------------------------------------------------------
+# _pairing_apply_bestmove
+# ---------------------------------------------------------------------------
+
+
+def test_apply_bestmove_no_state_returns_empty(orch):
+    """proxy_id not in _pairing_state → (set(), set()). Kills AddNot on
+    `state is None` (left operand of guard)."""
+    new_pairs, orphaned = orch._pairing_apply_bestmove(
+        "ghost", {"move": "e2e4"}
+    )
+    assert new_pairs == set() and orphaned == set()
+
+
+def test_apply_bestmove_none_parsed_returns_empty(orch):
+    """parsed=None with valid state → (set(), set()). Kills `or`→`and`
+    on the state-or-parsed guard so both sides are covered."""
+    _seed_proxy(orch, "pa", "A")
+    fen = chess.Board().fen()
+    orch._pairing_state["pa"] = (fen, "white")
+    new_pairs, orphaned = orch._pairing_apply_bestmove("pa", None)
+    assert new_pairs == set() and orphaned == set()
+
+
+def test_apply_bestmove_none_move_returns_empty(orch):
+    """parsed has no 'move' key → (set(), set()). Kills `or`→`and`
+    on the move-presence guard."""
+    _seed_proxy(orch, "pa", "A")
+    fen = chess.Board().fen()
+    orch._pairing_state["pa"] = (fen, "white")
+    new_pairs, orphaned = orch._pairing_apply_bestmove("pa", {"kind": "bestmove"})
+    assert new_pairs == set() and orphaned == set()
+
+
+def test_apply_bestmove_none_move_string_returns_empty(orch):
+    """move == '(none)' → (set(), set()). Kills `==`→`!=` / `Is` and
+    `or`→`and` on the move-validity guard."""
+    _seed_proxy(orch, "pa", "A")
+    fen = chess.Board().fen()
+    orch._pairing_state["pa"] = (fen, "white")
+    new_pairs, orphaned = orch._pairing_apply_bestmove(
+        "pa", {"move": "(none)"}
+    )
+    assert new_pairs == set() and orphaned == set()
+
+
+# ---------------------------------------------------------------------------
+# _white_black_for_group
+# ---------------------------------------------------------------------------
+
+
+def test_white_black_for_group_uses_pair_white_cache(orch):
+    """pair_white cache → white returned first. Kills AddNot and
+    `==`→`!=` / `Is` mutations on the cache-hit branch."""
+    _seed_proxy(orch, "pa", "A")
+    _seed_proxy(orch, "pb", "B")
+    fen = chess.Board().fen()
+    orch._pairing_register("pa", fen, "white")
+    orch._pairing_register("pb", fen, "black")
+    group = frozenset(("pa", "pb"))
+    w, b = orch._white_black_for_group(group)
+    assert w == "pa" and b == "pb"
+
+
+def test_white_black_for_group_black_registered_first(orch):
+    """When black registers before white, pair_white still resolves
+    correctly. Kills `white == pid_a` comparison mutations."""
+    _seed_proxy(orch, "pa", "A")
+    _seed_proxy(orch, "pb", "B")
+    fen = chess.Board().fen()
+    orch._pairing_register("pb", fen, "black")  # black first
+    orch._pairing_register("pa", fen, "white")
+    group = frozenset(("pa", "pb"))
+    w, b = orch._white_black_for_group(group)
+    assert w == "pa" and b == "pb"
+
+
+def test_white_black_for_group_falls_back_to_pairing_state(orch):
+    """No pair_id cached → fallback to _pairing_state side. Kills
+    `or`→`and` and `== 'white'`→`!= 'white'` mutations on the fallback path."""
+    # Manually inject a group without confirming via _recompute_groups
+    _seed_proxy(orch, "pa", "A")
+    _seed_proxy(orch, "pb", "B")
+    fen = chess.Board().fen()
+    orch._pairing_state["pa"] = (fen, "white")
+    orch._pairing_state["pb"] = (fen, "black")
+    group = frozenset(("pa", "pb"))
+    # No _pair_ids entry for this group → falls back to pairing_state
+    w, b = orch._white_black_for_group(group)
+    assert w == "pa" and b == "pb"
+
+
+def test_white_black_for_group_fallback_black_first_in_state(orch):
+    """When _pairing_state shows side_a is not white, swap. Kills
+    `== 'white'`→`IsNot/Gt` comparison mutations on the fallback path."""
+    _seed_proxy(orch, "pa", "A")
+    _seed_proxy(orch, "pb", "B")
+    fen = chess.Board().fen()
+    orch._pairing_state["pa"] = (fen, "black")   # pa is black
+    orch._pairing_state["pb"] = (fen, "white")
+    group = frozenset(("pa", "pb"))
+    w, b = orch._white_black_for_group(group)
+    # pb should be white
+    assert b == "pa" and w == "pb"
+
+
+def test_white_black_for_group_size_one_fallback(orch):
+    """Group of size 1 returns (pid, '') without crashing. Kills
+    `!= 2`→`== 2` mutation on the group-size guard."""
+    group = frozenset(("solo",))
+    w, b = orch._white_black_for_group(group)
+    assert w == "solo"
+    assert b == ""
+
+
+def test_white_black_for_group_empty_fallback(orch):
+    """Empty group returns ('', ''). Kills index mutations on the empty-group path."""
+    group = frozenset()
+    w, b = orch._white_black_for_group(group)
+    assert w == "" and b == ""
+
+
+# ---------------------------------------------------------------------------
+# _update_pair_moves
+# ---------------------------------------------------------------------------
+
+
+def _setup_confirmed_pair(orch) -> tuple[str, str, str]:
+    """Register two proxies at the same FEN so a pair is confirmed.
+    Returns (proxy_a, proxy_b, pair_id)."""
+    _seed_proxy(orch, "pa", "A")
+    _seed_proxy(orch, "pb", "B")
+    fen = chess.Board().fen()
+    orch._pairing_register("pa", fen, "white")
+    orch._pairing_register("pb", fen, "black")
+    pair_id = orch._pair_ids[frozenset(("pa", "pb"))]
+    return "pa", "pb", pair_id
+
+
+def test_update_pair_moves_ignores_non_position_kind(orch):
+    """parsed['kind'] != 'position' → no update. Kills `!= 'position'`→`== 'position'`
+    and `or`→`and` mutations on the kind guard."""
+    _setup_confirmed_pair(orch)
+    pa, pb, pair_id = "pa", "pb", orch._pair_ids[frozenset(("pa", "pb"))]
+    orch._update_pair_moves("pa", {"kind": "bestmove", "moves": ["e2e4"]})
+    assert orch._pair_moves[pair_id] == []
+
+
+def test_update_pair_moves_ignores_none_parsed(orch):
+    """parsed is None → return immediately. Kills AddNot on `parsed is None`."""
+    _setup_confirmed_pair(orch)
+    pa, pb, pair_id = "pa", "pb", orch._pair_ids[frozenset(("pa", "pb"))]
+    orch._update_pair_moves("pa", None)
+    assert orch._pair_moves[pair_id] == []
+
+
+def test_update_pair_moves_ignores_non_list_moves(orch):
+    """moves is not a list → return. Kills `not isinstance` AddNot on the type guard."""
+    _setup_confirmed_pair(orch)
+    pair_id = orch._pair_ids[frozenset(("pa", "pb"))]
+    orch._update_pair_moves("pa", {"kind": "position", "moves": "e2e4"})
+    assert orch._pair_moves[pair_id] == []
+
+
+def test_update_pair_moves_ignores_unknown_proxy(orch):
+    """proxy not in _confirmed_pairs → return. Kills IsNot→Is on the membership guard."""
+    _setup_confirmed_pair(orch)
+    pair_id = orch._pair_ids[frozenset(("pa", "pb"))]
+    orch._update_pair_moves("ghost", {"kind": "position", "moves": ["e2e4"]})
+    assert orch._pair_moves[pair_id] == []
+
+
+def test_update_pair_moves_extends_on_longer_prefix(orch):
+    """Longer list that extends current → stored. Core happy-path.
+    Kills `>`→`>=` and `==`→`!=` on the length comparison."""
+    pa, pb, pair_id = _setup_confirmed_pair(orch)
+    orch._pair_moves[pair_id] = ["e2e4"]
+    orch._update_pair_moves("pa", {"kind": "position", "moves": ["e2e4", "e7e5"]})
+    assert orch._pair_moves[pair_id] == ["e2e4", "e7e5"]
+
+
+def test_update_pair_moves_keeps_current_on_equal_length(orch):
+    """Equal-length list → keep current (no update). Kills `>`→`>=` mutation."""
+    pa, pb, pair_id = _setup_confirmed_pair(orch)
+    orch._pair_moves[pair_id] = ["e2e4", "e7e5"]
+    orch._update_pair_moves("pa", {"kind": "position", "moves": ["e2e4", "e7e5"]})
+    assert orch._pair_moves[pair_id] == ["e2e4", "e7e5"]
+
+
+def test_update_pair_moves_keeps_current_on_shorter_list(orch):
+    """Shorter list → keep current. Kills `>`→`<` mutation."""
+    pa, pb, pair_id = _setup_confirmed_pair(orch)
+    orch._pair_moves[pair_id] = ["e2e4", "e7e5"]
+    orch._update_pair_moves("pa", {"kind": "position", "moves": ["e2e4"]})
+    assert orch._pair_moves[pair_id] == ["e2e4", "e7e5"]
+
+
+def test_update_pair_moves_rejects_non_prefix_extension(orch):
+    """Longer but divergent list must not update. Kills `and`→`or` on the prefix-extension guard."""
+    pa, pb, pair_id = _setup_confirmed_pair(orch)
+    orch._pair_moves[pair_id] = ["e2e4"]
+    orch._update_pair_moves("pa", {"kind": "position", "moves": ["d2d4", "d7d5"]})
+    assert orch._pair_moves[pair_id] == ["e2e4"]
+
+
 @pytest.mark.asyncio
 async def test_debug_invariants_pass_in_normal_flow(orch, monkeypatch):
     """With debug asserts on, a typical two-proxy handoff sequence
@@ -258,45 +584,62 @@ async def test_debug_invariants_pass_in_normal_flow(orch, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-FAKE_FASTCHESS = r"""
-import sys, time
-i = 1
-while i < len(sys.argv):
-    a = sys.argv[i]
-    if a == "--sleep":
-        time.sleep(float(sys.argv[i+1])); i += 2
-    else:
-        i += 1
-"""
+def _write_fake_fastchess(tmp_path):
+    """Write a script that pretends to be the fastchess binary: ignores
+    all args and sleeps until killed. Returns the path to invoke."""
+    py = tmp_path / "fake_fastchess.py"
+    py.write_text(
+        f"#!{sys.executable}\n"
+        "import time\n"
+        "while True:\n"
+        "    time.sleep(60)\n"
+    )
+    if sys.platform.startswith("win"):
+        wrapper = tmp_path / "fake_fastchess.cmd"
+        wrapper.write_text(f'@"{sys.executable}" "{py}" %*\r\n')
+        return str(wrapper)
+    py.chmod(py.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return str(py)
 
 
 @pytest.fixture
-def running_app(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        FastchessRunner, "detect_binary",
-        staticmethod(lambda configured: configured),
-    )
-    monkeypatch.setattr(
-        fc_mod, "build_command",
-        lambda spec: [sys.executable, "-c", FAKE_FASTCHESS, "--sleep", "30"],
-    )
-    s = Settings(auth_disabled=True)
-    s.tournament_root = str(tmp_path / "tournaments")
-    s.tournament_fastchess_path = sys.executable
-    app = create_app(settings=s)
-    with TestClient(app) as c:
-        t = c.post("/api/tournaments", json={
-            "name": "t",
-            "engines": [{"id": "id-A", "name": "A", "cmd": "/bin/A"}, {"id": "id-B", "name": "B", "cmd": "/bin/B"}],
-        }).json()
-        c.post(f"/api/tournaments/{t['id']}/start")
-        yield c, app
-        c.post(f"/api/tournaments/{t['id']}/stop")
+def running_server(tmp_path):
+    fake_fc = _write_fake_fastchess(tmp_path)
+    env = {
+        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
+        "SV_TOURNAMENT_FASTCHESS_PATH": fake_fc,
+        "SV_ENGINE_REGISTRY_PATH": str(tmp_path / "engines.json"),
+        "SV_PGN_DIR": str(tmp_path / "pgn"),
+        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
+        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
+        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
+    }
+    with run_uvicorn_subprocess(env_overrides=env) as base:
+        c = httpx.Client(base_url=base)
+        try:
+            t = c.post("/api/tournaments", json={
+                "name": "t",
+                "engines": [
+                    {"id": "id-A", "name": "A", "cmd": "/bin/A"},
+                    {"id": "id-B", "name": "B", "cmd": "/bin/B"},
+                ],
+            }).json()
+            c.post(f"/api/tournaments/{t['id']}/start")
+            try:
+                yield base, c
+            finally:
+                c.post(f"/api/tournaments/{t['id']}/stop")
+        finally:
+            c.close()
 
 
-def test_e2e_paired_info_reaches_opposite_subscriber(running_app):
-    client, app = running_app
-    secret = app.state.tournament_orch.proxy_secret()
+@pytest.mark.asyncio
+async def test_e2e_paired_info_reaches_opposite_subscriber(running_server):
+    from websockets.asyncio.client import connect as ws_connect
+
+    base, client = running_server
+    secret = client.get("/_test/tournament/proxy_secret").json()["secret"]
+    assert secret, "test server must expose a proxy secret"
 
     # Drive the two proxies to the rendezvous before subscribing, so
     # the WS doesn't have to filter out unrelated snapshot replays.
@@ -313,17 +656,158 @@ def test_e2e_paired_info_reaches_opposite_subscriber(running_app):
         "lines": ["position startpos moves e2e4 c7c5"],
     })
 
-    with client.websocket_connect("/ws/tournament/proxy/black?token=") as ws_b:
+    ws_url = base.replace("http://", "ws://") + "/ws/tournament/proxy/black?token="
+    import json as _json
+    async with ws_connect(ws_url) as ws_b:
         client.post("/internal/proxy", json={
             "proxy_id": "white", "secret": secret,
             "lines": ["info depth 8 score cp 20 pv g1f3"],
         })
         seen_paired = None
-        for _ in range(10):
-            msg = ws_b.receive_json(mode="text")
+        for _ in range(20):
+            msg = _json.loads(await ws_b.recv())
             if msg.get("paired") and msg.get("proxy_id") == "white":
                 seen_paired = msg
                 break
         assert seen_paired is not None
         assert seen_paired["thinking_side"] == "white"
         assert "info " in seen_paired["line"]
+
+
+# ---------------------------------------------------------------------------
+# ingest_proxy_lines: specific guard branches
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ingest_position_missing_fen_skips_pairing_register(orch):
+    """parsed without 'fen' must not call _pairing_register. Kills
+    `and`→`or` mutation (guards combined with `in parsed`)."""
+    _seed_proxy(orch, "pa", "A")
+    # A position line that parse_uci_line returns without 'fen'
+    # (malformed; parse returns None for garbage, so we use a valid
+    # 'position' that yields parsed but with no fen key by patching).
+    import sturddle_view.tournament.orchestrator as _mod
+    orig = _mod.parse_uci_line
+    _mod.parse_uci_line = lambda line: {"kind": "position"}  # no fen
+    try:
+        await orch.ingest_proxy_lines("pa", ["position startpos"])
+    finally:
+        _mod.parse_uci_line = orig
+    assert orch._pairing_map == {}
+
+
+@pytest.mark.asyncio
+async def test_ingest_ucinewgame_without_confirmed_pair_is_noop(orch):
+    """ucinewgame when not confirmed (peer_before is None) → no dissolve.
+    Kills `IsNot`→`Is` and AddNot mutations on the peer-presence guard."""
+    _seed_proxy(orch, "pa", "A")
+    # Registered but not confirmed.
+    await orch.ingest_proxy_lines("pa", ["position startpos"])
+    assert "pa" not in orch._confirmed_pairs
+    # Should not raise and pairing state simply clears.
+    await orch.ingest_proxy_lines("pa", ["ucinewgame"])
+    assert orch._pair_proxies == {}
+
+
+@pytest.mark.asyncio
+async def test_ingest_info_pv_only_updates_snap(orch):
+    """info with only 'pv' (no 'score') still updates snap['info']. Kills
+    `or`→`and` mutation on the score-or-pv guard."""
+    _seed_proxy(orch, "pa", "A")
+    await orch.ingest_proxy_lines("pa", ["position startpos"])
+    snap = orch._proxy_snapshot.get("pa", {})
+    await orch.ingest_proxy_lines("pa", ["info depth 5 pv e2e4"])
+    assert "info" in orch._proxy_snapshot["pa"]
+
+
+@pytest.mark.asyncio
+async def test_ingest_go_line_fans_out_without_parsed(orch):
+    """go line has no parsed dict; fan-out must still land (parsed=None
+    branch). Kills `IsNot`→`Is` on `if parsed is not None`."""
+    _seed_proxy(orch, "pa", "A")
+    subs: list = []
+    q = orch.subscribe_to_proxy("pa")
+    subs.append(q)
+
+    await orch.ingest_proxy_lines("pa", ["go movetime 100"])
+    # Drain the queue; must receive the line without a 'parsed' key.
+    msg = q.get_nowait()
+    assert msg["line"] == "go movetime 100"
+    assert "parsed" not in msg
+
+
+@pytest.mark.asyncio
+async def test_ingest_game_subs_get_thinking_side_from_state(orch):
+    """game subscriber payload must include thinking_side from _pairing_state.
+    Kills NumberReplacer mutations on the state[1] index."""
+    _seed_proxy(orch, "pa", "A")
+    _seed_proxy(orch, "pb", "B")
+    fen = chess.Board().fen()
+    orch._pairing_register("pa", fen, "white")
+    orch._pairing_register("pb", fen, "black")
+    pair_id = orch._pair_ids[frozenset(("pa", "pb"))]
+
+    game_q = orch.subscribe_to_game(pair_id)
+    while not game_q.empty():
+        game_q.get_nowait()
+
+    await orch.ingest_proxy_lines("pa", ["go movetime 100"])
+    msg = game_q.get_nowait()
+    assert msg.get("thinking_side") == "white"
+
+
+# ---------------------------------------------------------------------------
+# subscribe_to_proxy: snapshot replay
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_subscribe_to_proxy_replays_all_snapshot_keys(orch):
+    """Snapshot with position + go + info → all 3 replayed on subscribe.
+    Kills ZeroIterationForLoop (loop body never runs)."""
+    _seed_proxy(orch, "pa", "A")
+    await orch.ingest_proxy_lines("pa", [
+        "position startpos",
+        "go movetime 100",
+        "info depth 5 score cp 10 pv e2e4",
+    ])
+    q = orch.subscribe_to_proxy("pa")
+    # info goes into the coalescing slot; flush it before draining.
+    q._flush_all_slots()
+    lines = []
+    while not q.empty():
+        lines.append(q.get_nowait()["line"])
+    assert any("position" in l for l in lines)
+    assert any("go" in l for l in lines)
+    assert any("info" in l for l in lines)
+
+
+@pytest.mark.asyncio
+async def test_subscribe_to_proxy_skips_missing_snap_key_continues(orch):
+    """Snapshot with go but no position → continue skips None, go still
+    replayed. Kills ReplaceContinueWithBreak on the None-snapshot continue."""
+    _seed_proxy(orch, "pa", "A")
+    await orch.ingest_proxy_lines("pa", ["go movetime 100"])
+    # position is not in snap (never ingested)
+    assert "position" not in orch._proxy_snapshot.get("pa", {})
+
+    q = orch.subscribe_to_proxy("pa")
+    lines = [q.get_nowait()["line"] for _ in range(q._q.qsize())]
+    # go must be replayed even though position was None
+    assert any("go" in l for l in lines)
+
+
+@pytest.mark.asyncio
+async def test_subscribe_to_proxy_info_replayed_via_put_info(orch):
+    """info snapshot uses put_info (coalescing slot), not put_other.
+    Kills `== 'info'`→`!= 'info'` mutations: put_other would flush
+    into the queue immediately; put_info parks in the slot."""
+    _seed_proxy(orch, "pa", "A")
+    await orch.ingest_proxy_lines("pa", [
+        "info depth 5 score cp 10 pv e2e4",
+    ])
+    q = orch.subscribe_to_proxy("pa")
+    # put_info parks in _slots; put_other would have put it in the queue.
+    assert "pa" in q._slots, "info must be in coalescing slot, not queue"
+    assert q.empty(), "queue must be empty (info is in slot, not queue)"

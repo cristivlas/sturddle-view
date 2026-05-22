@@ -135,6 +135,74 @@ async def test_opening_field_null_for_imported_games(hve):
     assert hve._board_event().payload["opening"] is None
 
 
+async def test_view_payload_eval_at_last_ply_uses_final_history_entry(hve):
+    """cursor==len(eval_history) → eval is the LAST recorded eval, not None.
+    Pins the `cursor <= len(history)` upper bound (mutating to `<` would
+    drop the eval at the final cursor)."""
+    evals = [{"cp": 30}, {"cp": -10}, {"mate": 5}, {"cp": 0}]
+    await _enter_view(hve, eval_history=evals)
+    await hve.view_goto(len(VIEW_MOVES))  # cursor == 4 == len(evals)
+    assert hve._view_payload()["eval"] == {"cp": 0}
+
+
+async def test_view_payload_has_eval_false_when_all_none(hve):
+    """eval_history full of Nones → has_eval=False. Kills `is not None`
+    → `is None` mutation on the `any(e is not None ...)` predicate
+    (which would flip the result and report has_eval=True for an all-None
+    history)."""
+    await _enter_view(hve, eval_history=[None, None, None, None])
+    assert hve._view_payload()["has_eval"] is False
+
+
+async def test_view_payload_has_eval_false_when_no_history(hve):
+    """eval_history not supplied → has_eval=False. Pins the
+    `_view_eval_history is not None` guard."""
+    await _enter_view(hve)  # no eval_history kwarg
+    assert hve._view_payload()["has_eval"] is False
+
+
+async def test_view_payload_comment_at_last_ply_uses_final_entry(hve):
+    """cursor==len(comments) → comment is the LAST recorded comment.
+    Pins the upper-bound on comment indexing (same shape as eval)."""
+    comments = ["c1", "c2", "c3", "c4"]
+    await _enter_view(hve, comments=comments)
+    await hve.view_goto(len(VIEW_MOVES))
+    assert hve._view_payload()["comment"] == "c4"
+
+
+async def test_view_payload_has_comment_false_when_comments_all_none(hve):
+    """All comment entries None and no root_comment → has_comment=False.
+    Kills `is not None` → `is None` mutation on the
+    `any(c is not None for c in self._view_comments)` predicate."""
+    await _enter_view(hve, comments=[None, None, None, None])
+    assert hve._view_payload()["has_comment"] is False
+
+
+async def test_view_payload_has_comment_true_from_root_alone(hve):
+    """has_comment must be True when only the root_comment is set (no
+    per-ply comments). Pins the `or` half of the has_any_comment
+    combinator (mutating `or` → `and` would require BOTH)."""
+    await _enter_view(hve, root_comment="game start")
+    assert hve._view_payload()["has_comment"] is True
+
+
+async def test_view_payload_has_comment_true_from_per_ply_alone(hve):
+    """has_comment must be True from per-ply comments alone (root None).
+    Pins the other half of the `or` combinator."""
+    await _enter_view(hve, comments=["a", None, None, None])
+    assert hve._view_payload()["has_comment"] is True
+
+
+async def test_view_payload_game_over_false_when_cursor_before_last_ply(hve):
+    """PGN result is non-`*` but cursor is mid-game → game_over=False.
+    Kills `==` → `>=`/`Is` mutations on the
+    `self._view_cursor == len(self._view_full_moves)` final-ply check."""
+    await _enter_view(hve, pgn_result="1-0", pgn_termination="normal")
+    await hve.view_goto(2)  # mid-game, not the final ply
+    view = hve._view_payload()
+    assert view["game_over"] is False
+
+
 async def test_view_payload_scrubbed_after_play_from_here(hve):
     """play_from_here transitions view -> play. The very next board_update
     must have view=None even though view-mode helpers were just live."""

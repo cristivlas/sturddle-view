@@ -15,7 +15,7 @@ from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 from sturddle_view.tournament.fastchess import FastchessRunner  # noqa: E402
 
-from .conftest import run_uvicorn  # noqa: E402
+from .conftest import run_uvicorn, wait_perspective_ready  # noqa: E402
 
 
 def _build_app(tmp_path, monkeypatch, *, sprt_defaults=None):
@@ -38,6 +38,7 @@ def _build_app(tmp_path, monkeypatch, *, sprt_defaults=None):
 async def _nav_to_tournaments(page, base):
     await page.goto(base + "/")
     await page.wait_for_selector("#play-perspective")
+    await wait_perspective_ready(page)
     await page.click('button[data-perspective="engines"]')
     await page.wait_for_selector(".tournaments-panel")
 
@@ -67,6 +68,7 @@ async def test_sprt_switch_disables_rounds_and_type(tmp_path, monkeypatch, make_
         ) if msg.type == "error" else None)
         await page.goto(base + "/")
         await page.wait_for_selector("#play-perspective")
+        await wait_perspective_ready(page)
         await _open_settings_tournament_tab(page)
 
         # Both should be enabled before toggling SPRT on.
@@ -208,6 +210,7 @@ async def test_sprt_settings_validation_marks_invalid_and_skips_persist(tmp_path
 
         await page.goto(base + "/")
         await page.wait_for_selector("#play-perspective")
+        await wait_perspective_ready(page)
         await page.click("#settings-btn")
         await page.wait_for_function(
             """() => !!document.querySelector('wa-dialog wa-tab[panel="sprt"]')""",
@@ -239,11 +242,10 @@ async def test_sprt_settings_validation_marks_invalid_and_skips_persist(tmp_path
             """() => document.querySelector('.sprt-settings-grid wa-input[data-key="alpha"]').classList.contains('sprt-invalid')""",
         )
 
-        # Wait past the debounce; no PUT should have fired while invalid.
-        await page.wait_for_timeout(600)
-        assert put_count["n"] == 0, f"expected no PUTs while invalid, got {put_count['n']}"
-
         # Fix all fields; invalid markers should clear and a PUT should fire.
+        # ``expect_request`` is the real signal -- it resolves on the next
+        # matching PUT, which is the first one (any PUT before would have
+        # been emitted during the invalid window).
         async with page.expect_request(
             lambda r: r.method == "PUT" and "tournament-settings" in r.url,
         ):
@@ -261,5 +263,11 @@ async def test_sprt_settings_validation_marks_invalid_and_skips_persist(tmp_path
                     return [...all].every(el => !el.classList.contains('sprt-invalid'));
                 }"""
             )
+        # Exactly one PUT must have fired in total: the post-fix one. If
+        # the debounce had fired during the invalid window the counter
+        # would be 2.
+        assert put_count["n"] == 1, (
+            f"expected exactly one PUT (post-fix); got {put_count['n']}"
+        )
 
         assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)

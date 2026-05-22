@@ -21,26 +21,57 @@ def _normalize_comment(text: str) -> str:
     return _WS_RUN.sub(" ", text).strip()
 
 
+def _render_canonical(game: chess.pgn.Game) -> str:
+    """Render the canonical PGN string for an already-parsed game.
+
+    Sorts headers and collapses whitespace runs in every comment
+    (mainline AND variations), then str()s the game and restores it.
+    Callers get a string they can hash; the game object is unchanged
+    on return so it can still be used for display/replay.
+    """
+    orig_headers = game.headers
+    sorted_headers = chess.pgn.Headers()
+    for k in sorted(orig_headers.keys()):
+        sorted_headers[k] = orig_headers[k]
+    snapshots: list = []  # [(node, comment, starting_comment_or_None)]
+
+    def _walk(node):
+        sc = getattr(node, "starting_comment", None)
+        snapshots.append((node, node.comment, sc))
+        if node.comment:
+            node.comment = _normalize_comment(node.comment)
+        if sc:
+            node.starting_comment = _normalize_comment(sc)
+        for child in node.variations:
+            _walk(child)
+
+    game.headers = sorted_headers
+    try:
+        _walk(game)
+        return str(game)
+    finally:
+        game.headers = orig_headers
+        for node, c, sc in snapshots:
+            node.comment = c
+            if sc is not None:
+                node.starting_comment = sc
+
+
+def canonical_hash_from_game(game: chess.pgn.Game) -> str:
+    """Hash an already-parsed game without reparsing the PGN text.
+
+    Callers that already have the parsed tree (e.g. tournament
+    read_game_record) should prefer this over canonical_hash to skip
+    the redundant parse.
+    """
+    return hashlib.sha256(_render_canonical(game).encode("utf-8")).hexdigest()
+
+
 def _canonical_pgn(text: str) -> str:
     game = chess.pgn.read_game(io.StringIO(text))
     if game is None:
         raise ValueError("could not parse PGN")
-    # Sort headers alphabetically for the hash only.
-    sorted_headers = chess.pgn.Headers()
-    for k in sorted(game.headers.keys()):
-        sorted_headers[k] = game.headers[k]
-    game.headers = sorted_headers
-    # Collapse whitespace runs inside every comment in the game tree
-    # -- mainline AND variations.
-    def _walk(node):
-        if node.comment:
-            node.comment = _normalize_comment(node.comment)
-        if getattr(node, "starting_comment", None):
-            node.starting_comment = _normalize_comment(node.starting_comment)
-        for child in node.variations:
-            _walk(child)
-    _walk(game)
-    return str(game)
+    return _render_canonical(game)
 
 
 def _canonical_fen(text: str) -> str:

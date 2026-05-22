@@ -69,7 +69,13 @@ def main() -> None:
     logging.getLogger(__name__).info("logging to %s", log_file)
 
     if not args.reload:
-        lock_path = Path(user_config_dir(APP_NAME, appauthor=False)) / "server.lock"
+        # ``SV_INSTANCE_LOCK_PATH`` overrides the default lock location
+        # (used by tests to give each subprocess its own lock).
+        lock_override = os.environ.get("SV_INSTANCE_LOCK_PATH")
+        if lock_override:
+            lock_path = Path(lock_override)
+        else:
+            lock_path = Path(user_config_dir(APP_NAME, appauthor=False)) / "server.lock"
         if not _acquire_lock(lock_path):
             msg = f"Another {APP_NAME} instance is already running."
             logging.getLogger(__name__).error("%s Exiting.", msg)

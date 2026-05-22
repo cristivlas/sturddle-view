@@ -262,6 +262,78 @@ def test_gauntlet_standings_elo_per_engine(tmp_path):
     assert by["C"]["elo"] is not None and by["C"]["elo"] == pytest.approx(0.0, abs=1.0)
 
 
+def test_gauntlet_standings_exact_challenger_elo_and_margin(tmp_path):
+    """Pin exact challenger Elo and margin against the leader. Kills
+    NumberReplacers on the wld `[0, 0, 0]` initializers and the
+    index access `[0]`/`[1]`/`[2]` (W/L/D slot routing)."""
+    # B vs leader A: 2 wins, 1 loss, 1 draw → score 0.625.
+    # Color-flipped so all 4 are leader-vs-challenger pairs.
+    body = (
+        _game("A", "B", "0-1") + _game("B", "A", "1-0")  # 2× B wins
+        + _game("A", "B", "1-0")  # A wins
+        + _game("A", "B", "1/2-1/2")  # draw
+    )
+    p = _write_pgn(tmp_path, body)
+    d = compute_standings(p, tournament_type="gauntlet").to_dict()
+    by = {e["name"]: e for e in d["engines"]}
+    # B: 2W 1L 1D vs A → exact head-to-head Elo and margin.
+    assert by["B"]["elo"] == pytest.approx(88.7395, abs=0.01)
+    assert by["B"]["elo_margin_95"] == pytest.approx(347.7241, abs=0.01)
+
+
+def test_gauntlet_standings_n_engines_branch_runs_for_four(tmp_path):
+    """4-engine gauntlet with non-perfect challenger scores → challenger
+    gets a real Elo. Kills `>= 3`→`== 3` mutation (which would skip the
+    gauntlet branch for n=4 and leave elo None)."""
+    body = (
+        _game("A", "B", "1/2-1/2") + _game("B", "A", "1/2-1/2")  # B: 0W 0L 2D vs A
+        + _game("A", "C", "1-0") + _game("C", "A", "0-1")  # C: 0W 2L 0D
+        + _game("A", "D", "1-0") + _game("D", "A", "0-1")
+    )
+    p = _write_pgn(tmp_path, body)
+    d = compute_standings(p, tournament_type="gauntlet").to_dict()
+    by = {e["name"]: e for e in d["engines"]}
+    # B drew both vs A → score 0.5 → elo 0.0 exactly. If `== 3` mutation
+    # is applied, the gauntlet branch is skipped → B.elo stays None.
+    assert by["B"]["elo"] is not None
+    assert by["B"]["elo"] == pytest.approx(0.0, abs=0.01)
+
+
+def test_single_engine_standings_no_elo_no_ordo(tmp_path):
+    """1 engine → none of the Elo branches run. Kills `== 2`→`<= 2`
+    on the head-to-head guard and `>= 2`→`>= 1` on the ordo guard."""
+    # PGN with a single engine playing itself (white==black) is degenerate,
+    # so build one with only one EngineRecord by using same name twice.
+    # _iter_games would still record both white and black as the same name.
+    body = _game("A", "A", "1-0")
+    p = _write_pgn(tmp_path, body)
+    s = compute_standings(p)
+    assert len(s.engines) == 1
+    e = s.engines[0]
+    # Head-to-head Elo branch is for len==2 only.
+    assert e.elo is None
+    assert e.elo_margin_95 is None
+    # ordo branch is for len>=2 only.
+    assert e.elo_ordo is None
+    assert e.elo_ordo_margin_95 is None
+
+
+def test_two_engine_standings_populates_ordo_margin(tmp_path):
+    """2 engines with 4 games (2W 2L from A's side) → ordo margin is a
+    finite number (not None). Pins `enc[1] += 1` played-counter increment:
+    a NumberReplacer `+= 1`→`+= 0` would leave np_=0 → margin None."""
+    body = (
+        _game("A", "B", "1-0") + _game("B", "A", "1-0")
+        + _game("A", "B", "1-0") + _game("B", "A", "1-0")
+    )
+    p = _write_pgn(tmp_path, body)
+    s = compute_standings(p)
+    by = {e.name: e for e in s.engines}
+    # Both engines went 2-2 → ordo Elo ~ 0, margin finite.
+    assert by["A"].elo_ordo_margin_95 is not None
+    assert by["A"].elo_ordo_margin_95 > 0
+
+
 def test_elo_margin_from_wld_perfect_score_is_none():
     assert elo_margin_from_wld(5, 0, 0) is None
     assert elo_margin_from_wld(0, 5, 0) is None
@@ -278,6 +350,276 @@ def test_elo_margin_from_wld_shrinks_with_more_games():
     large = elo_margin_from_wld(50, 50, 0)
     assert small is not None and large is not None
     assert large < small
+
+
+def test_elo_margin_from_wld_exact_symmetric(pytest_approx=None):
+    """5W5L0D at 50% → known value. Pins the variance formula
+    and the Elo propagation constants."""
+    result = elo_margin_from_wld(5, 5, 0)
+    assert result == pytest.approx(226.99, abs=0.01)
+
+
+def test_elo_margin_from_wld_exact_with_draws():
+    """3W1L2D → known value. Draws contribute (0.5-s)² term; pins
+    the draw term coefficient in the variance formula."""
+    result = elo_margin_from_wld(3, 1, 2)
+    assert result == pytest.approx(255.37, abs=0.01)
+
+
+def test_elo_margin_from_wld_exact_asymmetric():
+    """1W9L0D (low score) → known value. Pins (0-s)² loss term and
+    the dElo/dscore denominator at non-0.5 score."""
+    result = elo_margin_from_wld(1, 9, 0)
+    assert result == pytest.approx(378.32, abs=0.01)
+
+
+def test_elo_margin_from_wld_exact_with_wins_and_draws():
+    """10W0L10D (s=0.75) → known value. Pins the win+draw combination."""
+    result = elo_margin_from_wld(10, 0, 10)
+    assert result == pytest.approx(104.15, abs=0.01)
+
+
+def test_elo_margin_from_wld_all_draws_returns_zero():
+    """All draws → var=0 → returns 0.0 exactly. Kills NumberReplacer
+    on the `return 0.0` branch."""
+    assert elo_margin_from_wld(0, 0, 5) == 0.0
+    assert elo_margin_from_wld(0, 0, 10) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# _ordo_fit_margins — pin numeric output to kill formula-operator survivors
+# ---------------------------------------------------------------------------
+
+from sturddle_view.tournament.pgn_stats import _form_pairs, _ordo_fit_margins, _ordo_iterative_fit  # noqa: E402
+
+
+def test_ordo_fit_margins_one_engine_returns_none():
+    """n<2 → all None. Kills guard mutations."""
+    result = _ordo_fit_margins(["A"], [], {"A": 0.0})
+    assert result == {"A": None}
+
+
+def test_ordo_fit_margins_zero_info_returns_none():
+    """No encounters → info=0 → None for all. Kills `<= 0` mutations."""
+    result = _ordo_fit_margins(["A", "B"], [], {"A": 0.0, "B": 0.0})
+    assert result == {"A": None, "B": None}
+
+
+def test_ordo_fit_margins_two_engines_exact():
+    """2-engine symmetric case: A vs B, 10 games at equal rating. Pins
+    the Fisher info accumulation and se_diff computation."""
+    engines = ["A", "B"]
+    enc = [("A", "B", 5.0, 10)]
+    ratings = {"A": 0.0, "B": 0.0}
+    result = _ordo_fit_margins(engines, enc, ratings)
+    assert result["A"] == pytest.approx(108.617, abs=0.01)
+    assert result["B"] == pytest.approx(108.617, abs=0.01)
+
+
+def test_ordo_fit_margins_two_engines_asymmetric():
+    """2-engine with non-zero rating gap. Pins _ORDO_BETA usage in p=1/(1+exp(...))
+    and the `/ 2.0` halving in the 2-engine branch."""
+    engines = ["A", "B"]
+    enc = [("A", "B", 7.0, 10)]
+    ratings = {"A": 84.0, "B": -84.0}
+    result = _ordo_fit_margins(engines, enc, ratings)
+    assert result["A"] == pytest.approx(121.336, abs=0.01)
+    assert result["B"] == pytest.approx(121.336, abs=0.01)
+
+
+def test_ordo_fit_margins_three_engines_exact():
+    """3-engine case: exercises the Gauss-Jordan path and the last-engine
+    variance-under-constraint formula. Pins all numeric output."""
+    engines = ["A", "B", "C"]
+    enc = [
+        ("A", "B", 6.0, 10),
+        ("A", "C", 7.0, 10),
+        ("B", "C", 5.0, 10),
+    ]
+    ratings = {"A": 100.0, "B": 0.0, "C": -100.0}
+    result = _ordo_fit_margins(engines, enc, ratings)
+    assert result["A"] == pytest.approx(198.69, abs=0.01)
+    assert result["B"] == pytest.approx(188.25, abs=0.01)
+    assert result["C"] == pytest.approx(338.23, abs=0.01)
+
+
+def test_ordo_fit_margins_three_engines_symmetric():
+    """All at equal rating, equal encounters. A and C margins must be equal
+    (symmetry); B in the middle may differ. Pins the Gauss-Jordan inversion
+    and the `sum inv[i][j]` accumulation."""
+    engines = ["A", "B", "C"]
+    enc = [
+        ("A", "B", 5.0, 10),
+        ("B", "C", 5.0, 10),
+        ("A", "C", 5.0, 10),
+    ]
+    ratings = {"A": 0.0, "B": 0.0, "C": 0.0}
+    result = _ordo_fit_margins(engines, enc, ratings)
+    assert all(v is not None for v in result.values())
+    # A and B (reduced matrix entries) must be equal by symmetry;
+    # C (last engine, constraint formula) may differ.
+    assert result["A"] == pytest.approx(result["B"], abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# _ordo_iterative_fit — pin numeric output to kill formula-operator survivors
+# ---------------------------------------------------------------------------
+
+
+def test_ordo_iterative_fit_under_two_engines_returns_empty():
+    """n<2 → return {}. Kills NumberReplacer on the `< 2` guard."""
+    assert _ordo_iterative_fit([], []) == {}
+    assert _ordo_iterative_fit(["solo"], []) == {}
+
+
+def test_ordo_iterative_fit_two_engines_balanced_exact():
+    """A scores 6/10 (white) + B scores 4/10 (reverse) at 50% gap. Pins
+    the score-deviation update formula (obtained - expected, step ratio,
+    kappa = 0.05, delta halving) to a converged value."""
+    r = _ordo_iterative_fit(
+        ["A", "B"],
+        [("A", "B", 6.0, 10), ("B", "A", 4.0, 10)],
+    )
+    assert r["A"] == pytest.approx(35.5276, abs=0.01)
+    assert r["B"] == pytest.approx(-35.5276, abs=0.01)
+
+
+def test_ordo_iterative_fit_two_engines_one_sided_exact():
+    """A scores 7/10, single-color encounter. Pins the single-encounter
+    branch of the obtained accumulation and the kappa/step formula."""
+    r = _ordo_iterative_fit(["A", "B"], [("A", "B", 7.0, 10)])
+    assert r["A"] == pytest.approx(74.2419, abs=0.01)
+    assert r["B"] == pytest.approx(-74.2419, abs=0.01)
+
+
+def test_ordo_iterative_fit_three_engines_exact():
+    """3-engine joint fit, asymmetric scores. Pins mean-centering
+    (`m = sum(new_r) / n`, `new_r = [x - m for x in new_r]`) and the
+    convergence-improvement test (`if dev2 >= dev: break`)."""
+    r = _ordo_iterative_fit(
+        ["A", "B", "C"],
+        [("A", "B", 6.0, 10), ("A", "C", 7.0, 10), ("B", "C", 5.0, 10)],
+    )
+    assert r["A"] == pytest.approx(72.4049, abs=0.01)
+    assert r["B"] == pytest.approx(-24.1432, abs=0.01)
+    assert r["C"] == pytest.approx(-48.2616, abs=0.01)
+    # Mean must be exactly zero (mean-centering invariant).
+    assert sum(r.values()) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_ordo_iterative_fit_50_pct_collapses_to_zero():
+    """Both engines score 50% over many games → ratings collapse to 0.0
+    exactly. Kills mutations that bias the step (Sub→Add on
+    `obtained - expected`, USub→Not on the sign multiplier)."""
+    r = _ordo_iterative_fit(
+        ["A", "B"],
+        [("A", "B", 5.0, 10), ("B", "A", 5.0, 10)],
+    )
+    assert r["A"] == pytest.approx(0.0, abs=0.01)
+    assert r["B"] == pytest.approx(0.0, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# _form_pairs — exercise directly (only used via callers in prod)
+# ---------------------------------------------------------------------------
+
+
+def test_form_pairs_default_paired_true():
+    """Default `paired=True` keyword applies when omitted. Kills
+    `True`→`False` mutation on the default value (which would force
+    callers using the default to receive ([], [])."""
+    keyed = [
+        ("1", "A", "B", "1-0"),
+        ("1", "B", "A", "0-1"),
+    ]
+    pairs, orphans = _form_pairs(keyed)  # no paired= kwarg
+    assert pairs == [(0, 1)]
+    assert orphans == []
+
+
+def test_form_pairs_unpaired_returns_empty_for_nonempty_input():
+    """`paired=False` with non-empty keyed must short-circuit to ([], []).
+    Kills `or`→`and` on the early-return guard (which would let processing
+    continue and emit pairs/orphans for a non-paired tour)."""
+    keyed = [
+        ("1", "A", "B", "1-0"),
+        ("1", "B", "A", "0-1"),
+    ]
+    assert _form_pairs(keyed, paired=False) == ([], [])
+
+
+def test_form_pairs_empty_round_tag_becomes_orphan():
+    """An entry with empty Round tag is orphaned (not bucketed). Kills
+    `or`→`and` on the round-tag guard."""
+    keyed = [("", "A", "B", "1-0")]
+    pairs, orphans = _form_pairs(keyed, paired=True)
+    assert pairs == []
+    assert orphans == [0]
+
+
+def test_form_pairs_question_mark_round_becomes_orphan():
+    """Round=='?' is treated as no-round and orphaned. Kills `==`→`>`/`is`
+    mutations on the `round_tag == '?'` comparison."""
+    keyed = [("?", "A", "B", "1-0")]
+    pairs, orphans = _form_pairs(keyed, paired=True)
+    assert pairs == []
+    assert orphans == [0]
+
+
+def test_form_pairs_no_round_continue_processes_subsequent_entries():
+    """An entry with no round must `continue` (not `break`): later
+    entries with real rounds must still be bucketed and paired. Kills
+    ReplaceContinueWithBreak in the no-round branch."""
+    keyed = [
+        ("", "A", "B", "1-0"),                # no round → orphan
+        ("1", "A", "B", "1-0"),               # paired with next
+        ("1", "B", "A", "0-1"),
+    ]
+    pairs, orphans = _form_pairs(keyed, paired=True)
+    assert pairs == [(1, 2)]
+    assert sorted(orphans) == [0]
+
+
+def test_form_pairs_singleton_bucket_becomes_orphan():
+    """A bucket with one game (no color-flip partner) is orphaned."""
+    keyed = [("1", "A", "B", "1-0")]
+    pairs, orphans = _form_pairs(keyed, paired=True)
+    assert pairs == []
+    assert orphans == [0]
+
+
+def test_form_pairs_pair_order_uses_lower_file_index_first():
+    """When the i-th `A-white` game is at a later file index than the
+    i-th `B-white` game, the pair tuple lists the *lower* index first.
+    Kills `<` → other comparison mutations on the tuple-order normalizer."""
+    # B-white at index 0, A-white at index 1 → pair should be (0, 1).
+    keyed = [
+        ("1", "B", "A", "0-1"),  # B as white
+        ("1", "A", "B", "1-0"),  # A as white
+    ]
+    pairs, orphans = _form_pairs(keyed, paired=True)
+    assert pairs == [(0, 1)]
+    assert orphans == []
+
+
+def test_form_pairs_partition_by_first_white():
+    """Bucket entries are split by which engine is white (per the first
+    entry's white). Asymmetric counts → surplus side becomes orphans.
+    Kills `==`→`!=`/Is/IsNot mutations on the partitioning predicate
+    and NumberReplacers on the `keyed[idx][1]` white-name lookup."""
+    # 3 A-as-white + 1 B-as-white in same bucket → 1 pair + 2 orphans (extra A).
+    keyed = [
+        ("1", "A", "B", "1-0"),  # A white
+        ("1", "A", "B", "1-0"),  # A white
+        ("1", "A", "B", "1-0"),  # A white
+        ("1", "B", "A", "0-1"),  # B white
+    ]
+    pairs, orphans = _form_pairs(keyed, paired=True)
+    assert len(pairs) == 1
+    # The single pair pairs one A-white with the one B-white.
+    assert pairs[0] == (0, 3)
+    # The two surplus A-whites are orphans.
+    assert sorted(orphans) == [1, 2]
 
 
 def test_elo_from_score_perfect_score_is_none():
@@ -379,6 +721,99 @@ def test_ordo_fit_returns_mean_zero():
     elos = [fit[n][0] for n in ("A", "B", "C") if fit[n][0] is not None]
     if elos:
         assert sum(elos) == pytest.approx(0.0, abs=0.01)
+
+
+def test_ordo_fit_no_wins_losses_dicts_skips_purge():
+    """Without wins/losses dicts, no engine is purged even if its W/L
+    pattern would qualify. Kills `and`→`or` on the purge-precondition guard."""
+    encs = [("A", "B", 1.0, 1), ("B", "A", 0.0, 1)]
+    fit = ordo_fit(["A", "B"], encs)
+    # A swept B but no purge dicts → A must still get a rating, not (None, None).
+    assert fit["A"][0] is not None
+    assert fit["B"][0] is not None
+
+
+def test_ordo_fit_only_wins_dict_skips_purge():
+    """Only wins provided (losses=None) → guard fails, no purge. Kills
+    the `or`-mutation case where one None side alone would trigger purge."""
+    encs = [("A", "B", 1.0, 1), ("B", "A", 0.0, 1)]
+    fit = ordo_fit(["A", "B"], encs, wins={"A": 1, "B": 0})
+    assert fit["A"][0] is not None
+    assert fit["B"][0] is not None
+
+
+def test_ordo_fit_zero_games_engine_not_purged():
+    """An engine with wins=0 AND losses=0 (never played) must NOT be
+    purged: both `>0` legs of the purge predicate fail. Kills NumberReplacer
+    mutations on the `0` defaults in `.get(n, 0)`."""
+    encs = [("A", "B", 1.0, 2), ("B", "A", 1.0, 2)]
+    fit = ordo_fit(["A", "B", "Z"], encs,
+                   wins={"A": 1, "B": 1, "Z": 0},
+                   losses={"A": 1, "B": 1, "Z": 0})
+    # Z played nothing → singleton component → (None, None), but for the
+    # purge-not-applied reason, not the all-W/all-L reason. The crucial
+    # check is that purge does NOT fire on a zero-zero engine.
+    # Verified indirectly: A and B form a connected component and get
+    # ratings; Z is a singleton.
+    assert fit["A"][0] is not None
+    assert fit["B"][0] is not None
+    assert fit["Z"] == (None, None)
+
+
+def test_ordo_fit_purge_requires_strict_positive_wins():
+    """`wins.get(n, 0) > 0` must be STRICTLY positive. An engine missing
+    from the wins dict (defaults to 0) cannot be purged via the wins-leg.
+    Kills `> 0`→`>= 0` mutation on the wins-leg of the purge predicate."""
+    encs = [("A", "B", 1.0, 2), ("B", "A", 1.0, 2)]
+    # "Z" not in wins dict at all → wins.get("Z", 0) == 0 → strictly-positive
+    # leg fails. losses.get("Z", 0) > 0 with wins == 0 would trigger the
+    # other purge leg, so put losses at 0 too.
+    fit = ordo_fit(["A", "B", "Z"], encs,
+                   wins={"A": 1, "B": 1},
+                   losses={"A": 1, "B": 1})
+    # Z must not be purged; it ends up as a singleton (None, None).
+    # The point: it must NOT be classified as "all-wins" via `>= 0` mutation.
+    # If `>= 0` were used, Z would be flagged because losses.get("Z",0)==0
+    # would also satisfy `>= 0` (the symmetric leg). Test passes if Z is
+    # singleton-(None,None) for the right reason (connectivity, not purge).
+    assert fit["Z"] == (None, None)
+    assert fit["A"][0] is not None  # purged engines wouldn't be fit
+
+
+def test_ordo_fit_singleton_component_returns_none():
+    """An engine with zero encounters → singleton component → (None, None).
+    Kills `== 1`→`< 1` / `<= 1` mutations on the singleton-check and
+    ReplaceContinueWithBreak on the singleton branch (break would skip
+    the remaining components)."""
+    encs = [("A", "B", 1.0, 2), ("B", "A", 1.0, 2)]
+    # Three engines: A+B connected, C isolated. C must get (None, None);
+    # A and B must get real ratings (proving `continue` worked — `break`
+    # would have skipped fitting the A,B component if A,B sorted after C).
+    fit = ordo_fit(["C", "A", "B"], encs,
+                   wins={"A": 1, "B": 1, "C": 0},
+                   losses={"A": 1, "B": 1, "C": 0})
+    assert fit["C"] == (None, None)
+    assert fit["A"][0] is not None
+    assert fit["B"][0] is not None
+
+
+def test_ordo_fit_empty_remaining_returns_all_none():
+    """If every engine is purged, return (None, None) for all. Kills
+    AddNot on `if not remaining:` early-exit guard."""
+    # Both A and B are "all wins" against each other? Impossible — make
+    # one all-wins, one all-losses, each against the other.
+    encs = [("A", "B", 1.0, 1)]
+    fit = ordo_fit(["A", "B"], encs,
+                   wins={"A": 1, "B": 0},
+                   losses={"A": 0, "B": 1})
+    # Both purged → all (None, None).
+    assert fit["A"] == (None, None)
+    assert fit["B"] == (None, None)
+
+
+def test_ordo_fit_empty_engine_names_returns_empty_dict():
+    """No engines → empty dict. Kills AddNot on the early-exit guard."""
+    assert ordo_fit([], []) == {}
 
 
 def test_standings_populates_elo_ordo_for_two_engines(tmp_path):
@@ -647,6 +1082,67 @@ def test_sprt_invalid_params_raise(tmp_path, overrides):
         _sprt(p, _params(**overrides))
 
 
+def test_sprt_alpha_beta_defaults_accept_valid_params(tmp_path):
+    """Omit alpha/beta from params → defaults (0.05) must be valid.
+    Kills NumberReplacers on the default values (e.g. `1.05`, `-0.95`)
+    which would trip the (0, 1) range guard and raise ValueError."""
+    p = _write_pgn(tmp_path, "")
+    # No alpha/beta keys → exercise the .get(..., 0.05) defaults.
+    r = compute_sprt(p, {"elo0": 0.0, "elo1": 5.0},
+                     engine_a="A", engine_b="B")
+    assert r.status == "continue"
+    # Bounds computed from default alpha=0.05, beta=0.05.
+    assert r.lower_bound == pytest.approx(math.log(0.05 / 0.95))
+    assert r.upper_bound == pytest.approx(math.log(0.95 / 0.05))
+
+
+def test_sprt_pentanomial_alias_accepted(tmp_path):
+    """model='pentanomial' is the UI alias for 'normalized' and must be
+    accepted (and reported back as 'normalized'). Kills `==` mutations
+    on the alias-rewrite branch."""
+    rc = _RoundCounter()
+    body = "".join(_pair(rc, "A", "B", "1-0", "0-1") for _ in range(3))
+    p = _write_pgn(tmp_path, body)
+    r_alias = _sprt(p, _params(model="pentanomial"))
+    r_canon = _sprt(p, _params(model="normalized"))
+    assert r_alias.model == "normalized"  # rewritten internally
+    assert r_alias.status == r_canon.status
+    assert r_alias.llr == pytest.approx(r_canon.llr, abs=1e-12)
+
+
+def test_sprt_single_pair_returns_zero_llr(tmp_path):
+    """n=1 pair → variance ill-defined → returns LLR=0 / continue. Kills
+    NumberReplacer on `llr=0.0` in the n<2 branch (mutating to 1.0/-1.0
+    would change the asserted LLR)."""
+    rc = _RoundCounter()
+    body = _pair(rc, "A", "B", "1-0", "0-1")
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params())
+    assert r.pairs == 1
+    assert r.status == "continue"
+    assert r.llr == 0.0
+
+
+def test_sprt_exact_llr_three_pairs(tmp_path):
+    """Hand-computed LLR for 3 pairs with scores [2.0, 1.0, 0.0]
+    (A wins both / draw / B wins both). Pins:
+      - `s / 2.0` per-pair normalization
+      - `(s - mu) ** 2` variance numerator
+      - `/ (n - 1)` Bessel-corrected denominator
+      - the full Gaussian LLR formula
+    Reference: LLR = 3 * (s1-s0) * (0.5 - (s0+s1)/2) / 0.25 ≈ -3.107e-4."""
+    rc = _RoundCounter()
+    body = (
+        _pair(rc, "A", "B", "1-0", "0-1")          # pair score 2.0 (A swept)
+        + _pair(rc, "A", "B", "1/2-1/2", "1/2-1/2")  # pair score 1.0 (drawn)
+        + _pair(rc, "A", "B", "0-1", "1-0")          # pair score 0.0 (B swept)
+    )
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params(elo0=0.0, elo1=5.0))
+    assert r.pairs == 3
+    assert r.llr == pytest.approx(-3.1065809e-4, abs=1e-9)
+
+
 def test_sprt_to_dict_round_trip(tmp_path):
     p = _write_pgn(tmp_path, "")
     d = _sprt(p, _params()).to_dict()
@@ -872,6 +1368,96 @@ def test_sprt_logistic_model_reported_in_result(tmp_path):
     p = _write_pgn(tmp_path, _game("A", "B", "1-0"))
     r = _sprt(p, _params(model="logistic"))
     assert r.model == "logistic"
+
+
+def test_sprt_logistic_exact_llr_three_wins_one_loss_one_draw(tmp_path):
+    """Hand-computed logistic LLR for w=3 l=1 d=1, elo0=0, elo1=10. Pins:
+      - `d_obs = d / n` ratio
+      - `s = 1 / (1 + 10**(-elo/400))` Elo-to-score formula
+      - `pw = s - d_obs/2`, `pl = 1 - s - d_obs/2` trinomial probabilities
+      - `LLR = w * log(pw1/pw0) + l * log(pl1/pl0)` summation
+    Reference value (pure Python): 0.06937790251627435."""
+    body = (
+        _game("A", "B", "1-0") * 3       # 3 A-wins (white)
+        + _game("A", "B", "0-1")         # 1 A-loss (B white-win? No, A is white losing)
+        + _game("A", "B", "1/2-1/2")     # 1 draw
+    )
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params(elo0=0.0, elo1=10.0, model="logistic"))
+    assert r.pairs == 5
+    assert r.llr == pytest.approx(0.0693779, abs=1e-7)
+
+
+def test_sprt_logistic_only_mismatched_games_returns_zero_llr(tmp_path):
+    """All games involve a 3rd engine → n=0 → returns LLR=0, pairs=0.
+    Kills NumberReplacer on the `llr=0.0` in the n==0 logistic branch."""
+    body = _game("A", "C", "1-0") + _game("C", "B", "1-0")  # neither is A-vs-B
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params(model="logistic"))
+    assert r.pairs == 0
+    assert r.status == "continue"
+    assert r.llr == 0.0
+
+
+def test_sprt_logistic_white_win_routes_by_color_to_a_or_b(tmp_path):
+    """A wins twice as white → A's w counter += 2; B wins once as white →
+    A's l counter += 1 (B winning means A lost). Pins the `if white ==
+    a_name` slot-routing inside the `result == _WHITE_WIN` branch."""
+    body = (
+        _game("A", "B", "1-0")           # A white, A wins → A.w += 1
+        + _game("A", "B", "1-0")         # A white, A wins → A.w += 1
+        + _game("B", "A", "1-0")         # B white, B wins → A.l += 1
+    )
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params(elo0=0.0, elo1=10.0, model="logistic"))
+    # w=2, l=1, d=0, n=3, d_obs=0.
+    # s0=0.5, s1=0.5143871841659987
+    # pw0=0.5, pl0=0.5; pw1=0.5143871, pl1=0.4856128
+    # LLR = 2*log(pw1/pw0) + 1*log(pl1/pl0)
+    import math as _m
+    s0, s1 = 0.5, 1.0 / (1.0 + 10.0 ** (-10.0 / 400.0))
+    pw0, pl0 = s0, 1.0 - s0
+    pw1, pl1 = s1, 1.0 - s1
+    expected = 2 * _m.log(pw1 / pw0) + 1 * _m.log(pl1 / pl0)
+    assert r.pairs == 3
+    assert r.llr == pytest.approx(expected, abs=1e-9)
+
+
+def test_sprt_logistic_black_win_routes_by_color_to_a_or_b(tmp_path):
+    """A wins as black; B wins as black. Pins the `if black == a_name`
+    slot-routing inside the `result == _BLACK_WIN` branch."""
+    body = (
+        _game("B", "A", "0-1")           # A black, A wins → A.w += 1
+        + _game("B", "A", "0-1")         # A black, A wins → A.w += 1
+        + _game("A", "B", "0-1")         # B black, B wins → A.l += 1
+    )
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params(elo0=0.0, elo1=10.0, model="logistic"))
+    # Same W/L/D as the previous test → identical LLR.
+    import math as _m
+    s0, s1 = 0.5, 1.0 / (1.0 + 10.0 ** (-10.0 / 400.0))
+    expected = 2 * _m.log(s1 / s0) + 1 * _m.log((1 - s1) / (1 - s0))
+    assert r.pairs == 3
+    assert r.llr == pytest.approx(expected, abs=1e-9)
+
+
+def test_sprt_logistic_engine_identity_via_long_names(tmp_path):
+    """Use multi-word engine names to rule out CPython short-string
+    interning: `==` comparisons must still distinguish A from B when the
+    strings are not interned. Pins `==`→`is` mutations on the
+    `white == a_name` / `black == a_name` color-routing checks."""
+    long_a, long_b = "engine-alpha-v1", "engine-beta-v2"
+    body = (
+        _game(long_a, long_b, "1-0")     # long_a wins as white
+        + _game(long_b, long_a, "1-0")   # long_b wins as white (long_a loses)
+    )
+    p = _write_pgn(tmp_path, body)
+    r = compute_sprt(p, _params(elo0=0.0, elo1=10.0, model="logistic"),
+                     engine_a=long_a, engine_b=long_b)
+    assert r.pairs == 2
+    # With `==`→`is` mutation and non-interned strings, both games would
+    # be misrouted → w=l=0 instead of w=1,l=1 → LLR=0.
+    assert r.llr != 0.0
 
 
 def test_sprt_logistic_skips_engine_mismatch(tmp_path, caplog):
@@ -1167,6 +1753,45 @@ def test_rewrite_skips_ongoing_results(tmp_path):
     assert '[Round "1"]' in after
 
 
+def test_rewrite_output_blocks_end_with_exactly_one_blank_line(tmp_path):
+    """Each kept game in the rewritten PGN ends with exactly one trailing
+    blank line (`\\n\\n`), never more. Kills `not block.endswith("\\n\\n")`
+    Delete_Not/AddNot mutations on the trailing-newline normalizer
+    (which would append extra newlines and produce `\\n\\n\\n` runs)."""
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("2", "A", "B", "1-0")  # partial → triggers rewrite
+    )
+    p = _write_pgn(tmp_path, body)
+    rewrite_drop_partial_pairs(p)
+    after = p.read_bytes()
+    # No 3-newline runs anywhere in the output.
+    assert b"\n\n\n" not in after
+    # File ends with exactly one blank line.
+    assert after.endswith(b"\n\n")
+    assert not after.endswith(b"\n\n\n")
+
+
+def test_rewrite_normalizes_block_without_trailing_blank_line(tmp_path):
+    """A kept block missing its trailing blank line still ends with exactly
+    `\\n\\n` after rewrite. Kills AddNot on the
+    `"\\n" if block.endswith("\\n") else "\\n\\n"` ternary, which would
+    pick the wrong newline count for a single-newline-ending block."""
+    # Last kept block ends with a single `\n` (no trailing blank line).
+    body = (
+        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
+        + _game_round("2", "A", "B", "1-0")  # partial → dropped
+    )
+    # Strip the trailing blank line from the last (now-kept) game.
+    body = body.rstrip("\n") + "\n"  # ends with exactly one \n
+    p = _write_pgn(tmp_path, body)
+    rewrite_drop_partial_pairs(p)
+    after = p.read_bytes()
+    # No 3-newline run anywhere.
+    assert b"\n\n\n" not in after
+    assert after.endswith(b"\n\n")
+
+
 def test_rewrite_preserves_round_collision_with_two_complete_pairs(tmp_path):
     # Round 1 has two distinct color-flipped pairs sharing the same Round
     # number (Pause/Resume Round-reuse). All 4 games pair cleanly, so the
@@ -1380,6 +2005,83 @@ def test_read_game_record_returns_hash_and_summary():
     assert s["white"] == rec["engine_white"] and s["black"] == rec["engine_black"]
     # result mirrors rec; _get_game_offsets only indexes decisive games
     assert s["result"] == rec["result"]
+
+
+def test_read_game_record_missing_file_returns_none(tmp_path):
+    """Nonexistent PGN path → return None (not raise). Kills
+    ExceptionReplacer on the `FileNotFoundError` catch (replacing with
+    a non-parent exception class would let the error propagate)."""
+    p = tmp_path / "absent.pgn"
+    assert read_game_record(p, 1) is None
+
+
+def test_read_game_record_out_of_range_returns_none(tmp_path):
+    """game_n past end of file → None. Kills NotEq/Gt mutations on
+    the `game_n > len(offsets)` bounds check."""
+    body = _game("A", "B", "1-0")
+    p = _write_pgn(tmp_path, body)
+    assert read_game_record(p, 2) is None
+    assert read_game_record(p, 99) is None
+
+
+def test_read_game_record_zero_or_negative_game_n_returns_none(tmp_path):
+    """game_n < 1 → None. Pins the `< 1` guard."""
+    body = _game("A", "B", "1-0")
+    p = _write_pgn(tmp_path, body)
+    assert read_game_record(p, 0) is None
+    assert read_game_record(p, -1) is None
+
+
+def test_read_game_record_seeks_to_correct_game_for_n_greater_than_two(tmp_path):
+    """Reading game 3 must return game 3, not game 1 (`game_n - 1`
+    indexing into offsets). Kills `-` → `>>` mutation: `3 - 1 = 2`
+    but `3 >> 1 = 1`, which would re-read game 2."""
+    body = (
+        _game("AAA", "BBB", "1-0")  # game 1
+        + _game("CCC", "DDD", "0-1")  # game 2
+        + _game("EEE", "FFF", "1/2-1/2")  # game 3
+    )
+    p = _write_pgn(tmp_path, body)
+    rec = read_game_record(p, 3)
+    assert rec is not None
+    assert rec["engine_white"] == "EEE"
+    assert rec["engine_black"] == "FFF"
+    assert rec["result"] == "1/2-1/2"
+
+
+def test_read_game_record_final_fen_reflects_played_moves(tmp_path):
+    """final_fen must reflect the position AFTER the last move was played
+    (board iteration over mainline). Kills ZeroIterationForLoop on the
+    walk_mainline loop (would leave board=None → final_fen=initial pos)
+    and IsNot mutation on the `if board is None:` reset guard
+    (would overwrite the iterated board with the initial one)."""
+    body = _game("A", "B", "1-0")  # contains `1. e4 e5 1-0`
+    p = _write_pgn(tmp_path, body)
+    rec = read_game_record(p, 1)
+    assert rec is not None
+    # Initial position FEN; final_fen must NOT equal this.
+    initial_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    assert rec["final_fen"] != initial_fen
+    # last_move must be set (loop iterated at least once).
+    assert rec["last_move"] is not None
+
+
+def test_read_game_record_summary_question_mark_names_become_none(tmp_path):
+    """White or Black tag value of '?' (the PGN unknown sentinel) must
+    map to None in the summary dict. Kills `!=`→`is`/`>`/`>=` mutations
+    on the `white != '?'` / `black != '?'` checks."""
+    # Build a game with explicit "?" tags (override _game helper).
+    body = (
+        '[Event "x"]\n[White "?"]\n[Black "?"]\n'
+        '[Result "1-0"]\n\n1. e4 e5 1-0\n\n'
+    )
+    p = _write_pgn(tmp_path, body)
+    rec = read_game_record(p, 1)
+    assert rec is not None
+    assert rec["summary"]["white"] is None
+    assert rec["summary"]["black"] is None
+    # Engine-level headers fall back to "?" themselves (not None).
+    assert rec["engine_white"] == "?" and rec["engine_black"] == "?"
 
 
 

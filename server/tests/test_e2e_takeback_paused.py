@@ -5,71 +5,65 @@ button. Drives a real browser via Playwright.
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
-
+import httpx
 import pytest
 
 pytest.importorskip("playwright.async_api")
 
-from sturddle_view.app import create_app  # noqa: E402
-from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 
-from .conftest import run_uvicorn  # noqa: E402
+from .conftest import run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
+
+
+FAKE_ENGINE_PATH = "/nonexistent/engine"
 
 
 @pytest.fixture
 def server(tmp_path):
-    settings = Settings(token="test-token", auth_disabled=True)
-    settings.pgn_dir = tmp_path / "pgn"
-    registry = EngineRegistry(path=tmp_path / "engines.json")
-    e = registry.add(name="MyEngine", path="/nonexistent/engine")
-    registry.select(e.id)
-    app = create_app(settings=settings, engine_registry=registry)
-    with run_uvicorn(app) as (base, _s):
-        yield base, app
+    registry_path = tmp_path / "engines.json"
+    seed = EngineRegistry(path=registry_path)
+    e = seed.add(name="MyEngine", path=FAKE_ENGINE_PATH)
+    seed.select(e.id)
+    env = {
+        "SV_PGN_DIR": str(tmp_path / "pgn"),
+        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
+        "SV_ENGINE_REGISTRY_PATH": str(registry_path),
+        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
+        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
+        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
+    }
+    with run_uvicorn_subprocess(env_overrides=env) as base:
+        yield base
 
 
 @pytest.mark.asyncio
 async def test_takeback_button_enabled_while_paused(server, page):
-    base, app = server
+    base = server
 
-    from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl
-
-    hve = HumanVsEngine(
-        engine_path="/nonexistent/engine",
-        bus=app.state.event_bus,
-        openings=getattr(app.state, "openings", None),
-        settings=app.state.settings,
+    # Install a 2-ply game: human=white, moves e2e4 e7e5 -> it's white's
+    # (the human's) turn, which is what pause() requires. Engine path
+    # matches the registry entry so _get_hve doesn't trigger a swap.
+    install = httpx.post(
+        f"{base}/_test/hve/install",
+        json={
+            "engine_path": FAKE_ENGINE_PATH,
+            "human_white": True,
+            "moves_uci": ["e2e4", "e7e5"],
+            "tc": {"initial_seconds": 60.0, "increment_seconds": 0.0},
+        },
     )
-    # No real engine: stub ensure + suppress engine kicks.
-    class _Stub:
-        def send_line(self, _): pass
-        async def quit(self): return None
-    async def _ensure():
-        hve._engine = _Stub()
-        return hve._engine
-    hve._ensure_engine = _ensure
-    hve._engine_to_move = AsyncMock()
+    install.raise_for_status()
 
-    await hve.new_game(human_white=True, tc=TimeControl(60.0, 0.0))
-    await hve.submit_move("e2e4")
-    # Inject the engine's reply directly so it's the human's turn again,
-    # which is required by pause().
-    import chess
-    async with hve._lock:
-        hve._clock.append_snapshot()
-        hve._consume_turn_time()
-        hve._board.push(chess.Move.from_uci("e7e5"))
-        hve._eval_history.append(None)
-        await hve._publish_board()
-        await hve._publish_clock()
-    await hve.pause()
-    assert hve.is_paused
-    app.state.hve = hve
+    # Drive into PAUSED via the public HTTP endpoint.
+    pause_resp = httpx.post(f"{base}/game/pause")
+    pause_resp.raise_for_status()
+
+    state = httpx.get(f"{base}/_test/hve/state").json()
+    assert state["paused"] is True, f"server not paused after /game/pause: {state}"
 
     await page.goto(base + "/")
     await page.wait_for_selector("#play-perspective")
+    await wait_perspective_ready(page)
     # First wait for the Resume affordance (icon=forward-step) so we know
     # the client has applied paused=true. Then assert takeback is enabled.
     await page.wait_for_function(

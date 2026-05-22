@@ -23,7 +23,7 @@ from sturddle_view.engines import EngineRegistry  # noqa: E402
 from sturddle_view.tournament import fastchess as fc_mod  # noqa: E402
 from sturddle_view.tournament.fastchess import FastchessRunner  # noqa: E402
 
-from .conftest import free_port, run_uvicorn  # noqa: E402
+from .conftest import free_port, run_uvicorn, wait_perspective_ready  # noqa: E402
 
 
 # Minimal fake fastchess: stays alive so the tournament stays "running".
@@ -105,6 +105,7 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
 
             await page.goto(f"{base}/")
             await page.wait_for_selector("#play-perspective")
+            await wait_perspective_ready(page)
             await page.click('button[data-perspective="engines"]')
             await page.wait_for_selector(".tournament-row")
 

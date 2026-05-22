@@ -27,6 +27,13 @@ log = logging.getLogger(__name__)
 
 
 def default_registry_path() -> Path:
+    """Path to the persisted engine registry.
+
+    ``SV_ENGINE_REGISTRY_PATH`` overrides the default (tests, isolated
+    deployments). Defaults to platform user-config dir."""
+    override = os.environ.get("SV_ENGINE_REGISTRY_PATH")
+    if override:
+        return Path(override)
     return Path(user_config_dir(APP_NAME, appauthor=False)) / "engines.json"
 
 

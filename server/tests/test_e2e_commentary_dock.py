@@ -10,17 +10,14 @@ Skipped if Playwright is missing.
 """
 from __future__ import annotations
 
-import sys
-
+import httpx
 import pytest
 
 pytest.importorskip("playwright.async_api")
 
-from sturddle_view.app import create_app  # noqa: E402
-from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 
-from .conftest import run_uvicorn  # noqa: E402
+from .conftest import run_uvicorn_subprocess  # noqa: E402
 
 
 PLAY_PERSP = "#play-perspective"
@@ -28,25 +25,44 @@ COMMENTS_HOST = ".play-comments-host"
 COMMENTS_SLOT = f"{COMMENTS_HOST} .dock-slot"
 COMMENTS_WB = ".winbox.sturddle-wb-commentary"
 
-SEED_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-# Three plies, comments only on plies 1 and 3 (cursor 1 and 3 respectively).
-SEED_MOVES = ["e2e4", "e7e5", "g1f3"]
-SEED_COMMENTS = ["First move comment.", None, "Third move comment."]
 SEED_ROOT_COMMENT = "Root annotation."
+SEED_FIRST_COMMENT = "First move comment."
+SEED_THIRD_COMMENT = "Third move comment."
+
+# PGN with a root comment and per-ply comments on plies 1 and 3 (no
+# comment on ply 2). Imported into view mode via /game/import, which
+# parses PGN comments into ViewModeParams.comments/root_comment.
+_PGN = (
+    '[Event "?"]\n'
+    '[Site "?"]\n'
+    '[Date "????.??.??"]\n'
+    '[Round "?"]\n'
+    '[White "W"]\n'
+    '[Black "B"]\n'
+    '[Result "*"]\n\n'
+    f'{{{SEED_ROOT_COMMENT}}} '
+    f'1. e4 {{{SEED_FIRST_COMMENT}}} e5 2. Nf3 {{{SEED_THIRD_COMMENT}}} *\n'
+)
 
 
 @pytest.fixture
 def server(tmp_path):
-    settings = Settings(token="test-token", auth_disabled=True)
-    settings.pgn_dir = tmp_path / "pgn"
-    registry = EngineRegistry(path=tmp_path / "engines.json")
-    # Fake engine so _get_hve doesn't reject API calls; view mode never
+    # Fake engine so _get_hve doesn't reject /game/import; view mode never
     # actually spawns it.
-    e = registry.add(name="MyEngine", path="/nonexistent/engine")
-    registry.select(e.id)
-    app = create_app(settings=settings, engine_registry=registry)
-    with run_uvicorn(app) as (base, _s):
-        yield base, app
+    registry_path = tmp_path / "engines.json"
+    seed = EngineRegistry(path=registry_path)
+    e = seed.add(name="MyEngine", path="/nonexistent/engine")
+    seed.select(e.id)
+    env = {
+        "SV_PGN_DIR": str(tmp_path / "pgn"),
+        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
+        "SV_ENGINE_REGISTRY_PATH": str(registry_path),
+        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
+        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
+        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
+    }
+    with run_uvicorn_subprocess(env_overrides=env) as base:
+        yield base
 
 
 async def _new_page(make_page):
@@ -64,22 +80,21 @@ def _assert_no_errors(errors):
     assert real == [], "JS errors:\n" + "\n".join(real)
 
 
-async def _seed_view_mode(app):
-    from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
-    hve = HumanVsEngine(
-        engine_path="/nonexistent/engine",
-        bus=app.state.event_bus,
-        openings=getattr(app.state, "openings", None),
-        settings=app.state.settings,
+def _seed_view_mode(base):
+    """Drive the server into view mode by importing the seed PGN."""
+    resp = httpx.post(
+        f"{base}/game/import",
+        json={"text": _PGN, "format": "pgn"},
     )
-    await hve.enter_view_mode(ViewModeParams(
-        start_fen=SEED_FEN,
-        moves_uci=SEED_MOVES,
-        clock_history=None,
-        comments=SEED_COMMENTS,
-        root_comment=SEED_ROOT_COMMENT,
-    ))
-    app.state.hve = hve
+    resp.raise_for_status()
+
+
+def _set_view_show_pgn_comments(base, value):
+    resp = httpx.put(
+        f"{base}/settings",
+        json={"view_show_pgn_comments": value},
+    )
+    resp.raise_for_status()
 
 
 async def _goto_play_in_view_mode(page, base):
@@ -113,8 +128,8 @@ async def _snapshot(page):
 @pytest.mark.asyncio
 async def test_commentary_opens_docked_on_view_mode_entry(server, make_page):
     """Entering view-mode with setting on -> commentary auto-docks and shows root comment."""
-    base, app = server
-    await _seed_view_mode(app)
+    base = server
+    _seed_view_mode(base)
     _ctx, page, errors = await _new_page(make_page)
     await _goto_play_in_view_mode(page, base)
     await page.wait_for_selector(COMMENTS_SLOT)
@@ -131,20 +146,26 @@ async def test_commentary_opens_docked_on_view_mode_entry(server, make_page):
 async def test_commentary_survives_debug_window_lifecycle(server, make_page):
     """Regression: closeDebugWindowsPersist (triggered on view-mode entry)
     must only close UCI-dock instances, not commentary."""
-    base, app = server
-    await _seed_view_mode(app)
+    base = server
+    _seed_view_mode(base)
     _ctx, page, errors = await _new_page(make_page)
     await _goto_play_in_view_mode(page, base)
     await page.wait_for_selector(COMMENTS_SLOT)
     # Stays open across navigation (which triggers fresh board_update +
     # the analysis-off code path that previously tore commentary down).
     await page.evaluate("document.querySelector('#view-forward')?.click()")
-    await page.wait_for_timeout(300)
+    await page.wait_for_function(
+        f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
+        f"?.textContent?.includes('{SEED_FIRST_COMMENT}')",
+    )
     s = await _snapshot(page)
     assert s["slotPresent"]
     # And after another navigation step.
     await page.evaluate("document.querySelector('#view-forward')?.click()")
-    await page.wait_for_timeout(300)
+    await page.wait_for_function(
+        f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
+        "?.textContent?.includes('No commentary at this ply')",
+    )
     s = await _snapshot(page)
     assert s["slotPresent"]
     _assert_no_errors(errors)
@@ -153,8 +174,8 @@ async def test_commentary_survives_debug_window_lifecycle(server, make_page):
 @pytest.mark.asyncio
 async def test_commentary_text_updates_per_ply(server, make_page):
     """Navigating to a no-comment ply shows placeholder; window stays open."""
-    base, app = server
-    await _seed_view_mode(app)
+    base = server
+    _seed_view_mode(base)
     _ctx, page, errors = await _new_page(make_page)
     await _goto_play_in_view_mode(page, base)
     await page.wait_for_selector(COMMENTS_SLOT)
@@ -167,7 +188,7 @@ async def test_commentary_text_updates_per_ply(server, make_page):
     await page.evaluate("document.querySelector('#view-forward')?.click()")
     await page.wait_for_function(
         f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
-        "?.textContent?.includes('First move comment.')",
+        f"?.textContent?.includes('{SEED_FIRST_COMMENT}')",
     )
 
     # Cursor 2 = no comment -> placeholder.
@@ -183,7 +204,7 @@ async def test_commentary_text_updates_per_ply(server, make_page):
     await page.evaluate("document.querySelector('#view-forward')?.click()")
     await page.wait_for_function(
         f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
-        "?.textContent?.includes('Third move comment.')",
+        f"?.textContent?.includes('{SEED_THIRD_COMMENT}')",
     )
     _assert_no_errors(errors)
 
@@ -191,8 +212,8 @@ async def test_commentary_text_updates_per_ply(server, make_page):
 @pytest.mark.asyncio
 async def test_undock_floats_as_winbox(server, make_page):
     """Slot undock button moves commentary into a floating WinBox."""
-    base, app = server
-    await _seed_view_mode(app)
+    base = server
+    _seed_view_mode(base)
     _ctx, page, errors = await _new_page(make_page)
     await _goto_play_in_view_mode(page, base)
     await page.wait_for_selector(COMMENTS_SLOT)
@@ -210,8 +231,8 @@ async def test_undock_floats_as_winbox(server, make_page):
 @pytest.mark.asyncio
 async def test_redock_via_winbox_control(server, make_page):
     """The WinBox dock control returns commentary to a dock slot."""
-    base, app = server
-    await _seed_view_mode(app)
+    base = server
+    _seed_view_mode(base)
     _ctx, page, errors = await _new_page(make_page)
     await _goto_play_in_view_mode(page, base)
     await page.wait_for_selector(COMMENTS_SLOT)
@@ -235,8 +256,8 @@ async def test_redock_via_winbox_control(server, make_page):
 @pytest.mark.asyncio
 async def test_slot_close_clears_setting(server, make_page):
     """Clicking the slot X closes commentary AND clears the server setting."""
-    base, app = server
-    await _seed_view_mode(app)
+    base = server
+    _seed_view_mode(base)
     _ctx, page, errors = await _new_page(make_page)
     await _goto_play_in_view_mode(page, base)
     await page.wait_for_selector(COMMENTS_SLOT)
@@ -256,14 +277,16 @@ async def test_slot_close_clears_setting(server, make_page):
 @pytest.mark.asyncio
 async def test_setting_off_keeps_commentary_closed(server, make_page):
     """Entering view mode with setting=false -> no dock slot, no WinBox."""
-    base, app = server
-    # Pre-set the setting off before mounting the perspective.
-    app.state.settings.view_show_pgn_comments = False
-    await _seed_view_mode(app)
+    base = server
+    # Pre-set the setting off before the perspective mounts.
+    _set_view_show_pgn_comments(base, False)
+    _seed_view_mode(base)
     _ctx, page, errors = await _new_page(make_page)
     await _goto_play_in_view_mode(page, base)
-    # Settle then assert.
-    await page.wait_for_timeout(500)
+    # _goto_play_in_view_mode awaits the view-controls becoming visible,
+    # which only fires after the perspective's awaited refreshSettings()
+    # GET resolves and the subsequent board_update runs
+    # syncCommentsVisibility -- so by here the no-open decision is final.
     s = await _snapshot(page)
     assert not s["slotPresent"]
     assert not s["wbPresent"]

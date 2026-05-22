@@ -355,7 +355,7 @@ async def test_probe_engine_times_out_on_hanging_handshake(tmp_path, monkeypatch
 
     # A tiny "engine" that opens stdin and never replies to anything.
     py = tmp_path / "hang.py"
-    py.write_text("import sys\nsys.stdin.read()\n")
+    py.write_text(f"#!{sys.executable}\nimport sys\nsys.stdin.read()\n")
     if sys.platform.startswith("win"):
         wrapper = tmp_path / "hang.cmd"
         wrapper.write_text(f'@"{sys.executable}" "{py}" %*\r\n')

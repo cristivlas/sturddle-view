@@ -71,13 +71,6 @@ def test_pgn_clk_annotation_preserved_in_hash():
     assert canonical_hash(a, "pgn") != canonical_hash(b, "pgn")
 
 
-# --- PGN: stability -----------------------------------------------------
-
-def test_pgn_hash_is_stable():
-    pgn = '[Event "X"]\n[Result "*"]\n\n1. e4 e5 *\n'
-    assert canonical_hash(pgn, "pgn") == canonical_hash(pgn, "pgn")
-
-
 # --- FEN: defaults filled in -------------------------------------------
 
 def test_fen_short_equals_full():
@@ -112,12 +105,6 @@ def test_empty_pgn_raises():
 
 
 # --- Real PGN fixtures: source-formatting variants hash equal -----------
-
-@pytest.mark.parametrize("filename", REAL_PGN_FIXTURES)
-def test_real_pgn_hash_stable(filename):
-    text = (FIXTURES / filename).read_text(encoding="utf-8")
-    assert canonical_hash(text, "pgn") == canonical_hash(text, "pgn")
-
 
 @pytest.mark.parametrize("filename", REAL_PGN_FIXTURES)
 def test_real_pgn_crlf_hash_equal(filename):

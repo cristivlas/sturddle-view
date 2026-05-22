@@ -136,6 +136,31 @@ def test_internal_divergence_does_not_match():
     assert q.add_pgn_record(_record(moves=pgn)) is None
 
 
+def test_overrun_by_one_with_divergence_in_compared_range_does_not_match():
+    """Captured overruns PGN by 1 ply AND has a real divergence inside
+    the compared range. Must NOT match. Pins the precedence of
+    `cmp_end = n - 1 - max(0, overrun)` against `>>` mutations that
+    parse as `(n - 1) >> max(0, overrun)`, which would shrink cmp_end
+    enough to skip past the divergence."""
+    captured = list(_ENOUGH) + ["b1c3"]  # 13 plies (overrun by 1)
+    pgn = list(_ENOUGH)                    # 12 plies
+    pgn[7] = "XXXX"                        # divergence at index 7
+    q = ReconciliationQueue()
+    q.add_pending(_pending(moves=captured))
+    assert q.add_pgn_record(_record(moves=pgn)) is None
+
+
+def test_divergence_at_index_zero_does_not_match():
+    """First-ply divergence is caught by the backwards walk. Pins the
+    range stop value `-1` against `-0`/`+1` NumberReplacer mutations
+    that would change the range to exclude index 0."""
+    captured = ["XXXX"] + _ENOUGH[1:]
+    pgn = list(_ENOUGH)
+    q = ReconciliationQueue()
+    q.add_pending(_pending(moves=captured))
+    assert q.add_pgn_record(_record(moves=pgn)) is None
+
+
 def test_below_min_plies_does_not_match():
     """Short games skip reconciliation entirely. The pending side is
     silently dropped (no entry queued); a too-short PGN record is also
@@ -189,6 +214,56 @@ def test_timeout_drops_pending(monkeypatch):
     assert len(dropped) == 1
     assert dropped[0].pair_id == "pair-1"
     assert q.pending_count == 0
+
+
+def test_sweep_does_not_drop_when_age_below_timeout(monkeypatch):
+    """When (now - enqueued_at) < timeout_s, sweep keeps the entry.
+    Pin now ~= enqueued_at so the *subtraction* yields a tiny number;
+    a buggy `+` or `*` substitute would produce a huge age and over-drop."""
+    q = ReconciliationQueue(timeout_s=0.5)
+    entry = _pending()
+    # Force enqueued_at to a known large value matching `now`.
+    entry.enqueued_at = 1_000_000.0
+    q._pending.append(entry)
+
+    monkeypatch.setattr(time, "monotonic", lambda: 1_000_000.0 + 0.1)  # age=0.1s
+    dropped = q.sweep()
+    assert dropped == []
+    assert q.pending_count == 1
+
+
+def test_sweep_does_not_drop_at_exact_timeout(monkeypatch):
+    """Age equal to timeout_s is NOT dropped (strict `>`).
+    Catches Gt -> GtE / NotEq / IsNot mutations on the comparison."""
+    q = ReconciliationQueue(timeout_s=0.5)
+    entry = _pending()
+    entry.enqueued_at = 1_000.0
+    q._pending.append(entry)
+
+    monkeypatch.setattr(time, "monotonic", lambda: 1_000.0 + 0.5)  # age == timeout
+    dropped = q.sweep()
+    assert dropped == []
+    assert q.pending_count == 1
+
+
+def test_sweep_two_entries_drops_only_old(monkeypatch):
+    """Pin the FIFO order: first entry expired, second fresh. Sweep stops
+    at the second. Kills index-mutations on `_pending[0]` (item[1]/[-1]
+    would point at the wrong entry's enqueued_at)."""
+    q = ReconciliationQueue(timeout_s=0.5)
+    old = _pending(pair_id="old")
+    old.enqueued_at = 1_000.0
+    fresh = _pending(pair_id="fresh")
+    fresh.enqueued_at = 1_100.0  # 100s newer
+    q._pending.append(old)
+    q._pending.append(fresh)
+
+    # now = 1_000 + 1.0  -> old.age=1.0 (drop), fresh.age=-99.0 (keep)
+    monkeypatch.setattr(time, "monotonic", lambda: 1_000.0 + 1.0)
+    dropped = q.sweep()
+    assert len(dropped) == 1
+    assert dropped[0].pair_id == "old"
+    assert q.pending_count == 1
 
 
 def test_sweep_does_not_drop_pgn_records(monkeypatch):

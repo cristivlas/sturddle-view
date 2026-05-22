@@ -24,6 +24,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Callable
@@ -40,6 +41,10 @@ DEFAULT_CAP = 50
 
 
 def default_imports_dir() -> Path:
+    """Directory for the imports store. ``SV_IMPORTS_DIR`` overrides."""
+    override = os.environ.get("SV_IMPORTS_DIR")
+    if override:
+        return Path(override)
     return Path(user_data_dir(APP_NAME, appauthor=False)) / "imports"
 
 
@@ -184,6 +189,7 @@ class RecentImports:
         text: str,
         summary: dict,
         game_id: str | None = None,
+        precomputed_hash: str | None = None,
     ) -> str:
         """Upsert an entry for ``text``. Writes the blob if new, updates the
         index, evicts oldest entries past the cap. Returns the hash.
@@ -198,7 +204,7 @@ class RecentImports:
           entry but for a *different* hash -> programming bug, assert.
         """
         trimmed = text.strip()
-        h = canonical_hash(trimmed, fmt)
+        h = precomputed_hash if precomputed_hash is not None else canonical_hash(trimmed, fmt)
         async with self._lock:
             existing = self._index.get(h)
             if existing is not None:

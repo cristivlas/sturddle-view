@@ -9,27 +9,36 @@ corrupting its cursor to the old value.
 """
 from __future__ import annotations
 
+import httpx
 import pytest
 
 pytest.importorskip("playwright.async_api")
 
-from sturddle_view.app import create_app  # noqa: E402
-from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 
-from .conftest import make_fake_uci, run_uvicorn  # noqa: E402
+from .conftest import make_fake_uci, run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
 
 
 @pytest.fixture
 def server(tmp_path):
-    settings = Settings(token="test-token", auth_disabled=True)
-    settings.pgn_dir = tmp_path / "pgn"
-    registry = EngineRegistry(path=tmp_path / "engines.json")
-    eng = registry.add(name="FakeEngine", path=make_fake_uci(tmp_path, "FakeEngine"))
-    registry.select(eng.id)
-    app = create_app(settings=settings, engine_registry=registry)
-    with run_uvicorn(app) as (base, _s):
-        yield base, app
+    registry_path = tmp_path / "engines.json"
+    seed = EngineRegistry(path=registry_path)
+    eng = seed.add(name="FakeEngine", path=make_fake_uci(tmp_path, "FakeEngine"))
+    seed.select(eng.id)
+    env = {
+        "SV_PGN_DIR": str(tmp_path / "pgn"),
+        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
+        "SV_ENGINE_REGISTRY_PATH": str(registry_path),
+        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
+        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
+        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
+    }
+    with run_uvicorn_subprocess(env_overrides=env) as base:
+        yield base
+
+
+def _view_cursor(base: str) -> int:
+    return httpx.get(f"{base}/_test/hve/state").json()["view_cursor"]
 
 
 _PGN_A = """\
@@ -63,20 +72,20 @@ _PGN_B = """\
 async def test_replay_while_old_cursor_nonzero_does_not_corrupt_new_game(server, page):
     """Repro the production Replay bug: cursor=N on game A, import game B,
     remount play -- new game's cursor must stay at 0."""
-    base, app = server
+    base = server
 
     await page.goto(base + "/")
     await page.wait_for_selector("#play-perspective")
+    await wait_perspective_ready(page)
 
     # Ensure the failure mode's prerequisite: commentary window is on.
     # The bug only repros when syncCommentsVisibility() decides to open
     # the commentary window on board_update.
     await page.evaluate(
-        "fetch('/settings', {method:'PUT',"
+        "async () => { await fetch('/settings', {method:'PUT',"
         " headers:{'Content-Type':'application/json'},"
-        " body: JSON.stringify({view_show_pgn_comments: true})})"
+        " body: JSON.stringify({view_show_pgn_comments: true})}); }"
     )
-    await page.wait_for_timeout(200)
 
     # Import game A and navigate cursor to a non-zero ply.
     import_status = await page.evaluate(
@@ -88,8 +97,9 @@ async def test_replay_while_old_cursor_nonzero_does_not_corrupt_new_game(server,
     )
     assert import_status["status"] == 200, f"import A failed: {import_status}"
     # Tell client to sync to the new game id (mirrors normal UI flow).
-    await page.evaluate("fetch('/game/sync', {method:'POST'})")
-    await page.wait_for_timeout(200)
+    await page.evaluate(
+        "async () => { await fetch('/game/sync', {method:'POST'}); }"
+    )
     goto_status = await page.evaluate(
         "async () => { const r = await fetch('/game/view/goto', {method:'POST',"
         " headers:{'Content-Type':'application/json'},"
@@ -97,12 +107,15 @@ async def test_replay_while_old_cursor_nonzero_does_not_corrupt_new_game(server,
         " return { status: r.status, body: await r.text() }; }"
     )
     assert goto_status["status"] == 200, f"goto failed: {goto_status}"
-    assert app.state.hve._view_cursor == 10, "precondition: game A cursor at 10"
+    assert _view_cursor(base) == 10, "precondition: game A cursor at 10"
 
     # Switch away from play (simulates user opening tournament window
     # while play perspective is unmounted -- as the Replay button does).
     await page.click('button[data-perspective="engines"]')
-    await page.wait_for_timeout(300)
+    await page.wait_for_function(
+        "() => !!document.querySelector('#engines-perspective')"
+        " && !document.querySelector('.perspective-root')?.classList.contains('is-pending')",
+    )
 
     # Replay: import game B + activate play (mirror tournament-live-game).
     await page.evaluate(
@@ -115,12 +128,30 @@ async def test_replay_while_old_cursor_nonzero_does_not_corrupt_new_game(server,
         "}",
         _PGN_B,
     )
-    # Wait past the mount's /game/sync + any spurious POST.
-    await page.wait_for_timeout(1500)
+    # Wait for the play perspective to be fully re-mounted.
+    await page.wait_for_function(
+        "() => !!document.querySelector('#play-perspective')"
+        " && !document.querySelector('.perspective-root')?.classList.contains('is-pending')",
+    )
+    # The mount issues POST /game/sync; its board_update is what fires
+    # the buggy synthetic /view/goto. Issue ANOTHER /game/sync and wait
+    # for its server response -- it's enqueued behind any HVE-locked
+    # work the mount triggered, so by the time it resolves any spurious
+    # /view/goto from the bug would already have executed.
+    await page.evaluate(
+        "async () => { await fetch('/game/sync', {method:'POST'}); }"
+    )
+    # One more flush: wait for the resulting board_update to reach the
+    # client (view-controls visible reflects the latest server state).
+    await page.wait_for_function(
+        "() => getComputedStyle(document.querySelector('#view-controls'))"
+        ".display !== 'none'",
+    )
 
     # Assertion: server's view cursor on game B must be 0. Anything
     # else means a stale cached board_update from game A fired a
     # synthetic /view/goto against game B.
-    assert app.state.hve._view_cursor == 0, (
-        f"new game cursor corrupted to {app.state.hve._view_cursor}"
+    cursor = _view_cursor(base)
+    assert cursor == 0, (
+        f"new game cursor corrupted to {cursor}"
     )

@@ -260,6 +260,61 @@ async def test_start_falls_back_to_live_settings_for_legacy_tournaments(store, r
     assert spec.engine_default_hash_mb == 512
 
 
+async def test_start_busy_when_runner_running_without_active_id(store, runner, orch):
+    """`_runner.is_running()` alone (no active_id) must still reject.
+    Kills `or`→`and` mutation on the busy guard."""
+    runner._running = True  # simulate orphaned runner
+    tid = _create(store)
+    with pytest.raises(TournamentBusyError):
+        await orch.start(tid)
+
+
+async def test_start_busy_when_active_id_set_but_store_raises(store, runner, orch):
+    """active_id is set but store.get() raises → busy without name.
+    Kills AddNot on `if active:` branch."""
+    orch._active_id = "ghost-id"  # stale id not in store
+    tid = _create(store)
+    with pytest.raises(TournamentBusyError):
+        await orch.start(tid)
+
+
+async def test_start_passes_paired_false_for_single_game_tournament(store, runner, monkeypatch):
+    """games_per_round=1 → paired=False passed to rewrite.
+    Kills `!= 1`→`!= 2` / AddNot mutations."""
+    calls = []
+
+    def fake_rewrite(pgn_path, config_path, ts, *, paired):
+        calls.append(paired)
+        return (0, {})
+
+    monkeypatch.setattr(
+        "sturddle_view.tournament.orchestrator.rewrite_drop_partial_pairs",
+        fake_rewrite,
+    )
+    orch = Orchestrator(store, runner)
+    tid = _create(store, template={"games_per_round": 1})
+    await orch.start(tid)
+    assert calls == [False]
+
+
+async def test_start_passes_paired_true_for_default_tournament(store, runner, monkeypatch):
+    """games_per_round defaults to 2 → paired=True."""
+    calls = []
+
+    def fake_rewrite(pgn_path, config_path, ts, *, paired):
+        calls.append(paired)
+        return (0, {})
+
+    monkeypatch.setattr(
+        "sturddle_view.tournament.orchestrator.rewrite_drop_partial_pairs",
+        fake_rewrite,
+    )
+    orch = Orchestrator(store, runner)
+    tid = _create(store, template={})  # no games_per_round → default 2
+    await orch.start(tid)
+    assert calls == [True]
+
+
 # ---------------------------------------------------------------------------
 # stop + terminal events
 # ---------------------------------------------------------------------------
@@ -302,6 +357,35 @@ async def test_runner_crash_marks_failed_with_last_error(store, runner, orch):
     assert final.last_error["rc"] == 137
     assert final.last_error["stderr_tail"] == ["Error; no TimeControl specified!"]
     assert final.last_error["at"]
+
+
+async def test_terminal_event_finalizes_and_clears_tailer(store, runner, orch, tmp_path):
+    """_pgn_tailer is not None on terminal event → finalize() called and
+    tailer set to None. Kills `is not None`→`is None` mutation."""
+    from sturddle_view.tournament.pgn_tail import PgnTailer
+
+    tid = _create(store)
+    await orch.start(tid)
+
+    pgn_path = tmp_path / "games.pgn"
+    pgn_path.touch()
+    orch._pgn_tailer = PgnTailer(pgn_path, orch._on_pgn_record, poll_interval=0.01)
+
+    await runner.finish("done")
+
+    assert orch._pgn_tailer is None
+    assert orch.active_id() is None
+
+
+async def test_terminal_event_no_tailer_does_not_crash(store, runner, orch):
+    """_pgn_tailer explicitly None → terminal event skips finalize, no crash.
+    Paired with above to pin both branches of the tailer-is-not-None guard."""
+    tid = _create(store)
+    await orch.start(tid)
+    orch._pgn_tailer = None  # simulate: tailer never wired or already torn down
+
+    await runner.finish("done")
+    assert orch.active_id() is None
 
 
 def _patch_specs(monkeypatch, *, logical=4, physical=2, total_ram_mb=8192):
@@ -428,6 +512,43 @@ async def test_can_start_again_after_stop(store, runner, orch):
     await orch.start(b)
     assert orch.active_id() == b
     await orch.stop(b)
+
+
+# ---------------------------------------------------------------------------
+# verify_proxy_secret
+# ---------------------------------------------------------------------------
+
+
+def test_verify_proxy_secret_matches(orch):
+    """Correct secret → True."""
+    orch._proxy_secret = "correct"
+    assert orch.verify_proxy_secret("correct") is True
+
+
+def test_verify_proxy_secret_wrong(orch):
+    """Wrong secret → False."""
+    orch._proxy_secret = "correct"
+    assert orch.verify_proxy_secret("wrong") is False
+
+
+def test_verify_proxy_secret_none_secret_returns_false(orch):
+    """_proxy_secret is None (no active tournament) → False regardless of
+    what is presented. Kills `or`→`and` (left side) and `False`→`True`
+    mutations on the secret-presence guard."""
+    orch._proxy_secret = None
+    assert orch.verify_proxy_secret("anything") is False
+
+
+def test_verify_proxy_secret_none_presented_returns_false(orch):
+    """presented is None → False. Kills `or`→`and` (right side) on the secret-presence guard."""
+    orch._proxy_secret = "set"
+    assert orch.verify_proxy_secret(None) is False
+
+
+def test_verify_proxy_secret_both_none_returns_false(orch):
+    """Both None → False."""
+    orch._proxy_secret = None
+    assert orch.verify_proxy_secret(None) is False
 
 
 # ---------------------------------------------------------------------------

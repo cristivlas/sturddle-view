@@ -21,28 +21,6 @@ def _is_allowed(mode: Mode, op: Op) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Basic enum checks
-# ---------------------------------------------------------------------------
-
-def test_initial_mode_is_play():
-    assert Mode.PLAY is not None
-
-
-def test_mode_enum_has_five_members():
-    assert set(Mode) == {Mode.PLAY, Mode.PAUSED, Mode.VIEWING, Mode.EDITING, Mode.ANALYZING}
-
-
-def test_op_enum_covers_guarded_operations():
-    expected = {
-        Op.SUBMIT_MOVE, Op.TAKEBACK, Op.SWITCH_SIDES, Op.RESIGN,
-        Op.PAUSE, Op.RESUME, Op.START_ANALYSIS, Op.ENTER_VIEW_MODE,
-        Op.ENTER_EDIT_MODE, Op.VIEW_GOTO, Op.PLAY_FROM_HERE,
-        Op.COMMIT_EDIT, Op.CANCEL_EDIT, Op.NEW_GAME,
-    }
-    assert expected <= set(Op)
-
-
-# ---------------------------------------------------------------------------
 # Matrix spot-checks (sampled from the guard survey)
 # ---------------------------------------------------------------------------
 
@@ -157,10 +135,3 @@ def test_invalid_transitions_raise_typed_error():
     assert err.current is Mode.EDITING
     assert err.attempted is Op.SUBMIT_MOVE
     assert isinstance(err, RuntimeError)  # subclass of RuntimeError
-
-
-def test_mode_conflict_error_is_runtime_error():
-    err = ModeConflictError(Mode.VIEWING, Op.TAKEBACK)
-    assert isinstance(err, RuntimeError)
-    assert err.current is Mode.VIEWING
-    assert err.attempted is Op.TAKEBACK

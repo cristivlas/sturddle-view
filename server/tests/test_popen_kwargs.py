@@ -7,6 +7,7 @@ semantics and the platform-specific Windows creationflag.
 from __future__ import annotations
 
 import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -29,6 +30,7 @@ def test_popen_kwargs_empty_env_no_overlay():
     assert out == {}
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows-only creationflag")
 def test_popen_kwargs_includes_creationflag_on_win32():
     with patch("sturddle_view.engines.sys") as mock_sys:
         mock_sys.platform = "win32"

@@ -83,6 +83,16 @@ def pgn_path(tmp_path) -> Path:
     return tmp_path / "games.pgn"
 
 
+def _write_pgn_text(path: Path, text: str) -> None:
+    """Write PGN text with explicit `\\n`-only line endings.
+
+    `Path.write_text` on Windows translates `\\n` to `\\r\\n` via the
+    default newline handler, which breaks any test that inspects byte
+    offsets or scans for the `\\n\\n[` game-boundary separator. Use
+    this helper whenever the test cares about on-disk byte layout."""
+    path.write_bytes(text.encode("utf-8"))
+
+
 # ---------------------------------------------------------------------------
 # Parse correctness
 # ---------------------------------------------------------------------------
@@ -143,6 +153,25 @@ async def test_partial_game_held_for_next_pass(pgn_path):
 
 
 @pytest.mark.asyncio
+async def test_poll_once_no_records_with_end_at_file_size_clears_has_more(pgn_path):
+    """Delta read all the way to EOF but contained only in-flight (`*`)
+    bytes -> no records emitted, end == st_size. _has_more must be
+    False (the cap did not fire; there's nothing the loop can do without
+    new file content). Kills `<` -> `==`/`<=`/`!=` mutations on
+    `_has_more = end < st.st_size` in the records-empty branch."""
+    # A single `*`-Result game (no decisive games anywhere in the file).
+    pgn_path.write_bytes(_PARTIAL_GAME.encode("utf-8"))
+    records, cb, _ = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    n = await tailer.poll_once()
+    assert n == 0
+    # end == st_size (default cap is huge, snap finds no boundary, no
+    # complete games parsed). Original: `_has_more = end < st_size` -> False.
+    assert tailer._has_more is False
+
+
+@pytest.mark.asyncio
 async def test_two_games_appended_over_two_polls(pgn_path):
     """game_n is cumulative across polls, not reset per delta."""
     pgn_path.write_text(_ONE_GAME, encoding="utf-8")
@@ -181,6 +210,160 @@ async def test_illegal_move_game_skipped_valid_game_emitted(pgn_path):
     assert records[0].game_n == 1
     assert records[0].result == "0-1"
     assert tailer.offset == pgn_path.stat().st_size
+
+
+@pytest.mark.asyncio
+async def test_poll_once_has_more_true_when_delta_capped(pgn_path, monkeypatch):
+    """When _snap_to_boundary caps the delta below file_size, poll_once
+    must set _has_more=True so the run loop polls again without sleeping."""
+    from sturddle_view.tournament import pgn_tail as pt_mod
+    # Force a tiny cap so two games can't both fit in one poll.
+    monkeypatch.setattr(pt_mod, "_MAX_DELTA_BYTES_PER_POLL", 200)
+
+    # write_bytes (not write_text) so Windows doesn't translate \n -> \r\n;
+    # the snap-to-boundary `\n\n[` separator must match what's on disk.
+    _write_pgn_text(pgn_path, _ONE_GAME + _SECOND_GAME)
+    records, cb, _ = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    n = await tailer.poll_once()
+    assert n == 1                # only the first game fit
+    assert tailer._has_more is True   # signals the run loop to keep going
+    assert tailer.offset < pgn_path.stat().st_size
+
+
+@pytest.mark.asyncio
+async def test_poll_once_has_more_false_when_delta_fully_consumed(pgn_path):
+    """When the whole file is consumed in one poll, _has_more=False so
+    the run loop sleeps before polling again."""
+    pgn_path.write_text(_ONE_GAME, encoding="utf-8")
+    records, cb, _ = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    n = await tailer.poll_once()
+    assert n == 1
+    assert tailer._has_more is False
+    assert tailer.offset == pgn_path.stat().st_size
+
+
+@pytest.mark.asyncio
+async def test_poll_once_size_equals_offset_clears_has_more(pgn_path):
+    """File size == consumed offset but fast-skip didn't trigger (mtime
+    bumped without new bytes): must clear _has_more and return 0."""
+    _write_pgn_text(pgn_path, _ONE_GAME)
+    records, cb, _ = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    n1 = await tailer.poll_once()
+    assert n1 == 1
+    tailer._has_more = True  # pretend a prior caller set it
+    # Force the fast-skip predicate to fail by invalidating the cached
+    # mtime directly. Bumping mtime via os.utime is unreliable across
+    # platforms (NTFS may round nanoseconds; FAT has 2s resolution).
+    tailer._last_mtime_ns = 0
+
+    n2 = await tailer.poll_once()
+    assert n2 == 0
+    assert tailer._has_more is False
+
+
+def test_snap_to_boundary_returns_exact_offset(pgn_path):
+    """When a `\\n\\n[` separator is found in the window, snap returns the
+    offset *just after* the separator's blank line (start + sep + 2)."""
+    _write_pgn_text(pgn_path, _ONE_GAME + _SECOND_GAME)
+    records, cb, _ = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    file_size = pgn_path.stat().st_size
+    boundary = tailer._snap_to_boundary(0, file_size, file_size)
+
+    blob = pgn_path.read_bytes()
+    # The snapped offset must land at a `[` (start of a tag line),
+    # confirming start + sep + 2 hit the right spot.
+    assert 0 < boundary < file_size
+    assert blob[boundary:boundary + 1] == b"["
+    # And it must be the LAST such boundary (rfind), i.e. the start of game 2.
+    assert boundary == blob.rfind(b"\n\n[") + 2
+
+
+def test_snap_to_boundary_no_boundary_returns_file_size_and_warns(pgn_path):
+    """Window with no `\\n\\n[`: fallback to file_size and flip the
+    one-shot warned-oversized flag to True."""
+    # A blob with NO `\n\n[` anywhere -- a single oversized "game".
+    pgn_path.write_bytes(b"[Event \"x\"]\n1. e4 e5 *  (no boundary here)\n")
+    records, cb, _ = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    assert tailer._warned_oversized is False
+    file_size = pgn_path.stat().st_size
+    out = tailer._snap_to_boundary(0, file_size, file_size)
+    assert out == file_size
+    assert tailer._warned_oversized is True
+
+
+def test_snap_to_boundary_resets_warned_flag_when_boundary_returns(pgn_path):
+    """After a fallback (warned=True), the next successful snap must
+    clear _warned_oversized back to False so a later regression warns again."""
+    records, cb, _ = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+    # Force the flag set as if a prior poll hit the fallback path.
+    tailer._warned_oversized = True
+
+    _write_pgn_text(pgn_path, _ONE_GAME + _SECOND_GAME)
+    file_size = pgn_path.stat().st_size
+    tailer._snap_to_boundary(0, file_size, file_size)
+    assert tailer._warned_oversized is False
+
+
+def test_snap_to_boundary_oserror_returns_end(pgn_path, monkeypatch):
+    """A read failure during snap falls back to `end` (best-effort);
+    the caller will then re-attempt and the parser will skip mid-game garbage."""
+    pgn_path.write_text(_ONE_GAME, encoding="utf-8")
+    records, cb, _ = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    def boom(self, *_a, **_kw):
+        raise OSError("disk gone")
+    monkeypatch.setattr(Path, "open", boom)
+
+    file_size = pgn_path.stat().st_size
+    out = tailer._snap_to_boundary(0, file_size, file_size)
+    assert out == file_size  # `end` is what was passed in; both match here
+
+
+def test_parse_delta_returns_empty_on_oserror(pgn_path, monkeypatch):
+    """A read failure on the PGN file must be swallowed: empty records,
+    offset unchanged, no exception escapes."""
+    pgn_path.write_text(_ONE_GAME, encoding="utf-8")
+    records, cb, _received = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    def boom(self, *_a, **_kw):
+        raise OSError("disk gone")
+    monkeypatch.setattr(Path, "open", boom)
+
+    out, new_offset = tailer._parse_delta(0, pgn_path.stat().st_size)
+    assert out == []
+    assert new_offset == 0  # offset must NOT advance on read failure
+
+
+def test_parse_delta_returns_empty_on_read_game_exception(pgn_path, monkeypatch):
+    """If chess.pgn.read_game raises, the tailer logs and breaks out --
+    it does not advance the offset or surface the exception."""
+    pgn_path.write_text(_ONE_GAME, encoding="utf-8")
+    records, cb, _received = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    import chess.pgn as pgn_mod
+
+    def boom(*_a, **_kw):
+        raise RuntimeError("parser exploded")
+    monkeypatch.setattr(pgn_mod, "read_game", boom)
+
+    out, new_offset = tailer._parse_delta(0, pgn_path.stat().st_size)
+    assert out == []
+    # Offset must NOT advance: no game was successfully parsed.
+    assert new_offset == 0
 
 
 @pytest.mark.asyncio
