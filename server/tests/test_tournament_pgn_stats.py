@@ -1941,13 +1941,16 @@ def test_rewrite_normalizes_block_without_trailing_blank_line(tmp_path):
     `\\n\\n` after rewrite. Kills AddNot on the
     `"\\n" if block.endswith("\\n") else "\\n\\n"` ternary, which would
     pick the wrong newline count for a single-newline-ending block."""
-    # Last kept block ends with a single `\n` (no trailing blank line).
+    # The DROPPED block (partial) is first, so the LAST kept block ends
+    # with a single `\n` (after stripping the trailing blank from the
+    # file). That kept block then triggers the trailing-newline
+    # normalizer at write time.
     body = (
-        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
-        + _game_round("2", "A", "B", "1-0")  # partial → dropped
+        _game_round("1", "A", "B", "1-0")            # partial → dropped
+        + _game_round("2", "A", "B", "1-0")
+        + _game_round("2", "B", "A", "0-1")          # last kept
     )
-    # Strip the trailing blank line from the last (now-kept) game.
-    body = body.rstrip("\n") + "\n"  # ends with exactly one \n
+    body = body.rstrip("\n") + "\n"                  # last kept ends with single \n
     p = _write_pgn(tmp_path, body)
     rewrite_drop_partial_pairs(p)
     after = p.read_bytes()
