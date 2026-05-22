@@ -226,10 +226,64 @@ Pinned in `tests/test_recent_imports_api.py`:
 
 ## Phase 2 — Client (view ribbon + move list)
 
-Status: `todo` (gated on Phase 1 + remaining open questions Q1/Q2/Q4/Q5
-from the spec doc).
+Status: `wip` (initial scaffold in; round-trip verified end-to-end in
+the browser 2026-05-22; outstanding items in the buglist below).
 
-Sketches to be added when Phase 1 lands.
+Delivered (in `web/app/perspectives/play.js`, `web/app/game-view.js`,
+`web/styles.css`):
+
+- `xgame` state holder on play.js: gameId, parentGameId, forkPly,
+  children, childPlies, childBannerDismissed.
+- `fetchXgameInfo(gameId)` calls `GET /game/recent-imports/by-id/`
+  on view-game change; clears on view exit and on game switch.
+- Fork glyph (`<wa-icon name="code-fork">`) rendered in the parent's
+  move list at each fork ply, with a count when N>1. Tooltip shows
+  "N variations from this position".
+- Clicking the glyph navigates to the ply AND clears the per-game
+  dismiss flag so the banner re-fires.
+- Banner above the view ribbon (`<div id="xgame-banner">`) with two
+  rows: parent-link and children-link. CSS shows them stacked when
+  both fire (inner-node overlap).
+- Triggers (both gated on `lastViewNavKind === "precise"`):
+  - Child -> parent: cursor === `fork_ply` AND game has parent.
+  - Parent -> child: cursor lands on a fork ply AND not dismissed.
+- `lastViewNavKind` tracked in `doViewNav`: "/first" and "/last" are
+  jumps (suppress the trigger this turn), all others are precise.
+- Open actions reuse the import path:
+  `GET /game/recent-imports/by-id` -> `POST /game/import` -> optional
+  `POST /game/view/goto`. Land-at-ply = fork_ply for both directions.
+- Per-game dismiss via X on the children row (Q5).
+
+## UI buglist (Phase 2)
+
+Running list. Items prefixed B# survive context resets.
+
+- **B1** — Banner show/hide reflows the grid row, resizing the board.
+  *(Mitigated 2026-05-22)* The banner row is now reserved in view mode
+  via `body[data-view-mode] .xgame-banner.hidden { visibility: hidden;
+  min-height: 28px; }` -- show/hide no longer reflows. Placement is
+  still above the ribbon and steals ~28px from board height in view
+  mode. **Future refinement:** place the banner above the commentary
+  dock, or float it as an overlay, so no vertical space is spent when
+  the banner is empty. The above-commentary plan stalled because
+  `.play-comments-host` is `position: fixed` with JS-driven geometry;
+  any reuse needs to thread through the dock manager.
+- **B2** — Parent label is hardcoded "parent game" instead of the
+  parent's summary (white-vs-black, like the child label). Fix: extend
+  the `by-id` response so a child also receives the parent's summary,
+  or have the client fetch the parent's `by-id` lazily.
+- **B3** — Glyph stale after a child is deleted from the recents UI
+  while the parent is open. Need to refresh `xgame` state after any
+  delete that touches a related game.
+- **B4** — *(fixed 2026-05-22)* Child->parent trigger originally
+  fired at cursor 0; now correctly fires at `fork_ply` (matches the
+  `play_from_here` semantics).
+- **B5** — After "Open parent" lands at fork_ply, the move list
+  scrolls. Verify no flicker in production.
+- **B6** — Multi-child case (N>1): UX of the children-list button row
+  not yet tested visually.
+- **B7** — *(open UX consideration)* Possibly show a short
+  parent-summary label on the glyph hover, not just a count.
 
 ## Course corrections
 
@@ -245,3 +299,22 @@ Sketches to be added when Phase 1 lands.
   Final list: `_flush_recents_save` (mate/resign/timeout) and
   `commit_edit` (edit-mode commit). Edit-cancel and import-on-top
   drop the stash by design.
+
+- 2026-05-22: Discovered during UI testing that `play_from_here`
+  does NOT start the child at the fork FEN -- it inherits the
+  parent's plies 0..cursor and appends new moves. So the child's PGN
+  shares plies 0..fork_ply byte-for-byte with the parent; divergence
+  starts at ply fork_ply+1. Implications for the client:
+
+    - Open-child action lands at child's `fork_ply` (was: ply 0).
+    - Child -> parent trigger fires at cursor === `fork_ply` (was:
+      cursor === 0).
+    - Parent -> child trigger unchanged (was already cursor ===
+      `fork_ply`).
+    - Inner-node overlap is now the natural case (both triggers
+      share the same ply).
+
+  No server-side changes needed; the stored `fork_ply` already means
+  "ply count at which the fork was taken" and works for both sides.
+  Client-only fix in `play.js` (banner trigger condition, open-child
+  landing ply). Spec doc updated (Q1 revised).

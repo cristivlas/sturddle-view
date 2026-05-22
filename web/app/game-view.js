@@ -23,11 +23,20 @@ function fmtClock(seconds) {
   return `${m}:${ss.toString().padStart(2, "0")}`;
 }
 
-function renderMoveList(el, sanList, currentIdx = null, onMoveClick = null) {
+function renderMoveList(
+  el, sanList, currentIdx = null, onMoveClick = null,
+  forkChildCounts = null, onForkClick = null,
+) {
   // currentIdx: index of the highlighted ply, or null for "last" (play mode).
   // onMoveClick(plyIndex): when provided, each move cell becomes clickable
   // and invokes the callback with its 0-based ply index. Used in view mode
   // to jump the cursor to the clicked move.
+  // forkChildCounts (optional): Map<plyIndex, count> of plies that have
+  // forked children in the x-game tree. Plies in the map get an inline
+  // fork glyph + count.
+  // onForkClick(plyIndex): when provided, the glyph itself is clickable
+  // and invokes this callback (in addition to the move-cell click that
+  // also navigates). Used to re-show a dismissed parent->child banner.
   el.innerHTML = "";
   const lastIdx = sanList.length - 1;
   const highlightIdx = currentIdx == null ? lastIdx : currentIdx;
@@ -40,6 +49,30 @@ function renderMoveList(el, sanList, currentIdx = null, onMoveClick = null) {
     if (onMoveClick) {
       cell.classList.add("clickable");
       cell.addEventListener("click", () => onMoveClick(plyIdx));
+    }
+    const childCount = forkChildCounts ? forkChildCounts.get(plyIdx) : 0;
+    if (childCount > 0) {
+      cell.classList.add("has-fork");
+      const glyph = document.createElement("wa-icon");
+      glyph.setAttribute("name", "code-fork");
+      glyph.className = "fork-glyph";
+      glyph.title = childCount === 1
+        ? "1 variation from this position"
+        : `${childCount} variations from this position`;
+      if (onForkClick) {
+        glyph.classList.add("clickable");
+        glyph.addEventListener("click", (e) => {
+          e.stopPropagation();
+          onForkClick(plyIdx);
+        });
+      }
+      cell.append(" ", glyph);
+      if (childCount > 1) {
+        const cnt = document.createElement("span");
+        cnt.className = "fork-count";
+        cnt.textContent = String(childCount);
+        cell.append(cnt);
+      }
     }
     return cell;
   };
@@ -98,6 +131,8 @@ export function mountGameView(container, opts = {}) {
     events,
     onMove,
     onMoveJump = null, // view-mode click on a move; (plyIndex) => void
+    forkChildCountsFn = null, // () => Map<plyIdx, count> for fork glyphs
+    onForkClick = null, // (plyIdx) => void when glyph itself is clicked
     show = {},
     interactive = false,
     sideContainer = null, // optional: separate host for the side rail
@@ -661,8 +696,15 @@ export function mountGameView(container, opts = {}) {
             currentIdx = (evt.payload.view.cursor ?? 0) - 1;
             clickHandler = onMoveJump;
           }
+          // x-game fork glyphs: only meaningful in view mode (move
+          // list isn't otherwise interactive). The fn returns the
+          // current map snapshot; null/empty disables the glyph.
+          const forkCounts = (evt.payload.view && !editing && forkChildCountsFn)
+            ? forkChildCountsFn()
+            : null;
           renderMoveList(
             moveListEl, evt.payload.moves_san || [], currentIdx, clickHandler,
+            forkCounts, onForkClick,
           );
         }
         setOpening(evt.payload.opening);

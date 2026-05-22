@@ -193,6 +193,27 @@ export const playPerspective = {
             </button>
           </div>
 
+          <div id="xgame-banner" class="xgame-banner hidden">
+            <div id="xgame-parent-row" class="xgame-row hidden">
+              <wa-icon name="code-fork" class="xgame-row-icon"></wa-icon>
+              <span class="xgame-text">
+                Forked from
+                <button id="xgame-open-parent" class="xgame-link" type="button"></button>
+                at ply <span id="xgame-parent-ply"></span>.
+              </span>
+            </div>
+            <div id="xgame-children-row" class="xgame-row hidden">
+              <wa-icon name="code-fork" class="xgame-row-icon"></wa-icon>
+              <span class="xgame-text">
+                <span id="xgame-children-label"></span>
+                <span id="xgame-children-list"></span>
+              </span>
+              <button id="xgame-children-dismiss" class="xgame-dismiss" type="button" aria-label="Dismiss" title="Dismiss">
+                <wa-icon name="xmark"></wa-icon>
+              </button>
+            </div>
+          </div>
+
           <div id="edit-controls" class="board-ribbon" style="display: none">
             <div class="side-popover-wrap">
               <button id="edit-side" class="ribbon-btn" aria-label="Side to move" title="Side to move" aria-haspopup="true" aria-expanded="false">
@@ -338,6 +359,41 @@ export const playPerspective = {
       // Click on a move in the list (view mode only) → jump cursor to
       // the position AFTER that move, i.e. ply = plyIndex + 1.
       onMoveJump: (plyIndex) => { if (!analyzing) doViewNav("/game/view/goto", { ply: plyIndex + 1 }); },
+      // x-game fork glyphs. The fn returns a fresh Map at render time
+      // so children added/removed across game switches are reflected
+      // without having to re-mount the GameView.
+      forkChildCountsFn: () => {
+        if (!xgame.children || xgame.children.length === 0) return null;
+        const m = new Map();
+        for (const c of xgame.children) {
+          // Server emits 1-based ply count; the move list is 0-based on
+          // its rendered cells but each cell represents the position
+          // AFTER its move. The fork ply (== ply count in parent) lines
+          // up with the cell at index fork_ply - 1.
+          const idx = (c.fork_ply ?? 0) - 1;
+          if (idx >= 0) m.set(idx, (m.get(idx) ?? 0) + 1);
+        }
+        return m;
+      },
+      // Glyph click: same nav as the cell click PLUS clear the
+      // per-game dismiss flag so the banner re-fires at this ply.
+      onForkClick: (plyIndex) => {
+        if (analyzing) return;
+        xgame.childBannerDismissed = false;
+        doViewNav("/game/view/goto", { ply: plyIndex + 1 });
+      },
+    });
+
+    // X-game banner button wiring (one-time). Children dismiss flips
+    // the per-game flag; open-parent triggers the import-style nav.
+    root.querySelector("#xgame-children-dismiss")?.addEventListener("click", () => {
+      xgame.childBannerDismissed = true;
+      refreshXgameBanner();
+    });
+    root.querySelector("#xgame-open-parent")?.addEventListener("click", () => {
+      if (xgame.parentGameId) {
+        openXgameTarget(xgame.parentGameId, { landAtPly: xgame.forkPly });
+      }
     });
 
     // Settings cache (refreshed on settings-changed).
@@ -454,6 +510,149 @@ export const playPerspective = {
     let viewGameOver = false;
     let viewGameOverAlertShown = false;
     let viewingGameId = null;
+    // X-game navigation state. Populated by fetchXgameInfo after every
+    // view-game change; cleared when game_id flips. childPlies is a Set
+    // for O(1) lookup in renderMoveList. childBannerDismissed is the
+    // per-game don't-nag flag for the parent->child banner.
+    let xgame = {
+      gameId: null,
+      parentGameId: null,
+      parentSummary: null,
+      forkPly: null,
+      children: [],
+      childPlies: new Set(),
+      childBannerDismissed: false,
+    };
+    function resetXgame() {
+      xgame.gameId = null;
+      xgame.parentGameId = null;
+      xgame.parentSummary = null;
+      xgame.forkPly = null;
+      xgame.children = [];
+      xgame.childPlies = new Set();
+      xgame.childBannerDismissed = false;
+    }
+    async function fetchXgameInfo(gameId) {
+      if (!gameId) {
+        resetXgame();
+        refreshXgameBanner();
+        return;
+      }
+      try {
+        const r = await ctx.api(
+          "GET", `/game/recent-imports/by-id/${encodeURIComponent(gameId)}`,
+        );
+        xgame.gameId = gameId;
+        xgame.parentGameId = r.parent_game_id ?? null;
+        xgame.parentSummary = null;  // resolved lazily when we open parent
+        xgame.forkPly = r.fork_ply ?? null;
+        xgame.children = Array.isArray(r.children) ? r.children : [];
+        xgame.childPlies = new Set(xgame.children.map(c => c.fork_ply));
+        xgame.childBannerDismissed = false;
+        // After data lands, re-render the move list so glyphs appear
+        // without waiting for the next board_update.
+        if (_cachedBoardUpdate) view.applyEvent(_cachedBoardUpdate);
+        refreshXgameBanner();
+      } catch (_e) {
+        // The current game may not be in recents (e.g. brand-new play
+        // game with no moves yet). That's expected; just clear state.
+        resetXgame();
+        refreshXgameBanner();
+      }
+    }
+    function formatChildLabel(child) {
+      const s = child.summary || {};
+      const white = s.white || "?";
+      const black = s.black || "?";
+      const result = s.result && s.result !== "*" ? ` (${s.result})` : "";
+      return `${white} vs ${black}${result}`;
+    }
+    function refreshXgameBanner() {
+      const banner = root.querySelector("#xgame-banner");
+      const parentRow = root.querySelector("#xgame-parent-row");
+      const childRow = root.querySelector("#xgame-children-row");
+      if (!banner || !parentRow || !childRow) return;
+      let showAny = false;
+      // Child -> parent: cursor lands precisely on the fork ply of the
+      // current child + the game has a parent. play_from_here inherits
+      // plies 0..fork_ply from the parent, so the divergence is at
+      // ply fork_ply (not ply 0). Symmetric to the parent -> child
+      // trigger below.
+      const showParent = viewing
+        && xgame.parentGameId
+        && xgame.forkPly != null
+        && viewCursor === xgame.forkPly
+        && lastViewNavKind === "precise";
+      parentRow.classList.toggle("hidden", !showParent);
+      if (showParent) {
+        showAny = true;
+        const linkBtn = root.querySelector("#xgame-open-parent");
+        const plyEl = root.querySelector("#xgame-parent-ply");
+        // Server's children summary on the *parent* row would carry the
+        // parent's display; we don't have it client-side yet, so use a
+        // neutral label that still lets the user act.
+        linkBtn.textContent = "parent game";
+        plyEl.textContent = String(xgame.forkPly ?? "?");
+      }
+      // Parent -> child: cursor lands precisely on a fork ply that has
+      // 1+ children, and the user has not dismissed this game's banner.
+      const childrenHere = (xgame.children || []).filter(
+        c => (c.fork_ply ?? -1) === viewCursor,
+      );
+      const showChildren = viewing
+        && !xgame.childBannerDismissed
+        && lastViewNavKind === "precise"
+        && childrenHere.length > 0;
+      childRow.classList.toggle("hidden", !showChildren);
+      if (showChildren) {
+        showAny = true;
+        const labelEl = root.querySelector("#xgame-children-label");
+        const listEl = root.querySelector("#xgame-children-list");
+        listEl.innerHTML = "";
+        labelEl.textContent = childrenHere.length === 1
+          ? "Variation from this position:"
+          : `${childrenHere.length} variations from this position:`;
+        for (const c of childrenHere) {
+          const btn = document.createElement("button");
+          btn.className = "xgame-link";
+          btn.type = "button";
+          btn.textContent = formatChildLabel(c);
+          btn.addEventListener("click", () => openXgameTarget(
+            c.game_id, { landAtPly: c.fork_ply },
+          ));
+          listEl.append(btn, document.createTextNode(" "));
+        }
+      }
+      banner.classList.toggle("hidden", !showAny);
+    }
+    async function openXgameTarget(gameId, opts = {}) {
+      // Fetch the target's text from recents, then drive a normal
+      // import (server-side enter_view_mode swap). Mirrors the path
+      // used by the import dialog's "select a recent" affordance.
+      // ``landAtPly``: optional cursor ply to navigate to after the
+      // import lands; used by "Open parent" (Q2: land at parent's
+      // fork_ply). For "Open child" (Q1: ply 0) the default already
+      // matches (import lands at cursor 0).
+      const landAtPly = opts.landAtPly ?? null;
+      try {
+        const target = await ctx.api(
+          "GET", `/game/recent-imports/by-id/${encodeURIComponent(gameId)}`,
+        );
+        await ctx.api("POST", "/game/import", {
+          format: target.format,
+          text: target.text,
+        });
+        if (landAtPly !== null && landAtPly > 0) {
+          // Use the precise nav so a banner can fire if the landed ply
+          // is itself a fork ply in the newly-opened game.
+          await doViewNav("/game/view/goto", { ply: landAtPly });
+        }
+        // After import lands, the new game's board_update arrives via
+        // events and fetchXgameInfo runs again for the new game_id.
+      } catch (e) {
+        reportError(ctx, "Open game failed", e);
+      }
+    }
     let editing = false;
     // Annotation staged by the user via the edit-mode annotation modal.
     // null  -> no pending change; /edit/commit goes with apply_comment=false.
@@ -601,7 +800,13 @@ export const playPerspective = {
           // the same event but would be too late.
           if (typeof evt.payload.analyzing === "boolean") setAnalyzing(evt.payload.analyzing);
           if (viewing) {
-            if (!wasViewing || viewingGameId !== prevGameId) viewGameOverAlertShown = false;
+            if (!wasViewing || viewingGameId !== prevGameId) {
+              viewGameOverAlertShown = false;
+              // Game switched (or first entry into view). Refresh
+              // x-game nav state -- parent/children/fork_ply. Best
+              // effort: a 404 (game not in recents yet) just clears.
+              fetchXgameInfo(viewingGameId);
+            }
             viewCursor = v.cursor ?? 0;
             viewTotalPlies = v.total_plies ?? 0;
             viewGameOver = !!v.game_over;
@@ -636,8 +841,19 @@ export const playPerspective = {
             pushNavToUi();
             syncCommentsVisibility();
             if (wasViewing) restoreDebugWindows(ctx.events);
+            // Leaving view mode -- x-game state is per-viewed-game; drop it.
+            if (wasViewing) resetXgame();
             resignAvailable = true;
           }
+          // Cursor or viewing state may have just changed -- re-evaluate
+          // the parent / children banner. Cheap; only touches DOM when
+          // the trigger conditions change.
+          refreshXgameBanner();
+          // Reserve the banner row only in view mode so the parent /
+          // children banner can show/hide without reflowing the board
+          // (see styles.css `body[data-view-mode] .xgame-banner.hidden`).
+          if (viewing) document.body.dataset.viewMode = "1";
+          else delete document.body.dataset.viewMode;
           // Notify the perspective router so the nav label can swap
           // Play <-> View when the mode flips.
           if (wasViewing !== viewing) {
@@ -1072,7 +1288,16 @@ export const playPerspective = {
       setCommentaryNavState(gated ? null : commentNavPrev, gated ? null : commentNavNext);
     };
 
+    // Tracks how the cursor reached the next ply: "precise" (back /
+    // forward / goto / move-list click) vs "jump" (first / last). The
+    // parent->child banner only fires on precise landings -- jumping
+    // over a fork must NOT pop a prompt.
+    let lastViewNavKind = "precise";
     async function doViewNav(endpoint, payload = {}) {
+      lastViewNavKind =
+        endpoint === "/game/view/first" || endpoint === "/game/view/last"
+          ? "jump"
+          : "precise";
       try {
         await ctx.api("POST", endpoint, payload);
       } catch (e) {

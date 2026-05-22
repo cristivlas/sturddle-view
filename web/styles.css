@@ -1029,6 +1029,93 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   color: var(--accent);
   font-weight: 600;
 }
+.move-row .move-cell .fork-glyph {
+  font-size: 0.75em;
+  color: var(--muted);
+  margin-left: 2px;
+  vertical-align: baseline;
+}
+.move-row .move-cell .fork-glyph.clickable { cursor: pointer; }
+.move-row .move-cell .fork-glyph.clickable:hover { color: var(--accent); }
+.move-row .move-cell .fork-count {
+  font-size: 0.7em;
+  color: var(--muted);
+  margin-left: 1px;
+  vertical-align: super;
+}
+.xgame-banner {
+  grid-area: banner;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0;
+  padding: 0;
+  /* See body[data-view-mode] rule below: in view mode the banner row
+     is reserved so showing/hiding does not reflow the board column. */
+}
+.xgame-banner.hidden { display: none; }
+/* View mode: reserve the row even when no banner is firing. The row
+   height matches one .xgame-row line so toggling visibility never
+   shifts the board column. Multi-child lists are clipped to one row
+   (see .xgame-children-list overflow) so N > 1 does not grow. */
+body[data-view-mode] .xgame-banner.hidden {
+  display: flex;
+  visibility: hidden;
+  height: 22px;
+}
+.xgame-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-radius: 4px;
+  background: var(--nav-btn-bg);
+  font-size: 0.8125rem;
+  line-height: 1;
+  color: var(--fg);
+  height: 22px;
+  box-sizing: border-box;
+}
+.xgame-row.hidden { display: none; }
+.xgame-row .xgame-row-icon { color: var(--muted); flex-shrink: 0; font-size: 0.875em; }
+.xgame-row .xgame-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.xgame-row .xgame-link {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+.xgame-row .xgame-link:hover { color: var(--accent); filter: brightness(1.15); }
+.xgame-row #xgame-children-list {
+  display: inline-flex;
+  gap: 4px;
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+}
+.xgame-row .xgame-dismiss {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  cursor: pointer;
+  color: var(--muted);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+}
+.xgame-row .xgame-dismiss:hover { color: var(--fg); }
 
 #engines-perspective {
   display: flex;

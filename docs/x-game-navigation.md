@@ -52,9 +52,10 @@ move-list click counts as a precise landing.
 
 ### Child -> parent
 
-- Trigger: current game has `parent_game_id` AND view cursor === 0.
-- Reached via: one step back from ply 1, "jump to first", or
-  move-list click on ply 0.
+- Trigger: current game has `parent_game_id` AND view cursor ===
+  `fork_ply` (revised 2026-05-22; see Q1 note above).
+- Reached via: precise single-step landing on the fork ply (forward,
+  back, or move-list click).
 - Affordance: banner near view ribbon, e.g.
   "This game is a variation of `<parent summary>` at ply `<fork_ply>`.
   Open parent?"
@@ -72,9 +73,11 @@ move-list click counts as a precise landing.
 
 ### Inner node (child that is itself a parent)
 
-If the cursor lands on ply 0 of a child AND ply 0 also happens to be a
-fork ply for that same game's own children, both prompts are shown
-stacked. Rare but possible.
+If the cursor lands on the child's `fork_ply` (so the parent-link
+fires) AND that same ply happens to be a `fork_ply` for one or more of
+this game's own children, both prompts are shown stacked. (Both
+triggers now share the same ply condition, so this is the natural
+overlap case.)
 
 ## UX details
 
@@ -163,17 +166,25 @@ Info-log every relationship change, server-side:
 - DELETE blocked because refs non-empty.
 - Dangling parent_game_id detected / scrubbed.
 
-## Open questions
+## Resolved (originally open) questions
 
-- Q1: When opening a child from parent: open at **child ply 0**
-  (the fork FEN, showing the divergence point). Resolved.
+- Q1 (revised 2026-05-22 after impl discovery): When opening a child
+  from parent: open at the child's **fork_ply**. Reason: ``play_from_here``
+  builds the child by inheriting plies 0..cursor from the parent, then
+  appending the user's new moves. So plies 0..fork_ply are identical in
+  parent and child; the divergence appears at plies > fork_ply. Landing
+  the child at fork_ply puts the user exactly on the shared boundary,
+  symmetric to Q2.
 - Q2: When opening a parent from child: open at the parent's
-  **fork_ply** (the ply at which the child diverged). Resolved.
-- Q4: Visual style of the fork-ply glyph. Picking a glyph that does not
-  collide with existing move-list visual language.
-- Q5: Should the parent->child trigger remember "user already declined
-  this prompt" so it does not nag on every back-and-forth pass over the
-  fork ply within a session?
+  **fork_ply** (the ply at which the child diverged).
+- Q4: Fork-ply glyph rendered via the existing `<wa-icon>` element,
+  `name="code-fork"`. Sits inline next to the move SAN. For plies
+  with multiple children, a small count follows the icon.
+- Q5: The parent->child banner is dismissible per game (single boolean
+  state). Once the user dismisses, the banner stays hidden for the
+  remainder of the time that game is open. The move-list fork glyph
+  remains the manual reopen path -- clicking the glyph re-shows the
+  banner anchored at that ply.
 
 ## Out of scope (v1)
 
