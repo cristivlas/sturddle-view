@@ -11,7 +11,7 @@ import { mqNarrowDialog } from "./breakpoints.js";
 const PATH_NAME_RE = /(Path|File|Dir)$/i;
 const REFRESH_BTN_LABEL = "Refresh";
 const RESET_BTN_LABEL = "Reset";
-const SAVE_BTN_LABEL = "Save";
+const SAVE_BTN_LABEL = "Apply";
 
 function isPathOption(name) {
   return PATH_NAME_RE.test(name);
