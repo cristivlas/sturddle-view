@@ -394,14 +394,24 @@ async def export_pgn(request: Request) -> Response:
     """Download the current game as a PGN file.
 
     Works in play mode (in-progress or finished) and in view mode after a
-    PGN import or a play_from_here fork.  Returns 409 for FEN-only view
+    PGN import or a play_from_here fork. Returns 409 for FEN-only view
     (no game moves to export).
+
+    Side effect: for play-mode games, also writes the PGN to the
+    recents store (best-effort; failures are logged and swallowed --
+    the download must not break if the side-effect fails). This makes
+    user-driven Save PGN durable, including persisting a fork's
+    parent_game_id before game-end / edit-commit (B11).
     """
     hve = await _get_hve(request)
     result = hve.get_pgn_text()
     if result is None:
         raise HTTPException(status_code=409, detail="no game to export")
     pgn_text, filename = result
+    # Best-effort recents write. View-mode games are already in
+    # recents (or were imported there); export_to_recents is a no-op
+    # for them.
+    await hve.export_to_recents()
     return Response(
         content=pgn_text,
         media_type="application/x-chess-pgn; charset=utf-8",

@@ -2172,10 +2172,89 @@ class HumanVsEngine:
         parent_game_id, fork_ply = (
             fork_link if fork_link is not None else (None, None)
         )
+        # User-driven export_to_recents may have already written an
+        # in-progress row for this game_id. Use replace_at when a row
+        # exists so the final PGN swaps in atomically (no game_id-
+        # collision crash); fall through to save() for the common
+        # "no prior export" case.
+        old_hash = self._recents.hash_for_id(game_id)
         try:
-            await self._recents.save(
-                fmt="pgn", text=text, summary=summary, game_id=game_id,
+            if old_hash is None:
+                await self._recents.save(
+                    fmt="pgn", text=text, summary=summary, game_id=game_id,
+                    parent_game_id=parent_game_id, fork_ply=fork_ply,
+                )
+            else:
+                await self._recents.replace_at(
+                    old_hash=old_hash, fmt="pgn",
+                    text=text, summary=summary, game_id=game_id,
+                    parent_game_id=parent_game_id, fork_ply=fork_ply,
+                )
+        except Exception:
+            log.exception("could not save finished game to recents")
+
+    async def export_to_recents(self) -> str | None:
+        """User-driven save: write the in-progress play game to recents
+        in addition to whatever download the caller does.
+
+        Update-in-place semantics: if a row for this ``game_id`` already
+        exists, ``replace_at`` swaps in the latest content (the same
+        path used by edit-commit annotations). Avoids the collision the
+        eventual game-end auto-save would otherwise hit.
+
+        Carries the stashed fork link so a forked play game saved
+        before finalization still records its parent_game_id + fork_ply.
+        The link is consumed; the live ``_fork_link`` is cleared.
+
+        Returns the new hash, or ``None`` when there is nothing to save
+        (no game, no moves, no recents store). View-mode games are
+        already in recents -- nothing to do here.
+        """
+        log.info("xgame.export_to_recents called (mode=%s)", self._mode)
+        if self._recents is None:
+            log.info("xgame.export_to_recents: no recents wired")
+            return None
+        async with self._lock:
+            # Save PGN pauses to freeze state and clock; accept PLAY
+            # and PAUSED. View-mode games are already in recents.
+            if self._mode not in (Mode.PLAY, Mode.PAUSED):
+                log.info(
+                    "xgame.export_to_recents: skip (mode=%s, not PLAY/PAUSED)",
+                    self._mode,
+                )
+                return None
+            built = self._build_play_game_pgn(
+                result="*", termination="unterminated",
+            )
+            if built is None:
+                log.info("xgame.export_to_recents: build_pgn returned None")
+                return None
+            pgn_text, white, black = built
+            summary = self._play_summary(white=white, black=black, result=None)
+            game_id = self._game_id
+            fork_link = self._fork_link
+            self._fork_link = None
+        log.info(
+            "xgame.export_to_recents proceeding game_id=%s fork_link=%s",
+            game_id, fork_link,
+        )
+        # Outside the lock: hit the recents store.
+        parent_game_id, fork_ply = (
+            fork_link if fork_link is not None else (None, None)
+        )
+        old_hash = self._recents.hash_for_id(game_id)
+        try:
+            if old_hash is None:
+                return await self._recents.save(
+                    fmt="pgn", text=pgn_text, summary=summary,
+                    game_id=game_id,
+                    parent_game_id=parent_game_id, fork_ply=fork_ply,
+                )
+            return await self._recents.replace_at(
+                old_hash=old_hash, fmt="pgn",
+                text=pgn_text, summary=summary, game_id=game_id,
                 parent_game_id=parent_game_id, fork_ply=fork_ply,
             )
         except Exception:
-            log.exception("could not save finished game to recents")
+            log.exception("could not export play game to recents")
+            return None

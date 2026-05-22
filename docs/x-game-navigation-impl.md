@@ -309,6 +309,15 @@ Running list. Items prefixed B# survive context resets.
   game_id was unchanged so the board_update did not trigger
   fetchXgameInfo. Fix: call fetchXgameInfo explicitly after a
   successful /edit/commit response.
+- **B11** — *(fixed 2026-05-22)* Save PGN (`GET /game/pgn`) downloaded
+  the file but did not persist to recents, so a forked play game saved
+  before finalization lost its parent link. Fix: new
+  `HumanVsEngine.export_to_recents()` writes the current play PGN to
+  recents using `replace_at` (so the eventual game-end auto-save can
+  swap content in-place without a game_id-collision crash). Endpoint
+  calls it as a best-effort side effect (failures logged, download
+  unaffected). 5 new tests, including a PAUSED-mode regression guard
+  (Save PGN pauses before reading state, so PLAY-only would skip).
 
 ## Course corrections
 

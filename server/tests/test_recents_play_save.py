@@ -538,6 +538,110 @@ async def test_fork_t5_partial_clk_no_comments(hve):
     )
 
 
+# ---- Save PGN (GET /game/pgn) writes to recents (B11) ----
+#
+# Today /game/pgn only downloads; the recents-write side effect makes
+# user-driven saves durable -- including a fork's parent-link before
+# game-end / edit-commit.
+
+
+async def _start_play_game_with_moves(h):
+    """New play game + push two human moves so there's content to save."""
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    await h.submit_move("e2e4")
+    # Engine reply directly (mocked engine).
+    async with h._lock:
+        h._clock.append_snapshot()
+        h._consume_turn_time()
+        h._board.push(chess.Move.from_uci("e7e5"))
+        h._eval_history.append(None)
+
+
+async def test_export_pgn_writes_to_recents(hve):
+    """Save PGN mid-game creates a recents row bound to the live game_id."""
+    h, recents = hve
+    await _start_play_game_with_moves(h)
+    gid = h.game_id
+    h_hash = await h.export_to_recents()
+    assert h_hash is not None
+    got = recents.get_by_id(gid)
+    assert got is not None
+    row, _ = got
+    assert row["game_id"] == gid
+
+
+async def test_export_pgn_works_when_paused(hve):
+    """The Save PGN endpoint pauses before reading state -- export
+    must accept the PAUSED mode in addition to PLAY."""
+    h, recents = hve
+    await _start_play_game_with_moves(h)
+    gid = h.game_id
+    await h.pause()
+    h_hash = await h.export_to_recents()
+    assert h_hash is not None
+    assert recents.get_by_id(gid) is not None
+
+
+async def test_export_pgn_twice_updates_same_row(hve):
+    """Calling Save PGN twice (after more play) updates the same row,
+    does not create a duplicate."""
+    h, recents = hve
+    await _start_play_game_with_moves(h)
+    gid = h.game_id
+    h1 = await h.export_to_recents()
+    # Play one more half-move so the PGN content changes.
+    await h.submit_move("g1f3")
+    h2 = await h.export_to_recents()
+    assert h1 != h2  # content changed => hash changed
+    # Still exactly one row for this game_id (the first one was replaced).
+    assert recents.hash_for_id(gid) == h2
+    assert len(recents.list()) == 1
+
+
+async def test_export_pgn_then_resign_no_collision(hve):
+    """Mid-game Save PGN must not crash the game-end auto-save (the
+    bound game_id is reused; replace_at must swap in the final PGN)."""
+    h, recents = hve
+    await _start_play_game_with_moves(h)
+    gid = h.game_id
+    await h.export_to_recents()
+    # Game-end auto-save fires here; must not assert on game_id collision.
+    await h.resign()
+    # One row, latest content (with resign marker).
+    rows = recents.list()
+    assert len(rows) == 1
+    assert rows[0]["game_id"] == gid
+    # Final content has the resign / "0-1" result.
+    _row, text = recents.get_by_id(gid)
+    assert "0-1" in text
+
+
+async def test_export_pgn_on_forked_child_records_fork_link(hve):
+    """The user-visible feature: Save PGN on a forked play game
+    persists the parent_game_id + fork_ply (was previously lost
+    unless the user finalized or annotated)."""
+    h, recents = hve
+    parent_id = await _import_parent(h, recents)
+    await h.view_last()
+    child_gid = await h.play_from_here(tc=TimeControl(60, 0))
+    # Play one half-move so the child has content.
+    async with h._lock:
+        h._clock.append_snapshot()
+        h._consume_turn_time()
+        h._board.push(chess.Move.from_uci("d2d4"))
+        h._eval_history.append(None)
+        if h._play_comments is not None:
+            h._play_comments.append(None)
+    # User clicks Save PGN before finalizing.
+    await h.export_to_recents()
+    child_row = recents.get_by_id(child_gid)[0]
+    assert child_row["parent_game_id"] == parent_id
+    assert child_row["fork_ply"] == 4
+    # Parent's refs updated atomically.
+    parent_row = recents.get_by_id(parent_id)[0]
+    assert any(r["game_id"] == child_gid for r in parent_row["refs"])
+
+
 async def test_fork_t6_no_clk_partial_comments(hve):
     """T6: parent has comments only on some plies. Plies with no
     comment must remain empty; plies with a comment keep it."""
