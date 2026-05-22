@@ -1336,6 +1336,40 @@ def test_sprt_single_pair_returns_zero_llr(tmp_path):
     assert r.llr == 0.0
 
 
+def test_sprt_exact_llr_two_pairs(tmp_path):
+    """Hand-computed LLR for 2 pairs with scores [1.5, 0.5]. Pins
+    the variance Bessel-correction `/ (n - 1)` for the n=2 boundary:
+    `(n ^ 1)` mutation evaluates to 3 (not 1) at n=2, producing the
+    wrong variance and LLR; equivalent at n=3 (n^1 == n-1)."""
+    rc = _RoundCounter()
+    body = (
+        _pair(rc, "A", "B", "1-0", "1/2-1/2")        # A wins+draw -> score 1.5
+        + _pair(rc, "A", "B", "0-1", "1/2-1/2")      # A loses+draw -> score 0.5
+    )
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params(elo0=0.0, elo1=5.0))
+    assert r.pairs == 2
+    assert r.llr == pytest.approx(-4.1421079e-4, abs=1e-9)
+
+
+def test_sprt_exact_llr_four_pairs(tmp_path):
+    """Hand-computed LLR for 4 pairs. Pins the division in the variance
+    formula against `/` -> `**` mutation: for n=2 and n=3 the values
+    happen to coincide (0.5**1 == 0.5/1; 0.5**2 == 0.5/2), so n>=4 is
+    needed to distinguish."""
+    rc = _RoundCounter()
+    body = (
+        _pair(rc, "A", "B", "1-0", "1/2-1/2")        # score 1.5
+        + _pair(rc, "A", "B", "0-1", "1/2-1/2")      # score 0.5
+        + _pair(rc, "A", "B", "1-0", "1/2-1/2")      # score 1.5
+        + _pair(rc, "A", "B", "0-1", "1/2-1/2")      # score 0.5
+    )
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params(elo0=0.0, elo1=5.0))
+    assert r.pairs == 4
+    assert r.llr == pytest.approx(-0.0012426324, abs=1e-9)
+
+
 def test_sprt_exact_llr_three_pairs(tmp_path):
     """Hand-computed LLR for 3 pairs with scores [2.0, 1.0, 0.0]
     (A wins both / draw / B wins both). Pins:
