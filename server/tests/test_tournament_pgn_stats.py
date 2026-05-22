@@ -416,6 +416,16 @@ def test_elo_margin_from_wld_under_two_games_is_none():
     assert elo_margin_from_wld(1, 0, 0) is None
 
 
+def test_elo_margin_from_wld_exactly_two_games_returns_finite():
+    """At n=2 the CI is defined (n < 2 guard is strict-less-than). Kills
+    `n < 2` -> `n <= 2` / `n < 3` mutations on the under-games guard
+    (which would force None at the n=2 boundary)."""
+    # 1W 1L is 50% score, n=2 -> margin defined.
+    result = elo_margin_from_wld(1, 1, 0)
+    assert result is not None
+    assert result > 0
+
+
 def test_elo_margin_from_wld_shrinks_with_more_games():
     # Same score% (50%), more games → tighter CI.
     small = elo_margin_from_wld(5, 5, 0)
