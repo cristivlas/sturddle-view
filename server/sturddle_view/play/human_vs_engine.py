@@ -504,6 +504,8 @@ class HumanVsEngine:
             self._board.push(move)
             # Human ply: no engine search, eval slot is None.
             self._eval_history.append(None)
+            if self._play_comments is not None:
+                self._play_comments.append(None)
             await self._persist()
             await self._publish_board()
             await self._publish_clock()
@@ -1583,6 +1585,8 @@ class HumanVsEngine:
             self._consume_turn_time()
             self._board.push(best)
             self._eval_history.append(captured or None)
+            if self._play_comments is not None:
+                self._play_comments.append(None)
             await self._persist()
             await self._publish_board()
             await self._publish_clock()

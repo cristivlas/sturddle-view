@@ -16,7 +16,7 @@ import chess
 import pytest
 
 from sturddle_view.events import EventBus
-from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl
+from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
 from sturddle_view.recent_imports import RecentImports
 
 
@@ -207,3 +207,40 @@ async def test_recents_row_carries_game_id(hve):
     rows = recents.list()
     assert len(rows) == 1
     assert rows[0]["game_id"] == game_id_before
+
+
+async def test_play_from_here_with_comments_then_resign_builds_pgn(hve):
+    """Regression: play_from_here seeds _play_comments at fork depth; subsequent
+    moves must extend it so _build_play_game_pgn doesn't raise on length mismatch."""
+    h, recents = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5"],
+        clock_history=None,
+        comments=["c1", "c2"],
+    ))
+    await h.view_last()
+    await h.play_from_here(tc=TimeControl(60, 0))
+    assert h._play_comments == ["c1", "c2"]
+
+    # Human move -- _play_comments must grow to 3.
+    await h.submit_move("g1f3")
+    assert h._play_comments is not None
+    assert len(h._play_comments) == len(h._board.move_stack)
+
+    # Engine reply injected directly (engine is mocked).
+    async with h._lock:
+        h._clock.append_snapshot()
+        h._consume_turn_time()
+        h._board.push(chess.Move.from_uci("b8c6"))
+        h._eval_history.append(None)
+        if h._play_comments is not None:
+            h._play_comments.append(None)
+
+    assert len(h._play_comments) == len(h._board.move_stack)
+
+    # Resign triggers _stash_recents_payload -> _build_play_game_pgn.
+    # The bug caused ValueError here; after the fix it must succeed.
+    await h.resign()
+    rows = recents.list()
+    assert len(rows) == 1
