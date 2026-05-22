@@ -283,12 +283,18 @@ async def list_recent_imports(request: Request) -> dict:
 async def get_recent_import_by_id(game_id: str, request: Request) -> dict:
     """Resolve a recent import by ``game_id`` instead of hash.
 
-    Same payload shape as the hash route and the same side effect
-    (touch). Returns 404 for unknown or evicted ids.
+    Same payload shape as the hash route plus x-game navigation fields:
+    ``parent_game_id``, ``fork_ply`` (when this row is a child), and
+    ``children`` (list of live children with their fork_ply + summary).
+    Side effect: touch (ts bump). Returns 404 for unknown or evicted ids.
 
     Registered before ``/recent-imports/{h}`` so the literal ``by-id``
     segment doesn't get captured as a hash."""
     recents = request.app.state.recent_imports
+    # Lazy scrub: if this row's parent_game_id no longer resolves,
+    # drop the dangling link before serving so the client doesn't see
+    # a stale ancestor pointer.
+    await recents.scrub_dangling_parent(game_id)
     got = recents.get_by_id(game_id)
     if got is None:
         raise HTTPException(status_code=404, detail="not found")
@@ -303,6 +309,9 @@ async def get_recent_import_by_id(game_id: str, request: Request) -> dict:
         "summary": row["summary"],
         "ts": row["ts"],
         "text": text,
+        "parent_game_id": row.get("parent_game_id"),
+        "fork_ply": row.get("fork_ply"),
+        "children": recents.children_of(game_id),
     }
 
 
@@ -318,14 +327,25 @@ async def get_recent_import(h: str, request: Request) -> dict:
     if got is None:
         raise HTTPException(status_code=404, detail="not found")
     row, text = got
+    game_id = row.get("game_id")
+    if game_id is not None:
+        await recents.scrub_dangling_parent(game_id)
+        # Re-read after potential scrub.
+        got = recents.get(h)
+        if got is None:
+            raise HTTPException(status_code=404, detail="not found")
+        row, text = got
     await recents.touch(h)
     return {
         "hash": h,
-        "game_id": row.get("game_id"),
+        "game_id": game_id,
         "format": row["format"],
         "summary": row["summary"],
         "ts": row["ts"],
         "text": text,
+        "parent_game_id": row.get("parent_game_id"),
+        "fork_ply": row.get("fork_ply"),
+        "children": recents.children_of(game_id) if game_id else [],
     }
 
 
@@ -392,20 +412,27 @@ async def view_start(request: Request) -> dict:
     ) = hve.play_game_snapshot()
     summary = hve.play_game_summary()
     comments, root_comment = hve.play_game_comments()
+    # Preserve the fork link across the play -> view state-flip so a
+    # downstream annotation-only edit can still record it. (Import or
+    # FEN-edit branches do NOT preserve.)
+    fork_link = hve.fork_link
     try:
-        game_id = await hve.enter_view_mode(ViewModeParams(
-            start_fen=start_fen,
-            moves_uci=moves_uci,
-            clock_history=clock_history or None,
-            final_white_time=white_time,
-            final_black_time=black_time,
-            eval_history=eval_history if any(e is not None for e in eval_history) else None,
-            white_name=summary["white"] if summary else None,
-            black_name=summary["black"] if summary else None,
-            view_summary=summary,
-            comments=comments,
-            root_comment=root_comment,
-        ))
+        game_id = await hve.enter_view_mode(
+            ViewModeParams(
+                start_fen=start_fen,
+                moves_uci=moves_uci,
+                clock_history=clock_history or None,
+                final_white_time=white_time,
+                final_black_time=black_time,
+                eval_history=eval_history if any(e is not None for e in eval_history) else None,
+                white_name=summary["white"] if summary else None,
+                black_name=summary["black"] if summary else None,
+                view_summary=summary,
+                comments=comments,
+                root_comment=root_comment,
+            ),
+            fork_link=fork_link,
+        )
         await hve.view_last()
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -508,6 +535,12 @@ async def edit_commit(payload: dict, request: Request) -> dict:
         raise HTTPException(status_code=400, detail="'comment_text' exceeds maximum length")
     prev_id = hve.game_id
     prev_hash = request.app.state.recent_imports.hash_for_id(prev_id) if prev_id else None
+    # Capture the fork link before commit_edit -- the FEN-change branch
+    # routes through enter_view_mode which would clear it (correct
+    # behavior: FEN edit == new lineage). Annotation-only commit does
+    # NOT go through enter_view_mode, so the live HVE link stays, but
+    # we capture here anyway so the call site is symmetric.
+    pre_commit_fork_link = hve.fork_link
     try:
         result = await hve.commit_edit(
             fen, apply_comment=apply_comment, comment_text=comment_text,
@@ -518,6 +551,7 @@ async def edit_commit(payload: dict, request: Request) -> dict:
     h: str | None = None
     summary = None
     if result["changed"] == "fen":
+        # FEN edit == new lineage; do NOT carry the fork link forward.
         summary = parse_fen(fen).summary
         h = await recents.save(
             fmt="fen", text=fen, summary=summary, game_id=result["game_id"],
@@ -525,7 +559,14 @@ async def edit_commit(payload: dict, request: Request) -> dict:
     elif result["changed"] == "comment":
         # Annotation-only commit: same game_id, content hash changed.
         # Replace the pre-edit recents row (if any) with the new PGN.
+        # Carry the fork link through so a previously-unsaved child
+        # gets promoted into recents with the link attached.
         summary = result["summary"]
+        parent_game_id, fork_ply = (
+            pre_commit_fork_link
+            if pre_commit_fork_link is not None
+            else (None, None)
+        )
         h = await recents.replace_at(
             old_hash=prev_hash,
             fmt="pgn",
@@ -533,7 +574,12 @@ async def edit_commit(payload: dict, request: Request) -> dict:
             summary=summary or {},
             game_id=result["game_id"],
             precomputed_hash=result["hash"],
+            parent_game_id=parent_game_id,
+            fork_ply=fork_ply,
         )
+        # Consumed -- clear the live link so it doesn't re-fire on a
+        # subsequent transition.
+        hve.clear_fork_link()
     return {"game_id": result["game_id"], "hash": h, "summary": summary}
 
 

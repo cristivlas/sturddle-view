@@ -202,6 +202,13 @@ class HumanVsEngine:
         # game_id) for the recent-imports save so the async write happens
         # outside the critical section.
         self._pending_recents_save: tuple[str, dict, str] | None = None
+        # X-game navigation fork link. Set by play_from_here(cursor>=1):
+        # (parent_game_id, fork_ply). Drained by paths that durably save
+        # the child to recents (finalization via _flush_recents_save and
+        # commit_edit via the api layer). Cleared at the top of new_game
+        # so plain "new game" and import-on-top never carry a stale link
+        # forward; play_from_here re-stashes after new_game returns.
+        self._fork_link: tuple[str, int] | None = None
         self._tb: TablebaseProber | None = None
         self._lock = asyncio.Lock()
 
@@ -432,6 +439,11 @@ class HumanVsEngine:
             await self._cancel_think()
             await self._cancel_tick()
             self._reset_view_state()
+            # Universal reset point: any stale fork link from a prior
+            # session must not leak into the new game. play_from_here
+            # re-stashes after new_game returns; all other paths
+            # (plain new game, import-on-top) start link-free.
+            self._fork_link = None
             self._ensure_tablebase()
             engine = await self._ensure_engine()
             engine.send_line("ucinewgame")
@@ -810,10 +822,23 @@ class HumanVsEngine:
         comments = list(self._play_comments) if self._play_comments is not None else None
         return comments, self._play_root_comment
 
+    @property
+    def fork_link(self) -> tuple[str, int] | None:
+        """Read-only view of the current fork link, if any. Used by the
+        API layer to pass the link across an ``enter_view_mode`` boundary
+        when the transition preserves lineage (``/view/start``)."""
+        return self._fork_link
+
+    def clear_fork_link(self) -> None:
+        """Drop the current fork link. Used by the API layer once the
+        link has been consumed by a recents write."""
+        self._fork_link = None
+
     async def enter_view_mode(
         self,
         params: ViewModeParams,
         game_id: str | None = None,
+        fork_link: tuple[str, int] | None = None,
     ) -> str:
         """Load a PGN-imported game into view mode at the LAST ply.
 
@@ -827,6 +852,13 @@ class HumanVsEngine:
         content already in the store), pass it through so the live
         session and the store agree. When omitted, a fresh uuid4 is
         minted.
+
+        ``fork_link``: optional ``(parent_game_id, fork_ply)``. The
+        store is replaced unconditionally with this value -- so the
+        default ``None`` drops any stale link from a prior play game
+        (import-on-top, FEN-edit commit), and ``/view/start`` passes
+        its current link through so it survives the play -> view ->
+        edit -> annotate flow.
         """
         async with self._lock:
             if not (self._mode & Op.ENTER_VIEW_MODE._mask):
@@ -835,6 +867,12 @@ class HumanVsEngine:
             await self._cancel_think()
             await self._cancel_tick()
             self._ensure_tablebase()
+            # Unconditional replacement: default ``None`` drops a stale
+            # link from a prior play game (import-on-top, FEN-edit
+            # commit); ``/view/start`` passes the current link through
+            # so play -> view -> edit -> annotate can record it on
+            # commit.
+            self._fork_link = fork_link
             try:
                 start_board = board_from(params.start_fen)
             except ValueError as e:
@@ -1199,11 +1237,17 @@ class HumanVsEngine:
             if board.is_game_over():
                 raise RuntimeError("game is over at this ply; back up first")
             human_white = (board.turn == chess.WHITE)
+            # Capture fork link before new_game wipes it. The parent's
+            # game_id is the *current* self._game_id (we are still in
+            # view mode pointing at it). fork_ply==0 is a degenerate
+            # fork -- treated as a plain new game with no link.
+            parent_game_id = self._game_id
+            fork_ply = cursor
             # Exit view mode before the new_game call (which re-acquires
             # the lock). Clear viewer state so new_game starts clean.
             self._mode = Mode.PLAY
             self._reset_view_state()
-        return await self.new_game(
+        new_id = await self.new_game(
             human_white=human_white,
             tc=tc,
             start_fen=start_fen,
@@ -1214,6 +1258,12 @@ class HumanVsEngine:
             seed_comments=seed_comments,
             seed_root_comment=seed_root_comment,
         )
+        # Re-stash the fork link after new_game cleared it. Only when
+        # parent_id is known AND fork_ply >= 1 (ply 0 fork == plain new
+        # game, no link).
+        if parent_game_id is not None and fork_ply >= 1:
+            self._fork_link = (parent_game_id, fork_ply)
+        return new_id
 
     async def apply_engine_settings_live(self) -> None:
         """Force the play engine to respawn so the latest options/args/env
@@ -2092,15 +2142,27 @@ class HumanVsEngine:
     async def _flush_recents_save(self) -> None:
         """Drain the stash set by _stash_recents_payload. Call AFTER
         releasing self._lock. Best-effort: a failure here must not
-        block game-end signaling."""
+        block game-end signaling.
+
+        Also drains ``self._fork_link`` (set by play_from_here) so the
+        recents row records the parent_game_id + fork_ply. The link
+        is consumed regardless of whether the payload exists -- if a
+        finalization arrives without a payload (no moves played), the
+        link is dropped on the floor and never establishes."""
         payload = self._pending_recents_save
         self._pending_recents_save = None
+        fork_link = self._fork_link
+        self._fork_link = None
         if payload is None or self._recents is None:
             return
         text, summary, game_id = payload
+        parent_game_id, fork_ply = (
+            fork_link if fork_link is not None else (None, None)
+        )
         try:
             await self._recents.save(
                 fmt="pgn", text=text, summary=summary, game_id=game_id,
+                parent_game_id=parent_game_id, fork_ply=fork_ply,
             )
         except Exception:
             log.exception("could not save finished game to recents")

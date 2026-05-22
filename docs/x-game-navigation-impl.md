@@ -101,38 +101,56 @@ Existing eviction logic skips rows with non-empty `refs`. Confirm the
 dict-shape change does not break the truthiness check; add a regression
 test.
 
-### 1.7 Fork-link capture (not in play-from-here)
+### 1.7 Fork-link capture (lazy commit on finalization)
 
-Status: `todo`
+Status: `done`
 
 `POST /game/view/play-from-here` does NOT save the child to recents.
 That stays unchanged.
 
-Instead, at fork time the server records the prospective fork link
-**without writing to recents yet**:
+Instead, at fork time the server stashes the prospective fork link on
+the HVE session without writing to recents:
 
-- Capture parent `game_id` and the cursor ply at the moment
-  play-from-here is invoked.
-- Stash `(parent_game_id, fork_ply)` on the new play-mode session
-  state.
-- If `fork_ply == 0`: do not stash; treat as a plain new game.
+- Inside `play_from_here`, before `_reset_view_state()`, capture
+  `(self._game_id, self._view_cursor)` -- the parent's game_id and the
+  fork ply.
+- Store on a new HVE attribute, e.g.
+  `self._fork_link: tuple[str, int] | None`.
+- If cursor (= fork_ply) is 0: do not stash; treat as a plain new
+  game.
 
-The stashed link is consumed later, when the active game transitions
-into a viewed game via one of the existing paths (game-over auto-view,
-save-pgn-then-view, etc. — exact set TBD during impl). At that
-transition, `recents.save(...)` is called with `parent_game_id` and
-`fork_ply` set.
+The stashed link is consumed only when the child play game itself
+becomes a saved/viewed game via one of the paths that *already* write
+to recents today:
 
-Implication: a play game that never transitions to view never appears
-in recents and never establishes the link. This matches today's
-behavior for the play side of the app.
+- `_flush_recents_save` -- finalization (mate / stalemate / draw /
+  resign / time-forfeit). Picks up the stash and passes
+  `parent_game_id` + `fork_ply` to `recents.save`.
+- `commit_edit` -- edit-commit (FEN or annotation-only). Likewise
+  picks up the stash and forwards to `recents.save` /
+  `recents.replace_at`.
 
-Open during impl:
+Stash is cleared in all of: consumption, plain `new_game`, abandonment
+via another import-on-top, and `play_from_here` resetting it from the
+new parent's perspective (i.e. fork-of-fork chains correctly).
 
-- Exact list of "active -> viewed" transitions that should consume the
-  stashed link.
-- Where the stash lives (session object on the play game?). Constants
-  for keys to be defined alongside the existing ROW_* / REF_* set.
+NOT consumed (link drops on the floor by design):
+
+- `/game/view/start` -- transient state-flip used only as a step into
+  edit mode; today no recents write, leave alone.
+- `/game/import` on top of an active play game (user discards).
+- `play_from_here` -- the new fork resets the stash to point at the
+  NEW parent, not the old one (sibling forks share the same parent).
+- Edit-cancel -- no commit, no save.
+
+Rationale: a fork is "lazily committed" only when the child itself is
+durable. A play game that the user abandons mid-stream leaves no fork
+row -- matching today's behavior that abandoned play games leave no
+recents trace.
+
+Constants for the stash carrier go alongside the existing
+ROW_* / REF_* set in `recent_imports.py` if they need module-level
+visibility; otherwise the HVE attribute is self-contained.
 
 ### 1.8 API: `DELETE /game/recent-imports/{hash}`
 
@@ -149,7 +167,8 @@ Status: `done`
 
 ### 1.9 API: `GET /game/recent-imports/by-id/{game_id}`
 
-Status: `todo`
+Status: `done` (and the same extension applied to the by-hash route
+for symmetry)
 
 Extend response with:
 
@@ -171,10 +190,9 @@ Named logger, info level, structured fields:
 
 ### 1.11 Tests
 
-Status: `wip` (recent_imports tests done; play-from-here + transition
-tests pending the impl in 1.7).
+Status: `done` (Phase 1).
 
-Pinned:
+Pinned in `tests/test_recent_imports.py`:
 
 - save-with-parent populates both rows; refs is dict-shaped.
 - remove-with-live-refs blocked; refs untouched.
@@ -183,19 +201,28 @@ Pinned:
 - evict skips rows with non-empty refs (regression on dict-shape).
 - replace_at preserves parent_game_id/fork_ply on child edits.
 - replace_at preserves refs on parent edits.
+- replace_at explicit fork-link promotes an unsaved child into recents.
+- replace_at explicit link does NOT double-append parent's refs.
 - fork_ply must be supplied with parent_game_id (and vice versa).
 - fork_ply == 0 rejected.
 
-Still to pin (after 1.7):
+Pinned in `tests/test_recents_play_save.py`:
 
-- play-from-here at ply > 0 stashes (parent_id, fork_ply) on the new
-  play game; recents NOT touched at this point.
-- play-from-here at ply 0 does NOT stash; subsequent transition to
-  view writes a plain (non-fork) row.
-- active -> view transition consumes the stash and writes a fork row
-  with parent_game_id + fork_ply; parent's refs is appended atomically.
-- A play game that never transitions to view leaves no fork row and
-  does not append to the parent's refs.
+- play_from_here at ply > 0 stashes (parent_id, fork_ply); resign
+  finalizes and writes the fork row.
+- play_from_here at ply 0 does NOT stash; subsequent finalization
+  writes a plain non-fork row.
+- plain new_game clears a stale stash.
+- enter_view_mode (default) drops the stash.
+- enter_view_mode (fork_link= passed) preserves the stash.
+
+Pinned in `tests/test_recent_imports_api.py`:
+
+- GET /game/recent-imports/by-id includes parent_game_id, fork_ply,
+  children for both parent and child rows.
+- DELETE returns 409 with `{"error": "has_children", "children": [...]}`
+  when the row is pinned.
+- DELETE of the child unpins the parent.
 
 ## Phase 2 — Client (view ribbon + move list)
 
@@ -212,3 +239,9 @@ Sketches to be added when Phase 1 lands.
   fork row only when the active game later transitions into view via
   existing paths. Rationale: a play game that never becomes "viewed"
   should not pollute recents, matching today's behavior.
+- 2026-05-22: Code review showed `/view/start` is purely transient
+  (only used as a step into edit mode -- no standalone "view my live
+  play game" UX). Removed it from the list of consuming transitions.
+  Final list: `_flush_recents_save` (mate/resign/timeout) and
+  `commit_edit` (edit-mode commit). Edit-cancel and import-on-top
+  drop the stash by design.

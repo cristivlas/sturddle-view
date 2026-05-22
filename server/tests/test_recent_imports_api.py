@@ -371,3 +371,79 @@ def test_endpoints_require_auth(tmp_path):
         assert c.get("/game/recent-imports").status_code == 401
         assert c.get("/game/recent-imports/abc").status_code == 401
         assert c.delete("/game/recent-imports/abc").status_code == 401
+
+
+# ---- x-game navigation endpoint contract ----
+
+
+def _seed_parent_with_child(tmp_path, app, parent_id="gid-parent",
+                            child_id="gid-child", fork_ply=4):
+    """Inject a parent + linked child directly into the recents store
+    so we can exercise the GET endpoint shape without going through
+    play-from-here machinery."""
+    import asyncio
+    store = app.state.recent_imports
+
+    async def seed():
+        await store.save(
+            fmt="pgn", text='1. e4 e5 *',
+            summary={"white": "P"}, game_id=parent_id,
+        )
+        await store.save(
+            fmt="pgn", text='1. d4 d5 *',
+            summary={"white": "C"}, game_id=child_id,
+            parent_game_id=parent_id, fork_ply=fork_ply,
+        )
+
+    asyncio.get_event_loop().run_until_complete(seed())
+
+
+def test_by_id_response_includes_parent_and_children(tmp_path):
+    app = _make_app(tmp_path)
+    _seed_parent_with_child(tmp_path, app)
+    with TestClient(app) as c:
+        c.headers["Authorization"] = "Bearer test-token"
+        # Parent: children list non-empty, no parent_game_id.
+        parent = c.get("/game/recent-imports/by-id/gid-parent").json()
+        assert parent["parent_game_id"] is None
+        assert parent["fork_ply"] is None
+        assert len(parent["children"]) == 1
+        assert parent["children"][0]["game_id"] == "gid-child"
+        assert parent["children"][0]["fork_ply"] == 4
+        # Child: parent_game_id + fork_ply set, children empty.
+        child = c.get("/game/recent-imports/by-id/gid-child").json()
+        assert child["parent_game_id"] == "gid-parent"
+        assert child["fork_ply"] == 4
+        assert child["children"] == []
+
+
+def test_delete_blocked_by_refs_returns_409(tmp_path):
+    app = _make_app(tmp_path)
+    _seed_parent_with_child(tmp_path, app)
+    with TestClient(app) as c:
+        c.headers["Authorization"] = "Bearer test-token"
+        # Find parent's hash via the by-id endpoint.
+        parent = c.get("/game/recent-imports/by-id/gid-parent").json()
+        h_parent = parent["hash"]
+        r = c.delete(f"/game/recent-imports/{h_parent}")
+        assert r.status_code == 409, r.text
+        body = r.json()
+        assert body["detail"]["error"] == "has_children"
+        assert len(body["detail"]["children"]) == 1
+        # Parent row still present.
+        assert c.get(f"/game/recent-imports/{h_parent}").status_code == 200
+
+
+def test_delete_child_unblocks_parent(tmp_path):
+    app = _make_app(tmp_path)
+    _seed_parent_with_child(tmp_path, app)
+    with TestClient(app) as c:
+        c.headers["Authorization"] = "Bearer test-token"
+        parent = c.get("/game/recent-imports/by-id/gid-parent").json()
+        child = c.get("/game/recent-imports/by-id/gid-child").json()
+        h_parent = parent["hash"]
+        h_child = child["hash"]
+        # Remove child first -> 200.
+        assert c.delete(f"/game/recent-imports/{h_child}").status_code == 200
+        # Now parent is unpinned -> 200.
+        assert c.delete(f"/game/recent-imports/{h_parent}").status_code == 200

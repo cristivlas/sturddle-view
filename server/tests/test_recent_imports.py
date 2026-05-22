@@ -601,3 +601,64 @@ def test_replace_at_preserves_refs_on_parent_edit(store):
     ))
     row, _ = store.get(new_hash)
     assert row["refs"] == [{"game_id": "gid-child", "fork_ply": 5}]
+
+
+def test_replace_at_explicit_fork_link_promotes_child(store):
+    """Caller can promote an unsaved child into recents with an explicit
+    fork link. Parent's refs gets appended atomically."""
+    h_parent = _save_parent(store)
+    # Child has never been in recents; promote it via replace_at with
+    # old_hash=None and explicit (parent_game_id, fork_ply).
+    h_child = _run(store.replace_at(
+        old_hash=None, fmt="pgn",
+        text="1. e4 e5 2. Nf3 *", summary={"white": "C"},
+        game_id="gid-child",
+        parent_game_id="gid-parent", fork_ply=4,
+    ))
+    child_row = store.get(h_child)[0]
+    assert child_row["parent_game_id"] == "gid-parent"
+    assert child_row["fork_ply"] == 4
+    parent_row = store.get(h_parent)[0]
+    assert parent_row["refs"] == [{"game_id": "gid-child", "fork_ply": 4}]
+
+
+def test_replace_at_explicit_link_does_not_double_append(store):
+    """If the existing row already carries the link, an explicit link
+    that matches must NOT append a second entry to parent's refs."""
+    _save_parent(store)
+    h_child = _save_child(store, "gid-parent", ply=5)
+    # Re-edit the child via replace_at with an explicit link.
+    _run(store.replace_at(
+        old_hash=h_child, fmt="pgn",
+        text="1. d4 d5 2. c4 *", summary={"white": "C"},
+        game_id="gid-child",
+        parent_game_id="gid-parent", fork_ply=5,
+    ))
+    parent_row = store.get_by_id("gid-parent")[0]
+    assert parent_row["refs"] == [{"game_id": "gid-child", "fork_ply": 5}]
+
+
+def test_replace_at_rejects_partial_fork_link(store):
+    _save_parent(store)
+    with pytest.raises(AssertionError):
+        _run(store.replace_at(
+            old_hash=None, fmt="pgn",
+            text="1. d4 *", summary={}, game_id="g",
+            parent_game_id="gid-parent",
+        ))
+    with pytest.raises(AssertionError):
+        _run(store.replace_at(
+            old_hash=None, fmt="pgn",
+            text="1. d4 *", summary={}, game_id="g",
+            fork_ply=3,
+        ))
+
+
+def test_replace_at_rejects_zero_fork_ply(store):
+    _save_parent(store)
+    with pytest.raises(AssertionError):
+        _run(store.replace_at(
+            old_hash=None, fmt="pgn",
+            text="1. d4 *", summary={}, game_id="g",
+            parent_game_id="gid-parent", fork_ply=0,
+        ))

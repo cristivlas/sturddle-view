@@ -244,3 +244,129 @@ async def test_play_from_here_with_comments_then_resign_builds_pgn(hve):
     await h.resign()
     rows = recents.list()
     assert len(rows) == 1
+
+
+# ---- x-game fork-link tests ----
+
+
+async def _import_parent(h, recents):
+    """Drop a parent PGN into the store + view it. Returns the parent
+    game_id (the live HVE id while in view mode)."""
+    pgn = (
+        '[Event "?"]\n[White "P"]\n[Black "Q"]\n[Result "*"]\n'
+        '\n1. e4 e5 2. Nf3 Nc6 *'
+    )
+    parent_id = "gid-parent"
+    await recents.save(
+        fmt="pgn", text=pgn,
+        summary={"white": "P", "black": "Q", "result": "*"},
+        game_id=parent_id,
+    )
+    # Enter view mode against the parent's content so play_from_here
+    # captures parent_id correctly.
+    await h.enter_view_mode(
+        ViewModeParams(
+            start_fen=None,
+            moves_uci=["e2e4", "e7e5", "g1f3", "b8c6"],
+            clock_history=None,
+            view_hash=None,
+            view_summary={"white": "P", "black": "Q", "result": "*"},
+        ),
+        game_id=parent_id,
+    )
+    return parent_id
+
+
+async def test_play_from_here_then_resign_writes_fork_row(hve):
+    """play_from_here at parent ply >= 1 -> resign finalizes -> recents
+    has the fork row with parent_game_id + fork_ply set, and the parent's
+    refs is appended."""
+    h, recents = hve
+    parent_id = await _import_parent(h, recents)
+    # Cursor at last ply (4) when we fork.
+    await h.view_last()
+    await h.play_from_here(tc=TimeControl(60, 0))
+    assert h.fork_link == (parent_id, 4)
+    child_id = h.game_id
+    await h.submit_move("d2d4")  # one play move to make the PGN non-empty
+    await h.resign()
+
+    # Child row is in recents with the fork link.
+    child_got = recents.get_by_id(child_id)
+    assert child_got is not None
+    child_row = child_got[0]
+    assert child_row["parent_game_id"] == parent_id
+    assert child_row["fork_ply"] == 4
+    # Parent's refs records the child at the fork ply.
+    parent_row = recents.get_by_id(parent_id)[0]
+    assert parent_row["refs"] == [{"game_id": child_id, "fork_ply": 4}]
+    # And the stash is cleared after consumption.
+    assert h.fork_link is None
+
+
+async def test_play_from_here_at_ply_zero_is_not_a_fork(hve):
+    """Forking at ply 0 of the parent is treated as a plain new game --
+    no fork link, no parent ref."""
+    h, recents = hve
+    parent_id = await _import_parent(h, recents)
+    await h.view_first()  # cursor = 0
+    await h.play_from_here(tc=TimeControl(60, 0))
+    assert h.fork_link is None
+    await h.submit_move("e2e4")
+    await h.resign()
+    parent_row = recents.get_by_id(parent_id)[0]
+    assert parent_row["refs"] == []
+
+
+async def test_new_game_clears_stale_fork_link(hve):
+    """play_from_here stashes a link; a subsequent plain new_game must
+    drop it so the next finalization does NOT carry a stale parent."""
+    h, recents = hve
+    await _import_parent(h, recents)
+    await h.view_last()
+    await h.play_from_here(tc=TimeControl(60, 0))
+    assert h.fork_link is not None
+    # User abandons fork -> plain new game.
+    await h.new_game(human_white=True, tc=TimeControl(60, 0))
+    assert h.fork_link is None
+    new_game_id = h.game_id
+    await h.submit_move("e2e4")
+    await h.resign()
+    row = recents.get_by_id(new_game_id)[0]
+    assert "parent_game_id" not in row
+    assert "fork_ply" not in row
+
+
+async def test_enter_view_mode_drops_link_by_default(hve):
+    """Import-on-top of a forked play game must drop the stash; the new
+    view game has its own fresh lineage."""
+    h, recents = hve
+    await _import_parent(h, recents)
+    await h.view_last()
+    await h.play_from_here(tc=TimeControl(60, 0))
+    assert h.fork_link is not None
+    # Simulate import-on-top: new view mode WITHOUT preserve.
+    await h.enter_view_mode(
+        ViewModeParams(start_fen=None, moves_uci=[], clock_history=None),
+        game_id="gid-fresh",
+    )
+    assert h.fork_link is None
+
+
+async def test_enter_view_mode_preserves_link_when_asked(hve):
+    """``/view/start``-style transition passes fork_link through so the
+    play->view state-flip can hand the link to a downstream commit."""
+    h, recents = hve
+    parent_id = await _import_parent(h, recents)
+    await h.view_last()
+    await h.play_from_here(tc=TimeControl(60, 0))
+    link_before = h.fork_link
+    assert link_before == (parent_id, 4)
+    # Simulate /view/start: it captures the live link and passes it
+    # through enter_view_mode.
+    await h.enter_view_mode(
+        ViewModeParams(start_fen=None, moves_uci=[], clock_history=None),
+        game_id="gid-view-snapshot",
+        fork_link=link_before,
+    )
+    assert h.fork_link == link_before

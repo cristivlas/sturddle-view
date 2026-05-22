@@ -333,6 +333,8 @@ class RecentImports:
         summary: dict,
         game_id: str,
         precomputed_hash: str | None = None,
+        parent_game_id: str | None = None,
+        fork_ply: int | None = None,
     ) -> str:
         """Atomically swap content for a preserved ``game_id``.
 
@@ -364,7 +366,24 @@ class RecentImports:
         incoming binding is dropped. The old row at ``old_hash`` is
         still evicted, so the caller's game effectively vanishes from
         recents -- acceptable given the probability.
+
+        Fork link (optional): pass ``parent_game_id`` AND ``fork_ply``
+        together to attach a fresh link on the new row. Used by the
+        play -> view -> edit -> annotate path where the child is being
+        promoted into recents for the first time. Explicit values
+        override any link preserved from the old row. The parent's
+        ``refs`` is appended atomically. Asserts both-or-neither and
+        ``fork_ply >= 1``.
         """
+        if (parent_game_id is None) != (fork_ply is None):
+            raise AssertionError(
+                "parent_game_id and fork_ply must be supplied together"
+            )
+        if fork_ply is not None and fork_ply < 1:
+            raise AssertionError(
+                f"fork_ply must be >= 1 (got {fork_ply}); "
+                "ply-0 forks are not links"
+            )
         trimmed = text.strip()
         new_hash = precomputed_hash if precomputed_hash is not None else canonical_hash(trimmed, fmt)
         async with self._lock:
@@ -382,6 +401,19 @@ class RecentImports:
                     preserved_parent_id = old_row.get(ROW_PARENT_GAME_ID)
                     preserved_fork_ply = old_row.get(ROW_FORK_PLY)
                     preserved_refs = list(old_row.get(ROW_REFS) or [])
+
+            # Explicit fork-link wins over preserved -- used when the
+            # caller is promoting a previously-unsaved child into recents
+            # for the first time. parent_ref_to_append is set only when
+            # the explicit link is *new* (preserved == None), so we don't
+            # double-append to the parent's refs when the link was just
+            # carried across an in-place rewrite.
+            parent_ref_to_append: tuple[str, int] | None = None
+            if parent_game_id is not None:
+                if preserved_parent_id is None:
+                    parent_ref_to_append = (parent_game_id, fork_ply)
+                preserved_parent_id = parent_game_id
+                preserved_fork_ply = fork_ply
 
             if old_hash is not None and old_hash != new_hash:
                 old_row = self._index.get(old_hash)
@@ -426,6 +458,11 @@ class RecentImports:
                     existing[ROW_FORK_PLY] = preserved_fork_ply
                 if preserved_refs and not existing.get(ROW_REFS):
                     existing[ROW_REFS] = preserved_refs
+                if parent_ref_to_append is not None:
+                    self._append_parent_ref_locked(
+                        parent_ref_to_append[0], game_id,
+                        parent_ref_to_append[1],
+                    )
                 self._persist_locked()
                 return new_hash
 
@@ -447,6 +484,11 @@ class RecentImports:
                 row[ROW_FORK_PLY] = preserved_fork_ply
             self._index[new_hash] = row
             self._bind_id_locked(game_id, new_hash, row)
+            if parent_ref_to_append is not None:
+                self._append_parent_ref_locked(
+                    parent_ref_to_append[0], game_id,
+                    parent_ref_to_append[1],
+                )
             self._evict_locked()
             self._persist_locked()
         return new_hash
