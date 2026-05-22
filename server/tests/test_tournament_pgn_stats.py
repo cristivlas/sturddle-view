@@ -689,6 +689,27 @@ def test_form_pairs_question_mark_round_becomes_orphan():
     assert orphans == [0]
 
 
+def test_form_pairs_two_no_round_entries_do_not_pair():
+    """Two color-flipped entries with empty round tags must both be
+    orphaned -- the no-round guard prevents them from being bucketed
+    together. Kills `or` -> `and` mutation on the no-round guard
+    (which would funnel everything into buckets and pair these two)."""
+    keyed = [("", "A", "B", "1-0"), ("", "B", "A", "0-1")]
+    pairs, orphans = _form_pairs(keyed, paired=True)
+    assert pairs == []
+    assert sorted(orphans) == [0, 1]
+
+
+def test_form_pairs_two_question_mark_entries_do_not_pair():
+    """Same as the empty-round case but with `'?'` as the round tag.
+    Pins both branches of `not round_tag or round_tag == '?'` against
+    the `and` mutation."""
+    keyed = [("?", "A", "B", "1-0"), ("?", "B", "A", "0-1")]
+    pairs, orphans = _form_pairs(keyed, paired=True)
+    assert pairs == []
+    assert sorted(orphans) == [0, 1]
+
+
 def test_form_pairs_no_round_continue_processes_subsequent_entries():
     """An entry with no round must `continue` (not `break`): later
     entries with real rounds must still be bucketed and paired. Kills
@@ -722,6 +743,24 @@ def test_form_pairs_pair_order_uses_lower_file_index_first():
     ]
     pairs, orphans = _form_pairs(keyed, paired=True)
     assert pairs == [(0, 1)]
+    assert orphans == []
+
+
+def test_form_pairs_pair_order_swaps_when_side_a_index_greater():
+    """When the k-th A-white game comes AFTER the k-th B-white game in
+    file order, the pair tuple must still list the lower index first.
+    Pins the `if ia < ib` swap branch (which is unreachable when both
+    side_a and side_b are in strict ascending file order)."""
+    keyed = [
+        ("1", "A", "B", "1-0"),  # 0: A-white
+        ("1", "B", "A", "0-1"),  # 1: B-white
+        ("1", "B", "A", "0-1"),  # 2: B-white
+        ("1", "A", "B", "1-0"),  # 3: A-white
+    ]
+    pairs, orphans = _form_pairs(keyed, paired=True)
+    # k=0: side_a[0]=0 paired with side_b[0]=1 -> (0, 1) (no swap).
+    # k=1: side_a[1]=3 paired with side_b[1]=2 -> 3 > 2 -> swap -> (2, 3).
+    assert sorted(pairs) == [(0, 1), (2, 3)]
     assert orphans == []
 
 
