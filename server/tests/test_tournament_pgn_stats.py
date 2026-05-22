@@ -693,6 +693,57 @@ def test_ordo_fit_purges_all_losses_engine():
     assert fit["C"] == (None, None)
 
 
+def test_ordo_fit_purges_all_losses_engine_in_multi_component_pool():
+    """All-losses engine must be purged even when the remaining engines
+    form a non-degenerate component after the all-wins engine is also
+    removed. Kills `losses > 0` -> `== 0`/`< 0` mutations on the
+    second-leg purge predicate (which would fail to fire for an
+    all-losses engine, leaving it in the fit with a real rating)."""
+    # A: 2W 0L (all wins) -> purged via first leg
+    # C: 0W 2L (all losses) -> purged via second leg
+    # B, D: balanced -> form a real component
+    encs = [
+        ("A", "B", 1.0, 1),    # A beats B
+        ("A", "C", 1.0, 1),    # A beats C
+        ("B", "D", 1.0, 1),    # B beats D
+        ("D", "C", 1.0, 1),    # D beats C
+    ]
+    fit = ordo_fit(["A", "B", "C", "D"], encs,
+                   wins={"A": 2, "B": 1, "C": 0, "D": 1},
+                   losses={"A": 0, "B": 1, "C": 2, "D": 1})
+    # A and C are purged; B and D fit each other.
+    assert fit["A"] == (None, None)
+    assert fit["C"] == (None, None)
+    # If the all-losses-leg mutation slipped, C would have a real Elo
+    # because removing A still leaves C connected via D.
+    assert fit["B"][0] is not None
+    assert fit["D"][0] is not None
+
+
+def test_ordo_fit_purges_engine_missing_from_wins_dict_only_when_paired_with_losses():
+    """An engine absent from the `wins` dict (defaults to 0) but PRESENT
+    in `losses` with a positive count must be purged via the
+    "all losses" leg. Kills NumberReplacer mutations on the `.get(n, 0)`
+    defaults (specifically `0` -> `1` on wins.get and `0` -> `-1` on
+    losses.get) which would change which dict-default-bound engines get
+    purged."""
+    # Z is absent from wins (default 0) but has losses=2. Original
+    # purge predicate: (wins=0 > 0)=False; (losses=2 > 0 and wins=0 == 0)=True
+    # -> Z purged.
+    encs = [
+        ("A", "B", 1.0, 1), ("B", "A", 1.0, 1),
+        ("A", "Z", 1.0, 1), ("B", "Z", 1.0, 1),  # Z always loses
+    ]
+    fit = ordo_fit(["A", "B", "Z"], encs,
+                   wins={"A": 1, "B": 1},
+                   losses={"A": 1, "B": 1, "Z": 2})
+    assert fit["Z"] == (None, None)
+    # A and B fit; if NumberReplacer changed the wins default, A or B
+    # could be mistakenly purged.
+    assert fit["A"][0] is not None
+    assert fit["B"][0] is not None
+
+
 def test_ordo_fit_disconnected_components_fit_independently():
     # {A, B} played each other; {C, D} played each other; A never met C/D.
     encs = [

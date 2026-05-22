@@ -113,6 +113,14 @@ print(con.execute('SELECT COUNT(*) FROM work_items').fetchone()[0])
     log "  done in ${MOD_ELAPSED}s"
   fi
 
+  # cosmic-ray patches the source file in place; if `timeout` SIGTERM'd
+  # the worker between patch-apply and patch-restore, the file is left
+  # mutated. Restore from HEAD if dirty.
+  if ! git diff --quiet -- "${MODULE}"; then
+    log "  mutant residue detected in ${MODULE}; restoring from HEAD"
+    git checkout HEAD -- "${MODULE}" >> "${LOG}" 2>&1
+  fi
+
   log "rendering report"
   cr-html "${SESSION}" > "${HTML}" 2>>"${LOG}" || log "  cr-html failed"
 done
