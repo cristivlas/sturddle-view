@@ -359,21 +359,28 @@ export const playPerspective = {
       // Click on a move in the list (view mode only) → jump cursor to
       // the position AFTER that move, i.e. ply = plyIndex + 1.
       onMoveJump: (plyIndex) => { if (!analyzing) doViewNav("/game/view/goto", { ply: plyIndex + 1 }); },
-      // x-game fork glyphs. The fn returns a fresh Map at render time
-      // so children added/removed across game switches are reflected
-      // without having to re-mount the GameView.
-      forkChildCountsFn: () => {
-        if (!xgame.children || xgame.children.length === 0) return null;
+      // Fork glyphs. Fresh map per render; both child-here (this game
+      // has forks at this ply) and own-fork-ply (this game itself
+      // diverged from its parent here) get a glyph.
+      forkInfoFn: () => {
         const m = new Map();
-        for (const c of xgame.children) {
-          // Server emits 1-based ply count; the move list is 0-based on
-          // its rendered cells but each cell represents the position
-          // AFTER its move. The fork ply (== ply count in parent) lines
-          // up with the cell at index fork_ply - 1.
+        for (const c of xgame.children || []) {
+          // fork_ply is 1-based; cell index = fork_ply - 1.
           const idx = (c.fork_ply ?? 0) - 1;
-          if (idx >= 0) m.set(idx, (m.get(idx) ?? 0) + 1);
+          if (idx < 0) continue;
+          const cur = m.get(idx) ?? { childCount: 0, isOwnForkPly: false };
+          cur.childCount += 1;
+          m.set(idx, cur);
         }
-        return m;
+        if (xgame.parentGameId && xgame.forkPly != null) {
+          const idx = xgame.forkPly - 1;
+          if (idx >= 0) {
+            const cur = m.get(idx) ?? { childCount: 0, isOwnForkPly: false };
+            cur.isOwnForkPly = true;
+            m.set(idx, cur);
+          }
+        }
+        return m.size > 0 ? m : null;
       },
       // Glyph click: same nav as the cell click PLUS clear the
       // per-game dismiss flag so the banner re-fires at this ply.
@@ -666,21 +673,22 @@ export const playPerspective = {
           "GET", `/game/recent-imports/by-id/${encodeURIComponent(gameId)}`,
         );
         // Pass land_at_ply in the import payload so the server enters
-        // view mode at the target ply in a SINGLE transaction. This
-        // emits one board_update (not two) and avoids the animation
-        // flicker that happened when the import landed at ply 0 first
-        // and the client then called /view/goto to land at fork_ply.
+        // view mode at the target ply in a SINGLE transaction (no
+        // follow-up /view/goto -> no animation flicker).
         const importPayload = { format: target.format, text: target.text };
         if (landAtPly !== null && landAtPly > 0) {
           importPayload.land_at_ply = landAtPly;
-          // Match doViewNav's bookkeeping: the trigger is a precise
-          // landing on the fork ply, so any banner that depends on
+          // Precise landing on the fork ply -> any banner gated on
           // precise nav can fire on the resulting board_update.
           lastViewNavKind = "precise";
         }
-        await ctx.api("POST", "/game/import", importPayload);
-        // After import lands, the new game's board_update arrives via
-        // events and fetchXgameInfo runs again for the new game_id.
+        // GameView's applyEvent drops board_updates whose game_id does
+        // NOT match its local gameId. Clear before import so the
+        // server's fresh game_id is accepted; set it to the returned
+        // id so subsequent updates are still scoped.
+        view.setGameId(null);
+        const r = await ctx.api("POST", "/game/import", importPayload);
+        if (r?.game_id) view.setGameId(r.game_id);
       } catch (e) {
         reportError(ctx, "Open game failed", e);
       }
