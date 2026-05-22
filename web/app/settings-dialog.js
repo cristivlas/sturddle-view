@@ -228,7 +228,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       ribbonSide.size = "small";
       ribbonSide.setAttribute("distance", "4");
       ribbonSide.value = localStorage.getItem(RIBBON_SIDE_KEY) || initial.ribbon_side || "left";
-      for (const [val, label] of [["left", "Left"], ["right", "Right"], ["float", "Floating"]]) {
+      for (const [val, label] of [["left", "Left Ribbon"], ["right", "Right Ribbon"], ["float", "Floating"]]) {
         const opt = document.createElement("wa-option");
         opt.value = val;
         opt.textContent = label;
