@@ -437,9 +437,50 @@ def test_ordo_fit_margins_three_engines_exact():
     ]
     ratings = {"A": 100.0, "B": 0.0, "C": -100.0}
     result = _ordo_fit_margins(engines, enc, ratings)
-    assert result["A"] == pytest.approx(198.69, abs=0.01)
-    assert result["B"] == pytest.approx(188.25, abs=0.01)
-    assert result["C"] == pytest.approx(338.23, abs=0.01)
+    # Tight tolerance pins the var_last initializer (NumberReplacer 0.0 ->
+    # 1.0/-1.0 produces drift ~0.006 -- inside abs=0.01, outside abs=1e-4).
+    assert result["A"] == pytest.approx(198.6938, abs=1e-4)
+    assert result["B"] == pytest.approx(188.2517, abs=1e-4)
+    assert result["C"] == pytest.approx(338.2265, abs=1e-4)
+
+
+def test_ordo_fit_margins_four_engines_exact():
+    """4-engine case: exercises the n=4 Gauss-Jordan path with size=3.
+    Pins:
+      - `size = n - 1` against `n ^ 1` (n=4: 3 vs 5 -> indexing crash)
+      - `range(2 * size)` against `range(2 + size)` (size=3: 6 vs 5
+         elements per augmented row -> incomplete elimination, wrong inverse)
+    Smaller engines (n<=3) don't distinguish those mutations because
+    `2*2 == 2+2` and `3^1 == 3-1`."""
+    engines = ["A", "B", "C", "D"]
+    enc = [
+        ("A", "B", 6.0, 10), ("A", "C", 5.0, 10), ("A", "D", 7.0, 10),
+        ("B", "C", 4.0, 10), ("B", "D", 5.0, 10), ("C", "D", 6.0, 10),
+    ]
+    ratings = {"A": 50.0, "B": 0.0, "C": -25.0, "D": -25.0}
+    result = _ordo_fit_margins(engines, enc, ratings)
+    assert result["A"] == pytest.approx(156.0488, abs=1e-4)
+    assert result["B"] == pytest.approx(154.4801, abs=1e-4)
+    assert result["C"] == pytest.approx(154.5674, abs=1e-4)
+    assert result["D"] == pytest.approx(379.4239, abs=1e-4)
+
+
+def test_ordo_fit_margins_low_variance_returns_finite_margin():
+    """Very high sample sizes drive Fisher info up and the inverse-matrix
+    diagonal `v` below 1.0. Margin must still be finite. Kills
+    NumberReplacer `v >= 0` -> `v >= 1` on the variance positivity guard
+    (which would force margin=None when 0 <= v < 1)."""
+    engines = ["A", "B", "C"]
+    enc = [
+        ("A", "B", 5_000_000.0, 10_000_000),
+        ("A", "C", 5_000_000.0, 10_000_000),
+        ("B", "C", 5_000_000.0, 10_000_000),
+    ]
+    ratings = {"A": 0.0, "B": 0.0, "C": 0.0}
+    result = _ordo_fit_margins(engines, enc, ratings)
+    # v_A ~ 0.008 (well below 1); under `v >= 1` mutation margin -> None.
+    assert result["A"] is not None
+    assert result["A"] < 1.96  # confirms v < 1
 
 
 def test_ordo_fit_margins_three_engines_symmetric():
