@@ -539,6 +539,22 @@ def test_children_of_unknown_parent_returns_empty(store):
     assert store.children_of("nope") == []
 
 
+def test_parent_summary_of_returns_parent_summary(store):
+    _save_parent(store)
+    _save_child(store, "gid-parent", ply=5)
+    s = store.parent_summary_of("gid-child")
+    assert s == {"white": "P"}
+
+
+def test_parent_summary_of_unknown_returns_none(store):
+    assert store.parent_summary_of("nope") is None
+
+
+def test_parent_summary_of_orphan_root_returns_none(store):
+    _save_parent(store)
+    assert store.parent_summary_of("gid-parent") is None
+
+
 def test_evict_skips_rows_with_nonempty_refs(tmp_path):
     """Eviction must honor the dict-shaped refs (not just legacy lists)."""
     store = RecentImports.load(

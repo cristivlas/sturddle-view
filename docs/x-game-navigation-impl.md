@@ -268,10 +268,10 @@ Running list. Items prefixed B# survive context resets.
   the banner is empty. The above-commentary plan stalled because
   `.play-comments-host` is `position: fixed` with JS-driven geometry;
   any reuse needs to thread through the dock manager.
-- **B2** — Parent label is hardcoded "parent game" instead of the
-  parent's summary (white-vs-black, like the child label). Fix: extend
-  the `by-id` response so a child also receives the parent's summary,
-  or have the client fetch the parent's `by-id` lazily.
+- **B2** — *(fixed 2026-05-22)* Parent label now shows the parent's
+  white-vs-black summary. Server-side: `parent_summary_of(game_id)` on
+  the store + both by-id and by-hash endpoints emit `parent_summary`.
+  Client renders via `formatGameLabel`.
 - **B3** — Glyph stale after a child is deleted from the recents UI
   while the parent is open. Need to refresh `xgame` state after any
   delete that touches a related game.

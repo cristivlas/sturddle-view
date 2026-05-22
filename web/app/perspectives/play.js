@@ -560,7 +560,7 @@ export const playPerspective = {
         );
         xgame.gameId = gameId;
         xgame.parentGameId = r.parent_game_id ?? null;
-        xgame.parentSummary = null;  // resolved lazily when we open parent
+        xgame.parentSummary = r.parent_summary ?? null;
         xgame.forkPly = r.fork_ply ?? null;
         xgame.children = Array.isArray(r.children) ? r.children : [];
         xgame.childPlies = new Set(xgame.children.map(c => c.fork_ply));
@@ -576,12 +576,15 @@ export const playPerspective = {
         refreshXgameBanner();
       }
     }
-    function formatChildLabel(child) {
-      const s = child.summary || {};
+    function formatGameLabel(summary) {
+      const s = summary || {};
       const white = s.white || "?";
       const black = s.black || "?";
       const result = s.result && s.result !== "*" ? ` (${s.result})` : "";
       return `${white} vs ${black}${result}`;
+    }
+    function formatChildLabel(child) {
+      return formatGameLabel(child.summary);
     }
     function refreshXgameBanner() {
       const banner = root.querySelector("#xgame-banner");
@@ -604,10 +607,9 @@ export const playPerspective = {
         showAny = true;
         const linkBtn = root.querySelector("#xgame-open-parent");
         const plyEl = root.querySelector("#xgame-parent-ply");
-        // Server's children summary on the *parent* row would carry the
-        // parent's display; we don't have it client-side yet, so use a
-        // neutral label that still lets the user act.
-        linkBtn.textContent = "parent game";
+        linkBtn.textContent = xgame.parentSummary
+          ? formatGameLabel(xgame.parentSummary)
+          : "parent game";
         plyEl.textContent = String(xgame.forkPly ?? "?");
       }
       // Parent -> child: cursor lands precisely on a fork ply that has

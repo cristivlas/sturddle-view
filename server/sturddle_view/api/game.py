@@ -324,6 +324,7 @@ async def get_recent_import_by_id(game_id: str, request: Request) -> dict:
         "ts": row["ts"],
         "text": text,
         "parent_game_id": row.get("parent_game_id"),
+        "parent_summary": recents.parent_summary_of(game_id),
         "fork_ply": row.get("fork_ply"),
         "children": recents.children_of(game_id),
     }
@@ -358,6 +359,9 @@ async def get_recent_import(h: str, request: Request) -> dict:
         "ts": row["ts"],
         "text": text,
         "parent_game_id": row.get("parent_game_id"),
+        "parent_summary": (
+            recents.parent_summary_of(game_id) if game_id else None
+        ),
         "fork_ply": row.get("fork_ply"),
         "children": recents.children_of(game_id) if game_id else [],
     }

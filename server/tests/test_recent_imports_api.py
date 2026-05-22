@@ -406,13 +406,16 @@ def test_by_id_response_includes_parent_and_children(tmp_path):
         # Parent: children list non-empty, no parent_game_id.
         parent = c.get("/game/recent-imports/by-id/gid-parent").json()
         assert parent["parent_game_id"] is None
+        assert parent["parent_summary"] is None
         assert parent["fork_ply"] is None
         assert len(parent["children"]) == 1
         assert parent["children"][0]["game_id"] == "gid-child"
         assert parent["children"][0]["fork_ply"] == 4
-        # Child: parent_game_id + fork_ply set, children empty.
+        # Child: parent_game_id + fork_ply set, children empty,
+        # parent_summary carries the parent's display.
         child = c.get("/game/recent-imports/by-id/gid-child").json()
         assert child["parent_game_id"] == "gid-parent"
+        assert child["parent_summary"] == {"white": "P"}
         assert child["fork_ply"] == 4
         assert child["children"] == []
 

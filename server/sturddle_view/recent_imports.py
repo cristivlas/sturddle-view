@@ -561,6 +561,27 @@ class RecentImports:
                 )
             return RemoveResult(RemoveStatus.DELETED)
 
+    def parent_summary_of(self, game_id: str) -> dict | None:
+        """If the row identified by ``game_id`` has a resolvable parent,
+        return the parent's ``summary`` dict. Returns None when there is
+        no parent or the parent has been evicted / corrupted."""
+        h = self._by_id.get(game_id)
+        if h is None:
+            return None
+        row = self._index.get(h)
+        if row is None:
+            return None
+        parent_id = row.get(ROW_PARENT_GAME_ID)
+        if parent_id is None:
+            return None
+        parent_hash = self._by_id.get(parent_id)
+        if parent_hash is None:
+            return None
+        parent_row = self._index.get(parent_hash)
+        if parent_row is None:
+            return None
+        return parent_row.get(ROW_SUMMARY)
+
     def children_of(self, game_id: str) -> list[dict]:
         """Return live children of ``game_id`` as
         ``[{game_id, fork_ply, summary, ts}, ...]`` sorted by fork_ply
