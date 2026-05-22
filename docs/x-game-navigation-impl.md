@@ -278,8 +278,13 @@ Running list. Items prefixed B# survive context resets.
 - **B4** — *(fixed 2026-05-22)* Child->parent trigger originally
   fired at cursor 0; now correctly fires at `fork_ply` (matches the
   `play_from_here` semantics).
-- **B5** — After "Open parent" lands at fork_ply, the move list
-  scrolls. Verify no flicker in production.
+- **B5** — *(deferred)* "Open parent" / "Open child" should land at
+  fork_ply without move-list flicker. Likely resolved by the
+  land_at_ply server-side fix (single board_update). Needs proper
+  verification with two HvE games (both parent and child carrying
+  eval/clock info) so move-list re-render is exercised end-to-end.
+  Today's tests were mixed (human PGN parent + HvE child) which
+  doesn't fully cover the flicker path.
 - **B6** — Multi-child case (N>1): UX of the children-list button row
   not yet tested visually.
 - **B7** — *(open UX consideration)* Possibly show a short
