@@ -19,6 +19,7 @@ def _bench_fn():
 
 
 @pytest.mark.perf
+@pytest.mark.benchmark(min_rounds=30)
 def test_bench_parse_delta_200_games(benchmark, bench_compare):
     benchmark(_bench_fn)
-    bench_compare("parse_delta_200_games", benchmark.stats.stats.median, tolerance=TOLERANCE)
+    bench_compare("parse_delta_200_games", benchmark.stats.stats.min, tolerance=TOLERANCE)

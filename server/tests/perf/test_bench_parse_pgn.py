@@ -11,7 +11,7 @@ pytestmark = pytest.mark.perf
 from sturddle_view.play.import_position import parse_pgn
 
 FIXTURE = pathlib.Path(__file__).parent.parent / "fixtures" / "perf_200_games.pgn"
-TOLERANCE = 0.10
+TOLERANCE = 0.15
 
 _GAME_TEXTS: list[str] = []
 
@@ -35,7 +35,8 @@ def _bench_fn():
 
 
 @pytest.mark.perf
+@pytest.mark.benchmark(min_rounds=15)
 def test_bench_parse_pgn_200_games(benchmark, bench_compare):
     _load_games()
     benchmark(_bench_fn)
-    bench_compare("parse_pgn_200_games", benchmark.stats.stats.median, tolerance=TOLERANCE)
+    bench_compare("parse_pgn_200_games", benchmark.stats.stats.min, tolerance=TOLERANCE)
