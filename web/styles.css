@@ -302,6 +302,10 @@ svg.cm-chessboard {
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   transition: opacity 0.2s, transform 0.2s;
+  /* Re-enable pointer events: the stack has pointer-events:none so
+     empty regions stay click-through, but individual toasts need to
+     receive clicks for interactive content (xgame nav arrow + X). */
+  pointer-events: auto;
 }
 .toast-success { border-color: #6c6; }
 .toast-warning { border-color: #e08e0b; }
@@ -1043,52 +1047,37 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   margin-left: 1px;
   vertical-align: super;
 }
-.xgame-banner {
-  grid-area: banner;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 2px 0;
-  padding: 0;
-  /* See body[data-view-mode] rule below: in view mode the banner row
-     is reserved so showing/hiding does not reflow the board column. */
-}
-.xgame-banner.hidden { display: none; }
-/* View mode: reserve the row even when no banner is firing. The row
-   height matches one .xgame-row line so toggling visibility never
-   shifts the board column. Multi-child lists are clipped to one row
-   (see .xgame-children-list overflow) so N > 1 does not grow. */
-body[data-view-mode] .xgame-banner.hidden {
-  display: flex;
-  visibility: hidden;
-  height: 22px;
-}
-.xgame-row {
+/* X-game nav toasts: live inside the regular toast-stack (bottom of
+   screen). Collapsible variant has its list above the header so the
+   expansion grows upward away from the screen edge. */
+.xgame-toast {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 8px;
-  border-radius: 4px;
-  background: var(--nav-btn-bg);
-  font-size: 0.8125rem;
-  line-height: 1;
+  font-size: 0.875rem;
   color: var(--fg);
-  height: 22px;
-  box-sizing: border-box;
 }
-.xgame-row.hidden { display: none; }
-.xgame-row .xgame-row-icon { color: var(--muted); flex-shrink: 0; font-size: 0.875em; }
-.xgame-row .xgame-text {
-  flex: 1;
-  min-width: 0;
+.xgame-toast.xgame-toast-collapsible { flex-direction: column; align-items: stretch; }
+.xgame-toast-icon { color: var(--muted); flex-shrink: 0; }
+.xgame-toast-text { flex: 1; min-width: 0; }
+.xgame-toast-header {
   display: flex;
   align-items: center;
-  gap: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  gap: 6px;
 }
-.xgame-row .xgame-link {
+.xgame-toast-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--wa-color-border-loud, #353841);
+  max-height: 200px;
+  overflow-y: auto;
+}
+.xgame-toast-list.hidden { display: none; }
+.xgame-toast-list-item { text-align: left; align-self: flex-start; }
+.xgame-toast .xgame-link {
   background: none;
   border: none;
   padding: 0 2px;
@@ -1097,25 +1086,26 @@ body[data-view-mode] .xgame-banner.hidden {
   font: inherit;
   text-decoration: underline;
 }
-.xgame-row .xgame-link:hover { color: var(--accent); filter: brightness(1.15); }
-.xgame-row #xgame-children-list {
-  display: inline-flex;
-  gap: 4px;
-  overflow: hidden;
-  min-width: 0;
-  flex: 1;
-}
-.xgame-row .xgame-dismiss {
+.xgame-toast .xgame-link:hover { color: var(--accent); filter: brightness(1.15); }
+.xgame-toast-arrow,
+.xgame-toast-x {
   background: none;
-  border: none;
-  padding: 2px 4px;
+  border: 1px solid var(--wa-color-border-loud, #353841);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  padding: 0;
   cursor: pointer;
   color: var(--muted);
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
 }
-.xgame-row .xgame-dismiss:hover { color: var(--fg); }
+.xgame-toast-arrow:hover,
+.xgame-toast-x:hover { color: var(--fg); }
+.xgame-toast-arrow wa-icon,
+.xgame-toast-x wa-icon { font-size: 0.7rem; }
 
 #engines-perspective {
   display: flex;

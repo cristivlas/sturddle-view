@@ -84,13 +84,42 @@ overlap case.)
 - Desktop only for v1. No mobile affordances.
 - Direction-agnostic: same trigger for back-step and forward-step
   arrivals.
-- Fork-ply glyphs in the move list (parent view): mark plies that have
-  children. Click on the glyph or the move cell both land precisely on
-  the ply and fire the trigger.
-- "Open parent" / "Open child" performs the equivalent of selecting that
-  game from recents: server loads the row, enters view mode, returns the
-  child/parent at the appropriate cursor position (TBD: open at fork ply
-  vs. ply 0 vs. last-visited; see Open Questions).
+- Fork-ply glyphs in the move list mark plies that "fork":
+  - Plies where THIS game has 1+ children (parent-side glyph).
+  - The ply where THIS game (as a child) diverged from its parent
+    (child-side glyph). Tooltip text differs by case.
+- Click on the glyph or the move cell both land precisely on the ply
+  and fire the trigger.
+- "Open parent" / "Open child" lands the new view at `fork_ply` so the
+  user is precisely on the shared boundary (see Q1/Q2 revised).
+
+### Toast UX (revised 2026-05-22, replaces the always-on banner)
+
+The always-on above-ribbon banner is replaced by transient toasts
+anchored in the existing `toast()` stack:
+
+- **Parent -> child trigger**: cursor lands precisely on a fork ply
+  that has 1+ children. Toast: "N variation(s) from this position"
+  with an expand arrow and an X.
+  - Click the arrow: list of children expands upward (the toast is
+    bottom-anchored). Click a child: navigates + closes the
+    expansion + closes the toast.
+  - Click the arrow again: collapses without closing the toast.
+  - Click X: dismisses the toast AND marks "don't nag" for this game
+    until the fork glyph is clicked.
+- **Child -> parent trigger**: cursor lands precisely on the child's
+  own fork ply. Toast: "Forked from `<parent summary>` at ply N" with
+  a clickable parent link and an X. No collapse/list -- single link.
+- **Auto-close on ply change**: when the cursor leaves the fork ply,
+  any active xgame toast closes. This does NOT count as a dismiss --
+  the toast re-shows next time the user precisely lands there. Only
+  the explicit X counts as "don't nag".
+- **Inner node**: both toasts may fire at the same ply (rare: the
+  current game is a child AND has its own children at the same ply).
+  They stack independently in the toast stack, each with its own X.
+- **Stack reuse**: same `toast()` host used elsewhere -- bottom-left
+  or bottom-right depending on ribbon side (consistent with existing
+  toasts).
 
 ## Server changes (sketch)
 

@@ -51,6 +51,19 @@ export function getViewingSummary() { return _viewingSummary; }
 // overrides if anything changed server-side.
 let _cachedBoardUpdate = null;
 
+// X-game toast don't-nag flags, persisted across perspective mounts.
+// Keyed by game_id. Reset only on hard reload (fresh page load).
+const _xgameDismissed = new Map();
+function _getXgameDismissed(gameId) {
+  return _xgameDismissed.get(gameId) || { parent: false, children: false };
+}
+function _setXgameDismissed(gameId, key, value) {
+  if (!gameId) return;
+  const cur = _getXgameDismissed(gameId);
+  cur[key] = value;
+  _xgameDismissed.set(gameId, cur);
+}
+
 // Reduce a game_result payload to the canonical chess result string for
 // the header badge. resign/timeout don't carry "1-0"/"0-1" in the payload
 // so we derive it from who lost (only human can resign today).
@@ -191,27 +204,6 @@ export const playPerspective = {
             <button id="view-play-from-here" class="ribbon-btn" aria-label="Play from here" title="Play from here">
               <wa-icon name="play"></wa-icon>
             </button>
-          </div>
-
-          <div id="xgame-banner" class="xgame-banner hidden">
-            <div id="xgame-parent-row" class="xgame-row hidden">
-              <wa-icon name="code-fork" class="xgame-row-icon"></wa-icon>
-              <span class="xgame-text">
-                Forked from
-                <button id="xgame-open-parent" class="xgame-link" type="button"></button>
-                at ply <span id="xgame-parent-ply"></span>.
-              </span>
-            </div>
-            <div id="xgame-children-row" class="xgame-row hidden">
-              <wa-icon name="code-fork" class="xgame-row-icon"></wa-icon>
-              <span class="xgame-text">
-                <span id="xgame-children-label"></span>
-                <span id="xgame-children-list"></span>
-              </span>
-              <button id="xgame-children-dismiss" class="xgame-dismiss" type="button" aria-label="Dismiss" title="Dismiss">
-                <wa-icon name="xmark"></wa-icon>
-              </button>
-            </div>
           </div>
 
           <div id="edit-controls" class="board-ribbon" style="display: none">
@@ -382,32 +374,21 @@ export const playPerspective = {
         }
         return m.size > 0 ? m : null;
       },
-      // Glyph click: same nav as the cell click PLUS clear the
-      // per-game dismiss flag so the banner re-fires at this ply.
-      // Skip the server round-trip when we're already at this ply --
-      // a re-import would re-animate cm-chessboard to the same
-      // position (visible flicker).
+      // Glyph click: nav to the ply AND reset both per-game don't-nag
+      // flags (live + persisted) so the toasts re-fire at this ply.
+      // Skip the server round-trip when we're already there.
       onForkClick: (plyIndex) => {
         if (analyzing) return;
-        xgame.childBannerDismissed = false;
+        xgame.parentToastDismissed = false;
+        xgame.childrenToastDismissed = false;
+        _setXgameDismissed(xgame.gameId, "parent", false);
+        _setXgameDismissed(xgame.gameId, "children", false);
         if (viewCursor === plyIndex + 1) {
-          refreshXgameBanner();  // banner re-shows without nav
+          refreshXgameToasts();
           return;
         }
         doViewNav("/game/view/goto", { ply: plyIndex + 1 });
       },
-    });
-
-    // X-game banner button wiring (one-time). Children dismiss flips
-    // the per-game flag; open-parent triggers the import-style nav.
-    root.querySelector("#xgame-children-dismiss")?.addEventListener("click", () => {
-      xgame.childBannerDismissed = true;
-      refreshXgameBanner();
-    });
-    root.querySelector("#xgame-open-parent")?.addEventListener("click", () => {
-      if (xgame.parentGameId) {
-        openXgameTarget(xgame.parentGameId, { landAtPly: xgame.forkPly });
-      }
     });
 
     // Settings cache (refreshed on settings-changed).
@@ -534,31 +515,39 @@ export const playPerspective = {
     let viewGameOverAlertShown = false;
     let viewingGameId = null;
     // X-game navigation state. Populated by fetchXgameInfo after every
-    // view-game change; cleared when game_id flips. childPlies is a Set
-    // for O(1) lookup in renderMoveList. childBannerDismissed is the
-    // per-game don't-nag flag for the parent->child banner.
+    // view-game change; cleared when game_id flips. Toast dismiss flags
+    // are per-game don't-nag (only explicit X resets them; ply-change
+    // auto-close does NOT count). Toast handles are dismiss callbacks
+    // from toast() -- kept so we can close on ply change.
     let xgame = {
       gameId: null,
       parentGameId: null,
       parentSummary: null,
       forkPly: null,
       children: [],
-      childPlies: new Set(),
-      childBannerDismissed: false,
+      parentToastDismissed: false,
+      childrenToastDismissed: false,
+      parentToastHandle: null,
+      childrenToastHandle: null,
     };
+    function closeXgameToasts() {
+      if (xgame.parentToastHandle) { xgame.parentToastHandle(); xgame.parentToastHandle = null; }
+      if (xgame.childrenToastHandle) { xgame.childrenToastHandle(); xgame.childrenToastHandle = null; }
+    }
     function resetXgame() {
+      closeXgameToasts();
       xgame.gameId = null;
       xgame.parentGameId = null;
       xgame.parentSummary = null;
       xgame.forkPly = null;
       xgame.children = [];
-      xgame.childPlies = new Set();
-      xgame.childBannerDismissed = false;
+      xgame.parentToastDismissed = false;
+      xgame.childrenToastDismissed = false;
     }
     async function fetchXgameInfo(gameId) {
       if (!gameId) {
         resetXgame();
-        refreshXgameBanner();
+        refreshXgameToasts();
         return;
       }
       try {
@@ -570,17 +559,21 @@ export const playPerspective = {
         xgame.parentSummary = r.parent_summary ?? null;
         xgame.forkPly = r.fork_ply ?? null;
         xgame.children = Array.isArray(r.children) ? r.children : [];
-        xgame.childPlies = new Set(xgame.children.map(c => c.fork_ply));
-        xgame.childBannerDismissed = false;
+        // Hydrate per-game don't-nag flags from the module-level map so
+        // an explicit X survives perspective remount within the same
+        // page load.
+        const d = _getXgameDismissed(gameId);
+        xgame.parentToastDismissed = d.parent;
+        xgame.childrenToastDismissed = d.children;
         // After data lands, re-render the move list so glyphs appear
         // without waiting for the next board_update.
         if (_cachedBoardUpdate) view.applyEvent(_cachedBoardUpdate);
-        refreshXgameBanner();
+        refreshXgameToasts();
       } catch (_e) {
         // The current game may not be in recents (e.g. brand-new play
         // game with no moves yet). That's expected; just clear state.
         resetXgame();
-        refreshXgameBanner();
+        refreshXgameToasts();
       }
     }
     function formatGameLabel(summary) {
@@ -590,65 +583,151 @@ export const playPerspective = {
       const result = s.result && s.result !== "*" ? ` (${s.result})` : "";
       return `${white} vs ${black}${result}`;
     }
-    function formatChildLabel(child) {
-      return formatGameLabel(child.summary);
+    function buildParentToast() {
+      // "Forked from <parent> at ply N." Single clickable link, X to
+      // dismiss. No collapse -- there is only one parent.
+      const node = document.createElement("div");
+      node.className = "xgame-toast";
+      const icon = document.createElement("wa-icon");
+      icon.setAttribute("name", "code-fork");
+      icon.className = "xgame-toast-icon";
+      node.append(icon);
+      const text = document.createElement("span");
+      text.className = "xgame-toast-text";
+      text.append("Forked from ");
+      const link = document.createElement("button");
+      link.className = "xgame-link";
+      link.type = "button";
+      link.textContent = xgame.parentSummary
+        ? formatGameLabel(xgame.parentSummary)
+        : "parent game";
+      link.addEventListener("click", () => {
+        if (xgame.parentGameId) {
+          openXgameTarget(xgame.parentGameId, { landAtPly: xgame.forkPly });
+        }
+      });
+      text.append(link);
+      text.append(` at ply ${xgame.forkPly ?? "?"}.`);
+      node.append(text);
+      const x = document.createElement("button");
+      x.className = "xgame-toast-x";
+      x.type = "button";
+      x.setAttribute("aria-label", "Dismiss");
+      x.title = "Dismiss";
+      const xicon = document.createElement("wa-icon");
+      xicon.setAttribute("name", "xmark");
+      x.append(xicon);
+      x.addEventListener("click", () => {
+        xgame.parentToastDismissed = true;
+        _setXgameDismissed(xgame.gameId, "parent", true);
+        if (xgame.parentToastHandle) {
+          xgame.parentToastHandle();
+          xgame.parentToastHandle = null;
+        }
+      });
+      node.append(x);
+      return node;
     }
-    function refreshXgameBanner() {
-      const banner = root.querySelector("#xgame-banner");
-      const parentRow = root.querySelector("#xgame-parent-row");
-      const childRow = root.querySelector("#xgame-children-row");
-      if (!banner || !parentRow || !childRow) return;
-      let showAny = false;
+    function buildChildrenToast(childrenHere) {
+      // "N variation(s) from this position" header with an expand
+      // arrow + X. Expansion grows upward (toast is bottom-anchored).
+      const node = document.createElement("div");
+      node.className = "xgame-toast xgame-toast-collapsible";
+      // Expansion list (rendered above the header via flex-direction).
+      const list = document.createElement("div");
+      list.className = "xgame-toast-list hidden";
+      for (const c of childrenHere) {
+        const item = document.createElement("button");
+        item.className = "xgame-link xgame-toast-list-item";
+        item.type = "button";
+        item.textContent = formatGameLabel(c.summary);
+        item.addEventListener("click", () => {
+          openXgameTarget(c.game_id, { landAtPly: c.fork_ply });
+        });
+        list.append(item);
+      }
+      node.append(list);
+      // Header row.
+      const header = document.createElement("div");
+      header.className = "xgame-toast-header";
+      const icon = document.createElement("wa-icon");
+      icon.setAttribute("name", "code-fork");
+      icon.className = "xgame-toast-icon";
+      header.append(icon);
+      const text = document.createElement("span");
+      text.className = "xgame-toast-text";
+      text.textContent = childrenHere.length === 1
+        ? "1 variation from this position"
+        : `${childrenHere.length} variations from this position`;
+      header.append(text);
+      const arrow = document.createElement("button");
+      arrow.className = "xgame-toast-arrow";
+      arrow.type = "button";
+      arrow.setAttribute("aria-label", "Show variations");
+      arrow.title = "Show variations";
+      const arrowIcon = document.createElement("wa-icon");
+      arrowIcon.setAttribute("name", "chevron-up");
+      arrow.append(arrowIcon);
+      arrow.addEventListener("click", () => {
+        const expanded = !list.classList.toggle("hidden");
+        arrowIcon.setAttribute("name", expanded ? "chevron-down" : "chevron-up");
+      });
+      header.append(arrow);
+      const x = document.createElement("button");
+      x.className = "xgame-toast-x";
+      x.type = "button";
+      x.setAttribute("aria-label", "Dismiss");
+      x.title = "Dismiss";
+      const xicon = document.createElement("wa-icon");
+      xicon.setAttribute("name", "xmark");
+      x.append(xicon);
+      x.addEventListener("click", () => {
+        xgame.childrenToastDismissed = true;
+        _setXgameDismissed(xgame.gameId, "children", true);
+        if (xgame.childrenToastHandle) {
+          xgame.childrenToastHandle();
+          xgame.childrenToastHandle = null;
+        }
+      });
+      header.append(x);
+      node.append(header);
+      return node;
+    }
+    function refreshXgameToasts() {
       // Child -> parent: cursor lands precisely on the fork ply of the
-      // current child + the game has a parent. play_from_here inherits
-      // plies 0..fork_ply from the parent, so the divergence is at
-      // ply fork_ply (not ply 0). Symmetric to the parent -> child
-      // trigger below.
+      // current child + the game has a parent. Auto-close on ply
+      // change (does NOT count as a dismiss).
       const showParent = viewing
         && xgame.parentGameId
         && xgame.forkPly != null
         && viewCursor === xgame.forkPly
-        && lastViewNavKind === "precise";
-      parentRow.classList.toggle("hidden", !showParent);
-      if (showParent) {
-        showAny = true;
-        const linkBtn = root.querySelector("#xgame-open-parent");
-        const plyEl = root.querySelector("#xgame-parent-ply");
-        linkBtn.textContent = xgame.parentSummary
-          ? formatGameLabel(xgame.parentSummary)
-          : "parent game";
-        plyEl.textContent = String(xgame.forkPly ?? "?");
+        && lastViewNavKind === "precise"
+        && !xgame.parentToastDismissed;
+      if (showParent && !xgame.parentToastHandle) {
+        xgame.parentToastHandle = toast(buildParentToast(), {
+          variant: "neutral", duration: 0,
+        });
+      } else if (!showParent && xgame.parentToastHandle) {
+        xgame.parentToastHandle();
+        xgame.parentToastHandle = null;
       }
       // Parent -> child: cursor lands precisely on a fork ply that has
-      // 1+ children, and the user has not dismissed this game's banner.
+      // 1+ children. Same auto-close-on-ply-change rule.
       const childrenHere = (xgame.children || []).filter(
         c => (c.fork_ply ?? -1) === viewCursor,
       );
       const showChildren = viewing
-        && !xgame.childBannerDismissed
         && lastViewNavKind === "precise"
-        && childrenHere.length > 0;
-      childRow.classList.toggle("hidden", !showChildren);
-      if (showChildren) {
-        showAny = true;
-        const labelEl = root.querySelector("#xgame-children-label");
-        const listEl = root.querySelector("#xgame-children-list");
-        listEl.innerHTML = "";
-        labelEl.textContent = childrenHere.length === 1
-          ? "Variation from this position:"
-          : `${childrenHere.length} variations from this position:`;
-        for (const c of childrenHere) {
-          const btn = document.createElement("button");
-          btn.className = "xgame-link";
-          btn.type = "button";
-          btn.textContent = formatChildLabel(c);
-          btn.addEventListener("click", () => openXgameTarget(
-            c.game_id, { landAtPly: c.fork_ply },
-          ));
-          listEl.append(btn, document.createTextNode(" "));
-        }
+        && childrenHere.length > 0
+        && !xgame.childrenToastDismissed;
+      if (showChildren && !xgame.childrenToastHandle) {
+        xgame.childrenToastHandle = toast(buildChildrenToast(childrenHere), {
+          variant: "neutral", duration: 0,
+        });
+      } else if (!showChildren && xgame.childrenToastHandle) {
+        xgame.childrenToastHandle();
+        xgame.childrenToastHandle = null;
       }
-      banner.classList.toggle("hidden", !showAny);
     }
     async function openXgameTarget(gameId, opts = {}) {
       // Fetch the target's text from recents, then drive a normal
@@ -886,14 +965,8 @@ export const playPerspective = {
             resignAvailable = true;
           }
           // Cursor or viewing state may have just changed -- re-evaluate
-          // the parent / children banner. Cheap; only touches DOM when
-          // the trigger conditions change.
-          refreshXgameBanner();
-          // Reserve the banner row only in view mode so the parent /
-          // children banner can show/hide without reflowing the board
-          // (see styles.css `body[data-view-mode] .xgame-banner.hidden`).
-          if (viewing) document.body.dataset.viewMode = "1";
-          else delete document.body.dataset.viewMode;
+          // the parent / children toasts. Open/close as needed.
+          refreshXgameToasts();
           // Notify the perspective router so the nav label can swap
           // Play <-> View when the mode flips.
           if (wasViewing !== viewing) {
@@ -1562,6 +1635,11 @@ export const playPerspective = {
         offCrash();
         offEvent();
         view.unmount();
+        // Close any live x-game toasts so they don't outlive the
+        // perspective. Plain close (not via the X handler), so the
+        // dismiss flags are NOT set -- if the user returns to the
+        // play perspective at the same fork ply, the toast re-fires.
+        closeXgameToasts();
         window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
         window.removeEventListener("sturddle:layout-changed", onLayoutChanged);
         window.removeEventListener("sturddle:engines-changed", onEnginesChanged);

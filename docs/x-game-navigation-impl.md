@@ -258,16 +258,10 @@ Delivered (in `web/app/perspectives/play.js`, `web/app/game-view.js`,
 
 Running list. Items prefixed B# survive context resets.
 
-- **B1** — Banner show/hide reflows the grid row, resizing the board.
-  *(Mitigated 2026-05-22)* The banner row is now reserved in view mode
-  via `body[data-view-mode] .xgame-banner.hidden { visibility: hidden;
-  min-height: 28px; }` -- show/hide no longer reflows. Placement is
-  still above the ribbon and steals ~28px from board height in view
-  mode. **Future refinement:** place the banner above the commentary
-  dock, or float it as an overlay, so no vertical space is spent when
-  the banner is empty. The above-commentary plan stalled because
-  `.play-comments-host` is `position: fixed` with JS-driven geometry;
-  any reuse needs to thread through the dock manager.
+- **B1** — *(superseded 2026-05-22)* The always-on banner was
+  replaced by transient toasts in the existing `toast()` stack. No
+  vertical real estate is spent in view mode; layout is identical to
+  play mode.
 - **B2** — *(fixed 2026-05-22)* Parent label now shows the parent's
   white-vs-black summary. Server-side: `parent_summary_of(game_id)` on
   the store + both by-id and by-hash endpoints emit `parent_summary`.
@@ -287,6 +281,12 @@ Running list. Items prefixed B# survive context resets.
   doesn't fully cover the flicker path.
 - **B6** — Multi-child case (N>1): UX of the children-list button row
   not yet tested visually.
+- **B6** — *(fixed 2026-05-22)* Multi-child list (N>=3) was clipped
+  horizontally in the always-on banner. The new toast model
+  collapses the children list under an expand arrow; clicking the
+  arrow opens a scrollable vertical list (no clipping). Dismiss with
+  X (per-game don't-nag, persisted across perspective remounts
+  within the same page load). Move-list fork glyph re-opens.
 - **B7** — *(open UX consideration)* Possibly show a short
   parent-summary label on the glyph hover, not just a count.
 - **B8** — *(fixed 2026-05-22)* Import dialog now catches the 409
