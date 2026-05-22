@@ -4,8 +4,6 @@ Slice 1 covers move-list capture; slice 3 covers the match queue +
 `game_reconciled` emission. Pure-queue mechanics live in
 `test_pgn_reconcile_queue.py`; the PGN tailer lives in
 `test_pgn_tail.py`.
-
-See `docs/pgn-reconciliation.md`.
 """
 from __future__ import annotations
 

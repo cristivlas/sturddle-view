@@ -96,7 +96,7 @@ export function mountEngineList(container, api, opts = {}) {
   }
 
   // TODO: multi-select for bulk Remove (large engine libraries from
-  // tester users). See docs/spec.md "Open / Deferred".
+  // tester users).
   let selectedDetailId = null;
   let activeId = null;
   let filterText = "";

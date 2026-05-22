@@ -16,10 +16,6 @@ Supervisor reads/writes on the protocol object:
                                     plus type/default/min/max/var attrs
     - id                         -- dict (id name fills engine_name)
     - returncode                 -- optional Future-like, .add_done_callback
-
-References:
-    server-chess-audit.md section 10 (R3 gap closure)
-    test-battery-plan.md P6 sub-task
 """
 from __future__ import annotations
 

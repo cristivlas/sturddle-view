@@ -64,7 +64,7 @@ log = logging.getLogger(__name__)
 def build_command(spec: RunSpec) -> list[str]:
     """Translate a ``RunSpec`` into a fastchess argv.
 
-    Template fields recognized (see ``docs/tournament-spec.md``):
+    Template fields recognized:
       - tc                : str, fastchess tc= format ("10+0.1", "40/60", ...)
       - ponder            : bool
       - games_in_parallel : int  (fastchess -concurrency)
@@ -206,8 +206,7 @@ def build_command(spec: RunSpec) -> list[str]:
         cmd.extend(["-event", spec.tournament.name])
 
     # Pinned seed for fastchess's PRNG (opening shuffle, etc). Stable
-    # across Stop/Resume cycles — see Resume after Stop in
-    # docs/tournament-spec.md.
+    # across Stop/Resume cycles so the opening sequence is reproducible.
     if "seed" in t:
         cmd.extend(["-srand", str(t["seed"])])
 

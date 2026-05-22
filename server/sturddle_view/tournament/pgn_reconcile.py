@@ -1,8 +1,7 @@
 """Match queue + matching logic for PGN reconciliation.
 
 Pairs dissolved on the orchestrator side and games parsed off the
-PGN tailer are joined by UCI move-list comparison; see
-``docs/pgn-reconciliation.md`` for design and edge cases.
+PGN tailer are joined by UCI move-list comparison.
 """
 from __future__ import annotations
 

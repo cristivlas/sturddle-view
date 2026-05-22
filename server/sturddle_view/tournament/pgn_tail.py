@@ -2,8 +2,7 @@
 
 Polls ``games.pgn`` once per second; on growth, reads from the
 last-known offset and yields ``PgnGameRecord`` instances to a
-callback. Cross-platform via ``Path.stat()``. See
-``docs/pgn-reconciliation.md``.
+callback. Cross-platform via ``Path.stat()``.
 """
 from __future__ import annotations
 

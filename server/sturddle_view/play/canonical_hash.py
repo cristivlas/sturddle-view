@@ -2,7 +2,7 @@
 
 Two semantically identical games coming from different sources must
 hash equal. Verbatim storage is untouched; canonicalization is for
-the hash only. See docs/canonical-hash.md for the full spec.
+the hash only.
 """
 from __future__ import annotations
 

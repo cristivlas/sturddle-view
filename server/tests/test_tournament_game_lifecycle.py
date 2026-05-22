@@ -3,11 +3,9 @@
 Pair dissolution is the sole game-end signal: when one of a confirmed
 pair's proxies leaves its FEN bucket (typically via ``ucinewgame``), the
 pair's game ends and ``game_finished`` fires. Result/termination are
-reported as UNKNOWN — fastchess stdout correlation under concurrency is
+reported as UNKNOWN -- fastchess stdout correlation under concurrency is
 unreliable. The schema fields are kept for a future implementation that
 can populate them via a different signal.
-
-See `docs/tournament-spec.md` § "Pair lifecycle" for the design.
 """
 from __future__ import annotations
 

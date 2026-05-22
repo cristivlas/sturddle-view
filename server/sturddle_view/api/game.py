@@ -167,7 +167,7 @@ def _parse_import_payload(payload: dict) -> dict:
 def _resolve_game_id_for_import(recents, payload: dict, view_hash: str) -> str:
     """Pick the game_id for an /game/import call.
 
-    Rules (see docs/game_id_unification.md):
+    Rules:
     - new hash + supplied id  -> use supplied
     - new hash + no supplied  -> mint uuid4
     - existing hash + match   -> reuse stored id
@@ -311,8 +311,7 @@ async def get_recent_import(h: str, request: Request) -> dict:
 
     Side effect: bumps ``ts`` so frequently revisited entries stay at
     the top of the recents list (the dropdown shows newest first and
-    eviction drops oldest). See docs/recent-imports.md for the
-    GET-with-side-effect trade-off."""
+    eviction drops oldest)."""
     recents = request.app.state.recent_imports
     got = recents.get(h)
     if got is None:

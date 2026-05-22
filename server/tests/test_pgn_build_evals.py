@@ -1,8 +1,4 @@
-"""Tests for the cutechess/fastchess eval-history path in build_pgn().
-
-Covers the unit, round-trip and edge cases from docs/pgn-export.md
-(TODO: Engine Evaluations in Exported PGN).
-"""
+"""Tests for the cutechess/fastchess eval-history path in build_pgn()."""
 from __future__ import annotations
 
 import io

@@ -130,8 +130,7 @@ def test_standings_skips_unfinished_games(tmp_path):
 
 def test_standings_counts_every_decisive_game(tmp_path):
     # Standings tally every decisive entry in file order; no dedup by
-    # (Round, White, Black). See docs/pgn-reconciliation.md # "Pair
-    # identity in stored PGN" -- Round is not a reliable pair ID, so
+    # (Round, White, Black). Round is not a reliable pair ID, so
     # anything in the PGN is real.
     body = (
         _game_round("1", "A", "B", "1-0")

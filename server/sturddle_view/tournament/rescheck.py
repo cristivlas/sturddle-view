@@ -1,8 +1,7 @@
 """Resource sanity checks for tournament starts.
 
 Pure: no orchestrator state, no I/O. Called from the create-time
-rescheck endpoint and from ``Orchestrator.start()``. See
-``docs/tournament-spec.md`` # "Resource sanity checks" for the design.
+rescheck endpoint and from ``Orchestrator.start()``.
 """
 from __future__ import annotations
 
