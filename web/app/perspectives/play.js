@@ -651,7 +651,7 @@ export const playPerspective = {
             // analysis state.
             if (!viewing) view.setEnabled(!analyzing && !paused);
             syncPausedUi();
-            setCommentaryNavState(analyzing ? null : commentNavPrev, analyzing ? null : commentNavNext);
+            setCommentaryNavState((analyzing || editing) ? null : commentNavPrev, (analyzing || editing) ? null : commentNavNext);
             if (!analyzing) {
               dismissAnalysisToast?.();
               dismissAnalysisToast = null;
@@ -898,6 +898,7 @@ export const playPerspective = {
       const seed = _seedFromFen(view.getFen());
       view.enterEditMode(() => refreshButtons(), seed);
       pendingAnnotation = null;
+      setCommentaryNavState(null, null);
       refreshButtons();
     }
 
@@ -911,6 +912,7 @@ export const playPerspective = {
       view.exitEditMode();
       _clearEditTransitionSuppression();
       pendingAnnotation = null;
+      setCommentaryNavState(commentNavPrev, commentNavNext);
       refreshButtons();
     }
 
@@ -1067,7 +1069,7 @@ export const playPerspective = {
         if (isCommentaryOpen() && "prev_comment" in res) {
           commentNavPrev = res.prev_comment ?? null;
           commentNavNext = res.next_comment ?? null;
-          setCommentaryNavState(analyzing ? null : commentNavPrev, analyzing ? null : commentNavNext);
+          setCommentaryNavState((analyzing || editing) ? null : commentNavPrev, (analyzing || editing) ? null : commentNavNext);
         }
       } catch (e) {
         reportError(ctx, "Navigation failed", e);
