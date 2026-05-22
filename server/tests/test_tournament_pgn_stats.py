@@ -2153,6 +2153,23 @@ def test_patch_config_clamps_at_zero(tmp_path):
     assert stats["draws"] == 0
 
 
+def test_patch_config_missing_first_key_continues_to_next(tmp_path, caplog):
+    """A missing pair key in `deltas` must `continue` to the next entry,
+    not `break` out of the loop. Pins ReplaceContinueWithBreak on the
+    missing-key warning branch."""
+    p = _write_config(tmp_path)
+    deltas = {
+        "X vs Y": {"wins": 1, "losses": 0, "draws": 0},  # not in stats
+        "A vs B": {"wins": 1, "losses": 0, "draws": 0},  # present
+    }
+    with caplog.at_level("WARNING", logger="sturddle_view.tournament.pgn_stats"):
+        patch_config_json(p, deltas)
+    # The "A vs B" delta must still apply.
+    stats = json.loads(p.read_text())["stats"]["A vs B"]
+    assert stats["wins"] == 9  # original 10 minus 1
+    assert any("not found in stats" in m for m in caplog.messages)
+
+
 def test_patch_config_writes_backup(tmp_path):
     p = _write_config(tmp_path)
     original = p.read_bytes()
