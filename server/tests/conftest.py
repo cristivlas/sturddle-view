@@ -97,6 +97,17 @@ def run_uvicorn_subprocess(
     log_path = Path(_tempfile.gettempdir()) / f"sturddle-test-uvicorn-{port}.log"
     base = f"http://127.0.0.1:{port}"
     log_fh = open(log_path, "wb")
+
+    # Event-based startup handshake: listen on an ephemeral port and
+    # pass it to the subprocess via SV_READY_PORT. The app's lifespan
+    # startup connects to it after uvicorn has bound the listen socket,
+    # giving us a deterministic ready signal with no polling.
+    ready_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    ready_sock.bind(("127.0.0.1", 0))
+    ready_sock.listen(1)
+    ready_sock.settimeout(_UVICORN_STARTUP_TIMEOUT)
+    env["SV_READY_PORT"] = str(ready_sock.getsockname()[1])
+
     try:
         with subprocess.Popen(
             [sys.executable, "-m", "sturddle_view", "--no-auth",
@@ -107,30 +118,30 @@ def run_uvicorn_subprocess(
         ) as proc:
             _SERVER_LOGS[base] = log_path
             try:
-                import socket as _socket
-                while True:
-                    if proc.poll() is not None:
-                        log_fh.flush()
-                        try:
-                            tail = log_path.read_bytes().decode(errors="replace")
-                        except OSError:
-                            tail = "(log unreadable)"
-                        raise RuntimeError(
-                            f"uvicorn subprocess exited with code {proc.returncode}\n"
-                            f"LOG ({log_path}):\n{tail}"
-                        )
-                    with _socket.socket() as s:
-                        try:
-                            s.settimeout(0.1)
-                            s.connect(("127.0.0.1", port))
-                            break
-                        except OSError:
-                            continue
+                try:
+                    conn, _addr = ready_sock.accept()
+                    conn.close()
+                except (socket.timeout, OSError) as e:
+                    log_fh.flush()
+                    try:
+                        tail = log_path.read_bytes().decode(errors="replace")
+                    except OSError:
+                        tail = "(log unreadable)"
+                    raise RuntimeError(
+                        f"uvicorn subprocess startup signal not received "
+                        f"within {_UVICORN_STARTUP_TIMEOUT}s "
+                        f"(exit code={proc.poll()}; accept err={e})\n"
+                        f"LOG ({log_path}):\n{tail}"
+                    ) from e
                 yield base
             finally:
                 proc.kill()
                 _SERVER_LOGS.pop(base, None)
     finally:
+        try:
+            ready_sock.close()
+        except Exception:
+            pass
         try:
             log_fh.close()
         except Exception:

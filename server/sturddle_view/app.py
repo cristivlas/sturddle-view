@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import socket
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -211,13 +213,14 @@ async def _lifespan(app: FastAPI):
     _install_engine_sigkill_filter()
     _maybe_restore_game(app)
     # Tournament reconciliation: any 'running' rows on disk are stale.
-    # Phase 1 has no Resume — mark them stopped.
+    # Phase 1 has no Resume -- mark them stopped.
     try:
         reconciled = app.state.tournament_orch.reconcile_on_startup()
         for t in reconciled:
             log.info("reconciled stale running tournament: %s (%s)", t.id, t.name)
     except Exception:
         log.exception("tournament reconcile failed")
+    _signal_ready_port()
     yield
     # Best-effort: stop any active tournament on shutdown.
     try:
@@ -432,3 +435,25 @@ def _print_banner(settings: Settings) -> None:
     for h in hosts:
         path = "/" if settings.auth_disabled else f"/auth?token={settings.token}"
         log.info("  open: %s://%s:%d%s", scheme, h, settings.port, path)
+
+
+def _signal_ready_port() -> None:
+    """Test hook: connect once to SV_READY_PORT to signal startup completion.
+
+    The test harness opens a listening socket on an ephemeral port before
+    spawning this subprocess and passes the port via SV_READY_PORT. By
+    connecting here (after lifespan startup, before uvicorn enters the
+    serve loop), the harness gets a deterministic ready event with no
+    polling. Silent no-op when the env var is unset or unreachable.
+    """
+    port_s = os.environ.get("SV_READY_PORT")
+    if not port_s:
+        return
+    try:
+        port = int(port_s)
+    except ValueError:
+        return
+    try:
+        socket.create_connection(("127.0.0.1", port), timeout=2.0).close()
+    except OSError:
+        pass
