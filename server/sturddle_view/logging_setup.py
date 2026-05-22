@@ -39,6 +39,7 @@ def configure_logging(
 
     if _configured:
         logging.getLogger("sturddle_view").setLevel(level)
+        logging.getLogger("chess").setLevel(level)
         logging.getLogger("uvicorn").setLevel(server_level)
         logging.getLogger("uvicorn.access").setLevel(max(server_level, logging.WARNING))
         return log_file
@@ -66,6 +67,11 @@ def configure_logging(
     root.addHandler(stream_handler)
 
     logging.getLogger("sturddle_view").setLevel(level)
+    # python-chess library: clamp to our app level. Defaults to INFO,
+    # so the raw UCI byte trace on `chess.engine` (DEBUG) doesn't
+    # flood the file handler. ``--debug`` opens it back up for engine
+    # diagnostics.
+    logging.getLogger("chess").setLevel(level)
     logging.getLogger("uvicorn").setLevel(server_level)
     # Per-request access lines are noise; clamp at WARNING regardless.
     logging.getLogger("uvicorn.access").setLevel(max(server_level, logging.WARNING))
