@@ -153,6 +153,25 @@ async def test_partial_game_held_for_next_pass(pgn_path):
 
 
 @pytest.mark.asyncio
+async def test_poll_once_no_records_with_end_at_file_size_clears_has_more(pgn_path):
+    """Delta read all the way to EOF but contained only in-flight (`*`)
+    bytes -> no records emitted, end == st_size. _has_more must be
+    False (the cap did not fire; there's nothing the loop can do without
+    new file content). Kills `<` -> `==`/`<=`/`!=` mutations on
+    `_has_more = end < st.st_size` in the records-empty branch."""
+    # A single `*`-Result game (no decisive games anywhere in the file).
+    pgn_path.write_bytes(_PARTIAL_GAME.encode("utf-8"))
+    records, cb, _ = _records_collector()
+    tailer = PgnTailer(pgn_path, cb)
+
+    n = await tailer.poll_once()
+    assert n == 0
+    # end == st_size (default cap is huge, snap finds no boundary, no
+    # complete games parsed). Original: `_has_more = end < st_size` -> False.
+    assert tailer._has_more is False
+
+
+@pytest.mark.asyncio
 async def test_two_games_appended_over_two_polls(pgn_path):
     """game_n is cumulative across polls, not reset per delta."""
     pgn_path.write_text(_ONE_GAME, encoding="utf-8")
