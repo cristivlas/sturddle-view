@@ -7,7 +7,7 @@ import { mountEngineList } from "./engines.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
 import { CHESS_CLOCK_SVG_INNER, CHESS_CLOCK_VIEW_BOX } from "./icons.js";
-import { mqNarrowDialog } from "./breakpoints.js";
+import { mqMobile, mqNarrowDialog } from "./breakpoints.js";
 
 const SETTINGS_ENGINES_COL_PCTS_KEY = "sturddle:engines:settings:colPcts3";
 
@@ -241,6 +241,8 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const ribbonSideLabel = document.createElement("label");
       ribbonSideLabel.textContent = "Ribbon side";
       ribbonSideRow.append(ribbonSideLabel, ribbonSide);
+      ribbonSideRow.hidden = mqMobile.matches;
+      mqMobile.addEventListener("change", e => { ribbonSideRow.hidden = e.matches; });
 
       const evalPov = document.createElement("wa-select");
       evalPov.size = "small";
@@ -434,9 +436,12 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       showCommentsDisplayRow.append(showComments);
       const displayCol = document.createElement("div");
       displayCol.className = "settings-panel-col";
+      const ribbonSideDivider = makeDivider();
+      ribbonSideDivider.hidden = mqMobile.matches;
+      mqMobile.addEventListener("change", e => { ribbonSideDivider.hidden = e.matches; });
       displayCol.append(
         ribbonSideRow,
-        makeDivider(),
+        ribbonSideDivider,
         evalPovRow, boardStyleRow,
         makeDivider(),
         showCommentsDisplayRow,
