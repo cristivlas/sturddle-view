@@ -5,7 +5,7 @@
 import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
-import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, setDockContainer, isMobileLayout } from "../play-debug-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, isMobileLayout } from "../play-debug-windows.js";
 import {
   setCommentaryDockContainer,
   setOnUserCloseCommentary,
@@ -16,6 +16,8 @@ import {
   setCommentaryNavState,
   isCommentaryOpen,
 } from "../play-commentary-window.js";
+import { terminationLabel } from "../format-termination.js";
+import { editAnnotation } from "../annotation-dialog.js";
 
 // Module-scope mirror of "user has a live human-vs-engine game running"
 // so other modules (e.g. tournament Replay button) can decide whether
@@ -71,23 +73,8 @@ function formatResult(payload, humanWhite) {
   return "";
 }
 
-const TERMINATION_REASONS = {
-  checkmate: "Checkmate",
-  stalemate: "stalemate",
-  insufficient_material: "insufficient material",
-  seventyfive_moves: "75-move rule",
-  fivefold_repetition: "fivefold repetition",
-  fifty_moves: "50-move rule",
-  threefold_repetition: "threefold repetition",
-};
-
-function _reason(termination) {
-  const s = TERMINATION_REASONS[termination] ?? (termination ?? "Game over");
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
 function formatViewGameOver({ result, termination }) {
-  const reason = _reason(termination);
+  const reason = terminationLabel(termination);
   if (result === "1-0") return `${reason} -- White wins.`;
   if (result === "0-1") return `${reason} -- Black wins.`;
   if (result === "1/2-1/2") return `${reason} -- Draw.`;
@@ -103,7 +90,7 @@ function formatGameOver(payload, humanWhite) {
     const humanLost = (loser === "white") === humanWhite;
     return humanLost ? "You lost on time." : "Engine lost on time.";
   }
-  const reason = _reason(termination);
+  const reason = terminationLabel(termination);
   if (result === "1-0" || result === "0-1") {
     const humanWon = (result === "1-0") === humanWhite;
     return `${reason} -- ${humanWon ? "you win" : "engine wins"}.`;
@@ -154,7 +141,7 @@ export const playPerspective = {
               <wa-icon name="magnifying-glass"></wa-icon>
             </button>
             <button id="switch-sides" class="ribbon-btn" disabled aria-label="Switch sides" title="Switch sides">
-              <wa-icon name="arrow-right-arrow-left"></wa-icon>
+              <wa-icon name="arrows-rotate"></wa-icon>
             </button>
             <button id="resign" class="ribbon-btn ribbon-btn--danger" disabled aria-label="Resign" title="Resign">
               <wa-icon name="flag"></wa-icon>
@@ -199,7 +186,7 @@ export const playPerspective = {
               <wa-icon name="magnifying-glass"></wa-icon>
             </button>
             <button id="view-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
-              <wa-icon name="arrow-right-arrow-left"></wa-icon>
+              <wa-icon name="arrows-rotate"></wa-icon>
             </button>
             <button id="view-play-from-here" class="ribbon-btn" aria-label="Play from here" title="Play from here">
               <wa-icon name="play"></wa-icon>
@@ -209,7 +196,7 @@ export const playPerspective = {
           <div id="edit-controls" class="board-ribbon" style="display: none">
             <div class="side-popover-wrap">
               <button id="edit-side" class="ribbon-btn" aria-label="Side to move" title="Side to move" aria-haspopup="true" aria-expanded="false">
-                <wa-icon name="chess-king"></wa-icon>
+                <wa-icon name="circle-half-stroke"></wa-icon>
               </button>
               <div id="edit-side-popover" class="side-popover hidden" role="dialog" aria-label="Side to move">
                 <button type="button" id="edit-side-toggle" class="castle-pill side-toggle-pill" aria-pressed="true">White to move</button>
@@ -235,7 +222,10 @@ export const playPerspective = {
             </div>
             <span class="ribbon-sep" aria-hidden="true"></span>
             <button id="edit-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
-              <wa-icon name="arrow-right-arrow-left"></wa-icon>
+              <wa-icon name="arrows-rotate"></wa-icon>
+            </button>
+            <button id="edit-annotate" class="ribbon-btn" aria-label="Edit annotation" title="Edit annotation">
+              <wa-icon name="align-left"></wa-icon>
             </button>
             <span class="ribbon-sep ribbon-sep--push" aria-hidden="true"></span>
             <button id="edit-confirm" class="ribbon-btn" aria-label="Confirm position" title="Confirm">
@@ -276,6 +266,7 @@ export const playPerspective = {
     const viewLastBtn = root.querySelector("#view-last");
     const viewFlipBtn = root.querySelector("#view-flip");
     const editFlipBtn = root.querySelector("#edit-flip");
+    const editAnnotateBtn = root.querySelector("#edit-annotate");
     const viewAnalyzeBtn = root.querySelector("#view-analyze");
     const viewPlayFromHereBtn = root.querySelector("#view-play-from-here");
     const viewEditBtn = root.querySelector("#view-edit");
@@ -375,7 +366,15 @@ export const playPerspective = {
         const wasOpen = open;
         if (!open) openCommentary();
         setCommentaryText(lastViewComment);
-        if (!wasOpen && !analyzing) {
+        // Skip the seeding /view/goto in edit mode: view_goto is FSM-gated
+        // to VIEWING, not EDITING, and would 400. Nav state stays whatever
+        // it was before edit; refreshes on exit when this re-runs.
+        // Alternative considered: hide the commentary dock entirely while
+        // editing (parallel to the play->edit transient-suppress flag
+        // documented at suppressCommentsForEditTransition, see commit
+        // 7158076). Rejected: too aggressive -- user loses passive view
+        // of the comment they're about to annotate.
+        if (!wasOpen && !analyzing && !editing) {
           // Populate comment nav state on first open.
           doViewNav("/game/view/goto", { ply: viewCursor });
         }
@@ -463,6 +462,12 @@ export const playPerspective = {
     let viewGameOverAlertShown = false;
     let viewingGameId = null;
     let editing = false;
+    // Annotation staged by the user via the edit-mode annotation modal.
+    // null  -> no pending change; /edit/commit goes with apply_comment=false.
+    // ""    -> user explicitly cleared; server treats as delete.
+    // "text"-> set/replace at the edit-entry ply.
+    // Reset on every entry to edit mode and on /edit/cancel.
+    let pendingAnnotation = null;
     const pausedBadge = document.getElementById("paused-badge");
     const finishedBadge = document.getElementById("finished-badge");
     function syncPausedUi() {
@@ -613,7 +618,7 @@ export const playPerspective = {
             if (v.result) showFinishedBadge(resultBadge(v.result));
             if (viewGameOver && viewCursor === viewTotalPlies && v.result && !viewGameOverAlertShown) {
               viewGameOverAlertShown = true;
-              showAlert({ message: formatViewGameOver(v), messageClass: "game-over-message" });
+              toast(formatViewGameOver(v), { variant: "neutral", duration: 6000 });
             }
             resignAvailable = false;
             // Board is read-only in view mode; the user navigates via ribbon.
@@ -892,6 +897,7 @@ export const playPerspective = {
     function _onServerEditingStart() {
       const seed = _seedFromFen(view.getFen());
       view.enterEditMode(() => refreshButtons(), seed);
+      pendingAnnotation = null;
       refreshButtons();
     }
 
@@ -904,6 +910,7 @@ export const playPerspective = {
     function _onServerEditingStop() {
       view.exitEditMode();
       _clearEditTransitionSuppression();
+      pendingAnnotation = null;
       refreshButtons();
     }
 
@@ -1003,14 +1010,36 @@ export const playPerspective = {
       }
     };
 
+    const onEditAnnotate = async () => {
+      // Preload from pendingAnnotation (if user already staged something
+      // this edit session) or fall back to the server's current comment.
+      const preload = pendingAnnotation ?? (lastViewComment ?? "");
+      const result = await editAnnotation({ currentText: preload });
+      if (result?.apply) {
+        pendingAnnotation = result.text;
+        // Optimistically reflect the staged text in the commentary dock
+        // so the user sees their pending change. Lives until edit-commit
+        // (server then makes it real) or edit-cancel (we restore the
+        // pre-edit text from lastViewComment).
+        if (isCommentaryOpen()) {
+          setCommentaryText(pendingAnnotation || null);
+        }
+      }
+    };
+
     const onEditConfirm = async () => {
       const fen = view.getEditFen();
       // Server mints a fresh game_id on a real position change. Clear the
       // filter so the board_update SSE (which races the POST response) isn't
       // dropped for not matching our stale id.
       view.setGameId(null);
+      const payload = { fen };
+      if (pendingAnnotation !== null) {
+        payload.apply_comment = true;
+        payload.comment_text = pendingAnnotation;
+      }
       try {
-        const r = await ctx.api("POST", "/game/edit/commit", { fen });
+        const r = await ctx.api("POST", "/game/edit/commit", payload);
         view.setGameId(r.game_id);
       } catch (e) {
         reportError(ctx, "Invalid position", e);
@@ -1128,6 +1157,7 @@ export const playPerspective = {
 
     const onAnalyze = async () => {
       const wasAnalyzing = analyzing;
+      if (wasAnalyzing) snapshotViewAnalysisState();
       try {
         await ctx.api(
           "POST",
@@ -1138,6 +1168,7 @@ export const playPerspective = {
           dismissAnalysisToast?.();
           dismissAnalysisToast = null;
         } else {
+          restoreViewAnalysisWindows(ctx.events);
           showAnalysisToast();
         }
       } catch (e) {
@@ -1201,6 +1232,7 @@ export const playPerspective = {
     editCastleCb.bK.addEventListener("click", onCastleBK);
     editCastleCb.bQ.addEventListener("click", onCastleBQ);
     document.addEventListener("click", onDocClickClosePopover);
+    editAnnotateBtn.addEventListener("click", onEditAnnotate);
     editConfirmBtn.addEventListener("click", onEditConfirm);
     editCancelBtn.addEventListener("click", onEditCancel);
 
@@ -1278,6 +1310,7 @@ export const playPerspective = {
         viewLastBtn.removeEventListener("click", onViewLast);
         viewFlipBtn.removeEventListener("click", onViewFlip);
         editFlipBtn.removeEventListener("click", onViewFlip);
+        editAnnotateBtn.removeEventListener("click", onEditAnnotate);
         viewAnalyzeBtn.removeEventListener("click", onAnalyze);
         viewEditBtn.removeEventListener("click", onViewEditPosition);
         viewPlayFromHereBtn.removeEventListener("click", onPlayFromHere);

@@ -508,3 +508,331 @@ async def test_comment_nav_via_convenience_methods(hve):
     assert r == {"prev_comment": None, "next_comment": 2}  # now at ply 0
     r = await h.view_last(include_comment_nav=True)
     assert r == {"prev_comment": 4, "next_comment": None}  # now at ply 5
+
+
+# ---------------------------------------------------------------------------
+# play_from_here carries imported comments into the forked play game
+# (Phase 2 of the annotation-edit work: view-mode commentary survives the
+# view -> play fork so the eventual recents save / PGN export retain it).
+# ---------------------------------------------------------------------------
+
+
+async def test_play_from_here_carries_root_and_per_ply_comments(hve):
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5", "g1f3", "b8c6"],
+        clock_history=None,
+        comments=["c1", None, "c3", None],
+        root_comment="pre-game thoughts",
+    ))
+    await h.view_last()
+    await h.view_back()  # cursor at ply 3
+    await h.play_from_here(tc=TimeControl(60, 0))
+    assert h._play_root_comment == "pre-game thoughts"
+    assert h._play_comments == ["c1", None, "c3"]
+
+
+async def test_play_game_comments_helper(hve):
+    """Exposes _play_comments + _play_root_comment so /game/view/start
+    can re-seed a view game with them, closing the round trip."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5"],
+        clock_history=None,
+        comments=["c1", "c2"],
+        root_comment="pre",
+    ))
+    await h.view_last()
+    await h.play_from_here(tc=TimeControl(60, 0))
+    c, root = h.play_game_comments()
+    assert c == ["c1", "c2"]
+    assert root == "pre"
+
+
+async def test_play_from_here_no_view_comments_leaves_play_side_none(hve):
+    """When the imported PGN had no commentary, no synthesis happens."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5"],
+        clock_history=None,
+    ))
+    await h.view_last()
+    await h.play_from_here(tc=TimeControl(60, 0))
+    assert h._play_comments is None
+    assert h._play_root_comment is None
+
+
+async def test_play_from_here_at_ply_zero_keeps_only_root_comment(hve):
+    """Cursor at ply 0 -> seed_comments is an empty slice; the forked
+    play game still inherits the root comment but has no per-ply ones."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5"],
+        clock_history=None,
+        comments=["c1", "c2"],
+        root_comment="pre-game",
+    ))
+    # cursor stays at 0 (no view_last / view_forward)
+    await h.play_from_here(tc=TimeControl(60, 0))
+    assert h._play_comments is None  # collapsed because slice was empty
+    assert h._play_root_comment == "pre-game"
+
+
+async def test_take_back_pops_play_comments_in_lockstep(hve):
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5", "g1f3", "b8c6"],
+        clock_history=None,
+        comments=["c1", "c2", "c3", "c4"],
+    ))
+    await h.view_last()
+    await h.play_from_here(tc=TimeControl(60, 0))
+    # After play_from_here at last ply: 4 plies on the board, 4 comments.
+    assert len(h._board.move_stack) == 4
+    assert h._play_comments == ["c1", "c2", "c3", "c4"]
+    # Takeback drops engine reply + human's last (2 plies).
+    # Side-to-move at ply 4 is White; human side is determined at fork.
+    # We pop two if human is to move; otherwise one. Don't assume; just
+    # check post-state is consistent.
+    pre_n = len(h._board.move_stack)
+    await h.takeback()
+    post_n = len(h._board.move_stack)
+    assert post_n < pre_n
+    assert len(h._play_comments) == post_n
+
+
+# ---------------------------------------------------------------------------
+# Annotation editing via commit_edit (Phase 5).
+# Edit-mode-only mutation; FEN unchanged + apply_comment=True path.
+# ---------------------------------------------------------------------------
+
+
+async def _enter_edit_at_ply(h, ply):
+    """Helper: enter view + nav to ply + enter edit (cursor frozen at ply)."""
+    if ply > 0:
+        await h.view_goto(ply)
+    return await h.enter_edit_mode()
+
+
+async def test_commit_edit_annotation_sets_comment_at_entry_ply(hve):
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5", "g1f3"],
+        clock_history=None,
+    ))
+    fen = await _enter_edit_at_ply(h, 2)  # cursor at ply 2 (after e5)
+    result = await h.commit_edit(
+        fen, apply_comment=True, comment_text="Best by test.",
+    )
+    assert result["changed"] == "comment"
+    assert h._view_comments == [None, "Best by test.", None]
+    # Cursor restored to the entry ply.
+    assert h._view_cursor == 2
+
+
+async def test_commit_edit_annotation_at_root_ply_zero(hve):
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4"],
+        clock_history=None,
+    ))
+    fen = await _enter_edit_at_ply(h, 0)  # cursor at root
+    result = await h.commit_edit(
+        fen, apply_comment=True, comment_text="Pre-game thoughts.",
+    )
+    assert result["changed"] == "comment"
+    assert h._view_root_comment == "Pre-game thoughts."
+
+
+async def test_commit_edit_annotation_empty_text_deletes(hve):
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5"],
+        clock_history=None,
+        comments=["existing", None],
+    ))
+    fen = await _enter_edit_at_ply(h, 1)
+    result = await h.commit_edit(fen, apply_comment=True, comment_text="")
+    assert result["changed"] == "comment"
+    # Comments list collapsed to None since no entries remain.
+    assert h._view_comments is None
+
+
+async def test_commit_edit_annotation_no_change_returns_none_branch(hve):
+    """User opened the modal, didn't change anything (text matches current)
+    -> changed='none', no recents disturbance."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4"],
+        clock_history=None,
+        comments=["same"],
+    ))
+    fen = await _enter_edit_at_ply(h, 1)
+    result = await h.commit_edit(fen, apply_comment=True, comment_text="same")
+    assert result["changed"] == "none"
+    assert h._view_comments == ["same"]
+
+
+async def test_commit_edit_annotation_whitespace_only_deletes(hve):
+    """Empty after strip() -> delete, just like fully-empty text."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4"],
+        clock_history=None,
+        comments=["existing"],
+    ))
+    fen = await _enter_edit_at_ply(h, 1)
+    result = await h.commit_edit(fen, apply_comment=True, comment_text="   \t\n")
+    assert result["changed"] == "comment"
+    assert h._view_comments is None
+
+
+async def test_commit_edit_annotation_preserves_game_id(hve):
+    """The whole point: annotation edit does NOT mint a new game_id."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4"],
+        clock_history=None,
+    ))
+    pre_id = h._game_id
+    fen = await _enter_edit_at_ply(h, 1)
+    await h.commit_edit(fen, apply_comment=True, comment_text="x")
+    assert h._game_id == pre_id
+
+
+async def test_commit_edit_annotation_does_not_mutate_raw_text(hve):
+    """_view_raw_text is the frozen import artifact -- annotation edits
+    must NOT touch it."""
+    h, _ = hve
+    raw = (
+        '[Event "T"]\n[White "A"]\n[Black "B"]\n[Result "*"]\n\n'
+        '1. e4 *\n\n'
+    )
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4"],
+        clock_history=None,
+        view_raw_text=raw,
+    ))
+    fen = await _enter_edit_at_ply(h, 1)
+    await h.commit_edit(fen, apply_comment=True, comment_text="annotated")
+    assert h._view_raw_text == raw
+
+
+async def test_commit_edit_annotation_updates_hash(hve):
+    """Content changed -> _view_hash recomputed from the regen'd PGN."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4"],
+        clock_history=None,
+        view_hash="deadbeef" * 8,
+    ))
+    fen = await _enter_edit_at_ply(h, 1)
+    result = await h.commit_edit(fen, apply_comment=True, comment_text="new")
+    assert h._view_hash == result["hash"]
+    assert h._view_hash != "deadbeef" * 8
+
+
+async def test_commit_edit_fen_change_ignores_apply_comment(hve):
+    """FEN changed -> game truncated; the annotation request has no valid
+    target ply, so it's silently dropped."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4"],
+        clock_history=None,
+    ))
+    await h.enter_edit_mode()
+    new_fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+    # different EPD from the post-e4 position
+    result = await h.commit_edit(
+        new_fen, apply_comment=True, comment_text="ignored",
+    )
+    assert result["changed"] == "fen"
+    # New view game has no comments.
+    assert h._view_comments is None
+    assert h._view_root_comment is None
+
+
+async def test_commit_edit_unchanged_no_annotation_returns_none(hve):
+    """Existing behavior preserved: FEN same, apply_comment=False -> 'none'."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4"],
+        clock_history=None,
+    ))
+    fen = await h.enter_edit_mode()
+    result = await h.commit_edit(fen)  # no apply_comment
+    assert result["changed"] == "none"
+
+
+async def test_play_to_view_via_edit_round_trip_preserves_comments(hve):
+    """Repro for the user-reported bug:
+       import w/ comments -> play_from_here -> enter_view_mode (the play
+       -> view flip used by /game/view/start) -> enter edit -> cancel.
+    The restored view must still have the imported comments."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5", "g1f3"],
+        clock_history=None,
+        comments=["c1", "c2", "c3"],
+        root_comment="pre",
+    ))
+    await h.view_last()
+    await h.play_from_here(tc=TimeControl(60, 0))
+    # Simulate /game/view/start: snapshot play state + comments, enter view.
+    start_fen, moves, _, _, _, _ = h.play_game_snapshot()
+    comments, root = h.play_game_comments()
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=start_fen,
+        moves_uci=moves,
+        clock_history=None,
+        comments=comments,
+        root_comment=root,
+    ))
+    assert h._view_comments == ["c1", "c2", "c3"]
+    assert h._view_root_comment == "pre"
+    # Now enter edit then cancel -- the post-cancel view must still see them.
+    await h.enter_edit_mode()
+    await h.cancel_edit()
+    assert h._view_comments == ["c1", "c2", "c3"]
+    assert h._view_root_comment == "pre"
+
+
+async def test_play_from_here_pgn_export_preserves_comments(hve):
+    """End-to-end: import with comments -> play_from_here at last ply ->
+    PGN built via the play-mode path carries the seeded user prose."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5", "g1f3"],
+        clock_history=None,
+        comments=["king pawn", "symmetric", "knight develops"],
+        root_comment="study line",
+    ))
+    await h.view_last()
+    await h.play_from_here(tc=TimeControl(60, 0))
+    # _build_play_game_pgn is the shared workhorse driven by autosave,
+    # game-end recents save, and download. Exercises the same path that
+    # users see on game-end.
+    built = h._build_play_game_pgn(result="0-1", termination="resignation")
+    assert built is not None
+    pgn_text, _white, _black = built
+    assert "study line" in pgn_text
+    assert "king pawn" in pgn_text
+    assert "symmetric" in pgn_text
+    assert "knight develops" in pgn_text

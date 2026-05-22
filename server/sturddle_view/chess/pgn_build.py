@@ -36,6 +36,8 @@ def build_pgn(
     termination: str = "unterminated",
     time_control: tuple[int, int] | None = None,
     eval_history: list[dict | None] | None = None,
+    comments: list[str | None] | None = None,
+    root_comment: str | None = None,
 ) -> str:
     """Return PGN text for a game.
 
@@ -47,11 +49,21 @@ def build_pgn(
     [%clk] is dropped. eval entries are white-POV in memory; the sign
     is flipped at write time on black-to-move plies.
 
-    Raises ValueError on length mismatch between eval_history and moves.
+    `comments[i]` is the comment after move `i` (parallel to moves_uci).
+    `root_comment` is the pre-game comment (game-root). User comments
+    coexist with the [%clk] / eval-token machinery -- the latter are
+    appended to whatever the user-facing comment string already is.
+
+    Raises ValueError on length mismatch between eval_history/comments
+    and moves.
     """
     if eval_history is not None and len(eval_history) != len(moves_uci):
         raise ValueError(
             f"eval_history length {len(eval_history)} != moves length {len(moves_uci)}"
+        )
+    if comments is not None and len(comments) != len(moves_uci):
+        raise ValueError(
+            f"comments length {len(comments)} != moves length {len(moves_uci)}"
         )
 
     board = board_from(start_fen)
@@ -70,9 +82,20 @@ def build_pgn(
         game.headers["ECO"] = opening[0]
         game.headers["Opening"] = opening[1]
 
+    if root_comment:
+        game.comment = root_comment
+
     nodes = list(game.mainline())
     if not nodes:
         return f"{game}\n\n"
+
+    # Seed user-prose comments first so the [%clk] / cutechess-token
+    # machinery below appends to them rather than clobbering them.
+    if comments is not None:
+        for i, node in enumerate(nodes):
+            c = comments[i]
+            if c:
+                node.comment = c
 
     replay_board = board_from(start_fen)
     increment = float(time_control[1]) if time_control is not None else 0.0
@@ -124,6 +147,7 @@ def build_pgn(
         if elapsed is not None:
             parts.append(f"{elapsed:.1f}s")
         if parts:
-            node.comment = " ".join(parts)
+            token = " ".join(parts)
+            node.comment = f"{node.comment} {token}" if node.comment else token
 
     return f"{game}\n\n"

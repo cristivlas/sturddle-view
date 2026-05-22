@@ -203,6 +203,37 @@ async def test_view_payload_game_over_false_when_cursor_before_last_ply(hve):
     assert view["game_over"] is False
 
 
+async def test_play_game_summary_none_without_moves(hve):
+    """No live game and no moves -> None. Guards against view/start
+    labeling an empty position."""
+    assert hve.play_game_summary() is None
+    await hve.new_game(human_white=True, tc=TC)
+    assert hve.play_game_summary() is None
+
+
+async def test_play_game_summary_uses_engine_label(hve):
+    """With moves on the board, summary carries Human + engine label and
+    matches the shape stashed for recents on game-end."""
+    hve.set_engine_name("MyEngine")
+    await hve.new_game(human_white=True, tc=TC, start_moves_uci=SEED_MOVES)
+    s = hve.play_game_summary()
+    assert s == {
+        "white": "Human",
+        "black": "MyEngine",
+        "result": None,
+        "side_to_move": "white",  # after 1.e4 e5 it's white's turn
+        "source": "play",
+    }
+
+
+async def test_play_game_summary_flips_when_human_is_black(hve):
+    hve.set_engine_name("MyEngine")
+    await hve.new_game(human_white=False, tc=TC, start_moves_uci=SEED_MOVES)
+    s = hve.play_game_summary()
+    assert s["white"] == "MyEngine"
+    assert s["black"] == "Human"
+
+
 async def test_view_payload_scrubbed_after_play_from_here(hve):
     """play_from_here transitions view -> play. The very next board_update
     must have view=None even though view-mode helpers were just live."""

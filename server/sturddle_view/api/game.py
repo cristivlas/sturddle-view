@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 MAX_IMPORT_TEXT_BYTES = int(
     os.environ.get("SV_MAX_IMPORT_BYTES", 2 * 1024 * 1024)
 )
+MAX_ANNOTATION_LENGTH = int(os.environ.get("SV_MAX_ANNOTATION_LENGTH", 10_000))
 
 router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_token)])
 
@@ -376,6 +377,8 @@ async def view_start(request: Request) -> dict:
         black_time,
         eval_history,
     ) = hve.play_game_snapshot()
+    summary = hve.play_game_summary()
+    comments, root_comment = hve.play_game_comments()
     try:
         game_id = await hve.enter_view_mode(ViewModeParams(
             start_fen=start_fen,
@@ -384,6 +387,11 @@ async def view_start(request: Request) -> dict:
             final_white_time=white_time,
             final_black_time=black_time,
             eval_history=eval_history if any(e is not None for e in eval_history) else None,
+            white_name=summary["white"] if summary else None,
+            black_name=summary["black"] if summary else None,
+            view_summary=summary,
+            comments=comments,
+            root_comment=root_comment,
         ))
         await hve.view_last()
     except RuntimeError as e:
@@ -483,19 +491,41 @@ async def edit_commit(payload: dict, request: Request) -> dict:
     fen = payload.get("fen")
     if not isinstance(fen, str) or not fen:
         raise HTTPException(status_code=400, detail="missing 'fen'")
+    apply_comment = bool(payload.get("apply_comment", False))
+    comment_text = payload.get("comment_text", "")
+    if not isinstance(comment_text, str):
+        raise HTTPException(status_code=400, detail="'comment_text' must be a string")
+    if len(comment_text) > MAX_ANNOTATION_LENGTH:
+        raise HTTPException(status_code=400, detail="'comment_text' exceeds maximum length")
     prev_id = hve.game_id
+    prev_hash = request.app.state.recent_imports.hash_for_id(prev_id) if prev_id else None
     try:
-        game_id = await hve.commit_edit(fen)
+        result = await hve.commit_edit(
+            fen, apply_comment=apply_comment, comment_text=comment_text,
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    h = None
+    recents = request.app.state.recent_imports
+    h: str | None = None
     summary = None
-    if game_id != prev_id:
+    if result["changed"] == "fen":
         summary = parse_fen(fen).summary
-        h = await request.app.state.recent_imports.save(
-            fmt="fen", text=fen, summary=summary, game_id=game_id,
+        h = await recents.save(
+            fmt="fen", text=fen, summary=summary, game_id=result["game_id"],
         )
-    return {"game_id": game_id, "hash": h, "summary": summary}
+    elif result["changed"] == "comment":
+        # Annotation-only commit: same game_id, content hash changed.
+        # Replace the pre-edit recents row (if any) with the new PGN.
+        summary = result["summary"]
+        h = await recents.replace_at(
+            old_hash=prev_hash,
+            fmt="pgn",
+            text=result["pgn_text"],
+            summary=summary or {},
+            game_id=result["game_id"],
+            precomputed_hash=result["hash"],
+        )
+    return {"game_id": result["game_id"], "hash": h, "summary": summary}
 
 
 @router.post("/edit/cancel")

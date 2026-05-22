@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 from ..chess.board import board_from, moves_san as _moves_san, side_to_move
 from ..chess.engine_info import serialize_info
 from ..chess.pgn_build import build_pgn
+from .canonical_hash import canonical_hash
 from ..chess.results import DRAW, loser_result, winner_result
 from ..events import Event, EventBus
 from .chess_clock import ChessClock, TimeControl
@@ -79,8 +80,10 @@ class ViewModeParams:
     pgn_termination: str | None = None
     view_hash: str | None = None
     view_summary: dict | None = None
-    # Raw import text (verbatim PGN or FEN). When set, get_pgn_text() returns
-    # this directly so no metadata is lost on export.
+    # Verbatim import text (PGN or FEN). When set, get_pgn_text() can
+    # return this directly to avoid any re-serialization loss. Treated as
+    # a write-once import fossil on the HVE side -- see _view_raw_text
+    # for the freeze contract.
     view_raw_text: str | None = None
 
 
@@ -174,11 +177,26 @@ class HumanVsEngine:
         # text (PGN or FEN). None for play-mode games and view/start transitions.
         self._view_hash: str | None = None
         self._view_summary: dict | None = None
+        # Frozen import artifact: the original bytes the user pasted, set
+        # once in enter_view_mode and never updated thereafter. Annotation
+        # editing and any other in-place mutator MUST NOT write to this --
+        # it stays as a faithful copy of the imported text so we can serve
+        # it on export when structured state hasn't diverged, and (future)
+        # offer revert-to-imported. Reset to None on _reset_view_state and
+        # restored from snapshot on edit-cancel are not mutations of the
+        # loaded game -- they correspond to game-load transitions.
         self._view_raw_text: str | None = None
         # Per-ply engine eval (white POV), one entry per pushed move. None
         # entries for plies with no engine search (human moves). Matches
         # move_stack length; pop alongside on take-back. Reset on new game.
         self._eval_history: list[dict | None] = []
+        # Play-side PGN comments. Populated only when the play game was
+        # seeded from a view-mode position (play_from_here) that carried
+        # commentary -- otherwise None. Used by _build_play_game_pgn so
+        # imported annotations survive the view -> play fork into recents
+        # and exports. Live play does not mutate these today.
+        self._play_comments: list[str | None] | None = None
+        self._play_root_comment: str | None = None
         # Set inside the game-end lock by _stash_recents_payload(); drained
         # after the lock by _flush_recents_save(). Carries (text, summary,
         # game_id) for the recent-imports save so the async write happens
@@ -391,6 +409,8 @@ class HumanVsEngine:
         seed_clock_history: list[tuple[float | None, float | None]] | None = None,
         seed_final_white_time: float | None = None,
         seed_final_black_time: float | None = None,
+        seed_comments: list[str | None] | None = None,
+        seed_root_comment: str | None = None,
     ) -> str:
         """Start a fresh game.
 
@@ -399,6 +419,11 @@ class HumanVsEngine:
         a PGN with [%clk] comments), per-ply clocks are restored and
         take-back can undo into the seeded plies. None entries fall back
         to `tc.initial_seconds`.
+
+        `seed_comments` / `seed_root_comment` populate the play-side
+        comment storage when forking from a view game (play_from_here),
+        so imported annotations survive into the eventual PGN export and
+        recents save.
         """
         async with self._lock:
             if not (self._mode & Op.NEW_GAME._mask):
@@ -435,6 +460,17 @@ class HumanVsEngine:
                 final_b=seed_final_black_time,
             )
             self._eval_history = [None] * len(board.move_stack)
+            # Seed play-side comments from a forking caller (play_from_here).
+            # Truncate/pad the seed to match move_stack length so subsequent
+            # take-back can shrink alongside it.
+            n_plies = len(board.move_stack)
+            if seed_comments is not None:
+                seeded = list(seed_comments[:n_plies])
+                seeded.extend([None] * (n_plies - len(seeded)))
+                self._play_comments = seeded if any(c is not None for c in seeded) else None
+            else:
+                self._play_comments = None
+            self._play_root_comment = seed_root_comment or None
             self._clock.start_turn()
             self._mode = Mode.PLAY
             self._game_id = str(uuid.uuid4())
@@ -468,6 +504,8 @@ class HumanVsEngine:
             self._board.push(move)
             # Human ply: no engine search, eval slot is None.
             self._eval_history.append(None)
+            if self._play_comments is not None:
+                self._play_comments.append(None)
             await self._persist()
             await self._publish_board()
             await self._publish_clock()
@@ -554,24 +592,27 @@ class HumanVsEngine:
             if not (self._mode & Op.TAKEBACK._mask):
                 raise ModeConflictError(self._mode, Op.TAKEBACK)
             await self._cancel_think()
+            def _pop_one() -> None:
+                self._board.pop()
+                self._clock.pop_snapshot()
+                self._eval_history.pop()
+                if self._play_comments is not None:
+                    self._play_comments.pop()
+                    if not any(c is not None for c in self._play_comments):
+                        self._play_comments = None
+
             human_color = chess.WHITE if self._human_white else chess.BLACK
             if self._board.turn == human_color:
                 # Pop engine's reply, then human's last.
                 if len(self._board.move_stack) < 2:
                     raise RuntimeError("nothing to take back")
-                self._board.pop()
-                self._clock.pop_snapshot()
-                self._eval_history.pop()
-                self._board.pop()
-                self._clock.pop_snapshot()
-                self._eval_history.pop()
+                _pop_one()
+                _pop_one()
             else:
                 # Engine was thinking; pop the human's last move.
                 if len(self._board.move_stack) < 1:
                     raise RuntimeError("nothing to take back")
-                self._board.pop()
-                self._clock.pop_snapshot()
-                self._eval_history.pop()
+                _pop_one()
             # Preserve pause state across takeback: undoing should not
             # silently resume the clock.
             if self._paused:
@@ -759,6 +800,16 @@ class HumanVsEngine:
             list(self._eval_history),
         )
 
+    def play_game_comments(self) -> tuple[list[str | None] | None, str | None]:
+        """Return (comments, root_comment) from the current play-mode game.
+
+        Populated only when the play game was seeded from a view fork
+        (play_from_here) that carried commentary. Used by /game/view/start
+        so the play -> view clone preserves imported annotations through
+        an edit-mode round trip."""
+        comments = list(self._play_comments) if self._play_comments is not None else None
+        return comments, self._play_root_comment
+
     async def enter_view_mode(
         self,
         params: ViewModeParams,
@@ -939,10 +990,38 @@ class HumanVsEngine:
         self._view_summary = snap.view_summary
         self._view_raw_text = snap.view_raw_text
 
-    async def commit_edit(self, fen: str) -> str:
-        """Apply the edited FEN as a fresh view-mode position. On any
-        failure (FEN parse, illegality, or replay error), leaves edit mode
-        intact so the user can fix and retry. Returns the new game_id.
+    async def commit_edit(
+        self,
+        fen: str,
+        *,
+        apply_comment: bool = False,
+        comment_text: str = "",
+    ) -> dict:
+        """Apply the edited FEN (and optionally an annotation at the
+        edit-entry ply) as the next view-mode state. On any failure
+        (FEN parse, illegality, replay) leaves edit mode intact so the
+        user can fix and retry.
+
+        ``apply_comment=True`` requests an annotation commit at the
+        snapshotted entry ply (cursor at enter_edit_mode time). Empty
+        ``comment_text`` deletes the annotation. Annotation commit is
+        only honored on the FEN-unchanged branch; if the FEN changed
+        the game is truncated and the requested annotation has no
+        valid target.
+
+        Returns a dict::
+
+            {
+                "game_id":   str,
+                "changed":   "fen" | "comment" | "none",
+                "pgn_text":  str | None,   # set when changed == "comment"
+                "hash":      str | None,   # canonical hash for the new PGN
+                "summary":   dict | None,  # carry-through of _view_summary
+            }
+
+        The API layer uses ``changed`` to dispatch the recents-store
+        write (FEN -> save a FEN-only row; comment -> replace_at; none
+        -> no recents touch).
         """
         async with self._lock:
             if not (self._mode & Op.COMMIT_EDIT._mask):
@@ -963,9 +1042,33 @@ class HumanVsEngine:
                 self._restore_view_snapshot(snap)
                 self._edit_pre_fen = None
                 self._edit_view_snapshot = None
+                # Annotation branch: apply requested comment at the
+                # entry ply, regen PGN + hash, publish. Reuses the
+                # just-restored snapshot as the base state.
+                if apply_comment:
+                    annot = self._apply_view_annotation(
+                        ply=snap.cursor, text=comment_text,
+                    )
+                else:
+                    annot = None
                 await self._publish_board()
                 await self._publish_clock()
-            return self._game_id
+            if annot is not None:
+                pgn_text, new_hash = annot
+                return {
+                    "game_id": self._game_id,
+                    "changed": "comment",
+                    "pgn_text": pgn_text,
+                    "hash": new_hash,
+                    "summary": self._view_summary,
+                }
+            return {
+                "game_id": self._game_id,
+                "changed": "none",
+                "pgn_text": None,
+                "hash": None,
+                "summary": None,
+            }
         # FEN changed -- drop history, enter fresh view at new position.
         try:
             game_id = await self.enter_view_mode(
@@ -978,7 +1081,56 @@ class HumanVsEngine:
         async with self._lock:
             self._edit_pre_fen = None
             self._edit_view_snapshot = None
-        return game_id
+        return {
+            "game_id": game_id,
+            "changed": "fen",
+            "pgn_text": None,
+            "hash": None,
+            "summary": None,
+        }
+
+    def _apply_view_annotation(
+        self, *, ply: int, text: str,
+    ) -> tuple[str, str] | None:
+        """Mutate view-state to set/clear the comment at ``ply`` (0 ==
+        root, N == comment after move N), regen the PGN + canonical
+        hash, update ``_view_hash``. Returns ``(pgn_text, new_hash)``
+        or None when the requested annotation matches what's already
+        there (no-op).
+
+        Caller MUST hold the lock. ``_view_raw_text`` is intentionally
+        NOT touched -- it stays the frozen import artifact.
+        """
+        assert self._lock.locked(), "_apply_view_annotation called without lock"
+        new_value = text.strip() or None
+        if ply == 0:
+            current = self._view_root_comment
+            if current == new_value:
+                return None
+            self._view_root_comment = new_value
+        else:
+            n = len(self._view_full_moves)
+            if not (0 < ply <= n):
+                raise RuntimeError(f"ply {ply} out of range [0, {n}]")
+            idx = ply - 1
+            if self._view_comments is None:
+                if new_value is None:
+                    return None  # nothing to clear; was already absent
+                self._view_comments = [None] * n
+            current = self._view_comments[idx]
+            if current == new_value:
+                return None
+            self._view_comments[idx] = new_value
+            # Collapse to None if no comments remain anywhere.
+            if all(c is None for c in self._view_comments):
+                self._view_comments = None
+        built = self._build_view_pgn()
+        if built is None:
+            return None
+        pgn_text, _w, _b = built
+        new_hash = canonical_hash(pgn_text, "pgn")
+        self._view_hash = new_hash
+        return pgn_text, new_hash
 
     async def cancel_edit(self) -> str:
         """Leave edit mode; restore view state from pre-edit snapshot."""
@@ -1029,6 +1181,13 @@ class HumanVsEngine:
                 elif cursor < len(self._view_clock_history):
                     nw, nb = self._view_clock_history[cursor]
                     seed_final_w, seed_final_b = nw, nb
+            # Snapshot view-mode commentary slice before _reset_view_state wipes it.
+            seed_comments = (
+                list(self._view_comments[:cursor])
+                if self._view_comments is not None
+                else None
+            )
+            seed_root_comment = self._view_root_comment
             start_fen = self._start_fen
             # Determine side-to-move at the cursor without leaving the lock.
             board = board_from(start_fen)
@@ -1053,6 +1212,8 @@ class HumanVsEngine:
             seed_clock_history=seed_clocks,
             seed_final_white_time=seed_final_w,
             seed_final_black_time=seed_final_b,
+            seed_comments=seed_comments,
+            seed_root_comment=seed_root_comment,
         )
 
     async def apply_engine_settings_live(self) -> None:
@@ -1424,6 +1585,8 @@ class HumanVsEngine:
             self._consume_turn_time()
             self._board.push(best)
             self._eval_history.append(captured or None)
+            if self._play_comments is not None:
+                self._play_comments.append(None)
             await self._persist()
             await self._publish_board()
             await self._publish_clock()
@@ -1729,6 +1892,16 @@ class HumanVsEngine:
         tc = None
         if self._clock.tc.initial_seconds:
             tc = (int(self._clock.tc.initial_seconds), int(self._clock.tc.increment_seconds))
+        # Comments slice must match move_stack length. _play_comments is
+        # maintained in lockstep with the board by new_game (seed) and
+        # take_back (pop), so just clip defensively in case the lengths
+        # ever drift.
+        n_plies = len(self._board.move_stack)
+        comments = (
+            list(self._play_comments[:n_plies])
+            if self._play_comments is not None
+            else None
+        )
         pgn_text = build_pgn(
             start_fen=self._start_fen,
             moves_uci=[m.uci() for m in self._board.move_stack],
@@ -1740,6 +1913,8 @@ class HumanVsEngine:
             termination=termination,
             time_control=tc,
             eval_history=list(self._eval_history),
+            comments=comments,
+            root_comment=self._play_root_comment,
         )
         return pgn_text, white, black
 
@@ -1764,37 +1939,10 @@ class HumanVsEngine:
             return None  # FEN-only view with no verbatim text: nothing to export
 
         if self._viewing:
-            result = self._view_pgn_result or "*"
-            termination = self._view_pgn_termination or "unterminated"
-            white = self._view_white_name or "?"
-            black = self._view_black_name or "?"
-            # "Sturddle View" (no player label) -- origin unknown after fork/rebuild.
-            headers = {
-                "Event": "Sturddle View",
-                "Site": "Sturddle View",
-                "Date": datetime.date.today().strftime("%Y.%m.%d"),
-                "White": white,
-                "Black": black,
-            }
-            view_evals = (
-                list(self._view_eval_history)
-                if self._view_eval_history is not None
-                else [None] * len(self._view_full_moves)
-            )
-            pgn_text = build_pgn(
-                start_fen=self._start_fen,
-                moves_uci=[m.uci() for m in self._view_full_moves],
-                clock_history=list(self._view_clock_history) or None,
-                final_clocks=(
-                    (self._view_final_white, self._view_final_black)
-                    if self._view_final_white is not None and self._view_final_black is not None
-                    else None
-                ),
-                headers=headers,
-                result=result,
-                termination=termination,
-                eval_history=view_evals,
-            )
+            built = self._build_view_pgn()
+            if built is None:
+                return None
+            pgn_text, white, black = built
         else:
             built = self._build_play_game_pgn(result="*", termination="unterminated")
             if built is None:
@@ -1802,6 +1950,60 @@ class HumanVsEngine:
             pgn_text, white, black = built
 
         return pgn_text, self._make_pgn_filename(white, black)
+
+    def _build_view_pgn(self) -> tuple[str, str, str] | None:
+        """Assemble a PGN from the live view-mode state. Returns
+        (pgn_text, white, black) or None when there's nothing to build
+        (no moves). Shared by ``get_pgn_text`` (download when no raw
+        text is available) and ``commit_edit`` (annotation save: regen
+        from the post-edit comment array).
+
+        Always passes ``comments`` and ``root_comment`` to ``build_pgn``
+        so user prose round-trips. Caller is responsible for holding
+        the lock when serializing with concurrent mutators.
+        """
+        if not self._view_full_moves:
+            return None
+        result = self._view_pgn_result or "*"
+        termination = self._view_pgn_termination or "unterminated"
+        white = self._view_white_name or "?"
+        black = self._view_black_name or "?"
+        # "Sturddle View" (no player label) -- origin unknown after fork/rebuild.
+        headers = {
+            "Event": "Sturddle View",
+            "Site": "Sturddle View",
+            "Date": datetime.date.today().strftime("%Y.%m.%d"),
+            "White": white,
+            "Black": black,
+        }
+        view_evals = (
+            list(self._view_eval_history)
+            if self._view_eval_history is not None
+            else [None] * len(self._view_full_moves)
+        )
+        n_plies = len(self._view_full_moves)
+        comments = (
+            list(self._view_comments[:n_plies])
+            if self._view_comments is not None
+            else None
+        )
+        pgn_text = build_pgn(
+            start_fen=self._start_fen,
+            moves_uci=[m.uci() for m in self._view_full_moves],
+            clock_history=list(self._view_clock_history) or None,
+            final_clocks=(
+                (self._view_final_white, self._view_final_black)
+                if self._view_final_white is not None and self._view_final_black is not None
+                else None
+            ),
+            headers=headers,
+            result=result,
+            termination=termination,
+            eval_history=view_evals,
+            comments=comments,
+            root_comment=self._view_root_comment,
+        )
+        return pgn_text, white, black
 
     def _maybe_save_pgn(self, *, result: str, termination: str) -> Path | None:
         if self._board is None or self._game_id is None:
@@ -1861,14 +2063,31 @@ class HumanVsEngine:
         if built is None:
             return
         pgn_text, white, black = built
-        summary = {
+        summary = self._play_summary(white=white, black=black, result=result)
+        self._pending_recents_save = (pgn_text, summary, self._game_id)
+
+    def _play_summary(
+        self, *, white: str, black: str, result: str | None,
+    ) -> dict:
+        return {
             "white": white,
             "black": black,
             "result": result,
             "side_to_move": "white" if self._board.turn == chess.WHITE else "black",
             "source": "play",
         }
-        self._pending_recents_save = (pgn_text, summary, self._game_id)
+
+    def play_game_summary(self) -> dict | None:
+        """Minimal summary dict for the in-flight play game, matching the
+        shape stashed for recents on game-end. Returns None when there's
+        no live play game with moves. Used by /game/view/start to label
+        the play->view clone."""
+        if self._board is None or self._game_id is None or not self._board.move_stack:
+            return None
+        engine_label = self._engine_name or Path(self._engine_path).name
+        white = "Human" if self._human_white else engine_label
+        black = engine_label if self._human_white else "Human"
+        return self._play_summary(white=white, black=black, result=None)
 
     async def _flush_recents_save(self) -> None:
         """Drain the stash set by _stash_recents_payload. Call AFTER

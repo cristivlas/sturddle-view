@@ -493,14 +493,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     const ribbonW = ribbonRect ? Math.round(ribbonRect.width) : 0;
     const top = Math.round(rect.bottom);
     const left = Math.max(Math.round(rect.left), ribbonW);
-    const getRight = () => {
-      const row = document.querySelector(".tournament-row");
-      const rowRight = row ? Math.round(row.getBoundingClientRect().right) : null;
-      const list = document.querySelector(".tournaments-list");
-      const listRight = list ? Math.round(list.getBoundingClientRect().right) : null;
-      const base = rowRight ?? listRight ?? window.innerWidth;
-      return Math.min(base, window.innerWidth - ribbonW);
-    };
+    const getRight = () => window.innerWidth - ribbonW;
     openTournamentWorkspace({ api, events, log, token, tournament: t, top, left, getRight });
     syncWindowMenu();
     syncRibbon();

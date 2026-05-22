@@ -32,7 +32,7 @@ class Op(Enum):
 
 class ModeConflictError(RuntimeError):
     def __init__(self, current: Mode, attempted: Op) -> None:
-        super().__init__(f"op {attempted.name} not allowed in mode {current.name}")
+        super().__init__(f"{attempted.name} not allowed in {current.name} mode")
         self.current = current
         self.attempted = attempted
 

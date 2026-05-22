@@ -273,3 +273,142 @@ def test_build_pgn_matches_seeded_clock_snapshot():
     actual = _strip_run_varying(text)
     expected = _load_snapshot("seeded_clock_history_game.pgn")
     assert actual == expected
+
+
+# ---------------------------------------------------------------------------
+# Comment support (Phase 1: build_pgn must round-trip user prose alongside
+# the [%clk] / cutechess-token machinery so annotation editing -- and
+# play-from-here carrying view-mode comments -- doesn't silently lose them).
+# ---------------------------------------------------------------------------
+
+
+def _read(text):
+    import io
+    g = chess.pgn.read_game(io.StringIO(text))
+    assert g is not None
+    return g
+
+
+def test_root_comment_round_trips_with_no_per_ply_machinery():
+    text = build_pgn(
+        start_fen=None,
+        moves_uci=["e2e4"],
+        headers={"Event": "T"},
+        root_comment="Pre-game thoughts.",
+    )
+    assert _read(text).comment == "Pre-game thoughts."
+
+
+def test_per_ply_comments_round_trip_in_clk_path():
+    """Eval history absent -> [%clk] path. User prose precedes the clock
+    annotation in the rendered comment, both survive parsing."""
+    moves = ["e2e4", "e7e5", "g1f3"]
+    text = build_pgn(
+        start_fen=None,
+        moves_uci=moves,
+        clock_history=[(60.0, 60.0), (58.0, 60.0), (58.0, 57.0)],
+        final_clocks=(56.0, 57.0),
+        headers={"Event": "T"},
+        comments=["Strong opening.", None, "Knight develops."],
+    )
+    nodes = list(_read(text).mainline())
+    assert "Strong opening." in nodes[0].comment
+    assert "[%clk" in nodes[0].comment
+    # nodes[1] has clk but no user prose
+    assert "Strong opening." not in nodes[1].comment
+    assert "[%clk" in nodes[1].comment
+    assert "Knight develops." in nodes[2].comment
+    assert "[%clk" in nodes[2].comment
+
+
+def test_per_ply_comments_round_trip_in_eval_path():
+    """Eval history present -> cutechess-token path. User prose precedes
+    the engine token; both survive."""
+    moves = ["e2e4", "e7e5"]
+    text = build_pgn(
+        start_fen=None,
+        moves_uci=moves,
+        clock_history=[(60.0, 60.0), (58.0, 60.0)],
+        final_clocks=(58.0, 57.0),
+        headers={"Event": "T"},
+        eval_history=[{"cp": 25, "depth": 22}, {"cp": -10, "depth": 21}],
+        comments=["Best by test.", "Standard reply."],
+    )
+    nodes = list(_read(text).mainline())
+    assert "Best by test." in nodes[0].comment
+    assert "+0.25/22" in nodes[0].comment
+    assert "Standard reply." in nodes[1].comment
+
+
+def test_comments_length_mismatch_raises():
+    with pytest.raises(ValueError, match="comments length"):
+        build_pgn(
+            start_fen=None,
+            moves_uci=["e2e4", "e7e5"],
+            headers={"Event": "T"},
+            comments=["only one"],  # len 1 vs moves len 2
+        )
+
+
+def test_sparse_comments_preserve_positional_alignment():
+    """A None at index i must not shift later comments onto earlier plies."""
+    moves = ["e2e4", "e7e5", "g1f3", "b8c6"]
+    text = build_pgn(
+        start_fen=None,
+        moves_uci=moves,
+        headers={"Event": "T"},
+        comments=[None, None, None, "comment on move 4"],
+    )
+    nodes = list(_read(text).mainline())
+    assert not nodes[0].comment
+    assert not nodes[1].comment
+    assert not nodes[2].comment
+    assert "comment on move 4" in nodes[3].comment
+
+
+def test_empty_string_comment_treated_as_absent():
+    """An empty string at a ply must not emit an empty {} block."""
+    text = build_pgn(
+        start_fen=None,
+        moves_uci=["e2e4"],
+        headers={"Event": "T"},
+        comments=[""],
+    )
+    assert "{}" not in text
+    assert "{ }" not in text
+
+
+def test_root_comment_and_per_ply_coexist():
+    text = build_pgn(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5"],
+        headers={"Event": "T"},
+        root_comment="Opening study.",
+        comments=["King's pawn.", "Symmetric reply."],
+    )
+    g = _read(text)
+    assert g.comment == "Opening study."
+    nodes = list(g.mainline())
+    assert "King's pawn." in nodes[0].comment
+    assert "Symmetric reply." in nodes[1].comment
+
+
+def test_comments_unused_when_none_keeps_existing_behavior():
+    """Regression: with no comments arg, existing callers see no change."""
+    text_a = build_pgn(
+        start_fen=None,
+        moves_uci=["e2e4"],
+        headers={"Event": "T"},
+        clock_history=[(60.0, 60.0)],
+        final_clocks=(58.0, 60.0),
+    )
+    text_b = build_pgn(
+        start_fen=None,
+        moves_uci=["e2e4"],
+        headers={"Event": "T"},
+        clock_history=[(60.0, 60.0)],
+        final_clocks=(58.0, 60.0),
+        comments=None,
+        root_comment=None,
+    )
+    assert text_a == text_b

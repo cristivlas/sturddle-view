@@ -345,3 +345,109 @@ def test_load_rebuilds_reverse_index(tmp_path):
     got = s2.get_by_id("gid-1")
     assert got is not None
     assert got[1] == "1. e4 *"
+
+
+# ---------------------------------------------------------------------------
+# replace_at: atomic swap of content for a preserved game_id.
+# ---------------------------------------------------------------------------
+
+
+def test_replace_at_evicts_old_inserts_new_rebinds_game_id(store, tmp_path):
+    """Pre-edit row at H1 -> replace_at -> H2 row owns game_id, H1 gone."""
+    h1 = _run(store.save(fmt="pgn", text="1. e4 *", summary="s1", game_id="gid-1"))
+    h2 = _run(store.replace_at(
+        old_hash=h1, fmt="pgn", text="1. e4 e5 *", summary="s2", game_id="gid-1",
+    ))
+    assert h1 != h2
+    # H1 row + blob gone.
+    assert store.get(h1) is None
+    assert not (tmp_path / "imports" / "by-hash" / f"{h1}.pgn").exists()
+    # H2 row carries the same game_id, fresh summary.
+    row, text = store.get(h2)
+    assert row["game_id"] == "gid-1"
+    assert row["summary"] == "s2"
+    assert text == "1. e4 e5 *"
+    # Reverse index now points at H2.
+    assert store.hash_for_id("gid-1") == h2
+
+
+def test_replace_at_with_old_hash_none_promotes_to_recents(store):
+    """No pre-edit row -> insert at new_hash, bind game_id. This is the
+    play -> view -> edit -> annotate path."""
+    h = _run(store.replace_at(
+        old_hash=None, fmt="pgn", text="1. d4 *", summary="annotated", game_id="gid-promote",
+    ))
+    row, _ = store.get(h)
+    assert row["game_id"] == "gid-promote"
+    assert row["summary"] == "annotated"
+    assert store.hash_for_id("gid-promote") == h
+
+
+def test_replace_at_missing_old_hash_treated_as_insert(store):
+    """old_hash provided but absent from index (already evicted?) -> just
+    insert at new_hash. No error."""
+    h = _run(store.replace_at(
+        old_hash="deadbeef" * 8, fmt="pgn", text="1. c4 *", summary="s", game_id="gid",
+    ))
+    assert store.get(h) is not None
+
+
+def test_replace_at_same_hash_collapses_to_summary_refresh(store):
+    """Caller computed new_hash == old_hash (content didn't actually
+    change) -> single row, summary/ts refreshed, game_id intact."""
+    h1 = _run(store.save(fmt="pgn", text="1. e4 *", summary="orig", game_id="gid"))
+    h2 = _run(store.replace_at(
+        old_hash=h1, fmt="pgn", text="1. e4 *", summary="refreshed", game_id="gid",
+    ))
+    assert h1 == h2
+    [row] = store.list()
+    assert row["hash"] == h1
+    assert row["summary"] == "refreshed"
+    assert row["game_id"] == "gid"
+
+
+def test_replace_at_refuses_old_hash_bound_to_different_game_id(store):
+    """Programming bug: caller asks to evict a row whose game_id doesn't
+    match the one they're preserving. Surface loudly."""
+    h1 = _run(store.save(fmt="pgn", text="1. e4 *", summary="s", game_id="gid-other"))
+    with pytest.raises(AssertionError, match="bound to a different game_id"):
+        _run(store.replace_at(
+            old_hash=h1, fmt="pgn", text="1. d4 *", summary="s", game_id="gid-mine",
+        ))
+
+
+def test_replace_at_persists_to_disk(store, tmp_path):
+    """After replace_at, reloading the store sees the new state, not the old."""
+    h1 = _run(store.save(fmt="pgn", text="1. e4 *", summary="s1", game_id="gid"))
+    h2 = _run(store.replace_at(
+        old_hash=h1, fmt="pgn", text="1. e4 e5 *", summary="s2", game_id="gid",
+    ))
+    s2 = RecentImports.load(root=tmp_path / "imports", cap=5)
+    assert s2.get(h1) is None
+    got = s2.get_by_id("gid")
+    assert got is not None
+    row, text = got
+    assert row["summary"] == "s2"
+    assert text == "1. e4 e5 *"
+
+
+def test_replace_at_new_hash_collides_with_unrelated_game(store):
+    """new_hash already present and bound to a different game_id (a 2^-256
+    event). Old row evicted, but we cannot rebind game_id; the stored id
+    wins, our binding is dropped."""
+    # Pre-existing row at H_target bound to gid-other.
+    h_target = _run(store.save(fmt="pgn", text="1. d4 *", summary="other", game_id="gid-other"))
+    # Our game at H_ours.
+    h_ours = _run(store.save(fmt="pgn", text="1. e4 *", summary="ours", game_id="gid-ours"))
+    # Replace ours -> request lands on H_target (simulated via precomputed_hash).
+    result = _run(store.replace_at(
+        old_hash=h_ours, fmt="pgn", text="something irrelevant", summary="merged",
+        game_id="gid-ours", precomputed_hash=h_target,
+    ))
+    assert result == h_target
+    # Our old row gone.
+    assert store.get(h_ours) is None
+    # H_target row keeps gid-other; gid-ours is now unmapped.
+    row, _ = store.get(h_target)
+    assert row["game_id"] == "gid-other"
+    assert store.hash_for_id("gid-ours") is None
