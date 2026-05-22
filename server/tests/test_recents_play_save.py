@@ -10,9 +10,11 @@ In-progress games and empty games (no moves) must NOT be saved.
 """
 from __future__ import annotations
 
+import io
 from unittest.mock import AsyncMock
 
 import chess
+import chess.pgn
 import pytest
 
 from sturddle_view.events import EventBus
@@ -370,3 +372,182 @@ async def test_enter_view_mode_preserves_link_when_asked(hve):
         fork_link=link_before,
     )
     assert h.fork_link == link_before
+
+
+# ---- x-game fork PGN preservation matrix (B9 + sanity) ----
+#
+# Combinations of parent clock data x parent comments x child play.
+# Each test forks the parent at cursor 4 (after 2 full moves), plays
+# one engine half-move on the child, resigns, and inspects the child
+# row's PGN in recents. Asserts:
+#   - inherited plies (0..fork_ply-1) keep parent's clk / comments
+#     byte-for-byte when present.
+#   - inherited plies do NOT get fabricated `Xs` or comment tokens
+#     when the parent had none.
+#   - post-fork plies are unaffected.
+
+_PARENT_MOVES = ["e2e4", "e7e5", "g1f3", "b8c6"]
+_PARENT_NPLIES = len(_PARENT_MOVES)
+
+
+async def _import_parent_full(
+    h, recents, *, gid="gid-parent",
+    clock_history: list[tuple[float | None, float | None]] | None = None,
+    comments: list[str | None] | None = None,
+):
+    await recents.save(
+        fmt="pgn", text='1. e4 e5 2. Nf3 Nc6 *',
+        summary={"white": "P", "black": "Q", "result": "*"},
+        game_id=gid,
+    )
+    await h.enter_view_mode(
+        ViewModeParams(
+            start_fen=None,
+            moves_uci=_PARENT_MOVES,
+            clock_history=clock_history,
+            view_summary={"white": "P", "black": "Q", "result": "*"},
+            comments=comments,
+        ),
+        game_id=gid,
+    )
+    return gid
+
+
+async def _fork_and_finalize(h):
+    """Fork at cursor=4 (post-2-moves), play one engine half-move,
+    resign. Returns the child's game_id (assigned by play_from_here)."""
+    await h.view_last()
+    child_gid = await h.play_from_here(tc=TimeControl(60, 0))
+    # Simulate one engine move so the child has at least one new ply.
+    async with h._lock:
+        h._clock.append_snapshot()
+        h._consume_turn_time()
+        h._board.push(chess.Move.from_uci("d2d4"))
+        h._eval_history.append(None)
+        if h._play_comments is not None:
+            h._play_comments.append(None)
+    await h.resign()
+    return child_gid
+
+
+def _child_pgn_from_recents(recents, child_gid):
+    got = recents.get_by_id(child_gid)
+    assert got is not None, f"child {child_gid} not in recents"
+    _row, text = got
+    return text
+
+
+def _ply_comments_from_pgn(text):
+    """Return per-ply comment strings from a PGN. None for plies with
+    no comment at all."""
+    game = chess.pgn.read_game(io.StringIO(text))
+    return [(n.comment or None) for n in game.mainline()]
+
+
+async def test_fork_t1_no_clk_no_comments(hve):
+    """T1: parent has no clock data and no comments. Inherited plies
+    must have empty comments (no fabricated `0.0s`, no spurious text)."""
+    h, recents = hve
+    await _import_parent_full(h, recents, clock_history=None, comments=None)
+    child_gid = await _fork_and_finalize(h)
+    text = _child_pgn_from_recents(recents, child_gid)
+    plies = _ply_comments_from_pgn(text)
+    # Inherited plies 0..3: no comment at all.
+    for p in plies[:_PARENT_NPLIES]:
+        assert p is None, f"unexpected comment on inherited ply: {p!r}"
+
+
+async def test_fork_t2_full_clk_no_comments(hve):
+    """T2: parent has full clock data on every ply, no comments.
+    Inherited plies' comments must be exactly the cutechess `Xs` token
+    (no fabricated text, no missing clock)."""
+    h, recents = hve
+    clk = [(300.0, 300.0), (295.0, 300.0), (295.0, 290.0), (288.0, 290.0)]
+    await _import_parent_full(h, recents, clock_history=clk, comments=None)
+    child_gid = await _fork_and_finalize(h)
+    text = _child_pgn_from_recents(recents, child_gid)
+    plies = _ply_comments_from_pgn(text)
+    # Inherited plies: must contain a clock token, must NOT be empty.
+    for p in plies[:_PARENT_NPLIES]:
+        assert p is not None and p.endswith("s"), (
+            f"missing clock token on inherited ply: {p!r}"
+        )
+        # And no fabricated text -- only the token (possibly with eval).
+        assert all(part.endswith("s") or "/" in part for part in p.split()), (
+            f"unexpected text on inherited ply: {p!r}"
+        )
+
+
+async def test_fork_t3_no_clk_full_comments(hve):
+    """T3: parent has no clock data but every ply has a comment.
+    Inherited plies must preserve the parent's comment text and NOT
+    have a `0.0s` token appended (B9 -- the originating regression)."""
+    h, recents = hve
+    cmts = ["c0", "c1", "c2", "c3"]
+    await _import_parent_full(h, recents, clock_history=None, comments=cmts)
+    child_gid = await _fork_and_finalize(h)
+    text = _child_pgn_from_recents(recents, child_gid)
+    plies = _ply_comments_from_pgn(text)
+    for i, expected in enumerate(cmts):
+        got = plies[i]
+        assert got is not None and expected in got, (
+            f"ply {i}: lost comment {expected!r} (got {got!r})"
+        )
+        assert "0.0s" not in got, f"B9 regression on ply {i}: {got!r}"
+
+
+async def test_fork_t4_full_clk_full_comments(hve):
+    """T4: parent has both clock and comments on every ply (the
+    Anderssen-with-annotations-and-times case). Both must survive."""
+    h, recents = hve
+    clk = [(300.0, 300.0), (295.0, 300.0), (295.0, 290.0), (288.0, 290.0)]
+    cmts = ["c0", "c1", "c2", "c3"]
+    await _import_parent_full(h, recents, clock_history=clk, comments=cmts)
+    child_gid = await _fork_and_finalize(h)
+    text = _child_pgn_from_recents(recents, child_gid)
+    plies = _ply_comments_from_pgn(text)
+    for i, expected in enumerate(cmts):
+        got = plies[i]
+        assert got is not None and expected in got, (
+            f"ply {i}: lost comment {expected!r} (got {got!r})"
+        )
+        # And a clock-style token alongside (ends with `s`).
+        tail = got.split()[-1]
+        assert tail.endswith("s"), (
+            f"ply {i}: lost clock token (got {got!r})"
+        )
+
+
+async def test_fork_t5_partial_clk_no_comments(hve):
+    """T5: parent has clock on some plies, None on others. The plies
+    with clock data emit a token; the None plies do NOT get a `0.0s`."""
+    h, recents = hve
+    # ply 0: no clock, ply 1: clk, ply 2: no clock, ply 3: clk.
+    clk = [(None, None), (295.0, None), (None, None), (288.0, None)]
+    await _import_parent_full(h, recents, clock_history=clk, comments=None)
+    child_gid = await _fork_and_finalize(h)
+    text = _child_pgn_from_recents(recents, child_gid)
+    plies = _ply_comments_from_pgn(text)
+    # ply 0: no token (no before, no after).
+    assert plies[0] is None or "s" not in plies[0], (
+        f"ply 0 should have no token: {plies[0]!r}"
+    )
+    # ply 2: also no token.
+    assert plies[2] is None or "s" not in plies[2], (
+        f"ply 2 should have no token: {plies[2]!r}"
+    )
+
+
+async def test_fork_t6_no_clk_partial_comments(hve):
+    """T6: parent has comments only on some plies. Plies with no
+    comment must remain empty; plies with a comment keep it."""
+    h, recents = hve
+    cmts = ["c0", None, "c2", None]
+    await _import_parent_full(h, recents, clock_history=None, comments=cmts)
+    child_gid = await _fork_and_finalize(h)
+    text = _child_pgn_from_recents(recents, child_gid)
+    plies = _ply_comments_from_pgn(text)
+    assert plies[0] is not None and "c0" in plies[0]
+    assert plies[1] is None, f"ply 1 should have no comment: {plies[1]!r}"
+    assert plies[2] is not None and "c2" in plies[2]
+    assert plies[3] is None, f"ply 3 should have no comment: {plies[3]!r}"

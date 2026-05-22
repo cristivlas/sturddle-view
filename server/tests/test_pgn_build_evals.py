@@ -206,3 +206,25 @@ def test_empty_game_with_eval_history_succeeds():
     game = chess.pgn.read_game(io.StringIO(text))
     assert game is not None
     assert list(game.mainline()) == []
+
+
+def test_none_entries_in_clock_history_emit_no_clock_token():
+    """B9 -- a forked child inherits the parent's plies but the parent
+    had no per-ply timing; reseed_from_pgn fills with None markers so
+    build_pgn knows not to emit a fake `0.0s` token on those plies."""
+    text = _build(
+        ["e2e4", "e7e5", "g1f3"],
+        # Eval on the post-fork ply only; pre-fork plies have None.
+        [None, None, {"cp": 25, "depth": 10}],
+        clock_history=[(None, None), (None, None), (None, None)],
+        final_clocks=(None, None),
+        time_control=(60, 0),
+    )
+    nodes = _read_nodes(text)
+    # Inherited plies: no clock token.
+    assert "0.0s" not in (nodes[0].comment or "")
+    assert "0.0s" not in (nodes[1].comment or "")
+    assert "s" not in (nodes[0].comment or "")
+    assert "s" not in (nodes[1].comment or "")
+    # Post-fork ply: eval still emitted (no clock data to compute elapsed).
+    assert "+0.25/10" in (nodes[2].comment or "")

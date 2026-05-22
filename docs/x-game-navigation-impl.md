@@ -287,17 +287,22 @@ Running list. Items prefixed B# survive context resets.
   arrow opens a scrollable vertical list (no clipping). Dismiss with
   X (per-game don't-nag, persisted across perspective remounts
   within the same page load). Move-list fork glyph re-opens.
-- **B7** — *(open UX consideration)* Possibly show a short
-  parent-summary label on the glyph hover, not just a count.
+- **B7** — *(dropped 2026-05-22)* Glyph-hover label idea --
+  superseded by the toast itself surfacing full variation summaries.
+  No longer worth the multi-line-tooltip complexity.
 - **B8** — *(fixed 2026-05-22)* Import dialog now catches the 409
   blocked-by-refs response via `apiErrorObject` and shows a friendly
   toast ("Cannot delete: this game has N forked variation(s).")
   instead of dumping the raw JSON.
-- **B9** — Forked child's PGN has spurious `0.0s` timing appended to
-  the comments on the inherited plies (0..fork_ply). The parent had
-  no per-ply timing, so the child should inherit empty/None timing,
-  not zeros. Likely a `_build_play_game_pgn` issue when seed_clocks
-  is None vs absent. May predate xgame nav.
+- **B9** — *(fixed 2026-05-22)* Forked child's PGN had spurious `0.0s`
+  on inherited plies (parent had no per-ply timing). Root cause:
+  `ChessClock.reseed_from_pgn` filled the fallback history with
+  `(init, init)` placeholders, which `build_pgn` then read as a
+  legitimate "0 elapsed seconds" delta. Fix: fallback now uses
+  `(None, None)` markers (and `pop_snapshot` coerces None back to
+  initial_seconds on takeback into seeded territory). Pinned by 6
+  matrix tests covering parent {no/full/partial}-clk x
+  {no/full/partial}-comments.
 
 ## Course corrections
 

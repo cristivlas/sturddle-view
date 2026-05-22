@@ -146,13 +146,30 @@ def test_flag_check_no_loser_while_paused(now):
     assert c.flag_check(stm=chess.WHITE, game_over=False) is None
 
 
-def test_seed_clock_history_pads_missing_entries_with_initial(now):
+def test_seed_clock_history_missing_yields_none_markers(now):
+    """B9: When the parent had no per-ply timing (seed_history is None
+    or length-mismatched), the history entries are None markers so
+    downstream build_pgn does NOT emit a fake `0.0s` token on those
+    plies. The live clock falls back to INITIAL."""
     c = ChessClock(TC, monotonic=now)
     seed = [(50.0, 55.0)]  # length-mismatch: 1 entry for 2 plies
     c.reseed_from_pgn(n_plies=2, seed_history=seed, final_w=None, final_b=None)
     assert len(c.history) == 2
     for w, b in c.history:
-        assert w == INITIAL
-        assert b == INITIAL
+        assert w is None
+        assert b is None
+    assert c.white_time == INITIAL
+    assert c.black_time == INITIAL
+
+
+def test_pop_snapshot_coerces_none_to_initial(now):
+    """Takeback into seeded territory must not leave the live clock as
+    None. pop_snapshot coerces None markers to INITIAL so downstream
+    consumers always see floats."""
+    c = ChessClock(TC, monotonic=now)
+    c.reseed_from_pgn(n_plies=3, seed_history=None, final_w=None, final_b=None)
+    c.white_time = 42.0
+    c.black_time = 17.0
+    c.pop_snapshot()
     assert c.white_time == INITIAL
     assert c.black_time == INITIAL
