@@ -245,3 +245,71 @@ async def test_view_payload_scrubbed_after_play_from_here(hve):
     event = hve._board_event()
     assert event.payload["view"] is None
     assert event.payload["human_white"] is not None  # play-mode field returns
+
+
+# -- comment nav embedded in view payload ----------------------------------
+# Drives the fix for: stale commentNavPrev/Next after a game switch
+# (import while viewing) caused the client to post a previous-game ply to
+# view/goto -- skipped comments or "ply out of range". Truth source: the
+# view payload of every board_update.
+
+async def test_view_payload_includes_comment_nav_at_start(hve):
+    """At cursor 0 of a game with comments: prev_comment=None,
+    next_comment=first commented ply."""
+    await _enter_view(hve, comments=["c1", None, "c3", None])
+    view = hve._view_payload()
+    assert view["prev_comment"] is None
+    assert view["next_comment"] == 1
+
+
+async def test_view_payload_comment_nav_reflects_cursor(hve):
+    """Walking the cursor forward updates prev/next in the payload."""
+    await _enter_view(hve, comments=["c1", None, "c3", None])
+    await hve.view_goto(2)
+    view = hve._view_payload()
+    assert view["prev_comment"] == 1
+    assert view["next_comment"] == 3
+
+
+async def test_view_payload_comment_nav_none_when_no_comments(hve):
+    """No comments anywhere -> both fields None (still present in payload)."""
+    await _enter_view(hve)
+    view = hve._view_payload()
+    assert view["prev_comment"] is None
+    assert view["next_comment"] is None
+
+
+async def test_view_payload_comment_nav_after_game_switch(hve):
+    """Reproducer for the import-stale-nav bug:
+    Game A has comments at plies 1 and 3. Game B has no comments.
+    After importing B (game switch), the payload at cursor 0 must show
+    prev=None, next=None for the NEW game, not the OLD game's plies."""
+    await _enter_view(hve, comments=["c1", None, "c3", None])
+    # Game switch -- second enter_view_mode replaces all view state.
+    await _enter_view(hve, moves=["d2d4", "d7d5"], comments=None)
+    view = hve._view_payload()
+    assert view["prev_comment"] is None
+    assert view["next_comment"] is None
+
+
+async def test_view_payload_comment_nav_after_game_switch_new_comments(hve):
+    """Game switch to a game with DIFFERENT comments must surface the new
+    game's commented plies, not the old game's."""
+    await _enter_view(hve, comments=["old", "old", "old", "old"])
+    # Smaller game with one comment at ply 2.
+    await _enter_view(hve, moves=["d2d4", "d7d5"], comments=[None, "new"])
+    view = hve._view_payload()
+    assert view["prev_comment"] is None
+    assert view["next_comment"] == 2
+
+
+async def test_board_update_view_payload_carries_comment_nav(hve):
+    """The full board_update event (not just the helper) carries
+    comment-nav fields under payload['view']. This is what the client
+    actually consumes."""
+    await _enter_view(hve, comments=["c1", None, "c3", None])
+    await hve.view_goto(2)
+    event = hve._board_event()
+    view = event.payload["view"]
+    assert view["prev_comment"] == 1
+    assert view["next_comment"] == 3

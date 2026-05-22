@@ -4,7 +4,7 @@ import logging
 import os
 import uuid
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
 from ..auth import require_token
@@ -398,48 +398,44 @@ async def view_start(request: Request) -> dict:
     return {"game_id": game_id, "viewing": True}
 
 
-def _nav_payload(payload: dict) -> dict:
-    return {"include_comment_nav": bool(payload.get("include_comment_nav", False))}
-
-
 @router.post("/view/first")
-async def view_first(request: Request, payload: dict = Body(default={})) -> dict:
+async def view_first(request: Request) -> dict:
     hve = await _get_hve(request)
     try:
-        extra = await hve.view_first(**_nav_payload(payload))
+        await hve.view_first()
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    return {"ok": True, **extra}
+    return {"ok": True}
 
 
 @router.post("/view/back")
-async def view_back(request: Request, payload: dict = Body(default={})) -> dict:
+async def view_back(request: Request) -> dict:
     hve = await _get_hve(request)
     try:
-        extra = await hve.view_back(**_nav_payload(payload))
+        await hve.view_back()
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    return {"ok": True, **extra}
+    return {"ok": True}
 
 
 @router.post("/view/forward")
-async def view_forward(request: Request, payload: dict = Body(default={})) -> dict:
+async def view_forward(request: Request) -> dict:
     hve = await _get_hve(request)
     try:
-        extra = await hve.view_forward(**_nav_payload(payload))
+        await hve.view_forward()
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    return {"ok": True, **extra}
+    return {"ok": True}
 
 
 @router.post("/view/last")
-async def view_last(request: Request, payload: dict = Body(default={})) -> dict:
+async def view_last(request: Request) -> dict:
     hve = await _get_hve(request)
     try:
-        extra = await hve.view_last(**_nav_payload(payload))
+        await hve.view_last()
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    return {"ok": True, **extra}
+    return {"ok": True}
 
 
 @router.post("/view/goto")
@@ -449,10 +445,10 @@ async def view_goto(payload: dict, request: Request) -> dict:
     if not isinstance(ply, int):
         raise HTTPException(status_code=400, detail="missing or non-integer 'ply'")
     try:
-        extra = await hve.view_goto(ply, **_nav_payload(payload))
+        await hve.view_goto(ply)
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    return {"ok": True, **extra}
+    return {"ok": True}
 
 
 @router.post("/view/play-from-here")

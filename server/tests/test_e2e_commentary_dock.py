@@ -275,6 +275,112 @@ async def test_slot_close_clears_setting(server, make_page):
     _assert_no_errors(errors)
 
 
+# -- Regression: stale comment-nav state after game switch ----------------
+# Reproduces both reported symptoms when importing a new game while the
+# commentary window is already open:
+#  (a) "next comment" jumps to an old-game ply that has no comment in the
+#      new game, skipping many plies; and
+#  (b) the old-game ply is past the end of the new game, so view/goto
+#      400s with "ply out of range" and a "Navigation failed" toast.
+
+# Second PGN: 2 plies, single comment at ply 1 (no root, no later comments).
+# Old game's commented ply 3 is out of range here (only 0..2 valid).
+_PGN_TWO_PLY = (
+    '[Event "?"]\n[Site "?"]\n[Date "????.??.??"]\n[Round "?"]\n'
+    '[White "X"]\n[Black "Y"]\n[Result "*"]\n\n'
+    '1. d4 {Second-game first comment.} d5 *\n'
+)
+SECOND_FIRST_COMMENT = "Second-game first comment."
+
+# Third PGN: 2 plies, NO comments at all -- both nav buttons must end up
+# disabled after the switch.
+_PGN_NO_COMMENTS = (
+    '[Event "?"]\n[Site "?"]\n[Date "????.??.??"]\n[Round "?"]\n'
+    '[White "X"]\n[Black "Y"]\n[Result "*"]\n\n'
+    '1. d4 d5 *\n'
+)
+
+NAV_PREV = f"{COMMENTS_SLOT} .pgn-comments-nav-btn:nth-child(1)"
+NAV_NEXT = f"{COMMENTS_SLOT} .pgn-comments-nav-btn:nth-child(2)"
+
+
+def _import_pgn(base, pgn):
+    resp = httpx.post(f"{base}/game/import", json={"text": pgn, "format": "pgn"})
+    resp.raise_for_status()
+
+
+@pytest.mark.asyncio
+async def test_comment_nav_disabled_after_switch_to_no_comments(server, make_page):
+    """Import a commented game, then switch to one with no comments while
+    the commentary window stays open. Both nav buttons must become
+    disabled -- currently they carry stale prev/next from the old game."""
+    base = server
+    _seed_view_mode(base)  # game A: comments at plies 1, 3
+    _ctx, page, errors = await _new_page(make_page)
+    await _goto_play_in_view_mode(page, base)
+    await page.wait_for_selector(COMMENTS_SLOT)
+    # Move forward so prev_comment is populated from game A.
+    await page.evaluate("document.querySelector('#view-forward')?.click()")
+    await page.wait_for_function(
+        f"() => !document.querySelector('{NAV_PREV}').disabled"
+        f" || !document.querySelector('{NAV_NEXT}').disabled"
+    )
+    # Switch games via direct HTTP import (bypasses the JS confirm dialog).
+    _import_pgn(base, _PGN_NO_COMMENTS)
+    # Wait for the new game's board_update to land (root comment placeholder
+    # replaces the old game's text).
+    await page.wait_for_function(
+        f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
+        "?.textContent?.includes('No commentary at this ply')"
+    )
+    prev_disabled = await page.evaluate(
+        f"() => document.querySelector('{NAV_PREV}').disabled"
+    )
+    next_disabled = await page.evaluate(
+        f"() => document.querySelector('{NAV_NEXT}').disabled"
+    )
+    assert prev_disabled, "prev-comment must be disabled in a commentless game"
+    assert next_disabled, "next-comment must be disabled in a commentless game"
+    _assert_no_errors(errors)
+
+
+@pytest.mark.asyncio
+async def test_comment_nav_targets_new_game_after_switch(server, make_page):
+    """Import a longer commented game, then switch to a shorter one with
+    a comment at ply 1. Clicking next-comment must navigate within the
+    NEW game (no 400 'ply out of range', no 'Navigation failed' toast,
+    new comment text shows)."""
+    base = server
+    _seed_view_mode(base)  # game A: 4 plies, comment at ply 3
+    _ctx, page, errors = await _new_page(make_page)
+    await _goto_play_in_view_mode(page, base)
+    await page.wait_for_selector(COMMENTS_SLOT)
+    # Capture failed view/goto requests -- the bug 400s when the stale
+    # ply is past the end of the new game.
+    failed_goto = []
+    page.on(
+        "response",
+        lambda r: failed_goto.append(r.url) if (
+            r.status >= 400 and "view/goto" in r.url
+        ) else None,
+    )
+    # Switch to the short game (2 plies, comment at ply 1).
+    _import_pgn(base, _PGN_TWO_PLY)
+    # Wait for new game state to land (cursor 0, no root comment).
+    await page.wait_for_function(
+        f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
+        "?.textContent?.includes('No commentary at this ply')"
+    )
+    # Click next-comment. The new game has its first comment at ply 1.
+    await page.evaluate(f"document.querySelector('{NAV_NEXT}')?.click()")
+    await page.wait_for_function(
+        f"() => document.querySelector('{COMMENTS_SLOT} .pgn-comments-body')"
+        f"?.textContent?.includes('{SECOND_FIRST_COMMENT}')"
+    )
+    assert not failed_goto, f"view/goto failed (stale ply): {failed_goto}"
+    _assert_no_errors(errors)
+
+
 @pytest.mark.asyncio
 async def test_setting_off_keeps_commentary_closed(server, make_page):
     """Entering view mode with setting=false -> no dock slot, no WinBox."""

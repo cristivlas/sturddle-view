@@ -482,34 +482,6 @@ async def test_comment_nav_no_comments(hve):
     assert result == {"prev_comment": None, "next_comment": None}
 
 
-async def test_comment_nav_returned_by_view_goto(hve):
-    """view_goto returns comment nav when include_comment_nav=True."""
-    h = await _cn_hve(hve)
-    result = await h.view_goto(3, include_comment_nav=True)
-    assert result == {"prev_comment": 2, "next_comment": 4}
-
-
-async def test_comment_nav_not_returned_by_default(hve):
-    """view_goto returns empty dict by default (no overhead)."""
-    h = await _cn_hve(hve)
-    result = await h.view_goto(3)
-    assert result == {}
-
-
-async def test_comment_nav_via_convenience_methods(hve):
-    """view_first/back/forward/last all forward include_comment_nav."""
-    h = await _cn_hve(hve)
-    await h.view_goto(3)  # land at ply 3
-    r = await h.view_back(include_comment_nav=True)
-    assert r == {"prev_comment": None, "next_comment": 4}  # now at ply 2
-    r = await h.view_forward(include_comment_nav=True)
-    assert r == {"prev_comment": 2, "next_comment": 4}  # now at ply 3
-    r = await h.view_first(include_comment_nav=True)
-    assert r == {"prev_comment": None, "next_comment": 2}  # now at ply 0
-    r = await h.view_last(include_comment_nav=True)
-    assert r == {"prev_comment": 4, "next_comment": None}  # now at ply 5
-
-
 # ---------------------------------------------------------------------------
 # play_from_here carries imported comments into the forked play game
 # (Phase 2 of the annotation-edit work: view-mode commentary survives the

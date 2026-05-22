@@ -363,21 +363,8 @@ export const playPerspective = {
         && !suppressCommentsForEditTransition;
       const open = isCommentaryOpen();
       if (shouldShow) {
-        const wasOpen = open;
         if (!open) openCommentary();
         setCommentaryText(lastViewComment);
-        // Skip the seeding /view/goto in edit mode: view_goto is FSM-gated
-        // to VIEWING, not EDITING, and would 400. Nav state stays whatever
-        // it was before edit; refreshes on exit when this re-runs.
-        // Alternative considered: hide the commentary dock entirely while
-        // editing (parallel to the play->edit transient-suppress flag
-        // documented at suppressCommentsForEditTransition, see commit
-        // 7158076). Rejected: too aggressive -- user loses passive view
-        // of the comment they're about to annotate.
-        if (!wasOpen && !analyzing && !editing) {
-          // Populate comment nav state on first open.
-          doViewNav("/game/view/goto", { ply: viewCursor });
-        }
       } else if (open) {
         commentNavPrev = null;
         commentNavNext = null;
@@ -614,6 +601,12 @@ export const playPerspective = {
             _viewingHash = v.view_hash ?? null;
             _viewingSummary = v.view_summary ?? null;
             _viewing = true;
+            // Single source of truth for commentary navigation. The server
+            // ships fresh prev/next with every view payload, so game
+            // switches (import while open) can't leave stale plies behind.
+            commentNavPrev = v.prev_comment ?? null;
+            commentNavNext = v.next_comment ?? null;
+            pushNavToUi();
             syncCommentsVisibility();
             if (v.result) showFinishedBadge(resultBadge(v.result));
             if (viewGameOver && viewCursor === viewTotalPlies && v.result && !viewGameOverAlertShown) {
@@ -630,6 +623,9 @@ export const playPerspective = {
             _viewingHash = null;
             _viewingSummary = null;
             _viewing = false;
+            commentNavPrev = null;
+            commentNavNext = null;
+            pushNavToUi();
             syncCommentsVisibility();
             if (wasViewing) restoreDebugWindows(ctx.events);
             resignAvailable = true;
@@ -651,7 +647,7 @@ export const playPerspective = {
             // analysis state.
             if (!viewing) view.setEnabled(!analyzing && !paused);
             syncPausedUi();
-            setCommentaryNavState((analyzing || editing) ? null : commentNavPrev, (analyzing || editing) ? null : commentNavNext);
+            pushNavToUi();
             if (!analyzing) {
               dismissAnalysisToast?.();
               dismissAnalysisToast = null;
@@ -898,7 +894,7 @@ export const playPerspective = {
       const seed = _seedFromFen(view.getFen());
       view.enterEditMode(() => refreshButtons(), seed);
       pendingAnnotation = null;
-      setCommentaryNavState(null, null);
+      pushNavToUi();
       refreshButtons();
     }
 
@@ -912,7 +908,7 @@ export const playPerspective = {
       view.exitEditMode();
       _clearEditTransitionSuppression();
       pendingAnnotation = null;
-      setCommentaryNavState(commentNavPrev, commentNavNext);
+      pushNavToUi();
       refreshButtons();
     }
 
@@ -1060,17 +1056,17 @@ export const playPerspective = {
     let commentNavPrev = null;
     let commentNavNext = null;
 
+    // Single push of the gated nav state to the UI. Buttons are forced
+    // null while analyzing or editing (view/goto is rejected in those
+    // modes, so the targets would be unreachable anyway).
+    const pushNavToUi = () => {
+      const gated = analyzing || editing;
+      setCommentaryNavState(gated ? null : commentNavPrev, gated ? null : commentNavNext);
+    };
+
     async function doViewNav(endpoint, payload = {}) {
       try {
-        const body = isCommentaryOpen()
-          ? { ...payload, include_comment_nav: true }
-          : payload;
-        const res = await ctx.api("POST", endpoint, body);
-        if (isCommentaryOpen() && "prev_comment" in res) {
-          commentNavPrev = res.prev_comment ?? null;
-          commentNavNext = res.next_comment ?? null;
-          setCommentaryNavState((analyzing || editing) ? null : commentNavPrev, (analyzing || editing) ? null : commentNavNext);
-        }
+        await ctx.api("POST", endpoint, payload);
       } catch (e) {
         reportError(ctx, "Navigation failed", e);
       }

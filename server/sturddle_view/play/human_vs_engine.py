@@ -894,9 +894,10 @@ class HumanVsEngine:
         )
         return {"prev_comment": prev_c, "next_comment": next_c}
 
-    async def view_goto(self, ply: int, *, include_comment_nav: bool = False) -> dict:
+    async def view_goto(self, ply: int) -> None:
         """Move the view cursor to ``ply`` (0..len(full_moves)). Rebuilds
-        the board by replaying from start. Rejected during analysis."""
+        the board by replaying from start. Rejected during analysis.
+        Comment-nav state is shipped in the resulting board_update payload."""
         async with self._lock:
             if not (self._mode & Op.VIEW_GOTO._mask):
                 raise ModeConflictError(self._mode, Op.VIEW_GOTO)
@@ -909,25 +910,23 @@ class HumanVsEngine:
                 board.push(m)
             self._board = board
             await self._publish_board()
-            # Clock display reflects historical clocks at the cursor.
             await self._publish_clock()
-            return self._comment_nav(ply) if include_comment_nav else {}
 
-    async def view_first(self, *, include_comment_nav: bool = False) -> dict:
-        return await self.view_goto(0, include_comment_nav=include_comment_nav)
+    async def view_first(self) -> None:
+        await self.view_goto(0)
 
-    async def view_back(self, *, include_comment_nav: bool = False) -> dict:
+    async def view_back(self) -> None:
         async with self._lock:
             target = max(0, self._view_cursor - 1)
-        return await self.view_goto(target, include_comment_nav=include_comment_nav)
+        await self.view_goto(target)
 
-    async def view_forward(self, *, include_comment_nav: bool = False) -> dict:
+    async def view_forward(self) -> None:
         async with self._lock:
             target = min(len(self._view_full_moves), self._view_cursor + 1)
-        return await self.view_goto(target, include_comment_nav=include_comment_nav)
+        await self.view_goto(target)
 
-    async def view_last(self, *, include_comment_nav: bool = False) -> dict:
-        return await self.view_goto(len(self._view_full_moves), include_comment_nav=include_comment_nav)
+    async def view_last(self) -> None:
+        await self.view_goto(len(self._view_full_moves))
 
     async def enter_edit_mode(self) -> str:
         """Enter board editing. Must be in view mode; live play rejects.
@@ -1732,6 +1731,7 @@ class HumanVsEngine:
             "game_over": game_over,
             "view_hash": self._view_hash,
             "view_summary": self._view_summary,
+            **self._comment_nav(self._view_cursor),
             **result_termination,
         }
 
