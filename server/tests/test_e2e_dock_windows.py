@@ -58,9 +58,9 @@ async def _goto_play(page, base):
     await page.wait_for_selector(PLAY_PERSP)
     # Wait for mount to finish: button click handlers are attached
     # after the perspective controller resolves its ``ready`` promise,
-    # which is when ``.perspective-root.is-pending`` is removed.
+    # which is when ``#perspective-root.is-pending`` is removed.
     await page.wait_for_function(
-        "() => !document.querySelector('.perspective-root')?.classList.contains('is-pending')",
+        "() => !document.querySelector('#perspective-root')?.classList.contains('is-pending')",
     )
 
 

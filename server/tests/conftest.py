@@ -18,6 +18,10 @@ SNAPSHOT_UPDATE_FLAG = "--snapshot-update"
 _UVICORN_STARTUP_TIMEOUT = 10.0
 _UVICORN_SHUTDOWN_TIMEOUT = 10.0
 
+# Per-test registry: base URL -> server log path. Populated by
+# run_uvicorn_subprocess so the failure hook can dump server output.
+_SERVER_LOGS: dict[str, Path] = {}
+
 
 def make_fake_uci(root: Path, name: str) -> str:
     """Write a minimal UCI stub engine to ``root`` and return its path.
@@ -89,36 +93,48 @@ def run_uvicorn_subprocess(
             Path(tempfile.gettempdir()) / f"sturddle-test-{port}.lock"
         )
 
-    with subprocess.Popen(
-        [sys.executable, "-m", "sturddle_view", "--no-auth",
-         "--host", "127.0.0.1", "--port", str(port)],
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    ) as proc:
-        base = f"http://127.0.0.1:{port}"
+    import tempfile as _tempfile
+    log_path = Path(_tempfile.gettempdir()) / f"sturddle-test-uvicorn-{port}.log"
+    base = f"http://127.0.0.1:{port}"
+    log_fh = open(log_path, "wb")
+    try:
+        with subprocess.Popen(
+            [sys.executable, "-m", "sturddle_view", "--no-auth",
+             "--host", "127.0.0.1", "--port", str(port)],
+            env=env,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+        ) as proc:
+            _SERVER_LOGS[base] = log_path
+            try:
+                import socket as _socket
+                while True:
+                    if proc.poll() is not None:
+                        log_fh.flush()
+                        try:
+                            tail = log_path.read_bytes().decode(errors="replace")
+                        except OSError:
+                            tail = "(log unreadable)"
+                        raise RuntimeError(
+                            f"uvicorn subprocess exited with code {proc.returncode}\n"
+                            f"LOG ({log_path}):\n{tail}"
+                        )
+                    with _socket.socket() as s:
+                        try:
+                            s.settimeout(0.1)
+                            s.connect(("127.0.0.1", port))
+                            break
+                        except OSError:
+                            continue
+                yield base
+            finally:
+                proc.kill()
+                _SERVER_LOGS.pop(base, None)
+    finally:
         try:
-            # Wait for the server to bind by attempting a TCP connect.
-            # If the process exits early we surface stdout/stderr.
-            import socket as _socket
-            while True:
-                if proc.poll() is not None:
-                    stdout, stderr = proc.communicate()
-                    raise RuntimeError(
-                        f"uvicorn subprocess exited with code {proc.returncode}\n"
-                        f"STDOUT:\n{stdout.decode(errors='replace')}\n"
-                        f"STDERR:\n{stderr.decode(errors='replace')}"
-                    )
-                with _socket.socket() as s:
-                    try:
-                        s.settimeout(0.1)
-                        s.connect(("127.0.0.1", port))
-                        break
-                    except OSError:
-                        continue
-            yield base
-        finally:
-            proc.kill()
+            log_fh.close()
+        except Exception:
+            pass
 
 
 @contextlib.contextmanager
@@ -239,6 +255,28 @@ def pytest_runtest_makereport(item, call):
         except Exception as e:
             sections.append(f"  screenshot failed: {e}")
 
+    seen_logs: set[Path] = set()
+    for page in pages:
+        try:
+            url = page.url
+        except Exception:
+            continue
+        from urllib.parse import urlsplit
+        parts = urlsplit(url)
+        base = f"{parts.scheme}://{parts.netloc}"
+        log_path = _SERVER_LOGS.get(base)
+        if log_path is None or log_path in seen_logs:
+            continue
+        seen_logs.add(log_path)
+        try:
+            data = log_path.read_text(errors="replace")
+        except OSError as e:
+            sections.append(f"server log {log_path}: read failed: {e}")
+            continue
+        tail_lines = data.splitlines()[-200:]
+        sections.append(f"server log {log_path} (last {len(tail_lines)} lines):")
+        sections.extend(f"  {line}" for line in tail_lines)
+
     if sections:
         report.sections.append(("e2e forensics", "\n".join(sections)))
 
@@ -343,12 +381,12 @@ async def wait_perspective_ready(page) -> None:
     """Wait until the active perspective has finished mounting.
 
     The play perspective's button click handlers are attached only after
-    its controller resolves ``ready``; before that, ``.perspective-root``
+    its controller resolves ``ready``; before that, ``#perspective-root``
     carries the ``is-pending`` class. Tests that click ribbon buttons
     immediately after page.goto MUST await this before clicking, or
     the click can land on an unbound element and silently do nothing."""
     await page.wait_for_function(
-        "() => !document.querySelector('.perspective-root')?.classList.contains('is-pending')",
+        "() => !document.querySelector('#perspective-root')?.classList.contains('is-pending')",
     )
 
 

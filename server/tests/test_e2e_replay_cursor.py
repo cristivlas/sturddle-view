@@ -115,7 +115,7 @@ async def test_replay_while_old_cursor_nonzero_does_not_corrupt_new_game(server,
     await page.click('button[data-perspective="engines"]')
     await page.wait_for_function(
         "() => !!document.querySelector('#engines-perspective')"
-        " && !document.querySelector('.perspective-root')?.classList.contains('is-pending')",
+        " && !document.querySelector('#perspective-root')?.classList.contains('is-pending')",
     )
 
     # Replay: import game B + activate play (mirror tournament-live-game).
@@ -132,7 +132,7 @@ async def test_replay_while_old_cursor_nonzero_does_not_corrupt_new_game(server,
     # Wait for the play perspective to be fully re-mounted.
     await page.wait_for_function(
         "() => !!document.querySelector('#play-perspective')"
-        " && !document.querySelector('.perspective-root')?.classList.contains('is-pending')",
+        " && !document.querySelector('#perspective-root')?.classList.contains('is-pending')",
     )
     # The mount issues POST /game/sync; its board_update is what fires
     # the buggy synthetic /view/goto. Issue ANOTHER /game/sync and wait

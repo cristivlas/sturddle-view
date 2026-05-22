@@ -69,7 +69,7 @@ async def test_play_perspective_remount_resyncs_state(server, page):
     await page.click('button[data-perspective="engines"]')
     await page.wait_for_function(
         "() => !!document.querySelector('#engines-perspective')"
-        " && !document.querySelector('.perspective-root')?.classList.contains('is-pending')",
+        " && !document.querySelector('#perspective-root')?.classList.contains('is-pending')",
     )
     # Switch back; the play perspective remounts and calls /game/sync.
     # Wait for the board to render the synthetic game's pieces, which
