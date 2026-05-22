@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 MAX_IMPORT_TEXT_BYTES = int(
     os.environ.get("SV_MAX_IMPORT_BYTES", 2 * 1024 * 1024)
 )
+MAX_ANNOTATION_LENGTH = int(os.environ.get("SV_MAX_ANNOTATION_LENGTH", 10_000))
 
 router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_token)])
 
@@ -494,6 +495,8 @@ async def edit_commit(payload: dict, request: Request) -> dict:
     comment_text = payload.get("comment_text", "")
     if not isinstance(comment_text, str):
         raise HTTPException(status_code=400, detail="'comment_text' must be a string")
+    if len(comment_text) > MAX_ANNOTATION_LENGTH:
+        raise HTTPException(status_code=400, detail="'comment_text' exceeds maximum length")
     prev_id = hve.game_id
     prev_hash = request.app.state.recent_imports.hash_for_id(prev_id) if prev_id else None
     try:
