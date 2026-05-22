@@ -74,11 +74,9 @@ TDD. Each rule above gets a paired test:
 
 ## Scope boundary
 
-This work is independent of `docs/game_id_unification.md`. It
-changes *how* the hash is computed, not what the hash *means* in
-the store. The store still uses `hash` as the content key; the
-canonicalization just makes more content collide as "same" than
-today. Lands in any order vs the game_id phases.
+This work changes *how* the hash is computed, not what the hash
+*means* in the store. The store still uses `hash` as the content
+key; canonicalization just makes more content collide as "same".
 
 ## Status
 
