@@ -164,6 +164,85 @@ def pytest_addoption(parser):
     )
 
 
+_E2E_DUMP_SCRIPT = """
+() => {
+  const pick = (sel) => Array.from(document.querySelectorAll(sel));
+  const dump = {
+    url: location.href,
+    title: document.title,
+    perspective: {
+      root: !!document.querySelector('#perspective-root'),
+      isPending: document.querySelector('#perspective-root')?.classList.contains('is-pending') ?? null,
+      active: document.querySelector('[data-perspective].active')?.getAttribute('data-perspective') ?? null,
+    },
+    dockSlots: pick('.dock-slot').map(s => ({
+      title: s.querySelector('.dock-slot-title')?.textContent,
+      parent: s.parentElement?.className ?? null,
+    })),
+    winboxes: pick('.winbox').map(w => ({ cls: w.className, title: w.querySelector('.wb-title')?.textContent })),
+    localStorage: Object.fromEntries(
+      Object.keys(localStorage)
+        .filter(k => k.startsWith('sturddle:'))
+        .map(k => [k, localStorage.getItem(k)])
+    ),
+  };
+  return dump;
+}
+"""
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if report.when != "call" or not report.failed:
+        return
+    if not any(m.name == "e2e" for m in item.iter_markers()):
+        return
+    pages = getattr(item, _E2E_PAGES_ATTR, None) or []
+    if not pages:
+        return
+
+    import asyncio
+    import json
+
+    sections: list[str] = []
+    for idx, page in enumerate(pages):
+        try:
+            if page.is_closed():
+                sections.append(f"[page {idx}] closed before forensics")
+                continue
+        except Exception as e:
+            sections.append(f"[page {idx}] is_closed() failed: {e}")
+            continue
+
+        errors = getattr(page, _E2E_ERRORS_ATTR, []) or []
+        sections.append(f"[page {idx}] url={page.url}")
+        sections.append(f"  console/pageerror ({len(errors)}):")
+        sections.extend(f"    {e}" for e in errors[-50:])
+
+        try:
+            loop = asyncio.get_event_loop()
+            dump = loop.run_until_complete(page.evaluate(_E2E_DUMP_SCRIPT))
+            sections.append("  snapshot: " + json.dumps(dump, indent=2)[:4000])
+        except Exception as e:
+            sections.append(f"  snapshot eval failed: {e}")
+
+        try:
+            shot_path = f"/tmp/sv-e2e-fail-{item.name}-p{idx}.png"
+            if sys.platform.startswith("win"):
+                import tempfile
+                shot_path = str(Path(tempfile.gettempdir()) / f"sv-e2e-fail-{item.name}-p{idx}.png")
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(page.screenshot(path=shot_path, full_page=True))
+            sections.append(f"  screenshot: {shot_path}")
+        except Exception as e:
+            sections.append(f"  screenshot failed: {e}")
+
+    if sections:
+        report.sections.append(("e2e forensics", "\n".join(sections)))
+
+
 @pytest_asyncio.fixture
 async def browser():
     """Chromium instance scoped per-test.
@@ -195,16 +274,42 @@ async def browser():
         await b.close()
 
 
+_E2E_PAGES_ATTR = "_sv_e2e_pages"
+_E2E_ERRORS_ATTR = "_sv_console_errors"
+
+
+def _attach_console_capture(page):
+    """Sink console.error/warn and pageerror events into a list on the page.
+
+    The on-failure hook reads this list to dump forensic info without
+    requiring every test body to remember to print it. Idempotent.
+    """
+    if getattr(page, _E2E_ERRORS_ATTR, None) is not None:
+        return getattr(page, _E2E_ERRORS_ATTR)
+    errors: list[str] = []
+    setattr(page, _E2E_ERRORS_ATTR, errors)
+    page.on("pageerror", lambda exc: errors.append(f"pageerror: {exc}"))
+    page.on(
+        "console",
+        lambda msg: errors.append(f"console.{msg.type}: {msg.text}")
+        if msg.type in ("error", "warning") else None,
+    )
+    return errors
+
+
 @pytest_asyncio.fixture
-async def make_page(browser):
+async def make_page(browser, request):
     """Factory yielding a (ctx, page) tuple at the requested viewport.
 
     Tracks every context it creates so teardown closes them all in
     reverse order before the next test begins -- prevents WS leaks from
-    bleeding into the next test's fixtures."""
+    bleeding into the next test's fixtures. Also registers each page on
+    the test node so the on-failure hook can dump forensics."""
     if browser is None:
         pytest.skip("chromium not installed")
     contexts = []
+    pages: list = getattr(request.node, _E2E_PAGES_ATTR, None) or []
+    setattr(request.node, _E2E_PAGES_ATTR, pages)
 
     async def _make(viewport=None, **ctx_kwargs):
         kwargs = dict(ctx_kwargs)
@@ -213,6 +318,8 @@ async def make_page(browser):
         ctx = await browser.new_context(**kwargs)
         contexts.append(ctx)
         page = await ctx.new_page()
+        _attach_console_capture(page)
+        pages.append(page)
         return ctx, page
 
     try:
