@@ -12,6 +12,8 @@ import tempfile
 
 import pytest
 
+pytestmark = pytest.mark.perf
+
 from sturddle_view.tournament.pgn_stats import (
     _iter_games_keyed,
     _iter_games_uncached,

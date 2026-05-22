@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 pytest.importorskip("playwright.async_api")
+pytestmark = pytest.mark.e2e
 
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 

@@ -1,5 +1,5 @@
 """One-off stress repro for the wsproto LocalProtocolError that used to
-surface during test_slot_grid teardown.
+surface during test_e2e_slot_grid teardown.
 
 Opt-in only -- skipped unless SV_WS_STRESS=1 is set.
 
@@ -191,7 +191,7 @@ async def test_ws_shutdown_no_unhandled_thread_warning(tmp_path_factory, browser
                 await _close_half_staggered(page)
                 srv.should_exit = True
                 srv.force_exit = True
-                # Match the original test_slot_grid fixture timeout: we
+                # Match the original test_e2e_slot_grid fixture timeout: we
                 # are reproducing the same shutdown race, not a slower
                 # version of it.
                 thread.join(timeout=2)

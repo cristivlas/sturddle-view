@@ -16,6 +16,7 @@ import sys
 import pytest
 
 pytest.importorskip("playwright.async_api")
+pytestmark = pytest.mark.e2e
 
 from sturddle_view.app import create_app  # noqa: E402
 from sturddle_view.config import Settings  # noqa: E402

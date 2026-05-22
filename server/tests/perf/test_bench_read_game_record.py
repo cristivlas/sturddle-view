@@ -5,6 +5,8 @@ import pathlib
 
 import pytest
 
+pytestmark = pytest.mark.perf
+
 from sturddle_view.tournament.pgn_stats import read_game_record
 
 FIXTURE = pathlib.Path(__file__).parent.parent / "fixtures" / "perf_200_games.pgn"

@@ -11,6 +11,7 @@ import sys
 import pytest
 
 pytest.importorskip("playwright.async_api")
+pytestmark = pytest.mark.e2e
 
 from .conftest import run_uvicorn_subprocess  # noqa: E402
 

@@ -1,23 +1,13 @@
-"""Perf test harness: marker registration, env-var skip, CLI option, baseline helpers."""
+"""Perf test harness: CLI option and baseline helpers."""
 from __future__ import annotations
 
 import json
-import os
 import pathlib
 
 import pytest
 
 BASELINES_PATH = pathlib.Path(__file__).parent / "baselines.json"
-PERF_MARKER = "perf"
-ENV_VAR = "SV_RUN_PERF_BENCHES"
 UPDATE_FLAG = "--update-perf-baselines"
-
-
-def pytest_configure(config):
-    config.addinivalue_line(
-        "markers",
-        f"{PERF_MARKER}: mark a test as a performance benchmark (skipped unless {ENV_VAR}=1)",
-    )
 
 
 def pytest_addoption(parser):
@@ -27,15 +17,6 @@ def pytest_addoption(parser):
         default=False,
         help="Rewrite baselines.json with current timings instead of comparing.",
     )
-
-
-def pytest_collection_modifyitems(config, items):
-    if os.environ.get(ENV_VAR) == "1":
-        return
-    skip = pytest.mark.skip(reason=f"{ENV_VAR} not set")
-    for item in items:
-        if item.get_closest_marker(PERF_MARKER):
-            item.add_marker(skip)
 
 
 @pytest.fixture(scope="session")

@@ -48,3 +48,8 @@ asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["server/tests"]
 filterwarnings = ["error"]
+addopts = "-m 'not e2e and not perf'"
+markers = [
+    "e2e: end-to-end tests requiring a live browser (playwright)",
+    "perf: performance benchmarks",
+]
