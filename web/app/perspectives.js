@@ -12,14 +12,7 @@
 // - `ready: Promise<void>`: resolves when the perspective has rendered its
 //   real content (e.g. first server payload landed). The router keeps the
 //   root faded out until this resolves, so the user doesn't see half-loaded
-//   UI flashing before the real state. Capped at READY_TIMEOUT_MS so a
-//   perspective that forgets to signal doesn't stay invisible forever.
-
-// Upper bound on how long the router waits for a perspective's `ready`
-// before revealing anyway. Short enough that a slow backend doesn't make
-// perspective switches feel laggy; long enough to usually hide first-render
-// flashes (e.g. cm-chessboard going from startpos to the real FEN).
-const READY_TIMEOUT_MS = 100;
+//   UI flashing before the real state.
 
 // Parse a CSS time string ("80ms" / "0.08s") to milliseconds. Multi-value
 // lists fall back to the first entry.
@@ -97,10 +90,7 @@ export class PerspectiveRouter {
     }
     this._activeController = (await persp.mount(this._root, this._ctx)) ?? null;
     if (this._activeController?.ready) {
-      await Promise.race([
-        this._activeController.ready,
-        new Promise((r) => setTimeout(r, READY_TIMEOUT_MS)),
-      ]);
+      await this._activeController.ready;
     }
     this._root.classList.remove("is-pending");
     return true;
