@@ -555,14 +555,16 @@ export function reportError(ctx, action, error, opts = {}) {
 }
 
 /** Transient toast. Pass duration: 0 (or Infinity) to keep it open until the
- *  caller invokes the returned dismiss function. */
-export function toast(message, { variant = "neutral", duration = 4000 } = {}) {
+ *  caller invokes the returned dismiss function. `stack: "xgame"` routes
+ *  to the moves-list-side stack (used for fork/variation navigation). */
+export function toast(message, { variant = "neutral", duration = 4000, stack: stackName = "default" } = {}) {
   // Simple toast implementation; Web Awesome's callout supports more styling.
   const host = ensureContainer();
-  let stack = document.getElementById("toast-stack");
+  const stackId = stackName === "xgame" ? "xgame-toast-stack" : "toast-stack";
+  let stack = document.getElementById(stackId);
   if (!stack) {
     stack = document.createElement("div");
-    stack.id = "toast-stack";
+    stack.id = stackId;
     // popover="manual" promotes the stack to the top-layer so toasts sit
     // above any open <wa-dialog> backdrop (native <dialog> is top-layer
     // too; without this, author z-index alone can't beat it).

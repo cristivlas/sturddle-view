@@ -259,11 +259,13 @@ svg.cm-chessboard {
   max-width: none !important;
 }
 
-#toast-stack {
+#toast-stack,
+#xgame-toast-stack {
   position: fixed;
   /* Co-located with the ribbon: default is left; right-ribbon override
      below moves it to the right edge. Inset clears the 36px ribbon plus
-     an 8px gutter so toasts don't overlap ribbon buttons. */
+     an 8px gutter so toasts don't overlap ribbon buttons.
+     #xgame-toast-stack lives on the opposite (moves-list) side. */
   inset: auto auto 16px 44px;
   display: flex;
   flex-direction: column;
@@ -284,7 +286,9 @@ svg.cm-chessboard {
   max-height: none;
   color: inherit;
 }
-#toast-stack:popover-open {
+#xgame-toast-stack { inset: auto 44px 16px auto; }
+#toast-stack:popover-open,
+#xgame-toast-stack:popover-open {
   display: flex;
 }
 .toast {
@@ -2643,13 +2647,20 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 body[data-ribbon-side="right"] #toast-stack {
   inset: auto 44px 16px auto;
 }
+body[data-ribbon-side="right"] #xgame-toast-stack {
+  inset: auto auto 16px 44px;
+}
 @media (max-width: 640px) {
   /* Ribbon is horizontal at top on mobile, so toasts don't need a side
-     gutter to clear it -- reset to a uniform 16px edge inset. */
-  #toast-stack {
+     gutter to clear it -- reset to a uniform 16px edge inset. xgame
+     stack collapses onto the same edge as the default stack since the
+     "moves-list side" distinction is desktop-only. */
+  #toast-stack,
+  #xgame-toast-stack {
     inset: auto auto 16px 16px;
   }
-  body[data-ribbon-side="right"] #toast-stack {
+  body[data-ribbon-side="right"] #toast-stack,
+  body[data-ribbon-side="right"] #xgame-toast-stack {
     inset: auto 16px 16px auto;
   }
 }

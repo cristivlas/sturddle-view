@@ -688,7 +688,7 @@ export const playPerspective = {
         && !xgame.parentToastDismissed;
       if (showParent && !xgame.parentToastHandle) {
         xgame.parentToastHandle = toast(buildParentToast(), {
-          variant: "neutral", duration: 0,
+          variant: "neutral", duration: 0, stack: "xgame",
         });
       } else if (!showParent && xgame.parentToastHandle) {
         xgame.parentToastHandle();
@@ -705,7 +705,7 @@ export const playPerspective = {
         && !xgame.childrenToastDismissed;
       if (showChildren && !xgame.childrenToastHandle) {
         xgame.childrenToastHandle = toast(buildChildrenToast(childrenHere), {
-          variant: "neutral", duration: 0,
+          variant: "neutral", duration: 0, stack: "xgame",
         });
       } else if (!showChildren && xgame.childrenToastHandle) {
         xgame.childrenToastHandle();
