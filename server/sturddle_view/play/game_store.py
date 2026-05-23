@@ -60,6 +60,8 @@ class GameState:
     # Wall-clock seconds since epoch when the game was created. Persisted so
     # the autosaved PGN keeps the same filename after a server restart.
     game_started_wall: float | None = None
+    # Player name for PGN headers and clock badge. Survives reload/restart.
+    player_name: str = DEFAULT_PLAYER_NAME
     version: int = SCHEMA_VERSION
 
 
@@ -102,6 +104,7 @@ class GameStore:
                 eval_history=list(data.get("eval_history", [])),
                 start_fen=data.get("start_fen"),
                 game_started_wall=data.get("game_started_wall"),
+                player_name=data.get("player_name", DEFAULT_PLAYER_NAME),
             )
         except (KeyError, TypeError, ValueError):
             log.exception("malformed saved game in %s; ignoring", self._path)

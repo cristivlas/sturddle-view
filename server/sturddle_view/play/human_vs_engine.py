@@ -1371,6 +1371,7 @@ class HumanVsEngine:
             eval_history=list(self._eval_history),
             start_fen=self._start_fen,
             game_started_wall=self._game_started_wall,
+            player_name=self._player_name,
         )
         try:
             await asyncio.to_thread(self._store.save, state)
@@ -1403,8 +1404,7 @@ class HumanVsEngine:
         # autosave behavior, just renames the file going forward.
         self._game_started_wall = state.game_started_wall or time.time()
         self._human_white = state.human_white
-        # Not persisted -- restore to default; client re-sends on next new_game.
-        self._player_name = DEFAULT_PLAYER_NAME
+        self._player_name = state.player_name or DEFAULT_PLAYER_NAME
         self._clock = ChessClock(TimeControl(
             initial_seconds=state.tc_initial_seconds,
             increment_seconds=state.tc_increment_seconds,
@@ -1825,6 +1825,7 @@ class HumanVsEngine:
                 # playing); omit so the UI's local flip isn't clobbered.
                 "human_white": None if self._viewing else self._human_white,
                 "engine_name": self._engine_name,
+                "player_name": self._player_name,
                 "opening": self._opening_payload(),
                 "tablebase": {
                     "halfmove_clock": self._board.halfmove_clock,

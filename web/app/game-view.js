@@ -665,6 +665,10 @@ export function mountGameView(container, opts = {}) {
           engineName = evt.payload.engine_name;
           if (interactive) setNames({ top: engineName });
         }
+        if (evt.payload.player_name) {
+          playerName = evt.payload.player_name;
+          if (interactive && !viewing) setNames({ bottom: playerName });
+        }
         if (typeof evt.payload.human_white === "boolean") {
           humanWhite = evt.payload.human_white;
           board.setSide(humanWhite ? "white" : "black");

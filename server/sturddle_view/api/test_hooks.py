@@ -99,6 +99,7 @@ def hve_state(request: Request) -> dict[str, Any]:
         "view_cursor": hve._view_cursor,
         "viewing": hve._viewing,
         "human_white": hve._human_white,
+        "player_name": hve._player_name,
         "paused": hve._paused,
         "board_fen": hve._board.fen() if hve._board is not None else None,
         "move_stack_uci": [m.uci() for m in hve._board.move_stack] if hve._board is not None else [],
