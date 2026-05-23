@@ -514,6 +514,20 @@ export function buildToastActionButton(action) {
   return btn;
 }
 
+/** Build a circular xmark dismiss button for use inside a toast. */
+export function makeToastDismissBtn(onClick) {
+  const btn = document.createElement("button");
+  btn.className = "xgame-toast-x";
+  btn.type = "button";
+  btn.setAttribute("aria-label", "Dismiss");
+  btn.title = "Dismiss";
+  const icon = document.createElement("wa-icon");
+  icon.setAttribute("name", "xmark");
+  btn.append(icon);
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
 /** Compose a toast message Node from leading text plus action buttons. */
 export function buildToastWithActions(text, actions) {
   const node = document.createElement("span");

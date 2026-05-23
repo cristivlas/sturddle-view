@@ -3,7 +3,7 @@
 // Resign).
 
 import { mountGameView } from "../game-view.js";
-import { alert as showAlert, confirm, openSettings, reportError, toast } from "../dialogs.js";
+import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, isMobileLayout } from "../play-debug-windows.js";
 import {
@@ -583,18 +583,6 @@ export const playPerspective = {
       const black = s.black || "?";
       const result = s.result && s.result !== "*" ? ` (${s.result})` : "";
       return `${white} vs ${black}${result}`;
-    }
-    function makeToastDismissBtn(onClick) {
-      const btn = document.createElement("button");
-      btn.className = "xgame-toast-x";
-      btn.type = "button";
-      btn.setAttribute("aria-label", "Dismiss");
-      btn.title = "Dismiss";
-      const icon = document.createElement("wa-icon");
-      icon.setAttribute("name", "xmark");
-      btn.append(icon);
-      btn.addEventListener("click", onClick);
-      return btn;
     }
     function buildParentToast() {
       // "Forked from <parent> at ply N." Single clickable link, X to

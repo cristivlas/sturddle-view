@@ -7,7 +7,7 @@
 // look and feel. Clicking a row selects it; ribbon actions target the
 // selected tournament. New / Sort / Window remain in the top menubar.
 
-import { apiErrorDetail, buildToastWithActions, confirm, OPEN_ENGINES_ACTION, reportError, showDialog, toast } from "./dialogs.js";
+import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, showDialog, toast } from "./dialogs.js";
 import { openSettingsDialog } from "./settings-dialog.js";
 import { EVT, KIND, STATUS } from "./tournament-events.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
@@ -1014,15 +1014,7 @@ export function mountTournaments({ container, api, events, log, token }) {
         dismissSortToastNow();
       }
     });
-    const closeBtn = document.createElement("button");
-    closeBtn.className = "xgame-toast-x";
-    closeBtn.type = "button";
-    closeBtn.setAttribute("aria-label", "Dismiss");
-    closeBtn.title = "Dismiss";
-    const closeBtnIcon = document.createElement("wa-icon");
-    closeBtnIcon.setAttribute("name", "xmark");
-    closeBtn.append(closeBtnIcon);
-    closeBtn.addEventListener("click", dismissSortToastNow);
+    const closeBtn = makeToastDismissBtn(dismissSortToastNow);
     msg.append(sortToastTextEl, sortToastToggleBtn, closeBtn);
     dismissSortToast = toast(msg, { duration: 0 });
   }
