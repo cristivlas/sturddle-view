@@ -26,45 +26,67 @@ class Opening:
     name: str
 
 
-def _pgn_to_uci_sequence(pgn_text: str) -> tuple[str, ...]:
-    """Convert PGN-style move text (e.g. '1. e4 e5 2. Nf3') to a tuple of UCI moves."""
+def _pgn_to_terminal_epd(pgn_text: str) -> Optional[str]:
+    """Replay a PGN-style line and return the EPD of the terminal position
+    (or None if the line is empty or unparseable).
+
+    EPD = piece placement + side-to-move + castling + en-passant target
+    (no halfmove/fullmove counters), so it identifies a position
+    independent of how it was reached -- the basis for transposition-
+    aware opening lookup."""
     game = chess.pgn.read_game(io.StringIO(pgn_text))
     if game is None:
-        return ()
+        return None
     board = game.board()
-    moves: list[str] = []
+    moved = False
     for move in game.mainline_moves():
-        moves.append(move.uci())
         board.push(move)
-    return tuple(moves)
+        moved = True
+    return board.epd() if moved else None
 
 
 class OpeningBook:
-    """Trie-like lookup keyed by UCI move sequence."""
+    """Position-keyed opening lookup.
+
+    Each registered line is stored by the EPD of the position it reaches.
+    Lookup replays the played moves and reports the opening whose
+    position matches latest -- so transpositions to the same position
+    resolve identically regardless of move order."""
 
     def __init__(self) -> None:
-        # Maps move-sequence tuple -> Opening.
-        self._by_seq: dict[tuple[str, ...], Opening] = {}
+        # Maps position EPD -> Opening.
+        self._by_pos: dict[str, Opening] = {}
 
     def __len__(self) -> int:
-        return len(self._by_seq)
+        return len(self._by_pos)
 
     def add(self, eco: str, name: str, pgn_text: str) -> None:
-        seq = _pgn_to_uci_sequence(pgn_text)
-        if not seq:
+        epd = _pgn_to_terminal_epd(pgn_text)
+        if epd is None:
             return
-        # Earlier definitions win for the same sequence (rare).
-        self._by_seq.setdefault(seq, Opening(eco=eco, name=name))
+        # Earlier definitions win for the same position (rare).
+        self._by_pos.setdefault(epd, Opening(eco=eco, name=name))
 
     def lookup(self, uci_moves: Iterable[str]) -> Optional[Opening]:
-        """Return the longest registered opening that prefixes `uci_moves`."""
-        moves = tuple(uci_moves)
-        # Walk backwards from the longest possible prefix to the shortest.
-        for n in range(min(len(moves), 30), 0, -1):
-            hit = self._by_seq.get(moves[:n])
+        """Return the most specific (deepest-ply) opening reached while
+        replaying `uci_moves`. Returns None if no position along the line
+        is registered.
+
+        Caller is trusted to supply a legal move list; we don't validate
+        per-ply legality. Malformed UCI yields a graceful early return;
+        illegal-but-parseable moves will raise from chess.Board.push."""
+        board = chess.Board()
+        best: Optional[Opening] = None
+        for uci in uci_moves:
+            try:
+                move = chess.Move.from_uci(uci)
+            except ValueError:
+                return best
+            board.push(move)
+            hit = self._by_pos.get(board.epd())
             if hit is not None:
-                return hit
-        return None
+                best = hit
+        return best
 
     # Process-wide cache: parsing the TSVs takes ~3s and the data is static.
     # The cache is keyed by directory path only and is NOT invalidated on
