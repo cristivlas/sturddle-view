@@ -9,9 +9,17 @@
 export const RIBBON_SIDE_KEY = "sturddle:ribbon:side";
 const GEO_KEY = "sturddle:ribbon:geo";
 const ORIENT_KEY = "sturddle:ribbon:orient";
-const HEADER_H = 44; // px -- nav header height (top boundary)
+const HEADER_H = 44;     // px -- nav header height (top boundary)
 const ORIENT_H = "h";
 const ORIENT_V = "v";
+const DEFAULT_GEO_X = 8;      // px -- default float window left offset
+const WB_VERT_W = 50;         // px -- WinBox width when ribbon is vertical
+const WB_VERT_H = 480;        // px -- WinBox height when ribbon is vertical
+const WB_HORIZ_W = 480;       // px -- WinBox width when ribbon is horizontal
+const WB_HORIZ_H = 70;        // px -- WinBox height when ribbon is horizontal
+const WB_MIN_W = 80;          // px -- WinBox minimum width
+const WB_MIN_H = 40;          // px -- WinBox minimum height
+const WB_TITLE_H = 20;        // px -- WinBox title bar height (from CSS)
 
 let wb = null;
 let wbOuter = null; // outer .winbox element; cached so we don't querySelector
@@ -24,9 +32,19 @@ function loadGeo() {
   try { return JSON.parse(localStorage.getItem(GEO_KEY)) || null; } catch { return null; }
 }
 
+function clampGeo(x, y, w, h) {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  return {
+    x: Math.max(0, Math.min(x, vw - w)),
+    y: Math.max(HEADER_H, Math.min(y, vh - h)),
+  };
+}
+
 function saveGeo() {
   if (!wb) return;
-  localStorage.setItem(GEO_KEY, JSON.stringify({ x: wb.x, y: wb.y }));
+  const clamped = clampGeo(wb.x, wb.y, wb.width, wb.height);
+  localStorage.setItem(GEO_KEY, JSON.stringify(clamped));
 }
 
 function loadOrient() {
@@ -118,16 +136,17 @@ export function openRibbonWindow(el) {
     return;
   }
   const geo = loadGeo();
-  const x = geo?.x ?? 8;
-  const y = geo?.y ?? HEADER_H;
   const isVertical = loadOrient() === ORIENT_V;
+  const rawW = isVertical ? WB_VERT_W : WB_HORIZ_W;
+  const rawH = isVertical ? WB_VERT_H : WB_HORIZ_H;
+  const { x, y } = clampGeo(geo?.x ?? DEFAULT_GEO_X, geo?.y ?? HEADER_H, rawW, rawH);
   wb = new WinBox({
     title: "Controls",
     class: "sturddle-wb sturddle-wb-ribbon no-full no-resize no-min no-max",
-    width: isVertical ? 50 : 480,
-    height: isVertical ? 480 : 70,
-    minwidth: 80,
-    minheight: 40,
+    width: rawW,
+    height: rawH,
+    minwidth: WB_MIN_W,
+    minheight: WB_MIN_H,
     x,
     y,
     top: HEADER_H,
@@ -168,10 +187,16 @@ function clearInlineStyles(el) {
 
 function fitToContent() {
   if (!wb || !currentEl) return;
-  const HEADER_PX = 20; // thin title bar height from CSS
+  const HEADER_PX = WB_TITLE_H;
   const w = currentEl.scrollWidth;
   const h = currentEl.scrollHeight + HEADER_PX;
   wb.resize(w, h);
+}
+
+export function nudgeRibbonToViewport() {
+  if (!wb) return;
+  const { x, y } = clampGeo(wb.x, wb.y, wb.width, wb.height);
+  if (x !== wb.x || y !== wb.y) wb.move(x, y);
 }
 
 export function closeRibbonWindow() {

@@ -4,7 +4,8 @@ import { playPerspective } from "./perspectives/play.js";
 import { enginesPerspective } from "./perspectives/engines.js";
 import { openSettingsDialog } from "./settings-dialog.js";
 import { openAboutDialog } from "./about-dialog.js";
-import { openRibbonWindow, closeRibbonWindow, mountRibbonElement, isRibbonFloating, RIBBON_SIDE_KEY } from "./ribbon-window.js";
+import { openRibbonWindow, closeRibbonWindow, mountRibbonElement, isRibbonFloating, nudgeRibbonToViewport, RIBBON_SIDE_KEY } from "./ribbon-window.js";
+import { mqMobile } from "./breakpoints.js";
 
 // Auth is carried by the HttpOnly cookie set during the /auth handshake.
 const token = "";
@@ -73,10 +74,11 @@ const ctx = { api, events, token, log, getLogSnapshot };
 // Ribbon side: stored in localStorage, drives [data-ribbon-side] and
 // [data-ribbon-float] on <body>. "left"/"right" dock; "float" opens a WinBox.
 let lastDockedSide = "left";
+let mobileFloatSuppressed = false;
 
 function applyRibbonSide(side) {
   const isFloat = side === "float";
-  if (!isFloat) lastDockedSide = side;
+  if (!isFloat) { lastDockedSide = side; mobileFloatSuppressed = false; }
   let changed = false;
   const wantSide = isFloat ? lastDockedSide : side;
   if (document.body.dataset.ribbonSide !== wantSide) {
@@ -113,8 +115,21 @@ window.addEventListener("sturddle:settings-changed", refreshRibbonSide);
 // with detail.el = the active ribbon element (or null on unmount). The
 // manager mounts that element into the WinBox when data-ribbon-float is set.
 let activeRibbon = null;
+
 function syncFloatState() {
-  const wantFloat = !!document.body.dataset.ribbonFloat;
+  const wantFloat = !!document.body.dataset.ribbonFloat || mobileFloatSuppressed;
+  if (wantFloat && mqMobile.matches) {
+    if (isRibbonFloating()) closeRibbonWindow();
+    if (!mobileFloatSuppressed) {
+      mobileFloatSuppressed = true;
+      delete document.body.dataset.ribbonFloat;
+    }
+    return;
+  }
+  if (mobileFloatSuppressed) {
+    mobileFloatSuppressed = false;
+    document.body.dataset.ribbonFloat = "1";
+  }
   if (wantFloat && activeRibbon) {
     if (!isRibbonFloating()) openRibbonWindow(activeRibbon);
     else mountRibbonElement(activeRibbon);
@@ -127,6 +142,11 @@ window.addEventListener("sturddle:ribbon-active", (e) => {
   syncFloatState();
 });
 window.addEventListener("sturddle:layout-changed", syncFloatState);
+mqMobile.addEventListener("change", syncFloatState);
+window.addEventListener("resize", () => {
+  if (mqMobile.matches) syncFloatState();
+  else nudgeRibbonToViewport();
+});
 
 // When the user closes the floating ribbon WinBox, revert to last docked side.
 window.addEventListener("sturddle:ribbon-float-closed", () => {
