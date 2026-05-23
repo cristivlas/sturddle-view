@@ -1015,8 +1015,13 @@ export function mountTournaments({ container, api, events, log, token }) {
       }
     });
     const closeBtn = document.createElement("button");
-    closeBtn.className = "toast-action-btn toast-close-btn";
-    closeBtn.textContent = "X";
+    closeBtn.className = "xgame-toast-x";
+    closeBtn.type = "button";
+    closeBtn.setAttribute("aria-label", "Dismiss");
+    closeBtn.title = "Dismiss";
+    const closeBtnIcon = document.createElement("wa-icon");
+    closeBtnIcon.setAttribute("name", "xmark");
+    closeBtn.append(closeBtnIcon);
     closeBtn.addEventListener("click", dismissSortToastNow);
     msg.append(sortToastTextEl, sortToastToggleBtn, closeBtn);
     dismissSortToast = toast(msg, { duration: 0 });

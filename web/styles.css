@@ -191,13 +191,7 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   align-items: center;
   gap: 8px;
 }
-.toast-close-btn {
-  border-radius: 50%;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  flex-shrink: 0;
-}
+
 .toast-ws-toggle {
   width: 26px;
   height: 26px;

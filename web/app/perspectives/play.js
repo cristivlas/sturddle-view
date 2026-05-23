@@ -513,6 +513,7 @@ export const playPerspective = {
     let viewTotalPlies = 0;
     let viewGameOver = false;
     let viewGameOverAlertShown = false;
+    let dismissGameOverToast = null;
     let viewingGameId = null;
     // X-game navigation state. Populated by fetchXgameInfo after every
     // view-game change; cleared when game_id flips. Toast dismiss flags
@@ -583,6 +584,18 @@ export const playPerspective = {
       const result = s.result && s.result !== "*" ? ` (${s.result})` : "";
       return `${white} vs ${black}${result}`;
     }
+    function makeToastDismissBtn(onClick) {
+      const btn = document.createElement("button");
+      btn.className = "xgame-toast-x";
+      btn.type = "button";
+      btn.setAttribute("aria-label", "Dismiss");
+      btn.title = "Dismiss";
+      const icon = document.createElement("wa-icon");
+      icon.setAttribute("name", "xmark");
+      btn.append(icon);
+      btn.addEventListener("click", onClick);
+      return btn;
+    }
     function buildParentToast() {
       // "Forked from <parent> at ply N." Single clickable link, X to
       // dismiss. No collapse -- there is only one parent.
@@ -609,23 +622,14 @@ export const playPerspective = {
       text.append(link);
       text.append(` at ply ${xgame.forkPly ?? "?"}.`);
       node.append(text);
-      const x = document.createElement("button");
-      x.className = "xgame-toast-x";
-      x.type = "button";
-      x.setAttribute("aria-label", "Dismiss");
-      x.title = "Dismiss";
-      const xicon = document.createElement("wa-icon");
-      xicon.setAttribute("name", "xmark");
-      x.append(xicon);
-      x.addEventListener("click", () => {
+      node.append(makeToastDismissBtn(() => {
         xgame.parentToastDismissed = true;
         _setXgameDismissed(xgame.gameId, "parent", true);
         if (xgame.parentToastHandle) {
           xgame.parentToastHandle();
           xgame.parentToastHandle = null;
         }
-      });
-      node.append(x);
+      }));
       return node;
     }
     function buildChildrenToast(childrenHere) {
@@ -673,23 +677,14 @@ export const playPerspective = {
         arrowIcon.setAttribute("name", expanded ? "chevron-down" : "chevron-up");
       });
       header.append(arrow);
-      const x = document.createElement("button");
-      x.className = "xgame-toast-x";
-      x.type = "button";
-      x.setAttribute("aria-label", "Dismiss");
-      x.title = "Dismiss";
-      const xicon = document.createElement("wa-icon");
-      xicon.setAttribute("name", "xmark");
-      x.append(xicon);
-      x.addEventListener("click", () => {
+      header.append(makeToastDismissBtn(() => {
         xgame.childrenToastDismissed = true;
         _setXgameDismissed(xgame.gameId, "children", true);
         if (xgame.childrenToastHandle) {
           xgame.childrenToastHandle();
           xgame.childrenToastHandle = null;
         }
-      });
-      header.append(x);
+      }));
       node.append(header);
       return node;
     }
@@ -921,6 +916,8 @@ export const playPerspective = {
           if (viewing) {
             if (!wasViewing || viewingGameId !== prevGameId) {
               viewGameOverAlertShown = false;
+              dismissGameOverToast?.();
+              dismissGameOverToast = null;
               // Game switched (or first entry into view). Clear stale
               // x-game state synchronously and close any live toasts
               // BEFORE the in-band refreshXgameToasts (called later
@@ -947,7 +944,12 @@ export const playPerspective = {
             if (v.result) showFinishedBadge(resultBadge(v.result));
             if (viewGameOver && viewCursor === viewTotalPlies && v.result && !viewGameOverAlertShown) {
               viewGameOverAlertShown = true;
-              toast(formatViewGameOver(v), { variant: "neutral", duration: 6000 });
+              const node = document.createElement("span");
+              node.className = "toast-sort-msg";
+              const msg = document.createElement("span");
+              msg.textContent = formatViewGameOver(v);
+              node.append(msg, makeToastDismissBtn(() => { dismissGameOverToast?.(); dismissGameOverToast = null; }));
+              dismissGameOverToast = toast(node, { variant: "neutral", duration: 6000 });
             }
             resignAvailable = false;
             // Board is read-only in view mode; the user navigates via ribbon.
@@ -1592,15 +1594,11 @@ export const playPerspective = {
     function showEngineCrashToast() {
       const msg = document.createElement("span");
       msg.textContent = "Engine crashed unexpectedly.";
-      const closeBtn = document.createElement("button");
-      closeBtn.className = "toast-action-btn toast-close-btn";
-      closeBtn.textContent = "X";
       const node = document.createElement("span");
       node.className = "toast-sort-msg";
-      closeBtn.style.marginLeft = "auto";
-      node.append(msg, closeBtn);
-      const dismiss = toast(node, { variant: "danger", duration: 0 });
-      closeBtn.onclick = dismiss;
+      let dismissCrashToast;
+      node.append(msg, makeToastDismissBtn(() => dismissCrashToast?.()));
+      dismissCrashToast = toast(node, { variant: "danger", duration: 0 });
     }
 
     const offCrash = ctx.events.on(async (evt) => {
@@ -1639,6 +1637,8 @@ export const playPerspective = {
         setOnUserCloseCommentary(null);
         dismissAnalysisToast?.();
         dismissAnalysisToast = null;
+        dismissGameOverToast?.();
+        dismissGameOverToast = null;
         pausedBadge?.classList.add("hidden");
         showFinishedBadge("");
         offCrash();
