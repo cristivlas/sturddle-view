@@ -25,8 +25,10 @@ LOG="${OUT}/run.log"
 # A clean baseline of the largest narrow set takes ~8s; 60s gives 7x headroom
 # for a mutant that wedges before its own timeout fires.
 MUTANT_TIMEOUT=60.0
-# Hard cap per module. 2h each = 10h worst case for 5 modules.
-MODULE_BUDGET_SEC=7200
+# Hard cap per module. 5h each = 25h worst case for 5 modules, but the
+# 3 fast modules (pgn_reconcile, pgn_tail, smaller orchestrator runs)
+# finish in well under an hour in practice -- real wall ~10-15h.
+MODULE_BUDGET_SEC=18000
 
 # module -> space-separated list of test files to run for it. Narrow so each
 # mutant test run takes seconds, not minutes. e2e tests are excluded.
