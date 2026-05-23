@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
+import chess.pgn
 import pytest
 
 from sturddle_view.openings import OpeningBook
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture(autouse=True)
@@ -131,3 +135,27 @@ def test_lookup_stops_at_malformed_uci_returning_best_so_far():
     assert hit is not None
     assert hit.eco.startswith("B")
     assert "Caro-Kann" in hit.name
+
+
+def test_real_game_pgn_identifies_correct_opening_via_transposition():
+    """Witness fixture: a real game played 2026-05-22 reached the D14
+    Slav Exchange Trifunovic position via an Indian Defense move order
+    (1.d4 Nf6 2.Nf3 d5 3.c4 c6 ...). Before the position-keyed lookup
+    fix this game showed as A46. This test pins the fix to a concrete
+    artifact."""
+    pgn_path = FIXTURES_DIR / "Claude vs Sturddle 2.5.1-rc9, 2026.pgn"
+    text = pgn_path.read_text(encoding="utf-8")
+    game = chess.pgn.read_game(io.StringIO(text))
+    assert game is not None
+    ucis = [m.uci() for m in game.mainline_moves()]
+    assert len(ucis) == 38, f"expected 38 plies, got {len(ucis)}"
+
+    book = OpeningBook.load()
+    # The Trifunovic position is reached after 8.Qb3 Bb4 (ply 16).
+    hit = book.lookup(ucis[:16])
+    assert hit is not None
+    assert hit.eco == "D14", (
+        f"transposition lookup failed for the real-game fixture: "
+        f"expected D14 Trifunovic, got {hit.eco} {hit.name!r}"
+    )
+    assert "Trifunovic" in hit.name

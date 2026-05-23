@@ -1,0 +1,104 @@
+[Event "Sturddle View -- Human vs Engine"]
+[Site "Sturddle View"]
+[Date "2026.05.22"]
+[Round "?"]
+[White "Claude (Opus 4.7) + Sturddle 2.5.1-rc9 lifeline"]
+[Black "Sturddle 2.5.1-rc9.050226"]
+[Result "0-1"]
+[Termination "resignation"]
+[TimeControl "1800+30"]
+[ECO "D14"]
+[Opening "Slav Defense: Exchange Variation, Trifunovic Variation"]
+[Annotator "Claude"]
+
+1. d4 { Played in an agentic loop: Claude drives a Python orchestrator
+over the Sturddle View HTTP/WS API, narrates the position out loud each
+ply, and calls a local UCI engine via python-chess as an analysis tool
+(the "lifeline"). The lifeline is the same Sturddle 2.5.1-rc9 build as
+the opponent; OwnBook was disabled on both sides for fairness.
+Going for a closed game here -- I'd rather maneuver than calculate
+against a stronger engine. } 1... Nf6 { -0.26/30 } 2. Nf3 { Flexible -- can
+still transpose to QGD, Catalan, or London. } 2... d5 { -0.32/30 }
+3. c4 { Lifeline confirms +21 cp; slightly more than the London-style 3.Bf4
+which Black equalizes with 3...c5. } 3... c6 { -0.41/30 The Slav.
+The board still reads "A46 Indian Defense: Knights Variation" in the
+UI -- the opening tagger keys on move sequence, not position, and our
+1.d4 Nf6 2.Nf3 d5 3.c4 c6 order doesn't match the canonical Slav
+recording. (Bug fixed in a later commit; this PGN is the witness.) }
+4. cxd5 { -0.22/31 Exchange Slav. Drawish in theory, but it gives me a
+real positional plan (minority attack) rather than wading into Slav
+theory the engine has memorized. } 4... cxd5 5. Nc3 5... Nc6
+6. Bf4 { Lifeline check: 6.Bg5? loses to ...Ne4. Avoided. }
+6... Bf5 7. e3 { -0.43/32 } 7... e6
+8. Qb3 { !! The lifeline-prepared move. With Bf5 + e6, Black's b7 is
+undefended. Every Black reply other than 8...Bb4 loses material; even
+8...Bb4 only delays losing a pawn. I would not have spotted this
+without the engine call -- the natural move was 8.Bd3. }
+8... Bb4 { Only defensible reply. Pins my Nc3 so I can't simply grab b7. }
+9. Bb5 { Counter-pin on Nc6; after Black's forced ...Bxc3+ Qxc3,
+Bxc6 wins a clean pawn. } 9... Bxc3+ 10. Qxc3 { Queen recapture, not
+pawn. 10.bxc3?! drops back to -28 because doubled c-pawns + ...Nh5
+ideas give Black easy play. } 10... O-O
+11. Bxc6 { Cashing in. Engine plays the tricky 11...Rc8 declining
+recapture, but the position remains +28 to +49 for me. }
+11... Rc8 12. Ne5 { Knight lands on a central square; if Black recaptures
+on c6 with the pawn, my queenside pawn-majority becomes a real asset. }
+12... bxc6 { Engine accepts the slightly inferior recapture. Material
+is even but my structure is better. } 13. f3 { Lifeline pick. I had
+considered 13.Nxc6?? which fails to ...Qd7! -- the natural pawn-grab
+loses the knight. The lifeline saw the trap. }
+13... c5 14. dxc5 14... Nh5 15. O-O { 15.Bg5?? hangs the bishop to
+...Qxg5! -- another tactic I would have walked into. }
+15... f6 16. Ng4 { Only safe square; 16.Nd3?? Bxd3 loses a piece. }
+16... Nxf4 17. exf4 17... Qc7 18. b4 { Defends c5, starts the queenside
+roll. The plan: a4-b5-b6 with passed pawn potential. }
+18... Qxf4 { Black recovers the pawn. Material even now, but I have
+the better long-term structure. } 19. a4 19... Rfd8
+
+20. Nf2 { Engine pick -- prophylactic, preparing Rd1 to harvest the
+d5 pawn. My instinct was 20.b5 immediately, but the lifeline saw
+Black's ...d4! resource that punishes the rushed attack. }
+20... d4 { ! The freeing break I was warned about. } 21. Qc4 21... Rd5
+22. Rfc1 { Right rook -- 22.Rac1 drops the a-pawn after ...a5 b5. }
+22... h5 23. c6 { The prepped push; if 23...Rxc6 then 24.Qxc6 wins the
+exchange. Black declines. } 23... Qe5
+
+{ Critical moment. Eval drops from +22 to +2 -- ...Qe5 was a much
+stronger move than the lifeline had predicted (...Qd6). I'm still
+better but the edge is now nominal. }
+
+24. b5 { Continuing the plan -- but here I should have seen Black's
+reply. The lifeline rated this best at +31 but the position is more
+fragile than the number suggests. } 24... d3 { !! Engine plays the
+strong advance. The d-pawn becomes a long-term problem. Eval flips
+to -44; I never fully recover. } 25. f4 { Damage control: kick the
+queen off e5. I was no longer playing for advantage, just to hold. }
+25... Qc7 26. h3 { Luft. } 26... Rcd8 { Stacking the d-file behind the
+d-pawn. The march to d2 is now unstoppable. }
+27. Rc3 27... Kh7 28. a5 28... d2 { The pawn arrives on the 7th. }
+29. Qe2 { Forced -- only the queen can defend the d1 promotion
+square. } 29... Qxf4 { Black grabs the f4 pawn cleanly. I'm down a
+clean pawn now, with the d2 pawn as the long-term winner. }
+
+30. c7 { Still fighting -- my c-pawn is the only real counter-asset. }
+30... Rc8 31. Rc4 31... Qd6 32. Rd1 32... Bg6 33. Rc6 33... Qd7
+34. Qc4 34... Be8
+
+35. Qc2+ { Last gasp -- check with idea of disorganizing Black, but the
+engine just plays calmly. Eval is -2.66; passive resources are
+exhausted. } 35... f5 0-1
+
+{ Result: I resigned. Engine had 7:48 left on the clock vs my 18:32 --
+the engine genuinely had to think to convert; I had time to spare and
+should have used it to spot Black's ...d3 resource around move 24.
+
+Story of the game in three acts:
+  1) Opening prep (Bxc6+Qb3 plan) won a structural pawn -- +30 to +50.
+  2) Black's ...c5 freeing break neutralized cleanly; eval +20.
+  3) Black's ...d3 push on move 24 turned the tables; eval steadily
+     drifted to -2.66.
+
+Lesson: leaning on the lifeline kept me out of obvious tactical
+trouble, but couldn't substitute for strategic understanding. The
+critical missed moment (move 23-24) wasn't a tactic -- it was a
+prophylactic call I didn't make. }
