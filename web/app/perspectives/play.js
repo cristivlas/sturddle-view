@@ -18,6 +18,7 @@ import {
 } from "../play-commentary-window.js";
 import { terminationLabel } from "../format-termination.js";
 import { editAnnotation } from "../annotation-dialog.js";
+import { PLAYER_NAME_KEY, PLAYER_NAME_DEFAULT } from "../settings-dialog.js";
 
 // Module-scope mirror of "user has a live human-vs-engine game running"
 // so other modules (e.g. tournament Replay button) can decide whether
@@ -1080,8 +1081,10 @@ export const playPerspective = {
         if (!ok) return;
       }
       try {
+        const playerName = localStorage.getItem(PLAYER_NAME_KEY) || PLAYER_NAME_DEFAULT;
         view.setGameId(null);
-        const r = await ctx.api("POST", "/game/new", {});
+        view.setPlayerName(playerName);
+        const r = await ctx.api("POST", "/game/new", { player_name: playerName });
         view.setGameId(r.game_id);
         view.setHumanWhite(!!r.human_white);
         view.reset();

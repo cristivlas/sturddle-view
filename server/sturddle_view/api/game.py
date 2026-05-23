@@ -10,6 +10,7 @@ from fastapi.responses import Response
 from ..auth import require_token
 from ..engines import resolve_selected
 from ..play.canonical_hash import canonical_hash, canonical_hash_from_game
+from ..play.game_store import DEFAULT_PLAYER_NAME
 from ..play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
 from ..play.import_position import PositionImportError, parse_fen, parse_pgn
 from ..recent_imports import RemoveStatus
@@ -88,8 +89,9 @@ async def new_game(payload: dict, request: Request) -> dict:
         initial_seconds=float(payload.get("initial_seconds", s.tc_initial_seconds)),
         increment_seconds=float(payload.get("increment_seconds", s.tc_increment_seconds)),
     )
+    player_name = (payload.get("player_name") or "").strip() or DEFAULT_PLAYER_NAME
     try:
-        game_id = await hve.new_game(human_white=human_white, tc=tc)
+        game_id = await hve.new_game(human_white=human_white, tc=tc, player_name=player_name)
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=f"engine not found: {e}") from e
     return {"game_id": game_id, "human_white": human_white}

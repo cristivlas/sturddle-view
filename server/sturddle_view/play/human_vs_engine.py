@@ -31,7 +31,7 @@ from ..chess.results import DRAW, loser_result, winner_result
 from ..events import Event, EventBus
 from .chess_clock import ChessClock, TimeControl
 from .engine_supervisor import EngineSupervisor
-from .game_store import GameState, GameStore
+from .game_store import DEFAULT_PLAYER_NAME, GameState, GameStore
 from .import_position import explain_invalid
 from .mode import Mode, ModeConflictError, Op
 from .tablebase import TablebaseProber
@@ -123,6 +123,7 @@ class HumanVsEngine:
         # filenames across per-move autosaves and end-of-game finalization.
         self._game_started_wall: float | None = None
         self._human_white: bool = True
+        self._player_name: str = DEFAULT_PLAYER_NAME
         self._clock: ChessClock = ChessClock(TimeControl(300.0, 0.0))
         self._think_task: asyncio.Task | None = None
         self._analysis = None  # active chess.engine.AnalysisResult, if any
@@ -411,6 +412,7 @@ class HumanVsEngine:
         self,
         human_white: bool,
         tc: TimeControl,
+        player_name: str = DEFAULT_PLAYER_NAME,
         start_fen: str | None = None,
         start_moves_uci: list[str] | None = None,
         seed_clock_history: list[tuple[float | None, float | None]] | None = None,
@@ -464,6 +466,7 @@ class HumanVsEngine:
             self._board = board
             self._start_fen = start_fen  # None for startpos games
             self._human_white = human_white
+            self._player_name = player_name or DEFAULT_PLAYER_NAME
             self._clock = ChessClock(tc)
             self._clock.reseed_from_pgn(
                 n_plies=len(board.move_stack),
@@ -1263,6 +1266,7 @@ class HumanVsEngine:
         new_id = await self.new_game(
             human_white=human_white,
             tc=tc,
+            player_name=self._player_name,
             start_fen=start_fen,
             start_moves_uci=seed_moves,
             seed_clock_history=seed_clocks,
@@ -1399,6 +1403,8 @@ class HumanVsEngine:
         # autosave behavior, just renames the file going forward.
         self._game_started_wall = state.game_started_wall or time.time()
         self._human_white = state.human_white
+        # Not persisted -- restore to default; client re-sends on next new_game.
+        self._player_name = DEFAULT_PLAYER_NAME
         self._clock = ChessClock(TimeControl(
             initial_seconds=state.tc_initial_seconds,
             increment_seconds=state.tc_increment_seconds,
@@ -1937,8 +1943,8 @@ class HumanVsEngine:
         if not self._board.move_stack:
             return None
         engine_label = self._engine_name or Path(self._engine_path).name
-        white = "Human" if self._human_white else engine_label
-        black = engine_label if self._human_white else "Human"
+        white = self._player_name if self._human_white else engine_label
+        black = engine_label if self._human_white else self._player_name
         headers = {
             "Event": "Sturddle View -- Human vs Engine",
             "Site": "Sturddle View",
@@ -2148,8 +2154,8 @@ class HumanVsEngine:
         if self._board is None or self._game_id is None or not self._board.move_stack:
             return None
         engine_label = self._engine_name or Path(self._engine_path).name
-        white = "Human" if self._human_white else engine_label
-        black = engine_label if self._human_white else "Human"
+        white = self._player_name if self._human_white else engine_label
+        black = engine_label if self._human_white else self._player_name
         return self._play_summary(white=white, black=black, result=None)
 
     async def _flush_recents_save(self) -> None:

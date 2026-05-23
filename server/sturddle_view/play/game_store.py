@@ -25,6 +25,8 @@ log = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
 
+DEFAULT_PLAYER_NAME = "Human"
+
 
 def default_state_path() -> Path:
     """Path to the persisted current-game snapshot. ``SV_GAME_STATE_PATH`` overrides."""

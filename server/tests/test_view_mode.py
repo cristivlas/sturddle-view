@@ -152,6 +152,27 @@ async def test_play_from_here_seeds_new_game_at_cursor(hve):
     assert h._human_white is False
 
 
+async def test_play_from_here_preserves_player_name(hve):
+    """Regression: forking via play_from_here must carry self._player_name
+    into the new game. The internal new_game call previously omitted
+    player_name, silently resetting it to the default."""
+    h, _ = hve
+    await h.new_game(human_white=True, tc=TimeControl(60, 0), player_name="Alice")
+    # 2-ply history: White to move at last ply, so human plays White after fork.
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5"],
+        clock_history=None,
+    ))
+    await h.view_last()
+    await h.play_from_here(tc=TimeControl(60, 0))
+    assert h._player_name == "Alice"
+    assert h._human_white is True
+    summary = h.play_game_summary()
+    assert summary is not None
+    assert summary["white"] == "Alice"
+
+
 async def test_play_from_here_at_last_ply_uses_imported_final_clocks(hve):
     """Round-trip with [%clk]: import -- no nav -- play_from_here at last
     ply with inherit_clocks=True must restore live clocks from the PGN."""

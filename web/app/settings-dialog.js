@@ -11,6 +11,9 @@ import { mqMobile, mqNarrowDialog } from "./breakpoints.js";
 import { RIBBON_SIDE_KEY } from "./ribbon-window.js";
 
 const SETTINGS_ENGINES_COL_PCTS_KEY = "sturddle:engines:settings:colPcts3";
+export const PLAYER_NAME_KEY = "sturddle:player_name";
+export const PLAYER_NAME_DEFAULT = "Human";
+const PLAYER_NAME_MAX_LEN = 32;
 
 // Persisted unit is always seconds (float). The UI picks the most natural
 // display unit on load (largest unit with no fractional remainder) and
@@ -223,6 +226,22 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const humanSideLabel = document.createElement("label");
       humanSideLabel.textContent = "Human plays as";
       humanSideRow.append(humanSideLabel, humanSide);
+
+      const playerNameInput = document.createElement("wa-input");
+      playerNameInput.size = "small";
+      playerNameInput.placeholder = PLAYER_NAME_DEFAULT;
+      playerNameInput.maxlength = PLAYER_NAME_MAX_LEN;
+      playerNameInput.value = localStorage.getItem(PLAYER_NAME_KEY) || "";
+      playerNameInput.addEventListener("change", () => {
+        const v = playerNameInput.value.trim().slice(0, PLAYER_NAME_MAX_LEN);
+        if (v) localStorage.setItem(PLAYER_NAME_KEY, v);
+        else localStorage.removeItem(PLAYER_NAME_KEY);
+      });
+      const playerNameRow = document.createElement("div");
+      playerNameRow.className = "settings-row settings-row-spaced";
+      const playerNameLabel = document.createElement("label");
+      playerNameLabel.textContent = "Your name";
+      playerNameRow.append(playerNameLabel, playerNameInput);
 
       const ribbonSide = document.createElement("wa-select");
       ribbonSide.size = "small";
@@ -437,6 +456,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         togglesRow,
         makeDivider(),
         humanSideRow,
+        playerNameRow,
       );
       playPanel.append(playCol);
       // Display tab: presentation-only preferences (no gameplay effect).

@@ -4,6 +4,7 @@
 import { mountBoard } from "./board.js";
 import { toast } from "./dialogs.js";
 import { isMobileLayout } from "./play-debug-windows.js";
+import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -530,6 +531,7 @@ export function mountGameView(container, opts = {}) {
   let humanWhite = true;
   let gameId = null;
   let engineName = "Engine";
+  let playerName = PLAYER_NAME_DEFAULT;
   let names = { top: "—", bottom: "—" };
   let lastTurn = "white";
   let lastClockRunning = false;
@@ -592,7 +594,7 @@ export function mountGameView(container, opts = {}) {
     // In interactive (Play) mode, bottom = human, top = engine. In view
     // mode, re-swap cached PGN names to match the new orientation.
     if (interactive && !viewing) {
-      setNames({ bottom: "Human", top: engineName });
+      setNames({ bottom: playerName, top: engineName });
     } else if (viewing && viewWhiteName !== null) {
       if (humanWhite) setNames({ bottom: viewWhiteName, top: viewBlackName });
       else setNames({ bottom: viewBlackName, top: viewWhiteName });
@@ -666,7 +668,7 @@ export function mountGameView(container, opts = {}) {
         if (typeof evt.payload.human_white === "boolean") {
           humanWhite = evt.payload.human_white;
           board.setSide(humanWhite ? "white" : "black");
-          if (interactive) setNames({ bottom: "Human", top: engineName });
+          if (interactive) setNames({ bottom: playerName, top: engineName });
         }
         // View mode: surface the PGN's player names instead of Human/engine.
         if (interactive && evt.payload.view) {
@@ -827,6 +829,7 @@ export function mountGameView(container, opts = {}) {
     },
     setHumanWhite,
     setNames,
+    setPlayerName(name) { playerName = name || PLAYER_NAME_DEFAULT; },
     applyEvent,
     clearArrows() {
       board.clearArrows();
