@@ -162,6 +162,7 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   color: var(--accent);
   background: rgba(var(--accent-rgb), 0.12);
   border-color: rgba(var(--accent-rgb), 0.4);
+  cursor: pointer;
 }
 .status-badge--finished {
   color: var(--text, #ddd);

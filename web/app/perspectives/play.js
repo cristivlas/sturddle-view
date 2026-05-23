@@ -1564,6 +1564,7 @@ export const playPerspective = {
     takebackBtn.addEventListener("click", onTakeback);
     switchSidesBtn.addEventListener("click", onSwitchSides);
     pauseBtn.addEventListener("click", onPause);
+    pausedBadge?.addEventListener("click", onPause);
     analyzeBtn.addEventListener("click", onAnalyze);
     viewNewGameBtn.addEventListener("click", onNewGame);
     viewImportBtn.addEventListener("click", onImport);
