@@ -1130,16 +1130,31 @@ export const playPerspective = {
           const detail = await r.text();
           throw new Error(`GET /game/pgn -> ${r.status} ${detail}`);
         }
-        const blob = await r.blob();
         const cd = r.headers.get("Content-Disposition") || "";
         const match = cd.match(/filename="([^"]+)"/);
         const filename = match ? match[1] : "game.pgn";
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(url);
+        const bridge = window.pywebview && window.pywebview.api && window.pywebview.api.save_pgn;
+        if (bridge) {
+          // Desktop (PyWebView/WebView2): blob downloads don't trigger a
+          // save dialog, so route through the native bridge instead.
+          const text = await r.text();
+          const res = await window.pywebview.api.save_pgn(text, filename);
+          if (res && res.ok) {
+            toast(`Saved to ${res.path}`, { variant: "success" });
+          } else if (res && res.cancelled) {
+            // user dismissed dialog; stay silent
+          } else {
+            throw new Error((res && res.error) || "save failed");
+          }
+        } else {
+          const blob = await r.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = filename;
+          a.click();
+          URL.revokeObjectURL(url);
+        }
       } catch (e) {
         reportError(ctx, "Save PGN failed", e);
       } finally {
