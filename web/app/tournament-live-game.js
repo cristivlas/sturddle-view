@@ -480,8 +480,14 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   function setEngineColor(color) {
     engineColor = color;
     const oppColor = color === "white" ? "black" : "white";
-    bottomNameEl.textContent = engineName || (color === "white" ? "White" : "Black");
-    if (!opponentName) topNameEl.textContent = oppColor === "white" ? "White" : "Black";
+    const eName = engineName || (color === "white" ? "White" : "Black");
+    bottomNameEl.textContent = eName;
+    bottomNameEl.title = eName;
+    if (!opponentName) {
+      const oName = oppColor === "white" ? "White" : "Black";
+      topNameEl.textContent = oName;
+      topNameEl.title = oName;
+    }
     clockBottomEl.dataset.color = color;
     clockTopEl.dataset.color = oppColor;
   }
@@ -490,6 +496,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     if (!name || name === opponentName) return;
     opponentName = name;
     topNameEl.textContent = name;
+    topNameEl.title = name;
   }
 
   function updateClocks(wtime, btime) {
@@ -719,8 +726,12 @@ export function openFrozenGameWindow({
       board.setSide(color);
       if (fen) board.setPosition(fen, lastMove);
       board.clearArrows();
-      bottomNameEl.textContent = engineName || (engineIsWhite ? rec.engine_white : rec.engine_black) || "?";
-      topNameEl.textContent = engineIsWhite ? rec.engine_black : rec.engine_white;
+      const bName = engineName || (engineIsWhite ? rec.engine_white : rec.engine_black) || "?";
+      const tName = engineIsWhite ? rec.engine_black : rec.engine_white;
+      bottomNameEl.textContent = bName;
+      bottomNameEl.title = bName;
+      topNameEl.textContent = tName;
+      topNameEl.title = tName || "";
       clockBottomEl.dataset.color = color;
       clockTopEl.dataset.color = oppColor;
       // Refine banner from PGN headers if the snapshot was stale.

@@ -560,11 +560,13 @@ def test_view_play_from_here_honors_clk_annotations(client):
     # Live clocks come from the PGN, not the configured TC initial.
     assert hve._clock.white_time == 4 * 60 + 48
     assert hve._clock.black_time == 4 * 60 + 50
-    # _clock_history has one entry per seeded ply with PGN-derived snapshots
-    # (None entries fill from TC initial = 300).
+    # _clock_history has one entry per seeded ply with PGN-derived
+    # snapshots. None entries are preserved (no init coercion) so
+    # downstream build_pgn knows which plies had no clock and skips the
+    # cutechess `Xs` token for them (B9 fix).
     assert hve._clock.history == [
-        (300.0, 300.0),  # ply 0: nobody moved yet
-        (4 * 60 + 55, 300.0),  # ply 1: only white moved
+        (None, None),  # ply 0: nobody moved yet (no clock data)
+        (4 * 60 + 55, None),  # ply 1: only white moved
         (4 * 60 + 55, 4 * 60 + 50),  # ply 2: both moved
     ]
 

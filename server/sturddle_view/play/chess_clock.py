@@ -32,7 +32,9 @@ class ChessClock:
         self.white_time: float = tc.initial_seconds
         self.black_time: float = tc.initial_seconds
         # One snapshot per ply BEFORE the move at that ply. Take-back invariant.
-        self.history: list[tuple[float, float]] = []
+        # None entries mark "no recorded clock at this ply" (e.g.
+        # seeded plies inherited from a parent PGN with no timing).
+        self.history: list[tuple[float | None, float | None]] = []
         self.turn_started_at: float | None = None
 
     def start_turn(self) -> None:
@@ -95,8 +97,13 @@ class ChessClock:
 
     def pop_snapshot(self) -> None:
         wt, bt = self.history.pop()
-        self.white_time = wt
-        self.black_time = bt
+        # None markers in history indicate "no recorded clock" (e.g.
+        # seeded plies inherited from a parent PGN with no per-ply
+        # timing). Coerce to initial_seconds so the live clock stays
+        # a float for downstream consumers.
+        init = self.tc.initial_seconds
+        self.white_time = wt if wt is not None else init
+        self.black_time = bt if bt is not None else init
 
     def reseed_from_pgn(
         self,
@@ -113,12 +120,12 @@ class ChessClock:
         """
         init = self.tc.initial_seconds
         if seed_history is not None and len(seed_history) == n_plies:
-            self.history = [
-                (w if w is not None else init, b if b is not None else init)
-                for (w, b) in seed_history
-            ]
+            self.history = [(w, b) for (w, b) in seed_history]
         else:
-            self.history = [(init, init) for _ in range(n_plies)]
+            # No / mismatched seed: leave the entries as None markers
+            # so downstream build_pgn does NOT fabricate `0.0s` tokens
+            # for plies the parent never timed (B9).
+            self.history = [(None, None) for _ in range(n_plies)]
         self.white_time = final_w if final_w is not None else init
         self.black_time = final_b if final_b is not None else init
 

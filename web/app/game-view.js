@@ -9,7 +9,7 @@ const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 // Clock-row name cap: largest value that fits beside the clock on the
 // narrowest desktop board (~400px at the 800px viewport breakpoint).
-const MAX_CLOCK_NAME_DESKTOP = 32;
+const MAX_CLOCK_NAME_DESKTOP = 48;
 const MAX_CLOCK_NAME_MOBILE = 24;
 
 function fmtClock(seconds) {
@@ -23,11 +23,15 @@ function fmtClock(seconds) {
   return `${m}:${ss.toString().padStart(2, "0")}`;
 }
 
-function renderMoveList(el, sanList, currentIdx = null, onMoveClick = null) {
-  // currentIdx: index of the highlighted ply, or null for "last" (play mode).
-  // onMoveClick(plyIndex): when provided, each move cell becomes clickable
-  // and invokes the callback with its 0-based ply index. Used in view mode
-  // to jump the cursor to the clicked move.
+function renderMoveList(
+  el, sanList, currentIdx = null, onMoveClick = null,
+  forkInfo = null, onForkClick = null,
+) {
+  // currentIdx: highlighted ply, or null = last (play mode).
+  // onMoveClick(plyIndex): makes cells clickable for view-mode goto.
+  // forkInfo: Map<plyIdx, {childCount, isOwnForkPly}> for fork glyphs.
+  // onForkClick(plyIdx): glyph-only click; used to re-show a dismissed
+  // parent->child banner.
   el.innerHTML = "";
   const lastIdx = sanList.length - 1;
   const highlightIdx = currentIdx == null ? lastIdx : currentIdx;
@@ -40,6 +44,36 @@ function renderMoveList(el, sanList, currentIdx = null, onMoveClick = null) {
     if (onMoveClick) {
       cell.classList.add("clickable");
       cell.addEventListener("click", () => onMoveClick(plyIdx));
+    }
+    const info = forkInfo ? forkInfo.get(plyIdx) : null;
+    const childCount = info?.childCount ?? 0;
+    const isOwnForkPly = !!info?.isOwnForkPly;
+    if (childCount > 0 || isOwnForkPly) {
+      cell.classList.add("has-fork");
+      const glyph = document.createElement("wa-icon");
+      glyph.setAttribute("name", "code-fork");
+      glyph.className = "fork-glyph";
+      // Tooltip: children-here wins when present; otherwise show the
+      // child-side "forked from parent" label.
+      glyph.title = childCount > 0
+        ? (childCount === 1
+            ? "1 variation from this position"
+            : `${childCount} variations from this position`)
+        : "Forked from parent here";
+      if (onForkClick) {
+        glyph.classList.add("clickable");
+        glyph.addEventListener("click", (e) => {
+          e.stopPropagation();
+          onForkClick(plyIdx);
+        });
+      }
+      cell.append(" ", glyph);
+      if (childCount > 1) {
+        const cnt = document.createElement("span");
+        cnt.className = "fork-count";
+        cnt.textContent = String(childCount);
+        cell.append(cnt);
+      }
     }
     return cell;
   };
@@ -98,6 +132,8 @@ export function mountGameView(container, opts = {}) {
     events,
     onMove,
     onMoveJump = null, // view-mode click on a move; (plyIndex) => void
+    forkInfoFn = null, // () => Map<plyIdx, {childCount, isOwnForkPly}>
+    onForkClick = null, // (plyIdx) => void when glyph itself is clicked
     show = {},
     interactive = false,
     sideContainer = null, // optional: separate host for the side rail
@@ -536,11 +572,17 @@ export function mountGameView(container, opts = {}) {
   function setNames({ top, bottom } = {}) {
     if (top !== undefined) {
       names.top = top;
-      if (clockTopName) clockTopName.textContent = _truncName(top);
+      if (clockTopName) {
+        clockTopName.textContent = _truncName(top);
+        clockTopName.title = top || "";
+      }
     }
     if (bottom !== undefined) {
       names.bottom = bottom;
-      if (clockBottomName) clockBottomName.textContent = _truncName(bottom);
+      if (clockBottomName) {
+        clockBottomName.textContent = _truncName(bottom);
+        clockBottomName.title = bottom || "";
+      }
     }
   }
 
@@ -643,7 +685,13 @@ export function mountGameView(container, opts = {}) {
         // yet, and the board is at the cm-chessboard default startpos;
         // we must seed it from the server's authoritative FEN.
         if (!editing || firstBoardUpdate) {
-          board.setPosition(evt.payload.fen, evt.payload.last_move, !firstBoardUpdate);
+          // Suppress animation when the incoming FEN matches the
+          // current one. cm-chessboard otherwise re-runs its 200ms
+          // animation queue on a no-op move (visible flicker), e.g.
+          // when x-game nav opens the parent at the same fork ply.
+          const sameFen = !firstBoardUpdate && currentFen === evt.payload.fen;
+          const animate = !firstBoardUpdate && !sameFen;
+          board.setPosition(evt.payload.fen, evt.payload.last_move, animate);
         }
         if (firstBoardUpdate) {
           firstBoardUpdate = false;
@@ -661,8 +709,13 @@ export function mountGameView(container, opts = {}) {
             currentIdx = (evt.payload.view.cursor ?? 0) - 1;
             clickHandler = onMoveJump;
           }
+          // Fork glyphs only in view mode; snapshot at render time.
+          const forkInfo = (evt.payload.view && !editing && forkInfoFn)
+            ? forkInfoFn()
+            : null;
           renderMoveList(
             moveListEl, evt.payload.moves_san || [], currentIdx, clickHandler,
+            forkInfo, onForkClick,
           );
         }
         setOpening(evt.payload.opening);

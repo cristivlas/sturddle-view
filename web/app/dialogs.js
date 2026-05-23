@@ -514,6 +514,20 @@ export function buildToastActionButton(action) {
   return btn;
 }
 
+/** Build a circular xmark dismiss button for use inside a toast. */
+export function makeToastDismissBtn(onClick) {
+  const btn = document.createElement("button");
+  btn.className = "xgame-toast-x";
+  btn.type = "button";
+  btn.setAttribute("aria-label", "Dismiss");
+  btn.title = "Dismiss";
+  const icon = document.createElement("wa-icon");
+  icon.setAttribute("name", "xmark");
+  btn.append(icon);
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
 /** Compose a toast message Node from leading text plus action buttons. */
 export function buildToastWithActions(text, actions) {
   const node = document.createElement("span");
@@ -541,14 +555,16 @@ export function reportError(ctx, action, error, opts = {}) {
 }
 
 /** Transient toast. Pass duration: 0 (or Infinity) to keep it open until the
- *  caller invokes the returned dismiss function. */
-export function toast(message, { variant = "neutral", duration = 4000 } = {}) {
+ *  caller invokes the returned dismiss function. `stack: "xgame"` routes
+ *  to the moves-list-side stack (used for fork/variation navigation). */
+export function toast(message, { variant = "neutral", duration = 4000, stack: stackName = "default" } = {}) {
   // Simple toast implementation; Web Awesome's callout supports more styling.
   const host = ensureContainer();
-  let stack = document.getElementById("toast-stack");
+  const stackId = stackName === "xgame" ? "xgame-toast-stack" : "toast-stack";
+  let stack = document.getElementById(stackId);
   if (!stack) {
     stack = document.createElement("div");
-    stack.id = "toast-stack";
+    stack.id = stackId;
     // popover="manual" promotes the stack to the top-layer so toasts sit
     // above any open <wa-dialog> backdrop (native <dialog> is top-layer
     // too; without this, author z-index alone can't beat it).

@@ -6,7 +6,11 @@ import time
 
 import pytest
 
-from sturddle_view.recent_imports import RecentImports, _hash_text
+from sturddle_view.recent_imports import (
+    RecentImports,
+    RemoveStatus,
+    _hash_text,
+)
 
 
 @pytest.fixture
@@ -121,14 +125,15 @@ def test_remove_drops_index_and_blob(store, tmp_path):
     h = _run(store.save(fmt="pgn", text="1. b3 *", summary="larsen"))
     rel = store.list()[0]["file"]
     assert (tmp_path / "imports" / rel).exists()
-    removed = _run(store.remove(h))
-    assert removed is True
+    result = _run(store.remove(h))
+    assert result.status is RemoveStatus.DELETED
     assert store.list() == []
     assert not (tmp_path / "imports" / rel).exists()
 
 
-def test_remove_unknown_returns_false(store):
-    assert _run(store.remove("nonexistent")) is False
+def test_remove_unknown_returns_not_found(store):
+    result = _run(store.remove("nonexistent"))
+    assert result.status is RemoveStatus.NOT_FOUND
 
 
 def test_load_recovers_from_index_on_disk(tmp_path):
@@ -451,3 +456,225 @@ def test_replace_at_new_hash_collides_with_unrelated_game(store):
     row, _ = store.get(h_target)
     assert row["game_id"] == "gid-other"
     assert store.hash_for_id("gid-ours") is None
+
+
+# ---- x-game navigation: fork-link tests ----
+
+
+def _save_parent(store, gid="gid-parent"):
+    return _run(store.save(
+        fmt="pgn", text="1. e4 e5 *", summary={"white": "P"}, game_id=gid,
+    ))
+
+
+def _save_child(store, parent_gid, ply, gid="gid-child", text="1. d4 d5 *"):
+    return _run(store.save(
+        fmt="pgn", text=text, summary={"white": "C"}, game_id=gid,
+        parent_game_id=parent_gid, fork_ply=ply,
+    ))
+
+
+def test_save_with_parent_links_both_sides(store):
+    h_parent = _save_parent(store)
+    h_child = _save_child(store, "gid-parent", ply=5)
+    parent_row = store.get(h_parent)[0]
+    child_row = store.get(h_child)[0]
+    assert child_row["parent_game_id"] == "gid-parent"
+    assert child_row["fork_ply"] == 5
+    assert parent_row["refs"] == [{"game_id": "gid-child", "fork_ply": 5}]
+
+
+def test_save_requires_parent_and_ply_together(store):
+    with pytest.raises(AssertionError):
+        _run(store.save(
+            fmt="pgn", text="1. e4 *", summary="s", game_id="g",
+            parent_game_id="gid-parent",
+        ))
+    with pytest.raises(AssertionError):
+        _run(store.save(
+            fmt="pgn", text="1. e4 *", summary="s", game_id="g",
+            fork_ply=3,
+        ))
+
+
+def test_save_rejects_zero_fork_ply(store):
+    _save_parent(store)
+    with pytest.raises(AssertionError):
+        _save_child(store, "gid-parent", ply=0)
+
+
+def test_remove_parent_blocked_by_refs(store):
+    h_parent = _save_parent(store)
+    _save_child(store, "gid-parent", ply=5)
+    result = _run(store.remove(h_parent))
+    assert result.status is RemoveStatus.BLOCKED_BY_REFS
+    assert len(result.children) == 1
+    assert result.children[0]["game_id"] == "gid-child"
+    assert result.children[0]["fork_ply"] == 5
+    # Parent row + refs untouched.
+    parent_row = store.get(h_parent)[0]
+    assert parent_row["refs"] == [{"game_id": "gid-child", "fork_ply": 5}]
+
+
+def test_remove_child_scrubs_parent_ref(store):
+    h_parent = _save_parent(store)
+    h_child = _save_child(store, "gid-parent", ply=5)
+    result = _run(store.remove(h_child))
+    assert result.status is RemoveStatus.DELETED
+    parent_row = store.get(h_parent)[0]
+    assert parent_row["refs"] == []
+
+
+def test_children_of_returns_sorted_by_fork_ply(store):
+    _save_parent(store)
+    _save_child(store, "gid-parent", ply=10, gid="gid-c1", text="1. d4 d5 *")
+    _save_child(store, "gid-parent", ply=3,  gid="gid-c2", text="1. c4 c5 *")
+    _save_child(store, "gid-parent", ply=7,  gid="gid-c3", text="1. Nf3 Nf6 *")
+    children = store.children_of("gid-parent")
+    assert [c["fork_ply"] for c in children] == [3, 7, 10]
+    assert [c["game_id"] for c in children] == ["gid-c2", "gid-c3", "gid-c1"]
+
+
+def test_children_of_unknown_parent_returns_empty(store):
+    assert store.children_of("nope") == []
+
+
+def test_parent_summary_of_returns_parent_summary(store):
+    _save_parent(store)
+    _save_child(store, "gid-parent", ply=5)
+    s = store.parent_summary_of("gid-child")
+    assert s == {"white": "P"}
+
+
+def test_parent_summary_of_unknown_returns_none(store):
+    assert store.parent_summary_of("nope") is None
+
+
+def test_parent_summary_of_orphan_root_returns_none(store):
+    _save_parent(store)
+    assert store.parent_summary_of("gid-parent") is None
+
+
+def test_evict_skips_rows_with_nonempty_refs(tmp_path):
+    """Eviction must honor the dict-shaped refs (not just legacy lists)."""
+    store = RecentImports.load(
+        root=tmp_path / "imports", cap=2, active_game_id=lambda: None,
+    )
+    h_parent = _save_parent(store)
+    time.sleep(0.002)
+    _save_child(store, "gid-parent", ply=5)
+    time.sleep(0.002)
+    # Two more inserts push past cap=2; parent should be pinned via refs.
+    _run(store.save(fmt="pgn", text="1. Nf3 *", summary="s", game_id="g3"))
+    time.sleep(0.002)
+    _run(store.save(fmt="pgn", text="1. c4 *", summary="s", game_id="g4"))
+    # Parent still present.
+    assert store.get(h_parent) is not None
+
+
+def test_dangling_parent_scrubbed(tmp_path, caplog):
+    """Child whose parent_game_id is no longer resolvable gets the link
+    scrubbed by scrub_dangling_parent and a warning is logged."""
+    store = RecentImports.load(root=tmp_path / "imports", cap=5)
+    _save_parent(store)
+    _save_child(store, "gid-parent", ply=5)
+    # Forcibly drop the parent from the reverse map to simulate
+    # corruption (the public API would refuse via refs).
+    store._by_id.pop("gid-parent", None)
+    with caplog.at_level("WARNING"):
+        scrubbed = _run(store.scrub_dangling_parent("gid-child"))
+    assert scrubbed is True
+    assert any("dangling_parent" in r.message for r in caplog.records)
+    child_row = store.get_by_id("gid-child")[0]
+    assert "parent_game_id" not in child_row
+    assert "fork_ply" not in child_row
+
+
+def test_replace_at_preserves_fork_link(store):
+    """Annotation-edit on a child must not drop parent_game_id/fork_ply."""
+    _save_parent(store)
+    h_child = _save_child(store, "gid-parent", ply=5)
+    # Edit the child's content via replace_at (simulating annotation edit).
+    new_hash = _run(store.replace_at(
+        old_hash=h_child, fmt="pgn",
+        text="1. d4 d5 2. Nf3 *", summary={"white": "C"},
+        game_id="gid-child",
+    ))
+    row, _ = store.get(new_hash)
+    assert row["parent_game_id"] == "gid-parent"
+    assert row["fork_ply"] == 5
+
+
+def test_replace_at_preserves_refs_on_parent_edit(store):
+    """Annotation-edit on a parent must not drop its children's refs."""
+    h_parent = _save_parent(store)
+    _save_child(store, "gid-parent", ply=5)
+    # Edit the parent's content.
+    new_hash = _run(store.replace_at(
+        old_hash=h_parent, fmt="pgn",
+        text="1. e4 e5 2. Nf3 Nc6 *", summary={"white": "P"},
+        game_id="gid-parent",
+    ))
+    row, _ = store.get(new_hash)
+    assert row["refs"] == [{"game_id": "gid-child", "fork_ply": 5}]
+
+
+def test_replace_at_explicit_fork_link_promotes_child(store):
+    """Caller can promote an unsaved child into recents with an explicit
+    fork link. Parent's refs gets appended atomically."""
+    h_parent = _save_parent(store)
+    # Child has never been in recents; promote it via replace_at with
+    # old_hash=None and explicit (parent_game_id, fork_ply).
+    h_child = _run(store.replace_at(
+        old_hash=None, fmt="pgn",
+        text="1. e4 e5 2. Nf3 *", summary={"white": "C"},
+        game_id="gid-child",
+        parent_game_id="gid-parent", fork_ply=4,
+    ))
+    child_row = store.get(h_child)[0]
+    assert child_row["parent_game_id"] == "gid-parent"
+    assert child_row["fork_ply"] == 4
+    parent_row = store.get(h_parent)[0]
+    assert parent_row["refs"] == [{"game_id": "gid-child", "fork_ply": 4}]
+
+
+def test_replace_at_explicit_link_does_not_double_append(store):
+    """If the existing row already carries the link, an explicit link
+    that matches must NOT append a second entry to parent's refs."""
+    _save_parent(store)
+    h_child = _save_child(store, "gid-parent", ply=5)
+    # Re-edit the child via replace_at with an explicit link.
+    _run(store.replace_at(
+        old_hash=h_child, fmt="pgn",
+        text="1. d4 d5 2. c4 *", summary={"white": "C"},
+        game_id="gid-child",
+        parent_game_id="gid-parent", fork_ply=5,
+    ))
+    parent_row = store.get_by_id("gid-parent")[0]
+    assert parent_row["refs"] == [{"game_id": "gid-child", "fork_ply": 5}]
+
+
+def test_replace_at_rejects_partial_fork_link(store):
+    _save_parent(store)
+    with pytest.raises(AssertionError):
+        _run(store.replace_at(
+            old_hash=None, fmt="pgn",
+            text="1. d4 *", summary={}, game_id="g",
+            parent_game_id="gid-parent",
+        ))
+    with pytest.raises(AssertionError):
+        _run(store.replace_at(
+            old_hash=None, fmt="pgn",
+            text="1. d4 *", summary={}, game_id="g",
+            fork_ply=3,
+        ))
+
+
+def test_replace_at_rejects_zero_fork_ply(store):
+    _save_parent(store)
+    with pytest.raises(AssertionError):
+        _run(store.replace_at(
+            old_hash=None, fmt="pgn",
+            text="1. d4 *", summary={}, game_id="g",
+            parent_game_id="gid-parent", fork_ply=0,
+        ))

@@ -985,6 +985,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       [STATUS.STOPPED, STATUS.FAILED].includes(evt.payload?.status)
     ) {
       closeAllLiveGames();
+      if (evt.payload.status === STATUS.STOPPED) {
+        toast(`"${tournament.name}" paused`, { variant: "warning" });
+      }
     }
     // Tournament started: auto-open Live Games so the user sees
     // pairings as they form. Skip if restoring a saved desktop state --

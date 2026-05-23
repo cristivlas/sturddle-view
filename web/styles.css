@@ -191,13 +191,7 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   align-items: center;
   gap: 8px;
 }
-.toast-close-btn {
-  border-radius: 50%;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  flex-shrink: 0;
-}
+
 .toast-ws-toggle {
   width: 26px;
   height: 26px;
@@ -265,11 +259,13 @@ svg.cm-chessboard {
   max-width: none !important;
 }
 
-#toast-stack {
+#toast-stack,
+#xgame-toast-stack {
   position: fixed;
   /* Co-located with the ribbon: default is left; right-ribbon override
      below moves it to the right edge. Inset clears the 36px ribbon plus
-     an 8px gutter so toasts don't overlap ribbon buttons. */
+     an 8px gutter so toasts don't overlap ribbon buttons.
+     #xgame-toast-stack lives on the opposite (moves-list) side. */
   inset: auto auto 16px 44px;
   display: flex;
   flex-direction: column;
@@ -290,11 +286,13 @@ svg.cm-chessboard {
   max-height: none;
   color: inherit;
 }
-#toast-stack:popover-open {
+#xgame-toast-stack { inset: auto 44px 16px auto; }
+#toast-stack:popover-open,
+#xgame-toast-stack:popover-open {
   display: flex;
 }
 .toast {
-  background: var(--wa-color-surface-default);
+  background: var(--wa-color-surface-raised);
   color: var(--fg);
   border: 1px solid #888;
   padding: 8px 12px;
@@ -302,6 +300,10 @@ svg.cm-chessboard {
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   transition: opacity 0.2s, transform 0.2s;
+  /* Re-enable pointer events: the stack has pointer-events:none so
+     empty regions stay click-through, but individual toasts need to
+     receive clicks for interactive content (xgame nav arrow + X). */
+  pointer-events: auto;
 }
 .toast-success { border-color: #6c6; }
 .toast-warning { border-color: #e08e0b; }
@@ -988,11 +990,20 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   color: inherit;
   font-family: var(--wa-font-family-body);
 }
+/* Play/view mode: let name take all available space; CSS truncates. */
+.game-view-board .clock-row .clock-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .clock-row .clock-time {
   font-size: 1.375rem;
   font-weight: 600;
   letter-spacing: 0.5px;
   color: inherit;
+  flex-shrink: 0;
 }
 
 #board-controls {
@@ -1029,6 +1040,81 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   color: var(--accent);
   font-weight: 600;
 }
+.move-row .move-cell .fork-glyph {
+  font-size: 0.75em;
+  color: var(--muted);
+  margin-left: 2px;
+  vertical-align: baseline;
+}
+.move-row .move-cell .fork-glyph.clickable { cursor: pointer; }
+.move-row .move-cell .fork-glyph.clickable:hover { color: var(--accent); }
+.move-row .move-cell .fork-count {
+  font-size: 0.7em;
+  color: var(--muted);
+  margin-left: 1px;
+  vertical-align: super;
+}
+/* X-game nav toasts: live inside the regular toast-stack (bottom of
+   screen). Collapsible variant has its list above the header so the
+   expansion grows upward away from the screen edge. */
+.xgame-toast {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.875rem;
+  color: var(--fg);
+}
+.xgame-toast.xgame-toast-collapsible { flex-direction: column; align-items: stretch; }
+.xgame-toast-icon { color: var(--muted); flex-shrink: 0; }
+.xgame-toast-text { flex: 1; min-width: 0; }
+.xgame-toast-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.xgame-toast-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* Inner padding gives focus rings on the first/leftmost items room
+     to breathe without getting clipped by the toast box. */
+  padding: 4px 4px 6px 4px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--wa-color-border-loud, #353841);
+  max-height: 200px;
+  overflow-y: auto;
+}
+.xgame-toast-list.hidden { display: none; }
+.xgame-toast-list-item { text-align: left; align-self: flex-start; }
+.xgame-toast .xgame-link {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+.xgame-toast .xgame-link:hover { color: var(--accent); filter: brightness(1.15); }
+.xgame-toast-arrow,
+.xgame-toast-x {
+  background: none;
+  border: 1px solid var(--wa-color-border-loud, #353841);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  cursor: pointer;
+  color: var(--muted);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.xgame-toast-arrow:hover,
+.xgame-toast-x:hover { color: var(--fg); }
+.xgame-toast-arrow wa-icon,
+.xgame-toast-x wa-icon { font-size: 0.7rem; }
 
 #engines-perspective {
   display: flex;
@@ -2561,13 +2647,20 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 body[data-ribbon-side="right"] #toast-stack {
   inset: auto 44px 16px auto;
 }
+body[data-ribbon-side="right"] #xgame-toast-stack {
+  inset: auto auto 16px 44px;
+}
 @media (max-width: 640px) {
   /* Ribbon is horizontal at top on mobile, so toasts don't need a side
-     gutter to clear it -- reset to a uniform 16px edge inset. */
-  #toast-stack {
+     gutter to clear it -- reset to a uniform 16px edge inset. xgame
+     stack collapses onto the same edge as the default stack since the
+     "moves-list side" distinction is desktop-only. */
+  #toast-stack,
+  #xgame-toast-stack {
     inset: auto auto 16px 16px;
   }
-  body[data-ribbon-side="right"] #toast-stack {
+  body[data-ribbon-side="right"] #toast-stack,
+  body[data-ribbon-side="right"] #xgame-toast-stack {
     inset: auto 16px 16px auto;
   }
 }

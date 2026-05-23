@@ -6,7 +6,7 @@
 // localStorage cache is metadata-only and used to render the dropdown
 // before the server responds. Cache is updated optimistically on validate.
 
-import { apiErrorDetail, showDialog } from "./dialogs.js";
+import { apiErrorDetail, apiErrorObject, showDialog, toast } from "./dialogs.js";
 
 // Format a summary dict {white, black, result, side_to_move, fen} into a
 // display string. `short: true` returns a compact form for tight UI (e.g.
@@ -300,6 +300,13 @@ export function showImportPositionDialog({ api }) {
           if (!recentsCache.length) recentSel.style.visibility = "hidden";
           api("DELETE", `/game/recent-imports/${removed.hash}`)
             .then(async () => {
+              // Notify other perspectives that recents changed so they
+              // can refresh derived state (e.g. play.js x-game info,
+              // for the fork glyph + banner). Bus-style decoupling so
+              // the dialog stays unaware of who is listening.
+              window.dispatchEvent(new CustomEvent("sturddle:recents-changed", {
+                detail: { deletedHash: removed.hash },
+              }));
               if (recentSel.querySelectorAll("wa-option").length >= RECENTS_DISPLAY_CAP) return;
               try {
                 const r = await api("GET", "/game/recent-imports");
@@ -317,7 +324,18 @@ export function showImportPositionDialog({ api }) {
               recentsCache = [removed, ...recentsCache];
               saveRecentsCache(recentsCache);
               renderRecents();
-              setStatus(apiErrorDetail(e), "err");
+              // Friendly toast for the "blocked by live forks" 409 case
+              // (xgame nav). Falls back to the generic error otherwise.
+              const obj = apiErrorObject(e);
+              if (obj?.error === "has_children") {
+                const n = Array.isArray(obj.children) ? obj.children.length : 0;
+                const msg = n === 1
+                  ? "Cannot delete: this game has 1 forked variation."
+                  : `Cannot delete: this game has ${n} forked variations.`;
+                toast(msg, { variant: "warning" });
+              } else {
+                setStatus(apiErrorDetail(e), "err");
+              }
             });
         });
         return opt;
