@@ -9,7 +9,7 @@ const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
 // Clock-row name cap: largest value that fits beside the clock on the
 // narrowest desktop board (~400px at the 800px viewport breakpoint).
-const MAX_CLOCK_NAME_DESKTOP = 32;
+const MAX_CLOCK_NAME_DESKTOP = 48;
 const MAX_CLOCK_NAME_MOBILE = 24;
 
 function fmtClock(seconds) {
@@ -572,11 +572,17 @@ export function mountGameView(container, opts = {}) {
   function setNames({ top, bottom } = {}) {
     if (top !== undefined) {
       names.top = top;
-      if (clockTopName) clockTopName.textContent = _truncName(top);
+      if (clockTopName) {
+        clockTopName.textContent = _truncName(top);
+        clockTopName.title = top || "";
+      }
     }
     if (bottom !== undefined) {
       names.bottom = bottom;
-      if (clockBottomName) clockBottomName.textContent = _truncName(bottom);
+      if (clockBottomName) {
+        clockBottomName.textContent = _truncName(bottom);
+        clockBottomName.title = bottom || "";
+      }
     }
   }
 

@@ -992,11 +992,20 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   color: inherit;
   font-family: var(--wa-font-family-body);
 }
+/* Play/view mode: let name take all available space; CSS truncates. */
+.game-view-board .clock-row .clock-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .clock-row .clock-time {
   font-size: 1.375rem;
   font-weight: 600;
   letter-spacing: 0.5px;
   color: inherit;
+  flex-shrink: 0;
 }
 
 #board-controls {
