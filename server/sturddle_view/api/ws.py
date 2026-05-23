@@ -7,14 +7,19 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
 from ..auth import AUTH_COOKIE, check_token_value, origin_ok
-from ..events import Event, EventBus
+from ..events import SESSION_EPOCH, Event, EventBus
 
 router = APIRouter()
 log = logging.getLogger(__name__)
 
 
 def _event_to_json(event: Event) -> dict:
-    return {"kind": event.kind, "game_id": event.game_id, "payload": event.payload}
+    return {
+        "kind": event.kind,
+        "game_id": event.game_id,
+        "payload": event.payload,
+        "session_epoch": SESSION_EPOCH,
+    }
 
 
 def _ws_presented_token(websocket: WebSocket) -> str | None:

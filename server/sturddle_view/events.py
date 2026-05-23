@@ -7,8 +7,16 @@ agents are first-class consumers + producers via the same bus.
 from __future__ import annotations
 
 import asyncio
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Literal
+
+
+# Stable for the lifetime of this process. Emitted on every outgoing
+# event so the client can detect a server restart and reload, dropping
+# stale UI state (view-mode cursor, dismissed toasts, edit drafts) that
+# the new server session can't possibly honor.
+SESSION_EPOCH = uuid.uuid4().hex
 
 
 EventKind = Literal[
