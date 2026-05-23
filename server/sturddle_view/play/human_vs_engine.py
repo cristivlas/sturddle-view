@@ -2204,7 +2204,8 @@ class HumanVsEngine:
 
         Carries the stashed fork link so a forked play game saved
         before finalization still records its parent_game_id + fork_ply.
-        The link is consumed; the live ``_fork_link`` is cleared.
+        The link is consumed on success only; on write failure it stays
+        live so a later finalization can still establish it.
 
         Returns the new hash, or ``None`` when there is nothing to save
         (no game, no moves, no recents store). View-mode games are
@@ -2233,7 +2234,6 @@ class HumanVsEngine:
             summary = self._play_summary(white=white, black=black, result=None)
             game_id = self._game_id
             fork_link = self._fork_link
-            self._fork_link = None
         log.info(
             "xgame.export_to_recents proceeding game_id=%s fork_link=%s",
             game_id, fork_link,
@@ -2245,16 +2245,23 @@ class HumanVsEngine:
         old_hash = self._recents.hash_for_id(game_id)
         try:
             if old_hash is None:
-                return await self._recents.save(
+                result = await self._recents.save(
                     fmt="pgn", text=pgn_text, summary=summary,
                     game_id=game_id,
                     parent_game_id=parent_game_id, fork_ply=fork_ply,
                 )
-            return await self._recents.replace_at(
-                old_hash=old_hash, fmt="pgn",
-                text=pgn_text, summary=summary, game_id=game_id,
-                parent_game_id=parent_game_id, fork_ply=fork_ply,
-            )
+            else:
+                result = await self._recents.replace_at(
+                    old_hash=old_hash, fmt="pgn",
+                    text=pgn_text, summary=summary, game_id=game_id,
+                    parent_game_id=parent_game_id, fork_ply=fork_ply,
+                )
         except Exception:
             log.exception("could not export play game to recents")
             return None
+        # Consume the link only after the write succeeded; on failure
+        # leave it in place so a later finalization can still record it.
+        async with self._lock:
+            if self._fork_link == fork_link:
+                self._fork_link = None
+        return result
