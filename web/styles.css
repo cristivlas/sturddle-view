@@ -1658,6 +1658,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .settings-row wa-input,
 .settings-row wa-select {
   width: 100%;
+  --wa-form-control-value-line-height: 1.4;
 }
 /* Value + unit pair (e.g. time control). Total width matches the other
    single-control rows (max-width: 360px from .settings-row). */
