@@ -159,6 +159,10 @@ to OpenAI function-call format on the wire.
 ### Settings tab "Analysis"
 
 Flat:
+- **Use AI analysis** toggle (label TBD) — master switch. Off: ribbon
+  Analyze buttons run engine-only (today's behavior). On: ribbon
+  Analyze buttons run engine + AI; mode/state selects path 1/2/3.
+  No per-click AI toggle and no new ribbon buttons.
 - Provider (Anthropic / Ollama)
 - Model (free-form or dropdown TBD per provider)
 - Provider-specific credentials:

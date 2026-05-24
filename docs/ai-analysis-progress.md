@@ -163,10 +163,31 @@ Tests:
   early iteration. Path 3 layers per-ply emission and PGN write on top.
 - `apply_comment` helper extraction may land on `main` first and rebase
   into this branch; treat as a soft dependency, not a blocker.
-- Agent loop lives in its own coordinator module (e.g.,
-  `play/ai_analysis.py`), composed by the play perspective alongside
-  `HumanVsEngine` — not as additional methods on it. Mirrors how
-  `TablebaseProber` and `OpeningBook` sit alongside rather than inside.
+- File placement (locked):
+  - **Server coordinator:** new `server/sturddle_view/play/ai_analysis.py`
+    holds the `AIAnalysisCoordinator` class; composed by the play
+    perspective alongside `HumanVsEngine` (not methods on it). Mirrors
+    `TablebaseProber` / `OpeningBook` siblings.
+  - **Server providers:** new package `server/sturddle_view/llm/` with
+    `base.py`, `anthropic.py`, `ollama.py`. Lifted/adapted from
+    cluesmith.
+  - **Events:** add `ai_info` (prose stream) and `ai_annotation`
+    (per-ply record) to `events.py` `EventKind`. The pre-existing
+    `agent_annotation` kind is *not* reused — it serves external REST
+    agents (`api/agent.py`) with a different lifecycle.
+  - **Client panel:** new `web/app/play-ai-window.js`, mirrors
+    `play-commentary-window.js` (same `createDockableWindow` factory).
+    `play.js` wires open/close + event subscription.
+- Ribbon buttons (locked):
+  - **No new buttons.** Existing `#analyze` (play mode) and
+    `#view-analyze` (view mode) in `web/app/perspectives/play.js` are
+    reused as-is.
+  - **One Settings toggle** ("Use AI analysis" — exact label TBD)
+    selects engine-only vs. engine+AI behavior. Off = today's behavior
+    unchanged. On = engine + AI (engine remains source of truth).
+  - **Mode/state still picks the path** (1 = play in-progress,
+    2 = view navigating, 3 = post-game / analyze-all). Same button,
+    different downstream pipeline per (mode, game_state).
 
 ## Notes
 
