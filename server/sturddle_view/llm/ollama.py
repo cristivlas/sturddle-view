@@ -21,6 +21,7 @@ from typing import Any, AsyncIterator
 import httpx
 
 from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
+from .transcript import Transcript
 
 
 log = logging.getLogger(__name__)
@@ -105,23 +106,48 @@ def messages_anthropic_to_openai(messages: list[Message]) -> list[dict]:
     return out
 
 
+class MalformedToolArgumentsError(RuntimeError):
+    """The model's accumulated tool_call.arguments is not valid JSON.
+
+    Carries the raw string so callers / transcripts can surface what the
+    model actually produced. This is the seam where a future JSON-repair
+    pass would hook in.
+    """
+    def __init__(self, tool_name: str, raw_arguments: str, parse_error: str) -> None:
+        super().__init__(
+            f"ollama: tool {tool_name!r} arguments are not valid JSON "
+            f"({parse_error}); raw={raw_arguments!r}"
+        )
+        self.tool_name = tool_name
+        self.raw_arguments = raw_arguments
+        self.parse_error = parse_error
+
+
 def openai_tool_call_to_provider_chunk(tool_call: dict) -> ProviderChunk:
     """Accumulated OpenAI tool_call (from streamed deltas) -> Anthropic
-    tool_use ProviderChunk. Caller is responsible for accumulating the
-    streamed delta fragments before invoking this."""
+    tool_use ProviderChunk.
+
+    Raises `MalformedToolArgumentsError` on bad JSON rather than silently
+    coercing to `{}` -- a model that emits broken JSON is a real problem,
+    and silently passing `{}` to the tool just hides it. The transcript
+    will have already captured the raw byte trail.
+    """
     fn = tool_call.get("function", {}) or {}
+    tool_name = fn.get("name", "") or ""
     args_raw = fn.get("arguments", "")
     if args_raw:
         try:
             args = json.loads(args_raw)
-        except json.JSONDecodeError:
-            args = {}
+        except json.JSONDecodeError as exc:
+            raise MalformedToolArgumentsError(
+                tool_name=tool_name, raw_arguments=args_raw, parse_error=str(exc),
+            ) from exc
     else:
         args = {}
     return ProviderChunk(
         kind="tool_use",
         tool_use_id=tool_call.get("id", "") or "",
-        tool_name=fn.get("name", "") or "",
+        tool_name=tool_name,
         tool_input=args,
     )
 
@@ -139,6 +165,9 @@ class OllamaProvider(LLMProvider):
         system: str,
         messages: list[Message],
         tools: list[ToolWireSpec] | None = None,
+        *,
+        transcript: Transcript | None = None,
+        round_index: int = 0,
     ) -> AsyncIterator[ProviderChunk]:
         # Assemble OpenAI-shaped request. System prompt is a separate
         # first message in OpenAI's API; coordinator passes it as a
@@ -156,6 +185,8 @@ class OllamaProvider(LLMProvider):
         if tools:
             body["tools"] = tools_anthropic_to_openai(tools)
 
+        await self._tx_request(transcript, round_index, body)
+
         url = f"{self._base_url}/v1/chat/completions"
         # Per-line accumulator for tool_call deltas: id+name arrive once
         # near the start, arguments stream as a concatenated string.
@@ -171,12 +202,16 @@ class OllamaProvider(LLMProvider):
             ) as resp:
                 if resp.status_code != 200:
                     detail = (await resp.aread()).decode("utf-8", errors="replace")[:500]
+                    await self._tx_wire(transcript, round_index, f"HTTP {resp.status_code}: {detail}")
                     raise RuntimeError(
                         f"ollama API error {resp.status_code}: {detail}"
                     )
                 async for line in resp.aiter_lines():
                     if not line:
                         continue
+                    # Capture every raw line BEFORE parsing so a crash
+                    # downstream still leaves the byte trail behind.
+                    await self._tx_wire(transcript, round_index, line)
                     # OpenAI SSE: each chunk is "data: {...}". A
                     # terminal "data: [DONE]" marks end of stream.
                     if not line.startswith("data:"):
@@ -186,9 +221,10 @@ class OllamaProvider(LLMProvider):
                         continue
                     try:
                         evt = json.loads(payload)
-                    except json.JSONDecodeError:
-                        log.warning("ollama: malformed SSE payload, skipping")
-                        continue
+                    except json.JSONDecodeError as exc:
+                        raise RuntimeError(
+                            f"ollama: malformed SSE payload: {payload!r} ({exc})"
+                        ) from exc
                     choices = evt.get("choices") or []
                     if not choices:
                         continue

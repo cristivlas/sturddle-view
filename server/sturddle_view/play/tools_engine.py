@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 _DEFAULT_MAX_TIME_MS = 5_000
 _DEFAULT_MAX_DEPTH = 30
 # Hard caps -- the agent can request anything, but we clamp to these.
-# UI exposure (Phase 4 Advanced collapsible) lets the user raise them.
+# The env override is for ops; UI exposure is pending.
 MAX_TIME_MS = int(os.environ.get("SV_AI_ANALYZE_MAX_TIME_MS", _DEFAULT_MAX_TIME_MS))
 MAX_DEPTH = int(os.environ.get("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_MAX_DEPTH))
 
@@ -50,10 +50,14 @@ AnalyzeTool = Callable[..., Awaitable[dict[str, Any]]]
 ANALYZE_TOOL_SPEC = ToolSpec(
     name="analyze",
     description=(
-        "Run an engine search on a position. Returns a structured eval "
-        "(score_cp or mate, depth, pv, bestmove). Hard caps apply to "
-        "time_ms and depth -- requests above the cap are clamped, not "
-        "rejected."
+        "Run an engine search on a position. Returns a structured eval. "
+        "Evaluation fields are white-POV: score_cp (centipawns, int), "
+        "score_pawns (pawn units, float -- score_cp / 100), score_text "
+        "(presentation string, e.g. '+0.02' or '+M3'), mate (signed "
+        "plies-to-mate when present). Use score_text for prose; use "
+        "score_cp for any arithmetic. Also returns depth, pv, bestmove. "
+        "Hard caps apply to time_ms and depth -- requests above the cap "
+        "are clamped, not rejected."
     ),
     input_schema={
         "type": "object",
@@ -109,15 +113,23 @@ def _clamp_limits(input_: dict) -> tuple[chess.engine.Limit, dict]:
 
 
 def _score_to_cp(score: chess.engine.PovScore | None) -> dict:
-    """Normalize a python-chess PovScore into wire fields. Mate is
-    surfaced as `mate` (signed plies); regular evals as `score_cp` (white
-    POV centipawns). Both can appear in the same record (cp from the
-    last sub-mate info, mate flag set by the final info).
+    """Normalize a python-chess PovScore into wire fields.
 
-    POV: white-relative (positive = white better) regardless of who is
-    to move. Matches view-mode convention and ignores `play_eval_pov`
-    -- the AI agent shows the same numbers the engine panel does in
-    view mode; user-relative flipping is a play-side concern."""
+    Surfaced fields:
+    - `score_cp`: raw centipawns, integer, white POV (positive = white
+      better). Authoritative numeric value.
+    - `score_pawns`: same value in pawn units, float to 2 decimals.
+      Belt-and-suspenders for LLM consumers that have been observed to
+      treat `score_cp` as pawns (a 100x interpretation error). Exposing
+      both removes the ambiguity at the wire.
+    - `score_text`: presentation-ready string, e.g. "+0.02", "-1.45",
+      or "mate in 3". Drop-in for prose so the model does not have to
+      do arithmetic.
+    - `mate`: signed plies-to-mate when present (overrides cp meaning).
+
+    POV: white-relative regardless of side to move. Matches the view-mode
+    convention; user-relative flipping is a play-side concern.
+    """
     if score is None:
         return {}
     s = score.white()
@@ -125,9 +137,17 @@ def _score_to_cp(score: chess.engine.PovScore | None) -> dict:
     cp = s.score(mate_score=None)
     if cp is not None:
         out["score_cp"] = cp
+        out["score_pawns"] = round(cp / 100.0, 2)
+        out["score_text"] = f"{cp / 100.0:+.2f}"
     mate = s.mate()
     if mate is not None:
         out["mate"] = mate
+        # Mate beats cp for the human-readable string. python-chess uses
+        # signed plies, but coaching prose works better in moves: "mate
+        # in 3" reads cleaner than "mate in 6 plies".
+        sign = "+" if mate > 0 else "-"
+        moves = (abs(mate) + 1) // 2
+        out["score_text"] = f"{sign}M{moves}"
     return out
 
 

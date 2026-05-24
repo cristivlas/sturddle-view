@@ -338,6 +338,13 @@ def create_app(
     ai_registry.register(ANALYZE_TOOL_SPEC, make_analyze_tool(_ai_engine_launcher))
     app.state.ai_tool_registry = ai_registry
 
+    # SV_AI_DEBUG=1: flip the AI loggers to DEBUG so the system prompt,
+    # user message, text deltas, and tool calls are visible. Off by
+    # default; meant to be set when diagnosing a misbehaving model.
+    if os.environ.get("SV_AI_DEBUG") == "1":
+        logging.getLogger("sturddle_view.llm").setLevel(logging.DEBUG)
+        logging.getLogger("sturddle_view.play.ai_analysis").setLevel(logging.DEBUG)
+
     def _ai_provider_factory() -> LLMProvider:
         s = app.state.settings
         provider_name = (s.ai_provider or "").lower()

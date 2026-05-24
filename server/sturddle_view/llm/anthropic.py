@@ -1,12 +1,15 @@
-"""Anthropic provider stub. Real streaming + tool-use body lands in a
-later Phase 0 cycle; constructor signature is locked now so the rest of
-the system can target it.
+"""Anthropic provider stub.
+
+Constructor signature is locked so callers (provider factory, settings
+plumbing) can target it; the real streaming + tool-use body raises
+NotImplementedError until wired up.
 """
 from __future__ import annotations
 
 from typing import AsyncIterator
 
 from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
+from .transcript import Transcript
 
 
 class AnthropicProvider(LLMProvider):
@@ -19,6 +22,9 @@ class AnthropicProvider(LLMProvider):
         system: str,
         messages: list[Message],
         tools: list[ToolWireSpec] | None = None,
+        *,
+        transcript: Transcript | None = None,
+        round_index: int = 0,
     ) -> AsyncIterator[ProviderChunk]:
         raise NotImplementedError("Anthropic provider not yet implemented")
         yield  # pragma: no cover - marks this as an async generator

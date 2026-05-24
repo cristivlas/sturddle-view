@@ -1,22 +1,27 @@
-"""Slice C: `analyze` tool tests.
+"""`analyze` tool tests.
 
 Happy path uses a real subprocess running a Python UCI fake
 (`make_searching_fake_uci`) that answers `go` with a canned `info` +
 `bestmove`. Real chess.engine plumbing; no mocks at the protocol
 boundary. Error paths use lightweight stubs where a subprocess would
 add no signal.
+
+Direct unit tests on `_score_to_cp` at the bottom pin the LLM-facing
+wire shape (cp / pawns / score_text / mate) without spawning anything.
 """
 from __future__ import annotations
 
 import asyncio
 from pathlib import Path
 
+import chess
+from chess.engine import Cp, Mate, PovScore
 import pytest
 
 from sturddle_view.events import EventBus
 from sturddle_view.llm.cancel import CancelToken
-from sturddle_view.play.tools_engine import make_analyze_tool
 from sturddle_view.play.engine_supervisor import EngineSupervisor
+from sturddle_view.play.tools_engine import _score_to_cp, make_analyze_tool
 
 from .conftest import make_searching_fake_uci
 
@@ -48,6 +53,10 @@ async def test_analyze_returns_eval_pv_depth_for_known_position(tmp_path: Path):
     # best move convenience field, no error.
     assert "error" not in out, out
     assert out["score_cp"] == 42
+    # Pawn-units + presentation string accompany score_cp so the LLM
+    # has zero room to misinterpret centipawns as pawns.
+    assert out["score_pawns"] == 0.42
+    assert out["score_text"] == "+0.42"
     assert out["depth"] == 8
     assert isinstance(out["pv"], list)
     assert out["pv"][0] == "e2e4"
@@ -140,3 +149,45 @@ async def test_analyze_cancel_returns_cancelled_marker(tmp_path: Path):
 
     assert out.get("cancelled") is True
     assert "score_cp" in out  # info chunk was captured before the stop
+
+
+# ---------- _score_to_cp wire-shape unit tests --------------------------
+# Direct tests so each presentation-format branch is pinned without
+# spawning an engine. The wire shape is the LLM's only source of truth
+# for evaluations -- silent regressions here cause the 100x cp/pawn
+# misread we shipped fixes for.
+
+
+def test_score_to_cp_white_advantage():
+    out = _score_to_cp(PovScore(Cp(45), chess.WHITE))
+    assert out["score_cp"] == 45
+    assert out["score_pawns"] == 0.45
+    assert out["score_text"] == "+0.45"
+    assert "mate" not in out
+
+
+def test_score_to_cp_black_advantage():
+    # Side-to-move = black, score from black's POV is +150 (black ahead).
+    # White POV must surface as -150 / -1.5.
+    out = _score_to_cp(PovScore(Cp(150), chess.BLACK))
+    assert out["score_cp"] == -150
+    assert out["score_pawns"] == -1.5
+    assert out["score_text"] == "-1.50"
+
+
+def test_score_to_cp_mate_for_white():
+    # 5 plies = mate in 3 (plies/2 rounded up).
+    out = _score_to_cp(PovScore(Mate(5), chess.WHITE))
+    assert out["mate"] == 5
+    assert out["score_text"] == "+M3"
+
+
+def test_score_to_cp_mate_against_white():
+    # Black mates white in 2 (4 plies, side-to-move is white).
+    out = _score_to_cp(PovScore(Mate(-4), chess.WHITE))
+    assert out["mate"] == -4
+    assert out["score_text"] == "-M2"
+
+
+def test_score_to_cp_none_returns_empty():
+    assert _score_to_cp(None) == {}

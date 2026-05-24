@@ -1,17 +1,16 @@
 """Scripted provider for agent-loop tests.
 
-Phase 1 promotes `CannedProvider` (text-only) to `ScriptedProvider`
-(text + tool_use). Each `stream()` call consumes one pre-scripted round
-from the queue. Tests pass a list of rounds and assert the runner's
-behavior across them -- text emission, tool dispatch, tool_result
-re-injection into the next round's messages.
+Each `stream()` call consumes one pre-scripted round from a queue --
+text-only rounds and rounds carrying tool_use are both supported. Tests
+pass a list of rounds and assert the runner's behavior across them:
+text emission, tool dispatch, tool_result re-injection into the next
+round's messages.
 
 Why a separate class rather than extending CannedProvider:
-- Phase 0 tests pin the no-tool behavior; mixing tool_use into
-  CannedProvider blurs the contract.
-- ScriptedProvider is stateful (consumes one round per call). Canned is
-  stateless (replays the same chunks every call). Keeping them separate
-  makes the difference loud.
+- CannedProvider is stateless (replays the same chunks on every call)
+  and text-only; tests of the no-tool path pin that contract.
+- ScriptedProvider is stateful (one round per call) and supports
+  tool_use. Keeping them separate makes the difference loud.
 """
 from __future__ import annotations
 
@@ -19,6 +18,7 @@ from collections import deque
 from typing import AsyncIterator, Iterable
 
 from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
+from .transcript import Transcript
 
 
 class ScriptedProvider(LLMProvider):
@@ -49,6 +49,9 @@ class ScriptedProvider(LLMProvider):
         system: str,
         messages: list[Message],
         tools: list[ToolWireSpec] | None = None,
+        *,
+        transcript: Transcript | None = None,
+        round_index: int = 0,
     ) -> AsyncIterator[ProviderChunk]:
         self._stream_calls += 1
         # Deep-copy messages so a later mutation by the runner can't

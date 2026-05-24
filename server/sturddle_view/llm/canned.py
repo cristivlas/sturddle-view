@@ -1,4 +1,4 @@
-"""Hardcoded-response provider for the walking-skeleton spike and tests.
+"""Hardcoded-response provider.
 
 First-class repo citizen, not throwaway: hardens the abstraction boundary
 and lets the agent + transport + UI run end-to-end with no network and
@@ -11,12 +11,14 @@ import asyncio
 from typing import AsyncIterator, Sequence
 
 from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
+from .transcript import Transcript
 
 
 SKELETON_CHUNKS: tuple[str, ...] = (
-    "Walking skeleton: this prose is canned.\n\n",
-    "The full pipeline is live -- provider, coordinator, websocket bus, ",
-    "panel rendering -- but no real LLM call happens yet.\n",
+    "Canned provider response: the LLM backend is not wired in for ",
+    "this turn.\n\n",
+    "Provider, coordinator, websocket bus, and panel rendering are all ",
+    "live; only the model call is stubbed.\n",
 )
 
 
@@ -29,6 +31,9 @@ class CannedProvider(LLMProvider):
         system: str,
         messages: list[Message],
         tools: list[ToolWireSpec] | None = None,
+        *,
+        transcript: Transcript | None = None,
+        round_index: int = 0,
     ) -> AsyncIterator[ProviderChunk]:
         for chunk in self._chunks:
             yield ProviderChunk(kind="text", text=chunk)

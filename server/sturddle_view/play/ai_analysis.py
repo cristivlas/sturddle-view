@@ -1,14 +1,12 @@
 """AI analysis coordinator.
 
-Owns the LLM session for the live play path (path 1 in the spec). Drains
-the provider's chunk stream onto the websocket event bus as `ai_info`
-events. Path 2/3 (view, post-game) layer onto this in later phases.
+Owns the LLM session for live play. Drains the provider's chunk stream
+onto the websocket event bus as `ai_info` events.
 
-Slice B scope: real multi-turn agent loop. Each round = one
-provider.stream() call. On a tool_use chunk the coordinator dispatches
-via the registry, appends assistant + tool_result messages, and runs
-another round. Bounded by MAX_TOOL_ROUNDS so a stuck model can't burn
-budget forever.
+Runs a multi-turn agent loop: each round = one `provider.stream()` call.
+On a tool_use chunk the coordinator dispatches via the registry, appends
+assistant + tool_result messages, and runs another round. Bounded by
+MAX_TOOL_ROUNDS so a stuck model can't burn budget forever.
 """
 from __future__ import annotations
 
@@ -18,7 +16,16 @@ import logging
 import os
 
 from ..events import Event, EventBus
-from ..llm import LLMProvider, Message, ProviderChunk, ToolRegistry, UnknownToolError
+from ..llm import (
+    LLMProvider,
+    Message,
+    PromptMode,
+    ProviderChunk,
+    ToolRegistry,
+    UnknownToolError,
+    assemble_system_prompt,
+    open_transcript,
+)
 from ..llm.cancel import CancelToken
 
 
@@ -26,8 +33,7 @@ log = logging.getLogger(__name__)
 
 
 # Cap on agent loop rounds per turn (spec §Guardrails: "Tool call cap
-# per agent turn"). The env override is for ops; UI exposure lands in
-# Phase 4 (Advanced collapsible).
+# per agent turn"). The env override is for ops; UI exposure is pending.
 _DEFAULT_MAX_TOOL_ROUNDS = 8
 MAX_TOOL_ROUNDS = int(os.environ.get("SV_AI_MAX_TOOL_ROUNDS", _DEFAULT_MAX_TOOL_ROUNDS))
 
@@ -98,6 +104,8 @@ class AIAnalysisCoordinator:
         *,
         game_id: str | None = None,
         provider: LLMProvider | None = None,
+        mode: PromptMode = "coach",
+        user_message: str | None = None,
     ) -> None:
         """Run one analysis turn end-to-end.
 
@@ -106,88 +114,100 @@ class AIAnalysisCoordinator:
         returns without a tool_use or MAX_TOOL_ROUNDS is reached. Emits
         a terminal ai_info event on every exit path so the UI never
         hangs.
+
+        `user_message` carries the game context (FEN + SAN history) the
+        agent needs to actually analyze something. Built by the caller
+        (`api/ai.py` for live play) via `build_initial_user_message`.
+        None falls back to an empty user message for tests that don't
+        care about position context.
         """
         active = provider or self._provider
+        system_prompt = assemble_system_prompt(mode)
+        opening_user_content = user_message if user_message is not None else ""
         async with self._lock:
             self._task = asyncio.current_task()
             self._cancel_token = CancelToken()
-            # Slice B: empty user message; Slice D adds the prompt.
-            messages: list[Message] = [{"role": "user", "content": ""}]
+            messages: list[Message] = [{"role": "user", "content": opening_user_content}]
             tool_schemas = self._registry.schemas() or None
-            try:
-                round_cap_hit = True  # flipped to False on natural exit
-                for _round in range(MAX_TOOL_ROUNDS):
-                    round_chunks: list[ProviderChunk] = []
-                    pending_tool: ProviderChunk | None = None
-                    async for chunk in active.stream(
-                        system="",
-                        messages=messages,
-                        tools=tool_schemas,
-                    ):
-                        round_chunks.append(chunk)
-                        if chunk.kind == "text" and chunk.text:
-                            await self._bus.publish(
-                                Event(
-                                    kind="ai_info",
-                                    game_id=game_id,
-                                    payload={"delta": chunk.text},
+            done_payload: dict = {"done": True}
+            async with open_transcript() as transcript:
+                await transcript.turn_start({
+                    "mode": mode,
+                    "game_id": game_id,
+                    "provider": type(active).__name__,
+                    "tools": [t.get("name") for t in tool_schemas] if tool_schemas else [],
+                })
+                await transcript.system_prompt(system_prompt)
+                await transcript.user_message(opening_user_content)
+                try:
+                    round_cap_hit = True  # flipped to False on natural exit
+                    for round_index in range(MAX_TOOL_ROUNDS):
+                        round_chunks: list[ProviderChunk] = []
+                        pending_tool: ProviderChunk | None = None
+                        async for chunk in active.stream(
+                            system=system_prompt,
+                            messages=messages,
+                            tools=tool_schemas,
+                            transcript=transcript,
+                            round_index=round_index,
+                        ):
+                            round_chunks.append(chunk)
+                            await transcript.chunk(round_index, chunk)
+                            if chunk.kind == "text" and chunk.text:
+                                await self._bus.publish(
+                                    Event(
+                                        kind="ai_info",
+                                        game_id=game_id,
+                                        payload={"delta": chunk.text},
+                                    )
                                 )
-                            )
-                        elif chunk.kind == "tool_use":
-                            # In sequential mode (v1), a tool_use ends
-                            # the round; downstream chunks after it would
-                            # belong to the next round per Anthropic
-                            # semantics. We capture the call and break.
-                            pending_tool = chunk
+                            elif chunk.kind == "tool_use":
+                                # In sequential mode (v1), a tool_use ends
+                                # the round; downstream chunks after it
+                                # would belong to the next round per
+                                # Anthropic semantics. Capture and break.
+                                pending_tool = chunk
+                                break
+                        if pending_tool is None:
+                            round_cap_hit = False
                             break
-                    if pending_tool is None:
-                        # Round ended without tool_use -> turn complete.
-                        round_cap_hit = False
-                        break
-                    messages.append(_assistant_message(round_chunks))
-                    tool_output = await self._dispatch_tool(pending_tool)
-                    messages.append(
-                        _tool_result_message(pending_tool.tool_use_id, tool_output)
+                        messages.append(_assistant_message(round_chunks))
+                        tool_output = await self._dispatch_tool(pending_tool)
+                        await transcript.tool_result(
+                            round_index, pending_tool.tool_use_id, tool_output
+                        )
+                        messages.append(
+                            _tool_result_message(
+                                pending_tool.tool_use_id, tool_output
+                            )
+                        )
+                    if round_cap_hit:
+                        # Signal that the loop terminated on the guardrail
+                        # rather than reaching a natural answer; lets the
+                        # UI surface "stopped early; raise the tool-call
+                        # cap in Settings" if it wants to.
+                        done_payload["round_cap"] = True
+                except asyncio.CancelledError:
+                    done_payload["cancelled"] = True
+                    raise
+                except Exception as exc:
+                    # No silent failures: surface to the bus so the UI
+                    # exits its streaming state, then re-raise so the
+                    # task's done-callback can log details.
+                    log.exception("AI agent loop failed")
+                    done_payload["error"] = type(exc).__name__
+                    raise
+                finally:
+                    await transcript.turn_end(done_payload)
+                    await self._bus.publish(
+                        Event(
+                            kind="ai_info",
+                            game_id=game_id,
+                            payload=done_payload,
+                        )
                     )
-                done_payload: dict = {"done": True}
-                if round_cap_hit:
-                    # Signal that the loop terminated on the guardrail
-                    # rather than reaching a natural answer -- lets the
-                    # UI surface "stopped early; raise the tool-call cap
-                    # in Settings" if it wants to.
-                    done_payload["round_cap"] = True
-                await self._bus.publish(
-                    Event(
-                        kind="ai_info",
-                        game_id=game_id,
-                        payload=done_payload,
-                    )
-                )
-            except asyncio.CancelledError:
-                await self._bus.publish(
-                    Event(
-                        kind="ai_info",
-                        game_id=game_id,
-                        payload={"done": True, "cancelled": True},
-                    )
-                )
-                raise
-            except Exception as exc:
-                # No silent failures (spec §Error Handling). Surface to
-                # the bus so the UI exits its "streaming" state, and
-                # re-raise so the task's done-callback can log details.
-                log.exception("AI agent loop failed")
-                await self._bus.publish(
-                    Event(
-                        kind="ai_info",
-                        game_id=game_id,
-                        payload={"done": True, "error": type(exc).__name__},
-                    )
-                )
-                raise
-            finally:
-                self._task = None
-                self._cancel_token = None
+                    self._task = None
+                    self._cancel_token = None
 
     async def _dispatch_tool(self, call: ProviderChunk) -> dict:
         """Look up + invoke a tool. Unknown name or tool-raised exceptions

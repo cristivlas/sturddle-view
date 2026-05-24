@@ -1,18 +1,21 @@
 """Provider abstraction.
 
 One HTTP round per `stream()` call. The provider knows nothing about
-multi-turn assembly or tool execution -- those live in the coordinator
-(see `ai-analysis-progress.md` decision log for the rationale).
+multi-turn assembly or tool execution -- those live in the coordinator.
 
-Mock boundary for tests: `CannedProvider` (text-only, Phase 0) and
-`ScriptedProvider` (text + tool_use, Phase 1) -- both in sibling
-modules. We do NOT mock at the HTTP layer.
+The provider boundary is also the test mock boundary: `CannedProvider`
+(text-only) and `ScriptedProvider` (text + tool_use) live in sibling
+modules and let the coordinator be tested without HTTP. We do NOT mock
+at the HTTP layer.
 """
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Literal
+from typing import TYPE_CHECKING, Any, AsyncIterator, Literal
+
+if TYPE_CHECKING:
+    from .transcript import Transcript
 
 
 ChunkKind = Literal["text", "thinking", "tool_use"]
@@ -50,12 +53,44 @@ ToolWireSpec = dict[str, Any]
 
 
 class LLMProvider(ABC):
+    async def _tx_request(
+        self,
+        transcript: "Transcript | None",
+        round_index: int,
+        body: dict[str, Any],
+    ) -> None:
+        """Capture the request body about to go on the wire.
+
+        Centralized here so every provider's transcript story is the
+        same: same event label, same null-handling, same place to extend
+        when transcript schema evolves.
+        """
+        if transcript is not None:
+            await transcript.request(round_index, body)
+
+    async def _tx_wire(
+        self,
+        transcript: "Transcript | None",
+        round_index: int,
+        line: str,
+    ) -> None:
+        """Capture one raw line off the wire (parsed or not).
+
+        Called *before* the provider attempts to parse the line, so a
+        crash in parsing still leaves the byte trail behind.
+        """
+        if transcript is not None:
+            await transcript.wire_line(round_index, line)
+
     @abstractmethod
     def stream(
         self,
         system: str,
         messages: list[Message],
         tools: list[ToolWireSpec] | None = None,
+        *,
+        transcript: "Transcript | None" = None,
+        round_index: int = 0,
     ) -> AsyncIterator[ProviderChunk]:
         """Run one round and stream its chunks.
 
@@ -65,6 +100,12 @@ class LLMProvider(ABC):
           wire and does not mutate it.
         - `tools`: tool schemas the model may request; None when the
           coordinator runs without tools.
+        - `transcript`: optional sink for the request body and the raw
+          wire bytes coming back from the model. When None, the provider
+          does no transcript writes. The coordinator passes a
+          NullTranscript by default so subclasses never need to null-check.
+        - `round_index`: which round of the agent loop this call belongs
+          to (0-based). Carried into transcript labels.
 
         Subclasses MUST be cancel-safe -- a cancelled task on the
         consumer side must not leak provider state or HTTP connections.
