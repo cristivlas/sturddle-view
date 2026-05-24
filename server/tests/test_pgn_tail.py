@@ -83,6 +83,16 @@ def pgn_path(tmp_path) -> Path:
     return tmp_path / "games.pgn"
 
 
+def test_env_float_non_numeric_returns_default(monkeypatch):
+    """`_env_float` catches ValueError from float() on non-numeric env
+    var and falls back to default. Kills ExceptionReplacer mutations
+    on the `except ValueError` catch (which would let the parse error
+    propagate)."""
+    from sturddle_view.tournament.pgn_tail import _env_float
+    monkeypatch.setenv("SV_TEST_PGN_TAIL_BAD_FLOAT", "abc")
+    assert _env_float("SV_TEST_PGN_TAIL_BAD_FLOAT", 1.5) == 1.5
+
+
 def _write_pgn_text(path: Path, text: str) -> None:
     """Write PGN text with explicit `\\n`-only line endings.
 
