@@ -12,6 +12,27 @@ churns.
 - [!] blocked
 - [-] dropped
 
+## Implementation Methodology
+
+TDD with a walking skeleton.
+
+- **Walking skeleton first.** Day one: every layer end-to-end with the
+  shallowest possible stand-in at each — canned-response provider, no-op
+  agent loop, real websocket transport, real UI panel rendering a
+  hardcoded stream. No real LLM, no tools, no PGN context. The goal is
+  to exercise contracts between layers before any layer has substance.
+- **Then deepen layer-by-layer.** Each subsequent change replaces one
+  stand-in with the real thing (or adds one capability behind the same
+  contract): red test -> impl -> green -> commit. One Phase 0/1/2 item
+  per cycle.
+- **Stand-ins are first-class, not throwaway.** A canned provider, a
+  no-op tool, a stub event handler all stay in the repo as test
+  doubles. They harden the abstraction boundary and keep tests fast and
+  offline.
+- **Boundaries align with spec §Testing Principles.** Mock at the
+  provider abstraction (not HTTP); reuse engine test infra for the
+  `analyze` tool; canned LLM + canned engine for agent tests.
+
 ## Phasing Proposal
 
 Phases are roughly independent vertical slices. Each ends with something
@@ -142,6 +163,10 @@ Tests:
   early iteration. Path 3 layers per-ply emission and PGN write on top.
 - `apply_comment` helper extraction may land on `main` first and rebase
   into this branch; treat as a soft dependency, not a blocker.
+- Agent loop lives in its own coordinator module (e.g.,
+  `play/ai_analysis.py`), composed by the play perspective alongside
+  `HumanVsEngine` — not as additional methods on it. Mirrors how
+  `TablebaseProber` and `OpeningBook` sit alongside rather than inside.
 
 ## Notes
 
