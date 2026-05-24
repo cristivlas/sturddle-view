@@ -1702,6 +1702,80 @@ def test_sprt_logistic_exact_llr_three_wins_one_loss_one_draw(tmp_path):
     assert r.llr == pytest.approx(0.0693779, abs=1e-7)
 
 
+def test_sprt_logistic_exact_llr_with_nonzero_elo0(tmp_path):
+    """Same as the elo0=0 exact-LLR test but with elo0 != 0, so the
+    s0 = 1/(1+10^(-elo0/400)) computation depends on the base constant.
+    Kills NumberReplacer mutations on the `10.0` / `400.0` constants
+    in the s0 line (elo0=0 makes base-mutations equivalent because
+    `b^0 == 1` for any b)."""
+    import math as _m
+    w, l, d = 3, 1, 1
+    body = (
+        _game("A", "B", "1-0") * 3
+        + _game("A", "B", "0-1")
+        + _game("A", "B", "1/2-1/2")
+    )
+    p = _write_pgn(tmp_path, body)
+    r = _sprt(p, _params(elo0=-5.0, elo1=10.0, model="logistic"))
+
+    # Reference computation
+    n = w + l + d
+    d_obs = d / n
+    def _s(elo): return 1.0 / (1.0 + _m.pow(10.0, -elo / 400.0))
+    s0, s1 = _s(-5.0), _s(10.0)
+    pw0, pl0 = s0 - d_obs/2, 1.0 - s0 - d_obs/2
+    pw1, pl1 = s1 - d_obs/2, 1.0 - s1 - d_obs/2
+    expected = w*_m.log(pw1/pw0) + l*_m.log(pl1/pl0)
+    assert r.llr == pytest.approx(expected, abs=1e-9)
+
+
+def test_sprt_logistic_color_routing_engine_a_alphabetically_greater(tmp_path):
+    """Use engine_a lexicographically GREATER than engine_b so the
+    `white == a_name` and `black == a_name` checks would route the wrong
+    way under `<=` mutations (where 'a' <= 'b' is True but
+    'a' == 'b' is False). Pins the equality check (vs lexicographic <=)
+    on color routing via an EXACT LLR assertion (a direction-only
+    assertion would let the mutation through since both routings still
+    yield negative LLR for this fixture)."""
+    import math as _m
+    # A wins both games as white; Z's perspective: 0W 2L 0D.
+    body = _game("A", "Z", "1-0") + _game("A", "Z", "1-0")
+    p = _write_pgn(tmp_path, body)
+    r = compute_sprt(p, _params(elo0=0.0, elo1=5.0, model="logistic"),
+                     engine_a="Z", engine_b="A")
+    # Reference: w=0, l=2, d=0 from Z's perspective.
+    w, l, d = 0, 2, 0
+    n = w + l + d
+    d_obs = d / n
+    def _s(elo): return 1.0 / (1.0 + _m.pow(10.0, -elo / 400.0))
+    s0, s1 = _s(0.0), _s(5.0)
+    pw0, pl0 = s0 - d_obs/2, 1.0 - s0 - d_obs/2
+    pw1, pl1 = s1 - d_obs/2, 1.0 - s1 - d_obs/2
+    expected = w*_m.log(pw1/pw0) + l*_m.log(pl1/pl0)
+    assert r.llr == pytest.approx(expected, abs=1e-9)
+
+
+def test_sprt_logistic_color_routing_black_win_path(tmp_path):
+    """Mirror of the white-win color-routing test but exercising the
+    BLACK_WIN path's `if black == a_name` check. Pins it against
+    lexicographic-`<=` and `is` mutations."""
+    import math as _m
+    # A wins twice as BLACK; Z's perspective: 0W 2L 0D.
+    body = _game("Z", "A", "0-1") + _game("Z", "A", "0-1")
+    p = _write_pgn(tmp_path, body)
+    r = compute_sprt(p, _params(elo0=0.0, elo1=5.0, model="logistic"),
+                     engine_a="Z", engine_b="A")
+    w, l, d = 0, 2, 0
+    n = w + l + d
+    d_obs = d / n
+    def _s(elo): return 1.0 / (1.0 + _m.pow(10.0, -elo / 400.0))
+    s0, s1 = _s(0.0), _s(5.0)
+    pw0, pl0 = s0 - d_obs/2, 1.0 - s0 - d_obs/2
+    pw1, pl1 = s1 - d_obs/2, 1.0 - s1 - d_obs/2
+    expected = w*_m.log(pw1/pw0) + l*_m.log(pl1/pl0)
+    assert r.llr == pytest.approx(expected, abs=1e-9)
+
+
 def test_sprt_logistic_only_mismatched_games_returns_zero_llr(tmp_path):
     """All games involve a 3rd engine → n=0 → returns LLR=0, pairs=0.
     Kills NumberReplacer on the `llr=0.0` in the n==0 logistic branch."""
