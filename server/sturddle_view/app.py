@@ -30,7 +30,8 @@ from .api import ws as ws_api
 from .config import Settings
 from .engines import EngineRegistry, resolve_selected
 from .events import Event, EventBus
-from .llm import CannedProvider, ToolRegistry
+from .llm import CannedProvider, LLMProvider, ToolRegistry
+from .llm.ollama import OllamaProvider
 from .openings import OpeningBook
 from .play.ai_analysis import AIAnalysisCoordinator
 from .play.engine_supervisor import EngineSupervisor
@@ -92,6 +93,10 @@ class _OriginMiddleware(BaseHTTPMiddleware):
 # when a Job-killed proxy aborts mid-AcceptEx. Stock cpython closes the
 # listener — we re-arm instead and silence the orphan-task trace.
 _TRANSIENT_ACCEPT_WINERR = {64, 1236, 10054}  # NETNAME_DELETED, ABORTED, RST
+
+# Local Ollama daemon listens here by default; mirrored in the Settings
+# UI placeholder. Override via Settings > Analysis > Base URL.
+_DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 
 
 def _install_proactor_accept_resilience() -> None:
@@ -332,6 +337,21 @@ def create_app(
     ai_registry = ToolRegistry()
     ai_registry.register(ANALYZE_TOOL_SPEC, make_analyze_tool(_ai_engine_launcher))
     app.state.ai_tool_registry = ai_registry
+
+    def _ai_provider_factory() -> LLMProvider:
+        s = app.state.settings
+        provider_name = (s.ai_provider or "").lower()
+        if provider_name == "ollama":
+            return OllamaProvider(
+                base_url=(s.ai_base_url or _DEFAULT_OLLAMA_BASE_URL),
+                model=s.ai_model,
+            )
+        # Anthropic + any other selection fall back to the canned
+        # provider until their real bodies land. Selecting Anthropic
+        # in Settings today is dormant -- canned chunks flow either way.
+        return CannedProvider()
+
+    app.state.ai_provider_factory = _ai_provider_factory
     app.state.ai_coordinator = AIAnalysisCoordinator(
         app.state.event_bus, CannedProvider(), registry=ai_registry,
     )

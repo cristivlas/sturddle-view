@@ -226,6 +226,25 @@ def pytest_addoption(parser):
         default=False,
         help="Overwrite committed snapshot fixtures with current output.",
     )
+    # Real-Ollama opt-in for AI analysis integration tests. Default off
+    # so CI / normal runs skip the network. Model is required when the
+    # flag is set; base URL defaults to the local daemon.
+    parser.addoption(
+        "--ollama",
+        action="store_true",
+        default=False,
+        help="Run integration tests that talk to a real Ollama daemon.",
+    )
+    parser.addoption(
+        "--ollama-model",
+        default=None,
+        help="Model name to use when --ollama is set (e.g. qwen2.5:3b).",
+    )
+    parser.addoption(
+        "--ollama-base-url",
+        default="http://localhost:11434",
+        help="Base URL of the Ollama daemon when --ollama is set.",
+    )
 
 
 _E2E_DUMP_SCRIPT = """

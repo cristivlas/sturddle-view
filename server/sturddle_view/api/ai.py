@@ -44,9 +44,20 @@ async def start(request: Request) -> dict:
         raise HTTPException(status_code=400, detail="AI analysis is disabled in settings")
     coord = _coordinator(request)
     game_id = getattr(request.app.state.hve, "game_id", None) if request.app.state.hve else None
+    # Build the provider per turn so settings changes (model, base URL,
+    # API key) flow through without a coordinator rebuild. Not in the
+    # hot path -- happens once per AI turn.
+    factory = getattr(request.app.state, "ai_provider_factory", None)
+    if factory is None:
+        raise HTTPException(status_code=503, detail="AI provider factory not initialized")
+    try:
+        provider = factory()
+    except Exception as e:
+        log.exception("AI provider factory failed")
+        raise HTTPException(status_code=500, detail=f"AI provider error: {e}") from e
     # Pin the task on app.state so the event loop holds a strong ref --
     # asyncio GC can otherwise reap an unreferenced task mid-flight.
-    task = asyncio.create_task(coord.run(game_id=game_id))
+    task = asyncio.create_task(coord.run(game_id=game_id, provider=provider))
     task.add_done_callback(_log_task_exception)
     request.app.state.ai_task = task
     return {"ok": True}
