@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import AsyncIterator
 
-from .base import LLMProvider, Message, ProviderChunk, ToolSpec
+from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
 
 
 class AnthropicProvider(LLMProvider):
@@ -18,7 +18,7 @@ class AnthropicProvider(LLMProvider):
         self,
         system: str,
         messages: list[Message],
-        tools: list[ToolSpec] | None = None,
+        tools: list[ToolWireSpec] | None = None,
     ) -> AsyncIterator[ProviderChunk]:
         raise NotImplementedError("Anthropic provider not yet implemented")
         yield  # pragma: no cover - marks this as an async generator

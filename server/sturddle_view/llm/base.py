@@ -37,7 +37,16 @@ class ProviderChunk:
 
 
 Message = dict[str, Any]
-ToolSpec = dict[str, Any]
+# Wire-shape tool schema as sent to the provider. Canonical shape is
+# Anthropic's: {name, description, input_schema}. Spec §Providers locks
+# this choice -- Ollama's provider translates to OpenAI's function-call
+# format ({"type": "function", "function": {name, description, parameters}})
+# on the wire. The same translation applies to tool_use blocks in
+# responses and tool_result messages on the way back up.
+#
+# Structured ToolSpec lives in llm/tools.py; ToolRegistry.schemas()
+# exports to this canonical (Anthropic) shape.
+ToolWireSpec = dict[str, Any]
 
 
 class LLMProvider(ABC):
@@ -46,7 +55,7 @@ class LLMProvider(ABC):
         self,
         system: str,
         messages: list[Message],
-        tools: list[ToolSpec] | None = None,
+        tools: list[ToolWireSpec] | None = None,
     ) -> AsyncIterator[ProviderChunk]:
         """Run one round and stream its chunks.
 

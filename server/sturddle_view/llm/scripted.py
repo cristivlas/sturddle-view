@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections import deque
 from typing import AsyncIterator, Iterable
 
-from .base import LLMProvider, Message, ProviderChunk, ToolSpec
+from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
 
 
 class ScriptedProvider(LLMProvider):
@@ -48,7 +48,7 @@ class ScriptedProvider(LLMProvider):
         self,
         system: str,
         messages: list[Message],
-        tools: list[ToolSpec] | None = None,
+        tools: list[ToolWireSpec] | None = None,
     ) -> AsyncIterator[ProviderChunk]:
         self._stream_calls += 1
         # Deep-copy messages so a later mutation by the runner can't

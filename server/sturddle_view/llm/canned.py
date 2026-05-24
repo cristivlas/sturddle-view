@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from typing import AsyncIterator, Sequence
 
-from .base import LLMProvider, Message, ProviderChunk, ToolSpec
+from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
 
 
 SKELETON_CHUNKS: tuple[str, ...] = (
@@ -28,7 +28,7 @@ class CannedProvider(LLMProvider):
         self,
         system: str,
         messages: list[Message],
-        tools: list[ToolSpec] | None = None,
+        tools: list[ToolWireSpec] | None = None,
     ) -> AsyncIterator[ProviderChunk]:
         for chunk in self._chunks:
             yield ProviderChunk(kind="text", text=chunk)

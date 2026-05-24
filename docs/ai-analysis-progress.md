@@ -226,8 +226,31 @@ Tests:
 - [ ] Decide AI panel exact placement (pin engine, scroll AI - revisit)
 - [ ] Iterate prompt at end of Phase 2 and again after Phase 3
 - [ ] Add `feedback_no_magic_numbers` consts for every new env var
+- [ ] Surface `SV_AI_MAX_TOOL_ROUNDS` in Settings > Analysis > Advanced
+      (Phase 4): the tool-call cap belongs alongside the other token /
+      time caps. Server-side const + env override already in place
+      (`ai_analysis.MAX_TOOL_ROUNDS`).
 
 ## Bugs
+
+Slice-B-deferred:
+
+- **Thinking-chunk handling in `_assistant_message` is wrong.** When the
+  Anthropic provider emits `kind="thinking"` chunks, the coordinator
+  collapses their text into the same `{type:"text"}` block as normal
+  text. Anthropic's wire shape expects a separate
+  `{"type": "thinking", "thinking": "..."}` block. Fix when wiring real
+  Anthropic provider. Note: extended thinking is opt-in (a request
+  param) -- we can ship Anthropic without it and add later, in which
+  case this code path stays dormant.
+- **Round-cap signal not surfaced in UI.** Server emits
+  `ai_info {done: true, round_cap: true}` when the loop terminates on
+  the guardrail; client currently only honors `done` + `cancelled`. UI
+  toast / panel marker = Phase 5 (Error UX).
+- **Tool registry isn't wired into `app.py`.** `create_app` passes only
+  `(bus, provider)`, so the production coordinator has an empty
+  registry and can't dispatch any tools. Real wire-up + the first tool
+  (`analyze`) is Slice C.
 
 Skeleton-deferred (filed during Phase 0 walking-skeleton review; fine for
 the canned-provider spike, must land before the feature is user-facing):
@@ -255,6 +278,19 @@ Once a feature ships and a decision proves load-bearing across multiple
 phases, lift it into `ai-analysis-spec.md` so the spec stays the
 authoritative architecture record.
 
+- **Canonical tool wire shape = Anthropic** (decided 2026-05-23, Phase 1
+  Slice B; ratifies spec §Providers).
+  - `ToolRegistry.schemas()` exports
+    `{name, description, input_schema}` -- the Anthropic shape -- and
+    that's what providers receive in `tools=[...]`.
+  - Ollama provider is responsible for translating to OpenAI's
+    function-call shape
+    (`{"type": "function", "function": {name, description, parameters}}`)
+    on the wire. Same translation applies in both directions to
+    `tool_use` chunks and `tool_result` blocks.
+  - Alternative (neutral internal shape, each provider serializes) was
+    rejected: extra code with no payoff while Anthropic is the lead
+    provider and we want zero translation cost on the happy path.
 - **Multi-round agent loop lives in the runner, not the provider**
   (decided 2026-05-23, Phase 1 Slice A).
   - Provider surface: `stream(system, messages, tools=None) -> AsyncIterator[ProviderChunk]`.
