@@ -304,14 +304,38 @@ def test_queue_max_evicts_oldest():
     assert q.pending_count == 3
 
 
-def test_late_match_emits_warning(monkeypatch, caplog):
-    """Pending entry sat past LATE_WARNING_S before matching -- INFO log."""
-    q = ReconciliationQueue()
-    real = time.monotonic()
-    monkeypatch.setattr(time, "monotonic", lambda: real)
-    assert q.add_pending(_pending()) is None
+def test_env_float_non_numeric_returns_default(monkeypatch):
+    """`_env_float` catches ValueError from float() on non-numeric env
+    var and falls back to default. Kills ExceptionReplacer mutations
+    on the `except ValueError` catch (which would let the parse error
+    propagate)."""
+    from sturddle_view.tournament.pgn_reconcile import _env_float
+    monkeypatch.setenv("SV_TEST_BAD_FLOAT", "not-a-number")
+    assert _env_float("SV_TEST_BAD_FLOAT", 42.0) == 42.0
 
-    monkeypatch.setattr(time, "monotonic", lambda: real + RECONCILE_LATE_WARNING_S + 0.1)
+
+def test_env_int_non_numeric_returns_default(monkeypatch):
+    """`_env_int` mirror of _env_float test. Kills ExceptionReplacer
+    on its `except ValueError` catch."""
+    from sturddle_view.tournament.pgn_reconcile import _env_int
+    monkeypatch.setenv("SV_TEST_BAD_INT", "not-an-int")
+    assert _env_int("SV_TEST_BAD_INT", 17) == 17
+
+
+def test_late_match_emits_warning(monkeypatch, caplog):
+    """Pending entry sat past LATE_WARNING_S before matching -- INFO log.
+    Set enqueued_at and now explicitly so that
+    `now - enqueued_at != now % enqueued_at`, killing the `-` -> `%`
+    mutation on the age computation (which coincides with subtraction
+    when the dividend is just over the divisor, the typical case for
+    consecutive `time.monotonic()` reads)."""
+    q = ReconciliationQueue()
+    entry = _pending()
+    entry.enqueued_at = 2.0  # small base so `now % enqueued_at != now - enqueued_at`
+    q._pending.append(entry)
+
+    # now=7.1, enqueued_at=2.0 -> age original 5.1; mutated 7.1 % 2.0 = 1.1.
+    monkeypatch.setattr(time, "monotonic", lambda: 2.0 + RECONCILE_LATE_WARNING_S + 0.1)
     with caplog.at_level("INFO", logger="sturddle_view.tournament.pgn_reconcile"):
         m = q.add_pgn_record(_record())
     assert m is not None
