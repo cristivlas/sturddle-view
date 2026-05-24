@@ -1577,10 +1577,7 @@ export const playPerspective = {
         } else {
           restoreViewAnalysisWindows(ctx.events);
           showAnalysisToast();
-          // Skeleton scope = path 1 (live play). View-mode triggers
-          // (path 2) and post-game (path 3) land in Phase 3; until then
-          // the view-analyze button stays engine-only to avoid
-          // advertising a feature we haven't built.
+          // View-mode AI is not wired yet; play mode only.
           if (aiEnabled && !viewing) {
             resetAi();
             openAi();

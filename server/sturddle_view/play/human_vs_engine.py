@@ -24,12 +24,12 @@ from .._atomic import atomic_write_text
 if TYPE_CHECKING:
     from ..recent_imports import RecentImports
 from ..chess.board import board_from, moves_san as _moves_san, side_to_move
-from ..chess.engine_info import serialize_info
 from ..chess.pgn_build import build_pgn
 from .canonical_hash import canonical_hash
 from ..chess.results import DRAW, loser_result, winner_result
 from ..events import Event, EventBus
 from .chess_clock import ChessClock, TimeControl
+from .engine_info_pump import pump_engine_info
 from .engine_supervisor import EngineSupervisor
 from .game_store import DEFAULT_PLAYER_NAME, GameState, GameStore
 from .import_position import explain_invalid
@@ -748,10 +748,13 @@ class HumanVsEngine:
             await self._engine_to_move()
 
     async def start_analysis(self) -> None:
-        """Enter UCI go-infinite mode on the current position.
+        """Enter analysis mode on the current position.
 
-        Only valid from a paused game — that guarantees no engine search
-        is in flight and the clock is already frozen.
+        When `settings.ai_enabled` is on, no engine search is launched
+        -- the AI agent drives engine use via tool calls instead. Mode
+        and state transitions are identical so the client UI is uniform.
+
+        Only valid from a paused game -- guarantees no in-flight search.
         """
         async with self._lock:
             if self._board is None or self._game_id is None:
@@ -771,7 +774,8 @@ class HumanVsEngine:
             board = self._board.copy()
             await self._publish_board()
             await self._publish_clock()
-        self._analysis_task = asyncio.create_task(self._run_analysis(game_id, board))
+        if not getattr(self._settings, "ai_enabled", False):
+            self._analysis_task = asyncio.create_task(self._run_analysis(game_id, board))
 
     async def stop_analysis(self) -> None:
         """Leave analysis mode. Game stays paused until the user resumes;
@@ -1563,33 +1567,21 @@ class HumanVsEngine:
     ) -> None:
         """Drain analysis info events, serialize + publish, optionally cache.
 
-        Shared by _think_and_play (cache_payload=False) and _run_analysis
-        (cache_payload=True; the cached payload is re-emitted by /game/sync
-        on client remount so the board arrow returns immediately).
-
-        ``capture_score``: when not None, the deepest seen (score, depth) is
-        stored under keys "cp"/"mate" + "depth", white POV, for the caller
-        to read after the search completes.
+        Thin wrapper that pins HVE-specific behavior (eval POV honoring
+        `play_eval_pov`, last-payload cache for /game/sync replay) over
+        the shared `pump_engine_info` loop.
         """
-        async for info in analysis:
-            if "pv" in info or "depth" in info or "score" in info:
-                payload = serialize_info(info, board=board, pov=self._eval_pov(board.turn))
-                if cache_payload:
-                    self._last_analysis_info = payload
-                if capture_score is not None and "score" in info:
-                    side = info["score"].pov(chess.WHITE)
-                    entry: dict
-                    if side.is_mate():
-                        entry = {"mate": side.mate()}
-                    else:
-                        entry = {"cp": side.score()}
-                    if "depth" in info:
-                        entry["depth"] = info["depth"]
-                    capture_score.clear()
-                    capture_score.update(entry)
-                await self._bus.publish(
-                    Event(kind="engine_info", game_id=game_id, payload=payload)
-                )
+        def _cache(payload: dict) -> None:
+            self._last_analysis_info = payload
+        await pump_engine_info(
+            analysis,
+            bus=self._bus,
+            game_id=game_id,
+            board=board,
+            pov=self._eval_pov(board.turn),
+            on_payload=_cache if cache_payload else None,
+            capture_score=capture_score,
+        )  # cancel handled via asyncio task cancellation, not cancel_token
 
     async def _think_and_play(self) -> None:
         async with self._lock:

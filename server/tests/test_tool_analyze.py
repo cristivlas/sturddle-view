@@ -42,7 +42,7 @@ async def test_analyze_returns_eval_pv_depth_for_known_position(tmp_path: Path):
         score_cp=42, depth=8, bestmove="e2e4", pv="e2e4 e7e5",
     )
     bus = EventBus()
-    analyze = make_analyze_tool(_launcher_from_path(engine_path, bus))
+    analyze = make_analyze_tool(_launcher_from_path(engine_path, bus), bus=bus)
 
     out = await analyze(
         {"fen": "startpos", "depth": 8},
@@ -77,7 +77,7 @@ async def test_analyze_clamps_time_ms_above_hard_cap(tmp_path: Path, monkeypatch
     # Spy on chess.engine.Limit by reading what the supervisor saw.
     # Simpler approach: assert the tool's `limits_used` debug field
     # (deliberately exposed for tests; small surface, big signal).
-    analyze = make_analyze_tool(_launcher_from_path(engine_path, bus))
+    analyze = make_analyze_tool(_launcher_from_path(engine_path, bus), bus=bus)
     out = await analyze(
         {"fen": "startpos", "time_ms": 999_999},
         cancel_token=CancelToken(),
@@ -93,7 +93,7 @@ async def test_analyze_clamps_depth_above_hard_cap(tmp_path: Path, monkeypatch):
 
     engine_path = make_searching_fake_uci(tmp_path, "clamp_d", depth=2)
     bus = EventBus()
-    analyze = make_analyze_tool(_launcher_from_path(engine_path, bus))
+    analyze = make_analyze_tool(_launcher_from_path(engine_path, bus), bus=bus)
     out = await analyze(
         {"fen": "startpos", "depth": 999},
         cancel_token=CancelToken(),
@@ -108,7 +108,7 @@ async def test_analyze_rejects_invalid_fen_with_structured_error():
     def _no_launcher() -> EngineSupervisor:
         raise AssertionError("engine should never be launched for bad FEN")
 
-    analyze = make_analyze_tool(_no_launcher)
+    analyze = make_analyze_tool(_no_launcher, bus=EventBus())
     out = await analyze({"fen": "not-a-fen"}, cancel_token=CancelToken())
 
     assert out.get("error") == "invalid_fen"
@@ -120,7 +120,7 @@ async def test_analyze_missing_fen_with_structured_error():
     def _no_launcher() -> EngineSupervisor:
         raise AssertionError("engine should never be launched without a FEN")
 
-    analyze = make_analyze_tool(_no_launcher)
+    analyze = make_analyze_tool(_no_launcher, bus=EventBus())
     out = await analyze({}, cancel_token=CancelToken())
 
     assert out.get("error") == "missing_fen"
@@ -140,7 +140,7 @@ async def test_analyze_cancel_returns_cancelled_marker(tmp_path: Path):
         score_cp=10, depth=3, bestmove="e2e4", pv="e2e4",
     )
     bus = EventBus()
-    analyze = make_analyze_tool(_launcher_from_path(engine_path, bus))
+    analyze = make_analyze_tool(_launcher_from_path(engine_path, bus), bus=bus)
 
     token = CancelToken()
     token.cancel()  # already cancelled before analyze runs
@@ -149,6 +149,68 @@ async def test_analyze_cancel_returns_cancelled_marker(tmp_path: Path):
 
     assert out.get("cancelled") is True
     assert "score_cp" in out  # info chunk was captured before the stop
+
+
+@pytest.mark.asyncio
+async def test_analyze_publishes_engine_info_to_bus(tmp_path: Path):
+    """The PV table + board arrow want engine_info events. Without this,
+    AI mode shows an empty PV panel even though the engine is running.
+    Pre-refactor this was a separate code path entirely; now both paths
+    flow through pump_engine_info -- the test pins that the tool wires
+    the bus through correctly."""
+    engine_path = make_searching_fake_uci(
+        tmp_path, "pub_fake",
+        score_cp=25, depth=5, bestmove="d2d4", pv="d2d4 d7d5",
+    )
+    bus = EventBus()
+    queue = await bus.subscribe()
+    analyze = make_analyze_tool(_launcher_from_path(engine_path, bus), bus=bus)
+
+    out = await analyze({"fen": "startpos", "depth": 5}, cancel_token=CancelToken())
+    assert "error" not in out, out
+
+    events = []
+    while not queue.empty():
+        events.append(queue.get_nowait())
+
+    # First marker: engine_search_start clears the PV panel.
+    kinds = [e.kind for e in events]
+    assert "engine_search_start" in kinds
+    # At least one engine_info with the pv shows up so the PV table fills
+    # and the board arrow draws.
+    infos = [e for e in events if e.kind == "engine_info"]
+    assert infos, "tool did not publish any engine_info events"
+    last = infos[-1].payload
+    assert last.get("pv_uci") == ["d2d4", "d7d5"]
+    assert last.get("score", {}).get("cp") == 25
+
+
+@pytest.mark.asyncio
+async def test_analyze_passes_game_id_to_published_events(tmp_path: Path):
+    """game_id_provider lets engine_info events carry the live game's id
+    so the WS muxing routes them to the right session."""
+    engine_path = make_searching_fake_uci(
+        tmp_path, "gid_fake", score_cp=0, depth=2, bestmove="e2e4", pv="e2e4",
+    )
+    bus = EventBus()
+    queue = await bus.subscribe()
+    analyze = make_analyze_tool(
+        _launcher_from_path(engine_path, bus), bus=bus,
+        game_id_provider=lambda: "g-live",
+    )
+
+    await analyze({"fen": "startpos", "depth": 2}, cancel_token=CancelToken())
+
+    events = []
+    while not queue.empty():
+        events.append(queue.get_nowait())
+    # Only engine_info + engine_search_start are tool-published. Other
+    # events (uci_log, etc.) come from the EngineSupervisor transport
+    # and legitimately have no game_id.
+    tool_events = [e for e in events if e.kind in ("engine_info", "engine_search_start")]
+    assert tool_events, "tool did not publish any events"
+    for e in tool_events:
+        assert e.game_id == "g-live", f"unexpected game_id: {e.game_id}"
 
 
 # ---------- _score_to_cp wire-shape unit tests --------------------------

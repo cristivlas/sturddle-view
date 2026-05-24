@@ -50,7 +50,7 @@ async def test_real_ollama_drives_agent_loop_with_analyze_tool(ollama_opts, tmp_
         return EngineSupervisor(engine_path=engine_path, bus=bus)
 
     registry = ToolRegistry()
-    registry.register(ANALYZE_TOOL_SPEC, make_analyze_tool(_launcher))
+    registry.register(ANALYZE_TOOL_SPEC, make_analyze_tool(_launcher, bus=bus))
 
     provider = OllamaProvider(
         base_url=ollama_opts["base_url"],

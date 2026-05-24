@@ -44,7 +44,7 @@ async def test_coordinator_dispatches_analyze_to_real_subprocess(tmp_path):
             description="search a position",
             input_schema={"type": "object"},
         ),
-        make_analyze_tool(_launcher),
+        make_analyze_tool(_launcher, bus=bus),
     )
 
     provider = ScriptedProvider(rounds=[

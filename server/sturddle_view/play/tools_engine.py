@@ -20,8 +20,10 @@ from typing import Any, Awaitable, Callable
 import chess
 import chess.engine
 
+from ..events import Event, EventBus
 from ..llm import ToolSpec
 from ..llm.cancel import CancelToken
+from .engine_info_pump import pump_engine_info
 from .engine_supervisor import EngineSupervisor
 
 
@@ -41,7 +43,13 @@ _DEFAULT_TIME_MS = 1_000
 
 
 EngineLauncher = Callable[[], EngineSupervisor]
+GameIdProvider = Callable[[], str | None]
 AnalyzeTool = Callable[..., Awaitable[dict[str, Any]]]
+
+# Default fallback game_id when the tool runs outside a live HVE
+# session (e.g. unit tests, future post-game path). engine_info events
+# still need *some* game_id so the client's per-session muxing works.
+_ANALYZE_GAME_ID_FALLBACK = "ai-analyze"
 
 
 # Wire-shape ToolSpec describing this tool to the model. Lives next to
@@ -157,14 +165,24 @@ def _pv_to_uci(board: chess.Board, pv: list[chess.Move] | None) -> list[str]:
     return [m.uci() for m in pv]
 
 
-def make_analyze_tool(engine_launcher: EngineLauncher) -> AnalyzeTool:
+def make_analyze_tool(
+    engine_launcher: EngineLauncher,
+    bus: EventBus,
+    game_id_provider: GameIdProvider | None = None,
+) -> AnalyzeTool:
     """Build the `analyze` async tool.
 
     `engine_launcher()` returns a fresh `EngineSupervisor` per call --
     decouples the tool from how the production engine is resolved
-    (registry + settings happen in `app.py`). Tests pass a launcher
-    closed over a fake engine path; production passes one closed over
-    `resolve_selected(app.state.engines, app.state.settings)`.
+    (registry + settings happen in `app.py`).
+
+    `bus` is the same event bus HVE publishes engine_info events to.
+    The tool publishes there too so the PV-table window and the board
+    arrow light up while a tool-call search is running.
+
+    `game_id_provider()` returns the current live game's id at call
+    time. When None or the provider returns None, events are tagged
+    with a fallback id so they still flow through the WS muxing.
     """
     async def analyze(input_: dict, *, cancel_token: CancelToken) -> dict:
         fen = input_.get("fen")
@@ -184,24 +202,24 @@ def make_analyze_tool(engine_launcher: EngineLauncher) -> AnalyzeTool:
             log.exception("analyze: engine spawn failed")
             return {"error": "engine_spawn_failed", "detail": str(exc)}
 
+        game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
+        # Clear the live engine panel before streaming -- HVE emits the
+        # same marker before its analysis. PV table keys off depth=1 to
+        # reset, but the explicit event also resets the board arrow.
+        await bus.publish(Event(kind="engine_search_start", game_id=game_id, payload={}))
+
         last_info: chess.engine.InfoDict = {}
         cancelled = False
         try:
             with await engine.analysis(board, limit=limit) as analysis:
-                async for info in analysis:
-                    if info:
-                        last_info = info
-                    if cancel_token.cancelled:
-                        cancelled = True
-                        try:
-                            analysis.stop()
-                        except Exception:
-                            pass
-                        # Drain remaining items so the engine sees
-                        # bestmove and the context manager exits cleanly.
-                        async for _ in analysis:
-                            pass
-                        break
+                last_info, cancelled = await pump_engine_info(
+                    analysis,
+                    bus=bus,
+                    game_id=game_id,
+                    board=board,
+                    pov=chess.WHITE,
+                    cancel_token=cancel_token,
+                )
         except chess.engine.EngineTerminatedError as exc:
             log.error("analyze: engine terminated mid-search")
             return {"error": "engine_terminated", "detail": str(exc)}

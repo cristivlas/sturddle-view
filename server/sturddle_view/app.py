@@ -334,8 +334,19 @@ def create_app(
             sup.env = dict(launch.env)
         return sup
 
+    def _ai_game_id_provider() -> str | None:
+        hve = getattr(app.state, "hve", None)
+        return getattr(hve, "game_id", None) if hve else None
+
     ai_registry = ToolRegistry()
-    ai_registry.register(ANALYZE_TOOL_SPEC, make_analyze_tool(_ai_engine_launcher))
+    ai_registry.register(
+        ANALYZE_TOOL_SPEC,
+        make_analyze_tool(
+            _ai_engine_launcher,
+            bus=app.state.event_bus,
+            game_id_provider=_ai_game_id_provider,
+        ),
+    )
     app.state.ai_tool_registry = ai_registry
 
     # SV_AI_DEBUG=1: flip the AI loggers to DEBUG so the system prompt,
