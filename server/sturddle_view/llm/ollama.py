@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import AsyncIterator
 
-from .base import LLMProvider, ProviderChunk
+from .base import LLMProvider, Message, ProviderChunk, ToolSpec
 
 
 class OllamaProvider(LLMProvider):
@@ -13,6 +13,11 @@ class OllamaProvider(LLMProvider):
         self._base_url = base_url.rstrip("/")
         self._model = model
 
-    async def stream(self, system: str, user_msg: str) -> AsyncIterator[ProviderChunk]:
+    async def stream(
+        self,
+        system: str,
+        messages: list[Message],
+        tools: list[ToolSpec] | None = None,
+    ) -> AsyncIterator[ProviderChunk]:
         raise NotImplementedError("Ollama provider not yet implemented")
         yield  # pragma: no cover - marks this as an async generator

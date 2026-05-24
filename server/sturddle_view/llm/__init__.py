@@ -6,7 +6,15 @@ used by the walking-skeleton spike and by tests as the mock boundary.
 """
 from __future__ import annotations
 
-from .base import LLMProvider, ProviderChunk
+from .base import LLMProvider, Message, ProviderChunk, ToolSpec
 from .canned import CannedProvider
+from .scripted import ScriptedProvider
 
-__all__ = ["LLMProvider", "ProviderChunk", "CannedProvider"]
+__all__ = [
+    "LLMProvider",
+    "Message",
+    "ProviderChunk",
+    "ToolSpec",
+    "CannedProvider",
+    "ScriptedProvider",
+]

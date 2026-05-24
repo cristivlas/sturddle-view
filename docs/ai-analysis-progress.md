@@ -250,6 +250,29 @@ the canned-provider spike, must land before the feature is user-facing):
 
 ## Decisions taken during impl
 
+NOTE: these decisions live here while they're still fresh / negotiable.
+Once a feature ships and a decision proves load-bearing across multiple
+phases, lift it into `ai-analysis-spec.md` so the spec stays the
+authoritative architecture record.
+
+- **Multi-round agent loop lives in the runner, not the provider**
+  (decided 2026-05-23, Phase 1 Slice A).
+  - Provider surface: `stream(system, messages, tools=None) -> AsyncIterator[ProviderChunk]`.
+    One HTTP round per call. Provider knows nothing about tool execution
+    or multi-turn assembly.
+  - Coordinator (runner) owns: tool registry + dispatch, message
+    accumulation across rounds, cancellation, budget enforcement.
+  - Alternatives considered:
+    - *Provider owns the loop* (cluesmith-style): hides too much in the
+      provider, harder to test agent logic without a real provider, and
+      every new provider re-implements the loop.
+    - *Bidirectional stream (one open HTTP request across the loop)*:
+      saves connection setup per round and unlocks parallel tool use
+      naturally, but bigger provider surface, harder cancellation, and
+      Ollama would need a translation layer to fake it. Reconsider if
+      latency or token-overhead measurements push us there.
+  - Accepted cost: one HTTP/TLS connection per round (mitigated later
+    with connection pooling if needed).
 - Spike order: live (path 1) first, then post-game/view (paths 3, 2).
   Streaming + cancel + session model are the hardest pieces and want
   early iteration. Path 3 layers per-ply emission and PGN write on top.

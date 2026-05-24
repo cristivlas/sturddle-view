@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from typing import AsyncIterator, Sequence
 
-from .base import LLMProvider, ProviderChunk
+from .base import LLMProvider, Message, ProviderChunk, ToolSpec
 
 
 SKELETON_CHUNKS: tuple[str, ...] = (
@@ -24,7 +24,12 @@ class CannedProvider(LLMProvider):
     def __init__(self, chunks: Sequence[str] = SKELETON_CHUNKS) -> None:
         self._chunks = tuple(chunks)
 
-    async def stream(self, system: str, user_msg: str) -> AsyncIterator[ProviderChunk]:
+    async def stream(
+        self,
+        system: str,
+        messages: list[Message],
+        tools: list[ToolSpec] | None = None,
+    ) -> AsyncIterator[ProviderChunk]:
         for chunk in self._chunks:
             yield ProviderChunk(kind="text", text=chunk)
             # Yield control between chunks so the event loop can flush

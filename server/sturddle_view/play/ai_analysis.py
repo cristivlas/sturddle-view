@@ -46,7 +46,13 @@ class AIAnalysisCoordinator:
         async with self._lock:
             self._task = asyncio.current_task()
             try:
-                async for chunk in active.stream(system="", user_msg=""):
+                # Skeleton: single round, empty system + user. The full
+                # message-accumulation loop with tool dispatch lands in
+                # Phase 1 Slice B.
+                async for chunk in active.stream(
+                    system="",
+                    messages=[{"role": "user", "content": ""}],
+                ):
                     if chunk.kind != "text" or not chunk.text:
                         continue
                     await self._bus.publish(
@@ -69,6 +75,19 @@ class AIAnalysisCoordinator:
                         kind="ai_info",
                         game_id=game_id,
                         payload={"done": True, "cancelled": True},
+                    )
+                )
+                raise
+            except Exception as exc:
+                # No silent failures (spec §Error Handling). Surface to
+                # the bus so the UI exits its "streaming" state, and
+                # re-raise so the task's done-callback can log details.
+                log.exception("AI provider stream failed")
+                await self._bus.publish(
+                    Event(
+                        kind="ai_info",
+                        game_id=game_id,
+                        payload={"done": True, "error": type(exc).__name__},
                     )
                 )
                 raise

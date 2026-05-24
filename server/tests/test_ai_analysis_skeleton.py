@@ -12,7 +12,7 @@ import asyncio
 import pytest
 
 from sturddle_view.events import EventBus
-from sturddle_view.llm import CannedProvider
+from sturddle_view.llm import CannedProvider, ProviderChunk
 from sturddle_view.llm.canned import SKELETON_CHUNKS
 from sturddle_view.play.ai_analysis import AIAnalysisCoordinator
 
@@ -54,9 +54,8 @@ async def test_cancel_during_stream_emits_cancelled_done():
     # A custom provider that yields one chunk and then suspends forever,
     # so the cancel path is exercised deterministically without any timer.
     class _Hanging(CannedProvider):
-        async def stream(self, system, user_msg):
+        async def stream(self, system, messages, tools=None):
             yield_chunk = next(iter(SKELETON_CHUNKS))
-            from sturddle_view.llm import ProviderChunk
             yield ProviderChunk(kind="text", text=yield_chunk)
             # Wait on a future that never resolves; cancellation will
             # propagate from the consumer side.
