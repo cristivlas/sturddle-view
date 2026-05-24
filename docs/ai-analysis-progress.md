@@ -244,6 +244,20 @@ Tests:
 
 ## Bugs
 
+Pre-existing / side-quest (filed during Slice C+ wire-up review):
+
+- **`#view-analyze` not gated on engine presence.** Play perspective's
+  `#analyze` button is implicitly gated (no game without an engine, so
+  the button is unreachable) but the view-mode `#view-analyze` stays
+  clickable with zero engines registered; clicking it then crashes the
+  server-side analysis start. Independent of the AI feature -- existing
+  bug. Fix: track `noEngine` state and disable the button.
+- **Settings "Analysis" tab master toggle ungated.** With no engine
+  registered the user can still flip "Use AI analysis" on; the toggle
+  does nothing useful (no analyze button can fire it) but the UI
+  pretends it's live. Either disable the toggle or surface an inline
+  hint pointing to Engines tab.
+
 Slice-C-deferred:
 
 - **`analyze` mid-search cancel is not unit-tested.** The current cancel

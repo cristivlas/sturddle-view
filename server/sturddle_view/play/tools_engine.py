@@ -20,6 +20,7 @@ from typing import Any, Awaitable, Callable
 import chess
 import chess.engine
 
+from ..llm import ToolSpec
 from ..llm.cancel import CancelToken
 from .engine_supervisor import EngineSupervisor
 
@@ -41,6 +42,38 @@ _DEFAULT_TIME_MS = 1_000
 
 EngineLauncher = Callable[[], EngineSupervisor]
 AnalyzeTool = Callable[..., Awaitable[dict[str, Any]]]
+
+
+# Wire-shape ToolSpec describing this tool to the model. Lives next to
+# the implementation so prompt text + schema + behavior move together;
+# app.py only wires (spec, callable) into the registry.
+ANALYZE_TOOL_SPEC = ToolSpec(
+    name="analyze",
+    description=(
+        "Run an engine search on a position. Returns a structured eval "
+        "(score_cp or mate, depth, pv, bestmove). Hard caps apply to "
+        "time_ms and depth -- requests above the cap are clamped, not "
+        "rejected."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "fen": {
+                "type": "string",
+                "description": "FEN string, or 'startpos' for the initial position.",
+            },
+            "time_ms": {
+                "type": "integer",
+                "description": "Search time in milliseconds (clamped to server cap).",
+            },
+            "depth": {
+                "type": "integer",
+                "description": "Maximum depth (clamped to server cap).",
+            },
+        },
+        "required": ["fen"],
+    },
+)
 
 
 def _parse_fen(raw: str) -> chess.Board:

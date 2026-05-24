@@ -30,11 +30,13 @@ from .api import ws as ws_api
 from .config import Settings
 from .engines import EngineRegistry, resolve_selected
 from .events import Event, EventBus
-from .llm import CannedProvider
+from .llm import CannedProvider, ToolRegistry
 from .openings import OpeningBook
 from .play.ai_analysis import AIAnalysisCoordinator
+from .play.engine_supervisor import EngineSupervisor
 from .play.game_store import GameStore
 from .play.human_vs_engine import HumanVsEngine
+from .play.tools_engine import ANALYZE_TOOL_SPEC, make_analyze_tool
 from .recent_imports import RecentImports
 from .tournament.fastchess import FastchessRunner
 from .tournament.orchestrator import Orchestrator, wrap_event_for_bus
@@ -311,11 +313,27 @@ def create_app(
     app.state.openings = OpeningBook.load()
     log.info("loaded %d opening lines", len(app.state.openings))
 
-    # Walking-skeleton: coordinator wired with the canned provider so the
-    # end-to-end transport runs without any LLM credentials. Real provider
-    # selection (anthropic/ollama from settings) lands in a later cycle.
+    # AI analysis: registry + coordinator. Provider remains the canned
+    # walking-skeleton stand-in until real Anthropic/Ollama providers
+    # land. The `analyze` tool resolves the current engine on every
+    # call via resolve_selected(), so engine swaps in Settings are
+    # honored without rebuilding the coordinator.
+    def _ai_engine_launcher() -> EngineSupervisor:
+        launch = resolve_selected(app.state.engines, app.state.settings)
+        sup = EngineSupervisor(launch.path, app.state.event_bus, settings=app.state.settings)
+        if launch.options:
+            sup.options = launch.options
+        if launch.args:
+            sup.args = list(launch.args)
+        if launch.env:
+            sup.env = dict(launch.env)
+        return sup
+
+    ai_registry = ToolRegistry()
+    ai_registry.register(ANALYZE_TOOL_SPEC, make_analyze_tool(_ai_engine_launcher))
+    app.state.ai_tool_registry = ai_registry
     app.state.ai_coordinator = AIAnalysisCoordinator(
-        app.state.event_bus, CannedProvider()
+        app.state.event_bus, CannedProvider(), registry=ai_registry,
     )
 
     # Tournament subsystem: store + runner + orchestrator. Wired even
