@@ -355,3 +355,38 @@ def test_lifespan_skips_restore_when_no_engine(tmp_path):
         assert app.state.hve is None
     # File is left in place so a later engine selection still picks it up.
     assert store.load() is not None
+
+
+async def test_player_name_persisted_and_restored(tmp_path):
+    """Regression: player_name must survive persist/restore (server restart)."""
+    hve, store = _make_hve(tmp_path)
+    await hve.new_game(human_white=True, tc=TimeControl(60.0, 0.0), player_name="Alice")
+    await hve.submit_move("e2e4")
+    saved = store.load()
+    assert saved is not None
+    assert saved.player_name == "Alice"
+
+    fresh, _store2 = _make_hve(tmp_path)
+    fresh.restore_from(saved)
+    assert fresh._player_name == "Alice"
+
+
+def test_player_name_store_roundtrip(tmp_path):
+    """GameStore load/save round-trip preserves player_name; missing field defaults."""
+    store = GameStore(path=tmp_path / "game.json")
+    state = GameState(
+        game_id="x", human_white=True, tc_initial_seconds=60.0,
+        tc_increment_seconds=0.0, white_time=60.0, black_time=60.0, paused=False,
+        player_name="Bob",
+    )
+    store.save(state)
+    loaded = store.load()
+    assert loaded.player_name == "Bob"
+
+    # Old save without player_name field falls back to default.
+    import json
+    data = json.loads((tmp_path / "game.json").read_text())
+    del data["player_name"]
+    (tmp_path / "game.json").write_text(json.dumps(data))
+    loaded2 = store.load()
+    assert loaded2.player_name == "Human"
