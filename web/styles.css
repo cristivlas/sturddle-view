@@ -2294,7 +2294,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   opacity: 1 !important;
 }
 .winbox.sturddle-wb-ribbon {
-  border: 1px solid var(--wa-color-border-loud, #353841);
+  border: 1px solid lightgray;
   outline: none;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
   z-index: 2147483000 !important; /* always above other WinBoxes / dock content */
