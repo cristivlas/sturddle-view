@@ -1,14 +1,14 @@
-// Dockable AI analysis prose window. Mirrors play-commentary-window.js
-// but consumes `ai_info` websocket events to stream coach commentary as
-// the agent emits it.
+// Dockable AI analysis prose window. Mirrors the UCI Log / Search Lines
+// windows so it shares the same managed dock (with N-slot resize) in
+// the play perspective.
 //
 // Skeleton scope: opens on first chunk, appends every `ai_info` delta,
-// finishes when payload carries done=true (and shows a "cancelled" marker
-// if done && cancelled). Lifecycle (open/close on mode entry, persistence
-// of user-pinned state) is driven by play.js -- this module only owns the
-// dom inside the window.
+// finishes when payload carries done=true (and shows a "cancelled"
+// marker if done && cancelled). Lifecycle (open/close on Analyze
+// click, restore on perspective remount) is driven by play.js -- this
+// module only owns the dom inside the window.
 
-import { createDockableWindow, registerExtraDock } from "./play-debug-windows.js";
+import { createDockableWindow, DOCK_ORDER } from "./play-dock-windows.js";
 
 const GEO_KEY       = "sturddle:ai:geo";
 const WIN_STATE_KEY = "sturddle:ai:winstate";
@@ -16,8 +16,6 @@ const DOCKED_KEY    = "sturddle:ai:docked";
 const OPEN_KEY      = "sturddle:ai:open";
 const EMPTY_TEXT    = "No AI analysis yet.";
 
-let dockEl = null;
-let unregisterDock = null;
 let userCloseHandler = null;
 
 function buildBody() {
@@ -46,8 +44,7 @@ const inst = createDockableWindow({
   build() {
     return buildBody();
   },
-  dockOrder: 20,
-  getDockEl: () => dockEl,
+  dockOrder: DOCK_ORDER.AI_ANALYSIS,
   closable: true,
   onUserClose: () => {
     if (userCloseHandler) userCloseHandler();
@@ -56,12 +53,6 @@ const inst = createDockableWindow({
 
 export function setOnUserCloseAi(fn) {
   userCloseHandler = fn;
-}
-
-export function setAiDockContainer(el) {
-  if (unregisterDock) { unregisterDock(); unregisterDock = null; }
-  dockEl = el;
-  if (el) unregisterDock = registerExtraDock(el);
 }
 
 export function openAi() {

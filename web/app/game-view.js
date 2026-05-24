@@ -3,7 +3,7 @@
 
 import { mountBoard } from "./board.js";
 import { toast } from "./dialogs.js";
-import { isMobileLayout } from "./play-debug-windows.js";
+import { isMobileLayout } from "./play-dock-windows.js";
 import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";

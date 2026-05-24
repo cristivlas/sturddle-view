@@ -12,7 +12,7 @@
 // Closing the window (dock X or float X) clears the user setting via the
 // onUserClose callback -- play.js then PUTs the new setting.
 
-import { createDockableWindow, registerExtraDock } from "./play-debug-windows.js";
+import { createDockableWindow, DOCK_ORDER, registerExtraDock } from "./play-dock-windows.js";
 
 const GEO_KEY       = "sturddle:commentary:geo";
 const WIN_STATE_KEY = "sturddle:commentary:winstate";
@@ -90,7 +90,7 @@ const inst = createDockableWindow({
   build() {
     return buildBody();
   },
-  dockOrder: 10,
+  dockOrder: DOCK_ORDER.COMMENTARY,
   getDockEl: () => dockEl,
   closable: true,
   onUserClose: () => {

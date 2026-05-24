@@ -5,7 +5,7 @@
 import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
-import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, isMobileLayout } from "../play-debug-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, isMobileLayout } from "../play-dock-windows.js";
 import {
   setCommentaryDockContainer,
   setOnUserCloseCommentary,
@@ -17,7 +17,6 @@ import {
   isCommentaryOpen,
 } from "../play-commentary-window.js";
 import {
-  setAiDockContainer,
   setOnUserCloseAi,
   openAi,
   closeAi,
@@ -131,7 +130,6 @@ export const playPerspective = {
         <div class="play-grid">
           <div class="play-dock-left"></div>
           <aside class="play-comments-host dock-empty" aria-label="PGN commentary"></aside>
-          <aside class="play-ai-host dock-empty" aria-label="AI analysis"></aside>
           <div id="no-engine-banner" class="no-engine-banner hidden" role="status">
             <span class="no-engine-banner__msg">No engine configured.</span>
             <button type="button" class="no-engine-banner__btn" aria-label="Open engine settings" title="Open engine settings">
@@ -319,10 +317,11 @@ export const playPerspective = {
     // Mirrored in JS state so refreshButtons() can read it without an
     // extra DOM query each call.
     let noEngine = false;
+    let buttonsReady = false; // refreshButtons reads `editing` etc.; safe only after their let-bindings
     function setNoEngine(v) {
       noEngine = !!v;
       noEngineBanner.classList.toggle("hidden", !noEngine);
-      refreshButtons();
+      if (buttonsReady) refreshButtons();
     }
     async function checkEngines() {
       try {
@@ -440,10 +439,13 @@ export const playPerspective = {
     const onCommentsResize = () => { syncCommentsVisibility(); };
     window.addEventListener("resize", onCommentsResize);
 
-    // --- AI analysis dock + lifecycle ---
-    let aiEnabled = false;  // master toggle from settings (skeleton: gates start)
-    const aiHost = root.querySelector(".play-ai-host");
-    setAiDockContainer(aiHost);
+    // --- AI analysis lifecycle ---
+    // Master toggle from settings (skeleton: gates start). The AI
+    // window now lives in the main dock alongside Search Lines + UCI
+    // Log, so no extra host element is needed here -- the dock
+    // container is set up below by setDockContainer() and the AI
+    // window participates through createDockableWindow's default path.
+    let aiEnabled = false;
     setOnUserCloseAi(() => {
       // X on the AI window during a turn cancels it server-side.
       ctx.api("POST", "/ai/cancel", {}).catch(() => {});
@@ -810,6 +812,7 @@ export const playPerspective = {
       if (disabled) btn.setAttribute("disabled", "");
       else btn.removeAttribute("disabled");
     }
+    buttonsReady = true;
     function refreshButtons() {
       // Swap ribbons: edit overrides view, which overrides play.
       const activeRibbon = editing ? editRibbon : viewing ? viewRibbon : playRibbon;
@@ -1567,6 +1570,10 @@ export const playPerspective = {
           // regardless of mode -- a turn started in play and carried
           // into view mode still needs stopping.
           if (aiEnabled) ctx.api("POST", "/ai/cancel", {}).catch(() => {});
+          // Close all dock panels (PV, UCI, AI) as one analysis-off
+          // effect; their open-state is the user's last preference
+          // for the NEXT session.
+          closeDebugWindowsPersist();
         } else {
           restoreViewAnalysisWindows(ctx.events);
           showAnalysisToast();
@@ -1693,7 +1700,6 @@ export const playPerspective = {
         setCommentaryDockContainer(null);
         setOnUserCloseCommentary(null);
         closeAi();
-        setAiDockContainer(null);
         setOnUserCloseAi(null);
         dismissAnalysisToast?.();
         dismissAnalysisToast = null;
