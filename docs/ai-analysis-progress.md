@@ -154,7 +154,24 @@ Tests:
 
 ## Bugs
 
-(none yet)
+Skeleton-deferred (filed during Phase 0 walking-skeleton review; fine for
+the canned-provider spike, must land before the feature is user-facing):
+
+- **AI panel renders all prose in one `<p>` node.** `appendAiDelta` in
+  `web/app/play-ai-window.js` appends every delta as a text node into a
+  single paragraph -- `\n\n` paragraph breaks won't render. Mirror the
+  `play-commentary-window.js` split-on-`\n{2,}` approach when real prose
+  starts flowing.
+- **`api/ai.py` reaches into `app.state.hve` for `game_id`.** Couples the
+  AI router to the play perspective. Replace with coordinator-owned
+  session state (game_id pinned on `new_game`, cleared on takeback past
+  annotated ply / mode swap) when the rolling-session model lands.
+- **Provider-selection guard missing.** `AnthropicProvider` and
+  `OllamaProvider` are NotImplementedError stubs. Today the coordinator
+  hardcodes `CannedProvider` so user selection is dormant -- but the
+  cycle that wires `s.ai_provider` -> provider construction must guard
+  against unimplemented providers (or land at least one real one first)
+  to avoid a runtime crash from the settings UI.
 
 ## Decisions taken during impl
 

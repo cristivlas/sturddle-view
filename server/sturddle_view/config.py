@@ -55,6 +55,13 @@ PERSISTED_FIELDS = (
     "engine_default_book_path",
     "engine_default_book_plies",
     "engine_default_book_order",
+    "ai_enabled",
+    "ai_provider",
+    "ai_model",
+    "ai_base_url",
+    # ai_api_key intentionally NOT persisted: server mode reads SV_AI_API_KEY
+    # from env; desktop mode will switch to OS keyring (later cycle). The
+    # JSON settings file must never hold the plaintext key.
 )
 
 
@@ -124,6 +131,16 @@ class Settings(BaseSettings):
     engine_default_book_plies: int | None = None
     # "sequential" | "random". None = fastchess default (sequential).
     engine_default_book_order: str | None = None
+
+    # AI analysis & commentary. Master toggle gates the engine+AI behavior
+    # off the existing Analyze ribbon buttons; provider/model/base_url are
+    # UI-managed strings. ai_api_key is server-mode only (SV_AI_API_KEY);
+    # desktop builds will switch to keyring later. Empty = unset.
+    ai_enabled: bool = False
+    ai_provider: str = "anthropic"
+    ai_model: str = ""
+    ai_base_url: str = ""
+    ai_api_key: str = ""
 
     def apply_persisted(self, path: Path | None = None) -> None:
         path = path or default_settings_file()

@@ -19,6 +19,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from . import __version__
 from .auth import AUTH_COOKIE, origin_ok
 from .api import agent as agent_api
+from .api import ai as ai_api
 from .api import chess_utils as chess_api
 from .api import engines as engines_api
 from .api import fs as fs_api
@@ -29,7 +30,9 @@ from .api import ws as ws_api
 from .config import Settings
 from .engines import EngineRegistry, resolve_selected
 from .events import Event, EventBus
+from .llm import CannedProvider
 from .openings import OpeningBook
+from .play.ai_analysis import AIAnalysisCoordinator
 from .play.game_store import GameStore
 from .play.human_vs_engine import HumanVsEngine
 from .recent_imports import RecentImports
@@ -308,6 +311,13 @@ def create_app(
     app.state.openings = OpeningBook.load()
     log.info("loaded %d opening lines", len(app.state.openings))
 
+    # Walking-skeleton: coordinator wired with the canned provider so the
+    # end-to-end transport runs without any LLM credentials. Real provider
+    # selection (anthropic/ollama from settings) lands in a later cycle.
+    app.state.ai_coordinator = AIAnalysisCoordinator(
+        app.state.event_bus, CannedProvider()
+    )
+
     # Tournament subsystem: store + runner + orchestrator. Wired even
     # when fastchess isn't installed; the Tournaments UI surfaces an
     # empty-state until a binary is configured.
@@ -346,6 +356,7 @@ def create_app(
     app.include_router(fs_api.router)
     app.include_router(game_api.router)
     app.include_router(agent_api.router)
+    app.include_router(ai_api.router)
     app.include_router(tournaments_api.router)
     app.include_router(tournaments_api.internal_router)
     app.include_router(ws_api.router)

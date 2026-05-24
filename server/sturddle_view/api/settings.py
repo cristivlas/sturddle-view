@@ -13,6 +13,10 @@ router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(
 _VALID_SIDES = {"white", "black", "random"}
 _VALID_EVAL_POV = {"white", "engine", "human"}
 _VALID_RIBBON_SIDES = {"left", "right"}
+_VALID_AI_PROVIDERS = {"anthropic", "ollama"}
+# Sentinel echoed to the UI when an API key is set. UI never sees the
+# real key back; user "Update"s by sending a new value.
+_AI_KEY_MASK = "***"
 _VALID_BOARD_STYLES = {
     "classic", "classic-staunty",
     "green", "green-staunty",
@@ -47,6 +51,12 @@ def _serialize(s) -> dict:
         "engine_default_book_path": s.engine_default_book_path,
         "engine_default_book_plies": s.engine_default_book_plies,
         "engine_default_book_order": s.engine_default_book_order,
+        "ai_enabled": s.ai_enabled,
+        "ai_provider": s.ai_provider,
+        "ai_model": s.ai_model,
+        "ai_base_url": s.ai_base_url,
+        "ai_api_key_set": bool(s.ai_api_key),
+        "ai_api_key": _AI_KEY_MASK if s.ai_api_key else "",
         "host": {"logical_cores": logical, "physical_cores": physical},
         "version": __version__,
         "author": __author__,
@@ -220,6 +230,32 @@ async def update_settings(payload: dict, request: Request) -> dict:
                 status_code=400,
                 detail="engine_default_book_order must be 'sequential' or 'random'",
             )
+
+    if "ai_enabled" in payload:
+        s.ai_enabled = bool(payload["ai_enabled"])
+
+    if "ai_provider" in payload:
+        provider = payload["ai_provider"]
+        if provider not in _VALID_AI_PROVIDERS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"ai_provider must be one of {sorted(_VALID_AI_PROVIDERS)}",
+            )
+        s.ai_provider = provider
+
+    if "ai_model" in payload:
+        s.ai_model = str(payload["ai_model"] or "").strip()
+
+    if "ai_base_url" in payload:
+        s.ai_base_url = str(payload["ai_base_url"] or "").strip()
+
+    if "ai_api_key" in payload:
+        # Session-only: not in PERSISTED_FIELDS. Server mode loads from
+        # SV_AI_API_KEY env at startup; desktop will use OS keyring later.
+        # The mask sentinel echoed by GET means "no change".
+        raw = payload["ai_api_key"]
+        if raw != _AI_KEY_MASK:
+            s.ai_api_key = str(raw or "").strip()
 
     try:
         s.save_persisted()

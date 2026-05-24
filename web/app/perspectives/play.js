@@ -16,6 +16,15 @@ import {
   setCommentaryNavState,
   isCommentaryOpen,
 } from "../play-commentary-window.js";
+import {
+  setAiDockContainer,
+  setOnUserCloseAi,
+  openAi,
+  closeAi,
+  resetAi,
+  appendAiDelta,
+  markAiDone,
+} from "../play-ai-window.js";
 import { terminationLabel } from "../format-termination.js";
 import { editAnnotation } from "../annotation-dialog.js";
 import { PLAYER_NAME_KEY, PLAYER_NAME_DEFAULT } from "../settings-dialog.js";
@@ -122,6 +131,7 @@ export const playPerspective = {
         <div class="play-grid">
           <div class="play-dock-left"></div>
           <aside class="play-comments-host dock-empty" aria-label="PGN commentary"></aside>
+          <aside class="play-ai-host dock-empty" aria-label="AI analysis"></aside>
           <div id="no-engine-banner" class="no-engine-banner hidden" role="status">
             <span class="no-engine-banner__msg">No engine configured.</span>
             <button type="button" class="no-engine-banner__btn" aria-label="Open engine settings" title="Open engine settings">
@@ -425,6 +435,15 @@ export const playPerspective = {
     }
     const onCommentsResize = () => { syncCommentsVisibility(); };
     window.addEventListener("resize", onCommentsResize);
+
+    // --- AI analysis dock + lifecycle ---
+    let aiEnabled = false;  // master toggle from settings (skeleton: gates start)
+    const aiHost = root.querySelector(".play-ai-host");
+    setAiDockContainer(aiHost);
+    setOnUserCloseAi(() => {
+      // X on the AI window during a turn cancels it server-side.
+      ctx.api("POST", "/ai/cancel", {}).catch(() => {});
+    });
     // Snapshot of TC fields used at the start of the current game; lets
     // us tell the user "applies on next game" if they edit TC mid-play.
     let gameTcInitial = null;
@@ -434,6 +453,7 @@ export const playPerspective = {
         const s = await ctx.api("GET", "/settings");
         allowTakeback = s.allow_takeback !== false;
         showPgnComments = s.view_show_pgn_comments !== false;
+        aiEnabled = !!s.ai_enabled;
         syncCommentsVisibility();
         if (notifyOnDrift && !gameOver && resignAvailable) {
           const drift = [];
@@ -880,6 +900,12 @@ export const playPerspective = {
     //     are GameView's responsibility). ---
     const offEvent = ctx.events.on((evt) => {
       switch (evt.kind) {
+        case "ai_info": {
+          const p = evt.payload || {};
+          if (typeof p.delta === "string") appendAiDelta(p.delta);
+          if (p.done) markAiDone({ cancelled: !!p.cancelled });
+          break;
+        }
         case "board_update": {
           _cachedBoardUpdate = evt;
           movesPlayed = evt.payload.moves_san?.length ?? 0;
@@ -1528,9 +1554,25 @@ export const playPerspective = {
         if (wasAnalyzing) {
           dismissAnalysisToast?.();
           dismissAnalysisToast = null;
+          // Cancel any in-flight AI turn alongside the engine stop, so
+          // the user sees a single "analysis off" effect. Cancel runs
+          // regardless of mode -- a turn started in play and carried
+          // into view mode still needs stopping.
+          if (aiEnabled) ctx.api("POST", "/ai/cancel", {}).catch(() => {});
         } else {
           restoreViewAnalysisWindows(ctx.events);
           showAnalysisToast();
+          // Skeleton scope = path 1 (live play). View-mode triggers
+          // (path 2) and post-game (path 3) land in Phase 3; until then
+          // the view-analyze button stays engine-only to avoid
+          // advertising a feature we haven't built.
+          if (aiEnabled && !viewing) {
+            resetAi();
+            openAi();
+            ctx.api("POST", "/ai/start", {}).catch((e) =>
+              reportError(ctx, "AI analysis failed to start", e),
+            );
+          }
         }
       } catch (e) {
         reportError(
@@ -1642,6 +1684,9 @@ export const playPerspective = {
         closeCommentary();
         setCommentaryDockContainer(null);
         setOnUserCloseCommentary(null);
+        closeAi();
+        setAiDockContainer(null);
+        setOnUserCloseAi(null);
         dismissAnalysisToast?.();
         dismissAnalysisToast = null;
         dismissGameOverToast?.();

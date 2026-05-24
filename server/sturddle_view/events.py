@@ -30,6 +30,7 @@ EventKind = Literal[
     "tournament_status",
     "sprt_update",
     "agent_annotation",
+    "ai_info",
     "system",
 ]
 

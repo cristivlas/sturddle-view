@@ -854,8 +854,116 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       sprtPanel.addEventListener("change", () => { validateSprtDefaults(); persistSprt(); });
       validateSprtDefaults();
 
-      const tabByName = { engines: enginesTab, general: generalTab, play: playTab, tournament: tournamentTab, sprt: sprtTab };
-      const startTab = tabByName[initialTab] || generalTab;
+      // --- AI Analysis tab ---
+      // Flat layout per spec: master toggle + provider + model + key/url.
+      // Advanced collapsible (caps, tunables) and effective-config display
+      // land in Phase 4. Skeleton scope: persistence round-trip only;
+      // selected provider doesn't yet affect coordinator behavior.
+      const analysisTab = document.createElement("wa-tab");
+      analysisTab.panel = "analysis";
+      analysisTab.textContent = "Analysis";
+      const analysisPanel = document.createElement("wa-tab-panel");
+      analysisPanel.name = "analysis";
+
+      const aiEnabledRow = document.createElement("div");
+      aiEnabledRow.className = "settings-row";
+      const aiEnabledLabel = document.createElement("label");
+      aiEnabledLabel.textContent = "Use AI analysis";
+      const aiEnabled = document.createElement("wa-switch");
+      aiEnabled.size = "small";
+      if (initial.ai_enabled) aiEnabled.setAttribute("checked", "");
+      aiEnabled.addEventListener("change", () => {
+        putSettings({ ai_enabled: aiEnabled.checked });
+      });
+      aiEnabledRow.append(aiEnabledLabel, aiEnabled);
+
+      const aiProviderRow = document.createElement("div");
+      aiProviderRow.className = "settings-row";
+      const aiProviderLabel = document.createElement("label");
+      aiProviderLabel.textContent = "Provider";
+      const aiProvider = document.createElement("wa-select");
+      aiProvider.size = "small";
+      aiProvider.setAttribute("distance", "4");
+      aiProvider.value = initial.ai_provider || "anthropic";
+      for (const [val, label] of [["anthropic", "Anthropic"], ["ollama", "Ollama"]]) {
+        const opt = document.createElement("wa-option");
+        opt.value = val;
+        opt.textContent = label;
+        aiProvider.append(opt);
+      }
+      aiProviderRow.append(aiProviderLabel, aiProvider);
+
+      const aiModelRow = document.createElement("div");
+      aiModelRow.className = "settings-row";
+      const aiModelLabel = document.createElement("label");
+      aiModelLabel.textContent = "Model";
+      const aiModel = document.createElement("wa-input");
+      aiModel.size = "small";
+      aiModel.setAttribute("autocomplete", "off");
+      aiModel.value = initial.ai_model || "";
+      aiModel.addEventListener("input", () => {
+        putSettingsDebounced({ ai_model: aiModel.value });
+      });
+      aiModelRow.append(aiModelLabel, aiModel);
+
+      // Anthropic field: API key (masked when set). Ollama field: base URL.
+      // Toggled by provider selection.
+      const aiKeyRow = document.createElement("div");
+      aiKeyRow.className = "settings-row";
+      const aiKeyLabel = document.createElement("label");
+      aiKeyLabel.textContent = "API key";
+      const aiKey = document.createElement("wa-input");
+      aiKey.size = "small";
+      aiKey.type = "password";
+      aiKey.setAttribute("autocomplete", "off");
+      aiKey.placeholder = initial.ai_api_key_set ? "Set (enter new to update)" : "";
+      aiKey.addEventListener("input", () => {
+        putSettingsDebounced({ ai_api_key: aiKey.value });
+      });
+      aiKeyRow.append(aiKeyLabel, aiKey);
+
+      const aiUrlRow = document.createElement("div");
+      aiUrlRow.className = "settings-row";
+      const aiUrlLabel = document.createElement("label");
+      aiUrlLabel.textContent = "Base URL";
+      const aiUrl = document.createElement("wa-input");
+      aiUrl.size = "small";
+      aiUrl.setAttribute("autocomplete", "off");
+      aiUrl.placeholder = "http://localhost:11434";
+      aiUrl.value = initial.ai_base_url || "";
+      aiUrl.addEventListener("input", () => {
+        putSettingsDebounced({ ai_base_url: aiUrl.value });
+      });
+      aiUrlRow.append(aiUrlLabel, aiUrl);
+
+      function applyAiProviderVisibility() {
+        const isAnthropic = aiProvider.value === "anthropic";
+        aiKeyRow.style.display = isAnthropic ? "" : "none";
+        aiUrlRow.style.display = isAnthropic ? "none" : "";
+      }
+      aiProvider.addEventListener("change", () => {
+        putSettings({ ai_provider: aiProvider.value });
+        applyAiProviderVisibility();
+      });
+      applyAiProviderVisibility();
+
+      analysisPanel.append(aiEnabledRow, aiProviderRow, aiModelRow, aiKeyRow, aiUrlRow);
+
+      // Map preserves insertion order by spec -- the iteration order here
+      // IS the visual tab order. Each entry pairs the tab control with
+      // its panel, eliminating the parallel-list bug class where one of
+      // them gets forgotten in tabs.append().
+      const TABS = new Map([
+        ["general",    { tab: generalTab,    panel: generalPanel }],
+        ["engines",    { tab: enginesTab,    panel: enginesPanel }],
+        ["play",       { tab: playTab,       panel: playPanel }],
+        ["display",    { tab: displayTab,    panel: displayPanel }],
+        ["analysis",   { tab: analysisTab,   panel: analysisPanel }],
+        ["tournament", { tab: tournamentTab, panel: tournamentPanel }],
+        ["sprt",       { tab: sprtTab,       panel: sprtPanel }],
+      ]);
+
+      const startTab = (TABS.get(initialTab) || TABS.get("general")).tab;
       startTab.setAttribute("active", "");
       // Eager mount when Engines is the starting tab: defer until the
       // dialog is actually in the document so mountEngineList can measure
@@ -873,10 +981,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         });
       }
 
-      tabs.append(
-        generalTab, enginesTab, playTab, displayTab, tournamentTab, sprtTab,
-        generalPanel, enginesPanel, playPanel, displayPanel, tournamentPanel, sprtPanel,
-      );
+      for (const { tab, panel } of TABS.values()) tabs.append(tab, panel);
 
       dialog.append(tabs);
     },
