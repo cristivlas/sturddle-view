@@ -60,23 +60,98 @@ Tests:
 - API key never echoed back to UI
 - Cancel during stream aborts cleanly
 
-### Phase 1: Tools
+### Phase 1: Agent loop + first tool (TDD against scripted provider)
 
-Implement the tool layer. Agent not yet integrated.
+Goal: replace the no-op `coord.run()` with a real agent loop. One real
+tool (`analyze`) proves the abstraction boundary. No network -- all
+TDD'd against an extended scripted provider. Per spec
+`§Testing Principles`, the LLM mock lives at the provider boundary, not
+HTTP.
 
-- [ ] `analyze(fen, time_ms, depth)` - throwaway engine, stop/grace/kill
-- [ ] `get_position(ply)`
-- [ ] `get_pgn_range(from_ply, to_ply)`
-- [ ] `tablebase_probe(fen)` - wrap existing TablebaseProber
-- [ ] `opening_lookup(fen)` - wrap existing OpeningBook
-- [ ] `compare_moves(fen, [moves])`
-- [ ] Server-side hard caps (env-var) for analyze time/depth
-- [ ] Tool registry exposed to provider abstraction
+Slices are vertical: each is one red-green-commit cycle that ends with
+the system demonstrably more capable.
+
+#### Slice A: ScriptedProvider (extend the test double)
+
+- [ ] Extend `ProviderChunk` with `tool_use_id`, `tool_name`, `tool_input`
+      (declared deferred in `llm/base.py`; promote now)
+- [ ] New `ScriptedProvider` taking a list of "turns" (each turn = list
+      of chunks: text and/or tool_use). After each turn, awaits
+      tool_results back, then emits next turn.
+- [ ] Keep `CannedProvider` as the no-tool subset (Phase 0 tests stay
+      green untouched).
 
 Tests:
-- Each tool standalone with deterministic inputs
-- `analyze` honors limit and aborts cleanly on cancel
-- Hard caps clamp out-of-range requests
+- Multi-turn scripted dialog produces expected chunk sequence
+- tool_result feedback unblocks the next turn
+- Provider cancellation drops the script cleanly
+
+#### Slice B: Tool registry + dispatch
+
+- [ ] New `server/sturddle_view/llm/tools.py`: `ToolSpec` dataclass +
+      registry
+- [ ] Tool callable signature: `async def (input, *, cancel_token) -> dict`
+      (per-call cancel token so day-1 design tolerates parallel tool use
+      even though v1 runs sequentially -- spec §Triggers, "Forward-looking")
+- [ ] Coordinator extended: loop until provider yields no tool_use,
+      dispatch tool_use via registry, feed tool_result back through the
+      provider as the next turn.
+- [ ] Results keyed by `tool_use_id` end-to-end; no shared mutable
+      scratch between tool calls.
+
+Tests:
+- Tool dispatched with correct input shape
+- Result fed back into next provider turn
+- Cancel mid-tool propagates through token + aborts the agent loop
+- Unknown tool name yields a structured error tool_result (no crash)
+
+#### Slice C: `analyze` tool (first real capability)
+
+- [ ] New `server/sturddle_view/play/tools_engine.py`:
+      `analyze(fen, time_ms=None, depth=None)` -- throwaway engine via
+      the existing `_spawn_engine()` pattern (lifted from
+      `human_vs_engine._run_analysis`).
+- [ ] Hard caps as named consts + `SV_` env vars (no magic numbers):
+      `SV_AI_ANALYZE_MAX_TIME_MS`, `SV_AI_ANALYZE_MAX_DEPTH`.
+- [ ] Stop sequence matches existing `_cancel_analysis`:
+      UCI `stop` -> grace timeout -> transport close / kill.
+- [ ] Out-of-range requests clamped (not rejected) so the agent never
+      stalls on a guardrail.
+
+Tests:
+- Reuse existing engine fixtures (`make_fake_uci`)
+- Returns deterministic eval payload for a known position
+- Honors caller's `time_ms` and the hard cap
+- Cancel kills the process; no orphaned engine after the test
+- Reentrancy: two `analyze` calls in one agent turn don't share state
+
+Remaining tools (deferred to a follow-up cycle; same registry, no new
+plumbing required):
+- [ ] `get_position(ply)`
+- [ ] `get_pgn_range(from_ply, to_ply)`
+- [ ] `tablebase_probe(fen)` -- wrap existing TablebaseProber
+- [ ] `opening_lookup(fen)` -- wrap existing OpeningBook
+- [ ] `compare_moves(fen, [moves])` -- wrapper around `analyze`
+
+#### Slice D: System prompt + coach addendum
+
+- [ ] New `server/sturddle_view/llm/prompts.py`: `SYSTEM_PROMPT`,
+      `COACH_ADDENDUM` (path 1 persona).
+- [ ] Coordinator passes assembled prompt to provider's `stream()`.
+- [ ] Commentator/analyst addendum stubbed but unused (path 2/3 wires it
+      in Phase 3).
+
+Tests:
+- Prompt assembly is byte-stable (so the future cache-key strategy
+  isn't perturbed by silent format drift)
+- Wrong-mode addendum never leaks into path 1 calls
+
+#### Out of Phase 1 (explicit)
+
+- Other tools beyond `analyze` (one tool proves the boundary)
+- Real Anthropic / Ollama providers
+- Rolling session model, token caps, persona switching across modes
+- PGN context injection
 
 ### Phase 2: Agent + live path (path 1, play mode)
 
