@@ -220,6 +220,17 @@ Tests:
 - Each error category produces correct toast
 - Server logs contain full detail when toast is generic
 
+## Future cleanups (no rush; capture so we don't forget)
+
+- **Consolidate `EngineSupervisor.spawn()` and `spawn_throwaway()`** when
+  a third caller appears. Today they're honestly different (the former
+  binds to the supervisor's long-lived `_engine`/`_transport`; the
+  latter returns a self-contained `(engine, cleanup)` so multiple
+  concurrent one-shots from the same supervisor are safe). A shared
+  `_spawn_impl(...)` returning `(engine, transport, cleanup)` is the
+  obvious factor-out -- but doing it now is premature (two callers).
+  Worth ~30 lines of near-duplication in `spawn_throwaway` until then.
+
 ## Todos (cross-cutting)
 
 - [ ] Decide model dropdown vs free-form per provider
@@ -232,6 +243,17 @@ Tests:
       (`ai_analysis.MAX_TOOL_ROUNDS`).
 
 ## Bugs
+
+Slice-C-deferred:
+
+- **`analyze` mid-search cancel is not unit-tested.** The current cancel
+  test pre-flips the cancel token before calling `analyze`; that proves
+  the marker is surfaced and the engine winds down cleanly, but does
+  NOT exercise interruption of an in-flight search. A real mid-search
+  test needs a non-timer-based sync between "engine has started search"
+  and "test flips the token" (e.g., a hook on the analysis tool that
+  signals first-info-received). Add when designing Phase 2 streaming
+  hooks -- those will need the same observation seam.
 
 Slice-B-deferred:
 

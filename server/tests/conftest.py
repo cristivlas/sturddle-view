@@ -23,14 +23,17 @@ _UVICORN_SHUTDOWN_TIMEOUT = 10.0
 _SERVER_LOGS: dict[str, Path] = {}
 
 
-def make_fake_uci(root: Path, name: str) -> str:
-    """Write a minimal UCI stub engine to ``root`` and return its path.
+def _write_uci_stub(root: Path, name: str, extra_body: str = "") -> str:
+    """Shared writer for Python-based fake UCI engines.
 
-    The stub responds to ``uci``/``isready``/``quit`` only; it does NOT
-    play moves. Tests that need a move-playing fake should override
-    locally."""
+    Emits a script handling `uci`/`isready`/`quit`; callers pass
+    `extra_body` (already-indented Python lines) to add `go`/`stop`
+    responses or other behavior. Returns the executable path (a .cmd
+    wrapper on Windows, the chmod+x .py on POSIX) so the test can hand
+    it to chess.engine.popen_uci unchanged.
+    """
     py = root / f"{name}.py"
-    py.write_text(
+    body = (
         "#!/usr/bin/env python3\n"
         "import sys\n"
         "while True:\n"
@@ -39,14 +42,48 @@ def make_fake_uci(root: Path, name: str) -> str:
         "    line = line.strip()\n"
         f"    if line == 'uci': sys.stdout.write('id name {name}\\nuciok\\n'); sys.stdout.flush()\n"
         "    elif line == 'isready': sys.stdout.write('readyok\\n'); sys.stdout.flush()\n"
+        f"{extra_body}"
         "    elif line == 'quit': break\n"
     )
+    py.write_text(body)
     if sys.platform.startswith("win"):
         wrapper = root / f"{name}.cmd"
         wrapper.write_text(f'@"{sys.executable}" "{py}" %*\r\n')
         return str(wrapper)
     py.chmod(py.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     return str(py)
+
+
+def make_searching_fake_uci(
+    root: Path,
+    name: str,
+    *,
+    score_cp: int = 25,
+    depth: int = 6,
+    bestmove: str = "e2e4",
+    pv: str = "e2e4 e7e5",
+) -> str:
+    """Fake UCI engine that responds to `go` with a canned info line +
+    bestmove. Used by analysis-driving tests (e.g. the AI `analyze`
+    tool) to exercise the real chess.engine loop without a heavy binary.
+
+    Honors `stop` by emitting bestmove immediately (same canned line),
+    so a cancel-mid-search test sees the engine wind down cleanly.
+    """
+    extra = (
+        "    elif line.startswith('go') or line == 'stop':\n"
+        f"        sys.stdout.write('info depth {depth} score cp {score_cp} nodes 1234 time 50 pv {pv}\\n')\n"
+        f"        sys.stdout.write('bestmove {bestmove}\\n')\n"
+        "        sys.stdout.flush()\n"
+    )
+    return _write_uci_stub(root, name, extra)
+
+
+def make_fake_uci(root: Path, name: str) -> str:
+    """Minimal UCI stub: handles ``uci``/``isready``/``quit`` only and
+    does NOT play moves. Tests that need a move-playing fake should
+    use ``make_searching_fake_uci`` or override locally."""
+    return _write_uci_stub(root, name)
 
 
 def free_port() -> int:
