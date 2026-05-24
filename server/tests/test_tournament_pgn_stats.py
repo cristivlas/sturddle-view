@@ -2268,6 +2268,20 @@ def test_patch_config_subtracts_wld(tmp_path):
     assert stats["draws"] == 4
 
 
+def test_patch_config_subtracts_draws_with_nonzero_delta(tmp_path):
+    """Subtract a nonzero draws delta from a nonzero entry. Original
+    `entry - delta` arithmetic must be used, not `entry >> delta` /
+    `entry << delta` bit-shift mutations (which give wrong values for
+    typical W/L/D counts, e.g. 4 - 1 = 3 vs 4 >> 1 = 2)."""
+    p = _write_config(tmp_path)
+    # Entry: draws=4, losses=8, wins=10. Delta: draws=1, losses=2, wins=3.
+    patch_config_json(p, {"A vs B": {"wins": 3, "losses": 2, "draws": 1}})
+    stats = json.loads(p.read_text())["stats"]["A vs B"]
+    assert stats["wins"] == 7    # 10 - 3, not 10 >> 3 = 1
+    assert stats["losses"] == 6  # 8 - 2, not 8 >> 2 = 2
+    assert stats["draws"] == 3   # 4 - 1, not 4 >> 1 = 2
+
+
 def test_patch_config_preserves_penta(tmp_path):
     # Pentanomial counters must NOT be touched by the patch. Zeroing them
     # on every Stop wiped fastchess's running pentanomial across Pause/
