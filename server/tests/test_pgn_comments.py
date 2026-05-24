@@ -49,6 +49,50 @@ def test_strips_cutechess_trailing_token():
     assert s == "Engine preferred Rxd5"
 
 
+def test_strips_trailing_decimal_seconds_after_prose():
+    """Cutechess/fastchess sometimes emit '{ prose <time>s }' with no
+    eval/depth prefix. The decimal-seconds tail is a machine signature
+    and gets stripped even without a preceding eval token."""
+    s = _sanitize_comment("Good move! 3.2s")
+    assert s == "Good move!"
+
+
+def test_strips_trailing_milliseconds_after_prose():
+    s = _sanitize_comment("Quick reply 250ms")
+    assert s == "Quick reply"
+
+
+def test_strips_trailing_zero_decimal_seconds():
+    s = _sanitize_comment("Forced 0.5s")
+    assert s == "Forced"
+
+
+def test_keeps_trailing_bare_integer_seconds():
+    """Human prose often ends in 'Ns' without a decimal point ('took 7s',
+    'won in 30s'). The band-aid strip deliberately ignores bare integer
+    seconds to avoid eating these. Accept the tradeoff: cutechess
+    output configured to emit bare integer seconds is rare, and the
+    proper fix is bracket-tag emit (see docs/pgn-comment-format.md)."""
+    assert _sanitize_comment("took 7s") == "Took 7s"
+    assert _sanitize_comment("won in 30s") == "Won in 30s"
+
+
+def test_keeps_mid_string_time_token():
+    """The strip is anchored at end-of-comment. A time-shaped substring
+    in the middle of prose must not be touched."""
+    s = _sanitize_comment("Spent 5.0s and then blundered")
+    assert s == "Spent 5.0s and then blundered"
+
+
+def test_repro_bug_two_plies_one_with_eval_one_without():
+    """Bug repro from docs/pgn-comment-format.md: cutechess output where
+    one ply has eval/depth and the next has bare time only. Both
+    plies must shed their machine token, leaving only prose."""
+    assert _sanitize_comment("Ok, black plays Sicilian... -0.24/22") == \
+        "Ok, black plays Sicilian..."
+    assert _sanitize_comment("Good move! 3.2s") == "Good move!"
+
+
 def test_pure_prose_unchanged():
     assert _sanitize_comment("A purely human comment.") == "A purely human comment."
 
