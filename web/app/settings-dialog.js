@@ -105,9 +105,18 @@ function debounce(fn, ms) {
 export async function openSettingsDialog({ api, initialTab, getActivePerspective, reloadPerspective }) {
   let initial;
   let tournamentInitial;
+  let noEngine = false;
   try {
     initial = await api("GET", "/settings");
     tournamentInitial = await api("GET", "/api/tournament-settings");
+    // AI analysis depends on an engine; gate the master toggle and
+    // surface a hint when none is registered. Failure to read engines
+    // leaves noEngine=false (fail open -- a spurious hint is worse
+    // than a missing one).
+    try {
+      const enginesInfo = await api("GET", "/engines");
+      noEngine = !enginesInfo.selected_id;
+    } catch { /* ignore */ }
   } catch (e) {
     toast(`Couldn't load settings: ${e.message}`, { variant: "danger" });
     return;
@@ -872,10 +881,24 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const aiEnabled = document.createElement("wa-switch");
       aiEnabled.size = "small";
       if (initial.ai_enabled) aiEnabled.setAttribute("checked", "");
+      if (noEngine) aiEnabled.setAttribute("disabled", "");
       aiEnabled.addEventListener("change", () => {
         putSettings({ ai_enabled: aiEnabled.checked });
       });
       aiEnabledRow.append(aiEnabledLabel, aiEnabled);
+
+      // Inline hint when no engine is configured: AI analysis depends
+      // on the same engine the play / view perspectives use, so it
+      // can't function without one. Surfaced here rather than as a
+      // toast so the user can act on it without leaving the tab.
+      let aiNoEngineHint = null;
+      if (noEngine) {
+        aiNoEngineHint = document.createElement("div");
+        aiNoEngineHint.className = "settings-row settings-row-hint";
+        const hint = document.createElement("small");
+        hint.textContent = "Register an engine in the Engines tab to enable AI analysis.";
+        aiNoEngineHint.append(hint);
+      }
 
       const aiProviderRow = document.createElement("div");
       aiProviderRow.className = "settings-row";
@@ -947,7 +970,9 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       });
       applyAiProviderVisibility();
 
-      analysisPanel.append(aiEnabledRow, aiProviderRow, aiModelRow, aiKeyRow, aiUrlRow);
+      analysisPanel.append(aiEnabledRow);
+      if (aiNoEngineHint) analysisPanel.append(aiNoEngineHint);
+      analysisPanel.append(aiProviderRow, aiModelRow, aiKeyRow, aiUrlRow);
 
       // Map preserves insertion order by spec -- the iteration order here
       // IS the visual tab order. Each entry pairs the tab control with

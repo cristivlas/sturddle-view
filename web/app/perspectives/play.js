@@ -314,11 +314,15 @@ export const playPerspective = {
     const noEngineBanner = root.querySelector("#no-engine-banner");
     const noEngineBannerBtn = noEngineBanner.querySelector(".no-engine-banner__btn");
 
-    // Visible whenever the server has no engine configured. Hides the
-    // "no engine" failure mode behind a single visible CTA instead of
-    // waiting for the user to click New game and see an error toast.
-    function setNoEngine(noEngine) {
+    // Tracks "server has zero engines registered." Drives both the
+    // CTA banner and per-button gating (view-analyze, AI settings).
+    // Mirrored in JS state so refreshButtons() can read it without an
+    // extra DOM query each call.
+    let noEngine = false;
+    function setNoEngine(v) {
+      noEngine = !!v;
       noEngineBanner.classList.toggle("hidden", !noEngine);
+      refreshButtons();
     }
     async function checkEngines() {
       try {
@@ -842,13 +846,17 @@ export const playPerspective = {
         // stalemate / draw). Backed by a backend guard that prevents
         // half-cleared state if the UI is bypassed.
         setDisabled(viewPlayFromHereBtn, analyzing || viewGameOver);
+        // Engine-less view: analyze is unreachable. Tooltip points at
+        // Engines tab so the user knows the next step.
+        setDisabled(viewAnalyzeBtn, noEngine && !analyzing);
         viewAnalyzeBtn.classList.toggle("is-active", analyzing);
-        viewAnalyzeBtn.setAttribute(
-          "aria-label", analyzing ? "Stop analysis" : "Analysis mode",
-        );
-        viewAnalyzeBtn.setAttribute(
-          "title", analyzing ? "Stop analysis" : "Analysis mode",
-        );
+        const viewAnalyzeLabel = analyzing
+          ? "Stop analysis"
+          : noEngine
+            ? "Register an engine in Settings to analyze"
+            : "Analysis mode";
+        viewAnalyzeBtn.setAttribute("aria-label", viewAnalyzeLabel);
+        viewAnalyzeBtn.setAttribute("title", viewAnalyzeLabel);
         viewAnalyzeBtn.querySelector("wa-icon").setAttribute(
           "name", analyzing ? "circle-stop" : "magnifying-glass",
         );
