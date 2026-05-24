@@ -61,7 +61,8 @@ class _ViewSnapshot:
     pgn_termination: str | None
     view_hash: str | None = None
     view_summary: dict | None = None
-    view_raw_text: str | None = None
+    view_original_text: str | None = None
+    view_edited: bool = False
 
 
 @dataclass
@@ -82,9 +83,8 @@ class ViewModeParams:
     view_summary: dict | None = None
     # Verbatim import text (PGN or FEN). When set, get_pgn_text() can
     # return this directly to avoid any re-serialization loss. Treated as
-    # a write-once import fossil on the HVE side -- see _view_raw_text
-    # for the freeze contract.
-    view_raw_text: str | None = None
+    # write-once on the HVE side -- see _view_original_text.
+    view_original_text: str | None = None
 
 
 class HumanVsEngine:
@@ -178,15 +178,13 @@ class HumanVsEngine:
         # text (PGN or FEN). None for play-mode games and view/start transitions.
         self._view_hash: str | None = None
         self._view_summary: dict | None = None
-        # Frozen import artifact: the original bytes the user pasted, set
-        # once in enter_view_mode and never updated thereafter. Annotation
-        # editing and any other in-place mutator MUST NOT write to this --
-        # it stays as a faithful copy of the imported text so we can serve
-        # it on export when structured state hasn't diverged, and (future)
-        # offer revert-to-imported. Reset to None on _reset_view_state and
-        # restored from snapshot on edit-cancel are not mutations of the
-        # loaded game -- they correspond to game-load transitions.
-        self._view_raw_text: str | None = None
+        # Original bytes the user pasted, set once in enter_view_mode and never
+        # updated. Served verbatim by get_pgn_text when state hasn't diverged;
+        # also enables a future revert-to-original.
+        self._view_original_text: str | None = None
+        # True when view state has diverged from _view_original_text (e.g. after
+        # an annotation edit). Forces get_pgn_text to re-serialize.
+        self._view_edited: bool = False
         # Per-ply engine eval (white POV), one entry per pushed move. None
         # entries for plies with no engine search (human moves). Matches
         # move_stack length; pop alongside on take-back. Reset on new game.
@@ -370,7 +368,8 @@ class HumanVsEngine:
         self._view_pgn_termination = None
         self._view_hash = None
         self._view_summary = None
-        self._view_raw_text = None
+        self._view_original_text = None
+        self._view_edited = False
         self._view_cursor = 0
 
     def _eval_pov(self, stm: chess.Color = chess.WHITE) -> chess.Color:
@@ -906,7 +905,8 @@ class HumanVsEngine:
             self._view_root_comment = params.root_comment or None
             self._view_hash = params.view_hash or None
             self._view_summary = params.view_summary or None
-            self._view_raw_text = params.view_raw_text or None
+            self._view_original_text = params.view_original_text or None
+            self._view_edited = False
             # Default: land at start so the user is not greeted with the
             # end-of-game modal. Callers (e.g. x-game nav) can request a
             # specific ply so the first published board_update is already
@@ -1014,7 +1014,8 @@ class HumanVsEngine:
                 pgn_termination=self._view_pgn_termination,
                 view_hash=self._view_hash,
                 view_summary=self._view_summary,
-                view_raw_text=self._view_raw_text,
+                view_original_text=self._view_original_text,
+                view_edited=self._view_edited,
             )
             self._mode = Mode.EDITING
         if need_cancel_analysis:
@@ -1041,7 +1042,8 @@ class HumanVsEngine:
         self._view_pgn_termination = snap.pgn_termination
         self._view_hash = snap.view_hash
         self._view_summary = snap.view_summary
-        self._view_raw_text = snap.view_raw_text
+        self._view_original_text = snap.view_original_text
+        self._view_edited = snap.view_edited
 
     async def commit_edit(
         self,
@@ -1151,8 +1153,8 @@ class HumanVsEngine:
         or None when the requested annotation matches what's already
         there (no-op).
 
-        Caller MUST hold the lock. ``_view_raw_text`` is intentionally
-        NOT touched -- it stays the frozen import artifact.
+        Caller MUST hold the lock. ``_view_original_text`` is intentionally
+        NOT touched -- it stays the original import bytes.
         """
         assert self._lock.locked(), "_apply_view_annotation called without lock"
         new_value = text.strip() or None
@@ -1183,6 +1185,7 @@ class HumanVsEngine:
         pgn_text, _w, _b = built
         new_hash = canonical_hash(pgn_text, "pgn")
         self._view_hash = new_hash
+        self._view_edited = True
         return pgn_text, new_hash
 
     async def cancel_edit(self) -> str:
@@ -1998,12 +2001,14 @@ class HumanVsEngine:
         if self._board is None:
             return None
 
-        if self._viewing and self._view_raw_text:
+        if self._viewing and self._view_original_text and not self._view_edited:
             # Verbatim round-trip: return original import bytes unchanged.
             # Covers zero-move PGNs (headers-only) as well as full games.
+            # Skipped when structured state has diverged from the import
+            # (e.g. annotation edit) -- fall through to _build_view_pgn.
             white = self._view_white_name or "?"
             black = self._view_black_name or "?"
-            return self._view_raw_text, self._make_pgn_filename(white, black)
+            return self._view_original_text, self._make_pgn_filename(white, black)
 
         if self._viewing and not self._view_full_moves:
             return None  # FEN-only view with no verbatim text: nothing to export

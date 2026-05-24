@@ -63,12 +63,12 @@ Mutation API (new):
 ```python
 async def set_view_comment(self, ply: int, text: str | None) -> None:
     """ply==0 sets root_comment; ply>0 sets _view_comments[ply-1].
-    text=None deletes. Recomputes _view_hash and _view_raw_text."""
+    text=None deletes. Recomputes _view_hash and _view_original_text."""
 ```
 
 On commit:
 1. Update the in-memory comment array (or root).
-2. Regenerate `_view_raw_text` via `build_pgn(...)` from the live
+2. Regenerate `_view_original_text` via `build_pgn(...)` from the live
    view-mode state (start_fen, moves, clock_history, eval_history,
    the now-edited comments, root_comment, headers, result, termination).
 3. Recompute `_view_hash` from the new raw text via `canonical_hash`.
@@ -148,21 +148,21 @@ Cache refresh on response:
 - Refetch `/game/recent-imports` to rebuild the dropdown cache. Simple
   and authoritative; can be revisited if it shows up as a perf issue.
 
-## `_view_raw_text`: freeze as the import artifact
+## `_view_original_text`: freeze as the import artifact
 
-Today `_view_raw_text` is informally "the imported PGN bytes." There's
+Today `_view_original_text` is informally "the imported PGN bytes." There's
 no mechanism preventing a future code path from reassigning it, and the
 field name implies "live raw text" -- which it isn't.
 
 Going forward, treat it as a write-once import artifact:
 
-- Set exactly once in `enter_view_mode` from `params.view_raw_text`.
+- Set exactly once in `enter_view_mode` from `params.view_original_text`.
 - Declare with `Final` and document loudly that it is the **imported
   fossil**, never to be updated.
 - No mutation code path (annotation edit, anything future) touches it.
 
 Export decision becomes: if structured state still matches the import
-(no edits since), returning `_view_raw_text` is an optimization that
+(no edits since), returning `_view_original_text` is an optimization that
 skips re-serialization. If state has diverged (post-edit), serialize
 via `build_pgn`. Either way the raw remains a faithful copy of what
 the user pasted -- which gives us a free **"revert to imported"**
@@ -179,7 +179,7 @@ silently does today: the function signature has no `comments` or
 `game.comment`. The reason this hasn't been observed:
 
 - Import -> export is **verbatim**. `get_pgn_text()` returns
-  `self._view_raw_text` (the original imported bytes) when present,
+  `self._view_original_text` (the original imported bytes) when present,
   bypassing `build_pgn` entirely. So comments survive that path purely
   by virtue of the cached raw text, not because `build_pgn` handles
   them.
@@ -189,7 +189,7 @@ silently does today: the function signature has no `comments` or
     (autosave / recents-on-end / download). No comments today (live
     play has no comment storage either, see below).
   - The view-mode regeneration branch in `get_pgn_text` (post line
-    1766) when `_view_raw_text` is None -- can happen after
+    1766) when `_view_original_text` is None -- can happen after
     play_from_here folds a view-mode prefix into a play game, then the
     live game ends.
 
@@ -253,7 +253,7 @@ This must be tested exhaustively. Minimum surface:
     seeded comments at the correct plies.
   - Same, exported via the `_build_play_game_pgn` autosave path.
   - Round-trip parity: import a known PGN with comments, export via
-    the non-verbatim path (force `_view_raw_text=None` to simulate
+    the non-verbatim path (force `_view_original_text=None` to simulate
     post-annotation-edit state), expect comments preserved.
 
 ## Out of scope (v1)

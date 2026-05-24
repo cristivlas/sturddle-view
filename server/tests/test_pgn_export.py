@@ -62,7 +62,7 @@ async def _enter_view_from_pgn(h: HumanVsEngine, raw: str, view_hash: str) -> No
         pgn_termination=headers.get("Termination"),
         view_hash=view_hash,
         view_summary=parsed.summary,
-        view_raw_text=raw,
+        view_original_text=raw,
     ))
 
 
@@ -84,7 +84,7 @@ async def test_fen_only_view_returns_none(hve):
         moves_uci=[],
         clock_history=None,
         view_hash="abc123",
-        view_raw_text=None,  # API only sets this for PGN imports, not FEN
+        view_original_text=None,  # API only sets this for PGN imports, not FEN
     ))
     assert hve.get_pgn_text() is None
 
@@ -127,7 +127,7 @@ async def test_view_without_hash_falls_back_to_rebuilt_pgn(hve):
         black_name="Bob",
         pgn_result="*",
         view_hash=None,
-        view_raw_text=None,
+        view_original_text=None,
     ))
 
     result = hve.get_pgn_text()
@@ -154,7 +154,7 @@ async def test_view_export_emits_final_clock(hve):
         black_name="B",
         pgn_result="*",
         view_hash=None,
-        view_raw_text=None,
+        view_original_text=None,
     ))
     result = hve.get_pgn_text()
     assert result is not None
@@ -166,8 +166,8 @@ async def test_view_export_emits_final_clock(hve):
     assert "1... e5 { 5.0s }" in pgn_text
 
 
-async def test_view_raw_text_survives_edit_cancel(hve):
-    """view_raw_text must be restored after entering and cancelling edit mode."""
+async def test_view_original_text_survives_edit_cancel(hve):
+    """view_original_text must be restored after entering and cancelling edit mode."""
     raw = _load_fixture("Fischer vs Bolbochan, Stockholm 1962.pgn")
     await _enter_view_from_pgn(hve, raw, "deadbeef")
 
@@ -223,7 +223,7 @@ async def test_view_export_with_hash_returns_verbatim_pgn(hve, filename, must_co
 
 
 async def test_play_from_here_lossy_export(hve):
-    """After play_from_here, view_raw_text is gone; export rebuilds from live board."""
+    """After play_from_here, view_original_text is gone; export rebuilds from live board."""
     raw = _load_fixture("Fischer vs Bolbochan, Stockholm 1962.pgn")
     await _enter_view_from_pgn(hve, raw, "deadbeef")
 

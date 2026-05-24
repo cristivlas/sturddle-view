@@ -64,18 +64,20 @@ needed. Instead, a new `get_pgn_text() -> tuple[str, str] | None`
 method was added to `HumanVsEngine`:
 
 - Returns `(pgn_text, suggested_filename)` or `None` (no game / no moves).
-- **View mode with raw text** (`_view_raw_text` set): returns the
-  verbatim original import text -- zero metadata loss.
-- **View mode without raw text** (entered via `/game/view/start`
-  fork, not a direct import): rebuilds from `_view_full_moves` and
-  available headers. This is the one lossy case; annotations on the
-  pre-fork prefix are lost.
+- **View mode with original text** (`_view_original_text` set, no edits
+  since import): returns the verbatim original import text -- zero
+  metadata loss.
+- **View mode without original text** (entered via `/game/view/start`
+  fork, not a direct import) or **after an annotation edit**
+  (`_view_edited` flipped): rebuilds from `_view_full_moves` and
+  available headers via `build_pgn`. The fork case loses pre-fork
+  annotations; the edited case re-serializes including the edits.
 - **Play mode**: builds fresh PGN from the live board with
   `result="*"` / `termination="unterminated"` for in-progress games.
 - **FEN-only view** (no moves): returns `None`; endpoint replies 409.
 
-`ViewModeParams` and `_ViewSnapshot` both carry `view_raw_text`.
-`import_game` passes `raw_text` as `view_raw_text` so the verbatim
+`ViewModeParams` and `_ViewSnapshot` both carry `view_original_text`.
+`import_game` passes `raw_text` as `view_original_text` so the verbatim
 bytes travel with the session for the duration of the view.
 
 One new endpoint: `GET /game/pgn` -- returns the file with

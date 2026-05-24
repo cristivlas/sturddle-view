@@ -704,8 +704,8 @@ async def test_commit_edit_annotation_preserves_game_id(hve):
     assert h._game_id == pre_id
 
 
-async def test_commit_edit_annotation_does_not_mutate_raw_text(hve):
-    """_view_raw_text is the frozen import artifact -- annotation edits
+async def test_commit_edit_annotation_does_not_mutate_original_text(hve):
+    """_view_original_text holds the import bytes -- annotation edits
     must NOT touch it."""
     h, _ = hve
     raw = (
@@ -716,11 +716,11 @@ async def test_commit_edit_annotation_does_not_mutate_raw_text(hve):
         start_fen=None,
         moves_uci=["e2e4"],
         clock_history=None,
-        view_raw_text=raw,
+        view_original_text=raw,
     ))
     fen = await _enter_edit_at_ply(h, 1)
     await h.commit_edit(fen, apply_comment=True, comment_text="annotated")
-    assert h._view_raw_text == raw
+    assert h._view_original_text == raw
 
 
 async def test_commit_edit_annotation_updates_hash(hve):
@@ -829,3 +829,151 @@ async def test_play_from_here_pgn_export_preserves_comments(hve):
     assert "king pawn" in pgn_text
     assert "symmetric" in pgn_text
     assert "knight develops" in pgn_text
+
+
+# ---------------------------------------------------------------------------
+# get_pgn_text divergence gate: after an annotation edit, the export must
+# re-serialize structured state instead of returning the original text.
+# ---------------------------------------------------------------------------
+
+
+_RAW_NO_COMMENTS = (
+    '[Event "T"]\n[Site "T"]\n[Date "2026.05.24"]\n'
+    '[Round "-"]\n[White "A"]\n[Black "B"]\n[Result "*"]\n\n'
+    '1. e4 e5 *\n\n'
+)
+
+
+async def test_get_pgn_text_returns_original_when_unedited(hve):
+    """Optimization preserved: unedited view returns _view_original_text verbatim."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5"],
+        clock_history=None,
+        view_original_text=_RAW_NO_COMMENTS,
+    ))
+    result = h.get_pgn_text()
+    assert result is not None
+    pgn_text, _filename = result
+    assert pgn_text == _RAW_NO_COMMENTS
+
+
+async def test_get_pgn_text_reserializes_after_annotation_edit(hve):
+    """The bug fix: annotation via commit_edit must appear in the exported PGN,
+    not get masked by the verbatim-original short-circuit."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5"],
+        clock_history=None,
+        view_original_text=_RAW_NO_COMMENTS,
+    ))
+    fen = await _enter_edit_at_ply(h, 2)
+    await h.commit_edit(fen, apply_comment=True, comment_text="user note here")
+    result = h.get_pgn_text()
+    assert result is not None
+    pgn_text, _filename = result
+    assert pgn_text != _RAW_NO_COMMENTS
+    assert "user note here" in pgn_text
+
+
+async def test_get_pgn_text_reserializes_after_root_annotation_edit(hve):
+    """Root-comment edit (ply 0) must also flip the divergence flag."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4"],
+        clock_history=None,
+        view_original_text=_RAW_NO_COMMENTS,
+    ))
+    fen = await _enter_edit_at_ply(h, 0)
+    await h.commit_edit(fen, apply_comment=True, comment_text="pre-game note")
+    result = h.get_pgn_text()
+    assert result is not None
+    pgn_text, _filename = result
+    assert "pre-game note" in pgn_text
+
+
+async def test_get_pgn_text_stays_diverged_after_un_edit(hve):
+    """Once edited, the flag is sticky: round-tripping back to original text
+    leaves the export path on the regen branch (structurally equal but not
+    necessarily byte-identical to the original)."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4"],
+        clock_history=None,
+        view_original_text=_RAW_NO_COMMENTS,
+    ))
+    # Add then delete the comment.
+    fen = await _enter_edit_at_ply(h, 1)
+    await h.commit_edit(fen, apply_comment=True, comment_text="temporary")
+    fen = await _enter_edit_at_ply(h, 1)
+    await h.commit_edit(fen, apply_comment=True, comment_text="")
+    assert h._view_edited is True
+    result = h.get_pgn_text()
+    assert result is not None
+    pgn_text, _filename = result
+    assert "temporary" not in pgn_text
+
+
+async def test_cancel_edit_preserves_edited_flag(hve):
+    """enter_edit -> cancel_edit on an already-edited view must not clear
+    the flag (cancel restores the pre-edit snapshot wholesale)."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4"],
+        clock_history=None,
+        view_original_text=_RAW_NO_COMMENTS,
+    ))
+    fen = await _enter_edit_at_ply(h, 1)
+    await h.commit_edit(fen, apply_comment=True, comment_text="first edit")
+    assert h._view_edited is True
+    # Re-enter edit and cancel.
+    await h.enter_edit_mode()
+    await h.cancel_edit()
+    assert h._view_edited is True
+    pgn_text, _filename = h.get_pgn_text()
+    assert "first edit" in pgn_text
+
+
+async def test_no_op_annotation_does_not_set_edited_flag(hve):
+    """Opening the modal and committing the same text -> not an edit."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4"],
+        clock_history=None,
+        comments=["same"],
+        view_original_text=_RAW_NO_COMMENTS,
+    ))
+    fen = await _enter_edit_at_ply(h, 1)
+    result = await h.commit_edit(fen, apply_comment=True, comment_text="same")
+    assert result["changed"] == "none"
+    assert h._view_edited is False
+    pgn_text, _filename = h.get_pgn_text()
+    assert pgn_text == _RAW_NO_COMMENTS
+
+
+async def test_new_view_clears_edited_flag(hve):
+    """Loading a new game must reset the divergence flag."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4"],
+        clock_history=None,
+        view_original_text=_RAW_NO_COMMENTS,
+    ))
+    fen = await _enter_edit_at_ply(h, 1)
+    await h.commit_edit(fen, apply_comment=True, comment_text="stale")
+    assert h._view_edited is True
+    # Load a different game.
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["d2d4"],
+        clock_history=None,
+        view_original_text=_RAW_NO_COMMENTS,
+    ))
+    assert h._view_edited is False

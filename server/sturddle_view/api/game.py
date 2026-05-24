@@ -266,7 +266,7 @@ async def import_game(payload: dict, request: Request) -> dict:
                 pgn_termination=headers.get("Termination"),
                 view_hash=view_hash,
                 view_summary=summary,
-                view_raw_text=raw_text if parsed["detected_format"] == "pgn" else None,
+                view_original_text=raw_text if parsed["detected_format"] == "pgn" else None,
             ),
             game_id=game_id,
             land_at_ply=land_at_ply,
