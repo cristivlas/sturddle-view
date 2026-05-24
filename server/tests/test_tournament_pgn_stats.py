@@ -955,6 +955,47 @@ def test_ordo_fit_only_wins_dict_skips_purge():
     assert fit["B"][0] is not None
 
 
+def test_ordo_fit_purges_engine_with_exactly_one_loss():
+    """An all-losses engine with EXACTLY 1 loss must still be purged.
+    Kills `losses > 0` -> `losses > 1` NumberReplacer (which would let
+    the boundary case losses=1 escape the second purge leg)."""
+    # C has 0W 1L (single loss vs A). With the >1 mutation, C is not
+    # purged via second leg; we wire C into a real component so the
+    # not-purged outcome would yield a real rating.
+    encs = [
+        ("A", "B", 1.0, 1), ("B", "A", 1.0, 1),  # A, B balanced (1W 1L each)
+        ("D", "C", 1.0, 1),                       # D beats C
+        ("B", "D", 1.0, 1),                       # B beats D
+    ]
+    fit = ordo_fit(["A", "B", "C", "D"], encs,
+                   wins={"A": 1, "B": 2, "C": 0, "D": 1},
+                   losses={"A": 1, "B": 1, "C": 1, "D": 1})
+    # C: 0W 1L. Original `losses > 0` fires -> C purged.
+    # Mutated `losses > 1` is False -> C kept and would get a rating.
+    assert fit["C"] == (None, None)
+    # Sanity: B and D fit each other (non-degenerate component after purge).
+    assert fit["B"][0] is not None
+    assert fit["D"][0] is not None
+
+
+def test_ordo_fit_all_draws_engine_gets_rating_not_purged():
+    """An engine with `wins=0, losses=0` but real draw encounters must
+    be FIT (gets a real rating), not purged. Kills `> 0` -> `>= 0`
+    mutations on both purge legs (which would fire `0 >= 0` = True
+    against any zero-wins/zero-losses engine and silently purge it)."""
+    # Z plays 2 draws each vs A and vs B, both colors -> 0W 0L 4D.
+    encs = [
+        ("A", "B", 1.0, 2), ("B", "A", 1.0, 2),
+        ("Z", "A", 1.0, 2), ("A", "Z", 1.0, 2),
+        ("Z", "B", 1.0, 2), ("B", "Z", 1.0, 2),
+    ]
+    fit = ordo_fit(["A", "B", "Z"], encs,
+                   wins={"A": 1, "B": 1, "Z": 0},
+                   losses={"A": 1, "B": 1, "Z": 0})
+    # Z must be in the fit -- not purged via `>= 0` mutation.
+    assert fit["Z"][0] is not None
+
+
 def test_ordo_fit_zero_games_engine_not_purged():
     """An engine with wins=0 AND losses=0 (never played) must NOT be
     purged: both `>0` legs of the purge predicate fail. Kills NumberReplacer
