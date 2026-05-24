@@ -27,7 +27,8 @@ canned response can flow end-to-end.
 - [ ] Ollama provider (OpenAI-compatible translation)
 - [ ] Server-side config storage (deep-merge defaults + persisted JSON)
 - [ ] API key handling: env var (server) + keyring/file fallback (desktop)
-- [ ] New websocket event kind (`ai_info` or similar)
+- [ ] New websocket event kinds: `ai_info` (prose stream) +
+      `ai_annotation` (per-ply structured record)
 - [ ] Concurrency lock (1 AI analysis at a time)
 - [ ] Cancellation plumbing (abort LLM stream)
 
@@ -56,37 +57,49 @@ Tests:
 - `analyze` honors limit and aborts cleanly on cancel
 - Hard caps clamp out-of-range requests
 
-### Phase 2: Agent + path 3 (post-game)
+### Phase 2: Agent + live path (path 1, play mode)
 
-End-to-end agent flow for the simplest path (no live streaming pressure).
+Live-first spike. Streaming/cancel/transport is the hard part; building
+it first prevents under-design that path 3 would later force a rewrite.
 
-- [ ] System prompt + commentator/analyst mode addendum
+- [ ] System prompt + coach mode addendum
 - [ ] Agent runner: loop until done or budget exhausted
-- [ ] Per-move and per-game token caps; tool call cap
-- [ ] Structured annotations emitted
-- [ ] PGN persistence (`{}` comments + `[Annotator]` tag)
-- [ ] Re-run confirm prompt
-- [ ] Ribbon button wired for view mode
-
-Tests:
-- Canned LLM responses produce expected annotations
-- Budget exhaustion stops cleanly
-- PGN round-trip preserves annotations and metadata
-- Cancel mid-game aborts engine + LLM together
-
-### Phase 3: Live paths (1, 2)
-
-Add live-during-play and live-during-view paths.
-
-- [ ] Coach mode addendum
-- [ ] Per-move cap only (no per-game derivation live)
-- [ ] Live streaming to AI panel
-- [ ] Ribbon button semantics shift by mode/state
+- [ ] Rolling agent session for game lifetime; reset on new-game /
+      takeback past annotated ply / mode swap
+- [ ] Per-move and per-game token caps (both apply live); tool call cap
+- [ ] Live streaming to AI panel via `ai_info` events
+- [ ] `ai_annotation` event shape stubbed (no-op persistence) so path 3
+      doesn't surprise the transport layer
+- [ ] Ribbon button wired for play mode
 - [ ] Engine info pinned, AI prose scrolls
 
 Tests:
-- Live cancel aborts cleanly mid-stream
+- Canned LLM responses produce expected prose stream
+- Budget exhaustion stops cleanly
+- Live cancel (hard-stop) aborts engine + LLM together; partial prose
+  preserved in panel
 - Engine output still renders correctly during AI streaming
+- Session reset on takeback past annotated ply
+
+### Phase 3: Path 3 (post-game) + path 2 (live view)
+
+Reuse Phase 2 plumbing; add per-ply structured emission, PGN write, and
+view-mode trigger.
+
+- [ ] Commentator/analyst mode addendum
+- [ ] Full PGN + per-ply eval array in initial user message
+- [ ] Structured per-ply annotations emitted via `ai_annotation`
+- [ ] PGN persistence via shared `apply_comment` helper + `[Annotator]`
+      tag
+- [ ] Re-run confirm prompt (Overwrite / Cancel / Save backup)
+- [ ] Ribbon button wired for view mode + finished play mode
+- [ ] Live-during-view (path 2) reuses Phase 2 streaming
+
+Tests:
+- Canned LLM responses produce expected annotations
+- PGN round-trip preserves annotations and `[Annotator]` metadata
+- Overwrite prompt path: backup file created and original preserved
+- Cancel mid-game aborts engine + LLM together
 
 ### Phase 4: Settings UI
 
@@ -124,8 +137,11 @@ Tests:
 
 ## Decisions taken during impl
 
-(record decisions made or revised during impl that update or supersede
-spec items)
+- Spike order: live (path 1) first, then post-game/view (paths 3, 2).
+  Streaming + cancel + session model are the hardest pieces and want
+  early iteration. Path 3 layers per-ply emission and PGN write on top.
+- `apply_comment` helper extraction may land on `main` first and rebase
+  into this branch; treat as a soft dependency, not a blocker.
 
 ## Notes
 

@@ -39,6 +39,14 @@ Tournament mode is out of scope.
 - `opening_lookup(fen)` - wraps existing `OpeningBook.lookup()` (TSV-based)
 - `compare_moves(fen, [moves])` - wrapper around `analyze`
 
+### Initial context vs. tool-driven discovery
+
+- Full PGN + per-ply eval array injected into the initial user message
+  (chess games are small: ~80 plies SAN < 2k tokens typically)
+- `get_position` / `get_pgn_range` remain available as tools but are
+  expected to be rarely needed in path 3; primary value is live mode
+  (game grows turn by turn) and heavily-annotated re-runs
+
 ### Engine lifecycle for `analyze` tool
 
 - One throwaway engine per `analyze` call (pool later if perf demands)
@@ -73,16 +81,37 @@ to OpenAI function-call format on the wire.
 
 ## Triggers & Modes
 
-| Mode | Game state | Button action |
-|------|-----------|---------------|
-| play | in progress | live analysis (engine + optional AI) |
-| play | finished   | post-game analysis (path 3) |
-| view | any        | post-game analysis (path 3) |
+| Mode | Game state | Button action | Path |
+|------|-----------|---------------|------|
+| play | in progress | live coach commentary (rolling session) | 1 |
+| play | finished   | post-game analysis | 3 |
+| view | navigating | live commentator on current position | 2 |
+| view | analyze-all | post-game analysis over full PGN | 3 |
 
 - Same ribbon Analyze button across modes; semantics shift by state
 - Manual trigger only (no auto-on-game-end in v1)
 - Re-run allowed (overwrite); confirm prompt if prior AI annotation exists
 - Cancel aborts both engine and LLM as a single user-facing task
+- Cancel is hard-stop: kill current tool + LLM stream, drop agent loop;
+  no cooperative wrap-up turn (UI shows partial prose as-is)
+- Tool use is sequential only in v1 (no parallel tool calls); Anthropic
+  provider sets `disable_parallel_tool_use: true`
+- Forward-looking: parallel tool use is desirable later (latency + token
+  savings). Design the tool dispatcher and cancellation to tolerate
+  concurrent tool execution from day one even though v1 runs one at a
+  time — i.e., per-call cancellation tokens, no shared mutable scratch
+  between tools, results keyed by tool_use_id. Flip is then a config
+  change, not a refactor.
+
+### Live session model (paths 1, 2)
+
+- Rolling agent session for the lifetime of the game (not per-click)
+- System prompt + accumulated turns persist across Analyze invocations
+- Prompt caching (Anthropic native) covers system + early turns
+- Session reset on: new game, takeback past an annotated ply, mode swap
+- On Analyze click: agent decides what to discuss given session history
+  (coach judges relevance — recent move, position, strategic arc — no
+  forced focus from the UI)
 
 ## Output Format
 
@@ -99,6 +128,19 @@ to OpenAI function-call format on the wire.
 - Live commentary (paths 1, 2) is ephemeral - not persisted
 - PGN format: standard `{}` comments; portable
 - Metadata: provider/model captured in `[Annotator "..."]` PGN tag
+
+### PGN write path
+
+- Single helper (e.g., `apply_comment(node, prose, *, machine_token=None)`)
+  owns the "user prose first, machine token appended" composition rule;
+  AI write path calls the same helper
+- Re-run on path 3: if any target ply already has prose, prompt user —
+  Overwrite / Cancel / Save backup (.bak sibling file, exact format TBD
+  at impl)
+- AI prose lands in the same per-ply comment slot as human prose
+  (concatenated). Round-trip caveat: re-imported AI prose is
+  indistinguishable from human prose to the sanitizer — accepted
+  trade-off, mirrors the eval/time-token convention
 
 ### Citations
 
@@ -118,8 +160,10 @@ to OpenAI function-call format on the wire.
 
 Flat:
 - Provider (Anthropic / Ollama)
-- Model
-- API key (Anthropic) / Ollama URL (Ollama) - conditional on provider
+- Model (free-form or dropdown TBD per provider)
+- Provider-specific credentials:
+  - Anthropic: API key
+  - Ollama: base URL (no key)
 
 Advanced collapsible:
 - Per-move token cap
@@ -135,7 +179,8 @@ Advanced collapsible:
 
 - Per-move token cap (env + UI)
 - Per-game token cap (env + UI)
-- Live (paths 1, 2): per-move cap only
+- Live (paths 1, 2): per-move cap per invocation; per-game cap also
+  applies (rolling session accumulates cost across clicks)
 - View/post-game (path 3): min(per_move, per_game / remaining_plies)
 - Tool call cap per agent turn (env)
 - `analyze` per-call hard caps on time_ms/depth (env)
@@ -154,10 +199,12 @@ Advanced collapsible:
 
 ## Streaming Protocol
 
-- New event kind on existing websocket bus (e.g., `ai_info` /
-  `ai_commentary`)
+- Two event kinds on existing websocket bus:
+  - `ai_info` - prose tokens during streaming (live + post-game)
+  - `ai_annotation` - completed per-ply structured record (post-game)
 - Not multiplexed onto `engine_info` (clean schema separation)
-- Client renders in dedicated DOM area
+- Client renders prose in dedicated DOM area; annotations attach to
+  their ply for PGN persistence
 
 ## Error Handling
 
@@ -190,7 +237,8 @@ principles:
   workaround)
 - Engine pool for `analyze` calls
 - Wall-clock timeout backstop
-- Caching of post-game annotations (re-run always overwrites)
+- Caching of post-game annotations (re-runs require explicit user
+  Overwrite confirmation per the PGN write path)
 
 ## Open Items (decided at impl)
 
@@ -201,4 +249,6 @@ principles:
 - AI panel exact placement / dimensions
 - Cache key strategy if/when caching is added
 - Model dropdown vs free-form input per provider
+- Backup format on re-run overwrite (.bak sibling file vs.
+  `[OriginalComments]` PGN header vs. other)
 
