@@ -307,6 +307,32 @@ def test_gauntlet_first_contact_white_win_pins_wld_init(tmp_path):
     )
 
 
+def test_gauntlet_first_contact_black_win_pins_wld_init(tmp_path):
+    """First game between leader (A) and challenger (B) is B-as-black
+    winning. This makes line `setdefault(B, {}).setdefault(A, [0,0,0])`
+    in the BLACK_WIN branch the FIRST writer of wld[B][A]. Pins the
+    `[0, 0, 0]` initializer slots in that line against NumberReplacer
+    mutations."""
+    body = (
+        _game("A", "B", "0-1")   # B-as-black wins (FIRST B-vs-A contact)
+        + _game("B", "A", "0-1")  # A wins as black
+        + _game("B", "A", "0-1")  # A wins as black
+        + _game("A", "C", "1-0")  # leader pad
+        + _game("C", "A", "0-1")  # leader pad
+    )
+    p = _write_pgn(tmp_path, body)
+    d = compute_standings(p, tournament_type="gauntlet").to_dict()
+    by = {e["name"]: e for e in d["engines"]}
+    # B vs A: 1W 2L 0D -> score 1/3 -> exact Elo.
+    import math
+    expected_elo = -400 * math.log10((1 - 1/3) / (1/3))
+    assert by["B"]["elo"] == pytest.approx(expected_elo, abs=0.01)
+    from sturddle_view.tournament.pgn_stats import elo_margin_from_wld
+    assert by["B"]["elo_margin_95"] == pytest.approx(
+        elo_margin_from_wld(1, 2, 0), abs=0.01,
+    )
+
+
 def test_gauntlet_first_contact_draw_pins_wld_init(tmp_path):
     """First game between leader and challenger is a draw. Pins the
     `[0, 0, 0]` init in the DRAW branch (line writing wld[white][black]
