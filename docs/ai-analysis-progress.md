@@ -44,22 +44,28 @@ Wire the abstraction layer without any UI or agent intelligence. Goal: a
 canned response can flow end-to-end.
 
 - [x] Lift `LLMProvider` base from cluesmith; adapt to project conventions
-- [!] Anthropic provider (streaming + tool use loop) -- stub only;
-      constructor signature locked, body raises NotImplementedError
+- [x] Anthropic provider (streaming + tool use loop) -- full SSE body
+      shipped; `content_block_delta` -> text/thinking; tool_use accumulated
+      across `input_json_delta`; mid-stream `error` events surfaced.
 - [x] Ollama provider (OpenAI-compatible translation)
 - [x] Server-side config storage (deep-merge defaults + persisted JSON)
-- [x] API key handling: env var (server) + keyring/file fallback (desktop)
-- [x] New websocket event kinds: `ai_info` (prose stream) +
-      `ai_annotation` (per-ply structured record) -- `ai_info` shipped;
-      `ai_annotation` declared but unused until path 3 lands
+- [x] API key handling: cross-platform OS keyring (Windows Credential
+      Manager / macOS Keychain / Linux Secret Service) via `keyring`
+      lib; per-provider account names; env-var fallback
+      (`SV_AI_API_KEY`) for headless. See `key_store.py` and the
+      manual-clear instructions in `ai-analysis-spec.md` §Configuration.
+- [x] New websocket event kinds: `ai_info` (prose stream),
+      `ai_thinking` (collapsible reasoning disclosure), and
+      `ai_annotation` (per-ply structured record, unused until path 3).
 - [x] Concurrency lock (1 AI analysis at a time)
 - [x] Cancellation plumbing (abort LLM stream)
 
 Tests:
 - [x] Provider abstraction with mocked HTTP responses
-- [-] Anthropic and Ollama produce identical events for identical canned
-      inputs -- moot until Anthropic body lands
-- [x] API key never echoed back to UI
+      (`test_ollama_wire.py`, `test_anthropic_wire.py` -- shared shim).
+- [x] Anthropic and Ollama produce equivalent chunks for the same
+      canned inputs (text streaming, tool_use round-trip, thinking).
+- [x] API key never echoed back to UI (GET returns masked sentinel).
 - [x] Cancel during stream aborts cleanly
 
 ### Phase 1: Agent loop + first tool (TDD against scripted provider)
@@ -130,13 +136,21 @@ Tests:
 - [x] Tool publishes engine_info to the bus (PV table feeder)
 - [x] `_score_to_cp` wire-shape branches pinned
 
-Remaining tools (deferred to a follow-up cycle; same registry, no new
-plumbing required):
-- [ ] `get_position(ply)`
-- [ ] `get_pgn_range(from_ply, to_ply)`
-- [ ] `tablebase_probe(fen)` -- wrap existing TablebaseProber
-- [ ] `opening_lookup(fen)` -- wrap existing OpeningBook
-- [ ] `compare_moves(fen, [moves])` -- wrapper around `analyze`
+Remaining tools (deferred; same registry, no new plumbing required):
+- [~] `top_moves(n?, time_ms?, depth?)` -- BUILT but registration
+      commented out in `app.py`. Per-candidate searches via
+      `engine.analysis(..., root_moves=[m])` (UCI `searchmoves`);
+      Sturddle ignores `searchmoves` so every candidate returns the
+      same engine-best PV. Re-enable once the engine honors it.
+- [ ] `get_position(ply)`  -- low priority: full PGN already in initial
+      user message.
+- [ ] `get_pgn_range(from_ply, to_ply)` -- low priority for same reason.
+- [ ] `tablebase_probe()` -- wrap `TablebaseProber`; live board only.
+      Register conditionally on `engine_default_syzygy_path` being set
+      (no tool listed = no missing-syzygy error envelope to model).
+- [ ] `opening_lookup()` -- wrap `OpeningBook.lookup()`; live board only.
+- [ ] `compare_moves(fen, [moves])` -- wrapper around `analyze`; same
+      `searchmoves` blocker as `top_moves`.
 
 #### Slice D: System prompt + coach addendum
 
@@ -158,7 +172,7 @@ Tests:
 
 - Other tools beyond `analyze` (one tool proves the boundary)
 - ~~Real Ollama provider~~ -- shipped
-- ~~Real Anthropic provider~~ -- still pending (stub only)
+- ~~Real Anthropic provider~~ -- shipped (full streaming + tool use)
 - Rolling session model, token caps
 - Per-ply eval array injection (path 3 only)
 
@@ -219,26 +233,64 @@ Tests:
 
 ### Phase 4: Settings UI
 
-- [ ] Analysis tab with provider/model/key/url (flat)
-- [ ] Conditional reveal for provider-specific fields
+- [x] Analysis tab with provider/model/key/url (flat)
+- [x] Conditional reveal for provider-specific fields
+      (`applyAiProviderVisibility`: API key for Anthropic, Base URL
+      for Ollama)
+- [x] Master "Use AI analysis" toggle locks out child fields when off
+      (`applyAiEnabledLockout`)
+- [x] Per-provider model memory: server holds
+      `ai_models: dict[str, str]` keyed by provider; flipping provider
+      restores its last-selected model.
+- [x] Model dropdown via `GET /settings/ai/models` (Anthropic + Ollama
+      live endpoints); free-text fallback on provider error with the
+      server's `detail` surfaced inline.
+- [x] Masked key with replace-on-type flow (placeholder "Saved -- enter
+      new to replace"; sentinel `***` on the wire means "no change").
 - [ ] Advanced collapsible: caps + tunables
-- [ ] Masked key with "Update" flow
-- [ ] Effective config display (env-derived vs user-set)
+      (`SV_AI_MAX_TOOL_ROUNDS`, `SV_AI_ANALYZE_MAX_*`, token caps
+      pending).
+- [ ] Effective config display (env-derived vs user-set).
 
 Tests:
-- Settings round-trip (save, reload, persist)
-- Key update flow doesn't expose existing key
-- Layout fits in existing dialog without overflow
+- [x] Settings round-trip (save, reload, persist).
+- [x] Per-provider model memory survives provider flips
+      (`test_settings_api.py::test_ai_model_remembered_per_provider`).
+- [x] Per-provider keyring storage isolated from real OS keyring in
+      tests via autouse `_isolate_keyring` fixture.
+- [x] API key never echoed in full; GET returns mask when set.
+- [ ] Layout fits in existing dialog without overflow
+      (manual; hint slot pinned to fixed height to avoid reflow).
 
 ### Phase 5: Error UX
 
-- [ ] Error categorization on server
-- [ ] Toast mapping on client
-- [ ] No silent failure audit (every error path tested)
+- [x] Server attaches `error_detail` to the terminal `ai_info` event;
+      uses upstream `{"error": {"message": ...}}` field when available
+      (via `llm/_errors.py::extract_error_message`).
+- [x] Client renders the failure inline in the AI panel
+      (`play-ai-error` block) AND as a toast; user sees both the
+      what-broke + the where-to-look.
+- [x] Round-cap signal: `done.round_cap=true` -> "Stopped early at the
+      tool-call cap" inline note.
+- [x] Reasoning-only / no-text signal: `done.no_response=true` ->
+      "Model produced no answer. Try a different model" inline note.
+- [x] Settings dialog inline hint for AI-models endpoint failures
+      (key-not-configured, network, 4xx upstream): server `detail`
+      surfaced verbatim under the Model field; slot height pinned so
+      hint appearance does not reflow the dialog.
+- [ ] Category mapping table (auth / rate-limit / network / refusal):
+      today every error reaches the user as raw text. Categories would
+      let the toast suggest a specific action ("Open Settings" for
+      auth, "Retry" for rate limit). Park until evidence shows it
+      matters.
 
 Tests:
-- Each error category produces correct toast
-- Server logs contain full detail when toast is generic
+- [x] `error_detail` truncation cap pinned
+      (`test_agent_runner.py::test_error_detail_truncated_to_cap`).
+- [x] Provider error with structured detail flows through
+      (`test_provider_error_publishes_done_with_error_kind_and_detail`).
+- [x] `no_response` flagged on reasoning-only round
+      (`test_no_response_flagged_when_round_ends_without_text`).
 
 ## Future cleanups (no rush; capture so we don't forget)
 
@@ -253,14 +305,18 @@ Tests:
 
 ## Todos (cross-cutting)
 
-- [ ] Decide model dropdown vs free-form per provider
+- [x] Decide model dropdown vs free-form per provider -- dropdown via
+      `/settings/ai/models` for both; free-text fallback on endpoint
+      error with the server's `detail` surfaced inline.
 - [x] Decide AI panel exact placement (docked alongside Search Lines /
-      UCI Log via `createDockableWindow`)
-- [~] Iterate prompt (Slice D first cut shipped; iterate after path 3
-      lands)
+      UCI Log via `createDockableWindow`).
+- [x] Iterate prompt (STM hint, white-POV anchor, tools-from-registry,
+      "use own knowledge", "plain text only"). Further iteration after
+      path 3 lands.
 - [x] `feedback_no_magic_numbers` consts for every new env var
       (`SV_AI_MAX_TOOL_ROUNDS`, `SV_AI_ANALYZE_MAX_TIME_MS`,
-      `SV_AI_ANALYZE_MAX_DEPTH`, `SV_AI_TRANSCRIPT`, `SV_AI_DEBUG`)
+      `SV_AI_ANALYZE_MAX_DEPTH`, `SV_AI_TOP_MOVES_MAX_N`,
+      `SV_AI_TRANSCRIPT`, `SV_AI_DEBUG`)
 - [ ] Surface `SV_AI_MAX_TOOL_ROUNDS` in Settings > Analysis > Advanced
       (Phase 4): the tool-call cap belongs alongside the other token /
       time caps. Server-side const + env override already in place
@@ -270,12 +326,6 @@ Tests:
 
 Open:
 
-- **AI prose streams server-side but appears bursty in the UI.** The
-  transcript file shows real per-token streaming on the bus (~10ms
-  between chunks). Downstream of `Event.publish`, either the WebSocket
-  layer or `appendAiDelta` is coalescing. Parked refinement;
-  diagnose with Chrome devtools WS tab and inspect
-  `web/app/play-ai-window.js` `appendAiDelta`.
 - **`analyze` mid-search cancel is not unit-tested.** The current
   cancel test pre-flips the cancel token before calling `analyze`;
   that proves the marker is surfaced and the engine winds down cleanly,
@@ -283,17 +333,6 @@ Open:
   mid-search test needs a non-timer-based sync between "engine has
   started search" and "test flips the token" (e.g., a hook on the
   analysis tool that signals first-info-received).
-- **Thinking-chunk handling in `_assistant_message` is wrong.** When a
-  provider emits `kind="thinking"` chunks, the coordinator collapses
-  their text into the same `{type:"text"}` block as normal text.
-  Anthropic's wire shape expects a separate `{"type": "thinking",
-  "thinking": "..."}` block. Fix when wiring real Anthropic provider.
-  Extended thinking is opt-in -- can ship Anthropic without it and
-  add later, in which case this code path stays dormant.
-- **Round-cap signal not surfaced in UI.** Server emits
-  `ai_info {done: true, round_cap: true}` when the loop terminates on
-  the guardrail; client currently only honors `done` + `cancelled`. UI
-  toast / panel marker = Phase 5 (Error UX).
 - **AI panel renders all prose in one `<p>` node.** `appendAiDelta` in
   `web/app/play-ai-window.js` appends every delta as a text node into a
   single paragraph -- `\n\n` paragraph breaks won't render. Mirror the
@@ -303,15 +342,30 @@ Open:
   start path to play-perspective internals. Replace with
   coordinator-owned session state when the rolling-session model
   lands. (Was `api/ai.py`; same shortcut, renamed file.)
+- **`top_moves` blocked on engine `searchmoves` support.** See
+  `Open items (2026-05-25)` below. Registration is commented out.
+- **MD / LaTeX leakage in some models' prose.** Prompt now says
+  "plain text only". If leakage persists with that guidance,
+  client-side regex strip (`**`, `*`, `_`, `$...$`) is a fallback.
+  Park until evidence warrants.
 
 Fixed (kept here as a record):
 
-- ~~Tool registry isn't wired into `app.py`~~ -- fixed; `ANALYZE_TOOL_SPEC`
-  registered in `create_app`.
-- ~~Provider-selection guard missing~~ -- Ollama provider shipped;
-  Anthropic still a stub (selecting it from Settings raises
-  NotImplementedError, which falls out to a coordinator error event
-  rather than a runtime crash).
+- ~~AI prose streams server-side but appears bursty in the UI~~ --
+  spinner + thinking disclosure addressed the perceived "stuck panel"
+  UX; remaining burstiness is a non-issue.
+- ~~Thinking-chunk handling in `_assistant_message` is wrong~~ --
+  Anthropic provider now emits separate thinking chunks; coordinator
+  surfaces them as `ai_thinking` events; client renders them in a
+  sticky-pref `<details>` disclosure.
+- ~~Round-cap signal not surfaced in UI~~ -- inline `play-ai-roundcap`
+  note + `done.round_cap` flow fully wired.
+- ~~Tool registry isn't wired into `app.py`~~ -- `ANALYZE_TOOL_SPEC`
+  registered in `create_app`. Prompt's Tools: section is now rendered
+  by iterating the registry (no manual sync between schema and prompt
+  text); see `prompts.py::_render_tools_block`.
+- ~~Anthropic provider was a stub~~ -- full streaming body shipped:
+  text + thinking + tool_use accumulation; SSE error events surfaced.
 - ~~Two divergent engine_info loops~~ -- HVE's `_pump_engine_info` and
   the `analyze` tool both walk an analysis stream; both now go through
   `pump_engine_info` in `play/engine_info_pump.py`. PV table + arrow
@@ -329,6 +383,11 @@ Fixed (kept here as a record):
   consumption.
 - ~~Ollama silently swallowed malformed JSON~~ -- SSE payloads and
   tool-call arguments now raise (with raw bytes in transcript).
+- ~~Provider switch wiped the model id~~ -- server now keeps
+  per-provider model memory in `ai_models: dict[str, str]`; flipping
+  back restores the previously selected model.
+- ~~Settings dialog hint reflowed on appearance~~ -- pinned slot
+  height + ellipsis on overflow.
 
 ## Decisions taken during impl
 

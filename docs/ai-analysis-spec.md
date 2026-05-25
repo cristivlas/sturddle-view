@@ -29,15 +29,32 @@ Tournament mode is out of scope.
 - Agent consumes engine output via tools, emits prose + structured
   annotations
 
-### Tools (v1 list; refine during impl)
+### Tools (v1)
 
 - `analyze(fen, time_ms=None, depth=None)` - engine search; spawns
-  throwaway engine via existing `_spawn_engine()` pattern
-- `get_position(ply)` - FEN/SAN accessor on game history
-- `get_pgn_range(from_ply, to_ply)` - SAN move sequence
-- `tablebase_probe(fen)` - wraps existing `TablebaseProber` (Syzygy WDL/DTZ)
-- `opening_lookup(fen)` - wraps existing `OpeningBook.lookup()` (TSV-based)
-- `compare_moves(fen, [moves])` - wrapper around `analyze`
+  throwaway engine via existing `_spawn_engine()` pattern. SHIPPED.
+- `top_moves(n=None, time_ms=None, depth=None)` - rank top-N candidate
+  moves in the live position (workaround for engines without native
+  MultiPV). Operates on the live board via `board_provider` (no FEN
+  input). Requires engine support for UCI `searchmoves` (python-chess
+  `root_moves` kwarg); BUILT but registration commented out because
+  Sturddle ignores `searchmoves`.
+- `tablebase_probe()` - wraps existing `TablebaseProber` (Syzygy WDL/DTZ);
+  pending. Register conditionally on `engine_default_syzygy_path` being
+  set so the tool never appears for users without tablebases.
+- `opening_lookup()` - wraps existing `OpeningBook.lookup()`; pending.
+- `compare_moves(fen, [moves])` - same `searchmoves` blocker as
+  `top_moves`; pending until engine supports it.
+- `get_position(ply)` / `get_pgn_range(from_ply, to_ply)` - low
+  priority; full PGN is already in the initial user message.
+
+#### Tool-registry-as-source-of-truth
+
+The system prompt's `Tools:` block is rendered by iterating
+`ToolRegistry.specs()` -- each tool's `description` field flows into
+both the wire schema sent to providers and the prose listed in the
+prompt. Adding a tool requires no manual edit to the prompt; removing
+one cannot drift.
 
 ### Initial context vs. tool-driven discovery
 
@@ -95,6 +112,12 @@ to OpenAI function-call format on the wire.
     - **Linux:**
       `secret-tool clear service sturddle-view account ai_api_key_anthropic`
 - UI never receives full API key back; masked status only
+- **Per-provider model memory:** server stores `ai_models: dict[str, str]`
+  keyed by provider name; the active `ai_model` is a computed property
+  reading `ai_models[ai_provider]`. Flipping providers in the Settings
+  dialog restores the previously-selected model for the new provider
+  (or empty when never set). Adding a new provider does not bump the
+  persistence schema -- the dict gains a key at runtime.
 - All numeric tunables: named module constants, env-var override (SV_
   prefix), optional UI exposure
 
@@ -256,8 +279,11 @@ principles:
 
 - Tournament mode integration
 - Auto-trigger on game end
-- Multi-PV for engines that don't support it (agent uses `compare_moves`
-  workaround)
+- Multi-PV for engines that don't support it. The intended workaround
+  was `top_moves` / `compare_moves` (sequential per-candidate searches
+  via UCI `searchmoves`), but Sturddle ignores `searchmoves` today --
+  both tools are blocked engine-side. Re-enable once the engine
+  honors it.
 - Engine pool for `analyze` calls
 - Wall-clock timeout backstop
 - Caching of post-game annotations (re-runs require explicit user
@@ -267,11 +293,16 @@ principles:
 
 - Length target (try chess-magazine standard, iterate)
 - Output structure (experiment, iterate)
-- Exact prompt text
-- Settings tab visuals
-- AI panel exact placement / dimensions
 - Cache key strategy if/when caching is added
-- Model dropdown vs free-form input per provider
 - Backup format on re-run overwrite (.bak sibling file vs.
   `[OriginalComments]` PGN header vs. other)
+- ~~AI panel exact placement / dimensions~~ -- docked alongside
+  Search Lines / UCI Log via `createDockableWindow`.
+- ~~Model dropdown vs free-form input per provider~~ -- dropdown via
+  `/settings/ai/models`; free-text fallback on endpoint error.
+- ~~Settings tab visuals~~ -- flat layout shipped; conditional reveal
+  of API key vs Base URL by provider.
+- ~~Exact prompt text~~ -- shipped (Tools block rendered from registry;
+  STM hint, white-POV anchor, "use own knowledge", "plain text only").
+  Iteration continues as evidence comes in.
 
