@@ -406,3 +406,27 @@ authoritative architecture record.
 - Existing cancel pattern: `human_vs_engine.py:_cancel_analysis` (1464)
 - Existing tablebase: `play/tablebase.py`
 - Existing openings: `openings.py`
+
+## Open items (2026-05-25)
+
+State of the work after the prompt-revision + per-provider memory pass:
+
+- **top_moves disabled.** Built and tested in isolation, but registration
+  is commented out in `app.py`. Relies on UCI `searchmoves` (python-chess
+  `root_moves` kwarg) to restrict each per-candidate search; Sturddle
+  appears to ignore it (every candidate returns the same engine-best PV).
+  Re-enable once the engine honors `searchmoves` (engine-side change).
+- **Output format.** Some models leak Markdown / LaTeX into prose. Prompt
+  now says "plain text only"; if leakage persists, options are (a) strip
+  client-side via small regex (`**`, `*`, `_`, math wrappers), or
+  (b) ship a tiny renderer that interprets MD. Park until evidence
+  warrants.
+- **Spec-vs-code reconciliation.** Tools shipped today: `analyze` only
+  (`top_moves` defined but disabled; `compare_moves`, `tablebase_probe`,
+  `opening_lookup`, `get_position`, `get_pgn_range` not built). Spec
+  §Tools lists six; this section now reflects reality.
+- **Anthropic streaming.** `AnthropicProvider.list_models` works
+  (Settings dropdown populates); `stream()` still raises NotImplementedError.
+- **Per-provider model memory.** Server stores `ai_models: dict[str, str]`
+  keyed by provider; `ai_model` is a computed property. Adding a new
+  provider does not bump the persistence schema.
