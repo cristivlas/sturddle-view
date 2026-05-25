@@ -43,22 +43,24 @@ demonstrable. Refine as we go.
 Wire the abstraction layer without any UI or agent intelligence. Goal: a
 canned response can flow end-to-end.
 
-- [ ] Lift `LLMProvider` base from cluesmith; adapt to project conventions
-- [ ] Anthropic provider (streaming + tool use loop)
-- [ ] Ollama provider (OpenAI-compatible translation)
-- [ ] Server-side config storage (deep-merge defaults + persisted JSON)
-- [ ] API key handling: env var (server) + keyring/file fallback (desktop)
-- [ ] New websocket event kinds: `ai_info` (prose stream) +
-      `ai_annotation` (per-ply structured record)
-- [ ] Concurrency lock (1 AI analysis at a time)
-- [ ] Cancellation plumbing (abort LLM stream)
+- [x] Lift `LLMProvider` base from cluesmith; adapt to project conventions
+- [!] Anthropic provider (streaming + tool use loop) -- stub only;
+      constructor signature locked, body raises NotImplementedError
+- [x] Ollama provider (OpenAI-compatible translation)
+- [x] Server-side config storage (deep-merge defaults + persisted JSON)
+- [x] API key handling: env var (server) + keyring/file fallback (desktop)
+- [x] New websocket event kinds: `ai_info` (prose stream) +
+      `ai_annotation` (per-ply structured record) -- `ai_info` shipped;
+      `ai_annotation` declared but unused until path 3 lands
+- [x] Concurrency lock (1 AI analysis at a time)
+- [x] Cancellation plumbing (abort LLM stream)
 
 Tests:
-- Provider abstraction with mocked HTTP responses
-- Anthropic and Ollama produce identical events for identical canned
-  inputs
-- API key never echoed back to UI
-- Cancel during stream aborts cleanly
+- [x] Provider abstraction with mocked HTTP responses
+- [-] Anthropic and Ollama produce identical events for identical canned
+      inputs -- moot until Anthropic body lands
+- [x] API key never echoed back to UI
+- [x] Cancel during stream aborts cleanly
 
 ### Phase 1: Agent loop + first tool (TDD against scripted provider)
 
@@ -73,57 +75,60 @@ the system demonstrably more capable.
 
 #### Slice A: ScriptedProvider (extend the test double)
 
-- [ ] Extend `ProviderChunk` with `tool_use_id`, `tool_name`, `tool_input`
-      (declared deferred in `llm/base.py`; promote now)
-- [ ] New `ScriptedProvider` taking a list of "turns" (each turn = list
+- [x] Extend `ProviderChunk` with `tool_use_id`, `tool_name`, `tool_input`
+- [x] New `ScriptedProvider` taking a list of "turns" (each turn = list
       of chunks: text and/or tool_use). After each turn, awaits
       tool_results back, then emits next turn.
-- [ ] Keep `CannedProvider` as the no-tool subset (Phase 0 tests stay
-      green untouched).
+- [x] Keep `CannedProvider` as the no-tool subset.
 
 Tests:
-- Multi-turn scripted dialog produces expected chunk sequence
-- tool_result feedback unblocks the next turn
-- Provider cancellation drops the script cleanly
+- [x] Multi-turn scripted dialog produces expected chunk sequence
+- [x] tool_result feedback unblocks the next turn
+- [x] Provider cancellation drops the script cleanly
 
 #### Slice B: Tool registry + dispatch
 
-- [ ] New `server/sturddle_view/llm/tools.py`: `ToolSpec` dataclass +
+- [x] New `server/sturddle_view/llm/tools.py`: `ToolSpec` dataclass +
       registry
-- [ ] Tool callable signature: `async def (input, *, cancel_token) -> dict`
-      (per-call cancel token so day-1 design tolerates parallel tool use
-      even though v1 runs sequentially -- spec §Triggers, "Forward-looking")
-- [ ] Coordinator extended: loop until provider yields no tool_use,
+- [x] Tool callable signature: `async def (input, *, cancel_token) -> dict`
+- [x] Coordinator extended: loop until provider yields no tool_use,
       dispatch tool_use via registry, feed tool_result back through the
       provider as the next turn.
-- [ ] Results keyed by `tool_use_id` end-to-end; no shared mutable
+- [x] Results keyed by `tool_use_id` end-to-end; no shared mutable
       scratch between tool calls.
 
 Tests:
-- Tool dispatched with correct input shape
-- Result fed back into next provider turn
-- Cancel mid-tool propagates through token + aborts the agent loop
-- Unknown tool name yields a structured error tool_result (no crash)
+- [x] Tool dispatched with correct input shape
+- [x] Result fed back into next provider turn
+- [x] Cancel mid-tool propagates through token + aborts the agent loop
+- [x] Unknown tool name yields a structured error tool_result (no crash)
 
 #### Slice C: `analyze` tool (first real capability)
 
-- [ ] New `server/sturddle_view/play/tools_engine.py`:
+- [x] New `server/sturddle_view/play/tools_engine.py`:
       `analyze(fen, time_ms=None, depth=None)` -- throwaway engine via
-      the existing `_spawn_engine()` pattern (lifted from
-      `human_vs_engine._run_analysis`).
-- [ ] Hard caps as named consts + `SV_` env vars (no magic numbers):
+      the existing `_spawn_engine()` pattern.
+- [x] Hard caps as named consts + `SV_` env vars:
       `SV_AI_ANALYZE_MAX_TIME_MS`, `SV_AI_ANALYZE_MAX_DEPTH`.
-- [ ] Stop sequence matches existing `_cancel_analysis`:
+- [x] Stop sequence matches existing `_cancel_analysis`:
       UCI `stop` -> grace timeout -> transport close / kill.
-- [ ] Out-of-range requests clamped (not rejected) so the agent never
+- [x] Out-of-range requests clamped (not rejected) so the agent never
       stalls on a guardrail.
+- [x] Tool publishes `engine_info` + `engine_search_start` events to the
+      bus via the shared `pump_engine_info` helper -- PV table + board
+      arrow fill bursty during tool calls. (Refinement landed after
+      Slice C: AI mode was running a parallel go-infinite engine; that
+      gate now lives in HVE's start_analysis.)
+- [x] `score_pawns` + `score_text` accompany `score_cp` so the LLM can
+      drop in a presentation string without doing centipawn math.
 
 Tests:
-- Reuse existing engine fixtures (`make_fake_uci`)
-- Returns deterministic eval payload for a known position
-- Honors caller's `time_ms` and the hard cap
-- Cancel kills the process; no orphaned engine after the test
-- Reentrancy: two `analyze` calls in one agent turn don't share state
+- [x] Reuse existing engine fixtures (`make_searching_fake_uci`)
+- [x] Returns deterministic eval payload for a known position
+- [x] Honors caller's `time_ms` and the hard cap
+- [x] Cancel kills the process; no orphaned engine after the test
+- [x] Tool publishes engine_info to the bus (PV table feeder)
+- [x] `_score_to_cp` wire-shape branches pinned
 
 Remaining tools (deferred to a follow-up cycle; same registry, no new
 plumbing required):
@@ -135,67 +140,82 @@ plumbing required):
 
 #### Slice D: System prompt + coach addendum
 
-- [ ] New `server/sturddle_view/llm/prompts.py`: `SYSTEM_PROMPT`,
-      `COACH_ADDENDUM` (path 1 persona).
-- [ ] Coordinator passes assembled prompt to provider's `stream()`.
-- [ ] Commentator/analyst addendum stubbed but unused (path 2/3 wires it
-      in Phase 3).
+- [x] New `server/sturddle_view/llm/prompts.py`: `SYSTEM_PROMPT`,
+      `COACH_ADDENDUM` (path 1 persona), `COMMENTATOR_ADDENDUM` (path 2/3).
+- [x] Coordinator passes assembled prompt to provider's `stream()`.
+- [x] Commentator addendum WIRED (Refinement 3): view-mode analysis
+      flips persona via `_pre_analysis_mode` read in `_ai_kick.py`.
+- [x] User message carries `Current position (FEN)` + `Game moves`
+      (full game in view mode, played-so-far in play mode).
 
 Tests:
-- Prompt assembly is byte-stable (so the future cache-key strategy
-  isn't perturbed by silent format drift)
-- Wrong-mode addendum never leaks into path 1 calls
+- [x] Prompt assembly is byte-stable
+- [x] Wrong-mode addendum never leaks into path 1 calls
+- [x] User-message build pulls FEN + SAN from HVE board / view state
+- [x] Persona selection (coach vs commentator) routes by origin mode
 
 #### Out of Phase 1 (explicit)
 
 - Other tools beyond `analyze` (one tool proves the boundary)
-- Real Anthropic / Ollama providers
-- Rolling session model, token caps, persona switching across modes
-- PGN context injection
+- ~~Real Ollama provider~~ -- shipped
+- ~~Real Anthropic provider~~ -- still pending (stub only)
+- Rolling session model, token caps
+- Per-ply eval array injection (path 3 only)
 
 ### Phase 2: Agent + live path (path 1, play mode)
 
 Live-first spike. Streaming/cancel/transport is the hard part; building
 it first prevents under-design that path 3 would later force a rewrite.
 
-- [ ] System prompt + coach mode addendum
-- [ ] Agent runner: loop until done or budget exhausted
-- [ ] Rolling agent session for game lifetime; reset on new-game /
-      takeback past annotated ply / mode swap
+- [x] System prompt + coach mode addendum
+- [x] Agent runner: loop until done or budget exhausted (round cap only;
+      token caps pending)
+- [~] Rolling agent session for game lifetime -- not shipped; today is
+      one click = one turn. Session reset triggers (new-game, takeback
+      past annotated ply, mode swap) wait on rolling-session work.
 - [ ] Per-move and per-game token caps (both apply live); tool call cap
-- [ ] Live streaming to AI panel via `ai_info` events
-- [ ] `ai_annotation` event shape stubbed (no-op persistence) so path 3
-      doesn't surprise the transport layer
-- [ ] Ribbon button wired for play mode
-- [ ] Engine info pinned, AI prose scrolls
+      (tool call cap exists via `SV_AI_MAX_TOOL_ROUNDS`; token caps not
+      wired)
+- [x] Live streaming to AI panel via `ai_info` events
+- [~] `ai_annotation` event shape declared; persistence is no-op until
+      path 3 lands
+- [x] Ribbon button wired for play mode (no new button -- existing
+      Analyze button branches server-side on `settings.ai_enabled`)
+- [x] Engine info pinned, AI prose scrolls (PV table + arrow fill
+      bursty from `analyze` tool calls via shared `pump_engine_info`)
 
 Tests:
-- Canned LLM responses produce expected prose stream
-- Budget exhaustion stops cleanly
-- Live cancel (hard-stop) aborts engine + LLM together; partial prose
-  preserved in panel
-- Engine output still renders correctly during AI streaming
-- Session reset on takeback past annotated ply
+- [x] Canned LLM responses produce expected prose stream
+- [-] Budget exhaustion stops cleanly (round cap tested; token caps
+      pending)
+- [~] Live cancel (hard-stop) aborts LLM; engine winds down via tool's
+      cancel_token. No parallel go-infinite to abort in AI mode.
+- [x] Engine output still renders correctly during AI streaming
+- [ ] Session reset on takeback past annotated ply
 
 ### Phase 3: Path 3 (post-game) + path 2 (live view)
 
 Reuse Phase 2 plumbing; add per-ply structured emission, PGN write, and
 view-mode trigger.
 
-- [ ] Commentator/analyst mode addendum
-- [ ] Full PGN + per-ply eval array in initial user message
+- [x] Commentator/analyst mode addendum
+- [~] Full PGN in initial user message (view mode) -- shipped via
+      `Game moves` field. Per-ply eval array NOT shipped; engine evals
+      reach the model only through `analyze` tool calls.
 - [ ] Structured per-ply annotations emitted via `ai_annotation`
 - [ ] PGN persistence via shared `apply_comment` helper + `[Annotator]`
       tag
 - [ ] Re-run confirm prompt (Overwrite / Cancel / Save backup)
-- [ ] Ribbon button wired for view mode + finished play mode
-- [ ] Live-during-view (path 2) reuses Phase 2 streaming
+- [x] Ribbon button wired for view mode (existing view-Analyze button
+      now routes through the same server-side branch)
+- [x] Live-during-view (path 2) reuses path-1 streaming
 
 Tests:
-- Canned LLM responses produce expected annotations
-- PGN round-trip preserves annotations and `[Annotator]` metadata
-- Overwrite prompt path: backup file created and original preserved
-- Cancel mid-game aborts engine + LLM together
+- [ ] Canned LLM responses produce expected annotations
+- [ ] PGN round-trip preserves annotations and `[Annotator]` metadata
+- [ ] Overwrite prompt path: backup file created and original preserved
+- [x] Cancel mid-turn aborts cleanly (engine via tool cancel_token,
+      LLM via coordinator.cancel())
 
 ### Phase 4: Settings UI
 
@@ -234,9 +254,13 @@ Tests:
 ## Todos (cross-cutting)
 
 - [ ] Decide model dropdown vs free-form per provider
-- [ ] Decide AI panel exact placement (pin engine, scroll AI - revisit)
-- [ ] Iterate prompt at end of Phase 2 and again after Phase 3
-- [ ] Add `feedback_no_magic_numbers` consts for every new env var
+- [x] Decide AI panel exact placement (docked alongside Search Lines /
+      UCI Log via `createDockableWindow`)
+- [~] Iterate prompt (Slice D first cut shipped; iterate after path 3
+      lands)
+- [x] `feedback_no_magic_numbers` consts for every new env var
+      (`SV_AI_MAX_TOOL_ROUNDS`, `SV_AI_ANALYZE_MAX_TIME_MS`,
+      `SV_AI_ANALYZE_MAX_DEPTH`, `SV_AI_TRANSCRIPT`, `SV_AI_DEBUG`)
 - [ ] Surface `SV_AI_MAX_TOOL_ROUNDS` in Settings > Analysis > Advanced
       (Phase 4): the tool-call cap belongs alongside the other token /
       time caps. Server-side const + env override already in place
@@ -244,54 +268,67 @@ Tests:
 
 ## Bugs
 
-Slice-C-deferred:
+Open:
 
-- **`analyze` mid-search cancel is not unit-tested.** The current cancel
-  test pre-flips the cancel token before calling `analyze`; that proves
-  the marker is surfaced and the engine winds down cleanly, but does
-  NOT exercise interruption of an in-flight search. A real mid-search
-  test needs a non-timer-based sync between "engine has started search"
-  and "test flips the token" (e.g., a hook on the analysis tool that
-  signals first-info-received). Add when designing Phase 2 streaming
-  hooks -- those will need the same observation seam.
-
-Slice-B-deferred:
-
-- **Thinking-chunk handling in `_assistant_message` is wrong.** When the
-  Anthropic provider emits `kind="thinking"` chunks, the coordinator
-  collapses their text into the same `{type:"text"}` block as normal
-  text. Anthropic's wire shape expects a separate
-  `{"type": "thinking", "thinking": "..."}` block. Fix when wiring real
-  Anthropic provider. Note: extended thinking is opt-in (a request
-  param) -- we can ship Anthropic without it and add later, in which
-  case this code path stays dormant.
+- **AI prose streams server-side but appears bursty in the UI.** The
+  transcript file shows real per-token streaming on the bus (~10ms
+  between chunks). Downstream of `Event.publish`, either the WebSocket
+  layer or `appendAiDelta` is coalescing. Parked refinement;
+  diagnose with Chrome devtools WS tab and inspect
+  `web/app/play-ai-window.js` `appendAiDelta`.
+- **`analyze` mid-search cancel is not unit-tested.** The current
+  cancel test pre-flips the cancel token before calling `analyze`;
+  that proves the marker is surfaced and the engine winds down cleanly,
+  but does NOT exercise interruption of an in-flight search. A real
+  mid-search test needs a non-timer-based sync between "engine has
+  started search" and "test flips the token" (e.g., a hook on the
+  analysis tool that signals first-info-received).
+- **Thinking-chunk handling in `_assistant_message` is wrong.** When a
+  provider emits `kind="thinking"` chunks, the coordinator collapses
+  their text into the same `{type:"text"}` block as normal text.
+  Anthropic's wire shape expects a separate `{"type": "thinking",
+  "thinking": "..."}` block. Fix when wiring real Anthropic provider.
+  Extended thinking is opt-in -- can ship Anthropic without it and
+  add later, in which case this code path stays dormant.
 - **Round-cap signal not surfaced in UI.** Server emits
   `ai_info {done: true, round_cap: true}` when the loop terminates on
   the guardrail; client currently only honors `done` + `cancelled`. UI
   toast / panel marker = Phase 5 (Error UX).
-- **Tool registry isn't wired into `app.py`.** `create_app` passes only
-  `(bus, provider)`, so the production coordinator has an empty
-  registry and can't dispatch any tools. Real wire-up + the first tool
-  (`analyze`) is Slice C.
-
-Skeleton-deferred (filed during Phase 0 walking-skeleton review; fine for
-the canned-provider spike, must land before the feature is user-facing):
-
 - **AI panel renders all prose in one `<p>` node.** `appendAiDelta` in
   `web/app/play-ai-window.js` appends every delta as a text node into a
   single paragraph -- `\n\n` paragraph breaks won't render. Mirror the
-  `play-commentary-window.js` split-on-`\n{2,}` approach when real prose
-  starts flowing.
-- **`api/ai.py` reaches into `app.state.hve` for `game_id`.** Couples the
-  AI router to the play perspective. Replace with coordinator-owned
-  session state (game_id pinned on `new_game`, cleared on takeback past
-  annotated ply / mode swap) when the rolling-session model lands.
-- **Provider-selection guard missing.** `AnthropicProvider` and
-  `OllamaProvider` are NotImplementedError stubs. Today the coordinator
-  hardcodes `CannedProvider` so user selection is dormant -- but the
-  cycle that wires `s.ai_provider` -> provider construction must guard
-  against unimplemented providers (or land at least one real one first)
-  to avoid a runtime crash from the settings UI.
+  `play-commentary-window.js` split-on-`\n{2,}` approach.
+- **`api/_ai_kick.py` reaches into `hve._board` / `_start_fen` /
+  `_view_full_moves` / `_pre_analysis_mode` directly.** Couples the AI
+  start path to play-perspective internals. Replace with
+  coordinator-owned session state when the rolling-session model
+  lands. (Was `api/ai.py`; same shortcut, renamed file.)
+
+Fixed (kept here as a record):
+
+- ~~Tool registry isn't wired into `app.py`~~ -- fixed; `ANALYZE_TOOL_SPEC`
+  registered in `create_app`.
+- ~~Provider-selection guard missing~~ -- Ollama provider shipped;
+  Anthropic still a stub (selecting it from Settings raises
+  NotImplementedError, which falls out to a coordinator error event
+  rather than a runtime crash).
+- ~~Two divergent engine_info loops~~ -- HVE's `_pump_engine_info` and
+  the `analyze` tool both walk an analysis stream; both now go through
+  `pump_engine_info` in `play/engine_info_pump.py`. PV table + arrow
+  fill correctly in AI mode.
+- ~~Always-on `go infinite` competes with AI's tool engine~~ -- HVE's
+  `start_analysis` skips `_run_analysis` when `settings.ai_enabled`.
+- ~~`/ai/start` + `/ai/cancel` were separate client calls~~ -- folded
+  into `/game/analysis/start` + `/game/analysis/stop`; server picks the
+  path. Client posts to one endpoint.
+- ~~View-mode AI gated client-side~~ -- view mode now opens the AI
+  panel + the server picks commentator persona via
+  `_pre_analysis_mode`.
+- ~~LLM treated `score_cp` as pawns (100x misread)~~ -- tool result
+  carries `score_cp` + `score_pawns` + `score_text` for unambiguous
+  consumption.
+- ~~Ollama silently swallowed malformed JSON~~ -- SSE payloads and
+  tool-call arguments now raise (with raw bytes in transcript).
 
 ## Decisions taken during impl
 
