@@ -414,7 +414,15 @@ export function showEngineOptionsDialog({ engine, api, probeError = null }) {
       // Launch tab body ------------------------------------------------
       launchPanel.appendChild(buildLaunchTab(engine, launchState));
 
-      tabs.append(optionsTab, launchTab, optionsPanel, launchPanel);
+      // Map preserves insertion order by spec -- the iteration order here
+      // IS the visual tab order. Each entry pairs the tab control with
+      // its panel, eliminating the parallel-list bug class where one of
+      // them gets forgotten in tabs.append().
+      const TABS = new Map([
+        ["options", { tab: optionsTab, panel: optionsPanel }],
+        ["launch",  { tab: launchTab,  panel: launchPanel }],
+      ]);
+      for (const { tab, panel } of TABS.values()) tabs.append(tab, panel);
       dialog.appendChild(tabs);
 
       // Footer buttons --------------------------------------------------
