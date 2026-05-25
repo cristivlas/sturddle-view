@@ -362,23 +362,6 @@ See README for install steps.
 
 ---
 
-## Agent / Plugin Interface
-
-Phase 1 infrastructure (implemented):
-
-- `POST /agent/annotation` — agents push `{game_id, annotations}` to the server
-- Server publishes an `agent_annotation` event to the WebSocket event bus, broadcast to all clients
-- Any external agent can subscribe to the WebSocket stream as a plain client
-
-Deferred to Phase 2:
-
-- Client UI panels for agent output (analysis, commentary, teacher mode)
-- Agent subscribe/consume helper library
-- Built-in agents (analysis, move suggestions, teaching/explanation, post-game review)
-- Voice control / speech interface — designed to plug into the same event bus
-
----
-
 ## UI / Frontend
 
 Aesthetics and UX are first-class concerns; the GUI is not just a thin debug surface for the backend. Visual polish, consistent theming, and predictable interactions matter as much as functional correctness.

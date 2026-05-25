@@ -1,8 +1,8 @@
 """Typed event bus.
 
-All live activity (engine info, board updates, clock ticks, tournament standings,
-agent annotations) flows through this bus. Clients consume it via WebSocket;
-agents are first-class consumers + producers via the same bus.
+All live activity (engine info, board updates, clock ticks, tournament
+standings, AI analysis stream) flows through this bus. Clients consume
+it via WebSocket.
 """
 from __future__ import annotations
 
@@ -29,7 +29,6 @@ EventKind = Literal[
     "tournament_update",
     "tournament_status",
     "sprt_update",
-    "agent_annotation",
     "ai_info",
     "ai_thinking",
     "system",

@@ -442,8 +442,8 @@ authoritative architecture record.
     cluesmith.
   - **Events:** add `ai_info` (prose stream) and `ai_annotation`
     (per-ply record) to `events.py` `EventKind`. The pre-existing
-    `agent_annotation` kind is *not* reused — it serves external REST
-    agents (`api/agent.py`) with a different lifecycle.
+    `agent_annotation` kind / `/agent/annotation` route were removed
+    once AI work landed -- they had zero consumers.
   - **Client panel:** new `web/app/play-ai-window.js`, mirrors
     `play-commentary-window.js` (same `createDockableWindow` factory).
     `play.js` wires open/close + event subscription.
