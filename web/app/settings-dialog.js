@@ -976,9 +976,29 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         aiKeyToggleIcon.setAttribute("name", wasMasked ? "eye" : "eye-slash");
       });
       const setKeyPlaceholder = () => {
-        aiKey.placeholder = initial.ai_api_key_set ? "Saved -- enter new to replace" : "";
+        // setAttribute on host AND on the shadow input. wa-input mirrors
+        // the host attribute to the internal <input> on connect, but if
+        // we set it before connect, the mirror may not happen; if we set
+        // it after, the internal input has the value pinned. Doing both
+        // covers every order without relying on WA internals.
+        const text = initial.ai_api_key_set ? "Saved -- enter new to replace" : "";
+        if (text) aiKey.setAttribute("placeholder", text);
+        else aiKey.removeAttribute("placeholder");
+        const inner = aiKey.shadowRoot?.querySelector("input");
+        if (inner) {
+          if (text) inner.setAttribute("placeholder", text);
+          else inner.removeAttribute("placeholder");
+        }
       };
       setKeyPlaceholder();
+      // wa-input upgrades async on first connect. Apply once more after
+      // upgrade so the inner <input> picks the value up even when we
+      // set the attribute too early.
+      if (customElements.whenDefined) {
+        customElements.whenDefined("wa-input").then(() => {
+          requestAnimationFrame(setKeyPlaceholder);
+        });
+      }
       const persistAiKeyThenRefresh = debounce(async () => {
         const trimmed = (aiKey.value || "").trim();
         await putSettings({ ai_api_key: trimmed });
@@ -1069,17 +1089,19 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       }
 
       aiProvider.addEventListener("change", async () => {
-        // Server remembers each provider's last-selected model. PUT
-        // just the new provider; then re-read settings so we know the
-        // server's restored ai_model for this provider before fetching
-        // its model list.
+        // Server remembers each provider's last-selected model AND key
+        // status. PUT just the new provider; then re-read settings so
+        // we know the server's restored values for THIS provider before
+        // fetching its model list.
         await putSettings({ ai_provider: aiProvider.value });
         try {
           const live = await api("GET", "/settings");
           initial.ai_model = live.ai_model || "";
+          initial.ai_api_key_set = !!live.ai_api_key_set;
           aiModelInput.value = initial.ai_model;
         } catch { /* refreshAiModels still runs */ }
         applyAiProviderVisibility();
+        setKeyPlaceholder();
         refreshAiModels();
       });
       applyAiProviderVisibility();
