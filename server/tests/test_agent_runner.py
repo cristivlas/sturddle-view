@@ -763,3 +763,152 @@ async def test_illegal_move_and_false_piece_combined():
     corrective = provider.last_call["messages"][-1]
     assert "Nf6" in corrective["content"]
     assert "bishop on e4" in corrective["content"]
+
+
+# ---------- Per-round event labeling for the UI -----------------------
+# ai_info / ai_thinking carry the originating round_index so the panel
+# can render rounds as separate sections. ai_tool_call surfaces tool
+# dispatch. ai_corrective surfaces validator hits + the corrective
+# round number.
+
+
+@pytest.mark.asyncio
+async def test_ai_info_payload_includes_round_index():
+    provider = ScriptedProvider(rounds=[[
+        ProviderChunk(kind="text", text="hello"),
+    ]])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider, registry=ToolRegistry())
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    deltas = [e for e in events if e.payload.get("delta")]
+    assert all(e.payload.get("round") == 0 for e in deltas)
+
+
+@pytest.mark.asyncio
+async def test_ai_thinking_payload_includes_round_index():
+    provider = ScriptedProvider(rounds=[[
+        ProviderChunk(kind="thinking", text="hmm..."),
+        ProviderChunk(kind="text", text="answer."),
+    ]])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider, registry=ToolRegistry())
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    thinking = [e for e in events if e.kind == "ai_thinking"]
+    assert len(thinking) == 1
+    assert thinking[0].payload["round"] == 0
+
+
+@pytest.mark.asyncio
+async def test_ai_tool_call_event_emitted_per_dispatch():
+    async def ok(_input, *, cancel_token):
+        return {"ok": True}
+
+    reg = _make_registry({"analyze": ok})
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(
+            kind="tool_use", tool_use_id="t1",
+            tool_name="analyze", tool_input={"fen": "startpos"},
+        )],
+        [ProviderChunk(kind="text", text="done.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider, registry=reg)
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    calls = [e for e in events if e.kind == "ai_tool_call"]
+    assert len(calls) == 1
+    assert calls[0].payload == {
+        "round": 0,
+        "name": "analyze",
+        "input": {"fen": "startpos"},
+        "tool_use_id": "t1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_ai_corrective_event_emitted_on_validator_hit():
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="White plays Nf6.")],  # illegal
+        [ProviderChunk(kind="text", text="revised: Nf3.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=ToolRegistry(),
+        board_provider=_board_provider_for(chess.Board()),
+    )
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    corrective = [e for e in events if e.kind == "ai_corrective"]
+    assert len(corrective) == 1
+    assert corrective[0].payload == {
+        "round": 1,  # the round that the corrective triggers
+        "illegal_moves": ["Nf6"],
+        "false_claims": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ai_tool_call_failed_event_on_tool_error():
+    # Tool returns a structured {"error": ...} -- coordinator publishes
+    # ai_tool_call_failed so the panel can mark the failing call.
+    async def boom(_input, *, cancel_token):
+        raise RuntimeError("kaboom")
+
+    reg = _make_registry({"piece_at": boom})
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(
+            kind="tool_use", tool_use_id="t1",
+            tool_name="piece_at", tool_input={"square": "e4"},
+        )],
+        [ProviderChunk(kind="text", text="ok.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider, registry=reg)
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    failed = [e for e in events if e.kind == "ai_tool_call_failed"]
+    assert len(failed) == 1
+    assert failed[0].payload["round"] == 0
+    assert failed[0].payload["tool_use_id"] == "t1"
+    assert failed[0].payload["error"] == "tool_failed"
+
+
+@pytest.mark.asyncio
+async def test_no_ai_tool_call_failed_event_on_success():
+    async def ok(_input, *, cancel_token):
+        return {"ok": True}
+
+    reg = _make_registry({"piece_at": ok})
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(
+            kind="tool_use", tool_use_id="t1",
+            tool_name="piece_at", tool_input={"square": "e4"},
+        )],
+        [ProviderChunk(kind="text", text="ok.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider, registry=reg)
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    failed = [e for e in events if e.kind == "ai_tool_call_failed"]
+    assert failed == []

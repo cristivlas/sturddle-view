@@ -22,6 +22,9 @@ import {
   resetAi,
   appendAiDelta,
   appendAiThinking,
+  appendAiToolCall,
+  markAiToolCallFailed,
+  noteAiCorrective,
   markAiDone,
   setAiStatus,
   setAiTitle,
@@ -916,7 +919,7 @@ export const playPerspective = {
       switch (evt.kind) {
         case "ai_info": {
           const p = evt.payload || {};
-          if (typeof p.delta === "string") appendAiDelta(p.delta);
+          if (typeof p.delta === "string") appendAiDelta(p.delta, p.round ?? 0);
           if (p.done) {
             markAiDone({
               cancelled: !!p.cancelled,
@@ -936,7 +939,35 @@ export const playPerspective = {
         }
         case "ai_thinking": {
           const p = evt.payload || {};
-          if (typeof p.delta === "string") appendAiThinking(p.delta);
+          if (typeof p.delta === "string") appendAiThinking(p.delta, p.round ?? 0);
+          break;
+        }
+        case "ai_tool_call": {
+          const p = evt.payload || {};
+          appendAiToolCall({
+            round: p.round ?? 0,
+            name: p.name,
+            input: p.input,
+            toolUseId: p.tool_use_id,
+          });
+          break;
+        }
+        case "ai_tool_call_failed": {
+          const p = evt.payload || {};
+          markAiToolCallFailed({
+            toolUseId: p.tool_use_id,
+            error: p.error,
+            detail: p.detail,
+          });
+          break;
+        }
+        case "ai_corrective": {
+          const p = evt.payload || {};
+          noteAiCorrective({
+            round: p.round ?? 0,
+            illegalMoves: p.illegal_moves || [],
+            falseClaims: p.false_claims || [],
+          });
           break;
         }
         case "engine_search_start": {

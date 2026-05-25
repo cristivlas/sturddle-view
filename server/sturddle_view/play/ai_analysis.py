@@ -55,6 +55,11 @@ ERROR_DETAIL_MAX_LEN = 500
 # position. Two failure modes:
 #   - illegal moves (SAN-shaped tokens that the board rejects)
 #   - false piece claims ("X on Y" where Y does not hold X)
+# Prefix attributes the message to an automated check, not the user
+# (the corrective lands in the user-role slot per Anthropic wire shape,
+# but it isn't from the human -- mislabeling distracts the model's
+# reasoning trace).
+_CORRECTIVE_PREFIX = "[automated position check] "
 _ILLEGAL_MOVES_PROMPT = (
     "{moves} do not exist in this position. Rewrite without inventing moves."
 )
@@ -204,7 +209,7 @@ class AIAnalysisCoordinator:
                                     Event(
                                         kind="ai_info",
                                         game_id=game_id,
-                                        payload={"delta": chunk.text},
+                                        payload={"delta": chunk.text, "round": round_index},
                                     )
                                 )
                             elif chunk.kind == "thinking" and chunk.text:
@@ -212,7 +217,7 @@ class AIAnalysisCoordinator:
                                     Event(
                                         kind="ai_thinking",
                                         game_id=game_id,
-                                        payload={"delta": chunk.text},
+                                        payload={"delta": chunk.text, "round": round_index},
                                     )
                                 )
                             elif chunk.kind == "tool_use":
@@ -242,18 +247,65 @@ class AIAnalysisCoordinator:
                                 )
                             messages.append({
                                 "role": "user",
-                                "content": " ".join(parts),
+                                "content": _CORRECTIVE_PREFIX + " ".join(parts),
                             })
                             log.info(
                                 "AI agent loop: validator hits in round %d: moves=%s claims=%s",
                                 round_index, illegal, false_claims,
                             )
+                            # Tell the UI a corrective round is starting,
+                            # with why -- the panel renders a banner above
+                            # the next round.
+                            await self._bus.publish(
+                                Event(
+                                    kind="ai_corrective",
+                                    game_id=game_id,
+                                    payload={
+                                        "round": round_index + 1,
+                                        "illegal_moves": illegal,
+                                        "false_claims": false_claims,
+                                    },
+                                )
+                            )
                             continue
                         messages.append(_assistant_message(round_chunks))
+                        # Surface the tool call to the UI before dispatch,
+                        # so the panel can show "tool X called" while the
+                        # tool actually runs. Result is not emitted in v1
+                        # (engine PV / arrow side-effects cover analyze;
+                        # piece_at / validate_move outputs stay off-screen).
+                        await self._bus.publish(
+                            Event(
+                                kind="ai_tool_call",
+                                game_id=game_id,
+                                payload={
+                                    "round": round_index,
+                                    "name": pending_tool.tool_name,
+                                    "input": pending_tool.tool_input,
+                                    "tool_use_id": pending_tool.tool_use_id,
+                                },
+                            )
+                        )
                         tool_output = await self._dispatch_tool(pending_tool)
                         await transcript.tool_result(
                             round_index, pending_tool.tool_use_id, tool_output
                         )
+                        # Surface tool failures to the UI so the panel
+                        # can mark the dot. Success stays silent (v1
+                        # decision: results stay off-screen).
+                        if isinstance(tool_output, dict) and tool_output.get("error"):
+                            await self._bus.publish(
+                                Event(
+                                    kind="ai_tool_call_failed",
+                                    game_id=game_id,
+                                    payload={
+                                        "round": round_index,
+                                        "tool_use_id": pending_tool.tool_use_id,
+                                        "error": tool_output.get("error"),
+                                        "detail": tool_output.get("detail"),
+                                    },
+                                )
+                            )
                         card = self._inject_card_once(pending_tool.tool_name, cards_injected)
                         messages.append(
                             _tool_result_message(

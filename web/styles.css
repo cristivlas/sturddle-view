@@ -218,6 +218,80 @@ wa-select::part(listbox) {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* Round panel: one per agent-loop round. Stacks under status; each
+   round shows (optional) corrective banner, thinking, tool calls,
+   prose. Vertical spacing visually separates rounds. */
+.play-ai-round {
+  display: block;
+  margin: 0 0 12px;
+  padding-top: 6px;
+}
+
+/* Corrective banner shown on rounds triggered by a validator hit. */
+.play-ai-corrective {
+  margin: 0 12px 6px;
+  padding: 4px 8px;
+  border-left: 3px solid var(--wa-color-warning-60, #d6a200);
+  background: rgba(214, 162, 0, 0.08);
+  font-size: 0.85em;
+}
+
+/* Tool-call lines: colored dot per tool family + compact label.
+   Names mapped to dot color via .play-ai-tool-dot-<name>. */
+.play-ai-tools {
+  margin: 4px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* One horizontal scrollbar for the whole stack -- avoids per-row
+     scrollbars when multiple piece_at probes land in sequence. Rows
+     stay nowrap; widest row drives the scroller. */
+  overflow-x: auto;
+}
+.play-ai-tool-call {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85em;
+  opacity: 0.85;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+.play-ai-tool-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--wa-color-neutral-fill-loud, #888);
+  flex: 0 0 auto;
+}
+.play-ai-tool-dot-analyze       { background: var(--wa-color-primary-60, #4a90e2); }
+.play-ai-tool-dot-piece_at      { background: var(--wa-color-success-60, #4caf50); }
+.play-ai-tool-dot-validate_move { background: var(--wa-color-warning-60, #d6a200); }
+.play-ai-tool-dot-top_moves     { background: var(--wa-color-primary-60, #4a90e2); }
+/* Failed tool call: red dot + dim label, with the error appended to
+   the label by the renderer. */
+.play-ai-tool-call-failed .play-ai-tool-dot {
+  background: var(--wa-color-danger-60, #d9534f);
+}
+.play-ai-tool-call-failed .play-ai-tool-label {
+  opacity: 0.7;
+}
+.play-ai-tool-label {
+  /* Stay on one line; the row scrolls horizontally if needed. */
+  white-space: nowrap;
+}
+
+/* Terminal markers (cancelled/error/round-cap/no-response) sit
+   outside any round panel since they belong to the whole turn. */
+.play-ai-terminal {
+  margin: 0 12px 8px;
+}
+.play-ai-cancelled {
+  display: inline-block;
+  font-style: italic;
+  opacity: 0.7;
+}
+
 body {
   margin: 0;
   font: 0.875rem/1.4 system-ui, -apple-system, Segoe UI, sans-serif;

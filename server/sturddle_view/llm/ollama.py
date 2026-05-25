@@ -22,6 +22,7 @@ import httpx
 
 from ._errors import extract_error_message
 from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
+from .inline_tool_calls import recover_inline_tool_calls
 from .transcript import Transcript
 
 
@@ -280,16 +281,18 @@ class OllamaProvider(LLMProvider):
         # is the default; /api/chat (Ollama native) is required when the
         # caller asked for `think=true` since the compat layer ignores it.
         if self._thinking_enabled:
-            async for chunk in self._stream_native(
+            inner = self._stream_native(
                 system, messages, tools,
                 transcript=transcript, round_index=round_index,
-            ):
-                yield chunk
-            return
-        async for chunk in self._stream_openai_compat(
-            system, messages, tools,
-            transcript=transcript, round_index=round_index,
-        ):
+            )
+        else:
+            inner = self._stream_openai_compat(
+                system, messages, tools,
+                transcript=transcript, round_index=round_index,
+            )
+        # Some local models stream tool calls as prose (<function=...>)
+        # instead of structured tool_calls. Recover them transparently.
+        async for chunk in recover_inline_tool_calls(inner):
             yield chunk
 
     async def _stream_openai_compat(

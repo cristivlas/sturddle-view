@@ -47,7 +47,7 @@ function buildBody() {
   root.tabIndex = 0;
 
   // Status line: spinner + text, hidden until a turn starts. Lives
-  // above the prose so the prose can stream in below without jumping.
+  // above the rounds so they can stream in below without jumping.
   const status = document.createElement("div");
   status.className = "play-ai-status";
   status.hidden = true;
@@ -57,33 +57,126 @@ function buildBody() {
   statusText.className = "play-ai-status-text";
   status.append(spinner, statusText);
 
-  const para = document.createElement("p");
-  para.className = "play-ai-prose";
-  root.append(status, para);
+  // Container for per-round panels. Each round = its own thinking
+  // disclosure + tool-call lines + prose paragraph. New rounds append
+  // here in order; previous rounds auto-collapse their thinking.
+  const rounds = document.createElement("div");
+  rounds.className = "play-ai-rounds";
+
+  // Terminal markers (cancelled / error / round-cap / no-response)
+  // land here, below the last round panel.
+  const terminal = document.createElement("div");
+  terminal.className = "play-ai-terminal";
+
+  root.append(status, rounds, terminal);
   root._status = status;
   root._statusText = statusText;
-  root._para = para;
-  root._hasContent = false;
-  root._thinking = null;
+  root._rounds = rounds;
+  root._terminal = terminal;
+  // Map roundIndex -> {panel, thinking:{details,body}, tools, para,
+  //   hasProse, corrective}. Built lazily on first event per round.
+  root._roundPanels = new Map();
+  root._currentRound = null;
+  // Pending corrective banner data keyed by the round it applies to.
+  // The corrective event arrives before that round's first chunk.
+  root._pendingCorrective = new Map();
+  // tool_use_id -> tool-call line DOM node, so a failure event can
+  // mark the exact row by id (not by tool name or position).
+  root._toolCallNodes = new Map();
   return root;
 }
 
-function ensureThinkingBlock(root) {
-  if (root._thinking) return root._thinking;
+function buildRoundPanel() {
+  const panel = document.createElement("section");
+  panel.className = "play-ai-round";
+  // Optional corrective banner (only on rounds triggered by a
+  // validator hit on the previous round).
+  const corrective = document.createElement("div");
+  corrective.className = "play-ai-corrective";
+  corrective.hidden = true;
+  // Thinking disclosure -- collapsed by default; current round opens
+  // per the sticky pref.
   const details = document.createElement("details");
   details.className = "play-ai-thinking";
-  details.open = readThinkingOpen();
-  details.addEventListener("toggle", () => writeThinkingOpen(details.open));
   const summary = document.createElement("summary");
   summary.textContent = "Thinking";
-  const body = document.createElement("div");
-  body.className = "play-ai-thinking-body";
-  details.append(summary, body);
-  // Insert above the prose paragraph so the disclosure header is the
-  // top of the panel content; status line still sits above that.
-  root.insertBefore(details, root._para);
-  root._thinking = { details, body };
-  return root._thinking;
+  const thinkBody = document.createElement("div");
+  thinkBody.className = "play-ai-thinking-body";
+  details.append(summary, thinkBody);
+  details.hidden = true;  // un-hide on first thinking chunk
+  // Tool-call lines -- one per ai_tool_call event.
+  const tools = document.createElement("div");
+  tools.className = "play-ai-tools";
+  // Prose paragraph.
+  const para = document.createElement("p");
+  para.className = "play-ai-prose";
+  panel.append(corrective, details, tools, para);
+  return {
+    panel, corrective,
+    thinking: { details, body: thinkBody },
+    tools, para,
+    hasProse: false,
+  };
+}
+
+function ensureRoundPanel(root, roundIndex) {
+  let entry = root._roundPanels.get(roundIndex);
+  if (entry) return entry;
+  // Collapse the previously-current round's thinking; the new round
+  // takes the sticky-pref slot.
+  if (root._currentRound !== null) {
+    const prev = root._roundPanels.get(root._currentRound);
+    if (prev) prev.thinking.details.open = false;
+  }
+  entry = buildRoundPanel();
+  // New round is the "current" one -- its thinking honors the sticky
+  // pref. (Older rounds always default closed.)
+  entry.thinking.details.open = readThinkingOpen();
+  entry.thinking.details.addEventListener("toggle", () => {
+    // Only persist the pref when toggling the round that's still
+    // current; old-round toggles are explicit user inspection and
+    // shouldn't change the default for new turns.
+    if (root._currentRound === roundIndex) {
+      writeThinkingOpen(entry.thinking.details.open);
+    }
+  });
+  // Pending corrective banner for this round?
+  const corr = root._pendingCorrective.get(roundIndex);
+  if (corr) {
+    renderCorrective(entry.corrective, corr);
+    root._pendingCorrective.delete(roundIndex);
+  }
+  root._rounds.append(entry.panel);
+  root._roundPanels.set(roundIndex, entry);
+  root._currentRound = roundIndex;
+  return entry;
+}
+
+function renderCorrective(el, { illegalMoves, falseClaims }) {
+  el.hidden = false;
+  el.textContent = "";  // reset
+  const head = document.createElement("strong");
+  head.textContent = "Corrective: ";
+  el.append(head);
+  const parts = [];
+  if (illegalMoves && illegalMoves.length) {
+    parts.push(`illegal ${illegalMoves.join(", ")}`);
+  }
+  if (falseClaims && falseClaims.length) {
+    parts.push(`false ${falseClaims.join(", ")}`);
+  }
+  el.append(document.createTextNode(parts.join("; ")));
+}
+
+function formatToolArgs(input) {
+  // Compact one-line summary of the args. The full payload lives in
+  // the transcript; the panel just needs a glanceable label.
+  if (!input || typeof input !== "object") return "";
+  const pairs = Object.entries(input).map(([k, v]) => {
+    const s = typeof v === "string" ? v : JSON.stringify(v);
+    return `${k}=${s}`;
+  });
+  return pairs.join(", ");
 }
 
 let userCloseHandler = null;
@@ -143,21 +236,72 @@ function withStickyBottom(fn) {
 
 export function resetAi() {
   if (!inst.body) return;
-  inst.body._para.textContent = "";
-  inst.body._hasContent = false;
-  if (inst.body._thinking) {
-    inst.body._thinking.details.remove();
-    inst.body._thinking = null;
-  }
+  inst.body._rounds.textContent = "";
+  inst.body._terminal.textContent = "";
+  inst.body._roundPanels.clear();
+  inst.body._pendingCorrective.clear();
+  inst.body._toolCallNodes.clear();
+  inst.body._currentRound = null;
   setAiStatus("waiting");
 }
 
-export function appendAiThinking(text) {
+export function appendAiThinking(text, roundIndex = 0) {
   if (!inst.body || !text) return;
   withStickyBottom(() => {
-    const block = ensureThinkingBlock(inst.body);
-    block.body.append(document.createTextNode(text));
+    const entry = ensureRoundPanel(inst.body, roundIndex);
+    entry.thinking.details.hidden = false;
+    entry.thinking.body.append(document.createTextNode(text));
   });
+}
+
+export function appendAiToolCall({ round = 0, name, input, toolUseId }) {
+  if (!inst.body || !name) return;
+  withStickyBottom(() => {
+    const entry = ensureRoundPanel(inst.body, round);
+    const line = document.createElement("div");
+    line.className = "play-ai-tool-call";
+    const dot = document.createElement("span");
+    dot.className = `play-ai-tool-dot play-ai-tool-dot-${name}`;
+    line.append(dot);
+    const label = document.createElement("span");
+    label.className = "play-ai-tool-label";
+    const args = formatToolArgs(input);
+    label.textContent = args ? `${name}(${args})` : `${name}()`;
+    line.append(label);
+    entry.tools.append(line);
+    if (toolUseId) {
+      // Index by tool_use_id so a subsequent ai_tool_call_failed event
+      // can mark this exact row (multiple calls of the same tool in a
+      // round would otherwise collide).
+      inst.body._toolCallNodes.set(toolUseId, line);
+    }
+  });
+}
+
+export function markAiToolCallFailed({ toolUseId, error, detail }) {
+  if (!inst.body || !toolUseId) return;
+  const line = inst.body._toolCallNodes.get(toolUseId);
+  if (!line) return;
+  line.classList.add("play-ai-tool-call-failed");
+  const label = line.querySelector(".play-ai-tool-label");
+  if (label) {
+    const suffix = detail ? `${error}: ${detail}` : error;
+    label.textContent = `${label.textContent}  — ${suffix}`;
+  }
+}
+
+export function noteAiCorrective({ round, illegalMoves, falseClaims }) {
+  if (!inst.body) return;
+  // The corrective event arrives before the round's first chunk.
+  // Stash so ensureRoundPanel renders the banner when the panel is
+  // created. If the panel already exists (rare; chunk ordering
+  // surprise), render immediately.
+  const existing = inst.body._roundPanels.get(round);
+  if (existing) {
+    renderCorrective(existing.corrective, { illegalMoves, falseClaims });
+  } else {
+    inst.body._pendingCorrective.set(round, { illegalMoves, falseClaims });
+  }
 }
 
 export function setAiStatus(state) {
@@ -175,16 +319,16 @@ export function setAiStatus(state) {
   inst.body._statusText.textContent = text;
 }
 
-export function appendAiDelta(text) {
+export function appendAiDelta(text, roundIndex = 0) {
   if (!inst.body || !text) return;
   withStickyBottom(() => {
-    if (!inst.body._hasContent) {
-      inst.body._para.textContent = "";
-      inst.body._hasContent = true;
+    const entry = ensureRoundPanel(inst.body, roundIndex);
+    if (!entry.hasProse) {
+      entry.hasProse = true;
       // Prose has started flowing -- hide the spinner.
       setAiStatus("idle");
     }
-    inst.body._para.append(document.createTextNode(text));
+    entry.para.append(document.createTextNode(text));
   });
 }
 
@@ -197,8 +341,11 @@ export function markAiDone({
 } = {}) {
   // Terminal: clear spinner, then render whichever marker applies
   // (error > roundCap > noResponse > cancelled if multiple are set).
+  // Markers land in the dedicated terminal slot below the last round
+  // panel; they belong to the whole turn, not to any single round.
   setAiStatus("idle");
   if (!inst.body) return;
+  const slot = inst.body._terminal;
   withStickyBottom(() => {
     if (error) {
       const block = document.createElement("div");
@@ -212,28 +359,28 @@ export function markAiDone({
         body.textContent = errorDetail;
         block.append(body);
       }
-      inst.body._para.append(block);
+      slot.append(block);
       return;
     }
     if (roundCap) {
       const note = document.createElement("div");
       note.className = "play-ai-roundcap";
       note.textContent = "Stopped early at the tool-call cap. Raise SV_AI_MAX_TOOL_ROUNDS to allow more rounds.";
-      inst.body._para.append(note);
+      slot.append(note);
       return;
     }
     if (noResponse) {
       const note = document.createElement("div");
       note.className = "play-ai-roundcap";
       note.textContent = "Model produced no answer. Try a different model -- some stream only chain-of-thought.";
-      inst.body._para.append(note);
+      slot.append(note);
       return;
     }
     if (cancelled) {
       const marker = document.createElement("span");
       marker.className = "play-ai-cancelled";
-      marker.textContent = " [cancelled]";
-      inst.body._para.append(marker);
+      marker.textContent = "[cancelled]";
+      slot.append(marker);
     }
   });
 }
