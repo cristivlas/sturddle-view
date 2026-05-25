@@ -21,13 +21,15 @@ from sturddle_view.events import EventBus
 from sturddle_view.llm import (
     ProviderChunk,
     ScriptedProvider,
+    ToolSpec,
     assemble_system_prompt,
     build_initial_user_message,
 )
 from sturddle_view.llm.prompts import (
     COACH_ADDENDUM,
     COMMENTATOR_ADDENDUM,
-    SYSTEM_PROMPT,
+    SYSTEM_PROMPT_PREFACE,
+    SYSTEM_PROMPT_RULES,
 )
 from sturddle_view.play.ai_analysis import AIAnalysisCoordinator
 
@@ -41,15 +43,6 @@ _EXPECTED_PREAMBLE = (
     "depth. The engine is the source of truth for any numeric claim; your "
     "job is to turn its output into clear prose for a human reader.\n"
     "\n"
-    "Tools:\n"
-    "- `analyze(fen, time_ms?, depth?)`: run an engine search on a specific "
-    "position. Use this for the current position or a hypothetical line. "
-    "The user message gives you the live FEN; pass it as-is unless you are "
-    "exploring a what-if.\n"
-    "- `top_moves(n?, time_ms?, depth?)`: rank the top N candidate moves in "
-    "the live position. Use this whenever you want to compare alternatives; "
-    "do not chain several `analyze` calls to fake MultiPV.\n"
-    "\n"
     "Ground rules:\n"
     "- Engine evaluations are ALWAYS from White's point of view: positive "
     "cp = White is better, negative cp = Black is better, regardless of "
@@ -60,8 +53,8 @@ _EXPECTED_PREAMBLE = (
     "Use `score_text` for prose; never present `score_cp` as if it were "
     "pawns.\n"
     "- If you have not seen an engine evaluation for the position you are "
-    "discussing, call `analyze` (or `top_moves`) before claiming anything "
-    "about it. Do not guess.\n"
+    "discussing, call a tool before claiming anything about it. Do not "
+    "guess.\n"
     "- You have a bounded tool-call budget per turn. Prefer one well-aimed "
     "call over several speculative ones.\n"
     "- Be concise. A few sentences of grounded prose beats a paragraph of "
@@ -106,14 +99,16 @@ def test_commentator_prompt_byte_stable():
 
 def test_coach_prompt_contains_coach_addendum_only():
     out = assemble_system_prompt("coach")
-    assert SYSTEM_PROMPT in out
+    assert SYSTEM_PROMPT_PREFACE in out
+    assert SYSTEM_PROMPT_RULES.rstrip("\n") in out
     assert COACH_ADDENDUM in out
     assert COMMENTATOR_ADDENDUM not in out
 
 
 def test_commentator_prompt_contains_commentator_addendum_only():
     out = assemble_system_prompt("commentator")
-    assert SYSTEM_PROMPT in out
+    assert SYSTEM_PROMPT_PREFACE in out
+    assert SYSTEM_PROMPT_RULES.rstrip("\n") in out
     assert COMMENTATOR_ADDENDUM in out
     assert COACH_ADDENDUM not in out
 
@@ -121,6 +116,25 @@ def test_commentator_prompt_contains_commentator_addendum_only():
 def test_unknown_mode_raises_value_error():
     with pytest.raises(ValueError, match="unknown prompt mode"):
         assemble_system_prompt("analyst")  # type: ignore[arg-type]
+
+
+def test_tools_block_rendered_from_registry():
+    """The Tools: section is built by iterating registered tools, so
+    description drift (prompt vs. wire) can't happen. Confirms the
+    block uses each tool's `description` field verbatim."""
+    tools = [
+        ToolSpec(name="analyze", description="Run engine on FEN.", input_schema={}),
+        ToolSpec(name="hypothetical", description="Imaginary thing.", input_schema={}),
+    ]
+    out = assemble_system_prompt("coach", tools=tools)
+    assert "Tools:\n" in out
+    assert "- `analyze`: Run engine on FEN.\n" in out
+    assert "- `hypothetical`: Imaginary thing.\n" in out
+
+
+def test_no_tools_block_when_registry_empty():
+    out = assemble_system_prompt("coach", tools=[])
+    assert "Tools:" not in out
 
 
 def test_assembly_is_deterministic_across_calls():

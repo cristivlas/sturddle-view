@@ -127,7 +127,7 @@ class AIAnalysisCoordinator:
         care about position context.
         """
         active = provider or self._provider
-        system_prompt = assemble_system_prompt(mode)
+        system_prompt = assemble_system_prompt(mode, tools=self._registry.specs())
         opening_user_content = user_message if user_message is not None else ""
         async with self._lock:
             self._task = asyncio.current_task()

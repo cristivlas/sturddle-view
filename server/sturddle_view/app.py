@@ -357,15 +357,20 @@ def create_app(
             game_id_provider=_ai_game_id_provider,
         ),
     )
-    ai_registry.register(
-        TOP_MOVES_TOOL_SPEC,
-        make_top_moves_tool(
-            _ai_engine_launcher,
-            bus=app.state.event_bus,
-            board_provider=_ai_board_provider,
-            game_id_provider=_ai_game_id_provider,
-        ),
-    )
+    # top_moves disabled pending engine-side investigation: relies on
+    # UCI `searchmoves` (root_moves kwarg) to restrict each per-candidate
+    # search, but Sturddle appears to ignore the directive -- every
+    # candidate ends up with the engine's own best line instead of the
+    # restricted one. Re-enable once the engine honors searchmoves.
+    # ai_registry.register(
+    #     TOP_MOVES_TOOL_SPEC,
+    #     make_top_moves_tool(
+    #         _ai_engine_launcher,
+    #         bus=app.state.event_bus,
+    #         board_provider=_ai_board_provider,
+    #         game_id_provider=_ai_game_id_provider,
+    #     ),
+    # )
     app.state.ai_tool_registry = ai_registry
 
     # SV_AI_DEBUG=1: flip the AI loggers to DEBUG so the system prompt,

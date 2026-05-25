@@ -15,27 +15,23 @@ has callers wired today.
 """
 from __future__ import annotations
 
-from typing import Literal
+from typing import Iterable, Literal
+
+from .tools import ToolSpec
 
 
 PromptMode = Literal["coach", "commentator"]
 
 
-SYSTEM_PROMPT = """\
+SYSTEM_PROMPT_PREFACE = """\
 You are a chess analysis assistant. You collaborate with a chess engine \
 that produces numeric evaluations, principal variations, and search \
 depth. The engine is the source of truth for any numeric claim; your \
-job is to turn its output into clear prose for a human reader.
+job is to turn its output into clear prose for a human reader.\
+"""
 
-Tools:
-- `analyze(fen, time_ms?, depth?)`: run an engine search on a specific \
-position. Use this for the current position or a hypothetical line. \
-The user message gives you the live FEN; pass it as-is unless you are \
-exploring a what-if.
-- `top_moves(n?, time_ms?, depth?)`: rank the top N candidate moves in \
-the live position. Use this whenever you want to compare alternatives; \
-do not chain several `analyze` calls to fake MultiPV.
 
+SYSTEM_PROMPT_RULES = """\
 Ground rules:
 - Engine evaluations are ALWAYS from White's point of view: positive \
 cp = White is better, negative cp = Black is better, regardless of \
@@ -46,8 +42,8 @@ pawn) and `score_text` (presentation string like '+0.02' or '+M3'). \
 Use `score_text` for prose; never present `score_cp` as if it were \
 pawns.
 - If you have not seen an engine evaluation for the position you are \
-discussing, call `analyze` (or `top_moves`) before claiming anything \
-about it. Do not guess.
+discussing, call a tool before claiming anything about it. Do not \
+guess.
 - You have a bounded tool-call budget per turn. Prefer one well-aimed \
 call over several speculative ones.
 - Be concise. A few sentences of grounded prose beats a paragraph of \
@@ -89,18 +85,32 @@ _ADDENDA: dict[PromptMode, str] = {
 _SEPARATOR = "\n\n"
 
 
-def assemble_system_prompt(mode: PromptMode) -> str:
-    """Return the full system prompt for `mode`.
+def _render_tools_block(tools: Iterable[ToolSpec]) -> str:
+    """Format registered tools into the `Tools:` block. Each tool gets
+    one bullet: `- name: description`. Description comes from ToolSpec
+    -- single source of truth, no manual sync with the prompt."""
+    lines = ["Tools:"]
+    for t in tools:
+        lines.append(f"- `{t.name}`: {t.description}")
+    return "\n".join(lines)
 
-    Output is byte-stable: no env reads, no timestamps, no dict-iteration
-    order. The two inputs are the module constants above; if they don't
-    change, the output doesn't change.
-    """
+
+def assemble_system_prompt(
+    mode: PromptMode, tools: Iterable[ToolSpec] | None = None,
+) -> str:
+    """Return the full system prompt for `mode`. When `tools` is given,
+    a Tools: block is inserted between the preface and the rules,
+    rendered from the registry (no manual list-keeping)."""
     try:
         addendum = _ADDENDA[mode]
     except KeyError:
         raise ValueError(f"unknown prompt mode: {mode!r}") from None
-    return SYSTEM_PROMPT.rstrip("\n") + _SEPARATOR + addendum
+    parts = [SYSTEM_PROMPT_PREFACE]
+    if tools:
+        parts.append(_render_tools_block(tools))
+    parts.append(SYSTEM_PROMPT_RULES.rstrip("\n"))
+    parts.append(addendum.rstrip("\n"))
+    return _SEPARATOR.join(parts) + "\n"
 
 
 _INITIAL_NO_MOVES = "(none yet -- the game has not started)"

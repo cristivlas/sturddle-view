@@ -35,14 +35,15 @@ def _launcher_from_path(path: str, bus: EventBus):
 
 @pytest.mark.asyncio
 async def test_top_moves_returns_n_candidates_sorted_for_white(tmp_path: Path):
-    # Fake reports STM-POV cp; _score_to_cp flips to white-POV.
-    # Negative raw on black's STM => positive white-POV.
+    # Fake reports STM-POV cp (White's POV here -- White to move on a
+    # position with only 8 king moves; we restrict via root_moves).
+    # Higher cp = better for White.
     engine_path = make_position_aware_fake_uci(
         tmp_path, "tm_white",
         score_by_substring={
-            "moves b2a1": -300,
-            "moves b2a2": -100,
-            "moves b2a3": -50,
+            "searchmoves b2a1": 300,
+            "searchmoves b2a2": 100,
+            "searchmoves b2a3": 50,
         },
         default_score_cp=0,
     )
@@ -64,6 +65,39 @@ async def test_top_moves_returns_n_candidates_sorted_for_white(tmp_path: Path):
     assert cps == [300, 100, 50]
     sans = [c["move_san"] for c in out["candidates"]]
     assert sans == ["Ka1", "Ka2", "Ka3"]
+
+
+@pytest.mark.asyncio
+async def test_top_moves_returns_n_candidates_sorted_for_black(tmp_path: Path):
+    # Black to move; engine reports STM-POV (Black's). Higher raw cp =
+    # better for Black; _score_to_cp flips to white-POV (so values are
+    # negated). Best-for-Black = LOWEST white-POV cp.
+    engine_path = make_position_aware_fake_uci(
+        tmp_path, "tm_black",
+        score_by_substring={
+            "searchmoves a7a6": 300,
+            "searchmoves a7a5": 100,
+            "searchmoves b7b6": 50,
+        },
+        default_score_cp=0,
+    )
+    bus = EventBus()
+    board = chess.Board()
+    board.push_san("e4")
+    tool = make_top_moves_tool(
+        _launcher_from_path(engine_path, bus),
+        bus=bus,
+        board_provider=lambda: board,
+    )
+
+    out = await tool({"n": 3, "depth": 4}, cancel_token=CancelToken())
+
+    assert "error" not in out, out
+    assert out["side_to_move"] == "black"
+    cps = [c["score_cp"] for c in out["candidates"]]
+    assert cps == sorted(cps)
+    sans = [c["move_san"] for c in out["candidates"]]
+    assert sans == ["a6", "a5", "b6"]
 
 
 @pytest.mark.asyncio

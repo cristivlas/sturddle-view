@@ -247,10 +247,15 @@ async def _run_one_search(
     bus: EventBus,
     game_id: str,
     cancel_token: CancelToken,
+    root_moves: list[chess.Move] | None = None,
 ) -> tuple[chess.engine.InfoDict, bool]:
     """Spawn a throwaway engine, run one search, return (last_info, cancelled).
     Raises _SearchError on spawn or mid-search engine death so callers can
     map kind -> structured error envelope.
+
+    `root_moves`: when set, the engine is restricted to playing one of
+    these moves at the root (UCI `searchmoves`). Used by top_moves to
+    score a specific candidate without push/pop tricks.
 
     Publishes engine_info events via pump_engine_info but does NOT emit
     engine_search_start -- the caller decides when to clear the panel
@@ -262,7 +267,10 @@ async def _run_one_search(
         log.exception("search: engine spawn failed")
         raise _SearchError("engine_spawn_failed", str(exc)) from exc
     try:
-        with await engine.analysis(board, limit=limit) as analysis:
+        analysis_kwargs: dict = {"limit": limit}
+        if root_moves:
+            analysis_kwargs["root_moves"] = root_moves
+        with await engine.analysis(board, **analysis_kwargs) as analysis:
             last_info, cancelled = await pump_engine_info(
                 analysis,
                 bus=bus,
@@ -414,16 +422,14 @@ def make_top_moves_tool(
                 break
             move_san = board.san(move)
             move_uci = move.uci()
-            board.push(move)
             try:
                 last_info, cancelled = await _run_one_search(
                     engine_launcher, board, limit,
                     bus=bus, game_id=game_id, cancel_token=cancel_token,
+                    root_moves=[move],
                 )
             except _SearchError as err:
-                board.pop()
                 return {"error": err.kind, "detail": err.detail}
-            board.pop()
             if cancelled:
                 cancelled_any = True
             entry: dict = {"move_uci": move_uci, "move_san": move_san}

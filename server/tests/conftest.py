@@ -86,19 +86,21 @@ def make_position_aware_fake_uci(
     default_score_cp: int = 0,
     depth: int = 6,
 ) -> str:
-    """Fake UCI engine that varies `score cp` by the latest `position`
-    line. `score_by_substring` keys are substrings matched against that
-    line; first match wins, otherwise `default_score_cp`. No PV emitted."""
+    """Fake UCI engine that varies `score cp` by matching substrings
+    against the latest `position` line concatenated with the current
+    `go` line (so callers can key on FEN, played moves, OR `searchmoves`
+    args in `go`). First match wins, otherwise `default_score_cp`."""
     import json
     table_json = json.dumps(score_by_substring)
     extra = (
         "    elif line.startswith('position'):\n"
         "        last_position = line\n"
         "    elif line.startswith('go') or line == 'stop':\n"
+        "        ctx = last_position + ' ' + line\n"
         f"        table = {table_json}\n"
         f"        cp = {default_score_cp}\n"
         "        for needle, val in table.items():\n"
-        "            if needle in last_position:\n"
+        "            if needle in ctx:\n"
         "                cp = val\n"
         "                break\n"
         f"        sys.stdout.write(f'info depth {depth} score cp {{cp}} nodes 1234 time 50\\n')\n"
