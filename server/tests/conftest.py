@@ -23,6 +23,33 @@ _UVICORN_SHUTDOWN_TIMEOUT = 10.0
 _SERVER_LOGS: dict[str, Path] = {}
 
 
+class _InMemoryKeyring:
+    """Tests must never touch the real OS keyring -- they'd pollute the
+    user's Credential Manager / Keychain. This shim implements the two
+    methods key_store uses and lives only for the test process."""
+
+    def __init__(self) -> None:
+        self._store: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, account: str) -> str | None:
+        return self._store.get((service, account))
+
+    def set_password(self, service: str, account: str, password: str) -> None:
+        self._store[(service, account)] = password
+
+    def delete_password(self, service: str, account: str) -> None:
+        self._store.pop((service, account), None)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_keyring(monkeypatch):
+    """Force every test to use an in-memory keyring -- never the OS one."""
+    from sturddle_view import key_store
+    fake = _InMemoryKeyring()
+    monkeypatch.setattr(key_store, "_keyring", lambda: fake)
+    yield
+
+
 def _write_uci_stub(root: Path, name: str, extra_body: str = "", *, pre_loop: str = "") -> str:
     """Shared writer for Python-based fake UCI engines.
 

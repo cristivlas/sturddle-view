@@ -10,6 +10,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import APP_NAME
+from . import key_store
 from ._atomic import atomic_write_json
 from ._runtime import app_root
 
@@ -144,7 +145,6 @@ class Settings(BaseSettings):
     # schema -- new keys appear automatically.
     ai_models: dict[str, str] = Field(default_factory=dict)
     ai_base_url: str = ""
-    ai_api_key: str = ""
 
     @property
     def ai_model(self) -> str:
@@ -153,6 +153,17 @@ class Settings(BaseSettings):
     @ai_model.setter
     def ai_model(self, value: str) -> None:
         self.ai_models = {**self.ai_models, self.ai_provider: value}
+
+    # API keys live in the OS keyring (see key_store.py); never persisted
+    # in the settings file. The property dispatches by current provider
+    # so the provider factory just reads s.ai_api_key.
+    @property
+    def ai_api_key(self) -> str:
+        return key_store.get_api_key(self.ai_provider)
+
+    @ai_api_key.setter
+    def ai_api_key(self, value: str) -> None:
+        key_store.set_api_key(self.ai_provider, value or "")
 
     def apply_persisted(self, path: Path | None = None) -> None:
         path = path or default_settings_file()

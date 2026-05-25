@@ -19,6 +19,7 @@ dependencies = [
     "pydantic-settings>=2.2",
     "psutil>=5.9",
     "platformdirs>=4.0",
+    "keyring>=25.0",
 ]
 
 [project.optional-dependencies]

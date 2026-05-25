@@ -73,8 +73,27 @@ to OpenAI function-call format on the wire.
 
 - All major settings editable from UI (no server-only requirement)
 - API key handling:
-  - Server mode: env var only
-  - Desktop mode (PyInstaller): OS keyring, plaintext file fallback
+  - **Storage backend (cross-platform):** Python `keyring` library
+    (macOS Keychain, Windows Credential Manager, Linux Secret Service
+    via libsecret/kwallet).
+  - **Per-provider keys:** service name `sturddle-view`, account name
+    `ai_api_key_<provider>` (e.g. `ai_api_key_anthropic`). Lets multiple
+    providers coexist without a single shared slot.
+  - **Read order:** keyring → `SV_AI_API_KEY` env var → empty.
+  - **Headless / no backend:** Linux containers may lack a secret
+    service daemon; fall back to env var (server mode). Surface the
+    backend used in logs.
+  - **UI:** never receives the full key; GET returns masked string
+    when set, blank when unset. PUT writes through to keyring.
+  - **Manual clear (when the user revokes a key out-of-band):**
+    - **macOS:**
+      `security delete-generic-password -s sturddle-view -a ai_api_key_anthropic`
+    - **Windows:** Credential Manager UI (Control Panel ->
+      Credential Manager -> Windows Credentials -> remove the
+      `sturddle-view` / `ai_api_key_anthropic` entry) or
+      `cmdkey /delete:sturddle-view`
+    - **Linux:**
+      `secret-tool clear service sturddle-view account ai_api_key_anthropic`
 - UI never receives full API key back; masked status only
 - All numeric tunables: named module constants, env-var override (SV_
   prefix), optional UI exposure
