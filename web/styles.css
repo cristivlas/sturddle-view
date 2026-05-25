@@ -1952,7 +1952,14 @@ wa-dialog wa-tab-panel > .settings-tournament-tpl-mount { margin-top: 24px; }
 }
 /* Icon buttons have intrinsic size — don't stretch them across the column. */
 .settings-row-actions > * { flex: 0 0 auto; }
-.settings-row-hint { font-size: 0.6875rem; }
+.settings-row-hint {
+  font-size: 0.8125rem;
+  color: var(--muted, #888);
+  height: 1.4em;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .settings-section-heading {
   font-size: 0.75rem; color: var(--muted); margin: 12px 0 4px 0;
   text-transform: uppercase; letter-spacing: 0.05em;

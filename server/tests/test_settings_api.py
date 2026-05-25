@@ -125,3 +125,23 @@ def test_pgn_dir_blank_clears(client, tmp_path):
     r = client.put("/settings", json={"pgn_dir": ""})
     assert r.json()["pgn_dir"] == ""
     assert client.get("/settings").json()["pgn_dir"] == ""
+
+
+def test_ai_model_remembered_per_provider(client):
+    """Switching providers must not clobber the other provider's model.
+    Ollama -> pick gemma; Anthropic -> pick claude; flip back to Ollama
+    and the GET must surface gemma, not claude."""
+    client.put("/settings", json={"ai_provider": "ollama"})
+    client.put("/settings", json={"ai_model": "gemma:latest"})
+    assert client.get("/settings").json()["ai_model"] == "gemma:latest"
+
+    client.put("/settings", json={"ai_provider": "anthropic"})
+    # Anthropic has no remembered model yet -> empty.
+    assert client.get("/settings").json()["ai_model"] == ""
+    client.put("/settings", json={"ai_model": "claude-opus-4-7"})
+    assert client.get("/settings").json()["ai_model"] == "claude-opus-4-7"
+
+    client.put("/settings", json={"ai_provider": "ollama"})
+    assert client.get("/settings").json()["ai_model"] == "gemma:latest"
+    client.put("/settings", json={"ai_provider": "anthropic"})
+    assert client.get("/settings").json()["ai_model"] == "claude-opus-4-7"

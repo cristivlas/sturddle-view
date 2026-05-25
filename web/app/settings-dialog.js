@@ -991,16 +991,15 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
 
       function showModelInput(reason) {
         // Fall back to free-text input. Used when the provider can't
-        // be queried or returns nothing usable.
+        // be queried or returns nothing usable. Hint slot is always
+        // reserved (CSS min-height); we toggle text only -- so an
+        // appearing/disappearing error never reflows the dialog.
         aiModelSelect.style.display = "none";
         aiModelInput.style.display = "";
         aiModelHintText.textContent = reason || "";
-        aiModelHint.style.display = reason ? "" : "none";
       }
 
       function showModelSelect(models) {
-        // Populate + select current value (or prepend it if unknown so
-        // we don't silently change the user's setting).
         aiModelSelect.replaceChildren();
         const current = initial.ai_model || "";
         const list = models.slice();
@@ -1014,7 +1013,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         aiModelSelect.value = current || (list[0] || "");
         aiModelSelect.style.display = "";
         aiModelInput.style.display = "none";
-        aiModelHint.style.display = "none";
+        aiModelHintText.textContent = "";
       }
 
       // Lazy fetch: requested on dialog open + on provider/key/url
@@ -1035,21 +1034,21 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
           }
         } catch (e) {
           if (mySeq !== _modelsFetchSeq) return;
-          const msg = (e && e.message) || "Provider unavailable";
-          showModelInput(msg);
+          showModelInput(apiErrorDetail(e) || "Provider unavailable");
         }
       }
 
       aiProvider.addEventListener("change", async () => {
-        // Switching provider invalidates the previously-saved model id
-        // (Anthropic and Ollama have disjoint model namespaces). Clear
-        // it so a stale value doesn't survive into the next session.
-        // Persist BEFORE fetching models -- the endpoint reads the
-        // saved provider, so a fire-and-forget PUT races the GET and
-        // we'd query the previous provider.
-        await putSettings({ ai_provider: aiProvider.value, ai_model: "" });
-        initial.ai_model = "";
-        aiModelInput.value = "";
+        // Server remembers each provider's last-selected model. PUT
+        // just the new provider; then re-read settings so we know the
+        // server's restored ai_model for this provider before fetching
+        // its model list.
+        await putSettings({ ai_provider: aiProvider.value });
+        try {
+          const live = await api("GET", "/settings");
+          initial.ai_model = live.ai_model || "";
+          aiModelInput.value = initial.ai_model;
+        } catch { /* refreshAiModels still runs */ }
         applyAiProviderVisibility();
         refreshAiModels();
       });

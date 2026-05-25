@@ -57,7 +57,7 @@ PERSISTED_FIELDS = (
     "engine_default_book_order",
     "ai_enabled",
     "ai_provider",
-    "ai_model",
+    "ai_models",
     "ai_base_url",
     # ai_api_key intentionally NOT persisted: server mode reads SV_AI_API_KEY
     # from env; desktop mode will switch to OS keyring (later cycle). The
@@ -138,9 +138,21 @@ class Settings(BaseSettings):
     # desktop builds will switch to keyring later. Empty = unset.
     ai_enabled: bool = False
     ai_provider: str = "anthropic"
-    ai_model: str = ""
+    # Per-provider model memory: keys are provider names, values are model
+    # ids. The active model for the current provider is `ai_models.get(
+    # ai_provider, "")`. Open dict so adding a provider doesn't bump the
+    # schema -- new keys appear automatically.
+    ai_models: dict[str, str] = Field(default_factory=dict)
     ai_base_url: str = ""
     ai_api_key: str = ""
+
+    @property
+    def ai_model(self) -> str:
+        return self.ai_models.get(self.ai_provider, "")
+
+    @ai_model.setter
+    def ai_model(self, value: str) -> None:
+        self.ai_models = {**self.ai_models, self.ai_provider: value}
 
     def apply_persisted(self, path: Path | None = None) -> None:
         path = path or default_settings_file()
