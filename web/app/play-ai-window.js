@@ -2,11 +2,11 @@
 // windows so it shares the same managed dock (with N-slot resize) in
 // the play perspective.
 //
-// Skeleton scope: opens on first chunk, appends every `ai_info` delta,
-// finishes when payload carries done=true (and shows a "cancelled"
-// marker if done && cancelled). Lifecycle (open/close on Analyze
-// click, restore on perspective remount) is driven by play.js -- this
-// module only owns the dom inside the window.
+// Opens on first chunk, appends every `ai_info` delta, finishes when
+// payload carries done=true (and shows a "cancelled" marker if done &&
+// cancelled). Lifecycle (open/close on Analyze click, restore on
+// perspective remount) is driven by play.js -- this module only owns
+// the dom inside the window.
 
 import { createDockableWindow, DOCK_ORDER } from "./play-dock-windows.js";
 
@@ -15,8 +15,6 @@ const WIN_STATE_KEY = "sturddle:ai:winstate";
 const DOCKED_KEY    = "sturddle:ai:docked";
 const OPEN_KEY      = "sturddle:ai:open";
 const EMPTY_TEXT    = "No AI analysis yet.";
-
-let userCloseHandler = null;
 
 function buildBody() {
   const root = document.createElement("div");
@@ -46,14 +44,7 @@ const inst = createDockableWindow({
   },
   dockOrder: DOCK_ORDER.AI_ANALYSIS,
   closable: true,
-  onUserClose: () => {
-    if (userCloseHandler) userCloseHandler();
-  },
 });
-
-export function setOnUserCloseAi(fn) {
-  userCloseHandler = fn;
-}
 
 export function openAi() {
   if (inst.wb || inst.slot) return;

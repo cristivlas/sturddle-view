@@ -1,15 +1,15 @@
-"""api/ai.py builds the initial user message from live hve state.
+"""_ai_kick._build_user_message: builds the initial user message from
+live hve state.
 
-Direct unit test of `_build_user_message`. It reaches into `hve._board`
-and `hve._start_fen` -- same coupling shortcut that `api/ai.py` uses for
-`game_id`. When the coordinator owns its own session state, this test
-moves with the seam.
+It reaches into `hve._board` and `hve._start_fen` -- same coupling
+shortcut that api/game.py uses for `game_id`. When the coordinator
+owns its own session state, this test moves with the seam.
 """
 from __future__ import annotations
 
 import chess
 
-from sturddle_view.api.ai import _build_user_message
+from sturddle_view.api._ai_kick import _build_user_message
 
 
 class _FakeHve:

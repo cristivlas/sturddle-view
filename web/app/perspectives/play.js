@@ -17,7 +17,6 @@ import {
   isCommentaryOpen,
 } from "../play-commentary-window.js";
 import {
-  setOnUserCloseAi,
   openAi,
   closeAi,
   resetAi,
@@ -440,16 +439,10 @@ export const playPerspective = {
     window.addEventListener("resize", onCommentsResize);
 
     // --- AI analysis lifecycle ---
-    // Master toggle from settings (skeleton: gates start). The AI
-    // window now lives in the main dock alongside Search Lines + UCI
-    // Log, so no extra host element is needed here -- the dock
-    // container is set up below by setDockContainer() and the AI
-    // window participates through createDockableWindow's default path.
+    // Master toggle from settings; gates the AI panel + the server-side
+    // start_analysis branch. The AI window lives in the main dock
+    // alongside Search Lines + UCI Log.
     let aiEnabled = false;
-    setOnUserCloseAi(() => {
-      // X on the AI window during a turn cancels it server-side.
-      ctx.api("POST", "/ai/cancel", {}).catch(() => {});
-    });
     // Snapshot of TC fields used at the start of the current game; lets
     // us tell the user "applies on next game" if they edit TC mid-play.
     let gameTcInitial = null;
@@ -1565,25 +1558,20 @@ export const playPerspective = {
         if (wasAnalyzing) {
           dismissAnalysisToast?.();
           dismissAnalysisToast = null;
-          // Cancel any in-flight AI turn alongside the engine stop, so
-          // the user sees a single "analysis off" effect. Cancel runs
-          // regardless of mode -- a turn started in play and carried
-          // into view mode still needs stopping.
-          if (aiEnabled) ctx.api("POST", "/ai/cancel", {}).catch(() => {});
           // Close all dock panels (PV, UCI, AI) as one analysis-off
           // effect; their open-state is the user's last preference
-          // for the NEXT session.
+          // for the NEXT session. The server stopped the AI turn (if
+          // any) as part of /game/analysis/stop -- client doesn't kick.
           closeDebugWindowsPersist();
         } else {
           restoreViewAnalysisWindows(ctx.events);
           showAnalysisToast();
-          // View-mode AI is not wired yet; play mode only.
+          // Server picks the path (engine vs AI) based on settings.
+          // When AI is enabled in play mode, open the panel so the user
+          // sees prose as it streams in.
           if (aiEnabled && !viewing) {
             resetAi();
             openAi();
-            ctx.api("POST", "/ai/start", {}).catch((e) =>
-              reportError(ctx, "AI analysis failed to start", e),
-            );
           }
         }
       } catch (e) {
@@ -1697,7 +1685,6 @@ export const playPerspective = {
         setCommentaryDockContainer(null);
         setOnUserCloseCommentary(null);
         closeAi();
-        setOnUserCloseAi(null);
         dismissAnalysisToast?.();
         dismissAnalysisToast = null;
         dismissGameOverToast?.();

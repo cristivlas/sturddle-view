@@ -9,6 +9,7 @@ from fastapi.responses import Response
 
 from ..auth import require_token
 from ..engines import resolve_selected
+from ._ai_kick import cancel_ai_turn, start_ai_turn
 from ..play.canonical_hash import canonical_hash, canonical_hash_from_game
 from ..play.game_store import DEFAULT_PLAYER_NAME
 from ..play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
@@ -683,16 +684,29 @@ async def resume(request: Request) -> dict:
 
 @router.post("/analysis/start")
 async def analysis_start(request: Request) -> dict:
+    """Enter analysis mode. The server picks the path:
+    - engine go-infinite (default): HVE drives a live PV stream
+    - AI agent (when settings.ai_enabled): tool-call-driven, engine is
+      spawned per analyze call, no parallel go-infinite
+    The client doesn't care which; both produce the same UI signal
+    (analyzing=true on board_update, engine_info events on the bus).
+    """
     hve = await _get_hve(request)
     try:
         await hve.start_analysis()
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    if getattr(request.app.state.settings, "ai_enabled", False):
+        await start_ai_turn(request)
     return {"ok": True}
 
 
 @router.post("/analysis/stop")
 async def analysis_stop(request: Request) -> dict:
+    # Cancel any in-flight AI turn first so it stops cleanly before the
+    # mode flips out of ANALYZING. cancel_ai_turn is a no-op when no
+    # turn is running, so it's safe to call unconditionally.
+    await cancel_ai_turn(request)
     hve = await _get_hve(request)
     try:
         await hve.stop_analysis()

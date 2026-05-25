@@ -1,34 +1,28 @@
-"""AI analysis API: start/cancel a coordinator turn.
+"""AI analysis turn kickoff + cancel, called from `/game/analysis/*`.
 
-Walking-skeleton scope: a POST kicks the coordinator (which streams canned
-chunks back via the websocket bus as `ai_info` events). Real provider
-selection from settings, mode/state path dispatch, and tools land in
-later cycles. Cancel is wired so the UI can hard-stop a turn even before
-real provider integration.
+The client never talks to AI directly: it asks the server to start or
+stop analysis, and the server picks the path (engine go-infinite or
+AI agent) based on `settings.ai_enabled`. This module owns the AI
+half of that choice -- bridging the coordinator, provider factory,
+and HVE board snapshot at the API boundary.
+
+Direct hve._board / _start_fen access mirrors api/game.py's existing
+shortcut; replace when the coordinator owns its own session state.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import HTTPException, Request
 
-from ..auth import require_token
 from ..chess.board import moves_san
 from ..llm import build_initial_user_message
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/ai", tags=["ai"], dependencies=[Depends(require_token)])
-
 
 def _build_user_message(hve) -> str | None:
-    """Snapshot FEN + SAN history off the live play perspective.
-
-    Reaches into `hve._board` directly -- same coupling shortcut as the
-    `game_id` read above (filed in progress.md "Bugs"). Replace when the
-    coordinator owns its own session state.
-    """
     if hve is None:
         return None
     board = getattr(hve, "_board", None)
@@ -41,13 +35,6 @@ def _build_user_message(hve) -> str | None:
     )
 
 
-def _coordinator(request: Request):
-    coord = getattr(request.app.state, "ai_coordinator", None)
-    if coord is None:
-        raise HTTPException(status_code=503, detail="AI coordinator not initialized")
-    return coord
-
-
 def _log_task_exception(task: asyncio.Task) -> None:
     # Surface unhandled errors from the fire-and-forget run() task --
     # otherwise they vanish silently when the task is GC'd.
@@ -58,21 +45,25 @@ def _log_task_exception(task: asyncio.Task) -> None:
         log.exception("AI coordinator run failed", exc_info=exc)
 
 
-@router.post("/start")
-async def start(request: Request) -> dict:
-    s = request.app.state.settings
-    if not s.ai_enabled:
-        raise HTTPException(status_code=400, detail="AI analysis is disabled in settings")
-    coord = _coordinator(request)
+async def start_ai_turn(request: Request) -> None:
+    """Kick one AI analysis turn. Idempotent w.r.t. start_analysis --
+    callers should invoke this only when `settings.ai_enabled` is true.
+
+    Raises HTTPException on configuration/provider errors so the
+    /game/analysis/start endpoint can surface them as 4xx/5xx.
+    """
+    coord = getattr(request.app.state, "ai_coordinator", None)
+    if coord is None:
+        raise HTTPException(status_code=503, detail="AI coordinator not initialized")
+    factory = getattr(request.app.state, "ai_provider_factory", None)
+    if factory is None:
+        raise HTTPException(status_code=503, detail="AI provider factory not initialized")
     hve = request.app.state.hve
     game_id = getattr(hve, "game_id", None) if hve else None
     user_message = _build_user_message(hve)
     # Build the provider per turn so settings changes (model, base URL,
     # API key) flow through without a coordinator rebuild. Not in the
     # hot path -- happens once per AI turn.
-    factory = getattr(request.app.state, "ai_provider_factory", None)
-    if factory is None:
-        raise HTTPException(status_code=503, detail="AI provider factory not initialized")
     try:
         provider = factory()
     except Exception as e:
@@ -85,11 +76,11 @@ async def start(request: Request) -> dict:
     )
     task.add_done_callback(_log_task_exception)
     request.app.state.ai_task = task
-    return {"ok": True}
 
 
-@router.post("/cancel")
-async def cancel(request: Request) -> dict:
-    coord = _coordinator(request)
+async def cancel_ai_turn(request: Request) -> None:
+    """Cancel any in-flight AI turn. No-op if nothing is running."""
+    coord = getattr(request.app.state, "ai_coordinator", None)
+    if coord is None:
+        return
     await coord.cancel()
-    return {"ok": True}

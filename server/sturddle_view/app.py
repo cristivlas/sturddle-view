@@ -19,7 +19,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from . import __version__
 from .auth import AUTH_COOKIE, origin_ok
 from .api import agent as agent_api
-from .api import ai as ai_api
 from .api import chess_utils as chess_api
 from .api import engines as engines_api
 from .api import fs as fs_api
@@ -412,7 +411,6 @@ def create_app(
     app.include_router(fs_api.router)
     app.include_router(game_api.router)
     app.include_router(agent_api.router)
-    app.include_router(ai_api.router)
     app.include_router(tournaments_api.router)
     app.include_router(tournaments_api.internal_router)
     app.include_router(ws_api.router)
