@@ -25,6 +25,11 @@
 import { attachColumnResize } from "./col-resize.js";
 import { toast } from "./dialogs.js";
 import { mqMobile } from "./breakpoints.js";
+import {
+  AUTOSCROLL_SLACK_LINE_PX,
+  isPinnedToBottom,
+  scrollToBottom,
+} from "./wb-utils.js";
 
 // Vertical stack order for docked windows. Lower values render higher
 // in the column. Centralized so adding a new window doesn't require
@@ -610,15 +615,12 @@ function buildUciLogBody(events, { setOff }) {
 
   // Autoscroll only when the user is already pinned to the bottom; otherwise
   // they're inspecting earlier output and new lines must not yank them away.
-  const AUTOSCROLL_SLACK_PX = 4;
   setOff(events.on((evt) => {
     if (evt.kind !== "uci_log" || paused) return;
     const { dir, line } = evt.payload;
     // body.parentElement is wb.body when floating, .dock-slot-body when docked.
     const scroller = body.parentElement;
-    const pinned = scroller
-      ? scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - AUTOSCROLL_SLACK_PX
-      : false;
+    const pinned = isPinnedToBottom(scroller, AUTOSCROLL_SLACK_LINE_PX);
     const div = document.createElement("div");
     div.className = `wb-uci-log-line ${dir === ">" ? "uci-out" : "uci-in"}`;
     div.textContent = `${dir} ${line}`;
@@ -631,7 +633,7 @@ function buildUciLogBody(events, { setOff }) {
         lineCount--;
       }
     }
-    if (pinned && scroller) scroller.scrollTop = scroller.scrollHeight;
+    if (pinned) scrollToBottom(scroller);
   }));
 
   return body;

@@ -20,7 +20,13 @@ import {
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { attachColumnResize } from "./col-resize.js";
 import { apiErrorDetail, toast } from "./dialogs.js";
-import { escapeHtml, flashWindow } from "./wb-utils.js";
+import {
+  AUTOSCROLL_SLACK_ROW_PX,
+  escapeHtml,
+  flashWindow,
+  isPinnedToBottom,
+  scrollToBottom,
+} from "./wb-utils.js";
 import { createSlotGrid, SLOT_GAP } from "./workspace-slot-grid.js";
 
 const STORAGE_KEY_PREFIX = "sturddle:workspace:";
@@ -618,7 +624,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       return;
     }
     const scroller = scheduleBody.parentElement;
-    const atBottom = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
+    const atBottom = !scroller || isPinnedToBottom(scroller, AUTOSCROLL_SLACK_ROW_PX);
     scheduleBody.innerHTML = `<ul class="wb-sched-list"></ul>`;
     const list = scheduleBody.querySelector(".wb-sched-list");
 
@@ -652,7 +658,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       list.appendChild(li);
     }
 
-    if (atBottom && scroller) scroller.scrollTop = scroller.scrollHeight;
+    if (atBottom) scrollToBottom(scroller);
   }
 
   function renderEngines() {
@@ -665,7 +671,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       return;
     }
     const scroller = enginesBody.parentElement;
-    const atBottom = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
+    const atBottom = !scroller || isPinnedToBottom(scroller, AUTOSCROLL_SLACK_ROW_PX);
     enginesBody.innerHTML = `<ul class="wb-sched-list"></ul>`;
     const list = enginesBody.querySelector(".wb-sched-list");
     for (const [pid, p] of activeProxies) {
@@ -689,7 +695,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       li.appendChild(btn);
       list.appendChild(li);
     }
-    if (atBottom && scroller) scroller.scrollTop = scroller.scrollHeight;
+    if (atBottom) scrollToBottom(scroller);
   }
 
   let _schedulePending = false;
@@ -770,7 +776,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const list = logBody.querySelector(".wb-eventlog-list");
     if (!list) return;
     const scroller = logBody.parentElement;
-    const atBottom = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
+    const atBottom = !scroller || isPinnedToBottom(scroller, AUTOSCROLL_SLACK_ROW_PX);
     list.innerHTML = eventLog.filter(e => e.payload?.kind !== KIND.PROXY_UNPAIRED).map((e) => {
       const ts = e.ts || "";
       const inner = e.payload?.kind;
@@ -816,7 +822,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const detailHtml = parts.map(p => ` <span class="wb-log-detail">${escapeHtml(p)}</span>`).join("");
       return `<li><span class="wb-log-ts">${ts}</span> <span class="wb-log-kind">${escapeHtml(e.kind)}</span>${detailHtml}</li>`;
     }).join("");
-    if (atBottom && scroller) scroller.scrollTop = scroller.scrollHeight;
+    if (atBottom) scrollToBottom(scroller);
   }
 
   // ---- Data refresh -----------------------------------------------------

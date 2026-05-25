@@ -9,6 +9,11 @@
 // the dom inside the window.
 
 import { createDockableWindow, DOCK_ORDER } from "./play-dock-windows.js";
+import {
+  AUTOSCROLL_SLACK_PROSE_PX,
+  isPinnedToBottom,
+  scrollToBottom,
+} from "./wb-utils.js";
 
 const GEO_KEY       = "sturddle:ai:geo";
 const WIN_STATE_KEY = "sturddle:ai:winstate";
@@ -125,6 +130,17 @@ export function isAiOpen() {
   return !!(inst.wb || inst.slot);
 }
 
+// body.parentElement is wb.body when floating, .dock-slot-body when
+// docked -- both are the actual overflow scroller. Same shape as the
+// UCI Log window uses.
+function withStickyBottom(fn) {
+  if (!inst.body) return;
+  const scroller = inst.body.parentElement;
+  const pinned = isPinnedToBottom(scroller, AUTOSCROLL_SLACK_PROSE_PX);
+  fn();
+  if (pinned) scrollToBottom(scroller);
+}
+
 export function resetAi() {
   if (!inst.body) return;
   inst.body._para.textContent = "";
@@ -138,8 +154,10 @@ export function resetAi() {
 
 export function appendAiThinking(text) {
   if (!inst.body || !text) return;
-  const block = ensureThinkingBlock(inst.body);
-  block.body.append(document.createTextNode(text));
+  withStickyBottom(() => {
+    const block = ensureThinkingBlock(inst.body);
+    block.body.append(document.createTextNode(text));
+  });
 }
 
 export function setAiStatus(state) {
@@ -159,13 +177,15 @@ export function setAiStatus(state) {
 
 export function appendAiDelta(text) {
   if (!inst.body || !text) return;
-  if (!inst.body._hasContent) {
-    inst.body._para.textContent = "";
-    inst.body._hasContent = true;
-    // Prose has started flowing -- hide the spinner.
-    setAiStatus("idle");
-  }
-  inst.body._para.append(document.createTextNode(text));
+  withStickyBottom(() => {
+    if (!inst.body._hasContent) {
+      inst.body._para.textContent = "";
+      inst.body._hasContent = true;
+      // Prose has started flowing -- hide the spinner.
+      setAiStatus("idle");
+    }
+    inst.body._para.append(document.createTextNode(text));
+  });
 }
 
 export function markAiDone({
@@ -179,39 +199,41 @@ export function markAiDone({
   // (error > roundCap > noResponse > cancelled if multiple are set).
   setAiStatus("idle");
   if (!inst.body) return;
-  if (error) {
-    const block = document.createElement("div");
-    block.className = "play-ai-error";
-    const head = document.createElement("strong");
-    head.textContent = "AI analysis failed";
-    block.append(head);
-    if (errorDetail) {
-      const body = document.createElement("div");
-      body.className = "play-ai-error-detail";
-      body.textContent = errorDetail;
-      block.append(body);
+  withStickyBottom(() => {
+    if (error) {
+      const block = document.createElement("div");
+      block.className = "play-ai-error";
+      const head = document.createElement("strong");
+      head.textContent = "AI analysis failed";
+      block.append(head);
+      if (errorDetail) {
+        const body = document.createElement("div");
+        body.className = "play-ai-error-detail";
+        body.textContent = errorDetail;
+        block.append(body);
+      }
+      inst.body._para.append(block);
+      return;
     }
-    inst.body._para.append(block);
-    return;
-  }
-  if (roundCap) {
-    const note = document.createElement("div");
-    note.className = "play-ai-roundcap";
-    note.textContent = "Stopped early at the tool-call cap. Raise SV_AI_MAX_TOOL_ROUNDS to allow more rounds.";
-    inst.body._para.append(note);
-    return;
-  }
-  if (noResponse) {
-    const note = document.createElement("div");
-    note.className = "play-ai-roundcap";
-    note.textContent = "Model produced no answer. Try a different model -- some stream only chain-of-thought.";
-    inst.body._para.append(note);
-    return;
-  }
-  if (cancelled) {
-    const marker = document.createElement("span");
-    marker.className = "play-ai-cancelled";
-    marker.textContent = " [cancelled]";
-    inst.body._para.append(marker);
-  }
+    if (roundCap) {
+      const note = document.createElement("div");
+      note.className = "play-ai-roundcap";
+      note.textContent = "Stopped early at the tool-call cap. Raise SV_AI_MAX_TOOL_ROUNDS to allow more rounds.";
+      inst.body._para.append(note);
+      return;
+    }
+    if (noResponse) {
+      const note = document.createElement("div");
+      note.className = "play-ai-roundcap";
+      note.textContent = "Model produced no answer. Try a different model -- some stream only chain-of-thought.";
+      inst.body._para.append(note);
+      return;
+    }
+    if (cancelled) {
+      const marker = document.createElement("span");
+      marker.className = "play-ai-cancelled";
+      marker.textContent = " [cancelled]";
+      inst.body._para.append(marker);
+    }
+  });
 }
