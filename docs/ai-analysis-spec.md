@@ -56,6 +56,10 @@ both the wire schema sent to providers and the prose listed in the
 prompt. Adding a tool requires no manual edit to the prompt; removing
 one cannot drift.
 
+Per-tool usage guidance (how to interpret results, edge cases) lives
+in **tool cards**, not in the system prompt. See
+`ai-analysis-skills-spec.md`.
+
 ### Initial context vs. tool-driven discovery
 
 - Full PGN + per-ply eval array injected into the initial user message
