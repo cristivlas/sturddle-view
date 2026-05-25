@@ -14,6 +14,9 @@ import asyncio
 import json
 import logging
 import os
+from typing import Callable
+
+import chess
 
 from ..events import Event, EventBus
 from ..llm import (
@@ -27,6 +30,10 @@ from ..llm import (
     open_transcript,
 )
 from ..llm.cancel import CancelToken
+from ..llm.response_validator import find_false_piece_claims, find_illegal_moves
+
+
+BoardProvider = Callable[[], chess.Board | None]
 
 
 log = logging.getLogger(__name__)
@@ -41,6 +48,19 @@ MAX_TOOL_ROUNDS = int(os.environ.get("SV_AI_MAX_TOOL_ROUNDS", _DEFAULT_MAX_TOOL_
 # bus payload small even when a provider returns a wall of HTML / a
 # verbose stack trace. Full detail is in the transcript anyway.
 ERROR_DETAIL_MAX_LEN = 500
+
+# Corrective messages injected when the validator finds inconsistencies
+# in the round's text. Civil but firm: the model is hallucinating, and
+# the turn is not done until the prose is consistent with the live
+# position. Two failure modes:
+#   - illegal moves (SAN-shaped tokens that the board rejects)
+#   - false piece claims ("X on Y" where Y does not hold X)
+_ILLEGAL_MOVES_PROMPT = (
+    "{moves} do not exist in this position. Rewrite without inventing moves."
+)
+_FALSE_PIECE_PROMPT = (
+    "False piece claim(s): {claims}. Rewrite without inventing pieces."
+)
 
 
 def _assistant_message(chunks: list[ProviderChunk]) -> Message:
@@ -101,6 +121,8 @@ class AIAnalysisCoordinator:
         bus: EventBus,
         provider: LLMProvider,
         registry: ToolRegistry | None = None,
+        *,
+        board_provider: BoardProvider | None = None,
     ) -> None:
         self._bus = bus
         # Default provider for callers that don't supply one per turn.
@@ -108,6 +130,10 @@ class AIAnalysisCoordinator:
         # use to swap prompts / agents without rebuilding the coordinator.
         self._provider = provider
         self._registry = registry if registry is not None else ToolRegistry()
+        # Board provider lets the round-exit validator check move-tokens
+        # in the model's prose against the live position. None disables
+        # validation (tests / non-live callers).
+        self._board_provider = board_provider
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
         self._cancel_token: CancelToken | None = None
@@ -197,8 +223,32 @@ class AIAnalysisCoordinator:
                                 pending_tool = chunk
                                 break
                         if pending_tool is None:
-                            round_cap_hit = False
-                            break
+                            # Round ended without a tool_use. Run both
+                            # validators on the assembled text. Any hits
+                            # -> corrective user message + another round.
+                            illegal, false_claims = self._validate_round_text(round_chunks)
+                            if not illegal and not false_claims:
+                                round_cap_hit = False
+                                break
+                            messages.append(_assistant_message(round_chunks))
+                            parts: list[str] = []
+                            if illegal:
+                                parts.append(
+                                    _ILLEGAL_MOVES_PROMPT.format(moves=", ".join(illegal))
+                                )
+                            if false_claims:
+                                parts.append(
+                                    _FALSE_PIECE_PROMPT.format(claims=", ".join(false_claims))
+                                )
+                            messages.append({
+                                "role": "user",
+                                "content": " ".join(parts),
+                            })
+                            log.info(
+                                "AI agent loop: validator hits in round %d: moves=%s claims=%s",
+                                round_index, illegal, false_claims,
+                            )
+                            continue
                         messages.append(_assistant_message(round_chunks))
                         tool_output = await self._dispatch_tool(pending_tool)
                         await transcript.tool_result(
@@ -245,6 +295,23 @@ class AIAnalysisCoordinator:
                     )
                     self._task = None
                     self._cancel_token = None
+
+    def _validate_round_text(
+        self, chunks: list[ProviderChunk],
+    ) -> tuple[list[str], list[str]]:
+        """Run both validators on a round's assembled text.
+        Returns (illegal_moves, false_piece_claims). Empty pair when
+        clean, when no board_provider is wired, or when no live board
+        is available."""
+        if self._board_provider is None:
+            return [], []
+        board = self._board_provider()
+        if board is None:
+            return [], []
+        text = "".join(c.text for c in chunks if c.kind == "text" and c.text)
+        if not text:
+            return [], []
+        return find_illegal_moves(text, board), find_false_piece_claims(text, board)
 
     def _inject_card_once(self, tool_name: str, injected: set[str]) -> str | None:
         """Return the tool's card on first call this turn, else None.

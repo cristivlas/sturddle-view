@@ -418,6 +418,7 @@ def create_app(
     app.state.ai_provider_factory = _ai_provider_factory
     app.state.ai_coordinator = AIAnalysisCoordinator(
         app.state.event_bus, CannedProvider(), registry=ai_registry,
+        board_provider=_ai_board_provider,
     )
 
     # Tournament subsystem: store + runner + orchestrator. Wired even

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 
+import chess
 import pytest
 
 from sturddle_view.events import EventBus
@@ -586,3 +587,179 @@ async def test_distinct_tools_each_inject_their_own_card():
         b["text"] for m in tr_msgs for b in m["content"] if b.get("type") == "text"
     ]
     assert texts == ["VM_CARD", "PA_CARD"]
+
+
+# ---------- Round-exit validators -------------------------------------
+# Two parallel checks run when a round ends without a tool_use:
+#   - illegal SAN-shaped tokens in the prose (move validator)
+#   - false "piece on square" claims (piece-claim validator)
+# On any hit, the coordinator injects a corrective user message and
+# runs another round. Driven by the board_provider; absent provider
+# disables both checks.
+
+
+def _board_provider_for(board: chess.Board):
+    return lambda: board
+
+
+@pytest.mark.asyncio
+async def test_validator_skipped_when_no_board_provider():
+    # Without a board provider the round exits normally regardless of
+    # what the model wrote -- back-compat for callers that don't wire it.
+    provider = ScriptedProvider(rounds=[[
+        ProviderChunk(kind="text", text="The move Qh9 wins."),  # nonsense move
+    ]])
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider, registry=ToolRegistry())
+
+    await coord.run(game_id="g")
+
+    assert provider.stream_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_legal_moves_pass_validator():
+    provider = ScriptedProvider(rounds=[[
+        ProviderChunk(kind="text", text="Consider e4, then Nf3."),
+    ]])
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=ToolRegistry(),
+        board_provider=_board_provider_for(chess.Board()),
+    )
+
+    await coord.run(game_id="g")
+
+    assert provider.stream_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_illegal_move_triggers_corrective_round():
+    # "Nf6" is illegal for white on move 1 (knights can go Nf3, Nh3,
+    # Nc3, Na3 -- not Nf6, which is a black-side square from f-file).
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="White should play Nf6 here.")],
+        [ProviderChunk(kind="text", text="Revised: White should play Nf3.")],
+    ])
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=ToolRegistry(),
+        board_provider=_board_provider_for(chess.Board()),
+    )
+
+    await coord.run(game_id="g")
+
+    assert provider.stream_calls == 2
+    # The corrective user message is the last message before the second
+    # round's assistant content.
+    snap_msgs = provider.last_call["messages"]
+    corrective = snap_msgs[-1]
+    assert corrective["role"] == "user"
+    assert "Nf6" in corrective["content"]
+    assert "do not exist" in corrective["content"]
+
+
+@pytest.mark.asyncio
+async def test_multiple_illegal_moves_listed_once_each():
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="Try Nf6 then Bd5. Or Nf6 again.")],
+        [ProviderChunk(kind="text", text="Revised.")],
+    ])
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=ToolRegistry(),
+        board_provider=_board_provider_for(chess.Board()),
+    )
+
+    await coord.run(game_id="g")
+
+    snap_msgs = provider.last_call["messages"]
+    corrective = snap_msgs[-1]  # last is the corrective user message
+    # Both illegal moves listed, "Nf6" once (dedup).
+    assert corrective["role"] == "user"
+    assert corrective["content"].count("Nf6") == 1
+    assert "Bd5" in corrective["content"]
+
+
+@pytest.mark.asyncio
+async def test_validator_only_runs_on_tool_use_free_exit():
+    # When the round ends with a tool_use, the validator does not run --
+    # the model's text may legitimately reference moves it is about to
+    # verify with a tool call.
+    async def ok(_input, *, cancel_token):
+        return {"legal": False}
+
+    reg = _make_registry({"validate_move": ok})
+    provider = ScriptedProvider(rounds=[
+        [
+            ProviderChunk(kind="text", text="Trying Nf6."),
+            ProviderChunk(
+                kind="tool_use", tool_use_id="t1",
+                tool_name="validate_move", tool_input={"move": "Nf6"},
+            ),
+        ],
+        [ProviderChunk(kind="text", text="Got it, e4 instead.")],
+    ])
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg,
+        board_provider=_board_provider_for(chess.Board()),
+    )
+
+    await coord.run(game_id="g")
+
+    # 2 rounds, no extra corrective round triggered by round 1's text.
+    assert provider.stream_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_false_piece_claim_triggers_corrective_round():
+    # Starting position: no piece on e4. Model invents one.
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="The bishop on e4 dominates.")],
+        [ProviderChunk(kind="text", text="Revised, no bishop there.")],
+    ])
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=ToolRegistry(),
+        board_provider=_board_provider_for(chess.Board()),
+    )
+
+    await coord.run(game_id="g")
+
+    assert provider.stream_calls == 2
+    corrective = provider.last_call["messages"][-1]
+    assert corrective["role"] == "user"
+    assert "bishop on e4" in corrective["content"]
+    assert "False piece claim" in corrective["content"]
+
+
+@pytest.mark.asyncio
+async def test_illegal_move_and_false_piece_combined():
+    # Both validator hits in one round -> single corrective with both.
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(
+            kind="text",
+            text="The bishop on e4 supports Nf6.",  # bishop wrong; Nf6 illegal
+        )],
+        [ProviderChunk(kind="text", text="Revised.")],
+    ])
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=ToolRegistry(),
+        board_provider=_board_provider_for(chess.Board()),
+    )
+
+    await coord.run(game_id="g")
+
+    assert provider.stream_calls == 2
+    corrective = provider.last_call["messages"][-1]
+    assert "Nf6" in corrective["content"]
+    assert "bishop on e4" in corrective["content"]
