@@ -34,6 +34,9 @@ class ToolSpec:
     name: str
     description: str
     input_schema: dict[str, Any]
+    # Post-call usage guidance, lazy-loaded on first tool call per turn.
+    # See docs/ai-analysis-skills-spec.md. None = no card injected.
+    card: str | None = None
 
 
 # Forward reference for the cancel token; concrete class lives in

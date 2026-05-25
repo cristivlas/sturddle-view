@@ -103,11 +103,25 @@ TOP_MOVES_TOOL_SPEC = ToolSpec(
 )
 
 
+_PIECE_AT_CARD = (
+    "Card for `piece_at`. Any claim that a specific piece sits on or "
+    "moves from a specific square in the current position -- explicit "
+    "(\"the knight on f3\") or implied by verbs like centralize, "
+    "advance, push, capture, retreat, reroute, occupy, defend, attack, "
+    "pin, fork, develop -- must be confirmed with `piece_at` before "
+    "being written. Non-negotiable. Result is the piece symbol (e.g. "
+    "'N', 'p') or null when empty; symbol case encodes color (upper = "
+    "white, lower = black). Applies only to the live position, not to "
+    "squares inside calculated variations."
+)
+
+
 PIECE_AT_TOOL_SPEC = ToolSpec(
     name="piece_at",
     description=(
-        "Return the piece on a square in the live position, or null if empty. "
-        "Use to verify a piece exists before referring to it."
+        "Return the piece on a square in the live position, or null if "
+        "empty. Non-negotiable: call before naming any piece on a "
+        "specific square in prose."
     ),
     input_schema={
         "type": "object",
@@ -122,14 +136,28 @@ PIECE_AT_TOOL_SPEC = ToolSpec(
         },
         "required": ["square"],
     },
+    card=_PIECE_AT_CARD,
+)
+
+
+_VALIDATE_MOVE_CARD = (
+    "Card for `validate_move`. Before naming any move as playable in "
+    "the current position, confirm it with `validate_move`. "
+    "Non-negotiable. Applies only to the current position, not to "
+    "moves inside calculated lines (those are reasoned about, not "
+    "claimed as legal in the live position). Result fields: `legal` "
+    "(bool), `uci`, `san`. If `legal` is false, do not name the move "
+    "in prose."
 )
 
 
 VALIDATE_MOVE_TOOL_SPEC = ToolSpec(
     name="validate_move",
     description=(
-        "Check whether a move (UCI or SAN) is legal in the live position. "
-        "Use to verify a move before naming it."
+        "Check whether a move (UCI or SAN) is legal in the live "
+        "position. Non-negotiable: call before naming any move as "
+        "playable in the current position (not required for moves "
+        "inside calculated lines)."
     ),
     input_schema={
         "type": "object",
@@ -144,6 +172,7 @@ VALIDATE_MOVE_TOOL_SPEC = ToolSpec(
         },
         "required": ["move"],
     },
+    card=_VALIDATE_MOVE_CARD,
 )
 
 

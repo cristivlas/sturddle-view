@@ -61,13 +61,16 @@ definition). No separate files in v1. Rationale:
 ### Injection
 
 When the agent calls a tool for the first time in a given turn, the
-coordinator appends the card to the message list **as a separate
-`user`-role message immediately after the tool_result**:
+coordinator appends the card as a **separate `{type:"text"}` content
+block inside the tool_result user message**, alongside the tool_result
+block:
 
 ```
 assistant: [tool_use validate_move ...]
-user:      [tool_result <data>]
-user:      <card text for validate_move>     # injected on first use only
+user:      [
+             {type:"tool_result", content: <data>},
+             {type:"text", text: <card>},   # injected on first use only
+           ]
 assistant: ...
 ```
 
@@ -75,14 +78,18 @@ Subsequent calls to the same tool in the same turn do not re-inject.
 A per-turn `cards_injected: set[str]` tracks this; lives in the
 `run()` scope (no cross-turn state).
 
-Rationale for separate message (not inlined into tool_result):
+Rationale for separate content block (not a string-prefix on the
+tool_result, not a separate user message):
 - Keeps `tool_result.content` as pure tool output -- unambiguous for
   transcripts, log parsers, replay tools.
-- Scales as cards grow.
+- Stays inside one user message per assistant turn (Anthropic's
+  expected message-alternation shape).
 - Composes cleanly when parallel tool use is enabled later (per the
-  forward-looking note in `ai-analysis-spec.md`): one follow-up
-  message can cover guidance for all results, no per-result string
-  surgery.
+  forward-looking note in `ai-analysis-spec.md`): the same user
+  message can carry N tool_result blocks + N card text blocks.
+- Ollama translation already splits mixed-content user messages
+  correctly (tool_result -> `tool` role, text -> residual `user`
+  message).
 
 ### Caching interaction
 
@@ -106,17 +113,16 @@ in `SYSTEM_PROMPT_RULES` (no card in v1).
 
 ## Testing
 
-- Card content is asserted via `assemble_*_card()` helpers (parallel
-  to `assemble_system_prompt`): one round-trip test per card, no
-  byte-stable tripwires (lesson from the prompt tests we just dropped).
-- Coordinator test: drive a scripted provider that calls
-  `validate_move` twice; assert the card appears exactly once in the
-  message list, immediately after the first tool_result.
-- Coordinator test: drive a scripted provider that calls
-  `validate_move` then `piece_at`; assert both cards appear, each
-  after their respective tool_result.
-- No card on a tool without one: provider calls `analyze`; assert no
-  extra user message is injected.
+Coordinator-level (see `test_agent_runner.py`):
+- Card injected as a `{type:"text"}` content block inside the
+  tool_result user message, on first call.
+- Same tool called twice in one turn: card present on first
+  tool_result message, absent on second.
+- Two distinct tools called: each carries its own card, in order.
+- Tool with `card=None`: tool_result message has no text block.
+
+No byte-stable tripwires on card content (lesson from the prompt
+tests we dropped).
 
 ## Future skills (forward-looking; not v1)
 

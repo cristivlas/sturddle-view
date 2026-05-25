@@ -430,3 +430,159 @@ async def test_error_detail_truncated_to_cap():
     events = await _drain_until_done(queue)
     detail = events[-1].payload["error_detail"]
     assert len(detail) == ERROR_DETAIL_MAX_LEN
+
+
+# ---------- Tool cards (lazy per-tool guidance) ------------------------
+# See docs/ai-analysis-skills-spec.md. A tool's card is appended as a
+# text content block inside the tool_result user message, on the first
+# call to that tool per turn. Subsequent calls to the same tool reuse
+# the message-list prefix (card already in context); no re-injection.
+
+
+def _make_registry_with_card(name: str, fn, card: str | None) -> ToolRegistry:
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(
+            name=name, description=name, input_schema={"type": "object"}, card=card,
+        ),
+        fn,
+    )
+    return reg
+
+
+def _tool_result_user_msgs(snap_messages: list) -> list[dict]:
+    """All user-role messages in a provider snapshot that carry a
+    tool_result block (skips the opening user message)."""
+    out: list[dict] = []
+    for m in snap_messages:
+        if m["role"] != "user" or not isinstance(m["content"], list):
+            continue
+        if any(b.get("type") == "tool_result" for b in m["content"]):
+            out.append(m)
+    return out
+
+
+@pytest.mark.asyncio
+async def test_card_injected_after_first_tool_call():
+    async def ok(_input, *, cancel_token):
+        return {"legal": True}
+
+    reg = _make_registry_with_card("validate_move", ok, "USE_THE_CARD")
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(
+            kind="tool_use", tool_use_id="t1",
+            tool_name="validate_move", tool_input={"move": "e4"},
+        )],
+        [ProviderChunk(kind="text", text="done.")],
+    ])
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider, registry=reg)
+
+    await coord.run(game_id="g")
+
+    tr_msgs = _tool_result_user_msgs(provider.last_call["messages"])
+    assert len(tr_msgs) == 1
+    blocks = tr_msgs[0]["content"]
+    # First block is the tool_result data; second is the card text.
+    assert blocks[0]["type"] == "tool_result"
+    assert blocks[1] == {"type": "text", "text": "USE_THE_CARD"}
+
+
+@pytest.mark.asyncio
+async def test_card_not_reinjected_on_repeat_calls():
+    async def ok(_input, *, cancel_token):
+        return {"legal": True}
+
+    reg = _make_registry_with_card("validate_move", ok, "USE_THE_CARD")
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(
+            kind="tool_use", tool_use_id="t1",
+            tool_name="validate_move", tool_input={"move": "e4"},
+        )],
+        [ProviderChunk(
+            kind="tool_use", tool_use_id="t2",
+            tool_name="validate_move", tool_input={"move": "d4"},
+        )],
+        [ProviderChunk(kind="text", text="done.")],
+    ])
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider, registry=reg)
+
+    await coord.run(game_id="g")
+
+    tr_msgs = _tool_result_user_msgs(provider.last_call["messages"])
+    assert len(tr_msgs) == 2
+    # First tool_result message carries the card; second does not.
+    assert any(b.get("type") == "text" and b.get("text") == "USE_THE_CARD"
+               for b in tr_msgs[0]["content"])
+    assert all(b.get("type") != "text" for b in tr_msgs[1]["content"])
+
+
+@pytest.mark.asyncio
+async def test_no_card_means_no_text_block():
+    async def ok(_input, *, cancel_token):
+        return {"ok": True}
+
+    reg = _make_registry_with_card("analyze", ok, None)
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(
+            kind="tool_use", tool_use_id="t1",
+            tool_name="analyze", tool_input={"fen": "startpos"},
+        )],
+        [ProviderChunk(kind="text", text="done.")],
+    ])
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider, registry=reg)
+
+    await coord.run(game_id="g")
+
+    tr_msgs = _tool_result_user_msgs(provider.last_call["messages"])
+    assert len(tr_msgs) == 1
+    # tool_result only, no card text block.
+    blocks = tr_msgs[0]["content"]
+    assert len(blocks) == 1
+    assert blocks[0]["type"] == "tool_result"
+
+
+@pytest.mark.asyncio
+async def test_distinct_tools_each_inject_their_own_card():
+    async def ok(_input, *, cancel_token):
+        return {"ok": True}
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="validate_move", description="vm",
+                 input_schema={"type": "object"}, card="VM_CARD"),
+        ok,
+    )
+    reg.register(
+        ToolSpec(name="piece_at", description="pa",
+                 input_schema={"type": "object"}, card="PA_CARD"),
+        ok,
+    )
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(
+            kind="tool_use", tool_use_id="t1",
+            tool_name="validate_move", tool_input={"move": "e4"},
+        )],
+        [ProviderChunk(
+            kind="tool_use", tool_use_id="t2",
+            tool_name="piece_at", tool_input={"square": "e4"},
+        )],
+        [ProviderChunk(kind="text", text="done.")],
+    ])
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider, registry=reg)
+
+    await coord.run(game_id="g")
+
+    tr_msgs = _tool_result_user_msgs(provider.last_call["messages"])
+    assert len(tr_msgs) == 2
+    texts = [
+        b["text"] for m in tr_msgs for b in m["content"] if b.get("type") == "text"
+    ]
+    assert texts == ["VM_CARD", "PA_CARD"]

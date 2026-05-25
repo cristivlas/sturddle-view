@@ -71,20 +71,28 @@ def _assistant_message(chunks: list[ProviderChunk]) -> Message:
     return {"role": "assistant", "content": content}
 
 
-def _tool_result_message(tool_use_id: str, result: dict | str) -> Message:
+def _tool_result_message(
+    tool_use_id: str, result: dict | str, *, card: str | None = None
+) -> Message:
     """Build the user-role tool_result message that closes one tool call.
 
     Wire shape mirrors Anthropic's. The provider for Ollama translates
     to OpenAI on the way out.
+
+    `card` (tool-card body) is appended as a separate text content block
+    inside the same user message. Kept distinct from the tool_result
+    content -- transcripts and log parsers see "data" vs "guidance"
+    cleanly. Injected by the coordinator only on the first call to a
+    given tool per turn (see docs/ai-analysis-skills-spec.md).
     """
     if not isinstance(result, str):
         result = json.dumps(result)
-    return {
-        "role": "user",
-        "content": [
-            {"type": "tool_result", "tool_use_id": tool_use_id, "content": result}
-        ],
-    }
+    content: list[dict] = [
+        {"type": "tool_result", "tool_use_id": tool_use_id, "content": result}
+    ]
+    if card:
+        content.append({"type": "text", "text": card})
+    return {"role": "user", "content": content}
 
 
 class AIAnalysisCoordinator:
@@ -134,6 +142,11 @@ class AIAnalysisCoordinator:
             self._cancel_token = CancelToken()
             messages: list[Message] = [{"role": "user", "content": opening_user_content}]
             tool_schemas = self._registry.schemas() or None
+            # Per-turn tool-card injection state. A tool's card is
+            # appended to the first tool_result of the turn and never
+            # again; the model retains it via the message-list prefix
+            # for subsequent rounds. See docs/ai-analysis-skills-spec.md.
+            cards_injected: set[str] = set()
             done_payload: dict = {"done": True}
             async with open_transcript() as transcript:
                 await transcript.turn_start({
@@ -191,9 +204,10 @@ class AIAnalysisCoordinator:
                         await transcript.tool_result(
                             round_index, pending_tool.tool_use_id, tool_output
                         )
+                        card = self._inject_card_once(pending_tool.tool_name, cards_injected)
                         messages.append(
                             _tool_result_message(
-                                pending_tool.tool_use_id, tool_output
+                                pending_tool.tool_use_id, tool_output, card=card,
                             )
                         )
                     if round_cap_hit:
@@ -231,6 +245,19 @@ class AIAnalysisCoordinator:
                     )
                     self._task = None
                     self._cancel_token = None
+
+    def _inject_card_once(self, tool_name: str, injected: set[str]) -> str | None:
+        """Return the tool's card on first call this turn, else None.
+        Unknown tool names yield None (no card to inject). Mutates
+        `injected` to record the first-use moment."""
+        if tool_name in injected:
+            return None
+        try:
+            spec = self._registry.spec(tool_name)
+        except UnknownToolError:
+            return None
+        injected.add(tool_name)
+        return spec.card
 
     async def _dispatch_tool(self, call: ProviderChunk) -> dict:
         """Look up + invoke a tool. Unknown name or tool-raised exceptions
