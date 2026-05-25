@@ -202,6 +202,10 @@ class AIAnalysisCoordinator:
                         # UI surface "stopped early; raise the tool-call
                         # cap in Settings" if it wants to.
                         done_payload["round_cap"] = True
+                        log.warning(
+                            "AI agent loop hit round cap (%d); raise SV_AI_MAX_TOOL_ROUNDS if intentional",
+                            MAX_TOOL_ROUNDS,
+                        )
                     elif not text_published:
                         # Model exited the loop with zero user-facing
                         # text (reasoning-only models, refusals).
