@@ -160,6 +160,23 @@ class OllamaProvider(LLMProvider):
         self._base_url = base_url.rstrip("/")
         self._model = model
 
+    async def list_models(self) -> list[str]:
+        """List models the daemon has pulled, via the OpenAI-compatible
+        endpoint. Returns sorted ids; raises RuntimeError on HTTP / parse
+        failure so the API layer can surface a useful error to the UI."""
+        url = f"{self._base_url}/v1/models"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                raise RuntimeError(
+                    f"ollama /v1/models returned {resp.status_code}: "
+                    f"{resp.text[:200]}"
+                )
+            body = resp.json()
+        data = body.get("data") or []
+        ids = [m.get("id") for m in data if isinstance(m, dict) and m.get("id")]
+        return sorted(set(ids))
+
     async def stream(
         self,
         system: str,

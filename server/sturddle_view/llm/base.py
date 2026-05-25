@@ -110,3 +110,15 @@ class LLMProvider(ABC):
         Subclasses MUST be cancel-safe -- a cancelled task on the
         consumer side must not leak provider state or HTTP connections.
         """
+
+    async def list_models(self) -> list[str]:
+        """Return the provider's available model ids.
+
+        Default: raises NotImplementedError so unimplemented providers
+        fail loud in the Settings UI (the endpoint surfaces it as a
+        5xx that the client falls back from to a free-text input).
+        Real providers override.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__}.list_models is not implemented"
+        )

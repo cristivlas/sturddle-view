@@ -98,6 +98,16 @@ wa-select::part(listbox) {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
 }
+
+/* Toggling `disabled` on wa-input / wa-select runs the component's
+   default 150ms color transition, briefly painting a brighter "enabled"
+   border before the new state settles -- looks like a focus flash on
+   the AI settings rows when the master toggle flips. Suppress only on
+   the AI rows; other forms still get the smooth transition. */
+.ai-row wa-input::part(base),
+.ai-row wa-select::part(combobox) {
+  transition: none !important;
+}
 body {
   margin: 0;
   font: 0.875rem/1.4 system-ui, -apple-system, Segoe UI, sans-serif;

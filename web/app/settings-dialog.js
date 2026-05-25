@@ -882,9 +882,6 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       aiEnabled.size = "small";
       if (initial.ai_enabled) aiEnabled.setAttribute("checked", "");
       if (noEngine) aiEnabled.setAttribute("disabled", "");
-      aiEnabled.addEventListener("change", () => {
-        putSettings({ ai_enabled: aiEnabled.checked });
-      });
       aiEnabledRow.append(aiEnabledLabel, aiEnabled);
 
       // Inline hint when no engine is configured: AI analysis depends
@@ -901,7 +898,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       }
 
       const aiProviderRow = document.createElement("div");
-      aiProviderRow.className = "settings-row";
+      aiProviderRow.className = "settings-row ai-row";
       const aiProviderLabel = document.createElement("label");
       aiProviderLabel.textContent = "Provider";
       const aiProvider = document.createElement("wa-select");
@@ -916,23 +913,39 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       }
       aiProviderRow.append(aiProviderLabel, aiProvider);
 
+      // Model: a dropdown populated from the provider's list_models API.
+      // If the fetch fails (no key / unreachable / not implemented), the
+      // free-text input takes over so the user can still set a model
+      // and proceed. Hint line below reports the state.
       const aiModelRow = document.createElement("div");
-      aiModelRow.className = "settings-row";
+      aiModelRow.className = "settings-row ai-row";
       const aiModelLabel = document.createElement("label");
       aiModelLabel.textContent = "Model";
-      const aiModel = document.createElement("wa-input");
-      aiModel.size = "small";
-      aiModel.setAttribute("autocomplete", "off");
-      aiModel.value = initial.ai_model || "";
-      aiModel.addEventListener("input", () => {
-        putSettingsDebounced({ ai_model: aiModel.value });
+      const aiModelSelect = document.createElement("wa-select");
+      aiModelSelect.size = "small";
+      aiModelSelect.setAttribute("distance", "4");
+      const aiModelInput = document.createElement("wa-input");
+      aiModelInput.size = "small";
+      aiModelInput.setAttribute("autocomplete", "off");
+      aiModelInput.value = initial.ai_model || "";
+      aiModelInput.addEventListener("input", () => {
+        putSettingsDebounced({ ai_model: aiModelInput.value });
       });
-      aiModelRow.append(aiModelLabel, aiModel);
+      aiModelSelect.addEventListener("change", () => {
+        if (!aiModelSelect.value) return;
+        putSettings({ ai_model: aiModelSelect.value });
+      });
+      aiModelRow.append(aiModelLabel, aiModelSelect, aiModelInput);
+
+      const aiModelHint = document.createElement("div");
+      aiModelHint.className = "settings-row settings-row-hint";
+      const aiModelHintText = document.createElement("small");
+      aiModelHint.append(aiModelHintText);
 
       // Anthropic field: API key (masked when set). Ollama field: base URL.
       // Toggled by provider selection.
       const aiKeyRow = document.createElement("div");
-      aiKeyRow.className = "settings-row";
+      aiKeyRow.className = "settings-row ai-row";
       const aiKeyLabel = document.createElement("label");
       aiKeyLabel.textContent = "API key";
       const aiKey = document.createElement("wa-input");
@@ -940,13 +953,20 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       aiKey.type = "password";
       aiKey.setAttribute("autocomplete", "off");
       aiKey.placeholder = initial.ai_api_key_set ? "Set (enter new to update)" : "";
+      // Debounced PUT followed by a model refetch. The refetch must run
+      // AFTER the server has the new value, otherwise the endpoint
+      // reads the stale key/URL.
+      const persistAiKeyThenRefresh = debounce(async () => {
+        await putSettings({ ai_api_key: aiKey.value });
+        refreshAiModels();
+      }, 400);
       aiKey.addEventListener("input", () => {
-        putSettingsDebounced({ ai_api_key: aiKey.value });
+        persistAiKeyThenRefresh();
       });
       aiKeyRow.append(aiKeyLabel, aiKey);
 
       const aiUrlRow = document.createElement("div");
-      aiUrlRow.className = "settings-row";
+      aiUrlRow.className = "settings-row ai-row";
       const aiUrlLabel = document.createElement("label");
       aiUrlLabel.textContent = "Base URL";
       const aiUrl = document.createElement("wa-input");
@@ -954,8 +974,12 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       aiUrl.setAttribute("autocomplete", "off");
       aiUrl.placeholder = "http://localhost:11434";
       aiUrl.value = initial.ai_base_url || "";
+      const persistAiUrlThenRefresh = debounce(async () => {
+        await putSettings({ ai_base_url: aiUrl.value });
+        refreshAiModels();
+      }, 400);
       aiUrl.addEventListener("input", () => {
-        putSettingsDebounced({ ai_base_url: aiUrl.value });
+        persistAiUrlThenRefresh();
       });
       aiUrlRow.append(aiUrlLabel, aiUrl);
 
@@ -964,15 +988,103 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         aiKeyRow.style.display = isAnthropic ? "" : "none";
         aiUrlRow.style.display = isAnthropic ? "none" : "";
       }
-      aiProvider.addEventListener("change", () => {
-        putSettings({ ai_provider: aiProvider.value });
+
+      function showModelInput(reason) {
+        // Fall back to free-text input. Used when the provider can't
+        // be queried or returns nothing usable.
+        aiModelSelect.style.display = "none";
+        aiModelInput.style.display = "";
+        aiModelHintText.textContent = reason || "";
+        aiModelHint.style.display = reason ? "" : "none";
+      }
+
+      function showModelSelect(models) {
+        // Populate + select current value (or prepend it if unknown so
+        // we don't silently change the user's setting).
+        aiModelSelect.replaceChildren();
+        const current = initial.ai_model || "";
+        const list = models.slice();
+        if (current && !list.includes(current)) list.unshift(current);
+        for (const m of list) {
+          const opt = document.createElement("wa-option");
+          opt.value = m;
+          opt.textContent = m;
+          aiModelSelect.append(opt);
+        }
+        aiModelSelect.value = current || (list[0] || "");
+        aiModelSelect.style.display = "";
+        aiModelInput.style.display = "none";
+        aiModelHint.style.display = "none";
+      }
+
+      // Lazy fetch: requested on dialog open + on provider/key/url
+      // changes that could affect what the endpoint returns. Failures
+      // collapse to the free-text input with the server's error in
+      // the hint line.
+      let _modelsFetchSeq = 0;
+      async function refreshAiModels() {
+        const mySeq = ++_modelsFetchSeq;
+        try {
+          const r = await api("GET", "/settings/ai/models");
+          if (mySeq !== _modelsFetchSeq) return;  // raced
+          const models = (r && r.models) || [];
+          if (!models.length) {
+            showModelInput("Provider returned no models -- enter one manually.");
+          } else {
+            showModelSelect(models);
+          }
+        } catch (e) {
+          if (mySeq !== _modelsFetchSeq) return;
+          const msg = (e && e.message) || "Provider unavailable";
+          showModelInput(msg);
+        }
+      }
+
+      aiProvider.addEventListener("change", async () => {
+        // Switching provider invalidates the previously-saved model id
+        // (Anthropic and Ollama have disjoint model namespaces). Clear
+        // it so a stale value doesn't survive into the next session.
+        // Persist BEFORE fetching models -- the endpoint reads the
+        // saved provider, so a fire-and-forget PUT races the GET and
+        // we'd query the previous provider.
+        await putSettings({ ai_provider: aiProvider.value, ai_model: "" });
+        initial.ai_model = "";
+        aiModelInput.value = "";
         applyAiProviderVisibility();
+        refreshAiModels();
       });
       applyAiProviderVisibility();
 
+      // Every AI-related input below the master toggle gets greyed
+      // out when the toggle is off. Values are retained (settings
+      // persist server-side); flipping the toggle back restores them.
+      function applyAiEnabledLockout() {
+        const off = !aiEnabled.checked;
+        // Pull focus off the toggle before re-enabling fields so the
+        // user doesn't see a focus ring flash on an unrelated control.
+        if (document.activeElement && typeof document.activeElement.blur === "function") {
+          document.activeElement.blur();
+        }
+        for (const el of [aiProvider, aiModelSelect, aiModelInput, aiKey, aiUrl]) {
+          if (off) el.setAttribute("disabled", "");
+          else el.removeAttribute("disabled");
+        }
+      }
+      aiEnabled.addEventListener("change", () => {
+        putSettings({ ai_enabled: aiEnabled.checked });
+        applyAiEnabledLockout();
+        if (aiEnabled.checked) refreshAiModels();
+      });
+
       analysisPanel.append(aiEnabledRow);
       if (aiNoEngineHint) analysisPanel.append(aiNoEngineHint);
-      analysisPanel.append(aiProviderRow, aiModelRow, aiKeyRow, aiUrlRow);
+      analysisPanel.append(aiProviderRow, aiModelRow, aiModelHint, aiKeyRow, aiUrlRow);
+
+      // Initial state: hide the select until the first fetch tells us
+      // whether we have a real list. Lock fields based on the toggle.
+      showModelInput("");
+      applyAiEnabledLockout();
+      if (aiEnabled.checked) refreshAiModels();
 
       // Map preserves insertion order by spec -- the iteration order here
       // IS the visual tab order. Each entry pairs the tab control with

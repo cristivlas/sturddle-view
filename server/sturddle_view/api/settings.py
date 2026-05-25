@@ -271,3 +271,28 @@ async def update_settings(payload: dict, request: Request) -> dict:
             await hve.apply_engine_settings_live()
 
     return _serialize(s)
+
+
+@router.get("/ai/models")
+async def list_ai_models(request: Request) -> dict:
+    """Lists models available from the currently-selected provider.
+
+    Used by the Settings dialog to populate the model dropdown so the
+    user picks from a real list rather than typing an id. Errors flow
+    through as HTTPException 5xx so the client can fall back to a
+    free-text input + display the message.
+    """
+    factory = getattr(request.app.state, "ai_provider_factory", None)
+    if factory is None:
+        raise HTTPException(status_code=503, detail="AI provider factory not initialized")
+    try:
+        provider = factory()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"provider build failed: {e}") from e
+    try:
+        models = await provider.list_models()
+    except NotImplementedError as e:
+        raise HTTPException(status_code=501, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return {"models": models}

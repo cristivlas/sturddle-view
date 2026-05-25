@@ -30,6 +30,7 @@ from .config import Settings
 from .engines import EngineRegistry, resolve_selected
 from .events import Event, EventBus
 from .llm import CannedProvider, LLMProvider, ToolRegistry
+from .llm.anthropic import AnthropicProvider
 from .llm.ollama import OllamaProvider
 from .openings import OpeningBook
 from .play.ai_analysis import AIAnalysisCoordinator
@@ -363,9 +364,14 @@ def create_app(
                 base_url=(s.ai_base_url or _DEFAULT_OLLAMA_BASE_URL),
                 model=s.ai_model,
             )
-        # Anthropic + any other selection fall back to the canned
-        # provider until their real bodies land. Selecting Anthropic
-        # in Settings today is dormant -- canned chunks flow either way.
+        if provider_name == "anthropic":
+            # list_models() is implemented (Settings dropdown); stream()
+            # still raises NotImplementedError, which surfaces as a
+            # done/error event on the bus when an analysis turn fires.
+            return AnthropicProvider(api_key=s.ai_api_key, model=s.ai_model)
+        # Unknown / unset provider: canned stand-in so the pipeline
+        # still flows end-to-end. Picked by tests that don't care which
+        # provider runs.
         return CannedProvider()
 
     app.state.ai_provider_factory = _ai_provider_factory
