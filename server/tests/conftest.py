@@ -23,19 +23,18 @@ _UVICORN_SHUTDOWN_TIMEOUT = 10.0
 _SERVER_LOGS: dict[str, Path] = {}
 
 
-def _write_uci_stub(root: Path, name: str, extra_body: str = "") -> str:
+def _write_uci_stub(root: Path, name: str, extra_body: str = "", *, pre_loop: str = "") -> str:
     """Shared writer for Python-based fake UCI engines.
 
-    Emits a script handling `uci`/`isready`/`quit`; callers pass
-    `extra_body` (already-indented Python lines) to add `go`/`stop`
-    responses or other behavior. Returns the executable path (a .cmd
-    wrapper on Windows, the chmod+x .py on POSIX) so the test can hand
-    it to chess.engine.popen_uci unchanged.
+    `extra_body`: indented elif branches in the read loop.
+    `pre_loop`: module-level statements before the read loop (e.g. state
+    vars like `last_position = ''` for the position-aware fake).
     """
     py = root / f"{name}.py"
     body = (
         "#!/usr/bin/env python3\n"
         "import sys\n"
+        f"{pre_loop}"
         "while True:\n"
         "    line = sys.stdin.readline()\n"
         "    if not line: break\n"
@@ -77,6 +76,36 @@ def make_searching_fake_uci(
         "        sys.stdout.flush()\n"
     )
     return _write_uci_stub(root, name, extra)
+
+
+def make_position_aware_fake_uci(
+    root: Path,
+    name: str,
+    *,
+    score_by_substring: dict[str, int],
+    default_score_cp: int = 0,
+    depth: int = 6,
+) -> str:
+    """Fake UCI engine that varies `score cp` by the latest `position`
+    line. `score_by_substring` keys are substrings matched against that
+    line; first match wins, otherwise `default_score_cp`. No PV emitted."""
+    import json
+    table_json = json.dumps(score_by_substring)
+    extra = (
+        "    elif line.startswith('position'):\n"
+        "        last_position = line\n"
+        "    elif line.startswith('go') or line == 'stop':\n"
+        f"        table = {table_json}\n"
+        f"        cp = {default_score_cp}\n"
+        "        for needle, val in table.items():\n"
+        "            if needle in last_position:\n"
+        "                cp = val\n"
+        "                break\n"
+        f"        sys.stdout.write(f'info depth {depth} score cp {{cp}} nodes 1234 time 50\\n')\n"
+        "        sys.stdout.write('bestmove 0000\\n')\n"
+        "        sys.stdout.flush()\n"
+    )
+    return _write_uci_stub(root, name, extra, pre_loop="last_position = ''\n")
 
 
 def make_fake_uci(root: Path, name: str) -> str:

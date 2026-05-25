@@ -41,9 +41,21 @@ MAX_DEPTH = int(os.environ.get("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_MAX_DEPTH))
 # search keeps the agent responsive without runaway cost.
 _DEFAULT_TIME_MS = 1_000
 
+# top_moves: default and hard cap on N candidates returned. N searches
+# run sequentially with one throwaway engine each, so cost scales
+# linearly; the cap protects against agent runaway.
+_DEFAULT_TOP_MOVES_N = 3
+_DEFAULT_TOP_MOVES_MAX_N = 5
+TOP_MOVES_MAX_N = int(os.environ.get("SV_AI_TOP_MOVES_MAX_N", _DEFAULT_TOP_MOVES_MAX_N))
+
+# Per-candidate default time in top_moves -- short on purpose since we
+# multiply by N. Caller can raise via time_ms (still clamped to MAX_TIME_MS).
+_DEFAULT_TOP_MOVES_TIME_MS = 500
+
 
 EngineLauncher = Callable[[], EngineSupervisor]
 GameIdProvider = Callable[[], str | None]
+BoardProvider = Callable[[], chess.Board | None]
 AnalyzeTool = Callable[..., Awaitable[dict[str, Any]]]
 
 # Default fallback game_id when the tool runs outside a live HVE
@@ -55,6 +67,41 @@ _ANALYZE_GAME_ID_FALLBACK = "ai-analyze"
 # Wire-shape ToolSpec describing this tool to the model. Lives next to
 # the implementation so prompt text + schema + behavior move together;
 # app.py only wires (spec, callable) into the registry.
+TOP_MOVES_TOOL_SPEC = ToolSpec(
+    name="top_moves",
+    description=(
+        "Rank the top N candidate moves in the current live position. "
+        "Use this when the agent needs MultiPV-style comparison and the "
+        "underlying engine does not support MultiPV natively. Searches "
+        "each candidate position with a fresh throwaway engine; returns "
+        "candidates sorted best-first FOR THE SIDE TO MOVE. Each entry "
+        "carries move_uci, move_san, and the white-POV eval fields "
+        "(score_cp / score_pawns / score_text / mate / depth / pv). "
+        "Operates on the live game position -- no FEN input."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "n": {
+                "type": "integer",
+                "description": (
+                    f"Number of candidates to return (default {_DEFAULT_TOP_MOVES_N}, "
+                    f"capped at {TOP_MOVES_MAX_N})."
+                ),
+            },
+            "time_ms": {
+                "type": "integer",
+                "description": "Per-candidate search time in milliseconds (clamped to server cap).",
+            },
+            "depth": {
+                "type": "integer",
+                "description": "Per-candidate maximum depth (clamped to server cap).",
+            },
+        },
+    },
+)
+
+
 ANALYZE_TOOL_SPEC = ToolSpec(
     name="analyze",
     description=(
@@ -165,6 +212,75 @@ def _pv_to_uci(board: chess.Board, pv: list[chess.Move] | None) -> list[str]:
     return [m.uci() for m in pv]
 
 
+# Sort key for white-POV PovScore: mate-for-white > +cp > -cp > mate-against.
+# Used to rank top_moves candidates without re-scoring each comparison.
+_MATE_RANK = 10**9
+
+
+def _white_pov_sort_key(score: chess.engine.PovScore | None) -> int:
+    if score is None:
+        return -_MATE_RANK - 1
+    s = score.white()
+    mate = s.mate()
+    if mate is not None:
+        return (_MATE_RANK - abs(mate)) if mate > 0 else (-_MATE_RANK + abs(mate))
+    cp = s.score(mate_score=None)
+    return cp if cp is not None else 0
+
+
+class _SearchError(RuntimeError):
+    """Internal error from _run_one_search carrying a structured kind
+    (engine_spawn_failed or engine_terminated). Callers catch, convert
+    to the tool's error envelope. Local-only (not exported)."""
+    def __init__(self, kind: str, detail: str) -> None:
+        super().__init__(detail)
+        self.kind = kind
+        self.detail = detail
+
+
+async def _run_one_search(
+    engine_launcher: EngineLauncher,
+    board: chess.Board,
+    limit: chess.engine.Limit,
+    *,
+    bus: EventBus,
+    game_id: str,
+    cancel_token: CancelToken,
+) -> tuple[chess.engine.InfoDict, bool]:
+    """Spawn a throwaway engine, run one search, return (last_info, cancelled).
+    Raises _SearchError on spawn or mid-search engine death so callers can
+    map kind -> structured error envelope.
+
+    Publishes engine_info events via pump_engine_info but does NOT emit
+    engine_search_start -- the caller decides when to clear the panel
+    (analyze emits once; top_moves emits once for the whole batch)."""
+    sup = engine_launcher()
+    try:
+        engine, cleanup = await sup.spawn_throwaway()
+    except Exception as exc:
+        log.exception("search: engine spawn failed")
+        raise _SearchError("engine_spawn_failed", str(exc)) from exc
+    try:
+        with await engine.analysis(board, limit=limit) as analysis:
+            last_info, cancelled = await pump_engine_info(
+                analysis,
+                bus=bus,
+                game_id=game_id,
+                board=board,
+                pov=chess.WHITE,
+                cancel_token=cancel_token,
+            )
+        return last_info, cancelled
+    except chess.engine.EngineTerminatedError as exc:
+        log.error("search: engine terminated mid-search")
+        raise _SearchError("engine_terminated", str(exc)) from exc
+    finally:
+        try:
+            await cleanup()
+        except Exception:
+            log.exception("search: engine cleanup failed")
+
+
 def make_analyze_tool(
     engine_launcher: EngineLauncher,
     bus: EventBus,
@@ -195,41 +311,16 @@ def make_analyze_tool(
 
         limit, limits_used = _clamp_limits(input_)
 
-        sup = engine_launcher()
-        try:
-            engine, cleanup = await sup.spawn_throwaway()
-        except Exception as exc:
-            log.exception("analyze: engine spawn failed")
-            return {"error": "engine_spawn_failed", "detail": str(exc)}
-
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
-        # Clear the live engine panel before streaming -- HVE emits the
-        # same marker before its analysis. PV table keys off depth=1 to
-        # reset, but the explicit event also resets the board arrow.
         await bus.publish(Event(kind="engine_search_start", game_id=game_id, payload={}))
 
-        last_info: chess.engine.InfoDict = {}
-        cancelled = False
         try:
-            with await engine.analysis(board, limit=limit) as analysis:
-                last_info, cancelled = await pump_engine_info(
-                    analysis,
-                    bus=bus,
-                    game_id=game_id,
-                    board=board,
-                    pov=chess.WHITE,
-                    cancel_token=cancel_token,
-                )
-        except chess.engine.EngineTerminatedError as exc:
-            log.error("analyze: engine terminated mid-search")
-            return {"error": "engine_terminated", "detail": str(exc)}
-        except asyncio.CancelledError:
-            raise
-        finally:
-            try:
-                await cleanup()
-            except Exception:
-                log.exception("analyze: engine cleanup failed")
+            last_info, cancelled = await _run_one_search(
+                engine_launcher, board, limit,
+                bus=bus, game_id=game_id, cancel_token=cancel_token,
+            )
+        except _SearchError as err:
+            return {"error": err.kind, "detail": err.detail}
 
         out: dict = {"limits_used": limits_used}
         if cancelled:
@@ -251,3 +342,120 @@ def make_analyze_tool(
         return out
 
     return analyze
+
+
+def _clamp_top_moves_limits(input_: dict) -> tuple[chess.engine.Limit, dict]:
+    """Per-candidate limit for top_moves. Same clamps as analyze, but a
+    shorter default time -- top_moves multiplies cost by N."""
+    raw_time_ms = input_.get("time_ms")
+    raw_depth = input_.get("depth")
+    used: dict = {}
+    kwargs: dict = {}
+    if raw_time_ms is None and raw_depth is None:
+        kwargs["time"] = _DEFAULT_TOP_MOVES_TIME_MS / 1000.0
+        used["time_ms"] = _DEFAULT_TOP_MOVES_TIME_MS
+    if raw_time_ms is not None:
+        t = max(0, min(int(raw_time_ms), MAX_TIME_MS))
+        kwargs["time"] = t / 1000.0
+        used["time_ms"] = t
+    if raw_depth is not None:
+        d = max(1, min(int(raw_depth), MAX_DEPTH))
+        kwargs["depth"] = d
+        used["depth"] = d
+    return chess.engine.Limit(**kwargs), used
+
+
+def make_top_moves_tool(
+    engine_launcher: EngineLauncher,
+    bus: EventBus,
+    board_provider: BoardProvider,
+    game_id_provider: GameIdProvider | None = None,
+) -> AnalyzeTool:
+    """Build the `top_moves` async tool. Iterates legal moves on the
+    live board (via board_provider), searches each child position,
+    returns sorted candidates. `board_provider` returns the current
+    HVE board or None when no game is active.
+
+    Publishes one `engine_search_start` for the batch, then per-candidate
+    engine_info events. The PV table will thrash through candidates;
+    that's the intended UX (see review discussion -- alternative is to
+    leave the panel silent, which felt worse)."""
+    async def top_moves(input_: dict, *, cancel_token: CancelToken) -> dict:
+        board = board_provider()
+        if board is None:
+            return {"error": "no_live_position"}
+        # Copy so push/pop on candidates doesn't perturb the live board.
+        board = board.copy(stack=False)
+
+        raw_n = input_.get("n", _DEFAULT_TOP_MOVES_N)
+        try:
+            n = int(raw_n)
+        except (TypeError, ValueError):
+            return {"error": "invalid_n", "detail": f"n must be an integer, got {raw_n!r}"}
+        n = max(1, min(n, TOP_MOVES_MAX_N))
+
+        legals = list(board.legal_moves)
+        if not legals:
+            return {"error": "no_legal_moves"}
+
+        limit, limits_used = _clamp_top_moves_limits(input_)
+
+        game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
+        await bus.publish(Event(kind="engine_search_start", game_id=game_id, payload={}))
+
+        stm_is_white = board.turn == chess.WHITE
+        candidates: list[dict] = []
+        cancelled_any = False
+        evaluated_count = 0
+        for move in legals:
+            if cancel_token.cancelled:
+                cancelled_any = True
+                break
+            move_san = board.san(move)
+            move_uci = move.uci()
+            board.push(move)
+            try:
+                last_info, cancelled = await _run_one_search(
+                    engine_launcher, board, limit,
+                    bus=bus, game_id=game_id, cancel_token=cancel_token,
+                )
+            except _SearchError as err:
+                board.pop()
+                return {"error": err.kind, "detail": err.detail}
+            board.pop()
+            if cancelled:
+                cancelled_any = True
+            entry: dict = {"move_uci": move_uci, "move_san": move_san}
+            score = last_info.get("score")
+            entry.update(_score_to_cp(score))
+            depth = last_info.get("depth")
+            if depth is not None:
+                entry["depth"] = depth
+            pv = _pv_to_uci(board, last_info.get("pv"))
+            if pv:
+                entry["pv"] = pv
+            entry["_sort_key"] = _white_pov_sort_key(score)
+            candidates.append(entry)
+            evaluated_count += 1
+            if cancelled:
+                break
+
+        # Best-for-side-to-move ordering: white wants high white-POV,
+        # black wants low. Then keep top n. _sort_key drops off the wire.
+        candidates.sort(key=lambda c: c["_sort_key"], reverse=stm_is_white)
+        candidates = candidates[:n]
+        for c in candidates:
+            c.pop("_sort_key", None)
+
+        out: dict = {
+            "side_to_move": "white" if stm_is_white else "black",
+            "limits_used": limits_used,
+            "candidates": candidates,
+            "evaluated": evaluated_count,
+            "total_legal_moves": len(legals),
+        }
+        if cancelled_any:
+            out["cancelled"] = True
+        return out
+
+    return top_moves

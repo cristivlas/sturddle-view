@@ -38,7 +38,12 @@ from .play.ai_analysis import AIAnalysisCoordinator
 from .play.engine_supervisor import EngineSupervisor
 from .play.game_store import GameStore
 from .play.human_vs_engine import HumanVsEngine
-from .play.tools_engine import ANALYZE_TOOL_SPEC, make_analyze_tool
+from .play.tools_engine import (
+    ANALYZE_TOOL_SPEC,
+    TOP_MOVES_TOOL_SPEC,
+    make_analyze_tool,
+    make_top_moves_tool,
+)
 from .recent_imports import RecentImports
 from .tournament.fastchess import FastchessRunner
 from .tournament.orchestrator import Orchestrator, wrap_event_for_bus
@@ -339,12 +344,25 @@ def create_app(
         hve = getattr(app.state, "hve", None)
         return getattr(hve, "game_id", None) if hve else None
 
+    def _ai_board_provider():
+        hve = getattr(app.state, "hve", None)
+        return getattr(hve, "_board", None) if hve else None
+
     ai_registry = ToolRegistry()
     ai_registry.register(
         ANALYZE_TOOL_SPEC,
         make_analyze_tool(
             _ai_engine_launcher,
             bus=app.state.event_bus,
+            game_id_provider=_ai_game_id_provider,
+        ),
+    )
+    ai_registry.register(
+        TOP_MOVES_TOOL_SPEC,
+        make_top_moves_tool(
+            _ai_engine_launcher,
+            bus=app.state.event_bus,
+            board_provider=_ai_board_provider,
             game_id_provider=_ai_game_id_provider,
         ),
     )
