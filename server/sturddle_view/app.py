@@ -31,6 +31,7 @@ from .engines import EngineRegistry, resolve_selected
 from .events import Event, EventBus
 from .llm import CannedProvider, LLMProvider, ToolRegistry
 from .llm.anthropic import AnthropicProvider
+from .llm import ollama as ollama_mod
 from .llm.ollama import OllamaProvider
 from .openings import OpeningBook
 from .play.ai_analysis import AIAnalysisCoordinator
@@ -94,9 +95,9 @@ class _OriginMiddleware(BaseHTTPMiddleware):
 # listener — we re-arm instead and silence the orphan-task trace.
 _TRANSIENT_ACCEPT_WINERR = {64, 1236, 10054}  # NETNAME_DELETED, ABORTED, RST
 
-# Local Ollama daemon listens here by default; mirrored in the Settings
-# UI placeholder. Override via Settings > Analysis > Base URL.
-_DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+# Default Ollama daemon URL lives on the provider module so settings
+# code can reach it without importing app.
+_DEFAULT_OLLAMA_BASE_URL = ollama_mod.DEFAULT_BASE_URL
 
 
 def _install_proactor_accept_resilience() -> None:

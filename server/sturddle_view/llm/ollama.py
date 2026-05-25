@@ -28,6 +28,9 @@ from .transcript import Transcript
 log = logging.getLogger(__name__)
 
 
+DEFAULT_BASE_URL = "http://localhost:11434"
+
+
 # ----- Translation helpers (pure functions; covered by unit tests) -----
 
 
@@ -160,6 +163,21 @@ class OllamaProvider(LLMProvider):
     def __init__(self, base_url: str, model: str) -> None:
         self._base_url = base_url.rstrip("/")
         self._model = model
+
+    async def evict_model(self, model: str) -> None:
+        """Force the daemon to unload `model` from VRAM.
+
+        Ollama's native /api/generate accepts `keep_alive: 0` with an
+        empty prompt as the documented eviction signal. Fire-and-forget
+        from the caller's side: failures are swallowed (the daemon may
+        not have the model loaded, may be unreachable, etc.); callers
+        log a warning if they care.
+        """
+        if not model:
+            return
+        url = f"{self._base_url}/api/generate"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(url, json={"model": model, "keep_alive": 0})
 
     async def list_models(self) -> list[str]:
         """List models the daemon has pulled, via the OpenAI-compatible
