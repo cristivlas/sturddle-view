@@ -178,7 +178,7 @@ async def test_coordinator_writes_full_turn_to_transcript(monkeypatch, tmp_path)
     assert '"game_id": "g1"' in content
     assert "ScriptedProvider" in content
     assert "[system]" in content
-    assert "You are a chess analysis assistant." in content
+    assert "You are a chess analyst." in content
     assert "[user]" in content
     assert "FEN: ..." in content
     assert "round 0 chunk" in content

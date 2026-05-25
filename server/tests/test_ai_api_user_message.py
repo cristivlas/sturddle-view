@@ -11,6 +11,7 @@ from sturddle_view.api._ai_kick import (
     _san_history_for,
 )
 from sturddle_view.chess.board import board_from
+from sturddle_view.openings import Opening
 from sturddle_view.play.mode import Mode
 
 
@@ -22,11 +23,15 @@ class _FakeHve:
         start_fen: str | None = None,
         pre_analysis_mode: Mode | None = None,
         view_full_moves: list | None = None,
+        engine_name: str | None = None,
+        opening: Opening | None = None,
     ):
         self._board = board
         self._start_fen = start_fen
         self._pre_analysis_mode = pre_analysis_mode
         self._view_full_moves = list(view_full_moves or [])
+        self._engine_name = engine_name
+        self._opening = opening
 
     def current_board(self) -> chess.Board | None:
         return self._board
@@ -48,6 +53,12 @@ class _FakeHve:
             out.append(replay.san(m))
             replay.push(m)
         return out
+
+    def engine_display_name(self) -> str | None:
+        return self._engine_name
+
+    def lookup_opening(self) -> Opening | None:
+        return self._opening
 
 
 def test_build_user_message_handles_no_hve():
@@ -90,6 +101,32 @@ def test_build_user_message_honors_start_fen():
     assert msg is not None
     assert "1. e4" in msg
     assert board.fen() in msg
+
+
+def test_build_user_message_includes_engine_name():
+    # AI prompt path shortens to the first whitespace token to avoid
+    # leaking full UCI ids ("MyEngine 2.5.1-rc9...") into model prose.
+    h = _FakeHve(board=chess.Board(), engine_name="MyEngine 2.5.1-rc9")
+    msg = _build_user_message(h)
+    assert msg is not None
+    assert msg.startswith("Engine: MyEngine\n")
+
+
+def test_build_user_message_includes_opening_when_book_hit():
+    h = _FakeHve(
+        board=chess.Board(),
+        opening=Opening(eco="C44", name="King's Pawn Game"),
+    )
+    msg = _build_user_message(h)
+    assert msg is not None
+    assert "Opening: [C44] King's Pawn Game\n" in msg
+
+
+def test_build_user_message_omits_opening_when_book_misses():
+    h = _FakeHve(board=chess.Board(), opening=None)
+    msg = _build_user_message(h)
+    assert msg is not None
+    assert "Opening:" not in msg
 
 
 # ---------- _prompt_mode_for ------------------------------------------

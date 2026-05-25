@@ -39,15 +39,27 @@ def _san_history_for(hve) -> list[str]:
     return moves_san(hve.current_board(), hve.start_fen())
 
 
+def _short_engine_name(full: str | None) -> str | None:
+    # First whitespace token only: full UCI ids ("MyEngine 2.5.1-rc9.050226")
+    # otherwise leak verbatim into model prose.
+    if not full:
+        return full
+    return full.split()[0] or full
+
+
 def _build_user_message(hve) -> str | None:
     if hve is None:
         return None
     board = hve.current_board()
     if board is None:
         return None
+    opening = hve.lookup_opening()
     return build_initial_user_message(
         fen=board.fen(),
         san_history=_san_history_for(hve),
+        engine_name=_short_engine_name(hve.engine_display_name()),
+        opening_eco=opening.eco if opening else None,
+        opening_name=opening.name if opening else None,
     )
 
 

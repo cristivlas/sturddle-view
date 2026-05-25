@@ -278,6 +278,23 @@ class HumanVsEngine:
     def pre_analysis_mode(self) -> "Mode | None":
         return self._pre_analysis_mode
 
+    def engine_display_name(self) -> str | None:
+        return self._engine_name
+
+    def lookup_opening(self):
+        """Most-specific opening reached. Covers play (live move_stack) and
+        view (full PGN); returns None when no book is loaded, no moves yet,
+        or no registered line matches."""
+        if self._openings is None:
+            return None
+        if self._view_full_moves:
+            ucis = [m.uci() for m in self._view_full_moves]
+        elif self._board.move_stack and self._start_fen is None:
+            ucis = [m.uci() for m in self._board.move_stack]
+        else:
+            return None
+        return self._openings.lookup(ucis)
+
     # ----- supervisor passthroughs: tests and API layer still poke these
     # attributes directly on the HVE object; preserve the access pattern
     # so the supervisor extraction is a no-op at the call site.
