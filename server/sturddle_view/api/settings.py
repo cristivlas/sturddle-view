@@ -286,6 +286,7 @@ async def update_settings(payload: dict, request: Request) -> dict:
         try:
             evictor = OllamaProvider(base_url=prev_ollama_url, model="")
             await evictor.evict_model(prev_ollama_model)
+            log.info("ollama: evicted model %s", prev_ollama_model)
         except Exception as exc:
             log.warning("ollama: evict_model(%s) failed: %s", prev_ollama_model, exc)
 
