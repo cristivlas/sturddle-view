@@ -225,3 +225,26 @@ def test_empty_tool_arguments_yield_empty_dict():
     }
     chunk = openai_tool_call_to_provider_chunk(tc)
     assert chunk.tool_input == {}
+
+
+@pytest.mark.asyncio
+async def test_reasoning_field_yields_thinking_chunks(install_fake_httpx):
+    """Some Ollama models (nemotron-cascade) stream chain-of-thought
+    into delta.reasoning instead of delta.content. The provider must
+    surface those as kind=thinking so they at least appear in the
+    transcript -- otherwise the model can run silently for minutes
+    and the user sees nothing."""
+    install_fake_httpx(lines=[
+        'data: {"choices":[{"delta":{"reasoning":"thinking..."}}]}',
+        'data: {"choices":[{"delta":{"content":"answer"}}]}',
+        "data: [DONE]",
+    ])
+
+    provider = OllamaProvider(base_url="http://fake", model="m")
+    chunks = []
+    async for c in provider.stream(system="", messages=[]):
+        chunks.append(c)
+
+    kinds = [(c.kind, c.text) for c in chunks]
+    assert ("thinking", "thinking...") in kinds
+    assert ("text", "answer") in kinds

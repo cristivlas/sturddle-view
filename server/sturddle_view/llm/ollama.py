@@ -250,6 +250,14 @@ class OllamaProvider(LLMProvider):
                     content = delta.get("content")
                     if content:
                         yield ProviderChunk(kind="text", text=content)
+                    # Some Ollama models (e.g. nemotron-cascade) stream
+                    # chain-of-thought into `reasoning` and never fill
+                    # `content`. Surface as thinking so it lands in the
+                    # transcript labeled; the coordinator drops these
+                    # for the UI but counts the round.
+                    reasoning = delta.get("reasoning")
+                    if reasoning:
+                        yield ProviderChunk(kind="thinking", text=reasoning)
                     tc_deltas = delta.get("tool_calls") or []
                     for tcd in tc_deltas:
                         idx = tcd.get("index", 0)

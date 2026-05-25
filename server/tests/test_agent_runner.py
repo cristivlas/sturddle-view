@@ -329,6 +329,39 @@ async def test_provider_error_publishes_done_with_error_kind_and_detail():
 
 
 @pytest.mark.asyncio
+async def test_no_response_flagged_when_round_ends_without_text():
+    """Some models stream chain-of-thought (`reasoning`) but never emit
+    user-facing text. The runner must surface that so the UI can show
+    "no answer" instead of a silent empty panel."""
+    # Provider returns one round with NO text and NO tool_use -- the
+    # natural-exit path with text_published=False.
+    provider = ScriptedProvider(rounds=[[]])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider)
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    terminal = events[-1].payload
+    assert terminal["done"] is True
+    assert terminal.get("no_response") is True
+    assert "round_cap" not in terminal  # natural exit, not the guardrail
+
+
+@pytest.mark.asyncio
+async def test_no_response_NOT_flagged_when_text_was_streamed():
+    provider = ScriptedProvider(rounds=[[ProviderChunk(kind="text", text="ok")]])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider)
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+    assert "no_response" not in events[-1].payload
+
+
+@pytest.mark.asyncio
 async def test_error_detail_truncated_to_cap():
     """A misbehaving provider could return a wall of HTML. The done
     payload caps the detail string so the event-bus payload stays

@@ -146,6 +146,7 @@ class AIAnalysisCoordinator:
                 await transcript.user_message(opening_user_content)
                 try:
                     round_cap_hit = True  # flipped to False on natural exit
+                    text_published = False  # flips on first non-empty text chunk
                     for round_index in range(MAX_TOOL_ROUNDS):
                         round_chunks: list[ProviderChunk] = []
                         pending_tool: ProviderChunk | None = None
@@ -159,6 +160,7 @@ class AIAnalysisCoordinator:
                             round_chunks.append(chunk)
                             await transcript.chunk(round_index, chunk)
                             if chunk.kind == "text" and chunk.text:
+                                text_published = True
                                 await self._bus.publish(
                                     Event(
                                         kind="ai_info",
@@ -192,6 +194,10 @@ class AIAnalysisCoordinator:
                         # UI surface "stopped early; raise the tool-call
                         # cap in Settings" if it wants to.
                         done_payload["round_cap"] = True
+                    elif not text_published:
+                        # Model exited the loop with zero user-facing
+                        # text (reasoning-only models, refusals).
+                        done_payload["no_response"] = True
                 except asyncio.CancelledError:
                     done_payload["cancelled"] = True
                     raise

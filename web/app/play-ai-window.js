@@ -133,9 +133,10 @@ export function markAiDone({
   error = null,
   errorDetail = null,
   roundCap = false,
+  noResponse = false,
 } = {}) {
   // Terminal: clear spinner, then render whichever marker applies
-  // (error > roundCap > cancelled if multiple flags are set).
+  // (error > roundCap > noResponse > cancelled if multiple are set).
   setAiStatus("idle");
   if (!inst.body) return;
   if (error) {
@@ -157,6 +158,13 @@ export function markAiDone({
     const note = document.createElement("div");
     note.className = "play-ai-roundcap";
     note.textContent = "Stopped early at the tool-call cap. Raise SV_AI_MAX_TOOL_ROUNDS to allow more rounds.";
+    inst.body._para.append(note);
+    return;
+  }
+  if (noResponse) {
+    const note = document.createElement("div");
+    note.className = "play-ai-roundcap";
+    note.textContent = "Model produced no answer. Try a different model -- some stream only chain-of-thought.";
     inst.body._para.append(note);
     return;
   }

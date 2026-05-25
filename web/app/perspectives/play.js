@@ -922,6 +922,7 @@ export const playPerspective = {
               error: p.error || null,
               errorDetail: p.error_detail || null,
               roundCap: !!p.round_cap,
+              noResponse: !!p.no_response,
             });
             if (p.error) {
               toast(p.error_detail || p.error, {
