@@ -125,6 +125,28 @@ PIECE_AT_TOOL_SPEC = ToolSpec(
 )
 
 
+VALIDATE_MOVE_TOOL_SPEC = ToolSpec(
+    name="validate_move",
+    description=(
+        "Check whether a move (UCI or SAN) is legal in the live position. "
+        "Use to verify a move before naming it."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "move": {
+                "type": "string",
+                "description": (
+                    "Move in UCI (e.g. 'g1f3', 'e7e8q') or SAN (e.g. "
+                    "'Nf3', 'O-O', 'exd5')."
+                ),
+            },
+        },
+        "required": ["move"],
+    },
+)
+
+
 ANALYZE_TOOL_SPEC = ToolSpec(
     name="analyze",
     description=(
@@ -518,3 +540,28 @@ def make_piece_at_tool(board_provider: BoardProvider) -> AnalyzeTool:
         return out
 
     return piece_at
+
+
+def make_validate_move_tool(board_provider: BoardProvider) -> AnalyzeTool:
+    """Build the `validate_move` async tool. Tries UCI first, falls back
+    to SAN. Illegal or malformed input returns a structured error so the
+    model knows not to use the move it asked about."""
+    async def validate_move(input_: dict, *, cancel_token: CancelToken) -> dict:
+        board = board_provider()
+        if board is None:
+            return {"error": "no_live_position"}
+        raw = input_.get("move")
+        if not isinstance(raw, str) or not raw.strip():
+            return {"error": "invalid_input", "detail": "move must be a non-empty string"}
+        candidate = raw.strip()
+        for parse in (board.parse_uci, board.parse_san):
+            try:
+                move = parse(candidate)
+            except chess.IllegalMoveError as exc:
+                return {"error": "illegal_move", "detail": str(exc)}
+            except (chess.InvalidMoveError, chess.AmbiguousMoveError):
+                continue
+            return {"legal": True, "uci": move.uci(), "san": board.san(move)}
+        return {"error": "invalid_move", "detail": f"could not parse {candidate!r} as UCI or SAN"}
+
+    return validate_move

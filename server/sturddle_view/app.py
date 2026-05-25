@@ -41,9 +41,11 @@ from .play.tools_engine import (
     ANALYZE_TOOL_SPEC,
     PIECE_AT_TOOL_SPEC,
     TOP_MOVES_TOOL_SPEC,
+    VALIDATE_MOVE_TOOL_SPEC,
     make_analyze_tool,
     make_piece_at_tool,
     make_top_moves_tool,
+    make_validate_move_tool,
 )
 from .recent_imports import RecentImports
 from .tournament.fastchess import FastchessRunner
@@ -361,6 +363,10 @@ def create_app(
     ai_registry.register(
         PIECE_AT_TOOL_SPEC,
         make_piece_at_tool(board_provider=_ai_board_provider),
+    )
+    ai_registry.register(
+        VALIDATE_MOVE_TOOL_SPEC,
+        make_validate_move_tool(board_provider=_ai_board_provider),
     )
     # top_moves disabled pending engine-side investigation: relies on
     # UCI `searchmoves` (root_moves kwarg) to restrict each per-candidate
