@@ -365,6 +365,7 @@ export function createDockableWindow(config) {
   let docking = false;  // float -> dock transition; onclose skips destroy
   let navAway = false;  // nav detach; onclose skips destroy
   let programmaticClose = false; // close() -> wb.close(); onclose skips onUserClose
+  let currentTitle = title;
 
   function loadWinState() { return localStorage.getItem(winStateKey); }
   function saveWinState(v) { if (v) localStorage.setItem(winStateKey, v); else localStorage.removeItem(winStateKey); }
@@ -387,7 +388,7 @@ export function createDockableWindow(config) {
       docking = false;
     }
     setDocked(dockedKey, true);
-    slot = makeDockSlot(title, body, undock, closable ? userClose : null);
+    slot = makeDockSlot(currentTitle, body, undock, closable ? userClose : null);
     // Insert in dockOrder ascending; lower order goes on top. The
     // `instances` array is in module-load order, not dockOrder, so we
     // must scan for the MIN-order sibling that's still higher than us
@@ -425,7 +426,7 @@ export function createDockableWindow(config) {
     const y = geo?.y ?? defaultY(h);
     saved = null;
     wb = new WinBox({
-      ...winboxBase(title, className, w, h, x, y),
+      ...winboxBase(currentTitle, className, w, h, x, y),
       mount: body,
       onclose() {
         if (wb) saveGeo(geoKey, wb);
@@ -500,8 +501,18 @@ export function createDockableWindow(config) {
     if (body || saved || isOpen(openKey)) toggle(events);
   }
 
+  function setTitle(next) {
+    if (typeof next !== "string" || next === currentTitle) return;
+    currentTitle = next;
+    if (wb) wb.setTitle(next);
+    if (slot) {
+      const el = slot.querySelector(".dock-slot-title");
+      if (el) el.textContent = next;
+    }
+  }
+
   const inst = {
-    toggle, close, teardownSlot, closeForNav, restore,
+    toggle, close, teardownSlot, closeForNav, restore, setTitle,
     get wb() { return wb; },
     get slot() { return slot; },
     get body() { return body; },

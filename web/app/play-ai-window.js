@@ -51,6 +51,8 @@ function buildBody() {
   return root;
 }
 
+let userCloseHandler = null;
+
 const inst = createDockableWindow({
   title: "AI Analysis",
   className: "sturddle-wb-ai",
@@ -66,7 +68,19 @@ const inst = createDockableWindow({
   },
   dockOrder: DOCK_ORDER.AI_ANALYSIS,
   closable: true,
+  onUserClose: () => {
+    if (userCloseHandler) userCloseHandler();
+  },
 });
+
+export function setOnUserCloseAi(fn) {
+  userCloseHandler = fn;
+}
+
+export function setAiTitle(modelName) {
+  const t = modelName ? `AI Analysis (${modelName})` : "AI Analysis";
+  inst.setTitle(t);
+}
 
 export function openAi() {
   if (inst.wb || inst.slot) return;

@@ -23,6 +23,8 @@ import {
   appendAiDelta,
   markAiDone,
   setAiStatus,
+  setAiTitle,
+  setOnUserCloseAi,
   isAiOpen,
 } from "../play-ai-window.js";
 import { terminationLabel } from "../format-termination.js";
@@ -445,6 +447,10 @@ export const playPerspective = {
     // start_analysis branch. The AI window lives in the main dock
     // alongside Search Lines + UCI Log.
     let aiEnabled = false;
+    // Closing the AI window mid-turn = same effect as clicking
+    // toolbar Stop: snapshot view state, stop analysis, close all
+    // dock panels. stopAnalysisFromUi is defined further down.
+    setOnUserCloseAi(() => { stopAnalysisFromUi(); });
     // Snapshot of TC fields used at the start of the current game; lets
     // us tell the user "applies on next game" if they edit TC mid-play.
     let gameTcInitial = null;
@@ -455,6 +461,7 @@ export const playPerspective = {
         allowTakeback = s.allow_takeback !== false;
         showPgnComments = s.view_show_pgn_comments !== false;
         aiEnabled = !!s.ai_enabled;
+        setAiTitle(s.ai_enabled ? (s.ai_model || "") : "");
         syncCommentsVisibility();
         if (notifyOnDrift && !gameOver && resignAvailable) {
           const drift = [];
@@ -1576,43 +1583,42 @@ export const playPerspective = {
       });
     }
 
-    const onAnalyze = async () => {
-      const wasAnalyzing = analyzing;
-      if (wasAnalyzing) snapshotViewAnalysisState();
+    // Stop side of the analyze toggle, extracted so the AI-window
+    // close handler can trigger the same flow (snapshot + endpoint +
+    // toast + panels) as the toolbar Stop button.
+    async function stopAnalysisFromUi() {
+      if (!analyzing) return;
+      snapshotViewAnalysisState();
       try {
-        await ctx.api(
-          "POST",
-          wasAnalyzing ? "/game/analysis/stop" : "/game/analysis/start",
-          {},
-        );
-        if (wasAnalyzing) {
-          dismissAnalysisToast?.();
-          dismissAnalysisToast = null;
-          // Close all dock panels (PV, UCI, AI) as one analysis-off
-          // effect; their open-state is the user's last preference
-          // for the NEXT session. The server stopped the AI turn (if
-          // any) as part of /game/analysis/stop -- client doesn't kick.
-          closeDebugWindowsPersist();
-        } else {
-          restoreViewAnalysisWindows(ctx.events);
-          showAnalysisToast();
-          // Server picks the path (engine vs AI) based on settings, and
-          // the persona (coach vs commentator) based on the origin mode.
-          // Open the AI panel either way so the user sees prose stream.
-          if (aiEnabled) {
-            // openAi MUST come before resetAi: the body doesn't exist
-            // until the window is opened, and resetAi (which sets the
-            // status spinner) silently no-ops if body is null.
-            openAi();
-            resetAi();
-          }
+        await ctx.api("POST", "/game/analysis/stop", {});
+      } catch (e) {
+        reportError(ctx, "Stop analysis failed", e);
+        return;
+      }
+      dismissAnalysisToast?.();
+      dismissAnalysisToast = null;
+      closeDebugWindowsPersist();
+    }
+
+    const onAnalyze = async () => {
+      if (analyzing) {
+        await stopAnalysisFromUi();
+        return;
+      }
+      try {
+        await ctx.api("POST", "/game/analysis/start", {});
+        restoreViewAnalysisWindows(ctx.events);
+        showAnalysisToast();
+        // Server picks the path (engine vs AI) based on settings; AI
+        // panel opens either way so the user sees prose stream. openAi
+        // before resetAi: resetAi sets the spinner and no-ops if body
+        // is null.
+        if (aiEnabled) {
+          openAi();
+          resetAi();
         }
       } catch (e) {
-        reportError(
-          ctx,
-          wasAnalyzing ? "Stop analysis failed" : "Start analysis failed",
-          e,
-        );
+        reportError(ctx, "Start analysis failed", e);
       }
     };
 
@@ -1718,6 +1724,7 @@ export const playPerspective = {
         setCommentaryDockContainer(null);
         setOnUserCloseCommentary(null);
         closeAi();
+        setOnUserCloseAi(null);
         dismissAnalysisToast?.();
         dismissAnalysisToast = null;
         dismissGameOverToast?.();
