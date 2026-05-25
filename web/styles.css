@@ -109,6 +109,19 @@ wa-select::part(listbox) {
   transition: none !important;
 }
 
+/* AI key masking: text-security visually bullets the chars while the
+   wa-input stays type=text, so browsers don't offer to save it. */
+.ai-key-masked::part(input) {
+  -webkit-text-security: disc;
+  text-security: disc;
+  font-family: text-security-disc, monospace;
+}
+.ai-key-toggle {
+  cursor: pointer;
+  color: var(--muted, #888);
+}
+.ai-key-toggle:hover { color: inherit; }
+
 /* AI prose paragraph -- preserve newlines so blank lines from the
    model render as paragraph breaks. We stream tokens into a single
    <p> rather than splitting into multiple nodes (chunks may carry

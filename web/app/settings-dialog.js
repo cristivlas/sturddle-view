@@ -952,19 +952,47 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       aiKeyLabel.textContent = "API key";
       const aiKey = document.createElement("wa-input");
       aiKey.size = "small";
-      aiKey.type = "password";
+      // type="text" + CSS mask (text-security: disc) instead of
+      // type="password": browsers don't offer to save a non-password
+      // field. Visual security is identical; both expose the value
+      // via devtools.
+      aiKey.type = "text";
+      aiKey.classList.add("ai-key-masked");
       aiKey.setAttribute("autocomplete", "off");
-      aiKey.placeholder = initial.ai_api_key_set ? "Saved -- enter new to replace" : "";
-      // Debounced PUT followed by a model refetch. The refetch must run
-      // AFTER the server has the new value, otherwise the endpoint
-      // reads the stale key/URL.
+      aiKey.setAttribute("data-lpignore", "true");
+      aiKey.setAttribute("data-form-type", "other");
+      aiKey.setAttribute("spellcheck", "false");
+      // Eye icon slotted into the input's suffix slot so it sits
+      // inside the field's border (matches WA's password-toggle look).
+      const aiKeyToggleIcon = document.createElement("wa-icon");
+      aiKeyToggleIcon.setAttribute("name", "eye");
+      aiKeyToggleIcon.setAttribute("slot", "end");
+      aiKeyToggleIcon.classList.add("ai-key-toggle");
+      aiKeyToggleIcon.setAttribute("role", "button");
+      aiKeyToggleIcon.setAttribute("tabindex", "0");
+      aiKeyToggleIcon.setAttribute("aria-label", "Show/hide API key");
+      aiKeyToggleIcon.addEventListener("click", () => {
+        const wasMasked = aiKey.classList.toggle("ai-key-masked");
+        aiKeyToggleIcon.setAttribute("name", wasMasked ? "eye" : "eye-slash");
+      });
+      const setKeyPlaceholder = () => {
+        aiKey.placeholder = initial.ai_api_key_set ? "Saved -- enter new to replace" : "";
+      };
+      setKeyPlaceholder();
       const persistAiKeyThenRefresh = debounce(async () => {
-        await putSettings({ ai_api_key: aiKey.value });
+        const trimmed = (aiKey.value || "").trim();
+        await putSettings({ ai_api_key: trimmed });
+        // Server cleared/set the slot; update local view so the
+        // "Saved -- enter new to replace" placeholder appears the
+        // first time the user supplies a key.
+        initial.ai_api_key_set = !!trimmed;
+        setKeyPlaceholder();
         refreshAiModels();
       }, 400);
       aiKey.addEventListener("input", () => {
         persistAiKeyThenRefresh();
       });
+      aiKey.append(aiKeyToggleIcon);
       aiKeyRow.append(aiKeyLabel, aiKey);
 
       const aiUrlRow = document.createElement("div");
