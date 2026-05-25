@@ -6,8 +6,9 @@ AI agent) based on `settings.ai_enabled`. This module owns the AI
 half of that choice -- bridging the coordinator, provider factory,
 and HVE board snapshot at the API boundary.
 
-Direct hve._board / _start_fen access mirrors api/game.py's existing
-shortcut; replace when the coordinator owns its own session state.
+Reads HVE state via its accessors (current_board / start_fen /
+view_full_moves_san / pre_analysis_mode). Will be folded into the
+coordinator when rolling sessions land.
 """
 from __future__ import annotations
 
@@ -26,25 +27,22 @@ log = logging.getLogger(__name__)
 def _san_history_for(hve) -> list[str]:
     """Pick the right move list to ship to the agent.
 
-    View mode: the FULL game's moves (`_view_full_moves`). The current
-    cursor position is carried by the FEN; everything past that ply is
-    "future" the commentator can reference.
+    View mode: the FULL game's moves. The current cursor position is
+    carried by the FEN; everything past that ply is "future" the
+    commentator can reference.
 
     Play mode: the live board's move_stack -- there is no future.
-
-    `_view_full_moves` is `[]` in play mode (HVE init sets it; only
-    populated by enter_view_mode), so its emptiness is the signal.
     """
-    full_moves = getattr(hve, "_view_full_moves", None) or []
-    if full_moves:
-        return hve._view_moves_san()
-    return moves_san(hve._board, getattr(hve, "_start_fen", None))
+    full = hve.view_full_moves_san()
+    if full:
+        return full
+    return moves_san(hve.current_board(), hve.start_fen())
 
 
 def _build_user_message(hve) -> str | None:
     if hve is None:
         return None
-    board = getattr(hve, "_board", None)
+    board = hve.current_board()
     if board is None:
         return None
     return build_initial_user_message(
@@ -58,15 +56,11 @@ def _prompt_mode_for(hve) -> PromptMode:
 
     - View mode (replaying a PGN) -> commentator: third-person, can
       reference what happens later.
-    - Anywhere else (live play, paused) -> coach: second-person, focus
-      on the current position.
-
-    Reads `_pre_analysis_mode` directly -- same coupling shortcut as
-    `_board`/`_start_fen` above.
+    - Anywhere else (live play, paused) -> coach: second-person.
     """
     if hve is None:
         return "coach"
-    if getattr(hve, "_pre_analysis_mode", None) is Mode.VIEWING:
+    if hve.pre_analysis_mode() is Mode.VIEWING:
         return "commentator"
     return "coach"
 

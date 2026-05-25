@@ -1,10 +1,6 @@
 """_ai_kick internals: build the initial user message + pick persona
-from live hve state.
-
-Both reach into `hve._board` / `hve._start_fen` / `hve._pre_analysis_mode`
--- same coupling shortcut that api/game.py uses for `game_id`. When the
-coordinator owns its own session state, these move with the seam.
-"""
+from live hve state via HVE's public accessors. Replace when the
+coordinator owns its own session state."""
 from __future__ import annotations
 
 import chess
@@ -19,7 +15,7 @@ from sturddle_view.play.mode import Mode
 
 
 class _FakeHve:
-    """Minimal stand-in: only the attributes _ai_kick helpers read."""
+    """Minimal stand-in: only the accessors _ai_kick helpers call."""
     def __init__(
         self,
         board: chess.Board | None,
@@ -30,13 +26,22 @@ class _FakeHve:
         self._board = board
         self._start_fen = start_fen
         self._pre_analysis_mode = pre_analysis_mode
-        # Empty list = play mode (no view history); non-empty triggers
-        # the full-game path in _san_history_for.
         self._view_full_moves = list(view_full_moves or [])
 
-    def _view_moves_san(self) -> list[str]:
-        """Mirror HVE._view_moves_san for the fake -- render the full
-        moves into SAN against the start FEN."""
+    def current_board(self) -> chess.Board | None:
+        return self._board
+
+    def start_fen(self) -> str | None:
+        return self._start_fen
+
+    def pre_analysis_mode(self) -> Mode | None:
+        return self._pre_analysis_mode
+
+    def view_full_moves_san(self) -> list[str]:
+        """Empty list = play mode; non-empty = view mode, render
+        against the start FEN."""
+        if not self._view_full_moves:
+            return []
         replay = board_from(self._start_fen)
         out = []
         for m in self._view_full_moves:

@@ -258,6 +258,26 @@ class HumanVsEngine:
     def is_editing(self) -> bool:
         return self._mode is Mode.EDITING
 
+    # ----- accessors for the AI start path. Surface read-only views of
+    # internals so api/_ai_kick.py doesn't reach across the abstraction.
+    # Returning Optionals (vs raising) keeps the call site branchless.
+
+    def current_board(self) -> chess.Board | None:
+        return self._board
+
+    def start_fen(self) -> str | None:
+        return self._start_fen
+
+    def view_full_moves_san(self) -> list[str]:
+        """Full game's moves when HVE is in view mode (or analyzing-from-
+        view); empty in play mode."""
+        if self._view_full_moves:
+            return self._view_moves_san()
+        return []
+
+    def pre_analysis_mode(self) -> "Mode | None":
+        return self._pre_analysis_mode
+
     # ----- supervisor passthroughs: tests and API layer still poke these
     # attributes directly on the HVE object; preserve the access pattern
     # so the supervisor extraction is a no-op at the call site.

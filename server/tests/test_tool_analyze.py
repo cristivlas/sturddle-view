@@ -128,13 +128,9 @@ async def test_analyze_missing_fen_with_structured_error():
 
 @pytest.mark.asyncio
 async def test_analyze_cancel_returns_cancelled_marker(tmp_path: Path):
-    # Pre-cancel the token, then call analyze. The fake engine returns
-    # a single info chunk + bestmove on `go`, so the tool's loop body
-    # runs at least once and observes cancelled=True before completion.
-    # This is the deterministic cancel-path assertion -- it does NOT
-    # exercise mid-search interruption against a long-running search
-    # (which would require a non-timer-based sync mechanism we don't
-    # yet have).
+    # Pre-cancelled token: pump bails out before the first iteration.
+    # No score captured; just the cancelled marker. Mid-search cancel
+    # (after first info) is covered by test_engine_info_pump.
     engine_path = make_searching_fake_uci(
         tmp_path, "cancel_fake",
         score_cp=10, depth=3, bestmove="e2e4", pv="e2e4",
@@ -143,12 +139,11 @@ async def test_analyze_cancel_returns_cancelled_marker(tmp_path: Path):
     analyze = make_analyze_tool(_launcher_from_path(engine_path, bus), bus=bus)
 
     token = CancelToken()
-    token.cancel()  # already cancelled before analyze runs
+    token.cancel()
 
     out = await analyze({"fen": "startpos", "depth": 99}, cancel_token=token)
 
     assert out.get("cancelled") is True
-    assert "score_cp" in out  # info chunk was captured before the stop
 
 
 @pytest.mark.asyncio

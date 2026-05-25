@@ -109,6 +109,16 @@ wa-select::part(listbox) {
   transition: none !important;
 }
 
+/* AI prose paragraph -- preserve newlines so blank lines from the
+   model render as paragraph breaks. We stream tokens into a single
+   <p> rather than splitting into multiple nodes (chunks may carry
+   partial whitespace; pre-wrap handles it without DOM gymnastics). */
+.play-ai-prose {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  margin: 0 12px;
+}
+
 /* AI analysis status line: spinner + short text. Sits above the prose
    so streaming text can append below without re-flow. Slightly dimmer
    than the prose since it's transient progress state, not content. */

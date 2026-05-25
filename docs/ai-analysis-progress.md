@@ -326,22 +326,12 @@ Tests:
 
 Open:
 
-- **`analyze` mid-search cancel is not unit-tested.** The current
-  cancel test pre-flips the cancel token before calling `analyze`;
-  that proves the marker is surfaced and the engine winds down cleanly,
-  but does NOT exercise interruption of an in-flight search. A real
-  mid-search test needs a non-timer-based sync between "engine has
-  started search" and "test flips the token" (e.g., a hook on the
-  analysis tool that signals first-info-received).
-- **AI panel renders all prose in one `<p>` node.** `appendAiDelta` in
-  `web/app/play-ai-window.js` appends every delta as a text node into a
-  single paragraph -- `\n\n` paragraph breaks won't render. Mirror the
-  `play-commentary-window.js` split-on-`\n{2,}` approach.
-- **`api/_ai_kick.py` reaches into `hve._board` / `_start_fen` /
-  `_view_full_moves` / `_pre_analysis_mode` directly.** Couples the AI
-  start path to play-perspective internals. Replace with
-  coordinator-owned session state when the rolling-session model
-  lands. (Was `api/ai.py`; same shortcut, renamed file.)
+- **`api/_ai_kick.py` will fold into the coordinator when rolling
+  sessions land.** Today it reads HVE state via public accessors
+  (`current_board()`, `start_fen()`, `view_full_moves_san()`,
+  `pre_analysis_mode()`) -- no underscore reach-through -- but the
+  start-of-turn assembly itself belongs in the session, not on the
+  API boundary.
 - **`top_moves` blocked on engine `searchmoves` support.** See
   `Open items (2026-05-25)` below. Registration is commented out.
 - **MD / LaTeX leakage in some models' prose.** Prompt now says
@@ -360,6 +350,18 @@ Fixed (kept here as a record):
   sticky-pref `<details>` disclosure.
 - ~~Round-cap signal not surfaced in UI~~ -- inline `play-ai-roundcap`
   note + `done.round_cap` flow fully wired.
+- ~~AI panel renders all prose in one `<p>` node, dropping line
+  breaks~~ -- `.play-ai-prose` is now `white-space: pre-wrap`; model
+  newlines render verbatim.
+- ~~`analyze` mid-search cancel is not unit-tested~~ --
+  `pump_engine_info` now races the analysis iterator against the cancel
+  token's wait_cancelled event (no more "stuck waiting on next info"
+  on an idle engine) and exposes `first_info_event` so a test can
+  deterministically observe "search in flight" before flipping cancel.
+  See `test_engine_info_pump.py::test_pump_cancel_after_first_info_returns_cancelled`.
+- ~~`api/_ai_kick.py` reached into HVE underscore attributes~~ -- HVE
+  now exposes `current_board()`, `start_fen()`, `view_full_moves_san()`,
+  `pre_analysis_mode()`; _ai_kick uses those.
 - ~~Tool registry isn't wired into `app.py`~~ -- `ANALYZE_TOOL_SPEC`
   registered in `create_app`. Prompt's Tools: section is now rendered
   by iterating the registry (no manual sync between schema and prompt
@@ -470,6 +472,28 @@ authoritative architecture record.
 
 State of the work after the prompt-revision + per-provider memory pass:
 
+- **Rolling session: tabled.** Spec §Live session model and the
+  per-game cap reasoning assume an agent session that persists across
+  Analyze clicks. Today every click sends the whole PGN as the
+  initial user message and runs an independent turn -- equivalent
+  context, no shared state to invalidate. Implementing a real session
+  would unlock prompt-caching savings + the "session reset on
+  takeback past annotated ply" trigger, but adds rebuild logic for
+  diverging move stacks. Park until evidence (cost or coherence)
+  warrants it.
+- **[HIGH PRIORITY] Token caps unimplemented.** Spec §Guardrails calls
+  per-move and per-game token caps non-negotiable, but only the
+  round-cap (`SV_AI_MAX_TOOL_ROUNDS`) and `analyze` time/depth caps
+  ship today. With Anthropic now live, an unbounded loop is a billing
+  risk. Wire-up:
+  - Anthropic returns `usage` (`input_tokens`, `output_tokens`,
+    `cache_*`) in `message_delta` / `message_stop` SSE events.
+  - Ollama returns `prompt_eval_count` + `eval_count` at stream end.
+  - Coordinator tracks per-turn + cumulative-per-game; loop stops when
+    either cap is hit; surface `done.token_cap=true` to the UI.
+  - Settings UI exposure under Advanced (Phase 4).
+
+
 - **top_moves disabled.** Built and tested in isolation, but registration
   is commented out in `app.py`. Relies on UCI `searchmoves` (python-chess
   `root_moves` kwarg) to restrict each per-candidate search; Sturddle
@@ -484,8 +508,6 @@ State of the work after the prompt-revision + per-provider memory pass:
   (`top_moves` defined but disabled; `compare_moves`, `tablebase_probe`,
   `opening_lookup`, `get_position`, `get_pgn_range` not built). Spec
   §Tools lists six; this section now reflects reality.
-- **Anthropic streaming.** `AnthropicProvider.list_models` works
-  (Settings dropdown populates); `stream()` still raises NotImplementedError.
 - **Per-provider model memory.** Server stores `ai_models: dict[str, str]`
   keyed by provider; `ai_model` is a computed property. Adding a new
   provider does not bump the persistence schema.

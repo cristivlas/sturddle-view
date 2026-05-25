@@ -137,6 +137,32 @@ def make_position_aware_fake_uci(
     return _write_uci_stub(root, name, extra, pre_loop="last_position = ''\n")
 
 
+def make_long_search_fake_uci(
+    root: Path,
+    name: str,
+    *,
+    bestmove: str = "e2e4",
+    pv: str = "e2e4",
+    score_cp: int = 25,
+) -> str:
+    """Fake UCI that emits an info line on `go` and then sits idle until
+    `stop` (emits bestmove) or `quit` (exits). The outer read loop in
+    _write_uci_stub already handles waiting for the next command, so
+    after the info line we just fall back to it.
+
+    Lets a test deterministically observe "search in flight" and exercise
+    mid-search cancel via the engine's stop path."""
+    extra = (
+        "    elif line.startswith('go'):\n"
+        f"        sys.stdout.write('info depth 1 score cp {score_cp} nodes 100 time 10 pv {pv}\\n')\n"
+        "        sys.stdout.flush()\n"
+        "    elif line == 'stop':\n"
+        f"        sys.stdout.write('bestmove {bestmove}\\n')\n"
+        "        sys.stdout.flush()\n"
+    )
+    return _write_uci_stub(root, name, extra)
+
+
 def make_fake_uci(root: Path, name: str) -> str:
     """Minimal UCI stub: handles ``uci``/``isready``/``quit`` only and
     does NOT play moves. Tests that need a move-playing fake should

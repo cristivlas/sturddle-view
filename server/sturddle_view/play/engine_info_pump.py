@@ -12,6 +12,7 @@ empty even though the engine was producing info. Keep the loop here.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Callable, Optional
 
 import chess
@@ -32,6 +33,7 @@ async def pump_engine_info(
     on_payload: Optional[Callable[[dict], None]] = None,
     capture_score: Optional[dict] = None,
     cancel_token: Optional[CancelToken] = None,
+    first_info_event: Optional[asyncio.Event] = None,
 ) -> tuple[chess.engine.InfoDict, bool]:
     """Drain `analysis` until completion or cooperative cancel.
 
@@ -57,34 +59,78 @@ async def pump_engine_info(
     """
     last: chess.engine.InfoDict = {}
     cancelled = False
-    async for info in analysis:
-        if info:
-            last = info
-        if "pv" in info or "depth" in info or "score" in info:
-            payload = serialize_info(info, board=board, pov=pov)
-            if on_payload is not None:
-                on_payload(payload)
-            if capture_score is not None and "score" in info:
-                side = info["score"].pov(chess.WHITE)
-                entry: dict
-                if side.is_mate():
-                    entry = {"mate": side.mate()}
-                else:
-                    entry = {"cp": side.score()}
-                if "depth" in info:
-                    entry["depth"] = info["depth"]
-                capture_score.clear()
-                capture_score.update(entry)
-            await bus.publish(
-                Event(kind="engine_info", game_id=game_id, payload=payload)
-            )
-        if cancel_token is not None and cancel_token.cancelled:
-            cancelled = True
+    # Race the next info against cancel so an idle engine (no new chunks)
+    # still hits the stop path. asyncio.wait + FIRST_COMPLETED is the
+    # cancel-safe primitive; the pending task is awaited to swallow its
+    # exception before we move on.
+    iter_task: asyncio.Task | None = None
+    cancel_task: asyncio.Task | None = None
+    try:
+        while True:
+            if iter_task is None:
+                iter_task = asyncio.create_task(analysis.__anext__())
+            waiters: set[asyncio.Task] = {iter_task}
+            if cancel_token is not None:
+                if cancel_token.cancelled:
+                    cancelled = True
+                    break
+                if cancel_task is None or cancel_task.done():
+                    cancel_task = asyncio.create_task(cancel_token.wait_cancelled())
+                waiters.add(cancel_task)
+            done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+            if cancel_task in done:
+                cancelled = True
+                break
+            try:
+                info = iter_task.result()
+            except StopAsyncIteration:
+                break
+            finally:
+                iter_task = None
+            if info:
+                last = info
+                if first_info_event is not None and not first_info_event.is_set():
+                    first_info_event.set()
+            if "pv" in info or "depth" in info or "score" in info:
+                payload = serialize_info(info, board=board, pov=pov)
+                if on_payload is not None:
+                    on_payload(payload)
+                if capture_score is not None and "score" in info:
+                    side = info["score"].pov(chess.WHITE)
+                    entry: dict
+                    if side.is_mate():
+                        entry = {"mate": side.mate()}
+                    else:
+                        entry = {"cp": side.score()}
+                    if "depth" in info:
+                        entry["depth"] = info["depth"]
+                    capture_score.clear()
+                    capture_score.update(entry)
+                await bus.publish(
+                    Event(kind="engine_info", game_id=game_id, payload=payload)
+                )
+        if cancelled:
             try:
                 analysis.stop()
-            except Exception:
+            except chess.engine.EngineError:
                 pass
+            if iter_task is not None and not iter_task.done():
+                try:
+                    await iter_task
+                except (StopAsyncIteration, chess.engine.EngineError):
+                    pass
+                iter_task = None
             async for _ in analysis:
                 pass
-            break
+    finally:
+        # Best-effort cleanup of background waiters on any exit. Catchall
+        # is deliberate: cancel/shutdown paths can raise asyncio internals
+        # we don't want to bubble out of the pump.
+        for t in (iter_task, cancel_task):
+            if t is not None and not t.done():
+                t.cancel()
+                try:
+                    await t
+                except BaseException:
+                    pass
     return last, cancelled
