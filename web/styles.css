@@ -286,6 +286,15 @@ wa-select::part(listbox) {
 .play-ai-terminal {
   margin: 0 12px 8px;
 }
+/* Subtle "AI is done" divider below the final round's prose on
+   multi-round turns. Neutral grey so it doesn't compete with the
+   amber corrective banner. */
+.play-ai-final-sep {
+  border: none;
+  border-top: 1px solid var(--wa-color-neutral-fill-soft, #ccc);
+  margin: 8px 0 0;
+  opacity: 0.5;
+}
 .play-ai-cancelled {
   display: inline-block;
   font-style: italic;

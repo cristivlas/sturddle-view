@@ -347,6 +347,18 @@ export function markAiDone({
   if (!inst.body) return;
   const slot = inst.body._terminal;
   withStickyBottom(() => {
+    // Natural completion on a multi-round turn gets a subtle divider
+    // below the final prose, so the user has a clear "AI is done"
+    // signal. Skipped on cancel/error/round-cap/no-response (their
+    // own markers fill that role) and on single-round turns (nothing
+    // to separate from).
+    const multiRound = inst.body._roundPanels.size > 1;
+    const naturalDone = !error && !roundCap && !noResponse && !cancelled;
+    if (multiRound && naturalDone) {
+      const sep = document.createElement("hr");
+      sep.className = "play-ai-final-sep";
+      slot.append(sep);
+    }
     if (error) {
       const block = document.createElement("div");
       block.className = "play-ai-error";
