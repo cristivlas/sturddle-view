@@ -152,7 +152,9 @@ def _serialize(
         tournament_type = (t.template or {}).get("tournament_type", "roundrobin")
         try:
             standings = compute_standings(
-                store.pgn_path(t.id), tournament_type=tournament_type
+                store.pgn_path(t.id),
+                tournament_type=tournament_type,
+                config_path=store.config_path(t.id),
             ).to_dict()
         except FileNotFoundError:
             standings = {"games": 0, "engines": []}
