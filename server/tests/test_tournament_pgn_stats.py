@@ -2646,36 +2646,3 @@ def test_games_played_from_config_non_numeric_field_returns_none(tmp_path):
     assert games_played_from_config(p) is None
 
 
-# ---------------------------------------------------------------------------
-# compute_standings with config_path override
-# ---------------------------------------------------------------------------
-
-
-def test_compute_standings_uses_config_games_count_when_provided(tmp_path):
-    # PGN has 2 decisive games; config says 10. config wins.
-    pgn = _write_pgn(tmp_path, (
-        '[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 1-0\n\n'
-        '[White "B"]\n[Black "A"]\n[Result "0-1"]\n\n1. e4 0-1\n\n'
-    ))
-    cfg = tmp_path / "config.json"
-    cfg.write_text(json.dumps({
-        "stats": {"A vs B": {"wins": 5, "losses": 3, "draws": 2}}
-    }), encoding="utf-8")
-    s = compute_standings(pgn, config_path=cfg)
-    assert s.games == 10
-
-
-def test_compute_standings_falls_back_to_pgn_when_no_config(tmp_path):
-    pgn = _write_pgn(tmp_path, (
-        '[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 1-0\n\n'
-    ))
-    s = compute_standings(pgn)
-    assert s.games == 1
-
-
-def test_compute_standings_falls_back_to_pgn_when_config_missing(tmp_path):
-    pgn = _write_pgn(tmp_path, (
-        '[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 1-0\n\n'
-    ))
-    s = compute_standings(pgn, config_path=tmp_path / "absent.json")
-    assert s.games == 1

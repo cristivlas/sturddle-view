@@ -35,6 +35,7 @@ from ..tournament.pgn_stats import (
     compute_sprt,
     compute_standings,
     count_partial_pairs,
+    games_played_from_config,
     read_game_record,
 )
 from ..tournament.store import (
@@ -152,12 +153,18 @@ def _serialize(
         tournament_type = (t.template or {}).get("tournament_type", "roundrobin")
         try:
             standings = compute_standings(
-                store.pgn_path(t.id),
-                tournament_type=tournament_type,
-                config_path=store.config_path(t.id),
+                store.pgn_path(t.id), tournament_type=tournament_type,
             ).to_dict()
         except FileNotFoundError:
             standings = {"games": 0, "engines": []}
+        # Active: orch in-mem counter. Stopped: fastchess config snapshot.
+        live = orch.games_played(t.id) if orch is not None else None
+        if live is not None:
+            standings["games"] = live
+        else:
+            cfg_games = games_played_from_config(store.config_path(t.id))
+            if cfg_games is not None:
+                standings["games"] = cfg_games
         standings["tournament_type"] = tournament_type
         out["standings"] = standings
     if with_stats and store is not None:
@@ -208,7 +215,10 @@ def list_tournaments(request: Request) -> dict:
     s = _store(request)
     return {
         "active_id": _orch(request).active_id(),
-        "tournaments": [_serialize(t, with_standings=True, store=s) for t in s.list()],
+        "tournaments": [
+            _serialize(t, with_standings=True, store=s, orch=_orch(request))
+            for t in s.list()
+        ],
     }
 
 

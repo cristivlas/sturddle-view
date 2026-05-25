@@ -31,7 +31,7 @@ from .pgn_reconcile import (
     ReconciledMatch,
     ReconciliationQueue,
 )
-from .pgn_stats import rewrite_drop_partial_pairs
+from .pgn_stats import games_played_from_config, rewrite_drop_partial_pairs
 from .pgn_tail import PgnGameRecord, PgnTailer
 from .rescheck import RescheckError, check_template
 from .runner import RunSpec, Runner
@@ -245,6 +245,7 @@ class Orchestrator:
         self._runner = runner
         self._active_id: str | None = None
         self._broadcast: BroadcastCallback | None = None
+        self._games_played: int = 0
 
         # Slice 9b: live observation pipeline. WS subscribers attach
         # per-proxy and receive that engine's UCI line stream.
@@ -366,6 +367,14 @@ class Orchestrator:
         """Id of the currently-running tournament, or ``None``."""
         return self._active_id
 
+    def games_played(self, tournament_id: str) -> int | None:
+        """In-mem games-played tally for the active tournament; ``None``
+        for any other id. Seeded from fastchess's config.json at start
+        and bumped on every reconciled completion."""
+        if tournament_id != self._active_id:
+            return None
+        return self._games_played
+
     async def start(self, tournament_id: str) -> Tournament:
         """Start the given tournament. Raises:
 
@@ -486,6 +495,8 @@ class Orchestrator:
                     )
             except Exception:
                 log.exception("partial-pair rewrite failed for %s", t.id)
+            # Seed from post-rewrite config; bumped on each reconcile.
+            self._games_played = games_played_from_config(spec.config_path) or 0
             # Clear any prior last_error on (re)start -- the user has
             # acted on the diagnostic by retrying.
             updated = self._store.update_status(
@@ -507,6 +518,7 @@ class Orchestrator:
             # out the next attempt.
             self._active_id = None
             self._proxy_secret = None
+            self._games_played = 0
             self._reset_pairing_state()
             self._store.update_status(t.id, STATUS_STOPPED, stopped_at=_now())
             raise
@@ -608,6 +620,7 @@ class Orchestrator:
                             log.exception("PGN tailer finalize failed")
                         self._pgn_tailer = None
                     self._active_id = None
+                    self._games_played = 0
                     self._reset_pairing_state()
                     self._close_all_proxy_subscribers()
 
@@ -1076,6 +1089,7 @@ class Orchestrator:
             m.pair_id[:8], m.game_n, m.result,
             m.termination or "<none>", m.ply_count,
         )
+        self._games_played += 1
         await self._emit("game_reconciled", {
             "tournament_id": self._active_id,
             "pair_id": m.pair_id,

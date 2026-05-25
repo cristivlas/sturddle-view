@@ -980,15 +980,12 @@ def games_played_from_config(config_path: Path) -> int | None:
 def compute_standings(
     pgn_path: Path,
     tournament_type: str = "roundrobin",
-    *,
-    config_path: Path | None = None,
 ) -> Standings:
     """Tally W/L/D per engine across all games in ``games.pgn``.
 
     The PGN may be empty, missing, or partially-written; results from
-    valid games are counted, the rest skipped. When ``config_path`` is
-    given and fastchess has autosaved, ``games`` is taken from config
-    (authoritative); per-engine rows stay PGN-derived."""
+    valid games are counted, the rest skipped.
+    """
     # wld[a][b] = [wins, losses, draws] for engine a vs engine b
     wld: dict[str, dict[str, list[int]]] = {}
     records: dict[str, EngineRecord] = {}
@@ -1062,10 +1059,6 @@ def compute_standings(
             e.elo_ordo = elo
             e.elo_ordo_margin_95 = margin
 
-    if config_path is not None:
-        cfg_games = games_played_from_config(config_path)
-        if cfg_games is not None:
-            games = cfg_games
     return Standings(engines=engines, games=games)
 
 

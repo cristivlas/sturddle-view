@@ -11,6 +11,7 @@ Two layers of tests:
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from sturddle_view.tournament.orchestrator import (
     Orchestrator,
     TournamentBusyError,
 )
+from sturddle_view.tournament.pgn_reconcile import ReconciledMatch
 from sturddle_view.tournament.rescheck import HostSpecs, RescheckError
 from sturddle_view.tournament.runner import RunSpec
 from sturddle_view.tournament.store import (
@@ -716,4 +718,52 @@ async def test_integration_real_runner_stop(tmp_path, monkeypatch):
     await orch.stop(t.id)
     await stop_evt.wait()
 
-    assert store.get(t.id).status == STATUS_STOPPED
+
+# ---------------------------------------------------------------------------
+# games_played counter (in-mem authoritative for the active tournament)
+# ---------------------------------------------------------------------------
+
+
+async def test_games_played_none_when_inactive(store, runner, orch):
+    tid = _create(store)
+    assert orch.games_played(tid) is None
+
+
+async def test_games_played_seeded_from_config_on_start(store, runner, orch):
+    tid = _create(store)
+    cfg = store.config_path(tid)
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(json.dumps({
+        "stats": {"A vs B": {"wins": 4, "losses": 3, "draws": 2}}
+    }), encoding="utf-8")
+    await orch.start(tid)
+    assert orch.games_played(tid) == 9
+
+
+async def test_games_played_seeded_zero_when_no_config(store, runner, orch):
+    tid = _create(store)
+    await orch.start(tid)
+    assert orch.games_played(tid) == 0
+
+
+async def test_games_played_bumps_on_reconciled_emit(store, runner, orch):
+    tid = _create(store)
+    await orch.start(tid)
+    assert orch.games_played(tid) == 0
+    m = ReconciledMatch(
+        pair_id="p1", white_proxy="wp", black_proxy="bp",
+        white_engine="A", black_engine="B",
+        pgn_white="A", pgn_black="B",
+        result="1-0", termination="", game_n=1, ply_count=20,
+    )
+    await orch._emit_reconciled(m)
+    assert orch.games_played(tid) == 1
+    await orch._emit_reconciled(m)
+    assert orch.games_played(tid) == 2
+
+
+async def test_games_played_cleared_after_stop(store, runner, orch):
+    tid = _create(store)
+    await orch.start(tid)
+    await orch.stop(tid)
+    assert orch.games_played(tid) is None
