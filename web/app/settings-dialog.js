@@ -904,13 +904,15 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const aiProvider = document.createElement("wa-select");
       aiProvider.size = "small";
       aiProvider.setAttribute("distance", "4");
-      aiProvider.value = initial.ai_provider || "anthropic";
       for (const [val, label] of [["anthropic", "Anthropic"], ["ollama", "Ollama"]]) {
         const opt = document.createElement("wa-option");
         opt.value = val;
         opt.textContent = label;
         aiProvider.append(opt);
       }
+      // .value must be set AFTER options are appended -- wa-select
+      // (like native <select>) drops a value with no matching option.
+      aiProvider.value = initial.ai_provider || "anthropic";
       aiProviderRow.append(aiProviderLabel, aiProvider);
 
       // Model: a dropdown populated from the provider's list_models API.
@@ -952,7 +954,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       aiKey.size = "small";
       aiKey.type = "password";
       aiKey.setAttribute("autocomplete", "off");
-      aiKey.placeholder = initial.ai_api_key_set ? "Set (enter new to update)" : "";
+      aiKey.placeholder = initial.ai_api_key_set ? "Saved -- enter new to replace" : "";
       // Debounced PUT followed by a model refetch. The refetch must run
       // AFTER the server has the new value, otherwise the endpoint
       // reads the stale key/URL.
