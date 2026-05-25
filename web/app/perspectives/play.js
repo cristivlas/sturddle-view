@@ -21,6 +21,7 @@ import {
   closeAi,
   resetAi,
   appendAiDelta,
+  appendAiThinking,
   markAiDone,
   setAiStatus,
   setAiTitle,
@@ -931,6 +932,11 @@ export const playPerspective = {
               });
             }
           }
+          break;
+        }
+        case "ai_thinking": {
+          const p = evt.payload || {};
+          if (typeof p.delta === "string") appendAiThinking(p.delta);
           break;
         }
         case "engine_search_start": {

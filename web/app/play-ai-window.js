@@ -25,6 +25,17 @@ const STATUS_TEXT = {
   engine: "Running engine search...",
 };
 
+// Sticky open/closed pref for the Thinking disclosure block.
+const THINKING_OPEN_KEY = "sturddle:ai:thinking-open";
+
+function readThinkingOpen() {
+  try { return localStorage.getItem(THINKING_OPEN_KEY) === "1"; } catch { return false; }
+}
+
+function writeThinkingOpen(open) {
+  try { localStorage.setItem(THINKING_OPEN_KEY, open ? "1" : "0"); } catch { /* */ }
+}
+
 function buildBody() {
   const root = document.createElement("div");
   root.className = "play-ai-body";
@@ -48,7 +59,26 @@ function buildBody() {
   root._statusText = statusText;
   root._para = para;
   root._hasContent = false;
+  root._thinking = null;
   return root;
+}
+
+function ensureThinkingBlock(root) {
+  if (root._thinking) return root._thinking;
+  const details = document.createElement("details");
+  details.className = "play-ai-thinking";
+  details.open = readThinkingOpen();
+  details.addEventListener("toggle", () => writeThinkingOpen(details.open));
+  const summary = document.createElement("summary");
+  summary.textContent = "Thinking";
+  const body = document.createElement("div");
+  body.className = "play-ai-thinking-body";
+  details.append(summary, body);
+  // Insert above the prose paragraph so the disclosure header is the
+  // top of the panel content; status line still sits above that.
+  root.insertBefore(details, root._para);
+  root._thinking = { details, body };
+  return root._thinking;
 }
 
 let userCloseHandler = null;
@@ -99,7 +129,17 @@ export function resetAi() {
   if (!inst.body) return;
   inst.body._para.textContent = "";
   inst.body._hasContent = false;
+  if (inst.body._thinking) {
+    inst.body._thinking.details.remove();
+    inst.body._thinking = null;
+  }
   setAiStatus("waiting");
+}
+
+export function appendAiThinking(text) {
+  if (!inst.body || !text) return;
+  const block = ensureThinkingBlock(inst.body);
+  block.body.append(document.createTextNode(text));
 }
 
 export function setAiStatus(state) {

@@ -31,6 +31,7 @@ EventKind = Literal[
     "sprt_update",
     "agent_annotation",
     "ai_info",
+    "ai_thinking",
     "system",
 ]
 

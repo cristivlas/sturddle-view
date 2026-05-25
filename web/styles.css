@@ -153,6 +153,48 @@ wa-select::part(listbox) {
   opacity: 0.85;
 }
 
+/* Thinking disclosure: dimmer + smaller than prose; user opt-in. */
+.play-ai-thinking {
+  margin: 0 12px 8px;
+  font-size: 0.85em;
+  opacity: 0.75;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+.play-ai-thinking > summary {
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 0;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+}
+.play-ai-thinking > summary::-webkit-details-marker { display: none; }
+.play-ai-thinking > summary::marker { content: ""; }
+/* Web Awesome's native.css paints a chevron via summary::after { mask: svg }.
+   Override for our disclosure -- we render our own ::before triangle. */
+.play-ai-thinking > summary::after { display: none; mask: none; background: none; }
+.play-ai-thinking > summary::before {
+  content: "\25B6";
+  font-size: 1em;
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+.play-ai-thinking[open] > summary::before {
+  transform: rotate(90deg);
+}
+.play-ai-thinking-body {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--wa-color-neutral-fill-loud, #888);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 body {
   margin: 0;
   font: 0.875rem/1.4 system-ui, -apple-system, Segoe UI, sans-serif;

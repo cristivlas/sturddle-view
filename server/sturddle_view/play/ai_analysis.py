@@ -168,6 +168,14 @@ class AIAnalysisCoordinator:
                                         payload={"delta": chunk.text},
                                     )
                                 )
+                            elif chunk.kind == "thinking" and chunk.text:
+                                await self._bus.publish(
+                                    Event(
+                                        kind="ai_thinking",
+                                        game_id=game_id,
+                                        payload={"delta": chunk.text},
+                                    )
+                                )
                             elif chunk.kind == "tool_use":
                                 # In sequential mode (v1), a tool_use ends
                                 # the round; downstream chunks after it

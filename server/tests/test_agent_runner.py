@@ -362,6 +362,53 @@ async def test_no_response_NOT_flagged_when_text_was_streamed():
 
 
 @pytest.mark.asyncio
+async def test_thinking_chunks_publish_ai_thinking_events():
+    """Reasoning-only models emit `thinking` ProviderChunks. The runner
+    must republish them as `ai_thinking` events so the UI can render a
+    collapsible disclosure -- without this they only land in the
+    transcript file."""
+    provider = ScriptedProvider(rounds=[[
+        ProviderChunk(kind="thinking", text="let me think... "),
+        ProviderChunk(kind="thinking", text="checking the position."),
+        ProviderChunk(kind="text", text="OK, e4 is best."),
+    ]])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider)
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    thinking = [e for e in events if e.kind == "ai_thinking"]
+    info = [e for e in events if e.kind == "ai_info" and "delta" in e.payload]
+    assert [e.payload["delta"] for e in thinking] == [
+        "let me think... ",
+        "checking the position.",
+    ]
+    assert [e.payload["delta"] for e in info] == ["OK, e4 is best."]
+    for e in thinking:
+        assert e.game_id == "g"
+
+
+@pytest.mark.asyncio
+async def test_empty_thinking_chunks_not_published():
+    """Empty-text thinking chunks (which can happen on provider
+    boundaries) must not generate stray ai_thinking events."""
+    provider = ScriptedProvider(rounds=[[
+        ProviderChunk(kind="thinking", text=""),
+        ProviderChunk(kind="text", text="hi"),
+    ]])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider)
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    assert [e for e in events if e.kind == "ai_thinking"] == []
+
+
+@pytest.mark.asyncio
 async def test_error_detail_truncated_to_cap():
     """A misbehaving provider could return a wall of HTML. The done
     payload caps the detail string so the event-bus payload stays
