@@ -115,8 +115,8 @@ wa-select::part(listbox) {
 .play-ai-status {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
+  gap: 8px;
+  padding: 8px 12px 8px 4px;
   font-size: 1em;
   opacity: 0.85;
 }
@@ -179,7 +179,7 @@ wa-select::part(listbox) {
 .play-ai-thinking > summary::after { display: none; mask: none; background: none; }
 .play-ai-thinking > summary::before {
   content: "\25B6";
-  font-size: 1em;
+  font-size: 0.85em;
   line-height: 1;
   transition: transform 120ms ease;
 }
