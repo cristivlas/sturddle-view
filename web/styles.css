@@ -108,6 +108,21 @@ wa-select::part(listbox) {
 .ai-row wa-select::part(combobox) {
   transition: none !important;
 }
+
+/* AI analysis status line: spinner + short text. Sits above the prose
+   so streaming text can append below without re-flow. Slightly dimmer
+   than the prose since it's transient progress state, not content. */
+.play-ai-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  font-size: 1em;
+  opacity: 0.85;
+}
+.play-ai-status[hidden] { display: none; }
+.play-ai-status-text { line-height: 1; }
+
 body {
   margin: 0;
   font: 0.875rem/1.4 system-ui, -apple-system, Segoe UI, sans-serif;

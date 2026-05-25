@@ -22,6 +22,8 @@ import {
   resetAi,
   appendAiDelta,
   markAiDone,
+  setAiStatus,
+  isAiOpen,
 } from "../play-ai-window.js";
 import { terminationLabel } from "../format-termination.js";
 import { editAnnotation } from "../annotation-dialog.js";
@@ -910,6 +912,21 @@ export const playPerspective = {
           if (p.done) markAiDone({ cancelled: !!p.cancelled });
           break;
         }
+        case "engine_search_start": {
+          // Engine is busy. While the AI window is open this means the
+          // agent is in a tool call; flip the status line so the user
+          // sees what's taking time. The PV-table window consumes the
+          // same event for its own reset; no conflict.
+          if (isAiOpen()) setAiStatus("engine");
+          break;
+        }
+        case "engine_info": {
+          // Engine produced an info chunk -- search is delivering. Drop
+          // the "engine searching" hint back to "waiting" so the user
+          // knows the agent will narrate next.
+          if (isAiOpen()) setAiStatus("waiting");
+          break;
+        }
         case "board_update": {
           _cachedBoardUpdate = evt;
           movesPlayed = evt.payload.moves_san?.length ?? 0;
@@ -1570,8 +1587,11 @@ export const playPerspective = {
           // the persona (coach vs commentator) based on the origin mode.
           // Open the AI panel either way so the user sees prose stream.
           if (aiEnabled) {
-            resetAi();
+            // openAi MUST come before resetAi: the body doesn't exist
+            // until the window is opened, and resetAi (which sets the
+            // status spinner) silently no-ops if body is null.
             openAi();
+            resetAi();
           }
         }
       } catch (e) {
