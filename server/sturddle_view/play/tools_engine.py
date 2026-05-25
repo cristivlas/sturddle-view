@@ -103,6 +103,28 @@ TOP_MOVES_TOOL_SPEC = ToolSpec(
 )
 
 
+PIECE_AT_TOOL_SPEC = ToolSpec(
+    name="piece_at",
+    description=(
+        "Return the piece on a square in the live position, or null if empty. "
+        "Use to verify a piece exists before referring to it."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "square": {
+                "type": "string",
+                "description": (
+                    "Algebraic square name, e.g. 'e4', 'a1', 'h8'. "
+                    "Case-insensitive."
+                ),
+            },
+        },
+        "required": ["square"],
+    },
+)
+
+
 ANALYZE_TOOL_SPEC = ToolSpec(
     name="analyze",
     description=(
@@ -466,3 +488,33 @@ def make_top_moves_tool(
         return out
 
     return top_moves
+
+
+def make_piece_at_tool(board_provider: BoardProvider) -> AnalyzeTool:
+    """Build the `piece_at` async tool. Reads the live board (via
+    board_provider) and reports what occupies the requested square --
+    the model's self-check against hallucinated piece placements."""
+    async def piece_at(input_: dict, *, cancel_token: CancelToken) -> dict:
+        board = board_provider()
+        if board is None:
+            return {"error": "no_live_position"}
+        raw = input_.get("square")
+        if not isinstance(raw, str) or not raw:
+            return {"error": "invalid_square", "detail": "square must be a non-empty string"}
+        try:
+            sq = chess.parse_square(raw.lower())
+        except ValueError as exc:
+            return {"error": "invalid_square", "detail": str(exc)}
+        piece = board.piece_at(sq)
+        out: dict = {"square": chess.square_name(sq)}
+        if piece is None:
+            out["piece"] = None
+        else:
+            out["piece"] = {
+                "type": chess.PIECE_NAMES[piece.piece_type],
+                "color": "white" if piece.color == chess.WHITE else "black",
+                "symbol": piece.symbol(),
+            }
+        return out
+
+    return piece_at

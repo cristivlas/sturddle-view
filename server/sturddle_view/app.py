@@ -39,8 +39,10 @@ from .play.game_store import GameStore
 from .play.human_vs_engine import HumanVsEngine
 from .play.tools_engine import (
     ANALYZE_TOOL_SPEC,
+    PIECE_AT_TOOL_SPEC,
     TOP_MOVES_TOOL_SPEC,
     make_analyze_tool,
+    make_piece_at_tool,
     make_top_moves_tool,
 )
 from .recent_imports import RecentImports
@@ -355,6 +357,10 @@ def create_app(
             bus=app.state.event_bus,
             game_id_provider=_ai_game_id_provider,
         ),
+    )
+    ai_registry.register(
+        PIECE_AT_TOOL_SPEC,
+        make_piece_at_tool(board_provider=_ai_board_provider),
     )
     # top_moves disabled pending engine-side investigation: relies on
     # UCI `searchmoves` (root_moves kwarg) to restrict each per-candidate
