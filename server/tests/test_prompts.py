@@ -35,28 +35,44 @@ from sturddle_view.play.ai_analysis import AIAnalysisCoordinator
 _STARTPOS_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
 
-_EXPECTED_COACH = (
+_EXPECTED_PREAMBLE = (
     "You are a chess analysis assistant. You collaborate with a chess engine "
     "that produces numeric evaluations, principal variations, and search "
     "depth. The engine is the source of truth for any numeric claim; your "
     "job is to turn its output into clear prose for a human reader.\n"
     "\n"
+    "Tools:\n"
+    "- `analyze(fen, time_ms?, depth?)`: run an engine search on a specific "
+    "position. Use this for the current position or a hypothetical line. "
+    "The user message gives you the live FEN; pass it as-is unless you are "
+    "exploring a what-if.\n"
+    "- `top_moves(n?, time_ms?, depth?)`: rank the top N candidate moves in "
+    "the live position. Use this whenever you want to compare alternatives; "
+    "do not chain several `analyze` calls to fake MultiPV.\n"
+    "\n"
     "Ground rules:\n"
-    "- Cite engine numbers explicitly when you make a claim about an "
-    "evaluation. Tool results carry both `score_cp` (centipawns, integer; "
-    "100 cp = 1 pawn) and `score_text` (presentation string like '+0.02' "
-    "or '+M3'). Use `score_text` for prose; never present `score_cp` as "
-    "if it were pawns.\n"
+    "- Engine evaluations are ALWAYS from White's point of view: positive "
+    "cp = White is better, negative cp = Black is better, regardless of "
+    "whose turn it is. The user message tells you the side to move; trust "
+    "that field. Never re-derive side-to-move from the FEN.\n"
+    "- Tool results carry both `score_cp` (centipawns, integer; 100 cp = 1 "
+    "pawn) and `score_text` (presentation string like '+0.02' or '+M3'). "
+    "Use `score_text` for prose; never present `score_cp` as if it were "
+    "pawns.\n"
     "- If you have not seen an engine evaluation for the position you are "
-    "discussing, call the analyze tool before claiming anything about it. "
-    "Do not guess.\n"
+    "discussing, call `analyze` (or `top_moves`) before claiming anything "
+    "about it. Do not guess.\n"
     "- You have a bounded tool-call budget per turn. Prefer one well-aimed "
-    "analyze call over several speculative ones.\n"
+    "call over several speculative ones.\n"
     "- Be concise. A few sentences of grounded prose beats a paragraph of "
     "hedging.\n"
     "- Never invent moves, lines, or evaluations. If the engine output does "
     "not support a claim, say so.\n"
     "\n"
+)
+
+
+_EXPECTED_COACH = _EXPECTED_PREAMBLE + (
     "You are coaching a human player during a live game against an engine. "
     "Address the player in the second person.\n"
     "\n"
@@ -68,28 +84,7 @@ _EXPECTED_COACH = (
 )
 
 
-_EXPECTED_COMMENTATOR = (
-    "You are a chess analysis assistant. You collaborate with a chess engine "
-    "that produces numeric evaluations, principal variations, and search "
-    "depth. The engine is the source of truth for any numeric claim; your "
-    "job is to turn its output into clear prose for a human reader.\n"
-    "\n"
-    "Ground rules:\n"
-    "- Cite engine numbers explicitly when you make a claim about an "
-    "evaluation. Tool results carry both `score_cp` (centipawns, integer; "
-    "100 cp = 1 pawn) and `score_text` (presentation string like '+0.02' "
-    "or '+M3'). Use `score_text` for prose; never present `score_cp` as "
-    "if it were pawns.\n"
-    "- If you have not seen an engine evaluation for the position you are "
-    "discussing, call the analyze tool before claiming anything about it. "
-    "Do not guess.\n"
-    "- You have a bounded tool-call budget per turn. Prefer one well-aimed "
-    "analyze call over several speculative ones.\n"
-    "- Be concise. A few sentences of grounded prose beats a paragraph of "
-    "hedging.\n"
-    "- Never invent moves, lines, or evaluations. If the engine output does "
-    "not support a claim, say so.\n"
-    "\n"
+_EXPECTED_COMMENTATOR = _EXPECTED_PREAMBLE + (
     "You are annotating a chess game for a reader who is reviewing it after "
     "the fact. Write in the third person, in the style of a chess magazine "
     "annotator.\n"
@@ -168,12 +163,14 @@ async def test_coordinator_routes_mode_to_assembly():
 
 _EXPECTED_USER_STARTPOS_NO_MOVES = (
     f"Current position (FEN): {_STARTPOS_FEN}\n"
+    "Side to move: white\n"
     "Game moves: (none yet -- the game has not started)\n"
 )
 
 _EXPECTED_USER_AFTER_E4_E5_NF3 = (
     "Current position (FEN): "
     "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2\n"
+    "Side to move: black\n"
     "Game moves: 1. e4 e5 2. Nf3\n"
 )
 
@@ -189,6 +186,21 @@ def test_user_message_with_moves_byte_stable():
         san_history=["e4", "e5", "Nf3"],
     )
     assert got == _EXPECTED_USER_AFTER_E4_E5_NF3
+
+
+def test_user_message_side_to_move_derived_from_fen():
+    white = build_initial_user_message(fen=_STARTPOS_FEN, san_history=[])
+    assert "Side to move: white\n" in white
+    black = build_initial_user_message(
+        fen="rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2",
+        san_history=["e4", "e5"],
+    )
+    assert "Side to move: black\n" in black
+
+
+def test_user_message_malformed_fen_falls_back_to_white():
+    out = build_initial_user_message(fen="not-a-real-fen", san_history=[])
+    assert "Side to move: white\n" in out
 
 
 def test_user_message_pairs_handle_odd_length():

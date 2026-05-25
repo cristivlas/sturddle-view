@@ -37,9 +37,10 @@ _DEFAULT_MAX_DEPTH = 30
 MAX_TIME_MS = int(os.environ.get("SV_AI_ANALYZE_MAX_TIME_MS", _DEFAULT_MAX_TIME_MS))
 MAX_DEPTH = int(os.environ.get("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_MAX_DEPTH))
 
-# Fallback when the caller passes neither time_ms nor depth -- a short
-# search keeps the agent responsive without runaway cost.
-_DEFAULT_TIME_MS = 1_000
+# Fallback when caller passes neither time_ms nor depth. Depth-based
+# (not time-based): more consistent quality across positions and engine
+# loads. 16 plies is decent for prose-level commentary.
+_DEFAULT_DEPTH = 16
 
 # top_moves: default and hard cap on N candidates returned. N searches
 # run sequentially with one throwaway engine each, so cost scales
@@ -48,9 +49,9 @@ _DEFAULT_TOP_MOVES_N = 3
 _DEFAULT_TOP_MOVES_MAX_N = 5
 TOP_MOVES_MAX_N = int(os.environ.get("SV_AI_TOP_MOVES_MAX_N", _DEFAULT_TOP_MOVES_MAX_N))
 
-# Per-candidate default time in top_moves -- short on purpose since we
-# multiply by N. Caller can raise via time_ms (still clamped to MAX_TIME_MS).
-_DEFAULT_TOP_MOVES_TIME_MS = 500
+# Per-candidate default depth in top_moves -- shallower than analyze's
+# since cost multiplies by N.
+_DEFAULT_TOP_MOVES_DEPTH = 12
 
 
 EngineLauncher = Callable[[], EngineSupervisor]
@@ -154,8 +155,8 @@ def _clamp_limits(input_: dict) -> tuple[chess.engine.Limit, dict]:
     used: dict = {}
     kwargs: dict = {}
     if raw_time_ms is None and raw_depth is None:
-        kwargs["time"] = _DEFAULT_TIME_MS / 1000.0
-        used["time_ms"] = _DEFAULT_TIME_MS
+        kwargs["depth"] = _DEFAULT_DEPTH
+        used["depth"] = _DEFAULT_DEPTH
     if raw_time_ms is not None:
         t = max(0, min(int(raw_time_ms), MAX_TIME_MS))
         kwargs["time"] = t / 1000.0
@@ -345,15 +346,15 @@ def make_analyze_tool(
 
 
 def _clamp_top_moves_limits(input_: dict) -> tuple[chess.engine.Limit, dict]:
-    """Per-candidate limit for top_moves. Same clamps as analyze, but a
-    shorter default time -- top_moves multiplies cost by N."""
+    """Per-candidate limit for top_moves. Shallower depth default than
+    analyze since cost multiplies by N."""
     raw_time_ms = input_.get("time_ms")
     raw_depth = input_.get("depth")
     used: dict = {}
     kwargs: dict = {}
     if raw_time_ms is None and raw_depth is None:
-        kwargs["time"] = _DEFAULT_TOP_MOVES_TIME_MS / 1000.0
-        used["time_ms"] = _DEFAULT_TOP_MOVES_TIME_MS
+        kwargs["depth"] = _DEFAULT_TOP_MOVES_DEPTH
+        used["depth"] = _DEFAULT_TOP_MOVES_DEPTH
     if raw_time_ms is not None:
         t = max(0, min(int(raw_time_ms), MAX_TIME_MS))
         kwargs["time"] = t / 1000.0

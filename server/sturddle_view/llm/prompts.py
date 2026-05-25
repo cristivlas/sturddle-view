@@ -27,17 +27,29 @@ that produces numeric evaluations, principal variations, and search \
 depth. The engine is the source of truth for any numeric claim; your \
 job is to turn its output into clear prose for a human reader.
 
+Tools:
+- `analyze(fen, time_ms?, depth?)`: run an engine search on a specific \
+position. Use this for the current position or a hypothetical line. \
+The user message gives you the live FEN; pass it as-is unless you are \
+exploring a what-if.
+- `top_moves(n?, time_ms?, depth?)`: rank the top N candidate moves in \
+the live position. Use this whenever you want to compare alternatives; \
+do not chain several `analyze` calls to fake MultiPV.
+
 Ground rules:
-- Cite engine numbers explicitly when you make a claim about an \
-evaluation. Tool results carry both `score_cp` (centipawns, integer; \
-100 cp = 1 pawn) and `score_text` (presentation string like '+0.02' \
-or '+M3'). Use `score_text` for prose; never present `score_cp` as \
-if it were pawns.
+- Engine evaluations are ALWAYS from White's point of view: positive \
+cp = White is better, negative cp = Black is better, regardless of \
+whose turn it is. The user message tells you the side to move; trust \
+that field. Never re-derive side-to-move from the FEN.
+- Tool results carry both `score_cp` (centipawns, integer; 100 cp = 1 \
+pawn) and `score_text` (presentation string like '+0.02' or '+M3'). \
+Use `score_text` for prose; never present `score_cp` as if it were \
+pawns.
 - If you have not seen an engine evaluation for the position you are \
-discussing, call the analyze tool before claiming anything about it. \
-Do not guess.
+discussing, call `analyze` (or `top_moves`) before claiming anything \
+about it. Do not guess.
 - You have a bounded tool-call budget per turn. Prefer one well-aimed \
-analyze call over several speculative ones.
+call over several speculative ones.
 - Be concise. A few sentences of grounded prose beats a paragraph of \
 hedging.
 - Never invent moves, lines, or evaluations. If the engine output does \
@@ -113,29 +125,29 @@ def _render_san_pairs(san_history: list[str]) -> str:
     return " ".join(parts)
 
 
-def build_initial_user_message(*, fen: str, san_history: list[str]) -> str:
-    """Build the user message that opens an agent turn.
+def _side_to_move_from_fen(fen: str) -> str:
+    """Parse 'w' or 'b' from the FEN's second field. Falls back to
+    'white' when the FEN is malformed -- the agent will still get a
+    reasonable default, and analyze tools will surface the real error."""
+    parts = fen.split()
+    if len(parts) >= 2 and parts[1] == "b":
+        return "black"
+    return "white"
 
-    Carries the position the model is being asked to discuss. Without
-    this, the model literally has nothing to analyze -- spec §Initial
-    context calls this out: "Full PGN + per-ply eval array injected into
-    the initial user message".
+
+def build_initial_user_message(*, fen: str, san_history: list[str]) -> str:
+    """Build the user message that opens an agent turn. Carries the FEN,
+    the explicit side-to-move (so the model does not re-derive it), and
+    the played SAN history.
 
     `san_history` semantics depend on the caller:
-    - Play mode: moves played up to the current position (the only
-      moves that exist).
-    - View mode: the FULL game's moves. The FEN tells the model where
-      in the game the analysis is requested; everything past that ply
-      is "future" the commentator can reference.
+    - Play mode: moves played up to the current position.
+    - View mode: the FULL game's moves; FEN locates where commentary
+      is requested.
 
-    Single field either way (labeled `Game moves`) -- the FEN locates
-    the position, the move list provides context. Per-ply evals are
-    not included; the model uses the `analyze` tool for engine numbers.
-
-    Byte-stable for the same inputs -- prompt caching across the early
-    turns of a rolling session keys on these bytes.
-    """
+    Byte-stable for the same inputs (prompt caching keys on these bytes)."""
     return (
         f"Current position (FEN): {fen}\n"
+        f"Side to move: {_side_to_move_from_fen(fen)}\n"
         f"Game moves: {_render_san_pairs(san_history)}\n"
     )
