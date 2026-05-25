@@ -18,6 +18,12 @@ from ._runtime import app_root
 REPO_ROOT = app_root()
 WEB_DIR = REPO_ROOT / "web"
 
+# Default Anthropic thinking budget (tokens). Overridable via
+# SV_AI_THINKING_BUDGET_TOKENS. 4096 is a moderate value above the API
+# minimum (1024) -- enough headroom for tactical positions, small enough
+# not to dominate the output-token cap.
+_DEFAULT_AI_THINKING_BUDGET_TOKENS = 4096
+
 
 def default_settings_file() -> Path:
     """Path to persisted user settings.
@@ -60,6 +66,8 @@ PERSISTED_FIELDS = (
     "ai_provider",
     "ai_models",
     "ai_base_url",
+    "ai_thinking_enabled",
+    "ai_thinking_budget_tokens",
     # ai_api_key intentionally NOT persisted: server mode reads SV_AI_API_KEY
     # from env; desktop mode will switch to OS keyring (later cycle). The
     # JSON settings file must never hold the plaintext key.
@@ -145,6 +153,12 @@ class Settings(BaseSettings):
     # schema -- new keys appear automatically.
     ai_models: dict[str, str] = Field(default_factory=dict)
     ai_base_url: str = ""
+    # Extended thinking / native reasoning. When True, the provider asks
+    # the model to think before answering. Anthropic uses the `thinking`
+    # body field; Ollama switches to the native /api/chat endpoint with
+    # think=true. budget_tokens applies to Anthropic's enabled mode.
+    ai_thinking_enabled: bool = False
+    ai_thinking_budget_tokens: int = _DEFAULT_AI_THINKING_BUDGET_TOKENS
 
     @property
     def ai_model(self) -> str:

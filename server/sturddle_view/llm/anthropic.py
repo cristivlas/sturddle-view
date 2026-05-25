@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, AsyncIterator
 
 import httpx
@@ -38,6 +39,10 @@ _ANTHROPIC_VERSION = "2023-06-01"
 # Spec doesn't constrain max_tokens; pick a generous cap so the model
 # rarely truncates a coaching prose response. Env override for ops.
 _DEFAULT_MAX_TOKENS = 4096
+# Anthropic API requires budget_tokens < max_tokens. When thinking is
+# enabled we add the budget on top of the visible-output cap.
+_ADAPTIVE_THINKING_MIN_MAJOR = 4
+_ADAPTIVE_THINKING_MIN_MINOR = 6
 
 
 class _ToolUseAccumulator:
@@ -76,9 +81,32 @@ class _ToolUseAccumulator:
 
 
 class AnthropicProvider(LLMProvider):
-    def __init__(self, api_key: str, model: str) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        *,
+        thinking_enabled: bool = False,
+        thinking_budget_tokens: int = 0,
+    ) -> None:
         self._api_key = api_key
         self._model = model
+        self._thinking_enabled = thinking_enabled
+        self._thinking_budget_tokens = thinking_budget_tokens
+
+    def _use_adaptive_thinking(self) -> bool:
+        # claude-opus-4-6+ requires {"type": "adaptive"}; older Opus and
+        # Sonnet 3.7+ use {"type": "enabled", "budget_tokens": N}.
+        m = re.match(r"claude-opus-(\d+)-(\d+)", self._model or "")
+        if m is None:
+            return False
+        major, minor = int(m.group(1)), int(m.group(2))
+        return (major, minor) >= (_ADAPTIVE_THINKING_MIN_MAJOR, _ADAPTIVE_THINKING_MIN_MINOR)
+
+    def _thinking_param(self) -> dict:
+        if self._use_adaptive_thinking():
+            return {"type": "adaptive"}
+        return {"type": "enabled", "budget_tokens": self._thinking_budget_tokens}
 
     async def list_models(self) -> list[str]:
         """List available Anthropic models via GET /v1/models.
@@ -128,6 +156,12 @@ class AnthropicProvider(LLMProvider):
             body["system"] = system
         if tools:
             body["tools"] = tools
+        if self._thinking_enabled:
+            body["thinking"] = self._thinking_param()
+            # Anthropic requires max_tokens > budget_tokens; lift the cap
+            # so visible output isn't squeezed by reasoning.
+            if "budget_tokens" in body["thinking"]:
+                body["max_tokens"] = _DEFAULT_MAX_TOKENS + self._thinking_budget_tokens
 
         await self._tx_request(transcript, round_index, body)
 

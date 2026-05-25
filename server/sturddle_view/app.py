@@ -386,12 +386,18 @@ def create_app(
             return OllamaProvider(
                 base_url=(s.ai_base_url or _DEFAULT_OLLAMA_BASE_URL),
                 model=s.ai_model,
+                thinking_enabled=s.ai_thinking_enabled,
             )
         if provider_name == "anthropic":
             # list_models() is implemented (Settings dropdown); stream()
             # still raises NotImplementedError, which surfaces as a
             # done/error event on the bus when an analysis turn fires.
-            return AnthropicProvider(api_key=s.ai_api_key, model=s.ai_model)
+            return AnthropicProvider(
+                api_key=s.ai_api_key,
+                model=s.ai_model,
+                thinking_enabled=s.ai_thinking_enabled,
+                thinking_budget_tokens=s.ai_thinking_budget_tokens,
+            )
         # Unknown / unset provider: canned stand-in so the pipeline
         # still flows end-to-end. Picked by tests that don't care which
         # provider runs.

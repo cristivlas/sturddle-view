@@ -15,6 +15,13 @@ export const PLAYER_NAME_KEY = "sturddle:player_name";
 export const PLAYER_NAME_DEFAULT = "Human";
 const PLAYER_NAME_MAX_LEN = 32;
 
+// AI settings wire field names. Named per project's no-string-literals rule.
+const AI_THINKING_ENABLED_KEY = "ai_thinking_enabled";
+const AI_THINKING_BUDGET_TOKENS_KEY = "ai_thinking_budget_tokens";
+// Anthropic's minimum; the server also enforces this. UI prevents
+// submitting smaller values so the user gets feedback before the round trip.
+const AI_THINKING_BUDGET_MIN = 1024;
+
 // Persisted unit is always seconds (float). The UI picks the most natural
 // display unit on load (largest unit with no fractional remainder) and
 // converts back to seconds on save. UCI/cutechess/fastchess all support
@@ -1033,10 +1040,47 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       });
       aiUrlRow.append(aiUrlLabel, aiUrl);
 
+      // Divider separates provider/credentials block from thinking row.
+      // Stays visible for both providers; budget input inside the row
+      // hides for Ollama.
+      const aiThinkingDivider = document.createElement("hr");
+      aiThinkingDivider.className = "settings-divider";
+
+      const aiThinkingRow = document.createElement("div");
+      aiThinkingRow.className = "settings-row ai-row ai-thinking-row";
+      const aiThinking = document.createElement("wa-switch");
+      aiThinking.size = "small";
+      aiThinking.textContent = "Extended thinking";
+      if (initial[AI_THINKING_ENABLED_KEY]) aiThinking.setAttribute("checked", "");
+      const aiThinkingBudget = document.createElement("wa-input");
+      aiThinkingBudget.type = "number";
+      aiThinkingBudget.size = "small";
+      aiThinkingBudget.setAttribute("label", "Budget (tokens)");
+      aiThinkingBudget.min = String(AI_THINKING_BUDGET_MIN);
+      aiThinkingBudget.step = "1024";
+      aiThinkingBudget.value = String(
+        initial[AI_THINKING_BUDGET_TOKENS_KEY] || AI_THINKING_BUDGET_MIN
+      );
+      aiThinkingBudget.className = "ai-thinking-budget";
+      aiThinkingRow.append(aiThinking, aiThinkingBudget);
+
+      aiThinking.addEventListener("change", () => {
+        putSettings({ [AI_THINKING_ENABLED_KEY]: aiThinking.checked });
+      });
+      const persistThinkingBudget = debounce(() => {
+        const n = Number(aiThinkingBudget.value);
+        if (!Number.isFinite(n) || n < AI_THINKING_BUDGET_MIN) return;
+        putSettings({ [AI_THINKING_BUDGET_TOKENS_KEY]: n });
+      }, 400);
+      aiThinkingBudget.addEventListener("input", persistThinkingBudget);
+
       function applyAiProviderVisibility() {
+        // Budget only meaningful for Anthropic's enabled-mode thinking
+        // (Ollama just toggles `think: true`, no budget knob).
         const isAnthropic = aiProvider.value === "anthropic";
         aiKeyRow.style.display = isAnthropic ? "" : "none";
         aiUrlRow.style.display = isAnthropic ? "none" : "";
+        aiThinkingBudget.style.display = isAnthropic ? "" : "none";
       }
 
       function showModelInput(reason) {
@@ -1106,6 +1150,20 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       });
       applyAiProviderVisibility();
 
+      // One Map drives BOTH the visual order (insertion order = render
+      // order) and the lockout target set, so adding a row can't drift
+      // between the two lists. Pair each row with the input(s) inside it
+      // that need the disabled attribute when the master toggle is off.
+      const AI_ROWS = new Map([
+        ["provider",         { row: aiProviderRow,     inputs: [aiProvider] }],
+        ["model",            { row: aiModelRow,        inputs: [aiModelSelect, aiModelInput] }],
+        ["model-hint",       { row: aiModelHint,       inputs: [] }],
+        ["api-key",          { row: aiKeyRow,          inputs: [aiKey] }],
+        ["base-url",         { row: aiUrlRow,          inputs: [aiUrl] }],
+        ["thinking-divider", { row: aiThinkingDivider, inputs: [] }],
+        ["thinking",         { row: aiThinkingRow,     inputs: [aiThinking, aiThinkingBudget] }],
+      ]);
+
       // Every AI-related input below the master toggle gets greyed
       // out when the toggle is off. Values are retained (settings
       // persist server-side); flipping the toggle back restores them.
@@ -1116,9 +1174,11 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         if (document.activeElement && typeof document.activeElement.blur === "function") {
           document.activeElement.blur();
         }
-        for (const el of [aiProvider, aiModelSelect, aiModelInput, aiKey, aiUrl]) {
-          if (off) el.setAttribute("disabled", "");
-          else el.removeAttribute("disabled");
+        for (const { inputs } of AI_ROWS.values()) {
+          for (const el of inputs) {
+            if (off) el.setAttribute("disabled", "");
+            else el.removeAttribute("disabled");
+          }
         }
       }
       aiEnabled.addEventListener("change", () => {
@@ -1129,7 +1189,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
 
       analysisPanel.append(aiEnabledRow);
       if (aiNoEngineHint) analysisPanel.append(aiNoEngineHint);
-      analysisPanel.append(aiProviderRow, aiModelRow, aiModelHint, aiKeyRow, aiUrlRow);
+      for (const { row } of AI_ROWS.values()) analysisPanel.append(row);
 
       // Initial state: hide the select until the first fetch tells us
       // whether we have a real list. Lock fields based on the toggle.

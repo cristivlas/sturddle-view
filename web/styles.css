@@ -1697,6 +1697,20 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 
 /* Form-style rows (label + input) inside a panel. */
 .settings-row { max-width: 360px; }
+.ai-thinking-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+}
+.ai-thinking-row wa-switch { margin-bottom: 0.5em; }
+.ai-thinking-budget { width: 8em; max-width: 8em; }
+.ai-thinking-budget::part(base) { max-width: 8em; }
+.ai-thinking-budget::part(input) { width: 8em; min-width: 0; }
+.ai-thinking-budget::part(form-control-label) {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-family: var(--wa-font-family-body);
+}
 /* Toggles stack: switches stacked vertically, one per row. */
 .settings-toggles-grid {
   display: flex;

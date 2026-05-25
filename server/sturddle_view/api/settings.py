@@ -21,6 +21,18 @@ _VALID_AI_PROVIDERS = {"anthropic", "ollama"}
 # Sentinel echoed to the UI when an API key is set. UI never sees the
 # real key back; user "Update"s by sending a new value.
 _AI_KEY_MASK = "***"
+# Wire field names. Named constants per project rule.
+_AI_ENABLED_KEY = "ai_enabled"
+_AI_PROVIDER_KEY = "ai_provider"
+_AI_MODEL_KEY = "ai_model"
+_AI_BASE_URL_KEY = "ai_base_url"
+_AI_API_KEY_KEY = "ai_api_key"
+_AI_API_KEY_SET_KEY = "ai_api_key_set"
+_AI_THINKING_ENABLED_KEY = "ai_thinking_enabled"
+_AI_THINKING_BUDGET_TOKENS_KEY = "ai_thinking_budget_tokens"
+# Anthropic requires budget_tokens >= 1024; same floor used here for both
+# providers since 0/tiny budgets defeat the feature.
+_AI_THINKING_BUDGET_MIN = 1024
 _VALID_BOARD_STYLES = {
     "classic", "classic-staunty",
     "green", "green-staunty",
@@ -55,12 +67,14 @@ def _serialize(s) -> dict:
         "engine_default_book_path": s.engine_default_book_path,
         "engine_default_book_plies": s.engine_default_book_plies,
         "engine_default_book_order": s.engine_default_book_order,
-        "ai_enabled": s.ai_enabled,
-        "ai_provider": s.ai_provider,
-        "ai_model": s.ai_model,
-        "ai_base_url": s.ai_base_url,
-        "ai_api_key_set": bool(s.ai_api_key),
-        "ai_api_key": _AI_KEY_MASK if s.ai_api_key else "",
+        _AI_ENABLED_KEY: s.ai_enabled,
+        _AI_PROVIDER_KEY: s.ai_provider,
+        _AI_MODEL_KEY: s.ai_model,
+        _AI_BASE_URL_KEY: s.ai_base_url,
+        _AI_API_KEY_SET_KEY: bool(s.ai_api_key),
+        _AI_API_KEY_KEY: _AI_KEY_MASK if s.ai_api_key else "",
+        _AI_THINKING_ENABLED_KEY: s.ai_thinking_enabled,
+        _AI_THINKING_BUDGET_TOKENS_KEY: s.ai_thinking_budget_tokens,
         "host": {"logical_cores": logical, "physical_cores": physical},
         "version": __version__,
         "author": __author__,
@@ -235,8 +249,8 @@ async def update_settings(payload: dict, request: Request) -> dict:
                 detail="engine_default_book_order must be 'sequential' or 'random'",
             )
 
-    if "ai_enabled" in payload:
-        s.ai_enabled = bool(payload["ai_enabled"])
+    if _AI_ENABLED_KEY in payload:
+        s.ai_enabled = bool(payload[_AI_ENABLED_KEY])
 
     # Snapshot pre-update Ollama identity so we can evict the previous
     # model from the daemon's VRAM when the user switches models.
@@ -248,26 +262,44 @@ async def update_settings(payload: dict, request: Request) -> dict:
         prev_ollama_model = s.ai_model or None
     prev_ollama_url = s.ai_base_url or _DEFAULT_OLLAMA_BASE_URL
 
-    if "ai_provider" in payload:
-        provider = payload["ai_provider"]
+    if _AI_PROVIDER_KEY in payload:
+        provider = payload[_AI_PROVIDER_KEY]
         if provider not in _VALID_AI_PROVIDERS:
             raise HTTPException(
                 status_code=400,
-                detail=f"ai_provider must be one of {sorted(_VALID_AI_PROVIDERS)}",
+                detail=f"{_AI_PROVIDER_KEY} must be one of {sorted(_VALID_AI_PROVIDERS)}",
             )
         s.ai_provider = provider
 
-    if "ai_model" in payload:
-        s.ai_model = str(payload["ai_model"] or "").strip()
+    if _AI_MODEL_KEY in payload:
+        s.ai_model = str(payload[_AI_MODEL_KEY] or "").strip()
 
-    if "ai_base_url" in payload:
-        s.ai_base_url = str(payload["ai_base_url"] or "").strip()
+    if _AI_BASE_URL_KEY in payload:
+        s.ai_base_url = str(payload[_AI_BASE_URL_KEY] or "").strip()
 
-    if "ai_api_key" in payload:
+    if _AI_THINKING_ENABLED_KEY in payload:
+        s.ai_thinking_enabled = bool(payload[_AI_THINKING_ENABLED_KEY])
+
+    if _AI_THINKING_BUDGET_TOKENS_KEY in payload:
+        try:
+            budget = int(payload[_AI_THINKING_BUDGET_TOKENS_KEY])
+        except (TypeError, ValueError) as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{_AI_THINKING_BUDGET_TOKENS_KEY} must be an integer",
+            ) from e
+        if budget < _AI_THINKING_BUDGET_MIN:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{_AI_THINKING_BUDGET_TOKENS_KEY} must be >= {_AI_THINKING_BUDGET_MIN}",
+            )
+        s.ai_thinking_budget_tokens = budget
+
+    if _AI_API_KEY_KEY in payload:
         # Session-only: not in PERSISTED_FIELDS. Server mode loads from
         # SV_AI_API_KEY env at startup; desktop will use OS keyring later.
         # The mask sentinel echoed by GET means "no change".
-        raw = payload["ai_api_key"]
+        raw = payload[_AI_API_KEY_KEY]
         if raw != _AI_KEY_MASK:
             s.ai_api_key = str(raw or "").strip()
 

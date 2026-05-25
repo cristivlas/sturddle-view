@@ -338,7 +338,6 @@ Open:
   "plain text only". If leakage persists with that guidance,
   client-side regex strip (`**`, `*`, `_`, `$...$`) is a fallback.
   Park until evidence warrants.
-
 Fixed (kept here as a record):
 
 - ~~AI prose streams server-side but appears bursty in the UI~~ --

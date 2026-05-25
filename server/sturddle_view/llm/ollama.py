@@ -127,6 +127,70 @@ class MalformedToolArgumentsError(RuntimeError):
         self.parse_error = parse_error
 
 
+def messages_anthropic_to_ollama_native(messages: list[Message]) -> list[dict]:
+    """Like messages_anthropic_to_openai but for Ollama's native /api/chat:
+    tool messages carry no tool_call_id (Ollama matches by order in the
+    conversation, not by id); assistant tool_calls use dict arguments and
+    drop the id field."""
+    out: list[dict] = []
+    for m in messages:
+        role = m.get("role")
+        content = m.get("content")
+        if role == "assistant" and isinstance(content, list):
+            text_parts: list[str] = []
+            tool_calls: list[dict] = []
+            for block in content:
+                btype = block.get("type")
+                if btype == "text":
+                    text_parts.append(block.get("text", ""))
+                elif btype == "tool_use":
+                    tool_calls.append({
+                        "function": {
+                            "name": block.get("name", ""),
+                            "arguments": block.get("input", {}),
+                        },
+                    })
+            new_msg: dict = {
+                "role": "assistant",
+                "content": "".join(text_parts),
+            }
+            if tool_calls:
+                new_msg["tool_calls"] = tool_calls
+            out.append(new_msg)
+            continue
+        if role == "user" and isinstance(content, list):
+            residual_text: list[str] = []
+            for block in content:
+                btype = block.get("type")
+                if btype == "tool_result":
+                    out.append({
+                        "role": "tool",
+                        "content": block.get("content", ""),
+                    })
+                elif btype == "text":
+                    residual_text.append(block.get("text", ""))
+            if residual_text:
+                out.append({"role": "user", "content": "".join(residual_text)})
+            continue
+        out.append({"role": role, "content": content})
+    return out
+
+
+def ollama_native_tool_call_to_provider_chunk(
+    tool_call: dict, synthetic_id: str,
+) -> ProviderChunk:
+    """Ollama /api/chat tool_call (already-parsed dict args, no id) ->
+    ProviderChunk. We mint a synthetic tool_use_id so the coordinator's
+    id-keyed pipeline keeps working; Ollama never sees the id again."""
+    fn = tool_call.get("function", {}) or {}
+    return ProviderChunk(
+        kind="tool_use",
+        tool_use_id=synthetic_id,
+        tool_name=fn.get("name", "") or "",
+        tool_input=fn.get("arguments", {}) or {},
+    )
+
+
 def openai_tool_call_to_provider_chunk(tool_call: dict) -> ProviderChunk:
     """Accumulated OpenAI tool_call (from streamed deltas) -> Anthropic
     tool_use ProviderChunk.
@@ -160,9 +224,16 @@ def openai_tool_call_to_provider_chunk(tool_call: dict) -> ProviderChunk:
 
 
 class OllamaProvider(LLMProvider):
-    def __init__(self, base_url: str, model: str) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        *,
+        thinking_enabled: bool = False,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._model = model
+        self._thinking_enabled = thinking_enabled
 
     async def evict_model(self, model: str) -> None:
         """Force the daemon to unload `model` from VRAM.
@@ -204,6 +275,31 @@ class OllamaProvider(LLMProvider):
         *,
         transcript: Transcript | None = None,
         round_index: int = 0,
+    ) -> AsyncIterator[ProviderChunk]:
+        # Branch by thinking support. /v1/chat/completions (OpenAI-compat)
+        # is the default; /api/chat (Ollama native) is required when the
+        # caller asked for `think=true` since the compat layer ignores it.
+        if self._thinking_enabled:
+            async for chunk in self._stream_native(
+                system, messages, tools,
+                transcript=transcript, round_index=round_index,
+            ):
+                yield chunk
+            return
+        async for chunk in self._stream_openai_compat(
+            system, messages, tools,
+            transcript=transcript, round_index=round_index,
+        ):
+            yield chunk
+
+    async def _stream_openai_compat(
+        self,
+        system: str,
+        messages: list[Message],
+        tools: list[ToolWireSpec] | None,
+        *,
+        transcript: Transcript | None,
+        round_index: int,
     ) -> AsyncIterator[ProviderChunk]:
         # Assemble OpenAI-shaped request. System prompt is a separate
         # first message in OpenAI's API; coordinator passes it as a
@@ -298,3 +394,76 @@ class OllamaProvider(LLMProvider):
         # expects.
         for idx in sorted(tool_call_buf.keys()):
             yield openai_tool_call_to_provider_chunk(tool_call_buf[idx])
+
+    async def _stream_native(
+        self,
+        system: str,
+        messages: list[Message],
+        tools: list[ToolWireSpec] | None,
+        *,
+        transcript: Transcript | None,
+        round_index: int,
+    ) -> AsyncIterator[ProviderChunk]:
+        # Ollama /api/chat: takes a system message via leading {role:
+        # "system"} entry like OpenAI, but tool messages drop tool_call_id
+        # and tool_calls carry no id. NDJSON streaming (one full message
+        # snapshot per line), not SSE.
+        wire_messages: list[dict] = []
+        if system:
+            wire_messages.append({"role": "system", "content": system})
+        wire_messages.extend(messages_anthropic_to_ollama_native(messages))
+
+        body: dict[str, Any] = {
+            "model": self._model,
+            "messages": wire_messages,
+            "stream": True,
+            "think": True,
+        }
+        if tools:
+            body["tools"] = tools_anthropic_to_openai(tools)
+
+        await self._tx_request(transcript, round_index, body)
+
+        url = f"{self._base_url}/api/chat"
+        emitted_tool_calls: list[dict] = []
+
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream(
+                "POST",
+                url,
+                json=body,
+                headers={"Content-Type": "application/json"},
+            ) as resp:
+                if resp.status_code != 200:
+                    raw = (await resp.aread()).decode("utf-8", errors="replace")[:500]
+                    await self._tx_wire(transcript, round_index, f"HTTP {resp.status_code}: {raw}")
+                    raise RuntimeError(
+                        f"ollama API error {resp.status_code}: {extract_error_message(raw)}"
+                    )
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    await self._tx_wire(transcript, round_index, line)
+                    try:
+                        evt = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        raise RuntimeError(
+                            f"ollama: malformed NDJSON line: {line!r} ({exc})"
+                        ) from exc
+                    msg = evt.get("message") or {}
+                    thinking = msg.get("thinking")
+                    if thinking:
+                        yield ProviderChunk(kind="thinking", text=thinking)
+                    content = msg.get("content")
+                    if content:
+                        yield ProviderChunk(kind="text", text=content)
+                    tcs = msg.get("tool_calls") or []
+                    for tc in tcs:
+                        emitted_tool_calls.append(tc)
+
+        # /api/chat tool_calls carry no id. Mint a synthetic id per call
+        # so the coordinator's tool_use_id pipeline keeps working; Ollama
+        # never sees the id on subsequent turns.
+        for i, tc in enumerate(emitted_tool_calls):
+            synthetic_id = f"ollama-{round_index}-{i}"
+            yield ollama_native_tool_call_to_provider_chunk(tc, synthetic_id)
