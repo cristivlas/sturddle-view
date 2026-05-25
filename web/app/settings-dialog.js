@@ -985,9 +985,20 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       aiKeyToggleIcon.setAttribute("role", "button");
       aiKeyToggleIcon.setAttribute("tabindex", "0");
       aiKeyToggleIcon.setAttribute("aria-label", "Show/hide API key");
+      let aiKeyRevealed = false;
+      const syncAiKeyMaskUi = () => {
+        // No mask/toggle when the field is empty: the disc font would
+        // swap the placeholder font ("dance") and an eye on an empty
+        // field is meaningless.
+        const hasInput = (aiKey.value || "").trim().length > 0;
+        aiKeyToggleIcon.style.display = hasInput ? "" : "none";
+        const shouldMask = hasInput && !aiKeyRevealed;
+        aiKey.classList.toggle("ai-key-masked", shouldMask);
+        aiKeyToggleIcon.setAttribute("name", shouldMask ? "eye" : "eye-slash");
+      };
       aiKeyToggleIcon.addEventListener("click", () => {
-        const wasMasked = aiKey.classList.toggle("ai-key-masked");
-        aiKeyToggleIcon.setAttribute("name", wasMasked ? "eye" : "eye-slash");
+        aiKeyRevealed = !aiKeyRevealed;
+        syncAiKeyMaskUi();
       });
       const setKeyPlaceholder = () => {
         // setAttribute on host AND on the shadow input. wa-input mirrors
@@ -1010,10 +1021,18 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       // set the attribute too early.
       if (customElements.whenDefined) {
         customElements.whenDefined("wa-input").then(() => {
-          requestAnimationFrame(setKeyPlaceholder);
+          requestAnimationFrame(() => {
+            setKeyPlaceholder();
+            syncAiKeyMaskUi();
+          });
         });
       }
-      const persistAiKeyThenRefresh = debounce(async () => {
+      // Commit on blur/Enter only -- mid-typing persists would spam
+      // Anthropic's /v1/models with partial keys (401 storm).
+      let aiKeyDirty = false;
+      const commitAiKey = async () => {
+        if (!aiKeyDirty) return;
+        aiKeyDirty = false;
         const trimmed = (aiKey.value || "").trim();
         await putSettings({ [AI_API_KEY_KEY]: trimmed });
         // Server cleared/set the slot; update local view so the
@@ -1022,10 +1041,19 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         initial[AI_API_KEY_SET_KEY] = !!trimmed;
         setKeyPlaceholder();
         refreshAiModels();
-      }, 400);
+      };
       aiKey.addEventListener("input", () => {
-        persistAiKeyThenRefresh();
+        aiKeyDirty = true;
+        syncAiKeyMaskUi();
       });
+      aiKey.addEventListener("blur", commitAiKey);
+      aiKey.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") commitAiKey();
+      });
+      // Esc/X close can fire before blur -- flush any pending edit
+      // so the key isn't silently dropped.
+      dialog.addEventListener("wa-hide", commitAiKey);
+      syncAiKeyMaskUi();
       aiKey.append(aiKeyToggleIcon);
       aiKeyRow.append(aiKeyLabel, aiKey);
 
