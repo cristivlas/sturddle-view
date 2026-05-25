@@ -37,6 +37,11 @@ log = logging.getLogger(__name__)
 _DEFAULT_MAX_TOOL_ROUNDS = 8
 MAX_TOOL_ROUNDS = int(os.environ.get("SV_AI_MAX_TOOL_ROUNDS", _DEFAULT_MAX_TOOL_ROUNDS))
 
+# Max length of error_detail copied into the done event. Keeps the
+# bus payload small even when a provider returns a wall of HTML / a
+# verbose stack trace. Full detail is in the transcript anyway.
+ERROR_DETAIL_MAX_LEN = 500
+
 
 def _assistant_message(chunks: list[ProviderChunk]) -> Message:
     """Reassemble a provider chunk stream into the assistant turn that
@@ -191,11 +196,11 @@ class AIAnalysisCoordinator:
                     done_payload["cancelled"] = True
                     raise
                 except Exception as exc:
-                    # No silent failures: surface to the bus so the UI
-                    # exits its streaming state, then re-raise so the
-                    # task's done-callback can log details.
-                    log.exception("AI agent loop failed")
+                    # log.error (not exception): trace is noise for
+                    # provider rejections; full detail is in transcript.
+                    log.error("AI agent loop failed: %s: %s", type(exc).__name__, exc)
                     done_payload["error"] = type(exc).__name__
+                    done_payload["error_detail"] = str(exc)[:ERROR_DETAIL_MAX_LEN]
                     raise
                 finally:
                     await transcript.turn_end(done_payload)

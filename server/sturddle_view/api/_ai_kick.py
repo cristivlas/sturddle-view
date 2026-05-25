@@ -71,14 +71,14 @@ def _prompt_mode_for(hve) -> PromptMode:
     return "coach"
 
 
-def _log_task_exception(task: asyncio.Task) -> None:
-    # Surface unhandled errors from the fire-and-forget run() task --
-    # otherwise they vanish silently when the task is GC'd.
+def _consume_task_exception(task: asyncio.Task) -> None:
+    # Read the result so asyncio doesn't warn about an unretrieved
+    # exception. The coordinator already logs + publishes a done event
+    # with error/error_detail for any failure it sees; this callback is
+    # just here so the GC doesn't shout.
     if task.cancelled():
         return
-    exc = task.exception()
-    if exc is not None:
-        log.exception("AI coordinator run failed", exc_info=exc)
+    task.exception()
 
 
 async def start_ai_turn(request: Request) -> None:
@@ -116,7 +116,7 @@ async def start_ai_turn(request: Request) -> None:
             mode=mode,
         )
     )
-    task.add_done_callback(_log_task_exception)
+    task.add_done_callback(_consume_task_exception)
     request.app.state.ai_task = task
 
 

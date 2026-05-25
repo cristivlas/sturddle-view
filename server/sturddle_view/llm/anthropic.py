@@ -11,6 +11,7 @@ from typing import AsyncIterator
 
 import httpx
 
+from ._errors import extract_error_message
 from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
 from .transcript import Transcript
 
@@ -43,7 +44,7 @@ class AnthropicProvider(LLMProvider):
             if resp.status_code != 200:
                 raise RuntimeError(
                     f"anthropic /v1/models returned {resp.status_code}: "
-                    f"{resp.text[:200]}"
+                    f"{extract_error_message(resp.text[:500])}"
                 )
             body = resp.json()
         data = body.get("data") or []

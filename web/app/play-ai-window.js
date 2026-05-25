@@ -114,12 +114,42 @@ export function appendAiDelta(text) {
   inst.body._para.append(document.createTextNode(text));
 }
 
-export function markAiDone({ cancelled = false } = {}) {
-  // Terminal event: clear the spinner regardless of cancel state.
+export function markAiDone({
+  cancelled = false,
+  error = null,
+  errorDetail = null,
+  roundCap = false,
+} = {}) {
+  // Terminal: clear spinner, then render whichever marker applies
+  // (error > roundCap > cancelled if multiple flags are set).
   setAiStatus("idle");
-  if (!inst.body || !cancelled) return;
-  const marker = document.createElement("span");
-  marker.className = "play-ai-cancelled";
-  marker.textContent = " [cancelled]";
-  inst.body._para.append(marker);
+  if (!inst.body) return;
+  if (error) {
+    const block = document.createElement("div");
+    block.className = "play-ai-error";
+    const head = document.createElement("strong");
+    head.textContent = "AI analysis failed";
+    block.append(head);
+    if (errorDetail) {
+      const body = document.createElement("div");
+      body.className = "play-ai-error-detail";
+      body.textContent = errorDetail;
+      block.append(body);
+    }
+    inst.body._para.append(block);
+    return;
+  }
+  if (roundCap) {
+    const note = document.createElement("div");
+    note.className = "play-ai-roundcap";
+    note.textContent = "Stopped early at the tool-call cap. Raise SV_AI_MAX_TOOL_ROUNDS to allow more rounds.";
+    inst.body._para.append(note);
+    return;
+  }
+  if (cancelled) {
+    const marker = document.createElement("span");
+    marker.className = "play-ai-cancelled";
+    marker.textContent = " [cancelled]";
+    inst.body._para.append(marker);
+  }
 }

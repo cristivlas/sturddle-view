@@ -16,6 +16,7 @@ from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
 from sturddle_view.llm import anthropic as anthropic_mod
 from sturddle_view.llm import ollama as ollama_mod
+from sturddle_view.llm._errors import extract_error_message
 from sturddle_view.llm.anthropic import AnthropicProvider
 from sturddle_view.llm.ollama import OllamaProvider
 
@@ -179,3 +180,76 @@ def test_endpoint_returns_5xx_for_anthropic_stub_without_models(tmp_path):
         r = c.get("/settings/ai/models")
         assert r.status_code == 502, r.text
         assert "API key" in r.json()["detail"]
+
+
+# ---------- extract_error_message: cross-provider error parsing -----
+
+
+def test_extract_error_message_ollama_openai_shape():
+    body = '{"error":{"message":"model does not support tools","type":"invalid_request_error"}}'
+    assert extract_error_message(body) == "model does not support tools"
+
+
+def test_extract_error_message_anthropic_shape():
+    # Anthropic wraps in {"type": "error", "error": {"type": "...", "message": "..."}}
+    body = '{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}'
+    assert extract_error_message(body) == "invalid x-api-key"
+
+
+def test_extract_error_message_string_error_field():
+    # Some upstreams use a bare string instead of a dict. Don't fail
+    # on the shape we didn't expect; surface what's there.
+    body = '{"error":"rate limited, try again"}'
+    assert extract_error_message(body) == "rate limited, try again"
+
+
+def test_extract_error_message_non_json_fallback():
+    # A misconfigured proxy returns plain text / HTML. The raw body
+    # is returned verbatim so the user still sees something.
+    assert extract_error_message("Bad Gateway") == "Bad Gateway"
+    assert extract_error_message("<html>nginx</html>") == "<html>nginx</html>"
+
+
+def test_extract_error_message_missing_error_field_fallback():
+    # Valid JSON, no `error` key -- return raw so we don't silently
+    # swallow whatever the upstream said.
+    body = '{"status":"degraded","retry_after":30}'
+    assert extract_error_message(body) == body
+
+
+@pytest.mark.asyncio
+async def test_ollama_stream_error_message_is_extracted_not_wrapped(monkeypatch):
+    """When Ollama returns the OpenAI error envelope, the RuntimeError
+    we raise must carry the inner `message`, not the wrapping JSON.
+    Without this, toasts on the client showed the full JSON body."""
+    body = '{"error":{"message":"model does not support tools","type":"invalid_request_error"}}'
+
+    # Stub httpx for the streaming call -- we only need the
+    # non-200 path here, so the stream body is empty.
+    class _FakeStreamResponse:
+        status_code = 400
+        async def aread(self) -> bytes:
+            return body.encode("utf-8")
+
+    class _StreamCM:
+        async def __aenter__(self): return _FakeStreamResponse()
+        async def __aexit__(self, *a): return
+
+    class _FakeStreamClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return
+        def stream(self, *a, **kw): return _StreamCM()
+
+    class _ShimHttpx:
+        AsyncClient = lambda *a, **kw: _FakeStreamClient()  # noqa: E731
+
+    monkeypatch.setattr(ollama_mod, "httpx", _ShimHttpx)
+
+    provider = OllamaProvider(base_url="http://fake", model="m")
+    with pytest.raises(RuntimeError) as ei:
+        async for _ in provider.stream(system="", messages=[]):
+            pass
+    msg = str(ei.value)
+    assert "does not support tools" in msg
+    # The raw JSON envelope must NOT appear -- that was the bug.
+    assert "invalid_request_error" not in msg

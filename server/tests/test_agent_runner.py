@@ -1,6 +1,6 @@
-"""Slice B Step 3: Agent runner loop in AIAnalysisCoordinator.
+"""Agent runner loop in AIAnalysisCoordinator.
 
-The coordinator now owns the multi-turn loop:
+The coordinator owns the multi-turn loop:
 - Calls provider.stream(system, messages, tools) for one round.
 - On a tool_use chunk, dispatches via the registry, captures the result,
   appends the assistant + tool_result messages, and loops.
@@ -23,7 +23,7 @@ from sturddle_view.llm import (
     ToolRegistry,
     ToolSpec,
 )
-from sturddle_view.play.ai_analysis import AIAnalysisCoordinator
+from sturddle_view.play.ai_analysis import AIAnalysisCoordinator, ERROR_DETAIL_MAX_LEN
 
 
 def _make_registry(handlers: dict) -> ToolRegistry:
@@ -298,3 +298,55 @@ async def test_tools_schema_is_passed_to_provider_each_round():
     snap = provider.last_call
     assert snap is not None
     assert snap["tools"] == reg.schemas()
+
+
+@pytest.mark.asyncio
+async def test_provider_error_publishes_done_with_error_kind_and_detail():
+    """A provider raising (HTTP error, malformed wire) must surface a
+    done event carrying BOTH the exception class name AND the message.
+    Without the detail, the client only sees "RuntimeError" and the
+    user has to dig through the transcript file to learn what went
+    wrong (e.g. "model does not support tools")."""
+    class _BoomProvider(ScriptedProvider):
+        async def stream(self, system, messages, tools=None, *, transcript=None, round_index=0):
+            raise RuntimeError("ollama API error 400: model does not support tools")
+            yield  # pragma: no cover - marks this as an async generator
+
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, _BoomProvider(rounds=[]))
+
+    with pytest.raises(RuntimeError):
+        await coord.run(game_id="g")
+
+    events = await _drain_until_done(queue)
+    terminal = events[-1].payload
+    assert terminal["done"] is True
+    assert terminal["error"] == "RuntimeError"
+    # The message is what the client needs to show "API key invalid" /
+    # "does not support tools" / etc. without making users tail a log.
+    assert "does not support tools" in terminal["error_detail"]
+
+
+@pytest.mark.asyncio
+async def test_error_detail_truncated_to_cap():
+    """A misbehaving provider could return a wall of HTML. The done
+    payload caps the detail string so the event-bus payload stays
+    small; full text is in the transcript anyway."""
+    long_msg = "x" * (ERROR_DETAIL_MAX_LEN * 3)
+
+    class _BigBoom(ScriptedProvider):
+        async def stream(self, system, messages, tools=None, *, transcript=None, round_index=0):
+            raise RuntimeError(long_msg)
+            yield  # pragma: no cover
+
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, _BigBoom(rounds=[]))
+
+    with pytest.raises(RuntimeError):
+        await coord.run(game_id="g")
+
+    events = await _drain_until_done(queue)
+    detail = events[-1].payload["error_detail"]
+    assert len(detail) == ERROR_DETAIL_MAX_LEN

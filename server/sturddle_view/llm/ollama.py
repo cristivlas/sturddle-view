@@ -20,6 +20,7 @@ from typing import Any, AsyncIterator
 
 import httpx
 
+from ._errors import extract_error_message
 from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
 from .transcript import Transcript
 
@@ -170,7 +171,7 @@ class OllamaProvider(LLMProvider):
             if resp.status_code != 200:
                 raise RuntimeError(
                     f"ollama /v1/models returned {resp.status_code}: "
-                    f"{resp.text[:200]}"
+                    f"{extract_error_message(resp.text[:500])}"
                 )
             body = resp.json()
         data = body.get("data") or []
@@ -218,10 +219,10 @@ class OllamaProvider(LLMProvider):
                 headers={"Content-Type": "application/json"},
             ) as resp:
                 if resp.status_code != 200:
-                    detail = (await resp.aread()).decode("utf-8", errors="replace")[:500]
-                    await self._tx_wire(transcript, round_index, f"HTTP {resp.status_code}: {detail}")
+                    raw = (await resp.aread()).decode("utf-8", errors="replace")[:500]
+                    await self._tx_wire(transcript, round_index, f"HTTP {resp.status_code}: {raw}")
                     raise RuntimeError(
-                        f"ollama API error {resp.status_code}: {detail}"
+                        f"ollama API error {resp.status_code}: {extract_error_message(raw)}"
                     )
                 async for line in resp.aiter_lines():
                     if not line:

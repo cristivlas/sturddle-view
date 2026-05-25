@@ -909,7 +909,20 @@ export const playPerspective = {
         case "ai_info": {
           const p = evt.payload || {};
           if (typeof p.delta === "string") appendAiDelta(p.delta);
-          if (p.done) markAiDone({ cancelled: !!p.cancelled });
+          if (p.done) {
+            markAiDone({
+              cancelled: !!p.cancelled,
+              error: p.error || null,
+              errorDetail: p.error_detail || null,
+              roundCap: !!p.round_cap,
+            });
+            if (p.error) {
+              toast(p.error_detail || p.error, {
+                variant: "danger",
+                duration: 6000,
+              });
+            }
+          }
           break;
         }
         case "engine_search_start": {

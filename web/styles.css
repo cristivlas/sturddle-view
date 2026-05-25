@@ -123,6 +123,36 @@ wa-select::part(listbox) {
 .play-ai-status[hidden] { display: none; }
 .play-ai-status-text { line-height: 1; }
 
+/* Inline failure / guardrail markers in the AI panel. Error is loud
+   (red border, bolded header); round-cap is a softer informational
+   note. Both sit at the bottom of the prose paragraph so they don't
+   push existing text out of view. */
+.play-ai-error {
+  display: block;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--wa-color-danger-60, #d9534f);
+  background: rgba(217, 83, 79, 0.08);
+  font-size: 0.9em;
+}
+.play-ai-error-detail {
+  margin-top: 4px;
+  opacity: 0.85;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.play-ai-roundcap {
+  display: block;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--wa-color-warning-60, #d6a200);
+  background: rgba(214, 162, 0, 0.08);
+  font-size: 0.9em;
+  opacity: 0.85;
+}
+
 body {
   margin: 0;
   font: 0.875rem/1.4 system-ui, -apple-system, Segoe UI, sans-serif;
