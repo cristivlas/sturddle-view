@@ -16,6 +16,13 @@ export const PLAYER_NAME_DEFAULT = "Human";
 const PLAYER_NAME_MAX_LEN = 32;
 
 // AI settings wire field names. Named per project's no-string-literals rule.
+// Server-side mirror lives in server/sturddle_view/api/settings.py (_AI_*_KEY).
+const AI_ENABLED_KEY = "ai_enabled";
+const AI_PROVIDER_KEY = "ai_provider";
+const AI_MODEL_KEY = "ai_model";
+const AI_BASE_URL_KEY = "ai_base_url";
+const AI_API_KEY_KEY = "ai_api_key";
+const AI_API_KEY_SET_KEY = "ai_api_key_set";
 const AI_THINKING_ENABLED_KEY = "ai_thinking_enabled";
 const AI_THINKING_BUDGET_TOKENS_KEY = "ai_thinking_budget_tokens";
 // Anthropic's minimum; the server also enforces this. UI prevents
@@ -887,7 +894,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       aiEnabledLabel.textContent = "Use AI analysis";
       const aiEnabled = document.createElement("wa-switch");
       aiEnabled.size = "small";
-      if (initial.ai_enabled) aiEnabled.setAttribute("checked", "");
+      if (initial[AI_ENABLED_KEY]) aiEnabled.setAttribute("checked", "");
       if (noEngine) aiEnabled.setAttribute("disabled", "");
       aiEnabledRow.append(aiEnabledLabel, aiEnabled);
 
@@ -919,7 +926,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       }
       // .value must be set AFTER options are appended -- wa-select
       // (like native <select>) drops a value with no matching option.
-      aiProvider.value = initial.ai_provider || "anthropic";
+      aiProvider.value = initial[AI_PROVIDER_KEY] || "anthropic";
       aiProviderRow.append(aiProviderLabel, aiProvider);
 
       // Model: a dropdown populated from the provider's list_models API.
@@ -936,13 +943,13 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const aiModelInput = document.createElement("wa-input");
       aiModelInput.size = "small";
       aiModelInput.setAttribute("autocomplete", "off");
-      aiModelInput.value = initial.ai_model || "";
+      aiModelInput.value = initial[AI_MODEL_KEY] || "";
       aiModelInput.addEventListener("input", () => {
-        putSettingsDebounced({ ai_model: aiModelInput.value });
+        putSettingsDebounced({ [AI_MODEL_KEY]: aiModelInput.value });
       });
       aiModelSelect.addEventListener("change", () => {
         if (!aiModelSelect.value) return;
-        putSettings({ ai_model: aiModelSelect.value });
+        putSettings({ [AI_MODEL_KEY]: aiModelSelect.value });
       });
       aiModelRow.append(aiModelLabel, aiModelSelect, aiModelInput);
 
@@ -988,7 +995,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         // we set it before connect, the mirror may not happen; if we set
         // it after, the internal input has the value pinned. Doing both
         // covers every order without relying on WA internals.
-        const text = initial.ai_api_key_set ? "Saved -- enter new to replace" : "";
+        const text = initial[AI_API_KEY_SET_KEY] ? "Saved -- enter new to replace" : "";
         if (text) aiKey.setAttribute("placeholder", text);
         else aiKey.removeAttribute("placeholder");
         const inner = aiKey.shadowRoot?.querySelector("input");
@@ -1008,11 +1015,11 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       }
       const persistAiKeyThenRefresh = debounce(async () => {
         const trimmed = (aiKey.value || "").trim();
-        await putSettings({ ai_api_key: trimmed });
+        await putSettings({ [AI_API_KEY_KEY]: trimmed });
         // Server cleared/set the slot; update local view so the
         // "Saved -- enter new to replace" placeholder appears the
         // first time the user supplies a key.
-        initial.ai_api_key_set = !!trimmed;
+        initial[AI_API_KEY_SET_KEY] = !!trimmed;
         setKeyPlaceholder();
         refreshAiModels();
       }, 400);
@@ -1030,9 +1037,9 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       aiUrl.size = "small";
       aiUrl.setAttribute("autocomplete", "off");
       aiUrl.placeholder = "http://localhost:11434";
-      aiUrl.value = initial.ai_base_url || "";
+      aiUrl.value = initial[AI_BASE_URL_KEY] || "";
       const persistAiUrlThenRefresh = debounce(async () => {
-        await putSettings({ ai_base_url: aiUrl.value });
+        await putSettings({ [AI_BASE_URL_KEY]: aiUrl.value });
         refreshAiModels();
       }, 400);
       aiUrl.addEventListener("input", () => {
@@ -1095,7 +1102,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
 
       function showModelSelect(models) {
         aiModelSelect.replaceChildren();
-        const current = initial.ai_model || "";
+        const current = initial[AI_MODEL_KEY] || "";
         const list = models.slice();
         if (current && !list.includes(current)) list.unshift(current);
         for (const m of list) {
@@ -1137,12 +1144,12 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         // status. PUT just the new provider; then re-read settings so
         // we know the server's restored values for THIS provider before
         // fetching its model list.
-        await putSettings({ ai_provider: aiProvider.value });
+        await putSettings({ [AI_PROVIDER_KEY]: aiProvider.value });
         try {
           const live = await api("GET", "/settings");
-          initial.ai_model = live.ai_model || "";
-          initial.ai_api_key_set = !!live.ai_api_key_set;
-          aiModelInput.value = initial.ai_model;
+          initial[AI_MODEL_KEY] = live[AI_MODEL_KEY] || "";
+          initial[AI_API_KEY_SET_KEY] = !!live[AI_API_KEY_SET_KEY];
+          aiModelInput.value = initial[AI_MODEL_KEY];
         } catch { /* refreshAiModels still runs */ }
         applyAiProviderVisibility();
         setKeyPlaceholder();
@@ -1182,7 +1189,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         }
       }
       aiEnabled.addEventListener("change", () => {
-        putSettings({ ai_enabled: aiEnabled.checked });
+        putSettings({ [AI_ENABLED_KEY]: aiEnabled.checked });
         applyAiEnabledLockout();
         if (aiEnabled.checked) refreshAiModels();
       });
