@@ -17,9 +17,28 @@ import logging
 from fastapi import HTTPException, Request
 
 from ..chess.board import moves_san
-from ..llm import build_initial_user_message
+from ..llm import PromptMode, build_initial_user_message
+from ..play.mode import Mode
 
 log = logging.getLogger(__name__)
+
+
+def _san_history_for(hve) -> list[str]:
+    """Pick the right move list to ship to the agent.
+
+    View mode: the FULL game's moves (`_view_full_moves`). The current
+    cursor position is carried by the FEN; everything past that ply is
+    "future" the commentator can reference.
+
+    Play mode: the live board's move_stack -- there is no future.
+
+    `_view_full_moves` is `[]` in play mode (HVE init sets it; only
+    populated by enter_view_mode), so its emptiness is the signal.
+    """
+    full_moves = getattr(hve, "_view_full_moves", None) or []
+    if full_moves:
+        return hve._view_moves_san()
+    return moves_san(hve._board, getattr(hve, "_start_fen", None))
 
 
 def _build_user_message(hve) -> str | None:
@@ -28,11 +47,28 @@ def _build_user_message(hve) -> str | None:
     board = getattr(hve, "_board", None)
     if board is None:
         return None
-    start_fen = getattr(hve, "_start_fen", None)
     return build_initial_user_message(
         fen=board.fen(),
-        san_history=moves_san(board, start_fen),
+        san_history=_san_history_for(hve),
     )
+
+
+def _prompt_mode_for(hve) -> PromptMode:
+    """Pick the persona from where analysis was entered.
+
+    - View mode (replaying a PGN) -> commentator: third-person, can
+      reference what happens later.
+    - Anywhere else (live play, paused) -> coach: second-person, focus
+      on the current position.
+
+    Reads `_pre_analysis_mode` directly -- same coupling shortcut as
+    `_board`/`_start_fen` above.
+    """
+    if hve is None:
+        return "coach"
+    if getattr(hve, "_pre_analysis_mode", None) is Mode.VIEWING:
+        return "commentator"
+    return "coach"
 
 
 def _log_task_exception(task: asyncio.Task) -> None:
@@ -61,6 +97,7 @@ async def start_ai_turn(request: Request) -> None:
     hve = request.app.state.hve
     game_id = getattr(hve, "game_id", None) if hve else None
     user_message = _build_user_message(hve)
+    mode = _prompt_mode_for(hve)
     # Build the provider per turn so settings changes (model, base URL,
     # API key) flow through without a coordinator rebuild. Not in the
     # hot path -- happens once per AI turn.
@@ -72,7 +109,12 @@ async def start_ai_turn(request: Request) -> None:
     # Pin the task on app.state so the event loop holds a strong ref --
     # asyncio GC can otherwise reap an unreferenced task mid-flight.
     task = asyncio.create_task(
-        coord.run(game_id=game_id, provider=provider, user_message=user_message)
+        coord.run(
+            game_id=game_id,
+            provider=provider,
+            user_message=user_message,
+            mode=mode,
+        )
     )
     task.add_done_callback(_log_task_exception)
     request.app.state.ai_task = task

@@ -1566,10 +1566,10 @@ export const playPerspective = {
         } else {
           restoreViewAnalysisWindows(ctx.events);
           showAnalysisToast();
-          // Server picks the path (engine vs AI) based on settings.
-          // When AI is enabled in play mode, open the panel so the user
-          // sees prose as it streams in.
-          if (aiEnabled && !viewing) {
+          // Server picks the path (engine vs AI) based on settings, and
+          // the persona (coach vs commentator) based on the origin mode.
+          // Open the AI panel either way so the user sees prose stream.
+          if (aiEnabled) {
             resetAi();
             openAi();
           }

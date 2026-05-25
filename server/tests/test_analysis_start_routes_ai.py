@@ -18,7 +18,7 @@ from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
 from sturddle_view.play.chess_clock import ChessClock, TimeControl
-from sturddle_view.play.human_vs_engine import HumanVsEngine
+from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
 
 
 def _install_hve(app, *, engine_path) -> HumanVsEngine:
@@ -88,6 +88,47 @@ async def test_analysis_start_kicks_ai_when_enabled(tmp_path):
         assert ai_task is not None
         await ai_task
         coord_run.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_analysis_start_from_play_passes_coach_mode(tmp_path):
+    app, client = _build_client(tmp_path, ai_enabled=True)
+    with client:
+        hve = _install_hve(app, engine_path=str(tmp_path / "engine"))
+        await hve.pause()
+
+        coord_run = AsyncMock()
+        app.state.ai_coordinator.run = coord_run
+
+        r = client.post("/game/analysis/start")
+        assert r.status_code == 200, r.text
+
+        await app.state.ai_task
+        coord_run.assert_called_once()
+        assert coord_run.call_args.kwargs["mode"] == "coach"
+
+
+@pytest.mark.asyncio
+async def test_analysis_start_from_view_passes_commentator_mode(tmp_path):
+    app, client = _build_client(tmp_path, ai_enabled=True)
+    with client:
+        hve = _install_hve(app, engine_path=str(tmp_path / "engine"))
+        # Drop into view mode with no moves -- equivalent to opening
+        # a PGN replay. start_analysis from VIEWING -> ANALYZING flips
+        # _pre_analysis_mode to VIEWING, which is what picks commentator.
+        await hve.enter_view_mode(ViewModeParams(
+            start_fen=None, moves_uci=[], clock_history=None,
+        ))
+
+        coord_run = AsyncMock()
+        app.state.ai_coordinator.run = coord_run
+
+        r = client.post("/game/analysis/start")
+        assert r.status_code == 200, r.text
+
+        await app.state.ai_task
+        coord_run.assert_called_once()
+        assert coord_run.call_args.kwargs["mode"] == "commentator"
 
 
 @pytest.mark.asyncio

@@ -121,15 +121,21 @@ def build_initial_user_message(*, fen: str, san_history: list[str]) -> str:
     context calls this out: "Full PGN + per-ply eval array injected into
     the initial user message".
 
-    Per-ply evals are not included here: live play does not accumulate
-    them (see `docs/pgn-export.md`); the model can call the `analyze`
-    tool for the current position. Path 3 (post-game) will extend this
-    helper when it lands.
+    `san_history` semantics depend on the caller:
+    - Play mode: moves played up to the current position (the only
+      moves that exist).
+    - View mode: the FULL game's moves. The FEN tells the model where
+      in the game the analysis is requested; everything past that ply
+      is "future" the commentator can reference.
+
+    Single field either way (labeled `Game moves`) -- the FEN locates
+    the position, the move list provides context. Per-ply evals are
+    not included; the model uses the `analyze` tool for engine numbers.
 
     Byte-stable for the same inputs -- prompt caching across the early
     turns of a rolling session keys on these bytes.
     """
     return (
         f"Current position (FEN): {fen}\n"
-        f"Moves played so far: {_render_san_pairs(san_history)}\n"
+        f"Game moves: {_render_san_pairs(san_history)}\n"
     )

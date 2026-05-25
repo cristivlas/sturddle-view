@@ -168,13 +168,13 @@ async def test_coordinator_routes_mode_to_assembly():
 
 _EXPECTED_USER_STARTPOS_NO_MOVES = (
     f"Current position (FEN): {_STARTPOS_FEN}\n"
-    "Moves played so far: (none yet -- the game has not started)\n"
+    "Game moves: (none yet -- the game has not started)\n"
 )
 
 _EXPECTED_USER_AFTER_E4_E5_NF3 = (
     "Current position (FEN): "
     "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2\n"
-    "Moves played so far: 1. e4 e5 2. Nf3\n"
+    "Game moves: 1. e4 e5 2. Nf3\n"
 )
 
 
