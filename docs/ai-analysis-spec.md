@@ -29,10 +29,82 @@ Tournament mode is out of scope.
 - Agent consumes engine output via tools, emits prose + structured
   annotations
 
+### Agent loop
+
+Implementation: `AIAnalysisCoordinator.run()` in
+`server/sturddle_view/play/ai_analysis.py`.
+
+One "turn" = one Analyze click. A turn runs N rounds, capped at
+`SV_AI_MAX_TOOL_ROUNDS` (default in `ai_analysis.MAX_TOOL_ROUNDS`).
+Each round = one `provider.stream()` call. The coordinator owns
+multi-turn assembly; the provider knows nothing about tool execution.
+
+Round body, in order:
+1. Stream chunks from the provider (`text`, `thinking`, `tool_use`).
+2. Publish `text` deltas as `ai_info` events, `thinking` as
+   `ai_thinking`. A `tool_use` chunk ends the round (v1 is sequential;
+   downstream chunks would belong to the next round per Anthropic
+   semantics).
+3. **Validate the round's assembled prose** against the live board
+   (see Round-end validators below). Runs unconditionally -- a round
+   that mixes prose with a tool_use still streams prose to the user,
+   and any illegal/hallucinated tokens must trigger a corrective.
+4. Decide exit / continuation:
+   - Clean round (no tool_use, no validator hits) -> break. Natural
+     end of turn.
+   - Tool_use pending OR validator hit -> append the assistant
+     message; continue to step 5.
+5. If a tool_use is pending: dispatch via the registry, append the
+   `tool_result` user message (matching `tool_use_id`). Failures
+   surface as `ai_tool_call_failed` events but do not break the loop
+   -- the model can read the structured error and recover.
+6. If the validator hit: append a corrective user message AFTER the
+   `tool_result` (when one exists), so every assistant `tool_use`
+   gets a matching `tool_result` before the next user-role message
+   (Anthropic message-shape requirement). Emit `ai_corrective`.
+
+The loop terminates on: clean exit (no tool_use, no hits),
+`MAX_TOOL_ROUNDS` reached (`done.round_cap=true`), provider error,
+or user cancel. Every exit emits a terminal `ai_info` event with a
+`done` payload so the UI never hangs.
+
+### Round-end validators
+
+Pure functions over `(text, board)` in
+`server/sturddle_view/llm/response_validator.py`. Three checks run
+in parallel on the assembled text of every round; a hit on any one
+triggers a corrective round:
+
+- `find_illegal_moves` -- SAN-shaped tokens the board rejects (piece
+  moves, pawn captures, castles). Bare-square pawn moves are out of
+  scope (e.g. "e5" is ambiguous prose vs move).
+- `find_false_piece_claims` -- "<piece> on <square>" / "<square>
+  <piece>" claims whose square does not actually hold the named piece
+  (or holds a piece of the wrong color when the claim names one).
+- `find_castle_word_violations` -- natural-language "castle" /
+  "castling" / "castled" mentions when neither side has any legal
+  castling move available.
+
+Each validator returns the offending tokens (deduped, in order of
+first appearance). The coordinator routes them through three event
+fields (`illegal_moves`, `false_claims`, `castle_violations`) so the
+UI can render each category distinctly, and through three corrective
+prompt fragments so the model sees category-specific wording rather
+than a generic "rewrite" instruction.
+
+Disabled when no `board_provider` is wired (tests, non-live callers).
+
 ### Tools (v1)
 
 - `analyze(fen, time_ms=None, depth=None)` - engine search; spawns
   throwaway engine via existing `_spawn_engine()` pattern. SHIPPED.
+- `validate_move(move)` - legality check for UCI or SAN move strings
+  against the live position. Non-negotiable per its tool card before
+  naming any move as playable in prose. SHIPPED.
+- `piece_at(square)` - report the piece occupying a square in the
+  live position (or null when empty). Non-negotiable per its tool
+  card before naming any piece on a specific square in prose.
+  SHIPPED.
 - `top_moves(n=None, time_ms=None, depth=None)` - rank top-N candidate
   moves in the live position (workaround for engines without native
   MultiPV). Operates on the live board via `board_provider` (no FEN

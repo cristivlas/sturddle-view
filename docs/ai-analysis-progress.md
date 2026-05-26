@@ -356,6 +356,19 @@ Open:
   Park until evidence warrants.
 Fixed (kept here as a record):
 
+- ~~Round-end validators bypassed when round ended with a tool_use~~
+  -- model would stream illegal prose then call `validate_move`; tool
+  result came back "illegal" but the wrong prose had already shipped
+  to the UI with no corrective. Validators now run on every round
+  regardless of tool_use; corrective lands after the `tool_result`
+  to keep the message stack Anthropic-legal. See spec
+  §Round-end validators.
+- ~~Castle-word hallucinations not caught~~ -- models often write
+  "castle" / "castling" instead of "O-O", which the SAN regex did
+  not match. `find_castle_word_violations` now flags such mentions
+  when neither side has any legal castling move; routed through a
+  dedicated corrective prompt and event field
+  (`castle_violations`).
 - ~~AI prose streams server-side but appears bursty in the UI~~ --
   spinner + thinking disclosure addressed the perceived "stuck panel"
   UX; remaining burstiness is a non-issue.
@@ -426,6 +439,34 @@ authoritative architecture record.
   - Alternative (neutral internal shape, each provider serializes) was
     rejected: extra code with no payoff while Anthropic is the lead
     provider and we want zero translation cost on the happy path.
+- **Round-end validators run on every round, not only tool-use-free
+  exits** (decided 2026-05-25 after live evidence; lifted into spec
+  §Round-end validators).
+  - Original policy bypassed validation when a round ended with a
+    tool_use, on the theory that the model's text might legitimately
+    reference moves it was about to verify. Live transcripts proved
+    the opposite: the model would stream prose containing an illegal
+    or hallucinated move, *then* call `validate_move` -- by the time
+    the tool said "illegal" the wrong prose had already streamed to
+    the UI with no corrective.
+  - New policy: validators run on every round's prose. When both a
+    tool_use and a validator hit fire in the same round, the tool
+    dispatches normally (its `tool_result` is required by Anthropic
+    shape regardless), then the corrective user message is appended
+    after the `tool_result`.
+  - The "drop the tool on validator hit" alternative was considered
+    and rejected: every assistant `tool_use` block needs a matching
+    `tool_result` before the next user-role message, so dropping the
+    tool would require fabricating a placeholder `tool_result` --
+    more complexity for marginal gain.
+- **Validator output is categorized, not concatenated** (decided
+  2026-05-25 alongside the policy shift; lifted into spec).
+  Three independent buckets (`illegal_moves`, `false_claims`,
+  `castle_violations`) with three distinct corrective prompts and
+  three event fields. Folding castle-word violations into the
+  illegal-moves bucket produced wrong wording
+  ("castling do not exist in this position"); each bucket now owns
+  its phrasing.
 - **Multi-round agent loop lives in the runner, not the provider**
   (decided 2026-05-23, Phase 1 Slice A).
   - Provider surface: `stream(system, messages, tools=None) -> AsyncIterator[ProviderChunk]`.
