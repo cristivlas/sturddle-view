@@ -496,10 +496,6 @@ export const playPerspective = {
         syncCommentsVisibility();
         if (notifyOnDrift && !gameOver && resignAvailable) {
           const drift = [];
-          // Side: settings.human_side is "white"|"black"|"random". Only
-          // compare deterministic choices; "random" never conflicts.
-          if (s.human_side === "white" && humanWhite === false) drift.push("side");
-          else if (s.human_side === "black" && humanWhite === true) drift.push("side");
           // TC: compare against the snapshot taken at game start.
           if (
             gameTcInitial !== null &&
