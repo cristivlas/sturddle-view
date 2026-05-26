@@ -94,8 +94,11 @@ function buildRoundPanel() {
   const revision = document.createElement("div");
   revision.className = "play-ai-revision";
   revision.hidden = true;
-  // Thinking disclosure -- collapsed by default; current round opens
-  // per the sticky pref.
+  // Timeline: Thinking + tool calls share one container so a single
+  // CSS left rule connects them visually. Prose is outside the
+  // timeline so it isn't crossed by the rule.
+  const timeline = document.createElement("div");
+  timeline.className = "play-ai-timeline";
   const details = document.createElement("details");
   details.className = "play-ai-thinking";
   const summary = document.createElement("summary");
@@ -103,14 +106,13 @@ function buildRoundPanel() {
   const thinkBody = document.createElement("div");
   thinkBody.className = "play-ai-thinking-body";
   details.append(summary, thinkBody);
-  details.hidden = true;  // un-hide on first thinking chunk
-  // Tool-call lines -- one per ai_tool_call event.
+  details.hidden = true;
   const tools = document.createElement("div");
   tools.className = "play-ai-tools";
-  // Prose paragraph.
+  timeline.append(details, tools);
   const para = document.createElement("p");
   para.className = "play-ai-prose";
-  panel.append(revision, details, tools, para);
+  panel.append(revision, timeline, para);
   return {
     panel, revision,
     thinking: { details, body: thinkBody },
