@@ -14,6 +14,7 @@ from sturddle_view.engines import EngineRegistry
 from sturddle_view.events import EventBus
 from sturddle_view.play.game_store import GameState, GameStore
 from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl
+from sturddle_view.play.mode import Mode
 
 
 # -------- GameStore: pure file I/O --------
@@ -310,7 +311,111 @@ async def test_republish_kicks_engine_when_engine_to_move(tmp_path):
     await hve._cancel_tick()
 
 
-# -------- App startup: lifespan restores from disk --------
+# -------- _clock_running invariant --------
+
+
+def _restored_unpaused(tmp_path):
+    """A bare restored game in Mode.PLAY with the tick NOT started yet.
+    Mirrors the state right after `restore_from` but before the first
+    `republish_state` call."""
+    hve, _store = _make_hve(tmp_path)
+    hve.restore_from(GameState(
+        game_id="r", human_white=True, tc_initial_seconds=60.0,
+        tc_increment_seconds=0.0, white_time=60.0, black_time=60.0, paused=False,
+        moves_uci=[], clock_history=[],
+    ))
+    return hve
+
+
+def test_clock_running_no_board(tmp_path):
+    """Fresh HVE has no board -- clock cannot run."""
+    hve, _store = _make_hve(tmp_path)
+    assert hve._board is None
+    assert hve._clock_running is False
+
+
+def test_clock_running_play(tmp_path):
+    hve = _restored_unpaused(tmp_path)
+    assert hve._mode is Mode.PLAY
+    assert hve._clock_running is True
+
+
+def test_clock_running_paused(tmp_path):
+    hve = _restored_unpaused(tmp_path)
+    hve._mode = Mode.PAUSED
+    assert hve._clock_running is False
+
+
+def test_clock_running_analyzing_from_play(tmp_path):
+    hve = _restored_unpaused(tmp_path)
+    hve._pre_analysis_mode = Mode.PLAY
+    hve._mode = Mode.ANALYZING
+    assert hve._clock_running is False
+
+
+def test_clock_running_analyzing_from_paused(tmp_path):
+    """The bug's exact predicate: user paused, then entered analysis.
+    `_paused` is False (mode is ANALYZING), but the clock must NOT run."""
+    hve = _restored_unpaused(tmp_path)
+    hve._pre_analysis_mode = Mode.PAUSED
+    hve._mode = Mode.ANALYZING
+    assert hve._paused is False
+    assert hve._analysis_mode is True
+    assert hve._clock_running is False
+
+
+def test_clock_running_viewing(tmp_path):
+    hve = _restored_unpaused(tmp_path)
+    hve._mode = Mode.VIEWING
+    assert hve._clock_running is False
+
+
+def test_clock_running_editing(tmp_path):
+    hve = _restored_unpaused(tmp_path)
+    hve._mode = Mode.EDITING
+    assert hve._clock_running is False
+
+
+def test_clock_running_game_over(tmp_path):
+    """Fool's mate position -- board reports game over, clock must not run."""
+    hve = _restored_unpaused(tmp_path)
+    for uci in ("f2f3", "e7e5", "g2g4", "d8h4"):
+        hve._board.push(chess.Move.from_uci(uci))
+    assert hve._board.is_game_over()
+    assert hve._clock_running is False
+
+
+# -------- republish_state must respect analysis mode --------
+
+
+async def test_republish_does_not_start_tick_when_analyzing(tmp_path):
+    """Regression: a client refresh during paused+analysis must not start the
+    clock. Pre-fix, `republish_state` only checked `_paused`; once the user
+    pauses then enters analysis, mode flips to ANALYZING so `_paused` is False
+    and the tick would start unintentionally."""
+    hve = _restored_unpaused(tmp_path)
+    # Simulate "user paused, then entered analysis" without spawning the real
+    # analysis task (which would try to drive the UCI engine).
+    hve._pre_analysis_mode = Mode.PAUSED
+    hve._mode = Mode.ANALYZING
+    assert hve._clock.turn_started_at is None
+    await hve.republish_state()
+    assert hve._clock.turn_started_at is None
+    assert hve._tick_task is None
+
+
+# -------- _clock_event.running tracks _clock_running --------
+
+
+def test_clock_event_running_matches_clock_running(tmp_path):
+    """_clock_event publishes `running` to clients -- it must agree with the
+    same predicate republish_state uses. Verified across the live-play modes
+    (VIEWING/EDITING take a different branch in _clock_event)."""
+    hve = _restored_unpaused(tmp_path)
+    for mode in (Mode.PLAY, Mode.PAUSED, Mode.ANALYZING):
+        hve._mode = mode
+        evt = hve._clock_event()
+        assert evt.payload["running"] is hve._clock_running, mode
 
 
 def _seed_state(store: GameStore):

@@ -232,6 +232,17 @@ class HumanVsEngine:
         return self._mode is Mode.ANALYZING
 
     @property
+    def _clock_running(self) -> bool:
+        """Clock ticks only in live play: board present, mode is PLAY, game
+        not over. Shared by republish_state (gate to start the tick) and
+        _clock_event (advertises `running` to clients)."""
+        return (
+            self._board is not None
+            and self._mode is Mode.PLAY
+            and not self._board.is_game_over()
+        )
+
+    @property
     def _viewing(self) -> bool:
         if self._mode & self._VIEW_MASK:
             return True
@@ -582,11 +593,7 @@ class HumanVsEngine:
                 await self._publish_clock()
                 await self._republish_last_analysis_info()
                 return
-            if (
-                self._clock.turn_started_at is None
-                and not self._paused
-                and not self._board.is_game_over()
-            ):
+            if self._clock.turn_started_at is None and self._clock_running:
                 self._clock.start_turn()
                 self._start_tick()
                 if self._board.turn == self._engine_color() and self._think_task is None:
@@ -691,10 +698,11 @@ class HumanVsEngine:
             await self._persist()
             await self._publish_board()
             await self._publish_clock()
-            # Don't kick the engine while paused — resume() handles that.
-            if not self._paused:
-                if self._board.turn == self._engine_color():
-                    kick_engine = True
+            # Don't kick the engine outside live play. SWITCH_SIDES is also
+            # allowed in ANALYZING/VIEWING (board orientation flip only) where
+            # the engine must NOT be kicked -- _clock_running enforces that.
+            if self._clock_running and self._board.turn == self._engine_color():
+                kick_engine = True
         if kick_engine:
             await self._engine_to_move()
 
@@ -1332,11 +1340,8 @@ class HumanVsEngine:
             await self._cancel_think()
             await self._quit_engine()
             if (
-                self._board is not None
+                self._clock_running
                 and self._game_id is not None
-                and not self._viewing
-                and not self._paused
-                and not self._board.is_game_over()
                 and self._board.turn == self._engine_color()
             ):
                 kick_engine = True
@@ -1359,9 +1364,8 @@ class HumanVsEngine:
             await self._supervisor.swap(path)
             if self._board is not None and self._game_id is not None:
                 await self._publish_board()
-                if not self._board.is_game_over() and not self._paused:
-                    if self._board.turn == self._engine_color():
-                        kick_engine = True
+                if self._clock_running and self._board.turn == self._engine_color():
+                    kick_engine = True
         if kick_engine:
             await self._engine_to_move()
 
@@ -1888,9 +1892,7 @@ class HumanVsEngine:
                 "white_time": self._remaining(chess.WHITE),
                 "black_time": self._remaining(chess.BLACK),
                 "turn": side_to_move(self._board),
-                "running": not self._board.is_game_over()
-                and not self._paused
-                and not self._analysis_mode,
+                "running": self._clock_running,
                 "paused": self._paused,
                 "analyzing": self._analysis_mode,
             },
