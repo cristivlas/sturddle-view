@@ -24,7 +24,7 @@ import {
   appendAiThinking,
   appendAiToolCall,
   markAiToolCallFailed,
-  noteAiCorrective,
+  noteAiRevision,
   markAiDone,
   setAiStatus,
   setAiTitle,
@@ -964,7 +964,7 @@ export const playPerspective = {
         }
         case "ai_corrective": {
           const p = evt.payload || {};
-          noteAiCorrective({
+          noteAiRevision({
             round: p.round ?? 0,
             illegalMoves: p.illegal_moves || [],
             falseClaims: p.false_claims || [],

@@ -219,16 +219,24 @@ wa-select::part(listbox) {
 }
 
 /* Round panel: one per agent-loop round. Stacks under status; each
-   round shows (optional) corrective banner, thinking, tool calls,
+   round shows (optional) revision banner, thinking, tool calls,
    prose. Vertical spacing visually separates rounds. */
 .play-ai-round {
   display: block;
   margin: 0 0 12px;
   padding-top: 6px;
 }
+/* A round whose prose was invalidated by the next round's Revision
+   banner: muted + strikethrough on the prose so the user sees what
+   the model wrote without believing it. Tool calls and thinking
+   stay legible -- they aren't the wrong claim, the prose is. */
+.play-ai-round-invalidated .play-ai-prose {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
 
-/* Corrective banner shown on rounds triggered by a validator hit. */
-.play-ai-corrective {
+/* Revision banner shown on rounds triggered by a validator hit. */
+.play-ai-revision {
   margin: 0 12px 6px;
   padding: 4px 8px;
   border-left: 3px solid var(--wa-color-warning-60, #d6a200);
@@ -288,7 +296,7 @@ wa-select::part(listbox) {
 }
 /* Subtle "AI is done" divider below the final round's prose on
    multi-round turns. Neutral grey so it doesn't compete with the
-   amber corrective banner. */
+   amber revision banner. */
 .play-ai-final-sep {
   border: none;
   border-top: 1px solid var(--wa-color-neutral-fill-soft, #ccc);

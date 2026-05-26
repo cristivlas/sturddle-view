@@ -74,12 +74,12 @@ function buildBody() {
   root._rounds = rounds;
   root._terminal = terminal;
   // Map roundIndex -> {panel, thinking:{details,body}, tools, para,
-  //   hasProse, corrective}. Built lazily on first event per round.
+  //   hasProse, revision}. Built lazily on first event per round.
   root._roundPanels = new Map();
   root._currentRound = null;
-  // Pending corrective banner data keyed by the round it applies to.
-  // The corrective event arrives before that round's first chunk.
-  root._pendingCorrective = new Map();
+  // Pending revision banner data keyed by the round it applies to.
+  // The ai_corrective event arrives before that round's first chunk.
+  root._pendingRevision = new Map();
   // tool_use_id -> tool-call line DOM node, so a failure event can
   // mark the exact row by id (not by tool name or position).
   root._toolCallNodes = new Map();
@@ -89,11 +89,11 @@ function buildBody() {
 function buildRoundPanel() {
   const panel = document.createElement("section");
   panel.className = "play-ai-round";
-  // Optional corrective banner (only on rounds triggered by a
+  // Optional revision banner (only on rounds triggered by a
   // validator hit on the previous round).
-  const corrective = document.createElement("div");
-  corrective.className = "play-ai-corrective";
-  corrective.hidden = true;
+  const revision = document.createElement("div");
+  revision.className = "play-ai-revision";
+  revision.hidden = true;
   // Thinking disclosure -- collapsed by default; current round opens
   // per the sticky pref.
   const details = document.createElement("details");
@@ -110,9 +110,9 @@ function buildRoundPanel() {
   // Prose paragraph.
   const para = document.createElement("p");
   para.className = "play-ai-prose";
-  panel.append(corrective, details, tools, para);
+  panel.append(revision, details, tools, para);
   return {
-    panel, corrective,
+    panel, revision,
     thinking: { details, body: thinkBody },
     tools, para,
     hasProse: false,
@@ -140,11 +140,11 @@ function ensureRoundPanel(root, roundIndex) {
       writeThinkingOpen(entry.thinking.details.open);
     }
   });
-  // Pending corrective banner for this round?
-  const corr = root._pendingCorrective.get(roundIndex);
-  if (corr) {
-    renderCorrective(entry.corrective, corr);
-    root._pendingCorrective.delete(roundIndex);
+  // Pending revision banner for this round?
+  const rev = root._pendingRevision.get(roundIndex);
+  if (rev) {
+    renderRevision(entry.revision, rev);
+    root._pendingRevision.delete(roundIndex);
   }
   root._rounds.append(entry.panel);
   root._roundPanels.set(roundIndex, entry);
@@ -152,11 +152,11 @@ function ensureRoundPanel(root, roundIndex) {
   return entry;
 }
 
-function renderCorrective(el, { illegalMoves, falseClaims }) {
+function renderRevision(el, { illegalMoves, falseClaims }) {
   el.hidden = false;
   el.textContent = "";  // reset
   const head = document.createElement("strong");
-  head.textContent = "Corrective: ";
+  head.textContent = "Revision: ";
   el.append(head);
   const parts = [];
   if (illegalMoves && illegalMoves.length) {
@@ -239,7 +239,7 @@ export function resetAi() {
   inst.body._rounds.textContent = "";
   inst.body._terminal.textContent = "";
   inst.body._roundPanels.clear();
-  inst.body._pendingCorrective.clear();
+  inst.body._pendingRevision.clear();
   inst.body._toolCallNodes.clear();
   inst.body._currentRound = null;
   setAiStatus("waiting");
@@ -290,17 +290,23 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
   }
 }
 
-export function noteAiCorrective({ round, illegalMoves, falseClaims }) {
+export function noteAiRevision({ round, illegalMoves, falseClaims }) {
   if (!inst.body) return;
-  // The corrective event arrives before the round's first chunk.
+  // Mark the round that just got invalidated (the previous one) so
+  // its prose reads as overruled by the upcoming revision.
+  if (round > 0) {
+    const prev = inst.body._roundPanels.get(round - 1);
+    if (prev) prev.panel.classList.add("play-ai-round-invalidated");
+  }
+  // The ai_corrective event arrives before the round's first chunk.
   // Stash so ensureRoundPanel renders the banner when the panel is
   // created. If the panel already exists (rare; chunk ordering
   // surprise), render immediately.
   const existing = inst.body._roundPanels.get(round);
   if (existing) {
-    renderCorrective(existing.corrective, { illegalMoves, falseClaims });
+    renderRevision(existing.revision, { illegalMoves, falseClaims });
   } else {
-    inst.body._pendingCorrective.set(round, { illegalMoves, falseClaims });
+    inst.body._pendingRevision.set(round, { illegalMoves, falseClaims });
   }
 }
 
