@@ -47,16 +47,15 @@ MAX_DEPTH = int(os.environ.get("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_MAX_DEPTH))
 # docs/ai-analysis-progress.md.
 _DEFAULT_DEPTH = 20
 
-# top_moves: default and hard cap on N candidates returned. N searches
-# run sequentially with one throwaway engine each, so cost scales
-# linearly; the cap protects against agent runaway.
-_DEFAULT_TOP_MOVES_N = 3
+# top_moves: hard cap on the model-supplied candidate list length.
+# Each candidate runs one sequential search; cost scales linearly.
 _DEFAULT_TOP_MOVES_MAX_N = 5
 TOP_MOVES_MAX_N = int(os.environ.get("SV_AI_TOP_MOVES_MAX_N", _DEFAULT_TOP_MOVES_MAX_N))
 
-# Per-candidate default depth in top_moves -- shallower than analyze's
-# since cost multiplies by N.
-_DEFAULT_TOP_MOVES_DEPTH = 12
+# Per-candidate default depth -- match analyze's default; with the
+# model-supplied list capped at TOP_MOVES_MAX_N, worst-case cost is
+# bounded and shallower defaults were producing weak candidate ranking.
+_DEFAULT_TOP_MOVES_DEPTH = _DEFAULT_DEPTH
 
 
 EngineLauncher = Callable[[], EngineSupervisor]
@@ -80,23 +79,27 @@ _ANALYZE_GAME_ID_FALLBACK = "ai-analyze"
 TOP_MOVES_TOOL_SPEC = ToolSpec(
     name="top_moves",
     description=(
-        "Rank the top N candidate moves in the current live position. "
-        "Use this when the agent needs MultiPV-style comparison and the "
-        "underlying engine does not support MultiPV natively. Searches "
-        "each candidate position with a fresh throwaway engine; returns "
-        "candidates sorted best-first FOR THE SIDE TO MOVE. Each entry "
-        "carries move_uci, move_san, and the white-POV eval fields "
-        "(score_cp / score_pawns / score_text / mate / depth / pv). "
-        "Operates on the live game position -- no FEN input."
+        "Deep-evaluate a list of candidate moves you are considering in "
+        "the live position. YOU supply the candidates -- chess "
+        "understanding picks them, the engine ranks them. Each candidate "
+        "is searched with a fresh throwaway engine; returns per-move "
+        "entries sorted best-first FOR THE SIDE TO MOVE, carrying "
+        "move_uci, move_san, and the white-POV eval fields (score_cp / "
+        "score_pawns / score_text / mate / depth / pv). Illegal or "
+        "unparseable moves come back as per-entry errors; legal ones "
+        "are still searched. Operates on the live game position -- no "
+        f"FEN input. List capped at {TOP_MOVES_MAX_N}; extras are "
+        "dropped. Per-tool caps apply to time_ms and depth."
     ),
     input_schema={
         "type": "object",
         "properties": {
-            "n": {
-                "type": "integer",
+            "moves": {
+                "type": "array",
+                "items": {"type": "string"},
                 "description": (
-                    f"Number of candidates to return (default {_DEFAULT_TOP_MOVES_N}, "
-                    f"capped at {TOP_MOVES_MAX_N})."
+                    "Candidate moves in UCI or SAN. Capped at "
+                    f"{TOP_MOVES_MAX_N}; extras dropped."
                 ),
             },
             "time_ms": {
@@ -108,6 +111,7 @@ TOP_MOVES_TOOL_SPEC = ToolSpec(
                 "description": "Per-candidate maximum depth (clamped to server cap).",
             },
         },
+        "required": ["moves"],
     },
 )
 
@@ -467,6 +471,24 @@ def _clamp_top_moves_limits(input_: dict) -> tuple[chess.engine.Limit, dict]:
     return chess.engine.Limit(**kwargs), used
 
 
+def _parse_candidate_move(board: chess.Board, raw: str) -> tuple[chess.Move | None, dict | None]:
+    """Try UCI then SAN. Returns (move, None) on success, (None, error_entry)
+    on failure. Error entry carries `move_input` so the model can match
+    it back to the input list."""
+    candidate = raw.strip()
+    if not candidate:
+        return None, {"move_input": raw, "error": "invalid_input", "detail": "empty move string"}
+    for parse in (board.parse_uci, board.parse_san):
+        try:
+            return parse(candidate), None
+        except chess.IllegalMoveError as exc:
+            return None, {"move_input": raw, "error": "illegal_move", "detail": str(exc)}
+        except (chess.InvalidMoveError, chess.AmbiguousMoveError):
+            continue
+    return None, {"move_input": raw, "error": "invalid_move",
+                  "detail": f"could not parse {candidate!r} as UCI or SAN"}
+
+
 def make_top_moves_tool(
     engine_launcher: EngineLauncher,
     bus: EventBus,
@@ -474,48 +496,47 @@ def make_top_moves_tool(
     game_id_provider: GameIdProvider | None = None,
     settings_provider: SettingsProvider | None = None,
 ) -> AnalyzeTool:
-    """Build the `top_moves` async tool. Iterates legal moves on the
-    live board (via board_provider), searches each child position,
-    returns sorted candidates. `board_provider` returns the current
-    HVE board or None when no game is active.
-
-    Publishes one `engine_search_start` for the batch, then per-candidate
-    engine_info events. The PV table will thrash through candidates;
-    that's the intended UX (see review discussion -- alternative is to
-    leave the panel silent, which felt worse)."""
+    """Deep-evaluate a model-supplied list of candidate moves. Each
+    legal move runs a root-restricted search; illegal or unparseable
+    moves come back as per-entry errors. Publishes one
+    `engine_search_start` for the batch, then per-candidate
+    engine_info events."""
     async def top_moves(input_: dict, *, cancel_token: CancelToken) -> dict:
         board = board_provider()
         if board is None:
             return {"error": "no_live_position"}
-        # Copy so push/pop on candidates doesn't perturb the live board.
         board = board.copy(stack=False)
 
-        raw_n = input_.get("n", _DEFAULT_TOP_MOVES_N)
-        try:
-            n = int(raw_n)
-        except (TypeError, ValueError):
-            return {"error": "invalid_n", "detail": f"n must be an integer, got {raw_n!r}"}
-        n = max(1, min(n, TOP_MOVES_MAX_N))
+        raw_moves = input_.get("moves")
+        if not isinstance(raw_moves, list) or not raw_moves:
+            return {"error": "invalid_input", "detail": "moves must be a non-empty list of strings"}
+        truncated = len(raw_moves) > TOP_MOVES_MAX_N
+        raw_moves = raw_moves[:TOP_MOVES_MAX_N]
 
-        legals = list(board.legal_moves)
-        if not legals:
-            return {"error": "no_legal_moves"}
+        parsed: list[chess.Move] = []
+        errors: list[dict] = []
+        for raw in raw_moves:
+            if not isinstance(raw, str):
+                errors.append({"move_input": raw, "error": "invalid_input",
+                               "detail": "move must be a string"})
+                continue
+            move, err = _parse_candidate_move(board, raw)
+            if err is not None:
+                errors.append(err)
+            else:
+                parsed.append(move)
 
         limit, limits_used = _clamp_top_moves_limits(input_)
-
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
         await bus.publish(Event(kind="engine_search_start", game_id=game_id, payload={}))
 
         stm_is_white = board.turn == chess.WHITE
-        candidates: list[dict] = []
         cancelled_any = False
-        evaluated_count = 0
-        for move in legals:
+        entries: list[dict] = []
+        for move in parsed:
             if cancel_token.cancelled:
                 cancelled_any = True
                 break
-            move_san = board.san(move)
-            move_uci = move.uci()
             try:
                 last_info, cancelled = await _run_one_search(
                     engine_launcher, board, limit,
@@ -525,9 +546,7 @@ def make_top_moves_tool(
                 )
             except _SearchError as err:
                 return {"error": err.kind, "detail": err.detail}
-            if cancelled:
-                cancelled_any = True
-            entry: dict = {"move_uci": move_uci, "move_san": move_san}
+            entry: dict = {"move_uci": move.uci(), "move_san": board.san(move)}
             score = last_info.get("score")
             entry.update(_score_to_cp(score))
             depth = last_info.get("depth")
@@ -537,25 +556,24 @@ def make_top_moves_tool(
             if pv:
                 entry["pv"] = pv
             entry["_sort_key"] = _white_pov_sort_key(score)
-            candidates.append(entry)
-            evaluated_count += 1
+            entries.append(entry)
             if cancelled:
+                cancelled_any = True
                 break
 
-        # Best-for-side-to-move ordering: white wants high white-POV,
-        # black wants low. Then keep top n. _sort_key drops off the wire.
-        candidates.sort(key=lambda c: c["_sort_key"], reverse=stm_is_white)
-        candidates = candidates[:n]
-        for c in candidates:
+        entries.sort(key=lambda c: c["_sort_key"], reverse=stm_is_white)
+        for c in entries:
             c.pop("_sort_key", None)
 
         out: dict = {
             "side_to_move": "white" if stm_is_white else "black",
             "limits_used": limits_used,
-            "candidates": candidates,
-            "evaluated": evaluated_count,
-            "total_legal_moves": len(legals),
+            "candidates": entries,
         }
+        if errors:
+            out["errors"] = errors
+        if truncated:
+            out["truncated"] = True
         if cancelled_any:
             out["cancelled"] = True
         return out
@@ -616,3 +634,121 @@ def make_validate_move_tool(board_provider: BoardProvider) -> AnalyzeTool:
         return {"error": "invalid_move", "detail": f"could not parse {candidate!r} as UCI or SAN"}
 
     return validate_move
+
+
+_RECOMMEND_MOVE_CARD = (
+    "Card for `recommend_move`. Call this tool at the end of your turn "
+    "with the move you stand behind. Non-negotiable, same as "
+    "`validate_move` and `piece_at`: this is a tool invocation, not a "
+    "sentence in your prose. The engine re-evaluates the move and the "
+    "UI surfaces your pick distinctly from engine output."
+)
+
+
+RECOMMEND_MOVE_TOOL_SPEC = ToolSpec(
+    name="recommend_move",
+    description=(
+        "Call this tool with your final move recommendation. "
+        "Non-negotiable: call (do not narrate) at the end of your turn "
+        "after you've decided. Validates legality and returns the "
+        "post-move FEN. The UI surfaces your pick distinctly from "
+        "engine output."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "move": {
+                "type": "string",
+                "description": (
+                    "Move in UCI (e.g. 'g1f3', 'e7e8q') or SAN (e.g. "
+                    "'Nf3', 'O-O', 'exd5')."
+                ),
+            },
+        },
+        "required": ["move"],
+    },
+    card=_RECOMMEND_MOVE_CARD,
+)
+
+
+def make_recommend_move_tool(board_provider: BoardProvider) -> AnalyzeTool:
+    """Build the `recommend_move` async tool. Parses UCI/SAN, returns
+    `{ok, uci, san, post_move_fen}` on success or a structured error.
+    Coordinator tracks the latest successful call and runs an
+    end-of-turn search restricted to the move so the UI can render a
+    distinct arrow."""
+    async def recommend_move(input_: dict, *, cancel_token: CancelToken) -> dict:
+        board = board_provider()
+        if board is None:
+            return {"error": "no_live_position"}
+        raw = input_.get("move")
+        if not isinstance(raw, str) or not raw.strip():
+            return {"error": "invalid_input", "detail": "move must be a non-empty string"}
+        candidate = raw.strip()
+        parsed: chess.Move | None = None
+        for parse in (board.parse_uci, board.parse_san):
+            try:
+                parsed = parse(candidate)
+                break
+            except chess.IllegalMoveError as exc:
+                return {"error": "illegal_move", "detail": str(exc)}
+            except (chess.InvalidMoveError, chess.AmbiguousMoveError):
+                continue
+        if parsed is None:
+            return {"error": "invalid_move", "detail": f"could not parse {candidate!r} as UCI or SAN"}
+        san = board.san(parsed)
+        uci = parsed.uci()
+        scratch = board.copy(stack=False)
+        scratch.push(parsed)
+        return {
+            "ok": True,
+            "uci": uci,
+            "san": san,
+            "post_move_fen": scratch.fen(),
+        }
+
+    return recommend_move
+
+
+def make_recommend_verifier(
+    engine_launcher: EngineLauncher,
+    bus: EventBus,
+    board_provider: BoardProvider,
+    game_id_provider: GameIdProvider | None = None,
+    settings_provider: SettingsProvider | None = None,
+):
+    """Build the end-of-turn recommend-verifier. Returns a callable that
+    runs a searchmoves-restricted deep search on the recommended move
+    and returns a payload dict (or None on failure). The coordinator
+    emits the `ai_recommendation` event through its own _emit so the
+    payload gets a seq stamp and lands in the replay buffer."""
+    async def verify(move: chess.Move, cancel_token: CancelToken) -> dict | None:
+        board = board_provider()
+        if board is None or move not in board.legal_moves:
+            return None
+        game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
+        limit = chess.engine.Limit(depth=_DEFAULT_DEPTH)
+        try:
+            last_info, _cancelled = await _run_one_search(
+                engine_launcher, board.copy(stack=False), limit,
+                bus=bus, game_id=game_id, cancel_token=cancel_token,
+                root_moves=[move],
+                settings_provider=settings_provider,
+            )
+        except _SearchError:
+            return None
+        payload: dict = {
+            "uci": move.uci(),
+            "san": board.san(move),
+        }
+        payload.update(_score_to_cp(last_info.get("score")))
+        depth = last_info.get("depth")
+        if depth is not None:
+            payload["depth"] = depth
+        pv = _pv_to_uci(board, last_info.get("pv"))
+        if pv:
+            payload["pv"] = pv
+            payload["pv_uci"] = pv
+        return payload
+
+    return verify

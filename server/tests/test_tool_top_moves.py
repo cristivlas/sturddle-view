@@ -1,12 +1,13 @@
 """`top_moves` tool tests.
 
-Workaround for engines without native MultiPV: iterate legal moves,
-search each child position, return sorted candidates. Tests pin:
+Deep-evaluates a model-supplied list of candidate moves (one search per
+move, sequential). Tests pin:
 - wire shape (move_uci/move_san + score fields per candidate)
-- N cap clamp + default
+- moves-list cap + truncation flag
 - side-to-move-relative sort (white = high white-POV first; black flips)
 - no-fen-input: tool reads live board via board_provider
-- error envelopes (no_live_position, invalid_n, no_legal_moves)
+- error envelopes (no_live_position, invalid_input)
+- per-move errors for illegal/unparseable inputs (other moves still run)
 - engine_info publication per candidate; engine_search_start emitted once
 """
 from __future__ import annotations
@@ -34,10 +35,8 @@ def _launcher_from_path(path: str, bus: EventBus):
 
 
 @pytest.mark.asyncio
-async def test_top_moves_returns_n_candidates_sorted_for_white(tmp_path: Path):
-    # Fake reports STM-POV cp (White's POV here -- White to move on a
-    # position with only 8 king moves; we restrict via root_moves).
-    # Higher cp = better for White.
+async def test_top_moves_returns_candidates_sorted_for_white(tmp_path: Path):
+    # Fake reports STM-POV cp (White to move). Higher cp = better for White.
     engine_path = make_position_aware_fake_uci(
         tmp_path, "tm_white",
         score_by_substring={
@@ -55,7 +54,9 @@ async def test_top_moves_returns_n_candidates_sorted_for_white(tmp_path: Path):
         board_provider=lambda: board,
     )
 
-    out = await tool({"n": 3, "depth": 4}, cancel_token=CancelToken())
+    out = await tool(
+        {"moves": ["Ka1", "Ka2", "Ka3"], "depth": 4}, cancel_token=CancelToken(),
+    )
 
     assert "error" not in out, out
     assert out["side_to_move"] == "white"
@@ -68,10 +69,9 @@ async def test_top_moves_returns_n_candidates_sorted_for_white(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_top_moves_returns_n_candidates_sorted_for_black(tmp_path: Path):
-    # Black to move; engine reports STM-POV (Black's). Higher raw cp =
-    # better for Black; _score_to_cp flips to white-POV (so values are
-    # negated). Best-for-Black = LOWEST white-POV cp.
+async def test_top_moves_returns_candidates_sorted_for_black(tmp_path: Path):
+    # Black to move; engine reports STM-POV (Black's). _score_to_cp
+    # flips to white-POV (values negated). Best-for-Black = LOWEST.
     engine_path = make_position_aware_fake_uci(
         tmp_path, "tm_black",
         score_by_substring={
@@ -90,7 +90,9 @@ async def test_top_moves_returns_n_candidates_sorted_for_black(tmp_path: Path):
         board_provider=lambda: board,
     )
 
-    out = await tool({"n": 3, "depth": 4}, cancel_token=CancelToken())
+    out = await tool(
+        {"moves": ["a6", "a5", "b6"], "depth": 4}, cancel_token=CancelToken(),
+    )
 
     assert "error" not in out, out
     assert out["side_to_move"] == "black"
@@ -101,32 +103,20 @@ async def test_top_moves_returns_n_candidates_sorted_for_black(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_top_moves_default_n_is_three(tmp_path: Path):
+async def test_top_moves_truncates_list_above_cap(tmp_path: Path):
     engine_path = make_searching_fake_uci(
-        tmp_path, "tm_default_n", score_cp=0, depth=2, bestmove="0000", pv="",
+        tmp_path, "tm_trunc", score_cp=0, depth=2, bestmove="0000", pv="",
     )
     bus = EventBus()
     board = chess.Board()
     tool = make_top_moves_tool(
         _launcher_from_path(engine_path, bus), bus=bus, board_provider=lambda: board,
     )
-    out = await tool({"depth": 2}, cancel_token=CancelToken())
+    too_many = ["a3", "b3", "c3", "d3", "e3", "f3", "g3", "h3"]
+    assert len(too_many) > TOP_MOVES_MAX_N
+    out = await tool({"moves": too_many, "depth": 2}, cancel_token=CancelToken())
     assert "error" not in out, out
-    assert len(out["candidates"]) == 3
-
-
-@pytest.mark.asyncio
-async def test_top_moves_clamps_n_to_max(tmp_path: Path):
-    engine_path = make_searching_fake_uci(
-        tmp_path, "tm_clamp_n", score_cp=0, depth=2, bestmove="0000", pv="",
-    )
-    bus = EventBus()
-    board = chess.Board()
-    tool = make_top_moves_tool(
-        _launcher_from_path(engine_path, bus), bus=bus, board_provider=lambda: board,
-    )
-    out = await tool({"n": 999, "depth": 2}, cancel_token=CancelToken())
-    assert "error" not in out, out
+    assert out.get("truncated") is True
     assert len(out["candidates"]) == TOP_MOVES_MAX_N
 
 
@@ -138,36 +128,57 @@ async def test_top_moves_no_live_position_when_provider_returns_none():
     tool = make_top_moves_tool(
         _no_launcher, bus=EventBus(), board_provider=lambda: None,
     )
-    out = await tool({}, cancel_token=CancelToken())
+    out = await tool({"moves": ["e4"]}, cancel_token=CancelToken())
     assert out.get("error") == "no_live_position"
 
 
 @pytest.mark.asyncio
-async def test_top_moves_invalid_n_returns_structured_error():
+async def test_top_moves_missing_moves_returns_invalid_input():
     def _no_launcher() -> EngineSupervisor:
-        raise AssertionError("engine should never spawn for invalid n")
+        raise AssertionError("engine should never spawn without moves")
 
     board = chess.Board()
     tool = make_top_moves_tool(
         _no_launcher, bus=EventBus(), board_provider=lambda: board,
     )
-    out = await tool({"n": "not-a-number"}, cancel_token=CancelToken())
-    assert out.get("error") == "invalid_n"
+    out = await tool({}, cancel_token=CancelToken())
+    assert out.get("error") == "invalid_input"
 
 
 @pytest.mark.asyncio
-async def test_top_moves_no_legal_moves_when_terminal_position():
-    board = chess.Board("7k/8/5KQ1/8/8/8/8/8 b - - 0 1")
-    assert board.is_stalemate()
-
+async def test_top_moves_empty_list_returns_invalid_input():
     def _no_launcher() -> EngineSupervisor:
-        raise AssertionError("engine should never spawn with no legal moves")
+        raise AssertionError("engine should never spawn for empty list")
 
+    board = chess.Board()
     tool = make_top_moves_tool(
         _no_launcher, bus=EventBus(), board_provider=lambda: board,
     )
-    out = await tool({}, cancel_token=CancelToken())
-    assert out.get("error") == "no_legal_moves"
+    out = await tool({"moves": []}, cancel_token=CancelToken())
+    assert out.get("error") == "invalid_input"
+
+
+@pytest.mark.asyncio
+async def test_top_moves_per_move_errors_dont_block_legal_ones(tmp_path: Path):
+    engine_path = make_searching_fake_uci(
+        tmp_path, "tm_mixed", score_cp=10, depth=2, bestmove="0000", pv="",
+    )
+    bus = EventBus()
+    board = chess.Board()
+    tool = make_top_moves_tool(
+        _launcher_from_path(engine_path, bus), bus=bus, board_provider=lambda: board,
+    )
+    # e4 legal, z9 invalid, e5 illegal (black's move, white to move).
+    out = await tool(
+        {"moves": ["e4", "z9", "e5"], "depth": 2}, cancel_token=CancelToken(),
+    )
+    assert "error" not in out, out
+    assert len(out["candidates"]) == 1
+    assert out["candidates"][0]["move_san"] == "e4"
+    assert "errors" in out
+    error_inputs = [e["move_input"] for e in out["errors"]]
+    assert "z9" in error_inputs
+    assert "e5" in error_inputs
 
 
 @pytest.mark.asyncio
@@ -182,7 +193,7 @@ async def test_top_moves_publishes_engine_search_start_once(tmp_path: Path):
         _launcher_from_path(engine_path, bus), bus=bus, board_provider=lambda: board,
         game_id_provider=lambda: "g-live",
     )
-    out = await tool({"n": 2, "depth": 2}, cancel_token=CancelToken())
+    out = await tool({"moves": ["e4", "d4"], "depth": 2}, cancel_token=CancelToken())
     assert "error" not in out, out
 
     events = []
@@ -208,7 +219,7 @@ async def test_top_moves_cancel_returns_cancelled_marker(tmp_path: Path):
     )
     token = CancelToken()
     token.cancel()
-    out = await tool({"n": 3, "depth": 3}, cancel_token=token)
+    out = await tool({"moves": ["e4", "d4", "Nf3"], "depth": 3}, cancel_token=token)
     assert out.get("cancelled") is True
     assert "candidates" in out
 
@@ -223,7 +234,7 @@ async def test_top_moves_returns_san_and_uci(tmp_path: Path):
     tool = make_top_moves_tool(
         _launcher_from_path(engine_path, bus), bus=bus, board_provider=lambda: board,
     )
-    out = await tool({"n": 1, "depth": 4}, cancel_token=CancelToken())
+    out = await tool({"moves": ["e4"], "depth": 4}, cancel_token=CancelToken())
     assert "error" not in out, out
     c = out["candidates"][0]
     assert "move_uci" in c

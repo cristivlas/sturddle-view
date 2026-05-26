@@ -97,6 +97,36 @@ def test_illegal_queen_move_in_prose_detected():
     assert find_illegal_moves(text, chess.Board()) == ["Qg4"]
 
 
+def test_san_label_not_flagged_when_piece_already_on_square():
+    # 'Qd1' in prose IS the queen's current square in the startpos;
+    # treat as a label, not an illegal move-to-own-square.
+    text = "The queen at Qd1 supports the center."
+    assert find_illegal_moves(text, chess.Board()) == []
+
+
+def test_san_label_carveout_requires_piece_type_match():
+    # 'Kd1' would name a king on d1, but d1 holds the queen -> not a
+    # label; parse_san would also reject as illegal. Validator flags.
+    text = "Consider Kd1 to relocate the king."
+    assert find_illegal_moves(text, chess.Board()) == ["Kd1"]
+
+
+def test_san_label_carveout_requires_side_to_move_owns_piece():
+    # White to move, but the queen on d8 is Black's. 'Qd8' is not a
+    # label for White's side; if parse_san rejects as illegal, flag.
+    text = "Then Qd8 controls the back rank."
+    assert find_illegal_moves(text, chess.Board()) == ["Qd8"]
+
+
+def test_san_label_carveout_only_for_three_char_shape():
+    # 'Qxd1+' captures-with-check; even if d1 holds the side-to-move
+    # queen, the token isn't a bare piece+square label -- it's a move
+    # claim with capture semantics. Should still be flagged when illegal.
+    text = "After Qxd1+ the king is exposed."
+    out = find_illegal_moves(text, chess.Board())
+    assert out == ["Qxd1+"]
+
+
 # ---------- Piece-on-square claims ------------------------------------
 
 # Real FEN captured from a qwen3:30b hallucination logged in
@@ -239,5 +269,55 @@ def test_castle_word_only_one_side_can_castle_still_passes():
     # refer to either side, so we pass when *any* side can castle.
     board = chess.Board("4k3/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQ - 0 1")
     assert find_castle_word_violations("Castling is in the air.", board) == []
+
+
+# ---------- Move-target carve-out (forward-looking prose) -------------
+# Real case: model recommends a move and then describes the resulting
+# state -- "play Re1 ... the rook on e1 supports the file". The live
+# board has no rook on e1 yet; the carve-out keeps the validator from
+# flagging the post-move description as a false claim.
+
+
+def test_move_target_carveout_rook_to_e1():
+    # White's f1-rook can move to e1 from startpos (... no, blocked).
+    # Use a position where Re1 is legal.
+    board = chess.Board("4k3/8/8/8/8/8/8/R3K3 w - - 0 1")  # white rook a1, king e1
+    # Reposition: white rook on f1, king g1, so Re1 is legal.
+    board = chess.Board("4k3/8/8/8/8/8/8/5RK1 w - - 0 1")
+    text = "Play Re1 to centralize. The rook on e1 supports the file."
+    assert find_false_piece_claims(text, board) == []
+
+
+def test_move_target_carveout_does_not_swallow_unrelated_false_claim():
+    # Re1 is legal; prose claims a knight on e1 (wrong piece for the
+    # move's target). Knight-on-e1 must still flag.
+    board = chess.Board("4k3/8/8/8/8/8/8/5RK1 w - - 0 1")
+    text = "Play Re1, then the knight on e1 covers d3."
+    assert find_false_piece_claims(text, board) == ["knight on e1"]
+
+
+def test_move_target_carveout_color_must_match_move():
+    # Re1 is white's; claim says "black rook on e1" -- the carve-out
+    # only covers white's rook (the move's color). Black-rook-on-e1
+    # is still a false claim.
+    board = chess.Board("4k3/8/8/8/8/8/8/5RK1 w - - 0 1")
+    text = "Play Re1. Then black rook on e1 trades."
+    assert find_false_piece_claims(text, board) == ["black rook on e1"]
+
+
+def test_move_target_carveout_does_not_apply_without_a_legal_move():
+    # No SAN in prose; the false claim is still flagged.
+    board = chess.Board("4k3/8/8/8/8/8/8/5RK1 w - - 0 1")
+    text = "The rook on e1 supports the file."
+    assert find_false_piece_claims(text, board) == ["rook on e1"]
+
+
+def test_move_target_carveout_illegal_san_does_not_trigger():
+    # 'Re5' from this position is illegal for the f1 rook (not adjacent
+    # rank, and a king blocks); the carve-out must not fire.
+    board = chess.Board("4k3/8/8/8/8/8/8/5RK1 w - - 0 1")
+    text = "Imagine Re5; then the rook on e5 dominates."
+    out = find_false_piece_claims(text, board)
+    assert "rook on e5" in out
 
 

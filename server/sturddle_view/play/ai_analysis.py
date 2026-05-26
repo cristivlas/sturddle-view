@@ -14,7 +14,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import Callable
+from typing import Awaitable, Callable
 
 import chess
 
@@ -38,6 +38,8 @@ from ..llm.response_validator import (
 
 
 BoardProvider = Callable[[], chess.Board | None]
+# End-of-turn verifier; returns payload for ai_recommendation, or None.
+RecommendVerifier = Callable[[chess.Move, CancelToken], Awaitable[dict | None]]
 
 
 log = logging.getLogger(__name__)
@@ -136,6 +138,7 @@ class AIAnalysisCoordinator:
         registry: ToolRegistry | None = None,
         *,
         board_provider: BoardProvider | None = None,
+        recommend_verifier: RecommendVerifier | None = None,
     ) -> None:
         self._bus = bus
         # Default provider for callers that don't supply one per turn.
@@ -147,6 +150,8 @@ class AIAnalysisCoordinator:
         # in the model's prose against the live position. None disables
         # validation (tests / non-live callers).
         self._board_provider = board_provider
+        # End-of-turn verifier; None disables it.
+        self._recommend_verifier = recommend_verifier
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
         self._cancel_token: CancelToken | None = None
@@ -195,6 +200,8 @@ class AIAnalysisCoordinator:
             # again; the model retains it via the message-list prefix
             # for subsequent rounds. See docs/ai-analysis-skills-spec.md.
             cards_injected: set[str] = set()
+            # Last successful recommend_move uci; last wins.
+            recommended_uci: str | None = None
             done_payload: dict = {"done": True}
             async with open_transcript() as transcript:
                 await transcript.turn_start({
@@ -279,6 +286,13 @@ class AIAnalysisCoordinator:
                             await transcript.tool_result(
                                 round_index, pending_tool.tool_use_id, tool_output
                             )
+                            if (
+                                pending_tool.tool_name == "recommend_move"
+                                and isinstance(tool_output, dict)
+                                and tool_output.get("ok")
+                                and isinstance(tool_output.get("uci"), str)
+                            ):
+                                recommended_uci = tool_output["uci"]
                             if isinstance(tool_output, dict) and tool_output.get("error"):
                                 await self._emit(
                                     Event(
@@ -335,6 +349,30 @@ class AIAnalysisCoordinator:
                     done_payload["error_detail"] = str(exc)[:ERROR_DETAIL_MAX_LEN]
                     raise
                 finally:
+                    if (
+                        recommended_uci is not None
+                        and not done_payload.get("cancelled")
+                        and self._recommend_verifier is not None
+                        and self._cancel_token is not None
+                    ):
+                        try:
+                            move = chess.Move.from_uci(recommended_uci)
+                            payload = await self._recommend_verifier(move, self._cancel_token)
+                            if payload is not None:
+                                await self._emit(
+                                    Event(
+                                        kind="ai_recommendation",
+                                        game_id=game_id,
+                                        payload=payload,
+                                    )
+                                )
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:
+                            log.warning(
+                                "recommendation verification failed for %s: %s: %s",
+                                recommended_uci, type(exc).__name__, exc,
+                            )
                     await transcript.turn_end(done_payload)
                     await self._emit(
                         Event(

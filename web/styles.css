@@ -389,10 +389,11 @@ wa-select::part(listbox) {
   position: relative;
   z-index: 1;
 }
-.play-ai-tool-dot-analyze       { background: var(--wa-color-primary-60, #4a90e2); }
-.play-ai-tool-dot-piece_at      { background: var(--wa-color-success-60, #4caf50); }
-.play-ai-tool-dot-validate_move { background: var(--wa-color-warning-60, #d6a200); }
-.play-ai-tool-dot-top_moves     { background: var(--wa-color-primary-60, #4a90e2); }
+.play-ai-tool-dot-analyze        { background: var(--wa-color-primary-60, #4a90e2); }
+.play-ai-tool-dot-piece_at       { background: var(--wa-color-success-60, #4caf50); }
+.play-ai-tool-dot-validate_move  { background: var(--wa-color-warning-60, #d6a200); }
+.play-ai-tool-dot-top_moves      { background: var(--wa-color-primary-60, #4a90e2); }
+.play-ai-tool-dot-recommend_move { background: #15803d; }
 /* Failed tool call: red dot + dim label, with the error appended to
    the label by the renderer. */
 .play-ai-tool-call-failed .play-ai-tool-dot {
@@ -591,7 +592,7 @@ svg.cm-chessboard {
      below moves it to the right edge. Inset clears the 36px ribbon plus
      an 8px gutter so toasts don't overlap ribbon buttons.
      #xgame-toast-stack lives on the opposite (moves-list) side. */
-  inset: auto auto 16px 44px;
+  inset: auto auto 4px 44px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -611,7 +612,7 @@ svg.cm-chessboard {
   max-height: none;
   color: inherit;
 }
-#xgame-toast-stack { inset: auto 44px 16px auto; }
+#xgame-toast-stack { inset: auto 44px 4px auto; }
 #toast-stack:popover-open,
 #xgame-toast-stack:popover-open {
   display: flex;
@@ -1344,6 +1345,9 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 /* Engine "thinking" arrow: navy. */
 .cm-chessboard .arrow-success .arrow-head { fill: #1e3a8a; }
 .cm-chessboard .arrow-success .arrow-line { stroke: #1e3a8a; opacity: 0.55; }
+/* AI recommendation arrow: green. */
+.cm-chessboard .arrow-info .arrow-head { fill: #15803d; }
+.cm-chessboard .arrow-info .arrow-line { stroke: #15803d; opacity: 0.55; }
 .clock-row .clock-name {
   font-size: 0.8125rem;
   color: inherit;
@@ -3026,23 +3030,23 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    docks the ribbon horizontally and is unaffected.
    ------------------------------------------------------------------ */
 body[data-ribbon-side="right"] #toast-stack {
-  inset: auto 44px 16px auto;
+  inset: auto 44px 4px auto;
 }
 body[data-ribbon-side="right"] #xgame-toast-stack {
-  inset: auto auto 16px 44px;
+  inset: auto auto 4px 44px;
 }
 @media (max-width: 640px) {
   /* Ribbon is horizontal at top on mobile, so toasts don't need a side
-     gutter to clear it -- reset to a uniform 16px edge inset. xgame
+     gutter to clear it -- 16px side, 4px bottom edge inset. xgame
      stack collapses onto the same edge as the default stack since the
      "moves-list side" distinction is desktop-only. */
   #toast-stack,
   #xgame-toast-stack {
-    inset: auto auto 16px 16px;
+    inset: auto auto 4px 16px;
   }
   body[data-ribbon-side="right"] #toast-stack,
   body[data-ribbon-side="right"] #xgame-toast-stack {
-    inset: auto 16px 16px auto;
+    inset: auto 16px 4px auto;
   }
 }
 

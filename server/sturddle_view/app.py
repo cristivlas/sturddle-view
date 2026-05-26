@@ -40,10 +40,13 @@ from .play.human_vs_engine import HumanVsEngine
 from .play.tools_engine import (
     ANALYZE_TOOL_SPEC,
     PIECE_AT_TOOL_SPEC,
+    RECOMMEND_MOVE_TOOL_SPEC,
     TOP_MOVES_TOOL_SPEC,
     VALIDATE_MOVE_TOOL_SPEC,
     make_analyze_tool,
     make_piece_at_tool,
+    make_recommend_move_tool,
+    make_recommend_verifier,
     make_top_moves_tool,
     make_validate_move_tool,
 )
@@ -372,21 +375,20 @@ def create_app(
         VALIDATE_MOVE_TOOL_SPEC,
         make_validate_move_tool(board_provider=_ai_board_provider),
     )
-    # top_moves disabled pending engine-side investigation: relies on
-    # UCI `searchmoves` (root_moves kwarg) to restrict each per-candidate
-    # search, but Sturddle appears to ignore the directive -- every
-    # candidate ends up with the engine's own best line instead of the
-    # restricted one. Re-enable once the engine honors searchmoves.
-    # ai_registry.register(
-    #     TOP_MOVES_TOOL_SPEC,
-    #     make_top_moves_tool(
-    #         _ai_engine_launcher,
-    #         bus=app.state.event_bus,
-    #         board_provider=_ai_board_provider,
-    #         game_id_provider=_ai_game_id_provider,
-    #         settings_provider=_ai_settings_provider,
-    #     ),
-    # )
+    ai_registry.register(
+        TOP_MOVES_TOOL_SPEC,
+        make_top_moves_tool(
+            _ai_engine_launcher,
+            bus=app.state.event_bus,
+            board_provider=_ai_board_provider,
+            game_id_provider=_ai_game_id_provider,
+            settings_provider=_ai_settings_provider,
+        ),
+    )
+    ai_registry.register(
+        RECOMMEND_MOVE_TOOL_SPEC,
+        make_recommend_move_tool(board_provider=_ai_board_provider),
+    )
     app.state.ai_tool_registry = ai_registry
 
     # SV_AI_DEBUG=1: flip the AI loggers to DEBUG so the system prompt,
@@ -421,9 +423,17 @@ def create_app(
         return CannedProvider()
 
     app.state.ai_provider_factory = _ai_provider_factory
+    _ai_recommend_verifier = make_recommend_verifier(
+        _ai_engine_launcher,
+        bus=app.state.event_bus,
+        board_provider=_ai_board_provider,
+        game_id_provider=_ai_game_id_provider,
+        settings_provider=_ai_settings_provider,
+    )
     app.state.ai_coordinator = AIAnalysisCoordinator(
         app.state.event_bus, CannedProvider(), registry=ai_registry,
         board_provider=_ai_board_provider,
+        recommend_verifier=_ai_recommend_verifier,
     )
 
     # Tournament subsystem: store + runner + orchestrator. Wired even

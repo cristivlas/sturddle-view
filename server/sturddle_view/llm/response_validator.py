@@ -50,10 +50,45 @@ _NON_MOVE_LITERALS = frozenset({
 })
 
 
+_PIECE_LETTER_TO_TYPE = {
+    "K": chess.KING,
+    "Q": chess.QUEEN,
+    "R": chess.ROOK,
+    "B": chess.BISHOP,
+    "N": chess.KNIGHT,
+}
+
+
+def _is_san_label(bare: str, board: chess.Board) -> bool:
+    """True when `bare` is a 'piece+square' SAN-shape that names a piece
+    already on the named square for the side to move -- e.g. 'Qd1' when
+    the queen is on d1. Such tokens are labels in prose, not move
+    proposals, and should not be flagged as illegal."""
+    if len(bare) != 3:
+        return False
+    piece_char = bare[0]
+    if piece_char not in _PIECE_LETTER_TO_TYPE:
+        return False
+    try:
+        square = chess.parse_square(bare[1:3])
+    except ValueError:
+        return False
+    piece = board.piece_at(square)
+    if piece is None:
+        return False
+    if piece.piece_type != _PIECE_LETTER_TO_TYPE[piece_char]:
+        return False
+    return piece.color == board.turn
+
+
 def find_illegal_moves(text: str, board: chess.Board) -> list[str]:
     """Return distinct illegal SAN tokens found in `text` (order of first
     appearance, no duplicates). Tokens that don't parse as SAN at all are
     ignored -- only well-formed moves the board rejects count as illegal.
+
+    A SAN-shaped token whose destination already holds the named piece
+    for the side to move (e.g. 'Qd1' when the queen IS on d1) is treated
+    as a label, not an illegal move.
 
     Annotation glyphs (!, ?, !?, !!) are stripped before parsing but
     preserved in the returned token so the corrective message echoes
@@ -70,6 +105,8 @@ def find_illegal_moves(text: str, board: chess.Board) -> list[str]:
         try:
             board.parse_san(bare)
         except chess.IllegalMoveError:
+            if _is_san_label(bare, board):
+                continue
             illegal.append(token)
         except (chess.InvalidMoveError, chess.AmbiguousMoveError):
             # Not a move at all, or ambiguous (which is the model's
@@ -169,13 +206,39 @@ def _iter_piece_claims(text: str):
         yield (color or "").lower(), piece.lower(), square.lower()
 
 
+def _move_target_set(text: str, board: chess.Board) -> set[tuple[int, chess.Color, int]]:
+    """Scan `text` for SAN-shaped tokens that parse as legal moves on
+    `board`; return the set of (piece_type, color, dest_square) tuples
+    those moves would create on the post-move board. Used to carve out
+    forward-looking prose ("the rook on e1" following an Re1 proposal)
+    from false-piece-claim flagging."""
+    out: set[tuple[int, chess.Color, int]] = set()
+    for match in _SAN_TOKEN_RE.finditer(text):
+        bare = _strip_annotation_glyphs(match.group(0))
+        try:
+            move = board.parse_san(bare)
+        except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
+            continue
+        piece = board.piece_at(move.from_square)
+        if piece is None:
+            continue
+        dest_piece_type = move.promotion if move.promotion else piece.piece_type
+        out.add((dest_piece_type, piece.color, move.to_square))
+    return out
+
+
 def find_false_piece_claims(text: str, board: chess.Board) -> list[str]:
     """Return distinct false 'piece on square' claims (order of first
     appearance). A claim is false when the named square is empty or
     holds a piece of a different type. When the claim names a color,
     a mismatched color also counts as false. Two phrasings recognized:
     "<piece> on <square>" and "<square> <piece>".
+
+    Claims that match the destination of a legal SAN-shaped move in the
+    same text are skipped -- those describe the resulting state of a
+    recommendation, not the live position.
     """
+    targets = _move_target_set(text, board)
     seen: set[str] = set()
     false: list[str] = []
     for color_word, piece_word, square_name in _iter_piece_claims(text):
@@ -185,6 +248,12 @@ def find_false_piece_claims(text: str, board: chess.Board) -> list[str]:
         seen.add(key)
         piece_type = _PIECE_WORDS[piece_word]
         square = chess.parse_square(square_name)
+        # Forward-looking carve-out: a legal SAN in the prose places
+        # exactly this piece on this square (color must match the move's
+        # color, defaulting to the moving side when prose has no color).
+        claim_color = _COLOR_WORDS[color_word] if color_word else board.turn
+        if (piece_type, claim_color, square) in targets:
+            continue
         actual = board.piece_at(square)
         prefix = f"{color_word} " if color_word else ""
         label = f"{prefix}{piece_word} on {square_name}"

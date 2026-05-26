@@ -34,6 +34,7 @@ EventKind = Literal[
     "ai_tool_call",
     "ai_tool_call_failed",
     "ai_corrective",
+    "ai_recommendation",
     "system",
 ]
 

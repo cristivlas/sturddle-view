@@ -814,6 +814,12 @@ export function mountGameView(container, opts = {}) {
           }
         }
         break;
+      case "ai_recommendation":
+        if (!editing && evt.payload.uci && evt.payload.uci.length >= 4) {
+          const u = evt.payload.uci;
+          board.setRecommendArrow(u.slice(0, 2), u.slice(2, 4));
+        }
+        break;
       case "game_result":
         if (interactive && !editing) board.enableInput(false);
         if (!editing) board.cancelAnimations();
