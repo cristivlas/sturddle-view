@@ -46,7 +46,9 @@ async def test_canned_provider_streams_ai_info_chunks():
     deltas = [e.payload["delta"] for e in events if "delta" in e.payload]
     assert deltas == list(SKELETON_CHUNKS)
     terminal = events[-1].payload
-    assert terminal == {"done": True}
+    # Subset match -- payloads carry an auto-injected `seq` for the
+    # client replay-dedupe protocol.
+    assert terminal.get("done") is True
 
 
 @pytest.mark.asyncio
@@ -80,7 +82,8 @@ async def test_cancel_during_stream_emits_cancelled_done():
     terminal = await queue.get()
     assert terminal.kind == "ai_info"
     assert terminal.game_id == "g2"
-    assert terminal.payload == {"done": True, "cancelled": True}
+    assert terminal.payload.get("done") is True
+    assert terminal.payload.get("cancelled") is True
 
 
 @pytest.mark.asyncio

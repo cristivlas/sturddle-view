@@ -49,6 +49,11 @@ MAX_TOOL_ROUNDS = int(os.environ.get("SV_AI_MAX_TOOL_ROUNDS", _DEFAULT_MAX_TOOL_
 # verbose stack trace. Full detail is in the transcript anyway.
 ERROR_DETAIL_MAX_LEN = 500
 
+# LRU cap on per-game replay buffers. Long-lived processes shouldn't
+# accumulate one list per game ever played; this evicts the oldest.
+_DEFAULT_MAX_REPLAY_GAMES = 16
+MAX_REPLAY_GAMES = int(os.environ.get("SV_AI_MAX_REPLAY_GAMES", _DEFAULT_MAX_REPLAY_GAMES))
+
 # Corrective messages injected when the validator finds inconsistencies
 # in the round's text. Civil but firm: the model is hallucinating, and
 # the turn is not done until the prose is consistent with the live
@@ -142,6 +147,15 @@ class AIAnalysisCoordinator:
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
         self._cancel_token: CancelToken | None = None
+        # Replay buffer for the most recent turn per game_id. Memory
+        # only; reset at the start of each run(). LRU-evicted to
+        # MAX_REPLAY_GAMES so long-lived processes don't accumulate
+        # one list per game ever played.
+        self._replay_buffers: dict[str, list[dict]] = {}
+        self._replay_order: list[str] = []
+        # Monotonic per-turn sequence stamped on each emitted event.
+        # Replay + live dedupe by (game_id, seq).
+        self._seq = 0
 
     async def run(
         self,
@@ -171,6 +185,17 @@ class AIAnalysisCoordinator:
         async with self._lock:
             self._task = asyncio.current_task()
             self._cancel_token = CancelToken()
+            self._seq = 0
+            if game_id is not None:
+                # Reset this game's buffer, bump LRU position, evict
+                # the oldest if we've exceeded the cap.
+                self._replay_buffers[game_id] = []
+                if game_id in self._replay_order:
+                    self._replay_order.remove(game_id)
+                self._replay_order.append(game_id)
+                while len(self._replay_order) > MAX_REPLAY_GAMES:
+                    evicted = self._replay_order.pop(0)
+                    self._replay_buffers.pop(evicted, None)
             messages: list[Message] = [{"role": "user", "content": opening_user_content}]
             tool_schemas = self._registry.schemas() or None
             # Per-turn tool-card injection state. A tool's card is
@@ -205,7 +230,7 @@ class AIAnalysisCoordinator:
                             await transcript.chunk(round_index, chunk)
                             if chunk.kind == "text" and chunk.text:
                                 text_published = True
-                                await self._bus.publish(
+                                await self._emit(
                                     Event(
                                         kind="ai_info",
                                         game_id=game_id,
@@ -213,7 +238,7 @@ class AIAnalysisCoordinator:
                                     )
                                 )
                             elif chunk.kind == "thinking" and chunk.text:
-                                await self._bus.publish(
+                                await self._emit(
                                     Event(
                                         kind="ai_thinking",
                                         game_id=game_id,
@@ -256,7 +281,7 @@ class AIAnalysisCoordinator:
                             # Tell the UI a corrective round is starting,
                             # with why -- the panel renders a banner above
                             # the next round.
-                            await self._bus.publish(
+                            await self._emit(
                                 Event(
                                     kind="ai_corrective",
                                     game_id=game_id,
@@ -274,7 +299,7 @@ class AIAnalysisCoordinator:
                         # tool actually runs. Result is not emitted in v1
                         # (engine PV / arrow side-effects cover analyze;
                         # piece_at / validate_move outputs stay off-screen).
-                        await self._bus.publish(
+                        await self._emit(
                             Event(
                                 kind="ai_tool_call",
                                 game_id=game_id,
@@ -294,7 +319,7 @@ class AIAnalysisCoordinator:
                         # can mark the dot. Success stays silent (v1
                         # decision: results stay off-screen).
                         if isinstance(tool_output, dict) and tool_output.get("error"):
-                            await self._bus.publish(
+                            await self._emit(
                                 Event(
                                     kind="ai_tool_call_failed",
                                     game_id=game_id,
@@ -338,7 +363,7 @@ class AIAnalysisCoordinator:
                     raise
                 finally:
                     await transcript.turn_end(done_payload)
-                    await self._bus.publish(
+                    await self._emit(
                         Event(
                             kind="ai_info",
                             game_id=game_id,
@@ -347,6 +372,24 @@ class AIAnalysisCoordinator:
                     )
                     self._task = None
                     self._cancel_token = None
+
+    async def _emit(self, event: Event) -> None:
+        self._seq += 1
+        event.payload["seq"] = self._seq
+        if event.game_id is not None:
+            buf = self._replay_buffers.get(event.game_id)
+            if buf is not None:
+                buf.append({
+                    "kind": event.kind,
+                    "payload": event.payload,
+                    "game_id": event.game_id,
+                })
+        await self._bus.publish(event)
+
+    def replay(self, game_id: str | None) -> list[dict]:
+        if game_id is None:
+            return []
+        return list(self._replay_buffers.get(game_id, []))
 
     def _validate_round_text(
         self, chunks: list[ProviderChunk],

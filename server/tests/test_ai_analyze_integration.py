@@ -72,7 +72,7 @@ async def test_coordinator_dispatches_analyze_to_real_subprocess(tmp_path):
             break
     deltas = [e.payload["delta"] for e in events if "delta" in e.payload]
     assert deltas == ["d4 looks fine (+0.66)."]
-    assert events[-1].payload == {"done": True}
+    assert events[-1].payload.get("done") is True
 
     # Second round must carry the real tool_result the analyze tool
     # returned -- score_cp=66 from the fake engine.

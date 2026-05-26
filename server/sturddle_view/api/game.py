@@ -701,6 +701,19 @@ async def analysis_start(request: Request) -> dict:
     return {"ok": True}
 
 
+@router.get("/analysis/replay")
+async def analysis_replay(request: Request) -> dict:
+    """Return the buffered AI events for the current game's most recent
+    turn. Lets a client reconnecting mid-turn rebuild the panel from the
+    bus tap it missed. Empty list when no live game or no buffer."""
+    coord = getattr(request.app.state, "ai_coordinator", None)
+    if coord is None:
+        return {"events": []}
+    hve = getattr(request.app.state, "hve", None)
+    game_id = getattr(hve, "game_id", None) if hve else None
+    return {"events": coord.replay(game_id)}
+
+
 @router.post("/analysis/stop")
 async def analysis_stop(request: Request) -> dict:
     # Cancel any in-flight AI turn first so it stops cleanly before the

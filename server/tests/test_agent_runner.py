@@ -24,7 +24,11 @@ from sturddle_view.llm import (
     ToolRegistry,
     ToolSpec,
 )
-from sturddle_view.play.ai_analysis import AIAnalysisCoordinator, ERROR_DETAIL_MAX_LEN
+from sturddle_view.play.ai_analysis import (
+    AIAnalysisCoordinator,
+    ERROR_DETAIL_MAX_LEN,
+    MAX_REPLAY_GAMES,
+)
 
 
 def _make_registry(handlers: dict) -> ToolRegistry:
@@ -36,6 +40,13 @@ def _make_registry(handlers: dict) -> ToolRegistry:
             fn,
         )
     return reg
+
+
+def _payload_subset(payload: dict, expected: dict) -> bool:
+    """Subset match -- payloads carry an auto-injected `seq` field, so
+    strict equality is brittle. True iff every expected key/value pair
+    appears in payload (extra keys allowed)."""
+    return all(payload.get(k) == v for k, v in expected.items())
 
 
 async def _drain_until_done(queue: asyncio.Queue) -> list:
@@ -63,7 +74,7 @@ async def test_single_round_no_tool_use_completes_normally():
 
     deltas = [e.payload["delta"] for e in events if "delta" in e.payload]
     assert deltas == ["Hello."]
-    assert events[-1].payload == {"done": True}
+    assert _payload_subset(events[-1].payload, {"done": True})
     assert provider.stream_calls == 1
 
 
@@ -129,7 +140,7 @@ async def test_tool_use_dispatches_and_feeds_result_into_next_round():
     # Prose emitted to the bus spans both rounds.
     deltas = [e.payload["delta"] for e in events if "delta" in e.payload]
     assert deltas == ["Thinking. ", "It's +0.42."]
-    assert events[-1].payload == {"done": True}
+    assert _payload_subset(events[-1].payload, {"done": True})
 
 
 @pytest.mark.asyncio
@@ -162,7 +173,7 @@ async def test_unknown_tool_returns_structured_error_and_loop_continues():
     assert "unknown_tool" in tr["content"]
     # Turn still completes with terminal done (no error marker since
     # the runner handled the error gracefully).
-    assert events[-1].payload == {"done": True}
+    assert _payload_subset(events[-1].payload, {"done": True})
 
 
 @pytest.mark.asyncio
@@ -191,7 +202,7 @@ async def test_tool_raising_returns_structured_error_and_loop_continues():
     tr = provider.last_call["messages"][-1]["content"][0]
     assert "tool_failed" in tr["content"]
     assert "kaboom" in tr["content"]
-    assert events[-1].payload == {"done": True}
+    assert _payload_subset(events[-1].payload, {"done": True})
 
 
 @pytest.mark.asyncio
@@ -238,7 +249,7 @@ async def test_cancel_mid_tool_propagates_and_emits_cancelled_done():
     while not queue.empty():
         events.append(queue.get_nowait())
     assert events[-1].kind == "ai_info"
-    assert events[-1].payload == {"done": True, "cancelled": True}
+    assert _payload_subset(events[-1].payload, {"done": True, "cancelled": True})
     # Second round never happened.
     assert provider.stream_calls == 1
 
@@ -277,7 +288,7 @@ async def test_round_cap_stops_runaway_loop():
     assert provider.stream_calls == MAX_TOOL_ROUNDS
     # Terminal event carries `round_cap=True` so the UI can flag that
     # the turn stopped on the guardrail rather than reaching an answer.
-    assert events[-1].payload == {"done": True, "round_cap": True}
+    assert _payload_subset(events[-1].payload, {"done": True, "round_cap": True})
 
 
 @pytest.mark.asyncio
@@ -828,12 +839,12 @@ async def test_ai_tool_call_event_emitted_per_dispatch():
 
     calls = [e for e in events if e.kind == "ai_tool_call"]
     assert len(calls) == 1
-    assert calls[0].payload == {
+    assert _payload_subset(calls[0].payload, {
         "round": 0,
         "name": "analyze",
         "input": {"fen": "startpos"},
         "tool_use_id": "t1",
-    }
+    })
 
 
 @pytest.mark.asyncio
@@ -854,11 +865,11 @@ async def test_ai_corrective_event_emitted_on_validator_hit():
 
     corrective = [e for e in events if e.kind == "ai_corrective"]
     assert len(corrective) == 1
-    assert corrective[0].payload == {
+    assert _payload_subset(corrective[0].payload, {
         "round": 1,  # the round that the corrective triggers
         "illegal_moves": ["Nf6"],
         "false_claims": [],
-    }
+    })
 
 
 @pytest.mark.asyncio
@@ -888,6 +899,112 @@ async def test_ai_tool_call_failed_event_on_tool_error():
     assert failed[0].payload["round"] == 0
     assert failed[0].payload["tool_use_id"] == "t1"
     assert failed[0].payload["error"] == "tool_failed"
+
+
+@pytest.mark.asyncio
+async def test_replay_buffer_captures_turn_events():
+    # Replay returns the same events that flowed to the bus, in order.
+    # Lets a reconnecting client rebuild the AI panel without missing
+    # anything published during the WS gap.
+    provider = ScriptedProvider(rounds=[[
+        ProviderChunk(kind="text", text="hello"),
+    ]])
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider, registry=ToolRegistry())
+
+    await coord.run(game_id="g")
+    replay = coord.replay("g")
+
+    kinds = [e["kind"] for e in replay]
+    assert "ai_info" in kinds
+    # Terminal done is in the replay too.
+    assert any(e["payload"].get("done") for e in replay)
+    # Every event carries a monotonic seq.
+    seqs = [e["payload"]["seq"] for e in replay]
+    assert seqs == list(range(1, len(seqs) + 1))
+
+
+@pytest.mark.asyncio
+async def test_replay_buffer_resets_on_new_turn():
+    # Two consecutive turns on the same game_id: replay holds the
+    # latest turn only, with seq restarting at 1.
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, ScriptedProvider(rounds=[[ProviderChunk(kind="text", text="one")]]),
+        registry=ToolRegistry(),
+    )
+    await coord.run(game_id="g")
+    assert len(coord.replay("g")) > 0
+
+    # Second turn -- buffer resets.
+    await coord.run(
+        game_id="g",
+        provider=ScriptedProvider(rounds=[[ProviderChunk(kind="text", text="two")]]),
+    )
+    second = coord.replay("g")
+    texts = [e["payload"].get("delta") for e in second if e["payload"].get("delta")]
+    assert texts == ["two"]
+    # Seq counter resets per turn.
+    assert second[0]["payload"]["seq"] == 1
+
+
+@pytest.mark.asyncio
+async def test_replay_buffer_isolated_per_game_id():
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, ScriptedProvider(rounds=[[ProviderChunk(kind="text", text="a")]]),
+        registry=ToolRegistry(),
+    )
+    await coord.run(game_id="game-a")
+    await coord.run(
+        game_id="game-b",
+        provider=ScriptedProvider(rounds=[[ProviderChunk(kind="text", text="b")]]),
+    )
+
+    a_texts = [e["payload"].get("delta") for e in coord.replay("game-a") if e["payload"].get("delta")]
+    b_texts = [e["payload"].get("delta") for e in coord.replay("game-b") if e["payload"].get("delta")]
+    assert a_texts == ["a"]
+    assert b_texts == ["b"]
+
+
+@pytest.mark.asyncio
+async def test_replay_buffer_returns_empty_for_none_game_id():
+    # No live game -> replay must not leak whatever ran last.
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, ScriptedProvider(rounds=[[ProviderChunk(kind="text", text="x")]]),
+        registry=ToolRegistry(),
+    )
+    await coord.run(game_id="g")
+    assert coord.replay(None) == []
+
+
+@pytest.mark.asyncio
+async def test_replay_buffer_lru_evicts_oldest():
+    # Run more turns than the cap; oldest game_ids drop out of the
+    # buffer, latest stay.
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, ScriptedProvider(rounds=[[ProviderChunk(kind="text", text="x")]]),
+        registry=ToolRegistry(),
+    )
+    total = MAX_REPLAY_GAMES + 3
+    for i in range(total):
+        await coord.run(
+            game_id=f"g{i}",
+            provider=ScriptedProvider(rounds=[[ProviderChunk(kind="text", text="x")]]),
+        )
+    # Oldest 3 evicted.
+    assert coord.replay("g0") == []
+    assert coord.replay("g1") == []
+    assert coord.replay("g2") == []
+    # Most recent still there.
+    assert len(coord.replay(f"g{total - 1}")) > 0
 
 
 @pytest.mark.asyncio

@@ -913,9 +913,10 @@ export const playPerspective = {
     let viewFlipped = false;
     try { viewFlipped = localStorage.getItem(VIEW_FLIP_KEY) === "1"; } catch { /* */ }
 
-    // --- Hook events for control-bar state changes (board state changes
-    //     are GameView's responsibility). ---
-    const offEvent = ctx.events.on((evt) => {
+    // AI event handling extracted so the same dispatch can replay
+    // buffered events on perspective remount (panel rehydration when a
+    // mid-turn reconnect happens).
+    function dispatchAiEvent(evt) {
       switch (evt.kind) {
         case "ai_info": {
           const p = evt.payload || {};
@@ -935,12 +936,12 @@ export const playPerspective = {
               });
             }
           }
-          break;
+          return true;
         }
         case "ai_thinking": {
           const p = evt.payload || {};
           if (typeof p.delta === "string") appendAiThinking(p.delta, p.round ?? 0);
-          break;
+          return true;
         }
         case "ai_tool_call": {
           const p = evt.payload || {};
@@ -950,7 +951,7 @@ export const playPerspective = {
             input: p.input,
             toolUseId: p.tool_use_id,
           });
-          break;
+          return true;
         }
         case "ai_tool_call_failed": {
           const p = evt.payload || {};
@@ -959,7 +960,7 @@ export const playPerspective = {
             error: p.error,
             detail: p.detail,
           });
-          break;
+          return true;
         }
         case "ai_corrective": {
           const p = evt.payload || {};
@@ -968,8 +969,53 @@ export const playPerspective = {
             illegalMoves: p.illegal_moves || [],
             falseClaims: p.false_claims || [],
           });
-          break;
+          return true;
         }
+      }
+      return false;
+    }
+
+    // Buffer live AI events while the replay GET is in flight, then
+    // drain in seq order with dedupe. Avoids the GET-then-subscribe
+    // race: live events that fire between subscribe and replay arrival
+    // are held instead of dispatched out-of-order.
+    let aiRehydrating = true;
+    let aiLiveBuffer = [];
+    let aiMaxSeq = 0;
+    function dispatchAiEventOrdered(evt) {
+      const seq = evt?.payload?.seq ?? 0;
+      if (seq && seq <= aiMaxSeq) return;
+      if (seq) aiMaxSeq = seq;
+      dispatchAiEvent(evt);
+    }
+    async function rehydrateAiPanel() {
+      try {
+        const r = await ctx.api("GET", "/game/analysis/replay");
+        const events = Array.isArray(r?.events) ? r.events : [];
+        if (events.length > 0) {
+          openAi();
+          resetAi();
+          for (const evt of events) dispatchAiEventOrdered(evt);
+        }
+      } catch { /* */ } finally {
+        aiRehydrating = false;
+        const buffered = aiLiveBuffer;
+        aiLiveBuffer = [];
+        for (const evt of buffered) dispatchAiEventOrdered(evt);
+      }
+    }
+    rehydrateAiPanel();
+
+    // --- Hook events for control-bar state changes (board state changes
+    //     are GameView's responsibility). ---
+    const offEvent = ctx.events.on((evt) => {
+      // AI events: buffer until replay completes, then dedupe by seq.
+      if (evt.kind?.startsWith("ai_")) {
+        if (aiRehydrating) aiLiveBuffer.push(evt);
+        else dispatchAiEventOrdered(evt);
+        return;
+      }
+      switch (evt.kind) {
         case "engine_search_start": {
           // Engine is busy. While the AI window is open this means the
           // agent is in a tool call; flip the status line so the user

@@ -31,6 +31,9 @@ EventKind = Literal[
     "sprt_update",
     "ai_info",
     "ai_thinking",
+    "ai_tool_call",
+    "ai_tool_call_failed",
+    "ai_corrective",
     "system",
 ]
 
