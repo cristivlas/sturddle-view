@@ -129,7 +129,7 @@ to OpenAI function-call format on the wire.
 
 | Mode | Game state | Button action | Path |
 |------|-----------|---------------|------|
-| play | in progress | live coach commentary (rolling session) | 1 |
+| play | in progress | live coach commentary (one-shot per click) | 1 |
 | play | finished   | post-game analysis | 3 |
 | view | navigating | live commentator on current position | 2 |
 | view | analyze-all | post-game analysis over full PGN | 3 |
@@ -150,6 +150,11 @@ to OpenAI function-call format on the wire.
   change, not a refactor.
 
 ### Live session model (paths 1, 2)
+
+**Indefinitely postponed.** Each Analyze click is a fresh one-shot
+turn (cold system prompt + initial user message, no carry-over). The
+rolling-session design below is recorded for posterity; client/server
+code MUST NOT assume any of it.
 
 - Rolling agent session for the lifetime of the game (not per-click)
 - System prompt + accumulated turns persist across Analyze invocations

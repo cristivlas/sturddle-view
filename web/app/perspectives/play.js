@@ -532,6 +532,11 @@ export const playPerspective = {
     let turn = "white";
     let paused = false;
     let analyzing = false;
+    // AI mode only: flips true when an AI turn terminates naturally
+    // (not cancelled/error). Server stays in ANALYSIS so the board is
+    // locked, but the ribbon stops shouting "stopping..." and the
+    // toast disappears. Reset on next analyze start.
+    let aiTurnFinished = false;
     // Single sync point: every analyzing write goes through this setter so
     // the module-scope mirror (_analyzing) used by isAnalyzing() stays
     // current. Direct `analyzing = ...` writes will drift -- always call
@@ -539,6 +544,9 @@ export const playPerspective = {
     function setAnalyzing(v) {
       analyzing = !!v;
       _analyzing = analyzing;
+      // Server flipped out of ANALYSIS -- clear the AI-finished latch
+      // so the ribbon can re-enable when the game is paused again.
+      if (!analyzing) aiTurnFinished = false;
     }
     // View mode state (set from board_update.view payload).
     let viewing = false;
@@ -886,23 +894,29 @@ export const playPerspective = {
       setDisabled(savePgnBtn, movesPlayed === 0);
       setDisabled(switchSidesBtn, analyzing || gameOver || !resignAvailable);
       setDisabled(resignBtn, paused || analyzing || gameOver || !resignAvailable);
-      // Analysis is reachable only from a paused game (and to stop, while
-      // analyzing). Eliminates the "pause + enter analysis" combined step.
+      // AI mode + AI turn already finished: drop the active look but
+      // keep the button disabled. Server stays in ANALYSIS; user
+      // exits by closing the AI window (which calls /game/analysis/stop).
+      // Side effect: even when paused, the user cannot start a new
+      // analysis without closing the AI window first. Intentional --
+      // the open AI window pins ANALYSIS mode, and re-entering would
+      // overwrite the prose the user is still reading.
+      const showAsActive = analyzing && !aiTurnFinished;
       setDisabled(
         analyzeBtn,
-        gameOver || !resignAvailable || (!analyzing && !paused),
+        gameOver || !resignAvailable || (!showAsActive && !paused) || aiTurnFinished,
       );
-      analyzeBtn.classList.toggle("is-active", analyzing);
+      analyzeBtn.classList.toggle("is-active", showAsActive);
       analyzeBtn.setAttribute(
         "aria-label",
-        analyzing ? "Stop analysis" : "Analysis mode",
+        showAsActive ? "Stop analysis" : "Analysis mode",
       );
       analyzeBtn.setAttribute(
         "title",
-        analyzing ? "Stop analysis" : "Analysis mode",
+        showAsActive ? "Stop analysis" : "Analysis mode",
       );
       analyzeBtn.querySelector("wa-icon").setAttribute(
-        "name", analyzing ? "circle-stop" : "magnifying-glass",
+        "name", showAsActive ? "circle-stop" : "magnifying-glass",
       );
     }
 
@@ -934,6 +948,20 @@ export const playPerspective = {
                 variant: "danger",
                 duration: 6000,
               });
+            }
+            // Natural completion: hide the "stopping" affordances --
+            // toast and ribbon active look. Server stays in ANALYSIS;
+            // closing the AI window is what exits. Skipped on
+            // cancelled/error to preserve normal cleanup behavior.
+            // Per-turn dismissal is correct because each Analyze click
+            // is a one-shot turn (no rolling session; see
+            // ai-analysis-spec.md §Live session model -- indefinitely
+            // postponed).
+            if (!p.cancelled && !p.error) {
+              aiTurnFinished = true;
+              dismissAnalysisToast?.();
+              dismissAnalysisToast = null;
+              refreshButtons();
             }
           }
           return true;
@@ -984,6 +1012,10 @@ export const playPerspective = {
     let aiMaxSeq = 0;
     function dispatchAiEventOrdered(evt) {
       const seq = evt?.payload?.seq ?? 0;
+      // Server resets seq to 1 at the start of each turn. A drop in
+      // seq means a new turn began; reset the high-water mark so we
+      // don't silently swallow the whole turn as "already seen".
+      if (seq && seq < aiMaxSeq) aiMaxSeq = 0;
       if (seq && seq <= aiMaxSeq) return;
       if (seq) aiMaxSeq = seq;
       dispatchAiEvent(evt);
@@ -1679,6 +1711,7 @@ export const playPerspective = {
         reportError(ctx, "Stop analysis failed", e);
         return;
       }
+      aiTurnFinished = false;
       dismissAnalysisToast?.();
       dismissAnalysisToast = null;
       closeDebugWindowsPersist();
@@ -1692,6 +1725,7 @@ export const playPerspective = {
       try {
         await ctx.api("POST", "/game/analysis/start", {});
         restoreViewAnalysisWindows(ctx.events);
+        aiTurnFinished = false;
         showAnalysisToast();
         // Server picks the path (engine vs AI) based on settings; AI
         // panel opens either way so the user sees prose stream. openAi
