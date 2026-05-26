@@ -1241,7 +1241,12 @@ class HumanVsEngine:
             await self._publish_clock()
         return self._game_id
 
-    async def play_from_here(self, tc: TimeControl, inherit_clocks: bool = False) -> str:
+    async def play_from_here(
+        self,
+        tc: TimeControl,
+        inherit_clocks: bool = False,
+        player_name: str | None = None,
+    ) -> str:
         """Exit view mode by starting a fresh play game seeded with plies
         0..cursor. New game_id, new autosave file. Side-to-play is whoever
         is to move at the cursor (matches today's import default).
@@ -1307,7 +1312,7 @@ class HumanVsEngine:
         new_id = await self.new_game(
             human_white=human_white,
             tc=tc,
-            player_name=self._player_name,
+            player_name=player_name or self._player_name,
             start_fen=start_fen,
             start_moves_uci=seed_moves,
             seed_clock_history=seed_clocks,

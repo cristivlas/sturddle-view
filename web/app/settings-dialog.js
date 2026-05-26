@@ -15,6 +15,10 @@ export const PLAYER_NAME_KEY = "sturddle:player_name";
 export const PLAYER_NAME_DEFAULT = "Human";
 const PLAYER_NAME_MAX_LEN = 32;
 
+export function getConfiguredPlayerName() {
+  return localStorage.getItem(PLAYER_NAME_KEY) || PLAYER_NAME_DEFAULT;
+}
+
 // AI settings wire field names. Named per project's no-string-literals rule.
 // Server-side mirror lives in server/sturddle_view/api/settings.py (_AI_*_KEY).
 const AI_ENABLED_KEY = "ai_enabled";
