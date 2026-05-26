@@ -819,6 +819,7 @@ export const playPerspective = {
         // server's fresh game_id is accepted; set it to the returned
         // id so subsequent updates are still scoped.
         view.setGameId(null);
+        closeAi();
         const r = await ctx.api("POST", "/game/import", importPayload);
         if (r?.game_id) view.setGameId(r.game_id);
       } catch (e) {
@@ -1282,6 +1283,7 @@ export const playPerspective = {
         const playerName = getConfiguredPlayerName();
         view.setGameId(null);
         view.setPlayerName(playerName);
+        closeAi();
         const r = await ctx.api("POST", "/game/new", { player_name: playerName });
         view.setGameId(r.game_id);
         view.setHumanWhite(!!r.human_white);
@@ -1394,6 +1396,7 @@ export const playPerspective = {
       // Different game while viewing -- confirm before replacing.
       if (!await _confirmReplaceViewedGame({ incomingHash: result.hash, incomingSummary: result.summary })) return;
       try {
+        closeAi();
         const r = await ctx.api("POST", "/game/import", { format: result.format, text: result.text });
         view.setGameId(r.game_id);
         ctx.api("POST", "/game/sync", {}).catch(() => {});
@@ -1473,6 +1476,7 @@ export const playPerspective = {
         // races view_last() and resets the cursor to 0.
         suppressCommentsForEditTransition = true;
         try {
+          closeAi();
           const r = await ctx.api("POST", "/game/view/start", {});
           view.setGameId(r.game_id);
           await ctx.api("POST", "/game/sync", {});
@@ -1495,6 +1499,7 @@ export const playPerspective = {
         }
       }
       try {
+        closeAi();
         await ctx.api("POST", "/game/edit/start", {});
       } catch (e) {
         _clearEditTransitionSuppression();
@@ -1662,6 +1667,7 @@ export const playPerspective = {
       try {
         const playerName = getConfiguredPlayerName();
         view.setPlayerName(playerName);
+        closeAi();
         const r = await ctx.api("POST", "/game/view/play-from-here", { player_name: playerName });
         view.setGameId(r.game_id);
         // Snapshot TC for drift detection (mirrors onNewGame).
