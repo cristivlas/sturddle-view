@@ -166,7 +166,7 @@ function renderRevision(el, { illegalMoves, falseClaims, castleViolations }) {
   el.append(head);
   const parts = [];
   if (illegalMoves && illegalMoves.length) {
-    parts.push(`illegal ${illegalMoves.join(", ")}`);
+    parts.push(`invalid moves: ${illegalMoves.join(", ")}`);
   }
   if (falseClaims && falseClaims.length) {
     parts.push(falseClaims.map((c) => `no ${c}`).join(", "));
