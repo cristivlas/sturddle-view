@@ -865,9 +865,12 @@ export const playPerspective = {
         setDisabled(viewPlayFromHereBtn, analyzing || viewGameOver);
         // Engine-less view: analyze is unreachable. Tooltip points at
         // Engines tab so the user knows the next step.
-        setDisabled(viewAnalyzeBtn, noEngine && !analyzing);
-        viewAnalyzeBtn.classList.toggle("is-active", analyzing);
-        const viewAnalyzeLabel = analyzing
+        // AI turn finished but server still ANALYZING: show ribbon as
+        // normal ("Analysis mode") even though `analyzing` is true.
+        const viewShowAsActive = analyzing && !aiTurnFinished;
+        setDisabled(viewAnalyzeBtn, noEngine && !viewShowAsActive);
+        viewAnalyzeBtn.classList.toggle("is-active", viewShowAsActive);
+        const viewAnalyzeLabel = viewShowAsActive
           ? "Stop analysis"
           : noEngine
             ? "Register an engine in Settings to analyze"
@@ -875,7 +878,7 @@ export const playPerspective = {
         viewAnalyzeBtn.setAttribute("aria-label", viewAnalyzeLabel);
         viewAnalyzeBtn.setAttribute("title", viewAnalyzeLabel);
         viewAnalyzeBtn.querySelector("wa-icon").setAttribute(
-          "name", analyzing ? "circle-stop" : "magnifying-glass",
+          "name", viewShowAsActive ? "circle-stop" : "magnifying-glass",
         );
         return;
       }
@@ -894,17 +897,16 @@ export const playPerspective = {
       setDisabled(savePgnBtn, movesPlayed === 0);
       setDisabled(switchSidesBtn, analyzing || gameOver || !resignAvailable);
       setDisabled(resignBtn, paused || analyzing || gameOver || !resignAvailable);
-      // AI mode + AI turn already finished: drop the active look but
-      // keep the button disabled. Server stays in ANALYSIS; user
-      // exits by closing the AI window (which calls /game/analysis/stop).
-      // Side effect: even when paused, the user cannot start a new
-      // analysis without closing the AI window first. Intentional --
-      // the open AI window pins ANALYSIS mode, and re-entering would
-      // overwrite the prose the user is still reading.
+      // AI turn finished but server is still ANALYZING (user hasn't
+      // closed the AI window yet). Show the ribbon button as normal
+      // ("Analysis mode", magnifying-glass, enabled) -- the rest of
+      // the reachability gates (gameOver / no engine / not paused)
+      // still apply.
       const showAsActive = analyzing && !aiTurnFinished;
+      const analyzeReachable = !gameOver && resignAvailable && (paused || aiTurnFinished);
       setDisabled(
         analyzeBtn,
-        gameOver || !resignAvailable || (!showAsActive && !paused) || aiTurnFinished,
+        !showAsActive && !analyzeReachable,
       );
       analyzeBtn.classList.toggle("is-active", showAsActive);
       analyzeBtn.setAttribute(
