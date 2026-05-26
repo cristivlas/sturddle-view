@@ -682,6 +682,12 @@ async def resume(request: Request) -> dict:
     return {"ok": True}
 
 
+def _clear_replay(request: Request) -> None:
+    coord = getattr(request.app.state, "ai_coordinator", None)
+    if coord is not None:
+        coord.clear_replay()
+
+
 @router.post("/analysis/start")
 async def analysis_start(request: Request) -> dict:
     """Enter analysis mode. The server picks the path:
@@ -696,6 +702,9 @@ async def analysis_start(request: Request) -> dict:
         await hve.start_analysis()
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    # Drop any prior session's buffer before a new one begins, in case
+    # the previous /analysis/stop was skipped (mode toggle, crash).
+    _clear_replay(request)
     if getattr(request.app.state.settings, "ai_enabled", False):
         await start_ai_turn(request)
     return {"ok": True}
@@ -703,15 +712,13 @@ async def analysis_start(request: Request) -> dict:
 
 @router.get("/analysis/replay")
 async def analysis_replay(request: Request) -> dict:
-    """Return the buffered AI events for the current game's most recent
-    turn. Lets a client reconnecting mid-turn rebuild the panel from the
-    bus tap it missed. Empty list when no live game or no buffer."""
+    """Return the buffered AI events for the in-flight analysis turn.
+    Lets a client reconnecting mid-analysis rebuild the panel from the
+    bus events it missed. Empty list when no analysis is live."""
     coord = getattr(request.app.state, "ai_coordinator", None)
     if coord is None:
         return {"events": []}
-    hve = getattr(request.app.state, "hve", None)
-    game_id = getattr(hve, "game_id", None) if hve else None
-    return {"events": coord.replay(game_id)}
+    return {"events": coord.replay()}
 
 
 @router.post("/analysis/stop")
@@ -725,6 +732,9 @@ async def analysis_stop(request: Request) -> dict:
         await hve.stop_analysis()
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    # Drop the replay buffer -- analysis is over; a fresh reconnect
+    # should see nothing, not a stale snapshot of the last turn.
+    _clear_replay(request)
     return {"ok": True}
 
 

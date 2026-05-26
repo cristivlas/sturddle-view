@@ -27,7 +27,6 @@ from sturddle_view.llm import (
 from sturddle_view.play.ai_analysis import (
     AIAnalysisCoordinator,
     ERROR_DETAIL_MAX_LEN,
-    MAX_REPLAY_GAMES,
 )
 
 
@@ -914,7 +913,7 @@ async def test_replay_buffer_captures_turn_events():
     coord = AIAnalysisCoordinator(bus, provider, registry=ToolRegistry())
 
     await coord.run(game_id="g")
-    replay = coord.replay("g")
+    replay = coord.replay()
 
     kinds = [e["kind"] for e in replay]
     assert "ai_info" in kinds
@@ -927,8 +926,8 @@ async def test_replay_buffer_captures_turn_events():
 
 @pytest.mark.asyncio
 async def test_replay_buffer_resets_on_new_turn():
-    # Two consecutive turns on the same game_id: replay holds the
-    # latest turn only, with seq restarting at 1.
+    # Two consecutive turns: buffer holds the latest turn only,
+    # with seq restarting at 1.
     bus = EventBus()
     await bus.subscribe()
     coord = AIAnalysisCoordinator(
@@ -936,14 +935,14 @@ async def test_replay_buffer_resets_on_new_turn():
         registry=ToolRegistry(),
     )
     await coord.run(game_id="g")
-    assert len(coord.replay("g")) > 0
+    assert len(coord.replay()) > 0
 
     # Second turn -- buffer resets.
     await coord.run(
         game_id="g",
         provider=ScriptedProvider(rounds=[[ProviderChunk(kind="text", text="two")]]),
     )
-    second = coord.replay("g")
+    second = coord.replay()
     texts = [e["payload"].get("delta") for e in second if e["payload"].get("delta")]
     assert texts == ["two"]
     # Seq counter resets per turn.
@@ -951,28 +950,9 @@ async def test_replay_buffer_resets_on_new_turn():
 
 
 @pytest.mark.asyncio
-async def test_replay_buffer_isolated_per_game_id():
-    bus = EventBus()
-    await bus.subscribe()
-    coord = AIAnalysisCoordinator(
-        bus, ScriptedProvider(rounds=[[ProviderChunk(kind="text", text="a")]]),
-        registry=ToolRegistry(),
-    )
-    await coord.run(game_id="game-a")
-    await coord.run(
-        game_id="game-b",
-        provider=ScriptedProvider(rounds=[[ProviderChunk(kind="text", text="b")]]),
-    )
-
-    a_texts = [e["payload"].get("delta") for e in coord.replay("game-a") if e["payload"].get("delta")]
-    b_texts = [e["payload"].get("delta") for e in coord.replay("game-b") if e["payload"].get("delta")]
-    assert a_texts == ["a"]
-    assert b_texts == ["b"]
-
-
-@pytest.mark.asyncio
-async def test_replay_buffer_returns_empty_for_none_game_id():
-    # No live game -> replay must not leak whatever ran last.
+async def test_clear_replay_empties_buffer():
+    # Analysis stop drops the buffer so a fresh reconnect sees nothing,
+    # not a stale snapshot of the last turn.
     bus = EventBus()
     await bus.subscribe()
     coord = AIAnalysisCoordinator(
@@ -980,31 +960,9 @@ async def test_replay_buffer_returns_empty_for_none_game_id():
         registry=ToolRegistry(),
     )
     await coord.run(game_id="g")
-    assert coord.replay(None) == []
-
-
-@pytest.mark.asyncio
-async def test_replay_buffer_lru_evicts_oldest():
-    # Run more turns than the cap; oldest game_ids drop out of the
-    # buffer, latest stay.
-    bus = EventBus()
-    await bus.subscribe()
-    coord = AIAnalysisCoordinator(
-        bus, ScriptedProvider(rounds=[[ProviderChunk(kind="text", text="x")]]),
-        registry=ToolRegistry(),
-    )
-    total = MAX_REPLAY_GAMES + 3
-    for i in range(total):
-        await coord.run(
-            game_id=f"g{i}",
-            provider=ScriptedProvider(rounds=[[ProviderChunk(kind="text", text="x")]]),
-        )
-    # Oldest 3 evicted.
-    assert coord.replay("g0") == []
-    assert coord.replay("g1") == []
-    assert coord.replay("g2") == []
-    # Most recent still there.
-    assert len(coord.replay(f"g{total - 1}")) > 0
+    assert len(coord.replay()) > 0
+    coord.clear_replay()
+    assert coord.replay() == []
 
 
 @pytest.mark.asyncio
