@@ -19,6 +19,10 @@ const GEO_KEY       = "sturddle:ai:geo";
 const WIN_STATE_KEY = "sturddle:ai:winstate";
 const DOCKED_KEY    = "sturddle:ai:docked";
 const OPEN_KEY      = "sturddle:ai:open";
+// Last model name shown in the panel title. Pinned at analyze-start;
+// reload restores so the title reflects what last ran, not what is
+// currently selected in Settings.
+const TITLE_MODEL_KEY = "sturddle:ai:title-model";
 
 // Status text shown next to a spinner while a turn is in flight. The
 // LLM may take seconds (model latency + engine tool calls) before any
@@ -247,9 +251,21 @@ export function setOnReanalyzeAi(fn) {
 }
 
 export function setAiTitle(modelName) {
-  const t = modelName ? `AI Analysis (${modelName})` : "AI Analysis";
+  const name = modelName || "";
+  const t = name ? `AI Analysis (${name})` : "AI Analysis";
   inst.setTitle(t);
+  try {
+    if (name) localStorage.setItem(TITLE_MODEL_KEY, name);
+    else localStorage.removeItem(TITLE_MODEL_KEY);
+  } catch { /* quota / disabled storage; non-fatal */ }
 }
+
+// Restore the last-run title on module load so a page reload does not
+// reset the panel to the bare "AI Analysis" label.
+try {
+  const saved = localStorage.getItem(TITLE_MODEL_KEY);
+  if (saved) inst.setTitle(`AI Analysis (${saved})`);
+} catch { /* non-fatal */ }
 
 export function openAi() {
   if (inst.wb || inst.slot) return;

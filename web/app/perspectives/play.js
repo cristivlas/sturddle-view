@@ -487,13 +487,18 @@ export const playPerspective = {
     // us tell the user "applies on next game" if they edit TC mid-play.
     let gameTcInitial = null;
     let gameTcIncrement = null;
+    // Latest AI provider/model from settings, captured at analyze-start
+    // time. We do not write to setAiTitle on every settings refresh --
+    // the panel title should reflect what is actually running, not what
+    // is selected in Settings.
+    let aiTitleModel = "";
     async function refreshSettings({ notifyOnDrift = false } = {}) {
       try {
         const s = await ctx.api("GET", "/settings");
         allowTakeback = s.allow_takeback !== false;
         showPgnComments = s.view_show_pgn_comments !== false;
         aiEnabled = !!s.ai_enabled;
-        setAiTitle(s.ai_enabled ? (s.ai_model || "") : "");
+        aiTitleModel = s.ai_enabled ? (s.ai_model || "") : "";
         syncCommentsVisibility();
         if (notifyOnDrift && !gameOver && resignAvailable) {
           const drift = [];
@@ -1737,6 +1742,10 @@ export const playPerspective = {
       aiTurnFinished = false;
       showAnalysisToast();
       if (aiEnabled) {
+        // Pin the title to the model that is actually about to run.
+        // Mid-session provider/model edits do not retitle until the
+        // user clicks Analyze (or the re-analyze button) again.
+        setAiTitle(aiTitleModel);
         openAi();
         resetAi();
       }
