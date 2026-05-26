@@ -14,6 +14,7 @@ needs to stay one format.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, AsyncIterator
@@ -31,6 +32,12 @@ log = logging.getLogger(__name__)
 
 
 DEFAULT_BASE_URL = "http://localhost:11434"
+
+# Max parallel /api/show calls during list_models capability filtering.
+# Bounds simultaneous load on the local daemon when a user has many
+# models pulled. Cheap calls (single-digit ms each); the cap mostly
+# keeps things polite.
+_LIST_MODELS_SHOW_CONCURRENCY = 8
 
 
 # ----- Translation helpers (pure functions; covered by unit tests) -----
@@ -253,9 +260,12 @@ class OllamaProvider(LLMProvider):
             await client.post(url, json={"model": model, "keep_alive": 0})
 
     async def list_models(self) -> list[str]:
-        """List models the daemon has pulled, via the OpenAI-compatible
-        endpoint. Returns sorted ids; raises RuntimeError on HTTP / parse
-        failure so the API layer can surface a useful error to the UI."""
+        """List tool-capable models the daemon has pulled. Filters out
+        models whose `/api/show` capabilities list does not include
+        `tools` -- the agent loop requires tool calling, so non-capable
+        models would only fail mid-turn. Returns sorted ids; raises
+        RuntimeError on HTTP / parse failure so the API layer can
+        surface a useful error to the UI."""
         url = f"{self._base_url}/v1/models"
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(url)
@@ -265,9 +275,51 @@ class OllamaProvider(LLMProvider):
                     f"{extract_error_message(resp.text[:500])}"
                 )
             body = resp.json()
-        data = body.get("data") or []
-        ids = [m.get("id") for m in data if isinstance(m, dict) and m.get("id")]
-        return sorted(set(ids))
+            data = body.get("data") or []
+            ids = [m.get("id") for m in data if isinstance(m, dict) and m.get("id")]
+            ids = sorted(set(ids))
+            return await self._filter_tool_capable(client, ids)
+
+    async def _filter_tool_capable(
+        self, client: "httpx.AsyncClient", ids: list[str],
+    ) -> list[str]:
+        """Return the subset of `ids` whose /api/show capabilities
+        include `tools`. Best-effort: a model whose /api/show fails or
+        omits capabilities is dropped (cannot prove tool support)."""
+        if not ids:
+            return []
+        show_url = f"{self._base_url}/api/show"
+        sem = asyncio.Semaphore(_LIST_MODELS_SHOW_CONCURRENCY)
+
+        async def _capable(model_id: str) -> tuple[str, bool]:
+            async with sem:
+                try:
+                    resp = await client.post(show_url, json={"name": model_id})
+                except Exception as exc:
+                    log.debug("ollama /api/show %s raised: %s", model_id, exc)
+                    return model_id, False
+            if resp.status_code != 200:
+                log.debug("ollama /api/show %s -> %s", model_id, resp.status_code)
+                return model_id, False
+            try:
+                body = resp.json()
+            except Exception as exc:
+                log.debug("ollama /api/show %s: bad json: %s", model_id, exc)
+                return model_id, False
+            caps = body.get("capabilities")
+            if caps is None:
+                log.warning(
+                    "ollama /api/show for %s returned no `capabilities` field; "
+                    "model will be hidden from the tool-capable list. "
+                    "Upgrade Ollama if the dropdown is unexpectedly empty.",
+                    model_id,
+                )
+                return model_id, False
+            caps_lower = {str(c).lower() for c in caps}
+            return model_id, "tools" in caps_lower
+
+        results = await asyncio.gather(*(_capable(i) for i in ids))
+        return [mid for mid, ok in results if ok]
 
     async def stream(
         self,

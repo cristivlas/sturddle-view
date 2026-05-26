@@ -40,10 +40,19 @@ class _FakeResponse:
 
 
 class _FakeClient:
-    def __init__(self, response: _FakeResponse) -> None:
+    def __init__(
+        self,
+        response: _FakeResponse,
+        *,
+        post_responses: dict[str, _FakeResponse] | None = None,
+    ) -> None:
         self._response = response
+        # Per-model /api/show responses keyed by model id. Unscripted
+        # models default to empty capabilities (filtered out).
+        self._post_responses = post_responses or {}
         self.last_get_url: str | None = None
         self.last_get_headers: dict | None = None
+        self.post_calls: list[tuple[str, dict | None]] = []
 
     async def __aenter__(self) -> "_FakeClient":
         return self
@@ -56,15 +65,33 @@ class _FakeClient:
         self.last_get_headers = headers
         return self._response
 
+    async def post(self, url: str, *, json: dict | None = None) -> _FakeResponse:
+        self.post_calls.append((url, json))
+        if json and isinstance(json, dict):
+            key = json.get("name") or ""
+            if key in self._post_responses:
+                return self._post_responses[key]
+        return _FakeResponse(200, {"capabilities": []})
 
-def _install_fake_httpx(monkeypatch, module, response: _FakeResponse) -> _FakeClient:
-    client = _FakeClient(response)
+
+def _install_fake_httpx(
+    monkeypatch,
+    module,
+    response: _FakeResponse,
+    *,
+    post_responses: dict[str, _FakeResponse] | None = None,
+) -> _FakeClient:
+    client = _FakeClient(response, post_responses=post_responses)
 
     class _ShimHttpx:
         AsyncClient = lambda *a, **kw: client  # noqa: E731
 
     monkeypatch.setattr(module, "httpx", _ShimHttpx)
     return client
+
+
+def _tool_capable(model_id: str) -> _FakeResponse:
+    return _FakeResponse(200, {"capabilities": ["completion", "tools"]})
 
 
 # ---------- Ollama ---------------------------------------------------
@@ -80,12 +107,98 @@ async def test_ollama_list_models_returns_sorted_unique_ids(monkeypatch):
             {"id": "gemma2:latest"},  # dup, must collapse
         ],
     }
-    client = _install_fake_httpx(monkeypatch, ollama_mod, _FakeResponse(200, body))
+    client = _install_fake_httpx(
+        monkeypatch, ollama_mod, _FakeResponse(200, body),
+        post_responses={
+            "gemma2:latest": _tool_capable("gemma2:latest"),
+            "llama3:8b": _tool_capable("llama3:8b"),
+        },
+    )
 
     p = OllamaProvider(base_url="http://fake", model="m")
     models = await p.list_models()
     assert models == ["gemma2:latest", "llama3:8b"]
     assert client.last_get_url == "http://fake/v1/models"
+
+
+@pytest.mark.asyncio
+async def test_ollama_list_models_filters_non_tool_capable(monkeypatch):
+    # Two models pulled; only one supports tools. Non-tool-capable
+    # models are filtered out so the dropdown never offers a model
+    # that would fail mid-turn.
+    body = {
+        "data": [
+            {"id": "gemma2:latest"},        # no tools cap
+            {"id": "qwen3:32b"},            # tools cap
+            {"id": "llava:7b"},             # vision-only
+        ],
+    }
+    _install_fake_httpx(
+        monkeypatch, ollama_mod, _FakeResponse(200, body),
+        post_responses={
+            "gemma2:latest": _FakeResponse(200, {"capabilities": ["completion"]}),
+            "qwen3:32b": _tool_capable("qwen3:32b"),
+            "llava:7b": _FakeResponse(200, {"capabilities": ["completion", "vision"]}),
+        },
+    )
+
+    p = OllamaProvider(base_url="http://fake", model="m")
+    assert await p.list_models() == ["qwen3:32b"]
+
+
+@pytest.mark.asyncio
+async def test_ollama_list_models_capability_check_is_case_insensitive(monkeypatch):
+    body = {"data": [{"id": "weird:1"}, {"id": "weirder:1"}]}
+    _install_fake_httpx(
+        monkeypatch, ollama_mod, _FakeResponse(200, body),
+        post_responses={
+            "weird:1": _FakeResponse(200, {"capabilities": ["Tools"]}),
+            "weirder:1": _FakeResponse(200, {"capabilities": ["TOOLS"]}),
+        },
+    )
+
+    p = OllamaProvider(base_url="http://fake", model="m")
+    assert await p.list_models() == ["weird:1", "weirder:1"]
+
+
+@pytest.mark.asyncio
+async def test_ollama_list_models_warns_when_capabilities_absent(monkeypatch, caplog):
+    # Older Ollama versions don't return `capabilities`. The model is
+    # dropped (no proof of tool support) and a WARNING is logged so the
+    # user can diagnose an unexpectedly empty dropdown.
+    import logging
+    body = {"data": [{"id": "ancient:1"}]}
+    _install_fake_httpx(
+        monkeypatch, ollama_mod, _FakeResponse(200, body),
+        post_responses={
+            "ancient:1": _FakeResponse(200, {}),  # no capabilities field
+        },
+    )
+
+    p = OllamaProvider(base_url="http://fake", model="m")
+    with caplog.at_level(logging.WARNING, logger="sturddle_view.llm.ollama"):
+        result = await p.list_models()
+    assert result == []
+    assert any("ancient:1" in r.message and "capabilities" in r.message
+               for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_ollama_list_models_drops_model_when_show_fails(monkeypatch):
+    # If /api/show 5xxs for a model we cannot prove tool capability,
+    # so drop it. Better than offering a model the agent will then
+    # fail on.
+    body = {"data": [{"id": "good:latest"}, {"id": "bad:latest"}]}
+    _install_fake_httpx(
+        monkeypatch, ollama_mod, _FakeResponse(200, body),
+        post_responses={
+            "good:latest": _tool_capable("good:latest"),
+            "bad:latest": _FakeResponse(503, "down"),
+        },
+    )
+
+    p = OllamaProvider(base_url="http://fake", model="m")
+    assert await p.list_models() == ["good:latest"]
 
 
 @pytest.mark.asyncio
@@ -156,7 +269,13 @@ def _client_for_provider(tmp_path, *, provider: str, api_key: str = "", base_url
 
 def test_endpoint_returns_models_for_ollama(tmp_path, monkeypatch):
     body = {"data": [{"id": "gemma2:latest"}, {"id": "llama3:8b"}]}
-    _install_fake_httpx(monkeypatch, ollama_mod, _FakeResponse(200, body))
+    _install_fake_httpx(
+        monkeypatch, ollama_mod, _FakeResponse(200, body),
+        post_responses={
+            "gemma2:latest": _tool_capable("gemma2:latest"),
+            "llama3:8b": _tool_capable("llama3:8b"),
+        },
+    )
 
     with _client_for_provider(tmp_path, provider="ollama", base_url="http://fake") as c:
         r = c.get("/settings/ai/models")
