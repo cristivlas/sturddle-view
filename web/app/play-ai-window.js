@@ -388,9 +388,8 @@ export function markAiDone({
     const multiRound = inst.body._roundPanels.size > 1;
     const naturalDone = !error && !roundCap && !noResponse && !cancelled;
     if (multiRound && naturalDone) {
-      const sep = document.createElement("hr");
-      sep.className = "play-ai-final-sep";
-      slot.append(sep);
+      const last = inst.body._roundPanels.get(inst.body._currentRound);
+      if (last) last.para.classList.add("play-ai-prose-final");
     }
     if (error) {
       const block = document.createElement("div");

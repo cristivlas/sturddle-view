@@ -25,6 +25,7 @@
   --status-err-fg: #ff8a80;
   --status-err-bg: rgba(220, 50, 50, 0.15);
   --play-ai-warning-bg: rgba(255, 255, 255, 0.18);
+  --play-ai-prose-final-border: rgba(255, 255, 255, 0.6);
 
 
   --wa-font-family-body: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -399,14 +400,10 @@ wa-select::part(listbox) {
 .play-ai-terminal {
   margin: 0 12px 8px;
 }
-/* Subtle "AI is done" divider below the final round's prose on
-   multi-round turns. Neutral grey so it doesn't compete with the
-   amber revision banner. */
-.play-ai-final-sep {
-  border: none;
-  border-top: 1px solid var(--wa-color-neutral-fill-soft, #ccc);
-  margin: 8px 0 0;
-  opacity: 0.5;
+/* Final prose on a natural multi-round completion: thicker, brighter
+   bottom border signals "AI is done" without a separate separator. */
+.play-ai-prose-final {
+  border: 2px solid var(--play-ai-prose-final-border);
 }
 .play-ai-cancelled {
   display: inline-block;
