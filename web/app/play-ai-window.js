@@ -94,10 +94,16 @@ function buildRoundPanel() {
   const panel = document.createElement("section");
   panel.className = "play-ai-round";
   // Optional revision banner (only on rounds triggered by a
-  // validator hit on the previous round).
-  const revision = document.createElement("div");
+  // validator hit on the previous round). A <details> so clicking
+  // the banner reveals the previous round's redacted prose inline.
+  const revision = document.createElement("details");
   revision.className = "play-ai-revision";
   revision.hidden = true;
+  const revisionSummary = document.createElement("summary");
+  revisionSummary.className = "play-ai-revision-summary";
+  const revisionBody = document.createElement("div");
+  revisionBody.className = "play-ai-revision-body";
+  revision.append(revisionSummary, revisionBody);
   // Timeline: Thinking + tool calls share one container so a single
   // CSS left rule connects them visually. Prose is outside the
   // timeline so it isn't crossed by the rule.
@@ -118,7 +124,8 @@ function buildRoundPanel() {
   para.className = "play-ai-prose";
   panel.append(revision, timeline, para);
   return {
-    panel, revision,
+    panel,
+    revision: { details: revision, summary: revisionSummary, body: revisionBody },
     thinking: { details, body: thinkBody },
     tools, para,
     hasProse: false,
@@ -151,6 +158,10 @@ function ensureRoundPanel(root, roundIndex) {
   if (rev) {
     renderRevision(entry.revision, rev);
     root._pendingRevision.delete(roundIndex);
+    if (roundIndex > 0) {
+      const prev = root._roundPanels.get(roundIndex - 1);
+      if (prev) _moveProseIntoRevision(prev, entry);
+    }
   }
   root._rounds.append(entry.panel);
   root._roundPanels.set(roundIndex, entry);
@@ -158,12 +169,12 @@ function ensureRoundPanel(root, roundIndex) {
   return entry;
 }
 
-function renderRevision(el, { illegalMoves, falseClaims, castleViolations }) {
-  el.hidden = false;
-  el.textContent = "";  // reset
+function renderRevision({ details, summary }, { illegalMoves, falseClaims, castleViolations }) {
+  details.hidden = false;
+  summary.textContent = "";  // reset
   const head = document.createElement("strong");
   head.textContent = "Revision: ";
-  el.append(head);
+  summary.append(head);
   const parts = [];
   if (illegalMoves && illegalMoves.length) {
     parts.push(`invalid moves: ${illegalMoves.join(", ")}`);
@@ -174,7 +185,7 @@ function renderRevision(el, { illegalMoves, falseClaims, castleViolations }) {
   if (castleViolations && castleViolations.length) {
     parts.push("castling not legal");
   }
-  el.append(document.createTextNode(parts.join("; ")));
+  summary.append(document.createTextNode(parts.join("; ")));
 }
 
 function formatToolArgs(input) {
@@ -188,23 +199,15 @@ function formatToolArgs(input) {
   return pairs.join(", ");
 }
 
-// Wrap a round's prose paragraph in a collapsed <details> so a
-// reader can toggle the redacted text on/off. Idempotent -- if the
-// prose is already wrapped, leaves it as-is.
-function _wrapProseAsCollapsed(entry) {
-  const para = entry.para;
+// Move the previous round's prose into the current round's revision
+// banner body so clicking the banner reveals the redacted text inline.
+// Idempotent -- skips when the prose has already been moved out of
+// the prior round's panel.
+function _moveProseIntoRevision(prevEntry, currentEntry) {
+  const para = prevEntry.para;
   if (!para || !para.isConnected) return;
-  const parent = para.parentNode;
-  if (parent && parent.tagName === "DETAILS") return;  // already wrapped
-  const details = document.createElement("details");
-  details.className = "play-ai-redacted";
-  details.open = false;
-  const summary = document.createElement("summary");
-  // Glyph-only: the strikethrough redacted text below is already
-  // labeling itself; the summary just needs a clickable marker.
-  details.append(summary);
-  para.replaceWith(details);
-  details.append(para);
+  if (para.parentNode === currentEntry.revision.body) return;
+  currentEntry.revision.body.append(para);
 }
 
 
@@ -349,26 +352,28 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
 
 export function noteAiRevision({ round, illegalMoves, falseClaims, castleViolations }) {
   if (!inst.body) return;
-  // Mark the round that just got invalidated (the previous one) so
-  // its prose reads as overruled by the upcoming revision. Also wrap
-  // the prose in a collapsed <details> so the user can toggle it
-  // open if they want to see what got rejected.
+  // Mark the previous round as invalidated so its prose styles as
+  // overruled. The prose itself is moved into the new round's revision
+  // banner body once that panel exists -- ensureRoundPanel handles the
+  // move when ordering goes pending -> create -> render.
   if (round > 0) {
     const prev = inst.body._roundPanels.get(round - 1);
-    if (prev) {
-      prev.panel.classList.add("play-ai-round-invalidated");
-      _wrapProseAsCollapsed(prev);
-    }
+    if (prev) prev.panel.classList.add("play-ai-round-invalidated");
   }
   // The ai_corrective event arrives before the round's first chunk.
   // Stash so ensureRoundPanel renders the banner when the panel is
   // created. If the panel already exists (rare; chunk ordering
-  // surprise), render immediately.
+  // surprise), render and move immediately.
+  const payload = { illegalMoves, falseClaims, castleViolations };
   const existing = inst.body._roundPanels.get(round);
   if (existing) {
-    renderRevision(existing.revision, { illegalMoves, falseClaims, castleViolations });
+    renderRevision(existing.revision, payload);
+    if (round > 0) {
+      const prev = inst.body._roundPanels.get(round - 1);
+      if (prev) _moveProseIntoRevision(prev, existing);
+    }
   } else {
-    inst.body._pendingRevision.set(round, { illegalMoves, falseClaims, castleViolations });
+    inst.body._pendingRevision.set(round, payload);
   }
 }
 

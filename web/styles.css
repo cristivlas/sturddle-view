@@ -196,9 +196,9 @@ wa-select::part(listbox) {
 
 /* Thinking disclosure: dimmer + smaller than prose; user opt-in. */
 .play-ai-thinking {
-  /* Disclosure arrow sits flush with the timeline's vertical rule
-     (rule x=15px absolute, timeline margin-left=12px -> 3px inside). */
-  margin: 0 0 8px 3px;
+  /* Padded right of the timeline's vertical rule so the disclosure
+     header doesn't sit on the line. */
+  margin: 0 0 8px 14px;
   font-size: 0.85em;
   opacity: 0.75;
   background: transparent;
@@ -294,60 +294,68 @@ wa-select::part(listbox) {
    banner: muted + strikethrough on the prose so the user sees what
    the model wrote without believing it. Tool calls and thinking
    stay legible -- they aren't the wrong claim, the prose is. */
-.play-ai-round-invalidated .play-ai-prose {
+.play-ai-round-invalidated .play-ai-prose,
+.play-ai-revision-body > .play-ai-prose {
   /* Mute the text via color, not opacity, so the background stays
      opaque and continues to cover the rounds-container vertical rule. */
   color: var(--muted, #888);
   text-decoration: line-through;
 }
-/* <details> wrapper around the invalidated prose: collapsed by
-   default. Same disclosure look as .play-ai-thinking; the inner
-   .play-ai-prose retains its background so the rule stays hidden. */
-.play-ai-redacted {
-  /* margin-left matches .play-ai-thinking's absolute x (timeline margin
-     12px + thinking margin 3px) so both arrows align on the rule. */
-  margin: 0 12px 0 15px;
-  font-size: 0.85em;
-  background: transparent;
+/* Revision banner: <details> whose summary IS the banner; clicking
+   reveals the previous round's redacted prose inline. margin-left
+   matches .play-ai-thinking's absolute x so banner + Thinking arrow
+   share a single vertical column. The border/background/radius
+   resets undo Web Awesome native.css's generic details styling. */
+.play-ai-revision {
+  margin: 0 12px 6px 15px;
+  padding: 4px 8px;
   border: none;
+  border-left: 3px solid var(--wa-color-warning-60, #d6a200);
+  border-radius: 0;
+  background: var(--play-ai-warning-bg);
+  font-size: 0.85em;
 }
-.play-ai-redacted > summary {
+.play-ai-revision[open] {
+  /* native.css adds horizontal padding when open -- keep ours. */
+  padding: 4px 8px;
+}
+.play-ai-revision[open] > .play-ai-revision-summary {
+  /* native.css adds negative margin-inline on open; cancel it. */
+  margin-inline: 0;
+  border-radius: 0;
+}
+.play-ai-revision-summary {
   cursor: pointer;
   user-select: none;
-  padding: 0;
   list-style: none;
+  /* Override native.css summary padding + space-between layout. */
+  padding: 0;
+  margin: 0;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
-  color: var(--muted, #888);
 }
-.play-ai-redacted > summary::-webkit-details-marker { display: none; }
-.play-ai-redacted > summary::marker { content: ""; }
-.play-ai-redacted > summary::after { display: none; mask: none; background: none; }
-/* Filled triangle tinted with the Revision banner accent so the
-   redacted prose visually pairs with the banner that explains why. */
-.play-ai-redacted > summary::before {
+.play-ai-revision-summary::-webkit-details-marker { display: none; }
+.play-ai-revision-summary::marker { content: ""; }
+.play-ai-revision-summary::after { display: none; mask: none; background: none; }
+/* Amber filled triangle matching the banner accent. */
+.play-ai-revision-summary::before {
   content: "\25B6";
   color: var(--wa-color-warning-60, #d6a200);
   line-height: 1;
   transition: transform 120ms ease;
 }
-.play-ai-redacted[open] > summary::before {
+.play-ai-revision[open] > .play-ai-revision-summary::before {
   transform: rotate(90deg);
 }
-.play-ai-redacted > .play-ai-prose {
-  margin: 2px 0 0;
+.play-ai-revision-body {
+  margin-top: 4px;
 }
-
-/* Revision banner shown on rounds triggered by a validator hit.
-   margin-left aligns the orange border with the redacted/thinking
-   arrows so banner + arrows share a single vertical column. */
-.play-ai-revision {
-  margin: 0 12px 6px 15px;
-  padding: 4px 8px;
-  border-left: 3px solid var(--wa-color-warning-60, #d6a200);
-  background: var(--play-ai-warning-bg);
-  font-size: 0.85em;
+/* Redacted prose lives in the revision body; keep its background opaque
+   so the rounds-container rule stays hidden behind it. */
+.play-ai-revision-body > .play-ai-prose {
+  margin: 0;
 }
 
 /* Tool-call lines: colored dot per tool family + compact label.
