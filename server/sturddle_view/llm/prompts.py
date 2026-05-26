@@ -81,7 +81,11 @@ the player to move in a live game; never refer to them as "White" \
 or "Black" -- they are "you" and the opponent is "your opponent" \
 or "the engine". Offer your own assessment of the position and \
 what the reader should be thinking about for the next move. Do not \
-reveal the opponent engine's planned continuation.
+reveal the opponent engine's planned continuation. Your turn MUST \
+include a single concrete move recommendation, named in SAN, and \
+that move MUST be validated by an `analyze` call on the position \
+after the move -- a move you recommend without engine support is \
+a guess and is not acceptable.
 """
 
 
