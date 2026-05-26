@@ -24,6 +24,7 @@
   --status-ok-bg:  rgba(46, 160, 67, 0.12);
   --status-err-fg: #ff8a80;
   --status-err-bg: rgba(220, 50, 50, 0.15);
+  --play-ai-warning-bg: rgba(255, 255, 255, 0.18);
 
 
   --wa-font-family-body: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -187,7 +188,7 @@ wa-select::part(listbox) {
   margin-top: 8px;
   padding: 6px 8px;
   border-left: 3px solid var(--wa-color-warning-60, #d6a200);
-  background: rgba(214, 162, 0, 0.08);
+  background: var(--play-ai-warning-bg);
   font-size: 0.9em;
   opacity: 0.85;
 }
@@ -341,7 +342,7 @@ wa-select::part(listbox) {
   margin: 0 12px 6px;
   padding: 4px 8px;
   border-left: 3px solid var(--wa-color-warning-60, #d6a200);
-  background: rgba(214, 162, 0, 0.08);
+  background: var(--play-ai-warning-bg);
   font-size: 0.85em;
 }
 
