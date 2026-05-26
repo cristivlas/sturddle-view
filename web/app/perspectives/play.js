@@ -127,6 +127,33 @@ function formatGameOver(payload, humanWhite) {
   return `${reason} -- Draw.`;
 }
 
+const ANALYZE_LABEL_STOP = "Stop analysis";
+const ANALYZE_LABEL_START = "Analysis mode";
+const ANALYZE_ICON_STOP = "circle-stop";
+const ANALYZE_ICON_START = "magnifying-glass";
+
+function setDisabled(btn, disabled) {
+  if (disabled) btn.setAttribute("disabled", "");
+  else btn.removeAttribute("disabled");
+}
+
+function configureBtn(btn, {
+  disabled,
+  active,
+  label,
+  icon,
+}) {
+  if (disabled !== undefined) setDisabled(btn, disabled);
+  if (active !== undefined) btn.classList.toggle("is-active", active);
+  if (label !== undefined) {
+    btn.setAttribute("aria-label", label);
+    btn.setAttribute("title", label);
+  }
+  if (icon !== undefined) {
+    btn.querySelector("wa-icon").setAttribute("name", icon);
+  }
+}
+
 export const playPerspective = {
   id: "play",
   label: "Play",
@@ -817,15 +844,10 @@ export const playPerspective = {
     }
     let dismissAnalysisToast = null;
 
-    const pauseIcon = pauseBtn.querySelector("wa-icon");
     // Resign is enabled whenever there is an active game; cleared on
     // game_result. We track it explicitly so paused-state can additionally
     // gate it without losing the "active game" signal.
     let resignAvailable = false;
-    function setDisabled(btn, disabled) {
-      if (disabled) btn.setAttribute("disabled", "");
-      else btn.removeAttribute("disabled");
-    }
     buttonsReady = true;
     function refreshButtons() {
       // Swap ribbons: edit overrides view, which overrides play.
@@ -854,49 +876,47 @@ export const playPerspective = {
       if (viewing) {
         const atStart = viewCursor === 0;
         const atEnd = viewCursor === viewTotalPlies;
-        setDisabled(viewFirstBtn, analyzing || atStart);
-        setDisabled(viewBackBtn, analyzing || atStart);
-        setDisabled(viewForwardBtn, analyzing || atEnd);
-        setDisabled(viewLastBtn, analyzing || atEnd);
-        setDisabled(viewSavePgnBtn, viewTotalPlies === 0);
+        configureBtn(viewFirstBtn, { disabled: analyzing || atStart });
+        configureBtn(viewBackBtn, { disabled: analyzing || atStart });
+        configureBtn(viewForwardBtn, { disabled: analyzing || atEnd });
+        configureBtn(viewLastBtn, { disabled: analyzing || atEnd });
+        configureBtn(viewSavePgnBtn, { disabled: viewTotalPlies === 0 });
         // Play-from-here is rejected at game-over plies (checkmate /
         // stalemate / draw). Backed by a backend guard that prevents
         // half-cleared state if the UI is bypassed.
-        setDisabled(viewPlayFromHereBtn, analyzing || viewGameOver);
+        configureBtn(viewPlayFromHereBtn, { disabled: analyzing || viewGameOver });
         // Engine-less view: analyze is unreachable. Tooltip points at
         // Engines tab so the user knows the next step.
         // AI turn finished but server still ANALYZING: show ribbon as
         // normal ("Analysis mode") even though `analyzing` is true.
         const viewShowAsActive = analyzing && !aiTurnFinished;
-        setDisabled(viewAnalyzeBtn, noEngine && !viewShowAsActive);
-        viewAnalyzeBtn.classList.toggle("is-active", viewShowAsActive);
-        const viewAnalyzeLabel = viewShowAsActive
-          ? "Stop analysis"
-          : noEngine
-            ? "Register an engine in Settings to analyze"
-            : "Analysis mode";
-        viewAnalyzeBtn.setAttribute("aria-label", viewAnalyzeLabel);
-        viewAnalyzeBtn.setAttribute("title", viewAnalyzeLabel);
-        viewAnalyzeBtn.querySelector("wa-icon").setAttribute(
-          "name", viewShowAsActive ? "circle-stop" : "magnifying-glass",
-        );
+        configureBtn(viewAnalyzeBtn, {
+          disabled: noEngine && !viewShowAsActive,
+          active: viewShowAsActive,
+          label: viewShowAsActive
+            ? ANALYZE_LABEL_STOP
+            : noEngine
+              ? "Register an engine in Settings to analyze"
+              : ANALYZE_LABEL_START,
+          icon: viewShowAsActive ? ANALYZE_ICON_STOP : ANALYZE_ICON_START,
+        });
         return;
       }
       const humanToMove = humanWhite ? turn === "white" : turn === "black";
       // Pause is restricted to the human's turn; Resume (paused=true) is
       // always allowed so a game paused on the engine's turn — e.g. after
       // exiting Analysis — can be unpaused.
-      setDisabled(pauseBtn, gameOver || analyzing || (!paused && !humanToMove));
-      pauseIcon.setAttribute("name", paused ? "forward-step" : "pause");
-      pauseBtn.setAttribute("aria-label", paused ? "Resume" : "Pause");
-      pauseBtn.setAttribute("title", paused ? "Resume" : "Pause");
-      setDisabled(
-        takebackBtn,
-        analyzing || gameOver || !allowTakeback || movesPlayed === 0,
-      );
-      setDisabled(savePgnBtn, movesPlayed === 0);
-      setDisabled(switchSidesBtn, analyzing || gameOver || !resignAvailable);
-      setDisabled(resignBtn, paused || analyzing || gameOver || !resignAvailable);
+      configureBtn(pauseBtn, {
+        disabled: gameOver || analyzing || (!paused && !humanToMove),
+        label: paused ? "Resume" : "Pause",
+        icon: paused ? "forward-step" : "pause",
+      });
+      configureBtn(takebackBtn, {
+        disabled: analyzing || gameOver || !allowTakeback || movesPlayed === 0,
+      });
+      configureBtn(savePgnBtn, { disabled: movesPlayed === 0 });
+      configureBtn(switchSidesBtn, { disabled: analyzing || gameOver || !resignAvailable });
+      configureBtn(resignBtn, { disabled: paused || analyzing || gameOver || !resignAvailable });
       // AI turn finished but server is still ANALYZING (user hasn't
       // closed the AI window yet). Show the ribbon button as normal
       // ("Analysis mode", magnifying-glass, enabled) -- the rest of
@@ -904,22 +924,12 @@ export const playPerspective = {
       // still apply.
       const showAsActive = analyzing && !aiTurnFinished;
       const analyzeReachable = !gameOver && resignAvailable && (paused || aiTurnFinished);
-      setDisabled(
-        analyzeBtn,
-        !showAsActive && !analyzeReachable,
-      );
-      analyzeBtn.classList.toggle("is-active", showAsActive);
-      analyzeBtn.setAttribute(
-        "aria-label",
-        showAsActive ? "Stop analysis" : "Analysis mode",
-      );
-      analyzeBtn.setAttribute(
-        "title",
-        showAsActive ? "Stop analysis" : "Analysis mode",
-      );
-      analyzeBtn.querySelector("wa-icon").setAttribute(
-        "name", showAsActive ? "circle-stop" : "magnifying-glass",
-      );
+      configureBtn(analyzeBtn, {
+        disabled: !showAsActive && !analyzeReachable,
+        active: showAsActive,
+        label: showAsActive ? ANALYZE_LABEL_STOP : ANALYZE_LABEL_START,
+        icon: showAsActive ? ANALYZE_ICON_STOP : ANALYZE_ICON_START,
+      });
     }
 
     // View-mode flip is purely visual (no backend state; the user isn't
