@@ -380,10 +380,12 @@ class OllamaProvider(LLMProvider):
         # near the start, arguments stream as a concatenated string.
         # Indexed by `index` field in the OpenAI delta protocol.
         tool_call_buf: dict[int, dict] = {}
-        # Harmony marker carry-buffer for the text channel. See
-        # harmony_strip.py -- gemma4 and similar models leak `<|...|>`
-        # tokens into visible content when the chat template is buggy.
+        # Harmony marker carry-buffers. See harmony_strip.py -- gemma4
+        # and similar models leak `<|...|>` tokens into both visible
+        # content AND the reasoning channel; each needs its own carry
+        # because deltas interleave.
         text_carry: list[str] = []
+        reason_carry: list[str] = []
 
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream(
@@ -433,7 +435,9 @@ class OllamaProvider(LLMProvider):
                     # for the UI but counts the round.
                     reasoning = delta.get("reasoning")
                     if reasoning:
-                        yield ProviderChunk(kind="thinking", text=reasoning)
+                        scrubbed = strip_harmony_text(reasoning, reason_carry)
+                        if scrubbed:
+                            yield ProviderChunk(kind="thinking", text=scrubbed)
                     tc_deltas = delta.get("tool_calls") or []
                     for tcd in tc_deltas:
                         idx = tcd.get("index", 0)
@@ -456,6 +460,9 @@ class OllamaProvider(LLMProvider):
         tail = flush_harmony_carry(text_carry)
         if tail:
             yield ProviderChunk(kind="text", text=tail)
+        reason_tail = flush_harmony_carry(reason_carry)
+        if reason_tail:
+            yield ProviderChunk(kind="thinking", text=reason_tail)
 
         # Emit accumulated tool_calls (if any) AFTER text streaming
         # completes -- matches Anthropic's "text first, tool_use last"
@@ -496,8 +503,10 @@ class OllamaProvider(LLMProvider):
         url = f"{self._base_url}/api/chat"
         emitted_tool_calls: list[dict] = []
         # Same harmony carry as in the OpenAI-compat path; some local
-        # models (gemma4) leak `<|...|>` markers through native chat too.
+        # models (gemma4) leak `<|...|>` markers through native chat
+        # on both content AND thinking channels.
         text_carry: list[str] = []
+        think_carry: list[str] = []
 
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream(
@@ -525,7 +534,9 @@ class OllamaProvider(LLMProvider):
                     msg = evt.get("message") or {}
                     thinking = msg.get("thinking")
                     if thinking:
-                        yield ProviderChunk(kind="thinking", text=thinking)
+                        scrubbed = strip_harmony_text(thinking, think_carry)
+                        if scrubbed:
+                            yield ProviderChunk(kind="thinking", text=scrubbed)
                     content = msg.get("content")
                     if content:
                         scrubbed = strip_harmony_text(content, text_carry)
@@ -538,6 +549,9 @@ class OllamaProvider(LLMProvider):
         tail = flush_harmony_carry(text_carry)
         if tail:
             yield ProviderChunk(kind="text", text=tail)
+        think_tail = flush_harmony_carry(think_carry)
+        if think_tail:
+            yield ProviderChunk(kind="thinking", text=think_tail)
 
         # /api/chat tool_calls carry no id. Mint a synthetic id per call
         # so the coordinator's tool_use_id pipeline keeps working; Ollama

@@ -20,12 +20,10 @@ from __future__ import annotations
 import re
 
 
-# Matches a single marker. Two shapes:
-#   <|TAG|>     -- canonical Harmony
-#   <TAG|>      -- observed in the wild (gemma4 leak)
-# Case-insensitive to catch tag variants the model might emit (no
-# guarantee Harmony tags are always lowercase on the wire).
-_MARKER_RE = re.compile(r"<\|?[a-z_]*\|>", re.IGNORECASE)
+# Matches a single marker: `<|TAG|>` (canonical) or `<TAG|>` (gemma4
+# leak). Tag body is any run that isn't a delimiter, so closers like
+# `<|/tool_call|>` and odd payloads like `<|"|>` (gemma4) are caught.
+_MARKER_RE = re.compile(r"<\|?[^|>]*\|>")
 
 
 def strip_harmony_text(delta: str, carry: list[str]) -> str:

@@ -105,11 +105,24 @@ def test_html_like_text_not_eaten():
 @pytest.mark.parametrize("marker", [
     "<|start|>", "<|end|>", "<|channel|>", "<|message|>", "<|return|>",
     "<channel|>", "<|>",
+    "<|tool_call|>", "<|/tool_call|>",
 ])
 def test_known_markers_individually_stripped(marker):
     carry = _new_carry()
     text = f"x{marker}y"
     assert strip_harmony_text(text, carry) == "xy"
+    assert flush_harmony_carry(carry) == ""
+
+
+def test_gemma4_tool_call_block_stripped():
+    # Observed in gemma4 thinking channel: a tool_call marker pair
+    # wraps a payload like `g1g3`. Both open and close (with `/`) must
+    # be stripped; the payload between them remains visible.
+    carry = _new_carry()
+    text = "<|tool_call|>call:validate_move{move: <|\"|>g1g3<|\"|>}<|/tool_call|>"
+    out = strip_harmony_text(text, carry)
+    assert "<|" not in out and "|>" not in out
+    assert "g1g3" in out
     assert flush_harmony_carry(carry) == ""
 
 
