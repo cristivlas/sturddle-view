@@ -316,7 +316,7 @@ function syncDockVisibility() {
   rebuildDockGrips();
 }
 
-function makeDockSlot(title, bodyEl, onUndock, onClose) {
+function makeDockSlot(title, bodyEl, onUndock, onClose, titleActions) {
   const slot = document.createElement("div");
   slot.className = "dock-slot";
   const closeBtnHtml = onClose
@@ -326,6 +326,7 @@ function makeDockSlot(title, bodyEl, onUndock, onClose) {
   slot.innerHTML = `
     <div class="dock-slot-header">
       <span class="dock-slot-title"></span>
+      <span class="dock-slot-actions"></span>
       <button type="button" class="dock-slot-undock" title="Undock" aria-label="Undock">
         <wa-icon name="arrow-up-right-from-square"></wa-icon>
       </button>
@@ -336,6 +337,16 @@ function makeDockSlot(title, bodyEl, onUndock, onClose) {
   slot.querySelector(".dock-slot-title").textContent = title;
   slot.querySelector(".dock-slot-undock").addEventListener("click", onUndock);
   if (onClose) slot.querySelector(".dock-slot-close").addEventListener("click", onClose);
+  const actionsEl = slot.querySelector(".dock-slot-actions");
+  for (const a of titleActions || []) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `dock-slot-action ${a.className || ""}`.trim();
+    btn.title = a.title || "";
+    btn.setAttribute("aria-label", a.title || "");
+    btn.addEventListener("click", a.onClick);
+    actionsEl.appendChild(btn);
+  }
   slot.querySelector(".dock-slot-body").appendChild(bodyEl);
   return slot;
 }
@@ -360,6 +371,7 @@ export function createDockableWindow(config) {
     getDockEl = () => dockEl,
     onUserClose,
     closable = false,
+    titleActions = [],
   } = config;
 
   let wb = null;
@@ -393,7 +405,7 @@ export function createDockableWindow(config) {
       docking = false;
     }
     setDocked(dockedKey, true);
-    slot = makeDockSlot(currentTitle, body, undock, closable ? userClose : null);
+    slot = makeDockSlot(currentTitle, body, undock, closable ? userClose : null, titleActions);
     // Insert in dockOrder ascending; lower order goes on top. The
     // `instances` array is in module-load order, not dockOrder, so we
     // must scan for the MIN-order sibling that's still higher than us
@@ -451,7 +463,22 @@ export function createDockableWindow(config) {
       onmove()     { saveGeo(geoKey, wb); },
       onresize()   { saveGeo(geoKey, wb); },
     });
+    // WinBox addControl with index:0 PREPENDS into .wb-control, so the
+    // LAST call ends up leftmost. Add dock first so it stays rightmost,
+    // then actions in declaration order (each new one goes leftmost).
     addDockButton(wb, dock);
+    for (const a of titleActions) {
+      wb.addControl({ class: a.className, index: 0, click: a.onClick });
+      // WinBox's addControl does not accept title/aria; set them
+      // post-mount via querySelector. Caller must keep className unique
+      // to avoid colliding with anything in body content.
+      const outer = wb.body?.parentElement;
+      const btn = outer?.querySelector(`.wb-control > .${a.className}`);
+      if (btn) {
+        btn.title = a.title || "";
+        btn.setAttribute("aria-label", a.title || "");
+      }
+    }
     const ws = loadWinState();
     if (ws === "min") wb.minimize();
     else if (ws === "max") wb.maximize();

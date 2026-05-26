@@ -29,6 +29,7 @@ import {
   setAiStatus,
   setAiTitle,
   setOnUserCloseAi,
+  setOnReanalyzeAi,
   isAiOpen,
 } from "../play-ai-window.js";
 import { terminationLabel } from "../format-termination.js";
@@ -876,7 +877,7 @@ export const playPerspective = {
         configureBtn(viewBackBtn, { disabled: analyzing || atStart });
         configureBtn(viewForwardBtn, { disabled: analyzing || atEnd });
         configureBtn(viewLastBtn, { disabled: analyzing || atEnd });
-        configureBtn(viewSavePgnBtn, { disabled: viewTotalPlies === 0 });
+        configureBtn(viewSavePgnBtn, { disabled: analyzing || viewTotalPlies === 0 });
         // Play-from-here is rejected at game-over plies (checkmate /
         // stalemate / draw). Backed by a backend guard that prevents
         // half-cleared state if the UI is bypassed.
@@ -910,7 +911,7 @@ export const playPerspective = {
       configureBtn(takebackBtn, {
         disabled: analyzing || gameOver || !allowTakeback || movesPlayed === 0,
       });
-      configureBtn(savePgnBtn, { disabled: movesPlayed === 0 });
+      configureBtn(savePgnBtn, { disabled: analyzing || movesPlayed === 0 });
       configureBtn(switchSidesBtn, { disabled: analyzing || gameOver || !resignAvailable });
       configureBtn(resignBtn, { disabled: paused || analyzing || gameOver || !resignAvailable });
       // AI turn finished but server is still ANALYZING (user hasn't
@@ -1726,28 +1727,57 @@ export const playPerspective = {
       closeDebugWindowsPersist();
     }
 
+    // POST start + restore panels + toast + open/reset AI panel. Shared
+    // by the analyze toggle and the re-analyze button so the two paths
+    // can't drift. openAi() before resetAi(): resetAi sets the spinner
+    // and no-ops when the body is null.
+    async function startAnalysisFromUi() {
+      await ctx.api("POST", "/game/analysis/start", {});
+      restoreViewAnalysisWindows(ctx.events);
+      aiTurnFinished = false;
+      showAnalysisToast();
+      if (aiEnabled) {
+        openAi();
+        resetAi();
+      }
+    }
+
     const onAnalyze = async () => {
       if (analyzing) {
         await stopAnalysisFromUi();
         return;
       }
       try {
-        await ctx.api("POST", "/game/analysis/start", {});
-        restoreViewAnalysisWindows(ctx.events);
-        aiTurnFinished = false;
-        showAnalysisToast();
-        // Server picks the path (engine vs AI) based on settings; AI
-        // panel opens either way so the user sees prose stream. openAi
-        // before resetAi: resetAi sets the spinner and no-ops if body
-        // is null.
-        if (aiEnabled) {
-          openAi();
-          resetAi();
-        }
+        await startAnalysisFromUi();
       } catch (e) {
         reportError(ctx, "Start analysis failed", e);
       }
     };
+
+    // Re-analyze: stop the current turn server-side (if any), then start
+    // a fresh one. Distinct from the Analyze toggle which closes on a
+    // second click; this path keeps the AI panel open and mirrors the
+    // snapshot/restore dance of stopAnalysisFromUi + onAnalyze so view
+    // mode panels survive the round-trip. `reanalyzeInFlight` guards
+    // against rapid double-clicks producing a spurious second start
+    // that the server would reject with ModeConflictError.
+    let reanalyzeInFlight = false;
+    const onReanalyze = async () => {
+      if (reanalyzeInFlight) return;
+      reanalyzeInFlight = true;
+      try {
+        if (analyzing) {
+          snapshotViewAnalysisState();
+          await ctx.api("POST", "/game/analysis/stop", {});
+        }
+        await startAnalysisFromUi();
+      } catch (e) {
+        reportError(ctx, "Re-analyze failed", e);
+      } finally {
+        reanalyzeInFlight = false;
+      }
+    };
+    setOnReanalyzeAi(onReanalyze);
 
     // Cmd/Ctrl+O opens the import dialog. Skip when typing in an input or
     // when a dialog is already open, so it doesn't clobber an in-progress
@@ -1852,6 +1882,7 @@ export const playPerspective = {
         setOnUserCloseCommentary(null);
         closeAi();
         setOnUserCloseAi(null);
+        setOnReanalyzeAi(null);
         dismissAnalysisToast?.();
         dismissAnalysisToast = null;
         dismissGameOverToast?.();

@@ -970,6 +970,12 @@ body[data-ribbon-float] .tournaments-ribbon {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.dock-slot-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+.dock-slot-action,
 .dock-slot-undock,
 .dock-slot-close {
   flex: 0 0 auto;
@@ -980,8 +986,40 @@ body[data-ribbon-float] .tournaments-ribbon {
   color: var(--muted); cursor: pointer;
   font-size: 0.75rem;
 }
+.dock-slot-action:hover,
 .dock-slot-undock:hover,
 .dock-slot-close:hover { color: var(--fg); background: var(--nav-btn-bg-hover); }
+/* Floating-mode (WinBox title-bar control). Mirrors the
+   wb-ribbon-rotate-ctrl pattern; the !important rules override the
+   WinBox vendor CSS that paints a default background-image. */
+.play-ai-reanalyze-ctrl {
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-size: 11px; mask-size: 11px;
+  background-color: rgba(255,255,255,0.85) !important;
+  background-image: none !important;
+}
+/* Docked-mode override: the dock-slot-action button uses the muted
+   button theme. Reset mask/background back to the button's natural
+   styling, then paint the icon via ::before so hover/disabled colors
+   work via currentColor. */
+.dock-slot-action.play-ai-reanalyze-ctrl {
+  -webkit-mask-image: none !important; mask-image: none !important;
+  background-color: transparent !important;
+}
+.dock-slot-action.play-ai-reanalyze-ctrl::before {
+  content: "";
+  display: block;
+  width: 14px; height: 14px;
+  background-color: currentColor;
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-size: contain; mask-size: contain;
+}
 .dock-slot-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -2680,8 +2718,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 /* Rotate-orientation control button. Uses mask-image like other custom
    WinBox controls (see .wb-log-copy-ctrl). */
 .wb-ribbon-rotate-ctrl {
-  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
-  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-left.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-left.svg);
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
   -webkit-mask-position: center;

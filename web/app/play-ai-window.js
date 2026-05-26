@@ -205,6 +205,17 @@ function _wrapProseAsCollapsed(entry) {
 
 
 let userCloseHandler = null;
+let reanalyzeHandler = null;
+
+// Title-bar custom actions. className must be unique so the factory's
+// post-mount lookup in floating mode does not collide with body content.
+const TITLE_ACTIONS = [
+  {
+    className: "play-ai-reanalyze-ctrl",
+    title: "Re-analyze",
+    onClick: () => { if (reanalyzeHandler) reanalyzeHandler(); },
+  },
+];
 
 const inst = createDockableWindow({
   title: "AI Analysis",
@@ -224,10 +235,15 @@ const inst = createDockableWindow({
   onUserClose: () => {
     if (userCloseHandler) userCloseHandler();
   },
+  titleActions: TITLE_ACTIONS,
 });
 
 export function setOnUserCloseAi(fn) {
   userCloseHandler = fn;
+}
+
+export function setOnReanalyzeAi(fn) {
+  reanalyzeHandler = fn;
 }
 
 export function setAiTitle(modelName) {
