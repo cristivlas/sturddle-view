@@ -303,6 +303,22 @@ Tests:
   obvious factor-out -- but doing it now is premature (two callers).
   Worth ~30 lines of near-duplication in `spawn_throwaway` until then.
 
+- **`analyze` tool depth floor.** Models occasionally pass a low `depth`
+  to the `analyze` tool (e.g. 8, 10) which produces noisy bestmoves
+  that then surface in coach prose as bad recommendations. The default
+  is now 20 (was 16), but the model can still override downward.
+  Mitigations to consider, smallest to largest:
+  1. **Prompt nudge** in the `analyze` tool's description or card:
+     "minimum depth 20 for live coach use; lower values are noisy."
+     Cheap; effectiveness varies by model.
+  2. **Server-side floor** in `_clamp_limits`: `d = max(MIN_DEPTH, ...)`
+     with `MIN_DEPTH=20`. Deterministic; takes the decision out of the
+     model's hands. Risk: makes `top_moves` (when re-enabled) slow if
+     it inherits the same floor; want a separate per-tool floor.
+  3. **Both**: prompt nudge + server floor as defense in depth.
+  Defer until we see a concrete failure-mode change post the recent
+  default bump.
+
 ## Todos (cross-cutting)
 
 - [x] Decide model dropdown vs free-form per provider -- dropdown via

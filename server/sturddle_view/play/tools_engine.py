@@ -40,8 +40,12 @@ MAX_DEPTH = int(os.environ.get("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_MAX_DEPTH))
 
 # Fallback when caller passes neither time_ms nor depth. Depth-based
 # (not time-based): more consistent quality across positions and engine
-# loads. 16 plies is decent for prose-level commentary.
-_DEFAULT_DEPTH = 16
+# loads. 20 plies is the floor that gives reliable tactical resolution
+# for coach-style prose; lower values surface noisy bestmoves that
+# embarrass the agent. Server-side enforcement of the floor against
+# model-supplied depth is an open mitigation -- see
+# docs/ai-analysis-progress.md.
+_DEFAULT_DEPTH = 20
 
 # top_moves: default and hard cap on N candidates returned. N searches
 # run sequentially with one throwaway engine each, so cost scales

@@ -244,6 +244,25 @@ wa-select::part(listbox) {
   margin: 0 0 12px;
   padding-top: 6px;
 }
+/* Tool-only rounds: prose was never emitted (already hidden via
+   .play-ai-prose:empty). Trim the round's own vertical padding +
+   margin so the next round's content sits close (but not flush)
+   against this one's tools. Non-empty rounds keep their spacing. */
+.play-ai-round:has(.play-ai-prose:empty) {
+  margin-bottom: 4px;
+  padding-top: 0;
+}
+/* Thinking keeps its natural bottom margin (8px) so the tool calls
+   below don't crowd the disclosure header. */
+.play-ai-round:has(.play-ai-prose:empty) .play-ai-tools {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+/* A round that follows a tool-only round drops its own top padding,
+   since the previous round just supplied the 4px margin-bottom. */
+.play-ai-round:has(.play-ai-prose:empty) + .play-ai-round {
+  padding-top: 0;
+}
 /* Timeline: Thinking + tool-call rows in one container. The vertical
    rule lives on the .play-ai-rounds container (see below) so it stays
    continuous across rounds without per-panel gaps. */
@@ -279,6 +298,42 @@ wa-select::part(listbox) {
      opaque and continues to cover the rounds-container vertical rule. */
   color: var(--muted, #888);
   text-decoration: line-through;
+}
+/* <details> wrapper around the invalidated prose: collapsed by
+   default. Same disclosure look as .play-ai-thinking; the inner
+   .play-ai-prose retains its background so the rule stays hidden. */
+.play-ai-redacted {
+  margin: 0 12px;
+  font-size: 0.85em;
+  background: transparent;
+  border: none;
+}
+.play-ai-redacted > summary {
+  cursor: pointer;
+  user-select: none;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted, #888);
+}
+.play-ai-redacted > summary::-webkit-details-marker { display: none; }
+.play-ai-redacted > summary::marker { content: ""; }
+.play-ai-redacted > summary::after { display: none; mask: none; background: none; }
+/* Classic > / v tree expander, distinct from Thinking's chevron. */
+.play-ai-redacted > summary::before {
+  content: ">";
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.4em;
+  font-weight: bold;
+  line-height: 1;
+}
+.play-ai-redacted[open] > summary::before {
+  content: "v";
+}
+.play-ai-redacted > .play-ai-prose {
+  margin: 2px 0 0;
 }
 
 /* Revision banner shown on rounds triggered by a validator hit. */

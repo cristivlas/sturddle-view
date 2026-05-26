@@ -165,7 +165,7 @@ function renderRevision(el, { illegalMoves, falseClaims }) {
     parts.push(`illegal ${illegalMoves.join(", ")}`);
   }
   if (falseClaims && falseClaims.length) {
-    parts.push(`false ${falseClaims.join(", ")}`);
+    parts.push(`no ${falseClaims.join(", ")}`);
   }
   el.append(document.createTextNode(parts.join("; ")));
 }
@@ -180,6 +180,26 @@ function formatToolArgs(input) {
   });
   return pairs.join(", ");
 }
+
+// Wrap a round's prose paragraph in a collapsed <details> so a
+// reader can toggle the redacted text on/off. Idempotent -- if the
+// prose is already wrapped, leaves it as-is.
+function _wrapProseAsCollapsed(entry) {
+  const para = entry.para;
+  if (!para || !para.isConnected) return;
+  const parent = para.parentNode;
+  if (parent && parent.tagName === "DETAILS") return;  // already wrapped
+  const details = document.createElement("details");
+  details.className = "play-ai-redacted";
+  details.open = false;
+  const summary = document.createElement("summary");
+  // Glyph-only: the strikethrough redacted text below is already
+  // labeling itself; the summary just needs a clickable marker.
+  details.append(summary);
+  para.replaceWith(details);
+  details.append(para);
+}
+
 
 let userCloseHandler = null;
 
@@ -295,10 +315,15 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
 export function noteAiRevision({ round, illegalMoves, falseClaims }) {
   if (!inst.body) return;
   // Mark the round that just got invalidated (the previous one) so
-  // its prose reads as overruled by the upcoming revision.
+  // its prose reads as overruled by the upcoming revision. Also wrap
+  // the prose in a collapsed <details> so the user can toggle it
+  // open if they want to see what got rejected.
   if (round > 0) {
     const prev = inst.body._roundPanels.get(round - 1);
-    if (prev) prev.panel.classList.add("play-ai-round-invalidated");
+    if (prev) {
+      prev.panel.classList.add("play-ai-round-invalidated");
+      _wrapProseAsCollapsed(prev);
+    }
   }
   // The ai_corrective event arrives before the round's first chunk.
   // Stash so ensureRoundPanel renders the banner when the panel is

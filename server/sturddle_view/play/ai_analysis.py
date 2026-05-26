@@ -41,7 +41,7 @@ log = logging.getLogger(__name__)
 
 # Cap on agent loop rounds per turn (spec §Guardrails: "Tool call cap
 # per agent turn"). The env override is for ops; UI exposure is pending.
-_DEFAULT_MAX_TOOL_ROUNDS = 8
+_DEFAULT_MAX_TOOL_ROUNDS = 16
 MAX_TOOL_ROUNDS = int(os.environ.get("SV_AI_MAX_TOOL_ROUNDS", _DEFAULT_MAX_TOOL_ROUNDS))
 
 # Max length of error_detail copied into the done event. Keeps the
