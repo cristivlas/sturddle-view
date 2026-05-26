@@ -154,7 +154,7 @@ function ensureRoundPanel(root, roundIndex) {
   return entry;
 }
 
-function renderRevision(el, { illegalMoves, falseClaims }) {
+function renderRevision(el, { illegalMoves, falseClaims, castleViolations }) {
   el.hidden = false;
   el.textContent = "";  // reset
   const head = document.createElement("strong");
@@ -165,7 +165,10 @@ function renderRevision(el, { illegalMoves, falseClaims }) {
     parts.push(`illegal ${illegalMoves.join(", ")}`);
   }
   if (falseClaims && falseClaims.length) {
-    parts.push(`no ${falseClaims.join(", ")}`);
+    parts.push(falseClaims.map((c) => `no ${c}`).join(", "));
+  }
+  if (castleViolations && castleViolations.length) {
+    parts.push("castling not legal");
   }
   el.append(document.createTextNode(parts.join("; ")));
 }
@@ -312,7 +315,7 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
   }
 }
 
-export function noteAiRevision({ round, illegalMoves, falseClaims }) {
+export function noteAiRevision({ round, illegalMoves, falseClaims, castleViolations }) {
   if (!inst.body) return;
   // Mark the round that just got invalidated (the previous one) so
   // its prose reads as overruled by the upcoming revision. Also wrap
@@ -331,9 +334,9 @@ export function noteAiRevision({ round, illegalMoves, falseClaims }) {
   // surprise), render immediately.
   const existing = inst.body._roundPanels.get(round);
   if (existing) {
-    renderRevision(existing.revision, { illegalMoves, falseClaims });
+    renderRevision(existing.revision, { illegalMoves, falseClaims, castleViolations });
   } else {
-    inst.body._pendingRevision.set(round, { illegalMoves, falseClaims });
+    inst.body._pendingRevision.set(round, { illegalMoves, falseClaims, castleViolations });
   }
 }
 

@@ -10,6 +10,7 @@ import chess
 import pytest
 
 from sturddle_view.llm.response_validator import (
+    find_castle_word_violations,
     find_false_piece_claims,
     find_illegal_moves,
 )
@@ -84,6 +85,16 @@ def test_illegal_pawn_capture_detected():
     # Pawn captures keep the file prefix (`exd5`), so they are
     # syntactically distinct from bare-square prose and remain in scope.
     assert find_illegal_moves("White plays exd5.", chess.Board()) == ["exd5"]
+
+
+def test_illegal_queen_move_in_prose_detected():
+    # Regression: model called validate_move(Qg4) -> illegal, then wrote
+    # prose recommending "Qg4" anyway. Round-end validator must flag it.
+    text = (
+        "A strong candidate is Qg4, which develops the queen with tempo "
+        "and eyes at f7."
+    )
+    assert find_illegal_moves(text, chess.Board()) == ["Qg4"]
 
 
 # ---------- Piece-on-square claims ------------------------------------
@@ -189,5 +200,44 @@ def test_square_piece_form_real_hallucination_fixture():
     # "White's b5 pawn" -- color mismatch -- flagged.
     result = find_false_piece_claims("White's b5 pawn is hanging.", board)
     assert result == ["white pawn on b5"]
+
+
+# ---------- Castle-word validator -------------------------------------
+# Models often write "castle" / "castling" / "castles" instead of the
+# SAN "O-O" / "O-O-O". When neither side can legally castle the prose
+# is hallucinating that option.
+
+
+def test_castle_word_passes_when_castling_is_legal():
+    # Starting position: castling rights present but blocked. After we
+    # clear the back rank for both sides, castling is legal.
+    board = chess.Board("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1")
+    assert find_castle_word_violations("White should castle now.", board) == []
+    assert find_castle_word_violations("Both sides will castle soon.", board) == []
+
+
+def test_castle_word_flagged_when_neither_side_can_castle():
+    # No castling rights -- the kings are not on their starting squares.
+    board = chess.Board("4k3/8/8/8/8/8/8/4K3 w - - 0 1")
+    assert find_castle_word_violations("White should castle now.", board) == ["castle"]
+
+
+def test_castle_word_dedup_keeps_first_occurrence():
+    board = chess.Board("4k3/8/8/8/8/8/8/4K3 w - - 0 1")
+    text = "White wants to castle. After castling, the king is safer."
+    # Distinct surface forms both flagged once.
+    assert find_castle_word_violations(text, board) == ["castle", "castling"]
+
+
+def test_castle_word_no_match_returns_empty():
+    board = chess.Board("4k3/8/8/8/8/8/8/4K3 w - - 0 1")
+    assert find_castle_word_violations("The position is dry.", board) == []
+
+
+def test_castle_word_only_one_side_can_castle_still_passes():
+    # White has rights; black does not. A bare "castle" mention can
+    # refer to either side, so we pass when *any* side can castle.
+    board = chess.Board("4k3/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQ - 0 1")
+    assert find_castle_word_violations("Castling is in the air.", board) == []
 
 

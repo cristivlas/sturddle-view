@@ -85,6 +85,49 @@ def _strip_annotation_glyphs(token: str) -> str:
     return _GLYPH_RE.sub("", token)
 
 
+# Natural-language castle mention -- models often write "castle"
+# instead of "O-O". False positive risk: "castles" colloquially names
+# rook pieces ("Black's castles guard the back rank") -- rare in prose.
+_CASTLE_WORD_RE = re.compile(r"\b(castles?|castling|castled)\b", re.IGNORECASE)
+
+
+def _any_castle_legal(board: chess.Board) -> bool:
+    for move in board.legal_moves:
+        if board.is_castling(move):
+            return True
+    # Copy so flipping turn doesn't mutate the caller's board.
+    other = board.copy(stack=False)
+    other.turn = not other.turn
+    for move in other.legal_moves:
+        if other.is_castling(move):
+            return True
+    return False
+
+
+def find_castle_word_violations(text: str, board: chess.Board) -> list[str]:
+    """Return distinct castle-word mentions (e.g. 'castle', 'castling')
+    found in `text` when neither side has any legal castling move in
+    the live position. Order of first appearance, deduped. Empty when
+    castling is legal for at least one side, or when no castle word
+    appears in the text.
+    """
+    matches = list(_CASTLE_WORD_RE.finditer(text))
+    if not matches:
+        return []
+    if _any_castle_legal(board):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for m in matches:
+        token = m.group(0)
+        key = token.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(token)
+    return out
+
+
 # Piece-on-square claim recognizer. Two phrasings, both common in
 # chess prose:
 #   1. "<piece> on <square>"  -- "the knight on f1", "White's bishop on d2"

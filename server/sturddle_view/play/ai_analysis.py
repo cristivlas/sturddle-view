@@ -30,7 +30,11 @@ from ..llm import (
     open_transcript,
 )
 from ..llm.cancel import CancelToken
-from ..llm.response_validator import find_false_piece_claims, find_illegal_moves
+from ..llm.response_validator import (
+    find_castle_word_violations,
+    find_false_piece_claims,
+    find_illegal_moves,
+)
 
 
 BoardProvider = Callable[[], chess.Board | None]
@@ -65,6 +69,10 @@ _ILLEGAL_MOVES_PROMPT = (
 )
 _FALSE_PIECE_PROMPT = (
     "False piece claim(s): {claims}. Rewrite without inventing pieces."
+)
+_CASTLE_WORD_PROMPT = (
+    "Castling is not legal for either side in this position; "
+    "rewrite without recommending it."
 )
 
 
@@ -236,91 +244,72 @@ class AIAnalysisCoordinator:
                                 # Anthropic semantics. Capture and break.
                                 pending_tool = chunk
                                 break
-                        if pending_tool is None:
-                            # Round ended without a tool_use. Run both
-                            # validators on the assembled text. Any hits
-                            # -> corrective user message + another round.
-                            illegal, false_claims = self._validate_round_text(round_chunks)
-                            if not illegal and not false_claims:
-                                round_cap_hit = False
-                                break
-                            messages.append(_assistant_message(round_chunks))
-                            parts: list[str] = []
-                            if illegal:
-                                parts.append(
-                                    _ILLEGAL_MOVES_PROMPT.format(moves=", ".join(illegal))
-                                )
-                            if false_claims:
-                                parts.append(
-                                    _FALSE_PIECE_PROMPT.format(claims=", ".join(false_claims))
-                                )
-                            messages.append({
-                                "role": "user",
-                                "content": _CORRECTIVE_PREFIX + " ".join(parts),
-                            })
-                            log.info(
-                                "AI agent loop: validator hits in round %d: moves=%s claims=%s",
-                                round_index, illegal, false_claims,
-                            )
-                            # Tell the UI a corrective round is starting,
-                            # with why -- the panel renders a banner above
-                            # the next round.
-                            await self._emit(
-                                Event(
-                                    kind="ai_corrective",
-                                    game_id=game_id,
-                                    payload={
-                                        "round": round_index + 1,
-                                        "illegal_moves": illegal,
-                                        "false_claims": false_claims,
-                                    },
-                                )
-                            )
-                            continue
+                        # Validate every round's prose, even when a
+                        # tool_use follows (policy change -- previously
+                        # the tool_use exit path bypassed validation).
+                        illegal, false_claims, castle_violations = (
+                            self._validate_round_text(round_chunks)
+                        )
+                        if (
+                            pending_tool is None
+                            and not illegal
+                            and not false_claims
+                            and not castle_violations
+                        ):
+                            round_cap_hit = False
+                            break
                         messages.append(_assistant_message(round_chunks))
-                        # Surface the tool call to the UI before dispatch,
-                        # so the panel can show "tool X called" while the
-                        # tool actually runs. Result is not emitted in v1
-                        # (engine PV / arrow side-effects cover analyze;
-                        # piece_at / validate_move outputs stay off-screen).
-                        await self._emit(
-                            Event(
-                                kind="ai_tool_call",
-                                game_id=game_id,
-                                payload={
-                                    "round": round_index,
-                                    "name": pending_tool.tool_name,
-                                    "input": pending_tool.tool_input,
-                                    "tool_use_id": pending_tool.tool_use_id,
-                                },
-                            )
-                        )
-                        tool_output = await self._dispatch_tool(pending_tool)
-                        await transcript.tool_result(
-                            round_index, pending_tool.tool_use_id, tool_output
-                        )
-                        # Surface tool failures to the UI so the panel
-                        # can mark the dot. Success stays silent (v1
-                        # decision: results stay off-screen).
-                        if isinstance(tool_output, dict) and tool_output.get("error"):
+                        if pending_tool is not None:
+                            # Surface dispatch to the UI; result stays
+                            # off-screen in v1 (engine side-effects cover
+                            # analyze; piece_at / validate_move silent).
                             await self._emit(
                                 Event(
-                                    kind="ai_tool_call_failed",
+                                    kind="ai_tool_call",
                                     game_id=game_id,
                                     payload={
                                         "round": round_index,
+                                        "name": pending_tool.tool_name,
+                                        "input": pending_tool.tool_input,
                                         "tool_use_id": pending_tool.tool_use_id,
-                                        "error": tool_output.get("error"),
-                                        "detail": tool_output.get("detail"),
                                     },
                                 )
                             )
-                        card = self._inject_card_once(pending_tool.tool_name, cards_injected)
-                        messages.append(
-                            _tool_result_message(
-                                pending_tool.tool_use_id, tool_output, card=card,
+                            tool_output = await self._dispatch_tool(pending_tool)
+                            await transcript.tool_result(
+                                round_index, pending_tool.tool_use_id, tool_output
                             )
-                        )
+                            if isinstance(tool_output, dict) and tool_output.get("error"):
+                                await self._emit(
+                                    Event(
+                                        kind="ai_tool_call_failed",
+                                        game_id=game_id,
+                                        payload={
+                                            "round": round_index,
+                                            "tool_use_id": pending_tool.tool_use_id,
+                                            "error": tool_output.get("error"),
+                                            "detail": tool_output.get("detail"),
+                                        },
+                                    )
+                                )
+                            card = self._inject_card_once(pending_tool.tool_name, cards_injected)
+                            messages.append(
+                                _tool_result_message(
+                                    pending_tool.tool_use_id, tool_output, card=card,
+                                )
+                            )
+                        if illegal or false_claims or castle_violations:
+                            # After tool_result (if any) so every assistant
+                            # tool_use has a matching tool_result before the
+                            # next user-role message.
+                            await self._append_corrective(
+                                messages,
+                                illegal=illegal,
+                                false_claims=false_claims,
+                                castle_violations=castle_violations,
+                                game_id=game_id,
+                                round_index=round_index,
+                            )
                     if round_cap_hit:
                         # Signal that the loop terminated on the guardrail
                         # rather than reaching a natural answer; lets the
@@ -377,22 +366,65 @@ class AIAnalysisCoordinator:
         # the old list stays consistent.
         self._replay_buffer = []
 
+    async def _append_corrective(
+        self,
+        messages: list[Message],
+        *,
+        illegal: list[str],
+        false_claims: list[str],
+        castle_violations: list[str],
+        game_id: str | None,
+        round_index: int,
+    ) -> None:
+        """Append a corrective user message and emit ai_corrective."""
+        parts: list[str] = []
+        if illegal:
+            parts.append(_ILLEGAL_MOVES_PROMPT.format(moves=", ".join(illegal)))
+        if false_claims:
+            parts.append(_FALSE_PIECE_PROMPT.format(claims=", ".join(false_claims)))
+        if castle_violations:
+            parts.append(_CASTLE_WORD_PROMPT)
+        messages.append({
+            "role": "user",
+            "content": _CORRECTIVE_PREFIX + " ".join(parts),
+        })
+        log.info(
+            "AI agent loop: validator hits in round %d: moves=%s claims=%s castle=%s",
+            round_index, illegal, false_claims, castle_violations,
+        )
+        await self._emit(
+            Event(
+                kind="ai_corrective",
+                game_id=game_id,
+                payload={
+                    "round": round_index + 1,
+                    "illegal_moves": illegal,
+                    "false_claims": false_claims,
+                    "castle_violations": castle_violations,
+                },
+            )
+        )
+
     def _validate_round_text(
         self, chunks: list[ProviderChunk],
-    ) -> tuple[list[str], list[str]]:
-        """Run both validators on a round's assembled text.
-        Returns (illegal_moves, false_piece_claims). Empty pair when
-        clean, when no board_provider is wired, or when no live board
-        is available."""
+    ) -> tuple[list[str], list[str], list[str]]:
+        """Run all validators on a round's assembled text.
+        Returns (illegal_moves, false_piece_claims, castle_violations).
+        Empty triple when clean, when no board_provider is wired, or
+        when no live board is available."""
         if self._board_provider is None:
-            return [], []
+            return [], [], []
         board = self._board_provider()
         if board is None:
-            return [], []
+            return [], [], []
         text = "".join(c.text for c in chunks if c.kind == "text" and c.text)
         if not text:
-            return [], []
-        return find_illegal_moves(text, board), find_false_piece_claims(text, board)
+            return [], [], []
+        return (
+            find_illegal_moves(text, board),
+            find_false_piece_claims(text, board),
+            find_castle_word_violations(text, board),
+        )
 
     def _inject_card_once(self, tool_name: str, injected: set[str]) -> str | None:
         """Return the tool's card on first call this turn, else None.

@@ -696,38 +696,6 @@ async def test_multiple_illegal_moves_listed_once_each():
 
 
 @pytest.mark.asyncio
-async def test_validator_only_runs_on_tool_use_free_exit():
-    # When the round ends with a tool_use, the validator does not run --
-    # the model's text may legitimately reference moves it is about to
-    # verify with a tool call.
-    async def ok(_input, *, cancel_token):
-        return {"legal": False}
-
-    reg = _make_registry({"validate_move": ok})
-    provider = ScriptedProvider(rounds=[
-        [
-            ProviderChunk(kind="text", text="Trying Nf6."),
-            ProviderChunk(
-                kind="tool_use", tool_use_id="t1",
-                tool_name="validate_move", tool_input={"move": "Nf6"},
-            ),
-        ],
-        [ProviderChunk(kind="text", text="Got it, e4 instead.")],
-    ])
-    bus = EventBus()
-    await bus.subscribe()
-    coord = AIAnalysisCoordinator(
-        bus, provider, registry=reg,
-        board_provider=_board_provider_for(chess.Board()),
-    )
-
-    await coord.run(game_id="g")
-
-    # 2 rounds, no extra corrective round triggered by round 1's text.
-    assert provider.stream_calls == 2
-
-
-@pytest.mark.asyncio
 async def test_false_piece_claim_triggers_corrective_round():
     # Starting position: no piece on e4. Model invents one.
     provider = ScriptedProvider(rounds=[
@@ -869,6 +837,127 @@ async def test_ai_corrective_event_emitted_on_validator_hit():
         "illegal_moves": ["Nf6"],
         "false_claims": [],
     })
+
+
+@pytest.mark.asyncio
+async def test_castle_word_in_prose_triggers_dedicated_corrective():
+    # Neither side can castle (kings off their starting squares).
+    # Model writes "castling" -> corrective with the dedicated prompt,
+    # not the illegal-moves one.
+    no_castle_board = chess.Board("4k3/8/8/8/8/8/8/4K3 w - - 0 1")
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="White should consider castling soon.")],
+        [ProviderChunk(kind="text", text="Revised plan.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=ToolRegistry(),
+        board_provider=_board_provider_for(no_castle_board),
+    )
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    corrective = [e for e in events if e.kind == "ai_corrective"]
+    assert len(corrective) == 1
+    assert corrective[0].payload["castle_violations"] == ["castling"]
+    assert corrective[0].payload["illegal_moves"] == []
+    # The corrective user message uses the castle-specific wording, not
+    # the illegal-moves wording.
+    corrective_msg = provider.last_call["messages"][-1]["content"]
+    assert "Castling is not legal" in corrective_msg
+    assert "do not exist" not in corrective_msg
+
+
+@pytest.mark.asyncio
+async def test_illegal_prose_in_same_round_as_tool_use_triggers_corrective():
+    # Regression: model wrote "Qg4" prose then called validate_move(Qg4).
+    # The illegal token in the streamed prose must trigger a corrective
+    # round, even though the round ended with a tool_use.
+    async def validate_move(_input, *, cancel_token):
+        return {"error": "illegal_move", "detail": "illegal san: 'Qg4'"}
+
+    reg = _make_registry({"validate_move": validate_move})
+    provider = ScriptedProvider(rounds=[
+        [
+            ProviderChunk(
+                kind="text",
+                text="A strong candidate is Qg4, which develops the queen.",
+            ),
+            ProviderChunk(
+                kind="tool_use", tool_use_id="t1",
+                tool_name="validate_move", tool_input={"move": "Qg4"},
+            ),
+        ],
+        [ProviderChunk(kind="text", text="OK, different plan.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg,
+        board_provider=_board_provider_for(chess.Board()),
+    )
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    corrective = [e for e in events if e.kind == "ai_corrective"]
+    assert len(corrective) == 1
+    assert "Qg4" in corrective[0].payload["illegal_moves"]
+    # Tool also dispatched: ai_tool_call event fired in round 0.
+    tool_calls = [e for e in events if e.kind == "ai_tool_call"]
+    assert len(tool_calls) == 1
+    # Message stack: opening user, assistant(text+tool_use),
+    # user(tool_result), user(corrective), then round 1.
+    msgs = provider.last_call["messages"]
+    assert msgs[-1]["role"] == "user"
+    assert "Qg4" in msgs[-1]["content"]
+    assert msgs[-2]["role"] == "user"
+    assert msgs[-2]["content"][0]["type"] == "tool_result"
+
+
+@pytest.mark.asyncio
+async def test_illegal_move_in_prose_after_validate_move_tool_says_illegal():
+    # Regression: model called validate_move(Qg4), tool returned
+    # illegal_move, then the model wrote prose containing "Qg4" anyway.
+    # The round-end validator must catch the move and inject a corrective
+    # round -- the failing tool result alone is not enough.
+    async def validate_move(_input, *, cancel_token):
+        return {"error": "illegal_move", "detail": "illegal san: 'Qg4'"}
+
+    reg = _make_registry({"validate_move": validate_move})
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(
+            kind="tool_use", tool_use_id="t1",
+            tool_name="validate_move", tool_input={"move": "Qg4"},
+        )],
+        # Model writes Qg4 in prose anyway -- mirrors the screenshot.
+        [ProviderChunk(
+            kind="text",
+            text="A strong candidate is Qg4, which develops the queen.",
+        )],
+        # Corrective round expected here -- prose must not reuse the
+        # illegal token or we'd trigger a second corrective.
+        [ProviderChunk(kind="text", text="Revised: a different plan.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg,
+        board_provider=_board_provider_for(chess.Board()),
+    )
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    corrective = [e for e in events if e.kind == "ai_corrective"]
+    assert len(corrective) == 1, (
+        "validator should have flagged Qg4 in round 1 prose"
+    )
+    assert "Qg4" in corrective[0].payload["illegal_moves"]
+    # All three rounds must have run.
+    assert provider.stream_calls == 3
 
 
 @pytest.mark.asyncio
