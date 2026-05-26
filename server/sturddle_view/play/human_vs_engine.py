@@ -29,6 +29,7 @@ from .canonical_hash import canonical_hash
 from ..chess.results import DRAW, loser_result, winner_result
 from ..events import Event, EventBus
 from .chess_clock import ChessClock, TimeControl
+from .engine_analysis import global_engine_defaults, spawn_analysis_engine
 from .engine_info_pump import pump_engine_info
 from .engine_supervisor import EngineSupervisor
 from .game_store import DEFAULT_PLAYER_NAME, GameState, GameStore
@@ -419,22 +420,10 @@ class HumanVsEngine:
         return chess.WHITE
 
     def _global_engine_defaults(self) -> dict:
-        """UCI-option subset of the global engine defaults from settings.
-        Blank/None entries are dropped so callers can iterate without
-        another guard. Book file + plies are fastchess-only and
-        excluded — see project_hve_book_followup memory."""
-        s = self._settings
-        if s is None:
-            return {}
-        out: dict = {}
-        if getattr(s, "engine_default_threads", None):
-            out["Threads"] = s.engine_default_threads
-        if getattr(s, "engine_default_hash_mb", None):
-            out["Hash"] = s.engine_default_hash_mb
-        sp = getattr(s, "engine_default_syzygy_path", None)
-        if sp:
-            out["SyzygyPath"] = sp
-        return out
+        """Delegates to the shared engine-analysis helper so HVE,
+        the AI analysis tool, and any future caller derive engine
+        defaults from one place."""
+        return global_engine_defaults(self._settings)
 
     def _ensure_tablebase(self) -> None:
         sp = getattr(self._settings, "engine_default_syzygy_path", None)
@@ -1707,14 +1696,13 @@ class HumanVsEngine:
 
         A throwaway process avoids re-configuring + reverting Threads on the
         play engine (and any state bleed it could cause). Killed on exit.
+        Spawn + settings-derived options are owned by the shared
+        engine-analysis helper so this stays in sync with the AI tool.
         """
-        overrides: dict = {}
-        s = self._settings
-        n = getattr(s, "engine_default_analysis_threads", None) if s else None
-        if n:
-            overrides["Threads"] = n
         try:
-            engine = await self._spawn_engine(overrides=overrides)
+            engine, cleanup = await spawn_analysis_engine(
+                self._supervisor, self._settings,
+            )
         except Exception:
             log.exception("could not start engine for analysis")
             return
@@ -1734,10 +1722,10 @@ class HumanVsEngine:
             return
         finally:
             self._analysis = None
-            try:
-                await engine.quit()
-            except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
-                pass
+            # cleanup() is documented to swallow quit/pipe errors;
+            # no surrounding try needed (and the previous narrow tuple
+            # missed OSError from Windows proactor on pipe close).
+            await cleanup()
 
     def _opening_payload(self) -> dict | None:
         """Opening-book lookup. Keys on the standard starting position; an

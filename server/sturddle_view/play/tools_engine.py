@@ -23,6 +23,7 @@ import chess.engine
 from ..events import Event, EventBus
 from ..llm import ToolSpec
 from ..llm.cancel import CancelToken
+from .engine_analysis import spawn_analysis_engine
 from .engine_info_pump import pump_engine_info
 from .engine_supervisor import EngineSupervisor
 
@@ -57,6 +58,10 @@ _DEFAULT_TOP_MOVES_DEPTH = 12
 EngineLauncher = Callable[[], EngineSupervisor]
 GameIdProvider = Callable[[], str | None]
 BoardProvider = Callable[[], chess.Board | None]
+# Provider that returns the live app settings object (or None). Lets
+# the throwaway analysis engine inherit Threads/Hash/Syzygy/etc. from
+# the same source HVE's analysis path uses.
+SettingsProvider = Callable[[], Any]
 AnalyzeTool = Callable[..., Awaitable[dict[str, Any]]]
 
 # Default fallback game_id when the tool runs outside a live HVE
@@ -321,6 +326,7 @@ async def _run_one_search(
     game_id: str,
     cancel_token: CancelToken,
     root_moves: list[chess.Move] | None = None,
+    settings_provider: SettingsProvider | None = None,
 ) -> tuple[chess.engine.InfoDict, bool]:
     """Spawn a throwaway engine, run one search, return (last_info, cancelled).
     Raises _SearchError on spawn or mid-search engine death so callers can
@@ -330,12 +336,18 @@ async def _run_one_search(
     these moves at the root (UCI `searchmoves`). Used by top_moves to
     score a specific candidate without push/pop tricks.
 
+    `settings_provider`: returns the live app settings so the throwaway
+    engine inherits Threads/Hash/SyzygyPath/etc. via the shared
+    engine-analysis helper. None falls back to no overrides (matches
+    test doubles that don't carry settings).
+
     Publishes engine_info events via pump_engine_info but does NOT emit
     engine_search_start -- the caller decides when to clear the panel
     (analyze emits once; top_moves emits once for the whole batch)."""
     sup = engine_launcher()
+    settings = settings_provider() if settings_provider else None
     try:
-        engine, cleanup = await sup.spawn_throwaway()
+        engine, cleanup = await spawn_analysis_engine(sup, settings)
     except Exception as exc:
         log.exception("search: engine spawn failed")
         raise _SearchError("engine_spawn_failed", str(exc)) from exc
@@ -357,16 +369,15 @@ async def _run_one_search(
         log.error("search: engine terminated mid-search")
         raise _SearchError("engine_terminated", str(exc)) from exc
     finally:
-        try:
-            await cleanup()
-        except Exception:
-            log.exception("search: engine cleanup failed")
+        # cleanup() is exception-safe by contract; no wrapping needed.
+        await cleanup()
 
 
 def make_analyze_tool(
     engine_launcher: EngineLauncher,
     bus: EventBus,
     game_id_provider: GameIdProvider | None = None,
+    settings_provider: SettingsProvider | None = None,
 ) -> AnalyzeTool:
     """Build the `analyze` async tool.
 
@@ -381,6 +392,10 @@ def make_analyze_tool(
     `game_id_provider()` returns the current live game's id at call
     time. When None or the provider returns None, events are tagged
     with a fallback id so they still flow through the WS muxing.
+
+    `settings_provider()` returns the app settings so the throwaway
+    engine inherits Threads/Hash/SyzygyPath via the shared spawn
+    helper. None is acceptable (tests).
     """
     async def analyze(input_: dict, *, cancel_token: CancelToken) -> dict:
         fen = input_.get("fen")
@@ -400,6 +415,7 @@ def make_analyze_tool(
             last_info, cancelled = await _run_one_search(
                 engine_launcher, board, limit,
                 bus=bus, game_id=game_id, cancel_token=cancel_token,
+                settings_provider=settings_provider,
             )
         except _SearchError as err:
             return {"error": err.kind, "detail": err.detail}
@@ -452,6 +468,7 @@ def make_top_moves_tool(
     bus: EventBus,
     board_provider: BoardProvider,
     game_id_provider: GameIdProvider | None = None,
+    settings_provider: SettingsProvider | None = None,
 ) -> AnalyzeTool:
     """Build the `top_moves` async tool. Iterates legal moves on the
     live board (via board_provider), searches each child position,
@@ -500,6 +517,7 @@ def make_top_moves_tool(
                     engine_launcher, board, limit,
                     bus=bus, game_id=game_id, cancel_token=cancel_token,
                     root_moves=[move],
+                    settings_provider=settings_provider,
                 )
             except _SearchError as err:
                 return {"error": err.kind, "detail": err.detail}

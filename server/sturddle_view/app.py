@@ -352,12 +352,16 @@ def create_app(
         return getattr(hve, "_board", None) if hve else None
 
     ai_registry = ToolRegistry()
+    def _ai_settings_provider():
+        return app.state.settings
+
     ai_registry.register(
         ANALYZE_TOOL_SPEC,
         make_analyze_tool(
             _ai_engine_launcher,
             bus=app.state.event_bus,
             game_id_provider=_ai_game_id_provider,
+            settings_provider=_ai_settings_provider,
         ),
     )
     ai_registry.register(
@@ -380,6 +384,7 @@ def create_app(
     #         bus=app.state.event_bus,
     #         board_provider=_ai_board_provider,
     #         game_id_provider=_ai_game_id_provider,
+    #         settings_provider=_ai_settings_provider,
     #     ),
     # )
     app.state.ai_tool_registry = ai_registry

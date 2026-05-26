@@ -223,6 +223,9 @@ class EngineSupervisor:
                 log.exception("engine refused options %s", accepted)
 
         async def _cleanup() -> None:
+            """Exception-safe by contract: callers don't wrap. Swallows
+            quit failures, pipe-close failures (incl. Windows-proactor
+            OSError), and a hung asyncio.wait timeout."""
             try:
                 await engine.quit()
             except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
@@ -236,7 +239,10 @@ class EngineSupervisor:
                 if pipe is not None:
                     waiters.append(_close_and_wait(pipe))
             waiters.append(_close_and_wait(transport))
-            await asyncio.wait(waiters, timeout=_CLOSE_GRACE_SECONDS)
+            try:
+                await asyncio.wait(waiters, timeout=_CLOSE_GRACE_SECONDS)
+            except Exception:
+                log.exception("engine cleanup: transport close raised")
 
         return engine, _cleanup
 
