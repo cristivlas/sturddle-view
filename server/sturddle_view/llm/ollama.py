@@ -343,9 +343,16 @@ class OllamaProvider(LLMProvider):
                 system, messages, tools,
                 transcript=transcript, round_index=round_index,
             )
-        # Some local models stream tool calls as prose (<function=...>)
-        # instead of structured tool_calls. Recover them transparently.
-        async for chunk in recover_inline_tool_calls(inner):
+        # Some local models stream tool calls as prose -- recover them
+        # transparently. XML shape handled unconditionally; the call-
+        # syntax shape (name(args) / name{args}) needs the tool-name
+        # set so we know which identifiers to watch for.
+        tool_names: set[str] = set()
+        for t in tools or []:
+            n = t.get("name")
+            if n:
+                tool_names.add(n)
+        async for chunk in recover_inline_tool_calls(inner, tool_names=tool_names):
             yield chunk
 
     async def _stream_openai_compat(

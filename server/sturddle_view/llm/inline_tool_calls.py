@@ -1,36 +1,28 @@
 """Inline tool-call recovery for models that emit tool calls as prose.
 
-Some local models (Qwen, Nemotron-3 variants) don't reliably follow
-the OpenAI tool_call protocol. Instead they stream the call as text:
+Two patterns supported:
 
-    <function=piece_at>
-    <parameter=square>
-    f3
-    </parameter>
-    </function>
-    </tool_call>
+1. XML shape: `<function=name>...</function>`.
+2. Call-syntax shape: `name(args)` or `name{args}` with args in JSON,
+   Python-dict, or kwarg form. Requires the caller to pass a
+   `tool_names` set so the wrapper knows which names to watch.
 
-The model intended to call a tool; we'd like to honor that intent
-instead of leaking the literal XML into the user-visible panel.
-
-This module wraps a ProviderChunk async iterator and:
-- watches text chunks for the sentinel `<function=` (case-sensitive),
-- buffers from the sentinel forward, suppressing those text chunks,
-- on the closing `</function>` (and optional `</tool_call>`), parses
-  the buffered XML into a synthetic `tool_use` chunk and yields it.
-
-If parsing fails or the buffer never closes, the swallowed text is
+For each pattern, the wrapper buffers the matched span, parses it, and
+emits a synthetic `tool_use` chunk in place of the literal text. On
+parse failure or unclosed buffer at stream end, swallowed text is
 flushed back as a normal text chunk -- the user sees what the model
 emitted instead of silent loss.
 """
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import os
 import re
 import uuid
-from typing import AsyncIterator
+from dataclasses import dataclass
+from typing import AsyncIterator, Iterable
 
 from .base import ProviderChunk
 
@@ -39,23 +31,28 @@ log = logging.getLogger(__name__)
 
 
 _SENTINEL = "<function="
-# UUID hex slice length for synthetic tool_use_id (`inline-XXXXXXXXXXXX`).
-# 12 chars of hex = 48 bits of entropy, plenty for collision-free IDs
-# within a single turn. Env override is for ops if a longer ID is ever
-# needed for log correlation.
+# UUID hex slice length for synthetic tool_use_id; 12 chars = 48 bits.
 _DEFAULT_INLINE_ID_LEN = 12
 INLINE_ID_LEN = int(os.environ.get("SV_AI_INLINE_TOOL_ID_LEN", _DEFAULT_INLINE_ID_LEN))
-# Matches the full tool-call XML. The <tool_call> trailer is optional
-# (some models emit it, some don't).
+
+# Shared lexical primitives.
+_IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
+_IDENT_RE = re.compile(_IDENT)
+_TRAILING_IDENT_RE = re.compile(_IDENT + r"$")
+_QUOTE_CHARS = frozenset(('"', "'"))
+_BRACKET_OPENERS = "({["
+_BRACKET_CLOSERS = ")}]"
+
+# XML tool-call shape. `<tool_call>` trailer is optional.
 _TOOL_CALL_RE = re.compile(
-    r"<function=(?P<name>[A-Za-z_][A-Za-z0-9_]*)>\s*"
+    rf"<function=(?P<name>{_IDENT})>\s*"
     r"(?P<body>.*?)"
     r"</function>\s*"
     r"(?:</tool_call>\s*)?",
     re.DOTALL,
 )
 _PARAM_RE = re.compile(
-    r"<parameter=(?P<key>[A-Za-z_][A-Za-z0-9_]*)>\s*"
+    rf"<parameter=(?P<key>{_IDENT})>\s*"
     r"(?P<val>.*?)"
     r"\s*</parameter>",
     re.DOTALL,
@@ -96,58 +93,377 @@ def _synthesize_tool_use(name: str, params: dict[str, object]) -> ProviderChunk:
     )
 
 
+# ---------- Call-syntax recovery --------------------------------------
+
+
+_BRACKET_CLOSE = {"(": ")", "{": "}"}
+_BARE_KEY_RE = re.compile(rf"([{{,]\s*)({_IDENT})(\s*:)")
+
+
+def _build_name_pattern(tool_names: Iterable[str]) -> re.Pattern[str] | None:
+    """Compile a regex that matches any of `tool_names` as a word
+    immediately followed by `(` or `{`. Returns None when empty so the
+    caller can short-circuit."""
+    names = [re.escape(n) for n in tool_names if n]
+    if not names:
+        return None
+    return re.compile(r"\b(" + "|".join(sorted(set(names), key=len, reverse=True)) + r")\s*([({])")
+
+
+def _find_balanced_close(text: str, open_idx: int) -> int | None:
+    """Index just past the bracket that balances `text[open_idx]`,
+    or None if not closed. Quote-aware so brackets inside strings
+    don't break the count."""
+    opener = text[open_idx]
+    closer = _BRACKET_CLOSE[opener]
+    depth = 0
+    i = open_idx
+    n = len(text)
+    in_str: str | None = None
+    while i < n:
+        ch = text[i]
+        if in_str is not None:
+            if ch == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if ch == in_str:
+                in_str = None
+            i += 1
+            continue
+        if ch in _QUOTE_CHARS:
+            in_str = ch
+            i += 1
+            continue
+        if ch == opener:
+            depth += 1
+        elif ch == closer:
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return None
+
+
+def _quote_bare_keys(body: str) -> str:
+    """Quote bare-identifier dict keys so json.loads can parse
+    `{move: "e5"}` -> `{"move": "e5"}`. Matches only after `{` or `,`."""
+    return _BARE_KEY_RE.sub(r'\1"\2"\3', body)
+
+
+def _parse_call_args(body: str, opener: str = "(") -> dict[str, object] | None:
+    """Permissive parser cascade for `name(body)` / `name{body}` args.
+    Returns a normalized dict or None on total failure. Positional args
+    are not supported -- our tools all take named params.
+
+    `opener` is the bracket type at the call site. When `{`, we re-wrap
+    the (already-stripped) body in braces for the bare-key JSON retry
+    -- the round trip is intentional: the outer braces were peeled by
+    the caller, so we restore them for dict-shape parsing.
+    """
+    body = body.strip()
+    if not body:
+        return {}
+
+    for parser in (json.loads, ast.literal_eval):
+        try:
+            val = parser(body)
+        except (ValueError, SyntaxError):
+            continue
+        if isinstance(val, dict):
+            return {str(k): v for k, v in val.items()}
+        return None  # non-dict literal -- no positional dispatch
+
+    if opener == "{":
+        wrapped = "{" + body + "}"
+        try:
+            val = json.loads(_quote_bare_keys(wrapped))
+            if isinstance(val, dict):
+                return {str(k): v for k, v in val.items()}
+        except (ValueError, SyntaxError):
+            pass
+        try:
+            val = ast.literal_eval(wrapped)
+            if isinstance(val, dict):
+                return {str(k): v for k, v in val.items()}
+        except (ValueError, SyntaxError):
+            pass
+
+    parts = _split_top_level(body)
+    out: dict[str, object] = {}
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        eq = _find_top_level_eq(part)
+        if eq is None:
+            return None  # positional arg in unparseable body -- give up
+        key = part[:eq].strip()
+        # Strip quotes from the key if the model emitted `"k"=v`.
+        if len(key) >= 2 and key[0] == key[-1] and key[0] in _QUOTE_CHARS:
+            key = key[1:-1]
+        val_raw = part[eq + 1:].strip()
+        out[key] = _coerce_literal(val_raw)
+    return out or None
+
+
+def _iter_top_level(s: str):
+    """Yield (index, char) for every character of `s` that is at depth
+    zero (not inside quotes or nested brackets). Quote-aware: handles
+    backslash-escaped chars inside strings."""
+    depth = 0
+    in_str: str | None = None
+    i = 0
+    n = len(s)
+    while i < n:
+        ch = s[i]
+        if in_str is not None:
+            if ch == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if ch == in_str:
+                in_str = None
+            i += 1
+            continue
+        if ch in _QUOTE_CHARS:
+            in_str = ch
+        elif ch in _BRACKET_OPENERS:
+            depth += 1
+        elif ch in _BRACKET_CLOSERS:
+            depth -= 1
+        elif depth == 0:
+            yield i, ch
+        i += 1
+
+
+def _split_top_level(s: str) -> list[str]:
+    """Split on commas not inside quotes or nested brackets."""
+    parts: list[str] = []
+    start = 0
+    for i, ch in _iter_top_level(s):
+        if ch == ",":
+            parts.append(s[start:i])
+            start = i + 1
+    parts.append(s[start:])
+    return parts
+
+
+def _find_top_level_eq(s: str) -> int | None:
+    """Index of `=` not inside quotes/nested brackets, or None."""
+    for i, ch in _iter_top_level(s):
+        if ch == "=":
+            return i
+    return None
+
+
+def _coerce_literal(raw: str) -> object:
+    """Single-token coerce: JSON (handles "...\\"...") -> Python literal
+    (True/False/None, single-quoted strings) -> stripped-quote fallback
+    -> bare string."""
+    s = raw.strip()
+    try:
+        return json.loads(s)
+    except ValueError:
+        pass
+    try:
+        return ast.literal_eval(s)
+    except (ValueError, SyntaxError):
+        pass
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in _QUOTE_CHARS:
+        return s[1:-1]
+    return s
+
+
+# Streaming-helper outcomes. Dataclasses (not tuples) so unpacking
+# sites can branch on isinstance without # type: ignore noise.
+
+
+@dataclass(frozen=True)
+class _CallNone:
+    """No `name(...)` / `name{...}` shape found in the buffer."""
+
+
+@dataclass(frozen=True)
+class _CallUnfinished:
+    """Match found but bracket isn't closed yet; hold and wait."""
+    match_start: int
+
+
+@dataclass(frozen=True)
+class _CallUnparseable:
+    """Match closed but args couldn't be parsed; flush as text."""
+    match_start: int
+    match_end: int
+
+
+@dataclass(frozen=True)
+class _CallMatch:
+    """Complete and parsed."""
+    match_start: int
+    match_end: int
+    name: str
+    params: dict[str, object]
+
+
+_CallRecovery = _CallNone | _CallUnfinished | _CallUnparseable | _CallMatch
+
+
+def _try_recover_first_call(
+    buf: str, name_re: re.Pattern[str],
+) -> _CallRecovery:
+    """Inspect `buf` for the earliest `name(args)` / `name{args}` shape."""
+    m = name_re.search(buf)
+    if m is None:
+        return _CallNone()
+    open_idx = m.start(2)
+    close = _find_balanced_close(buf, open_idx)
+    if close is None:
+        return _CallUnfinished(m.start())
+    body = buf[open_idx + 1:close - 1]
+    params = _parse_call_args(body, opener=buf[open_idx])
+    if params is None:
+        return _CallUnparseable(m.start(), close)
+    return _CallMatch(m.start(), close, m.group(1), params)
+
+
+# ---------- Top-level wrapper -----------------------------------------
+
+
+def _try_close_xml(xml_buf: str) -> tuple[ProviderChunk, str] | None:
+    """If `xml_buf` contains a complete `<function=...>...</function>`,
+    return (tool_use_chunk, trailing_text). Else None."""
+    result = _parse_tool_call(xml_buf)
+    if result is None:
+        return None
+    name, params, end = result
+    log.info("inline-XML tool call recovered: %s(%s)", name, params)
+    return _synthesize_tool_use(name, params), xml_buf[end:]
+
+
 async def recover_inline_tool_calls(
     upstream: AsyncIterator[ProviderChunk],
+    *,
+    tool_names: Iterable[str] | None = None,
 ) -> AsyncIterator[ProviderChunk]:
-    """Async-iterator wrapper that converts inline-XML tool calls into
-    synthetic tool_use chunks. Non-text chunks pass through unchanged."""
-    buf = ""  # accumulating since the sentinel was seen
-    capturing = False
+    """Async-iterator wrapper that converts inline tool calls into
+    synthetic tool_use chunks. Non-text chunks pass through unchanged.
+
+    When `tool_names` is provided, the wrapper also recovers
+    `name(args)` / `name{args}` shapes for any matching name. None or
+    empty disables call-syntax recovery (legacy XML path only).
+    """
+    name_re = _build_name_pattern(tool_names) if tool_names else None
+
+    xml_buf = ""
+    xml_capturing = False
+    # Holds pending text that may complete a call-syntax match; never
+    # flushed as text until we know no match is forming.
+    call_buf = ""
 
     async for chunk in upstream:
         if chunk.kind != "text" or not chunk.text:
+            # Non-text mid-buffer: flush pending text first.
+            if call_buf:
+                yield ProviderChunk(kind="text", text=call_buf)
+                call_buf = ""
             yield chunk
             continue
 
-        if not capturing:
-            idx = chunk.text.find(_SENTINEL)
-            if idx < 0:
-                yield chunk
+        text = chunk.text
+
+        if xml_capturing:
+            xml_buf += text
+            closed = _try_close_xml(xml_buf)
+            if closed is None:
                 continue
-            # Split: emit any prefix as normal text, start capturing
-            # from the sentinel.
-            if idx > 0:
-                yield ProviderChunk(kind="text", text=chunk.text[:idx])
-            buf = chunk.text[idx:]
-            capturing = True
-        else:
-            buf += chunk.text
-
-        # Try to parse whatever's in the buffer. If we have a complete
-        # tool-call shape, emit it and exit capturing.
-        result = _parse_tool_call(buf)
-        if result is None:
-            # Not complete yet; keep buffering.
+            tool_chunk, tail = closed
+            yield tool_chunk
+            if tail:
+                yield ProviderChunk(kind="text", text=tail)
+            xml_buf = ""
+            xml_capturing = False
             continue
-        name, params, end = result
-        # Anything after the parsed XML is post-call prose; rare. NOTE:
-        # back-to-back tool calls in one chunk would emit the second's
-        # XML as plain text (we re-enter the loop only on next chunk).
-        # Hasn't been observed in real transcripts; fix when it does.
-        tail = buf[end:]
-        log.info("inline-XML tool call recovered: %s(%s)", name, params)
-        yield _synthesize_tool_use(name, params)
-        if tail:
-            yield ProviderChunk(kind="text", text=tail)
-        buf = ""
-        capturing = False
 
-    # Stream ended mid-capture: parsing never completed. Flush the
-    # buffered text so the user sees what the model produced instead
-    # of silent loss.
-    if capturing and buf:
+        # XML sentinel takes precedence over call-syntax.
+        xml_idx = text.find(_SENTINEL)
+        if xml_idx >= 0:
+            prefix = call_buf + text[:xml_idx]
+            if prefix:
+                yield ProviderChunk(kind="text", text=prefix)
+            call_buf = ""
+            xml_buf = text[xml_idx:]
+            xml_capturing = True
+            closed = _try_close_xml(xml_buf)
+            if closed is None:
+                continue
+            tool_chunk, tail = closed
+            yield tool_chunk
+            if tail:
+                yield ProviderChunk(kind="text", text=tail)
+            xml_buf = ""
+            xml_capturing = False
+            continue
+
+        if name_re is None:
+            # No call-syntax recovery: pass through.
+            if call_buf:
+                yield ProviderChunk(kind="text", text=call_buf)
+                call_buf = ""
+            yield chunk
+            continue
+
+        call_buf += text
+        while call_buf:
+            result = _try_recover_first_call(call_buf, name_re)
+            if isinstance(result, _CallNone):
+                # Hold back any trailing partial identifier so a name
+                # split across chunks can still match.
+                safe_flush, keep = _split_at_safe_boundary(call_buf, tool_names or ())
+                if safe_flush:
+                    yield ProviderChunk(kind="text", text=safe_flush)
+                call_buf = keep
+                break
+            if isinstance(result, _CallUnfinished):
+                # Flush any prefix; keep the unfinished tail for next chunk.
+                if result.match_start > 0:
+                    yield ProviderChunk(kind="text", text=call_buf[:result.match_start])
+                    call_buf = call_buf[result.match_start:]
+                break
+            if isinstance(result, _CallUnparseable):
+                # Flush prefix + the unparseable span as plain text.
+                yield ProviderChunk(kind="text", text=call_buf[:result.match_end])
+                call_buf = call_buf[result.match_end:]
+                continue
+            # _CallMatch
+            if result.match_start > 0:
+                yield ProviderChunk(kind="text", text=call_buf[:result.match_start])
+            log.info("inline-call tool call recovered: %s(%s)", result.name, result.params)
+            yield _synthesize_tool_use(result.name, result.params)
+            call_buf = call_buf[result.match_end:]
+
+    # Stream end: flush whatever's still buffered.
+    if xml_capturing and xml_buf:
         log.warning(
             "inline-XML tool call did not close before stream end; flushing %d bytes",
-            len(buf),
+            len(xml_buf),
         )
-        yield ProviderChunk(kind="text", text=buf)
+        yield ProviderChunk(kind="text", text=xml_buf)
+    if call_buf:
+        yield ProviderChunk(kind="text", text=call_buf)
+
+
+def _split_at_safe_boundary(buf: str, tool_names: Iterable[str]) -> tuple[str, str]:
+    """Split `buf` into (safe_to_flush, hold_for_next_chunk). Hold back
+    any trailing partial identifier that could complete into a tool
+    name on the next chunk."""
+    max_prefix = 0
+    for name in tool_names:
+        for i in range(1, min(len(name), len(buf)) + 1):
+            if name.startswith(buf[-i:]) and i > max_prefix:
+                max_prefix = i
+    if max_prefix == 0:
+        tail = _TRAILING_IDENT_RE.search(buf)
+        if tail:
+            max_prefix = len(tail.group(0))
+    if max_prefix == 0:
+        return buf, ""
+    return buf[:-max_prefix], buf[-max_prefix:]

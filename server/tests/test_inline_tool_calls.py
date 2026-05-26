@@ -24,7 +24,7 @@ async def _collect(it):
     return out
 
 
-# Real shape captured from nemotron-3-nano:4b on a Sturddle game.
+# Real shape captured from a small local model on a Sturddle game.
 _REAL_XML = (
     "<function=piece_at>\n"
     "<parameter=square>\n"
@@ -164,3 +164,176 @@ async def test_function_close_without_tool_call_trailer():
     assert out[0].kind == "tool_use"
     assert out[0].tool_name == "piece_at"
     assert out[0].tool_input == {"square": "e4"}
+
+
+# ---------- Call-syntax recovery (registry-aware) ---------------------
+# Some models stream tool calls as Python/JSON-shaped text instead of
+# the wire format. When the caller passes a `tool_names` set, the
+# wrapper recognizes any of those names followed by a `(` or `{` and
+# tries permissive arg parsing for several shapes.
+
+
+_NAMES = {"recommend_move", "piece_at"}
+
+
+@pytest.mark.asyncio
+async def test_call_python_dict_bare_keys():
+    chunks = [ProviderChunk(kind="text", text='recommend_move{move: "e5"}')]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_name == "recommend_move"
+    assert tool[0].tool_input == {"move": "e5"}
+
+
+@pytest.mark.asyncio
+async def test_call_json_arg():
+    chunks = [ProviderChunk(kind="text", text='recommend_move({"move": "e5"})')]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_input == {"move": "e5"}
+
+
+@pytest.mark.asyncio
+async def test_call_python_dict_single_quotes():
+    chunks = [ProviderChunk(kind="text", text="recommend_move({'move': 'e5'})")]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_input == {"move": "e5"}
+
+
+@pytest.mark.asyncio
+async def test_call_kwarg_quoted():
+    chunks = [ProviderChunk(kind="text", text='recommend_move(move="e5")')]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_input == {"move": "e5"}
+
+
+@pytest.mark.asyncio
+async def test_call_kwarg_unquoted():
+    chunks = [ProviderChunk(kind="text", text="recommend_move(move=e5)")]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_input == {"move": "e5"}
+
+
+@pytest.mark.asyncio
+async def test_call_positional_arg_falls_through_as_text():
+    # No positional-arg dispatch -- our tools all take named params.
+    # An unrecognized shape stays as text so the model can see and retry.
+    chunks = [ProviderChunk(kind="text", text='recommend_move("e5")')]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    assert all(c.kind == "text" for c in out)
+    assert "".join(c.text for c in out) == 'recommend_move("e5")'
+
+
+@pytest.mark.asyncio
+async def test_call_bool_and_null_literals_coerced():
+    # True/False/None must come through as real bools/None, not strings.
+    chunks = [ProviderChunk(kind="text", text='recommend_move(move=e5, deep=True, alt=None)')]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_input == {"move": "e5", "deep": True, "alt": None}
+
+
+@pytest.mark.asyncio
+async def test_call_escaped_quote_in_string_arg():
+    # Backslash-escaped quote must not close the string prematurely.
+    chunks = [ProviderChunk(kind="text", text='recommend_move(move="e5\\"x")')]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_input == {"move": 'e5"x'}
+
+
+@pytest.mark.asyncio
+async def test_call_split_across_chunks():
+    chunks = [
+        ProviderChunk(kind="text", text="recommend_"),
+        ProviderChunk(kind="text", text='move{move: "e5"}'),
+    ]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_input == {"move": "e5"}
+
+
+@pytest.mark.asyncio
+async def test_unregistered_name_passes_through():
+    chunks = [ProviderChunk(kind="text", text='bogus_name(move="e5")')]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    assert all(c.kind == "text" for c in out)
+    assert "".join(c.text for c in out) == 'bogus_name(move="e5")'
+
+
+@pytest.mark.asyncio
+async def test_tool_name_in_prose_without_brackets_not_recovered():
+    # The model talks about the tool in prose, no call shape.
+    chunks = [ProviderChunk(kind="text", text="The recommend_move tool would say more.")]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    assert all(c.kind == "text" for c in out)
+
+
+@pytest.mark.asyncio
+async def test_prefix_text_preserved():
+    chunks = [ProviderChunk(kind="text", text='Pick: recommend_move{move: "e5"}')]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    assert out[0].kind == "text"
+    assert out[0].text == "Pick: "
+    assert out[1].kind == "tool_use"
+
+
+@pytest.mark.asyncio
+async def test_tail_text_preserved():
+    chunks = [ProviderChunk(kind="text", text='recommend_move{move: "e5"} done.')]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool_idx = next(i for i, c in enumerate(out) if c.kind == "tool_use")
+    assert tool_idx + 1 < len(out)
+    assert out[tool_idx + 1].kind == "text"
+    assert out[tool_idx + 1].text == " done."
+
+
+@pytest.mark.asyncio
+async def test_malformed_args_flushed_as_text():
+    # Open bracket never closes; buffered text must surface at stream end.
+    chunks = [ProviderChunk(kind="text", text="recommend_move(move=")]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    assert all(c.kind == "text" for c in out)
+    assert "".join(c.text for c in out) == "recommend_move(move="
+
+
+@pytest.mark.asyncio
+async def test_real_wire_tool_use_passes_through():
+    chunks = [
+        ProviderChunk(kind="tool_use", tool_use_id="t1",
+                      tool_name="recommend_move", tool_input={"move": "e5"}),
+    ]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    assert len(out) == 1
+    assert out[0].kind == "tool_use"
+    assert out[0].tool_use_id == "t1"
+
+
+@pytest.mark.asyncio
+async def test_no_tool_names_disables_call_recovery():
+    # Back-compat: legacy XML path still works; new patterns ignored.
+    chunks = [ProviderChunk(kind="text", text='recommend_move{move: "e5"}')]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks)))
+    assert all(c.kind == "text" for c in out)
+
+
+@pytest.mark.asyncio
+async def test_xml_still_works_when_tool_names_provided():
+    # Legacy XML recovery is not gated on tool_names.
+    chunks = [ProviderChunk(kind="text", text=_REAL_XML)]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_name == "piece_at"
+    assert tool[0].tool_input == {"square": "f3"}
