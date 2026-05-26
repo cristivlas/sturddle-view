@@ -196,9 +196,9 @@ wa-select::part(listbox) {
 
 /* Thinking disclosure: dimmer + smaller than prose; user opt-in. */
 .play-ai-thinking {
-  /* Padded right of the timeline's vertical rule so the disclosure
-     header doesn't sit on the line. */
-  margin: 0 0 8px 14px;
+  /* Disclosure arrow sits flush with the timeline's vertical rule
+     (rule x=15px absolute, timeline margin-left=12px -> 3px inside). */
+  margin: 0 0 8px 3px;
   font-size: 0.85em;
   opacity: 0.75;
   background: transparent;
@@ -222,7 +222,6 @@ wa-select::part(listbox) {
 .play-ai-thinking > summary::after { display: none; mask: none; background: none; }
 .play-ai-thinking > summary::before {
   content: "\25B6";
-  font-size: 0.85em;
   line-height: 1;
   transition: transform 120ms ease;
 }
@@ -305,7 +304,9 @@ wa-select::part(listbox) {
    default. Same disclosure look as .play-ai-thinking; the inner
    .play-ai-prose retains its background so the rule stays hidden. */
 .play-ai-redacted {
-  margin: 0 12px;
+  /* margin-left matches .play-ai-thinking's absolute x (timeline margin
+     12px + thinking margin 3px) so both arrows align on the rule. */
+  margin: 0 12px 0 15px;
   font-size: 0.85em;
   background: transparent;
   border: none;
@@ -323,24 +324,26 @@ wa-select::part(listbox) {
 .play-ai-redacted > summary::-webkit-details-marker { display: none; }
 .play-ai-redacted > summary::marker { content: ""; }
 .play-ai-redacted > summary::after { display: none; mask: none; background: none; }
-/* Classic > / v tree expander, distinct from Thinking's chevron. */
+/* Filled triangle tinted with the Revision banner accent so the
+   redacted prose visually pairs with the banner that explains why. */
 .play-ai-redacted > summary::before {
-  content: ">";
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 1.4em;
-  font-weight: bold;
+  content: "\25B6";
+  color: var(--wa-color-warning-60, #d6a200);
   line-height: 1;
+  transition: transform 120ms ease;
 }
 .play-ai-redacted[open] > summary::before {
-  content: "v";
+  transform: rotate(90deg);
 }
 .play-ai-redacted > .play-ai-prose {
   margin: 2px 0 0;
 }
 
-/* Revision banner shown on rounds triggered by a validator hit. */
+/* Revision banner shown on rounds triggered by a validator hit.
+   margin-left aligns the orange border with the redacted/thinking
+   arrows so banner + arrows share a single vertical column. */
 .play-ai-revision {
-  margin: 0 12px 6px;
+  margin: 0 12px 6px 15px;
   padding: 4px 8px;
   border-left: 3px solid var(--wa-color-warning-60, #d6a200);
   background: var(--play-ai-warning-bg);
