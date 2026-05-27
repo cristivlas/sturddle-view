@@ -405,8 +405,8 @@ wa-select::part(listbox) {
   z-index: 1;
 }
 .play-ai-tool-dot-analyze        { background: var(--wa-color-primary-60, #4a90e2); }
-.play-ai-tool-dot-piece_at       { background: var(--wa-color-success-60, #4caf50); }
-.play-ai-tool-dot-validate_move  { background: var(--wa-color-warning-60, #d6a200); }
+.play-ai-tool-dot-piece_at       { background: var(--wa-color-success-80, lightblue); }
+.play-ai-tool-dot-validate_move  { background: teal; }
 .play-ai-tool-dot-top_moves      { background: var(--wa-color-primary-60, #4a90e2); }
 .play-ai-tool-dot-recommend_move { background: #7c3aed; }
 /* Completion marker: neutral checkmark glyph in place of the colored
