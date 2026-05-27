@@ -77,6 +77,7 @@ function buildBody() {
   root.append(status, scroll);
   root._status = status;
   root._statusText = statusText;
+  root._scroll = scroll;
   root._rounds = rounds;
   root._terminal = terminal;
   // Map roundIndex -> {panel, thinking:{details,body}, tools, para,
@@ -285,12 +286,12 @@ export function isAiOpen() {
   return !!(inst.wb || inst.slot);
 }
 
-// body.parentElement is wb.body when floating, .dock-slot-body when
-// docked -- both are the actual overflow scroller. Same shape as the
-// UCI Log window uses.
+// The actual scroller is the inner .play-ai-scroll wrapper; the
+// host bodies (wb.body / .dock-slot-body) are overflow:hidden so the
+// status header above the wrapper stays put.
 function withStickyBottom(fn) {
   if (!inst.body) return;
-  const scroller = inst.body.parentElement;
+  const scroller = inst.body._scroll;
   const pinned = isPinnedToBottom(scroller, AUTOSCROLL_SLACK_PROSE_PX);
   fn();
   if (pinned) scrollToBottom(scroller);
