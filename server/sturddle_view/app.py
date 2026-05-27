@@ -387,7 +387,13 @@ def create_app(
     )
     ai_registry.register(
         RECOMMEND_MOVE_TOOL_SPEC,
-        make_recommend_move_tool(board_provider=_ai_board_provider),
+        make_recommend_move_tool(
+            _ai_engine_launcher,
+            bus=app.state.event_bus,
+            board_provider=_ai_board_provider,
+            game_id_provider=_ai_game_id_provider,
+            settings_provider=_ai_settings_provider,
+        ),
     )
     app.state.ai_tool_registry = ai_registry
 

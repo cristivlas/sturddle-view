@@ -640,8 +640,10 @@ _RECOMMEND_MOVE_CARD = (
     "Card for `recommend_move`. Call this tool at the end of your turn "
     "with the move you stand behind. Non-negotiable, same as "
     "`validate_move` and `piece_at`: this is a tool invocation, not a "
-    "sentence in your prose. The engine re-evaluates the move and the "
-    "UI surfaces your pick distinctly from engine output."
+    "sentence in your prose. The engine evaluates your candidate and "
+    "the engine's own best move at the requested depth; if a different "
+    "move scores better for the side to move, the call returns an "
+    "error so you can reconsider."
 )
 
 
@@ -650,9 +652,10 @@ RECOMMEND_MOVE_TOOL_SPEC = ToolSpec(
     description=(
         "Call this tool with your final move recommendation. "
         "Non-negotiable: call (do not narrate) at the end of your turn "
-        "after you've decided. Validates legality and returns the "
-        "post-move FEN. The UI surfaces your pick distinctly from "
-        "engine output."
+        "after you've decided. Validates legality, scores the candidate "
+        "and the engine's best move at the requested depth, and rejects "
+        "with a structured error when a better move exists. Returns "
+        "the post-move FEN on acceptance."
     ),
     input_schema={
         "type": "object",
@@ -664,6 +667,12 @@ RECOMMEND_MOVE_TOOL_SPEC = ToolSpec(
                     "'Nf3', 'O-O', 'exd5')."
                 ),
             },
+            "depth": {
+                "type": "integer",
+                "description": (
+                    f"Search depth for the dominance check (clamped to {MAX_DEPTH})."
+                ),
+            },
         },
         "required": ["move"],
     },
@@ -671,12 +680,33 @@ RECOMMEND_MOVE_TOOL_SPEC = ToolSpec(
 )
 
 
-def make_recommend_move_tool(board_provider: BoardProvider) -> AnalyzeTool:
-    """Build the `recommend_move` async tool. Parses UCI/SAN, returns
-    `{ok, uci, san, post_move_fen}` on success or a structured error.
-    Coordinator tracks the latest successful call and runs an
-    end-of-turn search restricted to the move so the UI can render a
-    distinct arrow."""
+def _better_for_stm(
+    candidate: chess.engine.PovScore | None,
+    rival: chess.engine.PovScore | None,
+    turn: chess.Color,
+) -> bool:
+    """True iff `rival` is strictly better than `candidate` from `turn`'s
+    perspective. Mate always trumps cp; equal cp = not better."""
+    if rival is None:
+        return False
+    if candidate is None:
+        return True
+    return rival.pov(turn) > candidate.pov(turn)
+
+
+def make_recommend_move_tool(
+    engine_launcher: EngineLauncher,
+    bus: EventBus,
+    board_provider: BoardProvider,
+    game_id_provider: GameIdProvider | None = None,
+    settings_provider: SettingsProvider | None = None,
+) -> AnalyzeTool:
+    """Build the `recommend_move` async tool. Parses UCI/SAN, then runs
+    two engine searches (candidate-restricted + free) at the requested
+    depth on the live position; if the engine's bestmove dominates the
+    candidate for the side to move, returns a structured error so the
+    model can pivot. On acceptance returns `{ok, uci, san, post_move_fen,
+    candidate_score, engine_best_move, engine_best_score, depth}`."""
     async def recommend_move(input_: dict, *, cancel_token: CancelToken) -> dict:
         board = board_provider()
         if board is None:
@@ -700,12 +730,68 @@ def make_recommend_move_tool(board_provider: BoardProvider) -> AnalyzeTool:
         uci = parsed.uci()
         scratch = board.copy(stack=False)
         scratch.push(parsed)
-        return {
-            "ok": True,
+
+        raw_depth = input_.get("depth")
+        try:
+            depth = max(1, min(int(raw_depth), MAX_DEPTH)) if raw_depth is not None else _DEFAULT_DEPTH
+        except (TypeError, ValueError):
+            depth = _DEFAULT_DEPTH
+        limit = chess.engine.Limit(depth=depth)
+        game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
+
+        scratch_live = board.copy(stack=False)
+
+        # Search A: engine's free best move on the live position.
+        try:
+            best_info, _ = await _run_one_search(
+                engine_launcher, scratch_live, limit,
+                bus=bus, game_id=game_id, cancel_token=cancel_token,
+                settings_provider=settings_provider,
+            )
+        except _SearchError as err:
+            return {"error": err.kind, "detail": err.detail}
+        if cancel_token.cancelled:
+            # Accept as-is; we couldn't finish verification.
+            return {
+                "ok": True, "uci": uci, "san": san,
+                "post_move_fen": scratch.fen(), "cancelled": True,
+            }
+
+        # Search B: same board, restricted to the candidate.
+        try:
+            cand_info, _ = await _run_one_search(
+                engine_launcher, board.copy(stack=False), limit,
+                bus=bus, game_id=game_id, cancel_token=cancel_token,
+                root_moves=[parsed],
+                settings_provider=settings_provider,
+            )
+        except _SearchError as err:
+            return {"error": err.kind, "detail": err.detail}
+        if cancel_token.cancelled:
+            return {
+                "ok": True, "uci": uci, "san": san,
+                "post_move_fen": scratch.fen(), "cancelled": True,
+            }
+
+        best_score = best_info.get("score")
+        cand_score = cand_info.get("score")
+        best_move = best_info.get("pv", [None])[0] if best_info.get("pv") else None
+
+        result_common: dict = {
             "uci": uci,
             "san": san,
-            "post_move_fen": scratch.fen(),
+            "depth": depth,
+            "candidate_score": _score_to_cp(cand_score),
+            "engine_best_score": _score_to_cp(best_score),
         }
+        if best_move is not None:
+            result_common["engine_best_move"] = best_move.uci()
+            result_common["engine_best_san"] = scratch_live.san(best_move)
+
+        if _better_for_stm(cand_score, best_score, board.turn):
+            return {"error": "recommendation_dominated", **result_common}
+
+        return {"ok": True, "post_move_fen": scratch.fen(), **result_common}
 
     return recommend_move
 

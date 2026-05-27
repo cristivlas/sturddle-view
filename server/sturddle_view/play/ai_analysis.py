@@ -101,11 +101,13 @@ def _parse_move_canonical(raw: str, board: chess.Board) -> chess.Move | None:
 
 
 def _norm_move_arg(input_: dict, board: chess.Board | None) -> tuple | None:
+    # depth is part of the key for recommend_move; harmless for
+    # validate_move which doesn't accept it (always None).
     raw = input_.get("move")
     if not isinstance(raw, str) or board is None:
         return None
     move = _parse_move_canonical(raw, board)
-    return ("move", move.uci()) if move else None
+    return ("move", move.uci(), input_.get("depth")) if move else None
 
 
 def _norm_square_arg(input_: dict, board: chess.Board | None) -> tuple | None:
