@@ -301,10 +301,10 @@ def test_endpoint_returns_5xx_for_anthropic_stub_without_models(tmp_path):
         assert "API key" in r.json()["detail"]
 
 
-def test_put_ai_model_evicts_previous_ollama_model(tmp_path, monkeypatch):
-    """Switching models triggers eviction of the previous one. Without
-    this, the Ollama daemon keeps the old model in VRAM and the new
-    one fails to load with 'resource limits'."""
+def test_put_settings_does_not_evict_ollama_models(tmp_path, monkeypatch):
+    """Settings changes no longer trigger eviction -- eviction is
+    deferred to the next AI analysis turn so an in-flight turn can
+    finish on the old model."""
     evicted = []
 
     async def _fake_evict(self, model):
@@ -313,46 +313,12 @@ def test_put_ai_model_evicts_previous_ollama_model(tmp_path, monkeypatch):
     monkeypatch.setattr(OllamaProvider, "evict_model", _fake_evict)
 
     with _client_for_provider(tmp_path, provider="ollama", base_url="http://fake") as c:
-        # Seed the saved model.
         c.put("/settings", json={"ai_model": "old:latest"})
         evicted.clear()
-        # User switches model.
-        r = c.put("/settings", json={"ai_model": "new:latest"})
-        assert r.status_code == 200, r.text
-        assert evicted == ["old:latest"]
-
-
-def test_put_ai_provider_off_ollama_evicts_current_model(tmp_path, monkeypatch):
-    evicted = []
-
-    async def _fake_evict(self, model):
-        evicted.append(model)
-
-    monkeypatch.setattr(OllamaProvider, "evict_model", _fake_evict)
-
-    with _client_for_provider(tmp_path, provider="ollama", base_url="http://fake") as c:
-        c.put("/settings", json={"ai_model": "loaded:latest"})
-        evicted.clear()
-        # Switch provider away from Ollama.
-        r = c.put("/settings", json={"ai_provider": "anthropic"})
-        assert r.status_code == 200, r.text
-        assert evicted == ["loaded:latest"]
-
-
-def test_put_unrelated_setting_does_not_evict(tmp_path, monkeypatch):
-    evicted = []
-
-    async def _fake_evict(self, model):
-        evicted.append(model)
-
-    monkeypatch.setattr(OllamaProvider, "evict_model", _fake_evict)
-
-    with _client_for_provider(tmp_path, provider="ollama", base_url="http://fake") as c:
-        c.put("/settings", json={"ai_model": "stay:latest"})
-        evicted.clear()
-        # Touch an unrelated setting -- no eviction.
-        r = c.put("/settings", json={"view_show_pgn_comments": True})
-        assert r.status_code == 200, r.text
+        # Model switch, provider switch, and unrelated edits: none evict.
+        assert c.put("/settings", json={"ai_model": "new:latest"}).status_code == 200
+        assert c.put("/settings", json={"ai_provider": "anthropic"}).status_code == 200
+        assert c.put("/settings", json={"view_show_pgn_comments": True}).status_code == 200
         assert evicted == []
 
 
@@ -393,9 +359,10 @@ def test_extract_error_message_missing_error_field_fallback():
 
 @pytest.mark.asyncio
 async def test_ollama_evict_model_posts_keep_alive_zero(monkeypatch):
-    """When the user switches models, settings.py calls evict_model on
-    the previous one. The daemon owns lifecycle; our request just tells
-    it to drop the model. keep_alive=0 is the documented signal."""
+    """evict_model wire shape: keep_alive=0 against /api/generate is the
+    documented signal that tells the daemon to drop the model from VRAM.
+    The caller (now _ai_kick at turn start) trusts this to free room
+    before loading the model the user actually picked."""
     # Reuse the GET-style fake (evict_model uses POST but we only care
     # the URL hits /api/generate with the right body); add a minimal
     # post() that records what we sent.
@@ -431,6 +398,30 @@ async def test_ollama_evict_model_empty_name_is_noop():
     # real httpx would try to connect.
     provider = OllamaProvider(base_url="http://nonexistent.invalid", model="x")
     await provider.evict_model("")  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_ollama_list_loaded_models_parses_api_ps(monkeypatch):
+    body = {"models": [{"name": "gemma2:latest"}, {"name": "qwen3:32b"}]}
+    client = _install_fake_httpx(monkeypatch, ollama_mod, _FakeResponse(200, body))
+    p = OllamaProvider(base_url="http://fake", model="m")
+    assert sorted(await p.list_loaded_models()) == ["gemma2:latest", "qwen3:32b"]
+    assert client.last_get_url == "http://fake/api/ps"
+
+
+@pytest.mark.asyncio
+async def test_ollama_list_loaded_models_empty_when_none_resident(monkeypatch):
+    _install_fake_httpx(monkeypatch, ollama_mod, _FakeResponse(200, {"models": []}))
+    p = OllamaProvider(base_url="http://fake", model="m")
+    assert await p.list_loaded_models() == []
+
+
+@pytest.mark.asyncio
+async def test_ollama_list_loaded_models_raises_on_http_error(monkeypatch):
+    _install_fake_httpx(monkeypatch, ollama_mod, _FakeResponse(503, "down"))
+    p = OllamaProvider(base_url="http://fake", model="m")
+    with pytest.raises(RuntimeError, match="503"):
+        await p.list_loaded_models()
 
 
 @pytest.mark.asyncio

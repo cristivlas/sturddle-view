@@ -39,6 +39,11 @@ DEFAULT_BASE_URL = "http://localhost:11434"
 # keeps things polite.
 _LIST_MODELS_SHOW_CONCURRENCY = 8
 
+# Per-request timeout for the daemon's control-plane endpoints
+# (/api/generate keep_alive, /api/ps, /v1/models, /api/show). Streaming
+# chat has its own (much longer) timeout elsewhere in this module.
+_CONTROL_TIMEOUT_S = 10.0
+
 
 # ----- Translation helpers (pure functions; covered by unit tests) -----
 
@@ -256,8 +261,24 @@ class OllamaProvider(LLMProvider):
         if not model:
             return
         url = f"{self._base_url}/api/generate"
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=_CONTROL_TIMEOUT_S) as client:
             await client.post(url, json={"model": model, "keep_alive": 0})
+
+    async def list_loaded_models(self) -> list[str]:
+        """Return models currently resident in the daemon (via /api/ps).
+        Raises RuntimeError on HTTP/parse failure so callers can decide
+        whether to skip eviction or surface the error."""
+        url = f"{self._base_url}/api/ps"
+        async with httpx.AsyncClient(timeout=_CONTROL_TIMEOUT_S) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                raise RuntimeError(
+                    f"ollama /api/ps returned {resp.status_code}: "
+                    f"{extract_error_message(resp.text[:500])}"
+                )
+            body = resp.json()
+            models = body.get("models") or []
+            return [m.get("name") for m in models if isinstance(m, dict) and m.get("name")]
 
     async def list_models(self) -> list[str]:
         """List tool-capable models the daemon has pulled. Filters out
@@ -267,7 +288,7 @@ class OllamaProvider(LLMProvider):
         RuntimeError on HTTP / parse failure so the API layer can
         surface a useful error to the UI."""
         url = f"{self._base_url}/v1/models"
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=_CONTROL_TIMEOUT_S) as client:
             resp = await client.get(url)
             if resp.status_code != 200:
                 raise RuntimeError(

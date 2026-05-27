@@ -8,7 +8,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from .. import __author__, __copyright__, __version__
 from ..auth import require_token
-from ..llm.ollama import DEFAULT_BASE_URL as _DEFAULT_OLLAMA_BASE_URL, OllamaProvider
 
 log = logging.getLogger(__name__)
 
@@ -252,16 +251,6 @@ async def update_settings(payload: dict, request: Request) -> dict:
     if _AI_ENABLED_KEY in payload:
         s.ai_enabled = bool(payload[_AI_ENABLED_KEY])
 
-    # Snapshot pre-update Ollama identity so we can evict the previous
-    # model from the daemon's VRAM when the user switches models.
-    # Ollama doesn't auto-evict aggressively; without this, switching
-    # to a model that doesn't fit alongside the old one returns 500
-    # "model failed to load".
-    prev_ollama_model: str | None = None
-    if (s.ai_provider or "").lower() == "ollama":
-        prev_ollama_model = s.ai_model or None
-    prev_ollama_url = s.ai_base_url or _DEFAULT_OLLAMA_BASE_URL
-
     if _AI_PROVIDER_KEY in payload:
         provider = payload[_AI_PROVIDER_KEY]
         if provider not in _VALID_AI_PROVIDERS:
@@ -307,20 +296,6 @@ async def update_settings(payload: dict, request: Request) -> dict:
         s.save_persisted()
     except OSError:
         pass
-
-    # Evict the previously-loaded Ollama model when the user switches
-    # away from it. Ollama's default keepalive is 5 minutes; without
-    # this, the new model often fails to load with "resource limits"
-    # because the old one is still resident in VRAM.
-    new_provider = (s.ai_provider or "").lower()
-    new_model = s.ai_model or None
-    if prev_ollama_model and (new_provider != "ollama" or new_model != prev_ollama_model):
-        try:
-            evictor = OllamaProvider(base_url=prev_ollama_url, model="")
-            await evictor.evict_model(prev_ollama_model)
-            log.info("ollama: evicted model %s", prev_ollama_model)
-        except Exception as exc:
-            log.warning("ollama: evict_model(%s) failed: %s", prev_ollama_model, exc)
 
     # Live-apply: only globals that flow into _spawn_engine's option layering
     # (Threads/Hash/SyzygyPath). Other fields (PGN, eval POV, board style)

@@ -19,6 +19,7 @@ from fastapi import HTTPException, Request
 
 from ..chess.board import moves_san
 from ..llm import PromptMode, build_initial_user_message
+from ..llm.ollama import DEFAULT_BASE_URL as _DEFAULT_OLLAMA_BASE_URL, OllamaProvider
 from ..play.mode import Mode
 
 log = logging.getLogger(__name__)
@@ -77,6 +78,29 @@ def _prompt_mode_for(hve) -> PromptMode:
     return "coach"
 
 
+async def _evict_stale_ollama_models(base_url: str, target_model: str) -> None:
+    """Ask the daemon (/api/ps) what's loaded and evict anything other
+    than `target_model`. All failures swallowed: worst case is the
+    daemon's own "resource limits" error on the next load."""
+    if not target_model:
+        log.debug("ollama: no target model selected; skipping stale-model evict")
+        return
+    provider = OllamaProvider(base_url=base_url, model="")
+    try:
+        loaded = await provider.list_loaded_models()
+    except Exception as exc:
+        log.warning("ollama: list_loaded_models failed: %s", exc)
+        return
+    for name in loaded:
+        if name == target_model:
+            continue
+        try:
+            await provider.evict_model(name)
+            log.info("ollama: evicted stale model %s", name)
+        except Exception as exc:
+            log.warning("ollama: evict_model(%s) failed: %s", name, exc)
+
+
 def _consume_task_exception(task: asyncio.Task) -> None:
     # Read the result so asyncio doesn't warn about an unretrieved
     # exception. The coordinator already logs + publishes a done event
@@ -100,6 +124,10 @@ async def start_ai_turn(request: Request) -> None:
     factory = getattr(request.app.state, "ai_provider_factory", None)
     if factory is None:
         raise HTTPException(status_code=503, detail="AI provider factory not initialized")
+    s = request.app.state.settings
+    if (s.ai_provider or "").lower() == "ollama":
+        base_url = s.ai_base_url or _DEFAULT_OLLAMA_BASE_URL
+        await _evict_stale_ollama_models(base_url, s.ai_model or "")
     hve = request.app.state.hve
     game_id = getattr(hve, "game_id", None) if hve else None
     user_message = _build_user_message(hve)
