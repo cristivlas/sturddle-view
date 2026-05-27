@@ -173,7 +173,7 @@ async def test_function_close_without_tool_call_trailer():
 # tries permissive arg parsing for several shapes.
 
 
-_NAMES = {"recommend_move", "piece_at", "analyze"}
+_NAMES = {"recommend_move", "piece_at", "analyze", "validate_move", "top_moves"}
 
 
 @pytest.mark.asyncio
@@ -536,6 +536,37 @@ async def test_fenced_json_name_arguments_keys_recovered():
 
 
 @pytest.mark.asyncio
+async def test_fenced_json_streamed_with_tool_names_active():
+    # Live repro: model emits a long prose then a fenced-JSON tool call.
+    # When tool_names are active (call-syntax recovery on), the fence
+    # opener split across chunks must still be held back instead of
+    # flushed via the call-syntax safe-boundary path.
+    payload = (
+        "Apologies for the confusion earlier. Let's stick to valid options:\n"
+        "- **g4** - This pawn advance aims to open up the diagonal and create space.\n"
+        "- **e5** - This pawn might support a kingside attack or prepare for a pawn storm.\n"
+        "\n"
+        "First, let's validate `g4`:\n"
+        "\n"
+        '```json\n'
+        '{\n'
+        '  "name": "validate_move",\n'
+        '  "arguments": {\n'
+        '    "move": "g4"\n'
+        '  }\n'
+        '}\n'
+        '```'
+    )
+    # Stream char-by-char to exercise sentinel splitting.
+    chunks = [ProviderChunk(kind="text", text=c) for c in payload]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1, [c.text for c in out if c.kind == "text"]
+    assert tool[0].tool_name == "validate_move"
+    assert tool[0].tool_input == {"move": "g4"}
+
+
+@pytest.mark.asyncio
 async def test_fenced_json_uppercase_lang_tag_recovered():
     payload = (
         '```JSON\n'
@@ -547,6 +578,71 @@ async def test_fenced_json_uppercase_lang_tag_recovered():
     tool = [c for c in out if c.kind == "tool_use"]
     assert len(tool) == 1
     assert tool[0].tool_name == "validate_move"
+
+
+@pytest.mark.asyncio
+async def test_fenced_json_function_lang_tag_recovered():
+    # Real-world variant: model labels the fence as ```function instead
+    # of ```json. Recovery accepts any language tag.
+    payload = (
+        '```function\n'
+        '{"name": "validate_move", "arguments": {"move": "Ng4"}}\n'
+        '```'
+    )
+    chunks = [ProviderChunk(kind="text", text=payload)]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks)))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_name == "validate_move"
+    assert tool[0].tool_input == {"move": "Ng4"}
+
+
+@pytest.mark.asyncio
+async def test_fenced_json_function_key_recovered():
+    # Real-world variant: model uses "function" as the name key.
+    payload = (
+        '```json\n'
+        '{"function": "validate_move", "args": {"move": "Rf3"}}\n'
+        '```'
+    )
+    chunks = [ProviderChunk(kind="text", text=payload)]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks)))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_name == "validate_move"
+    assert tool[0].tool_input == {"move": "Rf3"}
+
+
+@pytest.mark.asyncio
+async def test_fenced_json_action_with_flat_args_recovered():
+    # Real-world variant: model uses "action" as name key and flattens
+    # the tool params at the top level (no args/arguments dict).
+    payload = (
+        '```json\n'
+        '{"action": "recommend_move", "depth": 5, "move": "Qf6"}\n'
+        '```'
+    )
+    chunks = [ProviderChunk(kind="text", text=payload)]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks)))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_name == "recommend_move"
+    assert tool[0].tool_input == {"depth": 5, "move": "Qf6"}
+
+
+@pytest.mark.asyncio
+async def test_fenced_no_lang_tag_recovered():
+    # Sometimes the fence has no language tag at all.
+    payload = (
+        '```\n'
+        '{"tool": "piece_at", "args": {"square": "g4"}}\n'
+        '```'
+    )
+    chunks = [ProviderChunk(kind="text", text=payload)]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks)))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_name == "piece_at"
 
 
 @pytest.mark.asyncio

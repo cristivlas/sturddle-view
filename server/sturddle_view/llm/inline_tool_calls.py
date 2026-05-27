@@ -41,10 +41,9 @@ log = logging.getLogger(__name__)
 
 
 _SENTINEL = "<function="
-# Opening fence prefix (`` ``` ``). The optional language tag (e.g.
-# `json`) is matched separately so casing/whitespace variants pass.
-_FENCE_PREFIX = "```"
-_FENCE_OPEN_RE = re.compile(r"```[ \t]*[Jj][Ss][Oo][Nn][ \t]*\n")
+# Fenced code block opener: 3 backticks, optional language tag, newline.
+# Permissive on the tag so casing/whitespace variants pass.
+_FENCE_OPEN_RE = re.compile(r"```[ \t]*[A-Za-z]*[ \t]*\n")
 _FENCE_CLOSE = "```"
 # UUID hex slice length for synthetic tool_use_id; 12 chars = 48 bits.
 _DEFAULT_INLINE_ID_LEN = 12
@@ -381,11 +380,23 @@ def _try_close_fenced_json(buf: str):
         return ("nottool", fence_text + tail)
     if not isinstance(obj, dict):
         return ("nottool", fence_text + tail)
-    # Accept either {tool, args} or {name, arguments}; real-world models
-    # split between the two conventions.
-    raw_name = obj.get("tool") if isinstance(obj.get("tool"), str) else obj.get("name")
-    raw_args = obj.get("args") if isinstance(obj.get("args"), dict) else obj.get("arguments")
-    if not isinstance(raw_name, str) or not isinstance(raw_args, dict):
+    # Name key: any of tool/name/action.
+    name_key = next(
+        (k for k in ("tool", "name", "action", "function") if isinstance(obj.get(k), str)),
+        None,
+    )
+    if name_key is None:
+        return ("nottool", fence_text + tail)
+    raw_name = obj[name_key]
+    # Args: explicit args/arguments dict, else flatten top-level (minus
+    # the name key) -- some models drop the wrapper entirely.
+    if isinstance(obj.get("args"), dict):
+        raw_args = obj["args"]
+    elif isinstance(obj.get("arguments"), dict):
+        raw_args = obj["arguments"]
+    else:
+        raw_args = {k: v for k, v in obj.items() if k != name_key}
+    if not isinstance(raw_args, dict):
         return ("nottool", fence_text + tail)
     name = raw_name
     params = {str(k): v for k, v in raw_args.items()}
@@ -485,14 +496,16 @@ async def recover_inline_tool_calls(
             fence_buf = ""
             continue
 
-        # XML sentinel takes precedence over call-syntax.
-        xml_idx = text.find(_SENTINEL)
+        # Sentinel search must see call_buf + text so an opener split
+        # across chunks (`call_buf` ending with ``` and `text` starting
+        # with `json\n`, say) still triggers.
+        combined = call_buf + text
+        xml_idx = combined.find(_SENTINEL)
         if xml_idx >= 0:
-            prefix = call_buf + text[:xml_idx]
-            if prefix:
-                yield ProviderChunk(kind=channel, text=prefix)
+            if xml_idx > 0:
+                yield ProviderChunk(kind=channel, text=combined[:xml_idx])
             call_buf = ""
-            xml_buf = text[xml_idx:]
+            xml_buf = combined[xml_idx:]
             xml_capturing = True
             closed = _try_close_xml(xml_buf)
             if closed is None:
@@ -505,14 +518,13 @@ async def recover_inline_tool_calls(
             xml_capturing = False
             continue
 
-        fence_m = _FENCE_OPEN_RE.search(text)
+        fence_m = _FENCE_OPEN_RE.search(combined)
         if fence_m is not None:
             fence_idx = fence_m.start()
-            prefix = call_buf + text[:fence_idx]
-            if prefix:
-                yield ProviderChunk(kind=channel, text=prefix)
+            if fence_idx > 0:
+                yield ProviderChunk(kind=channel, text=combined[:fence_idx])
             call_buf = ""
-            fence_buf = text[fence_idx:]
+            fence_buf = combined[fence_idx:]
             fence_capturing = True
             closed = _try_close_fenced_json(fence_buf)
             if closed is None:
@@ -616,23 +628,27 @@ def _split_at_sentinel_prefix(buf: str) -> tuple[str, str]:
 
 
 def _looks_like_fence_prefix(tail: str) -> bool:
-    """True iff `tail` is a strict prefix of any case variant of
-    ``` ```json ```. We hold these so a fence opener split across chunks
-    still triggers on reassembly."""
+    """True iff `tail` could complete into a fenced code block opener
+    (``` ``` ``` optionally followed by a language tag + newline). We
+    hold these so a fence opener split across chunks still triggers on
+    reassembly. Permissive: any language word (or none) is recognized."""
     if not tail:
         return False
-    # Walk a canonical opener and see if tail matches its first len(tail)
-    # chars in some case folding.
-    for variant in ("```json", "``` json"):
-        if len(tail) <= len(variant) and variant[:len(tail)].lower() == tail.lower():
-            return True
+    # `` ` ``, `` `` ``, `` ``` ``: all in-progress fences.
+    if tail in ("`", "``", "```"):
+        return True
+    # `` ```<anything-not-yet-newlined> `` -- a partial language tag.
+    if tail.startswith("```") and "\n" not in tail:
+        return True
     return False
 
 
 def _split_at_safe_boundary(buf: str, tool_names: Iterable[str]) -> tuple[str, str]:
     """Split `buf` into (safe_to_flush, hold_for_next_chunk). Hold back
     any trailing partial that could complete into a tool name on the
-    next chunk -- bare identifier prefix or `call:`-prefixed shape."""
+    next chunk -- bare identifier prefix, `call:`-prefixed shape, or a
+    fence/XML sentinel prefix (so a fence opener split across chunks
+    still reassembles for fence recovery)."""
     max_prefix = 0
     for name in tool_names:
         for i in range(1, min(len(name), len(buf)) + 1):
@@ -642,10 +658,15 @@ def _split_at_safe_boundary(buf: str, tool_names: Iterable[str]) -> tuple[str, s
         tail = _TRAILING_IDENT_RE.search(buf)
         if tail:
             max_prefix = len(tail.group(0))
-    # Also hold back any trailing partial of `call:<identifier>`.
     call_tail = _TRAILING_CALL_PREFIX_RE.search(buf)
     if call_tail and len(call_tail.group(0)) > max_prefix:
         max_prefix = len(call_tail.group(0))
+    # Also hold back any partial of a recovery sentinel (`<function=`
+    # or `` ```json ``); fence detection runs before call-syntax but
+    # needs the prefix to survive call-syntax's safe-boundary flushing.
+    _, fence_xml_hold = _split_at_sentinel_prefix(buf)
+    if len(fence_xml_hold) > max_prefix:
+        max_prefix = len(fence_xml_hold)
     if max_prefix == 0:
         return buf, ""
     return buf[:-max_prefix], buf[-max_prefix:]
