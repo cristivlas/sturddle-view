@@ -1,18 +1,28 @@
 """Inline tool-call recovery for models that emit tool calls as prose.
 
-Two patterns supported:
+Three patterns supported:
 
 1. XML shape: `<function=name>...</function>`.
 2. Call-syntax shape: `name(args)` or `name{args}` with args in JSON,
    Python-dict, or kwarg form. Requires the caller to pass a
    `tool_names` set so the wrapper knows which names to watch.
+3. Fenced-JSON shape: ```json {"tool"|"name": ..., "args"|"arguments":
+   {...}} ``` -- accepts either key convention.
 
 For each pattern, the wrapper buffers the matched span, parses it, and
 emits a synthetic `tool_use` chunk in place of the literal text. On
 parse failure or unclosed buffer at stream end, swallowed text is
 flushed back as a normal text chunk -- the user sees what the model
 emitted instead of silent loss.
-"""
+
+REFACTORING NOTE (deferred). `recover_inline_tool_calls` is a flat
+state machine carrying multiple parallel buffers (xml_buf,
+fence_buf, call_buf, pre_buf) and capture flags. Each new flavor
+adds another buf+flag pair and another branch in the main loop.
+At a fourth flavor it'll be cheaper to extract a `Flavor` protocol
+(detect_sentinel + try_close) and a state class that walks a flavor
+registry. Today's shape is fine for three flavors; revisit before
+adding DSML / Qwen / etc."""
 from __future__ import annotations
 
 import ast
@@ -31,6 +41,11 @@ log = logging.getLogger(__name__)
 
 
 _SENTINEL = "<function="
+# Opening fence prefix (`` ``` ``). The optional language tag (e.g.
+# `json`) is matched separately so casing/whitespace variants pass.
+_FENCE_PREFIX = "```"
+_FENCE_OPEN_RE = re.compile(r"```[ \t]*[Jj][Ss][Oo][Nn][ \t]*\n")
+_FENCE_CLOSE = "```"
 # UUID hex slice length for synthetic tool_use_id; 12 chars = 48 bits.
 _DEFAULT_INLINE_ID_LEN = 12
 INLINE_ID_LEN = int(os.environ.get("SV_AI_INLINE_TOOL_ID_LEN", _DEFAULT_INLINE_ID_LEN))
@@ -342,6 +357,42 @@ def _try_close_xml(xml_buf: str) -> tuple[ProviderChunk, str] | None:
     return _synthesize_tool_use(name, params), xml_buf[end:]
 
 
+def _try_close_fenced_json(buf: str):
+    """If `buf` starts with a ``` ```json `` opener and the closing
+    ``` ``` `` has arrived, return:
+      - (chunk, tail) when the body parses as {"tool": str, "args": dict};
+      - ("nottool", tail_with_fence) when fence closed but body isn't a
+        tool call -- the caller flushes the whole fence as text;
+      - None when the fence isn't closed yet.
+    """
+    open_m = _FENCE_OPEN_RE.match(buf)
+    if open_m is None:
+        return None
+    body_start = open_m.end()
+    close_idx = buf.find(_FENCE_CLOSE, body_start)
+    if close_idx < 0:
+        return None
+    body = buf[body_start:close_idx].strip()
+    tail = buf[close_idx + len(_FENCE_CLOSE):]
+    fence_text = buf[:close_idx + len(_FENCE_CLOSE)]
+    try:
+        obj = json.loads(body)
+    except ValueError:
+        return ("nottool", fence_text + tail)
+    if not isinstance(obj, dict):
+        return ("nottool", fence_text + tail)
+    # Accept either {tool, args} or {name, arguments}; real-world models
+    # split between the two conventions.
+    raw_name = obj.get("tool") if isinstance(obj.get("tool"), str) else obj.get("name")
+    raw_args = obj.get("args") if isinstance(obj.get("args"), dict) else obj.get("arguments")
+    if not isinstance(raw_name, str) or not isinstance(raw_args, dict):
+        return ("nottool", fence_text + tail)
+    name = raw_name
+    params = {str(k): v for k, v in raw_args.items()}
+    log.info("inline-fenced-JSON tool call recovered: %s(%s)", name, params)
+    return _synthesize_tool_use(name, params), tail
+
+
 async def recover_inline_tool_calls(
     upstream: AsyncIterator[ProviderChunk],
     *,
@@ -358,6 +409,13 @@ async def recover_inline_tool_calls(
 
     xml_buf = ""
     xml_capturing = False
+    fence_buf = ""
+    fence_capturing = False
+    # Tiny pre-flush buffer: holds back any trailing chars that could
+    # complete a sentinel (`<function=` or ```json) on the next chunk.
+    # Independent of call-syntax recovery, so fence/XML detection works
+    # without tool_names.
+    pre_buf = ""
     # Holds pending text that may complete a call-syntax match; never
     # flushed until we know no match is forming.
     call_buf = ""
@@ -376,7 +434,9 @@ async def recover_inline_tool_calls(
             yield chunk
             continue
 
-        if chunk.kind != channel and (call_buf or xml_capturing):
+        if chunk.kind != channel and (
+            call_buf or xml_capturing or fence_capturing or pre_buf
+        ):
             # Channel switch with pending buffer: flush as the old channel.
             if call_buf:
                 yield ProviderChunk(kind=channel, text=call_buf)
@@ -385,8 +445,16 @@ async def recover_inline_tool_calls(
                 yield ProviderChunk(kind=channel, text=xml_buf)
                 xml_buf = ""
                 xml_capturing = False
+            if fence_capturing and fence_buf:
+                yield ProviderChunk(kind=channel, text=fence_buf)
+                fence_buf = ""
+                fence_capturing = False
+            if pre_buf:
+                yield ProviderChunk(kind=channel, text=pre_buf)
+                pre_buf = ""
         channel = chunk.kind
-        text = chunk.text
+        text = pre_buf + chunk.text
+        pre_buf = ""
 
         if xml_capturing:
             xml_buf += text
@@ -399,6 +467,22 @@ async def recover_inline_tool_calls(
                 yield ProviderChunk(kind=channel, text=tail)
             xml_buf = ""
             xml_capturing = False
+            continue
+
+        if fence_capturing:
+            fence_buf += text
+            closed = _try_close_fenced_json(fence_buf)
+            if closed is None:
+                continue
+            fence_capturing = False
+            if isinstance(closed[0], str) and closed[0] == "nottool":
+                yield ProviderChunk(kind=channel, text=closed[1])
+            else:
+                tool_chunk, tail = closed
+                yield tool_chunk
+                if tail:
+                    yield ProviderChunk(kind=channel, text=tail)
+            fence_buf = ""
             continue
 
         # XML sentinel takes precedence over call-syntax.
@@ -421,12 +505,39 @@ async def recover_inline_tool_calls(
             xml_capturing = False
             continue
 
+        fence_m = _FENCE_OPEN_RE.search(text)
+        if fence_m is not None:
+            fence_idx = fence_m.start()
+            prefix = call_buf + text[:fence_idx]
+            if prefix:
+                yield ProviderChunk(kind=channel, text=prefix)
+            call_buf = ""
+            fence_buf = text[fence_idx:]
+            fence_capturing = True
+            closed = _try_close_fenced_json(fence_buf)
+            if closed is None:
+                continue
+            fence_capturing = False
+            if isinstance(closed[0], str) and closed[0] == "nottool":
+                yield ProviderChunk(kind=channel, text=closed[1])
+            else:
+                tool_chunk, tail = closed
+                yield tool_chunk
+                if tail:
+                    yield ProviderChunk(kind=channel, text=tail)
+            fence_buf = ""
+            continue
+
         if name_re is None:
             # No call-syntax recovery: pass through on source channel.
+            # First, hold back any trailing partial sentinel so a fence
+            # or XML opener split across chunks can still match.
+            flush, pre_buf = _split_at_sentinel_prefix(text)
             if call_buf:
                 yield ProviderChunk(kind=channel, text=call_buf)
                 call_buf = ""
-            yield chunk
+            if flush:
+                yield ProviderChunk(kind=channel, text=flush)
             continue
 
         call_buf += text
@@ -461,6 +572,14 @@ async def recover_inline_tool_calls(
             len(xml_buf),
         )
         yield ProviderChunk(kind=channel, text=xml_buf)
+    if fence_capturing and fence_buf:
+        log.warning(
+            "inline-fenced-JSON tool call did not close before stream end; flushing %d bytes",
+            len(fence_buf),
+        )
+        yield ProviderChunk(kind=channel, text=fence_buf)
+    if pre_buf:
+        yield ProviderChunk(kind=channel, text=pre_buf)
     if call_buf:
         yield ProviderChunk(kind=channel, text=call_buf)
 
@@ -471,6 +590,43 @@ async def recover_inline_tool_calls(
 _TRAILING_CALL_PREFIX_RE = re.compile(
     r"(?:c|ca|cal|call|call:|call:" + _IDENT + r")$"
 )
+
+
+def _split_at_sentinel_prefix(buf: str) -> tuple[str, str]:
+    """Split `buf` so any trailing partial of a recovery sentinel
+    (`<function=` or ```` ```json ````) is held back for the next chunk.
+    Lets the fence/XML detector see a split sentinel reconstituted across
+    chunks. Fence-prefix match is case-insensitive on the language tag."""
+    max_hold = 0
+    # XML opener: literal prefix match.
+    for i in range(1, min(len(_SENTINEL), len(buf)) + 1):
+        if _SENTINEL.startswith(buf[-i:]) and i > max_hold:
+            max_hold = i
+    # Fence opener: scan tail for a prefix that could complete to
+    # ``` ```[ws]json[ws]\n ```. Cheap upper-bound on the longest tail
+    # we'd need to hold (3 backticks + "json" + whitespace + newline = 9).
+    for i in range(1, min(9, len(buf)) + 1):
+        tail = buf[-i:]
+        if _FENCE_OPEN_RE.match(tail + "\n") or _looks_like_fence_prefix(tail):
+            if i > max_hold:
+                max_hold = i
+    if max_hold == 0:
+        return buf, ""
+    return buf[:-max_hold], buf[-max_hold:]
+
+
+def _looks_like_fence_prefix(tail: str) -> bool:
+    """True iff `tail` is a strict prefix of any case variant of
+    ``` ```json ```. We hold these so a fence opener split across chunks
+    still triggers on reassembly."""
+    if not tail:
+        return False
+    # Walk a canonical opener and see if tail matches its first len(tail)
+    # chars in some case folding.
+    for variant in ("```json", "``` json"):
+        if len(tail) <= len(variant) and variant[:len(tail)].lower() == tail.lower():
+            return True
+    return False
 
 
 def _split_at_safe_boundary(buf: str, tool_names: Iterable[str]) -> tuple[str, str]:

@@ -483,3 +483,94 @@ async def test_inline_call_split_across_thinking_chunks_recovered():
     assert tool[0].tool_input == {"move": "Be3"}
     text_emitted = "".join(c.text for c in out if c.kind == "text")
     assert text_emitted == ""
+
+
+# ---------- fenced JSON shape ----------------------------------------
+# `{"tool": "<name>", "args": {...}}` inside a ```json fence.
+
+
+_FENCED_JSON = (
+    '```json\n'
+    '{"tool": "validate_move", "args": {"move": "g4"}}\n'
+    '```'
+)
+
+
+@pytest.mark.asyncio
+async def test_fenced_json_tool_call_recovered():
+    chunks = [ProviderChunk(kind="text", text=_FENCED_JSON)]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks)))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_name == "validate_move"
+    assert tool[0].tool_input == {"move": "g4"}
+    text_emitted = "".join(c.text for c in out if c.kind == "text")
+    assert text_emitted == ""
+
+
+@pytest.mark.asyncio
+async def test_fenced_json_split_across_chunks_recovered():
+    chunks = [ProviderChunk(kind="text", text=c) for c in _FENCED_JSON]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks)))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_name == "validate_move"
+    assert tool[0].tool_input == {"move": "g4"}
+
+
+@pytest.mark.asyncio
+async def test_fenced_json_name_arguments_keys_recovered():
+    # Real-world variant: model uses {"name": ..., "arguments": ...}
+    # (Anthropic-ish) instead of {"tool": ..., "args": ...}.
+    payload = (
+        '```json\n'
+        '{"name": "recommend_move", "arguments": {"move": "Qh8"}}\n'
+        '```'
+    )
+    chunks = [ProviderChunk(kind="text", text=payload)]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks)))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_name == "recommend_move"
+    assert tool[0].tool_input == {"move": "Qh8"}
+
+
+@pytest.mark.asyncio
+async def test_fenced_json_uppercase_lang_tag_recovered():
+    payload = (
+        '```JSON\n'
+        '{"name": "validate_move", "arguments": {"move": "Nf3"}}\n'
+        '```'
+    )
+    chunks = [ProviderChunk(kind="text", text=payload)]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks)))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_name == "validate_move"
+
+
+@pytest.mark.asyncio
+async def test_fenced_json_lang_tag_with_whitespace_recovered():
+    payload = (
+        '```  json  \n'
+        '{"tool": "piece_at", "args": {"square": "e4"}}\n'
+        '```'
+    )
+    chunks = [ProviderChunk(kind="text", text=payload)]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks)))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_name == "piece_at"
+
+
+@pytest.mark.asyncio
+async def test_fenced_non_tool_json_passes_through():
+    # Fenced JSON that doesn't have {"tool": ..., "args": ...} shape
+    # must flush as plain text so legitimate JSON examples aren't eaten.
+    payload = '```json\n{"foo": 1, "bar": [2, 3]}\n```'
+    chunks = [ProviderChunk(kind="text", text=payload)]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks)))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert tool == []
+    text_emitted = "".join(c.text for c in out if c.kind == "text")
+    assert text_emitted == payload
