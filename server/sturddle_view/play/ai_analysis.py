@@ -357,34 +357,33 @@ class AIAnalysisCoordinator:
                             break
                         messages.append(_assistant_message(round_chunks))
                         if pending_tool is not None:
-                            # Surface dispatch to the UI; result stays
-                            # off-screen in v1 (engine side-effects cover
-                            # analyze; piece_at / validate_move silent).
-                            await self._emit(
-                                Event(
-                                    kind="ai_tool_call",
-                                    game_id=game_id,
-                                    payload={
-                                        "round": round_index,
-                                        "name": pending_tool.tool_name,
-                                        "input": pending_tool.tool_input,
-                                        "tool_use_id": pending_tool.tool_use_id,
-                                    },
-                                )
-                            )
-                            # Single-slot dedup. Only top-level `error`
-                            # clears the slot; per-entry errors (e.g.
-                            # top_moves errors list) cache normally since
-                            # the same input gives the same result.
+                            # Single-slot dedup. Cache hit returns the
+                            # prior result without re-dispatching and
+                            # without surfacing a duplicate UI dot.
                             key = self._dedup_key(pending_tool)
-                            if (
+                            cache_hit = (
                                 key is not None
                                 and last_call is not None
                                 and last_call[0] == key
-                            ):
+                            )
+                            if cache_hit:
                                 log.info("tool dedup hit: %s", pending_tool.tool_name)
                                 tool_output = last_call[1]
                             else:
+                                # Surface the call to the UI only on a
+                                # real dispatch.
+                                await self._emit(
+                                    Event(
+                                        kind="ai_tool_call",
+                                        game_id=game_id,
+                                        payload={
+                                            "round": round_index,
+                                            "name": pending_tool.tool_name,
+                                            "input": pending_tool.tool_input,
+                                            "tool_use_id": pending_tool.tool_use_id,
+                                        },
+                                    )
+                                )
                                 tool_output = await self._dispatch_tool(pending_tool)
                                 is_error = (
                                     isinstance(tool_output, dict)

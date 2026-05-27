@@ -177,7 +177,7 @@ function renderRevision({ details, summary }, { illegalMoves, falseClaims, castl
   summary.append(head);
   const parts = [];
   if (illegalMoves && illegalMoves.length) {
-    parts.push(`invalid moves: ${illegalMoves.join(", ")}`);
+    parts.push(`not valid: ${illegalMoves.join(", ")}`);
   }
   if (falseClaims && falseClaims.length) {
     parts.push(falseClaims.map((c) => `no ${c}`).join(", "));

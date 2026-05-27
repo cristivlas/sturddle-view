@@ -703,9 +703,9 @@ def make_recommend_move_tool(
 ) -> AnalyzeTool:
     """Build the `recommend_move` async tool. Parses UCI/SAN, then runs
     two engine searches (candidate-restricted + free) at the requested
-    depth on the live position; if the engine's bestmove dominates the
-    candidate for the side to move, returns a structured error so the
-    model can pivot. On acceptance returns `{ok, uci, san, post_move_fen,
+    depth on the live position; if the engine's bestmove scores better
+    for the side to move, returns a structured error so the model can
+    pivot. On acceptance returns `{ok, uci, san, post_move_fen,
     candidate_score, engine_best_move, engine_best_score, depth}`."""
     async def recommend_move(input_: dict, *, cancel_token: CancelToken) -> dict:
         board = board_provider()
@@ -789,7 +789,7 @@ def make_recommend_move_tool(
             result_common["engine_best_san"] = scratch_live.san(best_move)
 
         if _better_for_stm(cand_score, best_score, board.turn):
-            return {"error": "recommendation_dominated", **result_common}
+            return {"error": "recommendation_challenged", **result_common}
 
         return {"ok": True, "post_move_fen": scratch.fen(), **result_common}
 
