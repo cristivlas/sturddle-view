@@ -206,24 +206,38 @@ def _iter_piece_claims(text: str):
         yield (color or "").lower(), piece.lower(), square.lower()
 
 
+# Bare-square pawn-push token; carve-out-only (bare pushes are still
+# excluded from illegal-move detection). Trailing lookahead instead of
+# \b so glyphs at the end ('e8=Q+') don't break the boundary.
+_BARE_PAWN_PUSH_RE = re.compile(r"\b[a-h][1-8](?:=[QRBN])?[+#]?(?![a-zA-Z0-9])")
+
+
+def _add_move_target(
+    out: set[tuple[int, chess.Color, int]], token: str, board: chess.Board,
+) -> None:
+    try:
+        move = board.parse_san(token)
+    except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
+        return
+    piece = board.piece_at(move.from_square)
+    if piece is None:
+        return
+    dest_piece_type = move.promotion if move.promotion else piece.piece_type
+    out.add((dest_piece_type, piece.color, move.to_square))
+
+
 def _move_target_set(text: str, board: chess.Board) -> set[tuple[int, chess.Color, int]]:
-    """Scan `text` for SAN-shaped tokens that parse as legal moves on
-    `board`; return the set of (piece_type, color, dest_square) tuples
-    those moves would create on the post-move board. Used to carve out
-    forward-looking prose ("the rook on e1" following an Re1 proposal)
-    from false-piece-claim flagging."""
+    """Scan `text` for tokens that parse as legal moves on `board`;
+    return the set of (piece_type, color, dest_square) tuples those
+    moves would create on the post-move board. Carves out forward-looking
+    prose (post-Re1 "the rook on e1", post-e4 "the e4 pawn") from
+    false-piece-claim flagging."""
     out: set[tuple[int, chess.Color, int]] = set()
     for match in _SAN_TOKEN_RE.finditer(text):
-        bare = _strip_annotation_glyphs(match.group(0))
-        try:
-            move = board.parse_san(bare)
-        except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
-            continue
-        piece = board.piece_at(move.from_square)
-        if piece is None:
-            continue
-        dest_piece_type = move.promotion if move.promotion else piece.piece_type
-        out.add((dest_piece_type, piece.color, move.to_square))
+        _add_move_target(out, _strip_annotation_glyphs(match.group(0)), board)
+    for match in _BARE_PAWN_PUSH_RE.finditer(text):
+        # Strip kept for symmetry; _BARE_PAWN_PUSH_RE doesn't capture !?.
+        _add_move_target(out, _strip_annotation_glyphs(match.group(0)), board)
     return out
 
 

@@ -321,3 +321,46 @@ def test_move_target_carveout_illegal_san_does_not_trigger():
     assert "rook on e5" in out
 
 
+# ---------- Bare-pawn-push carve-out (forward-looking prose) ----------
+# Real case: model recommends a pawn push in bare-square form ("e4")
+# and then describes the resulting pawn. Bare pawn pushes are out of
+# scope for illegal-move detection (prose mentions squares constantly),
+# but the move-target carve-out must still recognize a *legal* bare
+# pawn push so post-move prose like "the e4 pawn" isn't flagged as a
+# false claim against the live (pre-move) board.
+
+
+def test_move_target_carveout_bare_pawn_push_white():
+    board = chess.Board()
+    text = "Play e4. The e4 pawn controls d5 and f5."
+    assert find_false_piece_claims(text, board) == []
+
+
+def test_move_target_carveout_bare_pawn_push_on_square_phrasing():
+    board = chess.Board()
+    text = "1.e4 is the main line; the pawn on e4 stakes the center."
+    assert find_false_piece_claims(text, board) == []
+
+
+def test_move_target_carveout_bare_pawn_push_color_must_match():
+    # Carve-out covers the moving side only (mirrors SAN-move carve-out).
+    board = chess.Board()
+    text = "Play e4. Then black pawn on e4 -- wait, that's impossible."
+    assert find_false_piece_claims(text, board) == ["black pawn on e4"]
+
+
+def test_move_target_carveout_bare_pawn_push_wrong_piece_still_flags():
+    # Pawn-push doesn't excuse a knight claim on the same square.
+    board = chess.Board()
+    text = "Play e4. The knight on e4 then jumps to f6."
+    assert find_false_piece_claims(text, board) == ["knight on e4"]
+
+
+def test_illegal_bare_pawn_push_does_not_create_carveout():
+    # e5 is NOT legal for White from startpos (blocked by own pawn).
+    # The carve-out must only fire on legal bare pawn pushes.
+    board = chess.Board()
+    text = "Imagine e5; then the pawn on e5 cramps Black."
+    assert find_false_piece_claims(text, board) == ["pawn on e5"]
+
+
