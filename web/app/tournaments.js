@@ -9,7 +9,7 @@
 
 import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, showDialog, toast } from "./dialogs.js";
 import { openSettingsDialog } from "./settings-dialog.js";
-import { EVT, KIND, STATUS } from "./tournament-events.js";
+import { EVT, KIND, POLL_INTERVAL_MS, STATUS } from "./tournament-events.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 
@@ -297,6 +297,23 @@ export function mountTournaments({ container, api, events, log, token }) {
     return li;
   }
 
+  function updateProgressInPlace(t) {
+    const played = t?.standings?.games;
+    if (played == null) return;
+    const row = listEl.querySelector(`li[data-id="${t.id}"]`);
+    if (!row) return;
+    const bar = row.querySelector(".tournament-progress");
+    const fill = row.querySelector(".tournament-progress-fill");
+    const label = row.querySelector(".tournament-progress-label");
+    if (!bar || !fill || !label) return;
+    const total = totalGames(t);
+    if (!total) return;
+    const pct = Math.min(100, Math.round((played / total) * 100));
+    bar.setAttribute("aria-valuenow", String(played));
+    fill.style.width = `${pct}%`;
+    label.textContent = `${played} / ${total} · ${pct}%`;
+  }
+
   function selectedTournament() {
     return tournaments.find((t) => t.id === selectedId) || null;
   }
@@ -340,6 +357,13 @@ export function mountTournaments({ container, api, events, log, token }) {
       // open windows. Brand-new or explicitly-dismissed tournaments stay
       // closed -- the user can open them manually.
       openWorkspace(t);
+    }
+    // Invariant: an open workspace always reflects the selected tournament.
+    // The list-level poll relies on this to drive workspace.refresh() from
+    // selectedId without having to track the workspace's pinned tid.
+    const wsAfter = getActiveWorkspace();
+    if (wsAfter && wsAfter.tournamentId !== selectedId) {
+      throw new Error(`workspace tid ${wsAfter.tournamentId} != selectedId ${selectedId}`);
     }
     return true;
   }
@@ -1192,6 +1216,32 @@ export function mountTournaments({ container, api, events, log, token }) {
   window.addEventListener("sturddle:settings-changed", onSettingsChanged);
   window.addEventListener("sturddle:workspace-closed", () => { syncWindowMenu(); syncRibbon(); });
 
+  // Single periodic refresh for the selected tournament when it's running.
+  // Hits one endpoint per tick and fans out: list progress bar in place,
+  // and the workspace (if open) via applyDetail() so it doesn't re-fetch.
+  // navigateTo's invariant guarantees workspace.tournamentId === selectedId
+  // when a workspace is open, so we can drive both from selectedId alone.
+  async function pollTick() {
+    const t = selectedTournament();
+    if (!t || t.status !== STATUS.RUNNING) return;
+    let fresh;
+    try {
+      fresh = await api("GET", `/api/tournaments/${t.id}`);
+    } catch (e) {
+      log?.(`tournaments poll failed: ${e.message}`);
+      return;
+    }
+    // Mutate in place so renderList() / sort / etc. see the latest.
+    // Narrow copy: list only consumes status + standings; workspace-only
+    // fields stay out of tournaments[] to avoid stale-field confusion.
+    t.status = fresh.status;
+    t.standings = fresh.standings;
+    updateProgressInPlace(t);
+    const ws = getActiveWorkspace();
+    if (ws && ws.tournamentId === t.id) ws.applyDetail(fresh);
+  }
+  const pollIntervalId = window.setInterval(pollTick, POLL_INTERVAL_MS);
+
   // ---- Initial load -------------------------------------------------------
 
   syncWindowMenu();
@@ -1201,7 +1251,10 @@ export function mountTournaments({ container, api, events, log, token }) {
   // Fire-and-forget: lastWriteWins resolves undefined; state is populated
   // asynchronously and rendered via renderList() inside each commit.
   loadSettings();
-  loadList();
+  // After initial population, fire one immediate pollTick so a workspace
+  // revealed on perspective re-mount catches up without waiting a full
+  // POLL_INTERVAL_MS. No-op when nothing's running.
+  loadList().then(pollTick);
 
   // true once engines.js confirms the Tournaments tab is active on load.
   let tournamentsTabActive = false;
@@ -1224,6 +1277,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     restoreWorkspace,
     unmount() {
       offEvents();
+      window.clearInterval(pollIntervalId);
       window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
       window.removeEventListener("sturddle:workspace-closed", syncWindowMenu);
       document.removeEventListener("click", closeMenus);

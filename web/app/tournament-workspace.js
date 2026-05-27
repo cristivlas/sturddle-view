@@ -32,7 +32,6 @@ import { createSlotGrid, SLOT_GAP } from "./workspace-slot-grid.js";
 const STORAGE_KEY_PREFIX = "sturddle:workspace:";
 const STANDINGS_COL_PCTS_KEY = "sturddle:tournaments:standingsColPcts";
 const STANDINGS_DEFAULT_PCTS = [22, 5, 5, 5, 5, 8, 25, 25];
-const POLL_INTERVAL_MS = 5000;
 const EVENT_LOG_LIMIT = 500;
 
 
@@ -124,7 +123,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // Lets us run the WS subscription in parallel with the REST backfill
   // without showing duplicates around workspace open.
   const seenSeqs = new Set();
-  let pollTimer = null;
   let unsubscribe = null;
   // True when close() / closeAll() drove the tear-down. Distinguishes from
   // "user closed the last window manually" -- in that case finalize() is the
@@ -828,12 +826,18 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // ---- Data refresh -----------------------------------------------------
 
   async function refresh() {
+    let fresh;
     try {
-      detail = await api("GET", `/api/tournaments/${tournament.id}`);
+      fresh = await api("GET", `/api/tournaments/${tournament.id}`);
     } catch (e) {
       log?.(`workspace refresh failed: ${e.message}`);
       return;
     }
+    applyDetail(fresh);
+  }
+
+  function applyDetail(fresh) {
+    detail = fresh;
     // While RUNNING, API state can lag WS events under fast tc, so
     // treat API as additive (add missing entries, never remove).
     // When not RUNNING, replace authoritatively to drop ghosts.
@@ -1012,11 +1016,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (unsubscribe == null) {
       unsubscribe = events.on(pushEvent);
     }
-    if (pollTimer == null) {
-      pollTimer = window.setInterval(() => {
-        if (detail?.status === STATUS.RUNNING) refresh();
-      }, POLL_INTERVAL_MS);
-    }
   }
 
   // Subscribe before backfill so any events firing during the REST
@@ -1102,12 +1101,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
   initWorkspace();
 
-  // Periodic poll: events should drive most updates, but a poll catches
-  // server-restart catch-up windows and PGN-only changes (e.g. the
-  // server's pgn_stats picks up games we missed via WS).
-  pollTimer = window.setInterval(() => {
-    if (detail?.status === STATUS.RUNNING) refresh();
-  }, POLL_INTERVAL_MS);
+  // Periodic refresh is driven by the tournaments-list poll (single source);
+  // it calls refresh() on this workspace handle. Catches WS gaps + PGN-only
+  // changes (games_played advancing without the tailer subscribed).
   function onReconnect(e) {
     if (!e.detail?.connected) {
       seenSeqs.clear();
@@ -1189,10 +1185,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   function tearDown() {
-    if (pollTimer != null) {
-      window.clearInterval(pollTimer);
-      pollTimer = null;
-    }
     if (unsubscribe) {
       unsubscribe();
       unsubscribe = null;
@@ -1536,7 +1528,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   function restoreWindows(wbs) {
     for (const wb of wbs) try { unminimize(wb); } catch { /* */ }
   }
-  const workspace = { close, tile, tidy, untidy, snap, closeAll, minimizeAll, restoreWindows, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id, get isTidy() { return activeLayout === LAYOUT.TIDY; } };
+  const workspace = { close, tile, tidy, untidy, snap, closeAll, minimizeAll, restoreWindows, focus, hide, show, isHidden, openSystemWindow, refresh, applyDetail, tournamentId: tournament.id, get isTidy() { return activeLayout === LAYOUT.TIDY; } };
   activeWorkspace = workspace;
   return workspace;
 }

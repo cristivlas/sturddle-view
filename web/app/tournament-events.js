@@ -28,3 +28,9 @@ export const STATUS = {
   DONE:    "done",
   FAILED:  "failed",
 };
+
+// Periodic refresh cadence for the selected tournament while running.
+// Catches WS gaps (reconnects, missed payloads) and pulls a fresh
+// games-played count from the server (read from fastchess's config.json
+// per request -- there is no live push for that counter).
+export const POLL_INTERVAL_MS = 5000;

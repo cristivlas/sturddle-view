@@ -157,14 +157,12 @@ def _serialize(
             ).to_dict()
         except FileNotFoundError:
             standings = {"games": 0, "engines": []}
-        # Active: orch in-mem counter. Stopped: fastchess config snapshot.
-        live = orch.games_played(t.id) if orch is not None else None
-        if live is not None:
-            standings["games"] = live
-        else:
-            cfg_games = games_played_from_config(store.config_path(t.id))
-            if cfg_games is not None:
-                standings["games"] = cfg_games
+        # Prefer fastchess's config.json -- authoritative across pause/resume
+        # and ahead of the PGN under autosave cadence. Falls back to the
+        # compute_standings count when the file is missing/unparseable.
+        cfg_games = games_played_from_config(store.config_path(t.id))
+        if cfg_games is not None:
+            standings["games"] = cfg_games
         standings["tournament_type"] = tournament_type
         out["standings"] = standings
     if with_stats and store is not None:
