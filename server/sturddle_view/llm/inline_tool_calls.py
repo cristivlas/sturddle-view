@@ -101,13 +101,14 @@ _BARE_KEY_RE = re.compile(rf"([{{,]\s*)({_IDENT})(\s*:)")
 
 
 def _build_name_pattern(tool_names: Iterable[str]) -> re.Pattern[str] | None:
-    """Compile a regex that matches any of `tool_names` as a word
-    immediately followed by `(` or `{`. Returns None when empty so the
-    caller can short-circuit."""
+    """Compile a regex matching any of `tool_names` as a word, optionally
+    preceded by `call:`, followed by `(` or `{`. Returns None when empty
+    so the caller can short-circuit."""
     names = [re.escape(n) for n in tool_names if n]
     if not names:
         return None
-    return re.compile(r"\b(" + "|".join(sorted(set(names), key=len, reverse=True)) + r")\s*([({])")
+    alt = "|".join(sorted(set(names), key=len, reverse=True))
+    return re.compile(r"(?:\bcall:)?\b(" + alt + r")\s*([({])")
 
 
 def _find_balanced_close(text: str, open_idx: int) -> int | None:
@@ -194,14 +195,14 @@ def _parse_call_args(body: str, opener: str = "(") -> dict[str, object] | None:
         part = part.strip()
         if not part:
             continue
-        eq = _find_top_level_eq(part)
-        if eq is None:
+        sep = _find_top_level_kv(part)
+        if sep is None:
             return None  # positional arg in unparseable body -- give up
-        key = part[:eq].strip()
+        key = part[:sep].strip()
         # Strip quotes from the key if the model emitted `"k"=v`.
         if len(key) >= 2 and key[0] == key[-1] and key[0] in _QUOTE_CHARS:
             key = key[1:-1]
-        val_raw = part[eq + 1:].strip()
+        val_raw = part[sep + 1:].strip()
         out[key] = _coerce_literal(val_raw)
     return out or None
 
@@ -247,10 +248,12 @@ def _split_top_level(s: str) -> list[str]:
     return parts
 
 
-def _find_top_level_eq(s: str) -> int | None:
-    """Index of `=` not inside quotes/nested brackets, or None."""
+def _find_top_level_kv(s: str) -> int | None:
+    """Index of the first `=` or `:` not inside quotes/nested brackets,
+    or None. Both serve as key/value separators in real-world models;
+    `=` is kwarg shape, `:` is dict-ish shape without braces."""
     for i, ch in _iter_top_level(s):
-        if ch == "=":
+        if ch == "=" or ch == ":":
             return i
     return None
 

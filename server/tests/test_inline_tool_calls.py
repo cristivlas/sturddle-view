@@ -173,7 +173,7 @@ async def test_function_close_without_tool_call_trailer():
 # tries permissive arg parsing for several shapes.
 
 
-_NAMES = {"recommend_move", "piece_at"}
+_NAMES = {"recommend_move", "piece_at", "analyze"}
 
 
 @pytest.mark.asyncio
@@ -337,3 +337,48 @@ async def test_xml_still_works_when_tool_names_provided():
     assert len(tool) == 1
     assert tool[0].tool_name == "piece_at"
     assert tool[0].tool_input == {"square": "f3"}
+
+
+# ---------- "call:" prefix + bare-value shape -------------------------
+# Real shape captured live in a model's thinking stream:
+#   call:analyze{fen:5r2/2qbbppk/...,depth:28,time_ms:150}
+# Three new wrinkles: a `call:` decoration before the tool name,
+# unquoted (bare) string values, and unquoted bare-identifier keys.
+
+
+@pytest.mark.asyncio
+async def test_call_prefix_with_bare_values():
+    fen = "5r2/2qbbppk/rpn4n/2p2p1p/P1PpP3/3P1NPP/3BN1BK/R2Q1R2 w - - 0 20"
+    chunks = [ProviderChunk(
+        kind="text",
+        text=f"call:analyze{{fen:{fen},depth:28,time_ms:150}}",
+    )]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_name == "analyze"
+    assert tool[0].tool_input == {"fen": fen, "depth": 28, "time_ms": 150}
+
+
+@pytest.mark.asyncio
+async def test_call_prefix_with_paren_args():
+    chunks = [ProviderChunk(
+        kind="text", text="call:piece_at(square:e4)",
+    )]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_input == {"square": "e4"}
+
+
+@pytest.mark.asyncio
+async def test_call_prefix_then_text_preserved():
+    # Tail text after the recovered call survives.
+    chunks = [ProviderChunk(
+        kind="text", text='call:piece_at{square:e4} then more prose.',
+    )]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool_idx = next(i for i, c in enumerate(out) if c.kind == "tool_use")
+    assert tool_idx + 1 < len(out)
+    assert out[tool_idx + 1].kind == "text"
+    assert out[tool_idx + 1].text == " then more prose."
