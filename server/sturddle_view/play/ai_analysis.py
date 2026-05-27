@@ -121,25 +121,28 @@ def _norm_square_arg(input_: dict, board: chess.Board | None) -> tuple | None:
 
 
 def _norm_top_moves(input_: dict, board: chess.Board | None) -> tuple | None:
-    # Any unparseable candidate -> skip dedup. Conservative: a partial
-    # subset of legal moves still produces a meaningful tool result, but
-    # we'd rather miss a cache hit than risk a wrong collapse.
+    # Two-tier key: "canonical" (all candidates parse -> tuple of UCIs)
+    # or "raw" fallback (stripped+lowered strings). Tags don't collide.
     raw_moves = input_.get("moves")
     if not isinstance(raw_moves, list) or board is None:
         return None
     ucis: list[str] = []
+    all_parseable = True
     for r in raw_moves:
         if not isinstance(r, str):
             return None
         move = _parse_move_canonical(r, board)
         if move is None:
-            return None
+            all_parseable = False
+            break
         ucis.append(move.uci())
-    # Sort: engine sees `searchmoves` as a set, list order is irrelevant.
-    return (
-        "moves", tuple(sorted(ucis)),
-        input_.get("depth"), input_.get("time_ms"),
-    )
+    depth = input_.get("depth")
+    time_ms = input_.get("time_ms")
+    if all_parseable:
+        # Sort: engine sees `searchmoves` as a set, list order is irrelevant.
+        return ("moves", "canonical", tuple(sorted(ucis)), depth, time_ms)
+    raws = tuple(sorted(r.strip().lower() for r in raw_moves))
+    return ("moves", "raw", raws, depth, time_ms)
 
 
 def _norm_analyze(input_: dict, board: chess.Board | None) -> tuple | None:
@@ -366,6 +369,12 @@ class AIAnalysisCoordinator:
                                 and last_call is not None
                                 and last_call[0] == key
                             )
+                            log.debug(
+                                "tool dedup probe: name=%s hit=%s raw_input=%r key=%r last_key=%r",
+                                pending_tool.tool_name, cache_hit,
+                                pending_tool.tool_input, key,
+                                last_call[0] if last_call is not None else None,
+                            )
                             if cache_hit:
                                 log.info("tool dedup hit: %s", pending_tool.tool_name)
                                 tool_output = last_call[1]
@@ -385,13 +394,10 @@ class AIAnalysisCoordinator:
                                     )
                                 )
                                 tool_output = await self._dispatch_tool(pending_tool)
-                                is_error = (
-                                    isinstance(tool_output, dict)
-                                    and tool_output.get("error")
-                                )
-                                if is_error or key is None:
-                                    last_call = None
-                                else:
+                                if key is not None:
+                                    # Cache success and error alike;
+                                    # deterministic rejection is just as
+                                    # redundant as deterministic success.
                                     last_call = (key, tool_output)
                             await transcript.tool_result(
                                 round_index, pending_tool.tool_use_id, tool_output

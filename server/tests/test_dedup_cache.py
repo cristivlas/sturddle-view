@@ -256,3 +256,105 @@ async def test_intervening_different_tool_clears_slot():
     assert counts == {"a": 2, "b": 1}
     tool_calls = [e for e in events if e.kind == "ai_tool_call"]
     assert len(tool_calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_uncacheable_call_does_not_clear_slot():
+    """Regression from live observation: A (cacheable), B (key=None),
+    A (cacheable, identical) -- the second A must hit the dedup cache,
+    because B was uncacheable but not invalidating. We saw the slot
+    cleared in production when an intervening validate_move call had
+    a move that didn't parse on the live board (key=None)."""
+    counts = {"a": 0, "b": 0}
+
+    async def fake_a(payload, *, cancel_token):
+        counts["a"] += 1
+        return {"side_to_move": "white", "candidates": []}
+
+    async def fake_b(payload, *, cancel_token):
+        counts["b"] += 1
+        return {"legal": False, "error": None}
+
+    reg = _make_registry({"top_moves": fake_a, "validate_move": fake_b})
+
+    a_input = {"moves": ["Nf3"], "depth": 12}
+    # validate_move with a move that won't parse on startpos -> key=None.
+    b_input = {"move": "Qxh7#"}
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(
+            kind="tool_use", tool_use_id="tu_1", tool_name="top_moves",
+            tool_input=a_input,
+        )],
+        [ProviderChunk(
+            kind="tool_use", tool_use_id="tu_2", tool_name="validate_move",
+            tool_input=b_input,
+        )],
+        [ProviderChunk(
+            kind="tool_use", tool_use_id="tu_3", tool_name="top_moves",
+            tool_input=dict(a_input),
+        )],
+        [ProviderChunk(kind="text", text="done.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    board = chess.Board()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg, board_provider=lambda: board,
+    )
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    # First A dispatches; B dispatches (uncacheable but real); second A
+    # is a dedup hit -> total a=1, b=1.
+    assert counts == {"a": 1, "b": 1}
+    tool_calls = [e for e in events if e.kind == "ai_tool_call"]
+    # Two UI dots: first A, then B. The second A is suppressed.
+    assert len(tool_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_identical_error_call_dedups():
+    """Identical calls that both produce an error result should still
+    dedup -- second dispatch is a slot hit and produces no second UI dot.
+    Regression: recommend_move rejected the same move twice and emitted
+    two full dots/cards instead of one."""
+    dispatch_count = 0
+
+    async def fake_recommend(payload, *, cancel_token):
+        nonlocal dispatch_count
+        dispatch_count += 1
+        return {
+            "error": "recommendation_rejected",
+            "uci": "e2e4", "san": "e4",
+            "engine_best_san": "Nf3",
+            "reason": "Engine prefers Nf3. Submit a different move.",
+        }
+
+    reg = _make_registry({"recommend_move": fake_recommend})
+
+    same = {"move": "e4"}
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(
+            kind="tool_use", tool_use_id="tu_1", tool_name="recommend_move",
+            tool_input=same,
+        )],
+        [ProviderChunk(
+            kind="tool_use", tool_use_id="tu_2", tool_name="recommend_move",
+            tool_input=dict(same),
+        )],
+        [ProviderChunk(kind="text", text="done.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    board = chess.Board()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg, board_provider=lambda: board,
+    )
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    assert dispatch_count == 1, f"expected 1 dispatch, got {dispatch_count}"
+    tool_calls = [e for e in events if e.kind == "ai_tool_call"]
+    assert len(tool_calls) == 1

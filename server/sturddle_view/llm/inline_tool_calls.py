@@ -359,18 +359,33 @@ async def recover_inline_tool_calls(
     xml_buf = ""
     xml_capturing = False
     # Holds pending text that may complete a call-syntax match; never
-    # flushed as text until we know no match is forming.
+    # flushed until we know no match is forming.
     call_buf = ""
+    # Source channel of the buffered content ("text" or "thinking").
+    # Recovery runs on both; channel switch flushes the buffer first.
+    channel = "text"
 
     async for chunk in upstream:
-        if chunk.kind != "text" or not chunk.text:
-            # Non-text mid-buffer: flush pending text first.
+        is_recoverable = chunk.kind in ("text", "thinking") and chunk.text
+        if not is_recoverable:
+            # Non-recoverable chunk mid-buffer: flush pending content first
+            # on its source channel.
             if call_buf:
-                yield ProviderChunk(kind="text", text=call_buf)
+                yield ProviderChunk(kind=channel, text=call_buf)
                 call_buf = ""
             yield chunk
             continue
 
+        if chunk.kind != channel and (call_buf or xml_capturing):
+            # Channel switch with pending buffer: flush as the old channel.
+            if call_buf:
+                yield ProviderChunk(kind=channel, text=call_buf)
+                call_buf = ""
+            if xml_capturing and xml_buf:
+                yield ProviderChunk(kind=channel, text=xml_buf)
+                xml_buf = ""
+                xml_capturing = False
+        channel = chunk.kind
         text = chunk.text
 
         if xml_capturing:
@@ -381,7 +396,7 @@ async def recover_inline_tool_calls(
             tool_chunk, tail = closed
             yield tool_chunk
             if tail:
-                yield ProviderChunk(kind="text", text=tail)
+                yield ProviderChunk(kind=channel, text=tail)
             xml_buf = ""
             xml_capturing = False
             continue
@@ -391,7 +406,7 @@ async def recover_inline_tool_calls(
         if xml_idx >= 0:
             prefix = call_buf + text[:xml_idx]
             if prefix:
-                yield ProviderChunk(kind="text", text=prefix)
+                yield ProviderChunk(kind=channel, text=prefix)
             call_buf = ""
             xml_buf = text[xml_idx:]
             xml_capturing = True
@@ -401,15 +416,15 @@ async def recover_inline_tool_calls(
             tool_chunk, tail = closed
             yield tool_chunk
             if tail:
-                yield ProviderChunk(kind="text", text=tail)
+                yield ProviderChunk(kind=channel, text=tail)
             xml_buf = ""
             xml_capturing = False
             continue
 
         if name_re is None:
-            # No call-syntax recovery: pass through.
+            # No call-syntax recovery: pass through on source channel.
             if call_buf:
-                yield ProviderChunk(kind="text", text=call_buf)
+                yield ProviderChunk(kind=channel, text=call_buf)
                 call_buf = ""
             yield chunk
             continue
@@ -418,40 +433,36 @@ async def recover_inline_tool_calls(
         while call_buf:
             result = _try_recover_first_call(call_buf, name_re)
             if isinstance(result, _CallNone):
-                # Hold back any trailing partial identifier so a name
-                # split across chunks can still match.
                 safe_flush, keep = _split_at_safe_boundary(call_buf, tool_names or ())
                 if safe_flush:
-                    yield ProviderChunk(kind="text", text=safe_flush)
+                    yield ProviderChunk(kind=channel, text=safe_flush)
                 call_buf = keep
                 break
             if isinstance(result, _CallUnfinished):
-                # Flush any prefix; keep the unfinished tail for next chunk.
                 if result.match_start > 0:
-                    yield ProviderChunk(kind="text", text=call_buf[:result.match_start])
+                    yield ProviderChunk(kind=channel, text=call_buf[:result.match_start])
                     call_buf = call_buf[result.match_start:]
                 break
             if isinstance(result, _CallUnparseable):
-                # Flush prefix + the unparseable span as plain text.
-                yield ProviderChunk(kind="text", text=call_buf[:result.match_end])
+                yield ProviderChunk(kind=channel, text=call_buf[:result.match_end])
                 call_buf = call_buf[result.match_end:]
                 continue
             # _CallMatch
             if result.match_start > 0:
-                yield ProviderChunk(kind="text", text=call_buf[:result.match_start])
+                yield ProviderChunk(kind=channel, text=call_buf[:result.match_start])
             log.info("inline-call tool call recovered: %s(%s)", result.name, result.params)
             yield _synthesize_tool_use(result.name, result.params)
             call_buf = call_buf[result.match_end:]
 
-    # Stream end: flush whatever's still buffered.
+    # Stream end: flush whatever's still buffered on its source channel.
     if xml_capturing and xml_buf:
         log.warning(
             "inline-XML tool call did not close before stream end; flushing %d bytes",
             len(xml_buf),
         )
-        yield ProviderChunk(kind="text", text=xml_buf)
+        yield ProviderChunk(kind=channel, text=xml_buf)
     if call_buf:
-        yield ProviderChunk(kind="text", text=call_buf)
+        yield ProviderChunk(kind=channel, text=call_buf)
 
 
 # Trailing prefix of `call:` followed by an optional identifier;

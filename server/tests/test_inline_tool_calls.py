@@ -427,3 +427,59 @@ async def test_call_prefix_char_by_char_does_not_leak_prefix():
     tool = [c for c in out if c.kind == "tool_use"]
     assert len(tool) == 1
     assert tool[0].tool_input == {"move": "Be3"}
+
+
+# ---------- thinking-channel inline call recovery ---------------------
+# Regression: models that stream reasoning into `thinking` sometimes
+# emit a real tool call there too, never on the text channel. Recovery
+# must also process thinking chunks; non-call portions stay as
+# `thinking`, recovered calls become `tool_use`.
+
+
+@pytest.mark.asyncio
+async def test_inline_call_in_thinking_recovered():
+    chunks = [ProviderChunk(
+        kind="thinking",
+        text="I should look at moves. call:recommend_move{move:Be3}",
+    )]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_name == "recommend_move"
+    assert tool[0].tool_input == {"move": "Be3"}
+    # Prefix prose preserved as thinking, not promoted to text.
+    thinking_text = "".join(c.text for c in out if c.kind == "thinking")
+    assert "I should look at moves." in thinking_text
+    text_emitted = "".join(c.text for c in out if c.kind == "text")
+    assert text_emitted == ""
+
+
+@pytest.mark.asyncio
+async def test_inline_xml_call_in_thinking_recovered():
+    chunks = [ProviderChunk(kind="thinking", text=_REAL_XML)]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_name == "piece_at"
+    assert tool[0].tool_input == {"square": "f3"}
+
+
+@pytest.mark.asyncio
+async def test_thinking_without_call_passes_through_as_thinking():
+    chunks = [ProviderChunk(kind="thinking", text="just musing about Be3 and Nf3")]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    assert all(c.kind == "thinking" for c in out)
+    assert "".join(c.text for c in out) == "just musing about Be3 and Nf3"
+    assert not any(c.kind == "tool_use" for c in out)
+
+
+@pytest.mark.asyncio
+async def test_inline_call_split_across_thinking_chunks_recovered():
+    text = "call:recommend_move{move:Be3}"
+    chunks = [ProviderChunk(kind="thinking", text=c) for c in text]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_input == {"move": "Be3"}
+    text_emitted = "".join(c.text for c in out if c.kind == "text")
+    assert text_emitted == ""

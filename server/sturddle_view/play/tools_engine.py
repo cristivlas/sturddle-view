@@ -642,8 +642,9 @@ _RECOMMEND_MOVE_CARD = (
     "`validate_move` and `piece_at`: this is a tool invocation, not a "
     "sentence in your prose. The engine evaluates your candidate and "
     "the engine's own best move at the requested depth; if a different "
-    "move scores better for the side to move, the call returns an "
-    "error so you can reconsider."
+    "move scores better for the side to move, the call returns "
+    "error=recommendation_rejected and you must submit a different "
+    "move -- repeating the same recommendation is not allowed."
 )
 
 
@@ -653,9 +654,10 @@ RECOMMEND_MOVE_TOOL_SPEC = ToolSpec(
         "Call this tool with your final move recommendation. "
         "Non-negotiable: call (do not narrate) at the end of your turn "
         "after you've decided. Validates legality, scores the candidate "
-        "and the engine's best move at the requested depth, and rejects "
-        "with a structured error when a better move exists. Returns "
-        "the post-move FEN on acceptance."
+        "and the engine's best move at the requested depth, and returns "
+        "error=recommendation_rejected with a `reason` when a better "
+        "move exists -- in that case you must submit a different move. "
+        "Returns the post-move FEN on acceptance."
     ),
     input_schema={
         "type": "object",
@@ -789,7 +791,15 @@ def make_recommend_move_tool(
             result_common["engine_best_san"] = scratch_live.san(best_move)
 
         if _better_for_stm(cand_score, best_score, board.turn):
-            return {"error": "recommendation_challenged", **result_common}
+            best_san = result_common.get("engine_best_san") or "a stronger move"
+            return {
+                "error": "recommendation_rejected",
+                "reason": (
+                    f"Engine prefers {best_san}. "
+                    "Submit a different move."
+                ),
+                **result_common,
+            }
 
         return {"ok": True, "post_move_fen": scratch.fen(), **result_common}
 
