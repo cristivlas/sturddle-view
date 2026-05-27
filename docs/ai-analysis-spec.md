@@ -22,6 +22,26 @@ Tournament mode is out of scope.
 
 ## Architecture
 
+### File placement
+
+- **Server coordinator:** `server/sturddle_view/play/ai_analysis.py`
+  holds `AIAnalysisCoordinator`. Composed by the play perspective
+  alongside `HumanVsEngine` (not methods on it). Mirrors
+  `TablebaseProber` / `OpeningBook` siblings.
+- **Server providers:** `server/sturddle_view/llm/` package --
+  `base.py`, `anthropic.py`, `ollama.py`, plus shared
+  `response_validator.py`, `tools.py`, `prompts.py`, `transcript.py`,
+  `inline_tool_calls.py`, `harmony_strip.py`.
+- **Engine tools:** `server/sturddle_view/play/tools_engine.py`
+  (`analyze`, `top_moves`, `recommend_move`, `validate_move`,
+  `piece_at`).
+- **Events:** `ai_info` (prose stream), `ai_thinking`, `ai_tool_call`,
+  `ai_tool_call_failed`, `ai_corrective`, `ai_recommendation` on
+  `events.py` `EventKind`.
+- **Client panel:** `web/app/play-ai-window.js`; mirrors
+  `play-commentary-window.js` (same `createDockableWindow` factory).
+  `play.js` wires open/close + event subscription.
+
 ### Agent
 
 - Tool-using LLM agent
@@ -129,8 +149,85 @@ prompt. Adding a tool requires no manual edit to the prompt; removing
 one cannot drift.
 
 Per-tool usage guidance (how to interpret results, edge cases) lives
-in **tool cards**, not in the system prompt. See
-`ai-analysis-skills-spec.md`.
+in **tool cards** -- see §Skills layer below.
+
+### Skills layer
+
+A "skill" is any chunk of procedural guidance the agent reads on
+demand. The umbrella keeps the cold system prompt small as the toolkit
+grows; the current prompt already carries multi-paragraph usage rules
+per tool, and adding more tools the same way dilutes every rule's
+attention weight (the documented failure mode behind the chess
+hallucinations the validators suppress).
+
+Not to be confused with Anthropic Agent Skills (the product feature).
+Same underlying principle (lazy-load on demand), different unit,
+trigger, and loader.
+
+#### Tool cards (v1)
+
+A tool card is a multi-line string of post-call usage guidance attached
+to a `ToolSpec`, distinct from the `description` field (which the
+model sees every turn to decide whether to invoke).
+
+| Lives in `description` (cold prompt, every turn) | Lives in card (lazy, on first call this turn) |
+|---|---|
+| One-sentence purpose | Output interpretation rules |
+| Gating rule -- when to call, when not | Edge cases, common mistakes |
+| Anything needed to decide whether to invoke | Worked examples, mode-specific nuance |
+
+Descriptions may absorb gating rules from `SYSTEM_PROMPT_RULES`;
+gating must stay in the cold prompt because the card never loads
+until after a call.
+
+**Storage.** Inline string on the `ToolSpec` (no separate files).
+Tools are registered statically; one place reads the tool's full
+contract.
+
+**Injection.** On the first call to a tool in a given turn, the
+coordinator appends the card as a separate `{type:"text"}` content
+block *inside* the `tool_result` user message:
+
+```
+assistant: [tool_use validate_move ...]
+user:      [
+             {type:"tool_result", content: <data>},
+             {type:"text", text: <card>},   # first use only
+           ]
+```
+
+Subsequent calls to the same tool in the same turn do not re-inject.
+A per-turn `cards_injected: set[str]` tracks this in the `run()`
+scope (no cross-turn state). Rationale for the separate content block
+(vs string-prefix on `tool_result`, vs a separate user message):
+keeps `tool_result.content` as pure tool output (clean for
+transcripts/replay), stays within one user message per assistant turn
+(Anthropic alternation), composes cleanly when parallel tool use is
+enabled later (N tool_results + N cards in one message), and Ollama
+translation already splits mixed-content user messages correctly.
+
+**Caching interaction.** Anthropic prompt caching keys on the system +
+initial message prefix. Cards land deep in the message list (after
+tool calls), so they do not invalidate the cached prefix.
+
+#### Future skills (not v1)
+
+- **Position-type playbooks** -- procedural chess wisdom for known
+  position types (IQP middlegame, Lucena/Philidor endgame, typical
+  pawn structures), injected when a cheap server-side classifier
+  matches the live position. More valuable for weaker local models
+  (Ollama 7-14B) than Claude. Open cost: playbook content must be
+  hand-authored / curated from chess literature.
+- **Opening-repertoire hints** -- once a known opening is identified
+  (we already pass `opening_name`/`opening_eco`), inject
+  opening-specific motifs. Same authoring-cost caveat.
+- **Mode-specific procedures** -- post-game commentator mode could
+  load a card on critical-moment selection that coach mode does not.
+
+These share the lazy-load principle but trigger on signals other than
+tool invocation. The harness needs a more general "skill manager"
+once the second axis lands; until then a `set[str]` inside `run()` is
+enough.
 
 ### Initial context vs. tool-driven discovery
 
@@ -161,6 +258,28 @@ Common interface modeled on a `generate_thinking_stream_with_tools()`
 shape: streaming response, tool-use loop, tool_result blocks fed back as
 user messages. Anthropic format is canonical; Ollama provider translates
 to OpenAI function-call format on the wire.
+
+**Canonical wire shape = Anthropic.** `ToolRegistry.schemas()` exports
+`{name, description, input_schema}` (the Anthropic shape) and that is
+what providers receive in `tools=[...]`. Ollama translates to OpenAI's
+function-call shape on the wire (same translation applies to `tool_use`
+chunks and `tool_result` blocks). Alternative considered and rejected:
+a neutral internal shape each provider serializes -- extra code with
+no payoff while Anthropic is the lead provider and we want zero
+translation cost on the happy path.
+
+**Loop ownership: coordinator, not provider.** Provider surface is
+`stream(system, messages, tools=None) -> AsyncIterator[ProviderChunk]`
+-- one HTTP round per call, no awareness of tool execution or
+multi-turn assembly. The coordinator owns tool registry + dispatch,
+message accumulation across rounds, cancellation, and budget
+enforcement. Alternatives considered: *provider owns the loop*
+(cluesmith-style) hides too much in the provider and every new provider
+re-implements it; *bidirectional single-HTTP stream* saves connection
+setup and unlocks parallel tool use naturally but bigger provider
+surface, harder cancellation, and Ollama needs a translation shim.
+Accepted cost: one HTTP/TLS connection per round (pool later if
+warranted).
 
 ### Configuration
 
@@ -279,13 +398,21 @@ code MUST NOT assume any of it.
 - Engine info pinned (existing PV panel)
 - AI prose scrolls in adjacent/below section (revisit at impl)
 
+### Ribbon buttons
+
+- **No new buttons.** Existing `#analyze` (play mode) and
+  `#view-analyze` (view mode) in `web/app/perspectives/play.js` are
+  reused as-is.
+- **One Settings toggle** ("Use AI analysis") selects engine-only vs.
+  engine+AI behavior. Off = today's behavior unchanged. On = engine +
+  AI (engine remains source of truth).
+- **Mode/state still picks the path** (1 = play in-progress, 2 = view
+  navigating, 3 = post-game / analyze-all). Same button, different
+  downstream pipeline per (mode, game_state).
+
 ### Settings tab "Analysis"
 
-Flat:
-- **Use AI analysis** toggle (label TBD) — master switch. Off: ribbon
-  Analyze buttons run engine-only (today's behavior). On: ribbon
-  Analyze buttons run engine + AI; mode/state selects path 1/2/3.
-  No per-click AI toggle and no new ribbon buttons.
+Flat (the master toggle is described in §Ribbon buttons above):
 - Provider (Anthropic / Ollama)
 - Model (free-form or dropdown TBD per provider)
 - Provider-specific credentials:

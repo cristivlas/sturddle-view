@@ -209,7 +209,7 @@ def _tool_result_message(
     inside the same user message. Kept distinct from the tool_result
     content -- transcripts and log parsers see "data" vs "guidance"
     cleanly. Injected by the coordinator only on the first call to a
-    given tool per turn (see docs/ai-analysis-skills-spec.md).
+    given tool per turn (see docs/ai-analysis-spec.md §Skills layer).
     """
     if not isinstance(result, str):
         result = json.dumps(result)
@@ -289,7 +289,7 @@ class AIAnalysisCoordinator:
             # Per-turn tool-card injection state. A tool's card is
             # appended to the first tool_result of the turn and never
             # again; the model retains it via the message-list prefix
-            # for subsequent rounds. See docs/ai-analysis-skills-spec.md.
+            # for subsequent rounds. See docs/ai-analysis-spec.md §Skills layer.
             cards_injected: set[str] = set()
             # Last successful recommend_move uci; last wins.
             recommended_uci: str | None = None

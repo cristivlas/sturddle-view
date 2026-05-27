@@ -51,3 +51,28 @@ properties of the fastchess + UCI protocol, not operator tunables.
 
 Invalid (non-numeric) overrides log a warning and fall back to the
 default.
+
+## AI agent
+
+Tunables and toggles for the AI analysis coordinator. See
+[ai-analysis-spec.md](ai-analysis-spec.md) for the full design. UI
+exposure for tunables is pending; until then these are ops-only knobs.
+Numeric defaults are defined as named module constants in the listed
+source; check the file when a precise value matters.
+
+| Var | Default | Effect | Where |
+|---|---|---|---|
+| `SV_AI_API_KEY` | unset | Headless fallback for the active provider's API key; OS keyring takes precedence. | `server/sturddle_view/key_store.py` |
+| `SV_AI_MAX_TOOL_ROUNDS` | `32` | Hard cap on agent loop rounds per turn. Hit emits `done.round_cap=true`. | `server/sturddle_view/play/ai_analysis.py` |
+| `SV_AI_ANALYZE_MAX_TIME_MS` | module const | `analyze` tool per-call wall-clock cap; caller's `time_ms` clamped down. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_ANALYZE_MAX_DEPTH` | module const | `analyze` tool per-call depth cap; caller's `depth` clamped down. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_RECOMMEND_MARGIN` | module const | Centipawn dominance margin for `recommend_move` to accept the model's pick over the engine's top line. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_TOP_MOVES_MAX_N` | module const | Hard cap on `top_moves` candidate count; over-large `n` clamped. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_INLINE_TOOL_ID_LEN` | module const | Synthetic `tool_use_id` length for inline-tool-call recovery. | `server/sturddle_view/llm/inline_tool_calls.py` |
+
+### AI debug flags
+
+| Var | Default | Effect | Where |
+|---|---|---|---|
+| `SV_AI_TRANSCRIPT` | unset | Opt-in: write per-turn transcripts to disk. | `server/sturddle_view/llm/transcript.py` |
+| `SV_AI_DEBUG` | `0` | Flip AI loggers to DEBUG when `--debug` is also on. | `server/sturddle_view/app.py` |

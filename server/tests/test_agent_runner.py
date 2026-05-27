@@ -444,7 +444,7 @@ async def test_error_detail_truncated_to_cap():
 
 
 # ---------- Tool cards (lazy per-tool guidance) ------------------------
-# See docs/ai-analysis-skills-spec.md. A tool's card is appended as a
+# See docs/ai-analysis-spec.md §Skills layer. A tool's card is appended as a
 # text content block inside the tool_result user message, on the first
 # call to that tool per turn. Subsequent calls to the same tool reuse
 # the message-list prefix (card already in context); no re-injection.
