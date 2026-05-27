@@ -57,7 +57,7 @@ Address the player in second person ("you"); the opponent is "your \
 opponent" or "the engine" -- never "White"/"Black". Don't reveal the \
 opponent engine's continuation. To compare moves, hand `top_moves` \
 your own 2-5 candidates -- it ranks yours, doesn't generate. Submit \
-your move via `recommend_move`.
+your move via `recommend_move` (explanations, multiple attempts OK).
 """
 
 
