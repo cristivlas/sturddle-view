@@ -23,6 +23,7 @@ import {
   appendAiDelta,
   appendAiThinking,
   appendAiToolCall,
+  appendAiToolCallComplete,
   markAiToolCallFailed,
   noteAiRevision,
   markAiDone,
@@ -1003,6 +1004,13 @@ export const playPerspective = {
             error: p.error,
             detail: p.detail,
           });
+          return true;
+        }
+        case "ai_tool_call_complete": {
+          const p = evt.payload || {};
+          appendAiToolCallComplete({ round: p.round ?? 0, name: p.name });
+          view.clearArrows();
+          view.clearEngineInfo();
           return true;
         }
         case "ai_corrective": {

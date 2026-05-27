@@ -95,6 +95,11 @@ async def test_identical_top_moves_calls_dispatched_once():
     tool_calls = [e for e in events if e.kind == "ai_tool_call"]
     assert len(tool_calls) == 1, [e.payload for e in tool_calls]
     assert tool_calls[0].payload["name"] == "top_moves"
+    # complete fires once per real dispatch (paired with the ai_tool_call
+    # dot); cache hits are silent so the client sees one dot + one complete.
+    completes = [e for e in events if e.kind == "ai_tool_call_complete"]
+    assert len(completes) == 1
+    assert completes[0].payload["tool_use_id"] == "tu_1"
 
 
 @pytest.mark.asyncio

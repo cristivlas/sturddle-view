@@ -153,15 +153,29 @@ wa-select::part(listbox) {
 /* AI analysis status line: spinner + short text. Sits above the prose
    so streaming text can append below without re-flow. Slightly dimmer
    than the prose since it's transient progress state, not content. */
+.play-ai-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.play-ai-body > .play-ai-rounds { flex: 1 1 auto; overflow: auto; padding: 8px 0; }
+.play-ai-body > .play-ai-terminal { flex: 0 0 auto; padding: 0 12px 8px; }
 .play-ai-status {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px 8px 4px;
   font-size: 1em;
-  opacity: 0.85;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border-subtle);
 }
 .play-ai-status[hidden] { display: none; }
+/* AI window owns its own scroll viewport (inside .play-ai-rounds) so
+   the status header can stay pinned without sticky positioning. */
+.winbox.sturddle-wb-ai .wb-body,
+.dock-slot-body:has(> .play-ai-body) { overflow: hidden; padding: 0; }
 .play-ai-status-text { line-height: 1; }
 
 /* Inline failure / guardrail markers in the AI panel. Error is loud
@@ -269,22 +283,18 @@ wa-select::part(listbox) {
    continuous across rounds without per-panel gaps. */
 .play-ai-timeline {
   margin: 0 12px;
-}
-/* Continuous muted rule passing through the dot column for all rounds.
-   Lives on the rounds-container so gaps between round panels don't
-   break it. Dot column x = timeline margin-left (12px) + dot-half
-   (4px) - line-half (0.5px) = ~15.5px. Prose paragraphs sit further
-   right (margin-left from .play-ai-prose) so the rule doesn't cross
-   them visually. */
-.play-ai-rounds {
   position: relative;
 }
-.play-ai-rounds::before {
+/* Muted rule passing through the dot column, sized to the timeline's
+   actual content so it grows as tool-call rows are appended (no empty
+   line floating in a blank panel). Dot column x = dot-half (4px) -
+   line-half (0.5px) = ~3.5px. */
+.play-ai-timeline::before {
   content: "";
   position: absolute;
-  left: 15px;
-  top: 8px;
-  bottom: 8px;
+  left: 3px;
+  top: 4px;
+  bottom: 4px;
   width: 1px;
   background: var(--wa-color-neutral-fill-soft, #ccc);
   opacity: 0.18;
@@ -394,6 +404,17 @@ wa-select::part(listbox) {
 .play-ai-tool-dot-validate_move  { background: var(--wa-color-warning-60, #d6a200); }
 .play-ai-tool-dot-top_moves      { background: var(--wa-color-primary-60, #4a90e2); }
 .play-ai-tool-dot-recommend_move { background: #7c3aed; }
+/* Completion marker: neutral checkmark glyph in place of the colored
+   dot. Inherits the dot's box dimensions for column alignment. */
+.play-ai-tool-dot-complete {
+  background: transparent;
+  border-radius: 0;
+  color: var(--accent-line);
+  font-weight: 700;
+  line-height: 8px;
+  text-align: center;
+}
+.play-ai-tool-dot-complete::before { content: "\2713"; font-size: 10px; }
 /* Failed tool call: red dot + dim label, with the error appended to
    the label by the renderer. */
 .play-ai-tool-call-failed .play-ai-tool-dot {

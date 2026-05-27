@@ -33,6 +33,7 @@ EventKind = Literal[
     "ai_thinking",
     "ai_tool_call",
     "ai_tool_call_failed",
+    "ai_tool_call_complete",
     "ai_corrective",
     "ai_recommendation",
     "system",

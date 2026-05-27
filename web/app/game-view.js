@@ -646,6 +646,16 @@ export function mountGameView(container, opts = {}) {
     _applyClockActive(lastTurn, lastClockRunning);
   }
 
+  function clearEngineInfoFields() {
+    if (engineDepth) engineDepth.textContent = "";
+    if (engineScore) engineScore.textContent = "";
+    if (engineNodes) engineNodes.textContent = "";
+    if (engineNps) engineNps.textContent = "";
+    if (engineTbhits) engineTbhits.textContent = "";
+    if (engineHashfull) engineHashfull.textContent = "";
+    if (enginePv) { enginePv.textContent = ""; enginePv.removeAttribute("title"); }
+  }
+
   function applyEvent(evt) {
     if (!evt) return;
     if (gameId !== null && evt.game_id && evt.game_id !== gameId) return;
@@ -772,13 +782,7 @@ export function mountGameView(container, opts = {}) {
         break;
       case "engine_search_start":
         if (!showEngineInfo) break;
-        if (engineDepth) engineDepth.textContent = "";
-        if (engineScore) engineScore.textContent = "";
-        if (engineNodes) engineNodes.textContent = "";
-        if (engineNps) engineNps.textContent = "";
-        if (engineTbhits) engineTbhits.textContent = "";
-        if (engineHashfull) engineHashfull.textContent = "";
-        if (enginePv) { enginePv.textContent = ""; enginePv.removeAttribute("title"); }
+        clearEngineInfoFields();
         break;
       case "engine_info":
         if (!showEngineInfo) break;
@@ -844,6 +848,10 @@ export function mountGameView(container, opts = {}) {
     clearArrows() {
       board.clearArrows();
     },
+    clearEngineInfo() {
+      clearEngineInfoFields();
+      engineSection?.classList.add("is-empty");
+    },
     setEnabled(enabled) {
       board.enableInput(interactive && enabled);
     },
@@ -852,13 +860,7 @@ export function mountGameView(container, opts = {}) {
       // from the server will set the new starting position.
       board.setPosition(INITIAL_FEN, null);
       if (moveListEl) moveListEl.innerHTML = "";
-      if (engineDepth) engineDepth.textContent = "";
-      if (engineScore) engineScore.textContent = "";
-      if (engineNodes) engineNodes.textContent = "";
-      if (engineNps) engineNps.textContent = "";
-      if (engineTbhits) engineTbhits.textContent = "";
-      if (engineHashfull) engineHashfull.textContent = "";
-      if (enginePv) enginePv.textContent = "";
+      clearEngineInfoFields();
       engineSection?.classList.add("is-empty");
       setOpening(null);
       setTablebase(null);

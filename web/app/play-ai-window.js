@@ -32,6 +32,7 @@ const STATUS_TEXT = {
   idle: "",
   waiting: "Analyzing...",
   engine: "Running engine search...",
+  done: "Analysis Done",
 };
 
 // Sticky open/closed pref for the Thinking disclosure block.
@@ -338,6 +339,23 @@ export function appendAiToolCall({ round = 0, name, input, toolUseId }) {
   });
 }
 
+export function appendAiToolCallComplete({ round = 0, name }) {
+  if (!inst.body) return;
+  withStickyBottom(() => {
+    const entry = ensureRoundPanel(inst.body, round);
+    const line = document.createElement("div");
+    line.className = "play-ai-tool-call";
+    const dot = document.createElement("span");
+    dot.className = "play-ai-tool-dot play-ai-tool-dot-complete";
+    line.append(dot);
+    const label = document.createElement("span");
+    label.className = "play-ai-tool-label";
+    label.textContent = name ? `${name} complete` : "tool complete";
+    line.append(label);
+    entry.tools.append(line);
+  });
+}
+
 export function markAiToolCallFailed({ toolUseId, error, detail }) {
   if (!inst.body || !toolUseId) return;
   const line = inst.body._toolCallNodes.get(toolUseId);
@@ -378,29 +396,27 @@ export function noteAiRevision({ round, illegalMoves, falseClaims, castleViolati
 }
 
 export function setAiStatus(state) {
-  // `state` in: idle | waiting | engine.
-  // Spinner shows on waiting/engine; hidden on idle. First text delta
-  // implicitly clears the status (see appendAiDelta).
+  // `state` in: idle | waiting | engine | done.
+  // Spinner shows on waiting/engine; hidden on idle/done. First text
+  // delta no longer hides the status (the header stays as a label).
   if (!inst.body) return;
   const text = STATUS_TEXT[state] ?? "";
-  if (!text) {
+  if (state === "idle" || !text) {
     inst.body._status.hidden = true;
     inst.body._statusText.textContent = "";
     return;
   }
   inst.body._status.hidden = false;
   inst.body._statusText.textContent = text;
+  const spinner = inst.body._status.querySelector("wa-spinner");
+  if (spinner) spinner.style.display = (state === "done") ? "none" : "";
 }
 
 export function appendAiDelta(text, roundIndex = 0) {
   if (!inst.body || !text) return;
   withStickyBottom(() => {
     const entry = ensureRoundPanel(inst.body, roundIndex);
-    if (!entry.hasProse) {
-      entry.hasProse = true;
-      // Prose has started flowing -- hide the spinner.
-      setAiStatus("idle");
-    }
+    if (!entry.hasProse) entry.hasProse = true;
     entry.para.append(document.createTextNode(text));
   });
 }
@@ -412,11 +428,11 @@ export function markAiDone({
   roundCap = false,
   noResponse = false,
 } = {}) {
-  // Terminal: clear spinner, then render whichever marker applies
-  // (error > roundCap > noResponse > cancelled if multiple are set).
-  // Markers land in the dedicated terminal slot below the last round
-  // panel; they belong to the whole turn, not to any single round.
-  setAiStatus("idle");
+  // Terminal: switch the header text + drop the spinner. Markers
+  // (error > roundCap > noResponse > cancelled if any apply) land in
+  // the dedicated terminal slot below the last round panel.
+  const naturalCompletion = !error && !roundCap && !noResponse && !cancelled;
+  setAiStatus(naturalCompletion ? "done" : "idle");
   if (!inst.body) return;
   const slot = inst.body._terminal;
   withStickyBottom(() => {
@@ -426,8 +442,7 @@ export function markAiDone({
     // own markers fill that role) and on single-round turns (nothing
     // to separate from).
     const multiRound = inst.body._roundPanels.size > 1;
-    const naturalDone = !error && !roundCap && !noResponse && !cancelled;
-    if (multiRound && naturalDone) {
+    if (multiRound && naturalCompletion) {
       const last = inst.body._roundPanels.get(inst.body._currentRound);
       if (last) last.para.classList.add("play-ai-prose-final");
     }

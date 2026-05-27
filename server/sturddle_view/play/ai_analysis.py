@@ -399,6 +399,17 @@ class AIAnalysisCoordinator:
                                     # deterministic rejection is just as
                                     # redundant as deterministic success.
                                     last_call = (key, tool_output)
+                                await self._emit(
+                                    Event(
+                                        kind="ai_tool_call_complete",
+                                        game_id=game_id,
+                                        payload={
+                                            "round": round_index,
+                                            "name": pending_tool.tool_name,
+                                            "tool_use_id": pending_tool.tool_use_id,
+                                        },
+                                    )
+                                )
                             await transcript.tool_result(
                                 round_index, pending_tool.tool_use_id, tool_output
                             )

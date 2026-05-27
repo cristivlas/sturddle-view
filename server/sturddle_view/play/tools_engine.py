@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 
 
 _DEFAULT_MAX_TIME_MS = 5_000
-_DEFAULT_MAX_DEPTH = 30
+_DEFAULT_MAX_DEPTH = 25
 # Hard caps -- the agent can request anything, but we clamp to these.
 # The env override is for ops; UI exposure is pending.
 MAX_TIME_MS = int(os.environ.get("SV_AI_ANALYZE_MAX_TIME_MS", _DEFAULT_MAX_TIME_MS))
