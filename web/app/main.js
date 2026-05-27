@@ -198,6 +198,15 @@ connect({
   onEvent: (evt) => events.emit(evt),
 });
 
+api("GET", "/settings").then(s => {
+  const footer = document.getElementById("app-footer");
+  if (footer && s) {
+    const ver = s.version ? ` v${s.version}` : "";
+    const copy = s.copyright ? ` -- (c) ${s.copyright}` : "";
+    footer.textContent = `SturddleView${ver}${copy}`;
+  }
+}).catch(() => {});
+
 document.getElementById("about-btn").addEventListener("click", () => {
   openAboutDialog({ api });
 });

@@ -670,6 +670,17 @@ svg.cm-chessboard {
 html, body { height: 100%; }
 body { display: flex; flex-direction: column; }
 main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+#app-footer {
+  flex: 0 0 auto;
+  text-align: center;
+  font-size: 0.7rem;
+  color: var(--muted);
+  padding: 3px 8px;
+  border-top: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 @media (max-width: 640px) {
   main { overflow-y: auto; }
 }
