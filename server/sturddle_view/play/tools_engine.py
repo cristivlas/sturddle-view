@@ -85,17 +85,12 @@ _ANALYZE_GAME_ID_FALLBACK = "ai-analyze"
 TOP_MOVES_TOOL_SPEC = ToolSpec(
     name="top_moves",
     description=(
-        "Deep-evaluate a list of candidate moves you are considering in "
-        "the live position. YOU supply the candidates -- chess "
-        "understanding picks them, the engine ranks them. Each candidate "
-        "is searched with a fresh throwaway engine; returns per-move "
-        "entries sorted best-first FOR THE SIDE TO MOVE, carrying "
-        "move_uci, move_san, and the white-POV eval fields (score_cp / "
-        "score_pawns / score_text / mate / depth / pv). Illegal or "
-        "unparseable moves come back as per-entry errors; legal ones "
-        "are still searched. Operates on the live game position -- no "
-        f"FEN input. List capped at {TOP_MOVES_MAX_N}; extras are "
-        "dropped. Per-tool caps apply to time_ms and depth."
+        "Rank YOUR candidate moves in the live position. You supply "
+        "2-5 moves; engine searches each and returns entries sorted "
+        f"best-first for the side to move (capped at {TOP_MOVES_MAX_N}). "
+        "Fields per entry: move_uci, move_san, score_cp, score_text, "
+        "score_pawns, mate, depth, pv (eval fields are white-POV). "
+        "Illegal candidates come back as per-entry errors."
     ),
     input_schema={
         "type": "object",
@@ -123,24 +118,19 @@ TOP_MOVES_TOOL_SPEC = ToolSpec(
 
 
 _PIECE_AT_CARD = (
-    "Card for `piece_at`. Any claim that a specific piece sits on or "
-    "moves from a specific square in the current position -- explicit "
-    "(\"the knight on f3\") or implied by verbs like centralize, "
-    "advance, push, capture, retreat, reroute, occupy, defend, attack, "
-    "pin, fork, develop -- must be confirmed with `piece_at` before "
-    "being written. Non-negotiable. Result is the piece symbol (e.g. "
-    "'N', 'p') or null when empty; symbol case encodes color (upper = "
-    "white, lower = black). Applies only to the live position, not to "
-    "squares inside calculated variations."
+    "Confirm any piece-on-square claim in the live position before "
+    "writing it -- explicit (\"knight on f3\") or implied (centralize, "
+    "push, capture, defend, pin, fork, etc). Result: piece symbol "
+    "(upper=white, lower=black) or null. Live position only, not "
+    "squares inside calculated lines."
 )
 
 
 PIECE_AT_TOOL_SPEC = ToolSpec(
     name="piece_at",
     description=(
-        "Return the piece on a square in the live position, or null if "
-        "empty. Non-negotiable: call before naming any piece on a "
-        "specific square in prose."
+        "Piece on a square in the live position, or null. Call before "
+        "naming any piece-on-square in prose."
     ),
     input_schema={
         "type": "object",
@@ -160,23 +150,18 @@ PIECE_AT_TOOL_SPEC = ToolSpec(
 
 
 _VALIDATE_MOVE_CARD = (
-    "Card for `validate_move`. Before naming any move as playable in "
-    "the current position, confirm it with `validate_move`. "
-    "Non-negotiable. Applies only to the current position, not to "
-    "moves inside calculated lines (those are reasoned about, not "
-    "claimed as legal in the live position). Result fields: `legal` "
-    "(bool), `uci`, `san`. If `legal` is false, do not name the move "
-    "in prose."
+    "Confirm any move you name as playable in the live position. "
+    "Live position only; moves inside calculated lines don't need it. "
+    "Result: legal (bool), uci, san. If legal=false, drop the move."
 )
 
 
 VALIDATE_MOVE_TOOL_SPEC = ToolSpec(
     name="validate_move",
     description=(
-        "Check whether a move (UCI or SAN) is legal in the live "
-        "position. Non-negotiable: call before naming any move as "
-        "playable in the current position (not required for moves "
-        "inside calculated lines)."
+        "Check if a move (UCI or SAN) is legal in the live position. "
+        "Call before naming any move as playable in the current "
+        "position."
     ),
     input_schema={
         "type": "object",
@@ -198,14 +183,9 @@ VALIDATE_MOVE_TOOL_SPEC = ToolSpec(
 ANALYZE_TOOL_SPEC = ToolSpec(
     name="analyze",
     description=(
-        "Run an engine search on a position. Returns a structured eval. "
-        "Evaluation fields are white-POV: score_cp (centipawns, int), "
-        "score_pawns (pawn units, float -- score_cp / 100), score_text "
-        "(presentation string, e.g. '+0.02' or '+M3'), mate (signed "
-        "plies-to-mate when present). Use score_text for prose; use "
-        "score_cp for any arithmetic. Also returns depth, pv, bestmove. "
-        "Hard caps apply to time_ms and depth -- requests above the cap "
-        "are clamped, not rejected."
+        "Engine search on a position. Returns white-POV eval: score_cp, "
+        "score_text, mate (signed plies when forced), depth, pv, bestmove. "
+        "Use the numbers internally; eval discipline still applies."
     ),
     input_schema={
         "type": "object",
@@ -643,27 +623,21 @@ def make_validate_move_tool(board_provider: BoardProvider) -> AnalyzeTool:
 
 
 _RECOMMEND_MOVE_CARD = (
-    "Card for `recommend_move`. Call this tool at the end of your turn "
-    "with the move you stand behind. Non-negotiable, same as "
-    "`validate_move` and `piece_at`: this is a tool invocation, not a "
-    "sentence in your prose. The engine evaluates your candidate and "
-    "the engine's own best move at the requested depth; if a different "
-    "move scores better for the side to move, the call returns "
-    "error=recommendation_rejected and you must submit a different "
-    "move -- repeating the same recommendation is not allowed."
+    "End your turn with this tool, not with prose. Engine compares "
+    "your move to its own best at the requested depth; if its best "
+    "is meaningfully stronger, returns error=recommendation_rejected "
+    "and you submit a different move (not the same one again)."
 )
 
 
 RECOMMEND_MOVE_TOOL_SPEC = ToolSpec(
     name="recommend_move",
     description=(
-        "Call this tool with your final move recommendation. "
-        "Non-negotiable: call (do not narrate) at the end of your turn "
-        "after you've decided. Validates legality, scores the candidate "
-        "and the engine's best move at the requested depth, and returns "
-        "error=recommendation_rejected with a `reason` when a better "
-        "move exists -- in that case you must submit a different move. "
-        "Returns the post-move FEN on acceptance."
+        "Submit your final move at end-of-turn. Validates legality and "
+        "compares against the engine's best at the requested depth. "
+        "Returns post-move FEN on acceptance, or "
+        "error=recommendation_rejected with a `reason` when the engine "
+        "has a meaningfully stronger move."
     ),
     input_schema={
         "type": "object",
