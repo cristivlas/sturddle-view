@@ -883,9 +883,8 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
 
       // --- AI Analysis tab ---
       // Flat layout per spec: master toggle + provider + model + key/url.
-      // Advanced collapsible (caps, tunables) and effective-config display
-      // land in Phase 4. Skeleton scope: persistence round-trip only;
-      // selected provider doesn't yet affect coordinator behavior.
+      // Tunables (tool-call cap, analyze caps, etc.) surface as flat
+      // fields when each proves necessary.
       const analysisTab = document.createElement("wa-tab");
       analysisTab.panel = "analysis";
       analysisTab.textContent = "Analysis";

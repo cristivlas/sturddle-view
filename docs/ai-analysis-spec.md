@@ -412,22 +412,15 @@ code MUST NOT assume any of it.
 
 ### Settings tab "Analysis"
 
-Flat (the master toggle is described in §Ribbon buttons above):
+Flat layout (the master toggle is described in §Ribbon buttons above):
 - Provider (Anthropic / Ollama)
 - Model (free-form or dropdown TBD per provider)
 - Provider-specific credentials:
   - Anthropic: API key
   - Ollama: base URL (no key)
-
-Advanced collapsible:
-- Per-move token cap
-- Per-game token cap
-- Tool call cap
-- analyze max time_ms / max depth
-- Stop grace timeout
-- Debug log toggle
-- Temperature
-- (Other tunables as they emerge)
+- Tunables surfaced as they prove necessary (tool call cap, analyze
+  max time_ms / depth, temperature, etc.). No collapsible / Advanced
+  grouping; each lives flat in the panel.
 
 ## Guardrails
 

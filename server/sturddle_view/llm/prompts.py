@@ -6,9 +6,9 @@ native) keys on the exact bytes of the system block, so silent drift
 (env reads, timestamps, dict-order joins) would quietly destroy the
 cache hit rate.
 
-The `commentator` addendum is defined alongside `coach` so the prompt
-shape and transport are uniform across paths, even though only `coach`
-has callers wired today.
+Both `coach` (live play mode) and `commentator` (view mode) addenda
+are wired via `_ai_kick.py::_prompt_mode_for`. Adding a new persona
+means adding an addendum constant and one branch in that selector.
 """
 from __future__ import annotations
 

@@ -7,8 +7,8 @@ half of that choice -- bridging the coordinator, provider factory,
 and HVE board snapshot at the API boundary.
 
 Reads HVE state via its accessors (current_board / start_fen /
-view_full_moves_san / pre_analysis_mode). Will be folded into the
-coordinator when rolling sessions land.
+view_full_moves_san / pre_analysis_mode). Lives at the API boundary
+to keep the coordinator free of HTTP/HVE plumbing.
 """
 from __future__ import annotations
 

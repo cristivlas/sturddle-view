@@ -31,11 +31,14 @@ Wire-up:
 - Ollama returns `prompt_eval_count` + `eval_count` at stream end.
 - Coordinator tracks per-turn + cumulative-per-game; loop stops when
   either cap is hit; surface `done.token_cap=true` to the UI.
-- Settings UI exposure under Advanced.
+- Settings UI exposure (flat in the Analysis tab).
 
-### Settings -- Advanced collapsible
+### Settings tunables
 
-- [ ] `SV_AI_MAX_TOOL_ROUNDS` knob.
+Surface as flat fields in the Analysis tab when each proves needed.
+
+- [ ] `ai_max_tool_rounds` (promote `SV_AI_MAX_TOOL_ROUNDS` from
+      module const to `Settings` field).
 - [ ] Token caps (depends on token-cap wire-up above).
 - [ ] `analyze` max time_ms / max depth.
 - [ ] Stop grace timeout.
