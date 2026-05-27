@@ -62,18 +62,19 @@ function buildBody() {
   statusText.className = "play-ai-status-text";
   status.append(spinner, statusText);
 
-  // Container for per-round panels. Each round = its own thinking
-  // disclosure + tool-call lines + prose paragraph. New rounds append
-  // here in order; previous rounds auto-collapse their thinking.
+  // Scroll wrapper. Holds rounds + terminal; the status header above
+  // it stays put because only this wrapper scrolls.
+  const scroll = document.createElement("div");
+  scroll.className = "play-ai-scroll";
+
   const rounds = document.createElement("div");
   rounds.className = "play-ai-rounds";
 
-  // Terminal markers (cancelled / error / round-cap / no-response)
-  // land here, below the last round panel.
   const terminal = document.createElement("div");
   terminal.className = "play-ai-terminal";
 
-  root.append(status, rounds, terminal);
+  scroll.append(rounds, terminal);
+  root.append(status, scroll);
   root._status = status;
   root._statusText = statusText;
   root._rounds = rounds;

@@ -1007,8 +1007,9 @@ export const playPerspective = {
           return true;
         }
         case "ai_tool_call_complete": {
-          const p = evt.payload || {};
-          appendAiToolCallComplete({ round: p.round ?? 0, name: p.name });
+          // Debug marker disabled; uncomment to surface per-call checkmarks.
+          // const p = evt.payload || {};
+          // appendAiToolCallComplete({ round: p.round ?? 0, name: p.name });
           view.clearArrows();
           view.clearEngineInfo();
           return true;

@@ -38,6 +38,12 @@ _DEFAULT_MAX_DEPTH = 25
 MAX_TIME_MS = int(os.environ.get("SV_AI_ANALYZE_MAX_TIME_MS", _DEFAULT_MAX_TIME_MS))
 MAX_DEPTH = int(os.environ.get("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_MAX_DEPTH))
 
+# recommend_move dominance margin: rival must beat candidate by strictly
+# more than this many cp (STM POV) to reject. Filters cosmetic 1-30 cp
+# preferences while still catching real blunders. Mate scores ignore it.
+_DEFAULT_RECOMMEND_MARGIN_CP = 50
+RECOMMEND_MARGIN_CP = int(os.environ.get("SV_AI_RECOMMEND_MARGIN", _DEFAULT_RECOMMEND_MARGIN_CP))
+
 # Fallback when caller passes neither time_ms nor depth. Depth-based
 # (not time-based): more consistent quality across positions and engine
 # loads. 20 plies is the floor that gives reliable tactical resolution
@@ -688,12 +694,22 @@ def _better_for_stm(
     turn: chess.Color,
 ) -> bool:
     """True iff `rival` is strictly better than `candidate` from `turn`'s
-    perspective. Mate always trumps cp; equal cp = not better."""
+    perspective by more than RECOMMEND_MARGIN_CP. Mate always trumps cp
+    (margin doesn't apply); None falls back to conservative behavior."""
     if rival is None:
         return False
     if candidate is None:
         return True
-    return rival.pov(turn) > candidate.pov(turn)
+    rival_score = rival.pov(turn)
+    cand_score = candidate.pov(turn)
+    # Mate trumps cp (and vice versa) regardless of margin.
+    if rival_score.is_mate() or cand_score.is_mate():
+        return rival_score > cand_score
+    rival_cp = rival_score.score()
+    cand_cp = cand_score.score()
+    if rival_cp is None or cand_cp is None:
+        return rival_score > cand_score
+    return (rival_cp - cand_cp) > RECOMMEND_MARGIN_CP
 
 
 def make_recommend_move_tool(

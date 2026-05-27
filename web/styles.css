@@ -159,8 +159,11 @@ wa-select::part(listbox) {
   height: 100%;
   min-height: 0;
 }
-.play-ai-body > .play-ai-rounds { flex: 1 1 auto; overflow: auto; padding: 8px 0; }
-.play-ai-body > .play-ai-terminal { flex: 0 0 auto; padding: 0 12px 8px; }
+.play-ai-body > .play-ai-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
 .play-ai-status {
   flex: 0 0 auto;
   display: flex;
@@ -172,8 +175,8 @@ wa-select::part(listbox) {
   border-bottom: 1px solid var(--border-subtle);
 }
 .play-ai-status[hidden] { display: none; }
-/* AI window owns its own scroll viewport (inside .play-ai-rounds) so
-   the status header can stay pinned without sticky positioning. */
+/* AI window scrolls inside its own inner wrapper, so the host bodies
+   stop scrolling at this layer. */
 .winbox.sturddle-wb-ai .wb-body,
 .dock-slot-body:has(> .play-ai-body) { overflow: hidden; padding: 0; }
 .play-ai-status-text { line-height: 1; }
@@ -283,18 +286,20 @@ wa-select::part(listbox) {
    continuous across rounds without per-panel gaps. */
 .play-ai-timeline {
   margin: 0 12px;
+}
+/* Continuous muted rule passing through the dot column for all rounds.
+   Lives on the rounds-container so gaps between round panels don't
+   break it. Dot column x = timeline margin-left (12px) + dot-half
+   (4px) - line-half (0.5px) = ~15.5px. */
+.play-ai-rounds {
   position: relative;
 }
-/* Muted rule passing through the dot column, sized to the timeline's
-   actual content so it grows as tool-call rows are appended (no empty
-   line floating in a blank panel). Dot column x = dot-half (4px) -
-   line-half (0.5px) = ~3.5px. */
-.play-ai-timeline::before {
+.play-ai-rounds::before {
   content: "";
   position: absolute;
-  left: 3px;
-  top: 4px;
-  bottom: 4px;
+  left: 15px;
+  top: 8px;
+  bottom: 8px;
   width: 1px;
   background: var(--wa-color-neutral-fill-soft, #ccc);
   opacity: 0.18;
