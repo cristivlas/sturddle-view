@@ -454,10 +454,18 @@ async def recover_inline_tool_calls(
         yield ProviderChunk(kind="text", text=call_buf)
 
 
+# Trailing prefix of `call:` followed by an optional identifier;
+# covers in-progress `call:<name>` so we don't flush the decoration
+# before the name chunk arrives.
+_TRAILING_CALL_PREFIX_RE = re.compile(
+    r"(?:c|ca|cal|call|call:|call:" + _IDENT + r")$"
+)
+
+
 def _split_at_safe_boundary(buf: str, tool_names: Iterable[str]) -> tuple[str, str]:
     """Split `buf` into (safe_to_flush, hold_for_next_chunk). Hold back
-    any trailing partial identifier that could complete into a tool
-    name on the next chunk."""
+    any trailing partial that could complete into a tool name on the
+    next chunk -- bare identifier prefix or `call:`-prefixed shape."""
     max_prefix = 0
     for name in tool_names:
         for i in range(1, min(len(name), len(buf)) + 1):
@@ -467,6 +475,10 @@ def _split_at_safe_boundary(buf: str, tool_names: Iterable[str]) -> tuple[str, s
         tail = _TRAILING_IDENT_RE.search(buf)
         if tail:
             max_prefix = len(tail.group(0))
+    # Also hold back any trailing partial of `call:<identifier>`.
+    call_tail = _TRAILING_CALL_PREFIX_RE.search(buf)
+    if call_tail and len(call_tail.group(0)) > max_prefix:
+        max_prefix = len(call_tail.group(0))
     if max_prefix == 0:
         return buf, ""
     return buf[:-max_prefix], buf[-max_prefix:]

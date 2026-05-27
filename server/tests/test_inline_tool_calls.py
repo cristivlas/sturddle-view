@@ -382,3 +382,48 @@ async def test_call_prefix_then_text_preserved():
     assert tool_idx + 1 < len(out)
     assert out[tool_idx + 1].kind == "text"
     assert out[tool_idx + 1].text == " then more prose."
+
+
+@pytest.mark.asyncio
+async def test_call_prefix_split_at_colon_boundary():
+    # Regression: live stream emitted `call:` and `recommend_move{...}`
+    # in separate chunks. The colon must not flush early before the
+    # second chunk can complete the match.
+    chunks = [
+        ProviderChunk(kind="text", text="call:"),
+        ProviderChunk(kind="text", text="recommend_move{depth:20,move:Be3}"),
+    ]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_name == "recommend_move"
+    assert tool[0].tool_input == {"depth": 20, "move": "Be3"}
+
+
+@pytest.mark.asyncio
+async def test_call_prefix_split_mid_prefix():
+    # Worse split: prefix broken at "ca" / "ll:" / "recommend_move...".
+    chunks = [
+        ProviderChunk(kind="text", text="ca"),
+        ProviderChunk(kind="text", text="ll:"),
+        ProviderChunk(kind="text", text="recommend_move{move:Be3}"),
+    ]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_input == {"move": "Be3"}
+
+
+@pytest.mark.asyncio
+async def test_call_prefix_char_by_char_does_not_leak_prefix():
+    # Regression: live token-by-token stream leaked the literal `call:`
+    # to the user before recovery completed. Buffer must hold back any
+    # partial prefix that could complete into a recoverable shape.
+    text = "call:recommend_move{move:Be3}"
+    chunks = [ProviderChunk(kind="text", text=c) for c in text]
+    out = await _collect(recover_inline_tool_calls(_from_iter(chunks), tool_names=_NAMES))
+    text_emitted = "".join(c.text for c in out if c.kind == "text")
+    assert text_emitted == "", f"expected no text leak, got {text_emitted!r}"
+    tool = [c for c in out if c.kind == "tool_use"]
+    assert len(tool) == 1
+    assert tool[0].tool_input == {"move": "Be3"}
