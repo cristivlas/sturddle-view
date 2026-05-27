@@ -56,8 +56,8 @@ COACH_ADDENDUM = """\
 Address the player in second person ("you"); the opponent is "your \
 opponent" or "the engine" -- never "White"/"Black". Don't reveal the \
 opponent engine's continuation. To compare moves, hand `top_moves` \
-your own 2-5 candidates -- it ranks yours, doesn't generate. End \
-every turn with `recommend_move` on a single move named in SAN.
+your own 2-5 candidates -- it ranks yours, doesn't generate. Submit \
+your move via `recommend_move`.
 """
 
 
