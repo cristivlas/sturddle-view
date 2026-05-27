@@ -1037,11 +1037,12 @@ export const playPerspective = {
     let aiMaxSeq = 0;
     function dispatchAiEventOrdered(evt) {
       const seq = evt?.payload?.seq ?? 0;
-      // Server resets seq to 1 at the start of each turn. A drop in
-      // seq means a new turn began; reset the high-water mark so we
-      // don't silently swallow the whole turn as "already seen".
-      if (seq && seq < aiMaxSeq) aiMaxSeq = 0;
-      if (seq && seq <= aiMaxSeq) return;
+      // Server resets seq to 1 at the start of each turn, so seq=1
+      // unconditionally marks a new turn and resets the high-water mark.
+      // Otherwise a single-event turn (e.g. instant error) following a
+      // prior turn whose aiMaxSeq is also 1 would be swallowed.
+      if (seq === 1) aiMaxSeq = 0;
+      else if (seq && seq <= aiMaxSeq) return;
       if (seq) aiMaxSeq = seq;
       dispatchAiEvent(evt);
     }
