@@ -78,6 +78,92 @@ _CASTLE_WORD_PROMPT = (
 )
 
 
+# Tool-arg normalizers for the dedup cache. Each maps (input, board) ->
+# hashable key, or None to skip caching this call.
+_SAN_PARSE_ERRORS = (
+    chess.InvalidMoveError, chess.IllegalMoveError, chess.AmbiguousMoveError,
+)
+
+
+def _parse_move_canonical(raw: str, board: chess.Board) -> chess.Move | None:
+    """Try UCI then SAN. Returns canonical Move or None on failure."""
+    candidate = raw.strip()
+    if not candidate:
+        return None
+    try:
+        return board.parse_uci(candidate)
+    except _SAN_PARSE_ERRORS:
+        pass
+    try:
+        return board.parse_san(candidate)
+    except _SAN_PARSE_ERRORS:
+        return None
+
+
+def _norm_move_arg(input_: dict, board: chess.Board | None) -> tuple | None:
+    raw = input_.get("move")
+    if not isinstance(raw, str) or board is None:
+        return None
+    move = _parse_move_canonical(raw, board)
+    return ("move", move.uci()) if move else None
+
+
+def _norm_square_arg(input_: dict, board: chess.Board | None) -> tuple | None:
+    raw = input_.get("square")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        return ("square", chess.square_name(chess.parse_square(raw.lower())))
+    except ValueError:
+        return None
+
+
+def _norm_top_moves(input_: dict, board: chess.Board | None) -> tuple | None:
+    # Any unparseable candidate -> skip dedup. Conservative: a partial
+    # subset of legal moves still produces a meaningful tool result, but
+    # we'd rather miss a cache hit than risk a wrong collapse.
+    raw_moves = input_.get("moves")
+    if not isinstance(raw_moves, list) or board is None:
+        return None
+    ucis: list[str] = []
+    for r in raw_moves:
+        if not isinstance(r, str):
+            return None
+        move = _parse_move_canonical(r, board)
+        if move is None:
+            return None
+        ucis.append(move.uci())
+    # Sort: engine sees `searchmoves` as a set, list order is irrelevant.
+    return (
+        "moves", tuple(sorted(ucis)),
+        input_.get("depth"), input_.get("time_ms"),
+    )
+
+
+def _norm_analyze(input_: dict, board: chess.Board | None) -> tuple | None:
+    # chess.Board(fen).fen() canonicalizes whitespace AND drops halfmove
+    # / fullmove counters into a fixed shape. Intentional collapse: the
+    # engine evaluation is position-dependent, not history-dependent,
+    # within a single turn.
+    fen = input_.get("fen")
+    if not isinstance(fen, str) or not fen.strip():
+        return None
+    try:
+        canonical = chess.Board(fen.strip()).fen()
+    except ValueError:
+        return None
+    return ("analyze", canonical, input_.get("depth"), input_.get("time_ms"))
+
+
+_NORMALIZERS: dict[str, Callable[[dict, chess.Board | None], tuple | None]] = {
+    "recommend_move": _norm_move_arg,
+    "validate_move": _norm_move_arg,
+    "piece_at": _norm_square_arg,
+    "top_moves": _norm_top_moves,
+    "analyze": _norm_analyze,
+}
+
+
 def _assistant_message(chunks: list[ProviderChunk]) -> Message:
     """Reassemble a provider chunk stream into the assistant turn that
     must be appended to messages before sending the next round.
@@ -202,6 +288,8 @@ class AIAnalysisCoordinator:
             cards_injected: set[str] = set()
             # Last successful recommend_move uci; last wins.
             recommended_uci: str | None = None
+            # Single-slot dedup cache; key+result of the prior call.
+            last_call: tuple[tuple, dict] | None = None
             done_payload: dict = {"done": True}
             async with open_transcript() as transcript:
                 await transcript.turn_start({
@@ -282,10 +370,34 @@ class AIAnalysisCoordinator:
                                     },
                                 )
                             )
-                            tool_output = await self._dispatch_tool(pending_tool)
+                            # Single-slot dedup. Only top-level `error`
+                            # clears the slot; per-entry errors (e.g.
+                            # top_moves errors list) cache normally since
+                            # the same input gives the same result.
+                            key = self._dedup_key(pending_tool)
+                            if (
+                                key is not None
+                                and last_call is not None
+                                and last_call[0] == key
+                            ):
+                                log.info("tool dedup hit: %s", pending_tool.tool_name)
+                                tool_output = last_call[1]
+                            else:
+                                tool_output = await self._dispatch_tool(pending_tool)
+                                is_error = (
+                                    isinstance(tool_output, dict)
+                                    and tool_output.get("error")
+                                )
+                                if is_error or key is None:
+                                    last_call = None
+                                else:
+                                    last_call = (key, tool_output)
                             await transcript.tool_result(
                                 round_index, pending_tool.tool_use_id, tool_output
                             )
+                            # Safe to read from a cached recommend_move
+                            # result: the cached uci is identical to a
+                            # fresh dispatch's.
                             if (
                                 pending_tool.tool_name == "recommend_move"
                                 and isinstance(tool_output, dict)
@@ -476,6 +588,19 @@ class AIAnalysisCoordinator:
             return None
         injected.add(tool_name)
         return spec.card
+
+    def _dedup_key(self, call: ProviderChunk) -> tuple | None:
+        """Compute the dedup cache key for a tool call, or None when
+        the call can't be normalized (no normalizer / malformed args /
+        no live board)."""
+        normalizer = _NORMALIZERS.get(call.tool_name)
+        if normalizer is None:
+            return None
+        board = self._board_provider() if self._board_provider else None
+        norm = normalizer(call.tool_input, board)
+        if norm is None:
+            return None
+        return (call.tool_name, norm)
 
     async def _dispatch_tool(self, call: ProviderChunk) -> dict:
         """Look up + invoke a tool. Unknown name or tool-raised exceptions
