@@ -229,16 +229,16 @@ export function mountBoard({ element, onMove, styleId }) {
     }
   }
 
-  // AI agent's declared move; uses ARROW_TYPE.info paired with a local
-  // green override in styles.css so it reads distinctly from the navy
-  // default/PV arrow.
+  // AI agent's declared move; uses ARROW_TYPE.secondary paired with a
+  // local purple override in styles.css so it reads distinctly from
+  // the navy default/PV arrow.
   function setRecommendArrow(fromUci, toUci) {
     if (typeof board.removeArrows === "function") {
-      board.removeArrows(ARROW_TYPE.info);
+      board.removeArrows(ARROW_TYPE.secondary);
     }
     if (!fromUci || !toUci) return;
     if (typeof board.addArrow === "function") {
-      board.addArrow(ARROW_TYPE.info, fromUci, toUci);
+      board.addArrow(ARROW_TYPE.secondary, fromUci, toUci);
     }
   }
 

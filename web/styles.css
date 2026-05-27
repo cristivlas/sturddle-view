@@ -393,7 +393,7 @@ wa-select::part(listbox) {
 .play-ai-tool-dot-piece_at       { background: var(--wa-color-success-60, #4caf50); }
 .play-ai-tool-dot-validate_move  { background: var(--wa-color-warning-60, #d6a200); }
 .play-ai-tool-dot-top_moves      { background: var(--wa-color-primary-60, #4a90e2); }
-.play-ai-tool-dot-recommend_move { background: #15803d; }
+.play-ai-tool-dot-recommend_move { background: #7c3aed; }
 /* Failed tool call: red dot + dim label, with the error appended to
    the label by the renderer. */
 .play-ai-tool-call-failed .play-ai-tool-dot {
@@ -1345,9 +1345,9 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 /* Engine "thinking" arrow: navy. */
 .cm-chessboard .arrow-success .arrow-head { fill: #1e3a8a; }
 .cm-chessboard .arrow-success .arrow-line { stroke: #1e3a8a; opacity: 0.55; }
-/* AI recommendation arrow: green. */
-.cm-chessboard .arrow-info .arrow-head { fill: #15803d; }
-.cm-chessboard .arrow-info .arrow-line { stroke: #15803d; opacity: 0.55; }
+/* AI recommendation arrow: purple. */
+.cm-chessboard .arrow-secondary .arrow-head { fill: #7c3aed; }
+.cm-chessboard .arrow-secondary .arrow-line { stroke: #7c3aed; opacity: 0.55; }
 .clock-row .clock-name {
   font-size: 0.8125rem;
   color: inherit;
