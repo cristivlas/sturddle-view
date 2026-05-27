@@ -378,6 +378,8 @@ wa-select::part(listbox) {
 .play-ai-tools {
   /* Inside .play-ai-timeline -- margin handled by timeline padding. */
   margin: 4px 0;
+  padding: 6px 0 6px 0;
+  /* border: 2px red solid; */
   display: flex;
   flex-direction: column;
   gap: 2px;
