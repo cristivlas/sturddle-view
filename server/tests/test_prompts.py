@@ -69,7 +69,9 @@ def test_tools_block_rendered_from_registry():
 
 def test_no_tools_block_when_registry_empty():
     out = assemble_system_prompt("coach", tools=[])
-    assert "Tools:" not in out
+    # The bulleted-list block (line starts with bare "Tools:") is absent;
+    # the rules bullet "- Tools: ..." stays.
+    assert "\nTools:\n" not in out
 
 
 def test_assembly_is_deterministic_across_calls():
