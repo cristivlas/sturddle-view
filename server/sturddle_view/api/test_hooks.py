@@ -12,6 +12,7 @@ from typing import Any
 import chess
 from fastapi import APIRouter, HTTPException, Request
 
+from ..events import Event
 from ..play.chess_clock import ChessClock, TimeControl
 from ..play.human_vs_engine import HumanVsEngine, ViewModeParams
 
@@ -85,6 +86,25 @@ def tournament_proxy_secret(request: Request) -> dict[str, str | None]:
     """Return the active tournament's proxy secret (or None)."""
     orch = request.app.state.tournament_orch
     return {"secret": orch.proxy_secret()}
+
+
+@router.post("/ai/publish_event")
+async def publish_ai_event(payload: dict, request: Request) -> dict:
+    """Publish a synthetic AI event onto the event bus.
+
+    Body: ``{"kind": str, "game_id": str|None, "payload": dict}``.
+    Used by e2e tests to drive ai_tool_call / ai_tool_call_complete
+    without booting a real LLM agent loop -- the client-side preview
+    wiring reacts to the bus event the same way regardless."""
+    kind = payload.get("kind")
+    if not isinstance(kind, str) or not kind:
+        raise HTTPException(status_code=400, detail="kind required")
+    await request.app.state.event_bus.publish(Event(
+        kind=kind,
+        game_id=payload.get("game_id"),
+        payload=payload.get("payload") or {},
+    ))
+    return {"ok": True}
 
 
 @router.get("/hve/state")
