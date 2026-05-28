@@ -1102,8 +1102,14 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       aiThinkingBudget.className = "ai-thinking-budget";
       aiThinkingRow.append(aiThinking, aiThinkingBudget);
 
+      const syncBudgetEnabled = () => {
+        aiThinkingBudget.disabled = !aiThinking.checked;
+      };
+      syncBudgetEnabled();
+
       aiThinking.addEventListener("change", () => {
         putSettings({ [AI_THINKING_ENABLED_KEY]: aiThinking.checked });
+        syncBudgetEnabled();
       });
       const persistThinkingBudget = debounce(() => {
         const n = Number(aiThinkingBudget.value);
