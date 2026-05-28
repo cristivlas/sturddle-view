@@ -404,7 +404,7 @@ def _try_close_fenced_json(buf: str):
     return _synthesize_tool_use(name, params), tail
 
 
-async def recover_inline_tool_calls(
+async def _recover_inline_tool_calls_legacy(
     upstream: AsyncIterator[ProviderChunk],
     *,
     tool_names: Iterable[str] | None = None,
@@ -670,3 +670,9 @@ def _split_at_safe_boundary(buf: str, tool_names: Iterable[str]) -> tuple[str, s
     if max_prefix == 0:
         return buf, ""
     return buf[:-max_prefix], buf[-max_prefix:]
+
+
+# Public entry lives in the inline_recovery package so it can hold a
+# top-level import of both impls without a cycle (legacy stays here,
+# v2 lives there). Re-exported below for backwards-compat imports.
+from .inline_recovery import recover_inline_tool_calls  # noqa: E402
