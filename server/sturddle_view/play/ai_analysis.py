@@ -28,6 +28,7 @@ from ..llm import (
     UnknownToolError,
     assemble_system_prompt,
     open_transcript,
+    strip_markdown_stream,
 )
 from ..llm.cancel import CancelToken
 from ..llm.response_validator import (
@@ -330,13 +331,19 @@ class AIAnalysisCoordinator:
                     for round_index in range(MAX_TOOL_ROUNDS):
                         round_chunks: list[ProviderChunk] = []
                         pending_tool: ProviderChunk | None = None
-                        async for chunk in active.stream(
+                        provider_stream = active.stream(
                             system=system_prompt,
                             messages=messages,
                             tools=tool_schemas,
                             transcript=transcript,
                             round_index=round_index,
-                        ):
+                        )
+                        # Strip paired markdown markers (**, __, `) so
+                        # downstream validation and inline tool-call
+                        # recovery see clean prose -- a "bishop on
+                        # **f2**" wrapper would otherwise hide the
+                        # square from validators.
+                        async for chunk in strip_markdown_stream(provider_stream):
                             round_chunks.append(chunk)
                             await transcript.chunk(round_index, chunk)
                             if chunk.kind == "text" and chunk.text:
