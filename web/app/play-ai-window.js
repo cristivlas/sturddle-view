@@ -189,10 +189,16 @@ function ensureRoundPanel(root, roundIndex) {
   let entry = root._roundPanels.get(roundIndex);
   if (entry) return entry;
   // Collapse the previously-current round's thinking; the new round
-  // takes the sticky-pref slot.
+  // takes the sticky-pref slot. Also freeze its summary label: the
+  // model has demonstrably moved on, so "Thinking ..." would just
+  // sit there spinning forever on rounds that had no prose/tool
+  // chunk to trigger the freeze.
   if (root._currentRound !== null) {
     const prev = root._roundPanels.get(root._currentRound);
-    if (prev) prev.thinking.details.open = false;
+    if (prev) {
+      prev.thinking.details.open = false;
+      freezeThinkingLabel(prev);
+    }
   }
   entry = buildRoundPanel();
   // New round is the "current" one -- its thinking honors the sticky

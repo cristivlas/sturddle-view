@@ -83,7 +83,10 @@ Post-game review; reader sees the whole game. Third person, \
 annotator voice. Identify critical moments -- blunders, missed \
 tactics, turning points -- and contrast plays with stronger \
 engine alternatives. May reference later moves when they \
-illuminate the current one.
+illuminate the current one. Any `Pre-game note` or `Annotations` \
+in the user message are the original author's notes -- weigh them \
+critically, verify with tools, form your own conclusions. Do not \
+parrot or restate them.
 """
 
 
@@ -171,6 +174,8 @@ def build_initial_user_message(
     opening_name: str | None = None,
     result: str | None = None,
     move_played: str | None = None,
+    annotations: list[str | None] | None = None,
+    root_annotation: str | None = None,
 ) -> str:
     """Build the user message that opens an agent turn. Carries the FEN,
     the explicit side-to-move (so the model does not re-derive it), the
@@ -190,6 +195,12 @@ def build_initial_user_message(
     or in play mode). Lets the commentator distinguish the played
     move from alternatives it explored via tools.
 
+    `annotations` is a list parallel to `san_history`; entries are the
+    original PGN comment for that ply (or None). `root_annotation` is
+    the pre-game comment. Commentator mode only -- the addendum tells
+    the model to read them critically, not parrot. Rendered on a
+    separate line so `Game moves:` stays byte-stable.
+
     Optional fields are omitted entirely when not provided -- byte-stable
     output is preserved for callers that don't pass them. Prompt caching
     keys on these bytes."""
@@ -206,4 +217,31 @@ def build_initial_user_message(
         lines.append(f"Move played here: {move_played}")
     if result:
         lines.append(f"Game result: {result}")
+    if root_annotation:
+        lines.append(f"Pre-game note: {root_annotation}")
+    annotations_line = _render_annotations(san_history, annotations)
+    if annotations_line:
+        lines.append(annotations_line)
     return "\n".join(lines) + "\n"
+
+
+def _render_annotations(
+    san_history: list[str], annotations: list[str | None] | None,
+) -> str | None:
+    """Render per-ply PGN comments as `Annotations: 5.O-O {note} 12...Nxd4 {note}`.
+
+    Returns None when there are no non-None entries or when annotations
+    is None / mismatched length. Drops entries past the SAN list rather
+    than raising, since caller-side capping may have truncated."""
+    if not annotations:
+        return None
+    pairs: list[str] = []
+    for i, comment in enumerate(annotations):
+        if comment is None or i >= len(san_history):
+            continue
+        move_no = (i // 2) + 1
+        dots = "." if i % 2 == 0 else "..."
+        pairs.append(f"{move_no}{dots}{san_history[i]} {{{comment}}}")
+    if not pairs:
+        return None
+    return f"Annotations: {' '.join(pairs)}"

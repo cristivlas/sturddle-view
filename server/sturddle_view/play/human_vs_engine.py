@@ -876,6 +876,14 @@ class HumanVsEngine:
         comments = list(self._play_comments) if self._play_comments is not None else None
         return comments, self._play_root_comment
 
+    def view_game_comments(self) -> tuple[list[str | None] | None, str | None]:
+        """Return (comments, root_comment) from the loaded PGN, sanitized.
+        None when no PGN is loaded or it had no human commentary. Used
+        by the AI-analysis kick in view mode to feed prior annotations
+        into the commentator prompt."""
+        comments = list(self._view_comments) if self._view_comments is not None else None
+        return comments, self._view_root_comment
+
     @property
     def fork_link(self) -> tuple[str, int] | None:
         """Read-only view of the current fork link, if any. Used by the
