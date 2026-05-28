@@ -29,7 +29,13 @@ from .canonical_hash import canonical_hash
 from ..chess.results import DRAW, loser_result, winner_result
 from ..events import Event, EventBus
 from .chess_clock import ChessClock, TimeControl
-from .engine_analysis import global_engine_defaults, spawn_analysis_engine
+from .engine_analysis import (
+    EVAL_POV_HUMAN,
+    EVAL_POV_WHITE,
+    global_engine_defaults,
+    resolve_eval_pov_white_or_stm,
+    spawn_analysis_engine,
+)
 from .engine_info_pump import pump_engine_info
 from .engine_supervisor import EngineSupervisor
 from .game_store import DEFAULT_PLAYER_NAME, GameState, GameStore
@@ -293,6 +299,11 @@ class HumanVsEngine:
     def engine_display_name(self) -> str | None:
         return self._engine_name
 
+    def viewed_pgn_result(self) -> str | None:
+        """PGN result tag of the game currently being viewed
+        ('1-0', '0-1', '1/2-1/2', '*'), or None when not in view mode."""
+        return self._view_pgn_result
+
     def lookup_opening(self):
         """Most-specific opening reached. Covers play (live move_stack) and
         view (full PGN); returns None when no book is loaded, no moves yet,
@@ -422,13 +433,16 @@ class HumanVsEngine:
         self._view_cursor = 0
 
     def _eval_pov(self, stm: chess.Color = chess.WHITE) -> chess.Color:
-        """Resolve play_eval_pov setting → chess.Color for serialization."""
-        mode = getattr(self._settings, "play_eval_pov", "white") if self._settings else "white"
-        if mode == "human":
+        """Resolve play_eval_pov setting -> chess.Color for serialization.
+        Handles 'human' via _human_white; delegates white/engine to
+        the shared helper so tools and HVE stay in sync."""
+        mode = (
+            getattr(self._settings, "play_eval_pov", EVAL_POV_WHITE)
+            if self._settings else EVAL_POV_WHITE
+        )
+        if mode == EVAL_POV_HUMAN:
             return chess.WHITE if self._human_white else chess.BLACK
-        if mode == "engine":
-            return stm  # raw UCI: score from the side to move
-        return chess.WHITE
+        return resolve_eval_pov_white_or_stm(self._settings, stm)
 
     def _global_engine_defaults(self) -> dict:
         """Delegates to the shared engine-analysis helper so HVE,

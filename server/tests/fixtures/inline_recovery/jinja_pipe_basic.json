@@ -1,0 +1,12 @@
+{
+  "name": "jinja_pipe_basic",
+  "source": "live model output; jinja-pipe shape with json_call filter",
+  "tool_names": ["recommend_move"],
+  "text": "You should play {{ \"recommend_move\" | json_call:fen=\"6rk/5Qp1/7r/1qpP4/3p3P/3P1R1P/8/6RK w  -  - 34 f7f5\"}}.",
+  "splits": [],
+  "expected": [
+    {"kind": "text", "text": "You should play "},
+    {"kind": "tool_use", "tool_name": "recommend_move", "tool_input": {"fen": "6rk/5Qp1/7r/1qpP4/3p3P/3P1R1P/8/6RK w  -  - 34 f7f5"}},
+    {"kind": "text", "text": "."}
+  ]
+}

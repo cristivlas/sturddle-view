@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
 from .canned import CannedProvider
+from .markdown_strip import strip_markdown_stream
 from .prompts import PromptMode, assemble_system_prompt, build_initial_user_message
 from .scripted import ScriptedProvider
 from .tools import ToolRegistry, ToolSpec, UnknownToolError
@@ -32,6 +33,7 @@ __all__ = [
     "UnknownToolError",
     "assemble_system_prompt",
     "build_initial_user_message",
+    "strip_markdown_stream",
     "Transcript",
     "NullTranscript",
     "open_transcript",

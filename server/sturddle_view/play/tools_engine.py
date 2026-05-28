@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from typing import Any, Awaitable, Callable
 
 import chess
@@ -23,7 +24,7 @@ import chess.engine
 from ..events import Event, EventBus
 from ..llm import ToolSpec
 from ..llm.cancel import CancelToken
-from .engine_analysis import spawn_analysis_engine
+from .engine_analysis import resolve_eval_pov_white_or_stm, spawn_analysis_engine
 from .engine_info_pump import pump_engine_info
 from .engine_supervisor import EngineSupervisor
 
@@ -78,6 +79,15 @@ AnalyzeTool = Callable[..., Awaitable[dict[str, Any]]]
 # still need *some* game_id so the client's per-session muxing works.
 _ANALYZE_GAME_ID_FALLBACK = "ai-analyze"
 
+# Move-notation constraint reused in every tool description that takes
+# a move string. PGN-style continuation marks ('...d6', '23...Nf6') are
+# not SAN; the server strips them defensively (see _parse_candidate_move)
+# but the prompt steers models away to keep tool inputs clean.
+_MOVE_NOTATION_CONSTRAINT = (
+    " Use bare UCI or SAN -- no PGN continuation prefix "
+    "('...d6' should be 'd6')."
+)
+
 
 # Wire-shape ToolSpec describing this tool to the model. Lives next to
 # the implementation so prompt text + schema + behavior move together;
@@ -101,6 +111,7 @@ TOP_MOVES_TOOL_SPEC = ToolSpec(
                 "description": (
                     "Candidate moves in UCI or SAN. Capped at "
                     f"{TOP_MOVES_MAX_N}; extras dropped."
+                    + _MOVE_NOTATION_CONSTRAINT
                 ),
             },
             "time_ms": {
@@ -171,6 +182,7 @@ VALIDATE_MOVE_TOOL_SPEC = ToolSpec(
                 "description": (
                     "Move in UCI (e.g. 'g1f3', 'e7e8q') or SAN (e.g. "
                     "'Nf3', 'O-O', 'exd5')."
+                    + _MOVE_NOTATION_CONSTRAINT
                 ),
             },
         },
@@ -355,7 +367,7 @@ async def _run_one_search(
                 bus=bus,
                 game_id=game_id,
                 board=board,
-                pov=chess.WHITE,
+                pov=resolve_eval_pov_white_or_stm(settings, board.turn),
                 cancel_token=cancel_token,
             )
         return last_info, cancelled
@@ -457,11 +469,22 @@ def _clamp_top_moves_limits(input_: dict) -> tuple[chess.engine.Limit, dict]:
     return chess.engine.Limit(**kwargs), used
 
 
+_PGN_CONTINUATION_RE = re.compile(r"^\s*(?:\d+\s*)?\.{2,3}\s*")
+
+
+def _strip_move_prefix(raw: str) -> str:
+    """Strip whitespace and any PGN-style continuation prefix
+    ('...', '23...') so 'Nf6'/'...Nf6'/'23...Nf6' all parse the same.
+    The prompt also asks for bare notation; this is defense-in-depth."""
+    stripped = raw.strip()
+    return _PGN_CONTINUATION_RE.sub("", stripped)
+
+
 def _parse_candidate_move(board: chess.Board, raw: str) -> tuple[chess.Move | None, dict | None]:
     """Try UCI then SAN. Returns (move, None) on success, (None, error_entry)
     on failure. Error entry carries `move_input` so the model can match
     it back to the input list."""
-    candidate = raw.strip()
+    candidate = _strip_move_prefix(raw)
     if not candidate:
         return None, {"move_input": raw, "error": "invalid_input", "detail": "empty move string"}
     for parse in (board.parse_uci, board.parse_san):
@@ -608,7 +631,9 @@ def make_validate_move_tool(board_provider: BoardProvider) -> AnalyzeTool:
         raw = input_.get("move")
         if not isinstance(raw, str) or not raw.strip():
             return {"error": "invalid_input", "detail": "move must be a non-empty string"}
-        candidate = raw.strip()
+        candidate = _strip_move_prefix(raw)
+        if not candidate:
+            return {"error": "invalid_input", "detail": "move must be a non-empty string"}
         for parse in (board.parse_uci, board.parse_san):
             try:
                 move = parse(candidate)
@@ -647,6 +672,7 @@ RECOMMEND_MOVE_TOOL_SPEC = ToolSpec(
                 "description": (
                     "Move in UCI (e.g. 'g1f3', 'e7e8q') or SAN (e.g. "
                     "'Nf3', 'O-O', 'exd5')."
+                    + _MOVE_NOTATION_CONSTRAINT
                 ),
             },
             "depth": {
@@ -706,7 +732,9 @@ def make_recommend_move_tool(
         raw = input_.get("move")
         if not isinstance(raw, str) or not raw.strip():
             return {"error": "invalid_input", "detail": "move must be a non-empty string"}
-        candidate = raw.strip()
+        candidate = _strip_move_prefix(raw)
+        if not candidate:
+            return {"error": "invalid_input", "detail": "move must be a non-empty string"}
         parsed: chess.Move | None = None
         for parse in (board.parse_uci, board.parse_san):
             try:
@@ -779,6 +807,12 @@ def make_recommend_move_tool(
         if best_move is not None:
             result_common["engine_best_move"] = best_move.uci()
             result_common["engine_best_san"] = scratch_live.san(best_move)
+
+        # Exact-move match short-circuits: search scores are mildly
+        # non-deterministic, so don't reject a move the engine itself
+        # just picked as best.
+        if best_move is not None and best_move == parsed:
+            return {"ok": True, "post_move_fen": scratch.fen(), **result_common}
 
         if _better_for_stm(cand_score, best_score, board.turn):
             best_san = result_common.get("engine_best_san") or "a stronger move"

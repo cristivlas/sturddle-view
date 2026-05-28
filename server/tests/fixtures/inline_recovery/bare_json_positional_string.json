@@ -1,0 +1,13 @@
+{
+  "name": "bare_json_positional_string",
+  "source": "live llama 3 output; positional string in parameters",
+  "tool_names": ["analyze"],
+  "tool_schemas": {"analyze": ["fen", "depth"]},
+  "text": "Consider c4 ({\"name\": \"analyze\", \"parameters\": \"c4\"}}.",
+  "splits": [],
+  "expected": [
+    {"kind": "text", "text": "Consider c4 ("},
+    {"kind": "tool_use", "tool_name": "analyze", "tool_input": {"fen": "c4"}},
+    {"kind": "text", "text": "}."}
+  ]
+}

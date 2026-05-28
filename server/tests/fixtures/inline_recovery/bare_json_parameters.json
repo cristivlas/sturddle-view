@@ -1,0 +1,11 @@
+{
+  "name": "bare_json_parameters",
+  "source": "live llama 3 output; bare JSON tool-call object, parameters key",
+  "tool_names": ["analyze"],
+  "text": "Pushed h3 to challenge.\n{\"name\": \"analyze\", \"parameters\": {\"depth\":\"15\",\"fen\":\"6rk/5Qp1/7r/1qpP4/3p3P/ 3P1R1P/8/6RK w - - 1 34\"}}",
+  "splits": [],
+  "expected": [
+    {"kind": "text", "text": "Pushed h3 to challenge.\n"},
+    {"kind": "tool_use", "tool_name": "analyze", "tool_input": {"depth": "15", "fen": "6rk/5Qp1/7r/1qpP4/3p3P/ 3P1R1P/8/6RK w - - 1 34"}}
+  ]
+}

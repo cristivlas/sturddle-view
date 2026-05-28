@@ -1,0 +1,11 @@
+{
+  "name": "bare_json_validate_move",
+  "source": "live llama 3 output; bare JSON tool-call with trailing text after",
+  "tool_names": ["validate_move"],
+  "text": "You should play d4.\n\n{\"name\": \"validate_move\", \"parameters\": {\"move\":\"d4\"}}",
+  "splits": [],
+  "expected": [
+    {"kind": "text", "text": "You should play d4.\n\n"},
+    {"kind": "tool_use", "tool_name": "validate_move", "tool_input": {"move": "d4"}}
+  ]
+}

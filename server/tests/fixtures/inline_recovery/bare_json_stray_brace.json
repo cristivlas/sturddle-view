@@ -1,0 +1,10 @@
+{
+  "name": "bare_json_stray_brace",
+  "source": "negative: stray braces in prose should not trigger recovery",
+  "tool_names": ["analyze"],
+  "text": "The set {1, 2, 3} is small. Also {not a tool call here}.",
+  "splits": [],
+  "expected": [
+    {"kind": "text", "text": "The set {1, 2, 3} is small. Also {not a tool call here}."}
+  ]
+}

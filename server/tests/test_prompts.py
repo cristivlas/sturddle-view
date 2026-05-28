@@ -69,7 +69,9 @@ def test_tools_block_rendered_from_registry():
 
 def test_no_tools_block_when_registry_empty():
     out = assemble_system_prompt("coach", tools=[])
-    assert "Tools:" not in out
+    # The bulleted-list block (line starts with bare "Tools:") is absent;
+    # the rules bullet "- Tools: ..." stays.
+    assert "\nTools:\n" not in out
 
 
 def test_assembly_is_deterministic_across_calls():
@@ -148,6 +150,34 @@ def test_user_message_opening_name_without_eco():
     )
     assert "Opening: King's Pawn\n" in got
     assert "[" not in got.split("Opening:")[1].split("\n")[0]
+
+
+def test_user_message_includes_result_when_provided():
+    got = build_initial_user_message(
+        fen=_STARTPOS_FEN, san_history=[], result="0-1",
+    )
+    assert "Game result: 0-1\n" in got
+
+
+def test_user_message_omits_result_when_none():
+    got = build_initial_user_message(
+        fen=_STARTPOS_FEN, san_history=[], result=None,
+    )
+    assert "Game result:" not in got
+
+
+def test_user_message_includes_move_played_when_provided():
+    got = build_initial_user_message(
+        fen=_STARTPOS_FEN, san_history=[], move_played="Bxg1",
+    )
+    assert "Move played here: Bxg1\n" in got
+
+
+def test_user_message_omits_move_played_when_none():
+    got = build_initial_user_message(
+        fen=_STARTPOS_FEN, san_history=[], move_played=None,
+    )
+    assert "Move played here:" not in got
 
 
 def test_user_message_pairs_handle_odd_length():

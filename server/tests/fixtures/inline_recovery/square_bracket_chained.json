@@ -1,0 +1,15 @@
+{
+  "name": "square_bracket_chained",
+  "source": "live model output; multiple bracketed calls on one line",
+  "tool_names": ["piece_at", "validate_move", "analyze"],
+  "text": "[piece_at square: 'h8'] [piece_at square: 'f7']\nThe key move for White seems to be [validate_move move: 'Qxh7+'] as it attacks.",
+  "splits": [],
+  "expected": [
+    {"kind": "tool_use", "tool_name": "piece_at", "tool_input": {"square": "h8"}},
+    {"kind": "text", "text": " "},
+    {"kind": "tool_use", "tool_name": "piece_at", "tool_input": {"square": "f7"}},
+    {"kind": "text", "text": "\nThe key move for White seems to be "},
+    {"kind": "tool_use", "tool_name": "validate_move", "tool_input": {"move": "Qxh7+"}},
+    {"kind": "text", "text": " as it attacks."}
+  ]
+}

@@ -37,6 +37,10 @@ import { terminationLabel } from "../format-termination.js";
 import { editAnnotation } from "../annotation-dialog.js";
 import { getConfiguredPlayerName } from "../settings-dialog.js";
 
+// Tool name the AI uses to inspect hypothetical positions; the live
+// board mirrors `input.fen` while a call with this name is in flight.
+const ANALYZE_TOOL_NAME = "analyze";
+
 // Module-scope mirror of "user has a live human-vs-engine game running"
 // so other modules (e.g. tournament Replay button) can decide whether
 // to confirm before discarding it. Updated from the perspective's
@@ -952,6 +956,9 @@ export const playPerspective = {
           const p = evt.payload || {};
           if (typeof p.delta === "string") appendAiDelta(p.delta, p.round ?? 0);
           if (p.done) {
+            // Defensive: tool-call lifecycle can drop the restore signal
+            // (cancelled mid-call, round cap, etc.). Always snap back.
+            view.restorePosition();
             markAiDone({
               cancelled: !!p.cancelled,
               error: p.error || null,
@@ -995,6 +1002,12 @@ export const playPerspective = {
             input: p.input,
             toolUseId: p.tool_use_id,
           });
+          // When the model inspects a hypothetical position, mirror
+          // the analyzed FEN on the board so the user can follow the
+          // AI's reasoning. Restored on ai_tool_call_complete.
+          if (p.name === ANALYZE_TOOL_NAME && p.input && typeof p.input.fen === "string") {
+            view.previewPosition(p.input.fen);
+          }
           return true;
         }
         case "ai_tool_call_failed": {
@@ -1004,12 +1017,15 @@ export const playPerspective = {
             error: p.error,
             detail: p.detail,
           });
+          // Restore in case the failed call was an analyze preview.
+          view.restorePosition();
           return true;
         }
         case "ai_tool_call_complete": {
+          const p = evt.payload || {};
           // Debug marker disabled; uncomment to surface per-call checkmarks.
-          // const p = evt.payload || {};
           // appendAiToolCallComplete({ round: p.round ?? 0, name: p.name });
+          if (p.name === ANALYZE_TOOL_NAME) view.restorePosition();
           view.clearArrows();
           view.clearEngineInfo();
           return true;

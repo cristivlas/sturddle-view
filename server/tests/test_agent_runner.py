@@ -696,6 +696,33 @@ async def test_multiple_illegal_moves_listed_once_each():
 
 
 @pytest.mark.asyncio
+async def test_view_mode_corrective_references_under_review_wording():
+    # Commentator mode's corrective text references the "position
+    # under review" so the model doesn't conflate a flag with a
+    # rejection of a legitimate hypothetical variation.
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="White should play Nf6 here.")],
+        [ProviderChunk(kind="text", text="Revised: White should play Nf3.")],
+    ])
+    bus = EventBus()
+    await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=ToolRegistry(),
+        board_provider=_board_provider_for(chess.Board()),
+    )
+
+    await coord.run(game_id="g", mode="commentator")
+
+    assert provider.stream_calls == 2
+    corrective = provider.last_call["messages"][-1]
+    assert corrective["role"] == "user"
+    assert "Nf6" in corrective["content"]
+    assert "position under review" in corrective["content"]
+    assert "not played in this game" in corrective["content"]
+    assert "hypothetical" in corrective["content"]
+
+
+@pytest.mark.asyncio
 async def test_false_piece_claim_triggers_corrective_round():
     # Starting position: no piece on e4. Model invents one.
     provider = ScriptedProvider(rounds=[

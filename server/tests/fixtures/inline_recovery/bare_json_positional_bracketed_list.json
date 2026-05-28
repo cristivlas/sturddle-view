@@ -1,0 +1,13 @@
+{
+  "name": "bare_json_positional_bracketed_list",
+  "source": "live llama 3 output; bracketed-string list as parameters",
+  "tool_names": ["recommend_move"],
+  "tool_schemas": {"recommend_move": ["move"]},
+  "text": "Try {\"name\": \"recommend_move\", \"parameters\": \"[c4]\"}}.",
+  "splits": [],
+  "expected": [
+    {"kind": "text", "text": "Try "},
+    {"kind": "tool_use", "tool_name": "recommend_move", "tool_input": {"move": "c4"}},
+    {"kind": "text", "text": "}."}
+  ]
+}

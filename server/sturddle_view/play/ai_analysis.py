@@ -28,6 +28,7 @@ from ..llm import (
     UnknownToolError,
     assemble_system_prompt,
     open_transcript,
+    strip_markdown_stream,
 )
 from ..llm.cancel import CancelToken
 from ..llm.response_validator import (
@@ -50,6 +51,25 @@ log = logging.getLogger(__name__)
 _DEFAULT_MAX_TOOL_ROUNDS = 32
 MAX_TOOL_ROUNDS = int(os.environ.get("SV_AI_MAX_TOOL_ROUNDS", _DEFAULT_MAX_TOOL_ROUNDS))
 
+_COMMENTATOR_MODE: PromptMode = "commentator"
+
+
+def _boards_for_validation(
+    board: chess.Board, mode: PromptMode,
+) -> list[chess.Board]:
+    """Build the board sequence the validators consume. Coach mode:
+    just [board]. Commentator mode: current plus every prior position
+    via repeated pop() -- so prose referencing earlier-game pieces
+    isn't flagged. We work on a copy so the caller's board is untouched."""
+    if mode != _COMMENTATOR_MODE or not board.move_stack:
+        return [board]
+    walker = board.copy()
+    out: list[chess.Board] = [walker.copy()]
+    while walker.move_stack:
+        walker.pop()
+        out.append(walker.copy())
+    return out
+
 # Max length of error_detail copied into the done event. Keeps the
 # bus payload small even when a provider returns a wall of HTML / a
 # verbose stack trace. Full detail is in the transcript anyway.
@@ -66,21 +86,44 @@ ERROR_DETAIL_MAX_LEN = 500
 # but it isn't from the human -- mislabeling distracts the model's
 # reasoning trace).
 _CORRECTIVE_PREFIX = "[automated position check] "
-_ILLEGAL_MOVES_PROMPT = (
-    "Illegal in this position: {moves}. Rewrite without these."
-)
-_FALSE_PIECE_PROMPT = (
-    "Not on the board: {claims}. Rewrite without these."
-)
-_CASTLE_WORD_PROMPT = (
-    "No legal castling for either side. Rewrite without recommending it."
-)
+# Per-mode corrective templates. View mode uses the multi-position
+# validator, so flags there mean "no match in current OR any earlier
+# position" -- the wording says so explicitly to avoid the model
+# rejecting a legitimate hypothetical-variation reference.
+_CORRECTIVES = {
+    "coach": {
+        "illegal": "Illegal in this position: {moves}. Rewrite without these.",
+        "false_piece": "Not on the board: {claims}. Rewrite without these.",
+        "castle": "No legal castling for either side. Rewrite without recommending it.",
+    },
+    "commentator": {
+        "illegal": (
+            "Not legal at the position under review and not played in "
+            "this game: {moves}. Rewrite without these (or mark as "
+            "hypothetical)."
+        ),
+        "false_piece": (
+            "Not on the board at the position under review, nor at any "
+            "earlier position in this game: {claims}. Rewrite without these."
+        ),
+        "castle": (
+            "No legal castling for either side, in the position under review "
+            "or any earlier position. Rewrite without recommending it."
+        ),
+    },
+}
 # Sent once at end-of-turn if the model never successfully called
 # recommend_move. Plain prefix (not _CORRECTIVE_PREFIX) -- this is a
-# completeness nudge, not a position-check rebuttal.
-_RECOMMEND_NUDGE_PROMPT = (
-    "Missing `recommend_move` call. Submit a move now."
-)
+# completeness nudge, not a position-check rebuttal. Per-mode wording:
+# play mode asks for the next move; view mode asks for the move the
+# annotator would have played at the position under review.
+_RECOMMEND_NUDGE_PROMPTS = {
+    "coach": "Missing `recommend_move` call. Submit a move now.",
+    "commentator": (
+        "Missing `recommend_move` call. Submit the move you would "
+        "have played in the position under review."
+    ),
+}
 
 
 # Tool-arg normalizers for the dedup cache. Each maps (input, board) ->
@@ -330,13 +373,19 @@ class AIAnalysisCoordinator:
                     for round_index in range(MAX_TOOL_ROUNDS):
                         round_chunks: list[ProviderChunk] = []
                         pending_tool: ProviderChunk | None = None
-                        async for chunk in active.stream(
+                        provider_stream = active.stream(
                             system=system_prompt,
                             messages=messages,
                             tools=tool_schemas,
                             transcript=transcript,
                             round_index=round_index,
-                        ):
+                        )
+                        # Strip paired markdown markers (**, __, `) so
+                        # downstream validation and inline tool-call
+                        # recovery see clean prose -- a "bishop on
+                        # **f2**" wrapper would otherwise hide the
+                        # square from validators.
+                        async for chunk in strip_markdown_stream(provider_stream):
                             round_chunks.append(chunk)
                             await transcript.chunk(round_index, chunk)
                             if chunk.kind == "text" and chunk.text:
@@ -367,7 +416,7 @@ class AIAnalysisCoordinator:
                         # tool_use follows (policy change -- previously
                         # the tool_use exit path bypassed validation).
                         illegal, false_claims, castle_violations = (
-                            self._validate_round_text(round_chunks)
+                            self._validate_round_text(round_chunks, mode)
                         )
                         if (
                             pending_tool is None
@@ -394,7 +443,7 @@ class AIAnalysisCoordinator:
                                 messages.append(_assistant_message(round_chunks))
                                 messages.append({
                                     "role": "user",
-                                    "content": _RECOMMEND_NUDGE_PROMPT,
+                                    "content": _RECOMMEND_NUDGE_PROMPTS[mode],
                                 })
                                 continue
                             round_cap_hit = False
@@ -495,6 +544,7 @@ class AIAnalysisCoordinator:
                                 castle_violations=castle_violations,
                                 game_id=game_id,
                                 round_index=round_index,
+                                mode=mode,
                             )
                     if round_cap_hit:
                         # Signal that the loop terminated on the guardrail
@@ -585,15 +635,17 @@ class AIAnalysisCoordinator:
         castle_violations: list[str],
         game_id: str | None,
         round_index: int,
+        mode: PromptMode,
     ) -> None:
         """Append a corrective user message and emit ai_corrective."""
+        templates = _CORRECTIVES[mode]
         parts: list[str] = []
         if illegal:
-            parts.append(_ILLEGAL_MOVES_PROMPT.format(moves=", ".join(illegal)))
+            parts.append(templates["illegal"].format(moves=", ".join(illegal)))
         if false_claims:
-            parts.append(_FALSE_PIECE_PROMPT.format(claims=", ".join(false_claims)))
+            parts.append(templates["false_piece"].format(claims=", ".join(false_claims)))
         if castle_violations:
-            parts.append(_CASTLE_WORD_PROMPT)
+            parts.append(templates["castle"])
         messages.append({
             "role": "user",
             "content": _CORRECTIVE_PREFIX + " ".join(parts),
@@ -616,12 +668,14 @@ class AIAnalysisCoordinator:
         )
 
     def _validate_round_text(
-        self, chunks: list[ProviderChunk],
+        self, chunks: list[ProviderChunk], mode: PromptMode,
     ) -> tuple[list[str], list[str], list[str]]:
         """Run all validators on a round's assembled text.
         Returns (illegal_moves, false_piece_claims, castle_violations).
         Empty triple when clean, when no board_provider is wired, or
-        when no live board is available."""
+        when no live board is available. In commentator mode the
+        board sequence includes every prior position via move_stack
+        walk -- references to earlier-game pieces aren't flagged."""
         if self._board_provider is None:
             return [], [], []
         board = self._board_provider()
@@ -630,10 +684,11 @@ class AIAnalysisCoordinator:
         text = "".join(c.text for c in chunks if c.kind == "text" and c.text)
         if not text:
             return [], [], []
+        boards = _boards_for_validation(board, mode)
         return (
-            find_illegal_moves(text, board),
-            find_false_piece_claims(text, board),
-            find_castle_word_violations(text, board),
+            find_illegal_moves(text, boards),
+            find_false_piece_claims(text, boards),
+            find_castle_word_violations(text, boards),
         )
 
     def _inject_card_once(self, tool_name: str, injected: set[str]) -> str | None:

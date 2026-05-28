@@ -1,16 +1,13 @@
-"""Server-side validation of model prose against the live position.
+"""Server-side validation of model prose against position(s).
 
-Two pure functions over (text, board) -> list[str]:
-
-- `find_illegal_moves`: SAN-shaped tokens in the prose that fail
-  board.parse_san() (piece moves, pawn captures, castling).
-- `find_false_piece_claims`: "<piece> on <square>" phrases whose
-  square does not actually hold that piece in the live position.
-
-Empty list means the prose is consistent. The coordinator combines
-both and injects a corrective user message when either fires.
+Pure functions over (text, boards) -> list[str]. A claim is invalid
+only when it matches no board in the sequence. Play mode passes
+[live_board]; view mode passes [current, current.pop(), ...] so a
+commentator's reference to an earlier-position piece isn't flagged.
 """
 from __future__ import annotations
+
+from typing import Sequence
 
 import re
 
@@ -81,19 +78,11 @@ def _is_san_label(bare: str, board: chess.Board) -> bool:
     return piece.color == board.turn
 
 
-def find_illegal_moves(text: str, board: chess.Board) -> list[str]:
-    """Return distinct illegal SAN tokens found in `text` (order of first
-    appearance, no duplicates). Tokens that don't parse as SAN at all are
-    ignored -- only well-formed moves the board rejects count as illegal.
-
-    A SAN-shaped token whose destination already holds the named piece
-    for the side to move (e.g. 'Qd1' when the queen IS on d1) is treated
-    as a label, not an illegal move.
-
-    Annotation glyphs (!, ?, !?, !!) are stripped before parsing but
-    preserved in the returned token so the corrective message echoes
-    what the model wrote.
-    """
+def find_illegal_moves(text: str, boards: Sequence[chess.Board]) -> list[str]:
+    """Return distinct illegal SAN tokens. `boards` is ordered current
+    first then prior positions. A token passes iff legal on the current
+    board, OR it parses on a prior board to a move actually played in
+    this game. Legal-but-never-played alternatives are flagged."""
     seen: set[str] = set()
     illegal: list[str] = []
     for match in _SAN_TOKEN_RE.finditer(text):
@@ -102,17 +91,59 @@ def find_illegal_moves(text: str, board: chess.Board) -> list[str]:
             continue
         seen.add(token)
         bare = _strip_annotation_glyphs(token)
-        try:
-            board.parse_san(bare)
-        except chess.IllegalMoveError:
-            if _is_san_label(bare, board):
-                continue
-            illegal.append(token)
-        except (chess.InvalidMoveError, chess.AmbiguousMoveError):
-            # Not a move at all, or ambiguous (which is the model's
-            # problem to disambiguate, not ours to flag as illegal).
+        if _token_legal_or_played(bare, boards):
             continue
+        if any(_token_is_illegal(bare, b) for b in boards):
+            illegal.append(token)
     return illegal
+
+
+def _token_legal_or_played(bare: str, boards: Sequence[chess.Board]) -> bool:
+    """True iff legal on the current board OR parses on a prior board
+    to the move that was actually played from there. Label carve-out
+    applies on the current board only."""
+    if not boards:
+        return False
+    current = boards[0]
+    try:
+        current.parse_san(bare)
+        return True
+    except chess.IllegalMoveError:
+        if _is_san_label(bare, current):
+            return True
+    except (chess.InvalidMoveError, chess.AmbiguousMoveError):
+        pass
+    for i in range(1, len(boards)):
+        prior = boards[i]
+        played = _played_move_from_prior(boards, i)
+        if played is None:
+            continue
+        try:
+            parsed = prior.parse_san(bare)
+        except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
+            continue
+        if parsed == played:
+            return True
+    return False
+
+
+def _played_move_from_prior(boards: Sequence[chess.Board], i: int) -> chess.Move | None:
+    """Move played from boards[i] to reach boards[i-1] (i.e., the last
+    move pushed on boards[i-1])."""
+    newer = boards[i - 1]
+    if not newer.move_stack:
+        return None
+    return newer.move_stack[-1]
+
+
+def _token_is_illegal(bare: str, board: chess.Board) -> bool:
+    try:
+        board.parse_san(bare)
+    except chess.IllegalMoveError:
+        return not _is_san_label(bare, board)
+    except (chess.InvalidMoveError, chess.AmbiguousMoveError):
+        return False
+    return False
 
 
 _GLYPH_RE = re.compile(r"[!?]{1,2}$")
@@ -141,17 +172,15 @@ def _any_castle_legal(board: chess.Board) -> bool:
     return False
 
 
-def find_castle_word_violations(text: str, board: chess.Board) -> list[str]:
-    """Return distinct castle-word mentions (e.g. 'castle', 'castling')
-    found in `text` when neither side has any legal castling move in
-    the live position. Order of first appearance, deduped. Empty when
-    castling is legal for at least one side, or when no castle word
-    appears in the text.
-    """
+def find_castle_word_violations(
+    text: str, boards: Sequence[chess.Board],
+) -> list[str]:
+    """Castle-word mentions when castling is legal in NO board.
+    Empty when at least one board allows castling for some side."""
     matches = list(_CASTLE_WORD_RE.finditer(text))
     if not matches:
         return []
-    if _any_castle_legal(board):
+    if any(_any_castle_legal(b) for b in boards):
         return []
     seen: set[str] = set()
     out: list[str] = []
@@ -241,18 +270,15 @@ def _move_target_set(text: str, board: chess.Board) -> set[tuple[int, chess.Colo
     return out
 
 
-def find_false_piece_claims(text: str, board: chess.Board) -> list[str]:
-    """Return distinct false 'piece on square' claims (order of first
-    appearance). A claim is false when the named square is empty or
-    holds a piece of a different type. When the claim names a color,
-    a mismatched color also counts as false. Two phrasings recognized:
-    "<piece> on <square>" and "<square> <piece>".
-
-    Claims that match the destination of a legal SAN-shaped move in the
-    same text are skipped -- those describe the resulting state of a
-    recommendation, not the live position.
-    """
-    targets = _move_target_set(text, board)
+def find_false_piece_claims(
+    text: str, boards: Sequence[chess.Board],
+) -> list[str]:
+    """False 'piece on square' claims. A claim is false only when NO
+    board in `boards` matches it (empty square or wrong piece/color in
+    all). The forward-looking carve-out uses `boards[-1]` (current)
+    since post-move targets are derived from the latest position."""
+    current = boards[-1]
+    targets = _move_target_set(text, current)
     seen: set[str] = set()
     false: list[str] = []
     for color_word, piece_word, square_name in _iter_piece_claims(text):
@@ -262,18 +288,29 @@ def find_false_piece_claims(text: str, board: chess.Board) -> list[str]:
         seen.add(key)
         piece_type = _PIECE_WORDS[piece_word]
         square = chess.parse_square(square_name)
-        # Forward-looking carve-out: a legal SAN in the prose places
-        # exactly this piece on this square (color must match the move's
-        # color, defaulting to the moving side when prose has no color).
-        claim_color = _COLOR_WORDS[color_word] if color_word else board.turn
+        claim_color = _COLOR_WORDS[color_word] if color_word else current.turn
         if (piece_type, claim_color, square) in targets:
             continue
-        actual = board.piece_at(square)
+        if _claim_holds_on_any(boards, piece_type, square, color_word):
+            continue
         prefix = f"{color_word} " if color_word else ""
-        label = f"{prefix}{piece_word} on {square_name}"
+        false.append(f"{prefix}{piece_word} on {square_name}")
+    return false
+
+
+def _claim_holds_on_any(
+    boards: Sequence[chess.Board],
+    piece_type: int,
+    square: int,
+    color_word: str,
+) -> bool:
+    """True iff some board has a piece of `piece_type` on `square`,
+    matching the optional color word."""
+    for board in boards:
+        actual = board.piece_at(square)
         if actual is None or actual.piece_type != piece_type:
-            false.append(label)
             continue
         if color_word and actual.color != _COLOR_WORDS[color_word]:
-            false.append(label)
-    return false
+            continue
+        return True
+    return False

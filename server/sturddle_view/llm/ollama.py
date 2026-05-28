@@ -44,7 +44,6 @@ _LIST_MODELS_SHOW_CONCURRENCY = 8
 # chat has its own (much longer) timeout elsewhere in this module.
 _CONTROL_TIMEOUT_S = 10.0
 
-
 # ----- Translation helpers (pure functions; covered by unit tests) -----
 
 
@@ -367,13 +366,21 @@ class OllamaProvider(LLMProvider):
         # Some local models stream tool calls as prose -- recover them
         # transparently. XML shape handled unconditionally; the call-
         # syntax shape (name(args) / name{args}) needs the tool-name
-        # set so we know which identifiers to watch for.
+        # set; positional-arg recovery (bare-JSON) needs ordered param
+        # names from the input_schema.
         tool_names: set[str] = set()
+        tool_schemas: dict[str, list[str]] = {}
         for t in tools or []:
             n = t.get("name")
-            if n:
-                tool_names.add(n)
-        async for chunk in recover_inline_tool_calls(inner, tool_names=tool_names):
+            if not n:
+                continue
+            tool_names.add(n)
+            params = _ordered_param_names(t.get("input_schema") or {})
+            if params:
+                tool_schemas[n] = params
+        async for chunk in recover_inline_tool_calls(
+            inner, tool_names=tool_names, tool_schemas=tool_schemas,
+        ):
             yield chunk
 
     async def _stream_openai_compat(
@@ -587,3 +594,29 @@ class OllamaProvider(LLMProvider):
         for i, tc in enumerate(emitted_tool_calls):
             synthetic_id = f"ollama-{round_index}-{i}"
             yield ollama_native_tool_call_to_provider_chunk(tc, synthetic_id)
+
+
+def _ordered_param_names(input_schema: dict) -> list[str]:
+    """Extract param names from a JSON Schema `input_schema`, ordered
+    by `required` first (in declared order) then any remaining
+    `properties` keys (dict insertion order). Used to drive
+    positional-arg recovery in inline-recovery's BareJsonFlavor."""
+    props = input_schema.get("properties") or {}
+    if not isinstance(props, dict):
+        return []
+    required = input_schema.get("required") or []
+    if not isinstance(required, list):
+        required = []
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for name in required:
+        if isinstance(name, str) and name in props and name not in seen:
+            ordered.append(name)
+            seen.add(name)
+    for name in props:
+        if name not in seen:
+            ordered.append(name)
+            seen.add(name)
+    return ordered
+
+

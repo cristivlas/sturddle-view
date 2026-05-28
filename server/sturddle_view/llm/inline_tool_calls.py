@@ -404,10 +404,11 @@ def _try_close_fenced_json(buf: str):
     return _synthesize_tool_use(name, params), tail
 
 
-async def recover_inline_tool_calls(
+async def _recover_inline_tool_calls_legacy(
     upstream: AsyncIterator[ProviderChunk],
     *,
     tool_names: Iterable[str] | None = None,
+    tool_schemas: object = None,  # accepted but ignored; v2-only
 ) -> AsyncIterator[ProviderChunk]:
     """Async-iterator wrapper that converts inline tool calls into
     synthetic tool_use chunks. Non-text chunks pass through unchanged.
@@ -415,7 +416,11 @@ async def recover_inline_tool_calls(
     When `tool_names` is provided, the wrapper also recovers
     `name(args)` / `name{args}` shapes for any matching name. None or
     empty disables call-syntax recovery (legacy XML path only).
+
+    `tool_schemas` is accepted for API symmetry with v2 but unused
+    here -- the legacy state machine has no positional-arg recovery.
     """
+    _ = tool_schemas
     name_re = _build_name_pattern(tool_names) if tool_names else None
 
     xml_buf = ""
@@ -670,3 +675,13 @@ def _split_at_safe_boundary(buf: str, tool_names: Iterable[str]) -> tuple[str, s
     if max_prefix == 0:
         return buf, ""
     return buf[:-max_prefix], buf[-max_prefix:]
+
+
+# Public entry lives in the inline_recovery package; re-exported here
+# lazily via __getattr__ so direct imports of the inline_recovery
+# package (e.g. from test modules) don't trigger an import cycle.
+def __getattr__(attr_name):
+    if attr_name == "recover_inline_tool_calls":
+        from .inline_recovery import recover_inline_tool_calls as _impl
+        return _impl
+    raise AttributeError(attr_name)
