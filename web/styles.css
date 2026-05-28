@@ -245,6 +245,29 @@ wa-select::part(listbox) {
 .play-ai-thinking[open] > summary::before {
   transform: rotate(90deg);
 }
+/* Live "Thinking" label gets an animated ellipsis via ::after. Removed
+   on freeze: JS drops .is-active when the round's first non-thinking
+   chunk lands and the summary text snaps to "Thought for Ns". */
+.play-ai-thinking > summary.is-active::after {
+  content: "";
+  display: inline-block;
+  width: 1.2em;
+  text-align: left;
+  animation: play-ai-thinking-dots 1.2s steps(4, end) infinite;
+}
+@keyframes play-ai-thinking-dots {
+  0%   { content: ""; }
+  25%  { content: "."; }
+  50%  { content: ".."; }
+  75%  { content: "..."; }
+  100% { content: ""; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .play-ai-thinking > summary.is-active::after {
+    animation: none;
+    content: "...";
+  }
+}
 .play-ai-thinking-body {
   margin-top: 4px;
   padding: 6px 8px;

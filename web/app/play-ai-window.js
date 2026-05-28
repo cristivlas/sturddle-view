@@ -38,6 +38,13 @@ const STATUS_TEXT = {
 // Sticky open/closed pref for the Thinking disclosure block.
 const THINKING_OPEN_KEY = "sturddle:ai:thinking-open";
 
+// Label shown on the Thinking disclosure summary while a round's
+// thinking stream is still arriving. Swapped to "Thought for Ns" once
+// any non-thinking chunk lands (prose delta or tool call), since that's
+// the signal the model finished thinking for this round.
+const THINKING_LABEL_ACTIVE = "Thinking";
+const THINKING_LABEL_DONE_PREFIX = "Thought for ";
+
 function readThinkingOpen() {
   try { return localStorage.getItem(THINKING_OPEN_KEY) === "1"; } catch { return false; }
 }
@@ -130,7 +137,7 @@ function buildRoundPanel() {
   const details = document.createElement("details");
   details.className = "play-ai-thinking";
   const summary = document.createElement("summary");
-  summary.textContent = "Thinking";
+  summary.textContent = THINKING_LABEL_ACTIVE;
   const thinkBody = document.createElement("div");
   thinkBody.className = "play-ai-thinking-body";
   details.append(summary, thinkBody);
@@ -144,11 +151,38 @@ function buildRoundPanel() {
   return {
     panel,
     revision: { details: revision, summary: revisionSummary, body: revisionBody },
-    thinking: { details, body: thinkBody },
+    thinking: { details, summary, body: thinkBody },
     tools, para,
     hasProse: false,
     hasThinking: false,
+    thinkingStartedAt: 0,
+    thinkingDurationMs: 0,
   };
+}
+
+function freezeThinkingLabel(entry) {
+  // Snap the disclosure summary from "Thinking" to "Thought for Ns" the
+  // first time any non-thinking chunk arrives for this round. Idempotent
+  // so prose + tool calls landing in either order both work.
+  if (!entry || !entry.hasThinking || entry.thinkingDurationMs > 0) return;
+  const elapsedMs = entry.thinkingStartedAt
+    ? Date.now() - entry.thinkingStartedAt
+    : 0;
+  entry.thinkingDurationMs = Math.max(1, elapsedMs);
+  entry.thinking.summary.textContent =
+    `${THINKING_LABEL_DONE_PREFIX}${formatThinkingDuration(entry.thinkingDurationMs)}`;
+  entry.thinking.summary.classList.remove("is-active");
+}
+
+function formatThinkingDuration(ms) {
+  // Under a minute: "Ns" (minimum 1s so sub-second flashes don't read
+  // as "0s"). At/over a minute: "m:ss". Hours are unrealistic for a
+  // single turn so we don't format past minutes.
+  const totalSeconds = Math.max(1, Math.round(ms / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 function ensureRoundPanel(root, roundIndex) {
@@ -332,6 +366,10 @@ export function appendAiThinking(text, roundIndex = 0) {
     // model that opens with " \n" doesn't show an empty Thinking pane.
     const out = entry.hasThinking ? text : text.replace(/^\s+/, "");
     if (!out) return;
+    if (!entry.hasThinking) {
+      entry.thinkingStartedAt = Date.now();
+      entry.thinking.summary.classList.add("is-active");
+    }
     entry.hasThinking = true;
     entry.thinking.details.hidden = false;
     entry.thinking.body.append(document.createTextNode(out));
@@ -342,6 +380,7 @@ export function appendAiToolCall({ round = 0, name, input, toolUseId }) {
   if (!inst.body || !name) return;
   withStickyBottom(() => {
     const entry = ensureRoundPanel(inst.body, round);
+    freezeThinkingLabel(entry);
     const line = document.createElement("div");
     line.className = "play-ai-tool-call";
     const dot = document.createElement("span");
@@ -444,6 +483,7 @@ export function appendAiDelta(text, roundIndex = 0) {
     // starts with stray newlines from the model.
     const out = entry.hasProse ? text : text.replace(/^\s+/, "");
     if (!out) return;
+    if (!entry.hasProse) freezeThinkingLabel(entry);
     entry.hasProse = true;
     entry.para.append(document.createTextNode(out));
   });
@@ -470,6 +510,7 @@ export function markAiDone({
     for (const entry of inst.body._roundPanels.values()) {
       trimTrailingWhitespace(entry.para);
       trimTrailingWhitespace(entry.thinking.body);
+      freezeThinkingLabel(entry);
     }
     // Natural completion on a multi-round turn gets a subtle divider
     // below the final prose, so the user has a clear "AI is done"
