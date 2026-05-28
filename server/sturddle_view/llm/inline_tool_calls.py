@@ -672,7 +672,11 @@ def _split_at_safe_boundary(buf: str, tool_names: Iterable[str]) -> tuple[str, s
     return buf[:-max_prefix], buf[-max_prefix:]
 
 
-# Public entry lives in the inline_recovery package so it can hold a
-# top-level import of both impls without a cycle (legacy stays here,
-# v2 lives there). Re-exported below for backwards-compat imports.
-from .inline_recovery import recover_inline_tool_calls  # noqa: E402
+# Public entry lives in the inline_recovery package; re-exported here
+# lazily via __getattr__ so direct imports of the inline_recovery
+# package (e.g. from test modules) don't trigger an import cycle.
+def __getattr__(attr_name):
+    if attr_name == "recover_inline_tool_calls":
+        from .inline_recovery import recover_inline_tool_calls as _impl
+        return _impl
+    raise AttributeError(attr_name)

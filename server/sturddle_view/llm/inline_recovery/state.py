@@ -28,7 +28,7 @@ from typing import AsyncIterator, Iterable, List, Optional
 
 from ..base import ProviderChunk
 from .protocol import Closed, Flavor, NotTool, Pending, Unparseable
-from .flavors import CallSyntaxFlavor, FencedJsonFlavor, XmlFlavor
+from .flavors import CallSyntaxFlavor, FencedJsonFlavor, JinjaPipeFlavor, XmlFlavor
 
 log = logging.getLogger(__name__)
 
@@ -40,12 +40,16 @@ _RECOVERABLE_CHANNELS = (_CHANNEL_TEXT, _CHANNEL_THINKING)
 
 
 def _build_registry(tool_names: Optional[Iterable[str]]) -> List[Flavor]:
-    """Priority order matches the legacy implementation: XML, fenced
-    JSON, then call-syntax. Call-syntax is included only when
-    `tool_names` is non-empty."""
+    """Priority order: XML, fenced JSON, jinja-pipe, then call-syntax.
+    XML and fenced JSON match without `tool_names`; jinja-pipe and
+    call-syntax require it."""
     registry: List[Flavor] = [XmlFlavor(), FencedJsonFlavor()]
     if tool_names:
-        call = CallSyntaxFlavor(tool_names)
+        names = tuple(tool_names)
+        jinja = JinjaPipeFlavor(names)
+        if jinja.enabled:
+            registry.append(jinja)
+        call = CallSyntaxFlavor(names)
         if call.enabled:
             registry.append(call)
     return registry
