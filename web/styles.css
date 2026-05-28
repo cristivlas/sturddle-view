@@ -1996,6 +1996,25 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   font-size: 0.75rem;
   font-family: var(--wa-font-family-body);
 }
+.ai-thinking-adaptive {
+  display: inline-flex;
+  align-items: center;
+  height: var(--wa-form-control-height);
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  background: var(--panel);
+  margin-bottom: 0;
+  opacity: 0.6;
+}
+.ai-thinking-adaptive.is-active {
+  color: var(--fg);
+  background: var(--wa-color-surface-raised);
+  border-color: var(--accent-line);
+  opacity: 1;
+}
 /* Toggles stack: switches stacked vertically, one per row. */
 .settings-toggles-grid {
   display: flex;

@@ -1100,10 +1100,32 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         initial[AI_THINKING_BUDGET_TOKENS_KEY] || AI_THINKING_BUDGET_MIN
       );
       aiThinkingBudget.className = "ai-thinking-budget";
-      aiThinkingRow.append(aiThinking, aiThinkingBudget);
+      // Regex parity with anthropic.py's _use_adaptive_thinking.
+      // Right way: /v1/models capabilities.thinking.types.adaptive.
+      const aiThinkingAdaptive = document.createElement("span");
+      aiThinkingAdaptive.className = "ai-thinking-adaptive";
+      aiThinkingAdaptive.textContent = "Adaptive";
+      aiThinkingAdaptive.title = "This model picks the thinking budget automatically.";
+      aiThinkingAdaptive.style.display = "none";
+      aiThinkingRow.append(aiThinking, aiThinkingBudget, aiThinkingAdaptive);
+
+      const isAdaptiveModel = () => {
+        if (aiProvider.value !== "anthropic") return false;
+        const live = aiModelSelect.style.display === "none"
+          ? aiModelInput.value
+          : aiModelSelect.value;
+        const model = live || initial[AI_MODEL_KEY] || "";
+        const m = /^claude-opus-(\d+)-(\d+)/.exec(model);
+        if (!m) return false;
+        const major = Number(m[1]), minor = Number(m[2]);
+        return major > 4 || (major === 4 && minor >= 6);
+      };
 
       const syncBudgetEnabled = () => {
-        aiThinkingBudget.disabled = !aiThinking.checked;
+        const adaptive = isAdaptiveModel();
+        aiThinkingAdaptive.style.display = adaptive ? "" : "none";
+        aiThinkingAdaptive.classList.toggle("is-active", adaptive && aiThinking.checked);
+        aiThinkingBudget.disabled = !aiThinking.checked || adaptive;
       };
       syncBudgetEnabled();
 
@@ -1111,6 +1133,8 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         putSettings({ [AI_THINKING_ENABLED_KEY]: aiThinking.checked });
         syncBudgetEnabled();
       });
+      aiModelSelect.addEventListener("change", syncBudgetEnabled);
+      aiModelInput.addEventListener("input", syncBudgetEnabled);
       const persistThinkingBudget = debounce(() => {
         const n = Number(aiThinkingBudget.value);
         if (!Number.isFinite(n) || n < AI_THINKING_BUDGET_MIN) return;
@@ -1125,6 +1149,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         aiKeyRow.style.display = isAnthropic ? "" : "none";
         aiUrlRow.style.display = isAnthropic ? "none" : "";
         aiThinkingBudget.style.display = isAnthropic ? "" : "none";
+        syncBudgetEnabled();
       }
 
       function showModelInput(reason) {
@@ -1135,6 +1160,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         aiModelSelect.style.display = "none";
         aiModelInput.style.display = "";
         aiModelHintText.textContent = reason || "";
+        syncBudgetEnabled();
       }
 
       function showModelSelect(models) {
@@ -1152,6 +1178,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         aiModelSelect.style.display = "";
         aiModelInput.style.display = "none";
         aiModelHintText.textContent = "";
+        syncBudgetEnabled();
       }
 
       // Lazy fetch: requested on dialog open + on provider/key/url
