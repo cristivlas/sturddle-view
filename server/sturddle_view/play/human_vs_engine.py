@@ -293,6 +293,11 @@ class HumanVsEngine:
     def engine_display_name(self) -> str | None:
         return self._engine_name
 
+    def viewed_pgn_result(self) -> str | None:
+        """PGN result tag of the game currently being viewed
+        ('1-0', '0-1', '1/2-1/2', '*'), or None when not in view mode."""
+        return self._view_pgn_result
+
     def lookup_opening(self):
         """Most-specific opening reached. Covers play (live move_stack) and
         view (full PGN); returns None when no book is loaded, no moves yet,

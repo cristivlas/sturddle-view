@@ -166,15 +166,21 @@ def build_initial_user_message(
     engine_name: str | None = None,
     opening_eco: str | None = None,
     opening_name: str | None = None,
+    result: str | None = None,
 ) -> str:
     """Build the user message that opens an agent turn. Carries the FEN,
     the explicit side-to-move (so the model does not re-derive it), the
-    played SAN history, and optional context (engine name, opening).
+    played SAN history, and optional context (engine name, opening,
+    final result).
 
     `san_history` semantics depend on the caller:
     - Play mode: moves played up to the current position.
     - View mode: the FULL game's moves; FEN locates where commentary
       is requested.
+
+    `result` is the PGN-style game result ('1-0', '0-1', '1/2-1/2'),
+    sent only for finished games (view mode). Caller passes None when
+    the game is still in progress.
 
     Optional fields are omitted entirely when not provided -- byte-stable
     output is preserved for callers that don't pass them. Prompt caching
@@ -188,4 +194,6 @@ def build_initial_user_message(
     lines.append(f"Current position (FEN): {fen}")
     lines.append(f"Side to move: {_side_to_move_from_fen(fen)}")
     lines.append(f"Game moves: {_render_san_pairs(san_history)}")
+    if result:
+        lines.append(f"Game result: {result}")
     return "\n".join(lines) + "\n"

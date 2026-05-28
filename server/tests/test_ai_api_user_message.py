@@ -25,6 +25,7 @@ class _FakeHve:
         view_full_moves: list | None = None,
         engine_name: str | None = None,
         opening: Opening | None = None,
+        viewed_pgn_result: str | None = None,
     ):
         self._board = board
         self._start_fen = start_fen
@@ -32,6 +33,7 @@ class _FakeHve:
         self._view_full_moves = list(view_full_moves or [])
         self._engine_name = engine_name
         self._opening = opening
+        self._viewed_pgn_result = viewed_pgn_result
 
     def current_board(self) -> chess.Board | None:
         return self._board
@@ -59,6 +61,9 @@ class _FakeHve:
 
     def lookup_opening(self) -> Opening | None:
         return self._opening
+
+    def viewed_pgn_result(self) -> str | None:
+        return self._viewed_pgn_result
 
 
 def test_build_user_message_handles_no_hve():
@@ -127,6 +132,20 @@ def test_build_user_message_omits_opening_when_book_misses():
     msg = _build_user_message(h)
     assert msg is not None
     assert "Opening:" not in msg
+
+
+def test_build_user_message_includes_view_pgn_result():
+    h = _FakeHve(board=chess.Board(), viewed_pgn_result="0-1")
+    msg = _build_user_message(h)
+    assert msg is not None
+    assert "Game result: 0-1" in msg
+
+
+def test_build_user_message_omits_unknown_pgn_result():
+    h = _FakeHve(board=chess.Board(), viewed_pgn_result="*")
+    msg = _build_user_message(h)
+    assert msg is not None
+    assert "Game result:" not in msg
 
 
 # ---------- _prompt_mode_for ------------------------------------------

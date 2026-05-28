@@ -150,6 +150,20 @@ def test_user_message_opening_name_without_eco():
     assert "[" not in got.split("Opening:")[1].split("\n")[0]
 
 
+def test_user_message_includes_result_when_provided():
+    got = build_initial_user_message(
+        fen=_STARTPOS_FEN, san_history=[], result="0-1",
+    )
+    assert "Game result: 0-1\n" in got
+
+
+def test_user_message_omits_result_when_none():
+    got = build_initial_user_message(
+        fen=_STARTPOS_FEN, san_history=[], result=None,
+    )
+    assert "Game result:" not in got
+
+
 def test_user_message_pairs_handle_odd_length():
     # White-to-move-next history (5 plies) ends on White's 3rd move with
     # no Black reply -- "1. e4 e5 2. Nf3 Nc6 3. Bb5".

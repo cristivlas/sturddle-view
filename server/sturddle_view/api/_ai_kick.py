@@ -55,12 +55,16 @@ def _build_user_message(hve) -> str | None:
     if board is None:
         return None
     opening = hve.lookup_opening()
+    # `*` means "result unknown / unfinished" in PGN; treat as absent.
+    raw_result = hve.viewed_pgn_result()
+    result = raw_result if raw_result and raw_result != "*" else None
     return build_initial_user_message(
         fen=board.fen(),
         san_history=_san_history_for(hve),
         engine_name=_short_engine_name(hve.engine_display_name()),
         opening_eco=opening.eco if opening else None,
         opening_name=opening.name if opening else None,
+        result=result,
     )
 
 
