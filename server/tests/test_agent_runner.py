@@ -669,7 +669,7 @@ async def test_illegal_move_triggers_corrective_round():
     corrective = snap_msgs[-1]
     assert corrective["role"] == "user"
     assert "Nf6" in corrective["content"]
-    assert "do not exist" in corrective["content"]
+    assert "Illegal in this position" in corrective["content"]
 
 
 @pytest.mark.asyncio
@@ -715,7 +715,7 @@ async def test_false_piece_claim_triggers_corrective_round():
     corrective = provider.last_call["messages"][-1]
     assert corrective["role"] == "user"
     assert "bishop on e4" in corrective["content"]
-    assert "False piece claim" in corrective["content"]
+    assert "Not on the board" in corrective["content"]
 
 
 @pytest.mark.asyncio
@@ -866,8 +866,8 @@ async def test_castle_word_in_prose_triggers_dedicated_corrective():
     # The corrective user message uses the castle-specific wording, not
     # the illegal-moves wording.
     corrective_msg = provider.last_call["messages"][-1]["content"]
-    assert "Castling is not legal" in corrective_msg
-    assert "do not exist" not in corrective_msg
+    assert "No legal castling" in corrective_msg
+    assert "Illegal in this position" not in corrective_msg
 
 
 @pytest.mark.asyncio

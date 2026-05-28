@@ -67,21 +67,19 @@ ERROR_DETAIL_MAX_LEN = 500
 # reasoning trace).
 _CORRECTIVE_PREFIX = "[automated position check] "
 _ILLEGAL_MOVES_PROMPT = (
-    "{moves} do not exist in this position. Rewrite without inventing moves."
+    "Illegal in this position: {moves}. Rewrite without these."
 )
 _FALSE_PIECE_PROMPT = (
-    "False piece claim(s): {claims}. Rewrite without inventing pieces."
+    "Not on the board: {claims}. Rewrite without these."
 )
 _CASTLE_WORD_PROMPT = (
-    "Castling is not legal for either side in this position; "
-    "rewrite without recommending it."
+    "No legal castling for either side. Rewrite without recommending it."
 )
 # Sent once at end-of-turn if the model never successfully called
 # recommend_move. Plain prefix (not _CORRECTIVE_PREFIX) -- this is a
 # completeness nudge, not a position-check rebuttal.
 _RECOMMEND_NUDGE_PROMPT = (
-    "Your analysis is complete but you never submitted a move. "
-    "Call `recommend_move` with your best candidate now."
+    "Missing `recommend_move` call. Submit a move now."
 )
 
 

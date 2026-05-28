@@ -48,6 +48,9 @@ a tool name, args, or call-shaped syntax (e.g. `name(args)`, \
 `name{args}`) in prose.
 - Format: plain text. No Markdown, LaTeX, code fences, headings, \
 or bullets.
+- Do not address the corrector. Apply the fix; don't acknowledge it.
+- No meta-commentary. Don't describe what you will do, will avoid, or \
+intend next. No "I'll do X" statements. Produce chess content only.
 """
 
 
