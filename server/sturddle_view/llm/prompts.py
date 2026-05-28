@@ -76,10 +76,11 @@ submit your move via `recommend_move` (explanations, multiple attempts OK).
 
 
 COMMENTATOR_ADDENDUM = """\
-Post-game review; the reader sees the whole game. Third person, \
-chess-magazine annotator voice. Assess critical moments and \
-strategic ideas; may reference later moves when they illuminate \
-the current one.
+Post-game review; reader sees the whole game. Third person, \
+annotator voice. Identify critical moments -- blunders, missed \
+tactics, turning points -- and contrast plays with stronger \
+engine alternatives. May reference later moves when they \
+illuminate the current one.
 """
 
 
