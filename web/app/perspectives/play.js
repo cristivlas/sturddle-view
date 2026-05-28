@@ -956,6 +956,9 @@ export const playPerspective = {
           const p = evt.payload || {};
           if (typeof p.delta === "string") appendAiDelta(p.delta, p.round ?? 0);
           if (p.done) {
+            // Defensive: tool-call lifecycle can drop the restore signal
+            // (cancelled mid-call, round cap, etc.). Always snap back.
+            view.restorePosition();
             markAiDone({
               cancelled: !!p.cancelled,
               error: p.error || null,

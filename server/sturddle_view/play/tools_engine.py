@@ -24,7 +24,7 @@ import chess.engine
 from ..events import Event, EventBus
 from ..llm import ToolSpec
 from ..llm.cancel import CancelToken
-from .engine_analysis import spawn_analysis_engine
+from .engine_analysis import resolve_eval_pov_white_or_stm, spawn_analysis_engine
 from .engine_info_pump import pump_engine_info
 from .engine_supervisor import EngineSupervisor
 
@@ -367,7 +367,7 @@ async def _run_one_search(
                 bus=bus,
                 game_id=game_id,
                 board=board,
-                pov=chess.WHITE,
+                pov=resolve_eval_pov_white_or_stm(settings, board.turn),
                 cancel_token=cancel_token,
             )
         return last_info, cancelled

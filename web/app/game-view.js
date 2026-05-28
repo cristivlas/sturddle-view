@@ -656,6 +656,13 @@ export function mountGameView(container, opts = {}) {
     if (enginePv) { enginePv.textContent = ""; enginePv.removeAttribute("title"); }
   }
 
+  // Preview overlay state: while previewActive, the board shows a
+  // hypothetical FEN (typically an AI `analyze` arg) and user input
+  // is suppressed. restorePosition() reverts to currentFen; a live
+  // board_update also clears the flag and snaps to authoritative state.
+  let previewActive = false;
+  let previewInputWasEnabled = false;
+
   function applyEvent(evt) {
     if (!evt) return;
     if (gameId !== null && evt.game_id && evt.game_id !== gameId) return;
@@ -701,6 +708,12 @@ export function mountGameView(container, opts = {}) {
         // yet, and the board is at the cm-chessboard default startpos;
         // we must seed it from the server's authoritative FEN.
         if (!editing || firstBoardUpdate) {
+          // Live update overrides any AI preview; drop the preview
+          // flag so input lock and stale restore-target don't linger.
+          if (previewActive) {
+            previewActive = false;
+            board.enableInput(previewInputWasEnabled);
+          }
           // Suppress animation when the incoming FEN matches the
           // current one. cm-chessboard otherwise re-runs its 200ms
           // animation queue on a no-op move (visible flicker), e.g.
@@ -835,12 +848,6 @@ export function mountGameView(container, opts = {}) {
   if (events) {
     off = events.on(applyEvent);
   }
-
-  // Preview overlay state: while non-null, the board shows a
-  // hypothetical FEN (typically an AI `analyze` arg) and user input
-  // is suppressed. restorePosition() reverts to currentFen.
-  let previewActive = false;
-  let previewInputWasEnabled = false;
 
   return {
     ready,

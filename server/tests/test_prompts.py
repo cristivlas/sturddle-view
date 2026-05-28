@@ -164,6 +164,20 @@ def test_user_message_omits_result_when_none():
     assert "Game result:" not in got
 
 
+def test_user_message_includes_move_played_when_provided():
+    got = build_initial_user_message(
+        fen=_STARTPOS_FEN, san_history=[], move_played="Bxg1",
+    )
+    assert "Move played here: Bxg1\n" in got
+
+
+def test_user_message_omits_move_played_when_none():
+    got = build_initial_user_message(
+        fen=_STARTPOS_FEN, san_history=[], move_played=None,
+    )
+    assert "Move played here:" not in got
+
+
 def test_user_message_pairs_handle_odd_length():
     # White-to-move-next history (5 plies) ends on White's 3rd move with
     # no Black reply -- "1. e4 e5 2. Nf3 Nc6 3. Bb5".

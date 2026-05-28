@@ -219,3 +219,39 @@ def test_build_user_message_view_mode_includes_future_moves():
     assert cursor_board.fen() in msg          # FEN reflects the cursor
     assert "1. e4 e5 2. Nf3" in msg            # full game appears
     assert "Game moves:" in msg                # new label
+
+
+def test_build_user_message_view_mode_includes_move_played_here():
+    # Cursor at ply 2 (after 1.e4 e5); the move played here is Nf3.
+    full_board = chess.Board()
+    moves = []
+    for san in ("e4", "e5", "Nf3", "Nc6"):
+        moves.append(full_board.parse_san(san))
+        full_board.push_san(san)
+
+    cursor_board = chess.Board()
+    cursor_board.push_san("e4")
+    cursor_board.push_san("e5")
+
+    h = _FakeHve(board=cursor_board, view_full_moves=moves)
+    msg = _build_user_message(h)
+    assert msg is not None
+    assert "Move played here: Nf3" in msg
+
+
+def test_build_user_message_view_mode_omits_move_played_at_end_of_game():
+    # Cursor at the final position; no move follows.
+    full_board = chess.Board()
+    moves = []
+    for san in ("e4", "e5"):
+        moves.append(full_board.parse_san(san))
+        full_board.push_san(san)
+
+    cursor_board = chess.Board()
+    cursor_board.push_san("e4")
+    cursor_board.push_san("e5")
+
+    h = _FakeHve(board=cursor_board, view_full_moves=moves)
+    msg = _build_user_message(h)
+    assert msg is not None
+    assert "Move played here:" not in msg
