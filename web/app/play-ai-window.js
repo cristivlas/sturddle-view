@@ -46,6 +46,21 @@ function writeThinkingOpen(open) {
   try { localStorage.setItem(THINKING_OPEN_KEY, open ? "1" : "0"); } catch { /* */ }
 }
 
+function trimTrailingWhitespace(el) {
+  // Strip trailing whitespace from the element's last text node, then
+  // drop trailing text nodes that became empty. Lets CSS :empty kick
+  // in for ws-only content.
+  if (!el) return;
+  while (el.lastChild && el.lastChild.nodeType === Node.TEXT_NODE) {
+    const trimmed = el.lastChild.nodeValue.replace(/\s+$/, "");
+    if (trimmed) {
+      el.lastChild.nodeValue = trimmed;
+      return;
+    }
+    el.removeChild(el.lastChild);
+  }
+}
+
 function buildBody() {
   const root = document.createElement("div");
   root.className = "play-ai-body";
@@ -132,6 +147,7 @@ function buildRoundPanel() {
     thinking: { details, body: thinkBody },
     tools, para,
     hasProse: false,
+    hasThinking: false,
   };
 }
 
@@ -312,8 +328,13 @@ export function appendAiThinking(text, roundIndex = 0) {
   if (!inst.body || !text) return;
   withStickyBottom(() => {
     const entry = ensureRoundPanel(inst.body, roundIndex);
+    // Drop leading whitespace until the first non-ws char arrives, so a
+    // model that opens with " \n" doesn't show an empty Thinking pane.
+    const out = entry.hasThinking ? text : text.replace(/^\s+/, "");
+    if (!out) return;
+    entry.hasThinking = true;
     entry.thinking.details.hidden = false;
-    entry.thinking.body.append(document.createTextNode(text));
+    entry.thinking.body.append(document.createTextNode(out));
   });
 }
 
@@ -418,8 +439,13 @@ export function appendAiDelta(text, roundIndex = 0) {
   if (!inst.body || !text) return;
   withStickyBottom(() => {
     const entry = ensureRoundPanel(inst.body, roundIndex);
-    if (!entry.hasProse) entry.hasProse = true;
-    entry.para.append(document.createTextNode(text));
+    // Drop leading whitespace until the first non-ws char arrives;
+    // prevents an empty-looking bordered box on rounds whose prose
+    // starts with stray newlines from the model.
+    const out = entry.hasProse ? text : text.replace(/^\s+/, "");
+    if (!out) return;
+    entry.hasProse = true;
+    entry.para.append(document.createTextNode(out));
   });
 }
 
@@ -438,6 +464,13 @@ export function markAiDone({
   if (!inst.body) return;
   const slot = inst.body._terminal;
   withStickyBottom(() => {
+    // Trim trailing whitespace on every round's prose and thinking so a
+    // model that closes with a newline doesn't leave an empty-looking
+    // last line under the final border.
+    for (const entry of inst.body._roundPanels.values()) {
+      trimTrailingWhitespace(entry.para);
+      trimTrailingWhitespace(entry.thinking.body);
+    }
     // Natural completion on a multi-round turn gets a subtle divider
     // below the final prose, so the user has a clear "AI is done"
     // signal. Skipped on cancel/error/round-cap/no-response (their
