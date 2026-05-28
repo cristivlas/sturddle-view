@@ -1,31 +1,37 @@
 """Call-syntax flavor: `name(args)` / `name{args}` / `call:name(...)`.
 
-Currently a wrapper around the legacy `_try_recover_first_call` plus
-the legacy trailing-hold heuristics. Step 3 of the refactor will
-replace this with a native implementation.
+Built only when `tool_names` is non-empty -- the State leaves this
+flavor out of the registry otherwise.
 
-Built only when `tool_names` is non-empty. The State leaves this
-flavor out of the registry otherwise -- call-syntax can't match
-without a name list.
+The state-machine layer (find_sentinel / try_close / trailing_hold)
+is native here. Parsing helpers (`_parse_call_args`,
+`_find_balanced_close`, `_build_name_pattern`) are reused from the
+legacy module; they are pure utilities, orthogonal to the refactor.
 """
 from __future__ import annotations
 
 import logging
+import re
 from typing import Iterable
 
 from ..protocol import Closed, CloseResult, Pending, Unparseable
 from ...inline_tool_calls import (
-    _CallNone,
-    _CallUnfinished,
-    _CallUnparseable,
-    _TRAILING_CALL_PREFIX_RE,
-    _TRAILING_IDENT_RE,
+    _IDENT,
     _build_name_pattern,
+    _find_balanced_close,
+    _parse_call_args,
     _synthesize_tool_use,
-    _try_recover_first_call,
 )
 
 log = logging.getLogger(__name__)
+
+# Trailing prefix of `call:` plus optional identifier; covers
+# in-progress `call:<name>` so we don't flush the decoration before
+# the name chunk arrives.
+_TRAILING_CALL_PREFIX_RE = re.compile(
+    r"(?:c|ca|cal|call|call:|call:" + _IDENT + r")$"
+)
+_TRAILING_IDENT_RE = re.compile(_IDENT + r"$")
 
 
 class CallSyntaxFlavor:
@@ -42,32 +48,33 @@ class CallSyntaxFlavor:
     def find_sentinel(self, buf: str) -> int | None:
         if self._name_re is None:
             return None
-        result = _try_recover_first_call(buf, self._name_re)
-        if isinstance(result, _CallNone):
-            return None
-        # Unfinished / Unparseable / Match all carry match_start.
-        return result.match_start
+        m = self._name_re.search(buf)
+        return m.start() if m is not None else None
 
     def try_close(self, buf: str) -> CloseResult:
-        """`buf` starts at the sentinel (caller has sliced)."""
+        """`buf` starts at the sentinel (caller has sliced). Returns:
+          - Pending if the bracket hasn't balanced yet,
+          - Unparseable when the bracket closed but args didn't parse,
+          - Closed on a clean match.
+        """
         if self._name_re is None:
             return Pending()
-        result = _try_recover_first_call(buf, self._name_re)
-        if isinstance(result, _CallNone):
-            # Should not happen given caller invariant, but be safe.
+        m = self._name_re.match(buf)
+        if m is None:
+            # Caller invariant violated -- treat as no-op and wait.
             return Pending()
-        if isinstance(result, _CallUnfinished):
+        open_idx = m.start(2)
+        close = _find_balanced_close(buf, open_idx)
+        if close is None:
             return Pending()
-        if isinstance(result, _CallUnparseable):
-            return Unparseable(consumed=result.match_end)
-        # _CallMatch
-        log.info(
-            "inline-call tool call recovered: %s(%s)",
-            result.name, result.params,
-        )
+        body = buf[open_idx + 1:close - 1]
+        params = _parse_call_args(body, opener=buf[open_idx])
+        if params is None:
+            return Unparseable(consumed=close)
+        log.info("inline-call tool call recovered: %s(%s)", m.group(1), params)
         return Closed(
-            chunk=_synthesize_tool_use(result.name, result.params),
-            tail=buf[result.match_end:],
+            chunk=_synthesize_tool_use(m.group(1), params),
+            tail=buf[close:],
         )
 
     def trailing_hold(self, buf: str) -> int:
@@ -79,9 +86,9 @@ class CallSyntaxFlavor:
                 if name.startswith(buf[-i:]) and i > max_prefix:
                     max_prefix = i
         if max_prefix == 0:
-            tail = _TRAILING_IDENT_RE.search(buf)
-            if tail:
-                max_prefix = len(tail.group(0))
+            ident_tail = _TRAILING_IDENT_RE.search(buf)
+            if ident_tail:
+                max_prefix = len(ident_tail.group(0))
         call_tail = _TRAILING_CALL_PREFIX_RE.search(buf)
         if call_tail and len(call_tail.group(0)) > max_prefix:
             max_prefix = len(call_tail.group(0))
