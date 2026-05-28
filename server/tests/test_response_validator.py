@@ -395,11 +395,19 @@ def test_history_walk_flags_piece_present_nowhere():
 
 def test_history_walk_accepts_san_legal_in_an_earlier_position():
     boards = _history_boards_after(["e4", "e5", "Nf3"])
-    # Nf3 was legal at ply 3; the current position has Nf3 already
-    # played so re-parsing fails as illegal. The history walk
-    # should accept it.
+    # Nf3 was actually played at ply 3; reference to it from a later
+    # position passes via the played-move match.
     text = "Then White played Nf3."
     assert find_illegal_moves(text, boards) == []
+
+
+def test_history_walk_rejects_legal_but_never_played_alternative():
+    # After 1.Nf3, the knight has moved off g1 -- Ng1 is illegal now.
+    # At startpos (ply 0) "Nc3" was legal but not what White played.
+    # The token must be flagged: not legal now, never played.
+    boards = _history_boards_after(["Nf3", "Nf6", "Ng1"])
+    text = "White could have tried Nc3 first."
+    assert "Nc3" in find_illegal_moves(text, boards)
 
 
 def test_history_walk_castle_word_accepted_if_legal_anywhere():

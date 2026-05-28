@@ -82,9 +82,7 @@ Post-game review; reader sees the whole game. Third person, \
 annotator voice. Identify critical moments -- blunders, missed \
 tactics, turning points -- and contrast plays with stronger \
 engine alternatives. May reference later moves when they \
-illuminate the current one. Only moves listed under `Game moves` \
-were played; anything from `top_moves`, `analyze`, or PVs is \
-hypothetical -- name it as such.
+illuminate the current one.
 """
 
 

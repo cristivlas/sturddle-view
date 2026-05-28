@@ -79,9 +79,10 @@ def _is_san_label(bare: str, board: chess.Board) -> bool:
 
 
 def find_illegal_moves(text: str, boards: Sequence[chess.Board]) -> list[str]:
-    """Return distinct illegal SAN tokens. A token is illegal only when
-    no board in `boards` parses it as legal AND no board labels it as a
-    piece-on-square mention. Order of first appearance, deduped."""
+    """Return distinct illegal SAN tokens. `boards` is ordered current
+    first then prior positions. A token passes iff legal on the current
+    board, OR it parses on a prior board to a move actually played in
+    this game. Legal-but-never-played alternatives are flagged."""
     seen: set[str] = set()
     illegal: list[str] = []
     for match in _SAN_TOKEN_RE.finditer(text):
@@ -90,26 +91,49 @@ def find_illegal_moves(text: str, boards: Sequence[chess.Board]) -> list[str]:
             continue
         seen.add(token)
         bare = _strip_annotation_glyphs(token)
-        if _token_legal_or_label_anywhere(bare, boards):
+        if _token_legal_or_played(bare, boards):
             continue
-        # Not parseable on any board -> ignore (likely not a move).
-        # Illegal on at least one board -> flag.
         if any(_token_is_illegal(bare, b) for b in boards):
             illegal.append(token)
     return illegal
 
 
-def _token_legal_or_label_anywhere(bare: str, boards: Sequence[chess.Board]) -> bool:
-    for board in boards:
-        try:
-            board.parse_san(bare)
+def _token_legal_or_played(bare: str, boards: Sequence[chess.Board]) -> bool:
+    """True iff legal on the current board OR parses on a prior board
+    to the move that was actually played from there. Label carve-out
+    applies on the current board only."""
+    if not boards:
+        return False
+    current = boards[0]
+    try:
+        current.parse_san(bare)
+        return True
+    except chess.IllegalMoveError:
+        if _is_san_label(bare, current):
             return True
-        except chess.IllegalMoveError:
-            if _is_san_label(bare, board):
-                return True
-        except (chess.InvalidMoveError, chess.AmbiguousMoveError):
+    except (chess.InvalidMoveError, chess.AmbiguousMoveError):
+        pass
+    for i in range(1, len(boards)):
+        prior = boards[i]
+        played = _played_move_from_prior(boards, i)
+        if played is None:
             continue
+        try:
+            parsed = prior.parse_san(bare)
+        except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
+            continue
+        if parsed == played:
+            return True
     return False
+
+
+def _played_move_from_prior(boards: Sequence[chess.Board], i: int) -> chess.Move | None:
+    """Move played from boards[i] to reach boards[i-1] (i.e., the last
+    move pushed on boards[i-1])."""
+    newer = boards[i - 1]
+    if not newer.move_stack:
+        return None
+    return newer.move_stack[-1]
 
 
 def _token_is_illegal(bare: str, board: chess.Board) -> bool:

@@ -98,8 +98,9 @@ _CORRECTIVES = {
     },
     "commentator": {
         "illegal": (
-            "Illegal at the position under review and at every earlier "
-            "position in this game: {moves}. Rewrite without these."
+            "Not legal at the position under review and not played in "
+            "this game: {moves}. Rewrite without these (or mark as "
+            "hypothetical)."
         ),
         "false_piece": (
             "Not on the board at the position under review, nor at any "

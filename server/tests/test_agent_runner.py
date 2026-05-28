@@ -718,7 +718,8 @@ async def test_view_mode_corrective_references_under_review_wording():
     assert corrective["role"] == "user"
     assert "Nf6" in corrective["content"]
     assert "position under review" in corrective["content"]
-    assert "earlier position" in corrective["content"]
+    assert "not played in this game" in corrective["content"]
+    assert "hypothetical" in corrective["content"]
 
 
 @pytest.mark.asyncio
