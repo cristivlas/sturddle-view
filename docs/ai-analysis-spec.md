@@ -119,18 +119,20 @@ Disabled when no `board_provider` is wired (tests, non-live callers).
 - `analyze(fen, time_ms=None, depth=None)` - engine search; spawns
   throwaway engine via existing `_spawn_engine()` pattern. SHIPPED.
 - `validate_move(move)` - legality check for UCI or SAN move strings
-  against the live position. Non-negotiable per its tool card before
-  naming any move as playable in prose. SHIPPED.
-- `piece_at(square)` - report the piece occupying a square in the
-  live position (or null when empty). Non-negotiable per its tool
-  card before naming any piece on a specific square in prose.
+  against the live position. Tool card asks the model to pre-check
+  before naming a move as playable; round-end validators catch
+  illegal SAN in prose after the fact and drive a corrective round.
   SHIPPED.
+- `piece_at(square)` - report the piece occupying a square in the
+  live position (or null when empty). Tool card asks the model to
+  pre-check before naming a piece on a specific square; round-end
+  validators catch false piece claims in prose and drive a
+  corrective round. SHIPPED.
 - `top_moves(n=None, time_ms=None, depth=None)` - rank top-N candidate
   moves in the live position (workaround for engines without native
   MultiPV). Operates on the live board via `board_provider` (no FEN
-  input). Requires engine support for UCI `searchmoves` (python-chess
-  `root_moves` kwarg); BUILT but registration commented out because
-  Sturddle ignores `searchmoves`.
+  input). Uses UCI `searchmoves` (python-chess `root_moves` kwarg).
+  SHIPPED.
 - `tablebase_probe()` - wraps existing `TablebaseProber` (Syzygy WDL/DTZ);
   pending. Register conditionally on `engine_default_syzygy_path` being
   set so the tool never appears for users without tablebases.
@@ -480,11 +482,8 @@ principles:
 
 - Tournament mode integration
 - Auto-trigger on game end
-- Multi-PV for engines that don't support it. The intended workaround
-  was `top_moves` / `compare_moves` (sequential per-candidate searches
-  via UCI `searchmoves`), but Sturddle ignores `searchmoves` today --
-  both tools are blocked engine-side. Re-enable once the engine
-  honors it.
+- `compare_moves` -- same per-candidate `searchmoves` shape as
+  `top_moves`; not built. `top_moves` is shipped.
 - Engine pool for `analyze` calls
 - Wall-clock timeout backstop
 - Caching of post-game annotations (re-runs require explicit user

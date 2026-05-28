@@ -64,6 +64,7 @@ source; check the file when a precise value matters.
 |---|---|---|---|
 | `SV_AI_API_KEY` | unset | Headless fallback for the active provider's API key; OS keyring takes precedence. | `server/sturddle_view/key_store.py` |
 | `SV_AI_MAX_TOOL_ROUNDS` | `32` | Hard cap on agent loop rounds per turn. Hit emits `done.round_cap=true`. | `server/sturddle_view/play/ai_analysis.py` |
+| `SV_AI_THINKING_BUDGET_TOKENS` | `4096` | Default Anthropic extended-thinking budget; UI override persists per-settings. | `server/sturddle_view/config.py` |
 | `SV_AI_ANALYZE_MAX_TIME_MS` | module const | `analyze` tool per-call wall-clock cap; caller's `time_ms` clamped down. | `server/sturddle_view/play/tools_engine.py` |
 | `SV_AI_ANALYZE_MAX_DEPTH` | module const | `analyze` tool per-call depth cap; caller's `depth` clamped down. | `server/sturddle_view/play/tools_engine.py` |
 | `SV_AI_RECOMMEND_MARGIN` | module const | Centipawn dominance margin for `recommend_move` to accept the model's pick over the engine's top line. | `server/sturddle_view/play/tools_engine.py` |

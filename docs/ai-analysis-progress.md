@@ -5,12 +5,19 @@ fresh decisions that have not yet earned a place in the spec. Spec
 stays stable; this doc churns. When a decision proves load-bearing
 across phases, lift it into the spec and remove it from here.
 
-Shipped work spans the walking-skeleton + agent loop + live play
-path + settings UI + most error UX, with refinements. See
-`git log main..HEAD` for detail. Phase 3 (path 3 post-game + path 2
-view annotations) and token caps are the remaining big items; see
-§Open work. Past decisions that proved load-bearing have been lifted
-into `ai-analysis-spec.md`.
+Shipped: walking skeleton, agent loop with round-end validators
+(illegal SAN / false piece claims / castle-word) and corrective
+rounds, inline tool-call recovery (call-syntax and fenced JSON),
+single-slot dedup, Anthropic + Ollama providers with extended
+thinking, Harmony marker stripping, tool registry (`analyze`,
+`validate_move`, `piece_at`, `top_moves`, `recommend_move` with
+centipawn dominance check) with lazy tool cards, live `play` path
+end-to-end, dockable AI panel with round-interleaved timeline and
+revision banner, Settings UI with OS-keyring API-key storage and
+per-provider model memory. See `git log main..HEAD` for detail.
+Remaining big items: token caps, path 3 (post-game PGN annotations),
+path 2 (live `view` mode) -- see §Open work. Past decisions that
+proved load-bearing have been lifted into `ai-analysis-spec.md`.
 
 ## Status legend
 
@@ -69,12 +76,8 @@ Tests:
 
 ### Engine-side blockers
 
-- **`top_moves` disabled.** Built and tested, registration commented
-  out in `app.py`. Relies on UCI `searchmoves` (python-chess
-  `root_moves` kwarg); Sturddle ignores it (every candidate returns
-  the same engine-best PV). Re-enable once the engine honors it.
-- **`compare_moves` not built.** Same `searchmoves` blocker as
-  `top_moves`.
+- **`compare_moves` not built.** Would use the same `searchmoves`
+  shape as `top_moves`; add when a concrete need appears.
 
 ### Other pending tools
 
