@@ -19,6 +19,7 @@ from typing import AsyncIterator, Iterable
 
 from ..base import ProviderChunk
 from ..inline_tool_calls import _recover_inline_tool_calls_legacy
+from .state import recover as _recover_v2
 
 log = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ def recover_inline_tool_calls_v2(
     *,
     tool_names: Iterable[str] | None = None,
 ) -> AsyncIterator[ProviderChunk]:
-    return _recover_inline_tool_calls_legacy(upstream, tool_names=tool_names)
+    return _recover_v2(upstream, tool_names=tool_names)
 
 
 def recover_inline_tool_calls(
