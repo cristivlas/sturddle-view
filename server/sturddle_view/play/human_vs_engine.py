@@ -437,10 +437,10 @@ class HumanVsEngine:
         Handles 'human' via _human_white; delegates white/engine to
         the shared helper so tools and HVE stay in sync."""
         mode = (
-            getattr(self._settings, "play_eval_pov", _EVAL_POV_WHITE)
-            if self._settings else _EVAL_POV_WHITE
+            getattr(self._settings, "play_eval_pov", EVAL_POV_WHITE)
+            if self._settings else EVAL_POV_WHITE
         )
-        if mode == _EVAL_POV_HUMAN:
+        if mode == EVAL_POV_HUMAN:
             return chess.WHITE if self._human_white else chess.BLACK
         return resolve_eval_pov_white_or_stm(self._settings, stm)
 
