@@ -76,6 +76,13 @@ _CASTLE_WORD_PROMPT = (
     "Castling is not legal for either side in this position; "
     "rewrite without recommending it."
 )
+# Sent once at end-of-turn if the model never successfully called
+# recommend_move. Plain prefix (not _CORRECTIVE_PREFIX) -- this is a
+# completeness nudge, not a position-check rebuttal.
+_RECOMMEND_NUDGE_PROMPT = (
+    "Your analysis is complete but you never submitted a move. "
+    "Call `recommend_move` with your best candidate now."
+)
 
 
 # Tool-arg normalizers for the dedup cache. Each maps (input, board) ->
@@ -293,6 +300,20 @@ class AIAnalysisCoordinator:
             cards_injected: set[str] = set()
             # Last successful recommend_move uci; last wins.
             recommended_uci: str | None = None
+            # True once any recommend_move call dispatched (success OR
+            # rejected). If the model tried and was rejected, nudging
+            # won't help -- same rejection would fire again.
+            recommend_move_attempted = False
+            # End-of-turn nudge: if the model exits without ever calling
+            # recommend_move, we inject one corrective and let the loop
+            # run one more round. One-shot per turn to prevent looping.
+            nudge_sent = False
+            # Compute once: the nudge only makes sense when recommend_move
+            # is registered with this coordinator.
+            has_recommend_move = any(
+                t.get("name") == "recommend_move"
+                for t in (tool_schemas or [])
+            )
             # Single-slot dedup cache; key+result of the prior call.
             last_call: tuple[tuple, dict] | None = None
             done_payload: dict = {"done": True}
@@ -356,6 +377,28 @@ class AIAnalysisCoordinator:
                             and not false_claims
                             and not castle_violations
                         ):
+                            # Natural exit. One-shot nudge if the model
+                            # never submitted a move via recommend_move;
+                            # gives it exactly one more round to comply.
+                            if (
+                                has_recommend_move
+                                and not recommend_move_attempted
+                                and not nudge_sent
+                            ):
+                                log.info(
+                                    "recommend_move nudge: no call this "
+                                    "turn; injecting corrective"
+                                )
+                                nudge_sent = True
+                                # Assistant prose must land in history
+                                # before the user nudge so the model sees
+                                # its own analysis above the request.
+                                messages.append(_assistant_message(round_chunks))
+                                messages.append({
+                                    "role": "user",
+                                    "content": _RECOMMEND_NUDGE_PROMPT,
+                                })
+                                continue
                             round_cap_hit = False
                             break
                         messages.append(_assistant_message(round_chunks))
@@ -416,13 +459,14 @@ class AIAnalysisCoordinator:
                             # Safe to read from a cached recommend_move
                             # result: the cached uci is identical to a
                             # fresh dispatch's.
-                            if (
-                                pending_tool.tool_name == "recommend_move"
-                                and isinstance(tool_output, dict)
-                                and tool_output.get("ok")
-                                and isinstance(tool_output.get("uci"), str)
-                            ):
-                                recommended_uci = tool_output["uci"]
+                            if pending_tool.tool_name == "recommend_move":
+                                recommend_move_attempted = True
+                                if (
+                                    isinstance(tool_output, dict)
+                                    and tool_output.get("ok")
+                                    and isinstance(tool_output.get("uci"), str)
+                                ):
+                                    recommended_uci = tool_output["uci"]
                             if isinstance(tool_output, dict) and tool_output.get("error"):
                                 await self._emit(
                                     Event(
