@@ -22,6 +22,7 @@ from sturddle_view.llm.cancel import CancelToken
 from sturddle_view.play.engine_supervisor import EngineSupervisor
 from sturddle_view.play.tools_engine import (
     TOP_MOVES_MAX_N,
+    _strip_move_prefix,
     make_top_moves_tool,
 )
 
@@ -240,3 +241,36 @@ async def test_top_moves_returns_san_and_uci(tmp_path: Path):
     assert "move_uci" in c
     assert "move_san" in c
     assert c["move_san"] != c["move_uci"]
+
+
+def test_strip_move_prefix_removes_pgn_continuation():
+    # Bare moves untouched.
+    assert _strip_move_prefix("Nf3") == "Nf3"
+    assert _strip_move_prefix("e4") == "e4"
+    assert _strip_move_prefix("g1f3") == "g1f3"
+    # Whitespace stripped.
+    assert _strip_move_prefix("  Nf3  ") == "Nf3"
+    # PGN continuation prefixes stripped.
+    assert _strip_move_prefix("...d6") == "d6"
+    assert _strip_move_prefix("...Nf6") == "Nf6"
+    assert _strip_move_prefix("23...Nf6") == "Nf6"
+    assert _strip_move_prefix("  23...  Nf6") == "Nf6"
+    # Single dot (move-number separator) not a continuation -- left alone.
+    assert _strip_move_prefix("1.e4") == "1.e4"
+
+
+@pytest.mark.asyncio
+async def test_top_moves_accepts_pgn_continuation_prefix(tmp_path: Path):
+    # Model emits "...e4"; server strips the prefix so parse succeeds.
+    engine_path = make_searching_fake_uci(
+        tmp_path, "tm_pgn", score_cp=20, depth=4, bestmove="0000", pv="",
+    )
+    bus = EventBus()
+    board = chess.Board()
+    tool = make_top_moves_tool(
+        _launcher_from_path(engine_path, bus), bus=bus, board_provider=lambda: board,
+    )
+    out = await tool({"moves": ["...e4"], "depth": 4}, cancel_token=CancelToken())
+    assert "error" not in out, out
+    sans = {c["move_san"] for c in out.get("candidates", [])}
+    assert "e4" in sans

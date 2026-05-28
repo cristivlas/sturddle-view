@@ -836,6 +836,12 @@ export function mountGameView(container, opts = {}) {
     off = events.on(applyEvent);
   }
 
+  // Preview overlay state: while non-null, the board shows a
+  // hypothetical FEN (typically an AI `analyze` arg) and user input
+  // is suppressed. restorePosition() reverts to currentFen.
+  let previewActive = false;
+  let previewInputWasEnabled = false;
+
   return {
     ready,
     setGameId(id) {
@@ -845,6 +851,19 @@ export function mountGameView(container, opts = {}) {
     setNames,
     setPlayerName(name) { playerName = name || PLAYER_NAME_DEFAULT; },
     applyEvent,
+    previewPosition(fen) {
+      if (!fen || fen === currentFen) return;
+      if (!previewActive) previewInputWasEnabled = board.isInputEnabled();
+      previewActive = true;
+      board.enableInput(false);
+      board.setPosition(fen, null, true);
+    },
+    restorePosition() {
+      if (!previewActive) return;
+      previewActive = false;
+      board.setPosition(currentFen, null, true);
+      board.enableInput(previewInputWasEnabled);
+    },
     clearArrows() {
       board.clearArrows();
     },

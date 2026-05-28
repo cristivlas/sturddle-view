@@ -86,21 +86,43 @@ ERROR_DETAIL_MAX_LEN = 500
 # but it isn't from the human -- mislabeling distracts the model's
 # reasoning trace).
 _CORRECTIVE_PREFIX = "[automated position check] "
-_ILLEGAL_MOVES_PROMPT = (
-    "Illegal in this position: {moves}. Rewrite without these."
-)
-_FALSE_PIECE_PROMPT = (
-    "Not on the board: {claims}. Rewrite without these."
-)
-_CASTLE_WORD_PROMPT = (
-    "No legal castling for either side. Rewrite without recommending it."
-)
+# Per-mode corrective templates. View mode uses the multi-position
+# validator, so flags there mean "no match in current OR any earlier
+# position" -- the wording says so explicitly to avoid the model
+# rejecting a legitimate hypothetical-variation reference.
+_CORRECTIVES = {
+    "coach": {
+        "illegal": "Illegal in this position: {moves}. Rewrite without these.",
+        "false_piece": "Not on the board: {claims}. Rewrite without these.",
+        "castle": "No legal castling for either side. Rewrite without recommending it.",
+    },
+    "commentator": {
+        "illegal": (
+            "Illegal at the position under review and at every earlier "
+            "position in this game: {moves}. Rewrite without these."
+        ),
+        "false_piece": (
+            "Not on the board at the position under review, nor at any "
+            "earlier position in this game: {claims}. Rewrite without these."
+        ),
+        "castle": (
+            "No legal castling for either side, in the position under review "
+            "or any earlier position. Rewrite without recommending it."
+        ),
+    },
+}
 # Sent once at end-of-turn if the model never successfully called
 # recommend_move. Plain prefix (not _CORRECTIVE_PREFIX) -- this is a
-# completeness nudge, not a position-check rebuttal.
-_RECOMMEND_NUDGE_PROMPT = (
-    "Missing `recommend_move` call. Submit a move now."
-)
+# completeness nudge, not a position-check rebuttal. Per-mode wording:
+# play mode asks for the next move; view mode asks for the move the
+# annotator would have played at the position under review.
+_RECOMMEND_NUDGE_PROMPTS = {
+    "coach": "Missing `recommend_move` call. Submit a move now.",
+    "commentator": (
+        "Missing `recommend_move` call. Submit the move you would "
+        "have played in the position under review."
+    ),
+}
 
 
 # Tool-arg normalizers for the dedup cache. Each maps (input, board) ->
@@ -420,7 +442,7 @@ class AIAnalysisCoordinator:
                                 messages.append(_assistant_message(round_chunks))
                                 messages.append({
                                     "role": "user",
-                                    "content": _RECOMMEND_NUDGE_PROMPT,
+                                    "content": _RECOMMEND_NUDGE_PROMPTS[mode],
                                 })
                                 continue
                             round_cap_hit = False
@@ -521,6 +543,7 @@ class AIAnalysisCoordinator:
                                 castle_violations=castle_violations,
                                 game_id=game_id,
                                 round_index=round_index,
+                                mode=mode,
                             )
                     if round_cap_hit:
                         # Signal that the loop terminated on the guardrail
@@ -611,15 +634,17 @@ class AIAnalysisCoordinator:
         castle_violations: list[str],
         game_id: str | None,
         round_index: int,
+        mode: PromptMode,
     ) -> None:
         """Append a corrective user message and emit ai_corrective."""
+        templates = _CORRECTIVES[mode]
         parts: list[str] = []
         if illegal:
-            parts.append(_ILLEGAL_MOVES_PROMPT.format(moves=", ".join(illegal)))
+            parts.append(templates["illegal"].format(moves=", ".join(illegal)))
         if false_claims:
-            parts.append(_FALSE_PIECE_PROMPT.format(claims=", ".join(false_claims)))
+            parts.append(templates["false_piece"].format(claims=", ".join(false_claims)))
         if castle_violations:
-            parts.append(_CASTLE_WORD_PROMPT)
+            parts.append(templates["castle"])
         messages.append({
             "role": "user",
             "content": _CORRECTIVE_PREFIX + " ".join(parts),

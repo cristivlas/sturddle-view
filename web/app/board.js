@@ -344,8 +344,10 @@ export function mountBoard({ element, onMove, styleId }) {
     }
   }
 
+  function isInputEnabled() { return inputEnabled; }
+
   return {
-    setSide, setPosition, enableInput, forceResize, cancelAnimations, destroy,
+    setSide, setPosition, enableInput, isInputEnabled, forceResize, cancelAnimations, destroy,
     setArrow, setOpponentArrow, setRecommendArrow, clearArrows,
     enterEditMode, exitEditMode, toggleCastlingRight, getCastlingRights, getPiecePlacement,
   };
