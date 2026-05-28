@@ -17,9 +17,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
-import time
-from pathlib import Path
 from typing import Any, AsyncIterator
 
 import httpx
@@ -46,12 +43,6 @@ _LIST_MODELS_SHOW_CONCURRENCY = 8
 # (/api/generate keep_alive, /api/ps, /v1/models, /api/show). Streaming
 # chat has its own (much longer) timeout elsewhere in this module.
 _CONTROL_TIMEOUT_S = 10.0
-
-# When set, raw text/thinking deltas from each chat stream are appended
-# to a file under this directory before inline-tool-call recovery runs.
-# Used to hunt for new wild tool-emission shapes; no-op when unset.
-_RAW_CAPTURE_ENV_VAR = "SV_AI_RAW_CAPTURE_DIR"
-
 
 # ----- Translation helpers (pure functions; covered by unit tests) -----
 
@@ -387,9 +378,6 @@ class OllamaProvider(LLMProvider):
             params = _ordered_param_names(t.get("input_schema") or {})
             if params:
                 tool_schemas[n] = params
-        capture_dir = os.environ.get(_RAW_CAPTURE_ENV_VAR)
-        if capture_dir:
-            inner = _capture_raw_stream(inner, capture_dir, self._model)
         async for chunk in recover_inline_tool_calls(
             inner, tool_names=tool_names, tool_schemas=tool_schemas,
         ):
@@ -632,24 +620,3 @@ def _ordered_param_names(input_schema: dict) -> list[str]:
     return ordered
 
 
-async def _capture_raw_stream(
-    inner: AsyncIterator[ProviderChunk],
-    capture_dir: str,
-    model: str,
-) -> AsyncIterator[ProviderChunk]:
-    """Tee text/thinking deltas to a per-stream file before inline
-    tool-call recovery sees them. Non-recoverable chunks pass through
-    untouched. Filename: <unix_ts>-<safe_model>.txt under capture_dir."""
-    path = Path(capture_dir)
-    path.mkdir(parents=True, exist_ok=True)
-    safe_model = "".join(c if c.isalnum() or c in "-_." else "_" for c in model)
-    out_file = path / f"{int(time.time() * 1000)}-{safe_model}.txt"
-    fh = out_file.open("a", encoding="utf-8")
-    try:
-        async for chunk in inner:
-            if chunk.kind in ("text", "thinking") and chunk.text:
-                fh.write(chunk.text)
-                fh.flush()
-            yield chunk
-    finally:
-        fh.close()

@@ -18,11 +18,11 @@ from typing import Iterable, Literal
 from .tools import ToolSpec
 
 
-# Raw-capture mode (gated by SV_AI_RAW_CAPTURE_DIR) also appends a
-# directive forcing the model to emit tool calls inline as text -- the
-# whole point of capture mode is hunting new inline shapes, so the
-# capture flag and the prompt nudge travel together.
-_FORCE_INLINE_ENV_VAR = "SV_AI_RAW_CAPTURE_DIR"
+# Appends a directive forcing the model to emit tool calls inline as
+# text. Used to hunt for new wild inline shapes -- pair with the
+# transcript (SV_AI_TRANSCRIPT=1) to see what the model produces.
+# Production: leave unset.
+_FORCE_INLINE_ENV_VAR = "SV_AI_FORCE_INLINE_CALLS"
 _FORCE_INLINE_DIRECTIVE = (
     "You MUST call tools inline as text. Do not use the structured "
     "tool channel."
@@ -122,7 +122,8 @@ def assemble_system_prompt(
 
 
 def _force_inline_enabled() -> bool:
-    return bool(os.environ.get(_FORCE_INLINE_ENV_VAR, "").strip())
+    raw = os.environ.get(_FORCE_INLINE_ENV_VAR, "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
 
 
 _INITIAL_NO_MOVES = "(none yet -- the game has not started)"
