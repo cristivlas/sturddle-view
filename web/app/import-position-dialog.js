@@ -26,7 +26,7 @@ export function formatSummary(s, { short = false } = {}) {
 
 const REPLACE_CURRENT_FALLBACK = "the current game";
 const REPLACE_INCOMING_FALLBACK = "a different game";
-const ANALYSIS_WARNING = "Analysis in progress will be cancelled.";
+const ANALYSIS_WARNING = "Analysis will be closed.";
 const CONFIRM_TRUNC_MAX = 46;
 const RECENT_TRUNC_MAX = 40;
 const ELLIPSIS = "...";
