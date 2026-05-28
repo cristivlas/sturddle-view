@@ -24,12 +24,13 @@ from .._atomic import atomic_write_text
 if TYPE_CHECKING:
     from ..recent_imports import RecentImports
 from ..chess.board import board_from, moves_san as _moves_san, side_to_move
-from ..chess.engine_info import serialize_info
 from ..chess.pgn_build import build_pgn
 from .canonical_hash import canonical_hash
 from ..chess.results import DRAW, loser_result, winner_result
 from ..events import Event, EventBus
 from .chess_clock import ChessClock, TimeControl
+from .engine_analysis import global_engine_defaults, spawn_analysis_engine
+from .engine_info_pump import pump_engine_info
 from .engine_supervisor import EngineSupervisor
 from .game_store import DEFAULT_PLAYER_NAME, GameState, GameStore
 from .import_position import explain_invalid
@@ -231,6 +232,17 @@ class HumanVsEngine:
         return self._mode is Mode.ANALYZING
 
     @property
+    def _clock_running(self) -> bool:
+        """Clock ticks only in live play: board present, mode is PLAY, game
+        not over. Shared by republish_state (gate to start the tick) and
+        _clock_event (advertises `running` to clients)."""
+        return (
+            self._board is not None
+            and self._mode is Mode.PLAY
+            and not self._board.is_game_over()
+        )
+
+    @property
     def _viewing(self) -> bool:
         if self._mode & self._VIEW_MASK:
             return True
@@ -257,6 +269,43 @@ class HumanVsEngine:
     @property
     def is_editing(self) -> bool:
         return self._mode is Mode.EDITING
+
+    # ----- accessors for the AI start path. Surface read-only views of
+    # internals so api/_ai_kick.py doesn't reach across the abstraction.
+    # Returning Optionals (vs raising) keeps the call site branchless.
+
+    def current_board(self) -> chess.Board | None:
+        return self._board
+
+    def start_fen(self) -> str | None:
+        return self._start_fen
+
+    def view_full_moves_san(self) -> list[str]:
+        """Full game's moves when HVE is in view mode (or analyzing-from-
+        view); empty in play mode."""
+        if self._view_full_moves:
+            return self._view_moves_san()
+        return []
+
+    def pre_analysis_mode(self) -> "Mode | None":
+        return self._pre_analysis_mode
+
+    def engine_display_name(self) -> str | None:
+        return self._engine_name
+
+    def lookup_opening(self):
+        """Most-specific opening reached. Covers play (live move_stack) and
+        view (full PGN); returns None when no book is loaded, no moves yet,
+        or no registered line matches."""
+        if self._openings is None:
+            return None
+        if self._view_full_moves:
+            ucis = [m.uci() for m in self._view_full_moves]
+        elif self._board.move_stack and self._start_fen is None:
+            ucis = [m.uci() for m in self._board.move_stack]
+        else:
+            return None
+        return self._openings.lookup(ucis)
 
     # ----- supervisor passthroughs: tests and API layer still poke these
     # attributes directly on the HVE object; preserve the access pattern
@@ -382,22 +431,10 @@ class HumanVsEngine:
         return chess.WHITE
 
     def _global_engine_defaults(self) -> dict:
-        """UCI-option subset of the global engine defaults from settings.
-        Blank/None entries are dropped so callers can iterate without
-        another guard. Book file + plies are fastchess-only and
-        excluded — see project_hve_book_followup memory."""
-        s = self._settings
-        if s is None:
-            return {}
-        out: dict = {}
-        if getattr(s, "engine_default_threads", None):
-            out["Threads"] = s.engine_default_threads
-        if getattr(s, "engine_default_hash_mb", None):
-            out["Hash"] = s.engine_default_hash_mb
-        sp = getattr(s, "engine_default_syzygy_path", None)
-        if sp:
-            out["SyzygyPath"] = sp
-        return out
+        """Delegates to the shared engine-analysis helper so HVE,
+        the AI analysis tool, and any future caller derive engine
+        defaults from one place."""
+        return global_engine_defaults(self._settings)
 
     def _ensure_tablebase(self) -> None:
         sp = getattr(self._settings, "engine_default_syzygy_path", None)
@@ -556,11 +593,7 @@ class HumanVsEngine:
                 await self._publish_clock()
                 await self._republish_last_analysis_info()
                 return
-            if (
-                self._clock.turn_started_at is None
-                and not self._paused
-                and not self._board.is_game_over()
-            ):
+            if self._clock.turn_started_at is None and self._clock_running:
                 self._clock.start_turn()
                 self._start_tick()
                 if self._board.turn == self._engine_color() and self._think_task is None:
@@ -665,10 +698,11 @@ class HumanVsEngine:
             await self._persist()
             await self._publish_board()
             await self._publish_clock()
-            # Don't kick the engine while paused — resume() handles that.
-            if not self._paused:
-                if self._board.turn == self._engine_color():
-                    kick_engine = True
+            # Don't kick the engine outside live play. SWITCH_SIDES is also
+            # allowed in ANALYZING/VIEWING (board orientation flip only) where
+            # the engine must NOT be kicked -- _clock_running enforces that.
+            if self._clock_running and self._board.turn == self._engine_color():
+                kick_engine = True
         if kick_engine:
             await self._engine_to_move()
 
@@ -748,10 +782,13 @@ class HumanVsEngine:
             await self._engine_to_move()
 
     async def start_analysis(self) -> None:
-        """Enter UCI go-infinite mode on the current position.
+        """Enter analysis mode on the current position.
 
-        Only valid from a paused game — that guarantees no engine search
-        is in flight and the clock is already frozen.
+        When `settings.ai_enabled` is on, no engine search is launched
+        -- the AI agent drives engine use via tool calls instead. Mode
+        and state transitions are identical so the client UI is uniform.
+
+        Only valid from a paused game -- guarantees no in-flight search.
         """
         async with self._lock:
             if self._board is None or self._game_id is None:
@@ -771,7 +808,8 @@ class HumanVsEngine:
             board = self._board.copy()
             await self._publish_board()
             await self._publish_clock()
-        self._analysis_task = asyncio.create_task(self._run_analysis(game_id, board))
+        if not getattr(self._settings, "ai_enabled", False):
+            self._analysis_task = asyncio.create_task(self._run_analysis(game_id, board))
 
     async def stop_analysis(self) -> None:
         """Leave analysis mode. Game stays paused until the user resumes;
@@ -1203,7 +1241,12 @@ class HumanVsEngine:
             await self._publish_clock()
         return self._game_id
 
-    async def play_from_here(self, tc: TimeControl, inherit_clocks: bool = False) -> str:
+    async def play_from_here(
+        self,
+        tc: TimeControl,
+        inherit_clocks: bool = False,
+        player_name: str | None = None,
+    ) -> str:
         """Exit view mode by starting a fresh play game seeded with plies
         0..cursor. New game_id, new autosave file. Side-to-play is whoever
         is to move at the cursor (matches today's import default).
@@ -1269,7 +1312,7 @@ class HumanVsEngine:
         new_id = await self.new_game(
             human_white=human_white,
             tc=tc,
-            player_name=self._player_name,
+            player_name=player_name or self._player_name,
             start_fen=start_fen,
             start_moves_uci=seed_moves,
             seed_clock_history=seed_clocks,
@@ -1302,11 +1345,8 @@ class HumanVsEngine:
             await self._cancel_think()
             await self._quit_engine()
             if (
-                self._board is not None
+                self._clock_running
                 and self._game_id is not None
-                and not self._viewing
-                and not self._paused
-                and not self._board.is_game_over()
                 and self._board.turn == self._engine_color()
             ):
                 kick_engine = True
@@ -1329,9 +1369,8 @@ class HumanVsEngine:
             await self._supervisor.swap(path)
             if self._board is not None and self._game_id is not None:
                 await self._publish_board()
-                if not self._board.is_game_over() and not self._paused:
-                    if self._board.turn == self._engine_color():
-                        kick_engine = True
+                if self._clock_running and self._board.turn == self._engine_color():
+                    kick_engine = True
         if kick_engine:
             await self._engine_to_move()
 
@@ -1563,33 +1602,21 @@ class HumanVsEngine:
     ) -> None:
         """Drain analysis info events, serialize + publish, optionally cache.
 
-        Shared by _think_and_play (cache_payload=False) and _run_analysis
-        (cache_payload=True; the cached payload is re-emitted by /game/sync
-        on client remount so the board arrow returns immediately).
-
-        ``capture_score``: when not None, the deepest seen (score, depth) is
-        stored under keys "cp"/"mate" + "depth", white POV, for the caller
-        to read after the search completes.
+        Thin wrapper that pins HVE-specific behavior (eval POV honoring
+        `play_eval_pov`, last-payload cache for /game/sync replay) over
+        the shared `pump_engine_info` loop.
         """
-        async for info in analysis:
-            if "pv" in info or "depth" in info or "score" in info:
-                payload = serialize_info(info, board=board, pov=self._eval_pov(board.turn))
-                if cache_payload:
-                    self._last_analysis_info = payload
-                if capture_score is not None and "score" in info:
-                    side = info["score"].pov(chess.WHITE)
-                    entry: dict
-                    if side.is_mate():
-                        entry = {"mate": side.mate()}
-                    else:
-                        entry = {"cp": side.score()}
-                    if "depth" in info:
-                        entry["depth"] = info["depth"]
-                    capture_score.clear()
-                    capture_score.update(entry)
-                await self._bus.publish(
-                    Event(kind="engine_info", game_id=game_id, payload=payload)
-                )
+        def _cache(payload: dict) -> None:
+            self._last_analysis_info = payload
+        await pump_engine_info(
+            analysis,
+            bus=self._bus,
+            game_id=game_id,
+            board=board,
+            pov=self._eval_pov(board.turn),
+            on_payload=_cache if cache_payload else None,
+            capture_score=capture_score,
+        )  # cancel handled via asyncio task cancellation, not cancel_token
 
     async def _think_and_play(self) -> None:
         async with self._lock:
@@ -1678,14 +1705,13 @@ class HumanVsEngine:
 
         A throwaway process avoids re-configuring + reverting Threads on the
         play engine (and any state bleed it could cause). Killed on exit.
+        Spawn + settings-derived options are owned by the shared
+        engine-analysis helper so this stays in sync with the AI tool.
         """
-        overrides: dict = {}
-        s = self._settings
-        n = getattr(s, "engine_default_analysis_threads", None) if s else None
-        if n:
-            overrides["Threads"] = n
         try:
-            engine = await self._spawn_engine(overrides=overrides)
+            engine, cleanup = await spawn_analysis_engine(
+                self._supervisor, self._settings,
+            )
         except Exception:
             log.exception("could not start engine for analysis")
             return
@@ -1705,10 +1731,10 @@ class HumanVsEngine:
             return
         finally:
             self._analysis = None
-            try:
-                await engine.quit()
-            except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
-                pass
+            # cleanup() is documented to swallow quit/pipe errors;
+            # no surrounding try needed (and the previous narrow tuple
+            # missed OSError from Windows proactor on pipe close).
+            await cleanup()
 
     def _opening_payload(self) -> dict | None:
         """Opening-book lookup. Keys on the standard starting position; an
@@ -1871,9 +1897,7 @@ class HumanVsEngine:
                 "white_time": self._remaining(chess.WHITE),
                 "black_time": self._remaining(chess.BLACK),
                 "turn": side_to_move(self._board),
-                "running": not self._board.is_game_over()
-                and not self._paused
-                and not self._analysis_mode,
+                "running": self._clock_running,
                 "paused": self._paused,
                 "analyzing": self._analysis_mode,
             },

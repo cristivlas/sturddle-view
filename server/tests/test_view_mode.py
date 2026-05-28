@@ -173,6 +173,28 @@ async def test_play_from_here_preserves_player_name(hve):
     assert summary["white"] == "Alice"
 
 
+async def test_play_from_here_player_name_arg_overrides_session(hve):
+    """Regression: importing a game on a fresh session leaves _player_name
+    at the default ("Human"); the play-from-here caller must be able to
+    inject the configured name (from client localStorage) so the new play
+    game's PGN headers and clock label reflect the user's actual name."""
+    h, _ = hve
+    # Fresh session: _player_name is the default. Import a PGN and fork.
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5"],
+        clock_history=None,
+    ))
+    await h.view_last()
+    await h.play_from_here(tc=TimeControl(60, 0), player_name="Alice")
+    assert h._player_name == "Alice"
+    # Cursor lands after Black's reply -- White to move -- human plays White.
+    assert h._human_white is True
+    summary = h.play_game_summary()
+    assert summary is not None
+    assert summary["white"] == "Alice"
+
+
 async def test_play_from_here_at_last_ply_uses_imported_final_clocks(hve):
     """Round-trip with [%clk]: import -- no nav -- play_from_here at last
     ply with inherit_clocks=True must restore live clocks from the PGN."""

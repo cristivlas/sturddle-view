@@ -3,7 +3,7 @@
 
 import { mountBoard } from "./board.js";
 import { toast } from "./dialogs.js";
-import { isMobileLayout } from "./play-debug-windows.js";
+import { isMobileLayout } from "./play-dock-windows.js";
 import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -646,6 +646,16 @@ export function mountGameView(container, opts = {}) {
     _applyClockActive(lastTurn, lastClockRunning);
   }
 
+  function clearEngineInfoFields() {
+    if (engineDepth) engineDepth.textContent = "";
+    if (engineScore) engineScore.textContent = "";
+    if (engineNodes) engineNodes.textContent = "";
+    if (engineNps) engineNps.textContent = "";
+    if (engineTbhits) engineTbhits.textContent = "";
+    if (engineHashfull) engineHashfull.textContent = "";
+    if (enginePv) { enginePv.textContent = ""; enginePv.removeAttribute("title"); }
+  }
+
   function applyEvent(evt) {
     if (!evt) return;
     if (gameId !== null && evt.game_id && evt.game_id !== gameId) return;
@@ -772,13 +782,7 @@ export function mountGameView(container, opts = {}) {
         break;
       case "engine_search_start":
         if (!showEngineInfo) break;
-        if (engineDepth) engineDepth.textContent = "";
-        if (engineScore) engineScore.textContent = "";
-        if (engineNodes) engineNodes.textContent = "";
-        if (engineNps) engineNps.textContent = "";
-        if (engineTbhits) engineTbhits.textContent = "";
-        if (engineHashfull) engineHashfull.textContent = "";
-        if (enginePv) { enginePv.textContent = ""; enginePv.removeAttribute("title"); }
+        clearEngineInfoFields();
         break;
       case "engine_info":
         if (!showEngineInfo) break;
@@ -814,6 +818,12 @@ export function mountGameView(container, opts = {}) {
           }
         }
         break;
+      case "ai_recommendation":
+        if (!editing && evt.payload.uci && evt.payload.uci.length >= 4) {
+          const u = evt.payload.uci;
+          board.setRecommendArrow(u.slice(0, 2), u.slice(2, 4));
+        }
+        break;
       case "game_result":
         if (interactive && !editing) board.enableInput(false);
         if (!editing) board.cancelAnimations();
@@ -838,6 +848,10 @@ export function mountGameView(container, opts = {}) {
     clearArrows() {
       board.clearArrows();
     },
+    clearEngineInfo() {
+      clearEngineInfoFields();
+      engineSection?.classList.add("is-empty");
+    },
     setEnabled(enabled) {
       board.enableInput(interactive && enabled);
     },
@@ -846,13 +860,7 @@ export function mountGameView(container, opts = {}) {
       // from the server will set the new starting position.
       board.setPosition(INITIAL_FEN, null);
       if (moveListEl) moveListEl.innerHTML = "";
-      if (engineDepth) engineDepth.textContent = "";
-      if (engineScore) engineScore.textContent = "";
-      if (engineNodes) engineNodes.textContent = "";
-      if (engineNps) engineNps.textContent = "";
-      if (engineTbhits) engineTbhits.textContent = "";
-      if (engineHashfull) engineHashfull.textContent = "";
-      if (enginePv) enginePv.textContent = "";
+      clearEngineInfoFields();
       engineSection?.classList.add("is-empty");
       setOpening(null);
       setTablebase(null);

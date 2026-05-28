@@ -20,13 +20,18 @@ import {
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { attachColumnResize } from "./col-resize.js";
 import { apiErrorDetail, toast } from "./dialogs.js";
-import { escapeHtml, flashWindow } from "./wb-utils.js";
+import {
+  AUTOSCROLL_SLACK_ROW_PX,
+  escapeHtml,
+  flashWindow,
+  isPinnedToBottom,
+  scrollToBottom,
+} from "./wb-utils.js";
 import { createSlotGrid, SLOT_GAP } from "./workspace-slot-grid.js";
 
 const STORAGE_KEY_PREFIX = "sturddle:workspace:";
 const STANDINGS_COL_PCTS_KEY = "sturddle:tournaments:standingsColPcts";
 const STANDINGS_DEFAULT_PCTS = [22, 5, 5, 5, 5, 8, 25, 25];
-const POLL_INTERVAL_MS = 5000;
 const EVENT_LOG_LIMIT = 500;
 
 
@@ -118,7 +123,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // Lets us run the WS subscription in parallel with the REST backfill
   // without showing duplicates around workspace open.
   const seenSeqs = new Set();
-  let pollTimer = null;
   let unsubscribe = null;
   // True when close() / closeAll() drove the tear-down. Distinguishes from
   // "user closed the last window manually" -- in that case finalize() is the
@@ -618,7 +622,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       return;
     }
     const scroller = scheduleBody.parentElement;
-    const atBottom = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
+    const atBottom = !scroller || isPinnedToBottom(scroller, AUTOSCROLL_SLACK_ROW_PX);
     scheduleBody.innerHTML = `<ul class="wb-sched-list"></ul>`;
     const list = scheduleBody.querySelector(".wb-sched-list");
 
@@ -652,7 +656,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       list.appendChild(li);
     }
 
-    if (atBottom && scroller) scroller.scrollTop = scroller.scrollHeight;
+    if (atBottom) scrollToBottom(scroller);
   }
 
   function renderEngines() {
@@ -665,7 +669,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       return;
     }
     const scroller = enginesBody.parentElement;
-    const atBottom = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
+    const atBottom = !scroller || isPinnedToBottom(scroller, AUTOSCROLL_SLACK_ROW_PX);
     enginesBody.innerHTML = `<ul class="wb-sched-list"></ul>`;
     const list = enginesBody.querySelector(".wb-sched-list");
     for (const [pid, p] of activeProxies) {
@@ -689,7 +693,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       li.appendChild(btn);
       list.appendChild(li);
     }
-    if (atBottom && scroller) scroller.scrollTop = scroller.scrollHeight;
+    if (atBottom) scrollToBottom(scroller);
   }
 
   let _schedulePending = false;
@@ -770,7 +774,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     const list = logBody.querySelector(".wb-eventlog-list");
     if (!list) return;
     const scroller = logBody.parentElement;
-    const atBottom = !scroller || scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 40;
+    const atBottom = !scroller || isPinnedToBottom(scroller, AUTOSCROLL_SLACK_ROW_PX);
     list.innerHTML = eventLog.filter(e => e.payload?.kind !== KIND.PROXY_UNPAIRED).map((e) => {
       const ts = e.ts || "";
       const inner = e.payload?.kind;
@@ -816,18 +820,24 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const detailHtml = parts.map(p => ` <span class="wb-log-detail">${escapeHtml(p)}</span>`).join("");
       return `<li><span class="wb-log-ts">${ts}</span> <span class="wb-log-kind">${escapeHtml(e.kind)}</span>${detailHtml}</li>`;
     }).join("");
-    if (atBottom && scroller) scroller.scrollTop = scroller.scrollHeight;
+    if (atBottom) scrollToBottom(scroller);
   }
 
   // ---- Data refresh -----------------------------------------------------
 
   async function refresh() {
+    let fresh;
     try {
-      detail = await api("GET", `/api/tournaments/${tournament.id}`);
+      fresh = await api("GET", `/api/tournaments/${tournament.id}`);
     } catch (e) {
       log?.(`workspace refresh failed: ${e.message}`);
       return;
     }
+    applyDetail(fresh);
+  }
+
+  function applyDetail(fresh) {
+    detail = fresh;
     // While RUNNING, API state can lag WS events under fast tc, so
     // treat API as additive (add missing entries, never remove).
     // When not RUNNING, replace authoritatively to drop ghosts.
@@ -1006,11 +1016,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (unsubscribe == null) {
       unsubscribe = events.on(pushEvent);
     }
-    if (pollTimer == null) {
-      pollTimer = window.setInterval(() => {
-        if (detail?.status === STATUS.RUNNING) refresh();
-      }, POLL_INTERVAL_MS);
-    }
   }
 
   // Subscribe before backfill so any events firing during the REST
@@ -1096,12 +1101,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
   initWorkspace();
 
-  // Periodic poll: events should drive most updates, but a poll catches
-  // server-restart catch-up windows and PGN-only changes (e.g. the
-  // server's pgn_stats picks up games we missed via WS).
-  pollTimer = window.setInterval(() => {
-    if (detail?.status === STATUS.RUNNING) refresh();
-  }, POLL_INTERVAL_MS);
+  // Periodic refresh is driven by the tournaments-list poll (single source);
+  // it calls refresh() on this workspace handle. Catches WS gaps + PGN-only
+  // changes (games_played advancing without the tailer subscribed).
   function onReconnect(e) {
     if (!e.detail?.connected) {
       seenSeqs.clear();
@@ -1183,10 +1185,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
 
   function tearDown() {
-    if (pollTimer != null) {
-      window.clearInterval(pollTimer);
-      pollTimer = null;
-    }
     if (unsubscribe) {
       unsubscribe();
       unsubscribe = null;
@@ -1530,7 +1528,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   function restoreWindows(wbs) {
     for (const wb of wbs) try { unminimize(wb); } catch { /* */ }
   }
-  const workspace = { close, tile, tidy, untidy, snap, closeAll, minimizeAll, restoreWindows, focus, hide, show, isHidden, openSystemWindow, tournamentId: tournament.id, get isTidy() { return activeLayout === LAYOUT.TIDY; } };
+  const workspace = { close, tile, tidy, untidy, snap, closeAll, minimizeAll, restoreWindows, focus, hide, show, isHidden, openSystemWindow, refresh, applyDetail, tournamentId: tournament.id, get isTidy() { return activeLayout === LAYOUT.TIDY; } };
   activeWorkspace = workspace;
   return workspace;
 }

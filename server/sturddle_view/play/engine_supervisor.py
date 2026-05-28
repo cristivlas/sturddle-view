@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import chess.engine
 
@@ -178,6 +178,73 @@ class EngineSupervisor:
             except chess.engine.EngineError:
                 log.exception("engine refused options %s", accepted)
         return engine
+
+    async def spawn_throwaway(
+        self,
+        overrides: dict | None = None,
+        global_defaults: dict | None = None,
+    ) -> tuple[chess.engine.UciProtocol, Callable[[], Awaitable[None]]]:
+        """Spawn a one-shot engine and return (engine, async cleanup).
+
+        Unlike ``spawn()`` which is paired with the long-lived
+        self._engine / self._transport state used by ``ensure()`` /
+        ``quit()``, this entry point is for short-lived analyses (e.g.
+        the AI agent's `analyze` tool) that own their own engine for
+        the duration of a single search and tear it down on exit.
+
+        The returned cleanup is an async callable -- ``await cleanup()``
+        -- that sends `quit`, closes all pipe transports, and awaits
+        their connection_lost callbacks. Calling it is mandatory; not
+        calling it leaks the asyncio subprocess transport (Windows GC
+        then fires ResourceWarning).
+        """
+        command: str | list[str] = (
+            [self._engine_path, *self._args] if self._args else self._engine_path
+        )
+        transport, engine = await self._popen_uci(command, **_popen_kwargs(self._env))
+        rc_future = getattr(engine, "returncode", None)
+        if rc_future is not None:
+            rc_future.add_done_callback(lambda f: f.exception())
+        self._patch_log(engine)
+        accepted: dict = {}
+        for k, v in (self._options or {}).items():
+            if k in engine.options and not engine.options[k].is_managed():
+                accepted[k] = v
+        for k, v in (global_defaults or {}).items():
+            if k in engine.options and not engine.options[k].is_managed():
+                accepted[k] = v
+        for k, v in (overrides or {}).items():
+            if k in engine.options and not engine.options[k].is_managed():
+                accepted[k] = v
+        if accepted:
+            try:
+                await engine.configure(accepted)
+            except chess.engine.EngineError:
+                log.exception("engine refused options %s", accepted)
+
+        async def _cleanup() -> None:
+            """Exception-safe by contract: callers don't wrap. Swallows
+            quit failures, pipe-close failures (incl. Windows-proactor
+            OSError), and a hung asyncio.wait timeout."""
+            try:
+                await engine.quit()
+            except (chess.engine.EngineTerminatedError, RuntimeError, BrokenPipeError):
+                pass
+            waiters: list[asyncio.Future] = []
+            for fd in (0, 1, 2):
+                try:
+                    pipe = transport.get_pipe_transport(fd)
+                except Exception:
+                    pipe = None
+                if pipe is not None:
+                    waiters.append(_close_and_wait(pipe))
+            waiters.append(_close_and_wait(transport))
+            try:
+                await asyncio.wait(waiters, timeout=_CLOSE_GRACE_SECONDS)
+            except Exception:
+                log.exception("engine cleanup: transport close raised")
+
+        return engine, _cleanup
 
     async def ensure(
         self,

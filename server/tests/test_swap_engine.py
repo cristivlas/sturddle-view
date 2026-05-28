@@ -12,6 +12,7 @@ import pytest
 
 from sturddle_view.events import EventBus
 from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl
+from sturddle_view.play.mode import Mode
 
 
 class _StubEngine:
@@ -67,3 +68,33 @@ async def test_swap_engine_clears_per_engine_env(hve):
     await hve.swap_engine("/engine_b")
 
     assert hve._engine_env == {}
+
+
+# -------- engine-kick gate: only in live play --------
+
+
+async def test_swap_engine_does_not_kick_when_viewing(hve):
+    """swap_engine has no Op-level guard. In VIEWING there is no live game,
+    so the engine must NOT be kicked after the swap."""
+    await hve.new_game(human_white=False, tc=TimeControl(60.0, 0.0))
+    hve._engine_to_move.reset_mock()
+    hve._mode = Mode.VIEWING
+    await hve.swap_engine("/engine_b")
+    hve._engine_to_move.assert_not_awaited()
+
+
+async def test_swap_engine_does_not_kick_when_editing(hve):
+    await hve.new_game(human_white=False, tc=TimeControl(60.0, 0.0))
+    hve._engine_to_move.reset_mock()
+    hve._mode = Mode.EDITING
+    await hve.swap_engine("/engine_b")
+    hve._engine_to_move.assert_not_awaited()
+
+
+async def test_swap_engine_kicks_in_play_when_engine_to_move(hve):
+    """Sanity: PLAY mode + engine to move still kicks after a swap."""
+    await hve.new_game(human_white=False, tc=TimeControl(60.0, 0.0))
+    hve._engine_to_move.reset_mock()
+    assert hve._mode is Mode.PLAY
+    await hve.swap_engine("/engine_b")
+    hve._engine_to_move.assert_awaited_once()

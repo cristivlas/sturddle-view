@@ -18,7 +18,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import __version__
 from .auth import AUTH_COOKIE, origin_ok
-from .api import agent as agent_api
 from .api import chess_utils as chess_api
 from .api import engines as engines_api
 from .api import fs as fs_api
@@ -29,9 +28,28 @@ from .api import ws as ws_api
 from .config import Settings
 from .engines import EngineRegistry, resolve_selected
 from .events import Event, EventBus
+from .llm import CannedProvider, LLMProvider, ToolRegistry
+from .llm.anthropic import AnthropicProvider
+from .llm import ollama as ollama_mod
+from .llm.ollama import OllamaProvider
 from .openings import OpeningBook
+from .play.ai_analysis import AIAnalysisCoordinator
+from .play.engine_supervisor import EngineSupervisor
 from .play.game_store import GameStore
 from .play.human_vs_engine import HumanVsEngine
+from .play.tools_engine import (
+    ANALYZE_TOOL_SPEC,
+    PIECE_AT_TOOL_SPEC,
+    RECOMMEND_MOVE_TOOL_SPEC,
+    TOP_MOVES_TOOL_SPEC,
+    VALIDATE_MOVE_TOOL_SPEC,
+    make_analyze_tool,
+    make_piece_at_tool,
+    make_recommend_move_tool,
+    make_recommend_verifier,
+    make_top_moves_tool,
+    make_validate_move_tool,
+)
 from .recent_imports import RecentImports
 from .tournament.fastchess import FastchessRunner
 from .tournament.orchestrator import Orchestrator, wrap_event_for_bus
@@ -87,6 +105,10 @@ class _OriginMiddleware(BaseHTTPMiddleware):
 # when a Job-killed proxy aborts mid-AcceptEx. Stock cpython closes the
 # listener — we re-arm instead and silence the orphan-task trace.
 _TRANSIENT_ACCEPT_WINERR = {64, 1236, 10054}  # NETNAME_DELETED, ABORTED, RST
+
+# Default Ollama daemon URL lives on the provider module so settings
+# code can reach it without importing app.
+_DEFAULT_OLLAMA_BASE_URL = ollama_mod.DEFAULT_BASE_URL
 
 
 def _install_proactor_accept_resilience() -> None:
@@ -308,6 +330,118 @@ def create_app(
     app.state.openings = OpeningBook.load()
     log.info("loaded %d opening lines", len(app.state.openings))
 
+    # AI analysis: registry + coordinator. Provider remains the canned
+    # walking-skeleton stand-in until real Anthropic/Ollama providers
+    # land. The `analyze` tool resolves the current engine on every
+    # call via resolve_selected(), so engine swaps in Settings are
+    # honored without rebuilding the coordinator.
+    def _ai_engine_launcher() -> EngineSupervisor:
+        launch = resolve_selected(app.state.engines, app.state.settings)
+        sup = EngineSupervisor(launch.path, app.state.event_bus, settings=app.state.settings)
+        if launch.options:
+            sup.options = launch.options
+        if launch.args:
+            sup.args = list(launch.args)
+        if launch.env:
+            sup.env = dict(launch.env)
+        return sup
+
+    def _ai_game_id_provider() -> str | None:
+        hve = getattr(app.state, "hve", None)
+        return getattr(hve, "game_id", None) if hve else None
+
+    def _ai_board_provider():
+        hve = getattr(app.state, "hve", None)
+        return getattr(hve, "_board", None) if hve else None
+
+    ai_registry = ToolRegistry()
+    def _ai_settings_provider():
+        return app.state.settings
+
+    ai_registry.register(
+        ANALYZE_TOOL_SPEC,
+        make_analyze_tool(
+            _ai_engine_launcher,
+            bus=app.state.event_bus,
+            game_id_provider=_ai_game_id_provider,
+            settings_provider=_ai_settings_provider,
+        ),
+    )
+    ai_registry.register(
+        PIECE_AT_TOOL_SPEC,
+        make_piece_at_tool(board_provider=_ai_board_provider),
+    )
+    ai_registry.register(
+        VALIDATE_MOVE_TOOL_SPEC,
+        make_validate_move_tool(board_provider=_ai_board_provider),
+    )
+    ai_registry.register(
+        TOP_MOVES_TOOL_SPEC,
+        make_top_moves_tool(
+            _ai_engine_launcher,
+            bus=app.state.event_bus,
+            board_provider=_ai_board_provider,
+            game_id_provider=_ai_game_id_provider,
+            settings_provider=_ai_settings_provider,
+        ),
+    )
+    ai_registry.register(
+        RECOMMEND_MOVE_TOOL_SPEC,
+        make_recommend_move_tool(
+            _ai_engine_launcher,
+            bus=app.state.event_bus,
+            board_provider=_ai_board_provider,
+            game_id_provider=_ai_game_id_provider,
+            settings_provider=_ai_settings_provider,
+        ),
+    )
+    app.state.ai_tool_registry = ai_registry
+
+    # SV_AI_DEBUG=1: flip the AI loggers to DEBUG so the system prompt,
+    # user message, text deltas, and tool calls are visible. Off by
+    # default; meant to be set when diagnosing a misbehaving model.
+    if os.environ.get("SV_AI_DEBUG") == "1":
+        logging.getLogger("sturddle_view.llm").setLevel(logging.DEBUG)
+        logging.getLogger("sturddle_view.play.ai_analysis").setLevel(logging.DEBUG)
+
+    def _ai_provider_factory() -> LLMProvider:
+        s = app.state.settings
+        provider_name = (s.ai_provider or "").lower()
+        if provider_name == "ollama":
+            return OllamaProvider(
+                base_url=(s.ai_base_url or _DEFAULT_OLLAMA_BASE_URL),
+                model=s.ai_model,
+                thinking_enabled=s.ai_thinking_enabled,
+            )
+        if provider_name == "anthropic":
+            # list_models() is implemented (Settings dropdown); stream()
+            # still raises NotImplementedError, which surfaces as a
+            # done/error event on the bus when an analysis turn fires.
+            return AnthropicProvider(
+                api_key=s.ai_api_key,
+                model=s.ai_model,
+                thinking_enabled=s.ai_thinking_enabled,
+                thinking_budget_tokens=s.ai_thinking_budget_tokens,
+            )
+        # Unknown / unset provider: canned stand-in so the pipeline
+        # still flows end-to-end. Picked by tests that don't care which
+        # provider runs.
+        return CannedProvider()
+
+    app.state.ai_provider_factory = _ai_provider_factory
+    _ai_recommend_verifier = make_recommend_verifier(
+        _ai_engine_launcher,
+        bus=app.state.event_bus,
+        board_provider=_ai_board_provider,
+        game_id_provider=_ai_game_id_provider,
+        settings_provider=_ai_settings_provider,
+    )
+    app.state.ai_coordinator = AIAnalysisCoordinator(
+        app.state.event_bus, CannedProvider(), registry=ai_registry,
+        board_provider=_ai_board_provider,
+        recommend_verifier=_ai_recommend_verifier,
+    )
+
     # Tournament subsystem: store + runner + orchestrator. Wired even
     # when fastchess isn't installed; the Tournaments UI surfaces an
     # empty-state until a binary is configured.
@@ -345,7 +479,6 @@ def create_app(
     app.include_router(engines_api.router)
     app.include_router(fs_api.router)
     app.include_router(game_api.router)
-    app.include_router(agent_api.router)
     app.include_router(tournaments_api.router)
     app.include_router(tournaments_api.internal_router)
     app.include_router(ws_api.router)

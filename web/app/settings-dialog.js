@@ -15,6 +15,24 @@ export const PLAYER_NAME_KEY = "sturddle:player_name";
 export const PLAYER_NAME_DEFAULT = "Human";
 const PLAYER_NAME_MAX_LEN = 32;
 
+export function getConfiguredPlayerName() {
+  return localStorage.getItem(PLAYER_NAME_KEY) || PLAYER_NAME_DEFAULT;
+}
+
+// AI settings wire field names. Named per project's no-string-literals rule.
+// Server-side mirror lives in server/sturddle_view/api/settings.py (_AI_*_KEY).
+const AI_ENABLED_KEY = "ai_enabled";
+const AI_PROVIDER_KEY = "ai_provider";
+const AI_MODEL_KEY = "ai_model";
+const AI_BASE_URL_KEY = "ai_base_url";
+const AI_API_KEY_KEY = "ai_api_key";
+const AI_API_KEY_SET_KEY = "ai_api_key_set";
+const AI_THINKING_ENABLED_KEY = "ai_thinking_enabled";
+const AI_THINKING_BUDGET_TOKENS_KEY = "ai_thinking_budget_tokens";
+// Anthropic's minimum; the server also enforces this. UI prevents
+// submitting smaller values so the user gets feedback before the round trip.
+const AI_THINKING_BUDGET_MIN = 1024;
+
 // Persisted unit is always seconds (float). The UI picks the most natural
 // display unit on load (largest unit with no fractional remainder) and
 // converts back to seconds on save. UCI/cutechess/fastchess all support
@@ -105,9 +123,18 @@ function debounce(fn, ms) {
 export async function openSettingsDialog({ api, initialTab, getActivePerspective, reloadPerspective }) {
   let initial;
   let tournamentInitial;
+  let noEngine = false;
   try {
     initial = await api("GET", "/settings");
     tournamentInitial = await api("GET", "/api/tournament-settings");
+    // AI analysis depends on an engine; gate the master toggle and
+    // surface a hint when none is registered. Failure to read engines
+    // leaves noEngine=false (fail open -- a spurious hint is worse
+    // than a missing one).
+    try {
+      const enginesInfo = await api("GET", "/engines");
+      noEngine = !enginesInfo.selected_id;
+    } catch { /* ignore */ }
   } catch (e) {
     toast(`Couldn't load settings: ${e.message}`, { variant: "danger" });
     return;
@@ -854,8 +881,408 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       sprtPanel.addEventListener("change", () => { validateSprtDefaults(); persistSprt(); });
       validateSprtDefaults();
 
-      const tabByName = { engines: enginesTab, general: generalTab, play: playTab, tournament: tournamentTab, sprt: sprtTab };
-      const startTab = tabByName[initialTab] || generalTab;
+      // --- AI Analysis tab ---
+      // Flat layout per spec: master toggle + provider + model + key/url.
+      // Tunables (tool-call cap, analyze caps, etc.) surface as flat
+      // fields when each proves necessary.
+      const analysisTab = document.createElement("wa-tab");
+      analysisTab.panel = "analysis";
+      analysisTab.textContent = "Analysis";
+      const analysisPanel = document.createElement("wa-tab-panel");
+      analysisPanel.name = "analysis";
+
+      const aiEnabledRow = document.createElement("div");
+      aiEnabledRow.className = "settings-row";
+      const aiEnabledLabel = document.createElement("label");
+      aiEnabledLabel.textContent = "Use AI analysis";
+      const aiEnabled = document.createElement("wa-switch");
+      aiEnabled.size = "small";
+      if (initial[AI_ENABLED_KEY]) aiEnabled.setAttribute("checked", "");
+      if (noEngine) aiEnabled.setAttribute("disabled", "");
+      aiEnabledRow.append(aiEnabledLabel, aiEnabled);
+
+      // Inline hint when no engine is configured: AI analysis depends
+      // on the same engine the play / view perspectives use, so it
+      // can't function without one. Surfaced here rather than as a
+      // toast so the user can act on it without leaving the tab.
+      let aiNoEngineHint = null;
+      if (noEngine) {
+        aiNoEngineHint = document.createElement("div");
+        aiNoEngineHint.className = "settings-row settings-row-hint";
+        const hint = document.createElement("small");
+        hint.textContent = "Register an engine in the Engines tab to enable AI analysis.";
+        aiNoEngineHint.append(hint);
+      }
+
+      const aiProviderRow = document.createElement("div");
+      aiProviderRow.className = "settings-row ai-row";
+      const aiProviderLabel = document.createElement("label");
+      aiProviderLabel.textContent = "Provider";
+      const aiProvider = document.createElement("wa-select");
+      aiProvider.size = "small";
+      aiProvider.setAttribute("distance", "4");
+      for (const [val, label] of [["anthropic", "Anthropic"], ["ollama", "Ollama"]]) {
+        const opt = document.createElement("wa-option");
+        opt.value = val;
+        opt.textContent = label;
+        aiProvider.append(opt);
+      }
+      // .value must be set AFTER options are appended -- wa-select
+      // (like native <select>) drops a value with no matching option.
+      aiProvider.value = initial[AI_PROVIDER_KEY] || "anthropic";
+      aiProviderRow.append(aiProviderLabel, aiProvider);
+
+      // Model: a dropdown populated from the provider's list_models API.
+      // If the fetch fails (no key / unreachable / not implemented), the
+      // free-text input takes over so the user can still set a model
+      // and proceed. Hint line below reports the state.
+      const aiModelRow = document.createElement("div");
+      aiModelRow.className = "settings-row ai-row";
+      const aiModelLabel = document.createElement("label");
+      aiModelLabel.textContent = "Model";
+      const aiModelSelect = document.createElement("wa-select");
+      aiModelSelect.size = "small";
+      aiModelSelect.setAttribute("distance", "4");
+      const aiModelInput = document.createElement("wa-input");
+      aiModelInput.size = "small";
+      aiModelInput.setAttribute("autocomplete", "off");
+      aiModelInput.value = initial[AI_MODEL_KEY] || "";
+      aiModelInput.addEventListener("input", () => {
+        putSettingsDebounced({ [AI_MODEL_KEY]: aiModelInput.value });
+      });
+      aiModelSelect.addEventListener("change", () => {
+        if (!aiModelSelect.value) return;
+        putSettings({ [AI_MODEL_KEY]: aiModelSelect.value });
+      });
+      aiModelRow.append(aiModelLabel, aiModelSelect, aiModelInput);
+
+      const aiModelHint = document.createElement("div");
+      aiModelHint.className = "settings-row settings-row-hint";
+      const aiModelHintText = document.createElement("small");
+      aiModelHint.append(aiModelHintText);
+
+      // Anthropic field: API key (masked when set). Ollama field: base URL.
+      // Toggled by provider selection.
+      const aiKeyRow = document.createElement("div");
+      aiKeyRow.className = "settings-row ai-row";
+      const aiKeyLabel = document.createElement("label");
+      aiKeyLabel.textContent = "API key";
+      const aiKey = document.createElement("wa-input");
+      aiKey.size = "small";
+      // type="text" + CSS mask (text-security: disc) instead of
+      // type="password": browsers don't offer to save a non-password
+      // field. Visual security is identical; both expose the value
+      // via devtools.
+      aiKey.type = "text";
+      aiKey.classList.add("ai-key-masked");
+      aiKey.setAttribute("autocomplete", "off");
+      aiKey.setAttribute("data-lpignore", "true");
+      aiKey.setAttribute("data-form-type", "other");
+      aiKey.setAttribute("spellcheck", "false");
+      // Eye icon slotted into the input's suffix slot so it sits
+      // inside the field's border (matches WA's password-toggle look).
+      const aiKeyToggleIcon = document.createElement("wa-icon");
+      aiKeyToggleIcon.setAttribute("name", "eye");
+      aiKeyToggleIcon.setAttribute("slot", "end");
+      aiKeyToggleIcon.classList.add("ai-key-toggle");
+      aiKeyToggleIcon.setAttribute("role", "button");
+      aiKeyToggleIcon.setAttribute("tabindex", "0");
+      aiKeyToggleIcon.setAttribute("aria-label", "Show/hide API key");
+      let aiKeyRevealed = false;
+      const syncAiKeyMaskUi = () => {
+        // No mask/toggle when the field is empty: the disc font would
+        // swap the placeholder font ("dance") and an eye on an empty
+        // field is meaningless.
+        const hasInput = (aiKey.value || "").trim().length > 0;
+        aiKeyToggleIcon.style.display = hasInput ? "" : "none";
+        const shouldMask = hasInput && !aiKeyRevealed;
+        aiKey.classList.toggle("ai-key-masked", shouldMask);
+        aiKeyToggleIcon.setAttribute("name", shouldMask ? "eye" : "eye-slash");
+      };
+      aiKeyToggleIcon.addEventListener("click", () => {
+        aiKeyRevealed = !aiKeyRevealed;
+        syncAiKeyMaskUi();
+      });
+      const setKeyPlaceholder = () => {
+        // setAttribute on host AND on the shadow input. wa-input mirrors
+        // the host attribute to the internal <input> on connect, but if
+        // we set it before connect, the mirror may not happen; if we set
+        // it after, the internal input has the value pinned. Doing both
+        // covers every order without relying on WA internals.
+        const text = initial[AI_API_KEY_SET_KEY] ? "Saved -- enter new to replace" : "";
+        if (text) aiKey.setAttribute("placeholder", text);
+        else aiKey.removeAttribute("placeholder");
+        const inner = aiKey.shadowRoot?.querySelector("input");
+        if (inner) {
+          if (text) inner.setAttribute("placeholder", text);
+          else inner.removeAttribute("placeholder");
+        }
+      };
+      setKeyPlaceholder();
+      // wa-input upgrades async on first connect. Apply once more after
+      // upgrade so the inner <input> picks the value up even when we
+      // set the attribute too early.
+      if (customElements.whenDefined) {
+        customElements.whenDefined("wa-input").then(() => {
+          requestAnimationFrame(() => {
+            setKeyPlaceholder();
+            syncAiKeyMaskUi();
+          });
+        });
+      }
+      // Commit on blur/Enter only -- mid-typing persists would spam
+      // Anthropic's /v1/models with partial keys (401 storm).
+      let aiKeyDirty = false;
+      const commitAiKey = async () => {
+        if (!aiKeyDirty) return;
+        aiKeyDirty = false;
+        const trimmed = (aiKey.value || "").trim();
+        await putSettings({ [AI_API_KEY_KEY]: trimmed });
+        // Server cleared/set the slot; update local view so the
+        // "Saved -- enter new to replace" placeholder appears the
+        // first time the user supplies a key.
+        initial[AI_API_KEY_SET_KEY] = !!trimmed;
+        setKeyPlaceholder();
+        refreshAiModels();
+      };
+      aiKey.addEventListener("input", () => {
+        aiKeyDirty = true;
+        syncAiKeyMaskUi();
+      });
+      aiKey.addEventListener("blur", commitAiKey);
+      aiKey.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") commitAiKey();
+      });
+      // Esc/X close can fire before blur -- flush any pending edit
+      // so the key isn't silently dropped.
+      dialog.addEventListener("wa-hide", commitAiKey);
+      syncAiKeyMaskUi();
+      aiKey.append(aiKeyToggleIcon);
+      aiKeyRow.append(aiKeyLabel, aiKey);
+
+      const aiUrlRow = document.createElement("div");
+      aiUrlRow.className = "settings-row ai-row";
+      const aiUrlLabel = document.createElement("label");
+      aiUrlLabel.textContent = "Base URL";
+      const aiUrl = document.createElement("wa-input");
+      aiUrl.size = "small";
+      aiUrl.setAttribute("autocomplete", "off");
+      aiUrl.placeholder = "http://localhost:11434";
+      aiUrl.value = initial[AI_BASE_URL_KEY] || "";
+      const persistAiUrlThenRefresh = debounce(async () => {
+        await putSettings({ [AI_BASE_URL_KEY]: aiUrl.value });
+        refreshAiModels();
+      }, 400);
+      aiUrl.addEventListener("input", () => {
+        persistAiUrlThenRefresh();
+      });
+      aiUrlRow.append(aiUrlLabel, aiUrl);
+
+      // Divider separates provider/credentials block from thinking row.
+      // Stays visible for both providers; budget input inside the row
+      // hides for Ollama.
+      const aiThinkingDivider = document.createElement("hr");
+      aiThinkingDivider.className = "settings-divider";
+
+      const aiThinkingRow = document.createElement("div");
+      aiThinkingRow.className = "settings-row ai-row ai-thinking-row";
+      const aiThinking = document.createElement("wa-switch");
+      aiThinking.size = "small";
+      aiThinking.textContent = "Extended thinking";
+      if (initial[AI_THINKING_ENABLED_KEY]) aiThinking.setAttribute("checked", "");
+      const aiThinkingBudget = document.createElement("wa-input");
+      aiThinkingBudget.type = "number";
+      aiThinkingBudget.size = "small";
+      aiThinkingBudget.setAttribute("label", "Budget (tokens)");
+      aiThinkingBudget.min = String(AI_THINKING_BUDGET_MIN);
+      aiThinkingBudget.step = "1024";
+      aiThinkingBudget.value = String(
+        initial[AI_THINKING_BUDGET_TOKENS_KEY] || AI_THINKING_BUDGET_MIN
+      );
+      aiThinkingBudget.className = "ai-thinking-budget";
+      // Regex parity with anthropic.py's _use_adaptive_thinking.
+      // Right way: /v1/models capabilities.thinking.types.adaptive.
+      const aiThinkingAdaptive = document.createElement("span");
+      aiThinkingAdaptive.className = "ai-thinking-adaptive";
+      aiThinkingAdaptive.textContent = "Adaptive";
+      aiThinkingAdaptive.title = "This model picks the thinking budget automatically.";
+      aiThinkingAdaptive.style.display = "none";
+      aiThinkingRow.append(aiThinking, aiThinkingBudget, aiThinkingAdaptive);
+
+      const isAdaptiveModel = () => {
+        if (aiProvider.value !== "anthropic") return false;
+        const live = aiModelSelect.style.display === "none"
+          ? aiModelInput.value
+          : aiModelSelect.value;
+        const model = live || initial[AI_MODEL_KEY] || "";
+        const m = /^claude-opus-(\d+)-(\d+)/.exec(model);
+        if (!m) return false;
+        const major = Number(m[1]), minor = Number(m[2]);
+        return major > 4 || (major === 4 && minor >= 6);
+      };
+
+      const syncBudgetEnabled = () => {
+        const adaptive = isAdaptiveModel();
+        aiThinkingAdaptive.style.display = adaptive ? "" : "none";
+        aiThinkingAdaptive.classList.toggle("is-active", adaptive && aiThinking.checked);
+        aiThinkingBudget.disabled = !aiThinking.checked || adaptive;
+      };
+      syncBudgetEnabled();
+
+      aiThinking.addEventListener("change", () => {
+        putSettings({ [AI_THINKING_ENABLED_KEY]: aiThinking.checked });
+        syncBudgetEnabled();
+      });
+      aiModelSelect.addEventListener("change", syncBudgetEnabled);
+      aiModelInput.addEventListener("input", syncBudgetEnabled);
+      const persistThinkingBudget = debounce(() => {
+        const n = Number(aiThinkingBudget.value);
+        if (!Number.isFinite(n) || n < AI_THINKING_BUDGET_MIN) return;
+        putSettings({ [AI_THINKING_BUDGET_TOKENS_KEY]: n });
+      }, 400);
+      aiThinkingBudget.addEventListener("input", persistThinkingBudget);
+
+      function applyAiProviderVisibility() {
+        // Budget only meaningful for Anthropic's enabled-mode thinking
+        // (Ollama just toggles `think: true`, no budget knob).
+        const isAnthropic = aiProvider.value === "anthropic";
+        aiKeyRow.style.display = isAnthropic ? "" : "none";
+        aiUrlRow.style.display = isAnthropic ? "none" : "";
+        aiThinkingBudget.style.display = isAnthropic ? "" : "none";
+        syncBudgetEnabled();
+      }
+
+      function showModelInput(reason) {
+        // Fall back to free-text input. Used when the provider can't
+        // be queried or returns nothing usable. Hint slot is always
+        // reserved (CSS min-height); we toggle text only -- so an
+        // appearing/disappearing error never reflows the dialog.
+        aiModelSelect.style.display = "none";
+        aiModelInput.style.display = "";
+        aiModelHintText.textContent = reason || "";
+        syncBudgetEnabled();
+      }
+
+      function showModelSelect(models) {
+        aiModelSelect.replaceChildren();
+        const current = initial[AI_MODEL_KEY] || "";
+        const list = models.slice();
+        if (current && !list.includes(current)) list.unshift(current);
+        for (const m of list) {
+          const opt = document.createElement("wa-option");
+          opt.value = m;
+          opt.textContent = m;
+          aiModelSelect.append(opt);
+        }
+        aiModelSelect.value = current || (list[0] || "");
+        aiModelSelect.style.display = "";
+        aiModelInput.style.display = "none";
+        aiModelHintText.textContent = "";
+        syncBudgetEnabled();
+      }
+
+      // Lazy fetch: requested on dialog open + on provider/key/url
+      // changes that could affect what the endpoint returns. Failures
+      // collapse to the free-text input with the server's error in
+      // the hint line.
+      let _modelsFetchSeq = 0;
+      async function refreshAiModels() {
+        const mySeq = ++_modelsFetchSeq;
+        try {
+          const r = await api("GET", "/settings/ai/models");
+          if (mySeq !== _modelsFetchSeq) return;  // raced
+          const models = (r && r.models) || [];
+          if (!models.length) {
+            showModelInput("Provider returned no models -- enter one manually.");
+          } else {
+            showModelSelect(models);
+          }
+        } catch (e) {
+          if (mySeq !== _modelsFetchSeq) return;
+          showModelInput(apiErrorDetail(e) || "Provider unavailable");
+        }
+      }
+
+      aiProvider.addEventListener("change", async () => {
+        // Server remembers each provider's last-selected model AND key
+        // status. PUT just the new provider; then re-read settings so
+        // we know the server's restored values for THIS provider before
+        // fetching its model list.
+        await putSettings({ [AI_PROVIDER_KEY]: aiProvider.value });
+        try {
+          const live = await api("GET", "/settings");
+          initial[AI_MODEL_KEY] = live[AI_MODEL_KEY] || "";
+          initial[AI_API_KEY_SET_KEY] = !!live[AI_API_KEY_SET_KEY];
+          aiModelInput.value = initial[AI_MODEL_KEY];
+        } catch { /* refreshAiModels still runs */ }
+        applyAiProviderVisibility();
+        setKeyPlaceholder();
+        refreshAiModels();
+      });
+      applyAiProviderVisibility();
+
+      // One Map drives BOTH the visual order (insertion order = render
+      // order) and the lockout target set, so adding a row can't drift
+      // between the two lists. Pair each row with the input(s) inside it
+      // that need the disabled attribute when the master toggle is off.
+      const AI_ROWS = new Map([
+        ["provider",         { row: aiProviderRow,     inputs: [aiProvider] }],
+        ["model",            { row: aiModelRow,        inputs: [aiModelSelect, aiModelInput] }],
+        ["model-hint",       { row: aiModelHint,       inputs: [] }],
+        ["api-key",          { row: aiKeyRow,          inputs: [aiKey] }],
+        ["base-url",         { row: aiUrlRow,          inputs: [aiUrl] }],
+        ["thinking-divider", { row: aiThinkingDivider, inputs: [] }],
+        ["thinking",         { row: aiThinkingRow,     inputs: [aiThinking, aiThinkingBudget] }],
+      ]);
+
+      // Every AI-related input below the master toggle gets greyed
+      // out when the toggle is off. Values are retained (settings
+      // persist server-side); flipping the toggle back restores them.
+      function applyAiEnabledLockout() {
+        const off = !aiEnabled.checked;
+        // Pull focus off the toggle before re-enabling fields so the
+        // user doesn't see a focus ring flash on an unrelated control.
+        if (document.activeElement && typeof document.activeElement.blur === "function") {
+          document.activeElement.blur();
+        }
+        for (const { inputs } of AI_ROWS.values()) {
+          for (const el of inputs) {
+            if (off) el.setAttribute("disabled", "");
+            else el.removeAttribute("disabled");
+          }
+        }
+      }
+      aiEnabled.addEventListener("change", () => {
+        putSettings({ [AI_ENABLED_KEY]: aiEnabled.checked });
+        applyAiEnabledLockout();
+        if (aiEnabled.checked) refreshAiModels();
+      });
+
+      analysisPanel.append(aiEnabledRow);
+      if (aiNoEngineHint) analysisPanel.append(aiNoEngineHint);
+      for (const { row } of AI_ROWS.values()) analysisPanel.append(row);
+
+      // Initial state: hide the select until the first fetch tells us
+      // whether we have a real list. Lock fields based on the toggle.
+      showModelInput("");
+      applyAiEnabledLockout();
+      if (aiEnabled.checked) refreshAiModels();
+
+      // Map preserves insertion order by spec -- the iteration order here
+      // IS the visual tab order. Each entry pairs the tab control with
+      // its panel, eliminating the parallel-list bug class where one of
+      // them gets forgotten in tabs.append().
+      const TABS = new Map([
+        ["general",    { tab: generalTab,    panel: generalPanel }],
+        ["engines",    { tab: enginesTab,    panel: enginesPanel }],
+        ["play",       { tab: playTab,       panel: playPanel }],
+        ["display",    { tab: displayTab,    panel: displayPanel }],
+        ["analysis",   { tab: analysisTab,   panel: analysisPanel }],
+        ["tournament", { tab: tournamentTab, panel: tournamentPanel }],
+        ["sprt",       { tab: sprtTab,       panel: sprtPanel }],
+      ]);
+
+      const startTab = (TABS.get(initialTab) || TABS.get("general")).tab;
       startTab.setAttribute("active", "");
       // Eager mount when Engines is the starting tab: defer until the
       // dialog is actually in the document so mountEngineList can measure
@@ -873,10 +1300,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         });
       }
 
-      tabs.append(
-        generalTab, enginesTab, playTab, displayTab, tournamentTab, sprtTab,
-        generalPanel, enginesPanel, playPanel, displayPanel, tournamentPanel, sprtPanel,
-      );
+      for (const { tab, panel } of TABS.values()) tabs.append(tab, panel);
 
       dialog.append(tabs);
     },

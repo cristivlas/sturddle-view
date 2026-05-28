@@ -33,3 +33,20 @@ def test_save_does_not_leak_secret_token(tmp_path):
     s.save_persisted(p)
     text = p.read_text()
     assert original_token not in text
+
+
+def test_ai_models_per_provider_round_trip(tmp_path):
+    p = tmp_path / "settings.json"
+    s = Settings()
+    s.ai_provider = "ollama"
+    s.ai_model = "gemma:latest"
+    s.ai_provider = "anthropic"
+    s.ai_model = "claude-opus-4-7"
+    s.save_persisted(p)
+
+    fresh = Settings()
+    fresh.apply_persisted(p)
+    assert fresh.ai_provider == "anthropic"
+    assert fresh.ai_model == "claude-opus-4-7"
+    fresh.ai_provider = "ollama"
+    assert fresh.ai_model == "gemma:latest"

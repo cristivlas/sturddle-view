@@ -1,14 +1,16 @@
 // Dockable windows for play mode (desktop only).
-// 1. UCI log: raw lines flowing between python-chess and the engine.
-// 2. Search Lines: per-iteration principal variation, cutechess-style.
+// 1. Search Lines: per-iteration principal variation, cutechess-style.
+// 2. AI Analysis: streamed prose commentary from the AI agent.
+// 3. UCI log: raw lines flowing between python-chess and the engine.
 //
 // Each window can float (WinBox) or dock into the left column of the play
-// grid (.play-dock-left, aka the "UCI dock"). Dock state is persisted in
-// localStorage.
+// grid (.play-dock-left). Dock state is persisted in localStorage; when
+// two or more windows are docked, drag-grips between adjacent slots
+// resize them (per-slot flex-grow ratios stored in DOCK_GROW_KEY).
 //
 // The exported createDockableWindow factory is reused by play-commentary-
 // window.js, which supplies its own dock container (.play-comments-host)
-// via getDockEl. Such instances are flagged !sharesUciDock so debug-dock
+// via getDockEl. Such instances are flagged !usesMainDock so main-dock
 // lifecycle helpers (closeDebugWindows, restoreDebugWindows) skip them.
 //
 // Narrow-viewport behavior: at <=800px width / <=700px height, CSS hides
@@ -22,8 +24,23 @@
 
 import { attachColumnResize } from "./col-resize.js";
 import { toast } from "./dialogs.js";
-import { makeSplitter } from "./splitter.js";
 import { mqMobile } from "./breakpoints.js";
+import {
+  AUTOSCROLL_SLACK_LINE_PX,
+  isPinnedToBottom,
+  scrollToBottom,
+} from "./wb-utils.js";
+
+// Vertical stack order for docked windows. Lower values render higher
+// in the column. Centralized so adding a new window doesn't require
+// guessing an unused number; the gaps between values leave room for
+// future insertions without renumbering existing entries.
+export const DOCK_ORDER = Object.freeze({
+  COMMENTARY: 10,
+  AI_ANALYSIS: 20,
+  SEARCH_LINES: 30,
+  UCI_LOG: 40,
+});
 
 const UCI_LOG_MAX_LINES = 1000;
 // Once the buffer overflows, trim this many lines in one go instead of
@@ -35,7 +52,10 @@ const WIN_MARGIN = 8; // gap between window edge and WinBox
 // Set by play.js on perspective mount/unmount.
 let dockEl = null;
 let dockResizeObs = null;
-let dockGrip = null;
+// Drag handles between adjacent docked slots. With N slots there are
+// (N-1) grips; the array is rebuilt each time slots change via
+// syncDockVisibility.
+let dockGrips = [];
 // Additional, independent dock containers (e.g. commentary). Each entry:
 //   { el, resizeObs }
 // These get the same bounds-tracking treatment as the debug dock but do
@@ -43,7 +63,24 @@ let dockGrip = null;
 // respective window factories via createDockableWindow's `getDockEl`.
 const extraDocks = new Map();
 
-const DOCK_SPLIT_KEY = "sturddle:play:dockSplit";
+// Per-slot flex-grow ratios, keyed by the instance's dockedKey. Survives
+// slot additions/removals/reorders because each entry stands alone --
+// missing entries fall back to DEFAULT_DOCK_GROW.
+const DOCK_GROW_KEY = "sturddle:play:dockGrow";
+const DEFAULT_DOCK_GROW = 1.0;
+
+function loadDockGrows() {
+  try {
+    const raw = localStorage.getItem(DOCK_GROW_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === "object") ? parsed : {};
+  } catch { return {}; }
+}
+
+function saveDockGrows(grows) {
+  try { localStorage.setItem(DOCK_GROW_KEY, JSON.stringify(grows)); } catch { /* */ }
+}
 
 // Mobile gate. Sourced from the shared --bp-mobile CSS custom property so
 // the breakpoint lives in one place (see styles.css :root + breakpoints.js).
@@ -164,6 +201,109 @@ function emitLayoutChanged() {
   window.dispatchEvent(new CustomEvent("sturddle:layout-changed"));
 }
 
+function applyDockGrows() {
+  if (!dockEl) return;
+  const slots = dockEl.querySelectorAll(".dock-slot");
+  // Single docked slot: force flex-grow=1 so it fills the whole dock
+  // regardless of any stored ratio from a prior multi-slot session.
+  if (slots.length <= 1) {
+    for (const slot of slots) slot.style.flexGrow = "1";
+    return;
+  }
+  const grows = loadDockGrows();
+  for (const slot of slots) {
+    const inst = instances.find(i => i.slot === slot);
+    if (!inst) continue;
+    const g = Number(grows[inst.dockedKey]);
+    const value = Number.isFinite(g) && g > 0 ? g : DEFAULT_DOCK_GROW;
+    slot.style.flexGrow = String(value);
+  }
+}
+
+function persistGrow(key, value) {
+  const grows = loadDockGrows();
+  grows[key] = value;
+  saveDockGrows(grows);
+}
+
+function attachGripDrag(grip, topInst, botInst) {
+  grip.addEventListener("pointerdown", (eDown) => {
+    if (eDown.button !== 0) return;
+    eDown.preventDefault();
+    try { grip.setPointerCapture(eDown.pointerId); } catch { /* */ }
+    grip.classList.add("dragging");
+
+    const topSlot = topInst.slot;
+    const botSlot = botInst.slot;
+    const topRect0 = topSlot.getBoundingClientRect();
+    const botRect0 = botSlot.getBoundingClientRect();
+    const pxRange = topRect0.height + botRect0.height;
+    // Snapshot the flex-grow values so deltas are linear in pixels:
+    // total grow units (= sum) maps to total pixels (= pxRange).
+    const topG0 = parseFloat(getComputedStyle(topSlot).flexGrow) || DEFAULT_DOCK_GROW;
+    const botG0 = parseFloat(getComputedStyle(botSlot).flexGrow) || DEFAULT_DOCK_GROW;
+    const sumG = topG0 + botG0;
+    const y0 = eDown.clientY;
+    let pendingCollapse = null; // "top" | "bottom" | null
+
+    const onMove = (e) => {
+      const dy = e.clientY - y0;
+      // Grip y movement maps 1:1 onto top-slot pixels; bottom absorbs
+      // the inverse. Clamp to [0, pxRange] so flex-grow stays
+      // non-negative; non-positive on either side flags collapse
+      // intent for release. The grip itself can travel all the way to
+      // either edge -- collapse fires when the slot would be zero.
+      const topPx = Math.max(0, Math.min(topRect0.height + dy, pxRange));
+      const botPx = pxRange - topPx;
+      if (topPx <= 0) pendingCollapse = "top";
+      else if (botPx <= 0) pendingCollapse = "bottom";
+      else pendingCollapse = null;
+      const topG = (topPx / pxRange) * sumG;
+      const botG = (botPx / pxRange) * sumG;
+      topSlot.style.flexGrow = String(topG);
+      botSlot.style.flexGrow = String(botG);
+    };
+
+    const onUp = () => {
+      grip.classList.remove("dragging");
+      grip.removeEventListener("pointermove", onMove);
+      grip.removeEventListener("pointerup", onUp);
+      grip.removeEventListener("pointercancel", onUp);
+      if (pendingCollapse === "top") { topInst.close(); return; }
+      if (pendingCollapse === "bottom") { botInst.close(); return; }
+      persistGrow(topInst.dockedKey, parseFloat(topSlot.style.flexGrow));
+      persistGrow(botInst.dockedKey, parseFloat(botSlot.style.flexGrow));
+    };
+
+    grip.addEventListener("pointermove", onMove);
+    grip.addEventListener("pointerup", onUp);
+    grip.addEventListener("pointercancel", onUp);
+  });
+}
+
+function clearDockGrips() {
+  for (const g of dockGrips) g.remove();
+  dockGrips = [];
+}
+
+function rebuildDockGrips() {
+  clearDockGrips();
+  if (!dockEl) return;
+  const slots = Array.from(dockEl.querySelectorAll(".dock-slot"));
+  for (let i = 0; i + 1 < slots.length; i++) {
+    const topSlot = slots[i];
+    const botSlot = slots[i + 1];
+    const topInst = instances.find(inst => inst.slot === topSlot);
+    const botInst = instances.find(inst => inst.slot === botSlot);
+    if (!topInst || !botInst) continue;
+    const grip = document.createElement("div");
+    grip.className = "dock-grip";
+    dockEl.insertBefore(grip, botSlot);
+    attachGripDrag(grip, topInst, botInst);
+    dockGrips.push(grip);
+  }
+}
+
 function syncDockVisibility() {
   syncExtraDocksVisibility();
   if (!dockEl) return;
@@ -172,37 +312,11 @@ function syncDockVisibility() {
   const isEmpty = slots.length === 0;
   dockEl.classList.toggle("dock-empty", isEmpty);
   if (wasEmpty !== isEmpty) emitLayoutChanged();
-  const bothDocked = slots.length === 2;
-  dockEl.classList.toggle("dock-single", !bothDocked);
-  if (bothDocked && !dockGrip) {
-    dockGrip = document.createElement("div");
-    dockGrip.className = "dock-grip";
-    // Insert between the two slots (after first, before second).
-    const [first, second] = slots;
-    dockEl.insertBefore(dockGrip, second);
-    // slots[0] = top (lower dockOrder), slots[1] = bottom (higher dockOrder).
-    const [topSlot, botSlot] = slots;
-    const topInst = instances.find(i => i.slot === topSlot);
-    const botInst = instances.find(i => i.slot === botSlot);
-    makeSplitter({
-      handle: dockGrip,
-      container: dockEl,
-      orientation: "vertical",
-      cssVar: "--dock-split-ratio",
-      storageKey: DOCK_SPLIT_KEY,
-      defaultRatio: 0.5,
-      onCollapse(side) {
-        if (side === "before" && topInst) topInst.close();
-        else if (side === "after" && botInst) botInst.close();
-      },
-    });
-  } else if (!bothDocked && dockGrip) {
-    dockGrip.remove();
-    dockGrip = null;
-  }
+  applyDockGrows();
+  rebuildDockGrips();
 }
 
-function makeDockSlot(title, bodyEl, onUndock, onClose) {
+function makeDockSlot(title, bodyEl, onUndock, onClose, titleActions) {
   const slot = document.createElement("div");
   slot.className = "dock-slot";
   const closeBtnHtml = onClose
@@ -212,6 +326,7 @@ function makeDockSlot(title, bodyEl, onUndock, onClose) {
   slot.innerHTML = `
     <div class="dock-slot-header">
       <span class="dock-slot-title"></span>
+      <span class="dock-slot-actions"></span>
       <button type="button" class="dock-slot-undock" title="Undock" aria-label="Undock">
         <wa-icon name="arrow-up-right-from-square"></wa-icon>
       </button>
@@ -222,6 +337,16 @@ function makeDockSlot(title, bodyEl, onUndock, onClose) {
   slot.querySelector(".dock-slot-title").textContent = title;
   slot.querySelector(".dock-slot-undock").addEventListener("click", onUndock);
   if (onClose) slot.querySelector(".dock-slot-close").addEventListener("click", onClose);
+  const actionsEl = slot.querySelector(".dock-slot-actions");
+  for (const a of titleActions || []) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `dock-slot-action ${a.className || ""}`.trim();
+    btn.title = a.title || "";
+    btn.setAttribute("aria-label", a.title || "");
+    btn.addEventListener("click", a.onClick);
+    actionsEl.appendChild(btn);
+  }
   slot.querySelector(".dock-slot-body").appendChild(bodyEl);
   return slot;
 }
@@ -246,6 +371,7 @@ export function createDockableWindow(config) {
     getDockEl = () => dockEl,
     onUserClose,
     closable = false,
+    titleActions = [],
   } = config;
 
   let wb = null;
@@ -256,6 +382,7 @@ export function createDockableWindow(config) {
   let docking = false;  // float -> dock transition; onclose skips destroy
   let navAway = false;  // nav detach; onclose skips destroy
   let programmaticClose = false; // close() -> wb.close(); onclose skips onUserClose
+  let currentTitle = title;
 
   function loadWinState() { return localStorage.getItem(winStateKey); }
   function saveWinState(v) { if (v) localStorage.setItem(winStateKey, v); else localStorage.removeItem(winStateKey); }
@@ -278,18 +405,22 @@ export function createDockableWindow(config) {
       docking = false;
     }
     setDocked(dockedKey, true);
-    slot = makeDockSlot(title, body, undock, closable ? userClose : null);
-    // Insert in dockOrder ascending; lower order goes on top.
-    let inserted = false;
+    slot = makeDockSlot(currentTitle, body, undock, closable ? userClose : null, titleActions);
+    // Insert in dockOrder ascending; lower order goes on top. The
+    // `instances` array is in module-load order, not dockOrder, so we
+    // must scan for the MIN-order sibling that's still higher than us
+    // -- inserting before the first match in array order would put a
+    // slot in the wrong place when higher-order siblings were created
+    // first (e.g. UCI loads before AI).
+    let anchor = null;
     for (const other of instances) {
       if (other === inst) continue;
-      if (other.slot && other.slot.parentElement === container && other.dockOrder > dockOrder) {
-        container.insertBefore(slot, other.slot);
-        inserted = true;
-        break;
-      }
+      if (!other.slot || other.slot.parentElement !== container) continue;
+      if (other.dockOrder <= dockOrder) continue;
+      if (anchor === null || other.dockOrder < anchor.dockOrder) anchor = other;
     }
-    if (!inserted) container.appendChild(slot);
+    if (anchor) container.insertBefore(slot, anchor.slot);
+    else container.appendChild(slot);
     syncDockVisibility();
     applyDockBounds(container);
   }
@@ -312,7 +443,7 @@ export function createDockableWindow(config) {
     const y = geo?.y ?? defaultY(h);
     saved = null;
     wb = new WinBox({
-      ...winboxBase(title, className, w, h, x, y),
+      ...winboxBase(currentTitle, className, w, h, x, y),
       mount: body,
       onclose() {
         if (wb) saveGeo(geoKey, wb);
@@ -332,7 +463,22 @@ export function createDockableWindow(config) {
       onmove()     { saveGeo(geoKey, wb); },
       onresize()   { saveGeo(geoKey, wb); },
     });
+    // WinBox addControl with index:0 PREPENDS into .wb-control, so the
+    // LAST call ends up leftmost. Add dock first so it stays rightmost,
+    // then actions in declaration order (each new one goes leftmost).
     addDockButton(wb, dock);
+    for (const a of titleActions) {
+      wb.addControl({ class: a.className, index: 0, click: a.onClick });
+      // WinBox's addControl does not accept title/aria; set them
+      // post-mount via querySelector. Caller must keep className unique
+      // to avoid colliding with anything in body content.
+      const outer = wb.body?.parentElement;
+      const btn = outer?.querySelector(`.wb-control > .${a.className}`);
+      if (btn) {
+        btn.title = a.title || "";
+        btn.setAttribute("aria-label", a.title || "");
+      }
+    }
     const ws = loadWinState();
     if (ws === "min") wb.minimize();
     else if (ws === "max") wb.maximize();
@@ -387,13 +533,24 @@ export function createDockableWindow(config) {
     if (body || saved || isOpen(openKey)) toggle(events);
   }
 
+  function setTitle(next) {
+    if (typeof next !== "string" || next === currentTitle) return;
+    currentTitle = next;
+    if (wb) wb.setTitle(next);
+    if (slot) {
+      const el = slot.querySelector(".dock-slot-title");
+      if (el) el.textContent = next;
+    }
+  }
+
   const inst = {
-    toggle, close, teardownSlot, closeForNav, restore,
+    toggle, close, teardownSlot, closeForNav, restore, setTitle,
     get wb() { return wb; },
     get slot() { return slot; },
     get body() { return body; },
+    dockedKey,
     dockOrder,
-    sharesUciDock: !config.getDockEl,
+    usesMainDock: !config.getDockEl,
   };
   instances.push(inst);
   return inst;
@@ -406,8 +563,8 @@ export function setDockContainer(el) {
   // Only debug-window instances (default getDockEl -> module dockEl) are torn
   // down here; extra-dock owners (e.g. commentary) manage their own lifecycle.
   if (!el) {
-    instances.forEach(i => { if (i.sharesUciDock) i.teardownSlot(); });
-    dockGrip = null;
+    instances.forEach(i => { if (i.usesMainDock) i.teardownSlot(); });
+    clearDockGrips();
   }
   dockEl = el;
   if (el) {
@@ -485,15 +642,12 @@ function buildUciLogBody(events, { setOff }) {
 
   // Autoscroll only when the user is already pinned to the bottom; otherwise
   // they're inspecting earlier output and new lines must not yank them away.
-  const AUTOSCROLL_SLACK_PX = 4;
   setOff(events.on((evt) => {
     if (evt.kind !== "uci_log" || paused) return;
     const { dir, line } = evt.payload;
     // body.parentElement is wb.body when floating, .dock-slot-body when docked.
     const scroller = body.parentElement;
-    const pinned = scroller
-      ? scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - AUTOSCROLL_SLACK_PX
-      : false;
+    const pinned = isPinnedToBottom(scroller, AUTOSCROLL_SLACK_LINE_PX);
     const div = document.createElement("div");
     div.className = `wb-uci-log-line ${dir === ">" ? "uci-out" : "uci-in"}`;
     div.textContent = `${dir} ${line}`;
@@ -506,7 +660,7 @@ function buildUciLogBody(events, { setOff }) {
         lineCount--;
       }
     }
-    if (pinned && scroller) scroller.scrollTop = scroller.scrollHeight;
+    if (pinned) scrollToBottom(scroller);
   }));
 
   return body;
@@ -527,7 +681,7 @@ const uciLog = createDockableWindow({
     return botTop - h - WIN_MARGIN;
   },
   build: buildUciLogBody,
-  dockOrder: 20, // below Search Lines
+  dockOrder: DOCK_ORDER.UCI_LOG,
   closable: true,
 });
 
@@ -689,7 +843,7 @@ const pvTable = createDockableWindow({
   defaultH: 260,
   defaultY: () => HEADER_H,
   build: buildPvTableBody,
-  dockOrder: 10, // above UCI log
+  dockOrder: DOCK_ORDER.SEARCH_LINES,
   closable: true,
 });
 
@@ -702,17 +856,17 @@ export function toggleUciLogWindow(events) { uciLog.toggle(events); }
 export function togglePvTableWindow(events) { pvTable.toggle(events); }
 
 export function closeDebugWindows() {
-  instances.forEach(i => { if (i.sharesUciDock) i.closeForNav(); });
+  instances.forEach(i => { if (i.usesMainDock) i.closeForNav(); });
   syncDockVisibility();
 }
 
 export function closeDebugWindowsPersist() {
-  instances.forEach(i => { if (i.sharesUciDock) i.close(); });
+  instances.forEach(i => { if (i.usesMainDock) i.close(); });
   syncDockVisibility();
 }
 
 export function restoreDebugWindows(events) {
-  instances.forEach(i => { if (i.sharesUciDock) i.restore(events); });
+  instances.forEach(i => { if (i.usesMainDock) i.restore(events); });
 }
 
 // Save open state of debug windows as of the last view-mode analysis session.

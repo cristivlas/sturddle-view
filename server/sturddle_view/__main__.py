@@ -123,10 +123,17 @@ def main() -> None:
         loop = asyncio.ProactorEventLoop
 
     # Windows: SIGINT can't preempt uvicorn's C-level blocking; use the
-    # OS console handler instead. Hard-exits — children rely on Job Object
+    # OS console handler instead. Hard-exits -- children rely on Job Object
     # (TODO 2) for cleanup.
     if sys.platform == "win32" and not args.reload:
         _install_windows_ctrl_handler()
+
+    if sys.platform == "win32" and args.reload:
+        _run_windows_reload(
+            host=host, port=port, loop=loop,
+            ssl_certfile=args.cert, ssl_keyfile=args.key,
+        )
+        return
 
     uvicorn.run(
         "sturddle_view.app:create_app",
@@ -136,13 +143,49 @@ def main() -> None:
         loop=loop,
         factory=True,
         # Use the project's logging config (configure_logging above), not
-        # uvicorn's default — which would otherwise overwrite our settings
+        # uvicorn's default -- which would otherwise overwrite our settings
         # and re-enable per-request access lines we already silenced.
         log_config=None,
         access_log=False,
         ssl_certfile=args.cert,
         ssl_keyfile=args.key,
     )
+
+
+def _run_windows_reload(
+    *,
+    host: str,
+    port: int,
+    loop: object,
+    ssl_certfile: str | None,
+    ssl_keyfile: str | None,
+) -> None:
+    # uvicorn.run pre-binds in the parent and reuses that socket across
+    # worker restarts. On Windows the 2nd worker's CreateIoCompletionPort on
+    # the inherited socket fails with WinError 87. Each worker binds fresh.
+    from uvicorn import Config
+    from uvicorn.supervisors import ChangeReload
+
+    from ._reload_worker import windows_reload_worker
+
+    os.environ["SV_HOST"] = host
+    os.environ["SV_PORT"] = str(port)
+    if ssl_certfile:
+        os.environ["SV_TLS_CERT"] = ssl_certfile
+    if ssl_keyfile:
+        os.environ["SV_TLS_KEY"] = ssl_keyfile
+
+    parent_config = Config(
+        "sturddle_view.app:create_app",
+        host=host,
+        port=port,
+        reload=True,
+        loop=loop,
+        factory=True,
+        log_config=None,
+        access_log=False,
+    )
+    ChangeReload(parent_config, target=windows_reload_worker, sockets=[]).run()
 
 
 _console_handler_ref = None  # keep wrapper alive across the OS callback

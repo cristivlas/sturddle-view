@@ -1,7 +1,7 @@
 """E2E: Play-perspective debug windows dock/undock/restore lifecycle.
 
 Covers the UCI Log and Search Lines windows refactored into the
-createDockableWindow factory (web/app/play-debug-windows.js).
+createDockableWindow factory (web/app/play-dock-windows.js).
 Skipped if Playwright is missing.
 """
 from __future__ import annotations

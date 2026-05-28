@@ -5,7 +5,7 @@
 import { mountGameView } from "../game-view.js";
 import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
-import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, isMobileLayout } from "../play-debug-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, isMobileLayout } from "../play-dock-windows.js";
 import {
   setCommentaryDockContainer,
   setOnUserCloseCommentary,
@@ -16,9 +16,26 @@ import {
   setCommentaryNavState,
   isCommentaryOpen,
 } from "../play-commentary-window.js";
+import {
+  openAi,
+  closeAi,
+  resetAi,
+  appendAiDelta,
+  appendAiThinking,
+  appendAiToolCall,
+  appendAiToolCallComplete,
+  markAiToolCallFailed,
+  noteAiRevision,
+  markAiDone,
+  setAiStatus,
+  setAiTitle,
+  setOnUserCloseAi,
+  setOnReanalyzeAi,
+  isAiOpen,
+} from "../play-ai-window.js";
 import { terminationLabel } from "../format-termination.js";
 import { editAnnotation } from "../annotation-dialog.js";
-import { PLAYER_NAME_KEY, PLAYER_NAME_DEFAULT } from "../settings-dialog.js";
+import { getConfiguredPlayerName } from "../settings-dialog.js";
 
 // Module-scope mirror of "user has a live human-vs-engine game running"
 // so other modules (e.g. tournament Replay button) can decide whether
@@ -110,6 +127,33 @@ function formatGameOver(payload, humanWhite) {
     return `${reason} -- ${humanWon ? "you win" : "engine wins"}.`;
   }
   return `${reason} -- Draw.`;
+}
+
+const ANALYZE_LABEL_STOP = "Stop analysis";
+const ANALYZE_LABEL_START = "Analysis mode";
+const ANALYZE_ICON_STOP = "circle-stop";
+const ANALYZE_ICON_START = "magnifying-glass";
+
+function setDisabled(btn, disabled) {
+  if (disabled) btn.setAttribute("disabled", "");
+  else btn.removeAttribute("disabled");
+}
+
+function configureBtn(btn, {
+  disabled,
+  active,
+  label,
+  icon,
+}) {
+  if (disabled !== undefined) setDisabled(btn, disabled);
+  if (active !== undefined) btn.classList.toggle("is-active", active);
+  if (label !== undefined) {
+    btn.setAttribute("aria-label", label);
+    btn.setAttribute("title", label);
+  }
+  if (icon !== undefined) {
+    btn.querySelector("wa-icon").setAttribute("name", icon);
+  }
 }
 
 export const playPerspective = {
@@ -304,11 +348,16 @@ export const playPerspective = {
     const noEngineBanner = root.querySelector("#no-engine-banner");
     const noEngineBannerBtn = noEngineBanner.querySelector(".no-engine-banner__btn");
 
-    // Visible whenever the server has no engine configured. Hides the
-    // "no engine" failure mode behind a single visible CTA instead of
-    // waiting for the user to click New game and see an error toast.
-    function setNoEngine(noEngine) {
+    // Tracks "server has zero engines registered." Drives both the
+    // CTA banner and per-button gating (view-analyze, AI settings).
+    // Mirrored in JS state so refreshButtons() can read it without an
+    // extra DOM query each call.
+    let noEngine = false;
+    let buttonsReady = false; // refreshButtons reads `editing` etc.; safe only after their let-bindings
+    function setNoEngine(v) {
+      noEngine = !!v;
       noEngineBanner.classList.toggle("hidden", !noEngine);
+      if (buttonsReady) refreshButtons();
     }
     async function checkEngines() {
       try {
@@ -425,22 +474,35 @@ export const playPerspective = {
     }
     const onCommentsResize = () => { syncCommentsVisibility(); };
     window.addEventListener("resize", onCommentsResize);
+
+    // --- AI analysis lifecycle ---
+    // Master toggle from settings; gates the AI panel + the server-side
+    // start_analysis branch. The AI window lives in the main dock
+    // alongside Search Lines + UCI Log.
+    let aiEnabled = false;
+    // Closing the AI window mid-turn = same effect as clicking
+    // toolbar Stop: snapshot view state, stop analysis, close all
+    // dock panels. stopAnalysisFromUi is defined further down.
+    setOnUserCloseAi(() => { stopAnalysisFromUi(); });
     // Snapshot of TC fields used at the start of the current game; lets
     // us tell the user "applies on next game" if they edit TC mid-play.
     let gameTcInitial = null;
     let gameTcIncrement = null;
+    // Latest AI provider/model from settings, captured at analyze-start
+    // time. We do not write to setAiTitle on every settings refresh --
+    // the panel title should reflect what is actually running, not what
+    // is selected in Settings.
+    let aiTitleModel = "";
     async function refreshSettings({ notifyOnDrift = false } = {}) {
       try {
         const s = await ctx.api("GET", "/settings");
         allowTakeback = s.allow_takeback !== false;
         showPgnComments = s.view_show_pgn_comments !== false;
+        aiEnabled = !!s.ai_enabled;
+        aiTitleModel = s.ai_enabled ? (s.ai_model || "") : "";
         syncCommentsVisibility();
         if (notifyOnDrift && !gameOver && resignAvailable) {
           const drift = [];
-          // Side: settings.human_side is "white"|"black"|"random". Only
-          // compare deterministic choices; "random" never conflicts.
-          if (s.human_side === "white" && humanWhite === false) drift.push("side");
-          else if (s.human_side === "black" && humanWhite === true) drift.push("side");
           // TC: compare against the snapshot taken at game start.
           if (
             gameTcInitial !== null &&
@@ -500,6 +562,11 @@ export const playPerspective = {
     let turn = "white";
     let paused = false;
     let analyzing = false;
+    // AI mode only: flips true when an AI turn terminates naturally
+    // (not cancelled/error). Server stays in ANALYSIS so the board is
+    // locked, but the ribbon stops shouting "stopping..." and the
+    // toast disappears. Reset on next analyze start.
+    let aiTurnFinished = false;
     // Single sync point: every analyzing write goes through this setter so
     // the module-scope mirror (_analyzing) used by isAnalyzing() stays
     // current. Direct `analyzing = ...` writes will drift -- always call
@@ -507,6 +574,9 @@ export const playPerspective = {
     function setAnalyzing(v) {
       analyzing = !!v;
       _analyzing = analyzing;
+      // Server flipped out of ANALYSIS -- clear the AI-finished latch
+      // so the ribbon can re-enable when the game is paused again.
+      if (!analyzing) aiTurnFinished = false;
     }
     // View mode state (set from board_update.view payload).
     let viewing = false;
@@ -750,6 +820,7 @@ export const playPerspective = {
         // server's fresh game_id is accepted; set it to the returned
         // id so subsequent updates are still scoped.
         view.setGameId(null);
+        closeAi();
         const r = await ctx.api("POST", "/game/import", importPayload);
         if (r?.game_id) view.setGameId(r.game_id);
       } catch (e) {
@@ -777,15 +848,11 @@ export const playPerspective = {
     }
     let dismissAnalysisToast = null;
 
-    const pauseIcon = pauseBtn.querySelector("wa-icon");
     // Resign is enabled whenever there is an active game; cleared on
     // game_result. We track it explicitly so paused-state can additionally
     // gate it without losing the "active game" signal.
     let resignAvailable = false;
-    function setDisabled(btn, disabled) {
-      if (disabled) btn.setAttribute("disabled", "");
-      else btn.removeAttribute("disabled");
-    }
+    buttonsReady = true;
     function refreshButtons() {
       // Swap ribbons: edit overrides view, which overrides play.
       const activeRibbon = editing ? editRibbon : viewing ? viewRibbon : playRibbon;
@@ -813,60 +880,60 @@ export const playPerspective = {
       if (viewing) {
         const atStart = viewCursor === 0;
         const atEnd = viewCursor === viewTotalPlies;
-        setDisabled(viewFirstBtn, analyzing || atStart);
-        setDisabled(viewBackBtn, analyzing || atStart);
-        setDisabled(viewForwardBtn, analyzing || atEnd);
-        setDisabled(viewLastBtn, analyzing || atEnd);
-        setDisabled(viewSavePgnBtn, viewTotalPlies === 0);
+        configureBtn(viewFirstBtn, { disabled: analyzing || atStart });
+        configureBtn(viewBackBtn, { disabled: analyzing || atStart });
+        configureBtn(viewForwardBtn, { disabled: analyzing || atEnd });
+        configureBtn(viewLastBtn, { disabled: analyzing || atEnd });
+        configureBtn(viewSavePgnBtn, { disabled: analyzing || viewTotalPlies === 0 });
         // Play-from-here is rejected at game-over plies (checkmate /
         // stalemate / draw). Backed by a backend guard that prevents
         // half-cleared state if the UI is bypassed.
-        setDisabled(viewPlayFromHereBtn, analyzing || viewGameOver);
-        viewAnalyzeBtn.classList.toggle("is-active", analyzing);
-        viewAnalyzeBtn.setAttribute(
-          "aria-label", analyzing ? "Stop analysis" : "Analysis mode",
-        );
-        viewAnalyzeBtn.setAttribute(
-          "title", analyzing ? "Stop analysis" : "Analysis mode",
-        );
-        viewAnalyzeBtn.querySelector("wa-icon").setAttribute(
-          "name", analyzing ? "circle-stop" : "magnifying-glass",
-        );
+        configureBtn(viewPlayFromHereBtn, { disabled: analyzing || viewGameOver });
+        // Engine-less view: analyze is unreachable. Tooltip points at
+        // Engines tab so the user knows the next step.
+        // AI turn finished but server still ANALYZING: show ribbon as
+        // normal ("Analysis mode") even though `analyzing` is true.
+        const viewShowAsActive = analyzing && !aiTurnFinished;
+        configureBtn(viewAnalyzeBtn, {
+          disabled: noEngine && !viewShowAsActive,
+          active: viewShowAsActive,
+          label: viewShowAsActive
+            ? ANALYZE_LABEL_STOP
+            : noEngine
+              ? "Register an engine in Settings to analyze"
+              : ANALYZE_LABEL_START,
+          icon: viewShowAsActive ? ANALYZE_ICON_STOP : ANALYZE_ICON_START,
+        });
         return;
       }
       const humanToMove = humanWhite ? turn === "white" : turn === "black";
       // Pause is restricted to the human's turn; Resume (paused=true) is
       // always allowed so a game paused on the engine's turn — e.g. after
       // exiting Analysis — can be unpaused.
-      setDisabled(pauseBtn, gameOver || analyzing || (!paused && !humanToMove));
-      pauseIcon.setAttribute("name", paused ? "forward-step" : "pause");
-      pauseBtn.setAttribute("aria-label", paused ? "Resume" : "Pause");
-      pauseBtn.setAttribute("title", paused ? "Resume" : "Pause");
-      setDisabled(
-        takebackBtn,
-        analyzing || gameOver || !allowTakeback || movesPlayed === 0,
-      );
-      setDisabled(savePgnBtn, movesPlayed === 0);
-      setDisabled(switchSidesBtn, analyzing || gameOver || !resignAvailable);
-      setDisabled(resignBtn, paused || analyzing || gameOver || !resignAvailable);
-      // Analysis is reachable only from a paused game (and to stop, while
-      // analyzing). Eliminates the "pause + enter analysis" combined step.
-      setDisabled(
-        analyzeBtn,
-        gameOver || !resignAvailable || (!analyzing && !paused),
-      );
-      analyzeBtn.classList.toggle("is-active", analyzing);
-      analyzeBtn.setAttribute(
-        "aria-label",
-        analyzing ? "Stop analysis" : "Analysis mode",
-      );
-      analyzeBtn.setAttribute(
-        "title",
-        analyzing ? "Stop analysis" : "Analysis mode",
-      );
-      analyzeBtn.querySelector("wa-icon").setAttribute(
-        "name", analyzing ? "circle-stop" : "magnifying-glass",
-      );
+      configureBtn(pauseBtn, {
+        disabled: gameOver || analyzing || (!paused && !humanToMove),
+        label: paused ? "Resume" : "Pause",
+        icon: paused ? "forward-step" : "pause",
+      });
+      configureBtn(takebackBtn, {
+        disabled: analyzing || gameOver || !allowTakeback || movesPlayed === 0,
+      });
+      configureBtn(savePgnBtn, { disabled: analyzing || movesPlayed === 0 });
+      configureBtn(switchSidesBtn, { disabled: analyzing || gameOver || !resignAvailable });
+      configureBtn(resignBtn, { disabled: paused || analyzing || gameOver || !resignAvailable });
+      // AI turn finished but server is still ANALYZING (user hasn't
+      // closed the AI window yet). Show the ribbon button as normal
+      // ("Analysis mode", magnifying-glass, enabled) -- the rest of
+      // the reachability gates (gameOver / no engine / not paused)
+      // still apply.
+      const showAsActive = analyzing && !aiTurnFinished;
+      const analyzeReachable = !gameOver && resignAvailable && (paused || aiTurnFinished);
+      configureBtn(analyzeBtn, {
+        disabled: !showAsActive && !analyzeReachable,
+        active: showAsActive,
+        label: showAsActive ? ANALYZE_LABEL_STOP : ANALYZE_LABEL_START,
+        icon: showAsActive ? ANALYZE_ICON_STOP : ANALYZE_ICON_START,
+      });
     }
 
     // View-mode flip is purely visual (no backend state; the user isn't
@@ -876,10 +943,152 @@ export const playPerspective = {
     let viewFlipped = false;
     try { viewFlipped = localStorage.getItem(VIEW_FLIP_KEY) === "1"; } catch { /* */ }
 
+    // AI event handling extracted so the same dispatch can replay
+    // buffered events on perspective remount (panel rehydration when a
+    // mid-turn reconnect happens).
+    function dispatchAiEvent(evt) {
+      switch (evt.kind) {
+        case "ai_info": {
+          const p = evt.payload || {};
+          if (typeof p.delta === "string") appendAiDelta(p.delta, p.round ?? 0);
+          if (p.done) {
+            markAiDone({
+              cancelled: !!p.cancelled,
+              error: p.error || null,
+              errorDetail: p.error_detail || null,
+              roundCap: !!p.round_cap,
+              noResponse: !!p.no_response,
+            });
+            if (p.error) {
+              toast(p.error_detail || p.error, {
+                variant: "danger",
+                duration: 6000,
+              });
+            }
+            // Natural completion: hide the "stopping" affordances --
+            // toast and ribbon active look. Server stays in ANALYSIS;
+            // closing the AI window is what exits. Skipped on
+            // cancelled/error to preserve normal cleanup behavior.
+            // Per-turn dismissal is correct because each Analyze click
+            // is a one-shot turn (no rolling session; see
+            // ai-analysis-spec.md §Live session model -- indefinitely
+            // postponed).
+            if (!p.cancelled && !p.error) {
+              aiTurnFinished = true;
+              dismissAnalysisToast?.();
+              dismissAnalysisToast = null;
+              refreshButtons();
+            }
+          }
+          return true;
+        }
+        case "ai_thinking": {
+          const p = evt.payload || {};
+          if (typeof p.delta === "string") appendAiThinking(p.delta, p.round ?? 0);
+          return true;
+        }
+        case "ai_tool_call": {
+          const p = evt.payload || {};
+          appendAiToolCall({
+            round: p.round ?? 0,
+            name: p.name,
+            input: p.input,
+            toolUseId: p.tool_use_id,
+          });
+          return true;
+        }
+        case "ai_tool_call_failed": {
+          const p = evt.payload || {};
+          markAiToolCallFailed({
+            toolUseId: p.tool_use_id,
+            error: p.error,
+            detail: p.detail,
+          });
+          return true;
+        }
+        case "ai_tool_call_complete": {
+          // Debug marker disabled; uncomment to surface per-call checkmarks.
+          // const p = evt.payload || {};
+          // appendAiToolCallComplete({ round: p.round ?? 0, name: p.name });
+          view.clearArrows();
+          view.clearEngineInfo();
+          return true;
+        }
+        case "ai_corrective": {
+          const p = evt.payload || {};
+          noteAiRevision({
+            round: p.round ?? 0,
+            illegalMoves: p.illegal_moves || [],
+            falseClaims: p.false_claims || [],
+            castleViolations: p.castle_violations || [],
+          });
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // Buffer live AI events while the replay GET is in flight, then
+    // drain in seq order with dedupe. Avoids the GET-then-subscribe
+    // race: live events that fire between subscribe and replay arrival
+    // are held instead of dispatched out-of-order.
+    let aiRehydrating = true;
+    let aiLiveBuffer = [];
+    let aiMaxSeq = 0;
+    function dispatchAiEventOrdered(evt) {
+      const seq = evt?.payload?.seq ?? 0;
+      // Server resets seq to 1 at the start of each turn, so seq=1
+      // unconditionally marks a new turn and resets the high-water mark.
+      // Otherwise a single-event turn (e.g. instant error) following a
+      // prior turn whose aiMaxSeq is also 1 would be swallowed.
+      if (seq === 1) aiMaxSeq = 0;
+      else if (seq && seq <= aiMaxSeq) return;
+      if (seq) aiMaxSeq = seq;
+      dispatchAiEvent(evt);
+    }
+    async function rehydrateAiPanel() {
+      try {
+        const r = await ctx.api("GET", "/game/analysis/replay");
+        const events = Array.isArray(r?.events) ? r.events : [];
+        if (events.length > 0) {
+          openAi();
+          resetAi();
+          for (const evt of events) dispatchAiEventOrdered(evt);
+        }
+      } catch { /* */ } finally {
+        aiRehydrating = false;
+        const buffered = aiLiveBuffer;
+        aiLiveBuffer = [];
+        for (const evt of buffered) dispatchAiEventOrdered(evt);
+      }
+    }
+    rehydrateAiPanel();
+
     // --- Hook events for control-bar state changes (board state changes
     //     are GameView's responsibility). ---
     const offEvent = ctx.events.on((evt) => {
+      // AI events: buffer until replay completes, then dedupe by seq.
+      if (evt.kind?.startsWith("ai_")) {
+        if (aiRehydrating) aiLiveBuffer.push(evt);
+        else dispatchAiEventOrdered(evt);
+        return;
+      }
       switch (evt.kind) {
+        case "engine_search_start": {
+          // Engine is busy. While the AI window is open this means the
+          // agent is in a tool call; flip the status line so the user
+          // sees what's taking time. The PV-table window consumes the
+          // same event for its own reset; no conflict.
+          if (isAiOpen()) setAiStatus("engine");
+          break;
+        }
+        case "engine_info": {
+          // Engine produced an info chunk -- search is delivering. Drop
+          // the "engine searching" hint back to "waiting" so the user
+          // knows the agent will narrate next.
+          if (isAiOpen()) setAiStatus("waiting");
+          break;
+        }
         case "board_update": {
           _cachedBoardUpdate = evt;
           movesPlayed = evt.payload.moves_san?.length ?? 0;
@@ -1081,9 +1290,10 @@ export const playPerspective = {
         if (!ok) return;
       }
       try {
-        const playerName = localStorage.getItem(PLAYER_NAME_KEY) || PLAYER_NAME_DEFAULT;
+        const playerName = getConfiguredPlayerName();
         view.setGameId(null);
         view.setPlayerName(playerName);
+        closeAi();
         const r = await ctx.api("POST", "/game/new", { player_name: playerName });
         view.setGameId(r.game_id);
         view.setHumanWhite(!!r.human_white);
@@ -1196,6 +1406,7 @@ export const playPerspective = {
       // Different game while viewing -- confirm before replacing.
       if (!await _confirmReplaceViewedGame({ incomingHash: result.hash, incomingSummary: result.summary })) return;
       try {
+        closeAi();
         const r = await ctx.api("POST", "/game/import", { format: result.format, text: result.text });
         view.setGameId(r.game_id);
         ctx.api("POST", "/game/sync", {}).catch(() => {});
@@ -1275,6 +1486,7 @@ export const playPerspective = {
         // races view_last() and resets the cursor to 0.
         suppressCommentsForEditTransition = true;
         try {
+          closeAi();
           const r = await ctx.api("POST", "/game/view/start", {});
           view.setGameId(r.game_id);
           await ctx.api("POST", "/game/sync", {});
@@ -1297,6 +1509,7 @@ export const playPerspective = {
         }
       }
       try {
+        closeAi();
         await ctx.api("POST", "/game/edit/start", {});
       } catch (e) {
         _clearEditTransitionSuppression();
@@ -1462,7 +1675,10 @@ export const playPerspective = {
       // game_id filter — that drop loses the human_white/name swap.
       view.setGameId(null);
       try {
-        const r = await ctx.api("POST", "/game/view/play-from-here", {});
+        const playerName = getConfiguredPlayerName();
+        view.setPlayerName(playerName);
+        closeAi();
+        const r = await ctx.api("POST", "/game/view/play-from-here", { player_name: playerName });
         view.setGameId(r.game_id);
         // Snapshot TC for drift detection (mirrors onNewGame).
         try {
@@ -1516,30 +1732,79 @@ export const playPerspective = {
       });
     }
 
-    const onAnalyze = async () => {
-      const wasAnalyzing = analyzing;
-      if (wasAnalyzing) snapshotViewAnalysisState();
+    // Stop side of the analyze toggle, extracted so the AI-window
+    // close handler can trigger the same flow (snapshot + endpoint +
+    // toast + panels) as the toolbar Stop button.
+    async function stopAnalysisFromUi() {
+      if (!analyzing) return;
+      snapshotViewAnalysisState();
       try {
-        await ctx.api(
-          "POST",
-          wasAnalyzing ? "/game/analysis/stop" : "/game/analysis/start",
-          {},
-        );
-        if (wasAnalyzing) {
-          dismissAnalysisToast?.();
-          dismissAnalysisToast = null;
-        } else {
-          restoreViewAnalysisWindows(ctx.events);
-          showAnalysisToast();
-        }
+        await ctx.api("POST", "/game/analysis/stop", {});
       } catch (e) {
-        reportError(
-          ctx,
-          wasAnalyzing ? "Stop analysis failed" : "Start analysis failed",
-          e,
-        );
+        reportError(ctx, "Stop analysis failed", e);
+        return;
+      }
+      aiTurnFinished = false;
+      dismissAnalysisToast?.();
+      dismissAnalysisToast = null;
+      closeDebugWindowsPersist();
+    }
+
+    // POST start + restore panels + toast + open/reset AI panel. Shared
+    // by the analyze toggle and the re-analyze button so the two paths
+    // can't drift. openAi() before resetAi(): resetAi sets the spinner
+    // and no-ops when the body is null.
+    async function startAnalysisFromUi() {
+      await ctx.api("POST", "/game/analysis/start", {});
+      restoreViewAnalysisWindows(ctx.events);
+      aiTurnFinished = false;
+      showAnalysisToast();
+      if (aiEnabled) {
+        // Pin the title to the model that is actually about to run.
+        // Mid-session provider/model edits do not retitle until the
+        // user clicks Analyze (or the re-analyze button) again.
+        setAiTitle(aiTitleModel);
+        openAi();
+        resetAi();
+      }
+    }
+
+    const onAnalyze = async () => {
+      if (analyzing) {
+        await stopAnalysisFromUi();
+        return;
+      }
+      try {
+        await startAnalysisFromUi();
+      } catch (e) {
+        reportError(ctx, "Start analysis failed", e);
       }
     };
+
+    // Re-analyze: stop the current turn server-side (if any), then start
+    // a fresh one. Distinct from the Analyze toggle which closes on a
+    // second click; this path keeps the AI panel open and mirrors the
+    // snapshot/restore dance of stopAnalysisFromUi + onAnalyze so view
+    // mode panels survive the round-trip. `reanalyzeInFlight` guards
+    // against rapid double-clicks producing a spurious second start
+    // that the server would reject with ModeConflictError.
+    let reanalyzeInFlight = false;
+    const onReanalyze = async () => {
+      if (reanalyzeInFlight) return;
+      reanalyzeInFlight = true;
+      try {
+        if (analyzing) {
+          snapshotViewAnalysisState();
+          await ctx.api("POST", "/game/analysis/stop", {});
+        }
+        await startAnalysisFromUi();
+      } catch (e) {
+        reportError(ctx, "Re-analyze failed", e);
+      } finally {
+        reanalyzeInFlight = false;
+      }
+    };
+    setOnReanalyzeAi(onReanalyze);
 
     // Cmd/Ctrl+O opens the import dialog. Skip when typing in an input or
     // when a dialog is already open, so it doesn't clobber an in-progress
@@ -1642,6 +1907,9 @@ export const playPerspective = {
         closeCommentary();
         setCommentaryDockContainer(null);
         setOnUserCloseCommentary(null);
+        closeAi();
+        setOnUserCloseAi(null);
+        setOnReanalyzeAi(null);
         dismissAnalysisToast?.();
         dismissAnalysisToast = null;
         dismissGameOverToast?.();

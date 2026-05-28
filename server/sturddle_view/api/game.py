@@ -9,8 +9,8 @@ from fastapi.responses import Response
 
 from ..auth import require_token
 from ..engines import resolve_selected
+from ._ai_kick import cancel_ai_turn, start_ai_turn
 from ..play.canonical_hash import canonical_hash, canonical_hash_from_game
-from ..play.game_store import DEFAULT_PLAYER_NAME
 from ..play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
 from ..play.import_position import PositionImportError, parse_fen, parse_pgn
 from ..recent_imports import RemoveStatus
@@ -89,7 +89,8 @@ async def new_game(payload: dict, request: Request) -> dict:
         initial_seconds=float(payload.get("initial_seconds", s.tc_initial_seconds)),
         increment_seconds=float(payload.get("increment_seconds", s.tc_increment_seconds)),
     )
-    player_name = (payload.get("player_name") or "").strip() or DEFAULT_PLAYER_NAME
+    player_name = (payload.get("player_name") or "").strip() or None
+    await _cancel_ai_analysis(request)
     try:
         game_id = await hve.new_game(human_white=human_white, tc=tc, player_name=player_name)
     except FileNotFoundError as e:
@@ -249,6 +250,7 @@ async def import_game(payload: dict, request: Request) -> dict:
             raise HTTPException(status_code=400, detail="land_at_ply must be int")
         if land_at_ply < 0:
             raise HTTPException(status_code=400, detail="land_at_ply must be >= 0")
+    await _cancel_ai_analysis(request)
     try:
         game_id = await hve.enter_view_mode(
             ViewModeParams(
@@ -446,6 +448,7 @@ async def view_start(request: Request) -> dict:
     # downstream annotation-only edit can still record it. (Import or
     # FEN-edit branches do NOT preserve.)
     fork_link = hve.fork_link
+    await _cancel_ai_analysis(request)
     try:
         game_id = await hve.enter_view_mode(
             ViewModeParams(
@@ -532,8 +535,12 @@ async def view_play_from_here(payload: dict, request: Request) -> dict:
         increment_seconds=float(payload.get("increment_seconds", s.tc_increment_seconds)),
     )
     inherit_clocks = bool(payload.get("inherit_pgn_clocks", s.inherit_pgn_clocks))
+    player_name = (payload.get("player_name") or "").strip() or None
+    await _cancel_ai_analysis(request)
     try:
-        game_id = await hve.play_from_here(tc=tc, inherit_clocks=inherit_clocks)
+        game_id = await hve.play_from_here(
+            tc=tc, inherit_clocks=inherit_clocks, player_name=player_name,
+        )
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=f"engine not found: {e}") from e
     except RuntimeError as e:
@@ -544,6 +551,7 @@ async def view_play_from_here(payload: dict, request: Request) -> dict:
 @router.post("/edit/start")
 async def edit_start(request: Request) -> dict:
     hve = await _get_hve(request)
+    await _cancel_ai_analysis(request)
     try:
         fen = await hve.enter_edit_mode()
     except RuntimeError as e:
@@ -681,18 +689,61 @@ async def resume(request: Request) -> dict:
     return {"ok": True}
 
 
+def _clear_replay(request: Request) -> None:
+    coord = getattr(request.app.state, "ai_coordinator", None)
+    if coord is not None:
+        coord.clear_replay()
+
+
+async def _cancel_ai_analysis(request: Request) -> None:
+    """Cancel any in-flight AI turn and drop its replay buffer.
+
+    The AI agent and its rehydrate buffer are owned by the coordinator,
+    not HVE. Endpoints that flip out of ANALYZING must call this so the
+    agent stops streaming into a discarded context and a page reload
+    doesn't rehydrate a stale panel.
+    """
+    await cancel_ai_turn(request)
+    _clear_replay(request)
+
+
 @router.post("/analysis/start")
 async def analysis_start(request: Request) -> dict:
+    """Enter analysis mode. The server picks the path:
+    - engine go-infinite (default): HVE drives a live PV stream
+    - AI agent (when settings.ai_enabled): tool-call-driven, engine is
+      spawned per analyze call, no parallel go-infinite
+    The client doesn't care which; both produce the same UI signal
+    (analyzing=true on board_update, engine_info events on the bus).
+    """
     hve = await _get_hve(request)
     try:
         await hve.start_analysis()
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    # Drop any prior session's buffer before a new one begins, in case
+    # the previous /analysis/stop was skipped (mode toggle, crash).
+    _clear_replay(request)
+    if getattr(request.app.state.settings, "ai_enabled", False):
+        await start_ai_turn(request)
     return {"ok": True}
+
+
+@router.get("/analysis/replay")
+async def analysis_replay(request: Request) -> dict:
+    """Return the buffered AI events for the in-flight analysis turn.
+    Lets a client reconnecting mid-analysis rebuild the panel from the
+    bus events it missed. Empty list when no analysis is live."""
+    coord = getattr(request.app.state, "ai_coordinator", None)
+    if coord is None:
+        return {"events": []}
+    return {"events": coord.replay()}
 
 
 @router.post("/analysis/stop")
 async def analysis_stop(request: Request) -> dict:
+    # Cancel before flipping out of ANALYZING so the agent stops cleanly.
+    await _cancel_ai_analysis(request)
     hve = await _get_hve(request)
     try:
         await hve.stop_analysis()

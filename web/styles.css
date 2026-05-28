@@ -24,6 +24,8 @@
   --status-ok-bg:  rgba(46, 160, 67, 0.12);
   --status-err-fg: #ff8a80;
   --status-err-bg: rgba(220, 50, 50, 0.15);
+  --play-ai-warning-bg: rgba(255, 255, 255, 0.18);
+  --play-ai-prose-final-border: rgba(255, 255, 255, 0.6);
 
 
   --wa-font-family-body: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -98,6 +100,357 @@ wa-select::part(listbox) {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
 }
+
+/* Toggling `disabled` on wa-input / wa-select runs the component's
+   default 150ms color transition, briefly painting a brighter "enabled"
+   border before the new state settles -- looks like a focus flash on
+   the AI settings rows when the master toggle flips. Suppress only on
+   the AI rows; other forms still get the smooth transition. */
+.ai-row wa-input::part(base),
+.ai-row wa-select::part(combobox) {
+  transition: none !important;
+}
+
+/* AI key masking: text-security visually bullets the chars while the
+   wa-input stays type=text, so browsers don't offer to save it. */
+.ai-key-masked::part(input) {
+  -webkit-text-security: disc;
+  text-security: disc;
+  font-family: text-security-disc, monospace;
+}
+.ai-key-toggle {
+  cursor: pointer;
+  color: var(--muted, #888);
+}
+.ai-key-toggle:hover { color: inherit; }
+
+/* AI prose paragraph -- preserve newlines so blank lines from the
+   model render as paragraph breaks. We stream tokens into a single
+   <p> rather than splitting into multiple nodes (chunks may carry
+   partial whitespace; pre-wrap handles it without DOM gymnastics). */
+.play-ai-prose {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  margin: 0 12px;
+  /* Paint with the panel background so prose covers the rounds-
+     container vertical rule where it overlaps. position:relative +
+     z-index puts prose above the rule's pseudo-element. */
+  position: relative;
+  z-index: 1;
+  background: var(--panel, var(--bg));
+  /* Box around the prose; matches the vertical timeline rule for
+     visual cohesion (same color, same muted opacity via rgba). */
+  border: 1px solid rgba(204, 204, 204, 0.18);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+/* Rounds whose model never emitted prose (tool-only) leave the
+   paragraph empty -- don't render an empty box. */
+.play-ai-prose:empty {
+  display: none;
+}
+
+/* AI analysis status line: spinner + short text. Sits above the prose
+   so streaming text can append below without re-flow. Slightly dimmer
+   than the prose since it's transient progress state, not content. */
+.play-ai-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.play-ai-body > .play-ai-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+.play-ai-status {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 8px 4px;
+  font-size: 1em;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.play-ai-status[hidden] { display: none; }
+/* AI window scrolls inside its own inner wrapper, so the host bodies
+   stop scrolling at this layer. */
+.winbox.sturddle-wb-ai .wb-body,
+.dock-slot-body:has(> .play-ai-body) { overflow: hidden; padding: 0; }
+.play-ai-status-text { line-height: 1; }
+
+/* Inline failure / guardrail markers in the AI panel. Error is loud
+   (red border, bolded header); round-cap is a softer informational
+   note. Both sit at the bottom of the prose paragraph so they don't
+   push existing text out of view. */
+.play-ai-error {
+  display: block;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--wa-color-danger-60, #d9534f);
+  background: rgba(217, 83, 79, 0.08);
+  font-size: 0.9em;
+}
+.play-ai-error-detail {
+  margin-top: 4px;
+  opacity: 0.85;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.play-ai-roundcap {
+  display: block;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--wa-color-warning-60, #d6a200);
+  background: var(--play-ai-warning-bg);
+  font-size: 0.9em;
+  opacity: 0.85;
+}
+
+/* Thinking disclosure: dimmer + smaller than prose; user opt-in. */
+.play-ai-thinking {
+  /* Padded right of the timeline's vertical rule so the disclosure
+     header doesn't sit on the line. */
+  margin: 0 0 8px 14px;
+  font-size: 0.85em;
+  opacity: 0.75;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+.play-ai-thinking > summary {
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 0;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+}
+.play-ai-thinking > summary::-webkit-details-marker { display: none; }
+.play-ai-thinking > summary::marker { content: ""; }
+/* Web Awesome's native.css paints a chevron via summary::after { mask: svg }.
+   Override for our disclosure -- we render our own ::before triangle. */
+.play-ai-thinking > summary::after { display: none; mask: none; background: none; }
+.play-ai-thinking > summary::before {
+  content: "\25B6";
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+.play-ai-thinking[open] > summary::before {
+  transform: rotate(90deg);
+}
+.play-ai-thinking-body {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--wa-color-neutral-fill-loud, #888);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Round panel: one per agent-loop round. Stacks under status; each
+   round shows (optional) revision banner, thinking, tool calls,
+   prose. Vertical spacing visually separates rounds. */
+.play-ai-round {
+  display: block;
+  margin: 0 0 12px;
+  padding-top: 6px;
+}
+/* Tool-only rounds: prose was never emitted (already hidden via
+   .play-ai-prose:empty). Trim the round's own vertical padding +
+   margin so the next round's content sits close (but not flush)
+   against this one's tools. Non-empty rounds keep their spacing. */
+.play-ai-round:has(.play-ai-prose:empty) {
+  margin-bottom: 4px;
+  padding-top: 0;
+}
+/* Thinking keeps its natural bottom margin (8px) so the tool calls
+   below don't crowd the disclosure header. */
+.play-ai-round:has(.play-ai-prose:empty) .play-ai-tools {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+/* A round that follows a tool-only round drops its own top padding,
+   since the previous round just supplied the 4px margin-bottom. */
+.play-ai-round:has(.play-ai-prose:empty) + .play-ai-round {
+  padding-top: 0;
+}
+/* Timeline: Thinking + tool-call rows in one container. The vertical
+   rule lives on the .play-ai-rounds container (see below) so it stays
+   continuous across rounds without per-panel gaps. */
+.play-ai-timeline {
+  margin: 0 12px;
+}
+/* Continuous muted rule passing through the dot column for all rounds.
+   Lives on the rounds-container so gaps between round panels don't
+   break it. Dot column x = timeline margin-left (12px) + dot-half
+   (4px) - line-half (0.5px) = ~15.5px. */
+.play-ai-rounds {
+  position: relative;
+}
+.play-ai-rounds::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  background: var(--wa-color-neutral-fill-soft, #ccc);
+  opacity: 0.18;
+  pointer-events: none;
+}
+/* A round whose prose was invalidated by the next round's Revision
+   banner: muted + strikethrough on the prose so the user sees what
+   the model wrote without believing it. Tool calls and thinking
+   stay legible -- they aren't the wrong claim, the prose is. */
+.play-ai-round-invalidated .play-ai-prose,
+.play-ai-revision-body > .play-ai-prose {
+  /* Mute the text via color, not opacity, so the background stays
+     opaque and continues to cover the rounds-container vertical rule. */
+  color: var(--muted, #888);
+  text-decoration: line-through;
+}
+/* Revision banner: <details> whose summary IS the banner; clicking
+   reveals the previous round's redacted prose inline. margin-left
+   matches .play-ai-thinking's absolute x so banner + Thinking arrow
+   share a single vertical column. The border/background/radius
+   resets undo Web Awesome native.css's generic details styling. */
+.play-ai-revision {
+  margin: 0 12px 6px 15px;
+  padding: 4px 8px;
+  border: none;
+  border-left: 3px solid var(--wa-color-warning-60, #d6a200);
+  border-radius: 0;
+  background: var(--play-ai-warning-bg);
+  font-size: 0.85em;
+}
+.play-ai-revision[open] {
+  /* native.css adds horizontal padding when open -- keep ours. */
+  padding: 4px 8px;
+}
+.play-ai-revision[open] > .play-ai-revision-summary {
+  /* native.css adds negative margin-inline on open; cancel it. */
+  margin-inline: 0;
+  border-radius: 0;
+}
+.play-ai-revision-summary {
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  /* Override native.css summary padding + space-between layout. */
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 8px;
+}
+.play-ai-revision-summary::-webkit-details-marker { display: none; }
+.play-ai-revision-summary::marker { content: ""; }
+.play-ai-revision-summary::after { display: none; mask: none; background: none; }
+/* Amber filled triangle matching the banner accent. */
+.play-ai-revision-summary::before {
+  content: "\25B6";
+  color: var(--wa-color-warning-60, #d6a200);
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+.play-ai-revision[open] > .play-ai-revision-summary::before {
+  transform: rotate(90deg);
+}
+.play-ai-revision-body {
+  margin-top: 4px;
+}
+/* Redacted prose lives in the revision body; keep its background opaque
+   so the rounds-container rule stays hidden behind it. */
+.play-ai-revision-body > .play-ai-prose {
+  margin: 0;
+}
+
+/* Tool-call lines: colored dot per tool family + compact label.
+   Names mapped to dot color via .play-ai-tool-dot-<name>. */
+.play-ai-tools {
+  /* Inside .play-ai-timeline -- margin handled by timeline padding. */
+  margin: 4px 0;
+  padding: 6px 0 6px 0;
+  /* border: 2px red solid; */
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* One horizontal scrollbar for the whole stack -- avoids per-row
+     scrollbars when multiple piece_at probes land in sequence. Rows
+     stay nowrap; widest row drives the scroller. */
+  overflow-x: auto;
+}
+.play-ai-tool-call {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85em;
+  opacity: 0.85;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+.play-ai-tool-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--wa-color-neutral-fill-loud, #888);
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 1;
+}
+.play-ai-tool-dot-analyze        { background: var(--wa-color-primary-60, #4a90e2); }
+.play-ai-tool-dot-piece_at       { background: var(--wa-color-success-80, lightblue); }
+.play-ai-tool-dot-validate_move  { background: teal; }
+.play-ai-tool-dot-top_moves      { background: var(--wa-color-primary-60, #4a90e2); }
+.play-ai-tool-dot-recommend_move { background: #7c3aed; }
+/* Completion marker: neutral checkmark glyph in place of the colored
+   dot. Inherits the dot's box dimensions for column alignment. */
+.play-ai-tool-dot-complete {
+  background: transparent;
+  border-radius: 0;
+  color: var(--accent-line);
+  font-weight: 700;
+  line-height: 8px;
+  text-align: center;
+}
+.play-ai-tool-dot-complete::before { content: "\2713"; font-size: 10px; }
+/* Failed tool call: red dot + dim label, with the error appended to
+   the label by the renderer. */
+.play-ai-tool-call-failed .play-ai-tool-dot {
+  background: var(--wa-color-danger-60, #d9534f);
+}
+.play-ai-tool-call-failed .play-ai-tool-label {
+  opacity: 0.7;
+}
+.play-ai-tool-label {
+  /* Stay on one line; the row scrolls horizontally if needed. */
+  white-space: nowrap;
+}
+
+/* Terminal markers (cancelled/error/round-cap/no-response) sit
+   outside any round panel since they belong to the whole turn. */
+.play-ai-terminal {
+  margin: 0 12px 8px;
+}
+/* Final prose on a natural multi-round completion: thicker, brighter
+   bottom border signals "AI is done" without a separate separator. */
+.play-ai-prose-final {
+  border: 2px solid var(--play-ai-prose-final-border);
+}
+.play-ai-cancelled {
+  display: inline-block;
+  font-style: italic;
+  opacity: 0.7;
+}
+
 body {
   margin: 0;
   font: 0.875rem/1.4 system-ui, -apple-system, Segoe UI, sans-serif;
@@ -267,7 +620,7 @@ svg.cm-chessboard {
      below moves it to the right edge. Inset clears the 36px ribbon plus
      an 8px gutter so toasts don't overlap ribbon buttons.
      #xgame-toast-stack lives on the opposite (moves-list) side. */
-  inset: auto auto 16px 44px;
+  inset: auto auto 4px 44px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -287,7 +640,7 @@ svg.cm-chessboard {
   max-height: none;
   color: inherit;
 }
-#xgame-toast-stack { inset: auto 44px 16px auto; }
+#xgame-toast-stack { inset: auto 44px 4px auto; }
 #toast-stack:popover-open,
 #xgame-toast-stack:popover-open {
   display: flex;
@@ -317,6 +670,17 @@ svg.cm-chessboard {
 html, body { height: 100%; }
 body { display: flex; flex-direction: column; }
 main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+#app-footer {
+  flex: 0 0 auto;
+  text-align: center;
+  font-size: 0.7rem;
+  color: var(--muted);
+  padding: 3px 8px;
+  border-top: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 @media (max-width: 640px) {
   main { overflow-y: auto; }
 }
@@ -554,13 +918,9 @@ body[data-ribbon-float] .tournaments-ribbon {
   position: fixed;
   left: calc(var(--ribbon-w) + 1px);
   /* top, bottom, width set dynamically in JS to align with clock rows and board */
-  --dock-split-size: 5px;
-  --dock-split-ratio: 0.5;
-  display: grid;
-  grid-template-rows:
-    calc(var(--dock-split-ratio) * 100% - var(--dock-split-size) / 2)
-    var(--dock-split-size)
-    calc((1 - var(--dock-split-ratio)) * 100% - var(--dock-split-size) / 2);
+  --dock-grip-size: 5px;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   z-index: 9; /* below ribbon (z-index:10) */
 }
@@ -568,7 +928,7 @@ body[data-ribbon-float] .tournaments-ribbon {
 
 /* PGN commentary panel: a parallel dock container occupying the same left
    column area as .play-dock-left. Holds at most one .dock-slot (commentary).
-   Visibility toggled via the .dock-empty class set by play-debug-windows.js. */
+   Visibility toggled via the .dock-empty class set by play-dock-windows.js. */
 .play-comments-host {
   grid-column: 1;
   grid-row: 1;
@@ -625,19 +985,18 @@ body[data-ribbon-float] .tournaments-ribbon {
 .play-dock-left:not(.dock-empty),
 .play-comments-host:not(.dock-empty) { border: 1px solid #454952; }
 .play-comments-host.dock-empty { visibility: hidden; }
-/* When only one slot is docked the grip row is absent; collapse to single row. */
-.play-dock-left.dock-single { display: flex; flex-direction: column; }
 .dock-slot {
   display: flex;
   flex-direction: column;
-  flex: 1 1 0; /* fills container in single-slot (flex) mode */
+  flex: 1 1 0; /* JS overrides flex-grow per slot for N-slot ratios */
   min-height: 0;
+  overflow: hidden;
   border: 1px solid var(--border-subtle);
   background: var(--panel);
 }
-.play-dock-left:not(.dock-single) .dock-slot { overflow: hidden; }
 .play-comments-host .dock-slot { overflow: hidden; }
 .dock-grip {
+  flex: 0 0 var(--dock-grip-size, 5px);
   cursor: row-resize;
   background: transparent;
   z-index: 1;
@@ -662,6 +1021,12 @@ body[data-ribbon-float] .tournaments-ribbon {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.dock-slot-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+.dock-slot-action,
 .dock-slot-undock,
 .dock-slot-close {
   flex: 0 0 auto;
@@ -672,8 +1037,40 @@ body[data-ribbon-float] .tournaments-ribbon {
   color: var(--muted); cursor: pointer;
   font-size: 0.75rem;
 }
+.dock-slot-action:hover,
 .dock-slot-undock:hover,
 .dock-slot-close:hover { color: var(--fg); background: var(--nav-btn-bg-hover); }
+/* Floating-mode (WinBox title-bar control). Mirrors the
+   wb-ribbon-rotate-ctrl pattern; the !important rules override the
+   WinBox vendor CSS that paints a default background-image. */
+.play-ai-reanalyze-ctrl {
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-size: 11px; mask-size: 11px;
+  background-color: rgba(255,255,255,0.85) !important;
+  background-image: none !important;
+}
+/* Docked-mode override: the dock-slot-action button uses the muted
+   button theme. Reset mask/background back to the button's natural
+   styling, then paint the icon via ::before so hover/disabled colors
+   work via currentColor. */
+.dock-slot-action.play-ai-reanalyze-ctrl {
+  -webkit-mask-image: none !important; mask-image: none !important;
+  background-color: transparent !important;
+}
+.dock-slot-action.play-ai-reanalyze-ctrl::before {
+  content: "";
+  display: block;
+  width: 14px; height: 14px;
+  background-color: currentColor;
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-size: contain; mask-size: contain;
+}
 .dock-slot-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -717,8 +1114,9 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 }
 
 @media (max-width: 640px) {
-  /* !important needed: .play-dock-left.dock-single below has higher
-     specificity than the bare class selector and would otherwise win. */
+  /* !important guards against any later .play-dock-left rule with
+     higher specificity (e.g. modifier classes set from JS). Mobile
+     must hide the dock unconditionally. */
   .play-dock-left { display: none !important; }
   .play-comments-host { display: none !important; }
   #play-perspective { display: block; }
@@ -986,6 +1384,9 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 /* Engine "thinking" arrow: navy. */
 .cm-chessboard .arrow-success .arrow-head { fill: #1e3a8a; }
 .cm-chessboard .arrow-success .arrow-line { stroke: #1e3a8a; opacity: 0.55; }
+/* AI recommendation arrow: purple. */
+.cm-chessboard .arrow-secondary .arrow-head { fill: #7c3aed; }
+.cm-chessboard .arrow-secondary .arrow-line { stroke: #7c3aed; opacity: 0.55; }
 .clock-row .clock-name {
   font-size: 0.8125rem;
   color: inherit;
@@ -1581,6 +1982,39 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 
 /* Form-style rows (label + input) inside a panel. */
 .settings-row { max-width: 360px; }
+.ai-thinking-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+}
+.ai-thinking-row wa-switch { margin-bottom: 0.5em; }
+.ai-thinking-budget { width: 8em; max-width: 8em; }
+.ai-thinking-budget::part(base) { max-width: 8em; }
+.ai-thinking-budget::part(input) { width: 8em; min-width: 0; }
+.ai-thinking-budget::part(form-control-label) {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-family: var(--wa-font-family-body);
+}
+.ai-thinking-adaptive {
+  display: inline-flex;
+  align-items: center;
+  height: var(--wa-form-control-height);
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  background: var(--panel);
+  margin-bottom: 0;
+  opacity: 0.6;
+}
+.ai-thinking-adaptive.is-active {
+  color: var(--fg);
+  background: var(--wa-color-surface-raised);
+  border-color: var(--accent-line);
+  opacity: 1;
+}
 /* Toggles stack: switches stacked vertically, one per row. */
 .settings-toggles-grid {
   display: flex;
@@ -1859,7 +2293,14 @@ wa-dialog wa-tab-panel > .settings-tournament-tpl-mount { margin-top: 24px; }
 }
 /* Icon buttons have intrinsic size — don't stretch them across the column. */
 .settings-row-actions > * { flex: 0 0 auto; }
-.settings-row-hint { font-size: 0.6875rem; }
+.settings-row-hint {
+  font-size: 0.8125rem;
+  color: var(--muted, #888);
+  height: 1.4em;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .settings-section-heading {
   font-size: 0.75rem; color: var(--muted); margin: 12px 0 4px 0;
   text-transform: uppercase; letter-spacing: 0.05em;
@@ -2350,8 +2791,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 /* Rotate-orientation control button. Uses mask-image like other custom
    WinBox controls (see .wb-log-copy-ctrl). */
 .wb-ribbon-rotate-ctrl {
-  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
-  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-right.svg);
+  -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-left.svg);
+  mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/arrow-rotate-left.svg);
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
   -webkit-mask-position: center;
@@ -2647,23 +3088,23 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    docks the ribbon horizontally and is unaffected.
    ------------------------------------------------------------------ */
 body[data-ribbon-side="right"] #toast-stack {
-  inset: auto 44px 16px auto;
+  inset: auto 44px 4px auto;
 }
 body[data-ribbon-side="right"] #xgame-toast-stack {
-  inset: auto auto 16px 44px;
+  inset: auto auto 4px 44px;
 }
 @media (max-width: 640px) {
   /* Ribbon is horizontal at top on mobile, so toasts don't need a side
-     gutter to clear it -- reset to a uniform 16px edge inset. xgame
+     gutter to clear it -- 16px side, 4px bottom edge inset. xgame
      stack collapses onto the same edge as the default stack since the
      "moves-list side" distinction is desktop-only. */
   #toast-stack,
   #xgame-toast-stack {
-    inset: auto auto 16px 16px;
+    inset: auto auto 4px 16px;
   }
   body[data-ribbon-side="right"] #toast-stack,
   body[data-ribbon-side="right"] #xgame-toast-stack {
-    inset: auto 16px 16px auto;
+    inset: auto 16px 4px auto;
   }
 }
 

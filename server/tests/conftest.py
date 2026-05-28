@@ -23,30 +23,151 @@ _UVICORN_SHUTDOWN_TIMEOUT = 10.0
 _SERVER_LOGS: dict[str, Path] = {}
 
 
-def make_fake_uci(root: Path, name: str) -> str:
-    """Write a minimal UCI stub engine to ``root`` and return its path.
+class _InMemoryKeyring:
+    """Tests must never touch the real OS keyring -- they'd pollute the
+    user's Credential Manager / Keychain. This shim implements the two
+    methods key_store uses and lives only for the test process."""
 
-    The stub responds to ``uci``/``isready``/``quit`` only; it does NOT
-    play moves. Tests that need a move-playing fake should override
-    locally."""
+    def __init__(self) -> None:
+        self._store: dict[tuple[str, str], str] = {}
+
+    def get_password(self, service: str, account: str) -> str | None:
+        return self._store.get((service, account))
+
+    def set_password(self, service: str, account: str, password: str) -> None:
+        self._store[(service, account)] = password
+
+    def delete_password(self, service: str, account: str) -> None:
+        self._store.pop((service, account), None)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_keyring(monkeypatch):
+    """Force every test to use an in-memory keyring -- never the OS one."""
+    from sturddle_view import key_store
+    fake = _InMemoryKeyring()
+    monkeypatch.setattr(key_store, "_keyring", lambda: fake)
+    yield
+
+
+def _write_uci_stub(root: Path, name: str, extra_body: str = "", *, pre_loop: str = "") -> str:
+    """Shared writer for Python-based fake UCI engines.
+
+    `extra_body`: indented elif branches in the read loop.
+    `pre_loop`: module-level statements before the read loop (e.g. state
+    vars like `last_position = ''` for the position-aware fake).
+    """
     py = root / f"{name}.py"
-    py.write_text(
+    body = (
         "#!/usr/bin/env python3\n"
         "import sys\n"
+        f"{pre_loop}"
         "while True:\n"
         "    line = sys.stdin.readline()\n"
         "    if not line: break\n"
         "    line = line.strip()\n"
         f"    if line == 'uci': sys.stdout.write('id name {name}\\nuciok\\n'); sys.stdout.flush()\n"
         "    elif line == 'isready': sys.stdout.write('readyok\\n'); sys.stdout.flush()\n"
+        f"{extra_body}"
         "    elif line == 'quit': break\n"
     )
+    py.write_text(body)
     if sys.platform.startswith("win"):
         wrapper = root / f"{name}.cmd"
         wrapper.write_text(f'@"{sys.executable}" "{py}" %*\r\n')
         return str(wrapper)
     py.chmod(py.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     return str(py)
+
+
+def make_searching_fake_uci(
+    root: Path,
+    name: str,
+    *,
+    score_cp: int = 25,
+    depth: int = 6,
+    bestmove: str = "e2e4",
+    pv: str = "e2e4 e7e5",
+) -> str:
+    """Fake UCI engine that responds to `go` with a canned info line +
+    bestmove. Used by analysis-driving tests (e.g. the AI `analyze`
+    tool) to exercise the real chess.engine loop without a heavy binary.
+
+    Honors `stop` by emitting bestmove immediately (same canned line),
+    so a cancel-mid-search test sees the engine wind down cleanly.
+    """
+    extra = (
+        "    elif line.startswith('go') or line == 'stop':\n"
+        f"        sys.stdout.write('info depth {depth} score cp {score_cp} nodes 1234 time 50 pv {pv}\\n')\n"
+        f"        sys.stdout.write('bestmove {bestmove}\\n')\n"
+        "        sys.stdout.flush()\n"
+    )
+    return _write_uci_stub(root, name, extra)
+
+
+def make_position_aware_fake_uci(
+    root: Path,
+    name: str,
+    *,
+    score_by_substring: dict[str, int],
+    default_score_cp: int = 0,
+    depth: int = 6,
+) -> str:
+    """Fake UCI engine that varies `score cp` by matching substrings
+    against the latest `position` line concatenated with the current
+    `go` line (so callers can key on FEN, played moves, OR `searchmoves`
+    args in `go`). First match wins, otherwise `default_score_cp`."""
+    import json
+    table_json = json.dumps(score_by_substring)
+    extra = (
+        "    elif line.startswith('position'):\n"
+        "        last_position = line\n"
+        "    elif line.startswith('go') or line == 'stop':\n"
+        "        ctx = last_position + ' ' + line\n"
+        f"        table = {table_json}\n"
+        f"        cp = {default_score_cp}\n"
+        "        for needle, val in table.items():\n"
+        "            if needle in ctx:\n"
+        "                cp = val\n"
+        "                break\n"
+        f"        sys.stdout.write(f'info depth {depth} score cp {{cp}} nodes 1234 time 50\\n')\n"
+        "        sys.stdout.write('bestmove 0000\\n')\n"
+        "        sys.stdout.flush()\n"
+    )
+    return _write_uci_stub(root, name, extra, pre_loop="last_position = ''\n")
+
+
+def make_long_search_fake_uci(
+    root: Path,
+    name: str,
+    *,
+    bestmove: str = "e2e4",
+    pv: str = "e2e4",
+    score_cp: int = 25,
+) -> str:
+    """Fake UCI that emits an info line on `go` and then sits idle until
+    `stop` (emits bestmove) or `quit` (exits). The outer read loop in
+    _write_uci_stub already handles waiting for the next command, so
+    after the info line we just fall back to it.
+
+    Lets a test deterministically observe "search in flight" and exercise
+    mid-search cancel via the engine's stop path."""
+    extra = (
+        "    elif line.startswith('go'):\n"
+        f"        sys.stdout.write('info depth 1 score cp {score_cp} nodes 100 time 10 pv {pv}\\n')\n"
+        "        sys.stdout.flush()\n"
+        "    elif line == 'stop':\n"
+        f"        sys.stdout.write('bestmove {bestmove}\\n')\n"
+        "        sys.stdout.flush()\n"
+    )
+    return _write_uci_stub(root, name, extra)
+
+
+def make_fake_uci(root: Path, name: str) -> str:
+    """Minimal UCI stub: handles ``uci``/``isready``/``quit`` only and
+    does NOT play moves. Tests that need a move-playing fake should
+    use ``make_searching_fake_uci`` or override locally."""
+    return _write_uci_stub(root, name)
 
 
 def free_port() -> int:
@@ -188,6 +309,25 @@ def pytest_addoption(parser):
         action="store_true",
         default=False,
         help="Overwrite committed snapshot fixtures with current output.",
+    )
+    # Real-Ollama opt-in for AI analysis integration tests. Default off
+    # so CI / normal runs skip the network. Model is required when the
+    # flag is set; base URL defaults to the local daemon.
+    parser.addoption(
+        "--ollama",
+        action="store_true",
+        default=False,
+        help="Run integration tests that talk to a real Ollama daemon.",
+    )
+    parser.addoption(
+        "--ollama-model",
+        default=None,
+        help="Model name to use when --ollama is set (e.g. qwen2.5:3b).",
+    )
+    parser.addoption(
+        "--ollama-base-url",
+        default="http://localhost:11434",
+        help="Base URL of the Ollama daemon when --ollama is set.",
     )
 
 

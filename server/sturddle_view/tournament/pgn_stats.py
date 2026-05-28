@@ -951,6 +951,32 @@ def ordo_fit(
     return result
 
 
+def games_played_from_config(config_path: Path) -> int | None:
+    """Sum of W+L+D across fastchess's stats; authoritative game count.
+    Returns None on missing/unparseable file; 0 on empty stats. Callers
+    fall back to the PGN count when None (pre-first-autosave)."""
+    if not config_path.exists():
+        return None
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    stats = data.get("stats")
+    if not isinstance(stats, dict):
+        return None
+    total = 0
+    try:
+        for entry in stats.values():
+            if not isinstance(entry, dict):
+                continue
+            total += int(entry.get("wins") or 0)
+            total += int(entry.get("losses") or 0)
+            total += int(entry.get("draws") or 0)
+    except (TypeError, ValueError):
+        return None
+    return total
+
+
 def compute_standings(
     pgn_path: Path,
     tournament_type: str = "roundrobin",

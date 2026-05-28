@@ -10,12 +10,19 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import APP_NAME
+from . import key_store
 from ._atomic import atomic_write_json
 from ._runtime import app_root
 
 
 REPO_ROOT = app_root()
 WEB_DIR = REPO_ROOT / "web"
+
+# Default Anthropic thinking budget (tokens). Overridable via
+# SV_AI_THINKING_BUDGET_TOKENS. 4096 is a moderate value above the API
+# minimum (1024) -- enough headroom for tactical positions, small enough
+# not to dominate the output-token cap.
+_DEFAULT_AI_THINKING_BUDGET_TOKENS = 4096
 
 
 def default_settings_file() -> Path:
@@ -55,6 +62,15 @@ PERSISTED_FIELDS = (
     "engine_default_book_path",
     "engine_default_book_plies",
     "engine_default_book_order",
+    "ai_enabled",
+    "ai_provider",
+    "ai_models",
+    "ai_base_url",
+    "ai_thinking_enabled",
+    "ai_thinking_budget_tokens",
+    # ai_api_key intentionally NOT persisted: server mode reads SV_AI_API_KEY
+    # from env; desktop mode will switch to OS keyring (later cycle). The
+    # JSON settings file must never hold the plaintext key.
 )
 
 
@@ -124,6 +140,44 @@ class Settings(BaseSettings):
     engine_default_book_plies: int | None = None
     # "sequential" | "random". None = fastchess default (sequential).
     engine_default_book_order: str | None = None
+
+    # AI analysis & commentary. Master toggle gates the engine+AI behavior
+    # off the existing Analyze ribbon buttons; provider/model/base_url are
+    # UI-managed strings. ai_api_key is server-mode only (SV_AI_API_KEY);
+    # desktop builds will switch to keyring later. Empty = unset.
+    ai_enabled: bool = False
+    ai_provider: str = "anthropic"
+    # Per-provider model memory: keys are provider names, values are model
+    # ids. The active model for the current provider is `ai_models.get(
+    # ai_provider, "")`. Open dict so adding a provider doesn't bump the
+    # schema -- new keys appear automatically.
+    ai_models: dict[str, str] = Field(default_factory=dict)
+    ai_base_url: str = ""
+    # Extended thinking / native reasoning. When True, the provider asks
+    # the model to think before answering. Anthropic uses the `thinking`
+    # body field; Ollama switches to the native /api/chat endpoint with
+    # think=true. budget_tokens applies to Anthropic's enabled mode.
+    ai_thinking_enabled: bool = False
+    ai_thinking_budget_tokens: int = _DEFAULT_AI_THINKING_BUDGET_TOKENS
+
+    @property
+    def ai_model(self) -> str:
+        return self.ai_models.get(self.ai_provider, "")
+
+    @ai_model.setter
+    def ai_model(self, value: str) -> None:
+        self.ai_models = {**self.ai_models, self.ai_provider: value}
+
+    # API keys live in the OS keyring (see key_store.py); never persisted
+    # in the settings file. The property dispatches by current provider
+    # so the provider factory just reads s.ai_api_key.
+    @property
+    def ai_api_key(self) -> str:
+        return key_store.get_api_key(self.ai_provider)
+
+    @ai_api_key.setter
+    def ai_api_key(self, value: str) -> None:
+        key_store.set_api_key(self.ai_provider, value or "")
 
     def apply_persisted(self, path: Path | None = None) -> None:
         path = path or default_settings_file()

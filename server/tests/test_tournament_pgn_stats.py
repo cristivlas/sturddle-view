@@ -21,11 +21,17 @@ from sturddle_view.tournament.pgn_stats import (
     count_partial_pairs,
     elo_from_score,
     elo_margin_from_wld,
+    games_played_from_config,
     ordo_fit,
     patch_config_json,
     read_game_pgn,
     read_game_record,
     rewrite_drop_partial_pairs,
+)
+
+
+_FIXTURE_RESUME_CONFIG = (
+    Path(__file__).parent / "fixtures" / "tournament_resume" / "config.json"
 )
 
 
@@ -2582,3 +2588,61 @@ def test_read_game_record_cache_invalidates_when_mtime_changes(tmp_path):
     # -> non-None (engine_white="X").
     rec2 = read_game_record(p, 1)
     assert rec2 is None
+
+
+# ---------------------------------------------------------------------------
+# games_played_from_config
+# ---------------------------------------------------------------------------
+
+
+def test_games_played_from_config_real_fixture():
+    # Snapshot of a real resumed tournament's fastchess config.json,
+    # stripped to the only field this helper reads. wins+losses+draws
+    # = 677 + 539 + 2817 = 4033, matching the "Started game 4034 of N"
+    # observed on resume.
+    assert games_played_from_config(_FIXTURE_RESUME_CONFIG) == 4033
+
+
+def test_games_played_from_config_sums_across_pairs(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({
+        "stats": {
+            "A vs B": {"wins": 3, "losses": 2, "draws": 5},
+            "C vs D": {"wins": 1, "losses": 0, "draws": 4},
+        }
+    }), encoding="utf-8")
+    assert games_played_from_config(p) == 15
+
+
+def test_games_played_from_config_missing_returns_none(tmp_path):
+    assert games_played_from_config(tmp_path / "nope.json") is None
+
+
+def test_games_played_from_config_empty_stats(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"stats": {}}), encoding="utf-8")
+    assert games_played_from_config(p) == 0
+
+
+def test_games_played_from_config_malformed_returns_none(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_text("{ not json", encoding="utf-8")
+    assert games_played_from_config(p) is None
+
+
+def test_games_played_from_config_null_field_treated_as_zero(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({
+        "stats": {"A vs B": {"wins": None, "losses": 2, "draws": 3}}
+    }), encoding="utf-8")
+    assert games_played_from_config(p) == 5
+
+
+def test_games_played_from_config_non_numeric_field_returns_none(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({
+        "stats": {"A vs B": {"wins": "many", "losses": 0, "draws": 0}}
+    }), encoding="utf-8")
+    assert games_played_from_config(p) is None
+
+

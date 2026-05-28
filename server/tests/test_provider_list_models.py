@@ -1,0 +1,462 @@
+"""Provider list_models() + /settings/ai/models endpoint.
+
+Mocks httpx at the module level for each provider, then exercises the
+endpoint end-to-end via TestClient so the wiring through the provider
+factory is covered too.
+"""
+from __future__ import annotations
+
+from typing import AsyncIterator
+
+import pytest
+from fastapi.testclient import TestClient
+
+from sturddle_view.app import create_app
+from sturddle_view.config import Settings
+from sturddle_view.engines import EngineRegistry
+from sturddle_view.llm import anthropic as anthropic_mod
+from sturddle_view.llm import ollama as ollama_mod
+from sturddle_view.llm._errors import extract_error_message
+from sturddle_view.llm.anthropic import AnthropicProvider
+from sturddle_view.llm.ollama import OllamaProvider
+
+
+# ---------- Test fakes for httpx -------------------------------------
+
+
+class _FakeResponse:
+    def __init__(self, status_code: int, body: dict | str) -> None:
+        self.status_code = status_code
+        self._body = body
+
+    def json(self) -> dict:
+        if isinstance(self._body, dict):
+            return self._body
+        raise ValueError("non-json body requested as json")
+
+    @property
+    def text(self) -> str:
+        return str(self._body)
+
+
+class _FakeClient:
+    def __init__(
+        self,
+        response: _FakeResponse,
+        *,
+        post_responses: dict[str, _FakeResponse] | None = None,
+    ) -> None:
+        self._response = response
+        # Per-model /api/show responses keyed by model id. Unscripted
+        # models default to empty capabilities (filtered out).
+        self._post_responses = post_responses or {}
+        self.last_get_url: str | None = None
+        self.last_get_headers: dict | None = None
+        self.post_calls: list[tuple[str, dict | None]] = []
+
+    async def __aenter__(self) -> "_FakeClient":
+        return self
+
+    async def __aexit__(self, *args) -> None:
+        return
+
+    async def get(self, url: str, *, headers: dict | None = None) -> _FakeResponse:
+        self.last_get_url = url
+        self.last_get_headers = headers
+        return self._response
+
+    async def post(self, url: str, *, json: dict | None = None) -> _FakeResponse:
+        self.post_calls.append((url, json))
+        if json and isinstance(json, dict):
+            key = json.get("name") or ""
+            if key in self._post_responses:
+                return self._post_responses[key]
+        return _FakeResponse(200, {"capabilities": []})
+
+
+def _install_fake_httpx(
+    monkeypatch,
+    module,
+    response: _FakeResponse,
+    *,
+    post_responses: dict[str, _FakeResponse] | None = None,
+) -> _FakeClient:
+    client = _FakeClient(response, post_responses=post_responses)
+
+    class _ShimHttpx:
+        AsyncClient = lambda *a, **kw: client  # noqa: E731
+
+    monkeypatch.setattr(module, "httpx", _ShimHttpx)
+    return client
+
+
+def _tool_capable(model_id: str) -> _FakeResponse:
+    return _FakeResponse(200, {"capabilities": ["completion", "tools"]})
+
+
+# ---------- Ollama ---------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ollama_list_models_returns_sorted_unique_ids(monkeypatch):
+    body = {
+        "object": "list",
+        "data": [
+            {"id": "gemma2:latest"},
+            {"id": "llama3:8b"},
+            {"id": "gemma2:latest"},  # dup, must collapse
+        ],
+    }
+    client = _install_fake_httpx(
+        monkeypatch, ollama_mod, _FakeResponse(200, body),
+        post_responses={
+            "gemma2:latest": _tool_capable("gemma2:latest"),
+            "llama3:8b": _tool_capable("llama3:8b"),
+        },
+    )
+
+    p = OllamaProvider(base_url="http://fake", model="m")
+    models = await p.list_models()
+    assert models == ["gemma2:latest", "llama3:8b"]
+    assert client.last_get_url == "http://fake/v1/models"
+
+
+@pytest.mark.asyncio
+async def test_ollama_list_models_filters_non_tool_capable(monkeypatch):
+    # Two models pulled; only one supports tools. Non-tool-capable
+    # models are filtered out so the dropdown never offers a model
+    # that would fail mid-turn.
+    body = {
+        "data": [
+            {"id": "gemma2:latest"},        # no tools cap
+            {"id": "qwen3:32b"},            # tools cap
+            {"id": "llava:7b"},             # vision-only
+        ],
+    }
+    _install_fake_httpx(
+        monkeypatch, ollama_mod, _FakeResponse(200, body),
+        post_responses={
+            "gemma2:latest": _FakeResponse(200, {"capabilities": ["completion"]}),
+            "qwen3:32b": _tool_capable("qwen3:32b"),
+            "llava:7b": _FakeResponse(200, {"capabilities": ["completion", "vision"]}),
+        },
+    )
+
+    p = OllamaProvider(base_url="http://fake", model="m")
+    assert await p.list_models() == ["qwen3:32b"]
+
+
+@pytest.mark.asyncio
+async def test_ollama_list_models_capability_check_is_case_insensitive(monkeypatch):
+    body = {"data": [{"id": "weird:1"}, {"id": "weirder:1"}]}
+    _install_fake_httpx(
+        monkeypatch, ollama_mod, _FakeResponse(200, body),
+        post_responses={
+            "weird:1": _FakeResponse(200, {"capabilities": ["Tools"]}),
+            "weirder:1": _FakeResponse(200, {"capabilities": ["TOOLS"]}),
+        },
+    )
+
+    p = OllamaProvider(base_url="http://fake", model="m")
+    assert await p.list_models() == ["weird:1", "weirder:1"]
+
+
+@pytest.mark.asyncio
+async def test_ollama_list_models_warns_when_capabilities_absent(monkeypatch, caplog):
+    # Older Ollama versions don't return `capabilities`. The model is
+    # dropped (no proof of tool support) and a WARNING is logged so the
+    # user can diagnose an unexpectedly empty dropdown.
+    import logging
+    body = {"data": [{"id": "ancient:1"}]}
+    _install_fake_httpx(
+        monkeypatch, ollama_mod, _FakeResponse(200, body),
+        post_responses={
+            "ancient:1": _FakeResponse(200, {}),  # no capabilities field
+        },
+    )
+
+    p = OllamaProvider(base_url="http://fake", model="m")
+    with caplog.at_level(logging.WARNING, logger="sturddle_view.llm.ollama"):
+        result = await p.list_models()
+    assert result == []
+    assert any("ancient:1" in r.message and "capabilities" in r.message
+               for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_ollama_list_models_drops_model_when_show_fails(monkeypatch):
+    # If /api/show 5xxs for a model we cannot prove tool capability,
+    # so drop it. Better than offering a model the agent will then
+    # fail on.
+    body = {"data": [{"id": "good:latest"}, {"id": "bad:latest"}]}
+    _install_fake_httpx(
+        monkeypatch, ollama_mod, _FakeResponse(200, body),
+        post_responses={
+            "good:latest": _tool_capable("good:latest"),
+            "bad:latest": _FakeResponse(503, "down"),
+        },
+    )
+
+    p = OllamaProvider(base_url="http://fake", model="m")
+    assert await p.list_models() == ["good:latest"]
+
+
+@pytest.mark.asyncio
+async def test_ollama_list_models_handles_missing_data_field(monkeypatch):
+    _install_fake_httpx(monkeypatch, ollama_mod, _FakeResponse(200, {}))
+    p = OllamaProvider(base_url="http://fake", model="m")
+    assert await p.list_models() == []
+
+
+@pytest.mark.asyncio
+async def test_ollama_list_models_raises_on_http_error(monkeypatch):
+    _install_fake_httpx(monkeypatch, ollama_mod, _FakeResponse(503, "down"))
+    p = OllamaProvider(base_url="http://fake", model="m")
+    with pytest.raises(RuntimeError, match="503"):
+        await p.list_models()
+
+
+# ---------- Anthropic ------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_anthropic_list_models_sends_auth_headers(monkeypatch):
+    body = {
+        "data": [
+            {"id": "claude-opus-4-5", "display_name": "Claude Opus 4.5"},
+            {"id": "claude-sonnet-4-5", "display_name": "Claude Sonnet 4.5"},
+        ],
+    }
+    client = _install_fake_httpx(monkeypatch, anthropic_mod, _FakeResponse(200, body))
+
+    p = AnthropicProvider(api_key="sk-test", model="m")
+    models = await p.list_models()
+    assert "claude-opus-4-5" in models
+    assert "claude-sonnet-4-5" in models
+    # Headers shape the API requires:
+    assert client.last_get_headers["x-api-key"] == "sk-test"
+    assert "anthropic-version" in client.last_get_headers
+
+
+@pytest.mark.asyncio
+async def test_anthropic_list_models_without_key_raises(monkeypatch):
+    p = AnthropicProvider(api_key="", model="m")
+    with pytest.raises(RuntimeError, match="API key"):
+        await p.list_models()
+
+
+@pytest.mark.asyncio
+async def test_anthropic_list_models_raises_on_auth_failure(monkeypatch):
+    _install_fake_httpx(monkeypatch, anthropic_mod, _FakeResponse(401, "bad key"))
+    p = AnthropicProvider(api_key="sk-bad", model="m")
+    with pytest.raises(RuntimeError, match="401"):
+        await p.list_models()
+
+
+# ---------- /settings/ai/models endpoint -----------------------------
+
+
+def _client_for_provider(tmp_path, *, provider: str, api_key: str = "", base_url: str = "") -> TestClient:
+    settings = Settings(token="t", auth_disabled=True)
+    settings.ai_enabled = True
+    settings.ai_provider = provider
+    settings.ai_api_key = api_key
+    settings.ai_base_url = base_url
+    registry = EngineRegistry(path=tmp_path / "engines.json")
+    app = create_app(settings=settings, engine_registry=registry)
+    return TestClient(app)
+
+
+def test_endpoint_returns_models_for_ollama(tmp_path, monkeypatch):
+    body = {"data": [{"id": "gemma2:latest"}, {"id": "llama3:8b"}]}
+    _install_fake_httpx(
+        monkeypatch, ollama_mod, _FakeResponse(200, body),
+        post_responses={
+            "gemma2:latest": _tool_capable("gemma2:latest"),
+            "llama3:8b": _tool_capable("llama3:8b"),
+        },
+    )
+
+    with _client_for_provider(tmp_path, provider="ollama", base_url="http://fake") as c:
+        r = c.get("/settings/ai/models")
+        assert r.status_code == 200, r.text
+        assert sorted(r.json()["models"]) == ["gemma2:latest", "llama3:8b"]
+
+
+def test_endpoint_returns_5xx_when_provider_unreachable(tmp_path, monkeypatch):
+    _install_fake_httpx(monkeypatch, ollama_mod, _FakeResponse(503, "down"))
+
+    with _client_for_provider(tmp_path, provider="ollama", base_url="http://fake") as c:
+        r = c.get("/settings/ai/models")
+        assert r.status_code == 502, r.text
+        assert "503" in r.json()["detail"]
+
+
+def test_endpoint_returns_5xx_for_anthropic_stub_without_models(tmp_path):
+    # AnthropicProvider built without an API key raises -- the endpoint
+    # surfaces that to the UI rather than returning an empty list.
+    with _client_for_provider(tmp_path, provider="anthropic", api_key="") as c:
+        r = c.get("/settings/ai/models")
+        assert r.status_code == 502, r.text
+        assert "API key" in r.json()["detail"]
+
+
+def test_put_settings_does_not_evict_ollama_models(tmp_path, monkeypatch):
+    """Settings changes no longer trigger eviction -- eviction is
+    deferred to the next AI analysis turn so an in-flight turn can
+    finish on the old model."""
+    evicted = []
+
+    async def _fake_evict(self, model):
+        evicted.append(model)
+
+    monkeypatch.setattr(OllamaProvider, "evict_model", _fake_evict)
+
+    with _client_for_provider(tmp_path, provider="ollama", base_url="http://fake") as c:
+        c.put("/settings", json={"ai_model": "old:latest"})
+        evicted.clear()
+        # Model switch, provider switch, and unrelated edits: none evict.
+        assert c.put("/settings", json={"ai_model": "new:latest"}).status_code == 200
+        assert c.put("/settings", json={"ai_provider": "anthropic"}).status_code == 200
+        assert c.put("/settings", json={"view_show_pgn_comments": True}).status_code == 200
+        assert evicted == []
+
+
+# ---------- extract_error_message: cross-provider error parsing -----
+
+
+def test_extract_error_message_ollama_openai_shape():
+    body = '{"error":{"message":"model does not support tools","type":"invalid_request_error"}}'
+    assert extract_error_message(body) == "model does not support tools"
+
+
+def test_extract_error_message_anthropic_shape():
+    # Anthropic wraps in {"type": "error", "error": {"type": "...", "message": "..."}}
+    body = '{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}'
+    assert extract_error_message(body) == "invalid x-api-key"
+
+
+def test_extract_error_message_string_error_field():
+    # Some upstreams use a bare string instead of a dict. Don't fail
+    # on the shape we didn't expect; surface what's there.
+    body = '{"error":"rate limited, try again"}'
+    assert extract_error_message(body) == "rate limited, try again"
+
+
+def test_extract_error_message_non_json_fallback():
+    # A misconfigured proxy returns plain text / HTML. The raw body
+    # is returned verbatim so the user still sees something.
+    assert extract_error_message("Bad Gateway") == "Bad Gateway"
+    assert extract_error_message("<html>nginx</html>") == "<html>nginx</html>"
+
+
+def test_extract_error_message_missing_error_field_fallback():
+    # Valid JSON, no `error` key -- return raw so we don't silently
+    # swallow whatever the upstream said.
+    body = '{"status":"degraded","retry_after":30}'
+    assert extract_error_message(body) == body
+
+
+@pytest.mark.asyncio
+async def test_ollama_evict_model_posts_keep_alive_zero(monkeypatch):
+    """evict_model wire shape: keep_alive=0 against /api/generate is the
+    documented signal that tells the daemon to drop the model from VRAM.
+    The caller (now _ai_kick at turn start) trusts this to free room
+    before loading the model the user actually picked."""
+    # Reuse the GET-style fake (evict_model uses POST but we only care
+    # the URL hits /api/generate with the right body); add a minimal
+    # post() that records what we sent.
+    class _RecordingClient:
+        def __init__(self):
+            self.last_post_url = None
+            self.last_post_json = None
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return
+        async def post(self, url, *, json=None):
+            self.last_post_url = url
+            self.last_post_json = json
+            return _FakeResponse(200, {})
+
+    rec = _RecordingClient()
+
+    class _ShimHttpx:
+        AsyncClient = lambda *a, **kw: rec  # noqa: E731
+
+    monkeypatch.setattr(ollama_mod, "httpx", _ShimHttpx)
+
+    provider = OllamaProvider(base_url="http://fake", model="x")
+    await provider.evict_model("gemma2:latest")
+
+    assert rec.last_post_url == "http://fake/api/generate"
+    assert rec.last_post_json == {"model": "gemma2:latest", "keep_alive": 0}
+
+
+@pytest.mark.asyncio
+async def test_ollama_evict_model_empty_name_is_noop():
+    # Calling with "" must not hit the network -- caller has nothing to
+    # evict. No fake httpx installed; if a request was attempted, the
+    # real httpx would try to connect.
+    provider = OllamaProvider(base_url="http://nonexistent.invalid", model="x")
+    await provider.evict_model("")  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_ollama_list_loaded_models_parses_api_ps(monkeypatch):
+    body = {"models": [{"name": "gemma2:latest"}, {"name": "qwen3:32b"}]}
+    client = _install_fake_httpx(monkeypatch, ollama_mod, _FakeResponse(200, body))
+    p = OllamaProvider(base_url="http://fake", model="m")
+    assert sorted(await p.list_loaded_models()) == ["gemma2:latest", "qwen3:32b"]
+    assert client.last_get_url == "http://fake/api/ps"
+
+
+@pytest.mark.asyncio
+async def test_ollama_list_loaded_models_empty_when_none_resident(monkeypatch):
+    _install_fake_httpx(monkeypatch, ollama_mod, _FakeResponse(200, {"models": []}))
+    p = OllamaProvider(base_url="http://fake", model="m")
+    assert await p.list_loaded_models() == []
+
+
+@pytest.mark.asyncio
+async def test_ollama_list_loaded_models_raises_on_http_error(monkeypatch):
+    _install_fake_httpx(monkeypatch, ollama_mod, _FakeResponse(503, "down"))
+    p = OllamaProvider(base_url="http://fake", model="m")
+    with pytest.raises(RuntimeError, match="503"):
+        await p.list_loaded_models()
+
+
+@pytest.mark.asyncio
+async def test_ollama_stream_error_message_is_extracted_not_wrapped(monkeypatch):
+    """When Ollama returns the OpenAI error envelope, the RuntimeError
+    we raise must carry the inner `message`, not the wrapping JSON.
+    Without this, toasts on the client showed the full JSON body."""
+    body = '{"error":{"message":"model does not support tools","type":"invalid_request_error"}}'
+
+    # Stub httpx for the streaming call -- we only need the
+    # non-200 path here, so the stream body is empty.
+    class _FakeStreamResponse:
+        status_code = 400
+        async def aread(self) -> bytes:
+            return body.encode("utf-8")
+
+    class _StreamCM:
+        async def __aenter__(self): return _FakeStreamResponse()
+        async def __aexit__(self, *a): return
+
+    class _FakeStreamClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return
+        def stream(self, *a, **kw): return _StreamCM()
+
+    class _ShimHttpx:
+        AsyncClient = lambda *a, **kw: _FakeStreamClient()  # noqa: E731
+
+    monkeypatch.setattr(ollama_mod, "httpx", _ShimHttpx)
+
+    provider = OllamaProvider(base_url="http://fake", model="m")
+    with pytest.raises(RuntimeError) as ei:
+        async for _ in provider.stream(system="", messages=[]):
+            pass
+    msg = str(ei.value)
+    assert "does not support tools" in msg
+    # The raw JSON envelope must NOT appear -- that was the bug.
+    assert "invalid_request_error" not in msg

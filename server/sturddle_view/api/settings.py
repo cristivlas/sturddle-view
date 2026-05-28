@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import psutil
@@ -8,11 +9,29 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from .. import __author__, __copyright__, __version__
 from ..auth import require_token
 
+log = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_token)])
 
 _VALID_SIDES = {"white", "black", "random"}
 _VALID_EVAL_POV = {"white", "engine", "human"}
 _VALID_RIBBON_SIDES = {"left", "right"}
+_VALID_AI_PROVIDERS = {"anthropic", "ollama"}
+# Sentinel echoed to the UI when an API key is set. UI never sees the
+# real key back; user "Update"s by sending a new value.
+_AI_KEY_MASK = "***"
+# Wire field names. Named constants per project rule.
+_AI_ENABLED_KEY = "ai_enabled"
+_AI_PROVIDER_KEY = "ai_provider"
+_AI_MODEL_KEY = "ai_model"
+_AI_BASE_URL_KEY = "ai_base_url"
+_AI_API_KEY_KEY = "ai_api_key"
+_AI_API_KEY_SET_KEY = "ai_api_key_set"
+_AI_THINKING_ENABLED_KEY = "ai_thinking_enabled"
+_AI_THINKING_BUDGET_TOKENS_KEY = "ai_thinking_budget_tokens"
+# Anthropic requires budget_tokens >= 1024; same floor used here for both
+# providers since 0/tiny budgets defeat the feature.
+_AI_THINKING_BUDGET_MIN = 1024
 _VALID_BOARD_STYLES = {
     "classic", "classic-staunty",
     "green", "green-staunty",
@@ -47,6 +66,14 @@ def _serialize(s) -> dict:
         "engine_default_book_path": s.engine_default_book_path,
         "engine_default_book_plies": s.engine_default_book_plies,
         "engine_default_book_order": s.engine_default_book_order,
+        _AI_ENABLED_KEY: s.ai_enabled,
+        _AI_PROVIDER_KEY: s.ai_provider,
+        _AI_MODEL_KEY: s.ai_model,
+        _AI_BASE_URL_KEY: s.ai_base_url,
+        _AI_API_KEY_SET_KEY: bool(s.ai_api_key),
+        _AI_API_KEY_KEY: _AI_KEY_MASK if s.ai_api_key else "",
+        _AI_THINKING_ENABLED_KEY: s.ai_thinking_enabled,
+        _AI_THINKING_BUDGET_TOKENS_KEY: s.ai_thinking_budget_tokens,
         "host": {"logical_cores": logical, "physical_cores": physical},
         "version": __version__,
         "author": __author__,
@@ -221,6 +248,50 @@ async def update_settings(payload: dict, request: Request) -> dict:
                 detail="engine_default_book_order must be 'sequential' or 'random'",
             )
 
+    if _AI_ENABLED_KEY in payload:
+        s.ai_enabled = bool(payload[_AI_ENABLED_KEY])
+
+    if _AI_PROVIDER_KEY in payload:
+        provider = payload[_AI_PROVIDER_KEY]
+        if provider not in _VALID_AI_PROVIDERS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{_AI_PROVIDER_KEY} must be one of {sorted(_VALID_AI_PROVIDERS)}",
+            )
+        s.ai_provider = provider
+
+    if _AI_MODEL_KEY in payload:
+        s.ai_model = str(payload[_AI_MODEL_KEY] or "").strip()
+
+    if _AI_BASE_URL_KEY in payload:
+        s.ai_base_url = str(payload[_AI_BASE_URL_KEY] or "").strip()
+
+    if _AI_THINKING_ENABLED_KEY in payload:
+        s.ai_thinking_enabled = bool(payload[_AI_THINKING_ENABLED_KEY])
+
+    if _AI_THINKING_BUDGET_TOKENS_KEY in payload:
+        try:
+            budget = int(payload[_AI_THINKING_BUDGET_TOKENS_KEY])
+        except (TypeError, ValueError) as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{_AI_THINKING_BUDGET_TOKENS_KEY} must be an integer",
+            ) from e
+        if budget < _AI_THINKING_BUDGET_MIN:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{_AI_THINKING_BUDGET_TOKENS_KEY} must be >= {_AI_THINKING_BUDGET_MIN}",
+            )
+        s.ai_thinking_budget_tokens = budget
+
+    if _AI_API_KEY_KEY in payload:
+        # Session-only: not in PERSISTED_FIELDS. Server mode loads from
+        # SV_AI_API_KEY env at startup; desktop will use OS keyring later.
+        # The mask sentinel echoed by GET means "no change".
+        raw = payload[_AI_API_KEY_KEY]
+        if raw != _AI_KEY_MASK:
+            s.ai_api_key = str(raw or "").strip()
+
     try:
         s.save_persisted()
     except OSError:
@@ -235,3 +306,28 @@ async def update_settings(payload: dict, request: Request) -> dict:
             await hve.apply_engine_settings_live()
 
     return _serialize(s)
+
+
+@router.get("/ai/models")
+async def list_ai_models(request: Request) -> dict:
+    """Lists models available from the currently-selected provider.
+
+    Used by the Settings dialog to populate the model dropdown so the
+    user picks from a real list rather than typing an id. Errors flow
+    through as HTTPException 5xx so the client can fall back to a
+    free-text input + display the message.
+    """
+    factory = getattr(request.app.state, "ai_provider_factory", None)
+    if factory is None:
+        raise HTTPException(status_code=503, detail="AI provider factory not initialized")
+    try:
+        provider = factory()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"provider build failed: {e}") from e
+    try:
+        models = await provider.list_models()
+    except NotImplementedError as e:
+        raise HTTPException(status_code=501, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return {"models": models}

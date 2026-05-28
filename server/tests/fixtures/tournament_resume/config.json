@@ -1,0 +1,15 @@
+{
+    "stats": {
+        "Sturddle 2.5.1 vs Sturddle 2.5.0": {
+            "wins": 677,
+            "losses": 539,
+            "draws": 2817,
+            "penta_WW": 27,
+            "penta_WD": 438,
+            "penta_WL": 117,
+            "penta_DD": 889,
+            "penta_LD": 320,
+            "penta_LL": 25
+        }
+    }
+}

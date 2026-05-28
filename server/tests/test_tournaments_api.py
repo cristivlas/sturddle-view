@@ -7,6 +7,7 @@ fastchess subprocess is replaced by a fake-fastchess script via a
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import time
 from pathlib import Path
@@ -126,6 +127,20 @@ def test_get_includes_standings_with_no_games(client):
     body = r.json()
     assert body["standings"]["games"] == 0
     assert body["standings"]["engines"] == []
+
+
+def test_get_standings_games_from_fastchess_config(client, settings):
+    created = client.post("/api/tournaments", json={
+        "name": "y", "engines": _engines_payload(),
+    }).json()
+    tid = created["id"]
+    cfg = Path(settings.tournament_root) / tid / "config.json"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(json.dumps({
+        "stats": {"A vs B": {"wins": 10, "losses": 8, "draws": 4}}
+    }), encoding="utf-8")
+    body = client.get(f"/api/tournaments/{tid}").json()
+    assert body["standings"]["games"] == 22
 
 
 def test_list_returns_created(client):
