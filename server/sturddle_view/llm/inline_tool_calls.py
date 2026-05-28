@@ -408,6 +408,7 @@ async def _recover_inline_tool_calls_legacy(
     upstream: AsyncIterator[ProviderChunk],
     *,
     tool_names: Iterable[str] | None = None,
+    tool_schemas: object = None,  # accepted but ignored; v2-only
 ) -> AsyncIterator[ProviderChunk]:
     """Async-iterator wrapper that converts inline tool calls into
     synthetic tool_use chunks. Non-text chunks pass through unchanged.
@@ -415,7 +416,11 @@ async def _recover_inline_tool_calls_legacy(
     When `tool_names` is provided, the wrapper also recovers
     `name(args)` / `name{args}` shapes for any matching name. None or
     empty disables call-syntax recovery (legacy XML path only).
+
+    `tool_schemas` is accepted for API symmetry with v2 but unused
+    here -- the legacy state machine has no positional-arg recovery.
     """
+    _ = tool_schemas
     name_re = _build_name_pattern(tool_names) if tool_names else None
 
     xml_buf = ""

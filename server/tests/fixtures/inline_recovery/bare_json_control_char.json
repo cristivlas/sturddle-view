@@ -1,0 +1,29 @@
+{
+  "name": "bare_json_control_char",
+  "source": "live model output; raw 0x19 inside a string value -- json strict=False handles it",
+  "tool_names": [
+    "recommend_move"
+  ],
+  "tool_schemas": {
+    "recommend_move": [
+      "depth",
+      "move"
+    ]
+  },
+  "text": "Try this: {\"name\": \"recommend_move\", \"parameters\": {\"depth\":10,\"move\":\"a8=\u0019\"}}",
+  "splits": [],
+  "expected": [
+    {
+      "kind": "text",
+      "text": "Try this: "
+    },
+    {
+      "kind": "tool_use",
+      "tool_name": "recommend_move",
+      "tool_input": {
+        "depth": 10,
+        "move": "a8=\u0019"
+      }
+    }
+  ]
+}

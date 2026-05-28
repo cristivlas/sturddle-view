@@ -1,0 +1,13 @@
+{
+  "name": "bare_json_doubled_braces",
+  "source": "live llama 3 output; bare JSON wrapped in extra {{ }}",
+  "tool_names": ["piece_at"],
+  "tool_schemas": {"piece_at": ["square"]},
+  "text": "The knight on g8 ({{\"name\": \"piece_at\", \"parameters\": {\"square\":\"g8\"}}} and the queenside pawns are both somewhat active.",
+  "splits": [],
+  "expected": [
+    {"kind": "text", "text": "The knight on g8 ("},
+    {"kind": "tool_use", "tool_name": "piece_at", "tool_input": {"square": "g8"}},
+    {"kind": "text", "text": " and the queenside pawns are both somewhat active."}
+  ]
+}

@@ -100,8 +100,39 @@ class JinjaPipeFlavor:
         return bool(self._tool_names)
 
     def find_sentinel(self, buf: str) -> int | None:
-        i = buf.find(_OPEN)
-        return i if i >= 0 else None
+        """Find the next `{{` that looks like a real jinja-pipe call
+        (`{{ ws "name" ...`). Plain `{{` without that prefix is left
+        for other flavors -- jinja-pipe shouldn't grab doubled-brace
+        wrappers that aren't actually filter expressions."""
+        start = 0
+        while start < len(buf):
+            i = buf.find(_OPEN, start)
+            if i < 0:
+                return None
+            if self._looks_like_jinja_call(buf, i):
+                return i
+            start = i + 1
+        return None
+
+    def _looks_like_jinja_call(self, buf: str, idx: int) -> bool:
+        """Cheap prefix check: after `{{`, optional whitespace, then a
+        double-quote. Conservative enough to skip `{{` wrappers
+        around bare JSON (which start with `{{"...`, no space).
+
+        If the trailing content past `{{` isn't yet long enough to
+        decide, return True so the state machine enters capture mode
+        and waits -- the full `try_close` will sort it out."""
+        body_start = idx + len(_OPEN)
+        if body_start >= len(buf):
+            return True  # too short to disprove; let try_close handle it
+        m_ws = _WS_RE.match(buf, body_start)
+        if m_ws.end() == body_start:
+            # No whitespace after `{{` -> almost certainly not a
+            # jinja-pipe expression (real ones use `{{ "..." | ...}}`).
+            return False
+        if m_ws.end() >= len(buf):
+            return True
+        return buf[m_ws.end()] == '"'
 
     def try_close(self, buf: str) -> CloseResult:
         """`buf` starts with `{{`. Parse:

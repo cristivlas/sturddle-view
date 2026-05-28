@@ -24,11 +24,18 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import AsyncIterator, Iterable, List, Optional
+from typing import AsyncIterator, Iterable, List, Mapping, Optional, Sequence
 
 from ..base import ProviderChunk
 from .protocol import Closed, Flavor, NotTool, Pending, Unparseable
-from .flavors import CallSyntaxFlavor, FencedJsonFlavor, JinjaPipeFlavor, XmlFlavor
+from .flavors import (
+    BareJsonFlavor,
+    CallSyntaxFlavor,
+    FencedJsonFlavor,
+    JinjaPipeFlavor,
+    SquareBracketFlavor,
+    XmlFlavor,
+)
 
 log = logging.getLogger(__name__)
 
@@ -39,19 +46,31 @@ _CHANNEL_THINKING = "thinking"
 _RECOVERABLE_CHANNELS = (_CHANNEL_TEXT, _CHANNEL_THINKING)
 
 
-def _build_registry(tool_names: Optional[Iterable[str]]) -> List[Flavor]:
-    """Priority order: XML, fenced JSON, jinja-pipe, then call-syntax.
-    XML and fenced JSON match without `tool_names`; jinja-pipe and
-    call-syntax require it."""
+def _build_registry(
+    tool_names: Optional[Iterable[str]],
+    tool_schemas: Optional[Mapping[str, Sequence[str]]],
+) -> List[Flavor]:
+    """Priority order: XML, fenced JSON, jinja-pipe, square-bracket,
+    then call-syntax, then bare-JSON. XML and fenced JSON match
+    without `tool_names`; the others require it. `tool_schemas` (name
+    -> ordered param names) feeds positional-arg recovery in
+    BareJsonFlavor."""
     registry: List[Flavor] = [XmlFlavor(), FencedJsonFlavor()]
     if tool_names:
         names = tuple(tool_names)
-        jinja = JinjaPipeFlavor(names)
-        if jinja.enabled:
-            registry.append(jinja)
-        call = CallSyntaxFlavor(names)
-        if call.enabled:
-            registry.append(call)
+        # BareJsonFlavor runs last because its sentinel (`{`) is very
+        # common in prose; higher-specificity flavors get first crack.
+        for flavor_cls in (
+            JinjaPipeFlavor,
+            SquareBracketFlavor,
+            CallSyntaxFlavor,
+        ):
+            flavor = flavor_cls(names)
+            if flavor.enabled:
+                registry.append(flavor)
+        bare = BareJsonFlavor(names, tool_schemas=tool_schemas)
+        if bare.enabled:
+            registry.append(bare)
     return registry
 
 
@@ -59,9 +78,10 @@ async def recover(
     upstream: AsyncIterator[ProviderChunk],
     *,
     tool_names: Optional[Iterable[str]] = None,
+    tool_schemas: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> AsyncIterator[ProviderChunk]:
     """Async-iterator wrapper. See module docstring."""
-    flavors = _build_registry(tool_names)
+    flavors = _build_registry(tool_names, tool_schemas)
 
     # Mode A (scanning): text_buf accumulates prose that may still
     # contain a sentinel split across chunks.

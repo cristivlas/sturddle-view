@@ -1,0 +1,12 @@
+{
+  "name": "square_bracket_basic",
+  "source": "live model output; bracketed call with one kv arg",
+  "tool_names": ["piece_at"],
+  "text": "Looking at the square [piece_at square: 'f7'] now.",
+  "splits": [],
+  "expected": [
+    {"kind": "text", "text": "Looking at the square "},
+    {"kind": "tool_use", "tool_name": "piece_at", "tool_input": {"square": "f7"}},
+    {"kind": "text", "text": " now."}
+  ]
+}

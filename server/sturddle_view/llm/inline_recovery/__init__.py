@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import AsyncIterator, Iterable
+from typing import AsyncIterator, Iterable, Mapping, Sequence
 
 from ..base import ProviderChunk
 from ..inline_tool_calls import _recover_inline_tool_calls_legacy
@@ -28,25 +28,34 @@ _IMPL_V2 = "v2"
 _IMPL_ENV_VAR = "SV_AI_INLINE_RECOVERY"
 
 
+ToolSchemas = Mapping[str, Sequence[str]]
+
+
 def recover_inline_tool_calls_v2(
     upstream: AsyncIterator[ProviderChunk],
     *,
     tool_names: Iterable[str] | None = None,
+    tool_schemas: ToolSchemas | None = None,
 ) -> AsyncIterator[ProviderChunk]:
-    return _recover_v2(upstream, tool_names=tool_names)
+    return _recover_v2(upstream, tool_names=tool_names, tool_schemas=tool_schemas)
 
 
 def recover_inline_tool_calls(
     upstream: AsyncIterator[ProviderChunk],
     *,
     tool_names: Iterable[str] | None = None,
+    tool_schemas: ToolSchemas | None = None,
 ) -> AsyncIterator[ProviderChunk]:
     impl = os.environ.get(_IMPL_ENV_VAR, _IMPL_LEGACY).strip().lower()
     if impl == _IMPL_V2:
-        return recover_inline_tool_calls_v2(upstream, tool_names=tool_names)
+        return recover_inline_tool_calls_v2(
+            upstream, tool_names=tool_names, tool_schemas=tool_schemas,
+        )
     if impl != _IMPL_LEGACY:
         log.warning("unknown %s=%r; falling back to %r", _IMPL_ENV_VAR, impl, _IMPL_LEGACY)
-    return _recover_inline_tool_calls_legacy(upstream, tool_names=tool_names)
+    return _recover_inline_tool_calls_legacy(
+        upstream, tool_names=tool_names, tool_schemas=tool_schemas,
+    )
 
 
 __all__ = ["recover_inline_tool_calls", "recover_inline_tool_calls_v2"]

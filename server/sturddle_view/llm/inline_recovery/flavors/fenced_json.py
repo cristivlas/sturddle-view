@@ -47,9 +47,10 @@ def _looks_like_fence_prefix(tail: str) -> bool:
 
 def _parse_fenced_body(body: str) -> tuple[str, dict[str, object]] | None:
     """Parse a fenced-JSON body into (name, params), or None if the
-    body isn't a recognizable tool-call shape."""
+    body isn't a recognizable tool-call shape. `strict=False` allows
+    raw control chars in string literals (some models leak them)."""
     try:
-        obj = json.loads(body)
+        obj = json.loads(body, strict=False)
     except ValueError:
         return None
     if not isinstance(obj, dict):

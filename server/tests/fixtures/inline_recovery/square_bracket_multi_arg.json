@@ -1,0 +1,12 @@
+{
+  "name": "square_bracket_multi_arg",
+  "source": "live model output; bracketed call with two kv args, mixed quoted/unquoted",
+  "tool_names": ["analyze"],
+  "text": "Consider [analyze fen: '4r2k/5Qpq/6p1/1rnpP3/8/8/7P/W5K1R w - - 0 34' depth: 25] next.",
+  "splits": [],
+  "expected": [
+    {"kind": "text", "text": "Consider "},
+    {"kind": "tool_use", "tool_name": "analyze", "tool_input": {"fen": "4r2k/5Qpq/6p1/1rnpP3/8/8/7P/W5K1R w - - 0 34", "depth": 25}},
+    {"kind": "text", "text": " next."}
+  ]
+}
