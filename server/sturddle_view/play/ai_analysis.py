@@ -51,6 +51,25 @@ log = logging.getLogger(__name__)
 _DEFAULT_MAX_TOOL_ROUNDS = 32
 MAX_TOOL_ROUNDS = int(os.environ.get("SV_AI_MAX_TOOL_ROUNDS", _DEFAULT_MAX_TOOL_ROUNDS))
 
+_COMMENTATOR_MODE: PromptMode = "commentator"
+
+
+def _boards_for_validation(
+    board: chess.Board, mode: PromptMode,
+) -> list[chess.Board]:
+    """Build the board sequence the validators consume. Coach mode:
+    just [board]. Commentator mode: current plus every prior position
+    via repeated pop() -- so prose referencing earlier-game pieces
+    isn't flagged. We work on a copy so the caller's board is untouched."""
+    if mode != _COMMENTATOR_MODE or not board.move_stack:
+        return [board]
+    walker = board.copy()
+    out: list[chess.Board] = [walker.copy()]
+    while walker.move_stack:
+        walker.pop()
+        out.append(walker.copy())
+    return out
+
 # Max length of error_detail copied into the done event. Keeps the
 # bus payload small even when a provider returns a wall of HTML / a
 # verbose stack trace. Full detail is in the transcript anyway.
@@ -374,7 +393,7 @@ class AIAnalysisCoordinator:
                         # tool_use follows (policy change -- previously
                         # the tool_use exit path bypassed validation).
                         illegal, false_claims, castle_violations = (
-                            self._validate_round_text(round_chunks)
+                            self._validate_round_text(round_chunks, mode)
                         )
                         if (
                             pending_tool is None
@@ -623,12 +642,14 @@ class AIAnalysisCoordinator:
         )
 
     def _validate_round_text(
-        self, chunks: list[ProviderChunk],
+        self, chunks: list[ProviderChunk], mode: PromptMode,
     ) -> tuple[list[str], list[str], list[str]]:
         """Run all validators on a round's assembled text.
         Returns (illegal_moves, false_piece_claims, castle_violations).
         Empty triple when clean, when no board_provider is wired, or
-        when no live board is available."""
+        when no live board is available. In commentator mode the
+        board sequence includes every prior position via move_stack
+        walk -- references to earlier-game pieces aren't flagged."""
         if self._board_provider is None:
             return [], [], []
         board = self._board_provider()
@@ -637,10 +658,11 @@ class AIAnalysisCoordinator:
         text = "".join(c.text for c in chunks if c.kind == "text" and c.text)
         if not text:
             return [], [], []
+        boards = _boards_for_validation(board, mode)
         return (
-            find_illegal_moves(text, board),
-            find_false_piece_claims(text, board),
-            find_castle_word_violations(text, board),
+            find_illegal_moves(text, boards),
+            find_false_piece_claims(text, boards),
+            find_castle_word_violations(text, boards),
         )
 
     def _inject_card_once(self, tool_name: str, injected: set[str]) -> str | None:
