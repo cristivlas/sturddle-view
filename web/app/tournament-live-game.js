@@ -393,11 +393,47 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   let positionGen = 0;
   let lastWtime = null;
   let lastBtime = null;
+  // rAF coalescer for board.setPosition. Bursts of position events
+  // (legitimate engine floods, or the post-background drain when a
+  // hidden tab regains focus) would otherwise stack animations.
+  // Latest pending FEN wins; superseded ones never animate. Background
+  // tabs accumulate at most one pending paint (browser pauses rAF).
+  let pendingPosition = null;
+  let positionRafToken = 0;
+
+  function schedulePositionPaint() {
+    if (positionRafToken) return;
+    positionRafToken = requestAnimationFrame(() => {
+      positionRafToken = 0;
+      const p = pendingPosition;
+      pendingPosition = null;
+      if (!p) return;
+      board.setPosition(p.fen, p.lastMove, p.animated);
+      board.clearArrows();
+    });
+  }
+
+  function queuePositionPaint(fen, lastMove) {
+    // Skip animation when the tab is hidden -- there is no one to watch
+    // it, and on return we want to snap to the final state, not replay
+    // the queued cascade.
+    pendingPosition = {
+      fen,
+      lastMove,
+      animated: document.visibilityState === "visible",
+    };
+    schedulePositionPaint();
+  }
 
   let wbClosed = false;
   wb.onclose = () => {
     wbClosed = true;
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    if (positionRafToken) {
+      cancelAnimationFrame(positionRafToken);
+      positionRafToken = 0;
+      pendingPosition = null;
+    }
     if (ws) try { ws.close(); } catch { /* */ }
     disposeShared();
     return false;
@@ -521,8 +557,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       // Discard if a newer `position` message arrived while the fetch was in flight.
       if (positionGen === gen) {
         currentFen = newFen;
-        board.setPosition(newFen, uciMove);
-        board.clearArrows();
+        queuePositionPaint(newFen, uciMove);
       }
     } catch { /* non-fatal: next position message will correct the board */ }
   }
@@ -539,8 +574,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
             setEngineColor(color);
             board.setSide(color);
           }
-          board.setPosition(p.fen, p.last_move || null);
-          board.clearArrows();
+          queuePositionPaint(p.fen, p.last_move || null);
         }
         break;
       case "info":
