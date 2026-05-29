@@ -1136,7 +1136,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   filter: grayscale(0.5) brightness(0.85);
 }
 
-@media (max-width: 640px) {
+@media (max-width: 640px), (max-height: 740px) {
   /* !important guards against any later .play-dock-left rule with
      higher specificity (e.g. modifier classes set from JS). Mobile
      must hide the dock unconditionally. */
@@ -2480,7 +2480,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .tournament-row-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 
-@media (max-width: 800px) {
+@media (max-width: 800px), (max-height: 740px) {
   .tournaments-panel { gap: 0; }
   .tournaments-body { display: flex; flex-direction: column; }
   .tournaments-ribbon {
