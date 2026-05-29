@@ -153,7 +153,7 @@ const LIVE_COMPACT_THRESHOLD = 280;
 // machinery, registers in `liveWindows`. Caller adds WS (live) or
 // final-state painting (frozen) and assigns a real `wb.onclose` that
 // cleans up its own resources after invoking `disposeShared`.
-function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token, tournamentId, top, left, boardStyle, avoidRect, initialRect, min, flash, variantClass }) {
+function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token, tournamentId, top, left, right = 0, boardStyle, avoidRect, initialRect, min, flash, variantClass }) {
   const body = document.createElement("div");
   body.className = "wb-livegame lg-measuring";
   body.innerHTML = `
@@ -232,6 +232,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     y: initialRect ? initialRect.y : `${5 + (idx * 4)}%`,
     top,
     left,
+    right,
     min,
     mount: body,
     class: variantClass ? `${defaultClass} ${variantClass}` : defaultClass,
@@ -356,7 +357,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   };
 }
 
-export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, flash = true }) {
+export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, right = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, flash = true }) {
   if (DEBUG_WATCH) console.log("[WATCH] openLiveGameWindow", { proxyId, gameId, windowKey, label });
   if (!windowKey) {
     console.error("[WATCH] no windowKey -- need at least one of proxyId/gameId", { proxyId, gameId });
@@ -373,7 +374,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 
   const built = buildLiveGameBox({
     windowKey, gameId, proxyId, label, engineName, token, tournamentId,
-    top, left, boardStyle, avoidRect, initialRect, min, flash,
+    top, left, right, boardStyle, avoidRect, initialRect, min, flash,
     variantClass: null,
   });
   const { wb, body, board, refs, showResult, disposeShared } = built;
@@ -703,7 +704,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 export function openFrozenGameWindow({
   proxyId, gameId, windowKey = gameId, label, engineName,
   token, tournamentId, gameN, result, termination,
-  top = 0, left = 0, boardStyle = null, initialRect = null, min = false, flash = true,
+  top = 0, left = 0, right = 0, boardStyle = null, initialRect = null, min = false, flash = true,
 }) {
   if (!windowKey) {
     console.error("[FROZEN] no windowKey", { proxyId, gameId });
@@ -723,7 +724,7 @@ export function openFrozenGameWindow({
 
   const built = buildLiveGameBox({
     windowKey, gameId, proxyId, label, engineName, token, tournamentId,
-    top, left, boardStyle, avoidRect: null, initialRect, min, flash,
+    top, left, right, boardStyle, avoidRect: null, initialRect, min, flash,
     variantClass: "sturddle-wb-live-frozen",
   });
   const { wb, board, refs, showResult, setReplayGameN, disposeShared } = built;

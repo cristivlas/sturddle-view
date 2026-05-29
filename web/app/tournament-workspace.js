@@ -355,11 +355,16 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }, { capture: true });
   }
 
+  // Inset (px) from the right viewport edge to the workspace area --
+  // i.e. ribbon width when docked right, 0 when docked left. WinBox's
+  // maximize() respects this so a maximized window stops at the ribbon.
+  const getRightInset = () => Math.max(0, window.innerWidth - getRight());
+
   function makeBox(key, title, body, { min = false, max = false } = {}) {
     const cfg = lastGeometry[key];
     const extra = EXTRA_CLASS[key] ? ` ${EXTRA_CLASS[key]}` : "";
     const wb = new WinBox({
-      title, mount: body, top, left, min, max,
+      title, mount: body, top, left, right: getRightInset(), min, max,
       ...(cfg ? { x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height } : {}),
       class: `sturddle-wb no-full no-shadow${extra}`,
       ...MIN_SIZES[key],
@@ -591,7 +596,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     try {
       result = openLiveGameWindow({
         ...openOpts, token, tournamentId: tournament.id,
-        top, left, boardStyle: boardStyleCached,
+        top, left, right: getRightInset(),
+        boardStyle: boardStyleCached,
         initialRect: claim ? { x: claim.x, y: claim.y, w: claim.w, h: claim.h } : (openOpts.initialRect ?? null),
       });
     } catch (e) {
@@ -1111,7 +1117,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
             gameN: s.resolved.gameN,
             result: s.resolved.result,
             termination: s.resolved.termination,
-            top, left, boardStyle: boardStyleCached,
+            top, left, right: getRightInset(),
+            boardStyle: boardStyleCached,
             initialRect: rect, min: !!s.min, flash: false,
           });
           if (fres?.wb && !fres.alreadyOpen) wireLayoutHandlers(fres.wb);
