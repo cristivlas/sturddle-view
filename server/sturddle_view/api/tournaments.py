@@ -286,7 +286,7 @@ def edit_tournament(tournament_id: str, payload: TournamentUpdate, request: Requ
                   "book_path", "book_plies", "book_order")
     }
     try:
-        t, _ = s.update(
+        t = s.update(
             tournament_id,
             name=name,
             template=_resolve_sprt(payload.template, settings),
@@ -297,6 +297,10 @@ def edit_tournament(tournament_id: str, payload: TournamentUpdate, request: Requ
         raise HTTPException(status_code=404, detail="tournament not found") from e
     except DuplicateNameError:
         raise HTTPException(status_code=409, detail="tournament name already exists")
+    # Wipe the orchestrator's in-memory event-history buffer for this
+    # tournament: any post-edit live-window re-subscribe would otherwise
+    # replay stale events from the pre-edit run. Mirrors delete_tournament.
+    orch.clear_event_history(tournament_id)
     return _serialize(t)
 
 

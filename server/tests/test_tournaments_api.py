@@ -10,6 +10,7 @@ import asyncio
 import json
 import sys
 import time
+from collections import deque
 from pathlib import Path
 
 import pytest
@@ -579,10 +580,24 @@ def test_patch_rejects_fewer_than_two_engines(client):
     assert r.status_code == 400
 
 
-def test_patch_always_deletes_pgn(client):
+def test_patch_wipes_tournament_dir_contents(client):
+    """Editing a tournament wipes every on-disk artifact (PGN, fastchess
+    config + rotated backups, logs, strays) and leaves a fresh state.json.
+    Past data was produced under potentially different conditions and
+    must not leak into future runs."""
     t = _create(client)
-    pgn = client.app.state.tournament_store.pgn_path(t["id"])
+    store = client.app.state.tournament_store
+    pgn = store.pgn_path(t["id"])
     pgn.write_text("[Event \"?\"]\n\n1. e4 *\n")
+    cfg = store.config_path(t["id"])
+    cfg.write_text("{\"games\": 7}")
+    cfg_bak = cfg.with_name(cfg.name + ".20260101-000000.bak.gz")
+    cfg_bak.write_bytes(b"\x1f\x8b\x08\x00fake")
+    logs = store.logs_dir(t["id"])
+    logs.mkdir(exist_ok=True)
+    (logs / "fastchess.log").write_text("info: ...")
+    stray = store._dir(t["id"]) / "stray.tmp"
+    stray.write_text("leftover")
 
     r = client.patch(f"/api/tournaments/{t['id']}", json={
         "name": t["name"],
@@ -591,6 +606,32 @@ def test_patch_always_deletes_pgn(client):
     })
     assert r.status_code == 200
     assert not pgn.exists()
+    assert not cfg.exists()
+    assert not cfg_bak.exists()
+    assert not logs.exists()
+    assert not stray.exists()
+    # The freshly written state.json must be there and parseable.
+    assert store._state_path(t["id"]).exists()
+
+
+def test_patch_clears_orchestrator_event_history(client):
+    """Stale events from the pre-edit run must not replay into post-edit
+    live-window re-subscribes -- mirrors delete_tournament's behavior."""
+    t = _create(client)
+    orch = client.app.state.tournament_orch
+    # Inject a synthetic event so we have something to clear.
+    orch._event_history.setdefault(t["id"], deque()).append(
+        {"kind": "synthetic", "tournament_id": t["id"]}
+    )
+    assert len(orch.event_history(t["id"])) == 1
+
+    r = client.patch(f"/api/tournaments/{t['id']}", json={
+        "name": t["name"],
+        "template": {"tc": "5+0"},
+        "engines": _engines_payload(),
+    })
+    assert r.status_code == 200
+    assert orch.event_history(t["id"]) == []
 
 
 def test_patch_unknown_returns_404(client):

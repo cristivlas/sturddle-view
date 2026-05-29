@@ -242,18 +242,21 @@ class TournamentStore:
         template: dict,
         engines: list,
         engine_defaults: dict | None = None,
-    ) -> tuple["Tournament", bool]:
+    ) -> "Tournament":
         """Replace name/template/engines and reset the tournament to idle.
 
         ``engine_defaults`` re-freezes the global engine_default_* snapshot
         (mirroring ``create``); pass ``None`` to keep the existing snapshot.
 
-        Always deletes games.pgn — any edit (template, engines, or even
-        rename) invalidates prior results since they were played under
-        potentially different conditions and must not mix with future
-        games. Caller is responsible for confirming with the user first.
-        Returns ``(tournament, had_games)`` where ``had_games`` is True
-        when a PGN existed and was removed.
+        Wipes the tournament directory clean before writing the fresh
+        state.json: any edit (template, engines, or rename) invalidates
+        prior PGN results, fastchess config/backups, logs, and any
+        stray files. They were produced under potentially different
+        conditions and must not leak into future runs. Caller (API
+        layer) is responsible for confirming with the user first.
+        Filesystem errors during wipe propagate -- a locked file
+        (AV scan, dangling handle) leaves the tournament in a usable
+        state on disk and the API returns 5xx.
         """
         with self._create_lock:
             t = self.get(tournament_id)
@@ -261,9 +264,7 @@ class TournamentStore:
                 x.name == name for x in self.list() if x.id != tournament_id
             ):
                 raise DuplicateNameError(name)
-            had_games = self.pgn_path(tournament_id).exists()
-            if had_games:
-                self.pgn_path(tournament_id).unlink(missing_ok=True)
+            self._wipe_dir_contents(tournament_id)
 
             t.name = name
             t.template = dict(template)
@@ -275,7 +276,20 @@ class TournamentStore:
             t.stopped_at = None
             t.last_error = None
             atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
-            return t, had_games
+            return t
+
+    def _wipe_dir_contents(self, tournament_id: str) -> None:
+        """Delete every entry inside the tournament dir, keeping the dir
+        itself. Iterates children so a concurrent process can't claim the
+        path between rmtree + recreate."""
+        d = self._dir(tournament_id)
+        if not d.exists():
+            return
+        for child in d.iterdir():
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
 
     def find_by_status(self, status: str) -> list[Tournament]:
         """All tournaments currently in the given status (helper for orchestrator
