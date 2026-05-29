@@ -253,6 +253,12 @@ wa-select::part(listbox) {
   display: inline-block;
   width: 1.2em;
   text-align: left;
+  /* Web Awesome's native.css sets `rotate: 90deg` on details[open]
+     summary::after (not `transform`). Cancel that here so the
+     animated dots stay horizontal when the disclosure is open. */
+  rotate: none;
+  mask: none;
+  background: none;
   animation: play-ai-thinking-dots 1.2s steps(4, end) infinite;
 }
 @keyframes play-ai-thinking-dots {
