@@ -958,7 +958,7 @@ export const playPerspective = {
           if (p.done) {
             // Defensive: tool-call lifecycle can drop the restore signal
             // (cancelled mid-call, round cap, etc.). Always snap back.
-            view.restorePosition();
+            view.restorePosition({ animate: false });
             markAiDone({
               cancelled: !!p.cancelled,
               error: p.error || null,
@@ -1006,7 +1006,10 @@ export const playPerspective = {
           // the analyzed FEN on the board so the user can follow the
           // AI's reasoning. Restored on ai_tool_call_complete.
           if (p.name === ANALYZE_TOOL_NAME && p.input && typeof p.input.fen === "string") {
-            view.previewPosition(p.input.fen);
+            // No animation: tool calls fire faster than the cm-chessboard
+            // queue drains while the perspective is hidden (rAF throttled
+            // off-screen), producing a "fast replay" on return.
+            view.previewPosition(p.input.fen, { animate: false });
           }
           return true;
         }
@@ -1018,14 +1021,14 @@ export const playPerspective = {
             detail: p.detail,
           });
           // Restore in case the failed call was an analyze preview.
-          view.restorePosition();
+          view.restorePosition({ animate: false });
           return true;
         }
         case "ai_tool_call_complete": {
           const p = evt.payload || {};
           // Debug marker disabled; uncomment to surface per-call checkmarks.
           // appendAiToolCallComplete({ round: p.round ?? 0, name: p.name });
-          if (p.name === ANALYZE_TOOL_NAME) view.restorePosition();
+          if (p.name === ANALYZE_TOOL_NAME) view.restorePosition({ animate: false });
           view.clearArrows();
           view.clearEngineInfo();
           return true;

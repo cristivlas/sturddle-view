@@ -858,17 +858,17 @@ export function mountGameView(container, opts = {}) {
     setNames,
     setPlayerName(name) { playerName = name || PLAYER_NAME_DEFAULT; },
     applyEvent,
-    previewPosition(fen) {
+    previewPosition(fen, { animate = true } = {}) {
       if (!fen || fen === currentFen) return;
       if (!previewActive) previewInputWasEnabled = board.isInputEnabled();
       previewActive = true;
       board.enableInput(false);
-      board.setPosition(fen, null, true);
+      board.setPosition(fen, null, animate);
     },
-    restorePosition() {
+    restorePosition({ animate = true } = {}) {
       if (!previewActive) return;
       previewActive = false;
-      board.setPosition(currentFen, null, true);
+      board.setPosition(currentFen, null, animate);
       board.enableInput(previewInputWasEnabled);
     },
     clearArrows() {
