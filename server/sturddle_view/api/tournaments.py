@@ -103,6 +103,39 @@ class EngineRef(BaseModel):
 
 _SPRT_DEFAULTS = {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05, "model": "normalized"}
 
+# Engine-default keys frozen into a tournament at create/edit time.
+# Mirrors `Settings.engine_default_<key>` fields. Snapshotting all of
+# them (including Nones) means a tournament's behavior cannot drift
+# if global Settings change later.
+_ENGINE_DEFAULT_KEYS = (
+    "threads", "hash_mb", "syzygy_path",
+    "book_path", "book_plies", "book_order",
+)
+
+
+def _freeze_engine_defaults(settings) -> dict:
+    return {
+        k: getattr(settings, f"engine_default_{k}", None)
+        for k in _ENGINE_DEFAULT_KEYS
+    }
+
+
+# 409 payload for /start when a stop/fail tournament restart needs the
+# user's confirmation. The reason string is part of the API contract
+# (clients branch on it); keep it stable.
+_WIPE_REQUIRED_REASON = "wipe_required"
+_WIPE_REQUIRED_MESSAGE = (
+    "Restarting will discard all previously recorded games. Continue?"
+)
+_WIPE_REQUIRED_DETAIL = {
+    "reason": _WIPE_REQUIRED_REASON,
+    "message": _WIPE_REQUIRED_MESSAGE,
+}
+
+# Logged when standings.games (from PGN) and fastchess's config.json
+# games-played disagree post-run. Tests assert on this substring.
+_PGN_CONFIG_MISMATCH_MSG = "PGN/config game count mismatch"
+
 
 def _resolve_sprt(template: dict, settings) -> dict:
     """If template.sprt is truthy but not a full dict, merge with sprt_defaults."""
@@ -161,19 +194,14 @@ def _serialize(
             ).to_dict()
         except FileNotFoundError:
             standings = {"games": 0, "engines": []}
-        # PGN is the authoritative count source. We never resume across
-        # stop cycles (Stop = wipe + restart), so the PGN never accumulates
-        # duplicate replays -- compute_standings.games is ground truth.
-        # Sanity check against fastchess's config.json; log a warning on
-        # disagreement so a future divergence surfaces without breaking
-        # the UI. Skip while RUNNING -- fastchess autosaves config.json
-        # lazily, so transient PGN-ahead-of-config lag is normal and
-        # would just spam the log.
+        # PGN is the authoritative count (Stop = wipe + restart, so no
+        # cross-run accumulation). Log a warning when config.json drifts.
+        # Skip while RUNNING: config.json autosaves lazily; lag is normal.
         if t.status != STATUS_RUNNING:
             cfg_games = games_played_from_config(store.config_path(t.id))
             if cfg_games is not None and cfg_games != standings["games"]:
                 log.warning(
-                    "tournament %s: PGN/config game count mismatch pgn=%d config=%d",
+                    "tournament %s: " + _PGN_CONFIG_MISMATCH_MSG + " pgn=%d config=%d",
                     t.id, standings["games"], cfg_games,
                 )
         standings["tournament_type"] = tournament_type
@@ -241,14 +269,8 @@ def create_tournament(payload: TournamentCreate, request: Request) -> dict:
     if len(payload.engines) < 2:
         raise HTTPException(status_code=400, detail="at least two engines required")
     name = payload.name.strip() or "tournament"
-    # Freeze ALL engine_default_* fields at create time — including Nones —
-    # so a tournament's behavior cannot drift if Settings change later.
     settings = request.app.state.settings
-    engine_defaults = {
-        k: getattr(settings, f"engine_default_{k}", None)
-        for k in ("threads", "hash_mb", "syzygy_path",
-                  "book_path", "book_plies", "book_order")
-    }
+    engine_defaults = _freeze_engine_defaults(settings)
     try:
         t = s.create(
             name=name,
@@ -290,14 +312,8 @@ def edit_tournament(tournament_id: str, payload: TournamentUpdate, request: Requ
         raise HTTPException(status_code=400, detail="at least two engines required")
     s = _store(request)
     name = payload.name.strip() or "tournament"
-    # Re-freeze engine_default_* — same rationale as create: a tournament's
-    # behavior should not silently drift if Settings change later.
     settings = request.app.state.settings
-    engine_defaults = {
-        k: getattr(settings, f"engine_default_{k}", None)
-        for k in ("threads", "hash_mb", "syzygy_path",
-                  "book_path", "book_plies", "book_order")
-    }
+    engine_defaults = _freeze_engine_defaults(settings)
     try:
         t = s.update(
             tournament_id,
@@ -385,10 +401,9 @@ async def start_tournament(
 ) -> dict:
     orch = _orch(request)
     store = _store(request)
-    # Stopped/failed tournaments are restarted from scratch -- fastchess's
-    # resume contract is too fragile across stop/resume cycles to support
-    # safely. Client must confirm a wipe; the server enforces the flag so
-    # a stray /start call never silently destroys data.
+    # Stop/fail restart wipes the dir (fastchess resume is unreliable).
+    # confirm_wipe gates the destructive path server-side so a stray
+    # /start can't silently destroy data.
     try:
         t = store.get(tournament_id)
     except TournamentNotFoundError as e:
@@ -396,16 +411,7 @@ async def start_tournament(
     needs_wipe = t.status in (STATUS_STOPPED, STATUS_FAILED)
     if needs_wipe:
         if not confirm_wipe:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "reason": "wipe_required",
-                    "message": (
-                        "Restarting will discard all previously recorded "
-                        "games. Continue?"
-                    ),
-                },
-            )
+            raise HTTPException(status_code=409, detail=_WIPE_REQUIRED_DETAIL)
         store.wipe_for_restart(tournament_id)
     try:
         t = await orch.start(tournament_id)

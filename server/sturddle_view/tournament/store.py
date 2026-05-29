@@ -21,9 +21,9 @@ from .. import APP_NAME
 from .._atomic import atomic_write_json
 
 
-# Allowed status values. Phase 1 has no `paused` (see tournament-spec.md).
-# `failed` is distinct from `stopped` — the latter is user-initiated, the
-# former is a runner crash with diagnostics in `last_error`.
+# Allowed status values. `failed` is distinct from `stopped`: the
+# latter is user-initiated; the former is a runner crash with
+# diagnostics in `last_error`.
 STATUS_IDLE = "idle"
 STATUS_RUNNING = "running"
 STATUS_STOPPED = "stopped"
@@ -62,7 +62,7 @@ class Tournament:
     template: dict = field(default_factory=dict)
     engines: list = field(default_factory=list)
     # Snapshot of global engine_default_* settings at creation time.
-    # Frozen so Stop/Resume can't drift if Settings change mid-run.
+    # Frozen so a tournament's behavior can't drift if Settings change later.
     engine_defaults: dict = field(default_factory=dict)
     # Diagnostic for the most recent runner_crash. None when the
     # tournament has never failed (or was cleared on a successful start).
@@ -153,9 +153,9 @@ class TournamentStore:
             (d / "logs").mkdir(parents=True, exist_ok=True)
 
             # Pin a seed for fastchess so opening-book shuffle (and
-            # anything else fastchess seeds from -srand) is stable
-            # across Stop/Resume cycles. Caller-supplied seed wins so
-            # tests/fixtures can be deterministic.
+            # anything else fastchess seeds from -srand) is reproducible
+            # for the lifetime of this tournament. Caller-supplied seed
+            # wins so tests/fixtures can be deterministic.
             frozen_template = dict(template)
             frozen_template.setdefault("seed", secrets.randbits(63))
 
@@ -252,15 +252,14 @@ class TournamentStore:
         ``engine_defaults`` re-freezes the global engine_default_* snapshot
         (mirroring ``create``); pass ``None`` to keep the existing snapshot.
 
-        Wipes the tournament directory clean before writing the fresh
-        state.json: any edit (template, engines, or rename) invalidates
-        prior PGN results, fastchess config/backups, logs, and any
-        stray files. They were produced under potentially different
-        conditions and must not leak into future runs. Caller (API
-        layer) is responsible for confirming with the user first.
-        Filesystem errors during wipe propagate -- a locked file
-        (AV scan, dangling handle) leaves the tournament in a usable
-        state on disk and the API returns 5xx.
+        Wipes the tournament directory clean: any edit (template,
+        engines, or rename) invalidates prior PGN results, fastchess
+        config/backups, logs, and any stray files. They were produced
+        under potentially different conditions and must not leak into
+        future runs. Caller (API layer) is responsible for confirming
+        with the user first. Filesystem errors during wipe propagate --
+        a locked file (AV scan, dangling handle) leaves the tournament
+        in a usable state on disk and the API returns 5xx.
         """
         with self._create_lock:
             t = self.get(tournament_id)
@@ -268,7 +267,6 @@ class TournamentStore:
                 x.name == name for x in self.list() if x.id != tournament_id
             ):
                 raise DuplicateNameError(name)
-            self._wipe_dir_contents(tournament_id)
 
             t.name = name
             t.template = dict(template)
@@ -279,7 +277,9 @@ class TournamentStore:
             t.started_at = None
             t.stopped_at = None
             t.last_error = None
+            # state.json first so a wipe failure can't vanish the row.
             atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
+            self._wipe_dir_contents(tournament_id)
             return t
 
     def wipe_for_restart(self, tournament_id: str) -> "Tournament":
@@ -290,22 +290,31 @@ class TournamentStore:
         """
         with self._create_lock:
             t = self.get(tournament_id)
-            self._wipe_dir_contents(tournament_id)
             t.status = STATUS_IDLE
             t.started_at = None
             t.stopped_at = None
             t.last_error = None
+            # Write the new state.json FIRST, then wipe siblings around it.
+            # Reversed order can vanish a tournament: if rmtree trips on a
+            # locked file (AV scan, dangling handle) after state.json is
+            # already gone, get() raises TournamentNotFoundError forever.
             atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
+            self._wipe_dir_contents(tournament_id)
             return t
 
     def _wipe_dir_contents(self, tournament_id: str) -> None:
-        """Delete every entry inside the tournament dir, keeping the dir
-        itself. Iterates children so a concurrent process can't claim the
-        path between rmtree + recreate."""
+        """Delete every entry inside the tournament dir except state.json,
+        keeping the dir itself. Iterates children so a concurrent process
+        can't claim the path between rmtree + recreate. Skipping state.json
+        preserves the tournament's listing identity through partial failures
+        -- callers must write state.json before invoking this."""
         d = self._dir(tournament_id)
         if not d.exists():
             return
+        state_name = self._state_path(tournament_id).name
         for child in d.iterdir():
+            if child.name == state_name:
+                continue
             if child.is_dir() and not child.is_symlink():
                 shutil.rmtree(child)
             else:

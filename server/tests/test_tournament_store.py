@@ -356,6 +356,30 @@ def test_update_wipes_tournament_dir_contents(store):
     assert reloaded.status == STATUS_IDLE
 
 
+def test_update_keeps_tournament_listable_if_wipe_partial_fails(store, monkeypatch):
+    """Vanish-window regression: if `_wipe_dir_contents` trips midway
+    (AV scan, dangling handle) the tournament must still be in `list()`
+    and `get()` -- state.json is written before the wipe runs."""
+    t = store.create(name="x", template={}, engines=[{"name": "A"}])
+    store.pgn_path(t.id).write_text("[Event \"?\"]\n\n*\n")
+
+    def _boom(self, tournament_id):
+        raise OSError("simulated AV lock")
+
+    monkeypatch.setattr(type(store), "_wipe_dir_contents", _boom)
+    with pytest.raises(OSError):
+        store.update(t.id, name="x", template={"tc": "1+0"}, engines=[{"name": "B"}])
+
+    # Even though the wipe blew up, state.json was already written --
+    # the row survives in list/get with the new template + idle status.
+    listed = [x for x in store.list() if x.id == t.id]
+    assert len(listed) == 1
+    reloaded = store.get(t.id)
+    assert reloaded.template["tc"] == "1+0"
+    assert reloaded.engines == [{"name": "B"}]
+    assert reloaded.status == STATUS_IDLE
+
+
 def test_update_succeeds_when_dir_only_has_state_file(store):
     """Fresh tournament with no PGN/config/logs yet: update must be a
     no-op-on-disk for the wipe and still produce a valid state.json."""

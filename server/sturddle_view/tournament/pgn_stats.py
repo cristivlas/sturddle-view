@@ -1,8 +1,9 @@
 """PGN-based standings, Elo, and SPRT computation.
 
-``games.pgn`` is the source of truth (not the runner's stdout summary), so
-Stop/Resume across the same PGN yields correct cumulative numbers.
-Reads the PGN; results are cached per-path keyed by (mtime, size).
+``games.pgn`` is the source of truth (not the runner's stdout summary).
+Stop wipes the PGN on next Start, so every tournament run computes
+standings over its own monotone PGN -- no cross-run reconciliation.
+Reads are cached per-path keyed by (mtime, size).
 """
 from __future__ import annotations
 

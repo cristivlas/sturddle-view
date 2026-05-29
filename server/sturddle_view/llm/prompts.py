@@ -8,7 +8,10 @@ cache hit rate.
 
 Both `coach` (live play mode) and `commentator` (view mode) addenda
 are wired via `_ai_kick.py::_prompt_mode_for`. Adding a new persona
-means adding an addendum constant and one branch in that selector.
+means adding an addendum constant, a branch in that selector, and
+(if it should receive PGN annotations) widening the gate in
+`_ai_kick.py::_build_user_message` -- annotations are keyed on the
+prompt persona, not the underlying play Mode.
 """
 from __future__ import annotations
 
@@ -135,6 +138,16 @@ def _force_inline_enabled() -> bool:
 
 _INITIAL_NO_MOVES = "(none yet -- the game has not started)"
 
+# Render-side scrub: drop any char that could break out of our `{...}`
+# framing or smuggle a fake instruction line. Defense in depth on top
+# of _sanitize_comment, which leaves braces and newlines intact for
+# the UI. Empty result means the caller should skip the slot entirely.
+_PROMPT_COMMENT_BAD_CHARS = str.maketrans("", "", "{}\n\r")
+
+
+def _scrub_comment_for_prompt(comment: str) -> str:
+    return comment.translate(_PROMPT_COMMENT_BAD_CHARS).strip()
+
 
 def _render_san_pairs(san_history: list[str]) -> str:
     """Render a flat SAN list as a numbered move sequence.
@@ -218,7 +231,7 @@ def build_initial_user_message(
     if result:
         lines.append(f"Game result: {result}")
     if root_annotation:
-        lines.append(f"Pre-game note: {root_annotation}")
+        lines.append(f"Pre-game note: {_scrub_comment_for_prompt(root_annotation)}")
     annotations_line = _render_annotations(san_history, annotations)
     if annotations_line:
         lines.append(annotations_line)
@@ -241,7 +254,10 @@ def _render_annotations(
             continue
         move_no = (i // 2) + 1
         dots = "." if i % 2 == 0 else "..."
-        pairs.append(f"{move_no}{dots}{san_history[i]} {{{comment}}}")
+        safe = _scrub_comment_for_prompt(comment)
+        if not safe:
+            continue
+        pairs.append(f"{move_no}{dots}{san_history[i]} {{{safe}}}")
     if not pairs:
         return None
     return f"Annotations: {' '.join(pairs)}"

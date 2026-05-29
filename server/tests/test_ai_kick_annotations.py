@@ -48,12 +48,13 @@ def test_truncate_limit_equal_to_marker_returns_marker_only():
     assert out == _TRUNCATION_MARKER
 
 
-def test_truncate_limit_below_marker_returns_empty_head_plus_marker():
-    # head_len clamps to 0; marker still appended even though we go over
-    # the (very small) limit. This is the corner case where the budget
-    # was tiny -- the caller has bigger problems than the marker overflow.
+def test_truncate_limit_below_marker_hard_cuts_without_marker():
+    # When the cap is smaller than the marker, dropping the marker is
+    # the only way to honor the cap. Hard-cut to the literal limit.
     out = _truncate("abcdefg", 1)
-    assert out == _TRUNCATION_MARKER
+    assert out == "a"
+    out = _truncate("abcdefg", 2)
+    assert out == "ab"
 
 
 def test_truncate_zero_limit_returns_empty():
@@ -146,30 +147,30 @@ def test_cap_annotations_preserves_none_slots_inside_list():
 # _int_env: positive int from env, default on anything else.
 
 def test_int_env_returns_default_when_unset(monkeypatch):
-    monkeypatch.delenv("SV_TEST_ENV_VAR", raising=False)
-    assert _int_env("SV_TEST_ENV_VAR", 42) == 42
+    monkeypatch.delenv("SVTEST_AI_KICK_INT_PROBE", raising=False)
+    assert _int_env("SVTEST_AI_KICK_INT_PROBE", 42) == 42
 
 
 def test_int_env_parses_positive_int(monkeypatch):
-    monkeypatch.setenv("SV_TEST_ENV_VAR", "123")
-    assert _int_env("SV_TEST_ENV_VAR", 42) == 123
+    monkeypatch.setenv("SVTEST_AI_KICK_INT_PROBE", "123")
+    assert _int_env("SVTEST_AI_KICK_INT_PROBE", 42) == 123
 
 
 def test_int_env_rejects_zero_returns_default(monkeypatch):
     # Zero is a footgun: capping to 0 means "render nothing" -- the
     # caller almost certainly didn't mean that. Treat as garbage.
-    monkeypatch.setenv("SV_TEST_ENV_VAR", "0")
-    assert _int_env("SV_TEST_ENV_VAR", 42) == 42
+    monkeypatch.setenv("SVTEST_AI_KICK_INT_PROBE", "0")
+    assert _int_env("SVTEST_AI_KICK_INT_PROBE", 42) == 42
 
 
 def test_int_env_rejects_negative_returns_default(monkeypatch):
-    monkeypatch.setenv("SV_TEST_ENV_VAR", "-5")
-    assert _int_env("SV_TEST_ENV_VAR", 42) == 42
+    monkeypatch.setenv("SVTEST_AI_KICK_INT_PROBE", "-5")
+    assert _int_env("SVTEST_AI_KICK_INT_PROBE", 42) == 42
 
 
 def test_int_env_rejects_garbage_returns_default(monkeypatch):
-    monkeypatch.setenv("SV_TEST_ENV_VAR", "abc")
-    assert _int_env("SV_TEST_ENV_VAR", 42) == 42
+    monkeypatch.setenv("SVTEST_AI_KICK_INT_PROBE", "abc")
+    assert _int_env("SVTEST_AI_KICK_INT_PROBE", 42) == 42
 
 
 def test_int_env_default_overrides_apply_via_caps(monkeypatch):

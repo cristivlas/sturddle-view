@@ -420,9 +420,9 @@ class Orchestrator:
             await self._emit_status(failed)
             raise
 
-        # Defense in depth: previous terminal event clears state; this
-        # is a no-op in the normal stop -> start (resume) flow but
-        # guards against any leak from prior runs.
+        # Defense in depth: previous terminal event already cleared
+        # state. No-op on the normal path; guards against leakage
+        # from prior runs.
         self._reset_pairing_state()
         # Mark active *before* spawning so a concurrent ``start`` call
         # racing against this one is rejected by the busy check above.
@@ -490,7 +490,8 @@ class Orchestrator:
     def reconcile_on_startup(self) -> list[Tournament]:
         """Mark persisted ``running`` rows as ``failed`` with a synthetic
         last_error -- server died mid-tournament; can't claim a clean
-        stop. Resume via Start (config.json still on disk)."""
+        stop. The user can press Start to restart from scratch (wipe
+        confirm required; prior PGN is discarded)."""
         stale = self._store.find_by_status(STATUS_RUNNING)
         out: list[Tournament] = []
         for t in stale:
@@ -498,7 +499,8 @@ class Orchestrator:
                 "rc": None,
                 "stderr_tail": [
                     "Server was killed or crashed while this tournament was running. "
-                    "fastchess and any engine processes have been reaped; press Start to resume."
+                    "fastchess and any engine processes have been reaped; press Start "
+                    "to restart from scratch (prior games will be discarded)."
                 ],
                 "at": _now(),
             }
@@ -521,7 +523,7 @@ class Orchestrator:
           - ``done``         -> status=done, active_id cleared
           - ``stopped``      -> status=stopped, active_id cleared
           - ``runner_crash`` -> status=failed + last_error persisted,
-                               active_id cleared (no Resume in Phase 1)
+                               active_id cleared
           - ``started``      -> no status change (we set RUNNING in start())
           - others           -> forwarded as-is to broadcast
         """

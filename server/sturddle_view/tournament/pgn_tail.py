@@ -170,7 +170,8 @@ class PgnTailer:
 
     async def _run(self) -> None:
         assert self._stop_event is not None
-        # Resume case: pre-existing PGN parsed without waiting.
+        # Pre-existing PGN content parsed without waiting (e.g. mid-game
+        # subscriber attach after the runner has already produced games).
         try:
             await self.poll_once()
         except Exception:

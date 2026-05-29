@@ -1,15 +1,9 @@
 """Unit tests for the tournament WS streamer (`_stream_queue_to_websocket`).
 
-The streamer races three async tasks: queue.get() for normal frames,
-queue.wait_terminal() for the sticky game-end payload, and
-websocket.receive() for client disconnect. Terminal must win over recv
-on close so the end-of-game banner reaches the client even when the WS
-is tearing down in the same scheduler tick -- this regression suite
-exists because banners were silently dropped before the fix.
-
-Uses a hand-rolled fake WebSocket. The real ASGI path is exercised via
-fastapi.TestClient elsewhere; here we want fine-grained control of
-which task wins the asyncio.wait() race, which TestClient cannot give.
+Terminal must win over recv on close so the end-of-game banner reaches
+the client even when the WS tears down in the same scheduler tick.
+Synchronization via `_FakeWS.recv_started` (set on first await), not
+sleeps.
 """
 from __future__ import annotations
 
@@ -23,19 +17,19 @@ from sturddle_view.tournament.orchestrator import CoalescingQueue
 
 
 class _FakeWS:
-    """Minimal stand-in for fastapi.WebSocket.
-
-    `sent` records every payload passed to `send_json`. `incoming` is a
-    queue tests push to in order to script client->server signals: a
-    plain dict is delivered; the sentinel `_CLOSE` makes `receive()`
-    raise WebSocketDisconnect to simulate the client closing the WS.
-    `recv_blocks_forever()` makes recv hang until cancel."""
+    """Stand-in for fastapi.WebSocket. `recv_started` fires on first
+    `receive()` await -- deterministic "streamer is parked" signal.
+    `incoming` carries client->server signals; `_CLOSE` raises
+    WebSocketDisconnect. `send_called` fires on every send_json so
+    tests can wait for "N frames flushed" without polling."""
 
     _CLOSE = object()
 
     def __init__(self) -> None:
         self.sent: list[dict] = []
         self.incoming: asyncio.Queue = asyncio.Queue()
+        self.recv_started: asyncio.Event = asyncio.Event()
+        self.send_called: asyncio.Event = asyncio.Event()
         self._block_forever = False
 
     def recv_blocks_forever(self) -> None:
@@ -43,8 +37,11 @@ class _FakeWS:
 
     async def send_json(self, payload: dict) -> None:
         self.sent.append(payload)
+        self.send_called.set()
+        self.send_called.clear()
 
     async def receive(self) -> dict:
+        self.recv_started.set()
         if self._block_forever:
             await asyncio.Event().wait()
         msg = await self.incoming.get()
@@ -54,6 +51,13 @@ class _FakeWS:
 
     def disconnect(self) -> None:
         self.incoming.put_nowait(self._CLOSE)
+
+
+async def _wait_until_sent(ws: _FakeWS, n: int, *, timeout: float = 0.5) -> None:
+    """Wait until ws.sent has at least n frames. Uses the send_called
+    edge-trigger instead of polling so the test stays deterministic."""
+    while len(ws.sent) < n:
+        await asyncio.wait_for(ws.send_called.wait(), timeout=timeout)
 
 
 @pytest.mark.asyncio
@@ -81,7 +85,9 @@ async def test_streamer_forwards_normal_frames_with_parsed_enrichment():
     ws.recv_blocks_forever()
 
     task = asyncio.create_task(_stream_queue_to_websocket(ws, q))
-    await asyncio.sleep(0.05)
+    # Wait until the frame is flushed before posting the sentinel; the
+    # sentinel races get_task otherwise and may win.
+    await _wait_until_sent(ws, 1)
     q.put_sentinel({"ended": True})
     await asyncio.wait_for(task, timeout=0.5)
 
@@ -104,7 +110,7 @@ async def test_streamer_preserves_caller_supplied_parsed_field():
     ws.recv_blocks_forever()
 
     task = asyncio.create_task(_stream_queue_to_websocket(ws, q))
-    await asyncio.sleep(0.05)
+    await _wait_until_sent(ws, 1)
     q.put_sentinel({"ended": True})
     await asyncio.wait_for(task, timeout=0.5)
 
@@ -120,7 +126,7 @@ async def test_streamer_delivers_terminal_mid_stream():
     ws.recv_blocks_forever()
 
     task = asyncio.create_task(_stream_queue_to_websocket(ws, q))
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(ws.recv_started.wait(), timeout=0.5)
     assert ws.sent == []
     q.put_sentinel({"ended": True, "result": "0-1"})
 
@@ -136,7 +142,7 @@ async def test_streamer_exits_on_client_disconnect_without_terminal():
     ws = _FakeWS()
 
     task = asyncio.create_task(_stream_queue_to_websocket(ws, q))
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(ws.recv_started.wait(), timeout=0.5)
     ws.disconnect()
 
     await asyncio.wait_for(task, timeout=0.5)
@@ -153,7 +159,7 @@ async def test_streamer_flushes_terminal_when_recv_wins_race():
     ws = _FakeWS()
 
     task = asyncio.create_task(_stream_queue_to_websocket(ws, q))
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(ws.recv_started.wait(), timeout=0.5)
     q.put_sentinel({"ended": True, "result": "1-0"})
     ws.disconnect()
 
@@ -171,7 +177,7 @@ async def test_streamer_flushes_terminal_on_websocket_disconnect_exception():
     ws = _FakeWS()
 
     async def _orchestrate():
-        await asyncio.sleep(0.02)
+        await ws.recv_started.wait()
         q.put_sentinel({"ended": True, "result": "1/2-1/2"})
         ws.disconnect()
 
@@ -184,16 +190,23 @@ async def test_streamer_flushes_terminal_on_websocket_disconnect_exception():
 
 @pytest.mark.asyncio
 async def test_streamer_cleans_up_tasks_after_terminal():
-    """All three internal tasks must be cancelled before return so the
-    asyncio loop has no lingering coroutines."""
+    """No lingering internal tasks after the streamer returns. Snapshot
+    the foreign-task set before+after so unrelated tasks (pytest-asyncio
+    fixtures, anyio threads) don't poison the assertion."""
     q = CoalescingQueue(maxsize=8)
     ws = _FakeWS()
     ws.recv_blocks_forever()
 
+    before = {t for t in asyncio.all_tasks() if t is not asyncio.current_task()}
+
     task = asyncio.create_task(_stream_queue_to_websocket(ws, q))
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(ws.recv_started.wait(), timeout=0.5)
     q.put_sentinel({"ended": True})
     await asyncio.wait_for(task, timeout=0.5)
+    # Yield once so any cancellation scheduled inside the streamer's
+    # finally has a chance to clear from all_tasks.
+    await asyncio.sleep(0)
 
-    all_tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-    assert all_tasks == []
+    after = {t for t in asyncio.all_tasks() if t is not asyncio.current_task()}
+    leaked = after - before
+    assert leaked == set(), f"streamer leaked tasks: {leaked}"

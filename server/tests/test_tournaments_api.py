@@ -1,4 +1,4 @@
-"""Slice 5: REST + WS surface for tournaments.
+"""REST + WS surface for tournaments.
 
 Uses ``fastapi.TestClient`` with ``auth_disabled=True``. The actual
 fastchess subprocess is replaced by a fake-fastchess script via a
@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from sturddle_view.api.tournaments import _PGN_CONFIG_MISMATCH_MSG
 from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.tournament import fastchess as fc_mod
@@ -171,7 +172,7 @@ def test_pgn_config_mismatch_logs_warning_when_not_running(client, settings, cap
     with caplog.at_level(logging.WARNING, logger="sturddle_view.api.tournaments"):
         body = client.get(f"/api/tournaments/{tid}").json()
     assert body["standings"]["games"] == 2  # PGN wins regardless
-    assert any("PGN/config game count mismatch" in r.message for r in caplog.records)
+    assert any(_PGN_CONFIG_MISMATCH_MSG in r.message for r in caplog.records)
 
 
 def test_pgn_config_mismatch_skipped_while_running(client, settings, caplog):
@@ -182,7 +183,10 @@ def test_pgn_config_mismatch_skipped_while_running(client, settings, caplog):
         "name": "y", "engines": _engines_payload(),
     }).json()
     tid = created["id"]
-    store = TournamentStore(Path(settings.tournament_root))
+    # Use the app-state store directly: a separately-constructed store
+    # over the same root would diverge from the app's instance the
+    # moment internal caching is added.
+    store = client.app.state.tournament_store
     store.update_status(tid, "running", started_at="2026-01-01T00:00:00+00:00")
     pgn = Path(settings.tournament_root) / tid / "games.pgn"
     pgn.parent.mkdir(parents=True, exist_ok=True)
@@ -194,7 +198,7 @@ def test_pgn_config_mismatch_skipped_while_running(client, settings, caplog):
     )
     with caplog.at_level(logging.WARNING, logger="sturddle_view.api.tournaments"):
         client.get(f"/api/tournaments/{tid}").json()
-    assert not any("PGN/config game count mismatch" in r.message for r in caplog.records)
+    assert not any(_PGN_CONFIG_MISMATCH_MSG in r.message for r in caplog.records)
 
 
 def test_list_returns_created(client):
@@ -216,7 +220,7 @@ def test_list_returns_created(client):
 
 def test_start_requires_confirm_wipe_when_stopped(client, settings, monkeypatch):
     """status=STOPPED -> 409 with reason=wipe_required when confirm_wipe is
-    omitted. Pause = wipe on next start; a silent /start would destroy
+    omitted. Stop wipes on next Start; a silent /start would destroy
     data."""
     _patch_fake_fastchess(monkeypatch, "--exit", "0")
     t = client.post("/api/tournaments", json={
@@ -812,7 +816,7 @@ def test_patch_running_returns_409(client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Per-game PGN fetch (slice 4 replay)
+# Per-game PGN fetch
 # ---------------------------------------------------------------------------
 
 

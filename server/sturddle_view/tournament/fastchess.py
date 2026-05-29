@@ -205,13 +205,13 @@ def build_command(spec: RunSpec) -> list[str]:
     if spec.tournament.name:
         cmd.extend(["-event", spec.tournament.name])
 
-    # Pinned seed for fastchess's PRNG (opening shuffle, etc). Stable
-    # across Stop/Resume cycles so the opening sequence is reproducible.
+    # Pinned seed for fastchess's PRNG (opening shuffle, etc) so the
+    # opening sequence is reproducible for this tournament's lifetime.
     if "seed" in t:
         cmd.extend(["-srand", str(t["seed"])])
 
-    # Save cfg.json after every game so a Stop loses at most one
-    # in-flight game's worth of resume progress (default is 20).
+    # Save cfg.json after every game so a server crash loses at most
+    # one in-flight game's worth of recorded progress (default is 20).
     cmd.extend(["-autosaveinterval", "1"])
 
     # Opening book — global default from settings; legacy template
@@ -269,10 +269,11 @@ def build_command(spec: RunSpec) -> list[str]:
     if _fc_log_level in {"trace", "info", "warn", "err", "fatal"}:
         cmd.extend(["-log", f"file={spec.log_path}", f"level={_fc_log_level}", "append=true"])
 
-    # -config drives Resume after Stop. Always pass outname= so fastchess
-    # writes its scoreboard snapshot. Only pass file= when the snapshot
-    # already exists, since fastchess errors out if file= points at a
-    # missing path (cli.cpp:439 throws fastchess_exception).
+    # Always pass outname= so fastchess writes its scoreboard snapshot
+    # (used post-run for the games-played reconcile check). Only pass
+    # file= when the snapshot already exists -- crash-recovery path
+    # only -- since fastchess errors out if file= points at a missing
+    # path (cli.cpp:439 throws fastchess_exception).
     cfg = ["-config", f"outname={spec.config_path}"]
     if spec.config_path.exists():
         cfg.insert(1, f"file={spec.config_path}")
@@ -362,15 +363,13 @@ class FastchessRunner:
         spec.work_dir.mkdir(parents=True, exist_ok=True)
         spec.log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Resume-relevant facts up front so logs make a Stop/Start cycle
-        # legible without grepping the full argv.
+        # Should always be cfg_exists=false post-wipe; any true here
+        # flags a wipe bypass and is worth investigating.
         seed = spec.tournament.template.get("seed")
-        is_resume = spec.config_path.exists()
         log.info(
-            "starting fastchess: tournament=%s resume=%s cfg_exists=%s seed=%s pgn=%s",
+            "starting fastchess: tournament=%s cfg_exists=%s seed=%s pgn=%s",
             spec.tournament.id,
-            is_resume,
-            is_resume,
+            spec.config_path.exists(),
             seed if seed is not None else "<unset>",
             spec.pgn_path,
         )

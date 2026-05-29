@@ -10,6 +10,7 @@
 import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, showDialog, toast } from "./dialogs.js";
 import { openSettingsDialog } from "./settings-dialog.js";
 import { EVT, KIND, POLL_INTERVAL_MS, STATUS } from "./tournament-events.js";
+import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 
@@ -493,17 +494,9 @@ export function mountTournaments({ container, api, events, log, token }) {
     const willWipe = t.status === STATUS.STOPPED || t.status === STATUS.FAILED;
     let qs = "";
     if (willWipe) {
-      const games = t.standings?.games ?? 0;
-      const message = games > 0
-        ? `Restart "${t.name}" from scratch? All ${games} recorded games will be permanently deleted.`
-        : `Restart "${t.name}" from scratch?`;
-      const ok = await confirm({
-        message,
-        okLabel: "Restart",
-        destructive: true,
-      });
+      const ok = await confirm(buildRestartConfirm(t.name, t.standings?.games ?? 0));
       if (!ok) return;
-      qs = "?confirm_wipe=true";
+      qs = `?${CONFIRM_WIPE_QS}`;
     }
     try {
       await api("POST", `/api/tournaments/${t.id}/start${qs}`);

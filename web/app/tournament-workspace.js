@@ -18,6 +18,7 @@ import {
   LIVE_MIN_WIDTH, LIVE_MIN_HEIGHT, DEBUG_WATCH,
 } from "./tournament-live-game.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
+import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
 import { attachColumnResize } from "./col-resize.js";
 import { apiErrorDetail, confirm, toast } from "./dialogs.js";
 import {
@@ -728,28 +729,39 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (banner) {
       const err = detail?.last_error;
       if (err) {
-        const RESUME_SUFFIX = "; press Start to resume.";
+        // Server-emitted server-crash hint vs fastchess's own runner-crash
+        // hint. Both produce a Restart button in the banner; we just need
+        // to strip the source-side "press Start" prose so we don't show it
+        // twice (once as text, once as the button).
+        const RESTART_HINT_SUFFIX = "press Start to restart from scratch (prior games will be discarded).";
         const FASTCHESS_RESUME_LINE = "To resume the tournament, run:";
         const rawTail = (err.stderr_tail || []).slice(-10);
         const lastIdx = rawTail.length - 1;
 
         let displayLines = rawTail;
-        let resumePre = null;
-        if (lastIdx >= 0 && rawTail[lastIdx].endsWith(RESUME_SUFFIX)) {
-          displayLines = [...rawTail.slice(0, lastIdx), rawTail[lastIdx].slice(0, -RESUME_SUFFIX.length)];
-          resumePre = "; press ";
+        let restartPre = null;
+        if (lastIdx >= 0 && rawTail[lastIdx].includes(RESTART_HINT_SUFFIX)) {
+          const head = rawTail[lastIdx].slice(0, rawTail[lastIdx].indexOf(RESTART_HINT_SUFFIX));
+          const trimmed = head.replace(/[;\s]+$/, "");
+          displayLines = trimmed
+            ? [...rawTail.slice(0, lastIdx), trimmed]
+            : rawTail.slice(0, lastIdx);
+          restartPre = "; press ";
         } else {
           const i = rawTail.findIndex((l) => l.includes(FASTCHESS_RESUME_LINE));
           if (i >= 0) {
             displayLines = rawTail.slice(0, i);
-            resumePre = " -- press ";
+            restartPre = " -- press ";
           }
         }
+        // FAILED always means "won't resume itself", so Restart is
+        // always a valid action. Default unconditionally so an
+        // unrecognized failure shape doesn't dead-end the workspace.
+        if (restartPre === null) restartPre = "; press ";
 
         const tail = displayLines.join("\n") || `exit code ${err.rc}`;
         banner.innerHTML = `<div class="wb-error-title">Tournament failed (rc=${err.rc})</div><pre>${escapeHtml(tail)}</pre>`;
-        if (resumePre) {
-          // Stop is destructive; restart always starts from scratch.
+        if (restartPre) {
           const blocked = otherActiveId != null;
           const otherLabel = otherActiveName ? `"${otherActiveName}"` : "another tournament";
           const tooltip = blocked
@@ -759,7 +771,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
             ? ` -- stop ${otherLabel} first to restart.`
             : " to restart from scratch.";
           const pre = banner.querySelector("pre");
-          pre.append(resumePre);
+          pre.append(restartPre);
           const btn = document.createElement("button");
           btn.type = "button";
           btn.className = "toast-icon-btn";
@@ -770,19 +782,17 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           ic.setAttribute("name", "rotate-right");
           btn.appendChild(ic);
           btn.addEventListener("click", async () => {
-            if (btn.disabled) return;
-            const games = detail?.standings?.games ?? 0;
-            const message = games > 0
-              ? `Restart "${tournament.name}" from scratch? All ${games} recorded games will be permanently deleted.`
-              : `Restart "${tournament.name}" from scratch?`;
-            const ok = await confirm({
-              message,
-              okLabel: "Restart",
-              destructive: true,
-            });
+            // Re-read otherActiveId at click time. btn.disabled is
+            // latched at render and can lag a setOtherActive update.
+            if (otherActiveId != null) {
+              const lbl = otherActiveName ? `"${otherActiveName}"` : "another tournament";
+              toast(`${lbl} is currently running. Stop it first.`, { variant: "warning" });
+              return;
+            }
+            const ok = await confirm(buildRestartConfirm(tournament.name, detail?.standings?.games ?? 0));
             if (!ok) return;
             try {
-              await api("POST", `/api/tournaments/${tournament.id}/start?confirm_wipe=true`);
+              await api("POST", `/api/tournaments/${tournament.id}/start?${CONFIRM_WIPE_QS}`);
             } catch (e) {
               toast(`Restart failed: ${apiErrorDetail(e)}`, { variant: "danger" });
             }
@@ -861,11 +871,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     applyDetail(fresh);
   }
 
-  // Id and name of another tournament currently running, if any.
-  // Drives the failure-banner Restart button's disabled state and the
-  // accompanying explanation -- attempting a restart while another
-  // tournament holds the single-active slot would 409 after the user
-  // already confirmed the wipe.
+  // Tracks any OTHER tournament currently running. Drives the failure
+  // banner's Restart disabled state -- restarting while another holds
+  // the single-active slot would 409 after a confirmed wipe.
   let otherActiveId = null;
   let otherActiveName = null;
   function setOtherActive(id, name) {
