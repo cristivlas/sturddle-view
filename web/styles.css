@@ -704,7 +704,7 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-@media (max-width: 640px) {
+@media (max-width: 640px), (max-height: 740px) {
   main { overflow-y: auto; }
 }
 @media (max-width: 640px) {
