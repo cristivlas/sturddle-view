@@ -750,17 +750,27 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         banner.innerHTML = `<div class="wb-error-title">Tournament failed (rc=${err.rc})</div><pre>${escapeHtml(tail)}</pre>`;
         if (resumePre) {
           // Stop is destructive; restart always starts from scratch.
+          const blocked = otherActiveId != null;
+          const otherLabel = otherActiveName ? `"${otherActiveName}"` : "another tournament";
+          const tooltip = blocked
+            ? `${otherLabel} is currently running. Stop it first.`
+            : "Restart";
+          const trailing = blocked
+            ? ` -- stop ${otherLabel} first to restart.`
+            : " to restart from scratch.";
           const pre = banner.querySelector("pre");
           pre.append(resumePre);
           const btn = document.createElement("button");
           btn.type = "button";
           btn.className = "toast-icon-btn";
           btn.setAttribute("aria-label", "Restart");
-          btn.setAttribute("title", "Restart");
+          btn.setAttribute("title", tooltip);
+          btn.disabled = blocked;
           const ic = document.createElement("wa-icon");
           ic.setAttribute("name", "rotate-right");
           btn.appendChild(ic);
           btn.addEventListener("click", async () => {
+            if (btn.disabled) return;
             const games = detail?.standings?.games ?? 0;
             const message = games > 0
               ? `Restart "${tournament.name}" from scratch? All ${games} recorded games will be permanently deleted.`
@@ -778,7 +788,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
             }
           });
           pre.appendChild(btn);
-          pre.append(" to restart from scratch.");
+          pre.append(trailing);
         }
         banner.hidden = false;
       } else {
@@ -849,6 +859,22 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       return;
     }
     applyDetail(fresh);
+  }
+
+  // Id and name of another tournament currently running, if any.
+  // Drives the failure-banner Restart button's disabled state and the
+  // accompanying explanation -- attempting a restart while another
+  // tournament holds the single-active slot would 409 after the user
+  // already confirmed the wipe.
+  let otherActiveId = null;
+  let otherActiveName = null;
+  function setOtherActive(id, name) {
+    const nextId = (id && id !== tournament.id) ? id : null;
+    const nextName = nextId ? (name || null) : null;
+    if (nextId === otherActiveId && nextName === otherActiveName) return;
+    otherActiveId = nextId;
+    otherActiveName = nextName;
+    renderEventLog();
   }
 
   function applyDetail(fresh) {
@@ -1543,7 +1569,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   function restoreWindows(wbs) {
     for (const wb of wbs) try { unminimize(wb); } catch { /* */ }
   }
-  const workspace = { close, tile, tidy, untidy, snap, closeAll, minimizeAll, restoreWindows, focus, hide, show, isHidden, openSystemWindow, refresh, applyDetail, tournamentId: tournament.id, get isTidy() { return activeLayout === LAYOUT.TIDY; } };
+  const workspace = { close, tile, tidy, untidy, snap, closeAll, minimizeAll, restoreWindows, focus, hide, show, isHidden, openSystemWindow, refresh, applyDetail, setOtherActive, tournamentId: tournament.id, get isTidy() { return activeLayout === LAYOUT.TIDY; } };
   activeWorkspace = workspace;
   return workspace;
 }

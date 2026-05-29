@@ -165,9 +165,25 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   const loadList = lastWriteWins(
     () => api("GET", "/api/tournaments"),
-    (body) => { tournaments = body.tournaments; activeId = body.active_id; renderList(); },
+    (body) => {
+      tournaments = body.tournaments;
+      activeId = body.active_id;
+      renderList();
+      syncWorkspaceOtherActive();
+    },
     (e) => reportError({ log }, "Loading tournaments failed", e),
   );
+
+  function syncWorkspaceOtherActive() {
+    const ws = getActiveWorkspace();
+    if (!ws?.setOtherActive) return;
+    if (!activeId || activeId === ws.tournamentId) {
+      ws.setOtherActive(null, null);
+      return;
+    }
+    const other = tournaments.find((x) => x.id === activeId);
+    ws.setOtherActive(activeId, other?.name || null);
+  }
   const debouncedLoadList = debounce(loadList, 150);
 
   // ---- Rendering ----------------------------------------------------------
@@ -558,6 +574,10 @@ export function mountTournaments({ container, api, events, log, token }) {
     const left = Math.max(Math.round(rect.left), ribbonW);
     const getRight = () => window.innerWidth - ribbonW;
     openTournamentWorkspace({ api, events, log, token, tournament: t, top, left, getRight });
+    // Seed the workspace's view of the other-active tournament so the
+    // banner Restart button reflects busy state on open, not just after
+    // the next loadList tick.
+    syncWorkspaceOtherActive();
     syncWindowMenu();
     syncRibbon();
   }
@@ -1234,6 +1254,7 @@ export function mountTournaments({ container, api, events, log, token }) {
       }
       // Re-render with the optimistic state; debouncedLoadList canonicalizes.
       renderList();
+      syncWorkspaceOtherActive();
       debouncedLoadList();
     }
   });

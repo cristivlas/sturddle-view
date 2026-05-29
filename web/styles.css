@@ -563,6 +563,17 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   background: rgba(255, 255, 255, 0.18);
   border-color: rgba(255, 255, 255, 0.4);
 }
+.toast-icon-btn:disabled,
+.toast-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: auto; /* keep hover so the tooltip still surfaces */
+}
+.toast-icon-btn:disabled:hover,
+.toast-action-btn:disabled:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.22);
+}
 .toast-sort-msg {
   display: flex;
   align-items: center;
