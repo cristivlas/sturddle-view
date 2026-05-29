@@ -11,11 +11,18 @@ from platformdirs import user_data_dir
 
 from . import APP_NAME
 from ._uvicorn_signal import make_signalling_server
+from .app import create_app
 from .config import Settings
 
 _SERVER_STARTUP_TIMEOUT = 5.0
 _SERVER_SHUTDOWN_TIMEOUT = 5.0
 _PGN_FILE_TYPES = ("PGN (*.pgn)", "All files (*.*)")
+_CLOSE_CONFIRM_TITLE = "Tournament in progress"
+_CLOSE_CONFIRM_MESSAGE = (
+    "A tournament is currently running ({name}). "
+    "Closing now will stop it; on restart it will start from scratch and "
+    "all recorded games will be discarded.\n\nClose anyway?"
+)
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +85,40 @@ def show_error(title: str, message: str) -> None:
         pass
 
 
+def _active_tournament_name(app) -> str | None:
+    """Return the running tournament's name, or None. Defensive: any
+    lookup failure (orch unattached, store error) returns None so the
+    close handler never blocks on bookkeeping bugs."""
+    try:
+        orch = getattr(app.state, "tournament_orch", None)
+        if orch is None:
+            return None
+        active_id = orch.active_id()
+        if not active_id:
+            return None
+        store = getattr(app.state, "tournament_store", None)
+        if store is None:
+            return None
+        return store.get(active_id).name
+    except Exception:
+        log.exception("close-confirm: active tournament lookup failed")
+        return None
+
+
+def _make_close_handler(app, window):
+    def on_closing() -> bool | None:
+        # Return False to cancel the close. PyWebView treats any False in
+        # the handler return set as "abort"; None / True allow the close.
+        name = _active_tournament_name(app)
+        if not name:
+            return None
+        confirmed = window.create_confirmation_dialog(
+            _CLOSE_CONFIRM_TITLE, _CLOSE_CONFIRM_MESSAGE.format(name=name),
+        )
+        return None if confirmed else False
+    return on_closing
+
+
 def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> None:
     try:
         import webview  # type: ignore[import-untyped]
@@ -85,15 +126,20 @@ def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> N
         raise SystemExit("PyWebView is not installed. Install with: pip install '.[desktop]'") from exc
 
     settings = Settings(host=host, port=port)
-    # Pin the token so the uvicorn-spawned create_app() picks up the same
-    # value via Settings() (rather than rolling a new random one).
+    # Pin the token so create_app picks up the same value via Settings()
+    # (rather than rolling a new random one) -- the /auth handshake below
+    # validates against this token.
     os.environ.setdefault("SV_TOKEN", settings.token)
 
+    # Build the app eagerly so we can hand the same instance to uvicorn
+    # AND keep a reference for the close-confirm handler (reads
+    # app.state.tournament_orch to decide whether to prompt).
+    app = create_app(settings=settings)
+
     config = uvicorn.Config(
-        "sturddle_view.app:create_app",
+        app,
         host=host,
         port=port,
-        factory=True,
         log_config=None,
         access_log=False,
     )
@@ -116,6 +162,7 @@ def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> N
         "sturddle-view", url, width=width, height=height, js_api=api,
     )
     api.attach(window)
+    window.events.closing += _make_close_handler(app, window)
     webview.start(private_mode=False, storage_path=user_data_dir(APP_NAME, appauthor=False))
 
     server.should_exit = True
