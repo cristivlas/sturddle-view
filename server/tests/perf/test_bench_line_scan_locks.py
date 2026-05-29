@@ -33,12 +33,12 @@ def _bench_uncached():
 
 
 @pytest.mark.perf
-def test_bench_iter_games_keyed_1k_games(benchmark, bench_compare):
+def test_bench_iter_games_keyed_1k_games(benchmark, bench_compare_ratio):
     benchmark(_bench_keyed)
-    bench_compare("iter_games_keyed_1k", benchmark.stats.stats.min, tolerance=TOLERANCE)
+    bench_compare_ratio("iter_games_keyed_1k", benchmark.stats.stats.min, tolerance=TOLERANCE)
 
 
 @pytest.mark.perf
-def test_bench_iter_games_uncached_1k_games(benchmark, bench_compare):
+def test_bench_iter_games_uncached_1k_games(benchmark, bench_compare_ratio):
     benchmark(_bench_uncached)
-    bench_compare("iter_games_uncached_1k", benchmark.stats.stats.min, tolerance=TOLERANCE)
+    bench_compare_ratio("iter_games_uncached_1k", benchmark.stats.stats.min, tolerance=TOLERANCE)

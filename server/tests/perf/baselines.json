@@ -1,9 +1,9 @@
 {
-  "_smoke_bench": 0.0004941999213770032,
-  "iter_games_keyed_1k": 2.019992098212242e-05,
-  "iter_games_uncached_1k": 0.011880000005476177,
-  "parse_delta_200_games": 0.41096450004260987,
-  "parse_pgn_200_games": 0.6285635998938233,
-  "read_game_record_first": 0.0034126999089494348,
-  "read_game_record_mid": 0.01139370002783835
+  "_smoke_bench": 0.0008598999993409961,
+  "iter_games_keyed_1k": 0.022044966594593284,
+  "iter_games_uncached_1k": 16.072116902416184,
+  "parse_delta_200_games": 616.4476535355205,
+  "parse_pgn_200_games": 1113.583687069375,
+  "read_game_record_first": 0.003920700008166023,
+  "read_game_record_mid": 0.015036299999337643
 }
