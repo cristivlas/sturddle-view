@@ -43,7 +43,6 @@ from ..tournament.store import (
     CorruptStateError,
     DuplicateNameError,
     STATUS_FAILED,
-    STATUS_RUNNING,
     STATUS_STOPPED,
     TournamentNotFoundError,
     TournamentStore,
@@ -194,10 +193,9 @@ def _serialize(
             ).to_dict()
         except FileNotFoundError:
             standings = {"games": 0, "engines": []}
-        # PGN is the authoritative count (Stop = wipe + restart, so no
-        # cross-run accumulation). Log a warning when config.json drifts.
-        # Skip while RUNNING: config.json autosaves lazily; lag is normal.
-        if t.status != STATUS_RUNNING:
+        # Sanity check only on STOPPED: RUNNING has autosave lag;
+        # DONE/FAILED may carry legacy drift we no longer care about.
+        if t.status == STATUS_STOPPED:
             cfg_games = games_played_from_config(store.config_path(t.id))
             if cfg_games is not None and cfg_games != standings["games"]:
                 log.warning(

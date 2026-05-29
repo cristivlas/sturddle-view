@@ -154,13 +154,15 @@ def test_get_standings_games_from_pgn(client, settings):
     assert body["standings"]["games"] == 2
 
 
-def test_pgn_config_mismatch_logs_warning_when_not_running(client, settings, caplog):
-    """Sanity check: when status != RUNNING and PGN/config disagree, log
+def test_pgn_config_mismatch_logs_warning_when_stopped(client, settings, caplog):
+    """Sanity check: when status == STOPPED and PGN/config disagree, log
     a warning. Catches future divergence without breaking the UI."""
     created = client.post("/api/tournaments", json={
         "name": "y", "engines": _engines_payload(),
     }).json()
     tid = created["id"]
+    store = client.app.state.tournament_store
+    store.update_status(tid, "stopped", stopped_at="2026-01-01T00:00:00+00:00")
     pgn = Path(settings.tournament_root) / tid / "games.pgn"
     pgn.parent.mkdir(parents=True, exist_ok=True)
     pgn.write_text(_PGN_TWO_GAMES, encoding="utf-8")
@@ -175,10 +177,10 @@ def test_pgn_config_mismatch_logs_warning_when_not_running(client, settings, cap
     assert any(_PGN_CONFIG_MISMATCH_MSG in r.message for r in caplog.records)
 
 
-def test_pgn_config_mismatch_skipped_while_running(client, settings, caplog):
-    """While RUNNING, fastchess autosaves config.json lazily so transient
-    PGN-ahead-of-config lag is normal. Must not log -- otherwise the 5s
-    poll spams the log throughout every tournament."""
+def test_pgn_config_mismatch_skipped_when_not_stopped(client, settings, caplog):
+    """Only STOPPED triggers the sanity-check warning. RUNNING has
+    autosave lag; DONE/FAILED may carry legacy drift we no longer
+    care about. None should spam the log."""
     created = client.post("/api/tournaments", json={
         "name": "y", "engines": _engines_payload(),
     }).json()
@@ -187,7 +189,6 @@ def test_pgn_config_mismatch_skipped_while_running(client, settings, caplog):
     # over the same root would diverge from the app's instance the
     # moment internal caching is added.
     store = client.app.state.tournament_store
-    store.update_status(tid, "running", started_at="2026-01-01T00:00:00+00:00")
     pgn = Path(settings.tournament_root) / tid / "games.pgn"
     pgn.parent.mkdir(parents=True, exist_ok=True)
     pgn.write_text(_PGN_TWO_GAMES, encoding="utf-8")
@@ -196,9 +197,14 @@ def test_pgn_config_mismatch_skipped_while_running(client, settings, caplog):
         json.dumps({"stats": {"A vs B": {"wins": 0, "losses": 0, "draws": 0}}}),
         encoding="utf-8",
     )
-    with caplog.at_level(logging.WARNING, logger="sturddle_view.api.tournaments"):
-        client.get(f"/api/tournaments/{tid}").json()
-    assert not any(_PGN_CONFIG_MISMATCH_MSG in r.message for r in caplog.records)
+    for status in ("running", "done", "failed"):
+        caplog.clear()
+        store.update_status(tid, status, started_at="2026-01-01T00:00:00+00:00")
+        with caplog.at_level(logging.WARNING, logger="sturddle_view.api.tournaments"):
+            client.get(f"/api/tournaments/{tid}").json()
+        assert not any(
+            _PGN_CONFIG_MISMATCH_MSG in r.message for r in caplog.records
+        ), f"status={status} unexpectedly logged the mismatch"
 
 
 def test_list_returns_created(client):
