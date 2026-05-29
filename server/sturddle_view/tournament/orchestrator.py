@@ -468,6 +468,9 @@ class Orchestrator:
                 # pair concept, so the rewrite is a no-op.
                 games_per_round = (t.template or {}).get("games_per_round", 2)
                 paired = games_per_round != 1
+                # >2 engines: fastchess discards loaded stats on resume
+                # (cli.cpp:478), so patching config.json is futile.
+                patch_config = len(t.engines) <= 2
                 dropped, _deltas = await asyncio.to_thread(
                     functools.partial(
                         rewrite_drop_partial_pairs,
@@ -475,6 +478,7 @@ class Orchestrator:
                         spec.config_path,
                         ts,
                         paired=paired,
+                        patch_config=patch_config,
                     ),
                 )
                 elapsed = time.monotonic() - t0
@@ -485,6 +489,18 @@ class Orchestrator:
                         "(partial pairs + resume dups) in %.1fs; "
                         "backup at %s.%s.bak.gz",
                         t.id, dropped, elapsed, spec.pgn_path.name, stamp,
+                    )
+                    # Decrement persistent counter so the progress bar
+                    # reflects the rewritten PGN, and record the event
+                    # for troubleshooting.
+                    pre_count = self._store.get(t.id).games_played
+                    post_count = self._store.bump_games_played(t.id, -dropped)
+                    self._store.append_rewrite(
+                        t.id,
+                        at=_now(),
+                        dropped=dropped,
+                        pre_games_played=pre_count,
+                        post_games_played=post_count,
                     )
                 elif pgn_size > 0:
                     log.info(
@@ -1148,6 +1164,14 @@ class Orchestrator:
             self._proxy_engine_names.get(white_pid, "?"),
             self._proxy_engine_names.get(black_pid, "?"),
         )
+        # Bump the persistent counter on natural dissolves only. Terminal
+        # teardown dissolves represent in-flight games at Stop time -- not
+        # finished games -- and would over-count across stop/resume cycles.
+        if not terminal and self._active_id is not None and moves:
+            try:
+                self._store.bump_games_played(self._active_id, +1)
+            except Exception:
+                log.exception("bump_games_played failed for %s", self._active_id)
         reconciled: ReconciledMatch | None = None
         if moves:
             entry = PendingMatch(

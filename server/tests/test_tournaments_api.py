@@ -20,6 +20,7 @@ from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.tournament import fastchess as fc_mod
 from sturddle_view.tournament.fastchess import FastchessRunner
+from sturddle_view.tournament.store import TournamentStore
 
 
 FAKE_FASTCHESS = r"""
@@ -130,16 +131,16 @@ def test_get_includes_standings_with_no_games(client):
     assert body["standings"]["engines"] == []
 
 
-def test_get_standings_games_from_fastchess_config(client, settings):
+def test_get_standings_games_from_state(client, settings):
+    """``standings.games`` is the persistent state.games_played counter.
+    config.json is no longer consulted -- it can be silently wiped by
+    fastchess on resume for >2-engine tournaments."""
     created = client.post("/api/tournaments", json={
         "name": "y", "engines": _engines_payload(),
     }).json()
     tid = created["id"]
-    cfg = Path(settings.tournament_root) / tid / "config.json"
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(json.dumps({
-        "stats": {"A vs B": {"wins": 10, "losses": 8, "draws": 4}}
-    }), encoding="utf-8")
+    store = TournamentStore(Path(settings.tournament_root))
+    store.bump_games_played(tid, +22)
     body = client.get(f"/api/tournaments/{tid}").json()
     assert body["standings"]["games"] == 22
 

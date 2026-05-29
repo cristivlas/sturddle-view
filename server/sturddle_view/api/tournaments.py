@@ -36,7 +36,6 @@ from ..tournament.pgn_stats import (
     compute_sprt,
     compute_standings,
     count_partial_pairs,
-    games_played_from_config,
     read_game_record,
 )
 from ..tournament.store import (
@@ -158,12 +157,11 @@ def _serialize(
             ).to_dict()
         except FileNotFoundError:
             standings = {"games": 0, "engines": []}
-        # Prefer fastchess's config.json -- authoritative across pause/resume
-        # and ahead of the PGN under autosave cadence. Falls back to the
-        # compute_standings count when the file is missing/unparseable.
-        cfg_games = games_played_from_config(store.config_path(t.id))
-        if cfg_games is not None:
-            standings["games"] = cfg_games
+        # Authoritative count comes from state.json: fastchess's
+        # config.json drops `stats` on resume for >2 engines, and the
+        # PGN can over-count when resume replays in-flight games before
+        # rewrite_drop_partial_pairs scrubs them.
+        standings["games"] = t.games_played
         standings["tournament_type"] = tournament_type
         out["standings"] = standings
     if with_stats and store is not None:

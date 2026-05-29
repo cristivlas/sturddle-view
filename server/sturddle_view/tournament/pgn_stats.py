@@ -420,6 +420,7 @@ def rewrite_drop_partial_pairs(
     ts: datetime | None = None,
     *,
     paired: bool = True,
+    patch_config: bool = True,
 ) -> tuple[int, dict[str, dict[str, int]]]:
     """Drop orphan games -- games whose ``(round, engine-set)`` bucket has
     no color-flip partner.
@@ -436,9 +437,13 @@ def rewrite_drop_partial_pairs(
     already has both colors) appear as orphans here and get dropped --
     same outcome as before, narrower trigger.
 
-    If ``config_path`` is given and games are dropped, ``patch_config_json``
-    is called in the same thread to subtract the orphan W/L/D from
-    fastchess's running stats, keeping its resume counter consistent.
+    If ``config_path`` is given, games are dropped, AND ``patch_config``
+    is True, ``patch_config_json`` is called in the same thread to
+    subtract the orphan W/L/D from fastchess's running stats. The caller
+    should pass ``patch_config=False`` for tournaments with >2 engines
+    -- fastchess discards loaded stats on resume in that case
+    (cli.cpp:478), so patching is futile and risks introducing a wrong
+    intermediate state.
 
     Single-game tours (``paired=False``) skip the rewrite entirely:
     every game stands alone, no orphan concept.
@@ -543,7 +548,7 @@ def rewrite_drop_partial_pairs(
     os.replace(tmp, pgn_path)
     _iter_games_cache.pop(pgn_path, None)
     _game_offsets_cache.pop(pgn_path, None)
-    if config_path is not None:
+    if config_path is not None and patch_config:
         patch_config_json(config_path, deltas, ts=ts)
     return len(orphans), deltas
 

@@ -283,7 +283,7 @@ async def test_start_passes_paired_false_for_single_game_tournament(store, runne
     Kills `!= 1`→`!= 2` / AddNot mutations."""
     calls = []
 
-    def fake_rewrite(pgn_path, config_path, ts, *, paired):
+    def fake_rewrite(pgn_path, config_path, ts, *, paired, patch_config=True):
         calls.append(paired)
         return (0, {})
 
@@ -301,7 +301,7 @@ async def test_start_passes_paired_true_for_default_tournament(store, runner, mo
     """games_per_round defaults to 2 → paired=True."""
     calls = []
 
-    def fake_rewrite(pgn_path, config_path, ts, *, paired):
+    def fake_rewrite(pgn_path, config_path, ts, *, paired, patch_config=True):
         calls.append(paired)
         return (0, {})
 
