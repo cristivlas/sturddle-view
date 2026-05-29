@@ -120,16 +120,18 @@ _INFO_COALESCE_MS = 100
 class CoalescingQueue:
     """Per-subscriber wrapper around ``asyncio.Queue`` with per-proxy
     info coalescing. Non-info events flush pending info first to
-    preserve order. The terminal sentinel uses ``put_sentinel`` which
-    evicts oldest on QueueFull so it always lands."""
+    preserve order. The terminal sentinel travels on a sticky side
+    channel so it survives queue eviction + WS recv/get races on close."""
 
-    __slots__ = ("_q", "_slots", "_timers", "_loop")
+    __slots__ = ("_q", "_slots", "_timers", "_loop", "_terminal", "_terminal_event")
 
     def __init__(self, maxsize: int) -> None:
         self._q: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
         self._slots: dict[str, dict] = {}
         self._timers: dict[str, asyncio.TimerHandle] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._terminal: dict | None = None
+        self._terminal_event: asyncio.Event = asyncio.Event()
 
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
         if self._loop is None:
@@ -176,20 +178,17 @@ class CoalescingQueue:
         self._try_put(payload)
 
     def put_sentinel(self, payload: dict) -> None:
-        # Terminal frame: flush all pending, then enqueue with eviction
-        # so the sentinel always lands.
+        # Idempotent: a second call (e.g. proxy_ended after pair-dissolve)
+        # is dropped so the first terminal wins.
         self._flush_all_slots()
-        try:
-            self._q.put_nowait(payload)
-        except asyncio.QueueFull:
-            try:
-                self._q.get_nowait()
-            except asyncio.QueueEmpty:
-                pass
-            try:
-                self._q.put_nowait(payload)
-            except asyncio.QueueFull:
-                pass
+        if self._terminal is not None:
+            log.debug(
+                "put_sentinel ignored (terminal already set): first=%s second=%s",
+                self._terminal, payload,
+            )
+            return
+        self._terminal = payload
+        self._terminal_event.set()
 
     async def get(self) -> dict:
         return await self._q.get()
@@ -199,6 +198,14 @@ class CoalescingQueue:
 
     def empty(self) -> bool:
         return self._q.empty()
+
+    @property
+    def terminal(self) -> dict | None:
+        return self._terminal
+
+    async def wait_terminal(self) -> dict:
+        await self._terminal_event.wait()
+        return self._terminal  # type: ignore[return-value]
 
     def cancel_timers(self) -> None:
         for t in self._timers.values():

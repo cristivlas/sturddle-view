@@ -30,6 +30,7 @@ from ..engines import InvalidLaunchProfileError, validate_launch_profile
 from ..tournament.fastchess import FastchessRunner
 from ..tournament.orchestrator import Orchestrator, TournamentBusyError, wrap_event_for_bus
 from ..tournament.rescheck import RescheckError, check as rescheck_run
+from ..tournament.uci_parse import parse_uci_line
 from ..tournament.pgn_stats import (
     compute_games_list,
     compute_sprt,
@@ -531,6 +532,83 @@ async def ingest_proxy(payload: ProxyBatch, request: Request) -> None:
         await orch.proxy_session_ended(payload.proxy_id)
 
 
+async def _stream_queue_to_websocket(websocket: WebSocket, queue) -> None:
+    """Pump CoalescingQueue to WS until terminal, client disconnect, or
+    cancel. Terminal beats recv on close so the banner always lands."""
+    if queue.terminal is not None:
+        try:
+            await websocket.send_json(queue.terminal)
+        except Exception:
+            log.warning(
+                "tournament WS: send_json failed on race-on-attach terminal flush; "
+                "banner lost: %s", queue.terminal,
+            )
+        return
+
+    async def _drain_recv() -> None:
+        while True:
+            await websocket.receive()
+
+    recv_task = asyncio.create_task(_drain_recv())
+    term_task = asyncio.create_task(queue.wait_terminal())
+    get_task: asyncio.Task | None = None
+    try:
+        while True:
+            if get_task is None or get_task.done():
+                get_task = asyncio.create_task(queue.get())
+            done, _ = await asyncio.wait(
+                {get_task, recv_task, term_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if term_task in done:
+                # Race-recovery path: if recv also resolved this tick, the
+                # old (pre-sticky-channel) handler would have dropped the
+                # terminal. Log so we can correlate with banner reports.
+                if recv_task in done:
+                    log.warning(
+                        "tournament WS: recv and terminal landed same tick; "
+                        "flushing terminal via sticky channel: %s",
+                        term_task.result(),
+                    )
+                try:
+                    await websocket.send_json(term_task.result())
+                except Exception:
+                    log.warning(
+                        "tournament WS: send_json failed on terminal flush; "
+                        "banner lost: %s", term_task.result(),
+                    )
+                break
+            if recv_task in done:
+                break
+            payload = get_task.result()
+            get_task = None
+            if "parsed" not in payload:
+                line = payload.get("line", "")
+                parsed = parse_uci_line(line)
+                if parsed is not None:
+                    payload = {**payload, "parsed": parsed}
+            await websocket.send_json(payload)
+    except WebSocketDisconnect:
+        if term_task.done():
+            try:
+                await websocket.send_json(term_task.result())
+            except Exception:
+                log.warning(
+                    "tournament WS: send_json failed flushing terminal after "
+                    "WebSocketDisconnect; banner lost: %s", term_task.result(),
+                )
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        log.exception("tournament WS handler error")
+    finally:
+        recv_task.cancel()
+        if get_task is not None:
+            get_task.cancel()
+        if not term_task.done():
+            term_task.cancel()
+
+
 @internal_router.websocket("/ws/tournament/proxy/{proxy_id}")
 async def proxy_subscribe(
     websocket: WebSocket,
@@ -556,44 +634,9 @@ async def proxy_subscribe(
     await websocket.accept()
     orch: Orchestrator = websocket.app.state.tournament_orch
     queue = orch.subscribe_to_proxy(proxy_id)
-
-    from ..tournament.uci_parse import parse_uci_line
-
-    async def _drain_recv() -> None:
-        while True:
-            await websocket.receive()
-
-    recv_task = asyncio.create_task(_drain_recv())
     try:
-        while True:
-            get_task = asyncio.create_task(queue.get())
-            done, _ = await asyncio.wait(
-                {get_task, recv_task}, return_when=asyncio.FIRST_COMPLETED,
-            )
-            if recv_task in done:
-                get_task.cancel()
-                break
-            payload = get_task.result()
-            if payload.get("ended"):
-                await websocket.send_json(payload)
-                break
-            # Enrich with parsed fields where possible. ``line`` is
-            # always present in non-ended payloads. Reuse the parse the
-            # orchestrator may have already done for pairing detection.
-            if "parsed" not in payload:
-                line = payload.get("line", "")
-                parsed = parse_uci_line(line)
-                if parsed is not None:
-                    payload = {**payload, "parsed": parsed}
-            await websocket.send_json(payload)
-    except WebSocketDisconnect:
-        pass
-    except asyncio.CancelledError:
-        pass
-    except Exception:
-        log.exception("proxy WS handler error")
+        await _stream_queue_to_websocket(websocket, queue)
     finally:
-        recv_task.cancel()
         orch.unsubscribe_from_proxy(proxy_id, queue)
         try:
             await websocket.close()
@@ -618,41 +661,9 @@ async def game_subscribe(
     await websocket.accept()
     orch: Orchestrator = websocket.app.state.tournament_orch
     queue = orch.subscribe_to_game(pair_id)
-
-    from ..tournament.uci_parse import parse_uci_line
-
-    async def _drain_recv() -> None:
-        while True:
-            await websocket.receive()
-
-    recv_task = asyncio.create_task(_drain_recv())
     try:
-        while True:
-            get_task = asyncio.create_task(queue.get())
-            done, _ = await asyncio.wait(
-                {get_task, recv_task}, return_when=asyncio.FIRST_COMPLETED,
-            )
-            if recv_task in done:
-                get_task.cancel()
-                break
-            payload = get_task.result()
-            if payload.get("ended"):
-                await websocket.send_json(payload)
-                break
-            if "parsed" not in payload:
-                line = payload.get("line", "")
-                parsed = parse_uci_line(line)
-                if parsed is not None:
-                    payload = {**payload, "parsed": parsed}
-            await websocket.send_json(payload)
-    except WebSocketDisconnect:
-        pass
-    except asyncio.CancelledError:
-        pass
-    except Exception:
-        log.exception("game WS handler error")
+        await _stream_queue_to_websocket(websocket, queue)
     finally:
-        recv_task.cancel()
         orch.unsubscribe_from_game(pair_id, queue)
         try:
             await websocket.close()

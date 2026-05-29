@@ -14,6 +14,7 @@ import asyncio
 import pytest
 
 from sturddle_view.tournament.orchestrator import (
+    CoalescingQueue,
     Orchestrator,
     _RESULT_UNKNOWN,
     _TERMINATION_UNKNOWN,
@@ -197,7 +198,8 @@ async def test_dissolve_sends_ws_sentinel(orch):
 
     await orch.ingest_proxy_lines(_PROXY_A, ["ucinewgame"])
 
-    msg = q.get_nowait()
+    msg = q.terminal
+    assert msg is not None
     assert msg["ended"] is True
     assert msg["result"] == _RESULT_UNKNOWN
     assert msg["termination"] == _TERMINATION_UNKNOWN
@@ -333,7 +335,8 @@ async def test_subscribe_to_dissolved_pair_returns_sentinel(orch):
 
     q = orch.subscribe_to_game(pair_id)
 
-    msg = q.get_nowait()
+    msg = q.terminal
+    assert msg is not None
     assert msg["ended"] is True
 
 
@@ -426,14 +429,14 @@ async def test_non_info_event_flushes_pending_info(orch):
 
 @pytest.mark.asyncio
 async def test_dissolve_sentinel_survives_full_queue(orch):
-    """Game-WS queue can fill under fast TC + slow consumer. The
-    terminal sentinel must still land — eviction policy drops oldest."""
+    """Game-WS queue can fill under fast TC + slow consumer. Terminal
+    lives on a sticky side channel so it lands regardless of queue
+    pressure -- the frame channel may drop frames, the terminal must not."""
     await orch.proxy_session_started(_PROXY_A, _ENGINE_A)
     await orch.proxy_session_started(_PROXY_B, _ENGINE_B)
     await _confirm_pair(orch, _PROXY_A, _PROXY_B)
     pair_id = next(iter(orch._pair_proxies))
     q = orch.subscribe_to_game(pair_id)
-    # Saturate the queue (maxsize=512).
     while True:
         try:
             q._q.put_nowait({"filler": True})
@@ -442,11 +445,52 @@ async def test_dissolve_sentinel_survives_full_queue(orch):
 
     await orch.ingest_proxy_lines(_PROXY_A, ["ucinewgame"])
 
-    # Drain to find the sentinel — it should be present.
-    found = False
-    while not q.empty():
-        msg = q.get_nowait()
-        if msg.get("ended"):
-            found = True
-            break
-    assert found, "ended sentinel evicted instead of landing"
+    msg = q.terminal
+    assert msg is not None, "terminal sentinel lost despite sticky channel"
+    assert msg["ended"] is True
+
+
+@pytest.mark.asyncio
+async def test_put_sentinel_is_idempotent():
+    q = CoalescingQueue(maxsize=8)
+    q.put_sentinel({"ended": True, "result": "1-0"})
+    q.put_sentinel({"ended": True, "result": "0-1"})
+    assert q.terminal == {"ended": True, "result": "1-0"}
+
+
+@pytest.mark.asyncio
+async def test_wait_terminal_returns_immediately_when_already_set():
+    q = CoalescingQueue(maxsize=8)
+    q.put_sentinel({"ended": True})
+    msg = await asyncio.wait_for(q.wait_terminal(), timeout=0.5)
+    assert msg == {"ended": True}
+
+
+@pytest.mark.asyncio
+async def test_wait_terminal_blocks_then_resolves():
+    q = CoalescingQueue(maxsize=8)
+    waiter = asyncio.create_task(q.wait_terminal())
+    await asyncio.sleep(0)
+    assert not waiter.done()
+    q.put_sentinel({"ended": True, "result": "1/2-1/2"})
+    msg = await asyncio.wait_for(waiter, timeout=0.5)
+    assert msg["result"] == "1/2-1/2"
+
+
+@pytest.mark.asyncio
+async def test_put_sentinel_flushes_pending_info():
+    q = CoalescingQueue(maxsize=8)
+    q.put_info({"proxy_id": "p1", "line": "info depth 1"})
+    assert q.empty()
+    q.put_sentinel({"ended": True})
+    msg = q.get_nowait()
+    assert msg.get("line") == "info depth 1"
+    assert q.terminal == {"ended": True}
+
+
+@pytest.mark.asyncio
+async def test_terminal_property_none_until_set():
+    q = CoalescingQueue(maxsize=8)
+    assert q.terminal is None
+    q.put_sentinel({"ended": True})
+    assert q.terminal is not None
