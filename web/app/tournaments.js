@@ -2,7 +2,7 @@
 // Path/defaults configuration lives in the global Settings dialog under
 // the "Tournament" tab — not here.
 //
-// Row-targeted verbs (Start/Resume, Pause, Open workspace, Info, Remove)
+// Row-targeted verbs (Start/Restart, Stop, Open workspace, Info, Remove)
 // live in a left-side vertical ribbon that mirrors the Play perspective's
 // look and feel. Clicking a row selects it; ribbon actions target the
 // selected tournament. New / Sort / Window remain in the top menubar.
@@ -63,8 +63,8 @@ export function mountTournaments({ container, api, events, log, token }) {
           <button class="ribbon-btn t-start" disabled aria-label="Start" title="Start">
             <wa-icon class="t-start-icon" name="play"></wa-icon>
           </button>
-          <button class="ribbon-btn t-stop" disabled aria-label="Pause" title="Pause">
-            <wa-icon name="pause"></wa-icon>
+          <button class="ribbon-btn t-stop" disabled aria-label="Stop" title="Stop">
+            <wa-icon name="hand"></wa-icon>
           </button>
           <span class="ribbon-sep" aria-hidden="true"></span>
           <button class="ribbon-btn t-workspace" disabled aria-label="Open workspace" title="Open workspace">
@@ -274,7 +274,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     const sprtBadge = t.template?.sprt ? `<span class="tournament-sprt-badge">SPRT</span>` : "";
     li.innerHTML = `
       <div class="tournament-row-main">
-        <span class="tournament-status status-${status}">${status === STATUS.STOPPED ? "paused" : status}</span>
+        <span class="tournament-status status-${status}">${status}</span>
         <span class="tournament-name"></span>
         ${sprtBadge}
         ${trailing}
@@ -387,7 +387,9 @@ export function mountTournaments({ container, api, events, log, token }) {
     const isActive = t.id === activeId;
     const anotherRunning = activeId !== null && !isActive;
     const status = t.status;
-    const isResume = status === STATUS.STOPPED || status === STATUS.FAILED;
+    // Stopped/failed -> Start = restart from scratch (Stop is destructive;
+    // fastchess's resume contract is fragile across stop/resume cycles).
+    const isRestart = status === STATUS.STOPPED || status === STATUS.FAILED;
 
     // !!startingId: only one tournament may start at a time (by design).
     ribbonStartBtn.disabled = isActive || anotherRunning || status === STATUS.RUNNING || status === STATUS.DONE || !!startingId;
@@ -398,7 +400,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     ribbonEditBtn.disabled = isActive || status === STATUS.DONE;
 
     const starting = t.id === startingId;
-    const startIconName = isResume ? "forward-step" : "play";
+    const startIconName = isRestart ? "rotate-right" : "play";
     if (starting) {
       ribbonStartBtn.innerHTML = '<wa-spinner class="spinner-accent"></wa-spinner>';
     } else if (!ribbonStartBtn.querySelector("wa-icon")) {
@@ -406,7 +408,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     } else {
       ribbonStartBtn.querySelector("wa-icon").setAttribute("name", startIconName);
     }
-    const startLabel = isResume ? "Resume" : "Start";
+    const startLabel = isRestart ? "Restart" : "Start";
     ribbonStartBtn.setAttribute("aria-label", startLabel);
     ribbonStartBtn.setAttribute("title", startLabel);
     const stopping = t.id === stoppingId;
@@ -414,7 +416,7 @@ export function mountTournaments({ container, api, events, log, token }) {
       ribbonStopBtn.disabled = true;
       ribbonStopBtn.innerHTML = '<wa-spinner class="spinner-accent"></wa-spinner>';
     } else {
-      ribbonStopBtn.innerHTML = '<wa-icon name="pause"></wa-icon>';
+      ribbonStopBtn.innerHTML = '<wa-icon name="hand"></wa-icon>';
     }
   }
 
@@ -470,10 +472,25 @@ export function mountTournaments({ container, api, events, log, token }) {
   // ---- Verbs --------------------------------------------------------------
 
   async function startOne(t) {
-    const isResume = t.status === STATUS.STOPPED || t.status === STATUS.FAILED;
-
+    // Stopped/failed tournaments restart from scratch: wipe the dir then
+    // launch fresh. Confirm before destroying games.
+    const willWipe = t.status === STATUS.STOPPED || t.status === STATUS.FAILED;
+    let qs = "";
+    if (willWipe) {
+      const games = t.standings?.games ?? 0;
+      const message = games > 0
+        ? `Restart "${t.name}" from scratch? All ${games} recorded games will be permanently deleted.`
+        : `Restart "${t.name}" from scratch?`;
+      const ok = await confirm({
+        message,
+        okLabel: "Restart",
+        destructive: true,
+      });
+      if (!ok) return;
+      qs = "?confirm_wipe=true";
+    }
     try {
-      await api("POST", `/api/tournaments/${t.id}/start`);
+      await api("POST", `/api/tournaments/${t.id}/start${qs}`);
     } catch (e) {
       reportError({ log }, `Starting "${t.name}" failed`, e);
       return;
@@ -482,6 +499,18 @@ export function mountTournaments({ container, api, events, log, token }) {
   }
 
   async function stopOne(t) {
+    // Stop is destructive -- on next Start the tournament is restarted
+    // from scratch. Warn before clicking through.
+    const games = t.standings?.games ?? 0;
+    const message = games > 0
+      ? `Stop "${t.name}"? On restart this tournament will start from scratch -- all ${games} recorded games will be discarded.`
+      : `Stop "${t.name}"? On restart this tournament will start from scratch.`;
+    const ok = await confirm({
+      message,
+      okLabel: "Stop",
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await api("POST", `/api/tournaments/${t.id}/stop`);
     } catch (e) {
@@ -619,7 +648,7 @@ export function mountTournaments({ container, api, events, log, token }) {
       }
     }
     row("ID", idCell);
-    row("Status", t.status === STATUS.STOPPED ? "paused" : t.status);
+    row("Status", t.status);
     if (t.last_error) {
       const tail = (t.last_error.stderr_tail || []).slice(-10).join("\n");
       const pre = document.createElement("pre");
@@ -662,7 +691,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     row("Book order", ed.book_order);
     row("Created", formatTime(t.created_at));
     if (t.status === STATUS.RUNNING || t.status === STATUS.FAILED || t.status === STATUS.STOPPED) row("Started", formatTime(t.started_at));
-    if (t.status === STATUS.STOPPED) row("Paused", formatTime(t.stopped_at));
+    if (t.status === STATUS.STOPPED) row("Stopped", formatTime(t.stopped_at));
 
     const enginesList = document.createElement("ul");
     enginesList.className = "tournament-info-engines";

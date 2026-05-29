@@ -6,12 +6,11 @@ which distinguishes a stale ``running`` on disk from a real live process.
 from __future__ import annotations
 
 import json
-import logging
 import secrets
 import shutil
 import threading
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,8 +19,6 @@ import platformdirs
 
 from .. import APP_NAME
 from .._atomic import atomic_write_json
-
-log = logging.getLogger(__name__)
 
 
 # Allowed status values. Phase 1 has no `paused` (see tournament-spec.md).
@@ -71,16 +68,6 @@ class Tournament:
     # tournament has never failed (or was cleared on a successful start).
     # Shape: {"rc": int, "stderr_tail": list[str], "at": iso8601}.
     last_error: dict | None = None
-    # Authoritative games-played counter. Persisted because fastchess's
-    # config.json drops `stats` on resume for >2 engines (cli.cpp:478),
-    # so neither the in-mem fastchess counter nor the PGN (which can
-    # double-count replays across restarts) is reliable alone.
-    games_played: int = 0
-    # Diagnostic history of partial-pair rewrites at start time. Each
-    # entry: {"at": iso8601, "dropped": int, "pre_games_played": int,
-    # "post_games_played": int} -- pre/post are the persisted counter,
-    # not raw PGN game counts. For troubleshooting only.
-    rewrites: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -193,6 +180,10 @@ class TournamentStore:
         except json.JSONDecodeError as e:
             raise CorruptStateError(f"state.json unparseable for {tournament_id}: {e}") from e
         _validate_state(payload)
+        # Drop fields that no longer exist on the dataclass (forward-compat
+        # with old state.json files written by prior versions).
+        known = {f.name for f in fields(Tournament)}
+        payload = {k: v for k, v in payload.items() if k in known}
         return Tournament(**payload)
 
     def list(self) -> list[Tournament]:
@@ -247,40 +238,6 @@ class TournamentStore:
         atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
         return t
 
-    def bump_games_played(self, tournament_id: str, delta: int = 1) -> int:
-        """Adjust the persistent games_played counter by ``delta`` and
-        return the new total. Clamped at zero -- a rewrite that drops
-        games never produces a negative count."""
-        t = self.get(tournament_id)
-        raw = t.games_played + delta
-        if raw < 0:
-            log.warning(
-                "bump_games_played(%s, %d) clamped from %d to 0",
-                tournament_id, delta, raw,
-            )
-        t.games_played = max(0, raw)
-        atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
-        return t.games_played
-
-    def append_rewrite(
-        self,
-        tournament_id: str,
-        *,
-        at: str,
-        dropped: int,
-        pre_games_played: int,
-        post_games_played: int,
-    ) -> None:
-        """Append a rewrite event to the diagnostic history."""
-        t = self.get(tournament_id)
-        t.rewrites.append({
-            "at": at,
-            "dropped": dropped,
-            "pre_games_played": pre_games_played,
-            "post_games_played": post_games_played,
-        })
-        atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
-
     def update(
         self,
         tournament_id: str,
@@ -322,8 +279,22 @@ class TournamentStore:
             t.started_at = None
             t.stopped_at = None
             t.last_error = None
-            t.games_played = 0
-            t.rewrites = []
+            atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
+            return t
+
+    def wipe_for_restart(self, tournament_id: str) -> "Tournament":
+        """Wipe the tournament directory and reset runtime state, keeping
+        name/template/engines/engine_defaults intact. Used when restarting
+        from a stopped/failed tournament -- fastchess's resume contract is
+        too fragile across stop/resume cycles, so we always start fresh.
+        """
+        with self._create_lock:
+            t = self.get(tournament_id)
+            self._wipe_dir_contents(tournament_id)
+            t.status = STATUS_IDLE
+            t.started_at = None
+            t.stopped_at = None
+            t.last_error = None
             atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
             return t
 

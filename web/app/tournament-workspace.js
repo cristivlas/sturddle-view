@@ -19,7 +19,7 @@ import {
 } from "./tournament-live-game.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { attachColumnResize } from "./col-resize.js";
-import { apiErrorDetail, toast } from "./dialogs.js";
+import { apiErrorDetail, confirm, toast } from "./dialogs.js";
 import {
   AUTOSCROLL_SLACK_ROW_PX,
   escapeHtml,
@@ -733,7 +733,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         const rawTail = (err.stderr_tail || []).slice(-10);
         const lastIdx = rawTail.length - 1;
 
-        const RESUME_POST = " to resume.";
         let displayLines = rawTail;
         let resumePre = null;
         if (lastIdx >= 0 && rawTail[lastIdx].endsWith(RESUME_SUFFIX)) {
@@ -750,20 +749,36 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         const tail = displayLines.join("\n") || `exit code ${err.rc}`;
         banner.innerHTML = `<div class="wb-error-title">Tournament failed (rc=${err.rc})</div><pre>${escapeHtml(tail)}</pre>`;
         if (resumePre) {
+          // Stop is destructive; restart always starts from scratch.
           const pre = banner.querySelector("pre");
           pre.append(resumePre);
           const btn = document.createElement("button");
           btn.type = "button";
           btn.className = "toast-icon-btn";
-          btn.setAttribute("aria-label", "Resume");
-          btn.setAttribute("title", "Resume");
+          btn.setAttribute("aria-label", "Restart");
+          btn.setAttribute("title", "Restart");
           const ic = document.createElement("wa-icon");
-          ic.setAttribute("name", "forward-step");
+          ic.setAttribute("name", "rotate-right");
           btn.appendChild(ic);
-          btn.addEventListener("click", () => api("POST", `/api/tournaments/${tournament.id}/start`)
-            .catch((e) => toast(`Resume failed: ${apiErrorDetail(e)}`, { variant: "danger" })));
+          btn.addEventListener("click", async () => {
+            const games = detail?.standings?.games ?? 0;
+            const message = games > 0
+              ? `Restart "${tournament.name}" from scratch? All ${games} recorded games will be permanently deleted.`
+              : `Restart "${tournament.name}" from scratch?`;
+            const ok = await confirm({
+              message,
+              okLabel: "Restart",
+              destructive: true,
+            });
+            if (!ok) return;
+            try {
+              await api("POST", `/api/tournaments/${tournament.id}/start?confirm_wipe=true`);
+            } catch (e) {
+              toast(`Restart failed: ${apiErrorDetail(e)}`, { variant: "danger" });
+            }
+          });
           pre.appendChild(btn);
-          pre.append(RESUME_POST);
+          pre.append(" to restart from scratch.");
         }
         banner.hidden = false;
       } else {
@@ -996,7 +1011,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     ) {
       closeAllLiveGames();
       if (evt.payload.status === STATUS.STOPPED) {
-        toast(`"${tournament.name}" paused`, { variant: "warning" });
+        toast(`"${tournament.name}" stopped`, { variant: "warning" });
       }
     }
     // Tournament started: auto-open Live Games so the user sees

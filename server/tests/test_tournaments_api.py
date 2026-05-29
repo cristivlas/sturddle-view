@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
 import time
 from collections import deque
@@ -131,18 +132,69 @@ def test_get_includes_standings_with_no_games(client):
     assert body["standings"]["engines"] == []
 
 
-def test_get_standings_games_from_state(client, settings):
-    """``standings.games`` is the persistent state.games_played counter.
-    config.json is no longer consulted -- it can be silently wiped by
-    fastchess on resume for >2-engine tournaments."""
+_PGN_TWO_GAMES = (
+    "[Event \"x\"]\n[White \"A\"]\n[Black \"B\"]\n[Result \"1-0\"]\n\n1-0\n\n"
+    "[Event \"x\"]\n[White \"B\"]\n[Black \"A\"]\n[Result \"0-1\"]\n\n0-1\n\n"
+)
+
+
+def test_get_standings_games_from_pgn(client, settings):
+    """``standings.games`` is PGN-derived (compute_standings). We never
+    resume across stop cycles, so the PGN never accumulates duplicate
+    replays and its game count is ground truth."""
+    created = client.post("/api/tournaments", json={
+        "name": "y", "engines": _engines_payload(),
+    }).json()
+    tid = created["id"]
+    pgn = Path(settings.tournament_root) / tid / "games.pgn"
+    pgn.parent.mkdir(parents=True, exist_ok=True)
+    pgn.write_text(_PGN_TWO_GAMES, encoding="utf-8")
+    body = client.get(f"/api/tournaments/{tid}").json()
+    assert body["standings"]["games"] == 2
+
+
+def test_pgn_config_mismatch_logs_warning_when_not_running(client, settings, caplog):
+    """Sanity check: when status != RUNNING and PGN/config disagree, log
+    a warning. Catches future divergence without breaking the UI."""
+    created = client.post("/api/tournaments", json={
+        "name": "y", "engines": _engines_payload(),
+    }).json()
+    tid = created["id"]
+    pgn = Path(settings.tournament_root) / tid / "games.pgn"
+    pgn.parent.mkdir(parents=True, exist_ok=True)
+    pgn.write_text(_PGN_TWO_GAMES, encoding="utf-8")
+    cfg = Path(settings.tournament_root) / tid / "config.json"
+    cfg.write_text(
+        json.dumps({"stats": {"A vs B": {"wins": 0, "losses": 0, "draws": 0}}}),
+        encoding="utf-8",
+    )
+    with caplog.at_level(logging.WARNING, logger="sturddle_view.api.tournaments"):
+        body = client.get(f"/api/tournaments/{tid}").json()
+    assert body["standings"]["games"] == 2  # PGN wins regardless
+    assert any("PGN/config game count mismatch" in r.message for r in caplog.records)
+
+
+def test_pgn_config_mismatch_skipped_while_running(client, settings, caplog):
+    """While RUNNING, fastchess autosaves config.json lazily so transient
+    PGN-ahead-of-config lag is normal. Must not log -- otherwise the 5s
+    poll spams the log throughout every tournament."""
     created = client.post("/api/tournaments", json={
         "name": "y", "engines": _engines_payload(),
     }).json()
     tid = created["id"]
     store = TournamentStore(Path(settings.tournament_root))
-    store.bump_games_played(tid, +22)
-    body = client.get(f"/api/tournaments/{tid}").json()
-    assert body["standings"]["games"] == 22
+    store.update_status(tid, "running", started_at="2026-01-01T00:00:00+00:00")
+    pgn = Path(settings.tournament_root) / tid / "games.pgn"
+    pgn.parent.mkdir(parents=True, exist_ok=True)
+    pgn.write_text(_PGN_TWO_GAMES, encoding="utf-8")
+    cfg = Path(settings.tournament_root) / tid / "config.json"
+    cfg.write_text(
+        json.dumps({"stats": {"A vs B": {"wins": 0, "losses": 0, "draws": 0}}}),
+        encoding="utf-8",
+    )
+    with caplog.at_level(logging.WARNING, logger="sturddle_view.api.tournaments"):
+        client.get(f"/api/tournaments/{tid}").json()
+    assert not any("PGN/config game count mismatch" in r.message for r in caplog.records)
 
 
 def test_list_returns_created(client):
@@ -155,6 +207,89 @@ def test_list_returns_created(client):
     listed = client.get("/api/tournaments").json()
     ids = [t["id"] for t in listed["tournaments"]]
     assert a["id"] in ids and b["id"] in ids
+
+
+# ---------------------------------------------------------------------------
+# /start wipe-required gate (universal: all engine counts)
+# ---------------------------------------------------------------------------
+
+
+def test_start_requires_confirm_wipe_when_stopped(client, settings, monkeypatch):
+    """status=STOPPED -> 409 with reason=wipe_required when confirm_wipe is
+    omitted. Pause = wipe on next start; a silent /start would destroy
+    data."""
+    _patch_fake_fastchess(monkeypatch, "--exit", "0")
+    t = client.post("/api/tournaments", json={
+        "name": "x", "engines": _engines_payload(),
+    }).json()
+    store = TournamentStore(Path(settings.tournament_root))
+    store.update_status(t["id"], "stopped", stopped_at="2026-01-01T00:00:00+00:00")
+    # Drop a stray file we expect to survive (no wipe happens on 409).
+    pgn = Path(settings.tournament_root) / t["id"] / "games.pgn"
+    pgn.parent.mkdir(parents=True, exist_ok=True)
+    pgn.write_text("[Result \"1-0\"]\n", encoding="utf-8")
+
+    r = client.post(f"/api/tournaments/{t['id']}/start")
+    assert r.status_code == 409
+    assert r.json()["detail"]["reason"] == "wipe_required"
+    assert pgn.exists(), "no wipe should happen on the 409 path"
+
+
+def test_start_with_confirm_wipe_wipes_and_starts(client, settings, monkeypatch):
+    """status=STOPPED + confirm_wipe=true -> wipes the dir and starts
+    the tournament fresh."""
+    _patch_fake_fastchess(monkeypatch, "--print", "1", "--exit", "0")
+    t = client.post("/api/tournaments", json={
+        "name": "x", "engines": _engines_payload(),
+    }).json()
+    store = TournamentStore(Path(settings.tournament_root))
+    store.update_status(t["id"], "stopped", stopped_at="2026-01-01T00:00:00+00:00")
+    pgn = Path(settings.tournament_root) / t["id"] / "games.pgn"
+    pgn.parent.mkdir(parents=True, exist_ok=True)
+    pgn.write_text("[Result \"1-0\"]\n", encoding="utf-8")
+
+    r = client.post(f"/api/tournaments/{t['id']}/start?confirm_wipe=true")
+    assert r.status_code == 200
+    assert r.json()["status"] == "running"
+    assert not pgn.exists(), "wipe should remove the stray PGN"
+
+
+def test_start_idle_does_not_require_confirm_wipe(client, monkeypatch):
+    """status=IDLE (fresh tournament) -> /start proceeds without flag."""
+    _patch_fake_fastchess(monkeypatch, "--exit", "0")
+    t = client.post("/api/tournaments", json={
+        "name": "x", "engines": _engines_payload(),
+    }).json()
+    r = client.post(f"/api/tournaments/{t['id']}/start")
+    assert r.status_code == 200
+
+
+def test_wipe_for_restart_preserves_immutables(settings):
+    """``wipe_for_restart`` keeps name/template/engines/engine_defaults
+    intact, resets runtime state (status, last_error)."""
+    store = TournamentStore(Path(settings.tournament_root))
+    t = store.create(
+        name="orig",
+        template={"foo": "bar"},
+        engines=_engines_payload(),
+        engine_defaults={"threads": 4},
+    )
+    store.update_status(t.id, "failed", last_error={"rc": 1})
+    pgn = Path(settings.tournament_root) / t.id / "games.pgn"
+    pgn.write_text("[Result \"1-0\"]\n", encoding="utf-8")
+
+    pre_template = dict(t.template)
+    pre_engines = list(t.engines)
+    pre_defaults = dict(t.engine_defaults)
+
+    after = store.wipe_for_restart(t.id)
+    assert after.name == "orig"
+    assert after.template == pre_template
+    assert after.engines == pre_engines
+    assert after.engine_defaults == pre_defaults
+    assert after.status == "idle"
+    assert after.last_error is None
+    assert not pgn.exists()
 
 
 def test_delete_removes(client):

@@ -316,46 +316,6 @@ async def test_dissolve_with_no_moves_skips_reconcile_push(orch, emitted):
     assert orch._reconcile_queue.pending_count == before
 
 
-@pytest.mark.asyncio
-async def test_dissolve_non_terminal_bumps_games_played(tmp_path):
-    """A natural (terminal=False) dissolve with captured moves bumps
-    the persistent games_played counter by 1. Kills mutations that
-    drop the bump or invert the terminal guard."""
-    store = TournamentStore(tmp_path / "tournaments")
-    t = store.create(name="t", template={}, engines=[
-        {"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"},
-    ])
-    o = Orchestrator(store, _FakeRunner())
-    o._active_id = t.id
-    await o.proxy_session_started(_PROXY_A, _ENGINE_A)
-    await o.proxy_session_started(_PROXY_B, _ENGINE_B)
-    await _confirm_pair(o, _PROXY_A, _PROXY_B)
-    pair_id = next(iter(o._pair_proxies))
-
-    assert store.get(t.id).games_played == 0
-    await o._dissolve_pair(pair_id, _RESULT_UNKNOWN, _TERMINATION_UNKNOWN)
-    assert store.get(t.id).games_played == 1
-
-
-@pytest.mark.asyncio
-async def test_dissolve_terminal_does_not_bump_games_played(tmp_path):
-    """terminal=True dissolves represent in-flight games at Stop time --
-    not finished -- and must not bump the counter. Kills mutations that
-    drop the `not terminal` guard."""
-    store = TournamentStore(tmp_path / "tournaments")
-    t = store.create(name="t", template={}, engines=[
-        {"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"},
-    ])
-    o = Orchestrator(store, _FakeRunner())
-    o._active_id = t.id
-    await o.proxy_session_started(_PROXY_A, _ENGINE_A)
-    await o.proxy_session_started(_PROXY_B, _ENGINE_B)
-    await _confirm_pair(o, _PROXY_A, _PROXY_B)
-    pair_id = next(iter(o._pair_proxies))
-
-    assert store.get(t.id).games_played == 0
-    await o._dissolve_pair(pair_id, _RESULT_UNKNOWN, _TERMINATION_UNKNOWN, terminal=True)
-    assert store.get(t.id).games_played == 0
 
 
 # ---------------------------------------------------------------------------

@@ -1264,6 +1264,15 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 #perspective-root.is-pending {
   opacity: 0;
 }
+/* Arena (engines perspective) needs to fill the viewport so the tournaments
+ * list can scroll within the available space. Scoped via :has() so the
+ * Play perspective's layout stays unchanged. */
+#perspective-root:has(#engines-perspective) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
 .game-view-board .board {
   background: #2a2a2a;
   border: 1px solid #333;
@@ -1544,7 +1553,8 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 #engines-perspective {
   display: flex;
   flex-direction: column;
-  min-height: 60vh;
+  flex: 1;
+  min-height: 0;
 }
 #engines-perspective .placeholder {
   display: flex;
@@ -2226,7 +2236,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .fs-entry .fs-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- Tournaments panel ---------- */
-.tournaments-panel { display: flex; flex-direction: column; gap: 12px; min-height: 50vh; }
+.tournaments-panel { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
 
 .tournaments-menubar {
   position: relative;
@@ -2425,7 +2435,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .tournaments-list {
   list-style: none; padding: 0; margin: 0;
   display: flex; flex-direction: column; gap: 8px;
-  max-height: calc(100dvh - 15rem); overflow-y: auto;
+  flex: 1; min-height: 0; overflow-y: auto;
   outline: none;
 }
 .tmb-sort-opt[data-dir]::before {
@@ -2470,7 +2480,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .tournament-row-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 
-@media (max-width: 800px), (max-height: 740px) {
+@media (max-width: 800px) {
   .tournaments-panel { gap: 0; }
   .tournaments-body { display: flex; flex-direction: column; }
   .tournaments-ribbon {

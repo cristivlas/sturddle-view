@@ -36,11 +36,15 @@ from ..tournament.pgn_stats import (
     compute_sprt,
     compute_standings,
     count_partial_pairs,
+    games_played_from_config,
     read_game_record,
 )
 from ..tournament.store import (
     CorruptStateError,
     DuplicateNameError,
+    STATUS_FAILED,
+    STATUS_RUNNING,
+    STATUS_STOPPED,
     TournamentNotFoundError,
     TournamentStore,
 )
@@ -157,11 +161,21 @@ def _serialize(
             ).to_dict()
         except FileNotFoundError:
             standings = {"games": 0, "engines": []}
-        # Authoritative count comes from state.json: fastchess's
-        # config.json drops `stats` on resume for >2 engines, and the
-        # PGN can over-count when resume replays in-flight games before
-        # rewrite_drop_partial_pairs scrubs them.
-        standings["games"] = t.games_played
+        # PGN is the authoritative count source. We never resume across
+        # stop cycles (Stop = wipe + restart), so the PGN never accumulates
+        # duplicate replays -- compute_standings.games is ground truth.
+        # Sanity check against fastchess's config.json; log a warning on
+        # disagreement so a future divergence surfaces without breaking
+        # the UI. Skip while RUNNING -- fastchess autosaves config.json
+        # lazily, so transient PGN-ahead-of-config lag is normal and
+        # would just spam the log.
+        if t.status != STATUS_RUNNING:
+            cfg_games = games_played_from_config(store.config_path(t.id))
+            if cfg_games is not None and cfg_games != standings["games"]:
+                log.warning(
+                    "tournament %s: PGN/config game count mismatch pgn=%d config=%d",
+                    t.id, standings["games"], cfg_games,
+                )
         standings["tournament_type"] = tournament_type
         out["standings"] = standings
     if with_stats and store is not None:
@@ -366,8 +380,33 @@ def get_tournament_game_pgn(
 
 
 @router.post("/api/tournaments/{tournament_id}/start")
-async def start_tournament(tournament_id: str, request: Request) -> dict:
+async def start_tournament(
+    tournament_id: str, request: Request, confirm_wipe: bool = False,
+) -> dict:
     orch = _orch(request)
+    store = _store(request)
+    # Stopped/failed tournaments are restarted from scratch -- fastchess's
+    # resume contract is too fragile across stop/resume cycles to support
+    # safely. Client must confirm a wipe; the server enforces the flag so
+    # a stray /start call never silently destroys data.
+    try:
+        t = store.get(tournament_id)
+    except TournamentNotFoundError as e:
+        raise HTTPException(status_code=404, detail="tournament not found") from e
+    needs_wipe = t.status in (STATUS_STOPPED, STATUS_FAILED)
+    if needs_wipe:
+        if not confirm_wipe:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "reason": "wipe_required",
+                    "message": (
+                        "Restarting will discard all previously recorded "
+                        "games. Continue?"
+                    ),
+                },
+            )
+        store.wipe_for_restart(tournament_id)
     try:
         t = await orch.start(tournament_id)
     except TournamentNotFoundError as e:
