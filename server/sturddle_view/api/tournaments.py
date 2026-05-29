@@ -36,7 +36,6 @@ from ..tournament.pgn_stats import (
     compute_sprt,
     compute_standings,
     count_partial_pairs,
-    games_played_from_config,
     read_game_record,
 )
 from ..tournament.store import (
@@ -131,11 +130,6 @@ _WIPE_REQUIRED_DETAIL = {
     "message": _WIPE_REQUIRED_MESSAGE,
 }
 
-# Logged when standings.games (from PGN) and fastchess's config.json
-# games-played disagree post-run. Tests assert on this substring.
-_PGN_CONFIG_MISMATCH_MSG = "PGN/config game count mismatch"
-
-
 def _resolve_sprt(template: dict, settings) -> dict:
     """If template.sprt is truthy but not a full dict, merge with sprt_defaults."""
     sprt = template.get("sprt")
@@ -193,15 +187,6 @@ def _serialize(
             ).to_dict()
         except FileNotFoundError:
             standings = {"games": 0, "engines": []}
-        # Sanity check only on STOPPED: RUNNING has autosave lag;
-        # DONE/FAILED may carry legacy drift we no longer care about.
-        if t.status == STATUS_STOPPED:
-            cfg_games = games_played_from_config(store.config_path(t.id))
-            if cfg_games is not None and cfg_games != standings["games"]:
-                log.warning(
-                    "tournament %s: " + _PGN_CONFIG_MISMATCH_MSG + " pgn=%d config=%d",
-                    t.id, standings["games"], cfg_games,
-                )
         standings["tournament_type"] = tournament_type
         out["standings"] = standings
     if with_stats and store is not None:

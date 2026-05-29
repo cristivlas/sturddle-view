@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import sys
 import time
 from collections import deque
@@ -17,7 +16,6 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from sturddle_view.api.tournaments import _PGN_CONFIG_MISMATCH_MSG
 from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.tournament import fastchess as fc_mod
@@ -152,59 +150,6 @@ def test_get_standings_games_from_pgn(client, settings):
     pgn.write_text(_PGN_TWO_GAMES, encoding="utf-8")
     body = client.get(f"/api/tournaments/{tid}").json()
     assert body["standings"]["games"] == 2
-
-
-def test_pgn_config_mismatch_logs_warning_when_stopped(client, settings, caplog):
-    """Sanity check: when status == STOPPED and PGN/config disagree, log
-    a warning. Catches future divergence without breaking the UI."""
-    created = client.post("/api/tournaments", json={
-        "name": "y", "engines": _engines_payload(),
-    }).json()
-    tid = created["id"]
-    store = client.app.state.tournament_store
-    store.update_status(tid, "stopped", stopped_at="2026-01-01T00:00:00+00:00")
-    pgn = Path(settings.tournament_root) / tid / "games.pgn"
-    pgn.parent.mkdir(parents=True, exist_ok=True)
-    pgn.write_text(_PGN_TWO_GAMES, encoding="utf-8")
-    cfg = Path(settings.tournament_root) / tid / "config.json"
-    cfg.write_text(
-        json.dumps({"stats": {"A vs B": {"wins": 0, "losses": 0, "draws": 0}}}),
-        encoding="utf-8",
-    )
-    with caplog.at_level(logging.WARNING, logger="sturddle_view.api.tournaments"):
-        body = client.get(f"/api/tournaments/{tid}").json()
-    assert body["standings"]["games"] == 2  # PGN wins regardless
-    assert any(_PGN_CONFIG_MISMATCH_MSG in r.message for r in caplog.records)
-
-
-def test_pgn_config_mismatch_skipped_when_not_stopped(client, settings, caplog):
-    """Only STOPPED triggers the sanity-check warning. RUNNING has
-    autosave lag; DONE/FAILED may carry legacy drift we no longer
-    care about. None should spam the log."""
-    created = client.post("/api/tournaments", json={
-        "name": "y", "engines": _engines_payload(),
-    }).json()
-    tid = created["id"]
-    # Use the app-state store directly: a separately-constructed store
-    # over the same root would diverge from the app's instance the
-    # moment internal caching is added.
-    store = client.app.state.tournament_store
-    pgn = Path(settings.tournament_root) / tid / "games.pgn"
-    pgn.parent.mkdir(parents=True, exist_ok=True)
-    pgn.write_text(_PGN_TWO_GAMES, encoding="utf-8")
-    cfg = Path(settings.tournament_root) / tid / "config.json"
-    cfg.write_text(
-        json.dumps({"stats": {"A vs B": {"wins": 0, "losses": 0, "draws": 0}}}),
-        encoding="utf-8",
-    )
-    for status in ("running", "done", "failed"):
-        caplog.clear()
-        store.update_status(tid, status, started_at="2026-01-01T00:00:00+00:00")
-        with caplog.at_level(logging.WARNING, logger="sturddle_view.api.tournaments"):
-            client.get(f"/api/tournaments/{tid}").json()
-        assert not any(
-            _PGN_CONFIG_MISMATCH_MSG in r.message for r in caplog.records
-        ), f"status={status} unexpectedly logged the mismatch"
 
 
 def test_list_returns_created(client):
