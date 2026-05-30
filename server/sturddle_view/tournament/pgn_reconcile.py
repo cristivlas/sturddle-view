@@ -11,6 +11,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
+from ..env_utils import env_float as _env_float, env_int as _env_int
 from .pgn_tail import PgnGameRecord
 
 
@@ -18,29 +19,6 @@ log = logging.getLogger(__name__)
 
 # SV_DEBUG_RECONCILE=1 turns on per-record / per-match traces.
 _DEBUG = os.environ.get("SV_DEBUG_RECONCILE", "0") == "1"
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        log.warning("ignoring non-numeric %s=%r; using default %s", name, raw, default)
-        return default
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        log.warning("ignoring non-numeric %s=%r; using default %s", name, raw, default)
-        return default
-
 
 # Min captured plies before we attempt a match -- guards against
 # opening-prefix collisions across parallel slots.

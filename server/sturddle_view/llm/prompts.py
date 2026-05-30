@@ -149,6 +149,11 @@ def _scrub_comment_for_prompt(comment: str) -> str:
     return comment.translate(_PROMPT_COMMENT_BAD_CHARS).strip()
 
 
+def _move_ref(ply_index: int) -> tuple[int, str]:
+    """Return (move_number, dots) for a zero-based ply index."""
+    return (ply_index // 2) + 1, "." if ply_index % 2 == 0 else "..."
+
+
 def _render_san_pairs(san_history: list[str]) -> str:
     """Render a flat SAN list as a numbered move sequence.
 
@@ -162,7 +167,8 @@ def _render_san_pairs(san_history: list[str]) -> str:
     parts: list[str] = []
     for i, san in enumerate(san_history):
         if i % 2 == 0:
-            parts.append(f"{(i // 2) + 1}. {san}")
+            move_no, _ = _move_ref(i)
+            parts.append(f"{move_no}. {san}")
         else:
             parts.append(san)
     return " ".join(parts)
@@ -252,8 +258,7 @@ def _render_annotations(
     for i, comment in enumerate(annotations):
         if comment is None or i >= len(san_history):
             continue
-        move_no = (i // 2) + 1
-        dots = "." if i % 2 == 0 else "..."
+        move_no, dots = _move_ref(i)
         safe = _scrub_comment_for_prompt(comment)
         if not safe:
             continue

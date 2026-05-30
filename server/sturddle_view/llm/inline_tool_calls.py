@@ -28,12 +28,12 @@ from __future__ import annotations
 import ast
 import json
 import logging
-import os
 import re
 import uuid
 from dataclasses import dataclass
 from typing import AsyncIterator, Iterable
 
+from ..env_utils import env_int
 from .base import ProviderChunk
 
 
@@ -47,7 +47,7 @@ _FENCE_OPEN_RE = re.compile(r"```[ \t]*[A-Za-z]*[ \t]*\n")
 _FENCE_CLOSE = "```"
 # UUID hex slice length for synthetic tool_use_id; 12 chars = 48 bits.
 _DEFAULT_INLINE_ID_LEN = 12
-INLINE_ID_LEN = int(os.environ.get("SV_AI_INLINE_TOOL_ID_LEN", _DEFAULT_INLINE_ID_LEN))
+INLINE_ID_LEN = env_int("SV_AI_INLINE_TOOL_ID_LEN", _DEFAULT_INLINE_ID_LEN)
 
 # Shared lexical primitives.
 _IDENT = r"[A-Za-z_][A-Za-z0-9_]*"

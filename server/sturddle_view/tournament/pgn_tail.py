@@ -18,23 +18,12 @@ import chess
 import chess.pgn
 
 from ..chess.results import DECISIVE_RESULTS
+from ..env_utils import env_float as _env_float
 
 log = logging.getLogger(__name__)
 
 # Same flag the reconcile queue uses; one opt-in for the whole subsystem.
 _DEBUG = os.environ.get("SV_DEBUG_RECONCILE", "0") == "1"
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        log.warning("ignoring non-numeric %s=%r; using default %s", name, raw, default)
-        return default
-
 
 # Operator knob (env-overridable). 1Hz is the default; lower for
 # faster matching at the cost of more stat() calls.

@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 
 import chess
 
+from ..env_utils import env_int as _env_int
 from .pgn_reconcile import (
     PendingMatch,
     ReconciledMatch,
@@ -53,18 +54,6 @@ log = logging.getLogger(__name__)
 # event vocabulary plus a ``status_change`` event the WebSocket layer
 # uses to refresh the per-row status badge.
 BroadcastCallback = Callable[[str, dict], Awaitable[None]]
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        log.warning("ignoring non-numeric %s=%r; using default %s", name, raw, default)
-        return default
-
 
 # Per-tournament event history depth. Big enough to cover all the
 # fastchess startup chatter (engine init, opening probes) plus a few
@@ -467,7 +456,8 @@ class Orchestrator:
             self._active_id = None
             self._proxy_secret = None
             self._reset_pairing_state()
-            self._store.update_status(t.id, STATUS_STOPPED, stopped_at=_now())
+            rolled_back = self._store.update_status(t.id, STATUS_STOPPED, stopped_at=_now())
+            await self._emit_status(rolled_back)
             raise
 
         # PGN tailer for reconciliation. Constructed here but its poll
