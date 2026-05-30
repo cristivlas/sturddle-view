@@ -11,11 +11,11 @@ from pathlib import Path
 
 from platformdirs import user_log_dir
 
-from . import APP_NAME
+from . import app_dir_name
 
 
 def default_log_dir() -> Path:
-    return Path(user_log_dir(APP_NAME, appauthor=False))
+    return Path(user_log_dir(app_dir_name(), appauthor=False))
 
 
 _configured = False

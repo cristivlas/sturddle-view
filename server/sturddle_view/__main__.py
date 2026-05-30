@@ -10,7 +10,7 @@ from pathlib import Path
 import uvicorn
 from platformdirs import user_config_dir
 
-from . import APP_NAME
+from . import APP_NAME, app_dir_name
 from ._instance_lock import acquire as _acquire_lock
 from .config import Settings
 from .logging_setup import configure_logging
@@ -41,6 +41,12 @@ def main() -> None:
     )
     parser.add_argument("--cert", default=None, help="TLS cert (PEM). Requires --key.")
     parser.add_argument("--key", default=None, help="TLS key (PEM). Requires --cert.")
+    parser.add_argument(
+        "--instance",
+        default=None,
+        metavar="TAG",
+        help="Instance tag (e.g. 2, beta) -- isolates config/data dirs so multiple instances can run side-by-side",
+    )
     parser.add_argument("--debug", action="store_true",
                         help="Verbose (DEBUG) logging for the app (sturddle_view)")
     parser.add_argument("--server-debug", action="store_true",
@@ -62,6 +68,9 @@ def main() -> None:
                 print(f"{label} file not found: {p}", file=sys.stderr)
                 sys.exit(2)
 
+    if args.instance:
+        os.environ["SV_INSTANCE"] = args.instance.strip()
+
     log_file = configure_logging(
         level=logging.DEBUG if args.debug else logging.INFO,
         server_level=logging.DEBUG if args.server_debug else logging.WARNING,
@@ -75,7 +84,7 @@ def main() -> None:
         if lock_override:
             lock_path = Path(lock_override)
         else:
-            lock_path = Path(user_config_dir(APP_NAME, appauthor=False)) / "server.lock"
+            lock_path = Path(user_config_dir(app_dir_name(), appauthor=False)) / "server.lock"
         if not _acquire_lock(lock_path):
             msg = f"Another {APP_NAME} instance is already running."
             logging.getLogger(__name__).error("%s Exiting.", msg)

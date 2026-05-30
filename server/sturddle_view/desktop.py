@@ -9,7 +9,7 @@ from pathlib import Path
 import uvicorn
 from platformdirs import user_data_dir
 
-from . import APP_NAME
+from . import app_dir_name
 from ._uvicorn_signal import make_signalling_server
 from .app import create_app
 from .config import Settings
@@ -163,7 +163,7 @@ def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> N
     )
     api.attach(window)
     window.events.closing += _make_close_handler(app, window)
-    webview.start(private_mode=False, storage_path=user_data_dir(APP_NAME, appauthor=False))
+    webview.start(private_mode=False, storage_path=user_data_dir(app_dir_name(), appauthor=False))
 
     server.should_exit = True
     thread.join(timeout=_SERVER_SHUTDOWN_TIMEOUT)

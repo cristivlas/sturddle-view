@@ -30,10 +30,10 @@ from typing import Any, Iterator
 
 import platformdirs
 
+from .. import app_dir_name
 from .base import ProviderChunk
 
 
-APP_NAME = "sturddle-view"
 TRANSCRIPT_FILENAME = "ai-transcript.log"
 TRANSCRIPT_ENV_VAR = "SV_AI_TRANSCRIPT"
 
@@ -42,7 +42,7 @@ TURN_SEPARATOR = "=" * 78
 
 def default_transcript_path() -> Path:
     """Where the rolling transcript file lives by default."""
-    return Path(platformdirs.user_data_dir(APP_NAME, appauthor=False)) / TRANSCRIPT_FILENAME
+    return Path(platformdirs.user_data_dir(app_dir_name(), appauthor=False)) / TRANSCRIPT_FILENAME
 
 
 def transcript_enabled() -> bool:

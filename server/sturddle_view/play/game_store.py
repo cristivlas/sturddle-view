@@ -18,7 +18,7 @@ from pathlib import Path
 
 from platformdirs import user_config_dir
 
-from .. import APP_NAME
+from .. import app_dir_name
 from .._atomic import atomic_write_json
 
 log = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ def default_state_path() -> Path:
     override = os.environ.get("SV_GAME_STATE_PATH")
     if override:
         return Path(override)
-    return Path(user_config_dir(APP_NAME, appauthor=False)) / "current_game.json"
+    return Path(user_config_dir(app_dir_name(), appauthor=False)) / "current_game.json"
 
 
 @dataclass

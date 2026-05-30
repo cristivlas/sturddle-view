@@ -17,7 +17,7 @@ from typing import Any
 
 import platformdirs
 
-from .. import APP_NAME
+from .. import app_dir_name
 from .._atomic import atomic_write_json
 
 
@@ -75,7 +75,7 @@ class Tournament:
 
 def default_root() -> Path:
     """Default tournaments root using platformdirs (cross-platform)."""
-    return Path(platformdirs.user_data_dir(APP_NAME, appauthor=False)) / "tournaments"
+    return Path(platformdirs.user_data_dir(app_dir_name(), appauthor=False)) / "tournaments"
 
 
 def _now() -> str:

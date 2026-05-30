@@ -41,7 +41,7 @@ from typing import Callable
 
 from platformdirs import user_data_dir
 
-from . import APP_NAME
+from . import app_dir_name
 from ._atomic import atomic_write_json, atomic_write_text
 from .play.canonical_hash import canonical_hash
 
@@ -88,7 +88,7 @@ def default_imports_dir() -> Path:
     override = os.environ.get("SV_IMPORTS_DIR")
     if override:
         return Path(override)
-    return Path(user_data_dir(APP_NAME, appauthor=False)) / "imports"
+    return Path(user_data_dir(app_dir_name(), appauthor=False)) / "imports"
 
 
 def _hash_text(text: str) -> str:

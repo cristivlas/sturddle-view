@@ -9,7 +9,7 @@ from platformdirs import user_config_dir
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from . import APP_NAME
+from . import app_dir_name
 from . import key_store
 from ._atomic import atomic_write_json
 from ._runtime import app_root
@@ -32,7 +32,7 @@ def default_settings_file() -> Path:
     override = os.environ.get("SV_SETTINGS_FILE")
     if override:
         return Path(override)
-    return Path(user_config_dir(APP_NAME, appauthor=False)) / "settings.json"
+    return Path(user_config_dir(app_dir_name(), appauthor=False)) / "settings.json"
 
 
 # Fields persisted to disk. Excludes secrets (token), bind config (host/port),
