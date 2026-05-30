@@ -104,16 +104,24 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // navigation). lastGeometry holds last-known position/size per key so
   // closed slots can carry geometry forward into the next snapshot.
   const restoreFromSaved = hasOpenWindows(savedState);
-  const MIN_SIZES = {
-    standings: { minwidth: 320, minheight: 120 },
-    schedule:  { minwidth: 320, minheight: 120 },
-    engines:   { minwidth: 280, minheight: 120 },
-    log:       { minwidth: 280, minheight: 120 },
-  };
+  // Min sizes scale with the root font size. 280px / 320px / 120px at
+  // default 16px match the previous hardcoded values; em keeps the
+  // proportions intact when the user changes font size.
+  function getMinSizes() {
+    const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const wWide = Math.round(rem * 20);    // 320px at 16px
+    const wNarrow = Math.round(rem * 17.5); // 280px at 16px
+    const h = Math.round(rem * 7.5);        // 120px at 16px
+    return {
+      standings: { minwidth: wWide,   minheight: h },
+      schedule:  { minwidth: wWide,   minheight: h },
+      engines:   { minwidth: wNarrow, minheight: h },
+      log:       { minwidth: wNarrow, minheight: h },
+    };
+  }
   const lastGeometry = {};
-  for (const key of Object.keys(MIN_SIZES)) {
+  for (const key of ["standings", "schedule", "engines", "log"]) {
     const s = savedState?.[key];
-    const ms = MIN_SIZES[key];
     lastGeometry[key] = s
       ? { x: s.x, y: s.y, width: s.width, height: s.height }
       : null;
@@ -364,16 +372,17 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   function makeBox(key, title, body, { min = false, max = false } = {}) {
     const cfg = lastGeometry[key];
     const extra = EXTRA_CLASS[key] ? ` ${EXTRA_CLASS[key]}` : "";
+    const sizes = getMinSizes()[key];
     const wb = new WinBox({
       title, mount: body, top, left, right: getRightInset(), min, max,
       ...(cfg ? { x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height } : {}),
       class: `sturddle-wb no-full no-shadow${extra}`,
-      ...MIN_SIZES[key],
+      ...sizes,
     });
     // Stash so tile()/snap() can read the effective min size from the
     // instance (WinBox doesn't expose its config min* on the instance).
-    wb.svMinWidth = MIN_SIZES[key].minwidth;
-    wb.svMinHeight = MIN_SIZES[key].minheight;
+    wb.svMinWidth = sizes.minwidth;
+    wb.svMinHeight = sizes.minheight;
     // Wire onclose after construction (TDZ on `wb` otherwise). No persist
     // here -- state is captured at workspace.close()/closeAll()/finalize().
     wb.onclose = () => {
@@ -1393,15 +1402,16 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
     const availW = getRight() - left;
     const availH = window.innerHeight - top - MINIMIZE_FOOTER_H;
-    const leftW = Math.max(Math.round(availW * 0.35), MIN_SIZES.engines.minwidth);
+    const mins = getMinSizes();
+    const leftW = Math.max(Math.round(availW * 0.35), mins.engines.minwidth);
     const rightW = availW - leftW - TIDY_GAP;
     // System rows get what's left after one row of board slots.
     // Clamp each row so both windows in a row share the same height
     // (WinBox silently floors to per-window minheight otherwise).
     const systemH = availH - LIVE_MIN_HEIGHT();
     const desiredRowH = Math.floor((systemH - TIDY_GAP) / 2);
-    const topRowH = Math.max(desiredRowH, MIN_SIZES.engines.minheight, MIN_SIZES.standings.minheight);
-    const botRowH = Math.max(desiredRowH, MIN_SIZES.schedule.minheight, MIN_SIZES.log.minheight);
+    const topRowH = Math.max(desiredRowH, mins.engines.minheight, mins.standings.minheight);
+    const botRowH = Math.max(desiredRowH, mins.schedule.minheight, mins.log.minheight);
     // Anchor bottom edge to top + availH (which already excludes the
     // minimize footer). If clamped rows exceed availH the layout
     // extends upward, but never below the reserved footer.
