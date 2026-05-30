@@ -163,7 +163,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const cols = Math.min(MAX_GRID_COLS, Number(detail?.template?.games_in_parallel) || MAX_GRID_COLS);
       return Math.max(LIVE_MIN_WIDTH, Math.floor((getRight() - left - SLOT_GAP * (cols - 1)) / cols));
     },
-    cellHeight: LIVE_MIN_HEIGHT,
+    cellHeight: LIVE_MIN_HEIGHT(),
     getWindows: () => getLiveWindows(),
     getMaxRows: () => activeLayout === LAYOUT.TIDY ? 1 : Infinity,
   });
@@ -1398,7 +1398,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     // System rows get what's left after one row of board slots.
     // Clamp each row so both windows in a row share the same height
     // (WinBox silently floors to per-window minheight otherwise).
-    const systemH = availH - LIVE_MIN_HEIGHT;
+    const systemH = availH - LIVE_MIN_HEIGHT();
     const desiredRowH = Math.floor((systemH - TIDY_GAP) / 2);
     const topRowH = Math.max(desiredRowH, MIN_SIZES.engines.minheight, MIN_SIZES.standings.minheight);
     const botRowH = Math.max(desiredRowH, MIN_SIZES.schedule.minheight, MIN_SIZES.log.minheight);
