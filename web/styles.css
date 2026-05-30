@@ -1209,7 +1209,13 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   #view-controls,
   #edit-controls { order: 1; }
   .play-board-host { order: 2; }
-  .play-side-host { order: 3; position: static; }
+  .play-side-host {
+    order: 3;
+    position: static;
+    align-self: center;
+    width: 100%;
+    max-width: var(--board-max-px, 100%);
+  }
 }
 .game-view-board {
   display: flex;

@@ -374,14 +374,12 @@ export function mountGameView(container, opts = {}) {
     // horizontally. Rail width is viewport-driven (not board-driven) to
     // avoid a feedback loop with the board sizing below.
     // Rail/board minimums are derived from root font-size so they honor
-    // the user's browser font-size preference. NARROW stays raw CSS-px:
-    // it must match the CSS `@media (max-width: 640px)` mobile breakpoint
-    // (which is viewport-driven, not font-size-driven) -- otherwise JS
-    // flips to mobile mode while CSS stays desktop, stranding the rail
-    // in the left filler column at large font sizes.
+    // the user's browser font-size preference. Mobile branch is gated by
+    // isMobileLayout() so a short-but-wide viewport (height breakpoint)
+    // also clears the desktop rail positioning instead of stranding the
+    // side rail at fixed coordinates.
     const rootFs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
     const rem = (n) => Math.round(n * rootFs);
-    const NARROW = 640;
     const MIN_BOARD = rem(20);   // 320px @ default fs
     const RAIL_MIN = rem(11.25); // 180px @ default fs
     const RAIL_MAX = rem(20);    // 320px @ default fs
@@ -406,7 +404,7 @@ export function mountGameView(container, opts = {}) {
     // board + right rail shift left as one block instead of being framed
     // by a wide empty band. Proportional to railW so it scales with width.
     const LEFT_RAIL_EMPTY_RATIO = window.__leftRailEmptyRatio ?? 0.4;
-    if (window.innerWidth <= NARROW || !grid) {
+    if (isMobileLayout() || !grid) {
       railW = 0;
       leftRailW = 0;
       availW = Math.max(rem(10), Math.floor(colRect.width));
@@ -420,10 +418,10 @@ export function mountGameView(container, opts = {}) {
       availW = Math.max(rem(10), Math.floor(usable - railW - leftRailW - 2 * gapW));
     }
 
-    const max = window.innerWidth <= NARROW
+    const max = isMobileLayout()
       ? availW
-      // Honor the CSS minmax(320px, …) floor so the board doesn't go
-      // below MIN_BOARD on awkward width-bound viewports (~800–900px).
+      // Honor the CSS minmax(320px, ...) floor so the board doesn't go
+      // below MIN_BOARD on awkward width-bound viewports (~800-900px).
       : Math.max(MIN_BOARD, Math.floor(Math.min(availW, availH)));
 
     boardEl.style.width = `${max}px`;
@@ -438,9 +436,11 @@ export function mountGameView(container, opts = {}) {
     boardCol.style.setProperty("--board-max-px", `${max}px`);
     if (grid) {
       grid.style.setProperty("--board-max-px", `${max}px`);
-      // Only drive the column width on wide viewports; on narrow, the
-      // grid collapses to a vertical flex layout (see CSS).
-      if (window.innerWidth > NARROW) {
+      // Only drive the column width on desktop; in mobile layout
+      // (narrow width OR short height -- see media query in styles.css)
+      // the grid collapses to a vertical flex layout.
+      const mobile = isMobileLayout();
+      if (!mobile) {
         grid.style.setProperty("--board-col-px", `${max}px`);
         grid.style.setProperty("--left-rail-w", `${leftRailW}px`);
       } else {
@@ -452,7 +452,7 @@ export function mountGameView(container, opts = {}) {
        // at the board's height so the moves panel stays within the board.
       const sideHost = grid.querySelector(".play-side-host");
       if (sideHost) {
-        if (window.innerWidth > NARROW) {
+        if (!mobile) {
           const boardRect = boardEl.getBoundingClientRect();
           const ribbonRight = document.body.dataset.ribbonSide === "right";
           const top = Math.ceil(boardRect.top);
