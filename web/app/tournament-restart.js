@@ -7,7 +7,12 @@ export const CONFIRM_WIPE_QS = "confirm_wipe=true";
 
 export function buildRestartConfirm(name, games) {
   const message = games > 0
-    ? `Restart "${name}" from scratch? All ${games} recorded games will be permanently deleted.`
+    ? `Restart "${name}" from scratch?\nAll ${games} recorded games will be permanently deleted.`
     : `Restart "${name}" from scratch?`;
-  return { message, okLabel: "Restart", destructive: true };
+  return {
+    message,
+    okLabel: "Restart",
+    destructive: true,
+    ...(games > 0 ? { messageClass: "confirm-message--multiline" } : {}),
+  };
 }
