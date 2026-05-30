@@ -592,7 +592,6 @@ export function mountTournaments({ container, api, events, log, token }) {
     showDialog({
       label: detailed.name,
       width: "520px",
-      height: "min(720px, 92vh)",
       body: (resolve, dialog) => {
         const wrap = document.createElement("div");
         wrap.className = "tournament-info";
@@ -689,22 +688,35 @@ export function mountTournaments({ container, api, events, log, token }) {
     row("Resign", formatResign(tpl.resign));
     row("Draw adjudication", formatDraw(tpl.draw));
     const ed = t.engine_defaults || {};
-    row("Threads", ed.threads);
-    row("Hash (MB)", ed.hash_mb);
-    if (ed.syzygy_path) {
+    const defaultSpan = (text, title) => {
       const span = document.createElement("span");
-      span.textContent = basename(ed.syzygy_path);
-      span.title = ed.syzygy_path;
+      if (text != null && text !== "") {
+        span.textContent = text;
+        if (title) span.title = title;
+      } else {
+        span.textContent = "engine default";
+        span.className = "tournament-info-default";
+      }
+      return span;
+    };
+    row("Threads", defaultSpan(ed.threads));
+    row("Hash (MB)", defaultSpan(ed.hash_mb));
+    {
+      const span = ed.syzygy_path
+        ? defaultSpan(basename(ed.syzygy_path), ed.syzygy_path)
+        : defaultSpan(null);
       row("Syzygy", span);
     }
-    if (ed.book_path) {
-      const span = document.createElement("span");
-      span.textContent = basename(ed.book_path);
-      span.title = ed.book_path;
+    {
+      const span = ed.book_path
+        ? defaultSpan(basename(ed.book_path), ed.book_path)
+        : defaultSpan(null);
       row("Opening book", span);
+      if (ed.book_path) {
+        row("Book plies", ed.book_plies);
+        row("Book order", ed.book_order);
+      }
     }
-    row("Book plies", ed.book_plies);
-    row("Book order", ed.book_order);
     row("Created", formatTime(t.created_at));
     if (t.status === STATUS.RUNNING || t.status === STATUS.FAILED || t.status === STATUS.STOPPED) row("Started", formatTime(t.started_at));
     if (t.status === STATUS.STOPPED) row("Stopped", formatTime(t.stopped_at));

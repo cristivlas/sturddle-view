@@ -2634,6 +2634,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   border-color: #a13a3a;
   color: #ffd7d7;
 }
+.tournament-info-default { color: var(--accent); }
 .tournament-info-error {
   margin: 0;
   padding: 6px 8px;

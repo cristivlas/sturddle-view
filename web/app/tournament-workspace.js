@@ -32,7 +32,7 @@ import { createSlotGrid, SLOT_GAP } from "./workspace-slot-grid.js";
 
 const STORAGE_KEY_PREFIX = "sturddle:workspace:";
 const STANDINGS_COL_PCTS_KEY = "sturddle:tournaments:standingsColPcts";
-const STANDINGS_DEFAULT_PCTS = [22, 5, 5, 5, 5, 8, 25, 25];
+const STANDINGS_DEFAULT_PCTS = [25, 7, 7, 7, 7, 7, 8, 14];
 const EVENT_LOG_LIMIT = 500;
 
 
