@@ -1,4 +1,4 @@
-"""Slice 5: REST + WS surface for tournaments.
+"""REST + WS surface for tournaments.
 
 Uses ``fastapi.TestClient`` with ``auth_disabled=True``. The actual
 fastchess subprocess is replaced by a fake-fastchess script via a
@@ -10,6 +10,7 @@ import asyncio
 import json
 import sys
 import time
+from collections import deque
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.tournament import fastchess as fc_mod
 from sturddle_view.tournament.fastchess import FastchessRunner
+from sturddle_view.tournament.store import TournamentStore
 
 
 FAKE_FASTCHESS = r"""
@@ -129,18 +131,25 @@ def test_get_includes_standings_with_no_games(client):
     assert body["standings"]["engines"] == []
 
 
-def test_get_standings_games_from_fastchess_config(client, settings):
+_PGN_TWO_GAMES = (
+    "[Event \"x\"]\n[White \"A\"]\n[Black \"B\"]\n[Result \"1-0\"]\n\n1-0\n\n"
+    "[Event \"x\"]\n[White \"B\"]\n[Black \"A\"]\n[Result \"0-1\"]\n\n0-1\n\n"
+)
+
+
+def test_get_standings_games_from_pgn(client, settings):
+    """``standings.games`` is PGN-derived (compute_standings). We never
+    resume across stop cycles, so the PGN never accumulates duplicate
+    replays and its game count is ground truth."""
     created = client.post("/api/tournaments", json={
         "name": "y", "engines": _engines_payload(),
     }).json()
     tid = created["id"]
-    cfg = Path(settings.tournament_root) / tid / "config.json"
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(json.dumps({
-        "stats": {"A vs B": {"wins": 10, "losses": 8, "draws": 4}}
-    }), encoding="utf-8")
+    pgn = Path(settings.tournament_root) / tid / "games.pgn"
+    pgn.parent.mkdir(parents=True, exist_ok=True)
+    pgn.write_text(_PGN_TWO_GAMES, encoding="utf-8")
     body = client.get(f"/api/tournaments/{tid}").json()
-    assert body["standings"]["games"] == 22
+    assert body["standings"]["games"] == 2
 
 
 def test_list_returns_created(client):
@@ -153,6 +162,89 @@ def test_list_returns_created(client):
     listed = client.get("/api/tournaments").json()
     ids = [t["id"] for t in listed["tournaments"]]
     assert a["id"] in ids and b["id"] in ids
+
+
+# ---------------------------------------------------------------------------
+# /start wipe-required gate (universal: all engine counts)
+# ---------------------------------------------------------------------------
+
+
+def test_start_requires_confirm_wipe_when_stopped(client, settings, monkeypatch):
+    """status=STOPPED -> 409 with reason=wipe_required when confirm_wipe is
+    omitted. Stop wipes on next Start; a silent /start would destroy
+    data."""
+    _patch_fake_fastchess(monkeypatch, "--exit", "0")
+    t = client.post("/api/tournaments", json={
+        "name": "x", "engines": _engines_payload(),
+    }).json()
+    store = TournamentStore(Path(settings.tournament_root))
+    store.update_status(t["id"], "stopped", stopped_at="2026-01-01T00:00:00+00:00")
+    # Drop a stray file we expect to survive (no wipe happens on 409).
+    pgn = Path(settings.tournament_root) / t["id"] / "games.pgn"
+    pgn.parent.mkdir(parents=True, exist_ok=True)
+    pgn.write_text("[Result \"1-0\"]\n", encoding="utf-8")
+
+    r = client.post(f"/api/tournaments/{t['id']}/start")
+    assert r.status_code == 409
+    assert r.json()["detail"]["reason"] == "wipe_required"
+    assert pgn.exists(), "no wipe should happen on the 409 path"
+
+
+def test_start_with_confirm_wipe_wipes_and_starts(client, settings, monkeypatch):
+    """status=STOPPED + confirm_wipe=true -> wipes the dir and starts
+    the tournament fresh."""
+    _patch_fake_fastchess(monkeypatch, "--print", "1", "--exit", "0")
+    t = client.post("/api/tournaments", json={
+        "name": "x", "engines": _engines_payload(),
+    }).json()
+    store = TournamentStore(Path(settings.tournament_root))
+    store.update_status(t["id"], "stopped", stopped_at="2026-01-01T00:00:00+00:00")
+    pgn = Path(settings.tournament_root) / t["id"] / "games.pgn"
+    pgn.parent.mkdir(parents=True, exist_ok=True)
+    pgn.write_text("[Result \"1-0\"]\n", encoding="utf-8")
+
+    r = client.post(f"/api/tournaments/{t['id']}/start?confirm_wipe=true")
+    assert r.status_code == 200
+    assert r.json()["status"] == "running"
+    assert not pgn.exists(), "wipe should remove the stray PGN"
+
+
+def test_start_idle_does_not_require_confirm_wipe(client, monkeypatch):
+    """status=IDLE (fresh tournament) -> /start proceeds without flag."""
+    _patch_fake_fastchess(monkeypatch, "--exit", "0")
+    t = client.post("/api/tournaments", json={
+        "name": "x", "engines": _engines_payload(),
+    }).json()
+    r = client.post(f"/api/tournaments/{t['id']}/start")
+    assert r.status_code == 200
+
+
+def test_wipe_for_restart_preserves_immutables(settings):
+    """``wipe_for_restart`` keeps name/template/engines/engine_defaults
+    intact, resets runtime state (status, last_error)."""
+    store = TournamentStore(Path(settings.tournament_root))
+    t = store.create(
+        name="orig",
+        template={"foo": "bar"},
+        engines=_engines_payload(),
+        engine_defaults={"threads": 4},
+    )
+    store.update_status(t.id, "failed", last_error={"rc": 1})
+    pgn = Path(settings.tournament_root) / t.id / "games.pgn"
+    pgn.write_text("[Result \"1-0\"]\n", encoding="utf-8")
+
+    pre_template = dict(t.template)
+    pre_engines = list(t.engines)
+    pre_defaults = dict(t.engine_defaults)
+
+    after = store.wipe_for_restart(t.id)
+    assert after.name == "orig"
+    assert after.template == pre_template
+    assert after.engines == pre_engines
+    assert after.engine_defaults == pre_defaults
+    assert after.status == "idle"
+    assert after.last_error is None
+    assert not pgn.exists()
 
 
 def test_delete_removes(client):
@@ -579,10 +671,24 @@ def test_patch_rejects_fewer_than_two_engines(client):
     assert r.status_code == 400
 
 
-def test_patch_always_deletes_pgn(client):
+def test_patch_wipes_tournament_dir_contents(client):
+    """Editing a tournament wipes every on-disk artifact (PGN, fastchess
+    config + rotated backups, logs, strays) and leaves a fresh state.json.
+    Past data was produced under potentially different conditions and
+    must not leak into future runs."""
     t = _create(client)
-    pgn = client.app.state.tournament_store.pgn_path(t["id"])
+    store = client.app.state.tournament_store
+    pgn = store.pgn_path(t["id"])
     pgn.write_text("[Event \"?\"]\n\n1. e4 *\n")
+    cfg = store.config_path(t["id"])
+    cfg.write_text("{\"games\": 7}")
+    cfg_bak = cfg.with_name(cfg.name + ".20260101-000000.bak.gz")
+    cfg_bak.write_bytes(b"\x1f\x8b\x08\x00fake")
+    logs = store.logs_dir(t["id"])
+    logs.mkdir(exist_ok=True)
+    (logs / "fastchess.log").write_text("info: ...")
+    stray = store._dir(t["id"]) / "stray.tmp"
+    stray.write_text("leftover")
 
     r = client.patch(f"/api/tournaments/{t['id']}", json={
         "name": t["name"],
@@ -591,6 +697,32 @@ def test_patch_always_deletes_pgn(client):
     })
     assert r.status_code == 200
     assert not pgn.exists()
+    assert not cfg.exists()
+    assert not cfg_bak.exists()
+    assert not logs.exists()
+    assert not stray.exists()
+    # The freshly written state.json must be there and parseable.
+    assert store._state_path(t["id"]).exists()
+
+
+def test_patch_clears_orchestrator_event_history(client):
+    """Stale events from the pre-edit run must not replay into post-edit
+    live-window re-subscribes -- mirrors delete_tournament's behavior."""
+    t = _create(client)
+    orch = client.app.state.tournament_orch
+    # Inject a synthetic event so we have something to clear.
+    orch._event_history.setdefault(t["id"], deque()).append(
+        {"kind": "synthetic", "tournament_id": t["id"]}
+    )
+    assert len(orch.event_history(t["id"])) == 1
+
+    r = client.patch(f"/api/tournaments/{t['id']}", json={
+        "name": t["name"],
+        "template": {"tc": "5+0"},
+        "engines": _engines_payload(),
+    })
+    assert r.status_code == 200
+    assert orch.event_history(t["id"]) == []
 
 
 def test_patch_unknown_returns_404(client):
@@ -635,7 +767,7 @@ def test_patch_running_returns_409(client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Per-game PGN fetch (slice 4 replay)
+# Per-game PGN fetch
 # ---------------------------------------------------------------------------
 
 

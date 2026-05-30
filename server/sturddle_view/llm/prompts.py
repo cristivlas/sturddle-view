@@ -8,7 +8,10 @@ cache hit rate.
 
 Both `coach` (live play mode) and `commentator` (view mode) addenda
 are wired via `_ai_kick.py::_prompt_mode_for`. Adding a new persona
-means adding an addendum constant and one branch in that selector.
+means adding an addendum constant, a branch in that selector, and
+(if it should receive PGN annotations) widening the gate in
+`_ai_kick.py::_build_user_message` -- annotations are keyed on the
+prompt persona, not the underlying play Mode.
 """
 from __future__ import annotations
 
@@ -83,7 +86,10 @@ Post-game review; reader sees the whole game. Third person, \
 annotator voice. Identify critical moments -- blunders, missed \
 tactics, turning points -- and contrast plays with stronger \
 engine alternatives. May reference later moves when they \
-illuminate the current one.
+illuminate the current one. Any `Pre-game note` or `Annotations` \
+in the user message are the original author's notes -- weigh them \
+critically, verify with tools, form your own conclusions. Do not \
+parrot or restate them.
 """
 
 
@@ -132,6 +138,21 @@ def _force_inline_enabled() -> bool:
 
 _INITIAL_NO_MOVES = "(none yet -- the game has not started)"
 
+# Render-side scrub: drop any char that could break out of our `{...}`
+# framing or smuggle a fake instruction line. Defense in depth on top
+# of _sanitize_comment, which leaves braces and newlines intact for
+# the UI. Empty result means the caller should skip the slot entirely.
+_PROMPT_COMMENT_BAD_CHARS = str.maketrans("", "", "{}\n\r")
+
+
+def _scrub_comment_for_prompt(comment: str) -> str:
+    return comment.translate(_PROMPT_COMMENT_BAD_CHARS).strip()
+
+
+def _move_ref(ply_index: int) -> tuple[int, str]:
+    """Return (move_number, dots) for a zero-based ply index."""
+    return (ply_index // 2) + 1, "." if ply_index % 2 == 0 else "..."
+
 
 def _render_san_pairs(san_history: list[str]) -> str:
     """Render a flat SAN list as a numbered move sequence.
@@ -146,7 +167,8 @@ def _render_san_pairs(san_history: list[str]) -> str:
     parts: list[str] = []
     for i, san in enumerate(san_history):
         if i % 2 == 0:
-            parts.append(f"{(i // 2) + 1}. {san}")
+            move_no, _ = _move_ref(i)
+            parts.append(f"{move_no}. {san}")
         else:
             parts.append(san)
     return " ".join(parts)
@@ -171,6 +193,8 @@ def build_initial_user_message(
     opening_name: str | None = None,
     result: str | None = None,
     move_played: str | None = None,
+    annotations: list[str | None] | None = None,
+    root_annotation: str | None = None,
 ) -> str:
     """Build the user message that opens an agent turn. Carries the FEN,
     the explicit side-to-move (so the model does not re-derive it), the
@@ -190,6 +214,12 @@ def build_initial_user_message(
     or in play mode). Lets the commentator distinguish the played
     move from alternatives it explored via tools.
 
+    `annotations` is a list parallel to `san_history`; entries are the
+    original PGN comment for that ply (or None). `root_annotation` is
+    the pre-game comment. Commentator mode only -- the addendum tells
+    the model to read them critically, not parrot. Rendered on a
+    separate line so `Game moves:` stays byte-stable.
+
     Optional fields are omitted entirely when not provided -- byte-stable
     output is preserved for callers that don't pass them. Prompt caching
     keys on these bytes."""
@@ -206,4 +236,33 @@ def build_initial_user_message(
         lines.append(f"Move played here: {move_played}")
     if result:
         lines.append(f"Game result: {result}")
+    if root_annotation:
+        lines.append(f"Pre-game note: {_scrub_comment_for_prompt(root_annotation)}")
+    annotations_line = _render_annotations(san_history, annotations)
+    if annotations_line:
+        lines.append(annotations_line)
     return "\n".join(lines) + "\n"
+
+
+def _render_annotations(
+    san_history: list[str], annotations: list[str | None] | None,
+) -> str | None:
+    """Render per-ply PGN comments as `Annotations: 5.O-O {note} 12...Nxd4 {note}`.
+
+    Returns None when there are no non-None entries or when annotations
+    is None / mismatched length. Drops entries past the SAN list rather
+    than raising, since caller-side capping may have truncated."""
+    if not annotations:
+        return None
+    pairs: list[str] = []
+    for i, comment in enumerate(annotations):
+        if comment is None or i >= len(san_history):
+            continue
+        move_no, dots = _move_ref(i)
+        safe = _scrub_comment_for_prompt(comment)
+        if not safe:
+            continue
+        pairs.append(f"{move_no}{dots}{san_history[i]} {{{safe}}}")
+    if not pairs:
+        return None
+    return f"Annotations: {' '.join(pairs)}"

@@ -13,11 +13,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from typing import Awaitable, Callable
 
 import chess
 
+from ..env_utils import env_int
 from ..events import Event, EventBus
 from ..llm import (
     LLMProvider,
@@ -49,7 +49,7 @@ log = logging.getLogger(__name__)
 # Cap on agent loop rounds per turn (spec §Guardrails: "Tool call cap
 # per agent turn"). The env override is for ops; UI exposure is pending.
 _DEFAULT_MAX_TOOL_ROUNDS = 32
-MAX_TOOL_ROUNDS = int(os.environ.get("SV_AI_MAX_TOOL_ROUNDS", _DEFAULT_MAX_TOOL_ROUNDS))
+MAX_TOOL_ROUNDS = env_int("SV_AI_MAX_TOOL_ROUNDS", _DEFAULT_MAX_TOOL_ROUNDS)
 
 _COMMENTATOR_MODE: PromptMode = "commentator"
 

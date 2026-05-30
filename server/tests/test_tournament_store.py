@@ -295,7 +295,7 @@ def test_update_replaces_fields_and_resets_to_idle(store):
     t = store.create(name="orig", template={"tc": "10+0.1"}, engines=[{"name": "A"}])
     store.update_status(t.id, STATUS_STOPPED, stopped_at="2026-01-01T01:00:00+00:00")
 
-    updated, had_games = store.update(
+    updated = store.update(
         t.id,
         name="renamed",
         template={"tc": "5+0.05"},
@@ -309,7 +309,6 @@ def test_update_replaces_fields_and_resets_to_idle(store):
     assert updated.started_at is None
     assert updated.stopped_at is None
     assert updated.last_error is None
-    assert had_games is False
 
 
 def test_update_persists_across_reload(store):
@@ -322,27 +321,72 @@ def test_update_persists_across_reload(store):
     assert reloaded.status == STATUS_IDLE
 
 
-def test_update_always_deletes_pgn(store):
-    """Any edit (even a no-op) deletes games.pgn — past games were played
-    under potentially different conditions and must not mix with future
-    games."""
+def test_update_wipes_tournament_dir_contents(store):
+    """Any edit wipes the tournament directory clean: games.pgn,
+    fastchess config.json and its rotated backups, logs/ subdir, and
+    any stray files (we don't allowlist artifact names -- the dir is
+    ours, edits start from a clean slate). Only the freshly written
+    state.json survives."""
     t = store.create(name="x", template={}, engines=[{"name": "A"}])
+    d = store._dir(t.id)
+    # Lay down the artifacts produced by a real fastchess run plus a
+    # nested logs dir and a stray file we never created on purpose.
     pgn = store.pgn_path(t.id)
     pgn.write_text("[Event \"?\"]\n\n1. e4 *\n")
-    assert pgn.exists()
+    cfg = store.config_path(t.id)
+    cfg.write_text("{\"games\": 42}")
+    cfg_bak = cfg.with_name(cfg.name + ".20260101-000000.bak.gz")
+    cfg_bak.write_bytes(b"\x1f\x8b\x08\x00fake gzip backup")
+    logs = store.logs_dir(t.id)
+    logs.mkdir(exist_ok=True)
+    (logs / "fastchess.log").write_text("info: ...")
+    stray = d / "stray.tmp"
+    stray.write_text("leftover from a future feature")
 
-    _, had_games = store.update(t.id, name="x", template={}, engines=[{"name": "A"}])
+    store.update(t.id, name="x", template={}, engines=[{"name": "A"}])
 
-    assert had_games is True
     assert not pgn.exists()
+    assert not cfg.exists()
+    assert not cfg_bak.exists()
+    assert not logs.exists()
+    assert not stray.exists()
+    # State file is fresh and parseable.
+    assert store._state_path(t.id).exists()
+    reloaded = store.get(t.id)
+    assert reloaded.status == STATUS_IDLE
 
 
-def test_update_had_games_false_when_no_pgn(store):
+def test_update_keeps_tournament_listable_if_wipe_partial_fails(store, monkeypatch):
+    """Vanish-window regression: if `_wipe_dir_contents` trips midway
+    (AV scan, dangling handle) the tournament must still be in `list()`
+    and `get()` -- state.json is written before the wipe runs."""
     t = store.create(name="x", template={}, engines=[{"name": "A"}])
-    _, had_games = store.update(
-        t.id, name="x", template={}, engines=[{"name": "B"}]
-    )
-    assert had_games is False
+    store.pgn_path(t.id).write_text("[Event \"?\"]\n\n*\n")
+
+    def _boom(self, tournament_id):
+        raise OSError("simulated AV lock")
+
+    monkeypatch.setattr(type(store), "_wipe_dir_contents", _boom)
+    with pytest.raises(OSError):
+        store.update(t.id, name="x", template={"tc": "1+0"}, engines=[{"name": "B"}])
+
+    # Even though the wipe blew up, state.json was already written --
+    # the row survives in list/get with the new template + idle status.
+    listed = [x for x in store.list() if x.id == t.id]
+    assert len(listed) == 1
+    reloaded = store.get(t.id)
+    assert reloaded.template["tc"] == "1+0"
+    assert reloaded.engines == [{"name": "B"}]
+    assert reloaded.status == STATUS_IDLE
+
+
+def test_update_succeeds_when_dir_only_has_state_file(store):
+    """Fresh tournament with no PGN/config/logs yet: update must be a
+    no-op-on-disk for the wipe and still produce a valid state.json."""
+    t = store.create(name="x", template={}, engines=[{"name": "A"}])
+    store.update(t.id, name="x", template={}, engines=[{"name": "B"}])
+    reloaded = store.get(t.id)
+    assert reloaded.engines == [{"name": "B"}]
 
 
 def test_update_refreezes_engine_defaults(store):
@@ -378,7 +422,7 @@ def test_update_rejects_duplicate_name(store):
 
 def test_update_allows_same_name(store):
     t = store.create(name="same", template={"tc": "10+0"}, engines=[])
-    updated, _ = store.update(t.id, name="same", template={"tc": "5+0"}, engines=[])
+    updated = store.update(t.id, name="same", template={"tc": "5+0"}, engines=[])
     assert updated.name == "same"
     assert updated.template["tc"] == "5+0"
 

@@ -18,8 +18,9 @@ import {
   LIVE_MIN_WIDTH, LIVE_MIN_HEIGHT, DEBUG_WATCH,
 } from "./tournament-live-game.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
+import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
 import { attachColumnResize } from "./col-resize.js";
-import { apiErrorDetail, toast } from "./dialogs.js";
+import { apiErrorDetail, confirm, toast } from "./dialogs.js";
 import {
   AUTOSCROLL_SLACK_ROW_PX,
   escapeHtml,
@@ -103,16 +104,24 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // navigation). lastGeometry holds last-known position/size per key so
   // closed slots can carry geometry forward into the next snapshot.
   const restoreFromSaved = hasOpenWindows(savedState);
-  const MIN_SIZES = {
-    standings: { minwidth: 320, minheight: 120 },
-    schedule:  { minwidth: 320, minheight: 120 },
-    engines:   { minwidth: 280, minheight: 120 },
-    log:       { minwidth: 280, minheight: 120 },
-  };
+  // Min sizes scale with the root font size. 280px / 320px / 120px at
+  // default 16px match the previous hardcoded values; em keeps the
+  // proportions intact when the user changes font size.
+  function getMinSizes() {
+    const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const wWide = Math.round(rem * 20);    // 320px at 16px
+    const wNarrow = Math.round(rem * 17.5); // 280px at 16px
+    const h = Math.round(rem * 7.5);        // 120px at 16px
+    return {
+      standings: { minwidth: wWide,   minheight: h },
+      schedule:  { minwidth: wWide,   minheight: h },
+      engines:   { minwidth: wNarrow, minheight: h },
+      log:       { minwidth: wNarrow, minheight: h },
+    };
+  }
   const lastGeometry = {};
-  for (const key of Object.keys(MIN_SIZES)) {
+  for (const key of ["standings", "schedule", "engines", "log"]) {
     const s = savedState?.[key];
-    const ms = MIN_SIZES[key];
     lastGeometry[key] = s
       ? { x: s.x, y: s.y, width: s.width, height: s.height }
       : null;
@@ -162,7 +171,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const cols = Math.min(MAX_GRID_COLS, Number(detail?.template?.games_in_parallel) || MAX_GRID_COLS);
       return Math.max(LIVE_MIN_WIDTH, Math.floor((getRight() - left - SLOT_GAP * (cols - 1)) / cols));
     },
-    cellHeight: LIVE_MIN_HEIGHT,
+    cellHeight: LIVE_MIN_HEIGHT(),
     getWindows: () => getLiveWindows(),
     getMaxRows: () => activeLayout === LAYOUT.TIDY ? 1 : Infinity,
   });
@@ -187,6 +196,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
               <th>W<span class="th-grip"></span></th>
               <th>L<span class="th-grip"></span></th>
               <th>D<span class="th-grip"></span></th>
+              <th>Pts<span class="th-grip"></span></th>
               <th>%<span class="th-grip"></span></th>
               <th>Elo<span class="th-grip"></span></th>
               <th>Ordo</th>
@@ -354,19 +364,25 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }, { capture: true });
   }
 
+  // Inset (px) from the right viewport edge to the workspace area --
+  // i.e. ribbon width when docked right, 0 when docked left. WinBox's
+  // maximize() respects this so a maximized window stops at the ribbon.
+  const getRightInset = () => Math.max(0, window.innerWidth - getRight());
+
   function makeBox(key, title, body, { min = false, max = false } = {}) {
     const cfg = lastGeometry[key];
     const extra = EXTRA_CLASS[key] ? ` ${EXTRA_CLASS[key]}` : "";
+    const sizes = getMinSizes()[key];
     const wb = new WinBox({
-      title, mount: body, top, left, min, max,
+      title, mount: body, top, left, right: getRightInset(), min, max,
       ...(cfg ? { x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height } : {}),
       class: `sturddle-wb no-full no-shadow${extra}`,
-      ...MIN_SIZES[key],
+      ...sizes,
     });
     // Stash so tile()/snap() can read the effective min size from the
     // instance (WinBox doesn't expose its config min* on the instance).
-    wb.svMinWidth = MIN_SIZES[key].minwidth;
-    wb.svMinHeight = MIN_SIZES[key].minheight;
+    wb.svMinWidth = sizes.minwidth;
+    wb.svMinHeight = sizes.minheight;
     // Wire onclose after construction (TDZ on `wb` otherwise). No persist
     // here -- state is captured at workspace.close()/closeAll()/finalize().
     wb.onclose = () => {
@@ -439,7 +455,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       render: () => renderEngines(),
     },
     log: {
-      title: "Event log",
+      title: "Event Log",
       makeBody: makeLogBody,
       setBody: (b) => { logBody = b; },
       render: () => renderEventLog(),
@@ -532,11 +548,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
             (e.elo_ordo_margin_95 == null ? "" : ` +/- ${e.elo_ordo_margin_95.toFixed(1)}`);
         return `
         <tr>
-          <td class="wb-eng-name">${escapeHtml(e.name)}</td>
+          <td class="wb-eng-name" title="${escapeHtml(e.name)}">${escapeHtml(e.name)}</td>
           <td>${e.games}</td>
           <td>${e.wins}</td>
           <td>${e.losses}</td>
           <td>${e.draws}</td>
+          <td>${e.points}</td>
           <td>${(e.score_pct * 100).toFixed(1)}%</td>
           <td>${eloCell}</td>
           <td>${ordoCell}</td>
@@ -590,7 +607,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     try {
       result = openLiveGameWindow({
         ...openOpts, token, tournamentId: tournament.id,
-        top, left, boardStyle: boardStyleCached,
+        top, left, right: getRightInset(),
+        boardStyle: boardStyleCached,
         initialRect: claim ? { x: claim.x, y: claim.y, w: claim.w, h: claim.h } : (openOpts.initialRect ?? null),
       });
     } catch (e) {
@@ -637,9 +655,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       li.className = "wb-sched-live wb-sched-pair";
       const wLabel = info.sideA === "white" ? info.engineA : info.engineB;
       const bLabel = info.sideA === "white" ? info.engineB : info.engineA;
+      const pairLabel = `${wLabel} - ${bLabel}`;
       li.innerHTML = `
         <span class="wb-sched-icon">&#9822;</span>
-        <span class="wb-sched-game">${escapeHtml(wLabel)} - ${escapeHtml(bLabel)}</span>
+        <span class="wb-sched-game" title="${escapeHtml(pairLabel)}">${escapeHtml(pairLabel)}</span>
       `;
       const btn = document.createElement("button");
       btn.className = "wb-sched-attach-btn";
@@ -678,7 +697,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const engineLabel = p.engineName || pid;
       li.innerHTML = `
         <span class="wb-sched-icon">&#9881;</span>
-        <span class="wb-sched-game">${escapeHtml(engineLabel)}</span>
+        <span class="wb-sched-game" title="${escapeHtml(engineLabel)}">${escapeHtml(engineLabel)}</span>
       `;
       const btn = document.createElement("button");
       btn.className = "wb-sched-attach-btn";
@@ -728,42 +747,76 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (banner) {
       const err = detail?.last_error;
       if (err) {
-        const RESUME_SUFFIX = "; press Start to resume.";
+        // Server-emitted server-crash hint vs fastchess's own runner-crash
+        // hint. Both produce a Restart button in the banner; we just need
+        // to strip the source-side "press Start" prose so we don't show it
+        // twice (once as text, once as the button).
+        const RESTART_HINT_SUFFIX = "press Start to restart from scratch (prior games will be discarded).";
         const FASTCHESS_RESUME_LINE = "To resume the tournament, run:";
         const rawTail = (err.stderr_tail || []).slice(-10);
         const lastIdx = rawTail.length - 1;
 
-        const RESUME_POST = " to resume.";
         let displayLines = rawTail;
-        let resumePre = null;
-        if (lastIdx >= 0 && rawTail[lastIdx].endsWith(RESUME_SUFFIX)) {
-          displayLines = [...rawTail.slice(0, lastIdx), rawTail[lastIdx].slice(0, -RESUME_SUFFIX.length)];
-          resumePre = "; press ";
+        let restartPre = null;
+        if (lastIdx >= 0 && rawTail[lastIdx].includes(RESTART_HINT_SUFFIX)) {
+          const head = rawTail[lastIdx].slice(0, rawTail[lastIdx].indexOf(RESTART_HINT_SUFFIX));
+          const trimmed = head.replace(/[;\s]+$/, "");
+          displayLines = trimmed
+            ? [...rawTail.slice(0, lastIdx), trimmed]
+            : rawTail.slice(0, lastIdx);
+          restartPre = "; press ";
         } else {
           const i = rawTail.findIndex((l) => l.includes(FASTCHESS_RESUME_LINE));
           if (i >= 0) {
             displayLines = rawTail.slice(0, i);
-            resumePre = " -- press ";
+            restartPre = " -- press ";
           }
         }
+        // FAILED always means "won't resume itself", so Restart is
+        // always a valid action. Default unconditionally so an
+        // unrecognized failure shape doesn't dead-end the workspace.
+        if (restartPre === null) restartPre = "; press ";
 
         const tail = displayLines.join("\n") || `exit code ${err.rc}`;
         banner.innerHTML = `<div class="wb-error-title">Tournament failed (rc=${err.rc})</div><pre>${escapeHtml(tail)}</pre>`;
-        if (resumePre) {
+        if (restartPre) {
+          const blocked = otherActiveId != null;
+          const otherLabel = otherActiveName ? `"${otherActiveName}"` : "another tournament";
+          const tooltip = blocked
+            ? `${otherLabel} is currently running. Stop it first.`
+            : "Restart";
+          const trailing = blocked
+            ? ` -- stop ${otherLabel} first to restart.`
+            : " to restart from scratch.";
           const pre = banner.querySelector("pre");
-          pre.append(resumePre);
+          pre.append(restartPre);
           const btn = document.createElement("button");
           btn.type = "button";
           btn.className = "toast-icon-btn";
-          btn.setAttribute("aria-label", "Resume");
-          btn.setAttribute("title", "Resume");
+          btn.setAttribute("aria-label", "Restart");
+          btn.setAttribute("title", tooltip);
+          btn.disabled = blocked;
           const ic = document.createElement("wa-icon");
-          ic.setAttribute("name", "forward-step");
+          ic.setAttribute("name", "rotate-right");
           btn.appendChild(ic);
-          btn.addEventListener("click", () => api("POST", `/api/tournaments/${tournament.id}/start`)
-            .catch((e) => toast(`Resume failed: ${apiErrorDetail(e)}`, { variant: "danger" })));
+          btn.addEventListener("click", async () => {
+            // Re-read otherActiveId at click time. btn.disabled is
+            // latched at render and can lag a setOtherActive update.
+            if (otherActiveId != null) {
+              const lbl = otherActiveName ? `"${otherActiveName}"` : "another tournament";
+              toast(`${lbl} is currently running. Stop it first.`, { variant: "warning" });
+              return;
+            }
+            const ok = await confirm(buildRestartConfirm(tournament.name, detail?.standings?.games ?? 0));
+            if (!ok) return;
+            try {
+              await api("POST", `/api/tournaments/${tournament.id}/start?${CONFIRM_WIPE_QS}`);
+            } catch (e) {
+              toast(`Restart failed: ${apiErrorDetail(e)}`, { variant: "danger" });
+            }
+          });
           pre.appendChild(btn);
-          pre.append(RESUME_POST);
+          pre.append(trailing);
         }
         banner.hidden = false;
       } else {
@@ -834,6 +887,20 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       return;
     }
     applyDetail(fresh);
+  }
+
+  // Tracks any OTHER tournament currently running. Drives the failure
+  // banner's Restart disabled state -- restarting while another holds
+  // the single-active slot would 409 after a confirmed wipe.
+  let otherActiveId = null;
+  let otherActiveName = null;
+  function setOtherActive(id, name) {
+    const nextId = (id && id !== tournament.id) ? id : null;
+    const nextName = nextId ? (name || null) : null;
+    if (nextId === otherActiveId && nextName === otherActiveName) return;
+    otherActiveId = nextId;
+    otherActiveName = nextName;
+    renderEventLog();
   }
 
   function applyDetail(fresh) {
@@ -996,7 +1063,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     ) {
       closeAllLiveGames();
       if (evt.payload.status === STATUS.STOPPED) {
-        toast(`"${tournament.name}" paused`, { variant: "warning" });
+        toast(`"${tournament.name}" stopped`, { variant: "warning" });
       }
     }
     // Tournament started: auto-open Live Games so the user sees
@@ -1062,7 +1129,8 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
             gameN: s.resolved.gameN,
             result: s.resolved.result,
             termination: s.resolved.termination,
-            top, left, boardStyle: boardStyleCached,
+            top, left, right: getRightInset(),
+            boardStyle: boardStyleCached,
             initialRect: rect, min: !!s.min, flash: false,
           });
           if (fres?.wb && !fres.alreadyOpen) wireLayoutHandlers(fres.wb);
@@ -1335,15 +1403,16 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
     const availW = getRight() - left;
     const availH = window.innerHeight - top - MINIMIZE_FOOTER_H;
-    const leftW = Math.max(Math.round(availW * 0.35), MIN_SIZES.engines.minwidth);
+    const mins = getMinSizes();
+    const leftW = Math.max(Math.round(availW * 0.35), mins.engines.minwidth);
     const rightW = availW - leftW - TIDY_GAP;
     // System rows get what's left after one row of board slots.
     // Clamp each row so both windows in a row share the same height
     // (WinBox silently floors to per-window minheight otherwise).
-    const systemH = availH - LIVE_MIN_HEIGHT;
+    const systemH = availH - LIVE_MIN_HEIGHT();
     const desiredRowH = Math.floor((systemH - TIDY_GAP) / 2);
-    const topRowH = Math.max(desiredRowH, MIN_SIZES.engines.minheight, MIN_SIZES.standings.minheight);
-    const botRowH = Math.max(desiredRowH, MIN_SIZES.schedule.minheight, MIN_SIZES.log.minheight);
+    const topRowH = Math.max(desiredRowH, mins.engines.minheight, mins.standings.minheight);
+    const botRowH = Math.max(desiredRowH, mins.schedule.minheight, mins.log.minheight);
     // Anchor bottom edge to top + availH (which already excludes the
     // minimize footer). If clamped rows exceed availH the layout
     // extends upward, but never below the reserved footer.
@@ -1528,7 +1597,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   function restoreWindows(wbs) {
     for (const wb of wbs) try { unminimize(wb); } catch { /* */ }
   }
-  const workspace = { close, tile, tidy, untidy, snap, closeAll, minimizeAll, restoreWindows, focus, hide, show, isHidden, openSystemWindow, refresh, applyDetail, tournamentId: tournament.id, get isTidy() { return activeLayout === LAYOUT.TIDY; } };
+  const workspace = { close, tile, tidy, untidy, snap, closeAll, minimizeAll, restoreWindows, focus, hide, show, isHidden, openSystemWindow, refresh, applyDetail, setOtherActive, tournamentId: tournament.id, get isTidy() { return activeLayout === LAYOUT.TIDY; } };
   activeWorkspace = workspace;
   return workspace;
 }

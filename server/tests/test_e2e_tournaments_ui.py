@@ -137,7 +137,7 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
         assert row_info["status"].strip() == "idle"
         assert row_info["ribbon_labels"] == {
             "start": "Start",
-            "stop": "Pause",
+            "stop": "Stop",
             "workspace": "Open workspace",
             "info": "Info",
             "remove": "Remove",

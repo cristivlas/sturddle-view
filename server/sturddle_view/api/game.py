@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -9,6 +8,7 @@ from fastapi.responses import Response
 
 from ..auth import require_token
 from ..engines import resolve_selected
+from ..env_utils import env_int
 from ._ai_kick import cancel_ai_turn, start_ai_turn
 from ..play.canonical_hash import canonical_hash, canonical_hash_from_game
 from ..play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
@@ -22,10 +22,8 @@ log = logging.getLogger(__name__)
 # or malicious LAN client from filling disk via the recent-imports
 # store. Override at import time via SV_MAX_IMPORT_BYTES (used by
 # tests to exercise the limit without large fixtures).
-MAX_IMPORT_TEXT_BYTES = int(
-    os.environ.get("SV_MAX_IMPORT_BYTES", 2 * 1024 * 1024)
-)
-MAX_ANNOTATION_LENGTH = int(os.environ.get("SV_MAX_ANNOTATION_LENGTH", 10_000))
+MAX_IMPORT_TEXT_BYTES = env_int("SV_MAX_IMPORT_BYTES", 2 * 1024 * 1024)
+MAX_ANNOTATION_LENGTH = env_int("SV_MAX_ANNOTATION_LENGTH", 10_000)
 
 router = APIRouter(prefix="/game", tags=["game"], dependencies=[Depends(require_token)])
 

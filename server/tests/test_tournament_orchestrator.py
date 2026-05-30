@@ -278,43 +278,6 @@ async def test_start_busy_when_active_id_set_but_store_raises(store, runner, orc
         await orch.start(tid)
 
 
-async def test_start_passes_paired_false_for_single_game_tournament(store, runner, monkeypatch):
-    """games_per_round=1 → paired=False passed to rewrite.
-    Kills `!= 1`→`!= 2` / AddNot mutations."""
-    calls = []
-
-    def fake_rewrite(pgn_path, config_path, ts, *, paired):
-        calls.append(paired)
-        return (0, {})
-
-    monkeypatch.setattr(
-        "sturddle_view.tournament.orchestrator.rewrite_drop_partial_pairs",
-        fake_rewrite,
-    )
-    orch = Orchestrator(store, runner)
-    tid = _create(store, template={"games_per_round": 1})
-    await orch.start(tid)
-    assert calls == [False]
-
-
-async def test_start_passes_paired_true_for_default_tournament(store, runner, monkeypatch):
-    """games_per_round defaults to 2 → paired=True."""
-    calls = []
-
-    def fake_rewrite(pgn_path, config_path, ts, *, paired):
-        calls.append(paired)
-        return (0, {})
-
-    monkeypatch.setattr(
-        "sturddle_view.tournament.orchestrator.rewrite_drop_partial_pairs",
-        fake_rewrite,
-    )
-    orch = Orchestrator(store, runner)
-    tid = _create(store, template={})  # no games_per_round → default 2
-    await orch.start(tid)
-    assert calls == [True]
-
-
 # ---------------------------------------------------------------------------
 # stop + terminal events
 # ---------------------------------------------------------------------------

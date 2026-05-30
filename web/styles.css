@@ -58,6 +58,7 @@
      remain meaningful under zoom. JS reads these via getComputedStyle. */
   --bp-narrow-dialog: 30rem;  /* 480px @ default font */
   --bp-mobile:        40rem;  /* 640px @ default font */
+  --bp-mobile-h:      30rem;  /* 480px @ default font; height analog */
   --bp-wide:          93.75rem; /* 1500px @ default font */
 }
 
@@ -253,6 +254,12 @@ wa-select::part(listbox) {
   display: inline-block;
   width: 1.2em;
   text-align: left;
+  /* Web Awesome's native.css sets `rotate: 90deg` on details[open]
+     summary::after (not `transform`). Cancel that here so the
+     animated dots stay horizontal when the disclosure is open. */
+  rotate: none;
+  mask: none;
+  background: none;
   animation: play-ai-thinking-dots 1.2s steps(4, end) infinite;
 }
 @keyframes play-ai-thinking-dots {
@@ -497,6 +504,15 @@ header {
   border-bottom: 2px solid var(--accent-line);
 }
 header h1 { margin: 0; font-size: 1rem; color: #b8b8b8; font-weight: 500; }
+.brand {
+  display: inline-flex; align-items: baseline;
+  letter-spacing: 0.01em;
+  font-weight: 600;
+  background: linear-gradient(90deg, #c8d4e2, #5d83ad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
 nav { display: flex; gap: 6px; }
 nav button {
   background: transparent;
@@ -562,6 +578,17 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
 .toast-action-btn:hover {
   background: rgba(255, 255, 255, 0.18);
   border-color: rgba(255, 255, 255, 0.4);
+}
+.toast-icon-btn:disabled,
+.toast-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: auto; /* keep hover so the tooltip still surfaces */
+}
+.toast-icon-btn:disabled:hover,
+.toast-action-btn:disabled:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.22);
 }
 .toast-sort-msg {
   display: flex;
@@ -704,7 +731,7 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-@media (max-width: 640px) {
+@media (max-width: 640px), (max-height: 740px) {
   main { overflow-y: auto; }
 }
 @media (max-width: 640px) {
@@ -1136,7 +1163,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   filter: grayscale(0.5) brightness(0.85);
 }
 
-@media (max-width: 640px) {
+@media (max-width: 640px), (max-height: 740px) {
   /* !important guards against any later .play-dock-left rule with
      higher specificity (e.g. modifier classes set from JS). Mobile
      must hide the dock unconditionally. */
@@ -1191,7 +1218,13 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   #view-controls,
   #edit-controls { order: 1; }
   .play-board-host { order: 2; }
-  .play-side-host { order: 3; position: static; }
+  .play-side-host {
+    order: 3;
+    position: static;
+    align-self: center;
+    width: 100%;
+    max-width: var(--board-max-px, 100%);
+  }
 }
 .game-view-board {
   display: flex;
@@ -1263,6 +1296,15 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 }
 #perspective-root.is-pending {
   opacity: 0;
+}
+/* Arena (engines perspective) needs to fill the viewport so the tournaments
+ * list can scroll within the available space. Scoped via :has() so the
+ * Play perspective's layout stays unchanged. */
+#perspective-root:has(#engines-perspective) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 .game-view-board .board {
   background: #2a2a2a;
@@ -1544,7 +1586,8 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 #engines-perspective {
   display: flex;
   flex-direction: column;
-  min-height: 60vh;
+  flex: 1;
+  min-height: 0;
 }
 #engines-perspective .placeholder {
   display: flex;
@@ -1901,6 +1944,7 @@ wa-dialog::part(header-actions) { gap: 6px; }
   line-height: 1.5;
   text-align: center;
 }
+.confirm-message.confirm-message--multiline { white-space: pre-line; }
 .replace-view-confirm {
   display: flex;
   flex-direction: column;
@@ -2010,33 +2054,15 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   align-items: flex-end;
   gap: 16px;
 }
-.ai-thinking-row wa-switch { margin-bottom: 0.5em; }
 .ai-thinking-budget { width: 8em; max-width: 8em; }
 .ai-thinking-budget::part(base) { max-width: 8em; }
 .ai-thinking-budget::part(input) { width: 8em; min-width: 0; }
-.ai-thinking-budget::part(form-control-label) {
+.ai-thinking-row wa-select::part(form-control-label),
+.ai-thinking-row wa-input::part(form-control-label) {
   color: var(--muted);
   font-size: 0.75rem;
   font-family: var(--wa-font-family-body);
-}
-.ai-thinking-adaptive {
-  display: inline-flex;
-  align-items: center;
-  height: var(--wa-form-control-height);
-  padding: 0 10px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 4px;
-  color: var(--muted);
-  font-size: 0.8125rem;
-  background: var(--panel);
-  margin-bottom: 0;
-  opacity: 0.6;
-}
-.ai-thinking-adaptive.is-active {
-  color: var(--fg);
-  background: var(--wa-color-surface-raised);
-  border-color: var(--accent-line);
-  opacity: 1;
+  margin-bottom: 4px;
 }
 /* Toggles stack: switches stacked vertically, one per row. */
 .settings-toggles-grid {
@@ -2226,7 +2252,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .fs-entry .fs-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- Tournaments panel ---------- */
-.tournaments-panel { display: flex; flex-direction: column; gap: 12px; min-height: 50vh; }
+.tournaments-panel { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
 
 .tournaments-menubar {
   position: relative;
@@ -2425,7 +2451,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .tournaments-list {
   list-style: none; padding: 0; margin: 0;
   display: flex; flex-direction: column; gap: 8px;
-  max-height: calc(100dvh - 15rem); overflow-y: auto;
+  flex: 1; min-height: 0; overflow-y: auto;
   outline: none;
 }
 .tmb-sort-opt[data-dir]::before {
@@ -2508,8 +2534,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .tournament-sprt-badge {
   flex: 0 0 auto;
-  font-size: 0.625rem; font-weight: 700; letter-spacing: 0.8px;
-  padding: 1px 5px; border-radius: 3px;
+  font-size: 0.625rem; font-weight: 700; letter-spacing: 0.05em;
+  padding: 0.0625em 0.3125em; border-radius: 0.1875em;
   background: rgba(var(--accent-rgb), 0.15);
   border: 1px solid rgba(var(--accent-rgb), 0.4);
   color: var(--accent);
@@ -2517,15 +2543,15 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .tournament-status {
   flex: 0 0 auto;
   display: inline-block;
-  width: 60px;
+  width: 6em;
   text-align: center;
   font-size: 0.625rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.4px;
-  padding: 1px 0;
+  letter-spacing: 0.04em;
+  padding: 0.0625em 0;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 0.5em;
   background: var(--border-subtle);
   color: #c8ccd6;
 }
@@ -2629,6 +2655,15 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   font-weight: normal;
   color: var(--muted);
 }
+
+@keyframes nt-name-shake {
+  0%, 100% { transform: translateX(0); }
+  20%       { transform: translateX(-6px); }
+  40%       { transform: translateX(6px); }
+  60%       { transform: translateX(-4px); }
+  80%       { transform: translateX(4px); }
+}
+.nt-name-error { animation: nt-name-shake 0.4s ease-out; }
 
 /* Two-pane engine builder */
 .ne-panes {
@@ -2948,10 +2983,10 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .winbox.sturddle-wb.sturddle-wb-live-game .wb-header { background: var(--row-bg-selected); }
 
 .wb-livegame {
-  display: flex; flex-direction: column; gap: 4px;
+  display: flex; flex-direction: column; gap: 0.25em;
   height: 100%; min-height: 0;
 }
-.wb-livegame .clock-row { padding: 5px 10px; }
+.wb-livegame .clock-row { padding: 0.3125em 0.625em; }
 .wb-livegame .clock-row .clock-time { font-size: 1rem; flex-shrink: 0; }
 .wb-livegame .clock-row .clock-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .wb-livegame.lg-compact .lg-pv { display: none; }
@@ -2983,29 +3018,29 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   text-align: center;
   background: rgba(20, 22, 26, 0.88);
   color: var(--fg);
-  padding: 14px 8px;
+  padding: 0.875em 0.5em;
   pointer-events: none;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 0.125em 0.75em rgba(0, 0, 0, 0.6);
 }
 .wb-livegame .lg-result-score {
-  font-size: 1.375rem; font-weight: 700;
+  font-size: 1.375em; font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--accent);
 }
 .wb-livegame .lg-result-termination {
-  font-size: 0.875rem;
-  margin-top: 4px;
+  font-size: 0.875em;
+  margin-top: 0.25em;
   color: var(--muted);
   text-transform: lowercase;
 }
 .wb-livegame .lg-result-replay {
-  margin-top: 10px;
-  padding: 4px 12px;
-  font-size: 0.75rem;
+  margin-top: 0.625em;
+  padding: 0.25em 0.75em;
+  font-size: 0.75em;
   background: var(--accent);
   color: var(--bg);
   border: none;
-  border-radius: 4px;
+  border-radius: 0.25em;
   cursor: pointer;
   pointer-events: auto;
 }
@@ -3013,7 +3048,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   filter: brightness(1.1);
 }
 .wb-livegame .lg-eval {
-  display: flex; gap: 8px; align-items: baseline;
+  display: flex; gap: 0.5em; align-items: baseline;
   font-family: var(--wa-font-family-code); font-size: 0.8125rem;
   /* Reserve the populated row height so the board doesn't snap-shrink
      when the first eval event arrives. 1.4 line-height matches the
@@ -3028,13 +3063,16 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   /* Match populated row height -- see .lg-eval note above. */
   min-height: 1.4em; line-height: 1.4; flex-shrink: 0;
 }
-.wb-livegame .lg-pv-bottom { padding-bottom: 2px; }
+.wb-livegame .lg-pv-bottom { padding-bottom: 0.125em; }
 
 /* Schedule: in-progress rows */
 .wb-sched-list .wb-sched-live {
   display: flex; align-items: center; gap: 8px;
 }
-.wb-sched-list .wb-sched-game { flex: 1; }
+.wb-sched-list .wb-sched-game {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .wb-sched-list .wb-sched-attach { font-size: 0.6875rem; }
 .wb-sched-list .wb-sched-attach-buttons {
   display: inline-flex; gap: 4px;

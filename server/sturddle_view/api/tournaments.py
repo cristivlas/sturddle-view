@@ -30,17 +30,19 @@ from ..engines import InvalidLaunchProfileError, validate_launch_profile
 from ..tournament.fastchess import FastchessRunner
 from ..tournament.orchestrator import Orchestrator, TournamentBusyError, wrap_event_for_bus
 from ..tournament.rescheck import RescheckError, check as rescheck_run
+from ..tournament.uci_parse import parse_uci_line
 from ..tournament.pgn_stats import (
     compute_games_list,
     compute_sprt,
     compute_standings,
     count_partial_pairs,
-    games_played_from_config,
     read_game_record,
 )
 from ..tournament.store import (
     CorruptStateError,
     DuplicateNameError,
+    STATUS_FAILED,
+    STATUS_STOPPED,
     TournamentNotFoundError,
     TournamentStore,
 )
@@ -99,6 +101,34 @@ class EngineRef(BaseModel):
 
 _SPRT_DEFAULTS = {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05, "model": "normalized"}
 
+# Engine-default keys frozen into a tournament at create/edit time.
+# Mirrors `Settings.engine_default_<key>` fields. Snapshotting all of
+# them (including Nones) means a tournament's behavior cannot drift
+# if global Settings change later.
+_ENGINE_DEFAULT_KEYS = (
+    "threads", "hash_mb", "syzygy_path",
+    "book_path", "book_plies", "book_order",
+)
+
+
+def _freeze_engine_defaults(settings) -> dict:
+    return {
+        k: getattr(settings, f"engine_default_{k}", None)
+        for k in _ENGINE_DEFAULT_KEYS
+    }
+
+
+# 409 payload for /start when a stop/fail tournament restart needs the
+# user's confirmation. The reason string is part of the API contract
+# (clients branch on it); keep it stable.
+_WIPE_REQUIRED_REASON = "wipe_required"
+_WIPE_REQUIRED_MESSAGE = (
+    "Restarting will discard all previously recorded games. Continue?"
+)
+_WIPE_REQUIRED_DETAIL = {
+    "reason": _WIPE_REQUIRED_REASON,
+    "message": _WIPE_REQUIRED_MESSAGE,
+}
 
 def _resolve_sprt(template: dict, settings) -> dict:
     """If template.sprt is truthy but not a full dict, merge with sprt_defaults."""
@@ -157,12 +187,6 @@ def _serialize(
             ).to_dict()
         except FileNotFoundError:
             standings = {"games": 0, "engines": []}
-        # Prefer fastchess's config.json -- authoritative across pause/resume
-        # and ahead of the PGN under autosave cadence. Falls back to the
-        # compute_standings count when the file is missing/unparseable.
-        cfg_games = games_played_from_config(store.config_path(t.id))
-        if cfg_games is not None:
-            standings["games"] = cfg_games
         standings["tournament_type"] = tournament_type
         out["standings"] = standings
     if with_stats and store is not None:
@@ -228,14 +252,8 @@ def create_tournament(payload: TournamentCreate, request: Request) -> dict:
     if len(payload.engines) < 2:
         raise HTTPException(status_code=400, detail="at least two engines required")
     name = payload.name.strip() or "tournament"
-    # Freeze ALL engine_default_* fields at create time — including Nones —
-    # so a tournament's behavior cannot drift if Settings change later.
     settings = request.app.state.settings
-    engine_defaults = {
-        k: getattr(settings, f"engine_default_{k}", None)
-        for k in ("threads", "hash_mb", "syzygy_path",
-                  "book_path", "book_plies", "book_order")
-    }
+    engine_defaults = _freeze_engine_defaults(settings)
     try:
         t = s.create(
             name=name,
@@ -277,16 +295,10 @@ def edit_tournament(tournament_id: str, payload: TournamentUpdate, request: Requ
         raise HTTPException(status_code=400, detail="at least two engines required")
     s = _store(request)
     name = payload.name.strip() or "tournament"
-    # Re-freeze engine_default_* — same rationale as create: a tournament's
-    # behavior should not silently drift if Settings change later.
     settings = request.app.state.settings
-    engine_defaults = {
-        k: getattr(settings, f"engine_default_{k}", None)
-        for k in ("threads", "hash_mb", "syzygy_path",
-                  "book_path", "book_plies", "book_order")
-    }
+    engine_defaults = _freeze_engine_defaults(settings)
     try:
-        t, _ = s.update(
+        t = s.update(
             tournament_id,
             name=name,
             template=_resolve_sprt(payload.template, settings),
@@ -297,6 +309,10 @@ def edit_tournament(tournament_id: str, payload: TournamentUpdate, request: Requ
         raise HTTPException(status_code=404, detail="tournament not found") from e
     except DuplicateNameError:
         raise HTTPException(status_code=409, detail="tournament name already exists")
+    # Wipe the orchestrator's in-memory event-history buffer for this
+    # tournament: any post-edit live-window re-subscribe would otherwise
+    # replay stale events from the pre-edit run. Mirrors delete_tournament.
+    orch.clear_event_history(tournament_id)
     return _serialize(t)
 
 
@@ -363,8 +379,23 @@ def get_tournament_game_pgn(
 
 
 @router.post("/api/tournaments/{tournament_id}/start")
-async def start_tournament(tournament_id: str, request: Request) -> dict:
+async def start_tournament(
+    tournament_id: str, request: Request, confirm_wipe: bool = False,
+) -> dict:
     orch = _orch(request)
+    store = _store(request)
+    # Stop/fail restart wipes the dir (fastchess resume is unreliable).
+    # confirm_wipe gates the destructive path server-side so a stray
+    # /start can't silently destroy data.
+    try:
+        t = store.get(tournament_id)
+    except TournamentNotFoundError as e:
+        raise HTTPException(status_code=404, detail="tournament not found") from e
+    needs_wipe = t.status in (STATUS_STOPPED, STATUS_FAILED)
+    if needs_wipe:
+        if not confirm_wipe:
+            raise HTTPException(status_code=409, detail=_WIPE_REQUIRED_DETAIL)
+        store.wipe_for_restart(tournament_id)
     try:
         t = await orch.start(tournament_id)
     except TournamentNotFoundError as e:
@@ -527,6 +558,83 @@ async def ingest_proxy(payload: ProxyBatch, request: Request) -> None:
         await orch.proxy_session_ended(payload.proxy_id)
 
 
+async def _stream_queue_to_websocket(websocket: WebSocket, queue) -> None:
+    """Pump CoalescingQueue to WS until terminal, client disconnect, or
+    cancel. Terminal beats recv on close so the banner always lands."""
+    if queue.terminal is not None:
+        try:
+            await websocket.send_json(queue.terminal)
+        except Exception:
+            log.warning(
+                "tournament WS: send_json failed on race-on-attach terminal flush; "
+                "banner lost: %s", queue.terminal,
+            )
+        return
+
+    async def _drain_recv() -> None:
+        while True:
+            await websocket.receive()
+
+    recv_task = asyncio.create_task(_drain_recv())
+    term_task = asyncio.create_task(queue.wait_terminal())
+    get_task: asyncio.Task | None = None
+    try:
+        while True:
+            if get_task is None or get_task.done():
+                get_task = asyncio.create_task(queue.get())
+            done, _ = await asyncio.wait(
+                {get_task, recv_task, term_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if term_task in done:
+                # Race-recovery path: if recv also resolved this tick, the
+                # old (pre-sticky-channel) handler would have dropped the
+                # terminal. Log so we can correlate with banner reports.
+                if recv_task in done:
+                    log.warning(
+                        "tournament WS: recv and terminal landed same tick; "
+                        "flushing terminal via sticky channel: %s",
+                        term_task.result(),
+                    )
+                try:
+                    await websocket.send_json(term_task.result())
+                except Exception:
+                    log.warning(
+                        "tournament WS: send_json failed on terminal flush; "
+                        "banner lost: %s", term_task.result(),
+                    )
+                break
+            if recv_task in done:
+                break
+            payload = get_task.result()
+            get_task = None
+            if "parsed" not in payload:
+                line = payload.get("line", "")
+                parsed = parse_uci_line(line)
+                if parsed is not None:
+                    payload = {**payload, "parsed": parsed}
+            await websocket.send_json(payload)
+    except WebSocketDisconnect:
+        if term_task.done():
+            try:
+                await websocket.send_json(term_task.result())
+            except Exception:
+                log.warning(
+                    "tournament WS: send_json failed flushing terminal after "
+                    "WebSocketDisconnect; banner lost: %s", term_task.result(),
+                )
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        log.exception("tournament WS handler error")
+    finally:
+        recv_task.cancel()
+        if get_task is not None:
+            get_task.cancel()
+        if not term_task.done():
+            term_task.cancel()
+
+
 @internal_router.websocket("/ws/tournament/proxy/{proxy_id}")
 async def proxy_subscribe(
     websocket: WebSocket,
@@ -552,44 +660,9 @@ async def proxy_subscribe(
     await websocket.accept()
     orch: Orchestrator = websocket.app.state.tournament_orch
     queue = orch.subscribe_to_proxy(proxy_id)
-
-    from ..tournament.uci_parse import parse_uci_line
-
-    async def _drain_recv() -> None:
-        while True:
-            await websocket.receive()
-
-    recv_task = asyncio.create_task(_drain_recv())
     try:
-        while True:
-            get_task = asyncio.create_task(queue.get())
-            done, _ = await asyncio.wait(
-                {get_task, recv_task}, return_when=asyncio.FIRST_COMPLETED,
-            )
-            if recv_task in done:
-                get_task.cancel()
-                break
-            payload = get_task.result()
-            if payload.get("ended"):
-                await websocket.send_json(payload)
-                break
-            # Enrich with parsed fields where possible. ``line`` is
-            # always present in non-ended payloads. Reuse the parse the
-            # orchestrator may have already done for pairing detection.
-            if "parsed" not in payload:
-                line = payload.get("line", "")
-                parsed = parse_uci_line(line)
-                if parsed is not None:
-                    payload = {**payload, "parsed": parsed}
-            await websocket.send_json(payload)
-    except WebSocketDisconnect:
-        pass
-    except asyncio.CancelledError:
-        pass
-    except Exception:
-        log.exception("proxy WS handler error")
+        await _stream_queue_to_websocket(websocket, queue)
     finally:
-        recv_task.cancel()
         orch.unsubscribe_from_proxy(proxy_id, queue)
         try:
             await websocket.close()
@@ -614,41 +687,9 @@ async def game_subscribe(
     await websocket.accept()
     orch: Orchestrator = websocket.app.state.tournament_orch
     queue = orch.subscribe_to_game(pair_id)
-
-    from ..tournament.uci_parse import parse_uci_line
-
-    async def _drain_recv() -> None:
-        while True:
-            await websocket.receive()
-
-    recv_task = asyncio.create_task(_drain_recv())
     try:
-        while True:
-            get_task = asyncio.create_task(queue.get())
-            done, _ = await asyncio.wait(
-                {get_task, recv_task}, return_when=asyncio.FIRST_COMPLETED,
-            )
-            if recv_task in done:
-                get_task.cancel()
-                break
-            payload = get_task.result()
-            if payload.get("ended"):
-                await websocket.send_json(payload)
-                break
-            if "parsed" not in payload:
-                line = payload.get("line", "")
-                parsed = parse_uci_line(line)
-                if parsed is not None:
-                    payload = {**payload, "parsed": parsed}
-            await websocket.send_json(payload)
-    except WebSocketDisconnect:
-        pass
-    except asyncio.CancelledError:
-        pass
-    except Exception:
-        log.exception("game WS handler error")
+        await _stream_queue_to_websocket(websocket, queue)
     finally:
-        recv_task.cancel()
         orch.unsubscribe_from_game(pair_id, queue)
         try:
             await websocket.close()

@@ -1,4 +1,4 @@
-"""Perf baseline for pgn_tail._parse_delta before P4 (R6a) refactor."""
+"""Perf bench for pgn_tail._parse_delta."""
 from __future__ import annotations
 
 import pathlib
@@ -20,6 +20,6 @@ def _bench_fn():
 
 @pytest.mark.perf
 @pytest.mark.benchmark(min_rounds=30)
-def test_bench_parse_delta_200_games(benchmark, bench_compare):
+def test_bench_parse_delta_200_games(benchmark, bench_compare_ratio):
     benchmark(_bench_fn)
-    bench_compare("parse_delta_200_games", benchmark.stats.stats.min, tolerance=TOLERANCE)
+    bench_compare_ratio("parse_delta_200_games", benchmark.stats.stats.min, tolerance=TOLERANCE)

@@ -13,11 +13,9 @@ Web-agnostic: takes ids + a broadcast callback, so the CLI wrapper can reuse it.
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
 import os
 import secrets
-import time
 import uuid
 from collections import deque
 from dataclasses import dataclass
@@ -26,12 +24,12 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 
 import chess
 
+from ..env_utils import env_int as _env_int
 from .pgn_reconcile import (
     PendingMatch,
     ReconciledMatch,
     ReconciliationQueue,
 )
-from .pgn_stats import rewrite_drop_partial_pairs
 from .pgn_tail import PgnGameRecord, PgnTailer
 from .rescheck import RescheckError, check_template
 from .runner import RunSpec, Runner
@@ -56,18 +54,6 @@ log = logging.getLogger(__name__)
 # event vocabulary plus a ``status_change`` event the WebSocket layer
 # uses to refresh the per-row status badge.
 BroadcastCallback = Callable[[str, dict], Awaitable[None]]
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        log.warning("ignoring non-numeric %s=%r; using default %s", name, raw, default)
-        return default
-
 
 # Per-tournament event history depth. Big enough to cover all the
 # fastchess startup chatter (engine init, opening probes) plus a few
@@ -120,16 +106,18 @@ _INFO_COALESCE_MS = 100
 class CoalescingQueue:
     """Per-subscriber wrapper around ``asyncio.Queue`` with per-proxy
     info coalescing. Non-info events flush pending info first to
-    preserve order. The terminal sentinel uses ``put_sentinel`` which
-    evicts oldest on QueueFull so it always lands."""
+    preserve order. The terminal sentinel travels on a sticky side
+    channel so it survives queue eviction + WS recv/get races on close."""
 
-    __slots__ = ("_q", "_slots", "_timers", "_loop")
+    __slots__ = ("_q", "_slots", "_timers", "_loop", "_terminal", "_terminal_event")
 
     def __init__(self, maxsize: int) -> None:
         self._q: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
         self._slots: dict[str, dict] = {}
         self._timers: dict[str, asyncio.TimerHandle] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._terminal: dict | None = None
+        self._terminal_event: asyncio.Event = asyncio.Event()
 
     def _ensure_loop(self) -> asyncio.AbstractEventLoop:
         if self._loop is None:
@@ -176,20 +164,17 @@ class CoalescingQueue:
         self._try_put(payload)
 
     def put_sentinel(self, payload: dict) -> None:
-        # Terminal frame: flush all pending, then enqueue with eviction
-        # so the sentinel always lands.
+        # Idempotent: a second call (e.g. proxy_ended after pair-dissolve)
+        # is dropped so the first terminal wins.
         self._flush_all_slots()
-        try:
-            self._q.put_nowait(payload)
-        except asyncio.QueueFull:
-            try:
-                self._q.get_nowait()
-            except asyncio.QueueEmpty:
-                pass
-            try:
-                self._q.put_nowait(payload)
-            except asyncio.QueueFull:
-                pass
+        if self._terminal is not None:
+            log.debug(
+                "put_sentinel ignored (terminal already set): first=%s second=%s",
+                self._terminal, payload,
+            )
+            return
+        self._terminal = payload
+        self._terminal_event.set()
 
     async def get(self) -> dict:
         return await self._q.get()
@@ -199,6 +184,14 @@ class CoalescingQueue:
 
     def empty(self) -> bool:
         return self._q.empty()
+
+    @property
+    def terminal(self) -> dict | None:
+        return self._terminal
+
+    async def wait_terminal(self) -> dict:
+        await self._terminal_event.wait()
+        return self._terminal  # type: ignore[return-value]
 
     def cancel_timers(self) -> None:
         for t in self._timers.values():
@@ -416,9 +409,9 @@ class Orchestrator:
             await self._emit_status(failed)
             raise
 
-        # Defense in depth: previous terminal event clears state; this
-        # is a no-op in the normal stop -> start (resume) flow but
-        # guards against any leak from prior runs.
+        # Defense in depth: previous terminal event already cleared
+        # state. No-op on the normal path; guards against leakage
+        # from prior runs.
         self._reset_pairing_state()
         # Mark active *before* spawning so a concurrent ``start`` call
         # racing against this one is rejected by the busy check above.
@@ -441,51 +434,6 @@ class Orchestrator:
             engine_default_book_order=_ed("book_order"),
         )
         try:
-            # On resume, drop any partial pairs from a prior interrupted
-            # Pause so fastchess's first emitted stats are honest. Threaded
-            # so a multi-MB scan can't stall the event loop.
-            try:
-                pgn_size = (
-                    spec.pgn_path.stat().st_size
-                    if spec.pgn_path.exists() else 0
-                )
-                if pgn_size > 0:
-                    log.info(
-                        "tournament %s: scanning PGN for partial pairs (%.1f MB)",
-                        t.id, pgn_size / (1024 * 1024),
-                    )
-                t0 = time.monotonic()
-                ts = datetime.now()
-                # Paired mode: any tour with games_per_round != 1 (default
-                # is 2 -- color-flipped pairs). Single-game tours have no
-                # pair concept, so the rewrite is a no-op.
-                games_per_round = (t.template or {}).get("games_per_round", 2)
-                paired = games_per_round != 1
-                dropped, _deltas = await asyncio.to_thread(
-                    functools.partial(
-                        rewrite_drop_partial_pairs,
-                        spec.pgn_path,
-                        spec.config_path,
-                        ts,
-                        paired=paired,
-                    ),
-                )
-                elapsed = time.monotonic() - t0
-                if dropped:
-                    stamp = ts.strftime("%Y-%m-%dT%H-%M-%S")
-                    log.info(
-                        "tournament %s: rewrote PGN, dropped %d game(s) "
-                        "(partial pairs + resume dups) in %.1fs; "
-                        "backup at %s.%s.bak.gz",
-                        t.id, dropped, elapsed, spec.pgn_path.name, stamp,
-                    )
-                elif pgn_size > 0:
-                    log.info(
-                        "tournament %s: PGN clean (no partial pairs) in %.1fs",
-                        t.id, elapsed,
-                    )
-            except Exception:
-                log.exception("partial-pair rewrite failed for %s", t.id)
             # Clear any prior last_error on (re)start -- the user has
             # acted on the diagnostic by retrying.
             updated = self._store.update_status(
@@ -508,7 +456,8 @@ class Orchestrator:
             self._active_id = None
             self._proxy_secret = None
             self._reset_pairing_state()
-            self._store.update_status(t.id, STATUS_STOPPED, stopped_at=_now())
+            rolled_back = self._store.update_status(t.id, STATUS_STOPPED, stopped_at=_now())
+            await self._emit_status(rolled_back)
             raise
 
         # PGN tailer for reconciliation. Constructed here but its poll
@@ -531,7 +480,8 @@ class Orchestrator:
     def reconcile_on_startup(self) -> list[Tournament]:
         """Mark persisted ``running`` rows as ``failed`` with a synthetic
         last_error -- server died mid-tournament; can't claim a clean
-        stop. Resume via Start (config.json still on disk)."""
+        stop. The user can press Start to restart from scratch (wipe
+        confirm required; prior PGN is discarded)."""
         stale = self._store.find_by_status(STATUS_RUNNING)
         out: list[Tournament] = []
         for t in stale:
@@ -539,7 +489,8 @@ class Orchestrator:
                 "rc": None,
                 "stderr_tail": [
                     "Server was killed or crashed while this tournament was running. "
-                    "fastchess and any engine processes have been reaped; press Start to resume."
+                    "fastchess and any engine processes have been reaped; press Start "
+                    "to restart from scratch (prior games will be discarded)."
                 ],
                 "at": _now(),
             }
@@ -562,7 +513,7 @@ class Orchestrator:
           - ``done``         -> status=done, active_id cleared
           - ``stopped``      -> status=stopped, active_id cleared
           - ``runner_crash`` -> status=failed + last_error persisted,
-                               active_id cleared (no Resume in Phase 1)
+                               active_id cleared
           - ``started``      -> no status change (we set RUNNING in start())
           - others           -> forwarded as-is to broadcast
         """

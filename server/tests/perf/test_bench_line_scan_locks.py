@@ -1,14 +1,13 @@
-"""DO NOT TOUCH lock benches for pgn_stats line-scan paths (R6 / P4).
+"""DO NOT TOUCH lock benches for pgn_stats line-scan paths.
 
-These benches pin the performance of _iter_games_keyed, _iter_games_uncached,
-and rewrite_drop_partial_pairs. Any PR that replaces these regex/line-scan
-paths with chess.pgn.read_game will regress by ~50x and fail here.
+These pin the performance of `_iter_games_keyed` and `_iter_games_uncached`
+-- both still on the hot path (compute_standings, count_partial_pairs).
+Any PR that replaces these regex/line-scan paths with
+`chess.pgn.read_game` will regress by ~50x and fail here.
 """
 from __future__ import annotations
 
 import pathlib
-import shutil
-import tempfile
 
 import pytest
 
@@ -17,7 +16,6 @@ pytestmark = pytest.mark.perf
 from sturddle_view.tournament.pgn_stats import (
     _iter_games_keyed,
     _iter_games_uncached,
-    rewrite_drop_partial_pairs,
 )
 
 FIXTURE = pathlib.Path(__file__).parent.parent / "fixtures" / "perf_1k_games.pgn"
@@ -34,30 +32,13 @@ def _bench_uncached():
         pass
 
 
-def _bench_rewrite():
-    with tempfile.NamedTemporaryFile(suffix=".pgn", delete=False) as tf:
-        tmp = pathlib.Path(tf.name)
-    shutil.copy(FIXTURE, tmp)
-    try:
-        rewrite_drop_partial_pairs(tmp)
-    finally:
-        tmp.unlink(missing_ok=True)
-
-
 @pytest.mark.perf
-def test_bench_iter_games_keyed_1k_games(benchmark, bench_compare):
+def test_bench_iter_games_keyed_1k_games(benchmark, bench_compare_ratio):
     benchmark(_bench_keyed)
-    bench_compare("iter_games_keyed_1k", benchmark.stats.stats.min, tolerance=TOLERANCE)
+    bench_compare_ratio("iter_games_keyed_1k", benchmark.stats.stats.min, tolerance=TOLERANCE)
 
 
 @pytest.mark.perf
-def test_bench_iter_games_uncached_1k_games(benchmark, bench_compare):
+def test_bench_iter_games_uncached_1k_games(benchmark, bench_compare_ratio):
     benchmark(_bench_uncached)
-    bench_compare("iter_games_uncached_1k", benchmark.stats.stats.min, tolerance=TOLERANCE)
-
-
-@pytest.mark.perf
-@pytest.mark.benchmark(min_rounds=15)
-def test_bench_rewrite_partial_pairs_1k_games(benchmark, bench_compare):
-    benchmark(_bench_rewrite)
-    bench_compare("rewrite_partial_pairs_1k", benchmark.stats.stats.min, tolerance=0.15)
+    bench_compare_ratio("iter_games_uncached_1k", benchmark.stats.stats.min, tolerance=TOLERANCE)

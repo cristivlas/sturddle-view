@@ -14,13 +14,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 from typing import Any, Awaitable, Callable
 
 import chess
 import chess.engine
 
+from ..env_utils import env_int
 from ..events import Event, EventBus
 from ..llm import ToolSpec
 from ..llm.cancel import CancelToken
@@ -36,14 +36,14 @@ _DEFAULT_MAX_TIME_MS = 5_000
 _DEFAULT_MAX_DEPTH = 25
 # Hard caps -- the agent can request anything, but we clamp to these.
 # The env override is for ops; UI exposure is pending.
-MAX_TIME_MS = int(os.environ.get("SV_AI_ANALYZE_MAX_TIME_MS", _DEFAULT_MAX_TIME_MS))
-MAX_DEPTH = int(os.environ.get("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_MAX_DEPTH))
+MAX_TIME_MS = env_int("SV_AI_ANALYZE_MAX_TIME_MS", _DEFAULT_MAX_TIME_MS)
+MAX_DEPTH = env_int("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_MAX_DEPTH)
 
 # recommend_move dominance margin: rival must beat candidate by strictly
 # more than this many cp (STM POV) to reject. Filters cosmetic 1-30 cp
 # preferences while still catching real blunders. Mate scores ignore it.
 _DEFAULT_RECOMMEND_MARGIN_CP = 50
-RECOMMEND_MARGIN_CP = int(os.environ.get("SV_AI_RECOMMEND_MARGIN", _DEFAULT_RECOMMEND_MARGIN_CP))
+RECOMMEND_MARGIN_CP = env_int("SV_AI_RECOMMEND_MARGIN", _DEFAULT_RECOMMEND_MARGIN_CP)
 
 # Fallback when caller passes neither time_ms nor depth. Depth-based
 # (not time-based): more consistent quality across positions and engine
@@ -57,7 +57,7 @@ _DEFAULT_DEPTH = 20
 # top_moves: hard cap on the model-supplied candidate list length.
 # Each candidate runs one sequential search; cost scales linearly.
 _DEFAULT_TOP_MOVES_MAX_N = 5
-TOP_MOVES_MAX_N = int(os.environ.get("SV_AI_TOP_MOVES_MAX_N", _DEFAULT_TOP_MOVES_MAX_N))
+TOP_MOVES_MAX_N = env_int("SV_AI_TOP_MOVES_MAX_N", _DEFAULT_TOP_MOVES_MAX_N)
 
 # Per-candidate default depth -- match analyze's default; with the
 # model-supplied list capped at TOP_MOVES_MAX_N, worst-case cost is

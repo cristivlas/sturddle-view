@@ -10,7 +10,7 @@ import secrets
 import shutil
 import threading
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -21,9 +21,9 @@ from .. import APP_NAME
 from .._atomic import atomic_write_json
 
 
-# Allowed status values. Phase 1 has no `paused` (see tournament-spec.md).
-# `failed` is distinct from `stopped` — the latter is user-initiated, the
-# former is a runner crash with diagnostics in `last_error`.
+# Allowed status values. `failed` is distinct from `stopped`: the
+# latter is user-initiated; the former is a runner crash with
+# diagnostics in `last_error`.
 STATUS_IDLE = "idle"
 STATUS_RUNNING = "running"
 STATUS_STOPPED = "stopped"
@@ -62,7 +62,7 @@ class Tournament:
     template: dict = field(default_factory=dict)
     engines: list = field(default_factory=list)
     # Snapshot of global engine_default_* settings at creation time.
-    # Frozen so Stop/Resume can't drift if Settings change mid-run.
+    # Frozen so a tournament's behavior can't drift if Settings change later.
     engine_defaults: dict = field(default_factory=dict)
     # Diagnostic for the most recent runner_crash. None when the
     # tournament has never failed (or was cleared on a successful start).
@@ -153,9 +153,9 @@ class TournamentStore:
             (d / "logs").mkdir(parents=True, exist_ok=True)
 
             # Pin a seed for fastchess so opening-book shuffle (and
-            # anything else fastchess seeds from -srand) is stable
-            # across Stop/Resume cycles. Caller-supplied seed wins so
-            # tests/fixtures can be deterministic.
+            # anything else fastchess seeds from -srand) is reproducible
+            # for the lifetime of this tournament. Caller-supplied seed
+            # wins so tests/fixtures can be deterministic.
             frozen_template = dict(template)
             frozen_template.setdefault("seed", secrets.randbits(63))
 
@@ -180,6 +180,10 @@ class TournamentStore:
         except json.JSONDecodeError as e:
             raise CorruptStateError(f"state.json unparseable for {tournament_id}: {e}") from e
         _validate_state(payload)
+        # Drop fields that no longer exist on the dataclass (forward-compat
+        # with old state.json files written by prior versions).
+        known = {f.name for f in fields(Tournament)}
+        payload = {k: v for k, v in payload.items() if k in known}
         return Tournament(**payload)
 
     def list(self) -> list[Tournament]:
@@ -242,18 +246,20 @@ class TournamentStore:
         template: dict,
         engines: list,
         engine_defaults: dict | None = None,
-    ) -> tuple["Tournament", bool]:
+    ) -> "Tournament":
         """Replace name/template/engines and reset the tournament to idle.
 
         ``engine_defaults`` re-freezes the global engine_default_* snapshot
         (mirroring ``create``); pass ``None`` to keep the existing snapshot.
 
-        Always deletes games.pgn — any edit (template, engines, or even
-        rename) invalidates prior results since they were played under
-        potentially different conditions and must not mix with future
-        games. Caller is responsible for confirming with the user first.
-        Returns ``(tournament, had_games)`` where ``had_games`` is True
-        when a PGN existed and was removed.
+        Wipes the tournament directory clean: any edit (template,
+        engines, or rename) invalidates prior PGN results, fastchess
+        config/backups, logs, and any stray files. They were produced
+        under potentially different conditions and must not leak into
+        future runs. Caller (API layer) is responsible for confirming
+        with the user first. Filesystem errors during wipe propagate --
+        a locked file (AV scan, dangling handle) leaves the tournament
+        in a usable state on disk and the API returns 5xx.
         """
         with self._create_lock:
             t = self.get(tournament_id)
@@ -261,9 +267,6 @@ class TournamentStore:
                 x.name == name for x in self.list() if x.id != tournament_id
             ):
                 raise DuplicateNameError(name)
-            had_games = self.pgn_path(tournament_id).exists()
-            if had_games:
-                self.pgn_path(tournament_id).unlink(missing_ok=True)
 
             t.name = name
             t.template = dict(template)
@@ -274,8 +277,48 @@ class TournamentStore:
             t.started_at = None
             t.stopped_at = None
             t.last_error = None
+            # state.json first so a wipe failure can't vanish the row.
             atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
-            return t, had_games
+            self._wipe_dir_contents(tournament_id)
+            return t
+
+    def wipe_for_restart(self, tournament_id: str) -> "Tournament":
+        """Wipe the tournament directory and reset runtime state, keeping
+        name/template/engines/engine_defaults intact. Used when restarting
+        from a stopped/failed tournament -- fastchess's resume contract is
+        too fragile across stop/resume cycles, so we always start fresh.
+        """
+        with self._create_lock:
+            t = self.get(tournament_id)
+            t.status = STATUS_IDLE
+            t.started_at = None
+            t.stopped_at = None
+            t.last_error = None
+            # Write the new state.json FIRST, then wipe siblings around it.
+            # Reversed order can vanish a tournament: if rmtree trips on a
+            # locked file (AV scan, dangling handle) after state.json is
+            # already gone, get() raises TournamentNotFoundError forever.
+            atomic_write_json(self._state_path(tournament_id), t.to_dict(), indent=2)
+            self._wipe_dir_contents(tournament_id)
+            return t
+
+    def _wipe_dir_contents(self, tournament_id: str) -> None:
+        """Delete every entry inside the tournament dir except state.json,
+        keeping the dir itself. Iterates children so a concurrent process
+        can't claim the path between rmtree + recreate. Skipping state.json
+        preserves the tournament's listing identity through partial failures
+        -- callers must write state.json before invoking this."""
+        d = self._dir(tournament_id)
+        if not d.exists():
+            return
+        state_name = self._state_path(tournament_id).name
+        for child in d.iterdir():
+            if child.name == state_name:
+                continue
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
 
     def find_by_status(self, status: str) -> list[Tournament]:
         """All tournaments currently in the given status (helper for orchestrator

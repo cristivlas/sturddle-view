@@ -1,4 +1,4 @@
-"""Perf baseline for import_position.parse_pgn before P4 (R6a) refactor."""
+"""Perf bench for import_position.parse_pgn."""
 from __future__ import annotations
 
 import pathlib
@@ -36,7 +36,7 @@ def _bench_fn():
 
 @pytest.mark.perf
 @pytest.mark.benchmark(min_rounds=15)
-def test_bench_parse_pgn_200_games(benchmark, bench_compare):
+def test_bench_parse_pgn_200_games(benchmark, bench_compare_ratio):
     _load_games()
     benchmark(_bench_fn)
-    bench_compare("parse_pgn_200_games", benchmark.stats.stats.min, tolerance=TOLERANCE)
+    bench_compare_ratio("parse_pgn_200_games", benchmark.stats.stats.min, tolerance=TOLERANCE)

@@ -1,4 +1,4 @@
-"""Perf baseline for pgn_stats.read_game_record before P4 (R6a) refactor."""
+"""Perf bench for pgn_stats.read_game_record (I/O-bound; absolute comparison)."""
 from __future__ import annotations
 
 import pathlib

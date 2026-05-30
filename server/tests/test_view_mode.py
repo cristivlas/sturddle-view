@@ -566,6 +566,47 @@ async def test_play_game_comments_helper(hve):
     assert root == "pre"
 
 
+async def test_view_game_comments_returns_none_on_fresh_hve(hve):
+    """Fresh HVE (no PGN loaded yet) -> accessor returns (None, None).
+    Used by the AI-analysis kick to detect "no annotations to inject"."""
+    h, _ = hve
+    comments, root = h.view_game_comments()
+    assert comments is None
+    assert root is None
+
+
+async def test_view_game_comments_returns_loaded_pgn_data(hve):
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5"],
+        clock_history=None,
+        comments=["sharp", "Petrov"],
+        root_comment="from the 1972 candidates",
+    ))
+    comments, root = h.view_game_comments()
+    assert comments == ["sharp", "Petrov"]
+    assert root == "from the 1972 candidates"
+
+
+async def test_view_game_comments_returns_copy_not_alias(hve):
+    """Mirror of play_game_comments: the returned list must be a copy so
+    callers (AI kick capping) can mutate it without corrupting HVE state."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5"],
+        clock_history=None,
+        comments=["c1", "c2"],
+        root_comment="r",
+    ))
+    comments, _ = h.view_game_comments()
+    assert comments is not None
+    comments[0] = "MUTATED"
+    again, _ = h.view_game_comments()
+    assert again == ["c1", "c2"]
+
+
 async def test_play_from_here_no_view_comments_leaves_play_side_none(hve):
     """When the imported PGN had no commentary, no synthesis happens."""
     h, _ = hve

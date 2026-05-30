@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 from fastapi import HTTPException, Request
 
@@ -23,6 +24,72 @@ from ..llm.ollama import DEFAULT_BASE_URL as _DEFAULT_OLLAMA_BASE_URL, OllamaPro
 from ..play.mode import Mode
 
 log = logging.getLogger(__name__)
+
+
+# Per-comment + total annotation budgets (chars). Caps prompt size and
+# the prompt-cache key. Raise via env for larger-context models.
+_PER_COMMENT_MAX_DEFAULT = 200
+_TOTAL_COMMENT_MAX_DEFAULT = 1500
+_PER_COMMENT_MAX_ENV = "SV_AI_ANNOTATION_PER_COMMENT_MAX"
+_TOTAL_COMMENT_MAX_ENV = "SV_AI_ANNOTATION_TOTAL_MAX"
+# Marker appended to a comment that was truncated mid-string.
+_TRUNCATION_MARKER = "..."
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        v = int(raw)
+    except ValueError:
+        return default
+    return v if v > 0 else default
+
+
+def _cap_annotations(
+    comments: list[str | None] | None,
+    root_comment: str | None,
+    per_comment_max: int,
+    total_max: int,
+) -> tuple[list[str | None] | None, str | None]:
+    """Truncate each comment to `per_comment_max` chars (with marker),
+    then drop trailing entries once the running total exceeds `total_max`.
+    Returns (None, None) when nothing survives. Root comment is capped
+    independently and counts against the total before per-ply entries.
+    """
+    capped_root: str | None = None
+    budget = total_max
+    if root_comment:
+        capped_root = _truncate(root_comment, per_comment_max)
+        budget -= len(capped_root)
+    capped: list[str | None] | None = None
+    if comments:
+        capped = []
+        for c in comments:
+            if c is None:
+                capped.append(None)
+                continue
+            if budget <= 0:
+                capped.append(None)
+                continue
+            piece = _truncate(c, min(per_comment_max, budget))
+            capped.append(piece)
+            budget -= len(piece)
+        if not any(p is not None for p in capped):
+            capped = None
+    return capped, capped_root
+
+
+def _truncate(s: str, limit: int) -> str:
+    if limit <= 0:
+        return ""
+    if len(s) <= limit:
+        return s
+    # Marker would overflow the cap; drop it and hard-cut.
+    if limit < len(_TRUNCATION_MARKER):
+        return s[:limit]
+    return s[:limit - len(_TRUNCATION_MARKER)] + _TRUNCATION_MARKER
 
 
 def _san_history_for(hve) -> list[str]:
@@ -48,6 +115,24 @@ def _short_engine_name(full: str | None) -> str | None:
     return full.split()[0] or full
 
 
+_COMMENTATOR_MODE: PromptMode = "commentator"
+_COACH_MODE: PromptMode = "coach"
+
+
+def _prompt_mode_for(hve) -> PromptMode:
+    """Pick the persona from where analysis was entered.
+
+    - View mode (replaying a PGN) -> commentator: third-person, can
+      reference what happens later.
+    - Anywhere else (live play, paused) -> coach: second-person.
+    """
+    if hve is None:
+        return _COACH_MODE
+    if hve.pre_analysis_mode() is Mode.VIEWING:
+        return _COMMENTATOR_MODE
+    return _COACH_MODE
+
+
 def _build_user_message(hve) -> str | None:
     if hve is None:
         return None
@@ -59,11 +144,22 @@ def _build_user_message(hve) -> str | None:
     raw_result = hve.viewed_pgn_result()
     result = raw_result if raw_result and raw_result != "*" else None
     san_history = _san_history_for(hve)
-    # View mode: SAN at index ply is the move actually played from
-    # the position-under-review. Lets the commentator distinguish the
-    # played move from alternatives it explored via tools.
+    # SAN at the current ply is the move played from the position under
+    # review (view mode); None in play mode where there is no future.
     ply = len(board.move_stack)
     move_played = san_history[ply] if ply < len(san_history) else None
+    annotations: list[str | None] | None = None
+    root_annotation: str | None = None
+    # Gate on the prompt persona, not Mode.VIEWING: keeps annotation
+    # plumbing aligned with the commentator addendum that tells the
+    # model how to weigh them.
+    if _prompt_mode_for(hve) == _COMMENTATOR_MODE:
+        raw_comments, raw_root = hve.view_game_comments()
+        per_max = _int_env(_PER_COMMENT_MAX_ENV, _PER_COMMENT_MAX_DEFAULT)
+        total_max = _int_env(_TOTAL_COMMENT_MAX_ENV, _TOTAL_COMMENT_MAX_DEFAULT)
+        annotations, root_annotation = _cap_annotations(
+            raw_comments, raw_root, per_max, total_max,
+        )
     return build_initial_user_message(
         fen=board.fen(),
         san_history=san_history,
@@ -72,21 +168,9 @@ def _build_user_message(hve) -> str | None:
         opening_name=opening.name if opening else None,
         result=result,
         move_played=move_played,
+        annotations=annotations,
+        root_annotation=root_annotation,
     )
-
-
-def _prompt_mode_for(hve) -> PromptMode:
-    """Pick the persona from where analysis was entered.
-
-    - View mode (replaying a PGN) -> commentator: third-person, can
-      reference what happens later.
-    - Anywhere else (live play, paused) -> coach: second-person.
-    """
-    if hve is None:
-        return "coach"
-    if hve.pre_analysis_mode() is Mode.VIEWING:
-        return "commentator"
-    return "coach"
 
 
 async def _evict_stale_ollama_models(base_url: str, target_model: str) -> None:

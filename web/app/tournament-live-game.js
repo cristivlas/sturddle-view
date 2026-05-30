@@ -21,13 +21,13 @@ async function replayTournamentGame({ tournamentId, gameN, token, pairId = null 
     pgnHash = rec.hash ?? null;
     pgnSummary = rec.summary ?? null;
   } catch (e) {
-    reportError(null, "Replay: fetch failed", e);
+    reportError(null, "Review: fetch failed", e);
     return;
   }
   if (isPlayInProgress()) {
     const ok = await confirm({
-      message: "Discard your in-progress game and replay this tournament game?",
-      okLabel: "Replay",
+      message: "Discard your in-progress game and review this tournament game?",
+      okLabel: "Review",
       cancelLabel: "Cancel",
       destructive: true,
     });
@@ -66,7 +66,7 @@ async function replayTournamentGame({ tournamentId, gameN, token, pairId = null 
     const data = await res.json();
     importedGameId = data?.game_id ?? null;
   } catch (e) {
-    reportError(null, "Replay: import failed", e);
+    reportError(null, "Review: import failed", e);
     return;
   }
   // Server-side invariant: when the client supplied a game_id, the
@@ -75,7 +75,7 @@ async function replayTournamentGame({ tournamentId, gameN, token, pairId = null 
   if (pairId && importedGameId && importedGameId !== pairId) {
     reportError(
       null,
-      "Replay: server returned game_id != pair_id (unification bug)",
+      "Review: server returned game_id != pair_id (unification bug)",
       new Error(`stored=${importedGameId} pair=${pairId}`),
     );
     return;
@@ -90,21 +90,32 @@ export const DEBUG_WATCH = false;
 
 const liveWindows = new Map(); // windowKey -> WinBox instance
 
-// Row heights are duplicated as `min-height` on .wb-livegame .lg-eval /
-// .lg-pv / .lg-status in styles.css so empty rows still hold space
-// before pairing data arrives. Keep the two in sync.
 const LIVE_MIN_BOARD    = 200; // px -- smallest usable board side
-const LIVE_CLOCK_H      = 36;  // px -- one clock row (font 16px + padding)
-const LIVE_EVAL_H       = 18;  // px -- eval row (0.8125rem * 1.4 line-height)
-const LIVE_PV_H         = 17;  // px -- pv row (0.6875rem * 1.4 line-height, +2px bottom padding)
 const LIVE_WINBOX_TITLE = 35;  // px -- WinBox title bar
-const LIVE_GAP          = 4;   // px -- flex gap between sections
+
+// Row heights and gaps scale with the root font size. CSS rules mirror these:
+//   container gap: 0.25em
+//   clock: 1rem * 1.2 line-height + 0.625em vertical padding
+//   eval:  0.8125rem * 1.4 line-height
+//   pv:    0.6875rem * 1.4 line-height + 0.125em bottom padding
+function liveFontMetrics() {
+  const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+  return {
+    clockH: Math.ceil(rem * 1.2 + rem * 0.625),
+    evalH:  Math.ceil(rem * 0.8125 * 1.4),
+    pvH:    Math.ceil(rem * 0.6875 * 1.4 + rem * 0.125),
+    gap:    Math.ceil(rem * 0.25),
+  };
+}
 
 const ARROW_MIN_TIME_MS = 250; // skip arrow if side-to-move has less time than this
 
-export const LIVE_MIN_WIDTH  = LIVE_MIN_BOARD;
+export const LIVE_MIN_WIDTH = LIVE_MIN_BOARD;
 // 7 flex children: pv-top, eval-top, clock-top, board, clock-bottom, eval-bottom, pv-bottom -- 6 gaps.
-export const LIVE_MIN_HEIGHT = LIVE_WINBOX_TITLE + LIVE_PV_H * 2 + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_MIN_BOARD + LIVE_GAP * 6;
+export function LIVE_MIN_HEIGHT() {
+  const { clockH, evalH, pvH, gap } = liveFontMetrics();
+  return LIVE_WINBOX_TITLE + pvH * 2 + evalH * 2 + clockH * 2 + LIVE_MIN_BOARD + gap * 6;
+}
 
 
 // Gap (px) between the avoid-rect and the new window when displacing.
@@ -142,9 +153,11 @@ function avoidOverlap(wb, avoid, top, left, cascade = 0) {
   }
 }
 
-// Total fixed-row height used by the WinBox onresize max-height clamp
-// (keeps the window from growing taller than the board can usefully fill).
-const FIXED_FULL = LIVE_PV_H * 2 + LIVE_EVAL_H * 2 + LIVE_CLOCK_H * 2 + LIVE_GAP * 6;
+// Total fixed-row height for the onresize max-height clamp.
+function liveFixedFull() {
+  const { clockH, evalH, pvH, gap } = liveFontMetrics();
+  return pvH * 2 + evalH * 2 + clockH * 2 + gap * 6;
+}
 // Below this body height, drop the pv rows (toggled via .lg-compact).
 const LIVE_COMPACT_THRESHOLD = 280;
 
@@ -153,7 +166,7 @@ const LIVE_COMPACT_THRESHOLD = 280;
 // machinery, registers in `liveWindows`. Caller adds WS (live) or
 // final-state painting (frozen) and assigns a real `wb.onclose` that
 // cleans up its own resources after invoking `disposeShared`.
-function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token, tournamentId, top, left, boardStyle, avoidRect, initialRect, min, flash, variantClass }) {
+function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token, tournamentId, top, left, right = 0, boardStyle, avoidRect, initialRect, min, flash, variantClass }) {
   const body = document.createElement("div");
   body.className = "wb-livegame lg-measuring";
   body.innerHTML = `
@@ -171,7 +184,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
       <div class="lg-result-overlay" hidden>
         <div class="lg-result-score"></div>
         <div class="lg-result-termination"></div>
-        <button type="button" class="lg-result-replay" hidden>Replay</button>
+        <button type="button" class="lg-result-replay" hidden>Review</button>
       </div>
     </div>
     <div class="clock-row lg-clock-bottom">
@@ -227,11 +240,12 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     width: initialWidth,
     ...(initialHeight ? { height: initialHeight } : {}),
     minwidth: LIVE_MIN_WIDTH,
-    minheight: LIVE_MIN_HEIGHT,
+    minheight: LIVE_MIN_HEIGHT(),
     x: initialRect ? initialRect.x : `${20 + (idx * 4)}%`,
     y: initialRect ? initialRect.y : `${5 + (idx * 4)}%`,
     top,
     left,
+    right,
     min,
     mount: body,
     class: variantClass ? `${defaultClass} ${variantClass}` : defaultClass,
@@ -249,14 +263,14 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   // Clamp height so the window can't grow taller than the board needs:
   // a portrait-stretched window wastes space and looks broken.
   wb.onresize = (w, h) => {
-    const maxH = w + LIVE_WINBOX_TITLE + FIXED_FULL;
+    const maxH = w + LIVE_WINBOX_TITLE + liveFixedFull();
     if (h > maxH) wb.resize(w, maxH);
   };
   if (avoidRect) avoidOverlap(wb, avoidRect, top, left, idx * 24);
   // WinBox doesn't expose its config minwidth/minheight as instance fields;
   // stash them so the workspace's tile() can clamp.
   wb.svMinWidth = LIVE_MIN_WIDTH;
-  wb.svMinHeight = LIVE_MIN_HEIGHT;
+  wb.svMinHeight = LIVE_MIN_HEIGHT();
   wb.svBoard = board;
   liveWindows.set(windowKey, wb);
   // Result-banner upgrade on game_reconciled (workspace dispatches).
@@ -295,8 +309,12 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   // clocks until the first real measurement lands.
   function constrainAndResize() {
     body.classList.toggle("lg-compact", body.clientHeight < LIVE_COMPACT_THRESHOLD);
-    const sz = boardHost.clientWidth;
+    // Board slot may be taller than wide (portrait window); cap height to
+    // width so the square board sits flush against the clock rows.
+    boardHost.style.height = "";
+    const sz = Math.min(boardHost.clientWidth, boardHost.clientHeight);
     if (sz > 0) {
+      boardHost.style.height = `${sz}px`;
       body.style.setProperty("--lg-board-w", `${sz}px`);
       body.classList.remove("lg-measuring");
     }
@@ -356,7 +374,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   };
 }
 
-export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, flash = true }) {
+export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, right = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, flash = true }) {
   if (DEBUG_WATCH) console.log("[WATCH] openLiveGameWindow", { proxyId, gameId, windowKey, label });
   if (!windowKey) {
     console.error("[WATCH] no windowKey -- need at least one of proxyId/gameId", { proxyId, gameId });
@@ -373,7 +391,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 
   const built = buildLiveGameBox({
     windowKey, gameId, proxyId, label, engineName, token, tournamentId,
-    top, left, boardStyle, avoidRect, initialRect, min, flash,
+    top, left, right, boardStyle, avoidRect, initialRect, min, flash,
     variantClass: null,
   });
   const { wb, body, board, refs, showResult, disposeShared } = built;
@@ -393,11 +411,47 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   let positionGen = 0;
   let lastWtime = null;
   let lastBtime = null;
+  // rAF coalescer for board.setPosition. Bursts of position events
+  // (legitimate engine floods, or the post-background drain when a
+  // hidden tab regains focus) would otherwise stack animations.
+  // Latest pending FEN wins; superseded ones never animate. Background
+  // tabs accumulate at most one pending paint (browser pauses rAF).
+  let pendingPosition = null;
+  let positionRafToken = 0;
+
+  function schedulePositionPaint() {
+    if (positionRafToken) return;
+    positionRafToken = requestAnimationFrame(() => {
+      positionRafToken = 0;
+      const p = pendingPosition;
+      pendingPosition = null;
+      if (!p) return;
+      board.setPosition(p.fen, p.lastMove, p.animated);
+      board.clearArrows();
+    });
+  }
+
+  function queuePositionPaint(fen, lastMove) {
+    // Skip animation when the tab is hidden -- there is no one to watch
+    // it, and on return we want to snap to the final state, not replay
+    // the queued cascade.
+    pendingPosition = {
+      fen,
+      lastMove,
+      animated: document.visibilityState === "visible",
+    };
+    schedulePositionPaint();
+  }
 
   let wbClosed = false;
   wb.onclose = () => {
     wbClosed = true;
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    if (positionRafToken) {
+      cancelAnimationFrame(positionRafToken);
+      positionRafToken = 0;
+      pendingPosition = null;
+    }
     if (ws) try { ws.close(); } catch { /* */ }
     disposeShared();
     return false;
@@ -521,8 +575,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       // Discard if a newer `position` message arrived while the fetch was in flight.
       if (positionGen === gen) {
         currentFen = newFen;
-        board.setPosition(newFen, uciMove);
-        board.clearArrows();
+        queuePositionPaint(newFen, uciMove);
       }
     } catch { /* non-fatal: next position message will correct the board */ }
   }
@@ -539,8 +592,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
             setEngineColor(color);
             board.setSide(color);
           }
-          board.setPosition(p.fen, p.last_move || null);
-          board.clearArrows();
+          queuePositionPaint(p.fen, p.last_move || null);
         }
         break;
       case "info":
@@ -669,7 +721,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 export function openFrozenGameWindow({
   proxyId, gameId, windowKey = gameId, label, engineName,
   token, tournamentId, gameN, result, termination,
-  top = 0, left = 0, boardStyle = null, initialRect = null, min = false, flash = true,
+  top = 0, left = 0, right = 0, boardStyle = null, initialRect = null, min = false, flash = true,
 }) {
   if (!windowKey) {
     console.error("[FROZEN] no windowKey", { proxyId, gameId });
@@ -689,7 +741,7 @@ export function openFrozenGameWindow({
 
   const built = buildLiveGameBox({
     windowKey, gameId, proxyId, label, engineName, token, tournamentId,
-    top, left, boardStyle, avoidRect: null, initialRect, min, flash,
+    top, left, right, boardStyle, avoidRect: null, initialRect, min, flash,
     variantClass: "sturddle-wb-live-frozen",
   });
   const { wb, board, refs, showResult, setReplayGameN, disposeShared } = built;

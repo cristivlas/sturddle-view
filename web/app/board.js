@@ -5,6 +5,7 @@ import {
   FEN,
 } from "../vendor/cm-chessboard/src/Chessboard.js";
 import { PositionAnimationsQueue } from "../vendor/cm-chessboard/src/view/PositionAnimationsQueue.js";
+import { Svg } from "../vendor/cm-chessboard/src/lib/Svg.js";
 import { MARKER_TYPE, Markers } from "../vendor/cm-chessboard/src/extensions/markers/Markers.js";
 import { ARROW_TYPE, Arrows } from "../vendor/cm-chessboard/src/extensions/arrows/Arrows.js";
 import {
@@ -77,6 +78,19 @@ function _patchAnimationsQueue(board) {
     );
   };
 }
+
+// cm-chessboard's PositionsAnimation captures `disappear` element refs at
+// animation start, then calls Svg.removeElement on them when the animation
+// completes. A concurrent redraw (resize-driven redrawPieces, sprite swap,
+// orientation flip) wipes the pieces layer mid-animation, leaving those
+// refs detached. The vanilla removeElement warns "without parentNode" for
+// every parentless ref. Silently skip -- the visual outcome is identical.
+(function _silenceParentlessRemove() {
+  const orig = Svg.removeElement;
+  Svg.removeElement = function (element) {
+    if (element && element.parentNode) orig.call(Svg, element);
+  };
+})();
 
 const ASSETS_URL = "./vendor/cm-chessboard/assets/";
 

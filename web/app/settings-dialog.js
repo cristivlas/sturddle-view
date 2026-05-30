@@ -1086,10 +1086,20 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
 
       const aiThinkingRow = document.createElement("div");
       aiThinkingRow.className = "settings-row ai-row ai-thinking-row";
-      const aiThinking = document.createElement("wa-switch");
-      aiThinking.size = "small";
-      aiThinking.textContent = "Extended thinking";
-      if (initial[AI_THINKING_ENABLED_KEY]) aiThinking.setAttribute("checked", "");
+
+      // Mode select replaces the old switch + adaptive badge. Values:
+      //   off -> AI_THINKING_ENABLED_KEY=false
+      //   on  -> AI_THINKING_ENABLED_KEY=true (budget shown only for
+      //          Anthropic non-adaptive models)
+      const aiThinkingMode = document.createElement("wa-select");
+      aiThinkingMode.size = "small";
+      aiThinkingMode.setAttribute("label", "Extended thinking");
+      aiThinkingMode.className = "ai-thinking-mode";
+
+      // Persisted via the same AI_THINKING_ENABLED_KEY so the server
+      // contract is unchanged.
+      let thinkingEnabled = !!initial[AI_THINKING_ENABLED_KEY];
+
       const aiThinkingBudget = document.createElement("wa-input");
       aiThinkingBudget.type = "number";
       aiThinkingBudget.size = "small";
@@ -1100,14 +1110,6 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         initial[AI_THINKING_BUDGET_TOKENS_KEY] || AI_THINKING_BUDGET_MIN
       );
       aiThinkingBudget.className = "ai-thinking-budget";
-      // Regex parity with anthropic.py's _use_adaptive_thinking.
-      // Right way: /v1/models capabilities.thinking.types.adaptive.
-      const aiThinkingAdaptive = document.createElement("span");
-      aiThinkingAdaptive.className = "ai-thinking-adaptive";
-      aiThinkingAdaptive.textContent = "Adaptive";
-      aiThinkingAdaptive.title = "This model picks the thinking budget automatically.";
-      aiThinkingAdaptive.style.display = "none";
-      aiThinkingRow.append(aiThinking, aiThinkingBudget, aiThinkingAdaptive);
 
       const isAdaptiveModel = () => {
         if (aiProvider.value !== "anthropic") return false;
@@ -1121,16 +1123,46 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         return major > 4 || (major === 4 && minor >= 6);
       };
 
+      // Adaptive is a model capability, not a user choice. When an
+      // adaptive-capable model is selected, "On" auto-uses the model's
+      // budget and the budget input disappears.
+      function rebuildThinkingModeOptions() {
+        const isAnthropic = aiProvider.value === "anthropic";
+        const adaptive = isAnthropic && isAdaptiveModel();
+        const onLabel = adaptive ? "On (adaptive)" : "On";
+        const options = [["off", "Off"], ["on", onLabel]];
+        const prev = aiThinkingMode.value;
+        aiThinkingMode.replaceChildren();
+        for (const [v, label] of options) {
+          const opt = document.createElement("wa-option");
+          opt.value = v;
+          opt.textContent = label;
+          aiThinkingMode.append(opt);
+        }
+        aiThinkingMode.value = options.find(([v]) => v === prev)?.[0] ?? options[0][0];
+      }
+
+      rebuildThinkingModeOptions();
+      aiThinkingMode.value = thinkingEnabled ? "on" : "off";
+
+      aiThinkingRow.append(aiThinkingMode, aiThinkingBudget);
+
       const syncBudgetEnabled = () => {
-        const adaptive = isAdaptiveModel();
-        aiThinkingAdaptive.style.display = adaptive ? "" : "none";
-        aiThinkingAdaptive.classList.toggle("is-active", adaptive && aiThinking.checked);
-        aiThinkingBudget.disabled = !aiThinking.checked || adaptive;
+        rebuildThinkingModeOptions();
+        const on = aiThinkingMode.value === "on";
+        const isAnthropic = aiProvider.value === "anthropic";
+        const adaptive = isAnthropic && isAdaptiveModel();
+        // Budget shows for Anthropic-on-non-adaptive only. Adaptive
+        // models decide their own budget; Ollama has no budget knob.
+        const showBudget = on && isAnthropic && !adaptive;
+        aiThinkingBudget.style.display = showBudget ? "" : "none";
+        aiThinkingBudget.disabled = !showBudget;
       };
       syncBudgetEnabled();
 
-      aiThinking.addEventListener("change", () => {
-        putSettings({ [AI_THINKING_ENABLED_KEY]: aiThinking.checked });
+      aiThinkingMode.addEventListener("change", () => {
+        thinkingEnabled = aiThinkingMode.value !== "off";
+        putSettings({ [AI_THINKING_ENABLED_KEY]: thinkingEnabled });
         syncBudgetEnabled();
       });
       aiModelSelect.addEventListener("change", syncBudgetEnabled);
@@ -1143,12 +1175,11 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       aiThinkingBudget.addEventListener("input", persistThinkingBudget);
 
       function applyAiProviderVisibility() {
-        // Budget only meaningful for Anthropic's enabled-mode thinking
-        // (Ollama just toggles `think: true`, no budget knob).
         const isAnthropic = aiProvider.value === "anthropic";
         aiKeyRow.style.display = isAnthropic ? "" : "none";
         aiUrlRow.style.display = isAnthropic ? "none" : "";
-        aiThinkingBudget.style.display = isAnthropic ? "" : "none";
+        // Budget visibility is owned by syncBudgetEnabled (provider +
+        // mode + adaptive-model interplay).
         syncBudgetEnabled();
       }
 
@@ -1232,7 +1263,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         ["api-key",          { row: aiKeyRow,          inputs: [aiKey] }],
         ["base-url",         { row: aiUrlRow,          inputs: [aiUrl] }],
         ["thinking-divider", { row: aiThinkingDivider, inputs: [] }],
-        ["thinking",         { row: aiThinkingRow,     inputs: [aiThinking, aiThinkingBudget] }],
+        ["thinking",         { row: aiThinkingRow,     inputs: [aiThinkingMode, aiThinkingBudget] }],
       ]);
 
       // Every AI-related input below the master toggle gets greyed
