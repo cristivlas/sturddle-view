@@ -539,7 +539,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
             (e.elo_ordo_margin_95 == null ? "" : ` +/- ${e.elo_ordo_margin_95.toFixed(1)}`);
         return `
         <tr>
-          <td class="wb-eng-name">${escapeHtml(e.name)}</td>
+          <td class="wb-eng-name" title="${escapeHtml(e.name)}">${escapeHtml(e.name)}</td>
           <td>${e.games}</td>
           <td>${e.wins}</td>
           <td>${e.losses}</td>
