@@ -504,6 +504,15 @@ header {
   border-bottom: 2px solid var(--accent-line);
 }
 header h1 { margin: 0; font-size: 1rem; color: #b8b8b8; font-weight: 500; }
+.brand {
+  display: inline-flex; align-items: baseline;
+  letter-spacing: 0.01em;
+  font-weight: 600;
+  background: linear-gradient(90deg, #c8d4e2, #5d83ad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
 nav { display: flex; gap: 6px; }
 nav button {
   background: transparent;
