@@ -455,7 +455,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       render: () => renderEngines(),
     },
     log: {
-      title: "Event log",
+      title: "Event Log",
       makeBody: makeLogBody,
       setBody: (b) => { logBody = b; },
       render: () => renderEventLog(),
