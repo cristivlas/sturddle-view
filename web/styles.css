@@ -1929,6 +1929,7 @@ wa-dialog::part(header-actions) { gap: 6px; }
   line-height: 1.5;
   text-align: center;
 }
+.confirm-message.confirm-message--multiline { white-space: pre-line; }
 .replace-view-confirm {
   display: flex;
   flex-direction: column;

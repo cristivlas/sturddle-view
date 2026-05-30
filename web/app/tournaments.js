@@ -513,12 +513,13 @@ export function mountTournaments({ container, api, events, log, token }) {
     // from scratch. Warn before clicking through.
     const games = t.standings?.games ?? 0;
     const message = games > 0
-      ? `Stop "${t.name}"? On restart this tournament will start from scratch -- all ${games} recorded games will be discarded.`
-      : `Stop "${t.name}"? On restart this tournament will start from scratch.`;
+      ? `Stop "${t.name}"?\nRestarting discards all ${games} recorded games.`
+      : `Stop "${t.name}"?\nOn restart this tournament will start from scratch.`;
     const ok = await confirm({
       message,
       okLabel: "Stop",
       destructive: true,
+      messageClass: "confirm-message--multiline",
     });
     if (!ok) return;
     try {

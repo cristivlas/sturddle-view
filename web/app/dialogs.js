@@ -75,6 +75,7 @@ export function confirm({
   cancelLabel = "Cancel",
   destructive = false,
   width = "min(440px, 92vw)",
+  messageClass = "",
 } = {}) {
   return showDialog({
     label: "",
@@ -84,7 +85,7 @@ export function confirm({
       dialog.setAttribute("no-header", "");
 
       const p = document.createElement("p");
-      p.className = "confirm-message";
+      p.className = `confirm-message ${messageClass}`.trim();
       p.textContent = message ?? "";
 
       const cancel = document.createElement("wa-button");
