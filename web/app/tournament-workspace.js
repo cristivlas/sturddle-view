@@ -655,9 +655,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       li.className = "wb-sched-live wb-sched-pair";
       const wLabel = info.sideA === "white" ? info.engineA : info.engineB;
       const bLabel = info.sideA === "white" ? info.engineB : info.engineA;
+      const pairLabel = `${wLabel} - ${bLabel}`;
       li.innerHTML = `
         <span class="wb-sched-icon">&#9822;</span>
-        <span class="wb-sched-game">${escapeHtml(wLabel)} - ${escapeHtml(bLabel)}</span>
+        <span class="wb-sched-game" title="${escapeHtml(pairLabel)}">${escapeHtml(pairLabel)}</span>
       `;
       const btn = document.createElement("button");
       btn.className = "wb-sched-attach-btn";
@@ -696,7 +697,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const engineLabel = p.engineName || pid;
       li.innerHTML = `
         <span class="wb-sched-icon">&#9881;</span>
-        <span class="wb-sched-game">${escapeHtml(engineLabel)}</span>
+        <span class="wb-sched-game" title="${escapeHtml(engineLabel)}">${escapeHtml(engineLabel)}</span>
       `;
       const btn = document.createElement("button");
       btn.className = "wb-sched-attach-btn";

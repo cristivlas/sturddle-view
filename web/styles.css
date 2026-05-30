@@ -2536,8 +2536,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .tournament-sprt-badge {
   flex: 0 0 auto;
-  font-size: 0.625rem; font-weight: 700; letter-spacing: 0.8px;
-  padding: 1px 5px; border-radius: 3px;
+  font-size: 0.625rem; font-weight: 700; letter-spacing: 0.05em;
+  padding: 0.0625em 0.3125em; border-radius: 0.1875em;
   background: rgba(var(--accent-rgb), 0.15);
   border: 1px solid rgba(var(--accent-rgb), 0.4);
   color: var(--accent);
@@ -2545,15 +2545,15 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .tournament-status {
   flex: 0 0 auto;
   display: inline-block;
-  width: 60px;
+  width: 6em;
   text-align: center;
   font-size: 0.625rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.4px;
-  padding: 1px 0;
+  letter-spacing: 0.04em;
+  padding: 0.0625em 0;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 0.5em;
   background: var(--border-subtle);
   color: #c8ccd6;
 }
@@ -3071,7 +3071,10 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-sched-list .wb-sched-live {
   display: flex; align-items: center; gap: 8px;
 }
-.wb-sched-list .wb-sched-game { flex: 1; }
+.wb-sched-list .wb-sched-game {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .wb-sched-list .wb-sched-attach { font-size: 0.6875rem; }
 .wb-sched-list .wb-sched-attach-buttons {
   display: inline-flex; gap: 4px;
