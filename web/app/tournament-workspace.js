@@ -492,6 +492,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
               .catch(() => {});
           },
         });
+        wb.g.querySelector(".wb-log-copy-ctrl").title = "Copy event log";
       },
     },
   };

@@ -357,6 +357,7 @@ function detachBody(slot, body) {
 
 function addDockButton(wb, onDock) {
   wb.addControl({ class: "wb-dock-ctrl", index: 0, click: onDock });
+  wb.g.querySelector(".wb-dock-ctrl").title = "Dock";
 }
 
 // -- dockable window factory -------------------------------------------------
