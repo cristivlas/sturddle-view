@@ -21,13 +21,13 @@ async function replayTournamentGame({ tournamentId, gameN, token, pairId = null 
     pgnHash = rec.hash ?? null;
     pgnSummary = rec.summary ?? null;
   } catch (e) {
-    reportError(null, "Replay: fetch failed", e);
+    reportError(null, "Review: fetch failed", e);
     return;
   }
   if (isPlayInProgress()) {
     const ok = await confirm({
-      message: "Discard your in-progress game and replay this tournament game?",
-      okLabel: "Replay",
+      message: "Discard your in-progress game and review this tournament game?",
+      okLabel: "Review",
       cancelLabel: "Cancel",
       destructive: true,
     });
@@ -66,7 +66,7 @@ async function replayTournamentGame({ tournamentId, gameN, token, pairId = null 
     const data = await res.json();
     importedGameId = data?.game_id ?? null;
   } catch (e) {
-    reportError(null, "Replay: import failed", e);
+    reportError(null, "Review: import failed", e);
     return;
   }
   // Server-side invariant: when the client supplied a game_id, the
@@ -75,7 +75,7 @@ async function replayTournamentGame({ tournamentId, gameN, token, pairId = null 
   if (pairId && importedGameId && importedGameId !== pairId) {
     reportError(
       null,
-      "Replay: server returned game_id != pair_id (unification bug)",
+      "Review: server returned game_id != pair_id (unification bug)",
       new Error(`stored=${importedGameId} pair=${pairId}`),
     );
     return;
@@ -184,7 +184,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
       <div class="lg-result-overlay" hidden>
         <div class="lg-result-score"></div>
         <div class="lg-result-termination"></div>
-        <button type="button" class="lg-result-replay" hidden>Replay</button>
+        <button type="button" class="lg-result-replay" hidden>Review</button>
       </div>
     </div>
     <div class="clock-row lg-clock-bottom">
