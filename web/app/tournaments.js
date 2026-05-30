@@ -782,7 +782,7 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   // Shared dialog body for both create and edit flows.
   // Returns a Promise that resolves to {name, template, engines} or null.
-  async function openTournamentDialog({ label, actionLabel, initialName, initialEngines, initialTemplate, available }) {
+  async function openTournamentDialog({ label, actionLabel, initialName, initialEngines, initialTemplate, available, onSubmit }) {
     const defaults =
       initialTemplate ||
       (settings && settings.default_template) ||
@@ -886,11 +886,29 @@ export function mountTournaments({ container, api, events, log, token }) {
           template.max_threads = resolved.max_threads;
           template.max_hash_mb = resolved.max_hash_mb;
 
-          resolve({
+          const data = {
             name: nameInput.value.trim(),
             template,
             engines: builder.getEngines(),
-          });
+          };
+          if (onSubmit) {
+            actionBtn.loading = true;
+            try {
+              const submitted = await onSubmit(data);
+              if (submitted !== false) resolve(data);
+            } catch (e) {
+              if (e.isNameCollision) {
+                nameInput.classList.remove("nt-name-error");
+                void nameInput.offsetWidth;
+                nameInput.classList.add("nt-name-error");
+                nameInput.addEventListener("animationend", () => nameInput.classList.remove("nt-name-error"), { once: true });
+              }
+            } finally {
+              actionBtn.loading = false;
+            }
+          } else {
+            resolve(data);
+          }
         });
 
         dialog.append(wrap, actionBtn);
@@ -913,23 +931,25 @@ export function mountTournaments({ container, api, events, log, token }) {
       return;
     }
 
-    const result = await openTournamentDialog({
+    await openTournamentDialog({
       label: "New Tournament",
       actionLabel: "Create",
       initialName: "",
       initialEngines: [],
       initialTemplate: (settings && settings.default_template) || null,
       available,
+      onSubmit: async (data) => {
+        try {
+          await api("POST", "/api/tournaments", data);
+          toast(`Created new tournament "${data.name}"`, { variant: "success" });
+        } catch (e) {
+          reportError({ log }, "Creating tournament failed", e);
+          if (/-> 409\b/.test(e.message)) throw Object.assign(e, { isNameCollision: true });
+          return false;
+        }
+        await loadList();
+      },
     });
-    if (!result) return;
-    try {
-      await api("POST", "/api/tournaments", result);
-      toast(`Created new tournament "${result.name}"`, { variant: "success" });
-    } catch (e) {
-      reportError({ log }, "Creating tournament failed", e);
-      return;
-    }
-    await loadList();
   }
 
   async function openEditTournamentDialog(t) {
@@ -981,39 +1001,42 @@ export function mountTournaments({ container, api, events, log, token }) {
       );
     }
 
-    const result = await openTournamentDialog({
+    await openTournamentDialog({
       label: `Edit "${t.name}"`,
       actionLabel: "Apply",
       initialName: t.name,
       initialEngines,
       initialTemplate: t.template || null,
       available,
+      onSubmit: async (data) => {
+        // POST-DIALOG gate: last chance to abort before the destructive PATCH.
+        // Any edit (template, engines, or rename) wipes the PGN server-side
+        // because past games were played under potentially different conditions
+        // and must not mix with future games — so this fires on hasGames alone.
+        if (hasGames) {
+          const ok = await confirm({
+            message: `Applying changes to "${t.name}" will permanently delete its recorded games. This cannot be undone.`,
+            okLabel: "Apply & Delete Games",
+            destructive: true,
+          });
+          if (!ok) return false;
+        }
+        let failed = false;
+        try {
+          await api("PATCH", `/api/tournaments/${t.id}`, data);
+          toast(`Updated "${data.name}"`, { variant: "success" });
+        } catch (e) {
+          reportError({ log }, "Updating tournament failed", e);
+          if (/-> 409\b/.test(e.message)) throw Object.assign(e, { isNameCollision: true });
+          failed = true;
+        }
+        // Refresh either way: success applied changes; failure may indicate the
+        // local view drifted (e.g. tournament started elsewhere) and should
+        // re-sync.
+        await loadList();
+        if (failed) return false;
+      },
     });
-    if (!result) return;
-
-    // POST-DIALOG gate: last chance to abort before the destructive PATCH.
-    // Any edit (template, engines, or rename) wipes the PGN server-side
-    // because past games were played under potentially different conditions
-    // and must not mix with future games — so this fires on hasGames alone.
-    if (hasGames) {
-      const ok = await confirm({
-        message: `Applying changes to "${t.name}" will permanently delete its recorded games. This cannot be undone.`,
-        okLabel: "Apply & Delete Games",
-        destructive: true,
-      });
-      if (!ok) return;
-    }
-
-    try {
-      await api("PATCH", `/api/tournaments/${t.id}`, result);
-      toast(`Updated "${result.name}"`, { variant: "success" });
-    } catch (e) {
-      reportError({ log }, "Updating tournament failed", e);
-    }
-    // Refresh either way: success applied changes; failure may indicate the
-    // local view drifted (e.g. tournament started elsewhere) and should
-    // re-sync.
-    await loadList();
   }
 
   // ---- Window menu --------------------------------------------------------

@@ -188,6 +188,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
               <th>W<span class="th-grip"></span></th>
               <th>L<span class="th-grip"></span></th>
               <th>D<span class="th-grip"></span></th>
+              <th>Pts<span class="th-grip"></span></th>
               <th>%<span class="th-grip"></span></th>
               <th>Elo<span class="th-grip"></span></th>
               <th>Ordo</th>
@@ -543,6 +544,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           <td>${e.wins}</td>
           <td>${e.losses}</td>
           <td>${e.draws}</td>
+          <td>${e.points}</td>
           <td>${(e.score_pct * 100).toFixed(1)}%</td>
           <td>${eloCell}</td>
           <td>${ordoCell}</td>
