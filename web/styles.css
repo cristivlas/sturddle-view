@@ -2985,10 +2985,10 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .winbox.sturddle-wb.sturddle-wb-live-game .wb-header { background: var(--row-bg-selected); }
 
 .wb-livegame {
-  display: flex; flex-direction: column; gap: 4px;
+  display: flex; flex-direction: column; gap: 0.25em;
   height: 100%; min-height: 0;
 }
-.wb-livegame .clock-row { padding: 5px 10px; }
+.wb-livegame .clock-row { padding: 0.3125em 0.625em; }
 .wb-livegame .clock-row .clock-time { font-size: 1rem; flex-shrink: 0; }
 .wb-livegame .clock-row .clock-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .wb-livegame.lg-compact .lg-pv { display: none; }
@@ -3020,29 +3020,29 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   text-align: center;
   background: rgba(20, 22, 26, 0.88);
   color: var(--fg);
-  padding: 14px 8px;
+  padding: 0.875em 0.5em;
   pointer-events: none;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 0.125em 0.75em rgba(0, 0, 0, 0.6);
 }
 .wb-livegame .lg-result-score {
-  font-size: 1.375rem; font-weight: 700;
+  font-size: 1.375em; font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--accent);
 }
 .wb-livegame .lg-result-termination {
-  font-size: 0.875rem;
-  margin-top: 4px;
+  font-size: 0.875em;
+  margin-top: 0.25em;
   color: var(--muted);
   text-transform: lowercase;
 }
 .wb-livegame .lg-result-replay {
-  margin-top: 10px;
-  padding: 4px 12px;
-  font-size: 0.75rem;
+  margin-top: 0.625em;
+  padding: 0.25em 0.75em;
+  font-size: 0.75em;
   background: var(--accent);
   color: var(--bg);
   border: none;
-  border-radius: 4px;
+  border-radius: 0.25em;
   cursor: pointer;
   pointer-events: auto;
 }
@@ -3050,7 +3050,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   filter: brightness(1.1);
 }
 .wb-livegame .lg-eval {
-  display: flex; gap: 8px; align-items: baseline;
+  display: flex; gap: 0.5em; align-items: baseline;
   font-family: var(--wa-font-family-code); font-size: 0.8125rem;
   /* Reserve the populated row height so the board doesn't snap-shrink
      when the first eval event arrives. 1.4 line-height matches the
@@ -3065,7 +3065,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   /* Match populated row height -- see .lg-eval note above. */
   min-height: 1.4em; line-height: 1.4; flex-shrink: 0;
 }
-.wb-livegame .lg-pv-bottom { padding-bottom: 2px; }
+.wb-livegame .lg-pv-bottom { padding-bottom: 0.125em; }
 
 /* Schedule: in-progress rows */
 .wb-sched-list .wb-sched-live {

@@ -92,18 +92,19 @@ const liveWindows = new Map(); // windowKey -> WinBox instance
 
 const LIVE_MIN_BOARD    = 200; // px -- smallest usable board side
 const LIVE_WINBOX_TITLE = 35;  // px -- WinBox title bar
-const LIVE_GAP          = 4;   // px -- flex gap between sections
 
-// Row heights scale with the root font size. CSS rules mirror these:
-//   clock: 1rem + 10px vertical padding (5px top + 5px bottom)
+// Row heights and gaps scale with the root font size. CSS rules mirror these:
+//   container gap: 0.25em
+//   clock: 1rem * 1.2 line-height + 0.625em vertical padding
 //   eval:  0.8125rem * 1.4 line-height
-//   pv:    0.6875rem * 1.4 line-height + 2px bottom padding (lg-pv-bottom)
+//   pv:    0.6875rem * 1.4 line-height + 0.125em bottom padding
 function liveFontMetrics() {
   const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
   return {
-    clockH: Math.ceil(rem * 1.0   + 10),
+    clockH: Math.ceil(rem * 1.2 + rem * 0.625),
     evalH:  Math.ceil(rem * 0.8125 * 1.4),
-    pvH:    Math.ceil(rem * 0.6875 * 1.4 + 2),
+    pvH:    Math.ceil(rem * 0.6875 * 1.4 + rem * 0.125),
+    gap:    Math.ceil(rem * 0.25),
   };
 }
 
@@ -112,8 +113,8 @@ const ARROW_MIN_TIME_MS = 250; // skip arrow if side-to-move has less time than 
 export const LIVE_MIN_WIDTH = LIVE_MIN_BOARD;
 // 7 flex children: pv-top, eval-top, clock-top, board, clock-bottom, eval-bottom, pv-bottom -- 6 gaps.
 export function LIVE_MIN_HEIGHT() {
-  const { clockH, evalH, pvH } = liveFontMetrics();
-  return LIVE_WINBOX_TITLE + pvH * 2 + evalH * 2 + clockH * 2 + LIVE_MIN_BOARD + LIVE_GAP * 6;
+  const { clockH, evalH, pvH, gap } = liveFontMetrics();
+  return LIVE_WINBOX_TITLE + pvH * 2 + evalH * 2 + clockH * 2 + LIVE_MIN_BOARD + gap * 6;
 }
 
 
@@ -154,8 +155,8 @@ function avoidOverlap(wb, avoid, top, left, cascade = 0) {
 
 // Total fixed-row height for the onresize max-height clamp.
 function liveFixedFull() {
-  const { clockH, evalH, pvH } = liveFontMetrics();
-  return pvH * 2 + evalH * 2 + clockH * 2 + LIVE_GAP * 6;
+  const { clockH, evalH, pvH, gap } = liveFontMetrics();
+  return pvH * 2 + evalH * 2 + clockH * 2 + gap * 6;
 }
 // Below this body height, drop the pv rows (toggled via .lg-compact).
 const LIVE_COMPACT_THRESHOLD = 280;
