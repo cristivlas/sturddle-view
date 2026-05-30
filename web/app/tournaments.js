@@ -532,9 +532,10 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   async function removeOne(t) {
     const ok = await confirm({
-      message: `Remove "${t.name}"? All games and data will be permanently deleted.`,
+      message: `Remove "${t.name}"?\nAll games and data will be permanently deleted.`,
       okLabel: "Remove",
       destructive: true,
+      messageClass: "confirm-message--multiline",
     });
     if (!ok) return;
     try {
