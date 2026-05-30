@@ -7,6 +7,7 @@
 // look and feel. Clicking a row selects it; ribbon actions target the
 // selected tournament. New / Sort / Window remain in the top menubar.
 
+import { mqMobile, mqMobileH } from "./breakpoints.js";
 import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, showDialog, toast } from "./dialogs.js";
 import { openSettingsDialog } from "./settings-dialog.js";
 import { EVT, KIND, POLL_INTERVAL_MS, STATUS } from "./tournament-events.js";
@@ -1302,6 +1303,10 @@ export function mountTournaments({ container, api, events, log, token }) {
   // true once engines.js confirms the Tournaments tab is active on load.
   let tournamentsTabActive = false;
 
+  // Workspace windows don't fit a mobile viewport in either axis. Width
+  // OR height crossing the threshold counts as mobile.
+  const isMobileViewport = () => mqMobile.matches || mqMobileH.matches;
+
   function maybeRestoreWorkspace() {
     if (!tournamentsTabActive || initialLoad) return;
     const t = selectedTournament();
@@ -1315,6 +1320,14 @@ export function mountTournaments({ container, api, events, log, token }) {
     requestAnimationFrame(maybeRestoreWorkspace);
   }
 
+  // Mobile viewport closes the workspace. No auto-reopen on widen --
+  // user must manually reopen via the ribbon button.
+  const onViewportChange = () => {
+    if (isMobileViewport()) getActiveWorkspace()?.close();
+  };
+  mqMobile.addEventListener("change", onViewportChange);
+  mqMobileH.addEventListener("change", onViewportChange);
+
   return {
     dismissSortToast: dismissSortToastNow,
     restoreWorkspace,
@@ -1323,6 +1336,8 @@ export function mountTournaments({ container, api, events, log, token }) {
       window.clearInterval(pollIntervalId);
       window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
       window.removeEventListener("sturddle:workspace-closed", syncWindowMenu);
+      mqMobile.removeEventListener("change", onViewportChange);
+      mqMobileH.removeEventListener("change", onViewportChange);
       document.removeEventListener("click", closeMenus);
       dismissSortToastNow();
       // Hide (don't close) so the workspace survives perspective

@@ -58,6 +58,7 @@
      remain meaningful under zoom. JS reads these via getComputedStyle. */
   --bp-narrow-dialog: 30rem;  /* 480px @ default font */
   --bp-mobile:        40rem;  /* 640px @ default font */
+  --bp-mobile-h:      30rem;  /* 480px @ default font; height analog */
   --bp-wide:          93.75rem; /* 1500px @ default font */
 }
 
