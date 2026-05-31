@@ -45,6 +45,11 @@ const THINKING_OPEN_KEY = "sturddle:ai:thinking-open";
 const THINKING_LABEL_ACTIVE = "Thinking";
 const THINKING_LABEL_DONE_PREFIX = "Thought for ";
 
+// Self-correct effect: how long the overruled prose lingers struck-out
+// in place before it collapses into the revision banner.
+const REVISION_STRIKE_MS = 2000;
+const PROSE_OVERRULING_CLASS = "play-ai-prose-overruling";
+
 function readThinkingOpen() {
   try { return localStorage.getItem(THINKING_OPEN_KEY) === "1"; } catch { return false; }
 }
@@ -439,8 +444,23 @@ export function noteAiRevision({ round, illegalMoves, falseClaims, castleViolati
   if (round <= 0) return;
   const prev = inst.body._roundPanels.get(round - 1);
   if (!prev) return;
-  renderRevision(prev.revision, { illegalMoves, falseClaims, castleViolations });
-  _moveProseIntoRevision(prev);
+  const payload = { illegalMoves, falseClaims, castleViolations };
+  // Self-correct effect: strike the prose in place for a beat, THEN
+  // reveal the banner and collapse the prose into it -- so the user
+  // sees the model scratch its claim before it's tucked away. The
+  // timer is this effect's own cadence (not a sync wait).
+  const para = prev.para;
+  if (para && para.isConnected && para.parentNode !== prev.revision.body) {
+    para.classList.add(PROSE_OVERRULING_CLASS);
+    setTimeout(() => {
+      para.classList.remove(PROSE_OVERRULING_CLASS);
+      renderRevision(prev.revision, payload);
+      _moveProseIntoRevision(prev);
+    }, REVISION_STRIKE_MS);
+  } else {
+    renderRevision(prev.revision, payload);
+    _moveProseIntoRevision(prev);
+  }
 }
 
 export function setAiStatus(state) {

@@ -290,7 +290,7 @@ wa-select::part(listbox) {
 .play-ai-round {
   display: block;
   margin: 0 0 4px;
-  padding-top: 4px;
+  padding-top: 6px;
   /* DEBUG */
   /* border: 1px solid red; */
 }
@@ -349,6 +349,13 @@ wa-select::part(listbox) {
   color: var(--muted, #888);
   text-decoration: line-through;
   margin: 0;
+}
+/* Self-correct effect: the overruled prose shows struck-out in place
+   for a beat (timer in JS) before it collapses into the revision
+   banner, so the user sees the model scratch its own claim. */
+.play-ai-prose-overruling {
+  color: var(--muted, #888);
+  text-decoration: line-through;
 }
 /* Revision banner: <details> whose summary IS the banner; clicking
    reveals the previous round's redacted prose inline. margin-left
