@@ -554,7 +554,8 @@ wa-select::part(listbox) {
   opacity: 0.7;
   white-space: pre;
   overflow-x: auto;
-  background-color: var(--wa-color-surface-raised, #2a2a2a);
+  background-color: black;
+  border-radius: 0;
 }
 
 /* Terminal markers (cancelled/error/round-cap/no-response) sit
