@@ -258,6 +258,18 @@ function formatToolArgs(input) {
   return pairs.join(", ");
 }
 
+const TOOL_FRIENDLY_LABELS = {
+  analyze:        "Analyzing position",
+  top_moves:      "Finding top moves",
+  piece_at:       "Checking piece",
+  validate_move:  "Validating move",
+  recommend_move: "Picking move",
+};
+
+function friendlyToolLabel(name) {
+  return TOOL_FRIENDLY_LABELS[name] || name;
+}
+
 // Move the previous round's prose into the current round's revision
 // banner body so clicking the banner reveals the redacted text inline.
 // Idempotent -- skips when the prose has already been moved out of
@@ -394,9 +406,24 @@ export function appendAiToolCall({ round = 0, name, input, toolUseId }) {
     line.append(dot);
     const label = document.createElement("span");
     label.className = "play-ai-tool-label";
-    const args = formatToolArgs(input);
-    label.textContent = args ? `${name}(${args})` : `${name}()`;
+    label.textContent = friendlyToolLabel(name);
     line.append(label);
+    const args = formatToolArgs(input);
+    const raw = args ? `${name}(${args})` : `${name}()`;
+    const toggle = document.createElement("span");
+    toggle.className = "play-ai-tool-toggle";
+    toggle.textContent = "▶";
+    line.append(toggle);
+    const pre = document.createElement("pre");
+    pre.className = "play-ai-tool-details-body";
+    pre.hidden = true;
+    pre.textContent = raw;
+    line.append(pre);
+    toggle.addEventListener("click", () => {
+      const open = pre.hidden;
+      pre.hidden = !open;
+      toggle.textContent = open ? "▼" : "▶";
+    });
     entry.tools.append(line);
     if (toolUseId) {
       // Index by tool_use_id so a subsequent ai_tool_call_failed event
@@ -407,33 +434,15 @@ export function appendAiToolCall({ round = 0, name, input, toolUseId }) {
   });
 }
 
-export function appendAiToolCallComplete({ round = 0, name }) {
-  if (!inst.body) return;
-  withStickyBottom(() => {
-    const entry = ensureRoundPanel(inst.body, round);
-    const line = document.createElement("div");
-    line.className = "play-ai-tool-call";
-    const dot = document.createElement("span");
-    dot.className = "play-ai-tool-dot play-ai-tool-dot-complete";
-    line.append(dot);
-    const label = document.createElement("span");
-    label.className = "play-ai-tool-label";
-    label.textContent = name ? `${name} complete` : "tool complete";
-    line.append(label);
-    entry.tools.append(line);
-  });
-}
 
 export function markAiToolCallFailed({ toolUseId, error, detail }) {
   if (!inst.body || !toolUseId) return;
   const line = inst.body._toolCallNodes.get(toolUseId);
   if (!line) return;
   line.classList.add("play-ai-tool-call-failed");
-  const label = line.querySelector(".play-ai-tool-label");
-  if (label) {
-    const suffix = detail ? `${error}: ${detail}` : error;
-    label.textContent = `${label.textContent}  — ${suffix}`;
-  }
+  const suffix = detail ? `${error}: ${detail}` : error;
+  const pre = line.querySelector(".play-ai-tool-details-body");
+  if (pre) pre.textContent = `${pre.textContent}\n${suffix}`;
 }
 
 export function noteAiRevision({ round, illegalMoves, falseClaims, castleViolations }) {

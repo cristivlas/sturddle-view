@@ -163,6 +163,11 @@ class AnthropicProvider(LLMProvider):
             if "budget_tokens" in body["thinking"]:
                 body["max_tokens"] = _DEFAULT_MAX_TOKENS + self._thinking_budget_tokens
 
+        log.info(
+            "anthropic stream: model=%s thinking=%s",
+            self._model,
+            body.get("thinking"),
+        )
         await self._tx_request(transcript, round_index, body)
 
         url = f"{_ANTHROPIC_BASE}/v1/messages"

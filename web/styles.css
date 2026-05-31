@@ -413,19 +413,16 @@ wa-select::part(listbox) {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  /* One horizontal scrollbar for the whole stack -- avoids per-row
-     scrollbars when multiple piece_at probes land in sequence. Rows
-     stay nowrap; widest row drives the scroller. */
-  overflow-x: auto;
+  overflow: hidden;
 }
 .play-ai-tool-call {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   font-size: 0.85em;
   opacity: 0.85;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  white-space: nowrap;
 }
 .play-ai-tool-dot {
   width: 8px;
@@ -441,28 +438,32 @@ wa-select::part(listbox) {
 .play-ai-tool-dot-validate_move  { background: teal; }
 .play-ai-tool-dot-top_moves      { background: var(--wa-color-primary-60, #4a90e2); }
 .play-ai-tool-dot-recommend_move { background: #7c3aed; }
-/* Completion marker: neutral checkmark glyph in place of the colored
-   dot. Inherits the dot's box dimensions for column alignment. */
-.play-ai-tool-dot-complete {
-  background: transparent;
-  border-radius: 0;
-  color: var(--accent-line);
-  font-weight: 700;
-  line-height: 8px;
-  text-align: center;
-}
-.play-ai-tool-dot-complete::before { content: "\2713"; font-size: 10px; }
-/* Failed tool call: red dot + dim label, with the error appended to
-   the label by the renderer. */
+/* Failed tool call: red dot + struck-through label. The error detail
+   is appended into the collapsible details body by the renderer. */
 .play-ai-tool-call-failed .play-ai-tool-dot {
   background: var(--wa-color-danger-60, #d9534f);
 }
 .play-ai-tool-call-failed .play-ai-tool-label {
   opacity: 0.7;
+  text-decoration: line-through;
 }
 .play-ai-tool-label {
   /* Stay on one line; the row scrolls horizontally if needed. */
   white-space: nowrap;
+}
+.play-ai-tool-toggle {
+  font-size: 0.65em;
+  opacity: 0.5;
+  cursor: pointer;
+  user-select: none;
+  flex: 0 0 auto;
+}
+.play-ai-tool-details-body {
+  flex: 0 0 100%;
+  margin: 2px 0 0 20px;
+  opacity: 0.7;
+  white-space: pre;
+  overflow-x: auto;
 }
 
 /* Terminal markers (cancelled/error/round-cap/no-response) sit

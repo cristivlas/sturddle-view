@@ -1126,47 +1126,41 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       // Adaptive is a model capability, not a user choice. When an
       // adaptive-capable model is selected, "On" auto-uses the model's
       // budget and the budget input disappears.
-      function rebuildThinkingModeOptions() {
-        const isAnthropic = aiProvider.value === "anthropic";
-        const adaptive = isAnthropic && isAdaptiveModel();
-        const onLabel = adaptive ? "On (adaptive)" : "On";
-        const options = [["off", "Off"], ["on", onLabel]];
-        const prev = aiThinkingMode.value;
-        aiThinkingMode.replaceChildren();
-        for (const [v, label] of options) {
-          const opt = document.createElement("wa-option");
-          opt.value = v;
-          opt.textContent = label;
-          aiThinkingMode.append(opt);
-        }
-        aiThinkingMode.value = options.find(([v]) => v === prev)?.[0] ?? options[0][0];
+      // Static options -- never replaced, so wa-select never loses its value.
+      for (const [v, label] of [["off", "Off"], ["on", "On"]]) {
+        const opt = document.createElement("wa-option");
+        opt.value = v;
+        opt.textContent = label;
+        aiThinkingMode.append(opt);
       }
-
-      rebuildThinkingModeOptions();
       aiThinkingMode.value = thinkingEnabled ? "on" : "off";
 
       aiThinkingRow.append(aiThinkingMode, aiThinkingBudget);
 
-      const syncBudgetEnabled = () => {
-        rebuildThinkingModeOptions();
+      const syncBudgetVisibility = () => {
         const on = aiThinkingMode.value === "on";
         const isAnthropic = aiProvider.value === "anthropic";
         const adaptive = isAnthropic && isAdaptiveModel();
-        // Budget shows for Anthropic-on-non-adaptive only. Adaptive
-        // models decide their own budget; Ollama has no budget knob.
+        // Budget shows for Anthropic-on-non-adaptive only.
         const showBudget = on && isAnthropic && !adaptive;
         aiThinkingBudget.style.display = showBudget ? "" : "none";
         aiThinkingBudget.disabled = !showBudget;
+        // Update "On" label to reflect adaptive capability.
+        const onOpt = aiThinkingMode.querySelector("wa-option[value='on']");
+        if (onOpt) onOpt.textContent = adaptive ? "On (adaptive)" : "On";
       };
-      syncBudgetEnabled();
+
+      // Called on model/provider change to sync budget visibility + label.
+      const syncThinkingOptions = () => syncBudgetVisibility();
+      syncBudgetVisibility();
 
       aiThinkingMode.addEventListener("change", () => {
         thinkingEnabled = aiThinkingMode.value !== "off";
         putSettings({ [AI_THINKING_ENABLED_KEY]: thinkingEnabled });
-        syncBudgetEnabled();
+        syncBudgetVisibility();
       });
-      aiModelSelect.addEventListener("change", syncBudgetEnabled);
-      aiModelInput.addEventListener("input", syncBudgetEnabled);
+      aiModelSelect.addEventListener("change", syncThinkingOptions);
+      aiModelInput.addEventListener("input", syncThinkingOptions);
       const persistThinkingBudget = debounce(() => {
         const n = Number(aiThinkingBudget.value);
         if (!Number.isFinite(n) || n < AI_THINKING_BUDGET_MIN) return;
@@ -1178,9 +1172,9 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         const isAnthropic = aiProvider.value === "anthropic";
         aiKeyRow.style.display = isAnthropic ? "" : "none";
         aiUrlRow.style.display = isAnthropic ? "none" : "";
-        // Budget visibility is owned by syncBudgetEnabled (provider +
+        // Budget visibility is owned by syncThinkingOptions (provider +
         // mode + adaptive-model interplay).
-        syncBudgetEnabled();
+        syncThinkingOptions();
       }
 
       function showModelInput(reason) {
@@ -1191,7 +1185,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         aiModelSelect.style.display = "none";
         aiModelInput.style.display = "";
         aiModelHintText.textContent = reason || "";
-        syncBudgetEnabled();
+        syncThinkingOptions();
       }
 
       function showModelSelect(models) {
@@ -1209,7 +1203,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         aiModelSelect.style.display = "";
         aiModelInput.style.display = "none";
         aiModelHintText.textContent = "";
-        syncBudgetEnabled();
+        syncThinkingOptions();
       }
 
       // Lazy fetch: requested on dialog open + on provider/key/url

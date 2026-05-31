@@ -23,7 +23,6 @@ import {
   appendAiDelta,
   appendAiThinking,
   appendAiToolCall,
-  appendAiToolCallComplete,
   markAiToolCallFailed,
   noteAiRevision,
   markAiDone,
@@ -1026,8 +1025,6 @@ export const playPerspective = {
         }
         case "ai_tool_call_complete": {
           const p = evt.payload || {};
-          // Debug marker disabled; uncomment to surface per-call checkmarks.
-          // appendAiToolCallComplete({ round: p.round ?? 0, name: p.name });
           if (p.name === ANALYZE_TOOL_NAME) view.restorePosition({ animate: false });
           view.clearArrows();
           view.clearEngineInfo();
