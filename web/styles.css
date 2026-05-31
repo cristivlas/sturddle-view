@@ -460,6 +460,7 @@ wa-select::part(listbox) {
 .play-ai-tool-dot-validate_move  { background: teal; }
 .play-ai-tool-dot-top_moves      { background: var(--wa-color-primary-60, #4a90e2); }
 .play-ai-tool-dot-recommend_move { background: #7c3aed; }
+.play-ai-tool-dot-material       { background: var(--wa-color-pink-60, #ec4899); }
 .play-ai-tool-dot-delegate       { background: var(--wa-color-cyan-60, #0ea5b5); }
 /* Verifier sub-run's tool calls, nested under their "Verifying line"
    row. Full-width break (flex-wrap). A vertical spine runs through the

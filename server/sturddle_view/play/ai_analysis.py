@@ -286,18 +286,36 @@ def _norm_top_moves(input_: dict, board: chess.Board | None) -> tuple | None:
     return ("moves", "raw", raws, depth)
 
 
-def _norm_analyze(input_: dict, board: chess.Board | None) -> tuple | None:
-    # Board(fen).fen() canonicalizes whitespace and drops the move
-    # counters -- intentional: eval is position- not history-dependent
-    # within a turn, so those positions share a cache key.
+def _canonical_fen(input_: dict) -> str | None:
+    # Canonical key for a position. Board(fen).fen() normalizes
+    # whitespace/field spacing; we then drop the trailing halfmove and
+    # fullmove counters so the same board with different clocks shares a
+    # key -- safe because these tools are position- not history-dependent.
+    # 'startpos' isn't expanded here, so it won't dedup.
     fen = input_.get("fen")
     if not isinstance(fen, str) or not fen.strip():
         return None
     try:
-        canonical = chess.Board(fen.strip()).fen()
+        board_fen = chess.Board(fen.strip()).fen()
     except ValueError:
         return None
+    # Keep the first 4 fields (placement, side, castling, en passant);
+    # the last 2 (halfmove clock, fullmove number) don't affect results.
+    return " ".join(board_fen.split(" ")[:4])
+
+
+def _norm_analyze(input_: dict, board: chess.Board | None) -> tuple | None:
+    canonical = _canonical_fen(input_)
+    if canonical is None:
+        return None
     return ("analyze", canonical, input_.get("depth"))
+
+
+def _norm_material(input_: dict, board: chess.Board | None) -> tuple | None:
+    canonical = _canonical_fen(input_)
+    if canonical is None:
+        return None
+    return ("material", canonical)
 
 
 _NORMALIZERS: dict[str, Callable[[dict, chess.Board | None], tuple | None]] = {
@@ -306,6 +324,7 @@ _NORMALIZERS: dict[str, Callable[[dict, chess.Board | None], tuple | None]] = {
     "piece_at": _norm_square_arg,
     "top_moves": _norm_top_moves,
     "analyze": _norm_analyze,
+    "material": _norm_material,
 }
 
 

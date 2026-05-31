@@ -43,11 +43,13 @@ from .play.game_store import GameStore
 from .play.human_vs_engine import HumanVsEngine
 from .play.tools_engine import (
     ANALYZE_TOOL_SPEC,
+    MATERIAL_TOOL_SPEC,
     PIECE_AT_TOOL_SPEC,
     RECOMMEND_MOVE_TOOL_SPEC,
     TOP_MOVES_TOOL_SPEC,
     VALIDATE_MOVE_TOOL_SPEC,
     make_analyze_tool,
+    make_material_tool,
     make_piece_at_tool,
     make_recommend_move_tool,
     make_recommend_verifier,
@@ -383,6 +385,10 @@ def create_app(
     ai_verifier_registry.register(
         VALIDATE_MOVE_TOOL_SPEC,
         make_validate_move_tool(board_provider=_ai_board_provider),
+    )
+    ai_verifier_registry.register(
+        MATERIAL_TOOL_SPEC,
+        make_material_tool(),
     )
     ai_verifier_registry.register(
         TOP_MOVES_TOOL_SPEC,

@@ -159,6 +159,27 @@ async def test_dedup_with_exact_live_inputs():
 
 
 @pytest.mark.asyncio
+async def test_dedup_material_keys_on_canonical_fen():
+    """material dedups on the canonicalized FEN: surrounding whitespace
+    AND the move counters wash out, so the same board with different
+    clocks shares a key; missing or unparseable FENs return None (miss)."""
+    from sturddle_view.play.ai_analysis import _NORMALIZERS
+
+    norm = _NORMALIZERS["material"]
+    fen = "r1bqk2r/pppp1ppp/2n5/8/1b6/2N2N2/PPPP1PPP/R1BQ1RK1 w kq - 0 1"
+    k1 = norm({"fen": fen}, None)
+    # Padded whitespace + different halfmove/fullmove counters: same board.
+    k2 = norm({"fen": "  " + fen.replace("0 1", "9 42") + "  "}, None)
+    assert k1 is not None and k1 == k2, f"{k1!r} != {k2!r}"
+    # A different position must not collide.
+    other = norm({"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"}, None)
+    assert other != k1
+    # Missing / unparseable FEN -> None so the dedup cache skips it.
+    assert norm({"fen": "not-a-fen"}, None) is None
+    assert norm({}, None) is None
+
+
+@pytest.mark.asyncio
 async def test_dedup_survives_intervening_corrective():
     """If a round has both an illegal-move-in-prose AND a tool_use, the
     corrective fires *between* rounds. A subsequent identical tool_use

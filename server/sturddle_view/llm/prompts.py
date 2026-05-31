@@ -104,7 +104,9 @@ existed.
 VERIFIER_ADDENDUM = """\
 You verify one move in the live position for an analyst. Call a tool to \
 check it before stating any verdict -- never conclude from intuition \
-alone. Report only your conclusion about the live position: is the move \
+alone. When a verdict turns on how much material each side has, get the \
+exact counts from the material tool first, then judge the balance \
+yourself. Report only your conclusion about the live position: is the move \
 sound, and the one-line reason. Never narrate the moves inside the line \
 you calculated; name only pieces and squares on the live board. One or \
 two sentences, no audience, no voice.\

@@ -94,6 +94,10 @@ _MOVE_NOTATION_CONSTRAINT = (
     "('...d6' should be 'd6')."
 )
 
+# Shared description for the `fen` arg across every FEN-taking tool spec
+# (analyze, material). One source so the startpos affordance stays in sync.
+_FEN_ARG_DESCRIPTION = "FEN string, or 'startpos' for the initial position."
+
 
 # Wire-shape ToolSpec describing this tool to the model. Lives next to
 # the implementation so prompt text + schema + behavior move together;
@@ -209,7 +213,7 @@ ANALYZE_TOOL_SPEC = ToolSpec(
         "properties": {
             "fen": {
                 "type": "string",
-                "description": "FEN string, or 'startpos' for the initial position.",
+                "description": _FEN_ARG_DESCRIPTION,
             },
             "depth": {
                 "type": "integer",
@@ -224,6 +228,34 @@ ANALYZE_TOOL_SPEC = ToolSpec(
 )
 
 
+# Piece types reported by `material`. Kings are omitted -- always one per
+# side, so they carry no material signal.
+_MATERIAL_PIECE_TYPES = (
+    chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN,
+)
+
+
+MATERIAL_TOOL_SPEC = ToolSpec(
+    name="material",
+    description=(
+        "Ground a material claim with exact piece counts before stating "
+        "it. Returns per-color counts keyed by piece name (pawn, knight, "
+        "bishop, rook, queen); kings are omitted. Pass a FEN. Raw counts "
+        "only -- no values, no engine: you judge the balance yourself."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "fen": {
+                "type": "string",
+                "description": _FEN_ARG_DESCRIPTION,
+            },
+        },
+        "required": ["fen"],
+    },
+)
+
+
 def _parse_fen(raw: str) -> chess.Board:
     """`startpos` is a convenience alias for the standard initial position
     that mirrors the UCI/PGN convention; anything else must be a real
@@ -231,6 +263,19 @@ def _parse_fen(raw: str) -> chess.Board:
     if raw == "startpos":
         return chess.Board()
     return chess.Board(fen=raw)
+
+
+def _parse_fen_arg(input_: dict) -> tuple[chess.Board | None, dict | None]:
+    """Read+parse the `fen` arg for FEN-taking tools (analyze, material).
+    Returns (board, None) on success or (None, error_envelope). Strips
+    surrounding whitespace first so '  startpos  ' parses like 'startpos'."""
+    fen = input_.get("fen")
+    if not isinstance(fen, str) or not fen.strip():
+        return None, {"error": "missing_fen"}
+    try:
+        return _parse_fen(fen.strip()), None
+    except ValueError as exc:
+        return None, {"error": "invalid_fen", "detail": str(exc)}
 
 
 def _depth_limit(input_: dict, default_depth: int) -> tuple[chess.engine.Limit, dict]:
@@ -409,13 +454,9 @@ def make_analyze_tool(
     helper. None is acceptable (tests).
     """
     async def analyze(input_: dict, *, cancel_token: CancelToken) -> dict:
-        fen = input_.get("fen")
-        if not isinstance(fen, str) or not fen:
-            return {"error": "missing_fen"}
-        try:
-            board = _parse_fen(fen)
-        except ValueError as exc:
-            return {"error": "invalid_fen", "detail": str(exc)}
+        board, err = _parse_fen_arg(input_)
+        if err is not None:
+            return err
 
         limit, limits_used = _depth_limit(input_, _DEFAULT_DEPTH)
 
@@ -616,6 +657,26 @@ def make_piece_at_tool(board_provider: BoardProvider) -> AnalyzeTool:
         return out
 
     return piece_at
+
+
+def make_material_tool() -> AnalyzeTool:
+    """Build the `material` async tool. Pure function of the supplied FEN
+    (no live-board fallback, no engine): parses the position and reports
+    per-color piece counts keyed by name. Kings are omitted."""
+    async def material(input_: dict, *, cancel_token: CancelToken) -> dict:
+        board, err = _parse_fen_arg(input_)
+        if err is not None:
+            return err
+
+        def counts(color: chess.Color) -> dict:
+            return {
+                chess.PIECE_NAMES[pt]: len(board.pieces(pt, color))
+                for pt in _MATERIAL_PIECE_TYPES
+            }
+
+        return {"white": counts(chess.WHITE), "black": counts(chess.BLACK)}
+
+    return material
 
 
 def make_validate_move_tool(board_provider: BoardProvider) -> AnalyzeTool:

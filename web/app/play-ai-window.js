@@ -256,6 +256,7 @@ const TOOL_FRIENDLY_LABELS = {
   piece_at:       "Checking piece",
   validate_move:  "Validating move",
   recommend_move: "Picking move",
+  material:       "Counting material",
   delegate:       "Verifying line",
 };
 
