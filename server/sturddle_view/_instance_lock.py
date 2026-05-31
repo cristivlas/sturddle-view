@@ -30,3 +30,13 @@ def acquire(lock_path: Path) -> bool:
         _lock_fh.close()
     _lock_fh = fh  # keep alive
     return True
+
+
+def release() -> None:
+    """Close the held lock handle, if any. Production relies on process
+    exit to release; this is for tests that acquire repeatedly in-process
+    and must not leak the handle."""
+    global _lock_fh
+    if _lock_fh is not None:
+        _lock_fh.close()
+        _lock_fh = None

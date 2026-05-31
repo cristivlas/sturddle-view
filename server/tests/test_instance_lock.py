@@ -9,7 +9,16 @@ from pathlib import Path
 
 import pytest
 
-from sturddle_view._instance_lock import acquire
+from sturddle_view._instance_lock import acquire, release
+
+
+@pytest.fixture(autouse=True)
+def _release_lock_after_test():
+    """acquire() keeps the handle in a module global for the process
+    lifetime; in-process tests must close it or it leaks a ResourceWarning
+    at interpreter shutdown."""
+    yield
+    release()
 
 
 def _acquire_with_retry(path: Path, timeout: float = 5.0) -> bool:
