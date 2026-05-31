@@ -88,6 +88,49 @@ The loop terminates on: clean exit (no tool_use, no hits),
 or user cancel. Every exit emits a terminal `ai_info` event with a
 `done` payload so the UI never hangs.
 
+### Planner + verifier subagents
+
+The narration loop conflates two jobs -- narration (judgment, short prose
+budget, voice rules) and verification (deep search, many tool calls, raw
+eval). Splitting them keeps raw eval out of the narrator's context (a
+structural fix for engine over-trust). Applies to both personas; only the
+base system prompt differs.
+
+**Strict split.** The narrator's registry holds only `recommend_move` +
+`delegate` -- it never searches. All engine tools (`analyze`, `top_moves`,
+`piece_at`, `validate_move`) live in a separate verifier registry.
+
+**Flow per turn:** the narrator names the critical lines and calls
+`delegate(question)` once per line; each spawns a verifier sub-run
+(`AIAnalysisCoordinator._run_verifier`, verifier prompt + registry, no
+`delegate` -- one level deep). The verifier must call a tool before
+concluding (a no-tool verdict draws one nudge), and returns a one/two
+sentence live-position conclusion that lands as the delegate tool_result.
+The narrator synthesizes and calls `recommend_move`.
+
+**Verifier sub-run is silent except tool calls.** Its `analyze`/`top_moves`
+events forward to the UI (nested under the originating "Verifying line" row
+via `parent_tool_use_id`); its prose/thinking are suppressed. Thinking is
+forced off for the verifier (the engine does the reasoning; thinking only
+adds latency x fan-out and risks Ollama `<think>` leaking into the verdict).
+
+**Anti-hallucination.** Two failure modes, two catches: fabricated tokens
+(illegal move, piece not on board) are caught by the round-end validators
+(which run on verifier output too); wrong tactical judgment is caught only
+by forcing the engine call before a verdict. The verifier skips
+*illegal-move* validation (it narrates calculated lines, so a line-internal
+move token is reasoning, not a live-move hallucination) but keeps the
+piece-claim and castle guards, which assert about the live board.
+
+Rejected: structured JSON verdicts (small Ollama models emit malformed
+JSON -> json-repair dependency). Prose + existing validators avoids it.
+
+**Accepted limitation.** With the strict split, the narrator's only engine
+gate on its pick is `recommend_move`'s A/B dominance check; it does not
+separately validate the line behind the move. The dominance check rejects a
+move the engine's best beats by margin -- the guard that matters; deeper
+line-validation is the model's job via `delegate`.
+
 ### Round-end validators
 
 Pure functions over `(text, board)` in
