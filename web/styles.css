@@ -761,9 +761,10 @@ svg.cm-chessboard {
   position: fixed;
   /* Co-located with the ribbon: default is left; right-ribbon override
      below moves it to the right edge. Inset clears the 36px ribbon plus
-     an 8px gutter so toasts don't overlap ribbon buttons.
+     (optionally) some gutter so toasts don't overlap ribbon buttons.
      #xgame-toast-stack lives on the opposite (moves-list) side. */
-  inset: auto auto 4px 44px;
+  /* inset: auto auto 4px 44px; */
+  inset: auto auto 4px 36px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -792,7 +793,8 @@ svg.cm-chessboard {
   background: var(--wa-color-surface-raised, #2a2a2a);
   color: var(--fg);
   border: 1px solid #888;
-  padding: 8px 12px;
+  /* padding: 8px 12px; */
+  padding: 4px 4px;
   font-size: 0.8125rem;
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
