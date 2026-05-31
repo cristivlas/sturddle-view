@@ -361,7 +361,7 @@ def create_app(
     def _ai_settings_provider():
         return app.state.settings
 
-    # Strict narrator/verifier split (docs/ai-planner-subagents-design.md):
+    # Strict narrator/verifier split (docs/ai-analysis-spec.md):
     # the narrator plans + delegates + recommends but never searches; the
     # verifier sub-run owns all engine tools. This keeps raw eval numbers
     # out of the narrator's context (structural fix for engine over-trust)
@@ -428,9 +428,9 @@ def create_app(
                 thinking_enabled=s.ai_thinking_enabled,
             )
         if provider_name == "anthropic":
-            # list_models() is implemented (Settings dropdown); stream()
-            # still raises NotImplementedError, which surfaces as a
-            # done/error event on the bus when an analysis turn fires.
+            # Live SSE provider (stream() POSTs /v1/messages). Raises
+            # RuntimeError if the API key is unset or the API returns
+            # non-200 -- surfaced as a done/error event on the bus.
             return AnthropicProvider(
                 api_key=s.ai_api_key,
                 model=s.ai_model,

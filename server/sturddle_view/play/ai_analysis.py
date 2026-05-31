@@ -847,10 +847,12 @@ class AIAnalysisCoordinator:
                     mode=mode,
                     emit=emit,
                 )
+        # On round-cap the narrator falls back to all-rounds text (consumer
+        # is recommended_uci). The verifier must NOT -- its prose IS the
+        # verdict; cross-round self-talk would poison it. Empty -> no_verdict.
+        final = final_text or ("".join(text_parts) if config.track_recommend else "")
         return _LoopResult(
-            # On round-cap (no natural exit) there's no clean final round;
-            # fall back to all-rounds text so the verdict isn't lost.
-            final_text=final_text or "".join(text_parts),
+            final_text=final,
             recommended_uci=recommended_uci,
             recommended_depth=recommended_depth,
             round_cap_hit=round_cap_hit,
@@ -943,6 +945,13 @@ class AIAnalysisCoordinator:
                 result = await self._run_loop(messages, config)
                 if result.round_cap_hit:
                     done_payload["round_cap"] = True
+                    # final_text is "" on a verifier cap (see _run_loop);
+                    # delegate maps that to no_verdict. Warn so a model that
+                    # never concludes in VERIFIER_MAX_ROUNDS is diagnosable.
+                    log.warning(
+                        "verifier sub-run hit round cap (%d) without a verdict; question=%r",
+                        VERIFIER_MAX_ROUNDS, question,
+                    )
                 return result.final_text
             except Exception as exc:
                 done_payload["error"] = type(exc).__name__

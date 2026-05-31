@@ -301,9 +301,15 @@ def _pv_to_uci(board: chess.Board, pv: list[chess.Move] | None) -> list[str]:
 _MATE_RANK = 10**9
 
 
-def _white_pov_sort_key(score: chess.engine.PovScore | None) -> int:
+def _white_pov_sort_key(score: chess.engine.PovScore | None) -> int | None:
+    """White-POV ranking value, or None when the candidate has no score
+    (search returned none: early cancel, or an info line with only
+    pv/depth). None is handled by the caller (partitioned to the bottom);
+    a numeric sentinel can't work because top_moves sorts
+    reverse=stm_is_white, so any fixed scalar inverts for black and floats
+    a scoreless candidate to the top."""
     if score is None:
-        return -_MATE_RANK - 1
+        return None
     s = score.white()
     mate = s.mate()
     if mate is not None:
@@ -455,22 +461,34 @@ def _strip_move_prefix(raw: str) -> str:
     return _PGN_CONTINUATION_RE.sub("", stripped)
 
 
+def _parse_move_or_error(
+    board: chess.Board, candidate: str,
+) -> tuple[chess.Move | None, str | None, str | None]:
+    """Core UCI-then-SAN parse of an already prefix-stripped move string.
+    Returns (move, None, None) on success, or (None, error_kind, detail).
+    Single source of truth for the parse + exception->envelope mapping
+    shared by top_moves / validate_move / recommend_move (each wraps the
+    kind/detail in its own result shape)."""
+    if not candidate:
+        return None, "invalid_input", "empty move string"
+    for parse in (board.parse_uci, board.parse_san):
+        try:
+            return parse(candidate), None, None
+        except chess.IllegalMoveError as exc:
+            return None, "illegal_move", str(exc)
+        except (chess.InvalidMoveError, chess.AmbiguousMoveError):
+            continue
+    return None, "invalid_move", f"could not parse {candidate!r} as UCI or SAN"
+
+
 def _parse_candidate_move(board: chess.Board, raw: str) -> tuple[chess.Move | None, dict | None]:
     """Try UCI then SAN. Returns (move, None) on success, (None, error_entry)
     on failure. Error entry carries `move_input` so the model can match
     it back to the input list."""
-    candidate = _strip_move_prefix(raw)
-    if not candidate:
-        return None, {"move_input": raw, "error": "invalid_input", "detail": "empty move string"}
-    for parse in (board.parse_uci, board.parse_san):
-        try:
-            return parse(candidate), None
-        except chess.IllegalMoveError as exc:
-            return None, {"move_input": raw, "error": "illegal_move", "detail": str(exc)}
-        except (chess.InvalidMoveError, chess.AmbiguousMoveError):
-            continue
-    return None, {"move_input": raw, "error": "invalid_move",
-                  "detail": f"could not parse {candidate!r} as UCI or SAN"}
+    move, kind, detail = _parse_move_or_error(board, _strip_move_prefix(raw))
+    if move is not None:
+        return move, None
+    return None, {"move_input": raw, "error": kind, "detail": detail}
 
 
 def make_top_moves_tool(
@@ -545,7 +563,12 @@ def make_top_moves_tool(
                 cancelled_any = True
                 break
 
-        entries.sort(key=lambda c: c["_sort_key"], reverse=stm_is_white)
+        # Scoreless candidates (no engine score) sort to the bottom in
+        # both directions; only the scored ones go through the POV sort.
+        scored = [c for c in entries if c["_sort_key"] is not None]
+        scoreless = [c for c in entries if c["_sort_key"] is None]
+        scored.sort(key=lambda c: c["_sort_key"], reverse=stm_is_white)
+        entries = scored + scoreless
         for c in entries:
             c.pop("_sort_key", None)
 
@@ -606,18 +629,10 @@ def make_validate_move_tool(board_provider: BoardProvider) -> AnalyzeTool:
         raw = input_.get("move")
         if not isinstance(raw, str) or not raw.strip():
             return {"error": "invalid_input", "detail": "move must be a non-empty string"}
-        candidate = _strip_move_prefix(raw)
-        if not candidate:
-            return {"error": "invalid_input", "detail": "move must be a non-empty string"}
-        for parse in (board.parse_uci, board.parse_san):
-            try:
-                move = parse(candidate)
-            except chess.IllegalMoveError as exc:
-                return {"error": "illegal_move", "detail": str(exc)}
-            except (chess.InvalidMoveError, chess.AmbiguousMoveError):
-                continue
-            return {"legal": True, "uci": move.uci(), "san": board.san(move)}
-        return {"error": "invalid_move", "detail": f"could not parse {candidate!r} as UCI or SAN"}
+        move, kind, detail = _parse_move_or_error(board, _strip_move_prefix(raw))
+        if move is None:
+            return {"error": kind, "detail": detail}
+        return {"legal": True, "uci": move.uci(), "san": board.san(move)}
 
     return validate_move
 
@@ -712,20 +727,9 @@ def make_recommend_move_tool(
         raw = input_.get("move")
         if not isinstance(raw, str) or not raw.strip():
             return {"error": "invalid_input", "detail": "move must be a non-empty string"}
-        candidate = _strip_move_prefix(raw)
-        if not candidate:
-            return {"error": "invalid_input", "detail": "move must be a non-empty string"}
-        parsed: chess.Move | None = None
-        for parse in (board.parse_uci, board.parse_san):
-            try:
-                parsed = parse(candidate)
-                break
-            except chess.IllegalMoveError as exc:
-                return {"error": "illegal_move", "detail": str(exc)}
-            except (chess.InvalidMoveError, chess.AmbiguousMoveError):
-                continue
+        parsed, kind, detail = _parse_move_or_error(board, _strip_move_prefix(raw))
         if parsed is None:
-            return {"error": "invalid_move", "detail": f"could not parse {candidate!r} as UCI or SAN"}
+            return {"error": kind, "detail": detail}
         san = board.san(parsed)
         uci = parsed.uci()
         scratch = board.copy(stack=False)
@@ -793,6 +797,14 @@ def make_recommend_move_tool(
         # just picked as best.
         if best_move is not None and best_move == parsed:
             return {"ok": True, "post_move_fen": scratch.fen(), **result_common}
+
+        # A move that forces mate for the side to move is a won game; a
+        # faster engine mate doesn't make it a mistake. Accept it (mate
+        # against STM isn't winning, so it falls through to the check below).
+        if cand_score is not None:
+            cand_mate = cand_score.pov(board.turn).mate()
+            if cand_mate is not None and cand_mate > 0:
+                return {"ok": True, "post_move_fen": scratch.fen(), **result_common}
 
         if _better_for_stm(cand_score, best_score, board.turn):
             best_san = result_common.get("engine_best_san") or "a stronger move"

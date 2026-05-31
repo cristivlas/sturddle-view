@@ -227,6 +227,10 @@ async def start_ai_turn(request: Request) -> None:
     game_id = getattr(hve, "game_id", None) if hve else None
     user_message = _build_user_message(hve)
     mode = _prompt_mode_for(hve)
+    # Latest-start-wins: hard-stop any in-flight turn first. run() holds a
+    # single lock for the whole turn, so without this the new turn queues
+    # behind the old one instead of superseding it. Idempotent; no-op if idle.
+    await coord.cancel()
     # Build the provider per turn so settings changes (model, base URL,
     # API key) flow through without a coordinator rebuild. Not in the
     # hot path -- happens once per AI turn.
