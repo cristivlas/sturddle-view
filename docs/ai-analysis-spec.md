@@ -116,8 +116,10 @@ Disabled when no `board_provider` is wired (tests, non-live callers).
 
 ### Tools (v1)
 
-- `analyze(fen, time_ms=None, depth=None)` - engine search; spawns
-  throwaway engine via existing `_spawn_engine()` pattern. SHIPPED.
+- `analyze(fen, depth=None)` - engine search; spawns throwaway engine
+  via existing `_spawn_engine()` pattern. Depth-only (no time limit):
+  a timer firing before the depth completes makes the bestmove
+  non-deterministic on near-equal candidates. SHIPPED.
 - `validate_move(move)` - legality check for UCI or SAN move strings
   against the live position. Tool card asks the model to pre-check
   before naming a move as playable; round-end validators catch
@@ -128,7 +130,7 @@ Disabled when no `board_provider` is wired (tests, non-live callers).
   pre-check before naming a piece on a specific square; round-end
   validators catch false piece claims in prose and drive a
   corrective round. SHIPPED.
-- `top_moves(n=None, time_ms=None, depth=None)` - rank top-N candidate
+- `top_moves(n=None, depth=None)` - rank top-N candidate
   moves in the live position (workaround for engines without native
   MultiPV). Operates on the live board via `board_provider` (no FEN
   input). Uses UCI `searchmoves` (python-chess `root_moves` kwarg).
@@ -421,8 +423,8 @@ Flat layout (the master toggle is described in §Ribbon buttons above):
   - Anthropic: API key
   - Ollama: base URL (no key)
 - Tunables surfaced as they prove necessary (tool call cap, analyze
-  max time_ms / depth, temperature, etc.). No collapsible / Advanced
-  grouping; each lives flat in the panel.
+  max depth, temperature, etc.). No collapsible / Advanced grouping;
+  each lives flat in the panel.
 
 ## Guardrails
 
@@ -432,7 +434,7 @@ Flat layout (the master toggle is described in §Ribbon buttons above):
   applies (rolling session accumulates cost across clicks)
 - View/post-game (path 3): min(per_move, per_game / remaining_plies)
 - Tool call cap per agent turn (env)
-- `analyze` per-call hard caps on time_ms/depth (env)
+- `analyze` per-call hard cap on depth (env)
 - Concurrency: 1 analysis at a time
 - User cancel always available
 - Wall-clock timeout deferred past v1 (testing complexity)

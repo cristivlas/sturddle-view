@@ -272,12 +272,11 @@ def _norm_top_moves(input_: dict, board: chess.Board | None) -> tuple | None:
             break
         ucis.append(move.uci())
     depth = input_.get("depth")
-    time_ms = input_.get("time_ms")
     if all_parseable:
         # Sort: engine sees `searchmoves` as a set, list order is irrelevant.
-        return ("moves", "canonical", tuple(sorted(ucis)), depth, time_ms)
+        return ("moves", "canonical", tuple(sorted(ucis)), depth)
     raws = tuple(sorted(r.strip().lower() for r in raw_moves))
-    return ("moves", "raw", raws, depth, time_ms)
+    return ("moves", "raw", raws, depth)
 
 
 def _norm_analyze(input_: dict, board: chess.Board | None) -> tuple | None:
@@ -291,7 +290,7 @@ def _norm_analyze(input_: dict, board: chess.Board | None) -> tuple | None:
         canonical = chess.Board(fen.strip()).fen()
     except ValueError:
         return None
-    return ("analyze", canonical, input_.get("depth"), input_.get("time_ms"))
+    return ("analyze", canonical, input_.get("depth"))
 
 
 _NORMALIZERS: dict[str, Callable[[dict, chess.Board | None], tuple | None]] = {

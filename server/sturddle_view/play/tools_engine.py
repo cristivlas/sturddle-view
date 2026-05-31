@@ -1,9 +1,10 @@
 """Engine-backed tools for the AI analysis agent.
 
 `analyze` is the first real tool: spawns a throwaway UCI engine,
-configures a search limit (time_ms and/or depth), drains info events
-until the engine signals bestmove (or the cancel token flips), and
-returns a structured eval record.
+configures a depth-only search limit, drains info events until the
+engine signals bestmove (or the cancel token flips), and returns a
+structured eval record. Searches are depth-only by design -- a time
+limit makes the bestmove non-deterministic on near-equal candidates.
 
 Per spec §Architecture: one throwaway engine per analyze call (pool
 later if perf demands). Hard caps live as named consts + SV_ env vars
@@ -32,11 +33,11 @@ from .engine_supervisor import EngineSupervisor
 log = logging.getLogger(__name__)
 
 
-_DEFAULT_MAX_TIME_MS = 5_000
 _DEFAULT_MAX_DEPTH = 25
-# Hard caps -- the agent can request anything, but we clamp to these.
-# The env override is for ops; UI exposure is pending.
-MAX_TIME_MS = env_int("SV_AI_ANALYZE_MAX_TIME_MS", _DEFAULT_MAX_TIME_MS)
+# Hard cap -- the agent can request any depth, but we clamp to this.
+# The env override is for ops; UI exposure is pending. Searches are
+# depth-only (no time limit): a timer firing before the depth completes
+# makes the bestmove non-deterministic.
 MAX_DEPTH = env_int("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_MAX_DEPTH)
 
 # recommend_move dominance margin: rival must beat candidate by strictly
@@ -45,13 +46,10 @@ MAX_DEPTH = env_int("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_MAX_DEPTH)
 _DEFAULT_RECOMMEND_MARGIN_CP = 50
 RECOMMEND_MARGIN_CP = env_int("SV_AI_RECOMMEND_MARGIN", _DEFAULT_RECOMMEND_MARGIN_CP)
 
-# Fallback when caller passes neither time_ms nor depth. Depth-based
-# (not time-based): more consistent quality across positions and engine
-# loads. 20 plies is the floor that gives reliable tactical resolution
-# for coach-style prose; lower values surface noisy bestmoves that
-# embarrass the agent. Server-side enforcement of the floor against
-# model-supplied depth is an open mitigation -- see
-# docs/ai-analysis-progress.md.
+# Default search depth when the caller omits one. 20 plies gives reliable
+# tactical resolution; lower values surface noisy bestmoves. Server-side
+# enforcement of this as a floor against model-supplied depth is an open
+# mitigation -- see docs/ai-analysis-progress.md.
 _DEFAULT_DEPTH = 20
 
 # top_moves: hard cap on the model-supplied candidate list length.
@@ -114,13 +112,9 @@ TOP_MOVES_TOOL_SPEC = ToolSpec(
                     + _MOVE_NOTATION_CONSTRAINT
                 ),
             },
-            "time_ms": {
-                "type": "integer",
-                "description": "Per-candidate search time in milliseconds (clamped to server cap).",
-            },
             "depth": {
                 "type": "integer",
-                "description": "Per-candidate maximum depth (clamped to server cap).",
+                "description": "Per-candidate search depth (clamped to server cap).",
             },
         },
         "required": ["moves"],
@@ -206,13 +200,9 @@ ANALYZE_TOOL_SPEC = ToolSpec(
                 "type": "string",
                 "description": "FEN string, or 'startpos' for the initial position.",
             },
-            "time_ms": {
-                "type": "integer",
-                "description": "Search time in milliseconds (clamped to server cap).",
-            },
             "depth": {
                 "type": "integer",
-                "description": "Maximum depth (clamped to server cap).",
+                "description": "Search depth (clamped to server cap).",
             },
         },
         "required": ["fen"],
@@ -229,27 +219,22 @@ def _parse_fen(raw: str) -> chess.Board:
     return chess.Board(fen=raw)
 
 
-def _clamp_limits(input_: dict) -> tuple[chess.engine.Limit, dict]:
-    """Build a chess.engine.Limit honoring the agent's requested
-    time_ms / depth, clamped to MAX_TIME_MS / MAX_DEPTH. Returns the
-    Limit and a debug dict echoing the effective values (used in the
-    tool output for both observability and test assertions)."""
-    raw_time_ms = input_.get("time_ms")
+def _depth_limit(input_: dict, default_depth: int) -> tuple[chess.engine.Limit, dict]:
+    """Build a depth-only chess.engine.Limit from the agent's requested
+    depth (clamped to MAX_DEPTH), falling back to `default_depth`. Returns
+    the Limit and a dict echoing the effective depth (tool output + test
+    assertions). Time limits are intentionally not supported: a timer that
+    fires before the depth is reached makes the bestmove non-deterministic,
+    which flips the pick on near-equal candidates."""
     raw_depth = input_.get("depth")
-    used: dict = {}
-    kwargs: dict = {}
-    if raw_time_ms is None and raw_depth is None:
-        kwargs["depth"] = _DEFAULT_DEPTH
-        used["depth"] = _DEFAULT_DEPTH
-    if raw_time_ms is not None:
-        t = max(0, min(int(raw_time_ms), MAX_TIME_MS))
-        kwargs["time"] = t / 1000.0
-        used["time_ms"] = t
     if raw_depth is not None:
-        d = max(1, min(int(raw_depth), MAX_DEPTH))
-        kwargs["depth"] = d
-        used["depth"] = d
-    return chess.engine.Limit(**kwargs), used
+        try:
+            depth = max(1, min(int(raw_depth), MAX_DEPTH))
+        except (TypeError, ValueError):
+            depth = default_depth
+    else:
+        depth = default_depth
+    return chess.engine.Limit(depth=depth), {"depth": depth}
 
 
 def _score_to_cp(score: chess.engine.PovScore | None) -> dict:
@@ -412,7 +397,7 @@ def make_analyze_tool(
         except ValueError as exc:
             return {"error": "invalid_fen", "detail": str(exc)}
 
-        limit, limits_used = _clamp_limits(input_)
+        limit, limits_used = _depth_limit(input_, _DEFAULT_DEPTH)
 
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
         await bus.publish(Event(kind="engine_search_start", game_id=game_id, payload={}))
@@ -436,9 +421,6 @@ def make_analyze_tool(
         nodes = last_info.get("nodes")
         if nodes is not None:
             out["nodes"] = nodes
-        time_used = last_info.get("time")
-        if time_used is not None:
-            out["time_ms"] = int(time_used * 1000)
         pv = _pv_to_uci(board, last_info.get("pv"))
         if pv:
             out["pv"] = pv
@@ -446,27 +428,6 @@ def make_analyze_tool(
         return out
 
     return analyze
-
-
-def _clamp_top_moves_limits(input_: dict) -> tuple[chess.engine.Limit, dict]:
-    """Per-candidate limit for top_moves. Shallower depth default than
-    analyze since cost multiplies by N."""
-    raw_time_ms = input_.get("time_ms")
-    raw_depth = input_.get("depth")
-    used: dict = {}
-    kwargs: dict = {}
-    if raw_time_ms is None and raw_depth is None:
-        kwargs["depth"] = _DEFAULT_TOP_MOVES_DEPTH
-        used["depth"] = _DEFAULT_TOP_MOVES_DEPTH
-    if raw_time_ms is not None:
-        t = max(0, min(int(raw_time_ms), MAX_TIME_MS))
-        kwargs["time"] = t / 1000.0
-        used["time_ms"] = t
-    if raw_depth is not None:
-        d = max(1, min(int(raw_depth), MAX_DEPTH))
-        kwargs["depth"] = d
-        used["depth"] = d
-    return chess.engine.Limit(**kwargs), used
 
 
 _PGN_CONTINUATION_RE = re.compile(r"^\s*(?:\d+\s*)?\.{2,3}\s*")
@@ -535,7 +496,7 @@ def make_top_moves_tool(
             else:
                 parsed.append(move)
 
-        limit, limits_used = _clamp_top_moves_limits(input_)
+        limit, limits_used = _depth_limit(input_, _DEFAULT_TOP_MOVES_DEPTH)
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
         await bus.publish(Event(kind="engine_search_start", game_id=game_id, payload={}))
 
