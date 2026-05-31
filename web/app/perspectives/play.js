@@ -668,7 +668,7 @@ export const playPerspective = {
       icon.className = "xgame-toast-icon";
       node.append(icon);
       const text = document.createElement("span");
-      text.className = "xgame-toast-text";
+      text.className = "toast-grow";
       text.append("Forked from ");
       const link = document.createElement("button");
       link.className = "xgame-link";
@@ -721,7 +721,7 @@ export const playPerspective = {
       icon.className = "xgame-toast-icon";
       header.append(icon);
       const text = document.createElement("span");
-      text.className = "xgame-toast-text";
+      text.className = "toast-grow";
       text.textContent = childrenHere.length === 1
         ? "1 variation from this position"
         : `${childrenHere.length} variations from this position`;
@@ -964,6 +964,7 @@ export const playPerspective = {
               errorDetail: p.error_detail || null,
               roundCap: !!p.round_cap,
               noResponse: !!p.no_response,
+              noRecommendation: !!p.no_recommendation,
             });
             if (p.error) {
               toast(p.error_detail || p.error, {
@@ -1162,6 +1163,7 @@ export const playPerspective = {
               const node = document.createElement("span");
               node.className = "toast-sort-msg";
               const msg = document.createElement("span");
+              msg.className = "toast-grow";
               msg.textContent = formatViewGameOver(v);
               node.append(msg, makeToastDismissBtn(() => { dismissGameOverToast?.(); dismissGameOverToast = null; }));
               dismissGameOverToast = toast(node, { variant: "neutral", duration: 6000 });
@@ -1734,13 +1736,12 @@ export const playPerspective = {
     function showAnalysisToast() {
       dismissAnalysisToast?.();
       const msg = document.createElement("span");
-      msg.style.display = "flex";
-      msg.style.alignItems = "center";
-      msg.style.gap = "6px";
-      msg.append("Analysis mode");
-      const pvBtn = makeToastIconBtn("table-list", "Search Lines", onPvTable);
-      pvBtn.style.marginLeft = "auto";
-      msg.append(pvBtn);
+      msg.className = "toast-sort-msg";
+      const label = document.createElement("span");
+      label.className = "toast-grow";
+      label.textContent = "Analysis mode";
+      msg.append(label);
+      msg.append(makeToastIconBtn("table-list", "Search Lines", onPvTable));
       msg.append(makeToastIconBtn("terminal", "UCI log", onUciLog));
       msg.append(makeToastIconBtn("circle-stop", "Stop analysis", onAnalyze));
       dismissAnalysisToast = toast(msg, {
@@ -1882,6 +1883,7 @@ export const playPerspective = {
 
     function showEngineCrashToast() {
       const msg = document.createElement("span");
+      msg.className = "toast-grow";
       msg.textContent = "Engine crashed unexpectedly.";
       const node = document.createElement("span");
       node.className = "toast-sort-msg";

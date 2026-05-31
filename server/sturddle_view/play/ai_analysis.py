@@ -560,6 +560,12 @@ class AIAnalysisCoordinator:
                         # Model exited the loop with zero user-facing
                         # text (reasoning-only models, refusals).
                         done_payload["no_response"] = True
+                    elif has_recommend_move and recommended_uci is None:
+                        # Naturally ended without an accepted move despite
+                        # the repeated nudge -- distinct from a round-cap so
+                        # the UI says "no move chosen", not "raise the cap".
+                        done_payload["no_recommendation"] = True
+                        log.info("AI turn ended with no accepted recommend_move")
                 except asyncio.CancelledError:
                     done_payload["cancelled"] = True
                     raise
@@ -632,9 +638,13 @@ class AIAnalysisCoordinator:
         text_parts: list[str] = []
         recommended_uci: str | None = None
         recommended_depth: int | None = None
-        recommend_move_attempted = False
         any_tool_called = False
         nudge_sent = False
+        # Narrator: re-nudge toward an accepted recommend_move each clean
+        # exit until one lands, but stop once a nudge draws no new attempt.
+        # These two track "progress since the last nudge" for that guard.
+        recommend_attempts = 0
+        attempts_at_last_nudge = -1
         # Flips when prose lands after recommend_move is accepted (the
         # closing conclusion); gates the post-recommend nudge.
         prose_after_recommend = False
@@ -701,14 +711,16 @@ class AIAnalysisCoordinator:
                 and not false_claims
                 and not castle_violations
             ):
-                # Natural exit. One-shot completeness nudge: narrator ->
-                # submit recommend_move; verifier -> call a tool before
-                # concluding. Gives the model exactly one more round.
+                # Natural exit. Completeness nudge: narrator re-nudges each
+                # clean exit until a move is accepted (stopping on a stall);
+                # verifier nudges once to call a tool before concluding.
                 if self._needs_nudge(
-                    config, nudge_sent, recommend_move_attempted, any_tool_called
+                    config, nudge_sent, recommended_uci, any_tool_called,
+                    recommend_attempts, attempts_at_last_nudge,
                 ):
                     log.info("completeness nudge (%s): injecting corrective", mode)
                     nudge_sent = True
+                    attempts_at_last_nudge = recommend_attempts
                     _inject_nudge(messages, round_chunks, config.completeness_nudge)
                     continue
                 # Prose in a post-acceptance round is the conclusion we
@@ -800,7 +812,7 @@ class AIAnalysisCoordinator:
                 # Safe to read from a cached recommend_move result: the
                 # cached uci is identical to a fresh dispatch's.
                 if config.track_recommend and pending_tool.tool_name == "recommend_move":
-                    recommend_move_attempted = True
+                    recommend_attempts += 1
                     if (
                         isinstance(tool_output, dict)
                         and tool_output.get("ok")
@@ -863,17 +875,27 @@ class AIAnalysisCoordinator:
     def _needs_nudge(
         config: _LoopConfig,
         nudge_sent: bool,
-        recommend_move_attempted: bool,
+        recommended_uci: str | None,
         any_tool_called: bool,
+        recommend_attempts: int,
+        attempts_at_last_nudge: int,
     ) -> bool:
-        """One-shot completeness nudge decision. Narrator nudges when it
-        tracked recommend_move but the model never submitted one; verifier
-        nudges when it concluded without ever calling a tool."""
-        if config.completeness_nudge is None or nudge_sent:
+        """Completeness nudge decision. Narrator re-nudges toward an
+        accepted recommend_move on every clean exit until one lands,
+        stopping only when a prior nudge drew no new attempt (the model is
+        ignoring it -- round_cap is the remaining backstop). Verifier nudge
+        stays one-shot: call a tool before concluding."""
+        if config.completeness_nudge is None:
             return False
         if config.track_recommend:
-            return not recommend_move_attempted
-        return not any_tool_called
+            if recommended_uci is not None:
+                return False
+            # First nudge always allowed; re-nudge only if the last one
+            # produced a fresh attempt (else we'd loop on a stuck model).
+            if not nudge_sent:
+                return True
+            return recommend_attempts > attempts_at_last_nudge
+        return not nudge_sent and not any_tool_called
 
     def delegate_runner(self) -> VerifierRunner:
         """The verifier sub-run callable to hand `make_delegate_tool`.

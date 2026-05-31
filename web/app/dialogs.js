@@ -500,6 +500,9 @@ export function buildToastActionButton(action) {
   btn.type = "button";
   btn.className = "toast-action-btn";
   if (action.icon) {
+    // Icon variant gets the square icon-button sizing; text variant
+    // keeps toast-action-btn's padding so the label fits.
+    btn.classList.add("toast-icon-btn");
     const ic = document.createElement("wa-icon");
     ic.setAttribute("name", action.icon);
     btn.appendChild(ic);
@@ -515,7 +518,7 @@ export function buildToastActionButton(action) {
   return btn;
 }
 
-/** Build a circular xmark dismiss button for use inside a toast. */
+/** Build an xmark dismiss button for use inside a toast. */
 export function makeToastDismissBtn(onClick) {
   const btn = document.createElement("button");
   btn.className = "xgame-toast-x";

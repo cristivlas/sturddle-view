@@ -525,11 +525,13 @@ export function markAiDone({
   errorDetail = null,
   roundCap = false,
   noResponse = false,
+  noRecommendation = false,
 } = {}) {
-  // Terminal: switch the header text + drop the spinner. Markers
-  // (error > roundCap > noResponse > cancelled if any apply) land in
-  // the dedicated terminal slot below the last round panel.
-  const naturalCompletion = !error && !roundCap && !noResponse && !cancelled;
+  // Terminal: switch the header text + drop the spinner. Markers (error >
+  // roundCap > noResponse > noRecommendation > cancelled if any apply)
+  // land in the dedicated terminal slot below the last round panel.
+  const naturalCompletion =
+    !error && !roundCap && !noResponse && !noRecommendation && !cancelled;
   setAiStatus(naturalCompletion ? "done" : "idle");
   if (!inst.body) return;
   const slot = inst.body._terminal;
@@ -582,6 +584,13 @@ export function markAiDone({
       const note = document.createElement("div");
       note.className = "play-ai-roundcap";
       note.textContent = "Model produced no answer. Try a different model -- some stream only chain-of-thought.";
+      slot.append(note);
+      return;
+    }
+    if (noRecommendation) {
+      const note = document.createElement("div");
+      note.className = "play-ai-roundcap";
+      note.textContent = "No move chosen -- the analysis finished without committing to one.";
       slot.append(note);
       return;
     }

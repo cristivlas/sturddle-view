@@ -654,8 +654,13 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.22);
 }
+/* Shared chrome for every toast button: bordered, square, light fill.
+   .toast-action-btn is the only text-bearing variant (keeps padding);
+   the rest are icon-only and get fixed square sizing just below. */
 .toast-icon-btn,
-.toast-action-btn {
+.toast-action-btn,
+.xgame-toast-arrow,
+.xgame-toast-x {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -663,12 +668,16 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 4px;
   padding: 2px 6px;
+  font-size: 0.75rem;
   color: inherit;
   cursor: pointer;
   pointer-events: auto;
+  flex-shrink: 0;
 }
 .toast-icon-btn:hover,
-.toast-action-btn:hover {
+.toast-action-btn:hover,
+.xgame-toast-arrow:hover,
+.xgame-toast-x:hover {
   background: rgba(255, 255, 255, 0.18);
   border-color: rgba(255, 255, 255, 0.4);
 }
@@ -683,23 +692,41 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.22);
 }
+/* Icon-only toast buttons: uniform square. Text .toast-action-btn is
+   excluded so its label keeps the padded sizing above. */
+.toast-icon-btn,
+.xgame-toast-arrow,
+.xgame-toast-x {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+}
+.toast-icon-btn wa-icon,
+.xgame-toast-arrow wa-icon,
+.xgame-toast-x wa-icon {
+  font-size: 0.8rem;
+}
 .toast-sort-msg {
   display: flex;
   align-items: center;
   gap: 8px;
 }
+/* Eats the flex-row slack so a trailing dismiss/action button lands at
+   the toast's right edge. Shared by every toast that pairs a message
+   with right-aligned controls. */
+.toast-grow { flex: 1; min-width: 0; }
 
 .toast-ws-toggle {
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   flex-shrink: 0;
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
   -webkit-mask-position: center;
   mask-position: center;
-  -webkit-mask-size: 14px;
-  mask-size: 14px;
+  -webkit-mask-size: 12px;
+  mask-size: 12px;
   background-color: rgba(255,255,255,0.85);
   color: transparent;
 }
@@ -784,7 +811,7 @@ svg.cm-chessboard {
   max-height: none;
   color: inherit;
 }
-#xgame-toast-stack { inset: auto 44px 4px auto; }
+#xgame-toast-stack { inset: auto 36px 4px auto; }
 #toast-stack:popover-open,
 #xgame-toast-stack:popover-open {
   display: flex;
@@ -1628,7 +1655,6 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 }
 .xgame-toast.xgame-toast-collapsible { flex-direction: column; align-items: stretch; }
 .xgame-toast-icon { color: var(--muted); flex-shrink: 0; }
-.xgame-toast-text { flex: 1; min-width: 0; }
 .xgame-toast-header {
   display: flex;
   align-items: center;
@@ -1658,25 +1684,13 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   text-decoration: underline;
 }
 .xgame-toast .xgame-link:hover { color: var(--accent); filter: brightness(1.15); }
+/* Chrome, square sizing, and icon size come from the shared toast-button
+   rules near .toast-icon-btn; arrow/X keep a muted resting color that
+   brightens on hover. */
 .xgame-toast-arrow,
-.xgame-toast-x {
-  background: none;
-  border: 1px solid var(--wa-color-border-loud, #353841);
-  border-radius: 50%;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  cursor: pointer;
-  color: var(--muted);
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
+.xgame-toast-x { color: var(--muted); }
 .xgame-toast-arrow:hover,
 .xgame-toast-x:hover { color: var(--fg); }
-.xgame-toast-arrow wa-icon,
-.xgame-toast-x wa-icon { font-size: 0.7rem; }
 
 #engines-perspective {
   display: flex;
@@ -3245,10 +3259,10 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    docks the ribbon horizontally and is unaffected.
    ------------------------------------------------------------------ */
 body[data-ribbon-side="right"] #toast-stack {
-  inset: auto 44px 4px auto;
+  inset: auto 36px 4px auto;
 }
 body[data-ribbon-side="right"] #xgame-toast-stack {
-  inset: auto auto 4px 44px;
+  inset: auto auto 4px 36px;
 }
 @media (max-width: 640px) {
   /* Ribbon is horizontal at top on mobile, so toasts don't need a side

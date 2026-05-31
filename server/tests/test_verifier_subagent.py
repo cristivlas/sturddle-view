@@ -408,6 +408,92 @@ async def test_no_post_recommend_nudge_when_conclusion_same_round():
 
 
 @pytest.mark.asyncio
+async def test_rejected_recommend_is_renudged_until_accepted():
+    # First attempt rejected; the completeness nudge re-fires (not one-shot)
+    # and the model's second, accepted attempt resolves the turn.
+    calls = {"n": 0}
+
+    async def recommend(_input, *, cancel_token):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"error": "recommendation_rejected", "reason": "Engine prefers Nf3."}
+        return {"ok": True, "uci": "g1f3"}
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
+        recommend,
+    )
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(                                    # r0: attempt -> rejected
+            kind="tool_use", tool_use_id="r1",
+            tool_name="recommend_move", tool_input={"move": "e4"},
+        )],
+        [ProviderChunk(                                    # r1 (nudged): second attempt
+            kind="tool_use", tool_use_id="r2",
+            tool_name="recommend_move", tool_input={"move": "Nf3"},
+        )],
+        [ProviderChunk(kind="text", text="Developing toward the center.")],  # r2: conclusion
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg, board_provider=(lambda: None),
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    # The rejected r0 still drew a nudge (old behavior suppressed it), so the
+    # model got r1 to resubmit; the accepted move ends cleanly, no
+    # no_recommendation marker.
+    assert calls["n"] == 2
+    done = events[-1]
+    assert not done.payload.get("no_recommendation")
+    assert not done.payload.get("round_cap")
+
+
+@pytest.mark.asyncio
+async def test_stalled_recommend_stops_nudging_and_flags_no_recommendation():
+    # Attempt rejected, then the model stalls (prose, no new attempt). The
+    # nudge does not loop forever: one re-nudge, then it gives up and the
+    # turn ends flagged no_recommendation (distinct from round_cap).
+    async def recommend(_input, *, cancel_token):
+        return {"error": "recommendation_rejected", "reason": "Engine prefers Nf3."}
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
+        recommend,
+    )
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(                                    # r0: attempt -> rejected
+            kind="tool_use", tool_use_id="r1",
+            tool_name="recommend_move", tool_input={"move": "e4"},
+        )],
+        [ProviderChunk(kind="text", text="I will not commit.")],  # r1: clean exit -> nudge #1
+        [ProviderChunk(kind="text", text="Still nothing.")],      # r2: clean exit, no new attempt
+        [ProviderChunk(kind="text", text="Should never run.")],   # r3: guard vs over-looping
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg, board_provider=(lambda: None),
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    # r0 attempt (rejected) -> r1 clean exit draws nudge #1 -> r2 clean exit
+    # with no new attempt trips the stall guard -> stop. Exactly 3 rounds;
+    # the 4th scripted round is never pulled (no infinite re-nudge).
+    assert len(provider.calls) == 3
+    done = events[-1]
+    assert done.payload.get("no_recommendation") is True
+    assert not done.payload.get("round_cap")
+
+
+@pytest.mark.asyncio
 async def test_verifier_concluding_without_tool_gets_one_nudge():
     # The verifier must check before concluding. A verdict-from-intuition
     # (no tool call) draws exactly one tool nudge, then it complies.
