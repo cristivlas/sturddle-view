@@ -106,9 +106,6 @@ function buildBody() {
   //   hasProse, revision}. Built lazily on first event per round.
   root._roundPanels = new Map();
   root._currentRound = null;
-  // Pending revision banner data keyed by the round it applies to.
-  // The ai_corrective event arrives before that round's first chunk.
-  root._pendingRevision = new Map();
   // tool_use_id -> tool-call line DOM node, so a failure event can
   // mark the exact row by id (not by tool name or position).
   root._toolCallNodes = new Map();
@@ -212,16 +209,6 @@ function ensureRoundPanel(root, roundIndex) {
       writeThinkingOpen(entry.thinking.details.open);
     }
   });
-  // Pending revision banner for this round?
-  const rev = root._pendingRevision.get(roundIndex);
-  if (rev) {
-    renderRevision(entry.revision, rev);
-    root._pendingRevision.delete(roundIndex);
-    if (roundIndex > 0) {
-      const prev = root._roundPanels.get(roundIndex - 1);
-      if (prev) _moveProseIntoRevision(prev, entry);
-    }
-  }
   root._rounds.append(entry.panel);
   root._roundPanels.set(roundIndex, entry);
   root._currentRound = roundIndex;
@@ -270,15 +257,14 @@ function friendlyToolLabel(name) {
   return TOOL_FRIENDLY_LABELS[name] || name;
 }
 
-// Move the previous round's prose into the current round's revision
-// banner body so clicking the banner reveals the redacted text inline.
-// Idempotent -- skips when the prose has already been moved out of
-// the prior round's panel.
-function _moveProseIntoRevision(prevEntry, currentEntry) {
-  const para = prevEntry.para;
+// Tuck a round's overruled prose into its own revision banner body so
+// clicking the banner reveals the redacted text inline. Idempotent --
+// skips when the prose is already inside the banner.
+function _moveProseIntoRevision(entry) {
+  const para = entry.para;
   if (!para || !para.isConnected) return;
-  if (para.parentNode === currentEntry.revision.body) return;
-  currentEntry.revision.body.append(para);
+  if (para.parentNode === entry.revision.body) return;
+  entry.revision.body.append(para);
 }
 
 
@@ -370,7 +356,6 @@ export function resetAi() {
   inst.body._rounds.textContent = "";
   inst.body._terminal.textContent = "";
   inst.body._roundPanels.clear();
-  inst.body._pendingRevision.clear();
   inst.body._toolCallNodes.clear();
   inst.body._currentRound = null;
   setAiStatus("waiting");
@@ -447,29 +432,15 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
 
 export function noteAiRevision({ round, illegalMoves, falseClaims, castleViolations }) {
   if (!inst.body) return;
-  // Mark the previous round as invalidated so its prose styles as
-  // overruled. The prose itself is moved into the new round's revision
-  // banner body once that panel exists -- ensureRoundPanel handles the
-  // move when ordering goes pending -> create -> render.
-  if (round > 0) {
-    const prev = inst.body._roundPanels.get(round - 1);
-    if (prev) prev.panel.classList.add("play-ai-round-invalidated");
-  }
-  // The ai_corrective event arrives before the round's first chunk.
-  // Stash so ensureRoundPanel renders the banner when the panel is
-  // created. If the panel already exists (rare; chunk ordering
-  // surprise), render and move immediately.
-  const payload = { illegalMoves, falseClaims, castleViolations };
-  const existing = inst.body._roundPanels.get(round);
-  if (existing) {
-    renderRevision(existing.revision, payload);
-    if (round > 0) {
-      const prev = inst.body._roundPanels.get(round - 1);
-      if (prev) _moveProseIntoRevision(prev, existing);
-    }
-  } else {
-    inst.body._pendingRevision.set(round, payload);
-  }
+  // The correction at `round` overrules `round - 1`. Host the revision
+  // banner on the overruled round's OWN panel and tuck its prose into
+  // that banner -- so it always shows, even when `round` never renders
+  // a panel of its own (turn ends/caps right after the correction).
+  if (round <= 0) return;
+  const prev = inst.body._roundPanels.get(round - 1);
+  if (!prev) return;
+  renderRevision(prev.revision, { illegalMoves, falseClaims, castleViolations });
+  _moveProseIntoRevision(prev);
 }
 
 export function setAiStatus(state) {
@@ -535,7 +506,11 @@ export function markAiDone({
     const multiRound = inst.body._roundPanels.size > 1;
     if (multiRound && naturalCompletion) {
       const last = inst.body._roundPanels.get(inst.body._currentRound);
-      if (last) last.para.classList.add("play-ai-prose-final");
+      // Skip when the last round's prose was overruled and tucked into
+      // its (collapsed) Revision banner -- the border would land on
+      // text the user can't see.
+      const overruled = last && last.para.parentNode === last.revision.body;
+      if (last && !overruled) last.para.classList.add("play-ai-prose-final");
     }
     if (error) {
       const block = document.createElement("div");

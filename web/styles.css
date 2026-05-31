@@ -335,11 +335,10 @@ wa-select::part(listbox) {
   opacity: 0.18;
   pointer-events: none;
 }
-/* A round whose prose was invalidated by the next round's Revision
-   banner: muted + strikethrough on the prose so the user sees what
-   the model wrote without believing it. Tool calls and thinking
-   stay legible -- they aren't the wrong claim, the prose is. */
-.play-ai-round-invalidated .play-ai-prose,
+/* Overruled prose, tucked inside its round's Revision banner: muted +
+   strikethrough so the user sees what the model wrote without believing
+   it. Tool calls and thinking stay legible -- the prose is the wrong
+   claim, not them. */
 .play-ai-revision-body > .play-ai-prose {
   /* Mute the text via color, not opacity, so the background stays
      opaque and continues to cover the rounds-container vertical rule. */
