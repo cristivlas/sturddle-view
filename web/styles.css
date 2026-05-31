@@ -3235,9 +3235,12 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    The PV cell scrolls horizontally so full variations are readable. */
 .wb-pvtable { position: relative; }
 .sturddle-wb-pvtable .wb-body { overflow-x: auto; }
-.wb-pvtable-tbl { table-layout: fixed; font-size: 0.75rem; }
+/* border-spacing:0 (not collapse) so the sticky thead keeps its
+   border-bottom -- collapsed borders detach from a sticky header. */
+.wb-pvtable-tbl { table-layout: fixed; font-size: 0.75rem; border-collapse: separate; border-spacing: 0; }
 .wb-pvtable-tbl thead th {
-  position: relative; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; user-select: none;
+  position: sticky; top: 0; z-index: 1; background: var(--panel);
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; user-select: none;
 }
 .wb-pvtable-tbl thead th:hover {
   background: #252830;
@@ -3249,14 +3252,14 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-pvtable-tbl thead th:last-child:hover {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841);
 }
-.wb-pvtable-tbl td { overflow: hidden; text-overflow: ellipsis; text-align: right; border-right: 1px solid rgba(255, 255, 255, 0.10); }
+.wb-pvtable-tbl td { overflow: hidden; text-overflow: ellipsis; text-align: right; border-right: 1px solid var(--border-subtle); }
 .wb-pvtable-tbl td:last-child { border-right: none; }
 .wb-pvtable-tbl th { text-align: center; }
 .wb-pvtable-tbl td.wb-pvtable-pv,
 .wb-pvtable-tbl th:last-child { text-align: left; }
 .wb-pvtable-tbl td.wb-pvtable-pv { overflow: visible; text-overflow: clip; }
 .winbox.sturddle-wb-pvtable .wb-body,
-.dock-slot-body:has(> .wb-pvtable) { padding-left: 0; padding-right: 0; }
+.dock-slot-body:has(> .wb-pvtable) { padding: 0; }
 .wb-pvtable-col-pv { min-width: 200px; }
 .wb-pvtable-pv { white-space: nowrap; }
 
