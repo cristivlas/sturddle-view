@@ -291,6 +291,8 @@ wa-select::part(listbox) {
   display: block;
   margin: 0 0 12px;
   padding-top: 6px;
+  /* DEBUG */
+  /* border: 1px solid red; */
 }
 /* Tool-only rounds: prose was never emitted (already hidden via
    .play-ai-prose:empty). Trim the round's own vertical padding +
@@ -316,6 +318,13 @@ wa-select::part(listbox) {
    continuous across rounds without per-panel gaps. */
 .play-ai-timeline {
   margin: 0 12px;
+  /* DEBUG */
+  /* border: 2px solid blue; */
+}
+/* Collapse an empty timeline (no thinking shown, no tool rows) so a
+   prose-only round doesn't carry the timeline's blank vertical space. */
+.play-ai-timeline:has(.play-ai-thinking[hidden]):has(.play-ai-tools:empty) {
+  display: none;
 }
 /* Continuous muted rule passing through the dot column for all rounds.
    Lives on the rounds-container so gaps between round panels don't
@@ -422,6 +431,8 @@ wa-select::part(listbox) {
   font-size: 0.85em;
   opacity: 0.85;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* DEBUG */
+  /* border: 1px solid olivedrab; */
 }
 .play-ai-tool-dot {
   width: 8px;
