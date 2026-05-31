@@ -1744,12 +1744,14 @@ export const playPerspective = {
       const msg = document.createElement("span");
       msg.className = "toast-sort-msg";
       const label = document.createElement("span");
-      label.className = "toast-grow";
+      label.className = "toast-grow is-active";
       label.textContent = "Analysis mode";
       msg.append(label);
       msg.append(makeToastIconBtn("table-list", "Search Lines", onPvTable));
       msg.append(makeToastIconBtn("terminal", "UCI log", onUciLog));
-      msg.append(makeToastIconBtn("circle-stop", "Stop analysis", onAnalyze));
+      const stopBtn = makeToastIconBtn("circle-stop", "Stop analysis", onAnalyze);
+      stopBtn.classList.add("is-active");
+      msg.append(stopBtn);
       dismissAnalysisToast = toast(msg, {
         variant: "neutral",
         duration: 0,
