@@ -136,6 +136,9 @@ const ANALYZE_LABEL_STOP = "Stop analysis";
 const ANALYZE_LABEL_START = "Analysis mode";
 const ANALYZE_ICON_STOP = "circle-stop";
 const ANALYZE_ICON_START = "magnifying-glass";
+// Body class set while analysis is on; CSS greys + inert-ifies x-game
+// nav links so the user can't jump games mid-analysis.
+const XGAME_LOCK_CLASS = "xgame-nav-locked";
 
 function setDisabled(btn, disabled) {
   if (disabled) btn.setAttribute("disabled", "");
@@ -580,6 +583,7 @@ export const playPerspective = {
       // Server flipped out of ANALYSIS -- clear the AI-finished latch
       // so the ribbon can re-enable when the game is paused again.
       if (!analyzing) aiTurnFinished = false;
+      document.body.classList.toggle(XGAME_LOCK_CLASS, analyzing);
     }
     // View mode state (set from board_update.view payload).
     let viewing = false;
@@ -677,6 +681,7 @@ export const playPerspective = {
         ? formatGameLabel(xgame.parentSummary)
         : "parent game";
       link.addEventListener("click", () => {
+        if (analyzing) return;
         if (xgame.parentGameId) {
           openXgameTarget(xgame.parentGameId, { landAtPly: xgame.forkPly });
         }
@@ -708,6 +713,7 @@ export const playPerspective = {
         item.type = "button";
         item.textContent = formatGameLabel(c.summary);
         item.addEventListener("click", () => {
+          if (analyzing) return;
           openXgameTarget(c.game_id, { landAtPly: c.fork_ply });
         });
         list.append(item);
@@ -1943,6 +1949,9 @@ export const playPerspective = {
         // dismiss flags are NOT set -- if the user returns to the
         // play perspective at the same fork ply, the toast re-fires.
         closeXgameToasts();
+        // Lock class lives on <body>; clear it so it can't outlive the
+        // perspective if we unmount mid-analysis.
+        document.body.classList.remove(XGAME_LOCK_CLASS);
         window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
         window.removeEventListener("sturddle:layout-changed", onLayoutChanged);
         window.removeEventListener("sturddle:engines-changed", onEnginesChanged);

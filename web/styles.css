@@ -1684,6 +1684,14 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   text-decoration: underline;
 }
 .xgame-toast .xgame-link:hover { color: var(--accent); filter: brightness(1.15); }
+/* Analysis on: x-game nav links are greyed and inert (no jumping games
+   mid-analysis). The expand arrow stays live so labels remain browsable. */
+body.xgame-nav-locked .xgame-toast .xgame-link {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: not-allowed;
+  text-decoration: none;
+}
 /* Chrome, square sizing, and icon size come from the shared toast-button
    rules near .toast-icon-btn; arrow/X keep a muted resting color that
    brightens on hover. */
