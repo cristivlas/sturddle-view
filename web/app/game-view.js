@@ -736,7 +736,8 @@ export function mountGameView(container, opts = {}) {
           let clickHandler = null;
           if (evt.payload.view && !editing) {
             currentIdx = (evt.payload.view.cursor ?? 0) - 1;
-            clickHandler = onMoveJump;
+            // No ply-jump (and no clickable cursor) while analyzing.
+            if (!analyzing) clickHandler = onMoveJump;
           }
           // Fork glyphs only in view mode; snapshot at render time.
           const forkInfo = (evt.payload.view && !editing && forkInfoFn)

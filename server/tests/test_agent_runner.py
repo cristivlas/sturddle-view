@@ -319,7 +319,7 @@ async def test_provider_error_publishes_done_with_error_kind_and_detail():
     user has to dig through the transcript file to learn what went
     wrong (e.g. "model does not support tools")."""
     class _BoomProvider(ScriptedProvider):
-        async def stream(self, system, messages, tools=None, *, transcript=None, round_index=0):
+        async def stream(self, system, messages, tools=None, *, transcript=None, round_index=0, thinking=None):
             raise RuntimeError("ollama API error 400: model does not support tools")
             yield  # pragma: no cover - marks this as an async generator
 
@@ -427,7 +427,7 @@ async def test_error_detail_truncated_to_cap():
     long_msg = "x" * (ERROR_DETAIL_MAX_LEN * 3)
 
     class _BigBoom(ScriptedProvider):
-        async def stream(self, system, messages, tools=None, *, transcript=None, round_index=0):
+        async def stream(self, system, messages, tools=None, *, transcript=None, round_index=0, thinking=None):
             raise RuntimeError(long_msg)
             yield  # pragma: no cover
 

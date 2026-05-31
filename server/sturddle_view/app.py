@@ -33,7 +33,11 @@ from .llm.anthropic import AnthropicProvider
 from .llm import ollama as ollama_mod
 from .llm.ollama import OllamaProvider
 from .openings import OpeningBook
-from .play.ai_analysis import AIAnalysisCoordinator
+from .play.ai_analysis import (
+    AIAnalysisCoordinator,
+    DELEGATE_TOOL_SPEC,
+    make_delegate_tool,
+)
 from .play.engine_supervisor import EngineSupervisor
 from .play.game_store import GameStore
 from .play.human_vs_engine import HumanVsEngine
@@ -354,11 +358,16 @@ def create_app(
         hve = getattr(app.state, "hve", None)
         return getattr(hve, "_board", None) if hve else None
 
-    ai_registry = ToolRegistry()
     def _ai_settings_provider():
         return app.state.settings
 
-    ai_registry.register(
+    # Strict narrator/verifier split (docs/ai-analysis-spec.md):
+    # the narrator plans + delegates + recommends but never searches; the
+    # verifier sub-run owns all engine tools. This keeps raw eval numbers
+    # out of the narrator's context (structural fix for engine over-trust)
+    # and the verifier's searches off the UI.
+    ai_verifier_registry = ToolRegistry()
+    ai_verifier_registry.register(
         ANALYZE_TOOL_SPEC,
         make_analyze_tool(
             _ai_engine_launcher,
@@ -367,15 +376,15 @@ def create_app(
             settings_provider=_ai_settings_provider,
         ),
     )
-    ai_registry.register(
+    ai_verifier_registry.register(
         PIECE_AT_TOOL_SPEC,
         make_piece_at_tool(board_provider=_ai_board_provider),
     )
-    ai_registry.register(
+    ai_verifier_registry.register(
         VALIDATE_MOVE_TOOL_SPEC,
         make_validate_move_tool(board_provider=_ai_board_provider),
     )
-    ai_registry.register(
+    ai_verifier_registry.register(
         TOP_MOVES_TOOL_SPEC,
         make_top_moves_tool(
             _ai_engine_launcher,
@@ -385,6 +394,10 @@ def create_app(
             settings_provider=_ai_settings_provider,
         ),
     )
+
+    # Narrator registry: recommend_move now; delegate registered below,
+    # once the coordinator exists (it owns the verifier sub-run).
+    ai_registry = ToolRegistry()
     ai_registry.register(
         RECOMMEND_MOVE_TOOL_SPEC,
         make_recommend_move_tool(
@@ -396,6 +409,7 @@ def create_app(
         ),
     )
     app.state.ai_tool_registry = ai_registry
+    app.state.ai_verifier_registry = ai_verifier_registry
 
     # SV_AI_DEBUG=1: flip the AI loggers to DEBUG so the system prompt,
     # user message, text deltas, and tool calls are visible. Off by
@@ -414,9 +428,9 @@ def create_app(
                 thinking_enabled=s.ai_thinking_enabled,
             )
         if provider_name == "anthropic":
-            # list_models() is implemented (Settings dropdown); stream()
-            # still raises NotImplementedError, which surfaces as a
-            # done/error event on the bus when an analysis turn fires.
+            # Live SSE provider (stream() POSTs /v1/messages). Raises
+            # RuntimeError if the API key is unset or the API returns
+            # non-200 -- surfaced as a done/error event on the bus.
             return AnthropicProvider(
                 api_key=s.ai_api_key,
                 model=s.ai_model,
@@ -440,6 +454,13 @@ def create_app(
         app.state.event_bus, CannedProvider(), registry=ai_registry,
         board_provider=_ai_board_provider,
         recommend_verifier=_ai_recommend_verifier,
+        verifier_registry=ai_verifier_registry,
+    )
+    # Register `delegate` last: it dispatches to the coordinator's verifier
+    # sub-run, so the coordinator must exist first.
+    ai_registry.register(
+        DELEGATE_TOOL_SPEC,
+        make_delegate_tool(app.state.ai_coordinator.delegate_runner()),
     )
 
     # Tournament subsystem: store + runner + orchestrator. Wired even

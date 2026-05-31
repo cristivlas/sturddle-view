@@ -56,7 +56,7 @@ async def test_cancel_during_stream_emits_cancelled_done():
     # A custom provider that yields one chunk and then suspends forever,
     # so the cancel path is exercised deterministically without any timer.
     class _Hanging(CannedProvider):
-        async def stream(self, system, messages, tools=None, *, transcript=None, round_index=0):
+        async def stream(self, system, messages, tools=None, *, transcript=None, round_index=0, thinking=None):
             yield_chunk = next(iter(SKELETON_CHUNKS))
             yield ProviderChunk(kind="text", text=yield_chunk)
             # Wait on a future that never resolves; cancellation will

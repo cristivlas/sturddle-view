@@ -88,6 +88,49 @@ The loop terminates on: clean exit (no tool_use, no hits),
 or user cancel. Every exit emits a terminal `ai_info` event with a
 `done` payload so the UI never hangs.
 
+### Planner + verifier subagents
+
+The narration loop conflates two jobs -- narration (judgment, short prose
+budget, voice rules) and verification (deep search, many tool calls, raw
+eval). Splitting them keeps raw eval out of the narrator's context (a
+structural fix for engine over-trust). Applies to both personas; only the
+base system prompt differs.
+
+**Strict split.** The narrator's registry holds only `recommend_move` +
+`delegate` -- it never searches. All engine tools (`analyze`, `top_moves`,
+`piece_at`, `validate_move`) live in a separate verifier registry.
+
+**Flow per turn:** the narrator names the critical lines and calls
+`delegate(question)` once per line; each spawns a verifier sub-run
+(`AIAnalysisCoordinator._run_verifier`, verifier prompt + registry, no
+`delegate` -- one level deep). The verifier must call a tool before
+concluding (a no-tool verdict draws one nudge), and returns a one/two
+sentence live-position conclusion that lands as the delegate tool_result.
+The narrator synthesizes and calls `recommend_move`.
+
+**Verifier sub-run is silent except tool calls.** Its `analyze`/`top_moves`
+events forward to the UI (nested under the originating "Verifying line" row
+via `parent_tool_use_id`); its prose/thinking are suppressed. Thinking is
+forced off for the verifier (the engine does the reasoning; thinking only
+adds latency x fan-out and risks Ollama `<think>` leaking into the verdict).
+
+**Anti-hallucination.** Two failure modes, two catches: fabricated tokens
+(illegal move, piece not on board) are caught by the round-end validators
+(which run on verifier output too); wrong tactical judgment is caught only
+by forcing the engine call before a verdict. The verifier skips
+*illegal-move* validation (it narrates calculated lines, so a line-internal
+move token is reasoning, not a live-move hallucination) but keeps the
+piece-claim and castle guards, which assert about the live board.
+
+Rejected: structured JSON verdicts (small Ollama models emit malformed
+JSON -> json-repair dependency). Prose + existing validators avoids it.
+
+**Accepted limitation.** With the strict split, the narrator's only engine
+gate on its pick is `recommend_move`'s A/B dominance check; it does not
+separately validate the line behind the move. The dominance check rejects a
+move the engine's best beats by margin -- the guard that matters; deeper
+line-validation is the model's job via `delegate`.
+
 ### Round-end validators
 
 Pure functions over `(text, board)` in
@@ -116,8 +159,10 @@ Disabled when no `board_provider` is wired (tests, non-live callers).
 
 ### Tools (v1)
 
-- `analyze(fen, time_ms=None, depth=None)` - engine search; spawns
-  throwaway engine via existing `_spawn_engine()` pattern. SHIPPED.
+- `analyze(fen, depth=None)` - engine search; spawns throwaway engine
+  via existing `_spawn_engine()` pattern. Depth-only (no time limit):
+  a timer firing before the depth completes makes the bestmove
+  non-deterministic on near-equal candidates. SHIPPED.
 - `validate_move(move)` - legality check for UCI or SAN move strings
   against the live position. Tool card asks the model to pre-check
   before naming a move as playable; round-end validators catch
@@ -128,7 +173,7 @@ Disabled when no `board_provider` is wired (tests, non-live callers).
   pre-check before naming a piece on a specific square; round-end
   validators catch false piece claims in prose and drive a
   corrective round. SHIPPED.
-- `top_moves(n=None, time_ms=None, depth=None)` - rank top-N candidate
+- `top_moves(n=None, depth=None)` - rank top-N candidate
   moves in the live position (workaround for engines without native
   MultiPV). Operates on the live board via `board_provider` (no FEN
   input). Uses UCI `searchmoves` (python-chess `root_moves` kwarg).
@@ -421,8 +466,8 @@ Flat layout (the master toggle is described in §Ribbon buttons above):
   - Anthropic: API key
   - Ollama: base URL (no key)
 - Tunables surfaced as they prove necessary (tool call cap, analyze
-  max time_ms / depth, temperature, etc.). No collapsible / Advanced
-  grouping; each lives flat in the panel.
+  max depth, temperature, etc.). No collapsible / Advanced grouping;
+  each lives flat in the panel.
 
 ## Guardrails
 
@@ -432,7 +477,7 @@ Flat layout (the master toggle is described in §Ribbon buttons above):
   applies (rolling session accumulates cost across clicks)
 - View/post-game (path 3): min(per_move, per_game / remaining_plies)
 - Tool call cap per agent turn (env)
-- `analyze` per-call hard caps on time_ms/depth (env)
+- `analyze` per-call hard cap on depth (env)
 - Concurrency: 1 analysis at a time
 - User cancel always available
 - Wall-clock timeout deferred past v1 (testing complexity)

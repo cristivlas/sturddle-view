@@ -136,6 +136,9 @@ const ANALYZE_LABEL_STOP = "Stop analysis";
 const ANALYZE_LABEL_START = "Analysis mode";
 const ANALYZE_ICON_STOP = "circle-stop";
 const ANALYZE_ICON_START = "magnifying-glass";
+// Body class set while analysis is on; CSS greys + inert-ifies x-game
+// nav links so the user can't jump games mid-analysis.
+const XGAME_LOCK_CLASS = "xgame-nav-locked";
 
 function setDisabled(btn, disabled) {
   if (disabled) btn.setAttribute("disabled", "");
@@ -403,7 +406,7 @@ export const playPerspective = {
       },
       // Click on a move in the list (view mode only) → jump cursor to
       // the position AFTER that move, i.e. ply = plyIndex + 1.
-      onMoveJump: (plyIndex) => { if (!analyzing) doViewNav("/game/view/goto", { ply: plyIndex + 1 }); },
+      onMoveJump: (plyIndex) => doViewNav("/game/view/goto", { ply: plyIndex + 1 }),
       // Fork glyphs. Fresh map per render; both child-here (this game
       // has forks at this ply) and own-fork-ply (this game itself
       // diverged from its parent here) get a glyph.
@@ -580,6 +583,7 @@ export const playPerspective = {
       // Server flipped out of ANALYSIS -- clear the AI-finished latch
       // so the ribbon can re-enable when the game is paused again.
       if (!analyzing) aiTurnFinished = false;
+      document.body.classList.toggle(XGAME_LOCK_CLASS, analyzing);
     }
     // View mode state (set from board_update.view payload).
     let viewing = false;
@@ -668,7 +672,7 @@ export const playPerspective = {
       icon.className = "xgame-toast-icon";
       node.append(icon);
       const text = document.createElement("span");
-      text.className = "xgame-toast-text";
+      text.className = "toast-grow";
       text.append("Forked from ");
       const link = document.createElement("button");
       link.className = "xgame-link";
@@ -677,6 +681,7 @@ export const playPerspective = {
         ? formatGameLabel(xgame.parentSummary)
         : "parent game";
       link.addEventListener("click", () => {
+        if (analyzing) return;
         if (xgame.parentGameId) {
           openXgameTarget(xgame.parentGameId, { landAtPly: xgame.forkPly });
         }
@@ -708,6 +713,7 @@ export const playPerspective = {
         item.type = "button";
         item.textContent = formatGameLabel(c.summary);
         item.addEventListener("click", () => {
+          if (analyzing) return;
           openXgameTarget(c.game_id, { landAtPly: c.fork_ply });
         });
         list.append(item);
@@ -721,7 +727,7 @@ export const playPerspective = {
       icon.className = "xgame-toast-icon";
       header.append(icon);
       const text = document.createElement("span");
-      text.className = "xgame-toast-text";
+      text.className = "toast-grow";
       text.textContent = childrenHere.length === 1
         ? "1 variation from this position"
         : `${childrenHere.length} variations from this position`;
@@ -964,6 +970,7 @@ export const playPerspective = {
               errorDetail: p.error_detail || null,
               roundCap: !!p.round_cap,
               noResponse: !!p.no_response,
+              noRecommendation: !!p.no_recommendation,
             });
             if (p.error) {
               toast(p.error_detail || p.error, {
@@ -1000,6 +1007,7 @@ export const playPerspective = {
             name: p.name,
             input: p.input,
             toolUseId: p.tool_use_id,
+            parentToolUseId: p.parent_tool_use_id,
           });
           // When the model inspects a hypothetical position, mirror
           // the analyzed FEN on the board so the user can follow the
@@ -1161,6 +1169,7 @@ export const playPerspective = {
               const node = document.createElement("span");
               node.className = "toast-sort-msg";
               const msg = document.createElement("span");
+              msg.className = "toast-grow";
               msg.textContent = formatViewGameOver(v);
               node.append(msg, makeToastDismissBtn(() => { dismissGameOverToast?.(); dismissGameOverToast = null; }));
               dismissGameOverToast = toast(node, { variant: "neutral", duration: 6000 });
@@ -1733,13 +1742,12 @@ export const playPerspective = {
     function showAnalysisToast() {
       dismissAnalysisToast?.();
       const msg = document.createElement("span");
-      msg.style.display = "flex";
-      msg.style.alignItems = "center";
-      msg.style.gap = "6px";
-      msg.append("Analysis mode");
-      const pvBtn = makeToastIconBtn("table-list", "Search Lines", onPvTable);
-      pvBtn.style.marginLeft = "auto";
-      msg.append(pvBtn);
+      msg.className = "toast-sort-msg";
+      const label = document.createElement("span");
+      label.className = "toast-grow";
+      label.textContent = "Analysis mode";
+      msg.append(label);
+      msg.append(makeToastIconBtn("table-list", "Search Lines", onPvTable));
       msg.append(makeToastIconBtn("terminal", "UCI log", onUciLog));
       msg.append(makeToastIconBtn("circle-stop", "Stop analysis", onAnalyze));
       dismissAnalysisToast = toast(msg, {
@@ -1881,6 +1889,7 @@ export const playPerspective = {
 
     function showEngineCrashToast() {
       const msg = document.createElement("span");
+      msg.className = "toast-grow";
       msg.textContent = "Engine crashed unexpectedly.";
       const node = document.createElement("span");
       node.className = "toast-sort-msg";
@@ -1940,6 +1949,9 @@ export const playPerspective = {
         // dismiss flags are NOT set -- if the user returns to the
         // play perspective at the same fork ply, the toast re-fires.
         closeXgameToasts();
+        // Lock class lives on <body>; clear it so it can't outlive the
+        // perspective if we unmount mid-analysis.
+        document.body.classList.remove(XGAME_LOCK_CLASS);
         window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
         window.removeEventListener("sturddle:layout-changed", onLayoutChanged);
         window.removeEventListener("sturddle:engines-changed", onEnginesChanged);

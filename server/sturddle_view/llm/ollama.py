@@ -349,11 +349,14 @@ class OllamaProvider(LLMProvider):
         *,
         transcript: Transcript | None = None,
         round_index: int = 0,
+        thinking: bool | None = None,
     ) -> AsyncIterator[ProviderChunk]:
         # Branch by thinking support. /v1/chat/completions (OpenAI-compat)
         # is the default; /api/chat (Ollama native) is required when the
         # caller asked for `think=true` since the compat layer ignores it.
-        if self._thinking_enabled:
+        # `thinking=False` forces the compat path (verifier sub-runs) so no
+        # <think> reasoning is generated or leaks into the verdict.
+        if thinking is not False and self._thinking_enabled:
             inner = self._stream_native(
                 system, messages, tools,
                 transcript=transcript, round_index=round_index,

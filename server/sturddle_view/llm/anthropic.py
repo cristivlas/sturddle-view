@@ -142,6 +142,7 @@ class AnthropicProvider(LLMProvider):
         *,
         transcript: Transcript | None = None,
         round_index: int = 0,
+        thinking: bool | None = None,
     ) -> AsyncIterator[ProviderChunk]:
         if not self._api_key:
             raise RuntimeError("anthropic: API key not configured")
@@ -156,7 +157,8 @@ class AnthropicProvider(LLMProvider):
             body["system"] = system
         if tools:
             body["tools"] = tools
-        if self._thinking_enabled:
+        # `thinking=False` forces it off for this call (verifier sub-runs).
+        if thinking is not False and self._thinking_enabled:
             body["thinking"] = self._thinking_param()
             # Anthropic requires max_tokens > budget_tokens; lift the cap
             # so visible output isn't squeezed by reasoning.

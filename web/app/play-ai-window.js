@@ -256,6 +256,7 @@ const TOOL_FRIENDLY_LABELS = {
   piece_at:       "Checking piece",
   validate_move:  "Validating move",
   recommend_move: "Picking move",
+  delegate:       "Verifying line",
 };
 
 function friendlyToolLabel(name) {
@@ -384,13 +385,34 @@ export function appendAiThinking(text, roundIndex = 0) {
   });
 }
 
-export function appendAiToolCall({ round = 0, name, input, toolUseId }) {
+export function appendAiToolCall({
+  round = 0, name, input, toolUseId, parentToolUseId = null,
+}) {
   if (!inst.body || !name) return;
   withStickyBottom(() => {
-    const entry = ensureRoundPanel(inst.body, round);
-    freezeThinkingLabel(entry);
     const line = document.createElement("div");
     line.className = "play-ai-tool-call";
+    // Verifier-origin calls nest under their "Verifying line" (delegate)
+    // row so the user sees them as that check's work, not the narrator's.
+    // Fall back to the round panel if the parent row isn't found.
+    let container = null;
+    if (parentToolUseId) {
+      const parent = inst.body._toolCallNodes.get(parentToolUseId);
+      if (parent) {
+        let children = parent.querySelector(".play-ai-tool-children");
+        if (!children) {
+          children = document.createElement("div");
+          children.className = "play-ai-tool-children";
+          parent.append(children);
+        }
+        container = children;
+      }
+    }
+    if (!container) {
+      const entry = ensureRoundPanel(inst.body, round);
+      freezeThinkingLabel(entry);
+      container = entry.tools;
+    }
     const dot = document.createElement("span");
     dot.className = `play-ai-tool-dot play-ai-tool-dot-${name}`;
     line.append(dot);
@@ -402,6 +424,8 @@ export function appendAiToolCall({ round = 0, name, input, toolUseId }) {
     const raw = args ? `${name}(${args})` : `${name}()`;
     const toggle = document.createElement("span");
     toggle.className = "play-ai-tool-toggle";
+    // One glyph, rotated via CSS when open -- guarantees the open/closed
+    // caret are identical size (the unicode triangles aren't).
     toggle.textContent = "▶";
     line.append(toggle);
     const pre = document.createElement("pre");
@@ -412,9 +436,9 @@ export function appendAiToolCall({ round = 0, name, input, toolUseId }) {
     toggle.addEventListener("click", () => {
       const open = pre.hidden;
       pre.hidden = !open;
-      toggle.textContent = open ? "▼" : "▶";
+      toggle.classList.toggle("is-open", open);
     });
-    entry.tools.append(line);
+    container.append(line);
     if (toolUseId) {
       // Index by tool_use_id so a subsequent ai_tool_call_failed event
       // can mark this exact row (multiple calls of the same tool in a
@@ -501,11 +525,13 @@ export function markAiDone({
   errorDetail = null,
   roundCap = false,
   noResponse = false,
+  noRecommendation = false,
 } = {}) {
-  // Terminal: switch the header text + drop the spinner. Markers
-  // (error > roundCap > noResponse > cancelled if any apply) land in
-  // the dedicated terminal slot below the last round panel.
-  const naturalCompletion = !error && !roundCap && !noResponse && !cancelled;
+  // Terminal: switch the header text + drop the spinner. Markers (error >
+  // roundCap > noResponse > noRecommendation > cancelled if any apply)
+  // land in the dedicated terminal slot below the last round panel.
+  const naturalCompletion =
+    !error && !roundCap && !noResponse && !noRecommendation && !cancelled;
   setAiStatus(naturalCompletion ? "done" : "idle");
   if (!inst.body) return;
   const slot = inst.body._terminal;
@@ -558,6 +584,13 @@ export function markAiDone({
       const note = document.createElement("div");
       note.className = "play-ai-roundcap";
       note.textContent = "Model produced no answer. Try a different model -- some stream only chain-of-thought.";
+      slot.append(note);
+      return;
+    }
+    if (noRecommendation) {
+      const note = document.createElement("div");
+      note.className = "play-ai-roundcap";
+      note.textContent = "No move chosen -- the analysis finished without committing to one.";
       slot.append(note);
       return;
     }

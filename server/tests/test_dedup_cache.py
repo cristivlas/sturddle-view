@@ -339,6 +339,10 @@ async def test_identical_error_call_dedups():
     reg = _make_registry({"recommend_move": fake_recommend})
 
     same = {"move": "e4"}
+    # Both attempts reject (dedup -> one dispatch). The narrator then keeps
+    # being nudged toward an accepted move; here it stalls with prose, so
+    # the nudge fires once and the stall guard ends the turn. The trailing
+    # rounds cover that tail without changing the dedup point.
     provider = ScriptedProvider(rounds=[
         [ProviderChunk(
             kind="tool_use", tool_use_id="tu_1", tool_name="recommend_move",
@@ -348,7 +352,8 @@ async def test_identical_error_call_dedups():
             kind="tool_use", tool_use_id="tu_2", tool_name="recommend_move",
             tool_input=dict(same),
         )],
-        [ProviderChunk(kind="text", text="done.")],
+        [ProviderChunk(kind="text", text="done.")],       # clean exit -> nudge #1
+        [ProviderChunk(kind="text", text="still done.")],  # stall -> guard stops
     ])
     bus = EventBus()
     queue = await bus.subscribe()

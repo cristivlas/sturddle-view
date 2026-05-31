@@ -91,6 +91,7 @@ class LLMProvider(ABC):
         *,
         transcript: "Transcript | None" = None,
         round_index: int = 0,
+        thinking: bool | None = None,
     ) -> AsyncIterator[ProviderChunk]:
         """Run one round and stream its chunks.
 
@@ -106,6 +107,11 @@ class LLMProvider(ABC):
           NullTranscript by default so subclasses never need to null-check.
         - `round_index`: which round of the agent loop this call belongs
           to (0-based). Carried into transcript labels.
+        - `thinking`: per-call override of the provider's thinking setting.
+          None uses the provider default; False forces thinking off for
+          this call (verifier sub-runs pass False -- the engine does the
+          reasoning, so model thinking only adds latency). True is not used
+          (enabling requires per-instance budget config).
 
         Subclasses MUST be cancel-safe -- a cancelled task on the
         consumer side must not leak provider state or HTTP connections.

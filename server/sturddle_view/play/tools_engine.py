@@ -1,9 +1,10 @@
 """Engine-backed tools for the AI analysis agent.
 
 `analyze` is the first real tool: spawns a throwaway UCI engine,
-configures a search limit (time_ms and/or depth), drains info events
-until the engine signals bestmove (or the cancel token flips), and
-returns a structured eval record.
+configures a depth-only search limit, drains info events until the
+engine signals bestmove (or the cancel token flips), and returns a
+structured eval record. Searches are depth-only by design -- a time
+limit makes the bestmove non-deterministic on near-equal candidates.
 
 Per spec §Architecture: one throwaway engine per analyze call (pool
 later if perf demands). Hard caps live as named consts + SV_ env vars
@@ -32,12 +33,20 @@ from .engine_supervisor import EngineSupervisor
 log = logging.getLogger(__name__)
 
 
-_DEFAULT_MAX_TIME_MS = 5_000
-_DEFAULT_MAX_DEPTH = 25
-# Hard caps -- the agent can request anything, but we clamp to these.
-# The env override is for ops; UI exposure is pending.
-MAX_TIME_MS = env_int("SV_AI_ANALYZE_MAX_TIME_MS", _DEFAULT_MAX_TIME_MS)
+# TODO: dynamic cap -- allow deeper searches when few pieces remain
+# (endgames resolve deep cheaply and benefit from it).
+_DEFAULT_MAX_DEPTH = 30
+# Hard cap -- the agent can request any depth, but we clamp to this.
+# The env override is for ops; UI exposure is pending. Searches are
+# depth-only (no time limit): a timer firing before the depth completes
+# makes the bestmove non-deterministic.
 MAX_DEPTH = env_int("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_MAX_DEPTH)
+
+# Floor for the end-of-turn recommendation check: it searches at least
+# this deep regardless of the (often shallow) depth the model picked, so
+# the authoritative verdict isn't a shallow rubber-stamp.
+_DEFAULT_VERIFICATION_DEPTH = 30
+VERIFICATION_DEPTH = env_int("SV_AI_VERIFICATION_DEPTH", _DEFAULT_VERIFICATION_DEPTH)
 
 # recommend_move dominance margin: rival must beat candidate by strictly
 # more than this many cp (STM POV) to reject. Filters cosmetic 1-30 cp
@@ -45,13 +54,10 @@ MAX_DEPTH = env_int("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_MAX_DEPTH)
 _DEFAULT_RECOMMEND_MARGIN_CP = 50
 RECOMMEND_MARGIN_CP = env_int("SV_AI_RECOMMEND_MARGIN", _DEFAULT_RECOMMEND_MARGIN_CP)
 
-# Fallback when caller passes neither time_ms nor depth. Depth-based
-# (not time-based): more consistent quality across positions and engine
-# loads. 20 plies is the floor that gives reliable tactical resolution
-# for coach-style prose; lower values surface noisy bestmoves that
-# embarrass the agent. Server-side enforcement of the floor against
-# model-supplied depth is an open mitigation -- see
-# docs/ai-analysis-progress.md.
+# Default search depth when the caller omits one. 20 plies gives reliable
+# tactical resolution; lower values surface noisy bestmoves. Server-side
+# enforcement of this as a floor against model-supplied depth is an open
+# mitigation -- see docs/ai-analysis-progress.md.
 _DEFAULT_DEPTH = 20
 
 # top_moves: hard cap on the model-supplied candidate list length.
@@ -114,13 +120,12 @@ TOP_MOVES_TOOL_SPEC = ToolSpec(
                     + _MOVE_NOTATION_CONSTRAINT
                 ),
             },
-            "time_ms": {
-                "type": "integer",
-                "description": "Per-candidate search time in milliseconds (clamped to server cap).",
-            },
             "depth": {
                 "type": "integer",
-                "description": "Per-candidate maximum depth (clamped to server cap).",
+                "description": (
+                    "Per-candidate depth. Go deeper when candidates score "
+                    "close -- shallow ranking is unreliable."
+                ),
             },
         },
         "required": ["moves"],
@@ -129,10 +134,10 @@ TOP_MOVES_TOOL_SPEC = ToolSpec(
 
 
 _PIECE_AT_CARD = (
-    "Confirm any piece-on-square claim in the live position before "
-    "writing it -- explicit (\"knight on f3\") or implied (centralize, "
-    "push, capture, defend, pin, fork, etc). Result: piece symbol "
-    "(upper=white, lower=black) or null. Live position only, not "
+    "Any piece-on-square claim about the live position is worth "
+    "confirming first -- explicit (\"knight on f3\") or implied "
+    "(centralize, push, capture, defend, pin, fork, etc). Result: piece "
+    "symbol (upper=white, lower=black) or null. Live position only, not "
     "squares inside calculated lines."
 )
 
@@ -161,9 +166,9 @@ PIECE_AT_TOOL_SPEC = ToolSpec(
 
 
 _VALIDATE_MOVE_CARD = (
-    "Confirm any move you name as playable in the live position. "
-    "Live position only; moves inside calculated lines don't need it. "
-    "Result: legal (bool), uci, san. If legal=false, drop the move."
+    "Any move named as playable in the live position is worth confirming "
+    "-- live position only, moves inside calculated lines aren't. Result: "
+    "legal (bool), uci, san. A legal=false move is not playable here."
 )
 
 
@@ -206,13 +211,12 @@ ANALYZE_TOOL_SPEC = ToolSpec(
                 "type": "string",
                 "description": "FEN string, or 'startpos' for the initial position.",
             },
-            "time_ms": {
-                "type": "integer",
-                "description": "Search time in milliseconds (clamped to server cap).",
-            },
             "depth": {
                 "type": "integer",
-                "description": "Maximum depth (clamped to server cap).",
+                "description": (
+                    "Search depth. Go deeper on sharp or close positions -- "
+                    "a shallow search misjudges tactics."
+                ),
             },
         },
         "required": ["fen"],
@@ -229,27 +233,22 @@ def _parse_fen(raw: str) -> chess.Board:
     return chess.Board(fen=raw)
 
 
-def _clamp_limits(input_: dict) -> tuple[chess.engine.Limit, dict]:
-    """Build a chess.engine.Limit honoring the agent's requested
-    time_ms / depth, clamped to MAX_TIME_MS / MAX_DEPTH. Returns the
-    Limit and a debug dict echoing the effective values (used in the
-    tool output for both observability and test assertions)."""
-    raw_time_ms = input_.get("time_ms")
+def _depth_limit(input_: dict, default_depth: int) -> tuple[chess.engine.Limit, dict]:
+    """Build a depth-only chess.engine.Limit from the agent's requested
+    depth (clamped to MAX_DEPTH), falling back to `default_depth`. Returns
+    the Limit and a dict echoing the effective depth (tool output + test
+    assertions). Time limits are intentionally not supported: a timer that
+    fires before the depth is reached makes the bestmove non-deterministic,
+    which flips the pick on near-equal candidates."""
     raw_depth = input_.get("depth")
-    used: dict = {}
-    kwargs: dict = {}
-    if raw_time_ms is None and raw_depth is None:
-        kwargs["depth"] = _DEFAULT_DEPTH
-        used["depth"] = _DEFAULT_DEPTH
-    if raw_time_ms is not None:
-        t = max(0, min(int(raw_time_ms), MAX_TIME_MS))
-        kwargs["time"] = t / 1000.0
-        used["time_ms"] = t
     if raw_depth is not None:
-        d = max(1, min(int(raw_depth), MAX_DEPTH))
-        kwargs["depth"] = d
-        used["depth"] = d
-    return chess.engine.Limit(**kwargs), used
+        try:
+            depth = max(1, min(int(raw_depth), MAX_DEPTH))
+        except (TypeError, ValueError):
+            depth = default_depth
+    else:
+        depth = default_depth
+    return chess.engine.Limit(depth=depth), {"depth": depth}
 
 
 def _score_to_cp(score: chess.engine.PovScore | None) -> dict:
@@ -302,9 +301,15 @@ def _pv_to_uci(board: chess.Board, pv: list[chess.Move] | None) -> list[str]:
 _MATE_RANK = 10**9
 
 
-def _white_pov_sort_key(score: chess.engine.PovScore | None) -> int:
+def _white_pov_sort_key(score: chess.engine.PovScore | None) -> int | None:
+    """White-POV ranking value, or None when the candidate has no score
+    (search returned none: early cancel, or an info line with only
+    pv/depth). None is handled by the caller (partitioned to the bottom);
+    a numeric sentinel can't work because top_moves sorts
+    reverse=stm_is_white, so any fixed scalar inverts for black and floats
+    a scoreless candidate to the top."""
     if score is None:
-        return -_MATE_RANK - 1
+        return None
     s = score.white()
     mate = s.mate()
     if mate is not None:
@@ -412,7 +417,7 @@ def make_analyze_tool(
         except ValueError as exc:
             return {"error": "invalid_fen", "detail": str(exc)}
 
-        limit, limits_used = _clamp_limits(input_)
+        limit, limits_used = _depth_limit(input_, _DEFAULT_DEPTH)
 
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
         await bus.publish(Event(kind="engine_search_start", game_id=game_id, payload={}))
@@ -436,9 +441,6 @@ def make_analyze_tool(
         nodes = last_info.get("nodes")
         if nodes is not None:
             out["nodes"] = nodes
-        time_used = last_info.get("time")
-        if time_used is not None:
-            out["time_ms"] = int(time_used * 1000)
         pv = _pv_to_uci(board, last_info.get("pv"))
         if pv:
             out["pv"] = pv
@@ -446,27 +448,6 @@ def make_analyze_tool(
         return out
 
     return analyze
-
-
-def _clamp_top_moves_limits(input_: dict) -> tuple[chess.engine.Limit, dict]:
-    """Per-candidate limit for top_moves. Shallower depth default than
-    analyze since cost multiplies by N."""
-    raw_time_ms = input_.get("time_ms")
-    raw_depth = input_.get("depth")
-    used: dict = {}
-    kwargs: dict = {}
-    if raw_time_ms is None and raw_depth is None:
-        kwargs["depth"] = _DEFAULT_TOP_MOVES_DEPTH
-        used["depth"] = _DEFAULT_TOP_MOVES_DEPTH
-    if raw_time_ms is not None:
-        t = max(0, min(int(raw_time_ms), MAX_TIME_MS))
-        kwargs["time"] = t / 1000.0
-        used["time_ms"] = t
-    if raw_depth is not None:
-        d = max(1, min(int(raw_depth), MAX_DEPTH))
-        kwargs["depth"] = d
-        used["depth"] = d
-    return chess.engine.Limit(**kwargs), used
 
 
 _PGN_CONTINUATION_RE = re.compile(r"^\s*(?:\d+\s*)?\.{2,3}\s*")
@@ -480,22 +461,34 @@ def _strip_move_prefix(raw: str) -> str:
     return _PGN_CONTINUATION_RE.sub("", stripped)
 
 
+def _parse_move_or_error(
+    board: chess.Board, candidate: str,
+) -> tuple[chess.Move | None, str | None, str | None]:
+    """Core UCI-then-SAN parse of an already prefix-stripped move string.
+    Returns (move, None, None) on success, or (None, error_kind, detail).
+    Single source of truth for the parse + exception->envelope mapping
+    shared by top_moves / validate_move / recommend_move (each wraps the
+    kind/detail in its own result shape)."""
+    if not candidate:
+        return None, "invalid_input", "empty move string"
+    for parse in (board.parse_uci, board.parse_san):
+        try:
+            return parse(candidate), None, None
+        except chess.IllegalMoveError as exc:
+            return None, "illegal_move", str(exc)
+        except (chess.InvalidMoveError, chess.AmbiguousMoveError):
+            continue
+    return None, "invalid_move", f"could not parse {candidate!r} as UCI or SAN"
+
+
 def _parse_candidate_move(board: chess.Board, raw: str) -> tuple[chess.Move | None, dict | None]:
     """Try UCI then SAN. Returns (move, None) on success, (None, error_entry)
     on failure. Error entry carries `move_input` so the model can match
     it back to the input list."""
-    candidate = _strip_move_prefix(raw)
-    if not candidate:
-        return None, {"move_input": raw, "error": "invalid_input", "detail": "empty move string"}
-    for parse in (board.parse_uci, board.parse_san):
-        try:
-            return parse(candidate), None
-        except chess.IllegalMoveError as exc:
-            return None, {"move_input": raw, "error": "illegal_move", "detail": str(exc)}
-        except (chess.InvalidMoveError, chess.AmbiguousMoveError):
-            continue
-    return None, {"move_input": raw, "error": "invalid_move",
-                  "detail": f"could not parse {candidate!r} as UCI or SAN"}
+    move, kind, detail = _parse_move_or_error(board, _strip_move_prefix(raw))
+    if move is not None:
+        return move, None
+    return None, {"move_input": raw, "error": kind, "detail": detail}
 
 
 def make_top_moves_tool(
@@ -535,7 +528,7 @@ def make_top_moves_tool(
             else:
                 parsed.append(move)
 
-        limit, limits_used = _clamp_top_moves_limits(input_)
+        limit, limits_used = _depth_limit(input_, _DEFAULT_TOP_MOVES_DEPTH)
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
         await bus.publish(Event(kind="engine_search_start", game_id=game_id, payload={}))
 
@@ -570,7 +563,12 @@ def make_top_moves_tool(
                 cancelled_any = True
                 break
 
-        entries.sort(key=lambda c: c["_sort_key"], reverse=stm_is_white)
+        # Scoreless candidates (no engine score) sort to the bottom in
+        # both directions; only the scored ones go through the POV sort.
+        scored = [c for c in entries if c["_sort_key"] is not None]
+        scoreless = [c for c in entries if c["_sort_key"] is None]
+        scored.sort(key=lambda c: c["_sort_key"], reverse=stm_is_white)
+        entries = scored + scoreless
         for c in entries:
             c.pop("_sort_key", None)
 
@@ -631,27 +629,22 @@ def make_validate_move_tool(board_provider: BoardProvider) -> AnalyzeTool:
         raw = input_.get("move")
         if not isinstance(raw, str) or not raw.strip():
             return {"error": "invalid_input", "detail": "move must be a non-empty string"}
-        candidate = _strip_move_prefix(raw)
-        if not candidate:
-            return {"error": "invalid_input", "detail": "move must be a non-empty string"}
-        for parse in (board.parse_uci, board.parse_san):
-            try:
-                move = parse(candidate)
-            except chess.IllegalMoveError as exc:
-                return {"error": "illegal_move", "detail": str(exc)}
-            except (chess.InvalidMoveError, chess.AmbiguousMoveError):
-                continue
-            return {"legal": True, "uci": move.uci(), "san": board.san(move)}
-        return {"error": "invalid_move", "detail": f"could not parse {candidate!r} as UCI or SAN"}
+        move, kind, detail = _parse_move_or_error(board, _strip_move_prefix(raw))
+        if move is None:
+            return {"error": kind, "detail": detail}
+        return {"legal": True, "uci": move.uci(), "san": board.san(move)}
 
     return validate_move
 
 
+# Declarative (see _DELEGATE_TOOL_CARD): the move goes via the tool, not
+# prose, and a one-to-two sentence conclusion follows the accepted call.
 _RECOMMEND_MOVE_CARD = (
-    "End your turn with this tool, not with prose. Engine compares "
-    "your move to its own best at the requested depth; if its best "
-    "is meaningfully stronger, returns error=recommendation_rejected "
-    "and you submit a different move (not the same one again)."
+    "The move goes through this tool, not in prose. The engine compares "
+    "it to its own best at the requested depth; a meaningfully stronger "
+    "best returns error=recommendation_rejected, which a different move "
+    "(not a repeat) resolves. Once the call is accepted, a one-to-two "
+    "sentence conclusion follows it, naming the plan the move commits to."
 )
 
 
@@ -678,7 +671,9 @@ RECOMMEND_MOVE_TOOL_SPEC = ToolSpec(
             "depth": {
                 "type": "integer",
                 "description": (
-                    f"Search depth for the dominance check (clamped to {MAX_DEPTH})."
+                    "Dominance-check depth. Go deeper when the position is "
+                    "sharp or the move was close, so the check doesn't "
+                    "confirm a shallow mistake."
                 ),
             },
         },
@@ -732,20 +727,9 @@ def make_recommend_move_tool(
         raw = input_.get("move")
         if not isinstance(raw, str) or not raw.strip():
             return {"error": "invalid_input", "detail": "move must be a non-empty string"}
-        candidate = _strip_move_prefix(raw)
-        if not candidate:
-            return {"error": "invalid_input", "detail": "move must be a non-empty string"}
-        parsed: chess.Move | None = None
-        for parse in (board.parse_uci, board.parse_san):
-            try:
-                parsed = parse(candidate)
-                break
-            except chess.IllegalMoveError as exc:
-                return {"error": "illegal_move", "detail": str(exc)}
-            except (chess.InvalidMoveError, chess.AmbiguousMoveError):
-                continue
+        parsed, kind, detail = _parse_move_or_error(board, _strip_move_prefix(raw))
         if parsed is None:
-            return {"error": "invalid_move", "detail": f"could not parse {candidate!r} as UCI or SAN"}
+            return {"error": kind, "detail": detail}
         san = board.san(parsed)
         uci = parsed.uci()
         scratch = board.copy(stack=False)
@@ -814,6 +798,14 @@ def make_recommend_move_tool(
         if best_move is not None and best_move == parsed:
             return {"ok": True, "post_move_fen": scratch.fen(), **result_common}
 
+        # A move that forces mate for the side to move is a won game; a
+        # faster engine mate doesn't make it a mistake. Accept it (mate
+        # against STM isn't winning, so it falls through to the check below).
+        if cand_score is not None:
+            cand_mate = cand_score.pov(board.turn).mate()
+            if cand_mate is not None and cand_mate > 0:
+                return {"ok": True, "post_move_fen": scratch.fen(), **result_common}
+
         if _better_for_stm(cand_score, best_score, board.turn):
             best_san = result_common.get("engine_best_san") or "a stronger move"
             return {
@@ -842,12 +834,18 @@ def make_recommend_verifier(
     and returns a payload dict (or None on failure). The coordinator
     emits the `ai_recommendation` event through its own _emit so the
     payload gets a seq stamp and lands in the replay buffer."""
-    async def verify(move: chess.Move, cancel_token: CancelToken) -> dict | None:
+    async def verify(
+        move: chess.Move, depth: int | None, cancel_token: CancelToken,
+    ) -> dict | None:
         board = board_provider()
         if board is None or move not in board.legal_moves:
             return None
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
-        limit = chess.engine.Limit(depth=_DEFAULT_DEPTH)
+        # Verify at least VERIFICATION_DEPTH deep, going deeper if the
+        # model asked for more -- never shallower. Clamped to the cap.
+        requested = int(depth) if depth else 0
+        d = min(max(requested, VERIFICATION_DEPTH), MAX_DEPTH)
+        limit = chess.engine.Limit(depth=d)
         try:
             last_info, _cancelled = await _run_one_search(
                 engine_launcher, board.copy(stack=False), limit,

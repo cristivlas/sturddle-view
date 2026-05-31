@@ -14,6 +14,7 @@ from sturddle_view.llm.response_validator import (
     find_false_piece_claims,
     find_illegal_moves,
 )
+from sturddle_view.play.ai_analysis import _boards_for_validation
 
 
 def test_empty_text_returns_empty():
@@ -418,3 +419,41 @@ def test_history_walk_castle_word_accepted_if_legal_anywhere():
     boards = _history_boards_after(["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"])
     text = "White can castle shortly."
     assert find_castle_word_violations(text, boards) == []
+
+
+# A square reused by a later piece (b2 pawn captured, queen now there)
+# is the failure mode the `committed` flag fixes: pre-commit prose may
+# still reference the departed pawn historically, but the closing
+# post-recommendation plan must validate against the live board, where
+# "capturing the pawn on b2" is false -- b2 holds the queen.
+_IMMORTAL_TO_MOVE_19 = (
+    "e4 e5 f4 exf4 Bc4 Qh4+ Kf1 b5 Bxb5 Nf6 Nf3 Qh6 d3 Nh5 Nh4 Qg5 "
+    "Nf5 c6 g4 Nf6 Rg1 cxb5 h4 Qg6 h5 Qg5 Qf3 Ng8 Bxf4 Qf6 Nc3 Bc5 "
+    "Nd5 Qxb2 Bd6 Qxa1+ Ke2"
+).split()
+_REUSED_SQUARE_CLAIM = "Capturing the pawn on b2 increases Black's advantage."
+
+
+def _immortal_board() -> chess.Board:
+    board = chess.Board()
+    for san in _IMMORTAL_TO_MOVE_19:
+        board.push_san(san)
+    return board
+
+
+def test_committed_collapses_history_walk_to_live_board():
+    board = _immortal_board()
+    pre = _boards_for_validation(board, "commentator", committed=False)
+    post = _boards_for_validation(board, "commentator", committed=True)
+    assert len(pre) > 1, "uncommitted commentator must keep the history walk"
+    assert post == [board], "committed must collapse to the live board only"
+
+
+def test_committed_flags_claim_on_square_reused_by_later_piece():
+    board = _immortal_board()
+    pre = _boards_for_validation(board, "commentator", committed=False)
+    post = _boards_for_validation(board, "commentator", committed=True)
+    # Pre-commit: the b2 pawn lived there for most of the game, so the
+    # history walk excuses the claim. Post-commit: live board only, flagged.
+    assert find_false_piece_claims(_REUSED_SQUARE_CLAIM, pre) == []
+    assert find_false_piece_claims(_REUSED_SQUARE_CLAIM, post) == ["pawn on b2"]

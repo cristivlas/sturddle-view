@@ -34,6 +34,7 @@ class CannedProvider(LLMProvider):
         *,
         transcript: Transcript | None = None,
         round_index: int = 0,
+        thinking: bool | None = None,
     ) -> AsyncIterator[ProviderChunk]:
         for chunk in self._chunks:
             yield ProviderChunk(kind="text", text=chunk)

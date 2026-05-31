@@ -440,6 +440,9 @@ wa-select::part(listbox) {
   font-size: 0.85em;
   opacity: 0.85;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Anchor the verifier spine (drawn on the parent row that owns a
+     .play-ai-tool-children) to the parent dot, not to the children box. */
+  position: relative;
   /* DEBUG */
   /* border: 1px solid olivedrab; */
 }
@@ -457,6 +460,64 @@ wa-select::part(listbox) {
 .play-ai-tool-dot-validate_move  { background: teal; }
 .play-ai-tool-dot-top_moves      { background: var(--wa-color-primary-60, #4a90e2); }
 .play-ai-tool-dot-recommend_move { background: #7c3aed; }
+.play-ai-tool-dot-delegate       { background: var(--wa-color-cyan-60, #0ea5b5); }
+/* Verifier sub-run's tool calls, nested under their "Verifying line"
+   row. Full-width break (flex-wrap). A vertical spine runs through the
+   child dot centers (dot is 8px wide -> center at x=4px), tying the
+   check's sub-calls into one timeline. */
+.play-ai-tool-children {
+  flex: 1 0 100%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;  /* allow nested details <pre> to shrink + scroll */
+  gap: 2px;
+  /* Left indent sets the children apart from the parent row. */
+  margin: 0 0 2px 18px;
+  position: relative;
+}
+/* Vertical spine connecting the parent "Verifying line" dot down to the
+   last child's dot. Drawn on the PARENT ROW (not the children box) and
+   anchored to the parent dot's center, so expanding the parent's
+   delegate(...) <pre> -- which wraps in between the dot and the children
+   -- can't open a gap above the spine. Bottom is the row's own bottom
+   padding, tuned to land on the last child dot's center. */
+.play-ai-tool-call:has(> .play-ai-tool-children)::before {
+  content: "";
+  position: absolute;
+  top: 8px;       /* parent dot center (8px dot, align-items:center) */
+  bottom: 10px;   /* up to the last child dot center */
+  left: 3px;      /* parent dot center (8px dot -> x=4, 2px spine) */
+  width: 2px;
+  border-radius: 1px;
+  background: var(--wa-color-cyan-60, #0ea5b5);
+  opacity: 0.6;
+}
+/* Nested rows: anchor the elbow, and reset font-size (nesting would
+   otherwise compound the parent's 0.85em -> 0.85 x 0.85). */
+.play-ai-tool-children .play-ai-tool-call {
+  position: relative;
+  min-width: 0;  /* allow the details <pre> to shrink + scroll */
+  font-size: 1em;
+}
+/* Short horizontal elbow from the spine into each child dot. Anchored to
+   the DOT's vertical center (50% of the fixed-size dot), not the row's --
+   so an expanded details <pre> growing the row height can't drop it. */
+.play-ai-tool-children .play-ai-tool-dot {
+  position: relative;
+}
+.play-ai-tool-children .play-ai-tool-dot::before {
+  content: "";
+  position: absolute;
+  /* Elbow from the spine (at row x=3px, i.e. 15px left of the child dot's
+     left edge) into each child dot center. */
+  right: 100%;
+  top: 50%;
+  width: 15px;
+  height: 2px;
+  transform: translateY(-50%);
+  background: var(--wa-color-cyan-60, #0ea5b5);
+  opacity: 0.6;
+}
 /* Failed tool call: red dot + struck-through label. The error detail
    is appended into the collapsible details body by the renderer. */
 .play-ai-tool-call-failed .play-ai-tool-dot {
@@ -476,13 +537,25 @@ wa-select::part(listbox) {
   cursor: pointer;
   user-select: none;
   flex: 0 0 auto;
+  /* Rotate the single caret glyph open/closed (identical size both ways).
+     inline-block so the transform applies; nudge down to sit on the
+     label baseline. */
+  display: inline-block;
+  transform: translateY(2px);
+  transition: transform 0.12s ease;
+}
+.play-ai-tool-toggle.is-open {
+  transform: translateY(2px) rotate(90deg);
 }
 .play-ai-tool-details-body {
-  flex: 0 0 100%;
+  flex: 1 1 100%;
+  min-width: 0;  /* let it shrink below content width so overflow-x scrolls */
   margin: 2px 0 0 20px;
   opacity: 0.7;
   white-space: pre;
   overflow-x: auto;
+  background-color: black;
+  border-radius: 0;
 }
 
 /* Terminal markers (cancelled/error/round-cap/no-response) sit
@@ -581,8 +654,13 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.22);
 }
+/* Shared chrome for every toast button: bordered, square, light fill.
+   .toast-action-btn is the only text-bearing variant (keeps padding);
+   the rest are icon-only and get fixed square sizing just below. */
 .toast-icon-btn,
-.toast-action-btn {
+.toast-action-btn,
+.xgame-toast-arrow,
+.xgame-toast-x {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -590,12 +668,16 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 4px;
   padding: 2px 6px;
+  font-size: 0.75rem;
   color: inherit;
   cursor: pointer;
   pointer-events: auto;
+  flex-shrink: 0;
 }
 .toast-icon-btn:hover,
-.toast-action-btn:hover {
+.toast-action-btn:hover,
+.xgame-toast-arrow:hover,
+.xgame-toast-x:hover {
   background: rgba(255, 255, 255, 0.18);
   border-color: rgba(255, 255, 255, 0.4);
 }
@@ -610,23 +692,41 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.22);
 }
+/* Icon-only toast buttons: uniform square. Text .toast-action-btn is
+   excluded so its label keeps the padded sizing above. */
+.toast-icon-btn,
+.xgame-toast-arrow,
+.xgame-toast-x {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+}
+.toast-icon-btn wa-icon,
+.xgame-toast-arrow wa-icon,
+.xgame-toast-x wa-icon {
+  font-size: 0.8rem;
+}
 .toast-sort-msg {
   display: flex;
   align-items: center;
   gap: 8px;
 }
+/* Eats the flex-row slack so a trailing dismiss/action button lands at
+   the toast's right edge. Shared by every toast that pairs a message
+   with right-aligned controls. */
+.toast-grow { flex: 1; min-width: 0; }
 
 .toast-ws-toggle {
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   flex-shrink: 0;
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
   -webkit-mask-position: center;
   mask-position: center;
-  -webkit-mask-size: 14px;
-  mask-size: 14px;
+  -webkit-mask-size: 12px;
+  mask-size: 12px;
   background-color: rgba(255,255,255,0.85);
   color: transparent;
 }
@@ -688,9 +788,10 @@ svg.cm-chessboard {
   position: fixed;
   /* Co-located with the ribbon: default is left; right-ribbon override
      below moves it to the right edge. Inset clears the 36px ribbon plus
-     an 8px gutter so toasts don't overlap ribbon buttons.
+     (optionally) some gutter so toasts don't overlap ribbon buttons.
      #xgame-toast-stack lives on the opposite (moves-list) side. */
-  inset: auto auto 4px 44px;
+  /* inset: auto auto 4px 44px; */
+  inset: auto auto 4px 36px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -710,16 +811,17 @@ svg.cm-chessboard {
   max-height: none;
   color: inherit;
 }
-#xgame-toast-stack { inset: auto 44px 4px auto; }
+#xgame-toast-stack { inset: auto 36px 4px auto; }
 #toast-stack:popover-open,
 #xgame-toast-stack:popover-open {
   display: flex;
 }
 .toast {
-  background: var(--wa-color-surface-raised);
+  background: var(--wa-color-surface-raised, #2a2a2a);
   color: var(--fg);
   border: 1px solid #888;
-  padding: 8px 12px;
+  /* padding: 8px 12px; */
+  padding: 4px 4px;
   font-size: 0.8125rem;
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
@@ -1553,7 +1655,6 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 }
 .xgame-toast.xgame-toast-collapsible { flex-direction: column; align-items: stretch; }
 .xgame-toast-icon { color: var(--muted); flex-shrink: 0; }
-.xgame-toast-text { flex: 1; min-width: 0; }
 .xgame-toast-header {
   display: flex;
   align-items: center;
@@ -1583,25 +1684,21 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   text-decoration: underline;
 }
 .xgame-toast .xgame-link:hover { color: var(--accent); filter: brightness(1.15); }
-.xgame-toast-arrow,
-.xgame-toast-x {
-  background: none;
-  border: 1px solid var(--wa-color-border-loud, #353841);
-  border-radius: 50%;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  cursor: pointer;
-  color: var(--muted);
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+/* Analysis on: x-game nav links are greyed and inert (no jumping games
+   mid-analysis). The expand arrow stays live so labels remain browsable. */
+body.xgame-nav-locked .xgame-toast .xgame-link {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: not-allowed;
+  text-decoration: none;
 }
+/* Chrome, square sizing, and icon size come from the shared toast-button
+   rules near .toast-icon-btn; arrow/X keep a muted resting color that
+   brightens on hover. */
+.xgame-toast-arrow,
+.xgame-toast-x { color: var(--muted); }
 .xgame-toast-arrow:hover,
 .xgame-toast-x:hover { color: var(--fg); }
-.xgame-toast-arrow wa-icon,
-.xgame-toast-x wa-icon { font-size: 0.7rem; }
 
 #engines-perspective {
   display: flex;
@@ -3138,9 +3235,12 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    The PV cell scrolls horizontally so full variations are readable. */
 .wb-pvtable { position: relative; }
 .sturddle-wb-pvtable .wb-body { overflow-x: auto; }
-.wb-pvtable-tbl { table-layout: fixed; font-size: 0.75rem; }
+/* border-spacing:0 (not collapse) so the sticky thead keeps its
+   border-bottom -- collapsed borders detach from a sticky header. */
+.wb-pvtable-tbl { table-layout: fixed; font-size: 0.75rem; border-collapse: separate; border-spacing: 0; }
 .wb-pvtable-tbl thead th {
-  position: relative; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; user-select: none;
+  position: sticky; top: 0; z-index: 1; background: var(--panel);
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; user-select: none;
 }
 .wb-pvtable-tbl thead th:hover {
   background: #252830;
@@ -3152,14 +3252,14 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-pvtable-tbl thead th:last-child:hover {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841);
 }
-.wb-pvtable-tbl td { overflow: hidden; text-overflow: ellipsis; text-align: right; border-right: 1px solid rgba(255, 255, 255, 0.10); }
+.wb-pvtable-tbl td { overflow: hidden; text-overflow: ellipsis; text-align: right; border-right: 1px solid var(--border-subtle); }
 .wb-pvtable-tbl td:last-child { border-right: none; }
 .wb-pvtable-tbl th { text-align: center; }
 .wb-pvtable-tbl td.wb-pvtable-pv,
 .wb-pvtable-tbl th:last-child { text-align: left; }
 .wb-pvtable-tbl td.wb-pvtable-pv { overflow: visible; text-overflow: clip; }
 .winbox.sturddle-wb-pvtable .wb-body,
-.dock-slot-body:has(> .wb-pvtable) { padding-left: 0; padding-right: 0; }
+.dock-slot-body:has(> .wb-pvtable) { padding: 0; }
 .wb-pvtable-col-pv { min-width: 200px; }
 .wb-pvtable-pv { white-space: nowrap; }
 
@@ -3170,10 +3270,10 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    docks the ribbon horizontally and is unaffected.
    ------------------------------------------------------------------ */
 body[data-ribbon-side="right"] #toast-stack {
-  inset: auto 44px 4px auto;
+  inset: auto 36px 4px auto;
 }
 body[data-ribbon-side="right"] #xgame-toast-stack {
-  inset: auto auto 4px 44px;
+  inset: auto auto 4px 36px;
 }
 @media (max-width: 640px) {
   /* Ribbon is horizontal at top on mobile, so toasts don't need a side

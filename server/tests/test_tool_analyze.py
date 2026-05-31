@@ -64,29 +64,6 @@ async def test_analyze_returns_eval_pv_depth_for_known_position(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_analyze_clamps_time_ms_above_hard_cap(tmp_path: Path, monkeypatch):
-    # Set the cap low; pass time_ms above it; the tool should still run
-    # (clamp, not reject) and the limit it constructs must be <= cap.
-    from sturddle_view.play import tools_engine
-    monkeypatch.setattr(tools_engine, "MAX_TIME_MS", 100)
-
-    engine_path = make_searching_fake_uci(tmp_path, "clamp_t")
-    bus = EventBus()
-    captured_limit: dict = {}
-
-    # Spy on chess.engine.Limit by reading what the supervisor saw.
-    # Simpler approach: assert the tool's `limits_used` debug field
-    # (deliberately exposed for tests; small surface, big signal).
-    analyze = make_analyze_tool(_launcher_from_path(engine_path, bus), bus=bus)
-    out = await analyze(
-        {"fen": "startpos", "time_ms": 999_999},
-        cancel_token=CancelToken(),
-    )
-    assert "error" not in out, out
-    assert out["limits_used"]["time_ms"] == 100
-
-
-@pytest.mark.asyncio
 async def test_analyze_clamps_depth_above_hard_cap(tmp_path: Path, monkeypatch):
     from sturddle_view.play import tools_engine
     monkeypatch.setattr(tools_engine, "MAX_DEPTH", 4)

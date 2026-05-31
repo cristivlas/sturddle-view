@@ -26,7 +26,11 @@ from sturddle_view.play.tools_engine import (
     make_top_moves_tool,
 )
 
-from .conftest import make_position_aware_fake_uci, make_searching_fake_uci
+from .conftest import (
+    _write_uci_stub,
+    make_position_aware_fake_uci,
+    make_searching_fake_uci,
+)
 
 
 def _launcher_from_path(path: str, bus: EventBus):
@@ -257,6 +261,50 @@ def test_strip_move_prefix_removes_pgn_continuation():
     assert _strip_move_prefix("  23...  Nf6") == "Nf6"
     # Single dot (move-number separator) not a continuation -- left alone.
     assert _strip_move_prefix("1.e4") == "1.e4"
+
+
+def _make_one_scoreless_fake(root: Path, name: str, scoreless_uci: str) -> str:
+    """Fake UCI that returns a normal scored info line for every `go`
+    EXCEPT when the command restricts to `searchmoves <scoreless_uci>`,
+    where it emits only `bestmove` (no info/score). That candidate's
+    last_info has no score -- the exact trigger for the scoreless-sort
+    path (top_moves must rank it LAST, not float it to black's top)."""
+    extra = (
+        "    elif line.startswith('go') or line == 'stop':\n"
+        f"        if 'searchmoves {scoreless_uci}' in line:\n"
+        "            sys.stdout.write('bestmove 0000\\n')\n"
+        "        else:\n"
+        "            sys.stdout.write('info depth 6 score cp 50 nodes 100 time 10\\n')\n"
+        "            sys.stdout.write('bestmove 0000\\n')\n"
+        "        sys.stdout.flush()\n"
+    )
+    return _write_uci_stub(root, name, extra)
+
+
+@pytest.mark.asyncio
+async def test_top_moves_scoreless_candidate_sorts_last_for_black(tmp_path: Path):
+    # Regression: a scoreless candidate must rank LAST, not float to
+    # black's top. black sorts ascending (reverse=stm_is_white), where a
+    # numeric sentinel would invert and put the scoreless entry first.
+    board = chess.Board()
+    board.push_san("e4")  # black to move
+    # a7a5 comes back scoreless; a7a6 and b7b6 score normally.
+    engine_path = _make_one_scoreless_fake(tmp_path, "tm_noscore", "a7a5")
+    bus = EventBus()
+    tool = make_top_moves_tool(
+        _launcher_from_path(engine_path, bus), bus=bus, board_provider=lambda: board,
+    )
+    out = await tool(
+        {"moves": ["a6", "a5", "b6"], "depth": 4}, cancel_token=CancelToken(),
+    )
+    assert "error" not in out, out
+    cands = out["candidates"]
+    assert len(cands) == 3
+    # The scoreless candidate (a5) is last; the scored ones precede it and
+    # carry score_cp.
+    assert cands[-1]["move_san"] == "a5"
+    assert "score_cp" not in cands[-1]
+    assert all("score_cp" in c for c in cands[:-1])
 
 
 @pytest.mark.asyncio
