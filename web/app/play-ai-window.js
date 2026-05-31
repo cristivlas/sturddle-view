@@ -424,6 +424,8 @@ export function appendAiToolCall({
     const raw = args ? `${name}(${args})` : `${name}()`;
     const toggle = document.createElement("span");
     toggle.className = "play-ai-tool-toggle";
+    // One glyph, rotated via CSS when open -- guarantees the open/closed
+    // caret are identical size (the unicode triangles aren't).
     toggle.textContent = "▶";
     line.append(toggle);
     const pre = document.createElement("pre");
@@ -434,7 +436,7 @@ export function appendAiToolCall({
     toggle.addEventListener("click", () => {
       const open = pre.hidden;
       pre.hidden = !open;
-      toggle.textContent = open ? "▼" : "▶";
+      toggle.classList.toggle("is-open", open);
     });
     container.append(line);
     if (toolUseId) {

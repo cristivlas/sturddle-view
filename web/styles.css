@@ -494,13 +494,18 @@ wa-select::part(listbox) {
   position: relative;
   font-size: 1em;
 }
-/* Short horizontal elbow from the spine into each child dot. */
-.play-ai-tool-children .play-ai-tool-call::before {
+/* Short horizontal elbow from the spine into each child dot. Anchored to
+   the DOT's vertical center (50% of the fixed-size dot), not the row's --
+   so an expanded details <pre> growing the row height can't drop it. */
+.play-ai-tool-children .play-ai-tool-dot {
+  position: relative;
+}
+.play-ai-tool-children .play-ai-tool-dot::before {
   content: "";
   position: absolute;
-  left: -14px;
+  right: 100%;
   top: 50%;
-  width: 12px;
+  width: 14px;
   height: 2px;
   transform: translateY(-50%);
   background: var(--wa-color-cyan-60, #0ea5b5);
@@ -525,6 +530,15 @@ wa-select::part(listbox) {
   cursor: pointer;
   user-select: none;
   flex: 0 0 auto;
+  /* Rotate the single caret glyph open/closed (identical size both ways).
+     inline-block so the transform applies; nudge down to sit on the
+     label baseline. */
+  display: inline-block;
+  transform: translateY(2px);
+  transition: transform 0.12s ease;
+}
+.play-ai-tool-toggle.is-open {
+  transform: translateY(2px) rotate(90deg);
 }
 .play-ai-tool-details-body {
   flex: 0 0 100%;
