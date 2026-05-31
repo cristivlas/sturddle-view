@@ -447,3 +447,73 @@ async def test_two_delegates_each_get_their_own_parent_id():
         if e.kind == "ai_tool_call" and e.payload.get("name") == "piece_at"
     }
     assert parents == {"vA": "dA", "vB": "dB"}
+
+
+@pytest.mark.asyncio
+async def test_verifier_line_internal_move_not_flagged():
+    # The verifier may narrate a refutation line ("after exd4..."); that
+    # token is illegal on the live board but is reasoning, not a live-move
+    # hallucination. It must NOT draw a corrective or burn an extra round.
+    board = chess.Board()  # startpos; "exd4" is illegal here
+    provider = _RecordingScriptedProvider(rounds=[
+        [_delegate_chunk("d1", "check e4")],               # narrator
+        [ProviderChunk(                                    # verifier: tool
+            kind="tool_use", tool_use_id="v1",
+            tool_name="piece_at", tool_input={"square": "e2"},
+        )],
+        [ProviderChunk(                                    # verifier: verdict naming a line
+            kind="text",
+            text="e4 is sound; after exd4 the center holds.",
+        )],
+        [ProviderChunk(kind="text", text="done.")],        # narrator
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = _coordinator(bus, provider, board=board)
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    # No corrective fired for the line-internal "exd4".
+    assert not [e for e in events if e.kind == "ai_corrective"]
+    # The verifier concluded in its 2nd round (tool, then verdict) -- no
+    # extra correction round: exactly 4 stream calls total.
+    assert len(provider.calls) == 4
+
+
+@pytest.mark.asyncio
+async def test_verifier_false_live_piece_claim_still_flagged():
+    # Skipping illegal-move validation for the verifier must NOT disable
+    # the piece-claim guard: a fabricated live-board piece still corrects.
+    board = chess.Board()  # startpos: no knight on e4
+    provider = _RecordingScriptedProvider(rounds=[
+        [_delegate_chunk("d1", "check e4")],               # narrator
+        [ProviderChunk(                                    # verifier: tool
+            kind="tool_use", tool_use_id="v1",
+            tool_name="piece_at", tool_input={"square": "e2"},
+        )],
+        [ProviderChunk(                                    # verifier: false live claim
+            kind="text", text="The knight on e4 dominates.",
+        )],
+        [ProviderChunk(kind="text", text="e4 is sound.")],  # verifier: corrected verdict
+        [ProviderChunk(kind="text", text="done.")],         # narrator
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = _coordinator(bus, provider, board=board)
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    await _drain_until_done(queue)
+
+    # Verifier correctives are suppressed from the UI (silent sub-run), so
+    # the proof is in the message history: a corrective user message was
+    # injected after the false claim, asking the verifier to rewrite.
+    corrective_texts = [
+        m["content"]
+        for c in provider.calls
+        for m in c["messages"]
+        if m["role"] == "user" and isinstance(m["content"], str)
+        and "Not on the live board" in m["content"]
+    ]
+    assert corrective_texts, "false live piece claim should still be flagged"
+    assert any("e4" in t for t in corrective_texts)

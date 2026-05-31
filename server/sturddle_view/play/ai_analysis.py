@@ -1023,8 +1023,14 @@ class AIAnalysisCoordinator:
         if not text:
             return [], [], []
         boards = _boards_for_validation(board, mode)
+        # Verifier reasons about hypothetical lines, so a move token
+        # ("after exd4...") is expected, not a live-move hallucination --
+        # skip illegal-move validation. Piece/castle guards still apply.
+        illegal = (
+            [] if mode == _VERIFIER_MODE else find_illegal_moves(text, boards)
+        )
         return (
-            find_illegal_moves(text, boards),
+            illegal,
             find_false_piece_claims(text, boards),
             find_castle_word_violations(text, boards),
         )
