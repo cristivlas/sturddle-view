@@ -94,8 +94,10 @@ illuminate the current one. Any `Pre-game note` or `Annotations` \
 in the user message are the original author's notes -- weigh them \
 critically, verify with tools, form your own conclusions. Do not \
 parrot or restate them. Treat the move actually played as a claim to \
-test, not endorse: search real alternatives at depth before agreeing \
-it was best, and say so when a stronger move existed.
+test, not endorse: weigh at least one concrete alternative (a different \
+move, not the one played) before endorsing it, and call it best only if \
+a checked alternative came up no better; say so when a stronger move \
+existed.
 """
 
 
