@@ -256,6 +256,7 @@ const TOOL_FRIENDLY_LABELS = {
   piece_at:       "Checking piece",
   validate_move:  "Validating move",
   recommend_move: "Picking move",
+  delegate:       "Verifying line",
 };
 
 function friendlyToolLabel(name) {
@@ -384,13 +385,34 @@ export function appendAiThinking(text, roundIndex = 0) {
   });
 }
 
-export function appendAiToolCall({ round = 0, name, input, toolUseId }) {
+export function appendAiToolCall({
+  round = 0, name, input, toolUseId, parentToolUseId = null,
+}) {
   if (!inst.body || !name) return;
   withStickyBottom(() => {
-    const entry = ensureRoundPanel(inst.body, round);
-    freezeThinkingLabel(entry);
     const line = document.createElement("div");
     line.className = "play-ai-tool-call";
+    // Verifier-origin calls nest under their "Verifying line" (delegate)
+    // row so the user sees them as that check's work, not the narrator's.
+    // Fall back to the round panel if the parent row isn't found.
+    let container = null;
+    if (parentToolUseId) {
+      const parent = inst.body._toolCallNodes.get(parentToolUseId);
+      if (parent) {
+        let children = parent.querySelector(".play-ai-tool-children");
+        if (!children) {
+          children = document.createElement("div");
+          children.className = "play-ai-tool-children";
+          parent.append(children);
+        }
+        container = children;
+      }
+    }
+    if (!container) {
+      const entry = ensureRoundPanel(inst.body, round);
+      freezeThinkingLabel(entry);
+      container = entry.tools;
+    }
     const dot = document.createElement("span");
     dot.className = `play-ai-tool-dot play-ai-tool-dot-${name}`;
     line.append(dot);
@@ -414,7 +436,7 @@ export function appendAiToolCall({ round = 0, name, input, toolUseId }) {
       pre.hidden = !open;
       toggle.textContent = open ? "▼" : "▶";
     });
-    entry.tools.append(line);
+    container.append(line);
     if (toolUseId) {
       // Index by tool_use_id so a subsequent ai_tool_call_failed event
       // can mark this exact row (multiple calls of the same tool in a

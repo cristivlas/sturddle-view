@@ -1000,6 +1000,7 @@ export const playPerspective = {
             name: p.name,
             input: p.input,
             toolUseId: p.tool_use_id,
+            parentToolUseId: p.parent_tool_use_id,
           });
           // When the model inspects a hypothetical position, mirror
           // the analyzed FEN on the board so the user can follow the

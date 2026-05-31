@@ -129,10 +129,10 @@ TOP_MOVES_TOOL_SPEC = ToolSpec(
 
 
 _PIECE_AT_CARD = (
-    "Confirm any piece-on-square claim in the live position before "
-    "writing it -- explicit (\"knight on f3\") or implied (centralize, "
-    "push, capture, defend, pin, fork, etc). Result: piece symbol "
-    "(upper=white, lower=black) or null. Live position only, not "
+    "Any piece-on-square claim about the live position is worth "
+    "confirming first -- explicit (\"knight on f3\") or implied "
+    "(centralize, push, capture, defend, pin, fork, etc). Result: piece "
+    "symbol (upper=white, lower=black) or null. Live position only, not "
     "squares inside calculated lines."
 )
 
@@ -161,9 +161,9 @@ PIECE_AT_TOOL_SPEC = ToolSpec(
 
 
 _VALIDATE_MOVE_CARD = (
-    "Confirm any move you name as playable in the live position. "
-    "Live position only; moves inside calculated lines don't need it. "
-    "Result: legal (bool), uci, san. If legal=false, drop the move."
+    "Any move named as playable in the live position is worth confirming "
+    "-- live position only, moves inside calculated lines aren't. Result: "
+    "legal (bool), uci, san. A legal=false move is not playable here."
 )
 
 
@@ -647,11 +647,14 @@ def make_validate_move_tool(board_provider: BoardProvider) -> AnalyzeTool:
     return validate_move
 
 
+# Declarative (see _DELEGATE_TOOL_CARD): the move goes via the tool, not
+# prose, and a one-to-two sentence conclusion follows the accepted call.
 _RECOMMEND_MOVE_CARD = (
-    "End your turn with this tool, not with prose. Engine compares "
-    "your move to its own best at the requested depth; if its best "
-    "is meaningfully stronger, returns error=recommendation_rejected "
-    "and you submit a different move (not the same one again)."
+    "The move goes through this tool, not in prose. The engine compares "
+    "it to its own best at the requested depth; a meaningfully stronger "
+    "best returns error=recommendation_rejected, which a different move "
+    "(not a repeat) resolves. Once the call is accepted, a one-to-two "
+    "sentence conclusion follows it, naming the plan the move commits to."
 )
 
 

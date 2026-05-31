@@ -457,6 +457,55 @@ wa-select::part(listbox) {
 .play-ai-tool-dot-validate_move  { background: teal; }
 .play-ai-tool-dot-top_moves      { background: var(--wa-color-primary-60, #4a90e2); }
 .play-ai-tool-dot-recommend_move { background: #7c3aed; }
+.play-ai-tool-dot-delegate       { background: var(--wa-color-cyan-60, #0ea5b5); }
+/* Verifier sub-run's tool calls, nested under their "Verifying line"
+   row. Full-width break (flex-wrap). A vertical spine runs through the
+   child dot centers (dot is 8px wide -> center at x=4px), tying the
+   check's sub-calls into one timeline. */
+.play-ai-tool-children {
+  flex: 1 0 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Negative top margin tucks the container up so its spine meets the
+     parent "Verifying line" dot. Left indent sets the children apart. */
+  margin: 0 0 2px 18px;
+  position: relative;
+}
+.play-ai-tool-children::before {
+  content: "";
+  position: absolute;
+  /* Rise above the container top to touch the parent dot, descend to
+     the last child's dot center. */
+  top: -10px;
+  bottom: 8px;
+  /* Spine sits at the parent dot's column: parent dot center is 4px from
+     the parent row's left; children are indented 18px, so within this
+     box the parent column is at -14px. */
+  left: -14px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--wa-color-cyan-60, #0ea5b5);
+  opacity: 0.6;
+}
+/* Nested rows: anchor the elbow, and reset font-size (nesting would
+   otherwise compound the parent's 0.85em -> 0.85 x 0.85). */
+.play-ai-tool-children .play-ai-tool-call {
+  position: relative;
+  font-size: 1em;
+}
+/* Short horizontal elbow from the spine into each child dot. */
+.play-ai-tool-children .play-ai-tool-call::before {
+  content: "";
+  position: absolute;
+  left: -14px;
+  top: 50%;
+  width: 12px;
+  height: 2px;
+  transform: translateY(-50%);
+  background: var(--wa-color-cyan-60, #0ea5b5);
+  opacity: 0.6;
+}
 /* Failed tool call: red dot + struck-through label. The error detail
    is appended into the collapsible details body by the renderer. */
 .play-ai-tool-call-failed .play-ai-tool-dot {

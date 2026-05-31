@@ -32,7 +32,7 @@ _FORCE_INLINE_DIRECTIVE = (
 )
 
 
-PromptMode = Literal["coach", "commentator"]
+PromptMode = Literal["coach", "commentator", "verifier"]
 
 
 SYSTEM_PROMPT_PREFACE = """\
@@ -77,9 +77,9 @@ meta-commentary, no "I'll do X" statements. Produce chess content only.
 COACH_ADDENDUM = """\
 Address the player in second person ("you"); the opponent is "your \
 opponent" -- never "White"/"Black" or "the engine". Don't reveal the \
-opponent's planned continuation. To compare moves, hand `top_moves` \
-your own 2-5 candidates -- it ranks yours, doesn't generate. You must \
-submit your move via `recommend_move` (explanations, multiple attempts OK).
+opponent's planned continuation. The move is submitted via \
+`recommend_move` (multiple attempts OK); a one-to-two sentence \
+conclusion follows the accepted call, naming the plan the move commits to.
 """
 
 
@@ -95,9 +95,20 @@ parrot or restate them.
 """
 
 
+VERIFIER_ADDENDUM = """\
+You verify one move in the live position for an analyst. Call a tool to \
+check it before stating any verdict -- never conclude from intuition \
+alone. Report only your conclusion about the live position: is the move \
+sound, and the one-line reason. Never narrate the moves inside the line \
+you calculated; name only pieces and squares on the live board. One or \
+two sentences, no audience, no voice.\
+"""
+
+
 _ADDENDA: dict[PromptMode, str] = {
     "coach": COACH_ADDENDUM,
     "commentator": COMMENTATOR_ADDENDUM,
+    "verifier": VERIFIER_ADDENDUM,
 }
 
 _SEPARATOR = "\n\n"
