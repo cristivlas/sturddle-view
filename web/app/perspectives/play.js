@@ -1747,7 +1747,7 @@ export const playPerspective = {
       label.className = "toast-grow is-active";
       label.textContent = "Analysis mode";
       msg.append(label);
-      msg.append(makeToastIconBtn("table-list", "Search Lines", onPvTable));
+      msg.append(makeToastIconBtn("table-list", "Search lines", onPvTable));
       msg.append(makeToastIconBtn("terminal", "UCI log", onUciLog));
       const stopBtn = makeToastIconBtn("magnifying-glass-minus", "Stop analysis", onAnalyze);
       stopBtn.classList.add("is-active");
