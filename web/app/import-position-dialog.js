@@ -223,7 +223,7 @@ export function showImportPositionDialog({ api }) {
       for (const name of ["pgn", "fen"]) {
         const ta = document.createElement("wa-textarea");
         ta.size = "small";
-        ta.resize = "vertical";
+        ta.resize = "none";
         ta.rows = TEXTAREA_ROWS;
         ta.placeholder = PLACEHOLDERS[name];
         ta.style.fontFamily = "var(--mono-font, monospace)";

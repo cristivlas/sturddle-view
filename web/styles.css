@@ -460,6 +460,7 @@ wa-select::part(listbox) {
 .play-ai-tool-dot-validate_move  { background: teal; }
 .play-ai-tool-dot-top_moves      { background: var(--wa-color-primary-60, #4a90e2); }
 .play-ai-tool-dot-recommend_move { background: #7c3aed; }
+.play-ai-tool-dot-material       { background: forestgreen; }
 .play-ai-tool-dot-delegate       { background: var(--wa-color-cyan-60, #0ea5b5); }
 /* Verifier sub-run's tool calls, nested under their "Verifying line"
    row. Full-width break (flex-wrap). A vertical spine runs through the
@@ -654,6 +655,10 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.22);
 }
+/* Analysis toast: accent the stop button and label to match ribbon active state. */
+.toast-icon-btn.is-active { color: var(--wa-color-brand-90); border-color: var(--wa-color-brand-90); }
+.toast-grow.is-active { color: var(--wa-color-brand-90); }
+
 /* Shared chrome for every toast button: bordered, square, light fill.
    .toast-action-btn is the only text-bearing variant (keeps padding);
    the rest are icon-only and get fixed square sizing just below. */
@@ -995,8 +1000,16 @@ body[data-ribbon-float] .tournaments-ribbon {
   outline: 2px solid var(--wa-color-focus, var(--wa-color-brand-60));
   outline-offset: -2px;
 }
-.ribbon-btn.is-active { color: var(--accent); }
-.ribbon-btn.is-active::before { background: var(--accent); }
+@keyframes analyze-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+.ribbon-btn.is-active { color: var(--wa-color-brand-90); }
+.ribbon-btn.is-active::before { background: var(--wa-color-brand-90); }
+.ribbon-btn.is-active wa-icon { animation: analyze-pulse 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .ribbon-btn.is-active wa-icon { animation: none; }
+}
 .ribbon-btn wa-icon { font-size: 1rem; }
 .ribbon-btn--danger:hover:not(:disabled) {
   color: var(--wa-color-danger-fill-loud, #d65a5a);

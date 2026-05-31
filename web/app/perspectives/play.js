@@ -134,8 +134,8 @@ function formatGameOver(payload, humanWhite) {
 
 const ANALYZE_LABEL_STOP = "Stop analysis";
 const ANALYZE_LABEL_START = "Analysis mode";
-const ANALYZE_ICON_STOP = "circle-stop";
-const ANALYZE_ICON_START = "magnifying-glass";
+const ANALYZE_ICON_STOP = "magnifying-glass-minus";
+const ANALYZE_ICON_START = "magnifying-glass-plus";
 // Body class set while analysis is on; CSS greys + inert-ifies x-game
 // nav links so the user can't jump games mid-analysis.
 const XGAME_LOCK_CLASS = "xgame-nav-locked";
@@ -202,7 +202,7 @@ export const playPerspective = {
             </button>
             <span class="ribbon-sep" aria-hidden="true"></span>
             <button id="analyze" class="ribbon-btn" disabled aria-label="Analysis mode" title="Analysis mode">
-              <wa-icon name="magnifying-glass"></wa-icon>
+              <wa-icon name="magnifying-glass-plus"></wa-icon>
             </button>
             <button id="switch-sides" class="ribbon-btn" disabled aria-label="Switch sides" title="Switch sides">
               <wa-icon name="arrows-rotate"></wa-icon>
@@ -247,7 +247,7 @@ export const playPerspective = {
             </button>
             <span class="ribbon-sep" aria-hidden="true"></span>
             <button id="view-analyze" class="ribbon-btn" aria-label="Analysis mode" title="Analysis mode">
-              <wa-icon name="magnifying-glass"></wa-icon>
+              <wa-icon name="magnifying-glass-plus"></wa-icon>
             </button>
             <button id="view-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
               <wa-icon name="arrows-rotate"></wa-icon>
@@ -1744,12 +1744,14 @@ export const playPerspective = {
       const msg = document.createElement("span");
       msg.className = "toast-sort-msg";
       const label = document.createElement("span");
-      label.className = "toast-grow";
+      label.className = "toast-grow is-active";
       label.textContent = "Analysis mode";
       msg.append(label);
-      msg.append(makeToastIconBtn("table-list", "Search Lines", onPvTable));
+      msg.append(makeToastIconBtn("table-list", "Search lines", onPvTable));
       msg.append(makeToastIconBtn("terminal", "UCI log", onUciLog));
-      msg.append(makeToastIconBtn("circle-stop", "Stop analysis", onAnalyze));
+      const stopBtn = makeToastIconBtn("magnifying-glass-minus", "Stop analysis", onAnalyze);
+      stopBtn.classList.add("is-active");
+      msg.append(stopBtn);
       dismissAnalysisToast = toast(msg, {
         variant: "neutral",
         duration: 0,
