@@ -440,6 +440,9 @@ wa-select::part(listbox) {
   font-size: 0.85em;
   opacity: 0.85;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Anchor the verifier spine (drawn on the parent row that owns a
+     .play-ai-tool-children) to the parent dot, not to the children box. */
+  position: relative;
   /* DEBUG */
   /* border: 1px solid olivedrab; */
 }
@@ -468,19 +471,22 @@ wa-select::part(listbox) {
   flex-direction: column;
   min-width: 0;  /* allow nested details <pre> to shrink + scroll */
   gap: 2px;
-  /* Negative top margin tucks the container up so its spine meets the
-     parent "Verifying line" dot. Left indent sets the children apart. */
+  /* Left indent sets the children apart from the parent row. */
   margin: 0 0 2px 18px;
   position: relative;
 }
-.play-ai-tool-children::before {
+/* Vertical spine connecting the parent "Verifying line" dot down to the
+   last child's dot. Drawn on the PARENT ROW (not the children box) and
+   anchored to the parent dot's center, so expanding the parent's
+   delegate(...) <pre> -- which wraps in between the dot and the children
+   -- can't open a gap above the spine. Bottom is the row's own bottom
+   padding, tuned to land on the last child dot's center. */
+.play-ai-tool-call:has(> .play-ai-tool-children)::before {
   content: "";
   position: absolute;
-  /* Vertical spine connecting the parent dot down to the last child's
-     dot. Offsets tuned by eye against the dot column. */
-  top: -16px;
-  bottom: 8px;
-  left: -15px;
+  top: 8px;       /* parent dot center (8px dot, align-items:center) */
+  bottom: 10px;   /* up to the last child dot center */
+  left: 3px;      /* parent dot center (8px dot -> x=4, 2px spine) */
   width: 2px;
   border-radius: 1px;
   background: var(--wa-color-cyan-60, #0ea5b5);
@@ -502,9 +508,11 @@ wa-select::part(listbox) {
 .play-ai-tool-children .play-ai-tool-dot::before {
   content: "";
   position: absolute;
+  /* Elbow from the spine (at row x=3px, i.e. 15px left of the child dot's
+     left edge) into each child dot center. */
   right: 100%;
   top: 50%;
-  width: 14px;
+  width: 15px;
   height: 2px;
   transform: translateY(-50%);
   background: var(--wa-color-cyan-60, #0ea5b5);
