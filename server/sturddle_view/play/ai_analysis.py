@@ -42,7 +42,7 @@ from ..llm.response_validator import (
 
 BoardProvider = Callable[[], chess.Board | None]
 # End-of-turn verifier; returns payload for ai_recommendation, or None.
-RecommendVerifier = Callable[[chess.Move, CancelToken], Awaitable[dict | None]]
+RecommendVerifier = Callable[[chess.Move, int | None, CancelToken], Awaitable[dict | None]]
 
 
 log = logging.getLogger(__name__)
@@ -411,6 +411,7 @@ class _LoopResult:
     is set only when the narrator tracked a recommend_move."""
     final_text: str = ""
     recommended_uci: str | None = None
+    recommended_depth: int | None = None
     round_cap_hit: bool = False
     text_published: bool = False
 
@@ -534,9 +535,11 @@ class AIAnalysisCoordinator:
                     track_recommend=has_recommend_move,
                 )
                 recommended_uci: str | None = None
+                recommended_depth: int | None = None
                 try:
                     result = await self._run_loop(messages, config)
                     recommended_uci = result.recommended_uci
+                    recommended_depth = result.recommended_depth
                     if result.round_cap_hit:
                         # Loop hit the guardrail, not a natural answer;
                         # lets the UI surface "stopped early; raise the
@@ -569,7 +572,9 @@ class AIAnalysisCoordinator:
                     ):
                         try:
                             move = chess.Move.from_uci(recommended_uci)
-                            payload = await self._recommend_verifier(move, self._cancel_token)
+                            payload = await self._recommend_verifier(
+                                move, recommended_depth, self._cancel_token
+                            )
                             if payload is not None:
                                 await self._emit(
                                     Event(
@@ -619,6 +624,7 @@ class AIAnalysisCoordinator:
         last_call: tuple[tuple, dict] | None = None
         text_parts: list[str] = []
         recommended_uci: str | None = None
+        recommended_depth: int | None = None
         recommend_move_attempted = False
         any_tool_called = False
         nudge_sent = False
@@ -789,6 +795,7 @@ class AIAnalysisCoordinator:
                         and isinstance(tool_output.get("uci"), str)
                     ):
                         recommended_uci = tool_output["uci"]
+                        recommended_depth = tool_output.get("depth")
                         # A conclusion alongside the accepting call counts
                         # -- no separate post-move round needed. Prose in a
                         # later round is handled at the natural-exit check.
@@ -833,6 +840,7 @@ class AIAnalysisCoordinator:
             # fall back to all-rounds text so the verdict isn't lost.
             final_text=final_text or "".join(text_parts),
             recommended_uci=recommended_uci,
+            recommended_depth=recommended_depth,
             round_cap_hit=round_cap_hit,
             text_published=text_published,
         )

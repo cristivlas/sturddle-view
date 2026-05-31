@@ -33,7 +33,9 @@ from .engine_supervisor import EngineSupervisor
 log = logging.getLogger(__name__)
 
 
-_DEFAULT_MAX_DEPTH = 25
+# TODO: dynamic cap -- allow deeper searches when few pieces remain
+# (endgames resolve deep cheaply and benefit from it).
+_DEFAULT_MAX_DEPTH = 30
 # Hard cap -- the agent can request any depth, but we clamp to this.
 # The env override is for ops; UI exposure is pending. Searches are
 # depth-only (no time limit): a timer firing before the depth completes
@@ -114,7 +116,10 @@ TOP_MOVES_TOOL_SPEC = ToolSpec(
             },
             "depth": {
                 "type": "integer",
-                "description": "Per-candidate search depth (clamped to server cap).",
+                "description": (
+                    "Per-candidate depth. Go deeper when candidates score "
+                    "close -- shallow ranking is unreliable."
+                ),
             },
         },
         "required": ["moves"],
@@ -202,7 +207,10 @@ ANALYZE_TOOL_SPEC = ToolSpec(
             },
             "depth": {
                 "type": "integer",
-                "description": "Search depth (clamped to server cap).",
+                "description": (
+                    "Search depth. Go deeper on sharp or close positions -- "
+                    "a shallow search misjudges tactics."
+                ),
             },
         },
         "required": ["fen"],
@@ -642,7 +650,9 @@ RECOMMEND_MOVE_TOOL_SPEC = ToolSpec(
             "depth": {
                 "type": "integer",
                 "description": (
-                    f"Search depth for the dominance check (clamped to {MAX_DEPTH})."
+                    "Dominance-check depth. Go deeper when the position is "
+                    "sharp or the move was close, so the check doesn't "
+                    "confirm a shallow mistake."
                 ),
             },
         },
@@ -806,12 +816,17 @@ def make_recommend_verifier(
     and returns a payload dict (or None on failure). The coordinator
     emits the `ai_recommendation` event through its own _emit so the
     payload gets a seq stamp and lands in the replay buffer."""
-    async def verify(move: chess.Move, cancel_token: CancelToken) -> dict | None:
+    async def verify(
+        move: chess.Move, depth: int | None, cancel_token: CancelToken,
+    ) -> dict | None:
         board = board_provider()
         if board is None or move not in board.legal_moves:
             return None
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
-        limit = chess.engine.Limit(depth=_DEFAULT_DEPTH)
+        # Verify at the depth the model used for its pick (clamped), so the
+        # final check matches what the recommendation was made at.
+        d = max(1, min(int(depth), MAX_DEPTH)) if depth else _DEFAULT_DEPTH
+        limit = chess.engine.Limit(depth=d)
         try:
             last_info, _cancelled = await _run_one_search(
                 engine_launcher, board.copy(stack=False), limit,
