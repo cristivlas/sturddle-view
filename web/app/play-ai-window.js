@@ -102,6 +102,34 @@ function buildBody() {
 
   scroll.append(rounds, terminal);
   root.append(status, scroll);
+
+  root._hoveredTarget = null;
+  scroll.addEventListener("mouseover", ev => {
+    root._hoveredTarget = ev.target;
+  });
+  scroll.addEventListener("mouseleave", () => {
+    root._hoveredTarget = null;
+  });
+
+  root.addEventListener("keydown", ev => {
+    if ((ev.ctrlKey || ev.metaKey) && (ev.key === "a" || ev.key === "A")) {
+      ev.preventDefault();
+      const hovered = root._hoveredTarget;
+      const detailPre = hovered?.closest(".play-ai-tool-details-body");
+      const prosePara = hovered?.closest(".play-ai-prose");
+      const target = (detailPre && !detailPre.hidden)
+        ? detailPre
+        : prosePara
+        ?? root._roundPanels.get(root._currentRound)?.para;
+      if (!target) return;
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      sel.addRange(range);
+    }
+  });
+
   root._status = status;
   root._statusText = statusText;
   root._scroll = scroll;

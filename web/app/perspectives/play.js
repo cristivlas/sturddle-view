@@ -134,7 +134,7 @@ function formatGameOver(payload, humanWhite) {
 
 const ANALYZE_LABEL_STOP = "Stop analysis";
 const ANALYZE_LABEL_START = "Analysis mode";
-const ANALYZE_ICON_STOP = "circle-stop";
+const ANALYZE_ICON_STOP = "magnifying-glass-minus";
 const ANALYZE_ICON_START = "magnifying-glass";
 // Body class set while analysis is on; CSS greys + inert-ifies x-game
 // nav links so the user can't jump games mid-analysis.
@@ -1749,7 +1749,7 @@ export const playPerspective = {
       msg.append(label);
       msg.append(makeToastIconBtn("table-list", "Search Lines", onPvTable));
       msg.append(makeToastIconBtn("terminal", "UCI log", onUciLog));
-      const stopBtn = makeToastIconBtn("circle-stop", "Stop analysis", onAnalyze);
+      const stopBtn = makeToastIconBtn("magnifying-glass-minus", "Stop analysis", onAnalyze);
       stopBtn.classList.add("is-active");
       msg.append(stopBtn);
       dismissAnalysisToast = toast(msg, {
