@@ -309,40 +309,73 @@ _NORMALIZERS: dict[str, Callable[[dict, chess.Board | None], tuple | None]] = {
 }
 
 
+# Stand-in for an assistant turn that produced no real content. Anthropic
+# rejects empty assistant content, so a silent round still needs a valid
+# turn to keep role alternation (the post-recommend nudge relies on this).
+_EMPTY_TURN_PLACEHOLDER = "(no output)"
+
+
 def _assistant_message(chunks: list[ProviderChunk]) -> Message:
     """Reassemble a provider chunk stream into the assistant turn that
     must be appended to messages before sending the next round.
 
     Anthropic's wire shape requires the assistant content to be a list
     of blocks ({type:"text"|"tool_use", ...}) -- we collapse contiguous
-    text deltas into one block and emit a tool_use block per call.
+    text deltas into one block and emit a tool_use block per call. Blank
+    text blocks are dropped; a turn that ends up empty gets a placeholder
+    so it stays wire-valid. Thinking is not fed back (see the loop below).
     """
     content: list[dict] = []
     text_buf: list[str] = []
+
+    def _flush_text() -> None:
+        # Drop blank text blocks -- Anthropic rejects empty content, and a
+        # whitespace-only block carries nothing the model needs to re-read.
+        joined = "".join(text_buf)
+        text_buf.clear()
+        if joined.strip():
+            content.append({"type": "text", "text": joined})
+
     for c in chunks:
-        if c.kind == "text" or c.kind == "thinking":
+        # Thinking is omitted: we lack the signature Anthropic needs on a
+        # returned thinking block, and reasoning-as-text is the wrong shape.
+        if c.kind == "text":
             text_buf.append(c.text)
         elif c.kind == "tool_use":
-            if text_buf:
-                content.append({"type": "text", "text": "".join(text_buf)})
-                text_buf = []
+            _flush_text()
             content.append({
                 "type": "tool_use",
                 "id": c.tool_use_id,
                 "name": c.tool_name,
                 "input": c.tool_input,
             })
-    if text_buf:
-        content.append({"type": "text", "text": "".join(text_buf)})
+    _flush_text()
+    if not content:
+        content.append({"type": "text", "text": _EMPTY_TURN_PLACEHOLDER})
     return {"role": "assistant", "content": content}
+
+
+def _round_produced_output(chunks: list[ProviderChunk]) -> bool:
+    """True iff the round produced real fed-back output -- a tool_use or
+    non-whitespace text (thinking is not fed back, so it doesn't count).
+    The completeness nudge ends the turn on a silent round instead of
+    re-nudging a model that produced nothing."""
+    for c in chunks:
+        if c.kind == "tool_use":
+            return True
+        if c.kind == "text" and c.text and c.text.strip():
+            return True
+    return False
 
 
 def _inject_nudge(
     messages: list[Message], round_chunks: list[ProviderChunk], content: str,
 ) -> None:
-    """Append the model's own round prose, then a one-shot user nudge.
-    The assistant message must land first so the model sees its analysis
-    above the request. Shared by the completeness + post-recommend nudges."""
+    """Append the model's own round turn, then a user nudge. The assistant
+    message lands first so the model sees its analysis above the request.
+    An empty round becomes a placeholder assistant turn (see
+    `_assistant_message`) so the post-recommend nudge can still prompt a
+    model that went silent after its accepting call."""
     messages.append(_assistant_message(round_chunks))
     messages.append({"role": "user", "content": content})
 
@@ -650,7 +683,7 @@ class AIAnalysisCoordinator:
         prose_after_recommend = False
         post_recommend_nudge_sent = False
         round_cap_hit = True  # flipped to False on natural exit
-        text_published = False  # flips on first non-empty text chunk
+        text_published = False  # flips on first non-whitespace text chunk
         final_text = ""  # last round's prose only (verifier verdict)
         for round_index in range(config.max_rounds):
             round_chunks: list[ProviderChunk] = []
@@ -670,7 +703,11 @@ class AIAnalysisCoordinator:
                 round_chunks.append(chunk)
                 await config.transcript.chunk(round_index, chunk)
                 if chunk.kind == "text" and chunk.text:
-                    text_published = True
+                    # Non-whitespace only: a whitespace-only turn produced no
+                    # real answer, so it reads as no_response, not a (missing)
+                    # recommendation. Matches _round_produced_output's strip.
+                    if chunk.text.strip():
+                        text_published = True
                     text_parts.append(chunk.text)
                     await emit(
                         Event(
@@ -697,9 +734,8 @@ class AIAnalysisCoordinator:
                 c.kind == "text" and c.text for c in round_chunks
             )
             # Validate every round's prose, even when a tool_use follows.
-            # Once a move is recommended, the closing prose is a
-            # live-position plan -- drop the commentator history walk so a
-            # square reused by a later piece can't excuse a false claim.
+            # After a move is recommended, the closing prose is a live-position
+            # plan -- drop the commentator history walk (committed=...) below.
             illegal, false_claims, castle_violations = (
                 self._validate_round_text(
                     round_chunks, mode, committed=recommended_uci is not None,
@@ -717,7 +753,10 @@ class AIAnalysisCoordinator:
                 if self._needs_nudge(
                     config, nudge_sent, recommended_uci, any_tool_called,
                     recommend_attempts, attempts_at_last_nudge,
-                ):
+                ) and _round_produced_output(round_chunks):
+                    # Gated on real output: a silent round ends the turn
+                    # (a model that produced nothing won't comply with one
+                    # more prompt) rather than burning rounds re-nudging it.
                     log.info("completeness nudge (%s): injecting corrective", mode)
                     nudge_sent = True
                     attempts_at_last_nudge = recommend_attempts
@@ -736,6 +775,9 @@ class AIAnalysisCoordinator:
                     and not prose_after_recommend
                     and not post_recommend_nudge_sent
                 ):
+                    # Fires even on a silent round -- that IS the trigger
+                    # (model treated the accepting call as the end). The
+                    # empty turn becomes a placeholder so the wire stays valid.
                     log.info("post-recommend nudge (%s): asking for conclusion", mode)
                     post_recommend_nudge_sent = True
                     _inject_nudge(

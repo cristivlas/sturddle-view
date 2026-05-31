@@ -37,6 +37,8 @@ from sturddle_view.llm.prompts import VERIFIER_ADDENDUM
 from sturddle_view.play.ai_analysis import (
     AIAnalysisCoordinator,
     DELEGATE_TOOL_SPEC,
+    _EMPTY_TURN_PLACEHOLDER,
+    _assistant_message,
     make_delegate_tool,
 )
 
@@ -655,3 +657,100 @@ async def test_verifier_false_live_piece_claim_still_flagged():
     ]
     assert corrective_texts, "false live piece claim should still be flagged"
     assert any("e4" in t for t in corrective_texts)
+
+
+@pytest.mark.asyncio
+async def test_silent_round_after_prose_ends_turn_without_renudging():
+    # Completeness nudge ends the turn on a silent round rather than
+    # re-nudging it (nudging an empty round would build an invalid
+    # empty-assistant message, and a silent model won't comply). The model
+    # produced prose first (so it's no_recommendation, not no_response),
+    # then went silent without ever attempting recommend_move.
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
+        _noop_tool,
+    )
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="The center is contested.")],  # r0: prose -> nudge #1
+        [],                                                # r1: silent -> end turn
+        [ProviderChunk(kind="text", text="should never run.")],  # guard vs looping
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg, board_provider=(lambda: None),
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    # r0 prose -> nudge #1 -> r1 silent: the empty round ends the turn (no
+    # re-nudge, no loop). Exactly 2 rounds; flagged no_recommendation.
+    assert len(provider.calls) == 2
+    done = events[-1]
+    assert done.payload.get("no_recommendation") is True
+
+
+@pytest.mark.asyncio
+async def test_whitespace_only_turn_flags_no_response_not_no_recommendation():
+    # A turn whose only text is whitespace produced no real answer: it must
+    # read as no_response, not no_recommendation (text_published gates on a
+    # non-whitespace char, matching _round_produced_output's strip).
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
+        _noop_tool,
+    )
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="   \n  ")],  # whitespace only -> silent
+        [ProviderChunk(kind="text", text="should never run.")],  # guard vs loop
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg, board_provider=(lambda: None),
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    assert len(provider.calls) == 1
+    done = events[-1]
+    assert done.payload.get("no_response") is True
+    assert not done.payload.get("no_recommendation")
+
+
+def test_empty_round_assistant_message_uses_placeholder():
+    # An otherwise-empty assistant turn (e.g. the post-recommend nudge
+    # firing on a silent round) must carry a non-empty content block so the
+    # wire stays valid -- Anthropic rejects empty assistant content.
+    msg = _assistant_message([ProviderChunk(kind="text", text="   ")])
+    assert msg["role"] == "assistant"
+    assert msg["content"] == [{"type": "text", "text": _EMPTY_TURN_PLACEHOLDER}]
+    # A real text chunk is preserved verbatim (no placeholder).
+    msg2 = _assistant_message([ProviderChunk(kind="text", text="real prose")])
+    assert msg2["content"] == [{"type": "text", "text": "real prose"}]
+
+
+def test_thinking_is_not_fed_back_into_assistant_message():
+    # Thinking must NOT round-trip: we lack the signature Anthropic needs
+    # on a returned thinking block, and reasoning-as-text is wrong shape.
+    # Thinking alongside real text: only the text survives.
+    msg = _assistant_message([
+        ProviderChunk(kind="thinking", text="let me reason about this"),
+        ProviderChunk(kind="text", text="the conclusion"),
+    ])
+    assert msg["content"] == [{"type": "text", "text": "the conclusion"}]
+    # Thinking-only round has no fed-back content -> placeholder.
+    msg2 = _assistant_message([ProviderChunk(kind="thinking", text="thinking only")])
+    assert msg2["content"] == [{"type": "text", "text": _EMPTY_TURN_PLACEHOLDER}]
+    # Thinking before a tool_use: thinking dropped, tool_use survives.
+    msg3 = _assistant_message([
+        ProviderChunk(kind="thinking", text="hmm"),
+        ProviderChunk(kind="tool_use", tool_use_id="t1", tool_name="analyze",
+                      tool_input={"fen": "startpos"}),
+    ])
+    assert msg3["content"] == [
+        {"type": "tool_use", "id": "t1", "name": "analyze", "input": {"fen": "startpos"}},
+    ]
