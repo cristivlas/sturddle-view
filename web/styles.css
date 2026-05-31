@@ -289,8 +289,8 @@ wa-select::part(listbox) {
    prose. Vertical spacing visually separates rounds. */
 .play-ai-round {
   display: block;
-  margin: 0 0 12px;
-  padding-top: 6px;
+  margin: 0 0 4px;
+  padding-top: 4px;
   /* DEBUG */
   /* border: 1px solid red; */
 }
@@ -321,11 +321,6 @@ wa-select::part(listbox) {
   /* DEBUG */
   /* border: 2px solid blue; */
 }
-/* Collapse an empty timeline (no thinking shown, no tool rows) so a
-   prose-only round doesn't carry the timeline's blank vertical space. */
-.play-ai-timeline:has(.play-ai-thinking[hidden]):has(.play-ai-tools:empty) {
-  display: none;
-}
 /* Continuous muted rule passing through the dot column for all rounds.
    Lives on the rounds-container so gaps between round panels don't
    break it. Dot column x = timeline margin-left (12px) + dot-half
@@ -353,6 +348,7 @@ wa-select::part(listbox) {
      opaque and continues to cover the rounds-container vertical rule. */
   color: var(--muted, #888);
   text-decoration: line-through;
+  margin: 0;
 }
 /* Revision banner: <details> whose summary IS the banner; clicking
    reveals the previous round's redacted prose inline. margin-left
@@ -405,11 +401,6 @@ wa-select::part(listbox) {
 .play-ai-revision-body {
   margin-top: 4px;
 }
-/* Redacted prose lives in the revision body; keep its background opaque
-   so the rounds-container rule stays hidden behind it. */
-.play-ai-revision-body > .play-ai-prose {
-  margin: 0;
-}
 
 /* Tool-call lines: colored dot per tool family + compact label.
    Names mapped to dot color via .play-ai-tool-dot-<name>. */
@@ -422,6 +413,17 @@ wa-select::part(listbox) {
   flex-direction: column;
   gap: 2px;
   overflow: hidden;
+}
+/* No tool rows -> no box; otherwise its margin+padding waste ~22px.
+   With thinking also hidden this leaves the (zero-vertical-margin)
+   timeline at 0 height, so a prose-only round carries no blank space. */
+.play-ai-tools:empty {
+  display: none;
+}
+/* No tools -> thinking is the last timeline child; drop its bottom
+   margin so it doesn't dangle 8px of empty space. */
+.play-ai-timeline:has(.play-ai-tools:empty) .play-ai-thinking {
+  margin-bottom: 0;
 }
 .play-ai-tool-call {
   display: flex;
