@@ -82,6 +82,16 @@ Prose + existing validators avoids it entirely.
 - Guards: verifier registry omits `delegate` (one level deep, no recursion);
   verifier gets its own `MAX_TOOL_ROUNDS`.
 
+## Accepted limitations
+
+- The narrator has no engine tools (strict split), so its only engine gate
+  on a recommended move is `recommend_move`'s A/B dominance check (engine
+  free-best vs the candidate at depth). It does not separately validate the
+  line *behind* the move -- delegate is optional. Accepted: the dominance
+  check rejects a move the engine's best beats by margin, which is the
+  guard that matters; deeper line-validation is the model's job via
+  delegate when it chooses.
+
 ## Open / TODO
 
 - Latency: each verifier is a full model turn. Measure on live coach mode.

@@ -42,6 +42,12 @@ _DEFAULT_MAX_DEPTH = 30
 # makes the bestmove non-deterministic.
 MAX_DEPTH = env_int("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_MAX_DEPTH)
 
+# Floor for the end-of-turn recommendation check: it searches at least
+# this deep regardless of the (often shallow) depth the model picked, so
+# the authoritative verdict isn't a shallow rubber-stamp.
+_DEFAULT_VERIFICATION_DEPTH = 30
+VERIFICATION_DEPTH = env_int("SV_AI_VERIFICATION_DEPTH", _DEFAULT_VERIFICATION_DEPTH)
+
 # recommend_move dominance margin: rival must beat candidate by strictly
 # more than this many cp (STM POV) to reject. Filters cosmetic 1-30 cp
 # preferences while still catching real blunders. Mate scores ignore it.
@@ -823,9 +829,10 @@ def make_recommend_verifier(
         if board is None or move not in board.legal_moves:
             return None
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
-        # Verify at the depth the model used for its pick (clamped), so the
-        # final check matches what the recommendation was made at.
-        d = max(1, min(int(depth), MAX_DEPTH)) if depth else _DEFAULT_DEPTH
+        # Verify at least VERIFICATION_DEPTH deep, going deeper if the
+        # model asked for more -- never shallower. Clamped to the cap.
+        requested = int(depth) if depth else 0
+        d = min(max(requested, VERIFICATION_DEPTH), MAX_DEPTH)
         limit = chess.engine.Limit(depth=d)
         try:
             last_info, _cancelled = await _run_one_search(

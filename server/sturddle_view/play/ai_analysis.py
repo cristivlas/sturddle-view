@@ -924,6 +924,8 @@ class AIAnalysisCoordinator:
                 # latency (x fan-out) and risks Ollama <think> in verdicts.
                 thinking_override=False,
             )
+            # done_payload feeds the transcript turn_end only -- a verifier
+            # sub-run emits no user-facing done event (it's internal).
             done_payload: dict = {"done": True}
             try:
                 result = await self._run_loop(messages, config)
@@ -945,6 +947,7 @@ class AIAnalysisCoordinator:
         client-side nesting) and the turn's game_id (for session muxing)."""
         if event.kind not in _VERIFIER_FORWARDED_KINDS:
             return
+        # Safe to mutate in place: _run_loop builds a fresh Event per emit.
         event.payload["parent_tool_use_id"] = self._active_delegate_id
         if event.game_id is None:
             event.game_id = self._turn_game_id

@@ -344,6 +344,8 @@ async def test_xml_still_works_when_tool_names_provided():
 #   call:analyze{fen:5r2/2qbbppk/...,depth:28,time_ms:150}
 # Three new wrinkles: a `call:` decoration before the tool name,
 # unquoted (bare) string values, and unquoted bare-identifier keys.
+# (time_ms is no longer an analyze param; kept verbatim as a faithful
+# capture -- the parser must handle unknown keys the model emits.)
 
 
 @pytest.mark.asyncio
