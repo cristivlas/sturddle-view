@@ -280,6 +280,58 @@ async def test_verifier_tool_events_carry_parent_id_and_prose_suppressed():
 
 
 @pytest.mark.asyncio
+async def test_committed_prose_validates_against_live_board_only():
+    # Commentator mode, a square reused by a later piece: a pawn lived on
+    # b2 for most of the game, then was captured and the queen ended up on
+    # b2. The history walk would excuse "pawn on b2", but the closing
+    # post-recommendation plan must validate against the live board, where
+    # b2 holds the queen -- so the false claim draws a corrective.
+    async def recommend(_input, *, cancel_token):
+        return {"ok": True, "uci": "a2a3"}
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
+        recommend,
+    )
+    # Immortal Game through 17...Qxb2: a White pawn lived on b2 for most
+    # of the game, then the black queen captured it and now sits there.
+    board = chess.Board()
+    for san in (
+        "e4 e5 f4 exf4 Bc4 Qh4+ Kf1 b5 Bxb5 Nf6 Nf3 Qh6 d3 Nh5 Nh4 Qg5 "
+        "Nf5 c6 g4 Nf6 Rg1 cxb5 h4 Qg6 h5 Qg5 Qf3 Ng8 Bxf4 Qf6 Nc3 Bc5 "
+        "Nd5 Qxb2"
+    ).split():
+        board.push_san(san)
+    assert board.piece_at(chess.B2) is not None  # queen now on b2
+    assert board.piece_at(chess.B2).piece_type == chess.QUEEN
+
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(                                       # round 0: accept move
+            kind="tool_use", tool_use_id="r1",
+            tool_name="recommend_move", tool_input={"move": "a3"},
+        )],
+        [ProviderChunk(                                       # round 1: false closing claim
+            kind="text",
+            text="Capturing the pawn on b2 wins material for Black.",
+        )],
+        [ProviderChunk(kind="text", text="The queen on b2 stays active.")],  # round 2: rewrite
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg, board_provider=(lambda: board),
+    )
+
+    await coord.run(game_id="g", mode="commentator", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    correctives = [e for e in events if e.kind == "ai_corrective"]
+    assert correctives, "committed prose should validate against the live board"
+    assert "pawn on b2" in correctives[0].payload["false_claims"]
+
+
+@pytest.mark.asyncio
 async def test_post_recommend_nudge_fires_when_no_conclusion():
     # Move accepted, then the model exits with no prose: the nudge runs
     # one more round to extract the conclusion.

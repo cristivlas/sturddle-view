@@ -63,13 +63,20 @@ _VERIFIER_MODE: PromptMode = "verifier"
 
 
 def _boards_for_validation(
-    board: chess.Board, mode: PromptMode,
+    board: chess.Board, mode: PromptMode, *, committed: bool = False,
 ) -> list[chess.Board]:
     """Build the board sequence the validators consume. Coach mode:
     just [board]. Commentator mode: current plus every prior position
     via repeated pop() -- so prose referencing earlier-game pieces
-    isn't flagged. We work on a copy so the caller's board is untouched."""
-    if mode != _COMMENTATOR_MODE or not board.move_stack:
+    isn't flagged. We work on a copy so the caller's board is untouched.
+
+    `committed` collapses the walk to [board] even in commentator mode:
+    once a move is recommended, the closing prose is a live-position
+    plan, not earlier-game commentary, so a square reused by a later
+    piece (pawn left b2, queen now there) must validate against the
+    live board -- the walk would excuse "capturing the pawn on b2"
+    because a pawn sat there 30 moves ago."""
+    if mode != _COMMENTATOR_MODE or committed or not board.move_stack:
         return [board]
     walker = board.copy()
     out: list[chess.Board] = [walker.copy()]
@@ -680,8 +687,13 @@ class AIAnalysisCoordinator:
                 c.kind == "text" and c.text for c in round_chunks
             )
             # Validate every round's prose, even when a tool_use follows.
+            # Once a move is recommended, the closing prose is a
+            # live-position plan -- drop the commentator history walk so a
+            # square reused by a later piece can't excuse a false claim.
             illegal, false_claims, castle_violations = (
-                self._validate_round_text(round_chunks, mode)
+                self._validate_round_text(
+                    round_chunks, mode, committed=recommended_uci is not None,
+                )
             )
             if (
                 pending_tool is None
@@ -1016,14 +1028,17 @@ class AIAnalysisCoordinator:
         )
 
     def _validate_round_text(
-        self, chunks: list[ProviderChunk], mode: PromptMode,
+        self, chunks: list[ProviderChunk], mode: PromptMode, *,
+        committed: bool = False,
     ) -> tuple[list[str], list[str], list[str]]:
         """Run all validators on a round's assembled text.
         Returns (illegal_moves, false_piece_claims, castle_violations).
         Empty triple when clean, when no board_provider is wired, or
         when no live board is available. In commentator mode the
         board sequence includes every prior position via move_stack
-        walk -- references to earlier-game pieces aren't flagged."""
+        walk -- references to earlier-game pieces aren't flagged --
+        unless `committed`, which collapses the walk to the live board
+        for the post-recommendation closing prose."""
         if self._board_provider is None:
             return [], [], []
         board = self._board_provider()
@@ -1032,7 +1047,7 @@ class AIAnalysisCoordinator:
         text = "".join(c.text for c in chunks if c.kind == "text" and c.text)
         if not text:
             return [], [], []
-        boards = _boards_for_validation(board, mode)
+        boards = _boards_for_validation(board, mode, committed=committed)
         # Verifier reasons about hypothetical lines, so a move token
         # ("after exd4...") is expected, not a live-move hallucination --
         # skip illegal-move validation. Piece/castle guards still apply.
