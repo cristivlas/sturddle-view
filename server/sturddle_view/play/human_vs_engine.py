@@ -1442,7 +1442,7 @@ class HumanVsEngine:
         except Exception:
             # Persistence is best-effort: never let a save failure (disk full,
             # serialization quirk, permissions) abort the move that triggered it.
-            log.exception("could not persist game state")
+            log.error("could not persist game state", exc_info=True)
 
     def _clear_store(self) -> None:
         if self._store is not None:
@@ -1580,7 +1580,7 @@ class HumanVsEngine:
         except asyncio.CancelledError:
             return
         except Exception:
-            log.exception("clock tick loop crashed")
+            log.error("clock tick loop crashed", exc_info=True)
 
     async def _handle_flag_fall(self) -> None:
         async with self._lock:
@@ -1650,7 +1650,7 @@ class HumanVsEngine:
             try:
                 engine = await self._ensure_engine()
             except Exception:
-                log.exception("could not start engine for search")
+                log.error("could not start engine for search", exc_info=True)
                 return
         # Use the live remaining time, not the snapshot at turn start.
         white_clock = self._remaining(chess.WHITE)
@@ -1735,7 +1735,7 @@ class HumanVsEngine:
                 self._supervisor, self._settings,
             )
         except Exception:
-            log.exception("could not start engine for analysis")
+            log.error("could not start engine for analysis", exc_info=True)
             return
         await self._bus.publish(
             Event(kind="engine_search_start", game_id=game_id, payload={})
@@ -2143,7 +2143,7 @@ class HumanVsEngine:
         try:
             pgn_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
-            log.exception("could not create PGN dir %s", pgn_dir)
+            log.error("could not create PGN dir %s", pgn_dir, exc_info=True)
             return None
 
         built = self._build_play_game_pgn(result=result, termination=termination)
@@ -2159,7 +2159,7 @@ class HumanVsEngine:
         try:
             atomic_write_text(path, pgn_text)
         except OSError:
-            log.exception("could not write PGN to %s", path)
+            log.error("could not write PGN to %s", path, exc_info=True)
             return None
         log.info("saved PGN to %s", path)
         return path
@@ -2179,7 +2179,7 @@ class HumanVsEngine:
         try:
             built = self._build_play_game_pgn(result=result, termination=termination)
         except Exception:
-            log.exception("could not build PGN for recents save")
+            log.error("could not build PGN for recents save", exc_info=True)
             return
         if built is None:
             return
@@ -2249,7 +2249,7 @@ class HumanVsEngine:
                     parent_game_id=parent_game_id, fork_ply=fork_ply,
                 )
         except Exception:
-            log.exception("could not save finished game to recents")
+            log.error("could not save finished game to recents", exc_info=True)
 
     async def export_to_recents(self) -> str | None:
         """User-driven save: write the in-progress play game to recents
@@ -2315,7 +2315,7 @@ class HumanVsEngine:
                     parent_game_id=parent_game_id, fork_ply=fork_ply,
                 )
         except Exception:
-            log.exception("could not export play game to recents")
+            log.error("could not export play game to recents", exc_info=True)
             return None
         # Consume the link only after the write succeeded; on failure
         # leave it in place so a later finalization can still record it.

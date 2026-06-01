@@ -405,7 +405,7 @@ async def _run_one_search(
     try:
         engine, cleanup = await spawn_analysis_engine(sup, settings)
     except Exception as exc:
-        log.exception("search: engine spawn failed")
+        log.error("search: engine spawn failed", exc_info=True)
         raise _SearchError("engine_spawn_failed", str(exc)) from exc
     try:
         analysis_kwargs: dict = {"limit": limit}

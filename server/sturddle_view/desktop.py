@@ -54,7 +54,7 @@ class JsApi:
                 file_types=_PGN_FILE_TYPES,
             )
         except Exception as exc:
-            log.exception("save_pgn: dialog failed")
+            log.error("save_pgn: dialog failed", exc_info=True)
             return {"ok": False, "error": str(exc)}
         if not result:
             return {"ok": False, "cancelled": True}
@@ -64,7 +64,7 @@ class JsApi:
         try:
             Path(path).write_text(pgn_text, encoding="utf-8", newline="")
         except OSError as exc:
-            log.exception("save_pgn: write failed for %s", path)
+            log.error("save_pgn: write failed for %s", path, exc_info=True)
             return {"ok": False, "error": str(exc), "path": str(path)}
         return {"ok": True, "path": str(path)}
 
@@ -101,7 +101,7 @@ def _active_tournament_name(app) -> str | None:
             return None
         return store.get(active_id).name
     except Exception:
-        log.exception("close-confirm: active tournament lookup failed")
+        log.error("close-confirm: active tournament lookup failed", exc_info=True)
         return None
 
 

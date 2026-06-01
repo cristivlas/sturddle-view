@@ -176,7 +176,7 @@ class EngineSupervisor:
             try:
                 await engine.configure(accepted)
             except chess.engine.EngineError:
-                log.exception("engine refused options %s", accepted)
+                log.error("engine refused options %s", accepted, exc_info=True)
         return engine
 
     async def spawn_throwaway(
@@ -220,7 +220,7 @@ class EngineSupervisor:
             try:
                 await engine.configure(accepted)
             except chess.engine.EngineError:
-                log.exception("engine refused options %s", accepted)
+                log.error("engine refused options %s", accepted, exc_info=True)
 
         async def _cleanup() -> None:
             """Exception-safe by contract: callers don't wrap. Swallows
@@ -242,7 +242,7 @@ class EngineSupervisor:
             try:
                 await asyncio.wait(waiters, timeout=_CLOSE_GRACE_SECONDS)
             except Exception:
-                log.exception("engine cleanup: transport close raised")
+                log.error("engine cleanup: transport close raised", exc_info=True)
 
         return engine, _cleanup
 

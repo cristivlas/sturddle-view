@@ -184,7 +184,7 @@ class RecentImports:
         except FileNotFoundError:
             pass
         except (OSError, json.JSONDecodeError):
-            log.exception("recent-imports index unreadable; starting empty")
+            log.error("recent-imports index unreadable; starting empty", exc_info=True)
         return inst
 
     # ---- read paths (sync) ----

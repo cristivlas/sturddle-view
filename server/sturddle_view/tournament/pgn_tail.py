@@ -135,7 +135,7 @@ class PgnTailer:
                 while self._has_more:
                     await self.poll_once()
             except Exception:
-                log.exception("PgnTailer finalize (paused) failed")
+                log.error("PgnTailer finalize (paused) failed", exc_info=True)
             return
         self._finalize = True
         task, self._task = self._task, None
@@ -164,7 +164,7 @@ class PgnTailer:
         try:
             await self.poll_once()
         except Exception:
-            log.exception("PgnTailer initial poll failed for %s", self._path)
+            log.error("PgnTailer initial poll failed for %s", self._path, exc_info=True)
         if self._finalize and not self._has_more:
             return
         while not self._stop_event.is_set():
@@ -186,7 +186,7 @@ class PgnTailer:
                 await self.poll_once()
             except Exception:
                 # Parse error must not kill the tailer.
-                log.exception("PgnTailer poll failed for %s", self._path)
+                log.error("PgnTailer poll failed for %s", self._path, exc_info=True)
             # In finalize mode the writer is gone -- once we've caught
             # up to the current EOF (``not _has_more``) no further data
             # will arrive, so exit cleanly.
@@ -256,9 +256,10 @@ class PgnTailer:
                 await self._on_record(rec)
                 emitted += 1
             except Exception:
-                log.exception(
+                log.error(
                     "PgnTailer on_record callback raised for game_n=%d",
                     rec.game_n,
+                    exc_info=True,
                 )
         self._offset = new_offset
         self._has_more = self._offset < st.st_size
@@ -306,7 +307,7 @@ class PgnTailer:
                 f.seek(start)
                 blob = f.read(end - start)
         except OSError:
-            log.exception("PgnTailer read failed for %s", self._path)
+            log.error("PgnTailer read failed for %s", self._path, exc_info=True)
             return [], start
 
         text = blob.decode("utf-8", errors="replace")
@@ -328,7 +329,7 @@ class PgnTailer:
             try:
                 game = chess.pgn.read_game(f)
             except Exception:
-                log.exception("PgnTailer read_game raised")
+                log.error("PgnTailer read_game raised", exc_info=True)
                 break
             if game is None:
                 break

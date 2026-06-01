@@ -626,7 +626,7 @@ async def _stream_queue_to_websocket(websocket: WebSocket, queue) -> None:
     except asyncio.CancelledError:
         pass
     except Exception:
-        log.exception("tournament WS handler error")
+        log.error("tournament WS handler error", exc_info=True)
     finally:
         recv_task.cancel()
         if get_task is not None:

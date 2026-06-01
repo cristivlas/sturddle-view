@@ -251,7 +251,7 @@ async def _lifespan(app: FastAPI):
         for t in reconciled:
             log.info("reconciled stale running tournament: %s (%s)", t.id, t.name)
     except Exception:
-        log.exception("tournament reconcile failed")
+        log.error("tournament reconcile failed", exc_info=True)
     _signal_ready_port()
     yield
     # Best-effort: stop any active tournament on shutdown.
@@ -260,7 +260,7 @@ async def _lifespan(app: FastAPI):
         if active is not None:
             await app.state.tournament_orch.stop(active)
     except Exception:
-        log.exception("tournament shutdown stop failed")
+        log.error("tournament shutdown stop failed", exc_info=True)
     for task in list(app.state.ws_tasks):
         task.cancel()
     if app.state.ws_tasks:
