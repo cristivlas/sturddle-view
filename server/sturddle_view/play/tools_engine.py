@@ -22,7 +22,7 @@ import chess
 import chess.engine
 
 from ..env_utils import env_int
-from ..events import Event, EventBus
+from ..events import EVT_ENGINE_SEARCH_START, Event, EventBus
 from ..llm import ToolSpec
 from ..llm.cancel import CancelToken
 from .engine_analysis import resolve_eval_pov_white_or_stm, spawn_analysis_engine
@@ -98,6 +98,10 @@ _MOVE_NOTATION_CONSTRAINT = (
 # the coordinator imports them rather than hardcoding string literals).
 ANALYZE_TOOL_NAME = "analyze"
 MATERIAL_TOOL_NAME = "material"
+TOP_MOVES_TOOL_NAME = "top_moves"
+PIECE_AT_TOOL_NAME = "piece_at"
+VALIDATE_MOVE_TOOL_NAME = "validate_move"
+RECOMMEND_MOVE_TOOL_NAME = "recommend_move"
 
 # Shared description for the `fen` arg across every FEN-taking tool spec
 # (analyze, material). One source so the startpos affordance stays in sync.
@@ -108,7 +112,7 @@ _FEN_ARG_DESCRIPTION = "FEN string, or 'startpos' for the initial position."
 # the implementation so prompt text + schema + behavior move together;
 # app.py only wires (spec, callable) into the registry.
 TOP_MOVES_TOOL_SPEC = ToolSpec(
-    name="top_moves",
+    name=TOP_MOVES_TOOL_NAME,
     description=(
         "Rank YOUR candidate moves in the live position. You supply "
         "2-5 moves; engine searches each and returns entries sorted "
@@ -152,7 +156,7 @@ _PIECE_AT_CARD = (
 
 
 PIECE_AT_TOOL_SPEC = ToolSpec(
-    name="piece_at",
+    name=PIECE_AT_TOOL_NAME,
     description=(
         "Piece on a square in the live position, or null. Call before "
         "naming any piece-on-square in prose."
@@ -182,7 +186,7 @@ _VALIDATE_MOVE_CARD = (
 
 
 VALIDATE_MOVE_TOOL_SPEC = ToolSpec(
-    name="validate_move",
+    name=VALIDATE_MOVE_TOOL_NAME,
     description=(
         "Check if a move (UCI or SAN) is legal in the live position. "
         "Call before naming any move as playable in the current "
@@ -475,7 +479,7 @@ def make_analyze_tool(
         limit, limits_used = _depth_limit(input_, _DEFAULT_DEPTH)
 
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
-        await bus.publish(Event(kind="engine_search_start", game_id=game_id, payload={}))
+        await bus.publish(Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={}))
 
         try:
             last_info, cancelled = await _run_one_search(
@@ -594,7 +598,7 @@ def make_top_moves_tool(
 
         limit, limits_used = _depth_limit(input_, _DEFAULT_TOP_MOVES_DEPTH)
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
-        await bus.publish(Event(kind="engine_search_start", game_id=game_id, payload={}))
+        await bus.publish(Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={}))
 
         stm_is_white = board.turn == chess.WHITE
         cancelled_any = False
@@ -733,7 +737,7 @@ _RECOMMEND_MOVE_CARD = (
 
 
 RECOMMEND_MOVE_TOOL_SPEC = ToolSpec(
-    name="recommend_move",
+    name=RECOMMEND_MOVE_TOOL_NAME,
     description=(
         "Submit your final move at end-of-turn. Validates legality and "
         "compares against the engine's best at the requested depth. "

@@ -7,7 +7,15 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
 from ..auth import AUTH_COOKIE, check_token_value, origin_ok
-from ..events import SESSION_EPOCH, Event, EventBus
+from ..events import (
+    ENVELOPE_GAME_ID,
+    ENVELOPE_KIND,
+    ENVELOPE_PAYLOAD,
+    ENVELOPE_SESSION_EPOCH,
+    SESSION_EPOCH,
+    Event,
+    EventBus,
+)
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -15,10 +23,10 @@ log = logging.getLogger(__name__)
 
 def _event_to_json(event: Event) -> dict:
     return {
-        "kind": event.kind,
-        "game_id": event.game_id,
-        "payload": event.payload,
-        "session_epoch": SESSION_EPOCH,
+        ENVELOPE_KIND: event.kind,
+        ENVELOPE_GAME_ID: event.game_id,
+        ENVELOPE_PAYLOAD: event.payload,
+        ENVELOPE_SESSION_EPOCH: SESSION_EPOCH,
     }
 
 

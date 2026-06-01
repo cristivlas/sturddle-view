@@ -27,7 +27,16 @@ from ..chess.board import board_from, moves_san as _moves_san, side_to_move
 from ..chess.pgn_build import build_pgn
 from .canonical_hash import canonical_hash
 from ..chess.results import DRAW, loser_result, winner_result
-from ..events import Event, EventBus
+from ..events import (
+    EVT_BOARD_UPDATE,
+    EVT_CLOCK_TICK,
+    EVT_ENGINE_INFO,
+    EVT_ENGINE_SEARCH_START,
+    EVT_GAME_RESULT,
+    EVT_SYSTEM,
+    Event,
+    EventBus,
+)
 from .chess_clock import ChessClock, TimeControl
 from .engine_analysis import (
     EVAL_POV_HUMAN,
@@ -582,7 +591,7 @@ class HumanVsEngine:
         if ended:
             await self._cancel_tick()
             await self._bus.publish(
-                Event(kind="game_result", game_id=end_game_id, payload=end_payload)
+                Event(kind=EVT_GAME_RESULT, game_id=end_game_id, payload=end_payload)
             )
             await self._flush_recents_save()
         else:
@@ -627,7 +636,7 @@ class HumanVsEngine:
             return
         await self._bus.publish(
             Event(
-                kind="engine_info",
+                kind=EVT_ENGINE_INFO,
                 game_id=self._game_id,
                 payload=self._last_analysis_info,
             )
@@ -736,7 +745,7 @@ class HumanVsEngine:
             self._stash_recents_payload(result=result, termination="resignation")
             await self._bus.publish(
                 Event(
-                    kind="game_result",
+                    kind=EVT_GAME_RESULT,
                     game_id=self._game_id,
                     payload={"result": "resign", "by": "human"},
                 )
@@ -1595,7 +1604,7 @@ class HumanVsEngine:
             self._stash_recents_payload(result=result, termination="time_forfeit")
         await self._bus.publish(
             Event(
-                kind="game_result",
+                kind=EVT_GAME_RESULT,
                 game_id=game_id,
                 payload={"result": "timeout", "loser": loser},
             )
@@ -1665,7 +1674,7 @@ class HumanVsEngine:
         # repopulate it. Book moves return bestmove without info, leaving it
         # blank -- which is the signal we want.
         await self._bus.publish(
-            Event(kind="engine_search_start", game_id=game_id, payload={})
+            Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={})
         )
         captured: dict = {}
         try:
@@ -1684,7 +1693,7 @@ class HumanVsEngine:
                 log.error("engine crashed mid-search")
                 await self._cancel_tick()
                 await self._bus.publish(
-                    Event(kind="system", game_id=game_id, payload={"error": "engine_terminated"})
+                    Event(kind=EVT_SYSTEM, game_id=game_id, payload={"error": "engine_terminated"})
                 )
             else:
                 log.info("engine terminated (takeback or shutdown)")
@@ -1718,7 +1727,7 @@ class HumanVsEngine:
         if ended:
             await self._cancel_tick()
             await self._bus.publish(
-                Event(kind="game_result", game_id=end_game_id, payload=end_payload)
+                Event(kind=EVT_GAME_RESULT, game_id=end_game_id, payload=end_payload)
             )
             await self._flush_recents_save()
 
@@ -1738,7 +1747,7 @@ class HumanVsEngine:
             log.error("could not start engine for analysis", exc_info=True)
             return
         await self._bus.publish(
-            Event(kind="engine_search_start", game_id=game_id, payload={})
+            Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={})
         )
         try:
             with await engine.analysis(board) as analysis:
@@ -1747,7 +1756,7 @@ class HumanVsEngine:
         except chess.engine.EngineTerminatedError:
             log.error("engine crashed mid-analysis")
             await self._bus.publish(
-                Event(kind="system", game_id=game_id, payload={"error": "engine_terminated"})
+                Event(kind=EVT_SYSTEM, game_id=game_id, payload={"error": "engine_terminated"})
             )
         except (asyncio.CancelledError, RuntimeError, BrokenPipeError):
             return
@@ -1864,7 +1873,7 @@ class HumanVsEngine:
             moves_san = _moves_san(self._board, self._start_fen)
             view_payload = None
         return Event(
-            kind="board_update",
+            kind=EVT_BOARD_UPDATE,
             game_id=self._game_id,
             payload={
                 "fen": self._board.fen(),
@@ -1900,7 +1909,7 @@ class HumanVsEngine:
                 idx = min(self._view_cursor, len(self._view_clock_history) - 1)
                 wt, bt = self._view_clock_history[idx]
             return Event(
-                kind="clock_tick",
+                kind=EVT_CLOCK_TICK,
                 game_id=self._game_id,
                 payload={
                     "white_time": wt,
@@ -1913,7 +1922,7 @@ class HumanVsEngine:
                 },
             )
         return Event(
-            kind="clock_tick",
+            kind=EVT_CLOCK_TICK,
             game_id=self._game_id,
             payload={
                 "white_time": self._remaining(chess.WHITE),

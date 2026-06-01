@@ -16,7 +16,13 @@ router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(
 _VALID_SIDES = {"white", "black", "random"}
 _VALID_EVAL_POV = {"white", "engine", "human"}
 _VALID_RIBBON_SIDES = {"left", "right"}
-_VALID_AI_PROVIDERS = {"anthropic", "gemini", "ollama"}
+# AI provider names -- single source of truth. Both the validation set
+# here and app.py's provider-dispatch chain reference these, so adding a
+# provider can't drift the two out of sync.
+PROVIDER_ANTHROPIC = "anthropic"
+PROVIDER_GEMINI = "gemini"
+PROVIDER_OLLAMA = "ollama"
+_VALID_AI_PROVIDERS = {PROVIDER_ANTHROPIC, PROVIDER_GEMINI, PROVIDER_OLLAMA}
 # Sentinel echoed to the UI when an API key is set. UI never sees the
 # real key back; user "Update"s by sending a new value.
 _AI_KEY_MASK = "***"

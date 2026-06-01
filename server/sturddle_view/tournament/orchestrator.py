@@ -25,6 +25,12 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 import chess
 
 from ..env_utils import env_int as _env_int
+from ..events import (
+    ENVELOPE_KIND,
+    ENVELOPE_PAYLOAD,
+    EVT_TOURNAMENT_STATUS,
+    EVT_TOURNAMENT_UPDATE,
+)
 from .pgn_reconcile import (
     PendingMatch,
     ReconciledMatch,
@@ -210,8 +216,11 @@ def wrap_event_for_bus(kind: str, payload: dict) -> dict:
     runner's original event kind.
     """
     if kind == "status_change":
-        return {"kind": "tournament_status", "payload": payload}
-    return {"kind": "tournament_update", "payload": {"kind": kind, **payload}}
+        return {ENVELOPE_KIND: EVT_TOURNAMENT_STATUS, ENVELOPE_PAYLOAD: payload}
+    return {
+        ENVELOPE_KIND: EVT_TOURNAMENT_UPDATE,
+        ENVELOPE_PAYLOAD: {"kind": kind, **payload},
+    }
 
 
 class TournamentBusyError(Exception):
@@ -588,7 +597,7 @@ class Orchestrator:
             hist = self._event_history.setdefault(
                 tid, deque(maxlen=EVENT_HISTORY_MAX)
             )
-            hist.append({"kind": kind, "payload": payload})
+            hist.append({ENVELOPE_KIND: kind, ENVELOPE_PAYLOAD: payload})
         if self._broadcast is None:
             return
         try:

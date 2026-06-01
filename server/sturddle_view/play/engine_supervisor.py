@@ -15,7 +15,7 @@ from typing import Any, Awaitable, Callable
 import chess.engine
 
 from ..engines import _popen_kwargs
-from ..events import Event, EventBus
+from ..events import EVT_UCI_LOG, Event, EventBus
 
 log = logging.getLogger(__name__)
 
@@ -373,7 +373,7 @@ class EngineSupervisor:
 
         def _emit(direction: str, line: str) -> None:
             t = loop.create_task(
-                bus.publish(Event(kind="uci_log", payload={"dir": direction, "line": line}))
+                bus.publish(Event(kind=EVT_UCI_LOG, payload={"dir": direction, "line": line}))
             )
             tasks.add(t)
             t.add_done_callback(tasks.discard)

@@ -431,13 +431,13 @@ def create_app(
     def _ai_provider_factory() -> LLMProvider:
         s = app.state.settings
         provider_name = (s.ai_provider or "").lower()
-        if provider_name == "ollama":
+        if provider_name == settings_api.PROVIDER_OLLAMA:
             return OllamaProvider(
                 base_url=(s.ai_base_url or _DEFAULT_OLLAMA_BASE_URL),
                 model=s.ai_model,
                 thinking_enabled=s.ai_thinking_enabled,
             )
-        if provider_name == "gemini":
+        if provider_name == settings_api.PROVIDER_GEMINI:
             # OpenAI-compatible SSE provider against Google's API. Bearer
             # auth from the keyring/env key. Base URL is fixed to Google's
             # endpoint -- ai_base_url is Ollama's field (the UI hides the
@@ -449,7 +449,7 @@ def create_app(
                 base_url=_DEFAULT_GEMINI_BASE_URL,
                 thinking_enabled=s.ai_thinking_enabled,
             )
-        if provider_name == "anthropic":
+        if provider_name == settings_api.PROVIDER_ANTHROPIC:
             # Live SSE provider (stream() POSTs /v1/messages). Raises
             # RuntimeError if the API key is unset or the API returns
             # non-200 -- surfaced as a done/error event on the bus.

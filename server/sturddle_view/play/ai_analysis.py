@@ -19,7 +19,20 @@ from typing import Awaitable, Callable, Sequence
 import chess
 
 from ..env_utils import env_int
-from ..events import Event, EventBus
+from ..events import (
+    ENVELOPE_GAME_ID,
+    ENVELOPE_KIND,
+    ENVELOPE_PAYLOAD,
+    EVT_AI_CORRECTIVE,
+    EVT_AI_INFO,
+    EVT_AI_RECOMMENDATION,
+    EVT_AI_THINKING,
+    EVT_AI_TOOL_CALL,
+    EVT_AI_TOOL_CALL_COMPLETE,
+    EVT_AI_TOOL_CALL_FAILED,
+    Event,
+    EventBus,
+)
 from ..llm import (
     LLMProvider,
     Message,
@@ -42,6 +55,10 @@ from ..llm.response_validator import (
 from .tools_engine import (
     ANALYZE_TOOL_NAME,
     MATERIAL_TOOL_NAME,
+    PIECE_AT_TOOL_NAME,
+    RECOMMEND_MOVE_TOOL_NAME,
+    TOP_MOVES_TOOL_NAME,
+    VALIDATE_MOVE_TOOL_NAME,
     board_from_fen_input,
     parse_move_canonical,
 )
@@ -181,11 +198,9 @@ _VERIFIER_QUESTION_LABEL = "Question to verify:"
 VerifierRunner = Callable[[str], Awaitable[str]]
 
 
-# Tool names the loop compares against. Must match the ToolSpec names
-# (tools_engine.py) and app.py's registry wiring; keep in lockstep.
+# `delegate` is defined in this module (DELEGATE_TOOL_SPEC); the engine
+# tool names are imported from tools_engine (single source of truth).
 _DELEGATE_TOOL_NAME = "delegate"
-_RECOMMEND_MOVE_TOOL_NAME = "recommend_move"
-_TOP_MOVES_TOOL_NAME = "top_moves"
 # Tools taking an explicit `fen` param -- the positions the model examined,
 # fed to the prose validators as extra boards (projected-line references).
 _FEN_PARAM_TOOL_NAMES = frozenset({ANALYZE_TOOL_NAME, MATERIAL_TOOL_NAME})
@@ -329,21 +344,21 @@ def _norm_analyze(input_: dict, board: chess.Board | None) -> tuple | None:
     canonical = _canonical_fen(input_)
     if canonical is None:
         return None
-    return ("analyze", canonical, input_.get("depth"))
+    return (ANALYZE_TOOL_NAME, canonical, input_.get("depth"))
 
 
 def _norm_material(input_: dict, board: chess.Board | None) -> tuple | None:
     canonical = _canonical_fen(input_)
     if canonical is None:
         return None
-    return ("material", canonical)
+    return (MATERIAL_TOOL_NAME, canonical)
 
 
 _NORMALIZERS: dict[str, Callable[[dict, chess.Board | None], tuple | None]] = {
-    _RECOMMEND_MOVE_TOOL_NAME: _norm_move_arg,
-    "validate_move": _norm_move_arg,
-    "piece_at": _norm_square_arg,
-    _TOP_MOVES_TOOL_NAME: _norm_top_moves,
+    RECOMMEND_MOVE_TOOL_NAME: _norm_move_arg,
+    VALIDATE_MOVE_TOOL_NAME: _norm_move_arg,
+    PIECE_AT_TOOL_NAME: _norm_square_arg,
+    TOP_MOVES_TOOL_NAME: _norm_top_moves,
     ANALYZE_TOOL_NAME: _norm_analyze,
     MATERIAL_TOOL_NAME: _norm_material,
 }
@@ -628,7 +643,7 @@ class AIAnalysisCoordinator:
             messages: list[Message] = [{"role": "user", "content": opening_user_content}]
             tool_schemas = self._registry.schemas() or None
             has_recommend_move = any(
-                t.get("name") == _RECOMMEND_MOVE_TOOL_NAME
+                t.get("name") == RECOMMEND_MOVE_TOOL_NAME
                 for t in (tool_schemas or [])
             )
             done_payload: dict = {"done": True}
@@ -719,7 +734,7 @@ class AIAnalysisCoordinator:
                                     payload["unvetted"] = True
                                 await self._emit(
                                     Event(
-                                        kind="ai_recommendation",
+                                        kind=EVT_AI_RECOMMENDATION,
                                         game_id=game_id,
                                         payload=payload,
                                     )
@@ -734,7 +749,7 @@ class AIAnalysisCoordinator:
                     await transcript.turn_end(done_payload)
                     await self._emit(
                         Event(
-                            kind="ai_info",
+                            kind=EVT_AI_INFO,
                             game_id=game_id,
                             payload=done_payload,
                         )
@@ -817,7 +832,7 @@ class AIAnalysisCoordinator:
                     text_parts.append(chunk.text)
                     await emit(
                         Event(
-                            kind="ai_info",
+                            kind=EVT_AI_INFO,
                             game_id=game_id,
                             payload={"delta": chunk.text, "round": round_index},
                         )
@@ -825,7 +840,7 @@ class AIAnalysisCoordinator:
                 elif chunk.kind == "thinking" and chunk.text:
                     await emit(
                         Event(
-                            kind="ai_thinking",
+                            kind=EVT_AI_THINKING,
                             game_id=game_id,
                             payload={"delta": chunk.text, "round": round_index},
                         )
@@ -917,7 +932,7 @@ class AIAnalysisCoordinator:
                     # Surface the call to the UI only on a real dispatch.
                     await emit(
                         Event(
-                            kind="ai_tool_call",
+                            kind=EVT_AI_TOOL_CALL,
                             game_id=game_id,
                             payload={
                                 "round": round_index,
@@ -946,7 +961,7 @@ class AIAnalysisCoordinator:
                         last_call = (key, tool_output)
                     await emit(
                         Event(
-                            kind="ai_tool_call_complete",
+                            kind=EVT_AI_TOOL_CALL_COMPLETE,
                             game_id=game_id,
                             payload={
                                 "round": round_index,
@@ -962,7 +977,7 @@ class AIAnalysisCoordinator:
                         examined = tool_output.get("move_uci")
                         if isinstance(examined, str):
                             examined_uci.add(examined)
-                    elif pending_tool.tool_name == _TOP_MOVES_TOOL_NAME:
+                    elif pending_tool.tool_name == TOP_MOVES_TOOL_NAME:
                         examined_uci.update(_top_moves_uci(tool_output))
                     elif pending_tool.tool_name in _FEN_PARAM_TOOL_NAMES:
                         examined = board_from_fen_input(pending_tool.tool_input)
@@ -971,7 +986,7 @@ class AIAnalysisCoordinator:
                 # Safe to read from a cached recommend_move result: the
                 # cached uci is identical to a fresh dispatch's. Gate runs
                 # before transcript/message so the model sees what we record.
-                if config.track_recommend and pending_tool.tool_name == _RECOMMEND_MOVE_TOOL_NAME:
+                if config.track_recommend and pending_tool.tool_name == RECOMMEND_MOVE_TOOL_NAME:
                     recommend_attempts += 1
                     if (
                         isinstance(tool_output, dict)
@@ -1002,7 +1017,7 @@ class AIAnalysisCoordinator:
                 if isinstance(tool_output, dict) and tool_output.get("error"):
                     await emit(
                         Event(
-                            kind="ai_tool_call_failed",
+                            kind=EVT_AI_TOOL_CALL_FAILED,
                             game_id=game_id,
                             payload={
                                 "round": round_index,
@@ -1178,9 +1193,9 @@ class AIAnalysisCoordinator:
         # Shallow-copy the payload so a downstream subscriber that
         # mutates what it receives can't retroactively change replay.
         self._replay_buffer.append({
-            "kind": event.kind,
-            "payload": dict(event.payload),
-            "game_id": event.game_id,
+            ENVELOPE_KIND: event.kind,
+            ENVELOPE_PAYLOAD: dict(event.payload),
+            ENVELOPE_GAME_ID: event.game_id,
         })
         await self._bus.publish(event)
 
@@ -1223,7 +1238,7 @@ class AIAnalysisCoordinator:
         )
         await emit(
             Event(
-                kind="ai_corrective",
+                kind=EVT_AI_CORRECTIVE,
                 game_id=game_id,
                 payload={
                     "round": round_index + 1,
