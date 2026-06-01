@@ -31,12 +31,17 @@ class ProviderChunk:
     appends a tool_result message to the next round's input -- tool_results
     flow over the wire as `messages`, not as `ProviderChunk`s, so there is
     no `tool_result` chunk kind on the read side.
+
+    `tool_signature` is opaque provider-side state attached to a tool_use
+    that must be echoed back verbatim on the next round (Gemini's encrypted
+    `thought_signature`). Empty for providers that don't use it.
     """
     kind: ChunkKind
     text: str = ""
     tool_use_id: str = ""
     tool_name: str = ""
     tool_input: dict[str, Any] = field(default_factory=dict)
+    tool_signature: str = ""
 
 
 Message = dict[str, Any]

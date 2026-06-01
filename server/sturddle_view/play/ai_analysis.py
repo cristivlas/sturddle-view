@@ -25,6 +25,7 @@ from ..llm import (
     Message,
     PromptMode,
     ProviderChunk,
+    TOOL_SIGNATURE_KEY,
     ToolRegistry,
     ToolSpec,
     UnknownToolError,
@@ -362,12 +363,19 @@ def _assistant_message(chunks: list[ProviderChunk]) -> Message:
             text_buf.append(c.text)
         elif c.kind == "tool_use":
             _flush_text()
-            content.append({
+            block = {
                 "type": "tool_use",
                 "id": c.tool_use_id,
                 "name": c.tool_name,
                 "input": c.tool_input,
-            })
+            }
+            # Carry an opaque provider signature (Gemini's thought_signature)
+            # so the provider can echo it back on the next round. Empty for
+            # providers that don't use it; the wire mapping lives in
+            # openai_compat.
+            if c.tool_signature:
+                block[TOOL_SIGNATURE_KEY] = c.tool_signature
+            content.append(block)
     _flush_text()
     if not content:
         content.append({"type": "text", "text": _EMPTY_TURN_PLACEHOLDER})

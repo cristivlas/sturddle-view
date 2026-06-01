@@ -29,6 +29,7 @@ from sturddle_view.events import EventBus
 from sturddle_view.llm import (
     Message,
     ProviderChunk,
+    TOOL_SIGNATURE_KEY,
     ToolRegistry,
     ToolSpec,
 )
@@ -754,3 +755,23 @@ def test_thinking_is_not_fed_back_into_assistant_message():
     assert msg3["content"] == [
         {"type": "tool_use", "id": "t1", "name": "analyze", "input": {"fen": "startpos"}},
     ]
+
+
+def test_tool_signature_copied_onto_tool_use_block():
+    # A tool_use chunk carrying a provider signature (Gemini's
+    # thought_signature) must land on the assistant block so the provider
+    # can echo it back next round; absence leaves the block untouched.
+    msg = _assistant_message([
+        ProviderChunk(kind="tool_use", tool_use_id="t1", tool_name="analyze",
+                      tool_input={"fen": "startpos"}, tool_signature="SIG_xyz"),
+    ])
+    assert msg["content"] == [{
+        "type": "tool_use", "id": "t1", "name": "analyze",
+        "input": {"fen": "startpos"}, TOOL_SIGNATURE_KEY: "SIG_xyz",
+    }]
+    # No signature -> no key (Anthropic/Ollama tool calls stay clean).
+    msg2 = _assistant_message([
+        ProviderChunk(kind="tool_use", tool_use_id="t2", tool_name="analyze",
+                      tool_input={}),
+    ])
+    assert TOOL_SIGNATURE_KEY not in msg2["content"][0]

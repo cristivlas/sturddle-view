@@ -30,6 +30,29 @@ from .harmony_strip import flush_harmony_carry, strip_harmony_text
 from .transcript import Transcript
 
 
+# Neutral key under which an opaque tool-call signature rides on the
+# canonical (Anthropic-shaped) tool_use block. The wire mapping to/from
+# Gemini's `extra_content.google.thought_signature` lives in this module;
+# the canonical shape stays provider-agnostic.
+TOOL_SIGNATURE_KEY = "tool_signature"
+# Gemini's OpenAI-compat location for the same value.
+_GEMINI_SIG_PATH = ("extra_content", "google", "thought_signature")
+
+
+def _read_gemini_signature(tool_call: dict) -> str:
+    node: object = tool_call
+    for key in _GEMINI_SIG_PATH:
+        if not isinstance(node, dict):
+            return ""
+        node = node.get(key)
+    return node if isinstance(node, str) else ""
+
+
+def _gemini_signature_block(signature: str) -> dict:
+    extra, google, leaf = _GEMINI_SIG_PATH
+    return {extra: {google: {leaf: signature}}}
+
+
 # ----- Translation helpers (pure functions; covered by unit tests) -----
 
 
@@ -70,14 +93,21 @@ def messages_anthropic_to_openai(messages: list[Message]) -> list[dict]:
                 if btype == "text":
                     text_parts.append(block.get("text", ""))
                 elif btype == "tool_use":
-                    tool_calls.append({
+                    tc: dict = {
                         "id": block.get("id", ""),
                         "type": "function",
                         "function": {
                             "name": block.get("name", ""),
                             "arguments": json.dumps(block.get("input", {})),
                         },
-                    })
+                    }
+                    # Echo back an opaque tool signature (Gemini requires
+                    # its thought_signature on the first tool_call of each
+                    # step or the follow-up request 400s).
+                    sig = block.get(TOOL_SIGNATURE_KEY)
+                    if sig:
+                        tc.update(_gemini_signature_block(sig))
+                    tool_calls.append(tc)
             new_msg: dict = {
                 "role": "assistant",
                 "content": "".join(text_parts),
@@ -152,6 +182,7 @@ def openai_tool_call_to_provider_chunk(tool_call: dict) -> ProviderChunk:
         tool_use_id=tool_call.get("id", "") or "",
         tool_name=tool_name,
         tool_input=args,
+        tool_signature=_read_gemini_signature(tool_call),
     )
 
 
@@ -261,6 +292,12 @@ async def stream_openai_compat(
                         slot["function"]["name"] = fn["name"]
                     if fn.get("arguments"):
                         slot["function"]["arguments"] += fn["arguments"]
+                    # Gemini rides the thought_signature on the tool_call's
+                    # extra_content; keep the first non-empty one we see for
+                    # this index (it arrives once, near the start).
+                    sig = _read_gemini_signature(tcd)
+                    if sig and not _read_gemini_signature(slot):
+                        slot.update(_gemini_signature_block(sig))
 
     # Surface any held-back partial that never completed into a marker, so
     # user text containing literal `<` is not silently dropped at stream
