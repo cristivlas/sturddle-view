@@ -457,3 +457,35 @@ def test_committed_flags_claim_on_square_reused_by_later_piece():
     # history walk excuses the claim. Post-commit: live board only, flagged.
     assert find_false_piece_claims(_REUSED_SQUARE_CLAIM, pre) == []
     assert find_false_piece_claims(_REUSED_SQUARE_CLAIM, post) == ["pawn on b2"]
+
+
+# --- extra_boards: positions the model examined via tool calls ---------
+# A move/piece legal-or-present only in an examined (projected) position
+# is legitimate forward-looking reasoning, not a live-board hallucination.
+_PROJ_KNIGHT_ON_F4 = "rnbqkb1r/pppppppp/8/8/5N2/8/PPPPPPPP/RNBQKB1R w KQkq - 0 1"
+_PROJ_KNIGHT_ON_D5 = "rnbqkb1r/pppppppp/8/3N4/8/8/PPPPPPPP/RNBQKB1R b KQkq - 1 1"
+
+
+def test_illegal_move_flagged_without_extra_board():
+    # Nd5 is illegal at the start; with no examined position it's flagged.
+    assert find_illegal_moves("Play Nd5.", [chess.Board()]) == ["Nd5"]
+
+
+def test_illegal_move_passes_when_legal_in_extra_board():
+    # The model examined a position (knight on f4) where Nd5 is legal, so
+    # naming it in prose is projected-line reasoning, not a hallucination.
+    extra = [chess.Board(_PROJ_KNIGHT_ON_F4)]
+    assert find_illegal_moves("Play Nd5.", [chess.Board()], extra) == []
+
+
+def test_false_piece_claim_flagged_without_extra_board():
+    assert find_false_piece_claims(
+        "The knight on d5 dominates.", [chess.Board()],
+    ) == ["knight on d5"]
+
+
+def test_piece_claim_passes_when_present_in_extra_board():
+    extra = [chess.Board(_PROJ_KNIGHT_ON_D5)]
+    assert find_false_piece_claims(
+        "The knight on d5 dominates.", [chess.Board()], extra,
+    ) == []

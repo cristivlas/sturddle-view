@@ -78,11 +78,17 @@ def _is_san_label(bare: str, board: chess.Board) -> bool:
     return piece.color == board.turn
 
 
-def find_illegal_moves(text: str, boards: Sequence[chess.Board]) -> list[str]:
+def find_illegal_moves(
+    text: str,
+    boards: Sequence[chess.Board],
+    extra_boards: Sequence[chess.Board] = (),
+) -> list[str]:
     """Return distinct illegal SAN tokens. `boards` is ordered current
     first then prior positions. A token passes iff legal on the current
-    board, OR it parses on a prior board to a move actually played in
-    this game. Legal-but-never-played alternatives are flagged."""
+    board, parses on a prior board to a move actually played in this
+    game, OR is legal on any `extra_board` (positions the model examined
+    via tool calls, where a projected move is legitimate reasoning).
+    Legal-but-never-played alternatives are flagged."""
     seen: set[str] = set()
     illegal: list[str] = []
     for match in _SAN_TOKEN_RE.finditer(text):
@@ -91,17 +97,21 @@ def find_illegal_moves(text: str, boards: Sequence[chess.Board]) -> list[str]:
             continue
         seen.add(token)
         bare = _strip_annotation_glyphs(token)
-        if _token_legal_or_played(bare, boards):
+        if _token_legal_or_played(bare, boards, extra_boards):
             continue
         if any(_token_is_illegal(bare, b) for b in boards):
             illegal.append(token)
     return illegal
 
 
-def _token_legal_or_played(bare: str, boards: Sequence[chess.Board]) -> bool:
-    """True iff legal on the current board OR parses on a prior board
-    to the move that was actually played from there. Label carve-out
-    applies on the current board only."""
+def _token_legal_or_played(
+    bare: str,
+    boards: Sequence[chess.Board],
+    extra_boards: Sequence[chess.Board] = (),
+) -> bool:
+    """True iff legal on the current board, parses on a prior board to
+    the move actually played from there, or is legal on any extra board.
+    Label carve-out applies on the current board only."""
     if not boards:
         return False
     current = boards[0]
@@ -124,6 +134,12 @@ def _token_legal_or_played(bare: str, boards: Sequence[chess.Board]) -> bool:
             continue
         if parsed == played:
             return True
+    for extra in extra_boards:
+        try:
+            extra.parse_san(bare)
+            return True
+        except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
+            continue
     return False
 
 
@@ -271,12 +287,16 @@ def _move_target_set(text: str, board: chess.Board) -> set[tuple[int, chess.Colo
 
 
 def find_false_piece_claims(
-    text: str, boards: Sequence[chess.Board],
+    text: str,
+    boards: Sequence[chess.Board],
+    extra_boards: Sequence[chess.Board] = (),
 ) -> list[str]:
     """False 'piece on square' claims. A claim is false only when NO
-    board in `boards` matches it (empty square or wrong piece/color in
-    all). The forward-looking carve-out uses `boards[-1]` (current)
-    since post-move targets are derived from the latest position."""
+    board in `boards` or `extra_boards` matches it (empty square or wrong
+    piece/color in all). `extra_boards` are positions the model examined
+    via tool calls, so a piece named in a projected line isn't flagged.
+    The forward-looking carve-out uses `boards[-1]` (current) since
+    post-move targets are derived from the latest position."""
     current = boards[-1]
     targets = _move_target_set(text, current)
     seen: set[str] = set()
@@ -292,6 +312,8 @@ def find_false_piece_claims(
         if (piece_type, claim_color, square) in targets:
             continue
         if _claim_holds_on_any(boards, piece_type, square, color_word):
+            continue
+        if _claim_holds_on_any(extra_boards, piece_type, square, color_word):
             continue
         prefix = f"{color_word} " if color_word else ""
         false.append(f"{prefix}{piece_word} on {square_name}")

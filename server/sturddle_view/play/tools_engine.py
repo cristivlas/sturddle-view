@@ -94,6 +94,11 @@ _MOVE_NOTATION_CONSTRAINT = (
     "('...d6' should be 'd6')."
 )
 
+# Tool names -- single source of truth (the ToolSpecs below use them, and
+# the coordinator imports them rather than hardcoding string literals).
+ANALYZE_TOOL_NAME = "analyze"
+MATERIAL_TOOL_NAME = "material"
+
 # Shared description for the `fen` arg across every FEN-taking tool spec
 # (analyze, material). One source so the startpos affordance stays in sync.
 _FEN_ARG_DESCRIPTION = "FEN string, or 'startpos' for the initial position."
@@ -202,7 +207,7 @@ VALIDATE_MOVE_TOOL_SPEC = ToolSpec(
 
 
 ANALYZE_TOOL_SPEC = ToolSpec(
-    name="analyze",
+    name=ANALYZE_TOOL_NAME,
     description=(
         "Engine search on a position. Returns white-POV eval: score_cp, "
         "score_text, mate (signed plies when forced), depth, pv, bestmove. "
@@ -236,7 +241,7 @@ _MATERIAL_PIECE_TYPES = (
 
 
 MATERIAL_TOOL_SPEC = ToolSpec(
-    name="material",
+    name=MATERIAL_TOOL_NAME,
     description=(
         "Ground a material claim with exact piece counts before stating "
         "it. Returns per-color counts keyed by piece name (pawn, knight, "
@@ -276,6 +281,15 @@ def _parse_fen_arg(input_: dict) -> tuple[chess.Board | None, dict | None]:
         return _parse_fen(fen.strip()), None
     except ValueError as exc:
         return None, {"error": "invalid_fen", "detail": str(exc)}
+
+
+def board_from_fen_input(tool_input: dict) -> chess.Board | None:
+    """Board for a fen-taking tool call's `fen` param, or None when
+    absent/unparseable. Same parse as the tools; no error envelope --
+    for callers (the coordinator's examined-position tracking) that just
+    want the board or nothing."""
+    board, err = _parse_fen_arg(tool_input)
+    return None if err is not None else board
 
 
 def _depth_limit(input_: dict, default_depth: int) -> tuple[chess.engine.Limit, dict]:

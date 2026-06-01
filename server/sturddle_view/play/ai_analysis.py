@@ -14,7 +14,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Sequence
 
 import chess
 
@@ -39,7 +39,12 @@ from ..llm.response_validator import (
     find_false_piece_claims,
     find_illegal_moves,
 )
-from .tools_engine import parse_move_canonical
+from .tools_engine import (
+    ANALYZE_TOOL_NAME,
+    MATERIAL_TOOL_NAME,
+    board_from_fen_input,
+    parse_move_canonical,
+)
 
 
 BoardProvider = Callable[[], chess.Board | None]
@@ -181,6 +186,9 @@ VerifierRunner = Callable[[str], Awaitable[str]]
 _DELEGATE_TOOL_NAME = "delegate"
 _RECOMMEND_MOVE_TOOL_NAME = "recommend_move"
 _TOP_MOVES_TOOL_NAME = "top_moves"
+# Tools taking an explicit `fen` param -- the positions the model examined,
+# fed to the prose validators as extra boards (projected-line references).
+_FEN_PARAM_TOOL_NAMES = frozenset({ANALYZE_TOOL_NAME, MATERIAL_TOOL_NAME})
 
 
 # Declarative, not imperative: a "you do X" instruction invites small
@@ -336,8 +344,8 @@ _NORMALIZERS: dict[str, Callable[[dict, chess.Board | None], tuple | None]] = {
     "validate_move": _norm_move_arg,
     "piece_at": _norm_square_arg,
     _TOP_MOVES_TOOL_NAME: _norm_top_moves,
-    "analyze": _norm_analyze,
-    "material": _norm_material,
+    ANALYZE_TOOL_NAME: _norm_analyze,
+    MATERIAL_TOOL_NAME: _norm_material,
 }
 
 
@@ -766,6 +774,10 @@ class AIAnalysisCoordinator:
         # Alternative-examined gate: UCIs the engine examined this turn
         # (delegate `move_uci` + top_moves candidates). See _alternative_examined.
         examined_uci: set[str] = set()
+        # Positions the model examined via fen-taking tools this turn, keyed
+        # by FEN (dedup). Fed to the prose validators so a move/piece legal
+        # in an examined line isn't flagged. See _validate_round_text.
+        examined_boards: dict[str, chess.Board] = {}
         nudge_sent = False
         # Narrator: re-nudge toward an accepted recommend_move each clean
         # exit until one lands, but stop once a nudge draws no new attempt.
@@ -833,6 +845,7 @@ class AIAnalysisCoordinator:
             illegal, false_claims, castle_violations = (
                 self._validate_round_text(
                     round_chunks, mode, committed=recommended_uci is not None,
+                    extra_boards=list(examined_boards.values()),
                 )
             )
             if (
@@ -951,6 +964,10 @@ class AIAnalysisCoordinator:
                             examined_uci.add(examined)
                     elif pending_tool.tool_name == _TOP_MOVES_TOOL_NAME:
                         examined_uci.update(_top_moves_uci(tool_output))
+                    elif pending_tool.tool_name in _FEN_PARAM_TOOL_NAMES:
+                        examined = board_from_fen_input(pending_tool.tool_input)
+                        if examined is not None:
+                            examined_boards[examined.fen()] = examined
                 # Safe to read from a cached recommend_move result: the
                 # cached uci is identical to a fresh dispatch's. Gate runs
                 # before transcript/message so the model sees what we record.
@@ -1220,6 +1237,7 @@ class AIAnalysisCoordinator:
     def _validate_round_text(
         self, chunks: list[ProviderChunk], mode: PromptMode, *,
         committed: bool = False,
+        extra_boards: Sequence[chess.Board] = (),
     ) -> tuple[list[str], list[str], list[str]]:
         """Run all validators on a round's assembled text.
         Returns (illegal_moves, false_piece_claims, castle_violations).
@@ -1228,7 +1246,12 @@ class AIAnalysisCoordinator:
         board sequence includes every prior position via move_stack
         walk -- references to earlier-game pieces aren't flagged --
         unless `committed`, which collapses the walk to the live board
-        for the post-recommendation closing prose."""
+        for the post-recommendation closing prose.
+
+        `extra_boards` are positions the model examined via fen-taking
+        tools this turn; the illegal-move and piece-claim checks treat a
+        move/piece legal there as legitimate projected-line reasoning.
+        Castling stays a live-position property, so it ignores them."""
         if self._board_provider is None:
             return [], [], []
         board = self._board_provider()
@@ -1242,11 +1265,12 @@ class AIAnalysisCoordinator:
         # ("after exd4...") is expected, not a live-move hallucination --
         # skip illegal-move validation. Piece/castle guards still apply.
         illegal = (
-            [] if mode == _VERIFIER_MODE else find_illegal_moves(text, boards)
+            [] if mode == _VERIFIER_MODE
+            else find_illegal_moves(text, boards, extra_boards)
         )
         return (
             illegal,
-            find_false_piece_claims(text, boards),
+            find_false_piece_claims(text, boards, extra_boards),
             find_castle_word_violations(text, boards),
         )
 

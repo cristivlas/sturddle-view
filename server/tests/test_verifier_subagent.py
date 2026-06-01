@@ -1040,3 +1040,70 @@ def test_tool_signature_copied_onto_tool_use_block():
                       tool_input={}),
     ])
     assert TOOL_SIGNATURE_KEY not in msg2["content"][0]
+
+
+# --- extra-board validation: prose moves in an examined position --------
+_PROJ_KNIGHT_ON_F4 = "rnbqkb1r/pppppppp/8/8/5N2/8/PPPPPPPP/RNBQKB1R w KQkq - 0 1"
+
+
+async def _stub_analyze(input_, *, cancel_token):
+    # Body is irrelevant: the coordinator reads the examined FEN from the
+    # call's `fen` input, not the result.
+    return {"score_cp": 20, "depth": 20}
+
+
+@pytest.mark.asyncio
+async def test_prose_move_legal_only_in_examined_fen_not_flagged():
+    # Live board is the start position, where Nd5 is illegal. The model
+    # examines a projected position (knight on f4) via analyze, then names
+    # Nd5 in prose -- legal there, so no illegal-move corrective fires.
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="analyze", description="search", input_schema={"type": "object"}),
+        _stub_analyze,
+    )
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(                                    # r0: examine projected fen
+            kind="tool_use", tool_use_id="a1",
+            tool_name="analyze", tool_input={"fen": _PROJ_KNIGHT_ON_F4},
+        )],
+        [ProviderChunk(kind="text", text="The knight swings to d5: Nd5.")],  # r1: projected move
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg, board_provider=(lambda: chess.Board()),
+    )
+
+    await coord.run(game_id="g", mode="commentator", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    correctives = [e for e in events if e.kind == "ai_corrective"]
+    assert not correctives, [e.payload for e in correctives]
+
+
+@pytest.mark.asyncio
+async def test_prose_move_illegal_everywhere_still_flagged():
+    # No analyze call: Nd5 is illegal on the live start board and examined
+    # nowhere, so the illegal-move corrective fires (guard against the
+    # extra-board change silencing real hallucinations).
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="analyze", description="search", input_schema={"type": "object"}),
+        _stub_analyze,
+    )
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="The knight swings to d5: Nd5.")],  # r0: live-illegal
+        [ProviderChunk(kind="text", text="Rewriting.")],                     # r1: corrective round
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg, board_provider=(lambda: chess.Board()),
+    )
+
+    await coord.run(game_id="g", mode="commentator", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    correctives = [e for e in events if e.kind == "ai_corrective"]
+    assert any("Nd5" in c.payload.get("illegal_moves", []) for c in correctives)
