@@ -57,7 +57,6 @@ export const STORAGE_KEY = {
   // Tournament workspace + list state.
   WORKSPACE_PREFIX: "sturddle:workspace:",
   TOURNAMENTS_STANDINGS_COL_PCTS: "sturddle:tournaments:standingsColPcts",
-  ACTIVE_LAYOUT: "sturddle:active-layout",
   TOURNAMENTS_SORT_BY: "sturddle:tournaments:sortBy",
   TOURNAMENTS_SORT_ASC: "sturddle:tournaments:sortAsc",
 };

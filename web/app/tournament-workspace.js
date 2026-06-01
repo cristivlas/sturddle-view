@@ -79,13 +79,11 @@ export function clearWorkspaceState(id) {
 
 
 const LAYOUT = Object.freeze({ NONE: 0, TIDY: 1, TILE: 2, SNAP: 3 });
-const LAYOUT_STORAGE_KEY = STORAGE_KEY.ACTIVE_LAYOUT;
 
 let activeWorkspace = null;
-let activeLayout = Number(localStorage.getItem(LAYOUT_STORAGE_KEY) ?? LAYOUT.NONE);
+let activeLayout = LAYOUT.NONE;
 function setLayout(mode) {
   activeLayout = mode;
-  localStorage.setItem(LAYOUT_STORAGE_KEY, mode);
 }
 
 
@@ -106,6 +104,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // navigation). lastGeometry holds last-known position/size per key so
   // closed slots can carry geometry forward into the next snapshot.
   const restoreFromSaved = hasOpenWindows(savedState);
+  activeLayout = restoreFromSaved ? (savedState._layout ?? LAYOUT.NONE) : LAYOUT.NONE;
   // Min sizes scale with the root font size. 280px / 320px / 120px at
   // default 16px match the previous hardcoded values; em keeps the
   // proportions intact when the user changes font size.
@@ -434,6 +433,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         : { open: false, ...lastGeometry[key], min: false, max: false, z: 0 };
     }
     state.live = snapshotLive();
+    state._layout = activeLayout;
     return state;
   }
 
@@ -1250,7 +1250,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (!explicitlyClosed) {
       saveState(tournament.id, { ...snapshot(), _closed: true });
     }
-    if (activeWorkspace === workspace) activeWorkspace = null;
+    if (activeWorkspace === workspace) {
+      activeWorkspace = null;
+      activeLayout = LAYOUT.NONE;
+    }
     // Re-sync the Window menu (the user may have closed via X, not the menu).
     window.dispatchEvent(new CustomEvent(APP_EVT.WORKSPACE_CLOSED));
   }
