@@ -829,6 +829,11 @@ svg.cm-chessboard {
 #xgame-toast-stack:popover-open {
   display: flex;
 }
+#toast-stack, #xgame-toast-stack,
+#toast-stack *, #xgame-toast-stack * {
+  transition: none !important;
+  animation: none !important;
+}
 .toast {
   background: var(--wa-color-surface-raised, #2a2a2a);
   color: var(--fg);
@@ -838,7 +843,6 @@ svg.cm-chessboard {
   font-size: 0.8125rem;
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-  transition: opacity 0.2s, transform 0.2s;
   /* Re-enable pointer events: the stack has pointer-events:none so
      empty regions stay click-through, but individual toasts need to
      receive clicks for interactive content (xgame nav arrow + X). */
@@ -847,7 +851,10 @@ svg.cm-chessboard {
 .toast-success { border-color: #6c6; }
 .toast-warning { border-color: #e08e0b; }
 .toast-danger { border-color: #c66; }
-.toast-hide { opacity: 0; transform: translateY(8px); }
+.toast-hide { display: none; }
+@starting-style {
+  #toast-stack, #xgame-toast-stack { opacity: 1; }
+}
 
 /* The page is a flex column that fills the viewport. <main> takes the
    remaining vertical space so perspectives can size their content to fit
