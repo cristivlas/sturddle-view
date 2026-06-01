@@ -237,7 +237,9 @@ async def start_ai_turn(request: Request) -> None:
     try:
         provider = factory()
     except Exception as e:
-        log.exception("AI provider factory failed")
+        # Surfaced to the client as HTTP 500 with the message; the stack
+        # is noise (config/build failure, not an internal bug).
+        log.error("AI provider factory failed: %s", e)
         raise HTTPException(status_code=500, detail=f"AI provider error: {e}") from e
     # Pin the task on app.state so the event loop holds a strong ref --
     # asyncio GC can otherwise reap an unreferenced task mid-flight.

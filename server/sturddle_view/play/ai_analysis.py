@@ -1205,7 +1205,10 @@ class AIAnalysisCoordinator:
             # the terminal done/cancelled event.
             raise
         except Exception as exc:
-            log.exception("tool %s raised", call.tool_name)
+            # Returned to the model as a structured error it recovers from
+            # (e.g. a provider 429 on a verifier sub-run), so the stack
+            # trace is noise -- log the message only.
+            log.error("tool %s raised: %s", call.tool_name, exc)
             return {"error": "tool_failed", "name": call.tool_name, "detail": str(exc)}
 
     async def cancel(self) -> None:
