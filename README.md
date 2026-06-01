@@ -8,8 +8,7 @@ engine tournaments. See [docs/spec.md](docs/spec.md) for the full design.
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
-playwright install chromium  # one-time, for end-to-end tests
-sturddle-view --reload
+sturddle-view
 ```
 
 The server binds to `127.0.0.1` by default and prints an `/auth?token=...`
@@ -24,6 +23,28 @@ the network). To serve over TLS, supply `--cert PATH --key PATH`. See
 ```bash
 git submodule update --init --recursive
 ```
+
+## Command-line flags
+
+| Flag | Effect |
+|---|---|
+| `--host HOST` | Bind address. Default `127.0.0.1`. |
+| `--port PORT` | Bind port. Default `8765`. |
+| `--engine PATH` | Fallback UCI engine when the registry has no selection. |
+| `--desktop` | Open in a native window instead of a browser tab. |
+| `--width N` / `--height N` | Desktop window size. Default `1280` x `1000`. |
+| `--no-auth` | Disable token auth. Loopback only unless you accept the risk. |
+| `--cert PATH` / `--key PATH` | Serve over TLS (PEM). Must be given together; rejected with `--desktop`. |
+| `--instance TAG` | Isolate config/data dirs so multiple instances run side by side. |
+| `--reload` | Dev: auto-reload on source changes. |
+| `--debug` | Verbose (DEBUG) logging for the app. |
+| `--server-debug` | Verbose (DEBUG) logging for uvicorn. |
+
+## Environment variables
+
+All knobs use the `SV_` prefix; any CLI flag above has an `SV_*` equivalent
+(e.g. `SV_HOST`, `SV_PORT`, `SV_AUTH_DISABLED`). AI, tournament, and debug
+tunables are documented in full in [docs/env-vars.md](docs/env-vars.md).
 
 ## Features
 
