@@ -25,6 +25,7 @@
 import { attachColumnResize } from "./col-resize.js";
 import { toast } from "./dialogs.js";
 import { mqMobile } from "./breakpoints.js";
+import { APP_EVT } from "./app-events.js";
 import {
   AUTOSCROLL_SLACK_LINE_PX,
   isPinnedToBottom,
@@ -122,7 +123,7 @@ function updateDockBounds() {
 // empties) don't trigger our ResizeObserver, which only fires on size change.
 // Listen for layout-changed too; defer two frames so game-view's own rAF-driven
 // recompute has settled the board's new left edge before we re-measure.
-window.addEventListener("sturddle:layout-changed", () => {
+window.addEventListener(APP_EVT.LAYOUT_CHANGED, () => {
   requestAnimationFrame(() =>
     requestAnimationFrame(updateDockBounds));
 });
@@ -198,7 +199,7 @@ function syncExtraDocksVisibility() {
 }
 
 function emitLayoutChanged() {
-  window.dispatchEvent(new CustomEvent("sturddle:layout-changed"));
+  window.dispatchEvent(new CustomEvent(APP_EVT.LAYOUT_CHANGED));
 }
 
 function applyDockGrows() {

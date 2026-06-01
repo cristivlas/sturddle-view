@@ -7,6 +7,7 @@ import { mountBoard } from "./board.js";
 import { confirm, reportError, toast } from "./dialogs.js";
 import { isPlayInProgress, isViewing, isAnalyzing, getViewingHash, getViewingSummary } from "./perspectives/play.js";
 import { confirmReplaceViewedGame } from "./import-position-dialog.js";
+import { APP_EVT } from "./app-events.js";
 import { flashWindow } from "./wb-utils.js";
 import { terminationPhrase } from "./format-termination.js";
 
@@ -351,7 +352,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     board.destroy();
     if (gameId) window.removeEventListener("sturddle:reconciled", onReconciled);
     liveWindows.delete(windowKey);
-    window.dispatchEvent(new CustomEvent("sturddle:livegame-closed"));
+    window.dispatchEvent(new CustomEvent(APP_EVT.LIVEGAME_CLOSED));
   }
 
   return {

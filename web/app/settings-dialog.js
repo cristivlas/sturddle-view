@@ -3,6 +3,7 @@
 // text fields). No Save button. The X just closes.
 
 import { apiErrorDetail, inlineSvgIcon, pickFile, showDialog, toast } from "./dialogs.js";
+import { APP_EVT } from "./app-events.js";
 import { mountEngineList } from "./engines.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
@@ -158,7 +159,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const putSettings = async (patch) => {
         try {
           await api("PUT", "/settings", patch);
-          window.dispatchEvent(new CustomEvent("sturddle:settings-changed"));
+          window.dispatchEvent(new CustomEvent(APP_EVT.SETTINGS_CHANGED));
         } catch (e) {
           toast(`Save failed: ${apiErrorDetail(e)}`, { variant: "danger" });
         }
@@ -168,7 +169,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const putTournamentSettings = async (patch) => {
         try {
           tournamentInitial = await api("PUT", "/api/tournament-settings", patch);
-          window.dispatchEvent(new CustomEvent("sturddle:settings-changed"));
+          window.dispatchEvent(new CustomEvent(APP_EVT.SETTINGS_CHANGED));
         } catch (e) {
           toast(`Save failed: ${apiErrorDetail(e)}`, { variant: "danger" });
         }
@@ -285,7 +286,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         localStorage.setItem(RIBBON_SIDE_KEY, val);
         if (val === "float") {
           // Float is client-only -- no server PUT, so we must dispatch ourselves.
-          window.dispatchEvent(new CustomEvent("sturddle:settings-changed"));
+          window.dispatchEvent(new CustomEvent(APP_EVT.SETTINGS_CHANGED));
         } else {
           // putSettings dispatches sturddle:settings-changed after the PUT resolves.
           putSettings({ ribbon_side: val });

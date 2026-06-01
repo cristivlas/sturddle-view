@@ -5,6 +5,7 @@ import { mountBoard } from "./board.js";
 import { toast } from "./dialogs.js";
 import { isMobileLayout } from "./play-dock-windows.js";
 import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
+import { APP_EVT } from "./app-events.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -516,7 +517,7 @@ export function mountGameView(container, opts = {}) {
   ro.observe(boardCol);
   ro.observe(document.body);
   window.addEventListener("resize", recomputeBoardSize);
-  window.addEventListener("sturddle:layout-changed", recomputeBoardSize);
+  window.addEventListener(APP_EVT.LAYOUT_CHANGED, recomputeBoardSize);
   requestAnimationFrame(recomputeBoardSize);
 
   function onVisibilityChange() {
@@ -945,7 +946,7 @@ export function mountGameView(container, opts = {}) {
       off?.();
       try { ro.disconnect(); } catch {}
       window.removeEventListener("resize", recomputeBoardSize);
-      window.removeEventListener("sturddle:layout-changed", recomputeBoardSize);
+      window.removeEventListener(APP_EVT.LAYOUT_CHANGED, recomputeBoardSize);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("focus", onWindowFocus);
       if (recomputeRaf) cancelAnimationFrame(recomputeRaf);

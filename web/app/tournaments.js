@@ -11,6 +11,7 @@ import { mqMobile, mqMobileH } from "./breakpoints.js";
 import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, showDialog, toast } from "./dialogs.js";
 import { openSettingsDialog } from "./settings-dialog.js";
 import { EVT, KIND, POLL_INTERVAL_MS, STATUS } from "./tournament-events.js";
+import { APP_EVT } from "./app-events.js";
 import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
@@ -1294,7 +1295,7 @@ export function mountTournaments({ container, api, events, log, token }) {
   function onSettingsChanged() {
     loadSettings();
   }
-  window.addEventListener("sturddle:settings-changed", onSettingsChanged);
+  window.addEventListener(APP_EVT.SETTINGS_CHANGED, onSettingsChanged);
   window.addEventListener("sturddle:workspace-closed", () => { syncWindowMenu(); syncRibbon(); });
 
   // Single periodic refresh for the selected tournament when it's running.
@@ -1371,7 +1372,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     unmount() {
       offEvents();
       window.clearInterval(pollIntervalId);
-      window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
+      window.removeEventListener(APP_EVT.SETTINGS_CHANGED, onSettingsChanged);
       window.removeEventListener("sturddle:workspace-closed", syncWindowMenu);
       mqMobile.removeEventListener("change", onViewportChange);
       mqMobileH.removeEventListener("change", onViewportChange);

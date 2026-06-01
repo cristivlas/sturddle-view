@@ -6,6 +6,7 @@ import { openSettingsDialog } from "./settings-dialog.js";
 import { openAboutDialog } from "./about-dialog.js";
 import { openRibbonWindow, closeRibbonWindow, mountRibbonElement, isRibbonFloating, nudgeRibbonToViewport, RIBBON_SIDE_KEY } from "./ribbon-window.js";
 import { mqMobile } from "./breakpoints.js";
+import { APP_EVT } from "./app-events.js";
 
 // Auth is carried by the HttpOnly cookie set during the /auth handshake.
 const token = "";
@@ -91,7 +92,7 @@ function applyRibbonSide(side) {
     else delete document.body.dataset.ribbonFloat;
     changed = true;
   }
-  if (changed) window.dispatchEvent(new CustomEvent("sturddle:layout-changed"));
+  if (changed) window.dispatchEvent(new CustomEvent(APP_EVT.LAYOUT_CHANGED));
 }
 
 async function refreshRibbonSide() {
@@ -109,7 +110,7 @@ async function refreshRibbonSide() {
   applyRibbonSide(side);
 }
 refreshRibbonSide();
-window.addEventListener("sturddle:settings-changed", refreshRibbonSide);
+window.addEventListener(APP_EVT.SETTINGS_CHANGED, refreshRibbonSide);
 
 // Global float manager. Each perspective dispatches sturddle:ribbon-active
 // with detail.el = the active ribbon element (or null on unmount). The
@@ -141,7 +142,7 @@ window.addEventListener("sturddle:ribbon-active", (e) => {
   activeRibbon = e.detail?.el ?? null;
   syncFloatState();
 });
-window.addEventListener("sturddle:layout-changed", syncFloatState);
+window.addEventListener(APP_EVT.LAYOUT_CHANGED, syncFloatState);
 mqMobile.addEventListener("change", syncFloatState);
 window.addEventListener("resize", () => {
   if (mqMobile.matches) syncFloatState();
@@ -152,7 +153,7 @@ window.addEventListener("resize", () => {
 window.addEventListener("sturddle:ribbon-float-closed", () => {
   localStorage.setItem(RIBBON_SIDE_KEY, lastDockedSide);
   delete document.body.dataset.ribbonFloat;
-  window.dispatchEvent(new CustomEvent("sturddle:layout-changed"));
+  window.dispatchEvent(new CustomEvent(APP_EVT.LAYOUT_CHANGED));
 });
 
 const router = new PerspectiveRouter({ root, ctx });

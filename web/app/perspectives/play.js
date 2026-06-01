@@ -3,6 +3,7 @@
 // Resign).
 
 import { mountGameView } from "../game-view.js";
+import { APP_EVT } from "../app-events.js";
 import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, isMobileLayout } from "../play-dock-windows.js";
@@ -538,13 +539,13 @@ export const playPerspective = {
     const onSettingsChanged = () => {
       refreshSettings({ notifyOnDrift: true }).then(() => refreshButtons());
     };
-    window.addEventListener("sturddle:settings-changed", onSettingsChanged);
+    window.addEventListener(APP_EVT.SETTINGS_CHANGED, onSettingsChanged);
 
     // sturddle:layout-changed fires when ribbon_float toggled in main.js or
     // when the user closes the ribbon WinBox. Re-run refreshButtons so the
     // active ribbon is mounted in the WinBox (or unhidden from the DOM).
     const onLayoutChanged = () => { refreshButtons(); };
-    window.addEventListener("sturddle:layout-changed", onLayoutChanged);
+    window.addEventListener(APP_EVT.LAYOUT_CHANGED, onLayoutChanged);
 
     // sturddle:recents-changed fires when another perspective (e.g. the
     // import dialog) mutated the recents store. Re-fetch x-game info
@@ -1954,8 +1955,8 @@ export const playPerspective = {
         // Lock class lives on <body>; clear it so it can't outlive the
         // perspective if we unmount mid-analysis.
         document.body.classList.remove(XGAME_LOCK_CLASS);
-        window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
-        window.removeEventListener("sturddle:layout-changed", onLayoutChanged);
+        window.removeEventListener(APP_EVT.SETTINGS_CHANGED, onSettingsChanged);
+        window.removeEventListener(APP_EVT.LAYOUT_CHANGED, onLayoutChanged);
         window.removeEventListener("sturddle:engines-changed", onEnginesChanged);
         window.removeEventListener("sturddle:recents-changed", onRecentsChanged);
         window.removeEventListener("resize", onCommentsResize);

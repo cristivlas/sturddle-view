@@ -18,6 +18,7 @@ import {
   LIVE_MIN_WIDTH, LIVE_MIN_HEIGHT, DEBUG_WATCH,
 } from "./tournament-live-game.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
+import { APP_EVT } from "./app-events.js";
 import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
 import { attachColumnResize } from "./col-resize.js";
 import { apiErrorDetail, confirm, toast } from "./dialogs.js";
@@ -1185,9 +1186,9 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   const onBeforeUnload = () => saveState(tournament.id, snapshot());
   window.addEventListener("beforeunload", onBeforeUnload);
   window.addEventListener("sturddle:connection", onReconnect);
-  window.addEventListener("sturddle:livegame-closed", refreshWatchButtons);
+  window.addEventListener(APP_EVT.LIVEGAME_CLOSED, refreshWatchButtons);
   const onLiveGameClosedReapply = () => { if (activeLayout !== LAYOUT.TIDY) requestAnimationFrame(reapplyLayout); };
-  window.addEventListener("sturddle:livegame-closed", onLiveGameClosedReapply);
+  window.addEventListener(APP_EVT.LIVEGAME_CLOSED, onLiveGameClosedReapply);
 
   let resizeTimer = null;
   const onResize = () => {
@@ -1236,11 +1237,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     finalized = true;
     window.removeEventListener("beforeunload", onBeforeUnload);
     window.removeEventListener("sturddle:connection", onReconnect);
-    window.removeEventListener("sturddle:livegame-closed", refreshWatchButtons);
-    window.removeEventListener("sturddle:livegame-closed", onLiveGameClosedReapply);
+    window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, refreshWatchButtons);
+    window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, onLiveGameClosedReapply);
     detachResizeListeners();
     if (liveWatcherAttached) {
-      window.removeEventListener("sturddle:livegame-closed", onLiveGameClosed);
+      window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, onLiveGameClosed);
       liveWatcherAttached = false;
     }
     // User X-closed the last window: persist a dismissed snapshot so a
@@ -1263,7 +1264,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     // live window closes.
     if (getLiveWindows().length > 0) {
       if (!liveWatcherAttached) {
-        window.addEventListener("sturddle:livegame-closed", onLiveGameClosed);
+        window.addEventListener(APP_EVT.LIVEGAME_CLOSED, onLiveGameClosed);
         liveWatcherAttached = true;
       }
       return;
