@@ -482,7 +482,10 @@ def create_app(
     # sub-run, so the coordinator must exist first.
     ai_registry.register(
         DELEGATE_TOOL_SPEC,
-        make_delegate_tool(app.state.ai_coordinator.delegate_runner()),
+        make_delegate_tool(
+            app.state.ai_coordinator.delegate_runner(),
+            board_provider=_ai_board_provider,
+        ),
     )
 
     # Tournament subsystem: store + runner + orchestrator. Wired even

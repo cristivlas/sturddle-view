@@ -39,6 +39,7 @@ from ..llm.response_validator import (
     find_false_piece_claims,
     find_illegal_moves,
 )
+from .tools_engine import parse_move_canonical
 
 
 BoardProvider = Callable[[], chess.Board | None]
@@ -136,6 +137,15 @@ _RECOMMEND_NUDGE_PROMPTS = {
     ),
 }
 
+# Alternative-examined gate: an otherwise-accepted recommend_move is held
+# back until a different move was examined this turn (delegate verdict or
+# top_moves candidate). Loop-enforced; stall-guard + round-cap backstop it.
+_ALTERNATIVE_REQUIRED_ERROR = "alternative_required"
+_ALTERNATIVE_REQUIRED_REASON = (
+    "Examine at least one alternative move first (delegate a check on a "
+    "different candidate), then submit your move."
+)
+
 # Sent once when recommend_move is accepted but the model skips the
 # closing conclusion (small models treat the call as the end). One-shot.
 _POST_RECOMMEND_NUDGE_PROMPTS = {
@@ -166,81 +176,83 @@ _VERIFIER_QUESTION_LABEL = "Question to verify:"
 VerifierRunner = Callable[[str], Awaitable[str]]
 
 
+# Tool names the loop compares against. Must match the ToolSpec names
+# (tools_engine.py) and app.py's registry wiring; keep in lockstep.
 _DELEGATE_TOOL_NAME = "delegate"
+_RECOMMEND_MOVE_TOOL_NAME = "recommend_move"
+_TOP_MOVES_TOOL_NAME = "top_moves"
 
 
 # Declarative, not imperative: a "you do X" instruction invites small
 # models to reply "Understood, I will..." as prose. Describing behavior
 # removes the thing being acknowledged (same pattern across all cards).
 _DELEGATE_TOOL_CARD = (
-    "One focused question per call works best -- naming the move and "
-    "what to check (\"Is Nxd4 sound, or does it drop material?\"). The "
-    "reply is a verdict about the live position, advisory not quotable."
+    "One move per call. The result echoes the canonical `move_uci` and a "
+    "verdict about the live position, advisory not quotable. Checking a "
+    "move other than the one committed is what unlocks committing it."
 )
 
 
 DELEGATE_TOOL_SPEC = ToolSpec(
     name=_DELEGATE_TOOL_NAME,
     description=(
-        "Hand one move-verification question to the engine-backed "
-        "checker. It searches the live position and returns a short "
-        "verdict (sound/unsound + reason). Use it to confirm any line "
-        "before you commit to it in prose."
+        "Hand one move to the engine-backed checker. It searches the "
+        "live position and returns a short verdict (sound/unsound + "
+        "reason). Confirm a line before committing to it -- and weigh a "
+        "real alternative this way before settling on a move."
     ),
     input_schema={
         "type": "object",
         "properties": {
+            "move": {
+                "type": "string",
+                "description": (
+                    "The move to check, UCI or SAN (e.g. 'Nf3', 'g1f3')."
+                ),
+            },
             "question": {
                 "type": "string",
                 "description": (
-                    "One focused question naming the move to check and "
-                    "what matters, e.g. 'Is Nxd4 sound here?'."
+                    "What to check about the move, e.g. "
+                    "'sound, or does it drop material?'."
                 ),
             },
         },
-        "required": ["question"],
+        "required": ["move", "question"],
     },
     card=_DELEGATE_TOOL_CARD,
 )
 
 
-def make_delegate_tool(runner: VerifierRunner) -> Callable:
-    """Build the `delegate` tool. Dispatches the narrator's question to a
-    verifier sub-run via `runner` and returns its verdict as a tool
-    result. Empty/malformed input returns a structured error so the
-    narrator can recover."""
+def make_delegate_tool(
+    runner: VerifierRunner, board_provider: BoardProvider,
+) -> Callable:
+    """Build the `delegate` tool. Parses `move` to canonical UCI against
+    the live board, dispatches the narrator's question to a verifier
+    sub-run, and echoes `move_uci` so the coordinator's alternative gate
+    knows which move was examined. Malformed input returns a structured
+    error so the narrator can recover."""
     async def delegate(input_: dict, *, cancel_token: CancelToken) -> dict:
         question = input_.get("question")
         if not isinstance(question, str) or not question.strip():
             return {"error": "invalid_input", "detail": "question must be a non-empty string"}
+        raw_move = input_.get("move")
+        if not isinstance(raw_move, str) or not raw_move.strip():
+            return {"error": "invalid_input", "detail": "move must be a non-empty string"}
+        board = board_provider()
+        move = parse_move_canonical(board, raw_move) if board is not None else None
+        if move is None:
+            return {"error": "invalid_move", "detail": f"could not parse {raw_move!r}"}
         verdict = await runner(question.strip())
         if not verdict:
             return {"error": "no_verdict", "detail": "verifier returned no conclusion"}
-        return {"verdict": verdict}
+        return {"move_uci": move.uci(), "verdict": verdict}
 
     return delegate
 
 
 # Tool-arg normalizers for the dedup cache. Each maps (input, board) ->
 # hashable key, or None to skip caching this call.
-_SAN_PARSE_ERRORS = (
-    chess.InvalidMoveError, chess.IllegalMoveError, chess.AmbiguousMoveError,
-)
-
-
-def _parse_move_canonical(raw: str, board: chess.Board) -> chess.Move | None:
-    """Try UCI then SAN. Returns canonical Move or None on failure."""
-    candidate = raw.strip()
-    if not candidate:
-        return None
-    try:
-        return board.parse_uci(candidate)
-    except _SAN_PARSE_ERRORS:
-        pass
-    try:
-        return board.parse_san(candidate)
-    except _SAN_PARSE_ERRORS:
-        return None
 
 
 def _norm_move_arg(input_: dict, board: chess.Board | None) -> tuple | None:
@@ -249,7 +261,7 @@ def _norm_move_arg(input_: dict, board: chess.Board | None) -> tuple | None:
     raw = input_.get("move")
     if not isinstance(raw, str) or board is None:
         return None
-    move = _parse_move_canonical(raw, board)
+    move = parse_move_canonical(board, raw)
     return ("move", move.uci(), input_.get("depth")) if move else None
 
 
@@ -274,7 +286,7 @@ def _norm_top_moves(input_: dict, board: chess.Board | None) -> tuple | None:
     for r in raw_moves:
         if not isinstance(r, str):
             return None
-        move = _parse_move_canonical(r, board)
+        move = parse_move_canonical(board, r)
         if move is None:
             all_parseable = False
             break
@@ -320,10 +332,10 @@ def _norm_material(input_: dict, board: chess.Board | None) -> tuple | None:
 
 
 _NORMALIZERS: dict[str, Callable[[dict, chess.Board | None], tuple | None]] = {
-    "recommend_move": _norm_move_arg,
+    _RECOMMEND_MOVE_TOOL_NAME: _norm_move_arg,
     "validate_move": _norm_move_arg,
     "piece_at": _norm_square_arg,
-    "top_moves": _norm_top_moves,
+    _TOP_MOVES_TOOL_NAME: _norm_top_moves,
     "analyze": _norm_analyze,
     "material": _norm_material,
 }
@@ -393,6 +405,37 @@ def _round_produced_output(chunks: list[ProviderChunk]) -> bool:
         if c.kind == "text" and c.text and c.text.strip():
             return True
     return False
+
+
+def _top_moves_uci(tool_output: dict) -> set[str]:
+    """UCIs the engine scored in a top_moves result, for the
+    alternative-examined gate. Skips entries the engine couldn't score
+    (per-candidate errors carry no move_uci)."""
+    candidates = tool_output.get("candidates")
+    if not isinstance(candidates, list):
+        return set()
+    return {
+        c["move_uci"] for c in candidates
+        if isinstance(c, dict) and isinstance(c.get("move_uci"), str)
+    }
+
+
+def _alternative_examined(examined_uci: set[str], committed_uci: str) -> bool:
+    """True iff the model had the engine examine at least one move OTHER
+    than the one it is committing (via delegate or top_moves). Checking
+    only the committed move doesn't count -- that's the failure mode the
+    gate exists to catch."""
+    return bool(examined_uci - {committed_uci})
+
+
+def _alternative_required_result(tool_output: dict) -> dict:
+    """Rewrite an otherwise-accepted recommend_move into the gate
+    rejection the model sees, preserving the engine fields so it keeps
+    the context it already paid for."""
+    rejected = {k: v for k, v in tool_output.items() if k != "ok"}
+    rejected["error"] = _ALTERNATIVE_REQUIRED_ERROR
+    rejected["reason"] = _ALTERNATIVE_REQUIRED_REASON
+    return rejected
 
 
 def _inject_nudge(
@@ -475,10 +518,14 @@ class _LoopResult:
     """What the shared loop reports back. `final_text` is the last round's
     prose -- the verifier verdict, with cross-round tool-call self-talk
     dropped (falls back to all-rounds text on round-cap). `recommended_uci`
-    is set only when the narrator tracked a recommend_move."""
+    is set only when the narrator tracked a recommend_move. `gated_uci` is
+    the latest move the alternative gate blocked, for the unvetted fallback
+    when no vetted recommendation lands."""
     final_text: str = ""
     recommended_uci: str | None = None
     recommended_depth: int | None = None
+    gated_uci: str | None = None
+    gated_depth: int | None = None
     round_cap_hit: bool = False
     text_published: bool = False
 
@@ -573,7 +620,7 @@ class AIAnalysisCoordinator:
             messages: list[Message] = [{"role": "user", "content": opening_user_content}]
             tool_schemas = self._registry.schemas() or None
             has_recommend_move = any(
-                t.get("name") == "recommend_move"
+                t.get("name") == _RECOMMEND_MOVE_TOOL_NAME
                 for t in (tool_schemas or [])
             )
             done_payload: dict = {"done": True}
@@ -621,11 +668,22 @@ class AIAnalysisCoordinator:
                         # text (reasoning-only models, refusals).
                         done_payload["no_response"] = True
                     elif has_recommend_move and recommended_uci is None:
-                        # Naturally ended without an accepted move despite
-                        # the repeated nudge -- distinct from a round-cap so
-                        # the UI says "no move chosen", not "raise the cap".
-                        done_payload["no_recommendation"] = True
-                        log.info("AI turn ended with no accepted recommend_move")
+                        if result.gated_uci is not None:
+                            # The model committed a move but never examined an
+                            # alternative; rather than ship nothing, fall back
+                            # to its pick and flag it unvetted on the payload.
+                            # The verifier still runs on it. (No client renders
+                            # the flag yet -- see frontend follow-up.)
+                            recommended_uci = result.gated_uci
+                            recommended_depth = result.gated_depth
+                            done_payload["unvetted"] = True
+                            log.info("AI turn fell back to unvetted move %s", recommended_uci)
+                        else:
+                            # Naturally ended without any move despite the
+                            # repeated nudge -- distinct from a round-cap so the
+                            # UI says "no move chosen", not "raise the cap".
+                            done_payload["no_recommendation"] = True
+                            log.info("AI turn ended with no accepted recommend_move")
                 except asyncio.CancelledError:
                     done_payload["cancelled"] = True
                     raise
@@ -649,6 +707,8 @@ class AIAnalysisCoordinator:
                                 move, recommended_depth, self._cancel_token
                             )
                             if payload is not None:
+                                if done_payload.get("unvetted"):
+                                    payload["unvetted"] = True
                                 await self._emit(
                                     Event(
                                         kind="ai_recommendation",
@@ -698,7 +758,14 @@ class AIAnalysisCoordinator:
         text_parts: list[str] = []
         recommended_uci: str | None = None
         recommended_depth: int | None = None
+        # Latest move the gate blocked for lack of an alternative; the
+        # turn falls back to it if it never gets a vetted recommendation.
+        gated_uci: str | None = None
+        gated_depth: int | None = None
         any_tool_called = False
+        # Alternative-examined gate: UCIs the engine examined this turn
+        # (delegate `move_uci` + top_moves candidates). See _alternative_examined.
+        examined_uci: set[str] = set()
         nudge_sent = False
         # Narrator: re-nudge toward an accepted recommend_move each clean
         # exit until one lands, but stop once a nudge draws no new attempt.
@@ -875,25 +942,46 @@ class AIAnalysisCoordinator:
                             },
                         )
                     )
-                await config.transcript.tool_result(
-                    round_index, pending_tool.tool_use_id, tool_output
-                )
+                # Track moves the engine looked at this turn, for the
+                # alternative-examined gate below.
+                if isinstance(tool_output, dict) and not tool_output.get("error"):
+                    if pending_tool.tool_name == _DELEGATE_TOOL_NAME:
+                        examined = tool_output.get("move_uci")
+                        if isinstance(examined, str):
+                            examined_uci.add(examined)
+                    elif pending_tool.tool_name == _TOP_MOVES_TOOL_NAME:
+                        examined_uci.update(_top_moves_uci(tool_output))
                 # Safe to read from a cached recommend_move result: the
-                # cached uci is identical to a fresh dispatch's.
-                if config.track_recommend and pending_tool.tool_name == "recommend_move":
+                # cached uci is identical to a fresh dispatch's. Gate runs
+                # before transcript/message so the model sees what we record.
+                if config.track_recommend and pending_tool.tool_name == _RECOMMEND_MOVE_TOOL_NAME:
                     recommend_attempts += 1
                     if (
                         isinstance(tool_output, dict)
                         and tool_output.get("ok")
                         and isinstance(tool_output.get("uci"), str)
                     ):
-                        recommended_uci = tool_output["uci"]
-                        recommended_depth = tool_output.get("depth")
-                        # A conclusion alongside the accepting call counts
-                        # -- no separate post-move round needed. Prose in a
-                        # later round is handled at the natural-exit check.
-                        if round_had_text:
-                            prose_after_recommend = True
+                        uci = tool_output["uci"]
+                        # Alternative-examined gate: hold an otherwise-good
+                        # move until a different one was checked this turn.
+                        if not _alternative_examined(examined_uci, uci):
+                            # Remember the latest gated move so a stalled
+                            # turn can fall back to it instead of shipping
+                            # nothing (see run() unvetted fallback).
+                            gated_uci = uci
+                            gated_depth = tool_output.get("depth")
+                            tool_output = _alternative_required_result(tool_output)
+                        else:
+                            recommended_uci = uci
+                            recommended_depth = tool_output.get("depth")
+                            # A conclusion alongside the accepting call counts
+                            # -- no separate post-move round needed. Prose in a
+                            # later round is handled at the natural-exit check.
+                            if round_had_text:
+                                prose_after_recommend = True
+                await config.transcript.tool_result(
+                    round_index, pending_tool.tool_use_id, tool_output
+                )
                 if isinstance(tool_output, dict) and tool_output.get("error"):
                     await emit(
                         Event(
@@ -936,6 +1024,8 @@ class AIAnalysisCoordinator:
             final_text=final,
             recommended_uci=recommended_uci,
             recommended_depth=recommended_depth,
+            gated_uci=gated_uci,
+            gated_depth=gated_depth,
             round_cap_hit=round_cap_hit,
             text_published=text_published,
         )

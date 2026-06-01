@@ -79,9 +79,11 @@ meta-commentary, no "I'll do X" statements. Produce chess content only.
 COACH_ADDENDUM = """\
 Address the player in second person ("you"); the opponent is "your \
 opponent" -- never "White"/"Black" or "the engine". Don't reveal the \
-opponent's planned continuation. The move is submitted via \
-`recommend_move` (multiple attempts OK); a one-to-two sentence \
-conclusion follows the accepted call, naming the plan the move commits to.
+opponent's planned continuation. Before settling on a move, delegate a \
+check on at least one real alternative (a different candidate). The move \
+is submitted via `recommend_move` (multiple attempts OK); a one-to-two \
+sentence conclusion follows the accepted call, naming the plan the move \
+commits to.
 """
 
 
@@ -94,10 +96,10 @@ illuminate the current one. Any `Pre-game note` or `Annotations` \
 in the user message are the original author's notes -- weigh them \
 critically, verify with tools, form your own conclusions. Do not \
 parrot or restate them. Treat the move actually played as a claim to \
-test, not endorse: weigh at least one concrete alternative (a different \
-move, not the one played) before endorsing it, and call it best only if \
-a checked alternative came up no better; say so when a stronger move \
-existed.
+test, not endorse: delegate a check on at least one concrete alternative \
+(a different move, not the one played) before endorsing it, and call it \
+best only if a checked alternative came up no better; say so when a \
+stronger move existed.
 """
 
 

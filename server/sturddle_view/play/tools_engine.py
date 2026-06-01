@@ -87,7 +87,7 @@ _ANALYZE_GAME_ID_FALLBACK = "ai-analyze"
 
 # Move-notation constraint reused in every tool description that takes
 # a move string. PGN-style continuation marks ('...d6', '23...Nf6') are
-# not SAN; the server strips them defensively (see _parse_candidate_move)
+# not SAN; the server strips them defensively (see _strip_move_prefix)
 # but the prompt steers models away to keep tool inputs clean.
 _MOVE_NOTATION_CONSTRAINT = (
     " Use bare UCI or SAN -- no PGN continuation prefix "
@@ -530,6 +530,15 @@ def _parse_candidate_move(board: chess.Board, raw: str) -> tuple[chess.Move | No
     if move is not None:
         return move, None
     return None, {"move_input": raw, "error": kind, "detail": detail}
+
+
+def parse_move_canonical(board: chess.Board, raw: str) -> chess.Move | None:
+    """Canonical Move for a UCI/SAN string, or None on failure. Shares the
+    same prefix-strip + UCI-then-SAN parse as the move-taking tools, so
+    every caller (tools + the ai_analysis gate/dedup) agrees on the UCI a
+    given string maps to."""
+    move, _kind, _detail = _parse_move_or_error(board, _strip_move_prefix(raw))
+    return move
 
 
 def make_top_moves_tool(
