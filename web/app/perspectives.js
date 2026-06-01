@@ -14,6 +14,8 @@
 //   root faded out until this resolves, so the user doesn't see half-loaded
 //   UI flashing before the real state.
 
+import { STORAGE_KEY } from "./storage-keys.js";
+
 // Parse a CSS time string ("80ms" / "0.08s") to milliseconds. Multi-value
 // lists fall back to the first entry.
 function _cssMs(value) {
@@ -23,7 +25,7 @@ function _cssMs(value) {
   return 0;
 }
 
-const STORAGE_KEY = "sturddle:active-perspective";
+const ACTIVE_PERSPECTIVE_KEY = STORAGE_KEY.ACTIVE_PERSPECTIVE;
 
 export class PerspectiveRouter {
   constructor({ root, ctx }) {
@@ -84,7 +86,7 @@ export class PerspectiveRouter {
     const persp = this._registry.get(id);
     this._active = id;
     try {
-      localStorage.setItem(STORAGE_KEY, id);
+      localStorage.setItem(ACTIVE_PERSPECTIVE_KEY, id);
     } catch {
       // localStorage may be unavailable; non-fatal.
     }
@@ -100,7 +102,7 @@ export class PerspectiveRouter {
   async activateInitial() {
     let id;
     try {
-      id = localStorage.getItem(STORAGE_KEY);
+      id = localStorage.getItem(ACTIVE_PERSPECTIVE_KEY);
     } catch {
       id = null;
     }

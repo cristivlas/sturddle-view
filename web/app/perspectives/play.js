@@ -4,6 +4,7 @@
 
 import { mountGameView } from "../game-view.js";
 import { APP_EVT } from "../app-events.js";
+import { STORAGE_KEY } from "../storage-keys.js";
 import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, isMobileLayout } from "../play-dock-windows.js";
@@ -380,7 +381,7 @@ export const playPerspective = {
     const onEnginesChanged = (e) => {
       setNoEngine(!e.detail?.activeId);
     };
-    window.addEventListener("sturddle:engines-changed", onEnginesChanged);
+    window.addEventListener(APP_EVT.ENGINES_CHANGED, onEnginesChanged);
     checkEngines();
 
     // Fetch settings before mount so the board picks up the saved style.
@@ -554,7 +555,7 @@ export const playPerspective = {
     const onRecentsChanged = () => {
       if (viewing && viewingGameId) fetchXgameInfo(viewingGameId);
     };
-    window.addEventListener("sturddle:recents-changed", onRecentsChanged);
+    window.addEventListener(APP_EVT.RECENTS_CHANGED, onRecentsChanged);
 
     // Ask server to re-emit current state so the freshly-mounted view syncs.
     ctx.api("POST", "/game/sync", {}).catch(() => {});
@@ -869,7 +870,7 @@ export const playPerspective = {
       playRibbon.style.display = (viewing || editing) ? "none" : "";
       viewRibbon.style.display = (viewing && !editing) ? "" : "none";
       editRibbon.style.display = editing ? "" : "none";
-      window.dispatchEvent(new CustomEvent("sturddle:ribbon-active", { detail: { el: activeRibbon } }));
+      window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_ACTIVE, { detail: { el: activeRibbon } }));
       if (editing) {
         const isWhite = view.getEditSide() === "w";
         editSideBtn.setAttribute("aria-label", `Side to move: ${isWhite ? "White" : "Black"}`);
@@ -949,7 +950,7 @@ export const playPerspective = {
     // View-mode flip is purely visual (no backend state; the user isn't
     // playing yet so "which side am I" is meaningless). Persisted so it
     // survives perspective remounts; applied on each entry into view mode.
-    const VIEW_FLIP_KEY = "sturddle:view:flipped";
+    const VIEW_FLIP_KEY = STORAGE_KEY.VIEW_FLIPPED;
     let viewFlipped = false;
     try { viewFlipped = localStorage.getItem(VIEW_FLIP_KEY) === "1"; } catch { /* */ }
 
@@ -1200,7 +1201,7 @@ export const playPerspective = {
           // Notify the perspective router so the nav label can swap
           // Play <-> View when the mode flips.
           if (wasViewing !== viewing) {
-            window.dispatchEvent(new CustomEvent("sturddle:viewing-changed", {
+            window.dispatchEvent(new CustomEvent(APP_EVT.VIEWING_CHANGED, {
               detail: { viewing },
             }));
           }
@@ -1930,7 +1931,7 @@ export const playPerspective = {
         }
         closeDebugWindows();
         // Announce no active ribbon so the global float manager unmounts it.
-        window.dispatchEvent(new CustomEvent("sturddle:ribbon-active", { detail: { el: null } }));
+        window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_ACTIVE, { detail: { el: null } }));
         setDockContainer(null);
         closeCommentary();
         setCommentaryDockContainer(null);
@@ -1957,8 +1958,8 @@ export const playPerspective = {
         document.body.classList.remove(XGAME_LOCK_CLASS);
         window.removeEventListener(APP_EVT.SETTINGS_CHANGED, onSettingsChanged);
         window.removeEventListener(APP_EVT.LAYOUT_CHANGED, onLayoutChanged);
-        window.removeEventListener("sturddle:engines-changed", onEnginesChanged);
-        window.removeEventListener("sturddle:recents-changed", onRecentsChanged);
+        window.removeEventListener(APP_EVT.ENGINES_CHANGED, onEnginesChanged);
+        window.removeEventListener(APP_EVT.RECENTS_CHANGED, onRecentsChanged);
         window.removeEventListener("resize", onCommentsResize);
         window.removeEventListener("keydown", onKeydown);
         newGameBtn.removeEventListener("click", onNewGame);

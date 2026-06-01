@@ -2,6 +2,9 @@
 // Application code calls these helpers; the actual UI library stays
 // behind this seam so it can be swapped later.
 
+import { APP_EVT } from "./app-events.js";
+import { STORAGE_KEY } from "./storage-keys.js";
+
 function ensureContainer() {
   let c = document.getElementById("dialog-host");
   if (!c) {
@@ -147,7 +150,7 @@ export function prompt({
   });
 }
 
-const LAST_DIR_KEY_PREFIX = "sturddle:fs-picker:last:";
+const LAST_DIR_KEY_PREFIX = STORAGE_KEY.FS_PICKER_LAST_PREFIX;
 
 function recallLastDir(key) {
   try {
@@ -437,13 +440,12 @@ export function apiErrorObject(error) {
   }
 }
 
-const OPEN_SETTINGS_EVENT = "sturddle:open-settings";
 const SETTINGS_TAB_ENGINES = "engines";
 
 /** Dispatch the deep-link event that opens the Settings dialog at
  *  `tab` (e.g. "engines"). Main wires up the actual open in main.js. */
 export function openSettings(tab) {
-  window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT, { detail: { tab } }));
+  window.dispatchEvent(new CustomEvent(APP_EVT.OPEN_SETTINGS, { detail: { tab } }));
 }
 
 const SVG_NS = "http://www.w3.org/2000/svg";

@@ -19,6 +19,7 @@ import {
 } from "./tournament-live-game.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { APP_EVT } from "./app-events.js";
+import { STORAGE_KEY } from "./storage-keys.js";
 import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
 import { attachColumnResize } from "./col-resize.js";
 import { apiErrorDetail, confirm, toast } from "./dialogs.js";
@@ -31,8 +32,8 @@ import {
 } from "./wb-utils.js";
 import { createSlotGrid, SLOT_GAP } from "./workspace-slot-grid.js";
 
-const STORAGE_KEY_PREFIX = "sturddle:workspace:";
-const STANDINGS_COL_PCTS_KEY = "sturddle:tournaments:standingsColPcts";
+const STORAGE_KEY_PREFIX = STORAGE_KEY.WORKSPACE_PREFIX;
+const STANDINGS_COL_PCTS_KEY = STORAGE_KEY.TOURNAMENTS_STANDINGS_COL_PCTS;
 const STANDINGS_DEFAULT_PCTS = [25, 7, 7, 7, 7, 7, 8, 14];
 const EVENT_LOG_LIMIT = 500;
 
@@ -78,7 +79,7 @@ export function clearWorkspaceState(id) {
 
 
 const LAYOUT = Object.freeze({ NONE: 0, TIDY: 1, TILE: 2, SNAP: 3 });
-const LAYOUT_STORAGE_KEY = "sturddle:active-layout";
+const LAYOUT_STORAGE_KEY = STORAGE_KEY.ACTIVE_LAYOUT;
 
 let activeWorkspace = null;
 let activeLayout = Number(localStorage.getItem(LAYOUT_STORAGE_KEY) ?? LAYOUT.NONE);
@@ -1020,7 +1021,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         }
         // Live windows listening for this pair_id will repaint
         // their banner; no-op if window already closed.
-        window.dispatchEvent(new CustomEvent("sturddle:reconciled", {
+        window.dispatchEvent(new CustomEvent(APP_EVT.RECONCILED, {
           detail: {
             pairId: pid,
             result: evt.payload.result,
@@ -1185,7 +1186,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
   const onBeforeUnload = () => saveState(tournament.id, snapshot());
   window.addEventListener("beforeunload", onBeforeUnload);
-  window.addEventListener("sturddle:connection", onReconnect);
+  window.addEventListener(APP_EVT.CONNECTION, onReconnect);
   window.addEventListener(APP_EVT.LIVEGAME_CLOSED, refreshWatchButtons);
   const onLiveGameClosedReapply = () => { if (activeLayout !== LAYOUT.TIDY) requestAnimationFrame(reapplyLayout); };
   window.addEventListener(APP_EVT.LIVEGAME_CLOSED, onLiveGameClosedReapply);
@@ -1236,7 +1237,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (finalized) return;
     finalized = true;
     window.removeEventListener("beforeunload", onBeforeUnload);
-    window.removeEventListener("sturddle:connection", onReconnect);
+    window.removeEventListener(APP_EVT.CONNECTION, onReconnect);
     window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, refreshWatchButtons);
     window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, onLiveGameClosedReapply);
     detachResizeListeners();
@@ -1251,7 +1252,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     }
     if (activeWorkspace === workspace) activeWorkspace = null;
     // Re-sync the Window menu (the user may have closed via X, not the menu).
-    window.dispatchEvent(new CustomEvent("sturddle:workspace-closed"));
+    window.dispatchEvent(new CustomEvent(APP_EVT.WORKSPACE_CLOSED));
   }
 
   function tearDown() {

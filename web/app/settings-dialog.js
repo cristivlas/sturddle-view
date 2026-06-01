@@ -4,6 +4,7 @@
 
 import { apiErrorDetail, inlineSvgIcon, pickFile, showDialog, toast } from "./dialogs.js";
 import { APP_EVT } from "./app-events.js";
+import { STORAGE_KEY } from "./storage-keys.js";
 import { mountEngineList } from "./engines.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
@@ -11,8 +12,8 @@ import { CHESS_CLOCK_SVG_INNER, CHESS_CLOCK_VIEW_BOX } from "./icons.js";
 import { mqMobile, mqNarrowDialog } from "./breakpoints.js";
 import { RIBBON_SIDE_KEY } from "./ribbon-window.js";
 
-const SETTINGS_ENGINES_COL_PCTS_KEY = "sturddle:engines:settings:colPcts3";
-export const PLAYER_NAME_KEY = "sturddle:player_name";
+const SETTINGS_ENGINES_COL_PCTS_KEY = STORAGE_KEY.ENGINES_SETTINGS_COL_PCTS;
+export const PLAYER_NAME_KEY = STORAGE_KEY.PLAYER_NAME;
 export const PLAYER_NAME_DEFAULT = "Human";
 const PLAYER_NAME_MAX_LEN = 32;
 

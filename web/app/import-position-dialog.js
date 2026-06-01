@@ -7,6 +7,8 @@
 // before the server responds. Cache is updated optimistically on validate.
 
 import { apiErrorDetail, apiErrorObject, showDialog, toast } from "./dialogs.js";
+import { APP_EVT } from "./app-events.js";
+import { STORAGE_KEY } from "./storage-keys.js";
 
 // Format a summary dict {white, black, result, side_to_move, fen} into a
 // display string. `short: true` returns a compact form for tight UI (e.g.
@@ -160,7 +162,7 @@ const EMPTY_PROMPT = {
 };
 const TEXTAREA_ROWS = 8;
 
-const RECENTS_CACHE_KEY = "sturddle:import:recent";
+const RECENTS_CACHE_KEY = STORAGE_KEY.IMPORT_RECENTS;
 const RECENTS_DISPLAY_CAP = 10;
 
 function loadRecentsCache() {
@@ -304,7 +306,7 @@ export function showImportPositionDialog({ api }) {
               // can refresh derived state (e.g. play.js x-game info,
               // for the fork glyph + banner). Bus-style decoupling so
               // the dialog stays unaware of who is listening.
-              window.dispatchEvent(new CustomEvent("sturddle:recents-changed", {
+              window.dispatchEvent(new CustomEvent(APP_EVT.RECENTS_CHANGED, {
                 detail: { deletedHash: removed.hash },
               }));
               if (recentSel.querySelectorAll("wa-option").length >= RECENTS_DISPLAY_CAP) return;

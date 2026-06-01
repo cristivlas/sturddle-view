@@ -14,15 +14,16 @@ import {
   isPinnedToBottom,
   scrollToBottom,
 } from "./wb-utils.js";
+import { STORAGE_KEY } from "./storage-keys.js";
 
-const GEO_KEY       = "sturddle:ai:geo";
-const WIN_STATE_KEY = "sturddle:ai:winstate";
-const DOCKED_KEY    = "sturddle:ai:docked";
-const OPEN_KEY      = "sturddle:ai:open";
+const GEO_KEY       = STORAGE_KEY.AI_GEO;
+const WIN_STATE_KEY = STORAGE_KEY.AI_WIN_STATE;
+const DOCKED_KEY    = STORAGE_KEY.AI_DOCKED;
+const OPEN_KEY      = STORAGE_KEY.AI_OPEN;
 // Last model name shown in the panel title. Pinned at analyze-start;
 // reload restores so the title reflects what last ran, not what is
 // currently selected in Settings.
-const TITLE_MODEL_KEY = "sturddle:ai:title-model";
+const TITLE_MODEL_KEY = STORAGE_KEY.AI_TITLE_MODEL;
 
 // Status text shown next to a spinner while a turn is in flight. The
 // LLM may take seconds (model latency + engine tool calls) before any
@@ -36,7 +37,7 @@ const STATUS_TEXT = {
 };
 
 // Sticky open/closed pref for the Thinking disclosure block.
-const THINKING_OPEN_KEY = "sturddle:ai:thinking-open";
+const THINKING_OPEN_KEY = STORAGE_KEY.AI_THINKING_OPEN;
 
 // Label shown on the Thinking disclosure summary while a round's
 // thinking stream is still arriving. Swapped to "Thought for Ns" once
