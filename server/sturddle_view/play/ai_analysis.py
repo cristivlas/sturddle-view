@@ -450,9 +450,10 @@ def _round_produced_output(chunks: list[ProviderChunk]) -> bool:
 
 
 def _alternative_examined(examined_uci: set[str], committed_uci: str) -> bool:
-    """True iff a prior recommend_move this turn committed a move OTHER
-    than the one now being committed. Only recommend_move counts --
-    examining via delegate or top_moves does not clear the gate."""
+    """True iff `examined_uci` holds a move OTHER than the one now being
+    committed. Populated by prior recommend_move calls this turn (delegate
+    and top_moves do not count) and, in commentator mode, seeded with the
+    played move so endorsing it requires a different recommend first."""
     return bool(examined_uci - {committed_uci})
 
 
@@ -536,6 +537,11 @@ class _LoopConfig:
     # True only for the narrator loop -- enables recommend_move tracking
     # so the end-of-turn verifier fires on the chosen move.
     track_recommend: bool = False
+    # Commentator only: UCI of the move actually played in the reviewed
+    # game. Seeds the alternative gate so endorsing the played move
+    # requires recommending a DIFFERENT move first -- the played move is
+    # the subject under review, not an alternative to it.
+    played_uci: str | None = None
     # Per-call thinking override passed to provider.stream(). None = use
     # the provider's setting (narrator); False = force off (verifier).
     thinking_override: bool | None = None
@@ -622,6 +628,7 @@ class AIAnalysisCoordinator:
         provider: LLMProvider | None = None,
         mode: PromptMode = "coach",
         user_message: str | None = None,
+        played_uci: str | None = None,
         max_tool_rounds: int = MAX_TOOL_ROUNDS,
         verifier_max_rounds: int = VERIFIER_MAX_ROUNDS,
     ) -> None:
@@ -639,6 +646,11 @@ class AIAnalysisCoordinator:
         (`api/ai.py` for live play) via `build_initial_user_message`.
         None falls back to an empty user message for tests that don't
         care about position context.
+
+        `played_uci` is the move actually played from the reviewed
+        position (commentator mode); it seeds the alternative gate so the
+        model must recommend a DIFFERENT move before endorsing it. Ignored
+        outside commentator mode.
         """
         active = provider or self._provider
         system_prompt = assemble_system_prompt(mode, tools=self._registry.specs())
@@ -682,6 +694,8 @@ class AIAnalysisCoordinator:
                         _RECOMMEND_NUDGE_PROMPTS[mode] if has_recommend_move else None
                     ),
                     track_recommend=has_recommend_move,
+                    # Only the commentator reviews a played move; coach has none.
+                    played_uci=played_uci if mode == _COMMENTATOR_MODE else None,
                 )
                 recommended_uci: str | None = None
                 recommended_depth: int | None = None
@@ -799,8 +813,12 @@ class AIAnalysisCoordinator:
         gated_depth: int | None = None
         any_tool_called = False
         # Alternative-examined gate: UCIs committed by prior recommend_move
-        # calls this turn. See _alternative_examined.
+        # calls this turn. See _alternative_examined. Seeded with the played
+        # move (commentator) so endorsing it requires a different recommend
+        # first -- the played move is the subject, not an alternative to it.
         examined_uci: set[str] = set()
+        if config.played_uci:
+            examined_uci.add(config.played_uci)
         # Positions the model examined via fen-taking tools this turn, keyed
         # by FEN (dedup). Fed to the prose validators so a move/piece legal
         # in an examined line isn't flagged. See _validate_round_text.
@@ -1004,9 +1022,11 @@ class AIAnalysisCoordinator:
                         # Alternative-examined gate: hold an otherwise-good
                         # move until a prior recommend_move committed a
                         # different one this turn. Record every committed uci
-                        # so the next recommend can clear against it.
-                        if not _alternative_examined(examined_uci, uci):
-                            examined_uci.add(uci)
+                        # (cleared or gated) so a later recommend can clear
+                        # against it.
+                        gate_cleared = _alternative_examined(examined_uci, uci)
+                        examined_uci.add(uci)
+                        if not gate_cleared:
                             # Remember the latest gated move so a stalled
                             # turn can fall back to it instead of shipping
                             # nothing (see run() unvetted fallback).

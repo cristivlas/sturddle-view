@@ -4,12 +4,14 @@ The agent's initial user message carries the loaded PGN's sanitized
 comments (per-ply + root) so the commentator can weigh prior author
 notes against tool-verified analysis. This module covers the cap math
 (`_truncate`, `_cap_annotations`), the env-var knobs (`_int_env`), and
-the mode gate in `_build_user_message` (view-only).
+the mode gate in `_build_turn_inputs` (view-only).
 """
 from __future__ import annotations
 
+import chess
+
 from sturddle_view.api._ai_kick import (
-    _build_user_message,
+    _build_turn_inputs,
     _cap_annotations,
     _int_env,
     _PER_COMMENT_MAX_ENV,
@@ -182,7 +184,7 @@ def test_int_env_default_overrides_apply_via_caps(monkeypatch):
     assert _int_env(_TOTAL_COMMENT_MAX_ENV, 1500) == 999
 
 
-# _build_user_message: mode-gated annotation flow. The fake HVE captures
+# _build_turn_inputs: mode-gated annotation flow. The fake HVE captures
 # whether view_game_comments was even consulted in each mode.
 
 class _FakeBoard:
@@ -192,6 +194,11 @@ class _FakeBoard:
 
     def fen(self) -> str:
         return self._fen
+
+    def parse_san(self, san: str):
+        # Delegate to a real board at this FEN so the played-move seed
+        # parse behaves; move_stack is empty, so ply 0 is the played move.
+        return chess.Board(self._fen).parse_san(san)
 
 
 class _FakeHVE:
@@ -240,7 +247,7 @@ def test_build_user_message_viewing_mode_injects_annotations():
         view_comments=["sharp", None, None],
         view_root="famous miniature",
     )
-    msg = _build_user_message(hve)
+    msg = _build_turn_inputs(hve)[0]
     assert msg is not None
     assert "Pre-game note: famous miniature" in msg
     assert "Annotations: 1.e4 {sharp}" in msg
@@ -256,7 +263,7 @@ def test_build_user_message_playing_mode_skips_view_comments_accessor():
         view_comments=["should not appear"],
         view_root="should not appear either",
     )
-    msg = _build_user_message(hve)
+    msg = _build_turn_inputs(hve)[0]
     assert msg is not None
     assert "Annotations:" not in msg
     assert "Pre-game note:" not in msg
@@ -265,7 +272,7 @@ def test_build_user_message_playing_mode_skips_view_comments_accessor():
 
 def test_build_user_message_viewing_mode_with_no_comments_omits_lines():
     hve = _FakeHVE(mode=Mode.VIEWING, view_comments=None, view_root=None)
-    msg = _build_user_message(hve)
+    msg = _build_turn_inputs(hve)[0]
     assert msg is not None
     assert "Annotations:" not in msg
     assert "Pre-game note:" not in msg
@@ -281,7 +288,7 @@ def test_build_user_message_viewing_mode_respects_env_caps(monkeypatch):
         view_comments=["x" * 200],
         view_root=None,
     )
-    msg = _build_user_message(hve)
+    msg = _build_turn_inputs(hve)[0]
     assert msg is not None
     # Annotation should appear but truncated -- the "x" run must be
     # <= 10 chars (including the marker) inside the braces.

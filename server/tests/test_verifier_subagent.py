@@ -670,6 +670,75 @@ async def test_gate_accepts_after_recommending_a_different_move():
 
 
 @pytest.mark.asyncio
+async def test_commentator_gate_blocks_endorsing_played_move_without_alternative():
+    # played_uci seeds the gate: endorsing the played move (e4) on the first
+    # recommend is blocked, because the played move is the subject under
+    # review, not an alternative to it.
+    reg = _gate_reg()
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, _RecordingScriptedProvider(rounds=[
+            [ProviderChunk(                                       # r0: endorse e4 -> blocked
+                kind="tool_use", tool_use_id="r0",
+                tool_name="recommend_move", tool_input={"move": "e4"},
+            )],
+            [ProviderChunk(kind="text", text="Sticking with e4.")],  # r1: stall
+            [ProviderChunk(kind="text", text="Nothing new.")],       # r2: stall -> give up
+        ]),
+        registry=reg, board_provider=(lambda: chess.Board()),
+        recommend_verifier=_accept_verifier,
+    )
+
+    await coord.run(
+        game_id="g", mode="commentator",
+        user_message=_TURN_CONTEXT + "\n", played_uci="e2e4",
+    )
+    events = await _drain_until_done(queue)
+
+    failures = [e for e in events if e.kind == "ai_tool_call_failed"]
+    assert any(e.payload.get("error") == "alternative_required" for e in failures)
+
+
+@pytest.mark.asyncio
+async def test_commentator_gate_clears_when_alternative_to_played_move_recommended():
+    # With played_uci=e2e4, recommending a DIFFERENT move (Nf3) first clears
+    # the gate, so a later endorsement of the played move (e4) goes through.
+    reg = _gate_reg()
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, _RecordingScriptedProvider(rounds=[
+            [ProviderChunk(                                       # r0: recommend Nf3 (alt) -> clears
+                kind="tool_use", tool_use_id="r0",
+                tool_name="recommend_move", tool_input={"move": "Nf3"},
+            )],
+            [ProviderChunk(                                       # r1: endorse e4 -> allowed
+                kind="tool_use", tool_use_id="r1",
+                tool_name="recommend_move", tool_input={"move": "e4"},
+            )],
+            [ProviderChunk(kind="text", text="e4 was best after all.")],  # r2: conclusion
+        ]),
+        registry=reg, board_provider=(lambda: chess.Board()),
+        recommend_verifier=_accept_verifier,
+    )
+
+    await coord.run(
+        game_id="g", mode="commentator",
+        user_message=_TURN_CONTEXT + "\n", played_uci="e2e4",
+    )
+    events = await _drain_until_done(queue)
+
+    # Nf3 (r0) clears against the seeded played move immediately, so neither
+    # call is gated and a recommendation fires.
+    assert not [
+        e for e in events if e.kind == "ai_tool_call_failed"
+        and e.payload.get("error") == "alternative_required"
+    ]
+    assert [e for e in events if e.kind == "ai_recommendation"]
+
+
+@pytest.mark.asyncio
 async def test_gate_rejects_when_only_the_committed_move_was_recommended():
     # Recommending the SAME move twice is not examining an alternative --
     # the gate blocks every attempt and the turn never clears.
