@@ -18,6 +18,7 @@ import pytest
 
 from sturddle_view.llm import Transcript
 from sturddle_view.llm import ollama as ollama_mod
+from sturddle_view.llm import openai_compat as openai_compat_mod
 from sturddle_view.llm.ollama import (
     MalformedToolArgumentsError,
     OllamaProvider,
@@ -82,7 +83,11 @@ def install_fake_httpx(monkeypatch):
         class _ShimHttpx:
             AsyncClient = lambda *a, **kw: client  # noqa: E731
 
+        # The streaming SSE call lives in openai_compat now; control-plane
+        # calls (list_models etc.) still use ollama's httpx. Patch both so
+        # whichever path the test exercises is intercepted.
         monkeypatch.setattr(ollama_mod, "httpx", _ShimHttpx)
+        monkeypatch.setattr(openai_compat_mod, "httpx", _ShimHttpx)
 
     install.holder = holder  # type: ignore[attr-defined]
     return install

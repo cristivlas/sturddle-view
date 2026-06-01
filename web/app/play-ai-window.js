@@ -116,10 +116,12 @@ function buildBody() {
       ev.preventDefault();
       const hovered = root._hoveredTarget;
       const detailPre = hovered?.closest(".play-ai-tool-details-body");
+      const errorBlock = hovered?.closest(".play-ai-error");
       const prosePara = hovered?.closest(".play-ai-prose");
       const target = (detailPre && !detailPre.hidden)
         ? detailPre
-        : prosePara
+        : errorBlock
+        ?? prosePara
         ?? root._roundPanels.get(root._currentRound)?.para;
       if (!target) return;
       const sel = window.getSelection();

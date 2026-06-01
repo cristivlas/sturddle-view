@@ -921,7 +921,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const aiProvider = document.createElement("wa-select");
       aiProvider.size = "small";
       aiProvider.setAttribute("distance", "4");
-      for (const [val, label] of [["anthropic", "Anthropic"], ["ollama", "Ollama"]]) {
+      for (const [val, label] of [["anthropic", "Anthropic"], ["gemini", "Gemini"], ["ollama", "Ollama"]]) {
         const opt = document.createElement("wa-option");
         opt.value = val;
         opt.textContent = label;
@@ -1168,10 +1168,14 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       }, 400);
       aiThinkingBudget.addEventListener("input", persistThinkingBudget);
 
+      // Credential shape per provider: key-based providers show the API
+      // key row; URL-based (Ollama) shows the base URL row. A set keeps
+      // adding a provider to a one-line change here.
+      const KEY_BASED_PROVIDERS = new Set(["anthropic", "gemini"]);
       function applyAiProviderVisibility() {
-        const isAnthropic = aiProvider.value === "anthropic";
-        aiKeyRow.style.display = isAnthropic ? "" : "none";
-        aiUrlRow.style.display = isAnthropic ? "none" : "";
+        const usesKey = KEY_BASED_PROVIDERS.has(aiProvider.value);
+        aiKeyRow.style.display = usesKey ? "" : "none";
+        aiUrlRow.style.display = usesKey ? "none" : "";
         // Budget visibility is owned by syncThinkingOptions (provider +
         // mode + adaptive-model interplay).
         syncThinkingOptions();
