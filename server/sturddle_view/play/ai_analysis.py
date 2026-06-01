@@ -63,6 +63,7 @@ from .tools_engine import (
     VALIDATE_MOVE_TOOL_NAME,
     board_from_fen_input,
     parse_move_canonical,
+    parse_move_reporting,
 )
 
 
@@ -276,9 +277,14 @@ def make_delegate_tool(
         if not isinstance(raw_move, str) or not raw_move.strip():
             return {"error": "invalid_input", "detail": "move must be a non-empty string"}
         board = board_provider()
-        move = parse_move_canonical(board, raw_move) if board is not None else None
-        if move is None:
+        if board is None:
             return {"error": "invalid_move", "detail": f"could not parse {raw_move!r}"}
+        # Surface the real kind (illegal_move vs invalid_move) and the FEN we
+        # validated against, so the narrator sees e.g. a wrong-side-to-move
+        # move for what it is instead of a flat "could not parse".
+        move, kind, detail = parse_move_reporting(board, raw_move)
+        if move is None:
+            return {"error": kind, "detail": detail, "fen": board.fen()}
         verdict = await runner(question.strip())
         if not verdict:
             return {"error": "no_verdict", "detail": "verifier returned no conclusion"}

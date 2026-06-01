@@ -34,6 +34,7 @@ from sturddle_view.llm import (
     ToolSpec,
 )
 from sturddle_view.llm.base import LLMProvider, ToolWireSpec
+from sturddle_view.llm.cancel import CancelToken
 from sturddle_view.llm.prompts import VERIFIER_ADDENDUM
 from sturddle_view.play.ai_analysis import (
     AIAnalysisCoordinator,
@@ -162,6 +163,31 @@ def _delegate_chunk(
         tool_name="delegate",
         tool_input={"move": move, "question": question},
     )
+
+
+@pytest.mark.asyncio
+async def test_delegate_reports_illegal_vs_invalid_with_fen():
+    # A bad `move` must surface the real kind (illegal_move vs invalid_move)
+    # and the FEN it validated against, not a flat "could not parse" -- so a
+    # wrong-side-to-move pick (e.g. '...d5' on white's turn) is legible. The
+    # parse fails before the verifier runs, so the runner is never called.
+    async def never(_question):
+        raise AssertionError("runner must not run when the move is rejected")
+
+    board = chess.Board()  # white to move
+    delegate = make_delegate_tool(never, board_provider=(lambda: board))
+
+    illegal = await delegate(
+        {"move": "...d5", "question": "best?"}, cancel_token=CancelToken(),
+    )
+    assert illegal["error"] == "illegal_move"
+    assert illegal["fen"] == board.fen()
+
+    invalid = await delegate(
+        {"move": "zz9", "question": "best?"}, cancel_token=CancelToken(),
+    )
+    assert invalid["error"] == "invalid_move"
+    assert invalid["fen"] == board.fen()
 
 
 @pytest.mark.asyncio

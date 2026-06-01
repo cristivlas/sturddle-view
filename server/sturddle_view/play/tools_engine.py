@@ -559,6 +559,15 @@ def parse_move_canonical(board: chess.Board, raw: str) -> chess.Move | None:
     return move
 
 
+def parse_move_reporting(
+    board: chess.Board, raw: str,
+) -> tuple[chess.Move | None, str | None, str | None]:
+    """Like parse_move_canonical but surfaces (kind, detail) on failure, so a
+    caller can distinguish illegal_move (wrong side to move, blocked) from
+    invalid_move (unparseable). Same prefix-strip + parse as every move tool."""
+    return _parse_move_or_error(board, _strip_move_prefix(raw))
+
+
 def make_top_moves_tool(
     engine_launcher: EngineLauncher,
     bus: EventBus,
