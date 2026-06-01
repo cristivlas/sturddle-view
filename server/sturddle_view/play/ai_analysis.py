@@ -50,6 +50,7 @@ from ..llm.cancel import CancelToken
 from ..llm.response_validator import (
     find_castle_word_violations,
     find_false_piece_claims,
+    find_illegal_continuations,
     find_illegal_moves,
 )
 from .tools_engine import (
@@ -123,6 +124,10 @@ _CORRECTIVE_PREFIX = "[automated position check] "
 _CORRECTIVES = {
     "coach": {
         "illegal": "Illegal in this position: {moves}. Rewrite without these.",
+        "continuation": (
+            "Not a legal sequence from any position in this game: {lines}. "
+            "Rewrite without these lines."
+        ),
         "false_piece": "Not on the board: {claims}. Rewrite without these.",
         "castle": "No legal castling for either side. Rewrite without recommending it.",
     },
@@ -131,6 +136,11 @@ _CORRECTIVES = {
             "Not legal at the position under review and not played in "
             "this game: {moves}. Rewrite without these (or mark as "
             "hypothetical)."
+        ),
+        "continuation": (
+            "Not a legal sequence from the position under review or any "
+            "earlier position in this game: {lines}. Rewrite without these "
+            "lines (or mark as hypothetical)."
         ),
         "false_piece": (
             "Not on the board at the position under review, nor at any "
@@ -143,6 +153,10 @@ _CORRECTIVES = {
     },
     "verifier": {
         "illegal": "Illegal in the live position: {moves}. Rewrite without these.",
+        "continuation": (
+            "Not a legal sequence from any position in this game: {lines}. "
+            "Rewrite without these lines."
+        ),
         "false_piece": "Not on the live board: {claims}. Rewrite without these.",
         "castle": "No legal castling for either side. Rewrite without recommending it.",
     },
@@ -857,7 +871,7 @@ class AIAnalysisCoordinator:
             # Validate every round's prose, even when a tool_use follows.
             # After a move is recommended, the closing prose is a live-position
             # plan -- drop the commentator history walk (committed=...) below.
-            illegal, false_claims, castle_violations = (
+            illegal, continuations, false_claims, castle_violations = (
                 self._validate_round_text(
                     round_chunks, mode, committed=recommended_uci is not None,
                     extra_boards=list(examined_boards.values()),
@@ -866,6 +880,7 @@ class AIAnalysisCoordinator:
             if (
                 pending_tool is None
                 and not illegal
+                and not continuations
                 and not false_claims
                 and not castle_violations
             ):
@@ -1035,12 +1050,13 @@ class AIAnalysisCoordinator:
                         pending_tool.tool_use_id, tool_output, card=card,
                     )
                 )
-            if illegal or false_claims or castle_violations:
+            if illegal or continuations or false_claims or castle_violations:
                 # After tool_result (if any) so every assistant tool_use
                 # has a matching tool_result before the next user message.
                 await self._append_corrective(
                     messages,
                     illegal=illegal,
+                    continuations=continuations,
                     false_claims=false_claims,
                     castle_violations=castle_violations,
                     game_id=game_id,
@@ -1212,6 +1228,7 @@ class AIAnalysisCoordinator:
         messages: list[Message],
         *,
         illegal: list[str],
+        continuations: list[str],
         false_claims: list[str],
         castle_violations: list[str],
         game_id: str | None,
@@ -1224,6 +1241,8 @@ class AIAnalysisCoordinator:
         parts: list[str] = []
         if illegal:
             parts.append(templates["illegal"].format(moves=", ".join(illegal)))
+        if continuations:
+            parts.append(templates["continuation"].format(lines=", ".join(continuations)))
         if false_claims:
             parts.append(templates["false_piece"].format(claims=", ".join(false_claims)))
         if castle_violations:
@@ -1233,8 +1252,9 @@ class AIAnalysisCoordinator:
             "content": _CORRECTIVE_PREFIX + " ".join(parts),
         })
         log.info(
-            "AI agent loop: validator hits in round %d: moves=%s claims=%s castle=%s",
-            round_index, illegal, false_claims, castle_violations,
+            "AI agent loop: validator hits in round %d: moves=%s lines=%s "
+            "claims=%s castle=%s",
+            round_index, illegal, continuations, false_claims, castle_violations,
         )
         await emit(
             Event(
@@ -1243,6 +1263,7 @@ class AIAnalysisCoordinator:
                 payload={
                     "round": round_index + 1,
                     "illegal_moves": illegal,
+                    "illegal_continuations": continuations,
                     "false_claims": false_claims,
                     "castle_violations": castle_violations,
                 },
@@ -1253,38 +1274,42 @@ class AIAnalysisCoordinator:
         self, chunks: list[ProviderChunk], mode: PromptMode, *,
         committed: bool = False,
         extra_boards: Sequence[chess.Board] = (),
-    ) -> tuple[list[str], list[str], list[str]]:
-        """Run all validators on a round's assembled text.
-        Returns (illegal_moves, false_piece_claims, castle_violations).
-        Empty triple when clean, when no board_provider is wired, or
-        when no live board is available. In commentator mode the
-        board sequence includes every prior position via move_stack
+    ) -> tuple[list[str], list[str], list[str], list[str]]:
+        """Run all validators on a round's assembled text. Returns
+        (illegal_moves, illegal_continuations, false_piece_claims,
+        castle_violations). Empty quad when clean, when no board_provider
+        is wired, or when no live board is available. In commentator mode
+        the board sequence includes every prior position via move_stack
         walk -- references to earlier-game pieces aren't flagged --
         unless `committed`, which collapses the walk to the live board
         for the post-recommendation closing prose.
 
         `extra_boards` are positions the model examined via fen-taking
-        tools this turn; the illegal-move and piece-claim checks treat a
-        move/piece legal there as legitimate projected-line reasoning.
-        Castling stays a live-position property, so it ignores them."""
+        tools this turn; the illegal-move, continuation, and piece-claim
+        checks treat a move/piece/line legal there as legitimate
+        projected-line reasoning. Castling stays a live-position property,
+        so it ignores them."""
         if self._board_provider is None:
-            return [], [], []
+            return [], [], [], []
         board = self._board_provider()
         if board is None:
-            return [], [], []
+            return [], [], [], []
         text = "".join(c.text for c in chunks if c.kind == "text" and c.text)
         if not text:
-            return [], [], []
+            return [], [], [], []
         boards = _boards_for_validation(board, mode, committed=committed)
         # Verifier reasons about hypothetical lines, so a move token
         # ("after exd4...") is expected, not a live-move hallucination --
-        # skip illegal-move validation. Piece/castle guards still apply.
-        illegal = (
-            [] if mode == _VERIFIER_MODE
-            else find_illegal_moves(text, boards, extra_boards)
+        # skip move and continuation validation. Piece/castle still apply.
+        skip_moves = mode == _VERIFIER_MODE
+        illegal = [] if skip_moves else find_illegal_moves(text, boards, extra_boards)
+        continuations = (
+            [] if skip_moves
+            else find_illegal_continuations(text, boards, extra_boards)
         )
         return (
             illegal,
+            continuations,
             find_false_piece_claims(text, boards, extra_boards),
             find_castle_word_violations(text, boards),
         )

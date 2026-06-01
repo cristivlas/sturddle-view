@@ -12,6 +12,7 @@ import pytest
 from sturddle_view.llm.response_validator import (
     find_castle_word_violations,
     find_false_piece_claims,
+    find_illegal_continuations,
     find_illegal_moves,
 )
 from sturddle_view.play.ai_analysis import _boards_for_validation
@@ -489,3 +490,162 @@ def test_piece_claim_passes_when_present_in_extra_board():
     assert find_false_piece_claims(
         "The knight on d5 dominates.", [chess.Board()], extra,
     ) == []
+
+
+# --- find_illegal_continuations: validate a run of moves AS a sequence ---
+# Per-token validation accepts a move legal on any board; a continuation
+# can pass that way while being an incoherent line. These pin the
+# sequence semantics: a run is legal iff it plays from some anchor board.
+def _board_after(moves_san: list[str]) -> chess.Board:
+    board = chess.Board()
+    for san in moves_san:
+        board.push_san(san)
+    return board
+
+
+def test_continuation_legal_line_from_startpos_passes():
+    text = "1.e4 e5 2.Nf3 Nc6 3.Bb5 a6"
+    assert find_illegal_continuations(text, [chess.Board()]) == []
+
+
+def test_continuation_bare_line_without_move_numbers_passes():
+    # Bare pawn pushes are included inside a run; the run disambiguates
+    # them from prose square references (unlike per-token detection).
+    assert find_illegal_continuations("e4 e5 Nf3 Nc6 Bb5 a6", [chess.Board()]) == []
+
+
+def test_continuation_incoherent_line_flagged():
+    # Each move is individually legal on some board, but after 1.e4 e5
+    # 2.Nf3 it is Black to move, so a second Nf3 cannot play -- not a
+    # legal sequence even though every token is legal somewhere.
+    text = "e4 e5 Nf3 Nf3"
+    assert find_illegal_continuations(text, [chess.Board()]) == ["e4 e5 Nf3 Nf3"]
+
+
+def test_continuation_per_token_validator_misses_what_sequence_catches():
+    # Contrast: the per-token validator accepts the incoherent line because
+    # each token is legal on some board. The sequence validator catches it.
+    text = "e4 e5 Nf3 Nf3"
+    assert find_illegal_moves(text, [chess.Board()]) == []
+    assert find_illegal_continuations(text, [chess.Board()]) == ["e4 e5 Nf3 Nf3"]
+
+
+def test_continuation_illegal_move_mid_line_flagged():
+    # Bb5 is illegal after 1.e4 e5 2.Ke2 Ke7: the king on e2 blocks the
+    # f1 bishop's diagonal, so it can't reach b5.
+    text = "e4 e5 Ke2 Ke7 Bb5"
+    assert find_illegal_continuations(text, [chess.Board()]) == ["e4 e5 Ke2 Ke7 Bb5"]
+
+
+def test_continuation_prose_between_moves_breaks_the_run():
+    # A word between two moves means it is description, not a line.
+    text = "Nf3 is strong, and Bb5 too."
+    assert find_illegal_continuations(text, [chess.Board()]) == []
+
+
+def test_continuation_single_move_is_not_a_continuation():
+    # A lone move is the per-token validator's job, not this one.
+    assert find_illegal_continuations("Consider Nf3 here.", [chess.Board()]) == []
+
+
+def test_continuation_dedup_repeated_run_listed_once():
+    text = "The line e4 e5 Nf3 Nf3 fails; e4 e5 Nf3 Nf3 again."
+    assert find_illegal_continuations(text, [chess.Board()]) == ["e4 e5 Nf3 Nf3"]
+
+
+def test_continuation_anchored_to_a_non_start_board():
+    # 3.Bb5 Nf6 is a legal line only after 1.e4 e5 2.Nf3 Nc6; when that
+    # board is among the anchors it plays cleanly and is not flagged.
+    mid = _board_after(["e4", "e5", "Nf3", "Nc6"])
+    assert find_illegal_continuations("Bb5 Nf6", [chess.Board(), mid]) == []
+
+
+def test_continuation_floating_quote_unanchored_is_left_alone():
+    # Bb5 is illegal on the only anchor (startpos), so the run cannot be
+    # placed -- it is a quoted line continuing from context we don't have.
+    # Flagging it would false-positive on legitimate mid-line quotes.
+    assert find_illegal_continuations("Bb5 Nf6", [chess.Board()]) == []
+
+
+def test_continuation_anchored_to_an_extra_board():
+    # The line is legal only from an examined (projected) position.
+    mid = _board_after(["e4", "e5", "Nf3", "Nc6"])
+    assert find_illegal_continuations("Bb5 Nf6", [chess.Board()], [mid]) == []
+
+
+def test_continuation_no_anchor_boards_returns_empty():
+    # No board to validate against -> nothing flagged (matches the
+    # coordinator short-circuit when no live board is available).
+    assert find_illegal_continuations("e4 e5 Nf3 Nf3", []) == []
+
+
+# --- prose-vs-line discrimination: descriptive prose must not be flagged ---
+# A run of bare squares in commentary ("doubled c3 c4 pawns") is not a
+# move line. Two guards prevent false positives: a line-proof token must
+# be present, and the first move must be legal on some anchor.
+@pytest.mark.parametrize("prose", [
+    "f7 g6 h6 are weak squares",
+    "doubled c3 c4 pawns",
+    "the a7 b6 c5 pawn wedge",
+    "rooks on a1 d1 dominate",
+    "his f5 e6 pawns cramp us",
+    "the e4 d5 pawn structure",
+])
+def test_continuation_bare_square_prose_not_flagged(prose):
+    assert find_illegal_continuations(prose, [chess.Board()]) == []
+
+
+def test_continuation_two_separate_lines_in_prose_not_misanchored():
+    # The second run ("Bb5 a6") legitimately continues from after the
+    # first; validated from startpos in isolation it would falsely flag.
+    # The first-move-anchor guard leaves the unanchorable run alone.
+    text = "Play Nf3 Nc6. Then Bb5 a6."
+    assert find_illegal_continuations(text, [chess.Board()]) == []
+
+
+def test_continuation_white_only_numbered_shorthand_skipped():
+    # "1.e4 2.Nf3" omits Black's plies (each move carries its own number),
+    # so it is not a ply sequence to replay -- skip rather than flag.
+    assert find_illegal_continuations("1.e4 2.Nf3", [chess.Board()]) == []
+
+
+def test_continuation_report_strips_move_numbers():
+    # The flagged string is the clean move list, not the raw run -- so
+    # leading "1."/"2." prefixes don't leak into the corrective message.
+    text = "1. e4 e5 2. Nf3 Nf3"
+    assert find_illegal_continuations(text, [chess.Board()]) == ["e4 e5 Nf3 Nf3"]
+
+
+# --- the common path: a line continuing from the live (non-start) board ---
+# A model usually quotes a line "from here". The first move is legal on the
+# live board, so the run anchors there and the whole sequence is replayed.
+_LIVE_NIMZO = ["d4", "Nf6", "c4", "e6", "Nc3"]  # Black to move
+
+
+def test_continuation_break_in_live_board_line_flagged():
+    # From the live position a piece-move line that breaks mid-sequence
+    # (a second Nf3 with no reply between) must be flagged.
+    live = _board_after(_LIVE_NIMZO)
+    assert find_illegal_continuations("Bb4 Nf3 Nf3", [live]) == ["Bb4 Nf3 Nf3"]
+
+
+def test_continuation_clean_live_board_line_passes():
+    # A legal line from the live position plays cleanly -> not flagged.
+    live = _board_after(_LIVE_NIMZO)
+    assert find_illegal_continuations("Bb4 Nf3 d5 cxd5 exd5", [live]) == []
+
+
+def test_continuation_legal_from_earlier_history_board_passes():
+    # Commentator anchors are [live, ...prior, startpos]. A line quoted
+    # from an earlier position (legal from startpos, not from live) is not
+    # flagged: it anchors on the board where its first move is legal.
+    live = _board_after(_LIVE_NIMZO)
+    boards = [live, chess.Board()]
+    assert find_illegal_continuations("e4 e5 Nf3 Nc6", boards) == []
+
+
+def test_continuation_bare_pawn_only_broken_line_is_not_flagged():
+    # Accepted tradeoff: "e4 e4" is broken (Black can't push e4 after
+    # 1.e4) but a bare-pawn-only run has no line-proof token, so it is
+    # skipped as prose -- the same gate that passes "doubled c3 c4 pawns".
+    assert find_illegal_continuations("e4 e4", [chess.Board()]) == []

@@ -1045,6 +1045,7 @@ export const playPerspective = {
           noteAiRevision({
             round: p.round ?? 0,
             illegalMoves: p.illegal_moves || [],
+            illegalContinuations: p.illegal_continuations || [],
             falseClaims: p.false_claims || [],
             castleViolations: p.castle_violations || [],
           });

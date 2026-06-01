@@ -29,13 +29,17 @@ import chess
 # Glyphs are inside the captured group so they survive to the return
 # value (the corrective message echoes them). Intentionally over-accepts:
 # parse_san() is the authoritative filter.
+# Shared SAN sub-patterns, factored so the per-token and continuation
+# recognizers can't drift. All groups non-capturing so finditer/findall
+# return whole tokens.
+_SAN_CASTLE = r"O-O-O|O-O"
+_SAN_PIECE_MOVE = r"[KQRBN][a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?"
+_SAN_PAWN_CAPTURE = r"[a-h]x[a-h][1-8](?:=[QRBN])?[+#]?"
+_SAN_PAWN_PUSH = r"[a-h][1-8](?:=[QRBN])?[+#]?"
+_SAN_GLYPHS = r"[!?]{0,2}"
+
 _SAN_TOKEN_RE = re.compile(
-    r"\b("
-    r"(?:O-O-O|O-O"                                       # castling
-    r"|[KQRBN][a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?"  # piece move
-    r"|[a-h]x[a-h][1-8](?:=[QRBN])?[+#]?)"                # pawn capture only
-    r"[!?]{0,2}"                                          # annotation glyphs
-    r")"
+    rf"\b((?:{_SAN_CASTLE}|{_SAN_PIECE_MOVE}|{_SAN_PAWN_CAPTURE}){_SAN_GLYPHS})"
 )
 
 
@@ -167,6 +171,93 @@ _GLYPH_RE = re.compile(r"[!?]{1,2}$")
 
 def _strip_annotation_glyphs(token: str) -> str:
     return _GLYPH_RE.sub("", token)
+
+
+# A single move inside a continuation. Reuses the shared SAN fragments
+# but adds bare pawn pushes (e4): inside a whitespace-delimited run a
+# push reads as a move, not a prose square reference.
+_CONT_MOVE = (
+    rf"(?:{_SAN_CASTLE}|{_SAN_PIECE_MOVE}|{_SAN_PAWN_CAPTURE}|{_SAN_PAWN_PUSH})"
+    rf"{_SAN_GLYPHS}"
+)
+# Per-move move-number prefix: "1.", "12.", "3...". Captured so we can
+# tell a fully-numbered white-only line ("1.e4 2.Nf3", skipping Black)
+# from a true ply sequence.
+_MOVE_NUM = r"(\d+\.(?:\.\.)?\s*)?"
+# Two or more moves separated only by whitespace and optional move
+# numbers. A prose word between moves breaks the run, so only genuine
+# lines (not "Nf3 is strong, and Bb5 too") are captured.
+_CONTINUATION_RE = re.compile(
+    rf"\b{_MOVE_NUM}(?:{_CONT_MOVE})(?:\s+{_MOVE_NUM}(?:{_CONT_MOVE}))+"
+)
+# Splits a matched run into (move_number_or_empty, move) pairs.
+_CONT_PAIR_RE = re.compile(rf"{_MOVE_NUM}({_CONT_MOVE})")
+# A run is a real line (not prose listing squares) only with a move
+# number, piece letter, castle, capture, or promotion somewhere in it;
+# a bare-pawn-square-only run ("c3 c4", "f5 e6") is descriptive prose.
+_LINE_PROOF_RE = re.compile(r"\d+\.|[KQRBN]|O-O|[a-h]x|=[QRBN]")
+
+
+def find_illegal_continuations(
+    text: str,
+    boards: Sequence[chess.Board],
+    extra_boards: Sequence[chess.Board] = (),
+) -> list[str]:
+    """Return continuation runs (2+ moves) that do not play cleanly as a
+    sequence from any anchor whose position the run's first move is legal
+    in. `boards` is current-first; `extra_boards` are examined positions.
+
+    Per-token validation accepts each move if it is legal on some board;
+    a run can pass that way while being an incoherent line (each move
+    legal alone, illegal in order). Two guards keep prose from being read
+    as a line: the run must contain a line-proof token (number, piece,
+    castle, capture, promotion), and its first move must be legal on at
+    least one anchor -- a floating quote we cannot place is left alone.
+    Fully per-move-numbered white-only lines ("1.e4 2.Nf3") are skipped:
+    they omit Black's plies, so they are not a ply sequence to replay."""
+    anchors = list(boards) + list(extra_boards)
+    if not anchors:
+        return []
+    seen: set[str] = set()
+    illegal: list[str] = []
+    for match in _CONTINUATION_RE.finditer(text):
+        run = match.group(0)
+        pairs = _CONT_PAIR_RE.findall(run)
+        moves = [_strip_annotation_glyphs(move) for _num, move in pairs]
+        if len(moves) < 2 or _every_move_numbered(pairs):
+            continue
+        key = " ".join(moves)
+        if key in seen or not _LINE_PROOF_RE.search(run):
+            continue
+        seen.add(key)
+        candidates = [a for a in anchors if _move_legal(moves[0], a)]
+        if candidates and not any(_line_plays(moves, a) for a in candidates):
+            illegal.append(key)
+    return illegal
+
+
+def _every_move_numbered(pairs: Sequence[tuple[str, str]]) -> bool:
+    """True iff every move in the run carries its own move number, i.e.
+    white-only shorthand ("1.e4 2.Nf3") that skips Black's replies."""
+    return len(pairs) >= 2 and all(num for num, _move in pairs)
+
+
+def _move_legal(san: str, board: chess.Board) -> bool:
+    try:
+        board.parse_san(san)
+    except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
+        return False
+    return True
+
+
+def _line_plays(moves: Sequence[str], anchor: chess.Board) -> bool:
+    """True iff every move parses+pushes in order from a copy of `anchor`."""
+    board = anchor.copy()
+    for san in moves:
+        if not _move_legal(san, board):
+            return False
+        board.push_san(san)
+    return True
 
 
 # Natural-language castle mention -- models often write "castle"

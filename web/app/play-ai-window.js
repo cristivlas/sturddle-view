@@ -251,7 +251,7 @@ function ensureRoundPanel(root, roundIndex) {
   return entry;
 }
 
-function renderRevision({ details, summary }, { illegalMoves, falseClaims, castleViolations }) {
+function renderRevision({ details, summary }, { illegalMoves, illegalContinuations, falseClaims, castleViolations }) {
   details.hidden = false;
   summary.textContent = "";  // reset
   const head = document.createElement("strong");
@@ -260,6 +260,9 @@ function renderRevision({ details, summary }, { illegalMoves, falseClaims, castl
   const parts = [];
   if (illegalMoves && illegalMoves.length) {
     parts.push(`not valid: ${illegalMoves.join(", ")}`);
+  }
+  if (illegalContinuations && illegalContinuations.length) {
+    parts.push(`bad line: ${illegalContinuations.join("; ")}`);
   }
   if (falseClaims && falseClaims.length) {
     parts.push(falseClaims.map((c) => `no ${c}`).join(", "));
@@ -491,7 +494,7 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
   if (pre) pre.textContent = `${pre.textContent}\n${suffix}`;
 }
 
-export function noteAiRevision({ round, illegalMoves, falseClaims, castleViolations }) {
+export function noteAiRevision({ round, illegalMoves, illegalContinuations, falseClaims, castleViolations }) {
   if (!inst.body) return;
   // The correction at `round` overrules `round - 1`. Host the revision
   // banner on the overruled round's OWN panel and tuck its prose into
@@ -500,7 +503,7 @@ export function noteAiRevision({ round, illegalMoves, falseClaims, castleViolati
   if (round <= 0) return;
   const prev = inst.body._roundPanels.get(round - 1);
   if (!prev) return;
-  const payload = { illegalMoves, falseClaims, castleViolations };
+  const payload = { illegalMoves, illegalContinuations, falseClaims, castleViolations };
   // Self-correct effect: strike the prose in place for a beat, THEN
   // reveal the banner and collapse the prose into it -- so the user
   // sees the model scratch its claim before it's tucked away. The
