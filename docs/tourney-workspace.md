@@ -55,6 +55,11 @@ When the active layout is Tile or Snap (not None or Tidy):
 Tidy mode is excluded from auto-reapply on open/close because it also opens all
 system windows, which would be disruptive.
 
+The active layout mode is persisted **per tournament** in that tournament's
+workspace state (`_layout`), not globally. Opening a workspace restores its own
+saved layout (or None when it had no open windows); closing the active workspace
+resets the in-memory layout to None so the next tournament starts clean.
+
 ### Status-driven auto-opens (inside an active workspace)
 
 Fires only when `hasSavedState` is false (no open-window snapshot in effect):
