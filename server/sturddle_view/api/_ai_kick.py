@@ -249,6 +249,8 @@ async def start_ai_turn(request: Request) -> None:
             provider=provider,
             user_message=user_message,
             mode=mode,
+            max_tool_rounds=s.ai_max_tool_rounds,
+            verifier_max_rounds=s.ai_verifier_max_rounds,
         )
     )
     task.add_done_callback(_consume_task_exception)

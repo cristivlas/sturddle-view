@@ -35,6 +35,10 @@ _AI_API_KEY_KEY = "ai_api_key"
 _AI_API_KEY_SET_KEY = "ai_api_key_set"
 _AI_THINKING_ENABLED_KEY = "ai_thinking_enabled"
 _AI_THINKING_BUDGET_TOKENS_KEY = "ai_thinking_budget_tokens"
+_AI_MAX_TOOL_ROUNDS_KEY = "ai_max_tool_rounds"
+_AI_VERIFIER_MAX_ROUNDS_KEY = "ai_verifier_max_rounds"
+# Round caps must leave room for at least one full round.
+_AI_ROUNDS_MIN = 1
 # Anthropic requires budget_tokens >= 1024; same floor used here for both
 # providers since 0/tiny budgets defeat the feature.
 _AI_THINKING_BUDGET_MIN = 1024
@@ -80,6 +84,8 @@ def _serialize(s) -> dict:
         _AI_API_KEY_KEY: _AI_KEY_MASK if s.ai_api_key else "",
         _AI_THINKING_ENABLED_KEY: s.ai_thinking_enabled,
         _AI_THINKING_BUDGET_TOKENS_KEY: s.ai_thinking_budget_tokens,
+        _AI_MAX_TOOL_ROUNDS_KEY: s.ai_max_tool_rounds,
+        _AI_VERIFIER_MAX_ROUNDS_KEY: s.ai_verifier_max_rounds,
         "host": {"logical_cores": logical, "physical_cores": physical},
         "version": __version__,
         "author": __author__,
@@ -289,6 +295,19 @@ async def update_settings(payload: dict, request: Request) -> dict:
                 detail=f"{_AI_THINKING_BUDGET_TOKENS_KEY} must be >= {_AI_THINKING_BUDGET_MIN}",
             )
         s.ai_thinking_budget_tokens = budget
+
+    for key in (_AI_MAX_TOOL_ROUNDS_KEY, _AI_VERIFIER_MAX_ROUNDS_KEY):
+        if key not in payload:
+            continue
+        try:
+            rounds = int(payload[key])
+        except (TypeError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=f"{key} must be an integer") from e
+        if rounds < _AI_ROUNDS_MIN:
+            raise HTTPException(
+                status_code=400, detail=f"{key} must be >= {_AI_ROUNDS_MIN}",
+            )
+        setattr(s, key, rounds)
 
     if _AI_API_KEY_KEY in payload:
         # Session-only: not in PERSISTED_FIELDS. Server mode loads from

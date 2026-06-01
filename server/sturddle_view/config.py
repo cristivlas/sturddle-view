@@ -24,6 +24,11 @@ WEB_DIR = REPO_ROOT / "web"
 # not to dominate the output-token cap.
 _DEFAULT_AI_THINKING_BUDGET_TOKENS = 4096
 
+# Agent-loop round caps (no-env defaults). ai_analysis imports these so the
+# Settings field default and the module-level guardrail share one literal.
+_DEFAULT_AI_MAX_TOOL_ROUNDS = 32
+_DEFAULT_AI_VERIFIER_MAX_ROUNDS = 8
+
 
 def default_settings_file() -> Path:
     """Path to persisted user settings.
@@ -68,6 +73,8 @@ PERSISTED_FIELDS = (
     "ai_base_url",
     "ai_thinking_enabled",
     "ai_thinking_budget_tokens",
+    "ai_max_tool_rounds",
+    "ai_verifier_max_rounds",
     # ai_api_key intentionally NOT persisted: server mode reads SV_AI_API_KEY
     # from env; desktop mode will switch to OS keyring (later cycle). The
     # JSON settings file must never hold the plaintext key.
@@ -159,6 +166,11 @@ class Settings(BaseSettings):
     # think=true. budget_tokens applies to Anthropic's enabled mode.
     ai_thinking_enabled: bool = False
     ai_thinking_budget_tokens: int = _DEFAULT_AI_THINKING_BUDGET_TOKENS
+    # Agent-loop round caps. Defaults mirror ai_analysis.MAX_TOOL_ROUNDS /
+    # VERIFIER_MAX_ROUNDS; both bind to SV_AI_MAX_TOOL_ROUNDS /
+    # SV_AI_VERIFIER_MAX_ROUNDS via the SV_ env prefix.
+    ai_max_tool_rounds: int = _DEFAULT_AI_MAX_TOOL_ROUNDS
+    ai_verifier_max_rounds: int = _DEFAULT_AI_VERIFIER_MAX_ROUNDS
 
     @property
     def ai_model(self) -> str:

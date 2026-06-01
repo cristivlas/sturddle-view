@@ -56,8 +56,9 @@ Tournament mode is out of scope.
 Implementation: `AIAnalysisCoordinator.run()` in
 `server/sturddle_view/play/ai_analysis.py`.
 
-One "turn" = one Analyze click. A turn runs N rounds, capped at
-`SV_AI_MAX_TOOL_ROUNDS` (default in `ai_analysis.MAX_TOOL_ROUNDS`).
+One "turn" = one Analyze click. A turn runs N rounds, capped at the
+"Max rounds" setting (`ai_max_tool_rounds`; env `SV_AI_MAX_TOOL_ROUNDS`,
+default in `ai_analysis.MAX_TOOL_ROUNDS`).
 Each round = one `provider.stream()` call. The coordinator owns
 multi-turn assembly; the provider knows nothing about tool execution.
 

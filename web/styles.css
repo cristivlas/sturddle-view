@@ -203,7 +203,9 @@ wa-select::part(listbox) {
   word-break: break-word;
 }
 .play-ai-roundcap {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-top: 8px;
   padding: 6px 8px;
   border-left: 3px solid var(--wa-color-warning-60, #d6a200);
@@ -211,6 +213,12 @@ wa-select::part(listbox) {
   font-size: 0.9em;
   opacity: 0.85;
 }
+.play-ai-roundcap-gear {
+  flex: none;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.play-ai-roundcap-gear:hover { opacity: 1; }
 
 /* Thinking disclosure: dimmer + smaller than prose; user opt-in. */
 .play-ai-thinking {
@@ -2179,7 +2187,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 
 /* Form-style rows (label + input) inside a panel. */
 .settings-row { max-width: 360px; }
-.ai-thinking-row {
+.ai-thinking-row,
+.ai-rounds-row {
   display: flex;
   align-items: flex-end;
   gap: 16px;
@@ -2187,8 +2196,12 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .ai-thinking-budget { width: 8em; max-width: 8em; }
 .ai-thinking-budget::part(base) { max-width: 8em; }
 .ai-thinking-budget::part(input) { width: 8em; min-width: 0; }
+.ai-max-tool-rounds, .ai-verifier-max-rounds { flex: 1; min-width: 0; }
+.ai-max-tool-rounds::part(input),
+.ai-verifier-max-rounds::part(input) { min-width: 0; }
 .ai-thinking-row wa-select::part(form-control-label),
-.ai-thinking-row wa-input::part(form-control-label) {
+.ai-thinking-row wa-input::part(form-control-label),
+.ai-rounds-row wa-input::part(form-control-label) {
   color: var(--muted);
   font-size: 0.75rem;
   font-family: var(--wa-font-family-body);

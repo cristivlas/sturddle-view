@@ -15,6 +15,7 @@ import {
   scrollToBottom,
 } from "./wb-utils.js";
 import { STORAGE_KEY } from "./storage-keys.js";
+import { openSettings, SETTINGS_TAB_ANALYSIS } from "./dialogs.js";
 
 const GEO_KEY       = STORAGE_KEY.AI_GEO;
 const WIN_STATE_KEY = STORAGE_KEY.AI_WIN_STATE;
@@ -611,7 +612,20 @@ export function markAiDone({
     if (roundCap) {
       const note = document.createElement("div");
       note.className = "play-ai-roundcap";
-      note.textContent = "Stopped early at the tool-call cap. Raise SV_AI_MAX_TOOL_ROUNDS to allow more rounds.";
+      const text = document.createElement("span");
+      text.textContent = "Stopped early at the tool-call cap. Raise \"Max rounds\" to allow more rounds.";
+      const gear = document.createElement("wa-icon");
+      gear.name = "gear";
+      gear.className = "play-ai-roundcap-gear";
+      gear.setAttribute("role", "button");
+      gear.setAttribute("tabindex", "0");
+      gear.setAttribute("aria-label", "Open AI settings");
+      const open = () => openSettings(SETTINGS_TAB_ANALYSIS);
+      gear.addEventListener("click", open);
+      gear.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+      });
+      note.append(text, gear);
       slot.append(note);
       return;
     }

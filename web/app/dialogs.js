@@ -441,6 +441,7 @@ export function apiErrorObject(error) {
 }
 
 const SETTINGS_TAB_ENGINES = "engines";
+export const SETTINGS_TAB_ANALYSIS = "analysis";
 
 /** Dispatch the deep-link event that opens the Settings dialog at
  *  `tab` (e.g. "engines"). Main wires up the actual open in main.js. */

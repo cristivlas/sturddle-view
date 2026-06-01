@@ -18,6 +18,7 @@ from typing import Awaitable, Callable, Sequence
 
 import chess
 
+from ..config import _DEFAULT_AI_MAX_TOOL_ROUNDS, _DEFAULT_AI_VERIFIER_MAX_ROUNDS
 from ..env_utils import env_int
 from ..events import (
     ENVELOPE_GAME_ID,
@@ -74,14 +75,12 @@ log = logging.getLogger(__name__)
 
 
 # Cap on agent loop rounds per turn (spec §Guardrails: "Tool call cap
-# per agent turn"). The env override is for ops; UI exposure is pending.
-_DEFAULT_MAX_TOOL_ROUNDS = 32
-MAX_TOOL_ROUNDS = env_int("SV_AI_MAX_TOOL_ROUNDS", _DEFAULT_MAX_TOOL_ROUNDS)
+# per agent turn"). UI-settable; env is the headless/no-UI default.
+MAX_TOOL_ROUNDS = env_int("SV_AI_MAX_TOOL_ROUNDS", _DEFAULT_AI_MAX_TOOL_ROUNDS)
 
 # Verifier sub-runs get a tighter round budget: one move, a tool call or
-# two, a verdict. The env override is for ops.
-_DEFAULT_VERIFIER_MAX_ROUNDS = 8
-VERIFIER_MAX_ROUNDS = env_int("SV_AI_VERIFIER_MAX_ROUNDS", _DEFAULT_VERIFIER_MAX_ROUNDS)
+# two, a verdict. UI-settable; env is the headless/no-UI default.
+VERIFIER_MAX_ROUNDS = env_int("SV_AI_VERIFIER_MAX_ROUNDS", _DEFAULT_AI_VERIFIER_MAX_ROUNDS)
 
 _COMMENTATOR_MODE: PromptMode = "commentator"
 _VERIFIER_MODE: PromptMode = "verifier"
@@ -599,6 +598,9 @@ class AIAnalysisCoordinator:
         # events so the client muxes them into this session. None outside
         # a turn.
         self._turn_game_id: str | None = None
+        # Round cap for verifier sub-runs this turn. Set in run() from the
+        # caller's setting; the module default applies outside a turn.
+        self._verifier_max_rounds: int = VERIFIER_MAX_ROUNDS
         # In-mem buffer of events emitted by the current/most-recent
         # turn. Reset on run() start, cleared on analysis stop. Lets a
         # client reconnecting mid-analysis rehydrate the panel.
@@ -614,14 +616,17 @@ class AIAnalysisCoordinator:
         provider: LLMProvider | None = None,
         mode: PromptMode = "coach",
         user_message: str | None = None,
+        max_tool_rounds: int = MAX_TOOL_ROUNDS,
+        verifier_max_rounds: int = VERIFIER_MAX_ROUNDS,
     ) -> None:
         """Run one analysis turn end-to-end.
 
         Loops: provider round -> on tool_use, dispatch via registry,
         append assistant + tool_result, next round. Stops when the model
-        returns without a tool_use or MAX_TOOL_ROUNDS is reached. Emits
+        returns without a tool_use or `max_tool_rounds` is reached. Emits
         a terminal ai_info event on every exit path so the UI never
-        hangs.
+        hangs. `max_tool_rounds`/`verifier_max_rounds` default to the
+        env-backed module caps; the UI overrides them per turn.
 
         `user_message` carries the game context (FEN + SAN history) the
         agent needs to actually analyze something. Built by the caller
@@ -638,6 +643,7 @@ class AIAnalysisCoordinator:
             self._active_provider = active
             self._turn_context = opening_user_content
             self._turn_game_id = game_id
+            self._verifier_max_rounds = verifier_max_rounds
             self._seq = 0
             self._replay_buffer = []
             messages: list[Message] = [{"role": "user", "content": opening_user_content}]
@@ -661,7 +667,7 @@ class AIAnalysisCoordinator:
                     registry=self._registry,
                     system_prompt=system_prompt,
                     tool_schemas=tool_schemas,
-                    max_rounds=MAX_TOOL_ROUNDS,
+                    max_rounds=max_tool_rounds,
                     emit=self._emit,
                     game_id=game_id,
                     provider=active,
@@ -683,8 +689,8 @@ class AIAnalysisCoordinator:
                         # cap in Settings" if it wants to.
                         done_payload["round_cap"] = True
                         log.warning(
-                            "AI agent loop hit round cap (%d); raise SV_AI_MAX_TOOL_ROUNDS if intentional",
-                            MAX_TOOL_ROUNDS,
+                            "AI agent loop hit round cap (%d); raise the Max tool rounds setting if intentional",
+                            max_tool_rounds,
                         )
                     elif not result.text_published:
                         # Model exited the loop with zero user-facing
@@ -1139,7 +1145,7 @@ class AIAnalysisCoordinator:
                 registry=self._verifier_registry,
                 system_prompt=system_prompt,
                 tool_schemas=tool_schemas,
-                max_rounds=VERIFIER_MAX_ROUNDS,
+                max_rounds=self._verifier_max_rounds,
                 emit=self._verifier_emit,
                 game_id=self._turn_game_id,
                 provider=provider,
@@ -1159,10 +1165,10 @@ class AIAnalysisCoordinator:
                     done_payload["round_cap"] = True
                     # final_text is "" on a verifier cap (see _run_loop);
                     # delegate maps that to no_verdict. Warn so a model that
-                    # never concludes in VERIFIER_MAX_ROUNDS is diagnosable.
+                    # never concludes within the cap is diagnosable.
                     log.warning(
                         "verifier sub-run hit round cap (%d) without a verdict; question=%r",
-                        VERIFIER_MAX_ROUNDS, question,
+                        self._verifier_max_rounds, question,
                     )
                 return result.final_text
             except Exception as exc:

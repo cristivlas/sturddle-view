@@ -34,6 +34,10 @@ const AI_THINKING_BUDGET_TOKENS_KEY = "ai_thinking_budget_tokens";
 // Anthropic's minimum; the server also enforces this. UI prevents
 // submitting smaller values so the user gets feedback before the round trip.
 const AI_THINKING_BUDGET_MIN = 1024;
+const AI_MAX_TOOL_ROUNDS_KEY = "ai_max_tool_rounds";
+const AI_VERIFIER_MAX_ROUNDS_KEY = "ai_verifier_max_rounds";
+// Server enforces the same floor; UI mirrors it for pre-roundtrip feedback.
+const AI_ROUNDS_MIN = 1;
 
 // Persisted unit is always seconds (float). The UI picks the most natural
 // display unit on load (largest unit with no fractional remainder) and
@@ -1170,6 +1174,36 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       }, 400);
       aiThinkingBudget.addEventListener("input", persistThinkingBudget);
 
+      // Agent-loop round caps. Two independent guardrails: the narrator's
+      // per-turn round budget, and the tighter verifier sub-run budget.
+      const aiRoundsRow = document.createElement("div");
+      aiRoundsRow.className = "settings-row ai-row ai-rounds-row";
+
+      const makeRoundsInput = (key, label) => {
+        const input = document.createElement("wa-input");
+        input.type = "number";
+        input.size = "small";
+        input.setAttribute("label", label);
+        input.min = String(AI_ROUNDS_MIN);
+        input.step = "1";
+        input.value = String(initial[key] || AI_ROUNDS_MIN);
+        const persist = debounce(() => {
+          const n = Number(input.value);
+          if (!Number.isFinite(n) || n < AI_ROUNDS_MIN) return;
+          putSettings({ [key]: n });
+        }, 400);
+        input.addEventListener("input", persist);
+        return input;
+      };
+
+      const aiMaxToolRounds = makeRoundsInput(AI_MAX_TOOL_ROUNDS_KEY, "Max rounds");
+      aiMaxToolRounds.className = "ai-max-tool-rounds";
+      const aiVerifierMaxRounds = makeRoundsInput(
+        AI_VERIFIER_MAX_ROUNDS_KEY, "Verifier rounds"
+      );
+      aiVerifierMaxRounds.className = "ai-verifier-max-rounds";
+      aiRoundsRow.append(aiMaxToolRounds, aiVerifierMaxRounds);
+
       // Credential shape per provider: key-based providers show the API
       // key row; URL-based (Ollama) shows the base URL row. A set keeps
       // adding a provider to a one-line change here.
@@ -1263,6 +1297,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         ["api-key",          { row: aiKeyRow,          inputs: [aiKey] }],
         ["base-url",         { row: aiUrlRow,          inputs: [aiUrl] }],
         ["thinking-divider", { row: aiThinkingDivider, inputs: [] }],
+        ["rounds",           { row: aiRoundsRow,       inputs: [aiMaxToolRounds, aiVerifierMaxRounds] }],
         ["thinking",         { row: aiThinkingRow,     inputs: [aiThinkingMode, aiThinkingBudget] }],
       ]);
 
