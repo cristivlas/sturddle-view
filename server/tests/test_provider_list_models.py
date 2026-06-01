@@ -304,7 +304,13 @@ def test_endpoint_returns_5xx_for_anthropic_stub_without_models(tmp_path):
 
 def test_endpoint_returns_models_for_gemini(tmp_path, monkeypatch):
     from sturddle_view.llm import gemini as gemini_mod
-    body = {"data": [{"id": "models/gemini-2.5-flash"}, {"id": "models/gemini-2.5-pro"}]}
+    # Native /v1beta/models shape; only generateContent models survive.
+    body = {"models": [
+        {"name": "models/gemini-2.5-flash",
+         "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/gemini-2.5-pro",
+         "supportedGenerationMethods": ["generateContent"]},
+    ]}
     _install_fake_httpx(monkeypatch, gemini_mod, _FakeResponse(200, body))
 
     with _client_for_provider(tmp_path, provider="gemini", api_key="k") as c:

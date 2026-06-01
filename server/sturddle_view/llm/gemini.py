@@ -36,8 +36,19 @@ log = logging.getLogger(__name__)
 
 
 # OpenAI-compatibility base; note the trailing path includes `/openai`.
-# The chat + models endpoints hang off this prefix.
+# The chat endpoint hangs off this prefix. Model listing uses the native
+# base below (the compat /openai/models omits capability metadata).
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+
+# Suffix that turns the OpenAI-compat base into the native one. The native
+# /v1beta/models endpoint returns `supportedGenerationMethods` per model;
+# the compat /openai/models does not, so capability filtering needs this.
+_OPENAI_SUFFIX = "/openai"
+
+# Native generation method a chat model advertises. Filtering on it drops
+# embedding/predict-only SKUs. (Image/tts variants also advertise it but
+# still 400 on the chat surface -- see list_models for why they're kept.)
+_CHAT_GENERATION_METHOD = "generateContent"
 
 # Per-request timeout for the control-plane endpoint (/models). Streaming
 # chat uses no timeout (long generations) like the other providers.
@@ -67,35 +78,59 @@ class GeminiProvider(LLMProvider):
         self._thinking_enabled = thinking_enabled
 
     def _auth_headers(self) -> dict[str, str]:
+        # Compat surface (chat/completions) takes OpenAI-style Bearer auth.
         return {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
 
-    async def list_models(self) -> list[str]:
-        """List available Gemini models via the compat `/models` endpoint.
+    def _native_headers(self) -> dict[str, str]:
+        # Native surface (/v1beta/models) rejects Bearer with 401; it wants
+        # the key in x-goog-api-key.
+        return {
+            "x-goog-api-key": self._api_key,
+            "Content-Type": "application/json",
+        }
 
-        Requires the user's API key. Raises RuntimeError on auth / network
-        failure so the API layer surfaces a useful error to the UI (which
-        then falls back to free-text model entry).
+    def _native_base(self) -> str:
+        """Native API base (drops the `/openai` compat suffix). Model
+        listing uses it because the compat surface omits the capability
+        metadata needed to filter chat-usable models."""
+        if self._base_url.endswith(_OPENAI_SUFFIX):
+            return self._base_url[: -len(_OPENAI_SUFFIX)]
+        return self._base_url
+
+    async def list_models(self) -> list[str]:
+        """Native /models, kept to those advertising `generateContent`.
+
+        Drops embedding/predict SKUs; image/tts variants stay (they also
+        advertise it but 400 on chat -- no metadata distinguishes them, and
+        a name blocklist risks hiding valid models). Raises on auth/network
+        failure so the UI falls back to free-text entry.
         """
         if not self._api_key:
             raise RuntimeError("gemini: API key not configured")
-        url = f"{self._base_url}/models"
+        url = f"{self._native_base()}/models"
         async with httpx.AsyncClient(timeout=_CONTROL_TIMEOUT_S) as client:
-            resp = await client.get(url, headers=self._auth_headers())
+            resp = await client.get(url, headers=self._native_headers())
             if resp.status_code != 200:
                 raise RuntimeError(
                     f"gemini /models returned {resp.status_code}: "
                     f"{extract_error_message(resp.text)}"
                 )
             body = resp.json()
-        data = body.get("data") or []
-        ids = [m.get("id") for m in data if isinstance(m, dict) and m.get("id")]
-        # Compat ids come back prefixed ("models/gemini-2.5-flash"); strip
-        # the prefix so the dropdown shows bare model names that the chat
-        # endpoint also accepts.
-        ids = [i.split("/", 1)[1] if i.startswith("models/") else i for i in ids]
+        models = body.get("models") or []
+        ids: list[str] = []
+        for m in models:
+            if not isinstance(m, dict):
+                continue
+            name = m.get("name")
+            methods = m.get("supportedGenerationMethods") or []
+            if not name or _CHAT_GENERATION_METHOD not in methods:
+                continue
+            # Native names are prefixed ("models/gemini-2.5-flash"); strip
+            # so the dropdown shows bare ids the chat endpoint also accepts.
+            ids.append(name.split("/", 1)[1] if name.startswith("models/") else name)
         return sorted(set(ids))
 
     def stream(

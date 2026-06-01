@@ -70,14 +70,23 @@ def _install_get(monkeypatch, response: _FakeResponse) -> _FakeGetClient:
 # ---------- list_models ----------------------------------------------
 
 
+# Native /v1beta/models URL the provider should hit (DEFAULT_BASE_URL
+# minus the /openai compat suffix).
+_NATIVE_MODELS_URL = DEFAULT_BASE_URL[: -len("/openai")] + "/models"
+
+
+def _native_model(name: str, *, chat: bool = True) -> dict:
+    methods = ["generateContent", "streamGenerateContent"] if chat else ["predict"]
+    return {"name": name, "supportedGenerationMethods": methods}
+
+
 @pytest.mark.asyncio
-async def test_list_models_sends_bearer_auth_and_strips_prefix(monkeypatch):
+async def test_list_models_uses_native_endpoint_and_strips_prefix(monkeypatch):
     body = {
-        "object": "list",
-        "data": [
-            {"id": "models/gemini-2.5-flash"},
-            {"id": "models/gemini-2.5-pro"},
-            {"id": "models/gemini-2.5-flash"},  # dup, must collapse
+        "models": [
+            _native_model("models/gemini-2.5-flash"),
+            _native_model("models/gemini-2.5-pro"),
+            _native_model("models/gemini-2.5-flash"),  # dup, must collapse
         ],
     }
     client = _install_get(monkeypatch, _FakeResponse(200, body))
@@ -85,9 +94,28 @@ async def test_list_models_sends_bearer_auth_and_strips_prefix(monkeypatch):
     p = GeminiProvider(api_key="k-secret", model="m")
     models = await p.list_models()
     assert models == ["gemini-2.5-flash", "gemini-2.5-pro"]
-    # DEFAULT_BASE_URL already includes the /openai compat prefix.
-    assert client.last_url == f"{DEFAULT_BASE_URL}/models"
-    assert client.last_headers["Authorization"] == "Bearer k-secret"
+    # Listing hits the NATIVE endpoint (compat /openai/models omits the
+    # capability metadata needed to filter).
+    assert client.last_url == _NATIVE_MODELS_URL
+    # Native endpoint takes x-goog-api-key, not Bearer (Bearer 401s here).
+    assert client.last_headers["x-goog-api-key"] == "k-secret"
+    assert "Authorization" not in client.last_headers
+
+
+@pytest.mark.asyncio
+async def test_list_models_filters_non_generate_content(monkeypatch):
+    # Image/audio/live SKUs don't advertise generateContent and would 400
+    # on the chat surface -- they must be dropped from the dropdown.
+    body = {
+        "models": [
+            _native_model("models/gemini-2.5-flash", chat=True),
+            _native_model("models/imagen-4.0", chat=False),       # predict-only
+            _native_model("models/gemini-live-2.5", chat=False),  # live-only
+        ],
+    }
+    _install_get(monkeypatch, _FakeResponse(200, body))
+    p = GeminiProvider(api_key="k", model="m")
+    assert await p.list_models() == ["gemini-2.5-flash"]
 
 
 @pytest.mark.asyncio
@@ -106,7 +134,7 @@ async def test_list_models_raises_on_http_error(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_list_models_handles_missing_data_field(monkeypatch):
+async def test_list_models_handles_missing_models_field(monkeypatch):
     _install_get(monkeypatch, _FakeResponse(200, {}))
     p = GeminiProvider(api_key="k", model="m")
     assert await p.list_models() == []
