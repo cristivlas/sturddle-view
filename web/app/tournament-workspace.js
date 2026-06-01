@@ -1191,9 +1191,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const all = openWindows();
       const anyMax = all.some(wb => wb.max);
       for (const wb of all) if (wb.max) { wb.restore(); wb.maximize(); }
-      if (!anyMax) {
-        if (activeLayout === LAYOUT.TIDY) tidy({ preserveMin: true });
-        else if (activeLayout === LAYOUT.TILE) tile(null, { preserveMin: true, reserveDock: true });
+      if (activeLayout === LAYOUT.TIDY) {
+        // tidy() skips the maximized window (preserveMin) and re-grids the
+        // rest, so survivors track the new viewport even mid-maximize. TILE/
+        // SNAP reflow would unmaximize, so they wait until nothing is maxed.
+        tidy({ preserveMin: true });
+      } else if (!anyMax) {
+        if (activeLayout === LAYOUT.TILE) tile(null, { preserveMin: true, reserveDock: true });
         else if (activeLayout === LAYOUT.SNAP) snap();
       }
     }, 150);
