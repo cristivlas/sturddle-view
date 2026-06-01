@@ -134,10 +134,11 @@ move the engine's best beats by margin -- the guard that matters; deeper
 line-validation is the model's job via `delegate`.
 
 **Alternative-examined gate.** A `recommend_move` that passes the dominance
-check is still held back until the model examined a *different* move this
-turn (via a `delegate` verdict's `move_uci` or a `top_moves` candidate).
-This forces the narrator to weigh at least one alternative before
-committing, rather than recommending the first move it names.
+check is still held back until a *prior* `recommend_move` this turn
+committed a *different* move. Only `recommend_move` counts -- examining via
+`delegate` or `top_moves` does not clear the gate. This forces the narrator
+to concretely commit at least one alternative before settling, rather than
+recommending the first move it names.
 
 ### Round-end validators
 

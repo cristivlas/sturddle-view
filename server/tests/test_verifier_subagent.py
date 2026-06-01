@@ -322,15 +322,6 @@ async def test_committed_prose_validates_against_live_board_only():
     # b2. The history walk would excuse "pawn on b2", but the closing
     # post-recommendation plan must validate against the live board, where
     # b2 holds the queen -- so the false claim draws a corrective.
-    async def recommend(_input, *, cancel_token):
-        return {"ok": True, "uci": "a2a3"}
-
-    reg = ToolRegistry()
-    reg.register(
-        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
-        recommend,
-    )
-    _register_top_moves(reg)
     # Immortal Game through 17...Qxb2: a White pawn lived on b2 for most
     # of the game, then the black queen captured it and now sits there.
     board = chess.Board()
@@ -343,9 +334,22 @@ async def test_committed_prose_validates_against_live_board_only():
     assert board.piece_at(chess.B2) is not None  # queen now on b2
     assert board.piece_at(chess.B2).piece_type == chess.QUEEN
 
+    async def recommend(_input, *, cancel_token):
+        # Echo the requested move so the gate sees distinct ucis.
+        return {"ok": True, "uci": board.parse_san(_input["move"]).uci()}
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
+        recommend,
+    )
+
     provider = _RecordingScriptedProvider(rounds=[
-        _examine_round("t0"),                                 # round 0: clear the gate
-        [ProviderChunk(                                       # round 1: accept move
+        [ProviderChunk(                                       # round 0: commit Nd4 -> gate blocks
+            kind="tool_use", tool_use_id="r0",
+            tool_name="recommend_move", tool_input={"move": "Nd4"},
+        )],
+        [ProviderChunk(                                       # round 1: accept a3
             kind="tool_use", tool_use_id="r1",
             tool_name="recommend_move", tool_input={"move": "a3"},
         )],
@@ -373,18 +377,17 @@ async def test_committed_prose_validates_against_live_board_only():
 async def test_post_recommend_nudge_fires_when_no_conclusion():
     # Move accepted, then the model exits with no prose: the nudge runs
     # one more round to extract the conclusion.
-    async def recommend(_input, *, cancel_token):
-        return {"ok": True, "uci": "e2e4"}
-
     reg = ToolRegistry()
     reg.register(
         ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
-        recommend,
+        _recommend_move_handler,
     )
-    _register_top_moves(reg)
     provider = _RecordingScriptedProvider(rounds=[
-        _examine_round("t0"),                                 # round 0: clear the gate
-        [ProviderChunk(                                       # round 1: accept move, no prose
+        [ProviderChunk(                                       # round 0: commit Nf3 -> gate blocks
+            kind="tool_use", tool_use_id="r0",
+            tool_name="recommend_move", tool_input={"move": "Nf3"},
+        )],
+        [ProviderChunk(                                       # round 1: accept e4, no prose
             kind="tool_use", tool_use_id="r1",
             tool_name="recommend_move", tool_input={"move": "e4"},
         )],
@@ -457,19 +460,25 @@ async def test_rejected_recommend_is_renudged_until_accepted():
 
     async def recommend(_input, *, cancel_token):
         calls["n"] += 1
-        if calls["n"] == 1:
+        # r0 commits Nc3 (gate-blocked, records the alternative); r1 attempt
+        # is engine-rejected; r2 attempt is accepted by the engine.
+        board = chess.Board()
+        uci = board.parse_san(_input["move"]).uci()
+        if calls["n"] == 2:
             return {"error": "recommendation_rejected", "reason": "Engine prefers Nf3."}
-        return {"ok": True, "uci": "g1f3"}
+        return {"ok": True, "uci": uci}
 
     reg = ToolRegistry()
     reg.register(
         ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
         recommend,
     )
-    _register_top_moves(reg)
     provider = _RecordingScriptedProvider(rounds=[
-        _examine_round("t0"),                              # r0: clear the gate (Nc3 != Nf3)
-        [ProviderChunk(                                    # r1: attempt -> rejected
+        [ProviderChunk(                                    # r0: commit Nc3 -> gate blocks
+            kind="tool_use", tool_use_id="r0",
+            tool_name="recommend_move", tool_input={"move": "Nc3"},
+        )],
+        [ProviderChunk(                                    # r1: attempt e4 -> engine-rejected
             kind="tool_use", tool_use_id="r1",
             tool_name="recommend_move", tool_input={"move": "e4"},
         )],
@@ -488,10 +497,11 @@ async def test_rejected_recommend_is_renudged_until_accepted():
     await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
     events = await _drain_until_done(queue)
 
-    # r1's attempt is engine-rejected and re-nudged; r2's attempt clears
-    # both the engine check and the alternative gate (Nc3 examined in r0),
-    # so the turn ends cleanly with no no_recommendation marker.
-    assert calls["n"] == 2
+    # r0's commit is gate-blocked (no prior recommend) but records Nc3 as an
+    # examined alternative; r1's attempt is engine-rejected and re-nudged;
+    # r2's attempt clears both the engine check and the alternative gate
+    # (Nc3 committed in r0), so the turn ends cleanly.
+    assert calls["n"] == 3
     done = events[-1]
     assert not done.payload.get("no_recommendation")
     assert not done.payload.get("round_cap")
@@ -538,24 +548,29 @@ async def test_stalled_recommend_stops_nudging_and_flags_no_recommendation():
 
 
 # --- Alternative-examined gate ---------------------------------------------
-# The gate holds an otherwise-accepted recommend_move until the model has
-# had the engine examine a move OTHER than the one it commits. Live
-# evidence (commentator delegating twice yet writing "no alternative
-# available") drove the strict basis: a delegate counts only for the
-# specific move it carried, never as a blanket "looked at something".
+# The gate holds an otherwise-accepted recommend_move until a PRIOR
+# recommend_move this turn committed a move OTHER than the one now being
+# committed. Only recommend_move counts -- examining via delegate or
+# top_moves does not clear the gate (draconian basis: the model must have
+# concretely committed an alternative, not merely looked at one).
 
 
 def _gate_reg():
     reg = ToolRegistry()
     reg.register(
         ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
-        _recommend_e4,
+        _recommend_move_handler,
     )
     return reg
 
 
-async def _recommend_e4(_input, *, cancel_token):
-    return {"ok": True, "uci": "e2e4"}
+async def _recommend_move_handler(_input, *, cancel_token):
+    # Echo the requested move as UCI so distinct recommend_move calls yield
+    # distinct ucis -- the gate now clears only on a prior recommend_move of
+    # a DIFFERENT move.
+    board = chess.Board()
+    move = board.parse_san(_input["move"])
+    return {"ok": True, "uci": move.uci()}
 
 
 @pytest.mark.asyncio
@@ -592,128 +607,63 @@ async def test_gate_blocks_in_turn_then_falls_back_to_unvetted():
 
 
 @pytest.mark.asyncio
-async def test_gate_accepts_after_delegating_a_different_move():
-    # Delegate a move OTHER than the one committed: the gate lets the
-    # subsequent recommend_move through and the recommendation fires.
+async def test_gate_accepts_after_recommending_a_different_move():
+    # A prior recommend_move on a move OTHER than the one committed clears
+    # the gate: the first commit (Nf3) is blocked but recorded, then the
+    # second commit (e4) goes through and the recommendation fires.
     reg = _gate_reg()
-
-    def board_provider():
-        return chess.Board()
-
     bus = EventBus()
     queue = await bus.subscribe()
     coord = AIAnalysisCoordinator(
         bus, _RecordingScriptedProvider(rounds=[
-            [_delegate_chunk("d1", "Is Nf3 sound?", move="Nf3")],  # narrator r0: examine Nf3
-            [ProviderChunk(                                         # verifier: tool first
-                kind="tool_use", tool_use_id="v1",
-                tool_name="piece_at", tool_input={"square": "g1"},
+            [ProviderChunk(                                         # r0: commit Nf3 -> blocked
+                kind="tool_use", tool_use_id="r0",
+                tool_name="recommend_move", tool_input={"move": "Nf3"},
             )],
-            [ProviderChunk(kind="text", text="Nf3 is sound.")],     # verifier: verdict
-            [ProviderChunk(                                         # narrator r1: commit e4
-                kind="tool_use", tool_use_id="r2",
+            [ProviderChunk(                                         # r1: commit e4 -> allowed
+                kind="tool_use", tool_use_id="r1",
                 tool_name="recommend_move", tool_input={"move": "e4"},
             )],
-            [ProviderChunk(kind="text", text="e4 grabs the center.")],  # narrator r2: conclusion
+            [ProviderChunk(kind="text", text="e4 grabs the center.")],  # r2: conclusion
         ]),
-        registry=reg, board_provider=board_provider,
-        verifier_registry=_verifier_registry(),
+        registry=reg, board_provider=(lambda: chess.Board()),
         recommend_verifier=_accept_verifier,
-    )
-    reg.register(
-        DELEGATE_TOOL_SPEC,
-        make_delegate_tool(coord.delegate_runner(), board_provider=board_provider),
     )
 
     await coord.run(game_id="g", mode="commentator", user_message=_TURN_CONTEXT + "\n")
     events = await _drain_until_done(queue)
 
-    assert not [
+    # r0 (the alternative) is blocked; r1 (the real commit) clears -- so only
+    # the first call carries alternative_required, and a recommendation fires.
+    gated = [
         e for e in events if e.kind == "ai_tool_call_failed"
         and e.payload.get("error") == "alternative_required"
     ]
+    assert [e.payload["tool_use_id"] for e in gated] == ["r0"]
     assert [e for e in events if e.kind == "ai_recommendation"]
 
 
 @pytest.mark.asyncio
-async def test_gate_accepts_delegated_alternative_with_pgn_prefix():
-    # A delegated alternative written with a PGN continuation prefix
-    # ('...Nf3') must canonicalize to the same UCI the engine tools use, so
-    # it lands in examined_uci and clears the gate. Guards the shared-parser
-    # fix (delegate once parsed prefixes differently and falsely rejected).
+async def test_gate_rejects_when_only_the_committed_move_was_recommended():
+    # Recommending the SAME move twice is not examining an alternative --
+    # the gate blocks every attempt and the turn never clears.
     reg = _gate_reg()
-
-    def board_provider():
-        return chess.Board()
-
     bus = EventBus()
     queue = await bus.subscribe()
     coord = AIAnalysisCoordinator(
         bus, _RecordingScriptedProvider(rounds=[
-            [_delegate_chunk("d1", "Is this sound?", move="...Nf3")],  # prefixed alt
-            [ProviderChunk(                                            # verifier: tool first
-                kind="tool_use", tool_use_id="v1",
-                tool_name="piece_at", tool_input={"square": "g1"},
-            )],
-            [ProviderChunk(kind="text", text="Nf3 is sound.")],        # verifier: verdict
-            [ProviderChunk(                                            # narrator: commit e4
-                kind="tool_use", tool_use_id="r2",
+            [ProviderChunk(                                       # r0: commit e4 -> blocked
+                kind="tool_use", tool_use_id="r0",
                 tool_name="recommend_move", tool_input={"move": "e4"},
             )],
-            [ProviderChunk(kind="text", text="e4 grabs the center.")],  # conclusion
-        ]),
-        registry=reg, board_provider=board_provider,
-        verifier_registry=_verifier_registry(),
-        recommend_verifier=_accept_verifier,
-    )
-    reg.register(
-        DELEGATE_TOOL_SPEC,
-        make_delegate_tool(coord.delegate_runner(), board_provider=board_provider),
-    )
-
-    await coord.run(game_id="g", mode="commentator", user_message=_TURN_CONTEXT + "\n")
-    events = await _drain_until_done(queue)
-
-    assert not [
-        e for e in events if e.kind == "ai_tool_call_failed"
-        and e.payload.get("error") == "alternative_required"
-    ]
-    assert [e for e in events if e.kind == "ai_recommendation"]
-
-
-@pytest.mark.asyncio
-async def test_gate_rejects_when_only_the_committed_move_was_examined():
-    # The screenshot failure: the model delegates only about the move it
-    # then commits. Examining the committed move is not examining an
-    # alternative -- the gate still blocks.
-    reg = _gate_reg()
-
-    def board_provider():
-        return chess.Board()
-
-    bus = EventBus()
-    queue = await bus.subscribe()
-    coord = AIAnalysisCoordinator(
-        bus, _RecordingScriptedProvider(rounds=[
-            [_delegate_chunk("d1", "Is e4 sound?", move="e4")],   # narrator r0: examine e4 (the pick)
-            [ProviderChunk(                                       # verifier: tool first
-                kind="tool_use", tool_use_id="v1",
-                tool_name="piece_at", tool_input={"square": "e2"},
-            )],
-            [ProviderChunk(kind="text", text="e4 is sound.")],     # verifier: verdict
-            [ProviderChunk(                                        # narrator r1: commit e4 -> blocked
-                kind="tool_use", tool_use_id="r2",
+            [ProviderChunk(                                       # r1: commit e4 again -> blocked
+                kind="tool_use", tool_use_id="r1",
                 tool_name="recommend_move", tool_input={"move": "e4"},
             )],
-            [ProviderChunk(kind="text", text="Sticking with e4.")],  # narrator r2: stall
-            [ProviderChunk(kind="text", text="Nothing new.")],       # narrator r3: stall -> give up
+            [ProviderChunk(kind="text", text="Sticking with e4.")],  # r2: stall
+            [ProviderChunk(kind="text", text="Nothing new.")],       # r3: stall -> give up
         ]),
-        registry=reg, board_provider=board_provider,
-        verifier_registry=_verifier_registry(),
-    )
-    reg.register(
-        DELEGATE_TOOL_SPEC,
-        make_delegate_tool(coord.delegate_runner(), board_provider=board_provider),
+        registry=reg, board_provider=(lambda: chess.Board()),
     )
 
     await coord.run(game_id="g", mode="commentator", user_message=_TURN_CONTEXT + "\n")
@@ -721,22 +671,23 @@ async def test_gate_rejects_when_only_the_committed_move_was_examined():
 
     failures = [e for e in events if e.kind == "ai_tool_call_failed"]
     assert any(e.payload.get("error") == "alternative_required" for e in failures)
-    assert not [e for e in events if e.kind == "ai_recommendation"]
 
 
 @pytest.mark.asyncio
-async def test_gate_accepts_after_top_moves_on_a_different_move():
-    # top_moves ranking a candidate other than the committed move clears
-    # the gate.
+async def test_gate_not_cleared_by_top_moves():
+    # top_moves does NOT clear the gate (draconian: only a prior
+    # recommend_move counts). Ranking Nc3/Nf3 then committing e4 is still
+    # blocked.
     reg = _gate_reg()
     _register_top_moves(reg)
     provider = _RecordingScriptedProvider(rounds=[
         _examine_round("t0"),                              # r0: top_moves (Nc3, Nf3)
-        [ProviderChunk(                                    # r1: commit e4 -> allowed
+        [ProviderChunk(                                    # r1: commit e4 -> still blocked
             kind="tool_use", tool_use_id="r1",
             tool_name="recommend_move", tool_input={"move": "e4"},
         )],
-        [ProviderChunk(kind="text", text="e4 grabs the center.")],  # r2: conclusion
+        [ProviderChunk(kind="text", text="Sticking with e4.")],  # r2: stall
+        [ProviderChunk(kind="text", text="Nothing new.")],       # r3: stall -> give up
     ])
     bus = EventBus()
     queue = await bus.subscribe()
@@ -748,11 +699,8 @@ async def test_gate_accepts_after_top_moves_on_a_different_move():
     await coord.run(game_id="g", mode="commentator", user_message=_TURN_CONTEXT + "\n")
     events = await _drain_until_done(queue)
 
-    assert not [
-        e for e in events if e.kind == "ai_tool_call_failed"
-        and e.payload.get("error") == "alternative_required"
-    ]
-    assert [e for e in events if e.kind == "ai_recommendation"]
+    failures = [e for e in events if e.kind == "ai_tool_call_failed"]
+    assert any(e.payload.get("error") == "alternative_required" for e in failures)
 
 
 async def _accept_verifier(move, depth, cancel_token):

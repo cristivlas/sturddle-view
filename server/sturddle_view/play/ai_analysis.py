@@ -174,12 +174,12 @@ _RECOMMEND_NUDGE_PROMPTS = {
 }
 
 # Alternative-examined gate: an otherwise-accepted recommend_move is held
-# back until a different move was examined this turn (delegate verdict or
-# top_moves candidate). Loop-enforced; stall-guard + round-cap backstop it.
+# back until a prior recommend_move this turn committed a different move.
+# Loop-enforced; stall-guard + round-cap backstop it.
 _ALTERNATIVE_REQUIRED_ERROR = "alternative_required"
 _ALTERNATIVE_REQUIRED_REASON = (
-    "Examine at least one alternative move first (delegate a check on a "
-    "different candidate), then submit your move."
+    "Call recommend_move on at least one different candidate first, "
+    "then submit your move."
 )
 
 # Sent once when recommend_move is accepted but the model skips the
@@ -444,24 +444,10 @@ def _round_produced_output(chunks: list[ProviderChunk]) -> bool:
     return False
 
 
-def _top_moves_uci(tool_output: dict) -> set[str]:
-    """UCIs the engine scored in a top_moves result, for the
-    alternative-examined gate. Skips entries the engine couldn't score
-    (per-candidate errors carry no move_uci)."""
-    candidates = tool_output.get("candidates")
-    if not isinstance(candidates, list):
-        return set()
-    return {
-        c["move_uci"] for c in candidates
-        if isinstance(c, dict) and isinstance(c.get("move_uci"), str)
-    }
-
-
 def _alternative_examined(examined_uci: set[str], committed_uci: str) -> bool:
-    """True iff the model had the engine examine at least one move OTHER
-    than the one it is committing (via delegate or top_moves). Checking
-    only the committed move doesn't count -- that's the failure mode the
-    gate exists to catch."""
+    """True iff a prior recommend_move this turn committed a move OTHER
+    than the one now being committed. Only recommend_move counts --
+    examining via delegate or top_moves does not clear the gate."""
     return bool(examined_uci - {committed_uci})
 
 
@@ -800,8 +786,8 @@ class AIAnalysisCoordinator:
         gated_uci: str | None = None
         gated_depth: int | None = None
         any_tool_called = False
-        # Alternative-examined gate: UCIs the engine examined this turn
-        # (delegate `move_uci` + top_moves candidates). See _alternative_examined.
+        # Alternative-examined gate: UCIs committed by prior recommend_move
+        # calls this turn. See _alternative_examined.
         examined_uci: set[str] = set()
         # Positions the model examined via fen-taking tools this turn, keyed
         # by FEN (dedup). Fed to the prose validators so a move/piece legal
@@ -985,16 +971,10 @@ class AIAnalysisCoordinator:
                             },
                         )
                     )
-                # Track moves the engine looked at this turn, for the
-                # alternative-examined gate below.
+                # Track positions the model examined via fen-taking tools
+                # this turn, for the prose validators.
                 if isinstance(tool_output, dict) and not tool_output.get("error"):
-                    if pending_tool.tool_name == _DELEGATE_TOOL_NAME:
-                        examined = tool_output.get("move_uci")
-                        if isinstance(examined, str):
-                            examined_uci.add(examined)
-                    elif pending_tool.tool_name == TOP_MOVES_TOOL_NAME:
-                        examined_uci.update(_top_moves_uci(tool_output))
-                    elif pending_tool.tool_name in _FEN_PARAM_TOOL_NAMES:
+                    if pending_tool.tool_name in _FEN_PARAM_TOOL_NAMES:
                         examined = board_from_fen_input(pending_tool.tool_input)
                         if examined is not None:
                             examined_boards[examined.fen()] = examined
@@ -1010,8 +990,11 @@ class AIAnalysisCoordinator:
                     ):
                         uci = tool_output["uci"]
                         # Alternative-examined gate: hold an otherwise-good
-                        # move until a different one was checked this turn.
+                        # move until a prior recommend_move committed a
+                        # different one this turn. Record every committed uci
+                        # so the next recommend can clear against it.
                         if not _alternative_examined(examined_uci, uci):
+                            examined_uci.add(uci)
                             # Remember the latest gated move so a stalled
                             # turn can fall back to it instead of shipping
                             # nothing (see run() unvetted fallback).
