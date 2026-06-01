@@ -270,10 +270,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   };
 
   const LAYOUT_NAME = { 0: "NONE", 1: "TIDY", 2: "TILE", 3: "SNAP" };
-  const OVERFLOW_X_OFFSET = 24;
-  // Counts consecutive overflow restores in TIDY mode (grid full); reset on
-  // successful slot claim so the cascade restarts from the left edge.
-  let overflowRestoreCount = 0;
 
   function setShadow(wb, on) {
     wb.g?.classList.toggle("no-shadow", !on);
@@ -310,15 +306,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           wb._justRestored = true;
           wb.resize(c.w, c.h).move(c.x, c.y);
           setShadow(wb, false);
-          overflowRestoreCount = 0;
         } else {
-          const x = Math.min(
-            left + overflowRestoreCount * OVERFLOW_X_OFFSET,
-            Math.max(left, window.innerWidth - wb.width),
-          );
-          wb.move(x, top);
-          setShadow(wb, true);
-          overflowRestoreCount++;
+          // No free slot: the grid shrank (e.g. browser resized while this
+          // window was maximized) so the stale slot positions no longer fit.
+          // A single-slot claim can't recover -- re-tidy the whole set, which
+          // re-grids survivors and minimizes any genuine overflow.
+          requestAnimationFrame(() => tidy({ preserveMin: true }));
         }
       }
     } else if (activeLayout === LAYOUT.TILE || activeLayout === LAYOUT.SNAP) {
