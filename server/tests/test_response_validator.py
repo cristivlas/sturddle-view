@@ -89,14 +89,16 @@ def test_illegal_pawn_capture_detected():
     assert find_illegal_moves("White plays exd5.", [chess.Board()]) == ["exd5"]
 
 
-_PHANTOM_CAPTURE_FEN = "r2qr1k1/5ppp/p4n2/1pbP1bB1/1n6/N1N2B2/PP1Q1PPP/3R1RK1 b - - 1 16"
+# A real reviewed position (black to move). Black king g8, rooks a8/e8,
+# queen d8; d1/d3/f4 empty. Reused across several hallucination fixtures.
+_REVIEWED_FEN = "r2qr1k1/5ppp/p4n2/1pbP1bB1/1n6/N1N2B2/PP1Q1PPP/3R1RK1 b - - 1 16"
 
 
 def test_phantom_capture_flagged():
     # Real model prose: 'Bxe4' marks a capture, but e4 is empty -- f5-e4 is a
     # quiet move that python-chess parses leniently. The validator must flag
     # the false capture; the legal alternative Rac8 in the same text does not.
-    board = chess.Board(_PHANTOM_CAPTURE_FEN)
+    board = chess.Board(_REVIEWED_FEN)
     text = (
         "Bxe4 immediately challenges the central pawn structure and gains a "
         "tempo against the diagonal bishop on g5. Black's knight on b4 "
@@ -112,7 +114,7 @@ def test_phantom_capture_flagged():
 
 def test_real_capture_not_flagged():
     # Nxd5 takes the white pawn on d5 -- a genuine capture, not flagged.
-    board = chess.Board(_PHANTOM_CAPTURE_FEN)
+    board = chess.Board(_REVIEWED_FEN)
     assert find_illegal_moves("Nxd5 wins a pawn.", [board]) == []
 
 
@@ -120,6 +122,25 @@ def test_en_passant_capture_not_flagged():
     # exf6 is en passant -- is_capture() is True, so the capture mark holds.
     board = chess.Board("rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3")
     assert find_illegal_moves("exf6 wins the pawn.", [board]) == []
+
+
+def test_hallucinated_check_sequence_flagged():
+    # Real model prose that confused this position for a different game:
+    # invents a check (Rxd1+), king escapes the wrong king can't make
+    # (Kh2/Kg1 -- black king is on g8), queen moves the queen can't reach
+    # (Qf1+/Qf2), and a rook on the empty f4. Every fabricated move/piece
+    # is flagged; the only legitimate mention (the knight on d3, reachable)
+    # is not.
+    board = chess.Board(_REVIEWED_FEN)
+    text = (
+        "Black has a formidable knight on d3 that dominates the board. The "
+        "rook has captured on d1 with check (40...Rxd1+). The only legal "
+        "move to exit check is Kh2 (or Kg1), which runs into Qf1+ and Qf2 "
+        "mating patterns. After Kh2, the undefended rook on f4 gives Black a "
+        "decisive advantage."
+    )
+    assert find_illegal_moves(text, [board]) == ["Rxd1+", "Kh2", "Kg1", "Qf1+", "Qf2"]
+    assert find_false_piece_claims(text, [board]) == ["rook on f4"]
 
 
 def test_illegal_queen_move_in_prose_detected():
