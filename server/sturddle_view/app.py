@@ -30,6 +30,8 @@ from .engines import EngineRegistry, resolve_selected
 from .events import Event, EventBus
 from .llm import CannedProvider, LLMProvider, ToolRegistry
 from .llm.anthropic import AnthropicProvider
+from .llm import gemini as gemini_mod
+from .llm.gemini import GeminiProvider
 from .llm import ollama as ollama_mod
 from .llm.ollama import OllamaProvider
 from .openings import OpeningBook
@@ -115,6 +117,8 @@ _TRANSIENT_ACCEPT_WINERR = {64, 1236, 10054}  # NETNAME_DELETED, ABORTED, RST
 # Default Ollama daemon URL lives on the provider module so settings
 # code can reach it without importing app.
 _DEFAULT_OLLAMA_BASE_URL = ollama_mod.DEFAULT_BASE_URL
+# Default Gemini API base; same pattern -- empty ai_base_url falls back.
+_DEFAULT_GEMINI_BASE_URL = gemini_mod.DEFAULT_BASE_URL
 
 
 def _install_proactor_accept_resilience() -> None:
@@ -247,7 +251,7 @@ async def _lifespan(app: FastAPI):
         for t in reconciled:
             log.info("reconciled stale running tournament: %s (%s)", t.id, t.name)
     except Exception:
-        log.exception("tournament reconcile failed")
+        log.error("tournament reconcile failed", exc_info=True)
     _signal_ready_port()
     yield
     # Best-effort: stop any active tournament on shutdown.
@@ -256,7 +260,7 @@ async def _lifespan(app: FastAPI):
         if active is not None:
             await app.state.tournament_orch.stop(active)
     except Exception:
-        log.exception("tournament shutdown stop failed")
+        log.error("tournament shutdown stop failed", exc_info=True)
     for task in list(app.state.ws_tasks):
         task.cancel()
     if app.state.ws_tasks:
@@ -427,13 +431,25 @@ def create_app(
     def _ai_provider_factory() -> LLMProvider:
         s = app.state.settings
         provider_name = (s.ai_provider or "").lower()
-        if provider_name == "ollama":
+        if provider_name == settings_api.PROVIDER_OLLAMA:
             return OllamaProvider(
                 base_url=(s.ai_base_url or _DEFAULT_OLLAMA_BASE_URL),
                 model=s.ai_model,
                 thinking_enabled=s.ai_thinking_enabled,
             )
-        if provider_name == "anthropic":
+        if provider_name == settings_api.PROVIDER_GEMINI:
+            # OpenAI-compatible SSE provider against Google's API. Bearer
+            # auth from the keyring/env key. Base URL is fixed to Google's
+            # endpoint -- ai_base_url is Ollama's field (the UI hides the
+            # URL row for key-based providers), so reading it here would
+            # wrongly point Gemini at the user's Ollama daemon.
+            return GeminiProvider(
+                api_key=s.ai_api_key,
+                model=s.ai_model,
+                base_url=_DEFAULT_GEMINI_BASE_URL,
+                thinking_enabled=s.ai_thinking_enabled,
+            )
+        if provider_name == settings_api.PROVIDER_ANTHROPIC:
             # Live SSE provider (stream() POSTs /v1/messages). Raises
             # RuntimeError if the API key is unset or the API returns
             # non-200 -- surfaced as a done/error event on the bus.
@@ -466,7 +482,10 @@ def create_app(
     # sub-run, so the coordinator must exist first.
     ai_registry.register(
         DELEGATE_TOOL_SPEC,
-        make_delegate_tool(app.state.ai_coordinator.delegate_runner()),
+        make_delegate_tool(
+            app.state.ai_coordinator.delegate_runner(),
+            board_provider=_ai_board_provider,
+        ),
     )
 
     # Tournament subsystem: store + runner + orchestrator. Wired even

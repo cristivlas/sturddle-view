@@ -176,7 +176,8 @@ Client-side (localStorage, server-agnostic):
 - Submit human move (snap-back on illegal: server publishes current state so
   client UI re-syncs)
 - New game, resign, take-back
-- Tournament control: start, stop, pause, attach (Phase 2)
+- Tournament control: start (wipes + runs fresh), stop; attach to an
+  externally-started run is deferred
 
 #### `/ws` — WebSocket
 - All live events: engine info (depth, score, PV, nodes, NPS), board state,
@@ -191,15 +192,16 @@ Client-side (localStorage, server-agnostic):
 - Vendored libraries (offline, pinned, no CDN at runtime):
   - `cm-chessboard` — chess board rendering and move input
   - Web Awesome — UI components (dialogs, inputs, tabs, switches, icons)
-  - WinBox — draggable/resizable windows (used by Observe sub-view)
+  - WinBox — draggable/resizable windows (tournament workspace live games)
   - Font Awesome Free SVGs — icon library used by Web Awesome
   - `chess-openings` (Lichess) — opening identification dataset
 - **Reusable `GameView` component**: composes board + clocks + move list +
-  engine info + opening line + tablebase result. Used by Play perspective and
-  (Phase 2) inside Observe windows. Each aspect can be hidden/shown
-  independently.
-- Two perspectives in Phase 1: Play, Engines. (See "Perspectives" below.)
-- Agent/analysis panels: designated UI areas agents can populate (Phase 2).
+  engine info + opening line + tablebase result. Used by the Play
+  perspective and inside tournament-workspace live-game windows. Each aspect
+  can be hidden/shown independently.
+- Two perspectives: Play, Engines. (See "Perspectives" below.)
+- Agent/analysis panels: a dockable AI analysis window (commentary + coach);
+  see `ai-analysis-spec.md`.
 - Per-perspective layout state persisted in localStorage.
 
 ---
@@ -426,7 +428,7 @@ The UI composes from a fixed set of primitives. Adding a new ad-hoc widget shoul
 
 The app is organized into **perspectives** — distinct top-level layouts tuned to different activities. Top-bar nav switches between them. A perspective owns its own root layout container; switching perspectives swaps the root content but leaves dialogs, toasts, and global state untouched.
 
-Two perspectives ship in Phase 1:
+Two perspectives ship:
 
 #### Play perspective (focused, fixed layout)
 
@@ -438,7 +440,7 @@ For human vs engine play. Calm, distraction-free.
   - Pause is enabled only on the human's turn (engine is idle then); it
     stops the clock and rejects moves until resumed.
 - No floating windows. The board is the focus; nothing should float over it during play.
-- One docked panel toggle: an optional "agent" tab in the side rail (Phase 2).
+- One docked panel toggle: the AI analysis window (see `ai-analysis-spec.md`).
 
 #### Engines perspective (workspace + management)
 
@@ -503,7 +505,7 @@ tournament"). Never block the edit. The current game / tournament keeps
 the values it was started with. See the "Logging" section for the
 related TODO on tournament-running settings policy.
 
-Future perspectives (not Phase 1): Analysis, Library/PGN browser, History.
+Future perspectives (deferred): Analysis, Library/PGN browser, History.
 
 TODO: Play/Analyze from a FEN. Two pieces:
 - A "Load FEN" entry point (likely a small dialog) that validates and sets
@@ -530,10 +532,14 @@ state with a one-liner in DevTools:
 Object.keys(localStorage).filter(k => k.startsWith("sturddle")).forEach(k => localStorage.removeItem(k));
 ```
 
-### Phasing
+### Status
 
-- **Phase 1**: Play perspective fully working with engine management, settings dialog, file picker dialog, message/confirm/toast primitives. Observe perspective with at least one live tournament displayed in WinBox windows. No agents.
-- **Phase 2**: Agent integration (Play side-rail tab + Observe windows), voice control, analysis perspective, eval graphs.
+- **Shipped**: Play perspective (engine management, settings, file picker,
+  message/confirm/toast primitives); tournament workspace with live WinBox
+  windows; AI analysis agents (commentary + coach) with a dockable panel --
+  see `ai-analysis-spec.md`.
+- **Deferred** (see "Open / Deferred"): voice control, a dedicated analysis
+  perspective, eval graphs.
 
 ### Library strategy
 
@@ -567,7 +573,7 @@ A thin app-level wrapper (`web/app/dialogs.js`) exposes `confirm()`, `alert()`, 
 - **Network drop (peek client)**: WebSocket client reconnects with exponential backoff; server rebroadcasts state on reconnect
 - **Attach to mid-run tournament**: catch-up from PGN/log to reconstruct state, then switch to live stream
 - **Illegal move from human**: server rejects with 400 and immediately re-publishes
-  the canonical board state so the client UI snaps back. (Phase 2: optional
+  the canonical board state so the client UI snaps back. (Deferred: optional
   "strict" mode auto-resigns on illegal moves.)
 - All failure states are surfaced explicitly in the UI — no silent stalls
 
@@ -599,11 +605,17 @@ TODO: not yet implemented. Plan:
 
 ## Tournament & SPRT Management
 
-- Create, save, and load tournament configurations (engine pairings, time controls, rounds, concurrency)
-- SPRT configuration: H0/H1 elo, alpha/beta, auto-stop on conclusion
-- View running tournament state: standings, game results, SPRT status and bounds progression
-- Historical tournament results: browse past tournaments, drill into individual games
-- PGN export per tournament or per game
+Engine-vs-engine tournaments (round-robin / gauntlet / SPRT) run locally
+via `fastchess`, with a workspace UI for live standings, per-game boards,
+and SPRT progress. Shipped; this section is a summary -- the authoritative
+specs are:
+
+- **`tournament-spec.md`** -- orchestrator, runner strategy, lifecycle
+  (Start / Stop / Restart; no resume -- Stop wipes), persistence,
+  standings/Elo, workspace.
+- **`sprt-ux-spec.md`** -- SPRT settings, template toggle, workspace panel.
+- **`pgn-elo-ordo.md`** -- joint Elo rating fit and margins.
+- **`pgn-reconciliation.md`** -- matching live games to fastchess PGN output.
 
 ---
 
@@ -612,7 +624,6 @@ TODO: not yet implemented. Plan:
 - PGN viewer: variation tree vs linear history — left open for implementation phase
 - Voice control and speech interface — later phase, prior implementation to be leveraged
 - Eval graph over full game history
-- Agent implementations (analysis, teacher, etc.)
 - Linux WebKitGTK consistency across distros
 - Theme integration for board annotations: when themes (dark/light) are
   wired up, the engine "considered move" arrow color must derive from the
@@ -623,14 +634,6 @@ TODO: not yet implemented. Plan:
   Shift/Ctrl click and Shift+Up/Down to extend selection, ribbon
   Remove acting on the set, and a confirm dialog summarizing the count.
   Activation (Use) stays single-select.
-- Auto-claim draws (3-fold repetition, 50-move rule). Currently the
-  engine plays on at claimable positions; tournament games called as
-  draws by fastchess become playable in play-from-here. Surface area
-  is larger than a one-liner: hooks every is_game_over caller (engine
-  think loop, move submission, autosave, restoration, view exit), must
-  not auto-claim while viewing, needs PGN result/termination wiring,
-  and a UI affordance for "claimable but not auto" when the setting is
-  off. Setting: Gameplay > "Auto-claim draws" toggle, default on.
 
 ### Server-side persistence — to be revisited
 
@@ -641,10 +644,10 @@ rotating server log (5 x 2 MB, `platformdirs.user_log_dir()`).
 
 Decisions deferred:
 
-- **Game history UI**: Library/History perspective for browsing saved PGNs — not Phase 1.
+- **Game history UI**: Library/History perspective for browsing saved PGNs.
 - **Tournament history storage**: PGN-on-disk is enough for browsing, but
   standings, SPRT state, and schedule reconstruction may want a small index
-  (sqlite) — flagged for the tournament-history milestone, not Phase 1.
+  (sqlite) — flagged for the tournament-history milestone.
 
 ---
 

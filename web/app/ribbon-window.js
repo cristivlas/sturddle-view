@@ -4,11 +4,14 @@
 // to localStorage. On user-close, fires sturddle:ribbon-float-closed so
 // main.js can revert to edge-docked.
 
+import { APP_EVT } from "./app-events.js";
+import { STORAGE_KEY } from "./storage-keys.js";
+
 // LocalStorage keys: side selection ("left"|"right"|"float"), the
 // WinBox geometry, and orientation ("h"|"v") for the floating mode.
-export const RIBBON_SIDE_KEY = "sturddle:ribbon:side";
-const GEO_KEY = "sturddle:ribbon:geo";
-const ORIENT_KEY = "sturddle:ribbon:orient";
+export const RIBBON_SIDE_KEY = STORAGE_KEY.RIBBON_SIDE;
+const GEO_KEY = STORAGE_KEY.RIBBON_GEO;
+const ORIENT_KEY = STORAGE_KEY.RIBBON_ORIENT;
 const HEADER_H = 44;     // px -- nav header height (top boundary)
 const ORIENT_H = "h";
 const ORIENT_V = "v";
@@ -158,7 +161,7 @@ export function openRibbonWindow(el) {
       wb = null;
       wbOuter = null;
       if (!programmaticClose) {
-        window.dispatchEvent(new CustomEvent("sturddle:ribbon-float-closed"));
+        window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_FLOAT_CLOSED));
       }
     },
     onmove() { saveGeo(); },

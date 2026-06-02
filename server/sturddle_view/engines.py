@@ -137,7 +137,7 @@ async def probe_engine(
         # on every GET /engines, full tracebacks just spam the log. Unknown
         # exception types stay at ERROR -- those are real bug signals.
         if err["code"] == "engine_probe_failed":
-            log.exception("could not spawn %s for probe", engine_path)
+            log.error("could not spawn %s for probe", engine_path, exc_info=True)
         else:
             log.warning("probe failed for %s: %s", engine_path, err["message"])
         return None, {}, err

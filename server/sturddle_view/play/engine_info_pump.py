@@ -19,7 +19,7 @@ import chess
 import chess.engine
 
 from ..chess.engine_info import serialize_info
-from ..events import Event, EventBus
+from ..events import EVT_ENGINE_INFO, Event, EventBus
 from ..llm.cancel import CancelToken
 
 
@@ -107,7 +107,7 @@ async def pump_engine_info(
                     capture_score.clear()
                     capture_score.update(entry)
                 await bus.publish(
-                    Event(kind="engine_info", game_id=game_id, payload=payload)
+                    Event(kind=EVT_ENGINE_INFO, game_id=game_id, payload=payload)
                 )
         if cancelled:
             try:

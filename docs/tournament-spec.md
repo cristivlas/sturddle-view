@@ -33,13 +33,13 @@ Out of scope for Phase 1:
 
 ## Terminology: UI labels vs. code states
 
-The UI surfaces tournament lifecycle as **Start / Pause / Resume**;
+The UI surfaces tournament lifecycle as **Start / Stop / Restart**;
 the code's state machine uses **`idle / running / stopped / done`**
-(no `paused` state). The Pause button transitions `running -> stopped`;
-the Resume button starts a `stopped` tournament again, picking up from
-fastchess's persisted `config.json`. This split is deliberate -- the UI
-verbs read naturally to users, the code keeps a minimal state set --
-and the rest of this spec uses the code names.
+(no `paused` state). Stop transitions `running -> stopped`; Start on a
+`stopped` row wipes the tournament directory and runs from scratch
+(there is no resume -- see **No resume: Stop wipes** below). This split
+is deliberate -- the UI verbs read naturally to users, the code keeps a
+minimal state set -- and the rest of this spec uses the code names.
 
 ---
 
@@ -170,10 +170,10 @@ States: `idle` -> `running` -> (`stopped` | `done`).
 - **Done**: fastchess exits cleanly (all rounds completed, or SPRT
   decided), transitions `running -> done`.
 
-The state machine has **no `paused` state**: the UI's Pause button
-maps to Stop (`running -> stopped`) and Resume maps to Start on a
-`stopped` row, picking up from fastchess's persisted `config.json`
-(see **Resume after Stop** below).
+The state machine has **no `paused` state**: the UI's Stop button
+maps to `running -> stopped`, and Start on a `stopped` row wipes the
+tournament directory and runs from scratch -- there is no resume
+(see **No resume: Stop wipes** below).
 
 ### Cross-platform process control
 
@@ -199,8 +199,9 @@ Why:
 
 - A `Stop` mid-tournament still has correct standings -- every game
   fastchess flushed to PGN counts; only the in-flight game is lost.
-- A future Resume that appends to the same PGN yields correct
-  cumulative numbers without special handling.
+- PGN is ground truth: since Start always wipes and runs from scratch,
+  the parsed PGN is the single source of game counts (no merge with
+  fastchess's `config.json`, which we only sanity-check against).
 - Swapping to a different runner later (cutechess, custom) does not
   affect the math.
 
@@ -256,7 +257,7 @@ Edge cases for `elo_ordo`:
 <tournaments-root>/
   <id>/
     state.json     <- wrapper-owned: id, name, status, timestamps, frozen template
-    config.json    <- fastchess-owned: resume artifact (its filename, we don't pick)
+    config.json    <- fastchess-owned: its run config (we sanity-check, never resume from)
     games.pgn      <- fastchess-owned: -pgnout file=games.pgn append=true
     logs/
       wrapper.log    <- orchestrator output
@@ -420,11 +421,13 @@ tournament row.
 The Engines perspective's **Tournaments** sub-tab becomes a master list
 of saved tournaments. Per-row verbs:
 
-- **Start / Resume** -- only enabled when no tournament is currently
-  running. The icon switches between *play* (idle) and *forward-step*
-  (resume from a previously stopped tournament).
-- **Pause** -- only enabled when this row is the running tournament.
-  Stops fastchess; the next Start resumes from the same state.
+- **Start / Restart** -- only enabled when no tournament is currently
+  running. On an `idle` row it starts fresh; on a `stopped` / `failed`
+  row it is **Restart**, which wipes the tournament directory and runs
+  from scratch behind a confirmation dialog citing the recorded game
+  count (there is no resume).
+- **Stop** -- only enabled when this row is the running tournament.
+  Stops fastchess; the next Start wipes and restarts from scratch.
 - **Open workspace** -- opens the workspace view (WinBox-driven). Valid
   in any state: live windows when running, frozen view when stopped /
   done.
@@ -801,11 +804,11 @@ directory tree) cannot tell. The orchestrator can, because it owns the
 runner.
 
 On server startup, the orchestrator reconciles: any tournament whose
-persisted status is `running` is marked `stopped` (Phase 1 does not
-support Resume; reviving the subprocess is not attempted). This
-preserves prior games already in `games.pgn`; only the in-flight game
-at the moment of the crash is lost -- the same loss profile as a
-user-initiated Stop.
+persisted status is `running` is marked `stopped` (reviving the
+subprocess is not attempted). The recorded `games.pgn` is preserved for
+inspection, but since there is no resume the next Start wipes it and
+runs from scratch -- the same outcome as a user-initiated Stop then
+Start.
 
 #### Single-orchestrator-per-store assumption
 
@@ -873,116 +876,31 @@ Rules enforced for every test shipped with this subsystem:
 
 ---
 
-## Resume after Stop (shipped)
+## No resume: Stop wipes
 
-Clicking **Start** on a `stopped` tournament resumes from where it
-left off using fastchess's native `-config` mechanism. Background:
+There is **no resume**. Stop transitions a tournament `running -> stopped`;
+the next Start on a `stopped` (or `failed`) row **wipes the tournament
+directory and runs from scratch**, behind a confirmation dialog that cites
+the recorded game count. The API enforces this: `/start` on a non-idle row
+returns `409 reason=wipe_required` unless called with `confirm_wipe=true`,
+which wipes then starts.
 
-The fix uses fastchess's native resume mechanism (`-config`). Research
-findings (verified against the fastchess source tree):
+Resume was prototyped on fastchess's native `-config` mechanism and then
+removed (commit `91545bf`): the contract is too fragile across stop/resume
+cycles. For >2 engines fastchess drops stats outright; for ==2 engines the
+PGN / `config.json` / `state.json` counts drift across multiple cycles.
+Rather than carry rewrite machinery to paper over that, Stop became
+destructive across the board. Consequences:
 
-- Fastchess maintains state in a JSON file (default `config.json`,
-  written by `BaseTournament::saveJson()`). The file contains the
-  tournament config, engine list, and a `stats` map (W/L/D + penta per
-  engine pair).
-- **Save cadence is governed by `-autosaveinterval N`**, which defaults
-  to **20 games**. With the default, killing fastchess after fewer than
-  20 completed games loses *all* progress for resume purposes (the
-  cfg.json was never written). Pass `-autosaveinterval 1` so every
-  game is durable.
-- On startup with `-config file=<path>`, fastchess loads that file via
-  `loadJson()` (`app/src/cli/cli.cpp:433`), seeds the scoreboard via
-  `setResults()` (`tournament.cpp:331`), and computes
-  `initial_matchcount_` as the sum of W+L+D across pairs
-  (`tournament.cpp:33`).
-- The opening book auto-rotates by that count
-  (`opening_book.cpp:23`: `offset_ = start - 1 + initial_matchcount /
-  games`), so fastchess fast-forwards through the schedule to the
-  exact next pair to play.
-- The CLI splits read and write paths: `-config file=<path>` is the
-  *read* (load on resume), `-config outname=<path>` is the *write*
-  (where fastchess saves snapshots). Initial run passes only
-  `outname=`; resume runs pass both `file=` and `outname=` (same
-  path, so the snapshot is overwritten in place). Passing `file=` to a
-  non-existent file is a fatal error, so the orchestrator must check
-  before adding the flag.
-- **Fastchess does not read `games.pgn` on resume.** Stats come from
-  `config.json` only. A truncated or `*`-result trailing game in the
-  PGN is invisible to fastchess; it will simply replay any pair that
-  hadn't yet been recorded in `config.json`.
-- **Resume produces at most one duplicate game.** Even with
-  `-autosaveinterval 1`, the save fires after the *post-game*
-  bookkeeping inside fastchess; if SIGKILL lands between the PGN
-  append for game N and the cfg.json write for game N, the resumed
-  run replays the pair that produced game N, leaving two PGN entries
-  for the same `(round, white, black)`. Verified empirically: see the
-  smoke test in `/tmp/fc-smoke/` (a planned 8-game match interrupted
-  after 3 PGN games but only 2 saved produced 9 total PGN entries on
-  completion).
-- **Resume is statistically valid but NOT byte-deterministic.**
-  `-srand` only seeds fastchess's pairing/opening-shuffle PRNG; it
-  does not seed the engines. With ultra-fast TC the same pair on the
-  same opening produces a different game across runs because engine
-  search depends on wall-clock timing. SPRT/Elo correctness is
-  unaffected (pairs remain independent samples), but anyone expecting
-  bit-identical replay will be disappointed.
+- **PGN is ground truth.** Since every run starts fresh, `games.pgn` is the
+  single source of game counts and standings. `config.json` is only
+  sanity-checked against it (a warning on disagreement, gated on
+  `status != running` so the autosave-lag window does not spam).
+- **No rewrite code.** `rewrite_drop_partial_pairs`, `patch_config_json`,
+  `state.games_played`, and `state.rewrites` were all deleted; `store.get`
+  drops those now-unknown keys silently for forward-compat.
 
-Implementation (shipped):
-
-1. **Pin a seed at tournament-creation time.** Add a `seed` field
-   (uint64) to the frozen template; generate at create-time with
-   `secrets.randbits(64)`. Pass `-srand <seed>` on every Start. This
-   does NOT make games reproducible (engines are not seeded); it only
-   makes the *opening order* stable across runs when the book is
-   shuffled. Schema change is acceptable (early dev, no production
-   data).
-2. **Pass `-autosaveinterval 1`** on every Start. Default is 20,
-   which would lose up to 19 games of resume progress on Stop.
-3. **On Start, conditionally pass `-config`:**
-   - First run (`<state.json>` does not exist):
-     `-config outname=<state.json>`.
-   - Resume run (`<state.json>` exists):
-     `-config file=<state.json> outname=<state.json>`.
-   The orchestrator checks file existence before composing the flag.
-   `<state.json>` lives in the tournament dir alongside `games.pgn`.
-4. **Do not delete `<state.json>` on stop.** Just leave the working
-   dir intact.
-5. **Dedup PGN games on parse.** In `compute_standings()` and
-   `compute_sprt()` (see
-   `server/sturddle_view/tournament/pgn_stats.py`), key games by
-   `(Round, White, Black)` and keep only the last occurrence per
-   key. This handles the at-most-one duplicate game produced by
-   resume after a kill that lands between PGN-append and
-   cfg.json-write. Same pass should also drop games without a
-   definitive `[Result]` (handles the rare `*`-tail case from a
-   killed in-flight game). Independent of resume -- ship anytime.
-6. **Disable Start when `status === "done"`** -- already in place
-   (web/app/tournaments.js:142 gates on
-   `running` and `done`). Listed for completeness only; no change
-   needed.
-7. **Graceful stop**: send SIGTERM, wait ~2 s for fastchess's
-   `~BaseTournament` to flush state (and ideally fire a final
-   `saveJson()`) and join the engine pool, fall back to SIGKILL only
-   on timeout. Reduces -- but does not eliminate -- duplicate-game
-   risk on resume, since SIGTERM lets fastchess finish any
-   in-flight save. PGN truncation risk (an unterminated tail game)
-   also drops to near-zero. Step 5's dedup/filter is the
-   correctness backstop; this step is a quality-of-life
-   improvement.
-
-Considered and rejected:
-
-- **Counting completed games ourselves** (parse PGN, pass
-  `-openings start=N+1` and reduced `-rounds`): more code, opaque
-  semantics for gauntlet/random-order, and we re-derive what
-  fastchess already tracks. Use `-config` instead.
-- **Defensive `try/except` around python-chess parsing** of the last
-  PGN game to handle SIGKILL truncation: low value given the `[Result]`
-  filter already handles the "no result" case, and graceful stop
-  handles the truncation case. Not worth the complexity or per-parse
-  cost.
-
-Future work (not part of the resume effort):
+Future work:
 
 - **Engine binary fingerprinting**: SHA-256 the engine binaries at
   tournament-creation time, store in the frozen template, warn (do

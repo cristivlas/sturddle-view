@@ -7,6 +7,7 @@ import { mountBoard } from "./board.js";
 import { confirm, reportError, toast } from "./dialogs.js";
 import { isPlayInProgress, isViewing, isAnalyzing, getViewingHash, getViewingSummary } from "./perspectives/play.js";
 import { confirmReplaceViewedGame } from "./import-position-dialog.js";
+import { APP_EVT } from "./app-events.js";
 import { flashWindow } from "./wb-utils.js";
 import { terminationPhrase } from "./format-termination.js";
 
@@ -38,7 +39,7 @@ async function replayTournamentGame({ tournamentId, gameN, token, pairId = null 
       // toast carrying the pair id. The toast doubles as a live
       // invariant check for the game_id-unification refactor -- if
       // the value looks wrong, the unification is broken.
-      window.dispatchEvent(new CustomEvent("sturddle:activate-perspective", {
+      window.dispatchEvent(new CustomEvent(APP_EVT.ACTIVATE_PERSPECTIVE, {
         detail: { id: "play" },
       }));
       if (pairId) toast(`Viewing ${pairId}`);
@@ -80,7 +81,7 @@ async function replayTournamentGame({ tournamentId, gameN, token, pairId = null 
     );
     return;
   }
-  window.dispatchEvent(new CustomEvent("sturddle:activate-perspective", { detail: { id: "play" } }));
+  window.dispatchEvent(new CustomEvent(APP_EVT.ACTIVATE_PERSPECTIVE, { detail: { id: "play" } }));
   if (importedGameId) toast(`Viewing ${importedGameId}`);
 }
 
@@ -287,7 +288,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     }
   };
   if (gameId) {
-    window.addEventListener("sturddle:reconciled", onReconciled);
+    window.addEventListener(APP_EVT.RECONCILED, onReconciled);
     replayBtnEl.addEventListener("click", async () => {
       if (replayInFlight || reconciledGameN == null || !tournamentId) return;
       replayInFlight = true;
@@ -349,9 +350,9 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   function disposeShared() {
     ro.disconnect();
     board.destroy();
-    if (gameId) window.removeEventListener("sturddle:reconciled", onReconciled);
+    if (gameId) window.removeEventListener(APP_EVT.RECONCILED, onReconciled);
     liveWindows.delete(windowKey);
-    window.dispatchEvent(new CustomEvent("sturddle:livegame-closed"));
+    window.dispatchEvent(new CustomEvent(APP_EVT.LIVEGAME_CLOSED));
   }
 
   return {

@@ -24,6 +24,7 @@ from sturddle_view.play.tools_engine import (
     TOP_MOVES_MAX_N,
     _strip_move_prefix,
     make_top_moves_tool,
+    parse_move_canonical,
 )
 
 from .conftest import (
@@ -261,6 +262,19 @@ def test_strip_move_prefix_removes_pgn_continuation():
     assert _strip_move_prefix("  23...  Nf6") == "Nf6"
     # Single dot (move-number separator) not a continuation -- left alone.
     assert _strip_move_prefix("1.e4") == "1.e4"
+
+
+def test_parse_move_canonical_agrees_across_prefix_and_notation():
+    # The shared parser must map every spelling of one move to the same
+    # canonical UCI, so all callers (engine tools + the ai_analysis gate)
+    # agree. SAN, PGN-continuation-prefixed SAN, and UCI all collapse to g1f3.
+    board = chess.Board()
+    for raw in ("Nf3", "...Nf3", "1...Nf3", "g1f3"):
+        move = parse_move_canonical(board, raw)
+        assert move is not None and move.uci() == "g1f3", raw
+    # Illegal / unparseable yields None, not a guess.
+    assert parse_move_canonical(board, "Nf6") is None      # black move, not legal for white
+    assert parse_move_canonical(board, "zz9") is None
 
 
 def _make_one_scoreless_fake(root: Path, name: str, scoreless_uci: str) -> str:

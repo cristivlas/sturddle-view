@@ -15,7 +15,7 @@ from typing import Any, Awaitable, Callable
 import chess.engine
 
 from ..engines import _popen_kwargs
-from ..events import Event, EventBus
+from ..events import EVT_UCI_LOG, Event, EventBus
 
 log = logging.getLogger(__name__)
 
@@ -176,7 +176,7 @@ class EngineSupervisor:
             try:
                 await engine.configure(accepted)
             except chess.engine.EngineError:
-                log.exception("engine refused options %s", accepted)
+                log.error("engine refused options %s", accepted, exc_info=True)
         return engine
 
     async def spawn_throwaway(
@@ -220,7 +220,7 @@ class EngineSupervisor:
             try:
                 await engine.configure(accepted)
             except chess.engine.EngineError:
-                log.exception("engine refused options %s", accepted)
+                log.error("engine refused options %s", accepted, exc_info=True)
 
         async def _cleanup() -> None:
             """Exception-safe by contract: callers don't wrap. Swallows
@@ -242,7 +242,7 @@ class EngineSupervisor:
             try:
                 await asyncio.wait(waiters, timeout=_CLOSE_GRACE_SECONDS)
             except Exception:
-                log.exception("engine cleanup: transport close raised")
+                log.error("engine cleanup: transport close raised", exc_info=True)
 
         return engine, _cleanup
 
@@ -373,7 +373,7 @@ class EngineSupervisor:
 
         def _emit(direction: str, line: str) -> None:
             t = loop.create_task(
-                bus.publish(Event(kind="uci_log", payload={"dir": direction, "line": line}))
+                bus.publish(Event(kind=EVT_UCI_LOG, payload={"dir": direction, "line": line}))
             )
             tasks.add(t)
             t.add_done_callback(tasks.discard)

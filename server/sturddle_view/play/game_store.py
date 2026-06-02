@@ -82,7 +82,7 @@ class GameStore:
             with self._path.open("r", encoding="utf-8") as f:
                 data = json.load(f)
         except (OSError, json.JSONDecodeError):
-            log.exception("could not read %s; ignoring saved game", self._path)
+            log.error("could not read %s; ignoring saved game", self._path, exc_info=True)
             return None
         if data.get("version") != SCHEMA_VERSION:
             log.warning(
@@ -107,7 +107,7 @@ class GameStore:
                 player_name=data.get("player_name", DEFAULT_PLAYER_NAME),
             )
         except (KeyError, TypeError, ValueError):
-            log.exception("malformed saved game in %s; ignoring", self._path)
+            log.error("malformed saved game in %s; ignoring", self._path, exc_info=True)
             return None
 
     def save(self, state: GameState) -> None:
@@ -119,4 +119,4 @@ class GameStore:
         except FileNotFoundError:
             pass
         except OSError:
-            log.exception("could not delete %s", self._path)
+            log.error("could not delete %s", self._path, exc_info=True)

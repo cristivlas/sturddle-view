@@ -29,12 +29,14 @@ Tournament mode is out of scope.
   alongside `HumanVsEngine` (not methods on it). Mirrors
   `TablebaseProber` / `OpeningBook` siblings.
 - **Server providers:** `server/sturddle_view/llm/` package --
-  `base.py`, `anthropic.py`, `ollama.py`, plus shared
-  `response_validator.py`, `tools.py`, `prompts.py`, `transcript.py`,
-  `inline_tool_calls.py`, `harmony_strip.py`.
+  `base.py`, `anthropic.py`, `ollama.py`, `gemini.py` (the last two
+  share `openai_compat.py`), plus shared `response_validator.py`,
+  `tools.py`, `prompts.py`, `transcript.py`, `inline_tool_calls.py`,
+  `harmony_strip.py`, `markdown_strip.py`.
 - **Engine tools:** `server/sturddle_view/play/tools_engine.py`
   (`analyze`, `top_moves`, `recommend_move`, `validate_move`,
-  `piece_at`).
+  `piece_at`); the narrator additionally has `delegate` (spawns a
+  verifier sub-run) -- see §Planner + verifier subagents.
 - **Events:** `ai_info` (prose stream), `ai_thinking`, `ai_tool_call`,
   `ai_tool_call_failed`, `ai_corrective`, `ai_recommendation` on
   `events.py` `EventKind`.
@@ -54,8 +56,9 @@ Tournament mode is out of scope.
 Implementation: `AIAnalysisCoordinator.run()` in
 `server/sturddle_view/play/ai_analysis.py`.
 
-One "turn" = one Analyze click. A turn runs N rounds, capped at
-`SV_AI_MAX_TOOL_ROUNDS` (default in `ai_analysis.MAX_TOOL_ROUNDS`).
+One "turn" = one Analyze click. A turn runs N rounds, capped at the
+"Max rounds" setting (`ai_max_tool_rounds`; env `SV_AI_MAX_TOOL_ROUNDS`,
+default in `ai_analysis.MAX_TOOL_ROUNDS`).
 Each round = one `provider.stream()` call. The coordinator owns
 multi-turn assembly; the provider knows nothing about tool execution.
 
@@ -131,16 +134,28 @@ separately validate the line behind the move. The dominance check rejects a
 move the engine's best beats by margin -- the guard that matters; deeper
 line-validation is the model's job via `delegate`.
 
+**Alternative-examined gate.** A `recommend_move` that passes the dominance
+check is still held back until a *prior* `recommend_move` this turn
+committed a *different* move. Only `recommend_move` counts -- examining via
+`delegate` or `top_moves` does not clear the gate. This forces the narrator
+to concretely commit at least one alternative before settling, rather than
+recommending the first move it names.
+
 ### Round-end validators
 
-Pure functions over `(text, board)` in
-`server/sturddle_view/llm/response_validator.py`. Three checks run
+Pure functions over `(text, boards)` in
+`server/sturddle_view/llm/response_validator.py`. Four checks run
 in parallel on the assembled text of every round; a hit on any one
 triggers a corrective round:
 
-- `find_illegal_moves` -- SAN-shaped tokens the board rejects (piece
-  moves, pawn captures, castles). Bare-square pawn moves are out of
-  scope (e.g. "e5" is ambiguous prose vs move).
+- `find_illegal_moves` -- single SAN-shaped tokens the board rejects
+  (piece moves, pawn captures, castles). Bare-square pawn moves are
+  out of scope (e.g. "e5" is ambiguous prose vs move).
+- `find_illegal_continuations` -- multi-move runs (2+ moves) that each
+  parse alone but do not play cleanly as a *sequence* from any legal
+  anchor. Catches incoherent lines that per-token validation misses.
+  White-only numbered shorthand ("1.e4 2.Nf3") is skipped (it omits
+  Black's plies, so it is not a ply sequence to replay).
 - `find_false_piece_claims` -- "<piece> on <square>" / "<square>
   <piece>" claims whose square does not actually hold the named piece
   (or holds a piece of the wrong color when the claim names one).
@@ -148,12 +163,19 @@ triggers a corrective round:
   "castling" / "castled" mentions when neither side has any legal
   castling move available.
 
+**Examined positions.** All move/piece validators take the live board
+plus `extra_boards` -- the positions the model actually examined this
+turn via fen-taking tools (e.g. `analyze`). A move or piece claim
+that is legal/true in an examined line is not flagged, so the
+narrator can describe a calculated continuation without tripping a
+corrective round.
+
 Each validator returns the offending tokens (deduped, in order of
-first appearance). The coordinator routes them through three event
-fields (`illegal_moves`, `false_claims`, `castle_violations`) so the
-UI can render each category distinctly, and through three corrective
-prompt fragments so the model sees category-specific wording rather
-than a generic "rewrite" instruction.
+first appearance). The coordinator routes them through per-category
+event fields (`illegal_moves`, `false_claims`, `castle_violations`,
+...) so the UI can render each category distinctly, and through
+category-specific corrective prompt fragments so the model sees
+targeted wording rather than a generic "rewrite" instruction.
 
 Disabled when no `board_provider` is wired (tests, non-live callers).
 
@@ -296,10 +318,11 @@ enough.
 
 ### Providers
 
-Two supported providers, both pluggable behind a common abstraction:
+Three supported providers, all pluggable behind a common abstraction:
 
 - Anthropic (native tool use)
 - Ollama (OpenAI-compatible tool format; translation layer)
+- Gemini (OpenAI-compatible SSE against Google's endpoint; Bearer key)
 
 Common interface modeled on a `generate_thinking_stream_with_tools()`
 shape: streaming response, tool-use loop, tool_result blocks fed back as
@@ -460,10 +483,11 @@ code MUST NOT assume any of it.
 ### Settings tab "Analysis"
 
 Flat layout (the master toggle is described in §Ribbon buttons above):
-- Provider (Anthropic / Ollama)
+- Provider (Anthropic / Ollama / Gemini)
 - Model (free-form or dropdown TBD per provider)
 - Provider-specific credentials:
   - Anthropic: API key
+  - Gemini: API key (Bearer; base URL fixed to Google's endpoint)
   - Ollama: base URL (no key)
 - Tunables surfaced as they prove necessary (tool call cap, analyze
   max depth, temperature, etc.). No collapsible / Advanced grouping;

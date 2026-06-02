@@ -44,8 +44,9 @@ Wire-up:
 
 Surface as flat fields in the Analysis tab when each proves needed.
 
-- [ ] `ai_max_tool_rounds` (promote `SV_AI_MAX_TOOL_ROUNDS` from
-      module const to `Settings` field).
+- [x] `ai_max_tool_rounds` (and `ai_verifier_max_rounds`) -- promoted
+      from module const to `Settings` field, env-overridable, surfaced in
+      the Analysis tab.
 - [ ] Token caps (depends on token-cap wire-up above).
 - [ ] `analyze` max time_ms / max depth.
 - [ ] Stop grace timeout.

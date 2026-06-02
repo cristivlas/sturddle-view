@@ -14,17 +14,32 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Sequence
 
 import chess
 
+from ..config import _DEFAULT_AI_MAX_TOOL_ROUNDS, _DEFAULT_AI_VERIFIER_MAX_ROUNDS
 from ..env_utils import env_int
-from ..events import Event, EventBus
+from ..events import (
+    ENVELOPE_GAME_ID,
+    ENVELOPE_KIND,
+    ENVELOPE_PAYLOAD,
+    EVT_AI_CORRECTIVE,
+    EVT_AI_INFO,
+    EVT_AI_RECOMMENDATION,
+    EVT_AI_THINKING,
+    EVT_AI_TOOL_CALL,
+    EVT_AI_TOOL_CALL_COMPLETE,
+    EVT_AI_TOOL_CALL_FAILED,
+    Event,
+    EventBus,
+)
 from ..llm import (
     LLMProvider,
     Message,
     PromptMode,
     ProviderChunk,
+    TOOL_SIGNATURE_KEY,
     ToolRegistry,
     ToolSpec,
     UnknownToolError,
@@ -36,7 +51,20 @@ from ..llm.cancel import CancelToken
 from ..llm.response_validator import (
     find_castle_word_violations,
     find_false_piece_claims,
+    find_illegal_continuations,
     find_illegal_moves,
+    find_move_attribution_errors,
+)
+from .tools_engine import (
+    ANALYZE_TOOL_NAME,
+    MATERIAL_TOOL_NAME,
+    PIECE_AT_TOOL_NAME,
+    RECOMMEND_MOVE_TOOL_NAME,
+    TOP_MOVES_TOOL_NAME,
+    VALIDATE_MOVE_TOOL_NAME,
+    board_from_fen_input,
+    parse_move_canonical,
+    parse_move_reporting,
 )
 
 
@@ -49,14 +77,12 @@ log = logging.getLogger(__name__)
 
 
 # Cap on agent loop rounds per turn (spec §Guardrails: "Tool call cap
-# per agent turn"). The env override is for ops; UI exposure is pending.
-_DEFAULT_MAX_TOOL_ROUNDS = 32
-MAX_TOOL_ROUNDS = env_int("SV_AI_MAX_TOOL_ROUNDS", _DEFAULT_MAX_TOOL_ROUNDS)
+# per agent turn"). UI-settable; env is the headless/no-UI default.
+MAX_TOOL_ROUNDS = env_int("SV_AI_MAX_TOOL_ROUNDS", _DEFAULT_AI_MAX_TOOL_ROUNDS)
 
 # Verifier sub-runs get a tighter round budget: one move, a tool call or
-# two, a verdict. The env override is for ops.
-_DEFAULT_VERIFIER_MAX_ROUNDS = 8
-VERIFIER_MAX_ROUNDS = env_int("SV_AI_VERIFIER_MAX_ROUNDS", _DEFAULT_VERIFIER_MAX_ROUNDS)
+# two, a verdict. UI-settable; env is the headless/no-UI default.
+VERIFIER_MAX_ROUNDS = env_int("SV_AI_VERIFIER_MAX_ROUNDS", _DEFAULT_AI_VERIFIER_MAX_ROUNDS)
 
 _COMMENTATOR_MODE: PromptMode = "commentator"
 _VERIFIER_MODE: PromptMode = "verifier"
@@ -99,14 +125,27 @@ _CORRECTIVE_PREFIX = "[automated position check] "
 _CORRECTIVES = {
     "coach": {
         "illegal": "Illegal in this position: {moves}. Rewrite without these.",
+        "continuation": (
+            "Not a legal sequence from any position in this game: {lines}. "
+            "Rewrite without these lines."
+        ),
         "false_piece": "Not on the board: {claims}. Rewrite without these.",
         "castle": "No legal castling for either side. Rewrite without recommending it.",
+        "attribution": (
+            "Wrong side to move: {moves}. That move belongs to the other "
+            "player in this position. Re-check whose turn it is."
+        ),
     },
     "commentator": {
         "illegal": (
             "Not legal at the position under review and not played in "
             "this game: {moves}. Rewrite without these (or mark as "
             "hypothetical)."
+        ),
+        "continuation": (
+            "Not a legal sequence from the position under review or any "
+            "earlier position in this game: {lines}. Rewrite without these "
+            "lines (or mark as hypothetical)."
         ),
         "false_piece": (
             "Not on the board at the position under review, nor at any "
@@ -116,11 +155,23 @@ _CORRECTIVES = {
             "No legal castling for either side, in the position under review "
             "or any earlier position. Rewrite without recommending it."
         ),
+        "attribution": (
+            "Wrong side to move: {moves}. At the position under review that "
+            "move belongs to the other player. Re-check whose turn it is."
+        ),
     },
     "verifier": {
         "illegal": "Illegal in the live position: {moves}. Rewrite without these.",
+        "continuation": (
+            "Not a legal sequence from any position in this game: {lines}. "
+            "Rewrite without these lines."
+        ),
         "false_piece": "Not on the live board: {claims}. Rewrite without these.",
         "castle": "No legal castling for either side. Rewrite without recommending it.",
+        "attribution": (
+            "Wrong side to move: {moves}. That move belongs to the other "
+            "player in the live position. Re-check whose turn it is."
+        ),
     },
 }
 # Sent once at end-of-turn if the model never called recommend_move; a
@@ -134,6 +185,15 @@ _RECOMMEND_NUDGE_PROMPTS = {
         "would have played in the position under review." + _NO_ACK_CLAUSE
     ),
 }
+
+# Alternative-examined gate: an otherwise-accepted recommend_move is held
+# back until a prior recommend_move this turn committed a different move.
+# Loop-enforced; stall-guard + round-cap backstop it.
+_ALTERNATIVE_REQUIRED_ERROR = "alternative_required"
+_ALTERNATIVE_REQUIRED_REASON = (
+    "Call recommend_move on at least one different candidate first, "
+    "then submit your move."
+)
 
 # Sent once when recommend_move is accepted but the model skips the
 # closing conclusion (small models treat the call as the end). One-shot.
@@ -165,81 +225,92 @@ _VERIFIER_QUESTION_LABEL = "Question to verify:"
 VerifierRunner = Callable[[str], Awaitable[str]]
 
 
+# `delegate` is defined in this module (DELEGATE_TOOL_SPEC); the engine
+# tool names are imported from tools_engine (single source of truth).
 _DELEGATE_TOOL_NAME = "delegate"
+# Tools taking an explicit `fen` param -- the positions the model examined,
+# fed to the prose validators as extra boards (projected-line references).
+_FEN_PARAM_TOOL_NAMES = frozenset({ANALYZE_TOOL_NAME, MATERIAL_TOOL_NAME})
 
 
 # Declarative, not imperative: a "you do X" instruction invites small
 # models to reply "Understood, I will..." as prose. Describing behavior
 # removes the thing being acknowledged (same pattern across all cards).
 _DELEGATE_TOOL_CARD = (
-    "One focused question per call works best -- naming the move and "
-    "what to check (\"Is Nxd4 sound, or does it drop material?\"). The "
-    "reply is a verdict about the live position, advisory not quotable."
+    "One move per call. The result echoes the canonical `move_uci` and a "
+    "verdict about the live position, advisory not quotable. Checking a "
+    "move other than the one committed is what unlocks committing it."
 )
 
 
 DELEGATE_TOOL_SPEC = ToolSpec(
     name=_DELEGATE_TOOL_NAME,
     description=(
-        "Hand one move-verification question to the engine-backed "
-        "checker. It searches the live position and returns a short "
-        "verdict (sound/unsound + reason). Use it to confirm any line "
-        "before you commit to it in prose."
+        "Hand one move to the engine-backed checker. It searches the "
+        "live position and returns a short verdict (sound/unsound + "
+        "reason). Confirm a line before committing to it -- and weigh a "
+        "real alternative this way before settling on a move."
     ),
     input_schema={
         "type": "object",
         "properties": {
+            "move": {
+                "type": "string",
+                "description": (
+                    "The move to check, UCI or SAN (e.g. 'Nf3', 'g1f3')."
+                ),
+            },
             "question": {
                 "type": "string",
                 "description": (
-                    "One focused question naming the move to check and "
-                    "what matters, e.g. 'Is Nxd4 sound here?'."
+                    "What to check about the move, e.g. "
+                    "'sound, or does it drop material?'."
                 ),
             },
         },
-        "required": ["question"],
+        "required": ["move", "question"],
     },
     card=_DELEGATE_TOOL_CARD,
 )
 
 
-def make_delegate_tool(runner: VerifierRunner) -> Callable:
-    """Build the `delegate` tool. Dispatches the narrator's question to a
-    verifier sub-run via `runner` and returns its verdict as a tool
-    result. Empty/malformed input returns a structured error so the
-    narrator can recover."""
+def make_delegate_tool(
+    runner: VerifierRunner, board_provider: BoardProvider,
+) -> Callable:
+    """Build the `delegate` tool. Parses `move` to canonical UCI against
+    the live board, dispatches the narrator's question to a verifier
+    sub-run, and echoes `move_uci` so the coordinator's alternative gate
+    knows which move was examined. Malformed input returns a structured
+    error so the narrator can recover."""
     async def delegate(input_: dict, *, cancel_token: CancelToken) -> dict:
         question = input_.get("question")
         if not isinstance(question, str) or not question.strip():
             return {"error": "invalid_input", "detail": "question must be a non-empty string"}
+        raw_move = input_.get("move")
+        if not isinstance(raw_move, str) or not raw_move.strip():
+            return {"error": "invalid_input", "detail": "move must be a non-empty string"}
+        board = board_provider()
+        if board is None:
+            return {"error": "invalid_move", "detail": f"could not parse {raw_move!r}"}
+        # Surface the real kind (illegal_move vs invalid_move) and the FEN we
+        # validated against, so the narrator sees e.g. a wrong-side-to-move
+        # move for what it is instead of a flat "could not parse".
+        move, kind, detail = parse_move_reporting(board, raw_move)
+        if move is None:
+            return {"error": kind, "detail": detail, "fen": board.fen()}
         verdict = await runner(question.strip())
         if not verdict:
-            return {"error": "no_verdict", "detail": "verifier returned no conclusion"}
-        return {"verdict": verdict}
+            return {
+                "error": "no_verdict",
+                "detail": "no conclusion. Try increasing Verifier rounds:",
+            }
+        return {"move_uci": move.uci(), "verdict": verdict}
 
     return delegate
 
 
 # Tool-arg normalizers for the dedup cache. Each maps (input, board) ->
 # hashable key, or None to skip caching this call.
-_SAN_PARSE_ERRORS = (
-    chess.InvalidMoveError, chess.IllegalMoveError, chess.AmbiguousMoveError,
-)
-
-
-def _parse_move_canonical(raw: str, board: chess.Board) -> chess.Move | None:
-    """Try UCI then SAN. Returns canonical Move or None on failure."""
-    candidate = raw.strip()
-    if not candidate:
-        return None
-    try:
-        return board.parse_uci(candidate)
-    except _SAN_PARSE_ERRORS:
-        pass
-    try:
-        return board.parse_san(candidate)
-    except _SAN_PARSE_ERRORS:
-        return None
 
 
 def _norm_move_arg(input_: dict, board: chess.Board | None) -> tuple | None:
@@ -248,7 +319,7 @@ def _norm_move_arg(input_: dict, board: chess.Board | None) -> tuple | None:
     raw = input_.get("move")
     if not isinstance(raw, str) or board is None:
         return None
-    move = _parse_move_canonical(raw, board)
+    move = parse_move_canonical(board, raw)
     return ("move", move.uci(), input_.get("depth")) if move else None
 
 
@@ -273,7 +344,7 @@ def _norm_top_moves(input_: dict, board: chess.Board | None) -> tuple | None:
     for r in raw_moves:
         if not isinstance(r, str):
             return None
-        move = _parse_move_canonical(r, board)
+        move = parse_move_canonical(board, r)
         if move is None:
             all_parseable = False
             break
@@ -308,23 +379,23 @@ def _norm_analyze(input_: dict, board: chess.Board | None) -> tuple | None:
     canonical = _canonical_fen(input_)
     if canonical is None:
         return None
-    return ("analyze", canonical, input_.get("depth"))
+    return (ANALYZE_TOOL_NAME, canonical, input_.get("depth"))
 
 
 def _norm_material(input_: dict, board: chess.Board | None) -> tuple | None:
     canonical = _canonical_fen(input_)
     if canonical is None:
         return None
-    return ("material", canonical)
+    return (MATERIAL_TOOL_NAME, canonical)
 
 
 _NORMALIZERS: dict[str, Callable[[dict, chess.Board | None], tuple | None]] = {
-    "recommend_move": _norm_move_arg,
-    "validate_move": _norm_move_arg,
-    "piece_at": _norm_square_arg,
-    "top_moves": _norm_top_moves,
-    "analyze": _norm_analyze,
-    "material": _norm_material,
+    RECOMMEND_MOVE_TOOL_NAME: _norm_move_arg,
+    VALIDATE_MOVE_TOOL_NAME: _norm_move_arg,
+    PIECE_AT_TOOL_NAME: _norm_square_arg,
+    TOP_MOVES_TOOL_NAME: _norm_top_moves,
+    ANALYZE_TOOL_NAME: _norm_analyze,
+    MATERIAL_TOOL_NAME: _norm_material,
 }
 
 
@@ -362,12 +433,19 @@ def _assistant_message(chunks: list[ProviderChunk]) -> Message:
             text_buf.append(c.text)
         elif c.kind == "tool_use":
             _flush_text()
-            content.append({
+            block = {
                 "type": "tool_use",
                 "id": c.tool_use_id,
                 "name": c.tool_name,
                 "input": c.tool_input,
-            })
+            }
+            # Carry an opaque provider signature (Gemini's thought_signature)
+            # so the provider can echo it back on the next round. Empty for
+            # providers that don't use it; the wire mapping lives in
+            # openai_compat.
+            if c.tool_signature:
+                block[TOOL_SIGNATURE_KEY] = c.tool_signature
+            content.append(block)
     _flush_text()
     if not content:
         content.append({"type": "text", "text": _EMPTY_TURN_PLACEHOLDER})
@@ -385,6 +463,24 @@ def _round_produced_output(chunks: list[ProviderChunk]) -> bool:
         if c.kind == "text" and c.text and c.text.strip():
             return True
     return False
+
+
+def _alternative_examined(examined_uci: set[str], committed_uci: str) -> bool:
+    """True iff `examined_uci` holds a move OTHER than the one now being
+    committed. Populated by prior recommend_move calls this turn (delegate
+    and top_moves do not count) and, in commentator mode, seeded with the
+    played move so endorsing it requires a different recommend first."""
+    return bool(examined_uci - {committed_uci})
+
+
+def _alternative_required_result(tool_output: dict) -> dict:
+    """Rewrite an otherwise-accepted recommend_move into the gate
+    rejection the model sees, preserving the engine fields so it keeps
+    the context it already paid for."""
+    rejected = {k: v for k, v in tool_output.items() if k != "ok"}
+    rejected["error"] = _ALTERNATIVE_REQUIRED_ERROR
+    rejected["reason"] = _ALTERNATIVE_REQUIRED_REASON
+    return rejected
 
 
 def _inject_nudge(
@@ -457,6 +553,11 @@ class _LoopConfig:
     # True only for the narrator loop -- enables recommend_move tracking
     # so the end-of-turn verifier fires on the chosen move.
     track_recommend: bool = False
+    # Commentator only: UCI of the move actually played in the reviewed
+    # game. Seeds the alternative gate so endorsing the played move
+    # requires recommending a DIFFERENT move first -- the played move is
+    # the subject under review, not an alternative to it.
+    played_uci: str | None = None
     # Per-call thinking override passed to provider.stream(). None = use
     # the provider's setting (narrator); False = force off (verifier).
     thinking_override: bool | None = None
@@ -467,10 +568,14 @@ class _LoopResult:
     """What the shared loop reports back. `final_text` is the last round's
     prose -- the verifier verdict, with cross-round tool-call self-talk
     dropped (falls back to all-rounds text on round-cap). `recommended_uci`
-    is set only when the narrator tracked a recommend_move."""
+    is set only when the narrator tracked a recommend_move. `gated_uci` is
+    the latest move the alternative gate blocked, for the unvetted fallback
+    when no vetted recommendation lands."""
     final_text: str = ""
     recommended_uci: str | None = None
     recommended_depth: int | None = None
+    gated_uci: str | None = None
+    gated_depth: int | None = None
     round_cap_hit: bool = False
     text_published: bool = False
 
@@ -521,6 +626,11 @@ class AIAnalysisCoordinator:
         # events so the client muxes them into this session. None outside
         # a turn.
         self._turn_game_id: str | None = None
+        # Round cap for verifier sub-runs this turn. Set in run() from the
+        # caller's setting; the module default applies outside a turn.
+        self._verifier_max_rounds: int = VERIFIER_MAX_ROUNDS
+        # True if any delegate's verifier sub-run capped out this turn.
+        self._verifier_round_cap_hit: bool = False
         # In-mem buffer of events emitted by the current/most-recent
         # turn. Reset on run() start, cleared on analysis stop. Lets a
         # client reconnecting mid-analysis rehydrate the panel.
@@ -536,20 +646,29 @@ class AIAnalysisCoordinator:
         provider: LLMProvider | None = None,
         mode: PromptMode = "coach",
         user_message: str | None = None,
+        played_uci: str | None = None,
+        max_tool_rounds: int = MAX_TOOL_ROUNDS,
+        verifier_max_rounds: int = VERIFIER_MAX_ROUNDS,
     ) -> None:
         """Run one analysis turn end-to-end.
 
         Loops: provider round -> on tool_use, dispatch via registry,
         append assistant + tool_result, next round. Stops when the model
-        returns without a tool_use or MAX_TOOL_ROUNDS is reached. Emits
+        returns without a tool_use or `max_tool_rounds` is reached. Emits
         a terminal ai_info event on every exit path so the UI never
-        hangs.
+        hangs. `max_tool_rounds`/`verifier_max_rounds` default to the
+        env-backed module caps; the UI overrides them per turn.
 
         `user_message` carries the game context (FEN + SAN history) the
         agent needs to actually analyze something. Built by the caller
         (`api/ai.py` for live play) via `build_initial_user_message`.
         None falls back to an empty user message for tests that don't
         care about position context.
+
+        `played_uci` is the move actually played from the reviewed
+        position (commentator mode); it seeds the alternative gate so the
+        model must recommend a DIFFERENT move before endorsing it. Ignored
+        outside commentator mode.
         """
         active = provider or self._provider
         system_prompt = assemble_system_prompt(mode, tools=self._registry.specs())
@@ -560,12 +679,16 @@ class AIAnalysisCoordinator:
             self._active_provider = active
             self._turn_context = opening_user_content
             self._turn_game_id = game_id
+            self._verifier_max_rounds = verifier_max_rounds
+            # OR'd true by any delegate whose verifier sub-run hits its round
+            # cap this turn; surfaced once on the done event (gear note).
+            self._verifier_round_cap_hit = False
             self._seq = 0
             self._replay_buffer = []
             messages: list[Message] = [{"role": "user", "content": opening_user_content}]
             tool_schemas = self._registry.schemas() or None
             has_recommend_move = any(
-                t.get("name") == "recommend_move"
+                t.get("name") == RECOMMEND_MOVE_TOOL_NAME
                 for t in (tool_schemas or [])
             )
             done_payload: dict = {"done": True}
@@ -583,7 +706,7 @@ class AIAnalysisCoordinator:
                     registry=self._registry,
                     system_prompt=system_prompt,
                     tool_schemas=tool_schemas,
-                    max_rounds=MAX_TOOL_ROUNDS,
+                    max_rounds=max_tool_rounds,
                     emit=self._emit,
                     game_id=game_id,
                     provider=active,
@@ -592,6 +715,8 @@ class AIAnalysisCoordinator:
                         _RECOMMEND_NUDGE_PROMPTS[mode] if has_recommend_move else None
                     ),
                     track_recommend=has_recommend_move,
+                    # Only the commentator reviews a played move; coach has none.
+                    played_uci=played_uci if mode == _COMMENTATOR_MODE else None,
                 )
                 recommended_uci: str | None = None
                 recommended_depth: int | None = None
@@ -599,25 +724,41 @@ class AIAnalysisCoordinator:
                     result = await self._run_loop(messages, config)
                     recommended_uci = result.recommended_uci
                     recommended_depth = result.recommended_depth
+                    # A delegate's verifier sub-run that capped out this turn
+                    # never produced a verdict; surface the gear note so the
+                    # user can raise the verifier-rounds setting.
+                    if self._verifier_round_cap_hit:
+                        done_payload["verifier_round_cap"] = True
                     if result.round_cap_hit:
                         # Loop hit the guardrail, not a natural answer;
                         # lets the UI surface "stopped early; raise the
                         # cap in Settings" if it wants to.
                         done_payload["round_cap"] = True
                         log.warning(
-                            "AI agent loop hit round cap (%d); raise SV_AI_MAX_TOOL_ROUNDS if intentional",
-                            MAX_TOOL_ROUNDS,
+                            "AI agent loop hit round cap (%d); raise the Max tool rounds setting if intentional",
+                            max_tool_rounds,
                         )
                     elif not result.text_published:
                         # Model exited the loop with zero user-facing
                         # text (reasoning-only models, refusals).
                         done_payload["no_response"] = True
                     elif has_recommend_move and recommended_uci is None:
-                        # Naturally ended without an accepted move despite
-                        # the repeated nudge -- distinct from a round-cap so
-                        # the UI says "no move chosen", not "raise the cap".
-                        done_payload["no_recommendation"] = True
-                        log.info("AI turn ended with no accepted recommend_move")
+                        if result.gated_uci is not None:
+                            # The model committed a move but never examined an
+                            # alternative; rather than ship nothing, fall back
+                            # to its pick and flag it unvetted on the payload.
+                            # The verifier still runs on it. (No client renders
+                            # the flag yet -- see frontend follow-up.)
+                            recommended_uci = result.gated_uci
+                            recommended_depth = result.gated_depth
+                            done_payload["unvetted"] = True
+                            log.info("AI turn fell back to unvetted move %s", recommended_uci)
+                        else:
+                            # Naturally ended without any move despite the
+                            # repeated nudge -- distinct from a round-cap so the
+                            # UI says "no move chosen", not "raise the cap".
+                            done_payload["no_recommendation"] = True
+                            log.info("AI turn ended with no accepted recommend_move")
                 except asyncio.CancelledError:
                     done_payload["cancelled"] = True
                     raise
@@ -641,9 +782,11 @@ class AIAnalysisCoordinator:
                                 move, recommended_depth, self._cancel_token
                             )
                             if payload is not None:
+                                if done_payload.get("unvetted"):
+                                    payload["unvetted"] = True
                                 await self._emit(
                                     Event(
-                                        kind="ai_recommendation",
+                                        kind=EVT_AI_RECOMMENDATION,
                                         game_id=game_id,
                                         payload=payload,
                                     )
@@ -658,7 +801,7 @@ class AIAnalysisCoordinator:
                     await transcript.turn_end(done_payload)
                     await self._emit(
                         Event(
-                            kind="ai_info",
+                            kind=EVT_AI_INFO,
                             game_id=game_id,
                             payload=done_payload,
                         )
@@ -690,7 +833,22 @@ class AIAnalysisCoordinator:
         text_parts: list[str] = []
         recommended_uci: str | None = None
         recommended_depth: int | None = None
+        # Latest move the gate blocked for lack of an alternative; the
+        # turn falls back to it if it never gets a vetted recommendation.
+        gated_uci: str | None = None
+        gated_depth: int | None = None
         any_tool_called = False
+        # Alternative-examined gate: UCIs committed by prior recommend_move
+        # calls this turn. See _alternative_examined. Seeded with the played
+        # move (commentator) so endorsing it requires a different recommend
+        # first -- the played move is the subject, not an alternative to it.
+        examined_uci: set[str] = set()
+        if config.played_uci:
+            examined_uci.add(config.played_uci)
+        # Positions the model examined via fen-taking tools this turn, keyed
+        # by FEN (dedup). Fed to the prose validators so a move/piece legal
+        # in an examined line isn't flagged. See _validate_round_text.
+        examined_boards: dict[str, chess.Board] = {}
         nudge_sent = False
         # Narrator: re-nudge toward an accepted recommend_move each clean
         # exit until one lands, but stop once a nudge draws no new attempt.
@@ -730,7 +888,7 @@ class AIAnalysisCoordinator:
                     text_parts.append(chunk.text)
                     await emit(
                         Event(
-                            kind="ai_info",
+                            kind=EVT_AI_INFO,
                             game_id=game_id,
                             payload={"delta": chunk.text, "round": round_index},
                         )
@@ -738,7 +896,7 @@ class AIAnalysisCoordinator:
                 elif chunk.kind == "thinking" and chunk.text:
                     await emit(
                         Event(
-                            kind="ai_thinking",
+                            kind=EVT_AI_THINKING,
                             game_id=game_id,
                             payload={"delta": chunk.text, "round": round_index},
                         )
@@ -755,16 +913,19 @@ class AIAnalysisCoordinator:
             # Validate every round's prose, even when a tool_use follows.
             # After a move is recommended, the closing prose is a live-position
             # plan -- drop the commentator history walk (committed=...) below.
-            illegal, false_claims, castle_violations = (
+            illegal, continuations, false_claims, castle_violations, attribution = (
                 self._validate_round_text(
                     round_chunks, mode, committed=recommended_uci is not None,
+                    extra_boards=list(examined_boards.values()),
                 )
             )
             if (
                 pending_tool is None
                 and not illegal
+                and not continuations
                 and not false_claims
                 and not castle_violations
+                and not attribution
             ):
                 # Natural exit. Completeness nudge: narrator re-nudges each
                 # clean exit until a move is accepted (stopping on a stall);
@@ -829,7 +990,7 @@ class AIAnalysisCoordinator:
                     # Surface the call to the UI only on a real dispatch.
                     await emit(
                         Event(
-                            kind="ai_tool_call",
+                            kind=EVT_AI_TOOL_CALL,
                             game_id=game_id,
                             payload={
                                 "round": round_index,
@@ -858,7 +1019,7 @@ class AIAnalysisCoordinator:
                         last_call = (key, tool_output)
                     await emit(
                         Event(
-                            kind="ai_tool_call_complete",
+                            kind=EVT_AI_TOOL_CALL_COMPLETE,
                             game_id=game_id,
                             payload={
                                 "round": round_index,
@@ -867,29 +1028,53 @@ class AIAnalysisCoordinator:
                             },
                         )
                     )
-                await config.transcript.tool_result(
-                    round_index, pending_tool.tool_use_id, tool_output
-                )
+                # Track positions the model examined via fen-taking tools
+                # this turn, for the prose validators.
+                if isinstance(tool_output, dict) and not tool_output.get("error"):
+                    if pending_tool.tool_name in _FEN_PARAM_TOOL_NAMES:
+                        examined = board_from_fen_input(pending_tool.tool_input)
+                        if examined is not None:
+                            examined_boards[examined.fen()] = examined
                 # Safe to read from a cached recommend_move result: the
-                # cached uci is identical to a fresh dispatch's.
-                if config.track_recommend and pending_tool.tool_name == "recommend_move":
+                # cached uci is identical to a fresh dispatch's. Gate runs
+                # before transcript/message so the model sees what we record.
+                if config.track_recommend and pending_tool.tool_name == RECOMMEND_MOVE_TOOL_NAME:
                     recommend_attempts += 1
                     if (
                         isinstance(tool_output, dict)
                         and tool_output.get("ok")
                         and isinstance(tool_output.get("uci"), str)
                     ):
-                        recommended_uci = tool_output["uci"]
-                        recommended_depth = tool_output.get("depth")
-                        # A conclusion alongside the accepting call counts
-                        # -- no separate post-move round needed. Prose in a
-                        # later round is handled at the natural-exit check.
-                        if round_had_text:
-                            prose_after_recommend = True
+                        uci = tool_output["uci"]
+                        # Alternative-examined gate: hold an otherwise-good
+                        # move until a prior recommend_move committed a
+                        # different one this turn. Record every committed uci
+                        # (cleared or gated) so a later recommend can clear
+                        # against it.
+                        gate_cleared = _alternative_examined(examined_uci, uci)
+                        examined_uci.add(uci)
+                        if not gate_cleared:
+                            # Remember the latest gated move so a stalled
+                            # turn can fall back to it instead of shipping
+                            # nothing (see run() unvetted fallback).
+                            gated_uci = uci
+                            gated_depth = tool_output.get("depth")
+                            tool_output = _alternative_required_result(tool_output)
+                        else:
+                            recommended_uci = uci
+                            recommended_depth = tool_output.get("depth")
+                            # A conclusion alongside the accepting call counts
+                            # -- no separate post-move round needed. Prose in a
+                            # later round is handled at the natural-exit check.
+                            if round_had_text:
+                                prose_after_recommend = True
+                await config.transcript.tool_result(
+                    round_index, pending_tool.tool_use_id, tool_output
+                )
                 if isinstance(tool_output, dict) and tool_output.get("error"):
                     await emit(
                         Event(
-                            kind="ai_tool_call_failed",
+                            kind=EVT_AI_TOOL_CALL_FAILED,
                             game_id=game_id,
                             payload={
                                 "round": round_index,
@@ -907,14 +1092,16 @@ class AIAnalysisCoordinator:
                         pending_tool.tool_use_id, tool_output, card=card,
                     )
                 )
-            if illegal or false_claims or castle_violations:
+            if illegal or continuations or false_claims or castle_violations or attribution:
                 # After tool_result (if any) so every assistant tool_use
                 # has a matching tool_result before the next user message.
                 await self._append_corrective(
                     messages,
                     illegal=illegal,
+                    continuations=continuations,
                     false_claims=false_claims,
                     castle_violations=castle_violations,
+                    attribution=attribution,
                     game_id=game_id,
                     round_index=round_index,
                     mode=mode,
@@ -928,6 +1115,8 @@ class AIAnalysisCoordinator:
             final_text=final,
             recommended_uci=recommended_uci,
             recommended_depth=recommended_depth,
+            gated_uci=gated_uci,
+            gated_depth=gated_depth,
             round_cap_hit=round_cap_hit,
             text_published=text_published,
         )
@@ -1010,7 +1199,7 @@ class AIAnalysisCoordinator:
                 registry=self._verifier_registry,
                 system_prompt=system_prompt,
                 tool_schemas=tool_schemas,
-                max_rounds=VERIFIER_MAX_ROUNDS,
+                max_rounds=self._verifier_max_rounds,
                 emit=self._verifier_emit,
                 game_id=self._turn_game_id,
                 provider=provider,
@@ -1028,12 +1217,15 @@ class AIAnalysisCoordinator:
                 result = await self._run_loop(messages, config)
                 if result.round_cap_hit:
                     done_payload["round_cap"] = True
-                    # final_text is "" on a verifier cap (see _run_loop);
-                    # delegate maps that to no_verdict. Warn so a model that
-                    # never concludes in VERIFIER_MAX_ROUNDS is diagnosable.
+                    # Flag the turn so the done event can show the gear note
+                    # pointing at the verifier-rounds setting. final_text is
+                    # "" on a cap (see _run_loop); delegate maps that to
+                    # no_verdict. Warn so a never-concluding model is
+                    # diagnosable.
+                    self._verifier_round_cap_hit = True
                     log.warning(
                         "verifier sub-run hit round cap (%d) without a verdict; question=%r",
-                        VERIFIER_MAX_ROUNDS, question,
+                        self._verifier_max_rounds, question,
                     )
                 return result.final_text
             except Exception as exc:
@@ -1063,9 +1255,9 @@ class AIAnalysisCoordinator:
         # Shallow-copy the payload so a downstream subscriber that
         # mutates what it receives can't retroactively change replay.
         self._replay_buffer.append({
-            "kind": event.kind,
-            "payload": dict(event.payload),
-            "game_id": event.game_id,
+            ENVELOPE_KIND: event.kind,
+            ENVELOPE_PAYLOAD: dict(event.payload),
+            ENVELOPE_GAME_ID: event.game_id,
         })
         await self._bus.publish(event)
 
@@ -1082,8 +1274,10 @@ class AIAnalysisCoordinator:
         messages: list[Message],
         *,
         illegal: list[str],
+        continuations: list[str],
         false_claims: list[str],
         castle_violations: list[str],
+        attribution: list[str],
         game_id: str | None,
         round_index: int,
         mode: PromptMode,
@@ -1094,27 +1288,35 @@ class AIAnalysisCoordinator:
         parts: list[str] = []
         if illegal:
             parts.append(templates["illegal"].format(moves=", ".join(illegal)))
+        if continuations:
+            parts.append(templates["continuation"].format(lines=", ".join(continuations)))
         if false_claims:
             parts.append(templates["false_piece"].format(claims=", ".join(false_claims)))
         if castle_violations:
             parts.append(templates["castle"])
+        if attribution:
+            parts.append(templates["attribution"].format(moves=", ".join(attribution)))
         messages.append({
             "role": "user",
             "content": _CORRECTIVE_PREFIX + " ".join(parts),
         })
         log.info(
-            "AI agent loop: validator hits in round %d: moves=%s claims=%s castle=%s",
-            round_index, illegal, false_claims, castle_violations,
+            "AI agent loop: validator hits in round %d: moves=%s lines=%s "
+            "claims=%s castle=%s attribution=%s",
+            round_index, illegal, continuations, false_claims, castle_violations,
+            attribution,
         )
         await emit(
             Event(
-                kind="ai_corrective",
+                kind=EVT_AI_CORRECTIVE,
                 game_id=game_id,
                 payload={
                     "round": round_index + 1,
                     "illegal_moves": illegal,
+                    "illegal_continuations": continuations,
                     "false_claims": false_claims,
                     "castle_violations": castle_violations,
+                    "attribution_errors": attribution,
                 },
             )
         )
@@ -1122,34 +1324,48 @@ class AIAnalysisCoordinator:
     def _validate_round_text(
         self, chunks: list[ProviderChunk], mode: PromptMode, *,
         committed: bool = False,
-    ) -> tuple[list[str], list[str], list[str]]:
-        """Run all validators on a round's assembled text.
-        Returns (illegal_moves, false_piece_claims, castle_violations).
-        Empty triple when clean, when no board_provider is wired, or
-        when no live board is available. In commentator mode the
-        board sequence includes every prior position via move_stack
-        walk -- references to earlier-game pieces aren't flagged --
-        unless `committed`, which collapses the walk to the live board
-        for the post-recommendation closing prose."""
+        extra_boards: Sequence[chess.Board] = (),
+    ) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
+        """Run all validators on a round's assembled text. Returns
+        (illegal_moves, illegal_continuations, false_piece_claims,
+        castle_violations, attribution_errors). Empty quintuple when clean,
+        when no board_provider is wired, or when no live board is available.
+        In commentator mode the board sequence includes every prior position
+        via move_stack walk -- references to earlier-game pieces aren't
+        flagged -- unless `committed`, which collapses the walk to the live
+        board for the post-recommendation closing prose.
+
+        `extra_boards` are positions the model examined via fen-taking
+        tools this turn; the illegal-move, continuation, and piece-claim
+        checks treat a move/piece/line legal there as legitimate
+        projected-line reasoning. Castling and side-to-move attribution
+        stay live-position properties, so they ignore them."""
+        empty: tuple[list[str], ...] = ([], [], [], [], [])
         if self._board_provider is None:
-            return [], [], []
+            return empty
         board = self._board_provider()
         if board is None:
-            return [], [], []
+            return empty
         text = "".join(c.text for c in chunks if c.kind == "text" and c.text)
         if not text:
-            return [], [], []
+            return empty
         boards = _boards_for_validation(board, mode, committed=committed)
         # Verifier reasons about hypothetical lines, so a move token
         # ("after exd4...") is expected, not a live-move hallucination --
-        # skip illegal-move validation. Piece/castle guards still apply.
-        illegal = (
-            [] if mode == _VERIFIER_MODE else find_illegal_moves(text, boards)
+        # skip move and continuation validation. Piece/castle still apply.
+        skip_moves = mode == _VERIFIER_MODE
+        illegal = [] if skip_moves else find_illegal_moves(text, boards, extra_boards)
+        continuations = (
+            [] if skip_moves
+            else find_illegal_continuations(text, boards, extra_boards)
         )
+        attribution = [] if skip_moves else find_move_attribution_errors(text, boards)
         return (
             illegal,
-            find_false_piece_claims(text, boards),
+            continuations,
+            find_false_piece_claims(text, boards, extra_boards),
             find_castle_word_violations(text, boards),
+            attribution,
         )
 
     def _inject_card_once(
@@ -1197,7 +1413,10 @@ class AIAnalysisCoordinator:
             # the terminal done/cancelled event.
             raise
         except Exception as exc:
-            log.exception("tool %s raised", call.tool_name)
+            # Returned to the model as a structured error it recovers from
+            # (e.g. a provider 429 on a verifier sub-run), so the stack
+            # trace is noise -- log the message only.
+            log.error("tool %s raised: %s", call.tool_name, exc)
             return {"error": "tool_failed", "name": call.tool_name, "detail": str(exc)}
 
     async def cancel(self) -> None:

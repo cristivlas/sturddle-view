@@ -14,15 +14,22 @@ import {
   isPinnedToBottom,
   scrollToBottom,
 } from "./wb-utils.js";
+import { STORAGE_KEY } from "./storage-keys.js";
+import {
+  openSettings,
+  SETTINGS_TAB_ANALYSIS,
+  errorActionsFor,
+  buildToastActionButton,
+} from "./dialogs.js";
 
-const GEO_KEY       = "sturddle:ai:geo";
-const WIN_STATE_KEY = "sturddle:ai:winstate";
-const DOCKED_KEY    = "sturddle:ai:docked";
-const OPEN_KEY      = "sturddle:ai:open";
+const GEO_KEY       = STORAGE_KEY.AI_GEO;
+const WIN_STATE_KEY = STORAGE_KEY.AI_WIN_STATE;
+const DOCKED_KEY    = STORAGE_KEY.AI_DOCKED;
+const OPEN_KEY      = STORAGE_KEY.AI_OPEN;
 // Last model name shown in the panel title. Pinned at analyze-start;
 // reload restores so the title reflects what last ran, not what is
 // currently selected in Settings.
-const TITLE_MODEL_KEY = "sturddle:ai:title-model";
+const TITLE_MODEL_KEY = STORAGE_KEY.AI_TITLE_MODEL;
 
 // Status text shown next to a spinner while a turn is in flight. The
 // LLM may take seconds (model latency + engine tool calls) before any
@@ -36,7 +43,7 @@ const STATUS_TEXT = {
 };
 
 // Sticky open/closed pref for the Thinking disclosure block.
-const THINKING_OPEN_KEY = "sturddle:ai:thinking-open";
+const THINKING_OPEN_KEY = STORAGE_KEY.AI_THINKING_OPEN;
 
 // Label shown on the Thinking disclosure summary while a round's
 // thinking stream is still arriving. Swapped to "Thought for Ns" once
@@ -116,10 +123,12 @@ function buildBody() {
       ev.preventDefault();
       const hovered = root._hoveredTarget;
       const detailPre = hovered?.closest(".play-ai-tool-details-body");
+      const errorBlock = hovered?.closest(".play-ai-error");
       const prosePara = hovered?.closest(".play-ai-prose");
       const target = (detailPre && !detailPre.hidden)
         ? detailPre
-        : prosePara
+        : errorBlock
+        ?? prosePara
         ?? root._roundPanels.get(root._currentRound)?.para;
       if (!target) return;
       const sel = window.getSelection();
@@ -248,7 +257,7 @@ function ensureRoundPanel(root, roundIndex) {
   return entry;
 }
 
-function renderRevision({ details, summary }, { illegalMoves, falseClaims, castleViolations }) {
+function renderRevision({ details, summary }, { illegalMoves, illegalContinuations, falseClaims, castleViolations }) {
   details.hidden = false;
   summary.textContent = "";  // reset
   const head = document.createElement("strong");
@@ -257,6 +266,9 @@ function renderRevision({ details, summary }, { illegalMoves, falseClaims, castl
   const parts = [];
   if (illegalMoves && illegalMoves.length) {
     parts.push(`not valid: ${illegalMoves.join(", ")}`);
+  }
+  if (illegalContinuations && illegalContinuations.length) {
+    parts.push(`bad line: ${illegalContinuations.join("; ")}`);
   }
   if (falseClaims && falseClaims.length) {
     parts.push(falseClaims.map((c) => `no ${c}`).join(", "));
@@ -288,7 +300,18 @@ const TOOL_FRIENDLY_LABELS = {
   delegate:       "Verifying line",
 };
 
-function friendlyToolLabel(name) {
+// Tools whose label shows the actual move under consideration ("Considering
+// Nd3"). Maps the tool to the verb; the move SAN from input.move is appended.
+const MOVE_TOOL_VERBS = {
+  recommend_move: "Considering",
+  validate_move:  "Validating",
+  delegate:       "Verifying",
+};
+
+function friendlyToolLabel(name, input) {
+  const move = input && typeof input.move === "string" ? input.move.trim() : "";
+  const verb = MOVE_TOOL_VERBS[name];
+  if (verb && move) return `${verb} ${move}`;
   return TOOL_FRIENDLY_LABELS[name] || name;
 }
 
@@ -447,7 +470,7 @@ export function appendAiToolCall({
     line.append(dot);
     const label = document.createElement("span");
     label.className = "play-ai-tool-label";
-    label.textContent = friendlyToolLabel(name);
+    label.textContent = friendlyToolLabel(name, input);
     line.append(label);
     const args = formatToolArgs(input);
     const raw = args ? `${name}(${args})` : `${name}()`;
@@ -482,13 +505,23 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
   if (!inst.body || !toolUseId) return;
   const line = inst.body._toolCallNodes.get(toolUseId);
   if (!line) return;
+  // Idempotent: replay-on-reconnect can re-dispatch this event for the same
+  // row; appending the suffix/gear twice would stack them.
+  if (line.classList.contains("play-ai-tool-call-failed")) return;
   line.classList.add("play-ai-tool-call-failed");
   const suffix = detail ? `${error}: ${detail}` : error;
   const pre = line.querySelector(".play-ai-tool-details-body");
-  if (pre) pre.textContent = `${pre.textContent}\n${suffix}`;
+  if (pre) {
+    pre.textContent = `${pre.textContent}\n${suffix}`;
+    // Known error codes get the same inline action (gear -> Settings) the
+    // toast path uses, appended inside the detail body next to the message.
+    for (const a of errorActionsFor(error)) {
+      pre.append(" ", buildToastActionButton(a));
+    }
+  }
 }
 
-export function noteAiRevision({ round, illegalMoves, falseClaims, castleViolations }) {
+export function noteAiRevision({ round, illegalMoves, illegalContinuations, falseClaims, castleViolations }) {
   if (!inst.body) return;
   // The correction at `round` overrules `round - 1`. Host the revision
   // banner on the overruled round's OWN panel and tuck its prose into
@@ -497,7 +530,7 @@ export function noteAiRevision({ round, illegalMoves, falseClaims, castleViolati
   if (round <= 0) return;
   const prev = inst.body._roundPanels.get(round - 1);
   if (!prev) return;
-  const payload = { illegalMoves, falseClaims, castleViolations };
+  const payload = { illegalMoves, illegalContinuations, falseClaims, castleViolations };
   // Self-correct effect: strike the prose in place for a beat, THEN
   // reveal the banner and collapse the prose into it -- so the user
   // sees the model scratch its claim before it's tucked away. The
@@ -548,11 +581,35 @@ export function appendAiDelta(text, roundIndex = 0) {
   });
 }
 
+// A round-cap note with a gear that opens Settings -> Analysis. Shared by
+// the narrator tool-call cap and the verifier-rounds cap (same tab).
+function _roundCapNote(message) {
+  const note = document.createElement("div");
+  note.className = "play-ai-roundcap";
+  const text = document.createElement("span");
+  text.textContent = message;
+  const gear = document.createElement("wa-icon");
+  gear.name = "gear";
+  gear.className = "play-ai-roundcap-gear";
+  gear.setAttribute("role", "button");
+  gear.setAttribute("tabindex", "0");
+  gear.setAttribute("aria-label", "Open AI settings");
+  const open = () => openSettings(SETTINGS_TAB_ANALYSIS);
+  gear.addEventListener("click", open);
+  gear.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+  });
+  note.append(text, gear);
+  return note;
+}
+
+
 export function markAiDone({
   cancelled = false,
   error = null,
   errorDetail = null,
   roundCap = false,
+  verifierRoundCap = false,
   noResponse = false,
   noRecommendation = false,
 } = {}) {
@@ -602,11 +659,18 @@ export function markAiDone({
       slot.append(block);
       return;
     }
+    // Advisory: a verification step capped out. The main analysis may have
+    // completed fine, so render the note without returning -- it sits above
+    // any other terminal marker below.
+    if (verifierRoundCap) {
+      slot.append(_roundCapNote(
+        "A verification step stopped early at its round cap. Raise \"Verifier rounds\" for fuller checks.",
+      ));
+    }
     if (roundCap) {
-      const note = document.createElement("div");
-      note.className = "play-ai-roundcap";
-      note.textContent = "Stopped early at the tool-call cap. Raise SV_AI_MAX_TOOL_ROUNDS to allow more rounds.";
-      slot.append(note);
+      slot.append(_roundCapNote(
+        "Stopped early at the tool-call cap. Raise \"Max rounds\" to allow more rounds.",
+      ));
       return;
     }
     if (noResponse) {

@@ -25,6 +25,12 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 import chess
 
 from ..env_utils import env_int as _env_int
+from ..events import (
+    ENVELOPE_KIND,
+    ENVELOPE_PAYLOAD,
+    EVT_TOURNAMENT_STATUS,
+    EVT_TOURNAMENT_UPDATE,
+)
 from .pgn_reconcile import (
     PendingMatch,
     ReconciledMatch,
@@ -210,8 +216,11 @@ def wrap_event_for_bus(kind: str, payload: dict) -> dict:
     runner's original event kind.
     """
     if kind == "status_change":
-        return {"kind": "tournament_status", "payload": payload}
-    return {"kind": "tournament_update", "payload": {"kind": kind, **payload}}
+        return {ENVELOPE_KIND: EVT_TOURNAMENT_STATUS, ENVELOPE_PAYLOAD: payload}
+    return {
+        ENVELOPE_KIND: EVT_TOURNAMENT_UPDATE,
+        ENVELOPE_PAYLOAD: {"kind": kind, **payload},
+    }
 
 
 class TournamentBusyError(Exception):
@@ -450,7 +459,7 @@ class Orchestrator:
             try:
                 await self._runner.stop()
             except Exception:
-                log.exception("rollback: runner.stop() failed")
+                log.error("rollback: runner.stop() failed", exc_info=True)
             # Roll back the active claim so a failed start doesn't lock
             # out the next attempt.
             self._active_id = None
@@ -541,7 +550,7 @@ class Orchestrator:
                     )
                     await self._emit_status(updated)
                 except Exception:
-                    log.exception("failed to persist terminal status for %s", active_id)
+                    log.error("failed to persist terminal status for %s", active_id, exc_info=True)
                 finally:
                     self._proxy_secret = None
                     # Dissolve pairs first so their pending entries are
@@ -556,7 +565,7 @@ class Orchestrator:
                         try:
                             await self._pgn_tailer.finalize()
                         except Exception:
-                            log.exception("PGN tailer finalize failed")
+                            log.error("PGN tailer finalize failed", exc_info=True)
                         self._pgn_tailer = None
                     self._active_id = None
                     self._reset_pairing_state()
@@ -588,13 +597,13 @@ class Orchestrator:
             hist = self._event_history.setdefault(
                 tid, deque(maxlen=EVENT_HISTORY_MAX)
             )
-            hist.append({"kind": kind, "payload": payload})
+            hist.append({ENVELOPE_KIND: kind, ENVELOPE_PAYLOAD: payload})
         if self._broadcast is None:
             return
         try:
             await self._broadcast(kind, payload)
         except Exception:
-            log.exception("broadcast callback raised for %s", kind)
+            log.error("broadcast callback raised for %s", kind, exc_info=True)
 
     def event_history(self, tournament_id: str) -> list[dict]:
         """Recent emitted events for a tournament, oldest first.
@@ -983,7 +992,7 @@ class Orchestrator:
             try:
                 await self._pgn_tailer.start()
             except Exception:
-                log.exception("PGN tailer start failed")
+                log.error("PGN tailer start failed", exc_info=True)
 
     async def _maybe_stop_tailer(self, reason: str) -> None:
         """Stop the tailer if conditions still hold. Re-checks at task
@@ -999,7 +1008,7 @@ class Orchestrator:
             try:
                 await self._pgn_tailer.stop()
             except Exception:
-                log.exception("PGN tailer stop failed")
+                log.error("PGN tailer stop failed", exc_info=True)
 
     def _schedule_tailer_start(self, reason: str) -> None:
         t = asyncio.create_task(self._maybe_start_tailer(reason))

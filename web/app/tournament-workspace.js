@@ -18,6 +18,8 @@ import {
   LIVE_MIN_WIDTH, LIVE_MIN_HEIGHT, DEBUG_WATCH,
 } from "./tournament-live-game.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
+import { APP_EVT } from "./app-events.js";
+import { STORAGE_KEY } from "./storage-keys.js";
 import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
 import { attachColumnResize } from "./col-resize.js";
 import { apiErrorDetail, confirm, toast } from "./dialogs.js";
@@ -30,8 +32,8 @@ import {
 } from "./wb-utils.js";
 import { createSlotGrid, SLOT_GAP } from "./workspace-slot-grid.js";
 
-const STORAGE_KEY_PREFIX = "sturddle:workspace:";
-const STANDINGS_COL_PCTS_KEY = "sturddle:tournaments:standingsColPcts";
+const STORAGE_KEY_PREFIX = STORAGE_KEY.WORKSPACE_PREFIX;
+const STANDINGS_COL_PCTS_KEY = STORAGE_KEY.TOURNAMENTS_STANDINGS_COL_PCTS;
 const STANDINGS_DEFAULT_PCTS = [25, 7, 7, 7, 7, 7, 8, 14];
 const EVENT_LOG_LIMIT = 500;
 
@@ -77,13 +79,11 @@ export function clearWorkspaceState(id) {
 
 
 const LAYOUT = Object.freeze({ NONE: 0, TIDY: 1, TILE: 2, SNAP: 3 });
-const LAYOUT_STORAGE_KEY = "sturddle:active-layout";
 
 let activeWorkspace = null;
-let activeLayout = Number(localStorage.getItem(LAYOUT_STORAGE_KEY) ?? LAYOUT.NONE);
+let activeLayout = LAYOUT.NONE;
 function setLayout(mode) {
   activeLayout = mode;
-  localStorage.setItem(LAYOUT_STORAGE_KEY, mode);
 }
 
 
@@ -104,6 +104,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // navigation). lastGeometry holds last-known position/size per key so
   // closed slots can carry geometry forward into the next snapshot.
   const restoreFromSaved = hasOpenWindows(savedState);
+  activeLayout = restoreFromSaved ? (savedState._layout ?? LAYOUT.NONE) : LAYOUT.NONE;
   // Min sizes scale with the root font size. 280px / 320px / 120px at
   // default 16px match the previous hardcoded values; em keeps the
   // proportions intact when the user changes font size.
@@ -269,10 +270,6 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   };
 
   const LAYOUT_NAME = { 0: "NONE", 1: "TIDY", 2: "TILE", 3: "SNAP" };
-  const OVERFLOW_X_OFFSET = 24;
-  // Counts consecutive overflow restores in TIDY mode (grid full); reset on
-  // successful slot claim so the cascade restarts from the left edge.
-  let overflowRestoreCount = 0;
 
   function setShadow(wb, on) {
     wb.g?.classList.toggle("no-shadow", !on);
@@ -309,15 +306,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
           wb._justRestored = true;
           wb.resize(c.w, c.h).move(c.x, c.y);
           setShadow(wb, false);
-          overflowRestoreCount = 0;
         } else {
-          const x = Math.min(
-            left + overflowRestoreCount * OVERFLOW_X_OFFSET,
-            Math.max(left, window.innerWidth - wb.width),
-          );
-          wb.move(x, top);
-          setShadow(wb, true);
-          overflowRestoreCount++;
+          // No free slot: the grid shrank (e.g. browser resized while this
+          // window was maximized) so the stale slot positions no longer fit.
+          // A single-slot claim can't recover -- re-tidy the whole set, which
+          // re-grids survivors and minimizes any genuine overflow.
+          requestAnimationFrame(() => tidy({ preserveMin: true }));
         }
       }
     } else if (activeLayout === LAYOUT.TILE || activeLayout === LAYOUT.SNAP) {
@@ -432,6 +426,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         : { open: false, ...lastGeometry[key], min: false, max: false, z: 0 };
     }
     state.live = snapshotLive();
+    state._layout = activeLayout;
     return state;
   }
 
@@ -1019,7 +1014,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
         }
         // Live windows listening for this pair_id will repaint
         // their banner; no-op if window already closed.
-        window.dispatchEvent(new CustomEvent("sturddle:reconciled", {
+        window.dispatchEvent(new CustomEvent(APP_EVT.RECONCILED, {
           detail: {
             pairId: pid,
             result: evt.payload.result,
@@ -1184,10 +1179,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   }
   const onBeforeUnload = () => saveState(tournament.id, snapshot());
   window.addEventListener("beforeunload", onBeforeUnload);
-  window.addEventListener("sturddle:connection", onReconnect);
-  window.addEventListener("sturddle:livegame-closed", refreshWatchButtons);
+  window.addEventListener(APP_EVT.CONNECTION, onReconnect);
+  window.addEventListener(APP_EVT.LIVEGAME_CLOSED, refreshWatchButtons);
   const onLiveGameClosedReapply = () => { if (activeLayout !== LAYOUT.TIDY) requestAnimationFrame(reapplyLayout); };
-  window.addEventListener("sturddle:livegame-closed", onLiveGameClosedReapply);
+  window.addEventListener(APP_EVT.LIVEGAME_CLOSED, onLiveGameClosedReapply);
 
   let resizeTimer = null;
   const onResize = () => {
@@ -1196,9 +1191,13 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       const all = openWindows();
       const anyMax = all.some(wb => wb.max);
       for (const wb of all) if (wb.max) { wb.restore(); wb.maximize(); }
-      if (!anyMax) {
-        if (activeLayout === LAYOUT.TIDY) tidy({ preserveMin: true });
-        else if (activeLayout === LAYOUT.TILE) tile(null, { preserveMin: true, reserveDock: true });
+      if (activeLayout === LAYOUT.TIDY) {
+        // tidy() skips the maximized window (preserveMin) and re-grids the
+        // rest, so survivors track the new viewport even mid-maximize. TILE/
+        // SNAP reflow would unmaximize, so they wait until nothing is maxed.
+        tidy({ preserveMin: true });
+      } else if (!anyMax) {
+        if (activeLayout === LAYOUT.TILE) tile(null, { preserveMin: true, reserveDock: true });
         else if (activeLayout === LAYOUT.SNAP) snap();
       }
     }, 150);
@@ -1235,12 +1234,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (finalized) return;
     finalized = true;
     window.removeEventListener("beforeunload", onBeforeUnload);
-    window.removeEventListener("sturddle:connection", onReconnect);
-    window.removeEventListener("sturddle:livegame-closed", refreshWatchButtons);
-    window.removeEventListener("sturddle:livegame-closed", onLiveGameClosedReapply);
+    window.removeEventListener(APP_EVT.CONNECTION, onReconnect);
+    window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, refreshWatchButtons);
+    window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, onLiveGameClosedReapply);
     detachResizeListeners();
     if (liveWatcherAttached) {
-      window.removeEventListener("sturddle:livegame-closed", onLiveGameClosed);
+      window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, onLiveGameClosed);
       liveWatcherAttached = false;
     }
     // User X-closed the last window: persist a dismissed snapshot so a
@@ -1248,9 +1247,12 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     if (!explicitlyClosed) {
       saveState(tournament.id, { ...snapshot(), _closed: true });
     }
-    if (activeWorkspace === workspace) activeWorkspace = null;
+    if (activeWorkspace === workspace) {
+      activeWorkspace = null;
+      activeLayout = LAYOUT.NONE;
+    }
     // Re-sync the Window menu (the user may have closed via X, not the menu).
-    window.dispatchEvent(new CustomEvent("sturddle:workspace-closed"));
+    window.dispatchEvent(new CustomEvent(APP_EVT.WORKSPACE_CLOSED));
   }
 
   function tearDown() {
@@ -1263,7 +1265,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
     // live window closes.
     if (getLiveWindows().length > 0) {
       if (!liveWatcherAttached) {
-        window.addEventListener("sturddle:livegame-closed", onLiveGameClosed);
+        window.addEventListener(APP_EVT.LIVEGAME_CLOSED, onLiveGameClosed);
         liveWatcherAttached = true;
       }
       return;

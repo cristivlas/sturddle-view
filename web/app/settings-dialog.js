@@ -3,6 +3,8 @@
 // text fields). No Save button. The X just closes.
 
 import { apiErrorDetail, inlineSvgIcon, pickFile, showDialog, toast } from "./dialogs.js";
+import { APP_EVT } from "./app-events.js";
+import { STORAGE_KEY } from "./storage-keys.js";
 import { mountEngineList } from "./engines.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
@@ -10,8 +12,8 @@ import { CHESS_CLOCK_SVG_INNER, CHESS_CLOCK_VIEW_BOX } from "./icons.js";
 import { mqMobile, mqNarrowDialog } from "./breakpoints.js";
 import { RIBBON_SIDE_KEY } from "./ribbon-window.js";
 
-const SETTINGS_ENGINES_COL_PCTS_KEY = "sturddle:engines:settings:colPcts3";
-export const PLAYER_NAME_KEY = "sturddle:player_name";
+const SETTINGS_ENGINES_COL_PCTS_KEY = STORAGE_KEY.ENGINES_SETTINGS_COL_PCTS;
+export const PLAYER_NAME_KEY = STORAGE_KEY.PLAYER_NAME;
 export const PLAYER_NAME_DEFAULT = "Human";
 const PLAYER_NAME_MAX_LEN = 32;
 
@@ -32,6 +34,19 @@ const AI_THINKING_BUDGET_TOKENS_KEY = "ai_thinking_budget_tokens";
 // Anthropic's minimum; the server also enforces this. UI prevents
 // submitting smaller values so the user gets feedback before the round trip.
 const AI_THINKING_BUDGET_MIN = 1024;
+const AI_MAX_TOOL_ROUNDS_KEY = "ai_max_tool_rounds";
+const AI_VERIFIER_MAX_ROUNDS_KEY = "ai_verifier_max_rounds";
+// Server enforces the same floor; UI mirrors it for pre-roundtrip feedback.
+const AI_ROUNDS_MIN = 1;
+
+// Analysis-mode dropdown: a friendlier face for the ai_enabled bool.
+// "Engine only" = ai_enabled false (plain engine); "AI analysis" = true.
+const AI_MODE_OFF = "engine";
+const AI_MODE_ON = "ai";
+const AI_MODE_OPTIONS = [
+  [AI_MODE_OFF, "Engine only"],
+  [AI_MODE_ON, "AI analysis"],
+];
 
 // Persisted unit is always seconds (float). The UI picks the most natural
 // display unit on load (largest unit with no fractional remainder) and
@@ -158,7 +173,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const putSettings = async (patch) => {
         try {
           await api("PUT", "/settings", patch);
-          window.dispatchEvent(new CustomEvent("sturddle:settings-changed"));
+          window.dispatchEvent(new CustomEvent(APP_EVT.SETTINGS_CHANGED));
         } catch (e) {
           toast(`Save failed: ${apiErrorDetail(e)}`, { variant: "danger" });
         }
@@ -168,7 +183,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const putTournamentSettings = async (patch) => {
         try {
           tournamentInitial = await api("PUT", "/api/tournament-settings", patch);
-          window.dispatchEvent(new CustomEvent("sturddle:settings-changed"));
+          window.dispatchEvent(new CustomEvent(APP_EVT.SETTINGS_CHANGED));
         } catch (e) {
           toast(`Save failed: ${apiErrorDetail(e)}`, { variant: "danger" });
         }
@@ -285,7 +300,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         localStorage.setItem(RIBBON_SIDE_KEY, val);
         if (val === "float") {
           // Float is client-only -- no server PUT, so we must dispatch ourselves.
-          window.dispatchEvent(new CustomEvent("sturddle:settings-changed"));
+          window.dispatchEvent(new CustomEvent(APP_EVT.SETTINGS_CHANGED));
         } else {
           // putSettings dispatches sturddle:settings-changed after the PUT resolves.
           putSettings({ ribbon_side: val });
@@ -891,15 +906,29 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const analysisPanel = document.createElement("wa-tab-panel");
       analysisPanel.name = "analysis";
 
-      const aiEnabledRow = document.createElement("div");
-      aiEnabledRow.className = "settings-row";
-      const aiEnabledLabel = document.createElement("label");
-      aiEnabledLabel.textContent = "Use AI analysis";
-      const aiEnabled = document.createElement("wa-switch");
-      aiEnabled.size = "small";
-      if (initial[AI_ENABLED_KEY]) aiEnabled.setAttribute("checked", "");
-      if (noEngine) aiEnabled.setAttribute("disabled", "");
-      aiEnabledRow.append(aiEnabledLabel, aiEnabled);
+      // Analysis mode + Provider share one row, split 50/50 (settings-pair-row).
+      // Mode "Engine only" disables every AI field below, same as the old
+      // ai_enabled toggle being off.
+      const aiModeRow = document.createElement("div");
+      aiModeRow.className = "settings-row";
+      const aiModeLabel = document.createElement("label");
+      aiModeLabel.textContent = "Analysis mode";
+      const aiMode = document.createElement("wa-select");
+      aiMode.size = "small";
+      aiMode.setAttribute("distance", "4");
+      for (const [val, label] of AI_MODE_OPTIONS) {
+        const opt = document.createElement("wa-option");
+        opt.value = val;
+        opt.textContent = label;
+        aiMode.append(opt);
+      }
+      aiMode.value = initial[AI_ENABLED_KEY] ? AI_MODE_ON : AI_MODE_OFF;
+      if (noEngine) {
+        aiMode.value = AI_MODE_OFF;
+        aiMode.setAttribute("disabled", "");
+      }
+      aiModeRow.append(aiModeLabel, aiMode);
+      const isAiOn = () => aiMode.value === AI_MODE_ON;
 
       // Inline hint when no engine is configured: AI analysis depends
       // on the same engine the play / view perspectives use, so it
@@ -921,7 +950,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const aiProvider = document.createElement("wa-select");
       aiProvider.size = "small";
       aiProvider.setAttribute("distance", "4");
-      for (const [val, label] of [["anthropic", "Anthropic"], ["ollama", "Ollama"]]) {
+      for (const [val, label] of [["anthropic", "Anthropic"], ["gemini", "Gemini"], ["ollama", "Ollama"]]) {
         const opt = document.createElement("wa-option");
         opt.value = val;
         opt.textContent = label;
@@ -931,6 +960,11 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       // (like native <select>) drops a value with no matching option.
       aiProvider.value = initial[AI_PROVIDER_KEY] || "anthropic";
       aiProviderRow.append(aiProviderLabel, aiProvider);
+
+      // Mode + Provider on one 50/50 row.
+      const aiModeProviderRow = document.createElement("div");
+      aiModeProviderRow.className = "settings-pair-row";
+      aiModeProviderRow.append(aiModeRow, aiProviderRow);
 
       // Model: a dropdown populated from the provider's list_models API.
       // If the fetch fails (no key / unreachable / not implemented), the
@@ -1168,10 +1202,45 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       }, 400);
       aiThinkingBudget.addEventListener("input", persistThinkingBudget);
 
+      // Agent-loop round caps. Two independent guardrails: the narrator's
+      // per-turn round budget, and the tighter verifier sub-run budget.
+      const aiRoundsRow = document.createElement("div");
+      aiRoundsRow.className = "settings-row ai-row ai-rounds-row";
+
+      const makeRoundsInput = (key, label) => {
+        const input = document.createElement("wa-input");
+        input.type = "number";
+        input.size = "small";
+        input.setAttribute("label", label);
+        input.setAttribute("autocomplete", "off");
+        input.min = String(AI_ROUNDS_MIN);
+        input.step = "1";
+        input.value = String(initial[key] || AI_ROUNDS_MIN);
+        const persist = debounce(() => {
+          const n = Number(input.value);
+          if (!Number.isFinite(n) || n < AI_ROUNDS_MIN) return;
+          putSettings({ [key]: n });
+        }, 400);
+        input.addEventListener("input", persist);
+        return input;
+      };
+
+      const aiMaxToolRounds = makeRoundsInput(AI_MAX_TOOL_ROUNDS_KEY, "Max rounds");
+      aiMaxToolRounds.className = "ai-max-tool-rounds";
+      const aiVerifierMaxRounds = makeRoundsInput(
+        AI_VERIFIER_MAX_ROUNDS_KEY, "Verifier rounds"
+      );
+      aiVerifierMaxRounds.className = "ai-verifier-max-rounds";
+      aiRoundsRow.append(aiMaxToolRounds, aiVerifierMaxRounds);
+
+      // Credential shape per provider: key-based providers show the API
+      // key row; URL-based (Ollama) shows the base URL row. A set keeps
+      // adding a provider to a one-line change here.
+      const KEY_BASED_PROVIDERS = new Set(["anthropic", "gemini"]);
       function applyAiProviderVisibility() {
-        const isAnthropic = aiProvider.value === "anthropic";
-        aiKeyRow.style.display = isAnthropic ? "" : "none";
-        aiUrlRow.style.display = isAnthropic ? "none" : "";
+        const usesKey = KEY_BASED_PROVIDERS.has(aiProvider.value);
+        aiKeyRow.style.display = usesKey ? "" : "none";
+        aiUrlRow.style.display = usesKey ? "none" : "";
         // Budget visibility is owned by syncThinkingOptions (provider +
         // mode + adaptive-model interplay).
         syncThinkingOptions();
@@ -1251,22 +1320,24 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       // between the two lists. Pair each row with the input(s) inside it
       // that need the disabled attribute when the master toggle is off.
       const AI_ROWS = new Map([
-        ["provider",         { row: aiProviderRow,     inputs: [aiProvider] }],
+        ["mode-provider",    { row: aiModeProviderRow, inputs: [aiProvider] }],
         ["model",            { row: aiModelRow,        inputs: [aiModelSelect, aiModelInput] }],
         ["model-hint",       { row: aiModelHint,       inputs: [] }],
         ["api-key",          { row: aiKeyRow,          inputs: [aiKey] }],
         ["base-url",         { row: aiUrlRow,          inputs: [aiUrl] }],
         ["thinking-divider", { row: aiThinkingDivider, inputs: [] }],
+        ["rounds",           { row: aiRoundsRow,       inputs: [aiMaxToolRounds, aiVerifierMaxRounds] }],
         ["thinking",         { row: aiThinkingRow,     inputs: [aiThinkingMode, aiThinkingBudget] }],
       ]);
 
-      // Every AI-related input below the master toggle gets greyed
-      // out when the toggle is off. Values are retained (settings
-      // persist server-side); flipping the toggle back restores them.
+      // Every AI input gets greyed out when mode is "Engine only". The
+      // mode select itself is never locked -- it's the master control.
+      // Values are retained (settings persist server-side); switching back
+      // to "AI-driven" restores them.
       function applyAiEnabledLockout() {
-        const off = !aiEnabled.checked;
-        // Pull focus off the toggle before re-enabling fields so the
-        // user doesn't see a focus ring flash on an unrelated control.
+        const off = !isAiOn();
+        // Pull focus off the control before re-enabling fields so the user
+        // doesn't see a focus ring flash on an unrelated control.
         if (document.activeElement && typeof document.activeElement.blur === "function") {
           document.activeElement.blur();
         }
@@ -1277,21 +1348,20 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
           }
         }
       }
-      aiEnabled.addEventListener("change", () => {
-        putSettings({ [AI_ENABLED_KEY]: aiEnabled.checked });
+      aiMode.addEventListener("change", () => {
+        putSettings({ [AI_ENABLED_KEY]: isAiOn() });
         applyAiEnabledLockout();
-        if (aiEnabled.checked) refreshAiModels();
+        if (isAiOn()) refreshAiModels();
       });
 
-      analysisPanel.append(aiEnabledRow);
       if (aiNoEngineHint) analysisPanel.append(aiNoEngineHint);
       for (const { row } of AI_ROWS.values()) analysisPanel.append(row);
 
       // Initial state: hide the select until the first fetch tells us
-      // whether we have a real list. Lock fields based on the toggle.
+      // whether we have a real list. Lock fields based on the mode.
       showModelInput("");
       applyAiEnabledLockout();
-      if (aiEnabled.checked) refreshAiModels();
+      if (isAiOn()) refreshAiModels();
 
       // Map preserves insertion order by spec -- the iteration order here
       // IS the visual tab order. Each entry pairs the tab control with

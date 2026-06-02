@@ -16,6 +16,7 @@ from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
 from sturddle_view.llm import anthropic as anthropic_mod
 from sturddle_view.llm import ollama as ollama_mod
+from sturddle_view.llm import openai_compat as openai_compat_mod
 from sturddle_view.llm._errors import extract_error_message
 from sturddle_view.llm.anthropic import AnthropicProvider
 from sturddle_view.llm.ollama import OllamaProvider
@@ -301,6 +302,31 @@ def test_endpoint_returns_5xx_for_anthropic_stub_without_models(tmp_path):
         assert "API key" in r.json()["detail"]
 
 
+def test_endpoint_returns_models_for_gemini(tmp_path, monkeypatch):
+    from sturddle_view.llm import gemini as gemini_mod
+    # Native /v1beta/models shape; only generateContent models survive.
+    body = {"models": [
+        {"name": "models/gemini-2.5-flash",
+         "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/gemini-2.5-pro",
+         "supportedGenerationMethods": ["generateContent"]},
+    ]}
+    _install_fake_httpx(monkeypatch, gemini_mod, _FakeResponse(200, body))
+
+    with _client_for_provider(tmp_path, provider="gemini", api_key="k") as c:
+        r = c.get("/settings/ai/models")
+        assert r.status_code == 200, r.text
+        assert sorted(r.json()["models"]) == ["gemini-2.5-flash", "gemini-2.5-pro"]
+
+
+def test_endpoint_returns_5xx_for_gemini_without_key(tmp_path):
+    # No key -> GeminiProvider.list_models raises -> endpoint surfaces it.
+    with _client_for_provider(tmp_path, provider="gemini", api_key="") as c:
+        r = c.get("/settings/ai/models")
+        assert r.status_code == 502, r.text
+        assert "API key" in r.json()["detail"]
+
+
 def test_put_settings_does_not_evict_ollama_models(tmp_path, monkeypatch):
     """Settings changes no longer trigger eviction -- eviction is
     deferred to the next AI analysis turn so an in-flight turn can
@@ -334,6 +360,39 @@ def test_extract_error_message_anthropic_shape():
     # Anthropic wraps in {"type": "error", "error": {"type": "...", "message": "..."}}
     body = '{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}'
     assert extract_error_message(body) == "invalid x-api-key"
+
+
+def test_extract_error_message_gemini_array_shape():
+    # Gemini wraps the error object in a single-element list. Without
+    # unwrapping, the user saw the raw JSON (truncated mid-word by the
+    # error_detail cap) instead of the quota message.
+    body = '[{"error":{"code":429,"message":"You exceeded your current quota","status":"RESOURCE_EXHAUSTED"}}]'
+    assert extract_error_message(body) == "You exceeded your current quota"
+
+
+def test_extract_error_message_parses_body_over_cap():
+    # Regression: the body must be parsed in full, then the extracted
+    # message capped -- not the body capped before parsing. A real Gemini
+    # 429 body exceeds the cap; truncating it first would break json.loads
+    # and leak raw truncated JSON.
+    padding = "x" * 800  # pushes total body well past the 500-char cap
+    msg = "You exceeded your current quota"
+    body = (
+        '[{"error":{"code":429,"message":"' + msg + '",'
+        '"status":"RESOURCE_EXHAUSTED","details":"' + padding + '"}}]'
+    )
+    assert len(body) > 500
+    assert extract_error_message(body) == msg
+
+
+def test_extract_error_message_caps_long_message():
+    # An over-long message (e.g. a wall of HTML that parses to a string
+    # error) is capped so the bus payload stays small.
+    long_msg = "z" * 900
+    body = '{"error":"' + long_msg + '"}'
+    out = extract_error_message(body)
+    assert len(out) == 500
+    assert out == "z" * 500
 
 
 def test_extract_error_message_string_error_field():
@@ -450,7 +509,8 @@ async def test_ollama_stream_error_message_is_extracted_not_wrapped(monkeypatch)
     class _ShimHttpx:
         AsyncClient = lambda *a, **kw: _FakeStreamClient()  # noqa: E731
 
-    monkeypatch.setattr(ollama_mod, "httpx", _ShimHttpx)
+    # Streaming now runs through openai_compat; patch its httpx.
+    monkeypatch.setattr(openai_compat_mod, "httpx", _ShimHttpx)
 
     provider = OllamaProvider(base_url="http://fake", model="m")
     with pytest.raises(RuntimeError) as ei:

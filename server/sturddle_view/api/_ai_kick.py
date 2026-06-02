@@ -133,12 +133,16 @@ def _prompt_mode_for(hve) -> PromptMode:
     return _COACH_MODE
 
 
-def _build_user_message(hve) -> str | None:
+def _build_turn_inputs(hve) -> tuple[str | None, str | None]:
+    """Build (user_message, played_uci) for one turn from a single SAN walk.
+    played_uci is the move played from the position under review, to seed
+    the commentator's alternative gate -- None in play mode, at end of game,
+    or when the SAN won't parse (a missing seed only relaxes the gate)."""
     if hve is None:
-        return None
+        return None, None
     board = hve.current_board()
     if board is None:
-        return None
+        return None, None
     opening = hve.lookup_opening()
     # `*` means "result unknown / unfinished" in PGN; treat as absent.
     raw_result = hve.viewed_pgn_result()
@@ -148,6 +152,12 @@ def _build_user_message(hve) -> str | None:
     # review (view mode); None in play mode where there is no future.
     ply = len(board.move_stack)
     move_played = san_history[ply] if ply < len(san_history) else None
+    played_uci: str | None = None
+    if move_played:
+        try:
+            played_uci = board.parse_san(move_played).uci()
+        except ValueError:
+            played_uci = None
     annotations: list[str | None] | None = None
     root_annotation: str | None = None
     # Gate on the prompt persona, not Mode.VIEWING: keeps annotation
@@ -160,7 +170,7 @@ def _build_user_message(hve) -> str | None:
         annotations, root_annotation = _cap_annotations(
             raw_comments, raw_root, per_max, total_max,
         )
-    return build_initial_user_message(
+    message = build_initial_user_message(
         fen=board.fen(),
         san_history=san_history,
         engine_name=_short_engine_name(hve.engine_display_name()),
@@ -171,6 +181,7 @@ def _build_user_message(hve) -> str | None:
         annotations=annotations,
         root_annotation=root_annotation,
     )
+    return message, played_uci
 
 
 async def _evict_stale_ollama_models(base_url: str, target_model: str) -> None:
@@ -225,7 +236,7 @@ async def start_ai_turn(request: Request) -> None:
         await _evict_stale_ollama_models(base_url, s.ai_model or "")
     hve = request.app.state.hve
     game_id = getattr(hve, "game_id", None) if hve else None
-    user_message = _build_user_message(hve)
+    user_message, played_uci = _build_turn_inputs(hve)
     mode = _prompt_mode_for(hve)
     # Latest-start-wins: hard-stop any in-flight turn first. run() holds a
     # single lock for the whole turn, so without this the new turn queues
@@ -237,7 +248,9 @@ async def start_ai_turn(request: Request) -> None:
     try:
         provider = factory()
     except Exception as e:
-        log.exception("AI provider factory failed")
+        # Surfaced to the client as HTTP 500 with the message; the stack
+        # is noise (config/build failure, not an internal bug).
+        log.error("AI provider factory failed: %s", e)
         raise HTTPException(status_code=500, detail=f"AI provider error: {e}") from e
     # Pin the task on app.state so the event loop holds a strong ref --
     # asyncio GC can otherwise reap an unreferenced task mid-flight.
@@ -247,6 +260,9 @@ async def start_ai_turn(request: Request) -> None:
             provider=provider,
             user_message=user_message,
             mode=mode,
+            played_uci=played_uci,
+            max_tool_rounds=s.ai_max_tool_rounds,
+            verifier_max_rounds=s.ai_verifier_max_rounds,
         )
     )
     task.add_done_callback(_consume_task_exception)

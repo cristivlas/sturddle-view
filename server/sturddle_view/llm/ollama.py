@@ -1,16 +1,14 @@
-"""Ollama (OpenAI-compatible) provider.
+"""Ollama provider.
 
-Wire-format translation responsibility (canonical = Anthropic, spec
-§Providers): this provider receives messages + tools in Anthropic shape
-and translates to OpenAI's chat-completions shape on the wire. Mirror
-translation applies on the way back: OpenAI's streamed deltas and
-tool_calls are re-shaped into Anthropic-style `tool_use` ProviderChunks
-before the runner sees them.
+Speaks two wire formats. The OpenAI-compatible chat-completions path is
+the default and shares its translation + SSE loop with every other
+OpenAI-compat provider via `openai_compat` (canonical = Anthropic, spec
+§Providers). The native `/api/chat` path is Ollama-specific and used only
+when `think=true` is requested (the compat layer ignores thinking).
 
-Endpoint: `{base_url}/v1/chat/completions` with `stream=true`. Ollama's
-OpenAI-compatibility surface is good enough for chat + tool calling;
-we do NOT use its native /api/chat here because the canonical shape
-needs to stay one format.
+Endpoints: `{base_url}/v1/chat/completions` (compat) and
+`{base_url}/api/chat` (native). Both stream; both translate to/from the
+canonical Anthropic message/tool shape.
 """
 from __future__ import annotations
 
@@ -25,10 +23,29 @@ from ._errors import extract_error_message
 from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
 from .harmony_strip import flush_harmony_carry, strip_harmony_text
 from .inline_tool_calls import recover_inline_tool_calls
+from .openai_compat import (
+    MalformedToolArgumentsError,
+    inline_recovery_args,
+    messages_anthropic_to_openai,
+    openai_tool_call_to_provider_chunk,
+    stream_openai_compat,
+    tools_anthropic_to_openai,
+)
 from .transcript import Transcript
 
 
 log = logging.getLogger(__name__)
+
+# Re-exported for back-compat: tests and callers import these from the
+# ollama module. The implementations now live in openai_compat.
+__all__ = [
+    "DEFAULT_BASE_URL",
+    "MalformedToolArgumentsError",
+    "OllamaProvider",
+    "messages_anthropic_to_openai",
+    "openai_tool_call_to_provider_chunk",
+    "tools_anthropic_to_openai",
+]
 
 
 DEFAULT_BASE_URL = "http://localhost:11434"
@@ -44,100 +61,10 @@ _LIST_MODELS_SHOW_CONCURRENCY = 8
 # chat has its own (much longer) timeout elsewhere in this module.
 _CONTROL_TIMEOUT_S = 10.0
 
-# ----- Translation helpers (pure functions; covered by unit tests) -----
-
-
-def tools_anthropic_to_openai(tools: list[ToolWireSpec]) -> list[dict]:
-    """Anthropic {name, description, input_schema} ->
-    OpenAI {type, function: {name, description, parameters}}."""
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": t["name"],
-                "description": t.get("description", ""),
-                "parameters": t.get("input_schema", {}),
-            },
-        }
-        for t in tools
-    ]
-
-
-def messages_anthropic_to_openai(messages: list[Message]) -> list[dict]:
-    """Re-shape Anthropic-style messages into OpenAI's chat shape.
-
-    - user/assistant strings pass through.
-    - assistant content lists collapse text blocks into the `content`
-      string and tool_use blocks into `tool_calls`.
-    - user content lists carrying tool_results split into one
-      `role: tool` message per result (OpenAI requires that).
-    """
-    out: list[dict] = []
-    for m in messages:
-        role = m.get("role")
-        content = m.get("content")
-        if role == "assistant" and isinstance(content, list):
-            text_parts: list[str] = []
-            tool_calls: list[dict] = []
-            for block in content:
-                btype = block.get("type")
-                if btype == "text":
-                    text_parts.append(block.get("text", ""))
-                elif btype == "tool_use":
-                    tool_calls.append({
-                        "id": block.get("id", ""),
-                        "type": "function",
-                        "function": {
-                            "name": block.get("name", ""),
-                            "arguments": json.dumps(block.get("input", {})),
-                        },
-                    })
-            new_msg: dict = {
-                "role": "assistant",
-                "content": "".join(text_parts),
-            }
-            if tool_calls:
-                new_msg["tool_calls"] = tool_calls
-            out.append(new_msg)
-            continue
-        if role == "user" and isinstance(content, list):
-            # Collect tool_results into separate `tool` messages; mix
-            # of tool_result + free text is unusual but we leave any
-            # non-tool_result blocks in a residual user message.
-            residual_text: list[str] = []
-            for block in content:
-                btype = block.get("type")
-                if btype == "tool_result":
-                    out.append({
-                        "role": "tool",
-                        "tool_call_id": block.get("tool_use_id", ""),
-                        "content": block.get("content", ""),
-                    })
-                elif btype == "text":
-                    residual_text.append(block.get("text", ""))
-            if residual_text:
-                out.append({"role": "user", "content": "".join(residual_text)})
-            continue
-        # Plain string content (or anything we don't transform) passes through.
-        out.append({"role": role, "content": content})
-    return out
-
-
-class MalformedToolArgumentsError(RuntimeError):
-    """The model's accumulated tool_call.arguments is not valid JSON.
-
-    Carries the raw string so callers / transcripts can surface what the
-    model actually produced. This is the seam where a future JSON-repair
-    pass would hook in.
-    """
-    def __init__(self, tool_name: str, raw_arguments: str, parse_error: str) -> None:
-        super().__init__(
-            f"ollama: tool {tool_name!r} arguments are not valid JSON "
-            f"({parse_error}); raw={raw_arguments!r}"
-        )
-        self.tool_name = tool_name
-        self.raw_arguments = raw_arguments
-        self.parse_error = parse_error
+# ----- Native (/api/chat) translation helpers ------------------------
+# The OpenAI-compat translation lives in openai_compat.py (shared). The
+# helpers below are Ollama-native: tool messages carry no tool_call_id
+# and tool_calls use dict arguments + no id.
 
 
 def messages_anthropic_to_ollama_native(messages: list[Message]) -> list[dict]:
@@ -273,7 +200,7 @@ class OllamaProvider(LLMProvider):
             if resp.status_code != 200:
                 raise RuntimeError(
                     f"ollama /api/ps returned {resp.status_code}: "
-                    f"{extract_error_message(resp.text[:500])}"
+                    f"{extract_error_message(resp.text)}"
                 )
             body = resp.json()
             models = body.get("models") or []
@@ -292,7 +219,7 @@ class OllamaProvider(LLMProvider):
             if resp.status_code != 200:
                 raise RuntimeError(
                     f"ollama /v1/models returned {resp.status_code}: "
-                    f"{extract_error_message(resp.text[:500])}"
+                    f"{extract_error_message(resp.text)}"
                 )
             body = resp.json()
             data = body.get("data") or []
@@ -367,26 +294,16 @@ class OllamaProvider(LLMProvider):
                 transcript=transcript, round_index=round_index,
             )
         # Some local models stream tool calls as prose -- recover them
-        # transparently. XML shape handled unconditionally; the call-
-        # syntax shape (name(args) / name{args}) needs the tool-name
-        # set; positional-arg recovery (bare-JSON) needs ordered param
-        # names from the input_schema.
-        tool_names: set[str] = set()
-        tool_schemas: dict[str, list[str]] = {}
-        for t in tools or []:
-            n = t.get("name")
-            if not n:
-                continue
-            tool_names.add(n)
-            params = _ordered_param_names(t.get("input_schema") or {})
-            if params:
-                tool_schemas[n] = params
+        # transparently. XML shape handled unconditionally; call-syntax
+        # and positional bare-JSON shapes need the tool names + ordered
+        # param names that inline_recovery_args derives from the schema.
+        tool_names, tool_schemas = inline_recovery_args(tools)
         async for chunk in recover_inline_tool_calls(
             inner, tool_names=tool_names, tool_schemas=tool_schemas,
         ):
             yield chunk
 
-    async def _stream_openai_compat(
+    def _stream_openai_compat(
         self,
         system: str,
         messages: list[Message],
@@ -397,7 +314,8 @@ class OllamaProvider(LLMProvider):
     ) -> AsyncIterator[ProviderChunk]:
         # Assemble OpenAI-shaped request. System prompt is a separate
         # first message in OpenAI's API; coordinator passes it as a
-        # bare string so we wrap it here.
+        # bare string so we wrap it here. The SSE loop + translation back
+        # to ProviderChunks is shared (openai_compat).
         wire_messages: list[dict] = []
         if system:
             wire_messages.append({"role": "system", "content": system})
@@ -411,103 +329,15 @@ class OllamaProvider(LLMProvider):
         if tools:
             body["tools"] = tools_anthropic_to_openai(tools)
 
-        await self._tx_request(transcript, round_index, body)
-
-        url = f"{self._base_url}/v1/chat/completions"
-        # Per-line accumulator for tool_call deltas: id+name arrive once
-        # near the start, arguments stream as a concatenated string.
-        # Indexed by `index` field in the OpenAI delta protocol.
-        tool_call_buf: dict[int, dict] = {}
-        # Harmony marker carry-buffers. See harmony_strip.py -- gemma4
-        # and similar models leak `<|...|>` tokens into both visible
-        # content AND the reasoning channel; each needs its own carry
-        # because deltas interleave.
-        text_carry: list[str] = []
-        reason_carry: list[str] = []
-
-        async with httpx.AsyncClient(timeout=None) as client:
-            async with client.stream(
-                "POST",
-                url,
-                json=body,
-                headers={"Content-Type": "application/json"},
-            ) as resp:
-                if resp.status_code != 200:
-                    raw = (await resp.aread()).decode("utf-8", errors="replace")[:500]
-                    await self._tx_wire(transcript, round_index, f"HTTP {resp.status_code}: {raw}")
-                    raise RuntimeError(
-                        f"ollama API error {resp.status_code}: {extract_error_message(raw)}"
-                    )
-                async for line in resp.aiter_lines():
-                    if not line:
-                        continue
-                    # Capture every raw line BEFORE parsing so a crash
-                    # downstream still leaves the byte trail behind.
-                    await self._tx_wire(transcript, round_index, line)
-                    # OpenAI SSE: each chunk is "data: {...}". A
-                    # terminal "data: [DONE]" marks end of stream.
-                    if not line.startswith("data:"):
-                        continue
-                    payload = line[len("data:"):].strip()
-                    if not payload or payload == "[DONE]":
-                        continue
-                    try:
-                        evt = json.loads(payload)
-                    except json.JSONDecodeError as exc:
-                        raise RuntimeError(
-                            f"ollama: malformed SSE payload: {payload!r} ({exc})"
-                        ) from exc
-                    choices = evt.get("choices") or []
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta") or {}
-                    content = delta.get("content")
-                    if content:
-                        scrubbed = strip_harmony_text(content, text_carry)
-                        if scrubbed:
-                            yield ProviderChunk(kind="text", text=scrubbed)
-                    # Some Ollama models (e.g. nemotron-cascade) stream
-                    # chain-of-thought into `reasoning` and never fill
-                    # `content`. Surface as thinking so it lands in the
-                    # transcript labeled; the coordinator drops these
-                    # for the UI but counts the round.
-                    reasoning = delta.get("reasoning")
-                    if reasoning:
-                        scrubbed = strip_harmony_text(reasoning, reason_carry)
-                        if scrubbed:
-                            yield ProviderChunk(kind="thinking", text=scrubbed)
-                    tc_deltas = delta.get("tool_calls") or []
-                    for tcd in tc_deltas:
-                        idx = tcd.get("index", 0)
-                        slot = tool_call_buf.setdefault(idx, {
-                            "id": "",
-                            "type": "function",
-                            "function": {"name": "", "arguments": ""},
-                        })
-                        if tcd.get("id"):
-                            slot["id"] = tcd["id"]
-                        fn = tcd.get("function") or {}
-                        if fn.get("name"):
-                            slot["function"]["name"] = fn["name"]
-                        if fn.get("arguments"):
-                            slot["function"]["arguments"] += fn["arguments"]
-
-        # Surface any held-back partial that never completed into a
-        # marker, so user text containing literal `<` is not silently
-        # dropped at stream end.
-        tail = flush_harmony_carry(text_carry)
-        if tail:
-            yield ProviderChunk(kind="text", text=tail)
-        reason_tail = flush_harmony_carry(reason_carry)
-        if reason_tail:
-            yield ProviderChunk(kind="thinking", text=reason_tail)
-
-        # Emit accumulated tool_calls (if any) AFTER text streaming
-        # completes -- matches Anthropic's "text first, tool_use last"
-        # ordering that the coordinator's round_chunks reassembly
-        # expects.
-        for idx in sorted(tool_call_buf.keys()):
-            yield openai_tool_call_to_provider_chunk(tool_call_buf[idx])
+        return stream_openai_compat(
+            self,
+            url=f"{self._base_url}/v1/chat/completions",
+            body=body,
+            headers={"Content-Type": "application/json"},
+            error_label="ollama",
+            transcript=transcript,
+            round_index=round_index,
+        )
 
     async def _stream_native(
         self,
@@ -554,7 +384,7 @@ class OllamaProvider(LLMProvider):
                 headers={"Content-Type": "application/json"},
             ) as resp:
                 if resp.status_code != 200:
-                    raw = (await resp.aread()).decode("utf-8", errors="replace")[:500]
+                    raw = (await resp.aread()).decode("utf-8", errors="replace")
                     await self._tx_wire(transcript, round_index, f"HTTP {resp.status_code}: {raw}")
                     raise RuntimeError(
                         f"ollama API error {resp.status_code}: {extract_error_message(raw)}"
@@ -597,29 +427,5 @@ class OllamaProvider(LLMProvider):
         for i, tc in enumerate(emitted_tool_calls):
             synthetic_id = f"ollama-{round_index}-{i}"
             yield ollama_native_tool_call_to_provider_chunk(tc, synthetic_id)
-
-
-def _ordered_param_names(input_schema: dict) -> list[str]:
-    """Extract param names from a JSON Schema `input_schema`, ordered
-    by `required` first (in declared order) then any remaining
-    `properties` keys (dict insertion order). Used to drive
-    positional-arg recovery in inline-recovery's BareJsonFlavor."""
-    props = input_schema.get("properties") or {}
-    if not isinstance(props, dict):
-        return []
-    required = input_schema.get("required") or []
-    if not isinstance(required, list):
-        required = []
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for name in required:
-        if isinstance(name, str) and name in props and name not in seen:
-            ordered.append(name)
-            seen.add(name)
-    for name in props:
-        if name not in seen:
-            ordered.append(name)
-            seen.add(name)
-    return ordered
 
 

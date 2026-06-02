@@ -19,16 +19,38 @@ from typing import Any, Literal
 SESSION_EPOCH = uuid.uuid4().hex
 
 
+# Event-kind string constants. Emitters reference these rather than raw
+# literals so a typo is a NameError, not a silently dropped event. The
+# `EventKind` Literal below is kept in lockstep with these (Literal can't
+# take runtime values, so it can't be derived) -- the wire-protocol enum
+# the client switches on.
+EVT_ENGINE_INFO = "engine_info"
+EVT_ENGINE_SEARCH_START = "engine_search_start"
+EVT_UCI_LOG = "uci_log"
+EVT_BOARD_UPDATE = "board_update"
+EVT_CLOCK_TICK = "clock_tick"
+EVT_GAME_RESULT = "game_result"
+EVT_TOURNAMENT_UPDATE = "tournament_update"
+EVT_TOURNAMENT_STATUS = "tournament_status"
+EVT_AI_INFO = "ai_info"
+EVT_AI_THINKING = "ai_thinking"
+EVT_AI_TOOL_CALL = "ai_tool_call"
+EVT_AI_TOOL_CALL_FAILED = "ai_tool_call_failed"
+EVT_AI_TOOL_CALL_COMPLETE = "ai_tool_call_complete"
+EVT_AI_CORRECTIVE = "ai_corrective"
+EVT_AI_RECOMMENDATION = "ai_recommendation"
+EVT_SYSTEM = "system"
+
+
 EventKind = Literal[
     "engine_info",
+    "engine_search_start",
     "uci_log",
     "board_update",
     "clock_tick",
-    "clock_update",
     "game_result",
     "tournament_update",
     "tournament_status",
-    "sprt_update",
     "ai_info",
     "ai_thinking",
     "ai_tool_call",
@@ -38,6 +60,16 @@ EventKind = Literal[
     "ai_recommendation",
     "system",
 ]
+
+
+# Envelope field names for the serialized event sent over the WS and for
+# the tournament-history dicts that mirror that shape. Producers (ws.py,
+# orchestrator) and consumers (tournaments API, replay buffer) share these
+# so the wrapper shape can't drift between them.
+ENVELOPE_KIND = "kind"
+ENVELOPE_PAYLOAD = "payload"
+ENVELOPE_GAME_ID = "game_id"
+ENVELOPE_SESSION_EPOCH = "session_epoch"
 
 
 @dataclass(slots=True)

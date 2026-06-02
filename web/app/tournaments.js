@@ -11,6 +11,8 @@ import { mqMobile, mqMobileH } from "./breakpoints.js";
 import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, showDialog, toast } from "./dialogs.js";
 import { openSettingsDialog } from "./settings-dialog.js";
 import { EVT, KIND, POLL_INTERVAL_MS, STATUS } from "./tournament-events.js";
+import { APP_EVT } from "./app-events.js";
+import { STORAGE_KEY } from "./storage-keys.js";
 import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
@@ -112,8 +114,8 @@ export function mountTournaments({ container, api, events, log, token }) {
   const ribbonEditBtn = container.querySelector(".t-edit");
   const ribbonRemoveBtn = container.querySelector(".t-remove");
 
-  const SORT_KEY_LS = "sturddle:tournaments:sortBy";
-  const SORT_ASC_LS = "sturddle:tournaments:sortAsc";
+  const SORT_KEY_LS = STORAGE_KEY.TOURNAMENTS_SORT_BY;
+  const SORT_ASC_LS = STORAGE_KEY.TOURNAMENTS_SORT_ASC;
   const VALID_SORTS = new Set(["name", "status", "created_at", "started_at"]);
   let sortBy = VALID_SORTS.has(localStorage.getItem(SORT_KEY_LS))
     ? localStorage.getItem(SORT_KEY_LS) : "created_at";
@@ -1294,8 +1296,8 @@ export function mountTournaments({ container, api, events, log, token }) {
   function onSettingsChanged() {
     loadSettings();
   }
-  window.addEventListener("sturddle:settings-changed", onSettingsChanged);
-  window.addEventListener("sturddle:workspace-closed", () => { syncWindowMenu(); syncRibbon(); });
+  window.addEventListener(APP_EVT.SETTINGS_CHANGED, onSettingsChanged);
+  window.addEventListener(APP_EVT.WORKSPACE_CLOSED, () => { syncWindowMenu(); syncRibbon(); });
 
   // Single periodic refresh for the selected tournament when it's running.
   // Hits one endpoint per tick and fans out: list progress bar in place,
@@ -1371,8 +1373,8 @@ export function mountTournaments({ container, api, events, log, token }) {
     unmount() {
       offEvents();
       window.clearInterval(pollIntervalId);
-      window.removeEventListener("sturddle:settings-changed", onSettingsChanged);
-      window.removeEventListener("sturddle:workspace-closed", syncWindowMenu);
+      window.removeEventListener(APP_EVT.SETTINGS_CHANGED, onSettingsChanged);
+      window.removeEventListener(APP_EVT.WORKSPACE_CLOSED, syncWindowMenu);
       mqMobile.removeEventListener("change", onViewportChange);
       mqMobileH.removeEventListener("change", onViewportChange);
       document.removeEventListener("click", closeMenus);

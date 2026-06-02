@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from ..auth import AUTH_COOKIE, check_token_value, origin_ok, require_token
 from ..engines import InvalidLaunchProfileError, validate_launch_profile
+from ..events import ENVELOPE_KIND, ENVELOPE_PAYLOAD
 from ..tournament.fastchess import FastchessRunner
 from ..tournament.orchestrator import Orchestrator, TournamentBusyError, wrap_event_for_bus
 from ..tournament.rescheck import RescheckError, check as rescheck_run
@@ -344,7 +345,7 @@ def get_tournament_events(tournament_id: str, request: Request) -> dict:
     orch = _orch(request)
     return {
         "events": [
-            wrap_event_for_bus(e["kind"], e["payload"])
+            wrap_event_for_bus(e[ENVELOPE_KIND], e[ENVELOPE_PAYLOAD])
             for e in orch.event_history(tournament_id)
         ]
     }
@@ -626,7 +627,7 @@ async def _stream_queue_to_websocket(websocket: WebSocket, queue) -> None:
     except asyncio.CancelledError:
         pass
     except Exception:
-        log.exception("tournament WS handler error")
+        log.error("tournament WS handler error", exc_info=True)
     finally:
         recv_task.cancel()
         if get_task is not None:

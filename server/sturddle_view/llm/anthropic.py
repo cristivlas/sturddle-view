@@ -127,7 +127,7 @@ class AnthropicProvider(LLMProvider):
             if resp.status_code != 200:
                 raise RuntimeError(
                     f"anthropic /v1/models returned {resp.status_code}: "
-                    f"{extract_error_message(resp.text[:500])}"
+                    f"{extract_error_message(resp.text)}"
                 )
             body = resp.json()
         data = body.get("data") or []
@@ -190,7 +190,7 @@ class AnthropicProvider(LLMProvider):
                 "POST", url, json=body, headers=headers,
             ) as resp:
                 if resp.status_code != 200:
-                    raw = (await resp.aread()).decode("utf-8", errors="replace")[:500]
+                    raw = (await resp.aread()).decode("utf-8", errors="replace")
                     await self._tx_wire(transcript, round_index, f"HTTP {resp.status_code}: {raw}")
                     raise RuntimeError(
                         f"anthropic API error {resp.status_code}: {extract_error_message(raw)}"

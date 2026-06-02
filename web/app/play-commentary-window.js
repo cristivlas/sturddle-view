@@ -13,11 +13,12 @@
 // onUserClose callback -- play.js then PUTs the new setting.
 
 import { createDockableWindow, DOCK_ORDER, registerExtraDock } from "./play-dock-windows.js";
+import { STORAGE_KEY } from "./storage-keys.js";
 
-const GEO_KEY       = "sturddle:commentary:geo";
-const WIN_STATE_KEY = "sturddle:commentary:winstate";
-const DOCKED_KEY    = "sturddle:commentary:docked";
-const OPEN_KEY      = "sturddle:commentary:open";
+const GEO_KEY       = STORAGE_KEY.COMMENTARY_GEO;
+const WIN_STATE_KEY = STORAGE_KEY.COMMENTARY_WIN_STATE;
+const DOCKED_KEY    = STORAGE_KEY.COMMENTARY_DOCKED;
+const OPEN_KEY      = STORAGE_KEY.COMMENTARY_OPEN;
 const EMPTY_TEXT    = "No commentary at this ply.";
 
 let onNavPrev = null;

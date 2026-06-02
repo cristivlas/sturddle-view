@@ -2,6 +2,7 @@
 // Engine roster management lives in Settings -> Engines.
 
 import { mountTournaments } from "../tournaments.js";
+import { APP_EVT } from "../app-events.js";
 import { getActiveWorkspace } from "../tournament-workspace.js";
 
 export const enginesPerspective = {
@@ -26,14 +27,14 @@ export const enginesPerspective = {
 
     // Announce the active ribbon for the global float manager.
     const ribbonEl = host.querySelector(".tournaments-ribbon");
-    window.dispatchEvent(new CustomEvent("sturddle:ribbon-active", { detail: { el: ribbonEl } }));
+    window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_ACTIVE, { detail: { el: ribbonEl } }));
 
     return {
       unmount() {
         tournamentsCtl?.dismissSortToast?.();
         getActiveWorkspace()?.close();
         tournamentsCtl?.unmount?.();
-        window.dispatchEvent(new CustomEvent("sturddle:ribbon-active", { detail: { el: null } }));
+        window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_ACTIVE, { detail: { el: null } }));
       },
     };
   },

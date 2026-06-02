@@ -6,6 +6,7 @@ import { openSettingsDialog } from "./settings-dialog.js";
 import { openAboutDialog } from "./about-dialog.js";
 import { openRibbonWindow, closeRibbonWindow, mountRibbonElement, isRibbonFloating, nudgeRibbonToViewport, RIBBON_SIDE_KEY } from "./ribbon-window.js";
 import { mqMobile } from "./breakpoints.js";
+import { APP_EVT } from "./app-events.js";
 
 // Auth is carried by the HttpOnly cookie set during the /auth handshake.
 const token = "";
@@ -62,7 +63,7 @@ function log(line) {
   const formatted = `${ts} ${line}`;
   logBuffer.push(formatted);
   if (logBuffer.length > LOG_LIMIT) logBuffer.shift();
-  window.dispatchEvent(new CustomEvent("sturddle:log", { detail: formatted }));
+  window.dispatchEvent(new CustomEvent(APP_EVT.LOG, { detail: formatted }));
 }
 
 function getLogSnapshot() {
@@ -91,7 +92,7 @@ function applyRibbonSide(side) {
     else delete document.body.dataset.ribbonFloat;
     changed = true;
   }
-  if (changed) window.dispatchEvent(new CustomEvent("sturddle:layout-changed"));
+  if (changed) window.dispatchEvent(new CustomEvent(APP_EVT.LAYOUT_CHANGED));
 }
 
 async function refreshRibbonSide() {
@@ -109,7 +110,7 @@ async function refreshRibbonSide() {
   applyRibbonSide(side);
 }
 refreshRibbonSide();
-window.addEventListener("sturddle:settings-changed", refreshRibbonSide);
+window.addEventListener(APP_EVT.SETTINGS_CHANGED, refreshRibbonSide);
 
 // Global float manager. Each perspective dispatches sturddle:ribbon-active
 // with detail.el = the active ribbon element (or null on unmount). The
@@ -137,11 +138,11 @@ function syncFloatState() {
     closeRibbonWindow();
   }
 }
-window.addEventListener("sturddle:ribbon-active", (e) => {
+window.addEventListener(APP_EVT.RIBBON_ACTIVE, (e) => {
   activeRibbon = e.detail?.el ?? null;
   syncFloatState();
 });
-window.addEventListener("sturddle:layout-changed", syncFloatState);
+window.addEventListener(APP_EVT.LAYOUT_CHANGED, syncFloatState);
 mqMobile.addEventListener("change", syncFloatState);
 window.addEventListener("resize", () => {
   if (mqMobile.matches) syncFloatState();
@@ -149,10 +150,10 @@ window.addEventListener("resize", () => {
 });
 
 // When the user closes the floating ribbon WinBox, revert to last docked side.
-window.addEventListener("sturddle:ribbon-float-closed", () => {
+window.addEventListener(APP_EVT.RIBBON_FLOAT_CLOSED, () => {
   localStorage.setItem(RIBBON_SIDE_KEY, lastDockedSide);
   delete document.body.dataset.ribbonFloat;
-  window.dispatchEvent(new CustomEvent("sturddle:layout-changed"));
+  window.dispatchEvent(new CustomEvent(APP_EVT.LAYOUT_CHANGED));
 });
 
 const router = new PerspectiveRouter({ root, ctx });
@@ -177,7 +178,7 @@ function renderNav() {
     nav.appendChild(btn);
   }
 }
-window.addEventListener("sturddle:viewing-changed", (ev) => {
+window.addEventListener(APP_EVT.VIEWING_CHANGED, (ev) => {
   inViewMode = !!ev.detail?.viewing;
   renderNav();
 });
@@ -187,7 +188,7 @@ function setConnected(yes) {
   conn.title = yes ? "connected" : "disconnected";
   document.body.classList.toggle("disconnected", !yes);
   window.dispatchEvent(
-    new CustomEvent("sturddle:connection", { detail: { connected: yes } })
+    new CustomEvent(APP_EVT.CONNECTION, { detail: { connected: yes } })
   );
 }
 
@@ -218,12 +219,12 @@ document.getElementById("settings-btn").addEventListener("click", () => {
 // threading the `api` reference through call chains. detail.tab opens
 // the named tab (e.g. "engines"). Used by the Play empty-state CTA and
 // the no-engine error toast.
-window.addEventListener("sturddle:open-settings", (e) => {
+window.addEventListener(APP_EVT.OPEN_SETTINGS, (e) => {
   const tab = e.detail?.tab;
   openSettingsDialog({ api, initialTab: tab, getActivePerspective: () => router.activeId(), reloadPerspective });
 });
 
-window.addEventListener("sturddle:connection", async (e) => {
+window.addEventListener(APP_EVT.CONNECTION, async (e) => {
   if (e.detail.connected) return;
   if (router.activeId() === "engines") {
     await router.activate("play");
@@ -231,7 +232,7 @@ window.addEventListener("sturddle:connection", async (e) => {
   }
 });
 
-window.addEventListener("sturddle:activate-perspective", async (e) => {
+window.addEventListener(APP_EVT.ACTIVATE_PERSPECTIVE, async (e) => {
   const id = e.detail?.id;
   if (!id) return;
   try {

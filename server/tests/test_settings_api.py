@@ -145,3 +145,37 @@ def test_ai_model_remembered_per_provider(client):
     assert client.get("/settings").json()["ai_model"] == "gemma:latest"
     client.put("/settings", json={"ai_provider": "anthropic"})
     assert client.get("/settings").json()["ai_model"] == "claude-opus-4-7"
+
+
+def test_ai_round_caps_round_trip(client):
+    """Both round caps survive PUT then GET, independently."""
+    r = client.put(
+        "/settings",
+        json={"ai_max_tool_rounds": 50, "ai_verifier_max_rounds": 12},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ai_max_tool_rounds"] == 50
+    assert body["ai_verifier_max_rounds"] == 12
+    got = client.get("/settings").json()
+    assert got["ai_max_tool_rounds"] == 50
+    assert got["ai_verifier_max_rounds"] == 12
+
+
+def test_ai_round_caps_default_to_module_caps(client):
+    """A fresh settings object reports the env-backed defaults (32 / 8)."""
+    got = client.get("/settings").json()
+    assert got["ai_max_tool_rounds"] == 32
+    assert got["ai_verifier_max_rounds"] == 8
+
+
+@pytest.mark.parametrize("key", ["ai_max_tool_rounds", "ai_verifier_max_rounds"])
+def test_ai_round_caps_below_floor_rejected(client, key):
+    """Zero/negative leaves no room for a round -- rejected with 400."""
+    assert client.put("/settings", json={key: 0}).status_code == 400
+    assert client.put("/settings", json={key: -1}).status_code == 400
+
+
+@pytest.mark.parametrize("key", ["ai_max_tool_rounds", "ai_verifier_max_rounds"])
+def test_ai_round_caps_non_integer_rejected(client, key):
+    assert client.put("/settings", json={key: "lots"}).status_code == 400

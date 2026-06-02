@@ -22,7 +22,7 @@ import chess
 import chess.engine
 
 from ..env_utils import env_int
-from ..events import Event, EventBus
+from ..events import EVT_ENGINE_SEARCH_START, Event, EventBus
 from ..llm import ToolSpec
 from ..llm.cancel import CancelToken
 from .engine_analysis import resolve_eval_pov_white_or_stm, spawn_analysis_engine
@@ -87,12 +87,21 @@ _ANALYZE_GAME_ID_FALLBACK = "ai-analyze"
 
 # Move-notation constraint reused in every tool description that takes
 # a move string. PGN-style continuation marks ('...d6', '23...Nf6') are
-# not SAN; the server strips them defensively (see _parse_candidate_move)
+# not SAN; the server strips them defensively (see _strip_move_prefix)
 # but the prompt steers models away to keep tool inputs clean.
 _MOVE_NOTATION_CONSTRAINT = (
     " Use bare UCI or SAN -- no PGN continuation prefix "
     "('...d6' should be 'd6')."
 )
+
+# Tool names -- single source of truth (the ToolSpecs below use them, and
+# the coordinator imports them rather than hardcoding string literals).
+ANALYZE_TOOL_NAME = "analyze"
+MATERIAL_TOOL_NAME = "material"
+TOP_MOVES_TOOL_NAME = "top_moves"
+PIECE_AT_TOOL_NAME = "piece_at"
+VALIDATE_MOVE_TOOL_NAME = "validate_move"
+RECOMMEND_MOVE_TOOL_NAME = "recommend_move"
 
 # Shared description for the `fen` arg across every FEN-taking tool spec
 # (analyze, material). One source so the startpos affordance stays in sync.
@@ -103,7 +112,7 @@ _FEN_ARG_DESCRIPTION = "FEN string, or 'startpos' for the initial position."
 # the implementation so prompt text + schema + behavior move together;
 # app.py only wires (spec, callable) into the registry.
 TOP_MOVES_TOOL_SPEC = ToolSpec(
-    name="top_moves",
+    name=TOP_MOVES_TOOL_NAME,
     description=(
         "Rank YOUR candidate moves in the live position. You supply "
         "2-5 moves; engine searches each and returns entries sorted "
@@ -147,7 +156,7 @@ _PIECE_AT_CARD = (
 
 
 PIECE_AT_TOOL_SPEC = ToolSpec(
-    name="piece_at",
+    name=PIECE_AT_TOOL_NAME,
     description=(
         "Piece on a square in the live position, or null. Call before "
         "naming any piece-on-square in prose."
@@ -177,7 +186,7 @@ _VALIDATE_MOVE_CARD = (
 
 
 VALIDATE_MOVE_TOOL_SPEC = ToolSpec(
-    name="validate_move",
+    name=VALIDATE_MOVE_TOOL_NAME,
     description=(
         "Check if a move (UCI or SAN) is legal in the live position. "
         "Call before naming any move as playable in the current "
@@ -202,7 +211,7 @@ VALIDATE_MOVE_TOOL_SPEC = ToolSpec(
 
 
 ANALYZE_TOOL_SPEC = ToolSpec(
-    name="analyze",
+    name=ANALYZE_TOOL_NAME,
     description=(
         "Engine search on a position. Returns white-POV eval: score_cp, "
         "score_text, mate (signed plies when forced), depth, pv, bestmove. "
@@ -236,7 +245,7 @@ _MATERIAL_PIECE_TYPES = (
 
 
 MATERIAL_TOOL_SPEC = ToolSpec(
-    name="material",
+    name=MATERIAL_TOOL_NAME,
     description=(
         "Ground a material claim with exact piece counts before stating "
         "it. Returns per-color counts keyed by piece name (pawn, knight, "
@@ -276,6 +285,15 @@ def _parse_fen_arg(input_: dict) -> tuple[chess.Board | None, dict | None]:
         return _parse_fen(fen.strip()), None
     except ValueError as exc:
         return None, {"error": "invalid_fen", "detail": str(exc)}
+
+
+def board_from_fen_input(tool_input: dict) -> chess.Board | None:
+    """Board for a fen-taking tool call's `fen` param, or None when
+    absent/unparseable. Same parse as the tools; no error envelope --
+    for callers (the coordinator's examined-position tracking) that just
+    want the board or nothing."""
+    board, err = _parse_fen_arg(tool_input)
+    return None if err is not None else board
 
 
 def _depth_limit(input_: dict, default_depth: int) -> tuple[chess.engine.Limit, dict]:
@@ -405,7 +423,7 @@ async def _run_one_search(
     try:
         engine, cleanup = await spawn_analysis_engine(sup, settings)
     except Exception as exc:
-        log.exception("search: engine spawn failed")
+        log.error("search: engine spawn failed", exc_info=True)
         raise _SearchError("engine_spawn_failed", str(exc)) from exc
     try:
         analysis_kwargs: dict = {"limit": limit}
@@ -461,7 +479,7 @@ def make_analyze_tool(
         limit, limits_used = _depth_limit(input_, _DEFAULT_DEPTH)
 
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
-        await bus.publish(Event(kind="engine_search_start", game_id=game_id, payload={}))
+        await bus.publish(Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={}))
 
         try:
             last_info, cancelled = await _run_one_search(
@@ -532,6 +550,24 @@ def _parse_candidate_move(board: chess.Board, raw: str) -> tuple[chess.Move | No
     return None, {"move_input": raw, "error": kind, "detail": detail}
 
 
+def parse_move_canonical(board: chess.Board, raw: str) -> chess.Move | None:
+    """Canonical Move for a UCI/SAN string, or None on failure. Shares the
+    same prefix-strip + UCI-then-SAN parse as the move-taking tools, so
+    every caller (tools + the ai_analysis gate/dedup) agrees on the UCI a
+    given string maps to."""
+    move, _kind, _detail = _parse_move_or_error(board, _strip_move_prefix(raw))
+    return move
+
+
+def parse_move_reporting(
+    board: chess.Board, raw: str,
+) -> tuple[chess.Move | None, str | None, str | None]:
+    """Like parse_move_canonical but surfaces (kind, detail) on failure, so a
+    caller can distinguish illegal_move (wrong side to move, blocked) from
+    invalid_move (unparseable). Same prefix-strip + parse as every move tool."""
+    return _parse_move_or_error(board, _strip_move_prefix(raw))
+
+
 def make_top_moves_tool(
     engine_launcher: EngineLauncher,
     bus: EventBus,
@@ -571,7 +607,7 @@ def make_top_moves_tool(
 
         limit, limits_used = _depth_limit(input_, _DEFAULT_TOP_MOVES_DEPTH)
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
-        await bus.publish(Event(kind="engine_search_start", game_id=game_id, payload={}))
+        await bus.publish(Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={}))
 
         stm_is_white = board.turn == chess.WHITE
         cancelled_any = False
@@ -710,7 +746,7 @@ _RECOMMEND_MOVE_CARD = (
 
 
 RECOMMEND_MOVE_TOOL_SPEC = ToolSpec(
-    name="recommend_move",
+    name=RECOMMEND_MOVE_TOOL_NAME,
     description=(
         "Submit your final move at end-of-turn. Validates legality and "
         "compares against the engine's best at the requested depth. "

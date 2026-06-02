@@ -388,7 +388,7 @@ class FastchessRunner:
             try:
                 self._job_handle = create_job()
             except OSError:
-                log.exception("Job Object creation failed")
+                log.error("Job Object creation failed", exc_info=True)
 
         with spawn_in_job(self._job_handle):
             self._proc = await asyncio.create_subprocess_exec(
@@ -412,7 +412,7 @@ class FastchessRunner:
                     # ERROR_ACCESS_DENIED (5) = already in this Job. Expected
                     # in the atomic path. Anything else is real.
                     if getattr(e, "winerror", None) != 5:
-                        log.exception("assign_to_job failed for pid=%d", self._proc.pid)
+                        log.error("assign_to_job failed for pid=%d", self._proc.pid, exc_info=True)
 
             # Pipe drains: emit runner_log events; fastchess writes the log file.
             self._drain_tasks = [
@@ -529,7 +529,7 @@ class FastchessRunner:
             try:
                 await proc.wait()
             except Exception:  # noqa: BLE001
-                log.exception("abort_setup: proc.wait raised")
+                log.error("abort_setup: proc.wait raised", exc_info=True)
         self._proc = None
 
     # ----- internals --------------------------------------------------------
@@ -552,7 +552,7 @@ class FastchessRunner:
         except asyncio.CancelledError:
             raise
         except Exception:
-            log.exception("drain task (%s) crashed", tag)
+            log.error("drain task (%s) crashed", tag, exc_info=True)
 
     async def _supervise(self) -> None:
         assert self._proc is not None
@@ -599,4 +599,4 @@ class FastchessRunner:
         try:
             await self._on_event(kind, payload)
         except Exception:
-            log.exception("on_event callback raised for %s", kind)
+            log.error("on_event callback raised for %s", kind, exc_info=True)

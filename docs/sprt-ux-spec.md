@@ -131,34 +131,12 @@ sprt.status ("continue" | "H0" | "H1"), sprt.pairs
 ## Out of scope
 
 - SPRT for gauntlet tournaments.
-- Path B resume completion for partial SPRT pairs (deferred).
 - Per-engine SPRT (only 2-engine tournaments supported).
 - Bayesian SPRT (fastchess supports it; the local recompute path does not).
 
-## Pause/Resume support
+## No resume
 
-SPRT is designed for run-to-completion, but Pause/Resume is supported
-with a small, bounded discrepancy between the workspace banner and
-fastchess's own stdout LLR.
-
-Each Pause/Resume cycle dedups partial pairs from the PGN and
-subtracts the dropped game's W/L/D from fastchess's per-pair counters
-in `config.json`. Pentanomial counters (`penta_*`) are not touched:
-fastchess only writes a pentanomial entry when a pair's second game
-completes, so partial pairs never made it into the pentanomial -- no
-subtraction is needed. Zeroing them was tried (commit b221385) and
-broke fastchess's internal SPRT by wiping the running pentanomial on
-every Stop.
-
-Consequences:
-
-- The workspace LLR banner is recomputed from the PGN on every API
-  read and is authoritative across any number of Pause/Resume cycles.
-- fastchess's view of the tournament is missing one pair per dropped
-  partial pair (one per Stop in the worst case). Its stdout LLR
-  therefore converges slightly slower than the banner, in proportion
-  to how many Stops happened.
-- fastchess will still self-terminate at its bound; the gap just
-  delays termination by the same fraction of pairs that were lost.
-  Users in a hurry can Stop manually once the workspace banner
-  concludes H1/H0.
+There is no Pause/Resume: Stop wipes and the next Start runs from
+scratch (see `tournament-spec.md` -- "No resume: Stop wipes"). The
+workspace LLR banner is recomputed from the PGN on every API read, so a
+fresh run's banner is always consistent with fastchess's own SPRT.

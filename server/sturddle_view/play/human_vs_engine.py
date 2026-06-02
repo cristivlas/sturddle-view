@@ -27,7 +27,16 @@ from ..chess.board import board_from, moves_san as _moves_san, side_to_move
 from ..chess.pgn_build import build_pgn
 from .canonical_hash import canonical_hash
 from ..chess.results import DRAW, loser_result, winner_result
-from ..events import Event, EventBus
+from ..events import (
+    EVT_BOARD_UPDATE,
+    EVT_CLOCK_TICK,
+    EVT_ENGINE_INFO,
+    EVT_ENGINE_SEARCH_START,
+    EVT_GAME_RESULT,
+    EVT_SYSTEM,
+    Event,
+    EventBus,
+)
 from .chess_clock import ChessClock, TimeControl
 from .engine_analysis import (
     EVAL_POV_HUMAN,
@@ -582,7 +591,7 @@ class HumanVsEngine:
         if ended:
             await self._cancel_tick()
             await self._bus.publish(
-                Event(kind="game_result", game_id=end_game_id, payload=end_payload)
+                Event(kind=EVT_GAME_RESULT, game_id=end_game_id, payload=end_payload)
             )
             await self._flush_recents_save()
         else:
@@ -627,7 +636,7 @@ class HumanVsEngine:
             return
         await self._bus.publish(
             Event(
-                kind="engine_info",
+                kind=EVT_ENGINE_INFO,
                 game_id=self._game_id,
                 payload=self._last_analysis_info,
             )
@@ -736,7 +745,7 @@ class HumanVsEngine:
             self._stash_recents_payload(result=result, termination="resignation")
             await self._bus.publish(
                 Event(
-                    kind="game_result",
+                    kind=EVT_GAME_RESULT,
                     game_id=self._game_id,
                     payload={"result": "resign", "by": "human"},
                 )
@@ -1442,7 +1451,7 @@ class HumanVsEngine:
         except Exception:
             # Persistence is best-effort: never let a save failure (disk full,
             # serialization quirk, permissions) abort the move that triggered it.
-            log.exception("could not persist game state")
+            log.error("could not persist game state", exc_info=True)
 
     def _clear_store(self) -> None:
         if self._store is not None:
@@ -1580,7 +1589,7 @@ class HumanVsEngine:
         except asyncio.CancelledError:
             return
         except Exception:
-            log.exception("clock tick loop crashed")
+            log.error("clock tick loop crashed", exc_info=True)
 
     async def _handle_flag_fall(self) -> None:
         async with self._lock:
@@ -1595,7 +1604,7 @@ class HumanVsEngine:
             self._stash_recents_payload(result=result, termination="time_forfeit")
         await self._bus.publish(
             Event(
-                kind="game_result",
+                kind=EVT_GAME_RESULT,
                 game_id=game_id,
                 payload={"result": "timeout", "loser": loser},
             )
@@ -1650,7 +1659,7 @@ class HumanVsEngine:
             try:
                 engine = await self._ensure_engine()
             except Exception:
-                log.exception("could not start engine for search")
+                log.error("could not start engine for search", exc_info=True)
                 return
         # Use the live remaining time, not the snapshot at turn start.
         white_clock = self._remaining(chess.WHITE)
@@ -1665,7 +1674,7 @@ class HumanVsEngine:
         # repopulate it. Book moves return bestmove without info, leaving it
         # blank -- which is the signal we want.
         await self._bus.publish(
-            Event(kind="engine_search_start", game_id=game_id, payload={})
+            Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={})
         )
         captured: dict = {}
         try:
@@ -1684,7 +1693,7 @@ class HumanVsEngine:
                 log.error("engine crashed mid-search")
                 await self._cancel_tick()
                 await self._bus.publish(
-                    Event(kind="system", game_id=game_id, payload={"error": "engine_terminated"})
+                    Event(kind=EVT_SYSTEM, game_id=game_id, payload={"error": "engine_terminated"})
                 )
             else:
                 log.info("engine terminated (takeback or shutdown)")
@@ -1718,7 +1727,7 @@ class HumanVsEngine:
         if ended:
             await self._cancel_tick()
             await self._bus.publish(
-                Event(kind="game_result", game_id=end_game_id, payload=end_payload)
+                Event(kind=EVT_GAME_RESULT, game_id=end_game_id, payload=end_payload)
             )
             await self._flush_recents_save()
 
@@ -1735,10 +1744,10 @@ class HumanVsEngine:
                 self._supervisor, self._settings,
             )
         except Exception:
-            log.exception("could not start engine for analysis")
+            log.error("could not start engine for analysis", exc_info=True)
             return
         await self._bus.publish(
-            Event(kind="engine_search_start", game_id=game_id, payload={})
+            Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={})
         )
         try:
             with await engine.analysis(board) as analysis:
@@ -1747,7 +1756,7 @@ class HumanVsEngine:
         except chess.engine.EngineTerminatedError:
             log.error("engine crashed mid-analysis")
             await self._bus.publish(
-                Event(kind="system", game_id=game_id, payload={"error": "engine_terminated"})
+                Event(kind=EVT_SYSTEM, game_id=game_id, payload={"error": "engine_terminated"})
             )
         except (asyncio.CancelledError, RuntimeError, BrokenPipeError):
             return
@@ -1864,7 +1873,7 @@ class HumanVsEngine:
             moves_san = _moves_san(self._board, self._start_fen)
             view_payload = None
         return Event(
-            kind="board_update",
+            kind=EVT_BOARD_UPDATE,
             game_id=self._game_id,
             payload={
                 "fen": self._board.fen(),
@@ -1900,7 +1909,7 @@ class HumanVsEngine:
                 idx = min(self._view_cursor, len(self._view_clock_history) - 1)
                 wt, bt = self._view_clock_history[idx]
             return Event(
-                kind="clock_tick",
+                kind=EVT_CLOCK_TICK,
                 game_id=self._game_id,
                 payload={
                     "white_time": wt,
@@ -1913,7 +1922,7 @@ class HumanVsEngine:
                 },
             )
         return Event(
-            kind="clock_tick",
+            kind=EVT_CLOCK_TICK,
             game_id=self._game_id,
             payload={
                 "white_time": self._remaining(chess.WHITE),
@@ -2143,7 +2152,7 @@ class HumanVsEngine:
         try:
             pgn_dir.mkdir(parents=True, exist_ok=True)
         except OSError:
-            log.exception("could not create PGN dir %s", pgn_dir)
+            log.error("could not create PGN dir %s", pgn_dir, exc_info=True)
             return None
 
         built = self._build_play_game_pgn(result=result, termination=termination)
@@ -2159,7 +2168,7 @@ class HumanVsEngine:
         try:
             atomic_write_text(path, pgn_text)
         except OSError:
-            log.exception("could not write PGN to %s", path)
+            log.error("could not write PGN to %s", path, exc_info=True)
             return None
         log.info("saved PGN to %s", path)
         return path
@@ -2179,7 +2188,7 @@ class HumanVsEngine:
         try:
             built = self._build_play_game_pgn(result=result, termination=termination)
         except Exception:
-            log.exception("could not build PGN for recents save")
+            log.error("could not build PGN for recents save", exc_info=True)
             return
         if built is None:
             return
@@ -2249,7 +2258,7 @@ class HumanVsEngine:
                     parent_game_id=parent_game_id, fork_ply=fork_ply,
                 )
         except Exception:
-            log.exception("could not save finished game to recents")
+            log.error("could not save finished game to recents", exc_info=True)
 
     async def export_to_recents(self) -> str | None:
         """User-driven save: write the in-progress play game to recents
@@ -2315,7 +2324,7 @@ class HumanVsEngine:
                     parent_game_id=parent_game_id, fork_ply=fork_ply,
                 )
         except Exception:
-            log.exception("could not export play game to recents")
+            log.error("could not export play game to recents", exc_info=True)
             return None
         # Consume the link only after the write succeeded; on failure
         # leave it in place so a later finalization can still record it.

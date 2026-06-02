@@ -203,7 +203,9 @@ wa-select::part(listbox) {
   word-break: break-word;
 }
 .play-ai-roundcap {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-top: 8px;
   padding: 6px 8px;
   border-left: 3px solid var(--wa-color-warning-60, #d6a200);
@@ -211,6 +213,12 @@ wa-select::part(listbox) {
   font-size: 0.9em;
   opacity: 0.85;
 }
+.play-ai-roundcap-gear {
+  flex: none;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.play-ai-roundcap-gear:hover { opacity: 1; }
 
 /* Thinking disclosure: dimmer + smaller than prose; user opt-in. */
 .play-ai-thinking {
@@ -821,6 +829,11 @@ svg.cm-chessboard {
 #xgame-toast-stack:popover-open {
   display: flex;
 }
+#toast-stack, #xgame-toast-stack,
+#toast-stack *, #xgame-toast-stack * {
+  transition: none !important;
+  animation: none !important;
+}
 .toast {
   background: var(--wa-color-surface-raised, #2a2a2a);
   color: var(--fg);
@@ -830,7 +843,6 @@ svg.cm-chessboard {
   font-size: 0.8125rem;
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-  transition: opacity 0.2s, transform 0.2s;
   /* Re-enable pointer events: the stack has pointer-events:none so
      empty regions stay click-through, but individual toasts need to
      receive clicks for interactive content (xgame nav arrow + X). */
@@ -839,7 +851,10 @@ svg.cm-chessboard {
 .toast-success { border-color: #6c6; }
 .toast-warning { border-color: #e08e0b; }
 .toast-danger { border-color: #c66; }
-.toast-hide { opacity: 0; transform: translateY(8px); }
+.toast-hide { display: none; }
+@starting-style {
+  #toast-stack, #xgame-toast-stack { opacity: 1; }
+}
 
 /* The page is a flex column that fills the viewport. <main> takes the
    remaining vertical space so perspectives can size their content to fit
@@ -1696,6 +1711,10 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   font: inherit;
   text-decoration: underline;
 }
+.xgame-nav-locked {
+  /* Don't scroll -- the media breakpoint at short height handles it. */
+  overflow-y: hidden;
+}
 .xgame-toast .xgame-link:hover { color: var(--accent); filter: brightness(1.15); }
 /* Analysis on: x-game nav links are greyed and inert (no jumping games
    mid-analysis). The expand arrow stays live so labels remain browsable. */
@@ -2179,7 +2198,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 
 /* Form-style rows (label + input) inside a panel. */
 .settings-row { max-width: 360px; }
-.ai-thinking-row {
+.ai-thinking-row,
+.ai-rounds-row {
   display: flex;
   align-items: flex-end;
   gap: 16px;
@@ -2187,8 +2207,12 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .ai-thinking-budget { width: 8em; max-width: 8em; }
 .ai-thinking-budget::part(base) { max-width: 8em; }
 .ai-thinking-budget::part(input) { width: 8em; min-width: 0; }
+.ai-max-tool-rounds, .ai-verifier-max-rounds { flex: 1; min-width: 0; }
+.ai-max-tool-rounds::part(input),
+.ai-verifier-max-rounds::part(input) { min-width: 0; }
 .ai-thinking-row wa-select::part(form-control-label),
-.ai-thinking-row wa-input::part(form-control-label) {
+.ai-thinking-row wa-input::part(form-control-label),
+.ai-rounds-row wa-input::part(form-control-label) {
   color: var(--muted);
   font-size: 0.75rem;
   font-family: var(--wa-font-family-body);

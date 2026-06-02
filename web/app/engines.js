@@ -4,12 +4,14 @@
 // height is sized to fit the dialog body via JS measurement.
 
 import { attachColumnResize } from "./col-resize.js";
+import { APP_EVT } from "./app-events.js";
+import { STORAGE_KEY } from "./storage-keys.js";
 import { apiErrorDetail, confirm, pickFile, reportError, toast } from "./dialogs.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 
-const COL_PCTS_KEY = "sturddle:engines:colPcts3";
+const COL_PCTS_KEY = STORAGE_KEY.ENGINES_COL_PCTS;
 const DEFAULT_PCTS = [20, 12, 68];
-const SORT_KEY_LS = "sturddle:engines:sortOrder";
+const SORT_KEY_LS = STORAGE_KEY.ENGINES_SORT_ORDER;
 // Height of the overlaid search bar; matches the CSS rule. Added as
 // bottom padding on the list while open so the last row stays visible
 // above the bar.
@@ -122,7 +124,7 @@ export function mountEngineList(container, api, opts = {}) {
       renderAll();
       if (engines.length !== lastBroadcast.count || activeId !== lastBroadcast.activeId) {
         lastBroadcast = { count: engines.length, activeId };
-        window.dispatchEvent(new CustomEvent("sturddle:engines-changed", {
+        window.dispatchEvent(new CustomEvent(APP_EVT.ENGINES_CHANGED, {
           detail: { count: engines.length, activeId },
         }));
       }

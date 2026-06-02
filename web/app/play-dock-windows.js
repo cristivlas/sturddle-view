@@ -25,6 +25,8 @@
 import { attachColumnResize } from "./col-resize.js";
 import { toast } from "./dialogs.js";
 import { mqMobile } from "./breakpoints.js";
+import { APP_EVT } from "./app-events.js";
+import { STORAGE_KEY } from "./storage-keys.js";
 import {
   AUTOSCROLL_SLACK_LINE_PX,
   isPinnedToBottom,
@@ -66,7 +68,7 @@ const extraDocks = new Map();
 // Per-slot flex-grow ratios, keyed by the instance's dockedKey. Survives
 // slot additions/removals/reorders because each entry stands alone --
 // missing entries fall back to DEFAULT_DOCK_GROW.
-const DOCK_GROW_KEY = "sturddle:play:dockGrow";
+const DOCK_GROW_KEY = STORAGE_KEY.PLAY_DOCK_GROW;
 const DEFAULT_DOCK_GROW = 1.0;
 
 function loadDockGrows() {
@@ -122,7 +124,7 @@ function updateDockBounds() {
 // empties) don't trigger our ResizeObserver, which only fires on size change.
 // Listen for layout-changed too; defer two frames so game-view's own rAF-driven
 // recompute has settled the board's new left edge before we re-measure.
-window.addEventListener("sturddle:layout-changed", () => {
+window.addEventListener(APP_EVT.LAYOUT_CHANGED, () => {
   requestAnimationFrame(() =>
     requestAnimationFrame(updateDockBounds));
 });
@@ -198,7 +200,7 @@ function syncExtraDocksVisibility() {
 }
 
 function emitLayoutChanged() {
-  window.dispatchEvent(new CustomEvent("sturddle:layout-changed"));
+  window.dispatchEvent(new CustomEvent(APP_EVT.LAYOUT_CHANGED));
 }
 
 function applyDockGrows() {
@@ -607,10 +609,10 @@ export function registerExtraDock(el) {
 
 // -- UCI log body ------------------------------------------------------------
 
-const UCI_GEO_KEY       = "sturddle:ucilog:geo";
-const UCI_WIN_STATE_KEY = "sturddle:ucilog:winstate";
-const UCI_DOCKED_KEY    = "sturddle:ucilog:docked";
-const UCI_OPEN_KEY      = "sturddle:ucilog:open";
+const UCI_GEO_KEY       = STORAGE_KEY.UCILOG_GEO;
+const UCI_WIN_STATE_KEY = STORAGE_KEY.UCILOG_WIN_STATE;
+const UCI_DOCKED_KEY    = STORAGE_KEY.UCILOG_DOCKED;
+const UCI_OPEN_KEY      = STORAGE_KEY.UCILOG_OPEN;
 
 function buildUciLogBody(events, { setOff }) {
   const body = document.createElement("div");
@@ -688,10 +690,10 @@ const uciLog = createDockableWindow({
 
 // -- Search Lines body -------------------------------------------------------
 
-const PV_GEO_KEY       = "sturddle:pvtable:geo";
-const PV_WIN_STATE_KEY = "sturddle:pvtable:winstate";
-const PV_DOCKED_KEY    = "sturddle:pvtable:docked";
-const PV_OPEN_KEY      = "sturddle:pvtable:open";
+const PV_GEO_KEY       = STORAGE_KEY.PVTABLE_GEO;
+const PV_WIN_STATE_KEY = STORAGE_KEY.PVTABLE_WIN_STATE;
+const PV_DOCKED_KEY    = STORAGE_KEY.PVTABLE_DOCKED;
+const PV_OPEN_KEY      = STORAGE_KEY.PVTABLE_OPEN;
 
 function fmtScore(score) {
   if (!score) return "";
@@ -734,7 +736,7 @@ function buildPvTableBody(events, { setOff }) {
   const tbody = body.querySelector("tbody");
   const tableEl = body.querySelector(".wb-pvtable-tbl");
   const colEls = Array.from(body.querySelectorAll("col"));
-  const COL_WIDTHS_KEY = "sturddle:pvtable:colWidths";
+  const COL_WIDTHS_KEY = STORAGE_KEY.PVTABLE_COL_WIDTHS;
   const DEFAULT_WIDTHS = [50, 50, 55, 45];
   const minPx = 30;
   const grips = Array.from(body.querySelectorAll(".th-grip"));
@@ -850,8 +852,8 @@ const pvTable = createDockableWindow({
 
 // -- public API --------------------------------------------------------------
 
-const VIEW_UCI_OPEN_KEY = "sturddle:view:ucilog:open";
-const VIEW_PV_OPEN_KEY  = "sturddle:view:pvtable:open";
+const VIEW_UCI_OPEN_KEY = STORAGE_KEY.VIEW_UCILOG_OPEN;
+const VIEW_PV_OPEN_KEY  = STORAGE_KEY.VIEW_PVTABLE_OPEN;
 
 export function toggleUciLogWindow(events) { uciLog.toggle(events); }
 export function togglePvTableWindow(events) { pvTable.toggle(events); }
