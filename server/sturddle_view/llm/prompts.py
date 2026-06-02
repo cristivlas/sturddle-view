@@ -95,7 +95,9 @@ critically, verify with tools, form your own conclusions. Do not \
 parrot or restate them. Treat the move played as a claim to test: \
 submit at least one alternative via `recommend_move` (not the move \
 played) before endorsing it. Call it best only if no recommended \
-alternative beat it; say so when a stronger move existed.
+alternative beat it; say so when a stronger move existed. Make your final \
+`recommend_move` the move you conclude is best -- the played move \
+included -- so your last recommendation matches your verdict.
 """
 
 

@@ -739,6 +739,46 @@ async def test_commentator_gate_clears_when_alternative_to_played_move_recommend
 
 
 @pytest.mark.asyncio
+async def test_final_recommend_of_played_move_wins_the_arrow():
+    # Screenshot regression: model tests the played move (e4) first -- gated,
+    # but recorded -- then an alternative (Nf3) which clears, then concludes
+    # the played move was best and re-recommends it. The final recommendation
+    # (the arrow) must be the played move, not the alternative that merely
+    # cleared the gate first.
+    reg = _gate_reg()
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, _RecordingScriptedProvider(rounds=[
+            [ProviderChunk(                                       # r0: e4 (played) -> gated
+                kind="tool_use", tool_use_id="r0",
+                tool_name="recommend_move", tool_input={"move": "e4"},
+            )],
+            [ProviderChunk(                                       # r1: Nf3 (alt) -> clears
+                kind="tool_use", tool_use_id="r1",
+                tool_name="recommend_move", tool_input={"move": "Nf3"},
+            )],
+            [ProviderChunk(                                       # r2: re-commit e4 -> clears
+                kind="tool_use", tool_use_id="r2",
+                tool_name="recommend_move", tool_input={"move": "e4"},
+            )],
+            [ProviderChunk(kind="text", text="e4 is the stronger choice.")],  # r3: conclusion
+        ]),
+        registry=reg, board_provider=(lambda: chess.Board()),
+        recommend_verifier=_accept_verifier,
+    )
+
+    await coord.run(
+        game_id="g", mode="commentator",
+        user_message=_TURN_CONTEXT + "\n", played_uci="e2e4",
+    )
+    events = await _drain_until_done(queue)
+
+    recs = [e for e in events if e.kind == "ai_recommendation"]
+    assert recs and recs[-1].payload.get("uci") == "e2e4"
+
+
+@pytest.mark.asyncio
 async def test_gate_rejects_when_only_the_committed_move_was_recommended():
     # Recommending the SAME move twice is not examining an alternative --
     # the gate blocks every attempt and the turn never clears.
