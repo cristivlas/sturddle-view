@@ -125,6 +125,40 @@ def test_en_passant_capture_not_flagged():
     assert find_illegal_moves("exf6 wins the pawn.", [board]) == []
 
 
+# ---------- Move-numbered reply exemption -----------------------------
+# A SAN prefixed with a move number names its side: "17." -> White,
+# "16..." -> Black. A numbered move legal for that side is a correctly
+# attributed reply, not a live-board move, even when illegal as-is on the
+# current board (the other side is to move). Real prose: black to move at
+# ply 16 (_REVIEWED_FEN), prose cites White's "17.Nab1" reply.
+
+
+def test_numbered_reply_for_other_side_not_flagged():
+    # Black to move; "17.Nab1" is White's legal reply (a3->b1). Exempt.
+    board = chess.Board(_REVIEWED_FEN)
+    assert find_illegal_moves("White's 17.Nab1 reply drifts into passivity.", [board]) == []
+
+
+def test_numbered_move_for_side_to_move_not_flagged():
+    # "16...Nd3" is Black's (side to move) legal move -- exempt as usual.
+    board = chess.Board(_REVIEWED_FEN)
+    assert find_illegal_moves("Kasparov's 16...Nd3 is the right call.", [board]) == []
+
+
+def test_unnumbered_move_for_other_side_still_flagged():
+    # Bare "Nab1" (no move number) on a black-to-move board is flagged --
+    # the exemption needs the number to name the side.
+    board = chess.Board(_REVIEWED_FEN)
+    assert find_illegal_moves("Nab1 is bad.", [board]) == ["Nab1"]
+
+
+def test_numbered_but_illegal_reply_still_flagged():
+    # "17.Rd8" is numbered White but illegal (d1 rook blocked by the d5
+    # pawn); the number does not excuse an illegal move.
+    board = chess.Board(_REVIEWED_FEN)
+    assert find_illegal_moves("Then 17.Rd8 wins.", [board]) == ["Rd8"]
+
+
 def test_hallucinated_check_sequence_flagged():
     # Real model prose that confused this position for a different game:
     # invents a check (Rxd1+), king escapes the wrong king can't make

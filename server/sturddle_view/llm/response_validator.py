@@ -82,6 +82,20 @@ def _is_san_label(bare: str, board: chess.Board) -> bool:
     return piece.color == board.turn
 
 
+# Move-number prefix before a SAN: "17." => White, "16..." => Black. We
+# trust the dots' side, not that the number is correct.
+_MOVE_NUM_SIDE_RE = re.compile(r"(\d+)(\.\.\.|\.)\s*$")
+
+
+def _numbered_side(text: str, token_start: int) -> chess.Color | None:
+    """Color implied by a move-number prefix right before `token_start`,
+    or None if there is no such prefix. '17.' -> White, '16...' -> Black."""
+    m = _MOVE_NUM_SIDE_RE.search(text[:token_start])
+    if not m:
+        return None
+    return chess.WHITE if m.group(2) == "." else chess.BLACK
+
+
 def find_illegal_moves(
     text: str,
     boards: Sequence[chess.Board],
@@ -92,7 +106,10 @@ def find_illegal_moves(
     board, parses on a prior board to a move actually played in this
     game, OR is legal on any `extra_board` (positions the model examined
     via tool calls, where a projected move is legitimate reasoning).
+    A move-numbered token ('17.Nab1' when Black is to move) is exempt when
+    legal for the opponent next ply -- a cited reply, not a live-board move.
     Legal-but-never-played alternatives are flagged."""
+    current = boards[0] if boards else None
     seen: set[str] = set()
     illegal: list[str] = []
     for match in _SAN_TOKEN_RE.finditer(text):
@@ -102,6 +119,13 @@ def find_illegal_moves(
         seen.add(token)
         bare = _strip_annotation_glyphs(token)
         if _token_legal_or_played(bare, boards, extra_boards):
+            continue
+        numbered = _numbered_side(text, match.start())
+        if (
+            numbered is not None
+            and current is not None
+            and _legal_for_color(current, bare, numbered)
+        ):
             continue
         if any(_token_is_illegal(bare, b) for b in boards):
             illegal.append(token)
