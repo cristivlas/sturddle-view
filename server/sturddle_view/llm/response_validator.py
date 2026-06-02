@@ -108,6 +108,20 @@ def find_illegal_moves(
     return illegal
 
 
+def _parse_san_real(board: chess.Board, bare: str) -> chess.Move | None:
+    """parse_san, but reject a phantom capture: `x` in the token while the
+    parsed move captures nothing. python-chess parses 'Bxe4' onto an empty
+    e4 as a quiet move, masking a false capture claim. Returns the move, or
+    None if it doesn't parse or the capture mark is a lie."""
+    try:
+        move = board.parse_san(bare)
+    except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
+        return None
+    if "x" in bare and not board.is_capture(move):
+        return None
+    return move
+
+
 def _token_legal_or_played(
     bare: str,
     boards: Sequence[chess.Board],
@@ -115,35 +129,28 @@ def _token_legal_or_played(
 ) -> bool:
     """True iff legal on the current board, parses on a prior board to
     the move actually played from there, or is legal on any extra board.
-    Label carve-out applies on the current board only."""
+    Label carve-out applies on the current board only. A phantom capture
+    (token marks `x` but captures nothing) never passes."""
     if not boards:
         return False
     current = boards[0]
-    try:
-        current.parse_san(bare)
+    if _parse_san_real(current, bare) is not None:
         return True
-    except chess.IllegalMoveError:
-        if _is_san_label(bare, current):
-            return True
-    except (chess.InvalidMoveError, chess.AmbiguousMoveError):
-        pass
+    # Label carve-out ('Qd1' naming the queen's own square). Its 3-char
+    # guard excludes phantom captures (>=4 chars with the 'x').
+    if _is_san_label(bare, current):
+        return True
     for i in range(1, len(boards)):
         prior = boards[i]
         played = _played_move_from_prior(boards, i)
         if played is None:
             continue
-        try:
-            parsed = prior.parse_san(bare)
-        except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
-            continue
-        if parsed == played:
+        parsed = _parse_san_real(prior, bare)
+        if parsed is not None and parsed == played:
             return True
     for extra in extra_boards:
-        try:
-            extra.parse_san(bare)
+        if _parse_san_real(extra, bare) is not None:
             return True
-        except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
-            continue
     return False
 
 
@@ -158,12 +165,13 @@ def _played_move_from_prior(boards: Sequence[chess.Board], i: int) -> chess.Move
 
 def _token_is_illegal(bare: str, board: chess.Board) -> bool:
     try:
-        board.parse_san(bare)
+        move = board.parse_san(bare)
     except chess.IllegalMoveError:
         return not _is_san_label(bare, board)
     except (chess.InvalidMoveError, chess.AmbiguousMoveError):
         return False
-    return False
+    # Parsed cleanly -- illegal only if it claims a capture but takes nothing.
+    return "x" in bare and not board.is_capture(move)
 
 
 _GLYPH_RE = re.compile(r"[!?]{1,2}$")
@@ -330,10 +338,9 @@ _SQUARE_PIECE_RE = re.compile(
 
 
 def _iter_piece_claims(text: str):
-    """Yield (color_word, piece_word, square_name) for every claim
-    matched by either phrasing regex. Positional groups: both regexes
-    expose (color, piece-or-square, square-or-piece) in a known order;
-    we adapt per regex."""
+    """Yield (color_word, piece_word, square_name) for every claim matched
+    by either phrasing regex. Positional groups: both regexes expose
+    (color, piece-or-square, square-or-piece) in a known order."""
     for m in _PIECE_ON_SQUARE_RE.finditer(text):
         color, piece, square = m.group(1), m.group(2), m.group(3)
         yield (color or "").lower(), piece.lower(), square.lower()
@@ -342,39 +349,26 @@ def _iter_piece_claims(text: str):
         yield (color or "").lower(), piece.lower(), square.lower()
 
 
-# Bare-square pawn-push token; carve-out-only (bare pushes are still
-# excluded from illegal-move detection). Trailing lookahead instead of
-# \b so glyphs at the end ('e8=Q+') don't break the boundary.
-_BARE_PAWN_PUSH_RE = re.compile(r"\b[a-h][1-8](?:=[QRBN])?[+#]?(?![a-zA-Z0-9])")
-
-
-def _add_move_target(
-    out: set[tuple[int, chess.Color, int]], token: str, board: chess.Board,
-) -> None:
-    try:
-        move = board.parse_san(token)
-    except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
-        return
-    piece = board.piece_at(move.from_square)
-    if piece is None:
-        return
-    dest_piece_type = move.promotion if move.promotion else piece.piece_type
-    out.add((dest_piece_type, piece.color, move.to_square))
-
-
-def _move_target_set(text: str, board: chess.Board) -> set[tuple[int, chess.Color, int]]:
-    """Scan `text` for tokens that parse as legal moves on `board`;
-    return the set of (piece_type, color, dest_square) tuples those
-    moves would create on the post-move board. Carves out forward-looking
-    prose (post-Re1 "the rook on e1", post-e4 "the e4 pawn") from
-    false-piece-claim flagging."""
-    out: set[tuple[int, chess.Color, int]] = set()
-    for match in _SAN_TOKEN_RE.finditer(text):
-        _add_move_target(out, _strip_annotation_glyphs(match.group(0)), board)
-    for match in _BARE_PAWN_PUSH_RE.finditer(text):
-        # Strip kept for symmetry; _BARE_PAWN_PUSH_RE doesn't capture !?.
-        _add_move_target(out, _strip_annotation_glyphs(match.group(0)), board)
-    return out
+def _placement_is_legal_move(
+    board: chess.Board, piece_type: int, color: chess.Color, square: int,
+) -> bool:
+    """True iff some legal move (for the side to move) lands a piece of
+    `piece_type`/`color` on `square`. Backs the carve-out for forward-looking
+    prose naming a reachable square; the move belongs to the side to move, so
+    a claim for the other color never clears. Promotions resolve to the
+    promoted type."""
+    if board.turn != color:
+        return False
+    for move in board.legal_moves:
+        if move.to_square != square:
+            continue
+        mover = board.piece_at(move.from_square)
+        if mover is None:
+            continue
+        landed = move.promotion if move.promotion else mover.piece_type
+        if landed == piece_type:
+            return True
+    return False
 
 
 def find_false_piece_claims(
@@ -386,10 +380,11 @@ def find_false_piece_claims(
     board in `boards` or `extra_boards` matches it (empty square or wrong
     piece/color in all). `extra_boards` are positions the model examined
     via tool calls, so a piece named in a projected line isn't flagged.
-    The forward-looking carve-out uses `boards[-1]` (current) since
-    post-move targets are derived from the latest position."""
+    A claim whose square is reachable by a legal move on the current board
+    (a forward-looking plan named in prose, not SAN) is treated as a plan,
+    not a live-board claim. The move belongs to the side to move, so a claim
+    for the other color never clears that way."""
     current = boards[-1]
-    targets = _move_target_set(text, current)
     seen: set[str] = set()
     false: list[str] = []
     for color_word, piece_word, square_name in _iter_piece_claims(text):
@@ -400,7 +395,7 @@ def find_false_piece_claims(
         piece_type = _PIECE_WORDS[piece_word]
         square = chess.parse_square(square_name)
         claim_color = _COLOR_WORDS[color_word] if color_word else current.turn
-        if (piece_type, claim_color, square) in targets:
+        if _placement_is_legal_move(current, piece_type, claim_color, square):
             continue
         if _claim_holds_on_any(boards, piece_type, square, color_word):
             continue

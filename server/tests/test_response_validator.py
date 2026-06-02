@@ -89,6 +89,39 @@ def test_illegal_pawn_capture_detected():
     assert find_illegal_moves("White plays exd5.", [chess.Board()]) == ["exd5"]
 
 
+_PHANTOM_CAPTURE_FEN = "r2qr1k1/5ppp/p4n2/1pbP1bB1/1n6/N1N2B2/PP1Q1PPP/3R1RK1 b - - 1 16"
+
+
+def test_phantom_capture_flagged():
+    # Real model prose: 'Bxe4' marks a capture, but e4 is empty -- f5-e4 is a
+    # quiet move that python-chess parses leniently. The validator must flag
+    # the false capture; the legal alternative Rac8 in the same text does not.
+    board = chess.Board(_PHANTOM_CAPTURE_FEN)
+    text = (
+        "Bxe4 immediately challenges the central pawn structure and gains a "
+        "tempo against the diagonal bishop on g5. Black's knight on b4 "
+        "pressures the c2 pawn, and the initiative arising from the bishop "
+        "trade can open lines towards the white king's position. A strong "
+        "alternative to Bxe4 exists utilizing the rooks for pressure, such as "
+        "Rac8, but Bxe4 forces the most immediate structural concession."
+    )
+    assert find_illegal_moves(text, [board]) == ["Bxe4"]
+    # Same move without the bogus capture mark is a legal quiet move.
+    assert find_illegal_moves("Be4 challenges the center.", [board]) == []
+
+
+def test_real_capture_not_flagged():
+    # Nxd5 takes the white pawn on d5 -- a genuine capture, not flagged.
+    board = chess.Board(_PHANTOM_CAPTURE_FEN)
+    assert find_illegal_moves("Nxd5 wins a pawn.", [board]) == []
+
+
+def test_en_passant_capture_not_flagged():
+    # exf6 is en passant -- is_capture() is True, so the capture mark holds.
+    board = chess.Board("rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3")
+    assert find_illegal_moves("exf6 wins the pawn.", [board]) == []
+
+
 def test_illegal_queen_move_in_prose_detected():
     # Regression: model called validate_move(Qg4) -> illegal, then wrote
     # prose recommending "Qg4" anyway. Round-end validator must flag it.
@@ -229,9 +262,10 @@ def test_square_piece_form_real_hallucination_fixture():
     # Bare "b5 pawn" -- color unspecified -- matches the black pawn:
     # not flagged.
     assert find_false_piece_claims("the b5 pawn is hanging", [board]) == []
-    # "White's b5 pawn" -- color mismatch -- flagged.
-    result = find_false_piece_claims("White's b5 pawn is hanging.", [board])
-    assert result == ["white pawn on b5"]
+    # "White's a6 pawn" -- wrong color and unreachable by any white move --
+    # flagged.
+    result = find_false_piece_claims("White's a6 pawn is hanging.", [board])
+    assert result == ["white pawn on a6"]
 
 
 # ---------- Castle-word validator -------------------------------------
@@ -307,11 +341,12 @@ def test_move_target_carveout_color_must_match_move():
     assert find_false_piece_claims(text, [board]) == ["black rook on e1"]
 
 
-def test_move_target_carveout_does_not_apply_without_a_legal_move():
-    # No SAN in prose; the false claim is still flagged.
+def test_unreachable_square_without_legal_move_is_flagged():
+    # No legal move lands a rook on e5 (king blocks the file), and no SAN
+    # in prose; the false claim is flagged.
     board = chess.Board("4k3/8/8/8/8/8/8/5RK1 w - - 0 1")
-    text = "The rook on e1 supports the file."
-    assert find_false_piece_claims(text, [board]) == ["rook on e1"]
+    text = "The rook on e5 supports the file."
+    assert find_false_piece_claims(text, [board]) == ["rook on e5"]
 
 
 def test_move_target_carveout_illegal_san_does_not_trigger():
@@ -321,6 +356,45 @@ def test_move_target_carveout_illegal_san_does_not_trigger():
     text = "Imagine Re5; then the rook on e5 dominates."
     out = find_false_piece_claims(text, [board])
     assert "rook on e5" in out
+
+
+# ---------- Reachable-square carve-out (plain-English plans) ----------
+# A piece-on-square named in prose, not SAN, clears when a legal move
+# lands that piece/color on the square -- a forward-looking plan, however
+# phrased. Unreachable squares still flag.
+
+
+# Real model prose that tripped false negatives -- d3 is reachable by a
+# legal black knight move, so the claim clears however it is phrased. FEN
+# is the actual position reviewed.
+_OUTPOST_FEN = "r2qr1k1/5ppp/p4n2/1pbP1bB1/1n6/N1N2B2/PP1Q1PPP/3R1RK1 b - - 1 16"
+
+
+def test_reachable_square_clears_however_phrased():
+    board = chess.Board(_OUTPOST_FEN)
+    for text in (
+        "Black places the knight on d3, securing a formidable outpost that "
+        "centralizes control.",
+        "Black anchors the knight on d3 to restrict White's coordination "
+        "and exert heavy pressure on the center.",
+        "Black enjoys strong central pressure from the knight on d3.",
+    ):
+        assert find_false_piece_claims(text, [board]) == [], text
+
+
+def test_reachable_via_capture_clears():
+    # cxb5 lands a white pawn on b5; the claim reads as a reachable plan.
+    board = chess.Board("r4bk1/2q2p2/4p2p/1pp1P2Q/b1PpP3/3P1NPP/6BK/5R2 w - - 0 26")
+    assert find_false_piece_claims("White's b5 pawn is strong.", [board]) == []
+
+
+def test_unreachable_target_still_flags():
+    # No knight can legally reach a1, so the false claim is flagged.
+    board = chess.Board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+    text = "White develops the knight on a1 for central control."
+    # Color word is not adjacent to the piece (verb intervenes), so the
+    # claim carries no color prefix.
+    assert find_false_piece_claims(text, [board]) == ["knight on a1"]
 
 
 # ---------- Bare-pawn-push carve-out (forward-looking prose) ----------
