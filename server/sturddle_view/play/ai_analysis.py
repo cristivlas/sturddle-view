@@ -53,6 +53,7 @@ from ..llm.response_validator import (
     find_false_piece_claims,
     find_illegal_continuations,
     find_illegal_moves,
+    find_move_attribution_errors,
 )
 from .tools_engine import (
     ANALYZE_TOOL_NAME,
@@ -130,6 +131,10 @@ _CORRECTIVES = {
         ),
         "false_piece": "Not on the board: {claims}. Rewrite without these.",
         "castle": "No legal castling for either side. Rewrite without recommending it.",
+        "attribution": (
+            "Wrong side to move: {moves}. That move belongs to the other "
+            "player in this position. Re-check whose turn it is."
+        ),
     },
     "commentator": {
         "illegal": (
@@ -150,6 +155,10 @@ _CORRECTIVES = {
             "No legal castling for either side, in the position under review "
             "or any earlier position. Rewrite without recommending it."
         ),
+        "attribution": (
+            "Wrong side to move: {moves}. At the position under review that "
+            "move belongs to the other player. Re-check whose turn it is."
+        ),
     },
     "verifier": {
         "illegal": "Illegal in the live position: {moves}. Rewrite without these.",
@@ -159,6 +168,10 @@ _CORRECTIVES = {
         ),
         "false_piece": "Not on the live board: {claims}. Rewrite without these.",
         "castle": "No legal castling for either side. Rewrite without recommending it.",
+        "attribution": (
+            "Wrong side to move: {moves}. That move belongs to the other "
+            "player in the live position. Re-check whose turn it is."
+        ),
     },
 }
 # Sent once at end-of-turn if the model never called recommend_move; a
@@ -887,7 +900,7 @@ class AIAnalysisCoordinator:
             # Validate every round's prose, even when a tool_use follows.
             # After a move is recommended, the closing prose is a live-position
             # plan -- drop the commentator history walk (committed=...) below.
-            illegal, continuations, false_claims, castle_violations = (
+            illegal, continuations, false_claims, castle_violations, attribution = (
                 self._validate_round_text(
                     round_chunks, mode, committed=recommended_uci is not None,
                     extra_boards=list(examined_boards.values()),
@@ -899,6 +912,7 @@ class AIAnalysisCoordinator:
                 and not continuations
                 and not false_claims
                 and not castle_violations
+                and not attribution
             ):
                 # Natural exit. Completeness nudge: narrator re-nudges each
                 # clean exit until a move is accepted (stopping on a stall);
@@ -1065,7 +1079,7 @@ class AIAnalysisCoordinator:
                         pending_tool.tool_use_id, tool_output, card=card,
                     )
                 )
-            if illegal or continuations or false_claims or castle_violations:
+            if illegal or continuations or false_claims or castle_violations or attribution:
                 # After tool_result (if any) so every assistant tool_use
                 # has a matching tool_result before the next user message.
                 await self._append_corrective(
@@ -1074,6 +1088,7 @@ class AIAnalysisCoordinator:
                     continuations=continuations,
                     false_claims=false_claims,
                     castle_violations=castle_violations,
+                    attribution=attribution,
                     game_id=game_id,
                     round_index=round_index,
                     mode=mode,
@@ -1246,6 +1261,7 @@ class AIAnalysisCoordinator:
         continuations: list[str],
         false_claims: list[str],
         castle_violations: list[str],
+        attribution: list[str],
         game_id: str | None,
         round_index: int,
         mode: PromptMode,
@@ -1262,14 +1278,17 @@ class AIAnalysisCoordinator:
             parts.append(templates["false_piece"].format(claims=", ".join(false_claims)))
         if castle_violations:
             parts.append(templates["castle"])
+        if attribution:
+            parts.append(templates["attribution"].format(moves=", ".join(attribution)))
         messages.append({
             "role": "user",
             "content": _CORRECTIVE_PREFIX + " ".join(parts),
         })
         log.info(
             "AI agent loop: validator hits in round %d: moves=%s lines=%s "
-            "claims=%s castle=%s",
+            "claims=%s castle=%s attribution=%s",
             round_index, illegal, continuations, false_claims, castle_violations,
+            attribution,
         )
         await emit(
             Event(
@@ -1281,6 +1300,7 @@ class AIAnalysisCoordinator:
                     "illegal_continuations": continuations,
                     "false_claims": false_claims,
                     "castle_violations": castle_violations,
+                    "attribution_errors": attribution,
                 },
             )
         )
@@ -1289,29 +1309,30 @@ class AIAnalysisCoordinator:
         self, chunks: list[ProviderChunk], mode: PromptMode, *,
         committed: bool = False,
         extra_boards: Sequence[chess.Board] = (),
-    ) -> tuple[list[str], list[str], list[str], list[str]]:
+    ) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
         """Run all validators on a round's assembled text. Returns
         (illegal_moves, illegal_continuations, false_piece_claims,
-        castle_violations). Empty quad when clean, when no board_provider
-        is wired, or when no live board is available. In commentator mode
-        the board sequence includes every prior position via move_stack
-        walk -- references to earlier-game pieces aren't flagged --
-        unless `committed`, which collapses the walk to the live board
-        for the post-recommendation closing prose.
+        castle_violations, attribution_errors). Empty quintuple when clean,
+        when no board_provider is wired, or when no live board is available.
+        In commentator mode the board sequence includes every prior position
+        via move_stack walk -- references to earlier-game pieces aren't
+        flagged -- unless `committed`, which collapses the walk to the live
+        board for the post-recommendation closing prose.
 
         `extra_boards` are positions the model examined via fen-taking
         tools this turn; the illegal-move, continuation, and piece-claim
         checks treat a move/piece/line legal there as legitimate
-        projected-line reasoning. Castling stays a live-position property,
-        so it ignores them."""
+        projected-line reasoning. Castling and side-to-move attribution
+        stay live-position properties, so they ignore them."""
+        empty: tuple[list[str], ...] = ([], [], [], [], [])
         if self._board_provider is None:
-            return [], [], [], []
+            return empty
         board = self._board_provider()
         if board is None:
-            return [], [], [], []
+            return empty
         text = "".join(c.text for c in chunks if c.kind == "text" and c.text)
         if not text:
-            return [], [], [], []
+            return empty
         boards = _boards_for_validation(board, mode, committed=committed)
         # Verifier reasons about hypothetical lines, so a move token
         # ("after exd4...") is expected, not a live-move hallucination --
@@ -1322,11 +1343,13 @@ class AIAnalysisCoordinator:
             [] if skip_moves
             else find_illegal_continuations(text, boards, extra_boards)
         )
+        attribution = [] if skip_moves else find_move_attribution_errors(text, boards)
         return (
             illegal,
             continuations,
             find_false_piece_claims(text, boards, extra_boards),
             find_castle_word_violations(text, boards),
+            attribution,
         )
 
     def _inject_card_once(

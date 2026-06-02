@@ -423,3 +423,72 @@ def _claim_holds_on_any(
             continue
         return True
     return False
+
+
+# Move attributed to a named side: "White plays Nd3", "White answers Bxe4".
+# An explicit move verb links the color to the SAN. A possessive ("White's
+# Nd3") is deliberately NOT matched -- it is ambiguous with a piece
+# reference ("White's knight on d3"), which find_false_piece_claims owns.
+_ATTRIB_COLOR = r"(white|black)"
+_ATTRIB_VERB = (
+    r"\s+(?:plays?|played|moves?|moved|continues?(?:\s+with)?|"
+    r"answers?(?:\s+with)?|responds?(?:\s+with)?|replies?(?:\s+with)?|"
+    r"captures?|recaptures?|pushes?|develops?|goes?)\s+"
+)
+_ATTRIB_MOVE = (
+    rf"(?:{_SAN_CASTLE}|{_SAN_PIECE_MOVE}|{_SAN_PAWN_CAPTURE}|{_SAN_PAWN_PUSH})"
+    rf"{_SAN_GLYPHS}"
+)
+_MOVE_ATTRIBUTION_RE = re.compile(
+    rf"\b{_ATTRIB_COLOR}{_ATTRIB_VERB}({_ATTRIB_MOVE})",
+    re.IGNORECASE,
+)
+
+
+def _legal_for_color(board: chess.Board, san: str, color: chess.Color) -> bool:
+    """True iff `san` is a legal move for `color`, testing the named side by
+    flipping turn when it isn't theirs. Phantom captures rejected. Bails when
+    the side to move is in check -- the flipped position is illegal."""
+    if board.turn == color:
+        return _parse_san_real(board, san) is not None
+    if board.is_check():
+        return False
+    probe = board.copy(stack=False)
+    probe.turn = color
+    return _parse_san_real(probe, san) is not None
+
+
+def find_move_attribution_errors(
+    text: str, boards: Sequence[chess.Board],
+) -> list[str]:
+    """Moves attributed to the wrong side: prose says "White plays <SAN>"
+    when it is Black to move and <SAN> is a move only Black can make (and
+    vice versa). `boards` is current-first; the live board (boards[0]) is
+    the side-to-move authority.
+
+    A claim is flagged only when, on the live board, the SAN is illegal for
+    the named color BUT legal for the side actually to move -- i.e. the move
+    is real, just credited to the wrong player. This avoids flagging
+    hypotheticals the named side genuinely could play next."""
+    if not boards:
+        return []
+    board = boards[0]
+    seen: set[str] = set()
+    out: list[str] = []
+    for m in _MOVE_ATTRIBUTION_RE.finditer(text):
+        color_word = m.group(1).lower()
+        san = _strip_annotation_glyphs(m.group(2))
+        named = _COLOR_WORDS[color_word]
+        if named == board.turn:
+            continue
+        # Wrong side named: flag only if the move is the side-to-move's
+        # (legal for them) and not legal for the side that was named.
+        if _legal_for_color(board, san, board.turn) and not _legal_for_color(
+            board, san, named
+        ):
+            key = f"{color_word} {san}"
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(f"{color_word.capitalize()} {san}")
+    return out

@@ -14,6 +14,7 @@ from sturddle_view.llm.response_validator import (
     find_false_piece_claims,
     find_illegal_continuations,
     find_illegal_moves,
+    find_move_attribution_errors,
 )
 from sturddle_view.play.ai_analysis import _boards_for_validation
 
@@ -386,13 +387,12 @@ def test_move_target_carveout_illegal_san_does_not_trigger():
 
 
 # Real model prose that tripped false negatives -- d3 is reachable by a
-# legal black knight move, so the claim clears however it is phrased. FEN
-# is the actual position reviewed.
-_OUTPOST_FEN = "r2qr1k1/5ppp/p4n2/1pbP1bB1/1n6/N1N2B2/PP1Q1PPP/3R1RK1 b - - 1 16"
+# legal black knight move, so the claim clears however it is phrased.
+# Reuses _REVIEWED_FEN (the actual position reviewed).
 
 
 def test_reachable_square_clears_however_phrased():
-    board = chess.Board(_OUTPOST_FEN)
+    board = chess.Board(_REVIEWED_FEN)
     for text in (
         "Black places the knight on d3, securing a formidable outpost that "
         "centralizes control.",
@@ -560,7 +560,7 @@ def test_reachable_carveout_uses_live_board_not_oldest_in_walk():
     # pops append priors). The reachability carve-out must test the LIVE
     # board, not boards[-1] (the start), or a plan square reachable now but
     # not at the start gets falsely flagged. Live: black knight can reach d3.
-    live = chess.Board("r2qr1k1/5ppp/p4n2/1pbP1bB1/1n6/N1N2B2/PP1Q1PPP/3R1RK1 b - - 1 16")
+    live = chess.Board(_REVIEWED_FEN)
     walk = [live, chess.Board(), chess.Board()]  # live first, older priors after
     assert find_false_piece_claims("The knight on d3 is a powerful anchor.", walk) == []
 
@@ -754,3 +754,56 @@ def test_continuation_bare_pawn_only_broken_line_is_not_flagged():
     # 1.e4) but a bare-pawn-only run has no line-proof token, so it is
     # skipped as prose -- the same gate that passes "doubled c3 c4 pawns".
     assert find_illegal_continuations("e4 e4", [chess.Board()]) == []
+
+
+# ---------- Move-attribution / wrong side-to-move ---------------------
+# Prose that credits a move to the wrong side ("White plays <Black's
+# move>"). Flagged only when the named color != side to move AND the SAN
+# is the side-to-move's legal move, not the named side's. Reuses
+# _REVIEWED_FEN (black to move).
+
+
+def test_attribution_wrong_side_flagged():
+    # Black to move; "White plays Nd3" credits Black's move to White.
+    board = chess.Board(_REVIEWED_FEN)
+    out = find_move_attribution_errors("White plays Nd3, seizing the center.", [board])
+    assert out == ["White Nd3"]
+
+
+def test_attribution_correct_side_not_flagged():
+    board = chess.Board(_REVIEWED_FEN)
+    assert find_move_attribution_errors("Black plays Nd3, a strong outpost.", [board]) == []
+
+
+def test_attribution_possessive_not_flagged():
+    # "White's Nd3" is ambiguous with a piece reference ("the knight on
+    # d3"); the attribution validator does not match possessives -- a wrong
+    # piece claim there is find_false_piece_claims's job, not this one.
+    board = chess.Board(_REVIEWED_FEN)
+    assert find_move_attribution_errors("White's Nd3 dominates the board.", [board]) == []
+
+
+def test_attribution_no_color_word_not_flagged():
+    board = chess.Board(_REVIEWED_FEN)
+    assert find_move_attribution_errors("Nd3 is a strong outpost.", [board]) == []
+
+
+def test_attribution_piece_on_square_not_a_move():
+    # "White bishop on g5" is a piece reference, not a move -- no SAN, no flag.
+    board = chess.Board(_REVIEWED_FEN)
+    assert find_move_attribution_errors("White bishop on g5 pins the knight.", [board]) == []
+
+
+def test_attribution_move_not_legal_for_either_owner_not_flagged():
+    # "White plays Rd4" -- not a legal Black move (side to move), so it is
+    # not a wrong-attribution of the STM's move; left to other validators.
+    board = chess.Board(_REVIEWED_FEN)
+    assert find_move_attribution_errors("White plays Rd4.", [board]) == []
+
+
+def test_attribution_skipped_when_side_to_move_in_check():
+    # Black to move and in check: flipping turn to test the named side would
+    # be an illegal position, so attribution bails rather than guess.
+    board = chess.Board("4k3/4Q3/8/8/8/8/8/4K3 b - - 0 1")
+    assert board.is_check()
+    assert find_move_attribution_errors("White plays Qe8 next.", [board]) == []

@@ -400,6 +400,30 @@ async def test_committed_prose_validates_against_live_board_only():
 
 
 @pytest.mark.asyncio
+async def test_wrong_side_to_move_attribution_flagged():
+    # Black to move, but the prose credits the move to White: "White plays
+    # Nd3" when Nd3 is Black's move (and no white knight reaches d3). The
+    # attribution validator flags it via an ai_corrective.
+    board = chess.Board("r2qr1k1/5ppp/p4n2/1pbP1bB1/1n6/N1N2B2/PP1Q1PPP/3R1RK1 b - - 1 16")
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="White plays Nd3, seizing the center.")],
+        [ProviderChunk(kind="text", text="Black's knight eyes d3.")],  # rewrite
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=ToolRegistry(), board_provider=(lambda: board),
+    )
+
+    await coord.run(game_id="g", mode="commentator", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    correctives = [e for e in events if e.kind == "ai_corrective"]
+    assert correctives, "wrong-side attribution should draw a corrective"
+    assert "White Nd3" in correctives[0].payload["attribution_errors"]
+
+
+@pytest.mark.asyncio
 async def test_post_recommend_nudge_fires_when_no_conclusion():
     # Move accepted, then the model exits with no prose: the nudge runs
     # one more round to extract the conclusion.
