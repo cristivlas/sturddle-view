@@ -524,6 +524,17 @@ def test_history_walk_flags_piece_present_nowhere():
     assert find_false_piece_claims(text, boards) == ["knight on f6"]
 
 
+def test_history_walk_does_not_excuse_king_on_old_square():
+    # A king is unique and always present, so a king-on-square claim is
+    # about the live position. After castling the king left e8; the walk
+    # must NOT excuse "king on e8" just because it sat there at startpos.
+    boards = _history_boards_after(
+        ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "O-O", "Nf6", "d3", "O-O"]
+    )
+    text = "The king on e8 is not under attack."
+    assert find_false_piece_claims(text, boards) == ["king on e8"]
+
+
 def test_history_walk_accepts_san_legal_in_an_earlier_position():
     boards = _history_boards_after(["e4", "e5", "Nf3"])
     # Nf3 was actually played at ply 3; reference to it from a later

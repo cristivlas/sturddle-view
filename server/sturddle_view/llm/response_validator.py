@@ -437,9 +437,15 @@ def find_false_piece_claims(
         claim_color = _COLOR_WORDS[color_word] if color_word else current.turn
         if _placement_is_legal_move(current, piece_type, claim_color, square):
             continue
-        if _claim_holds_on_any(boards, piece_type, square, color_word):
+        # A king is unique and always on the board, so a king-on-square
+        # claim is about the live position, not an earlier one -- skip the
+        # history walk (it would excuse "king on e8" after castling).
+        claim_boards = [current] if piece_type == chess.KING else boards
+        if _claim_holds_on_any(claim_boards, piece_type, square, color_word):
             continue
-        if _claim_holds_on_any(extra_boards, piece_type, square, color_word):
+        if piece_type != chess.KING and _claim_holds_on_any(
+            extra_boards, piece_type, square, color_word
+        ):
             continue
         prefix = f"{color_word} " if color_word else ""
         false.append(f"{prefix}{piece_word} on {square_name}")
