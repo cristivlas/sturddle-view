@@ -295,7 +295,18 @@ const TOOL_FRIENDLY_LABELS = {
   delegate:       "Verifying line",
 };
 
-function friendlyToolLabel(name) {
+// Tools whose label shows the actual move under consideration ("Considering
+// Nd3"). Maps the tool to the verb; the move SAN from input.move is appended.
+const MOVE_TOOL_VERBS = {
+  recommend_move: "Considering",
+  validate_move:  "Validating",
+  delegate:       "Verifying",
+};
+
+function friendlyToolLabel(name, input) {
+  const move = input && typeof input.move === "string" ? input.move.trim() : "";
+  const verb = MOVE_TOOL_VERBS[name];
+  if (verb && move) return `${verb} ${move}`;
   return TOOL_FRIENDLY_LABELS[name] || name;
 }
 
@@ -454,7 +465,7 @@ export function appendAiToolCall({
     line.append(dot);
     const label = document.createElement("span");
     label.className = "play-ai-tool-label";
-    label.textContent = friendlyToolLabel(name);
+    label.textContent = friendlyToolLabel(name, input);
     line.append(label);
     const args = formatToolArgs(input);
     const raw = args ? `${name}(${args})` : `${name}()`;
