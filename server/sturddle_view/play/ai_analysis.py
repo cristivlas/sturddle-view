@@ -62,6 +62,7 @@ from .tools_engine import (
     RECOMMEND_MOVE_TOOL_NAME,
     TOP_MOVES_TOOL_NAME,
     VALIDATE_MOVE_TOOL_NAME,
+    SearchCache,
     board_from_fen_input,
     parse_move_canonical,
     parse_move_reporting,
@@ -590,6 +591,7 @@ class AIAnalysisCoordinator:
         board_provider: BoardProvider | None = None,
         recommend_verifier: RecommendVerifier | None = None,
         verifier_registry: ToolRegistry | None = None,
+        search_cache: SearchCache | None = None,
     ) -> None:
         self._bus = bus
         # Default provider for callers that don't supply one per turn.
@@ -607,6 +609,10 @@ class AIAnalysisCoordinator:
         self._board_provider = board_provider
         # End-of-turn verifier; None disables it.
         self._recommend_verifier = recommend_verifier
+        # Cross-tool engine-search cache, shared with the engine tools.
+        # Cleared at turn start (position is stable within a turn, not
+        # across). None when the tools aren't cache-wired (tests).
+        self._search_cache = search_cache
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
         self._cancel_token: CancelToken | None = None
@@ -685,6 +691,10 @@ class AIAnalysisCoordinator:
             self._verifier_round_cap_hit = False
             self._seq = 0
             self._replay_buffer = []
+            # New turn -> the live position has moved; stale searches must
+            # not satisfy this turn's requests.
+            if self._search_cache is not None:
+                self._search_cache.clear()
             messages: list[Message] = [{"role": "user", "content": opening_user_content}]
             tool_schemas = self._registry.schemas() or None
             has_recommend_move = any(

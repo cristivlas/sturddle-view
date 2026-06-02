@@ -391,6 +391,73 @@ class _SearchError(RuntimeError):
         self.detail = detail
 
 
+# Key into SearchCache: the position plus the root-move restriction. A free
+# search and a candidate-restricted one on the same FEN are different searches
+# (different `searchmoves`), so root_moves is part of the identity.
+_SearchKey = tuple[str, frozenset]
+
+
+class SearchCache:
+    """Per-turn cache of completed engine searches, shared across the
+    engine-backed tools (analyze, top_moves, recommend_move, the
+    recommend-verifier). A position+restriction searched once this turn is
+    not re-searched: the deepest completed result is authoritative, so a
+    cached search at depth >= the request is reused as-is.
+
+    Lifetime is one analysis turn -- the live board mutates between turns,
+    so the coordinator clears this at turn start. Within a turn the position
+    is stable, which is what makes FEN keying safe.
+
+    A reused result is returned without spawning an engine, so no
+    engine_info events fire for it (the PV panel won't re-animate for a
+    cache hit -- accepted: a redundant-looking re-search would be worse).
+    Cancelled searches are never cached: a partial result must not satisfy
+    a later request."""
+
+    def __init__(self) -> None:
+        self._entries: dict[_SearchKey, tuple[int, chess.engine.InfoDict]] = {}
+
+    def clear(self) -> None:
+        self._entries = {}
+
+    @staticmethod
+    def _key(board: chess.Board, root_moves: list[chess.Move] | None) -> _SearchKey:
+        roots = frozenset(m.uci() for m in root_moves) if root_moves else frozenset()
+        return (board.fen(), roots)
+
+    async def get_or_search(
+        self,
+        engine_launcher: EngineLauncher,
+        board: chess.Board,
+        limit: chess.engine.Limit,
+        *,
+        bus: EventBus,
+        game_id: str,
+        cancel_token: CancelToken,
+        root_moves: list[chess.Move] | None = None,
+        settings_provider: SettingsProvider | None = None,
+    ) -> tuple[chess.engine.InfoDict, bool]:
+        """Reuse a cached result when one this turn reached at least the
+        requested depth; otherwise run the search and cache it if deeper than
+        what's stored. Same return shape as _run_one_search. A reuse hit
+        reports (info, cancelled=False)."""
+        requested = limit.depth or 0
+        key = self._key(board, root_moves)
+        cached = self._entries.get(key)
+        if cached is not None and cached[0] >= requested:
+            return cached[1], False
+        last_info, cancelled = await _run_one_search(
+            engine_launcher, board, limit,
+            bus=bus, game_id=game_id, cancel_token=cancel_token,
+            root_moves=root_moves, settings_provider=settings_provider,
+        )
+        if not cancelled:
+            reached = last_info.get("depth") or 0
+            if cached is None or reached > cached[0]:
+                self._entries[key] = (reached, last_info)
+        return last_info, cancelled
+
+
 async def _run_one_search(
     engine_launcher: EngineLauncher,
     board: chess.Board,
@@ -452,8 +519,11 @@ def make_analyze_tool(
     bus: EventBus,
     game_id_provider: GameIdProvider | None = None,
     settings_provider: SettingsProvider | None = None,
+    search_cache: SearchCache | None = None,
 ) -> AnalyzeTool:
-    """Build the `analyze` async tool.
+    """Build the `analyze` async tool. `search_cache` is the cross-tool
+    engine-search cache; an unshared fresh one (always-miss) is used when
+    the caller doesn't pass the shared instance.
 
     `engine_launcher()` returns a fresh `EngineSupervisor` per call --
     decouples the tool from how the production engine is resolved
@@ -471,6 +541,8 @@ def make_analyze_tool(
     engine inherits Threads/Hash/SyzygyPath via the shared spawn
     helper. None is acceptable (tests).
     """
+    cache = search_cache or SearchCache()
+
     async def analyze(input_: dict, *, cancel_token: CancelToken) -> dict:
         board, err = _parse_fen_arg(input_)
         if err is not None:
@@ -482,7 +554,7 @@ def make_analyze_tool(
         await bus.publish(Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={}))
 
         try:
-            last_info, cancelled = await _run_one_search(
+            last_info, cancelled = await cache.get_or_search(
                 engine_launcher, board, limit,
                 bus=bus, game_id=game_id, cancel_token=cancel_token,
                 settings_provider=settings_provider,
@@ -574,12 +646,15 @@ def make_top_moves_tool(
     board_provider: BoardProvider,
     game_id_provider: GameIdProvider | None = None,
     settings_provider: SettingsProvider | None = None,
+    search_cache: SearchCache | None = None,
 ) -> AnalyzeTool:
     """Deep-evaluate a model-supplied list of candidate moves. Each
     legal move runs a root-restricted search; illegal or unparseable
     moves come back as per-entry errors. Publishes one
     `engine_search_start` for the batch, then per-candidate
-    engine_info events."""
+    engine_info events. `search_cache`: see make_analyze_tool."""
+    cache = search_cache or SearchCache()
+
     async def top_moves(input_: dict, *, cancel_token: CancelToken) -> dict:
         board = board_provider()
         if board is None:
@@ -617,7 +692,7 @@ def make_top_moves_tool(
                 cancelled_any = True
                 break
             try:
-                last_info, cancelled = await _run_one_search(
+                last_info, cancelled = await cache.get_or_search(
                     engine_launcher, board, limit,
                     bus=bus, game_id=game_id, cancel_token=cancel_token,
                     root_moves=[move],
@@ -810,13 +885,17 @@ def make_recommend_move_tool(
     board_provider: BoardProvider,
     game_id_provider: GameIdProvider | None = None,
     settings_provider: SettingsProvider | None = None,
+    search_cache: SearchCache | None = None,
 ) -> AnalyzeTool:
     """Build the `recommend_move` async tool. Parses UCI/SAN, then runs
     two engine searches (candidate-restricted + free) at the requested
     depth on the live position; if the engine's bestmove scores better
     for the side to move, returns a structured error so the model can
     pivot. On acceptance returns `{ok, uci, san, post_move_fen,
-    candidate_score, engine_best_move, engine_best_score, depth}`."""
+    candidate_score, engine_best_move, engine_best_score, depth}`.
+    `search_cache`: see make_analyze_tool."""
+    cache = search_cache or SearchCache()
+
     async def recommend_move(input_: dict, *, cancel_token: CancelToken) -> dict:
         board = board_provider()
         if board is None:
@@ -844,7 +923,7 @@ def make_recommend_move_tool(
 
         # Search A: engine's free best move on the live position.
         try:
-            best_info, _ = await _run_one_search(
+            best_info, _ = await cache.get_or_search(
                 engine_launcher, scratch_live, limit,
                 bus=bus, game_id=game_id, cancel_token=cancel_token,
                 settings_provider=settings_provider,
@@ -860,7 +939,7 @@ def make_recommend_move_tool(
 
         # Search B: same board, restricted to the candidate.
         try:
-            cand_info, _ = await _run_one_search(
+            cand_info, _ = await cache.get_or_search(
                 engine_launcher, board.copy(stack=False), limit,
                 bus=bus, game_id=game_id, cancel_token=cancel_token,
                 root_moves=[parsed],
@@ -925,12 +1004,16 @@ def make_recommend_verifier(
     board_provider: BoardProvider,
     game_id_provider: GameIdProvider | None = None,
     settings_provider: SettingsProvider | None = None,
+    search_cache: SearchCache | None = None,
 ):
     """Build the end-of-turn recommend-verifier. Returns a callable that
     runs a searchmoves-restricted deep search on the recommended move
     and returns a payload dict (or None on failure). The coordinator
     emits the `ai_recommendation` event through its own _emit so the
-    payload gets a seq stamp and lands in the replay buffer."""
+    payload gets a seq stamp and lands in the replay buffer.
+    `search_cache`: see make_analyze_tool."""
+    cache = search_cache or SearchCache()
+
     async def verify(
         move: chess.Move, depth: int | None, cancel_token: CancelToken,
     ) -> dict | None:
@@ -944,7 +1027,7 @@ def make_recommend_verifier(
         d = min(max(requested, VERIFICATION_DEPTH), MAX_DEPTH)
         limit = chess.engine.Limit(depth=d)
         try:
-            last_info, _cancelled = await _run_one_search(
+            last_info, _cancelled = await cache.get_or_search(
                 engine_launcher, board.copy(stack=False), limit,
                 bus=bus, game_id=game_id, cancel_token=cancel_token,
                 root_moves=[move],
