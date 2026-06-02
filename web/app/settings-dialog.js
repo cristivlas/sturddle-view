@@ -1233,7 +1233,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       );
       aiMaxToolRounds.className = "ai-max-tool-rounds";
       const aiVerifierMaxRounds = makeIntInput(
-        AI_VERIFIER_MAX_ROUNDS_KEY, "Verifier rounds", AI_ROUNDS_MIN
+        AI_VERIFIER_MAX_ROUNDS_KEY, "Max subagent rounds", AI_ROUNDS_MIN
       );
       aiVerifierMaxRounds.className = "ai-verifier-max-rounds";
       aiRoundsRow.append(aiMaxToolRounds, aiVerifierMaxRounds);
