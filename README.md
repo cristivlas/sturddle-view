@@ -3,7 +3,29 @@
 Browser-based chess GUI for human vs engine play and live observation of headless
 engine tournaments. See [docs/spec.md](docs/spec.md) for the full design.
 
+## Getting started
+
+Requires Python >= 3.10 and at least one UCI engine binary. The app ships no
+engine -- download any UCI-compatible engine and register it from the Engines
+tab once the app is running.
+
+```bash
+git clone https://github.com/cristivlas/sturddle-view.git
+cd sturddle-view
+git submodule update --init --recursive   # board renderer + opening data (required)
+```
+
+The submodules ([cm-chessboard](https://github.com/shaack/cm-chessboard),
+[chess-openings](https://github.com/lichess-org/chess-openings)) provide the
+board UI and opening identification; the app will not render correctly without
+them, so init them before the first run.
+
 ## Quickstart
+
+Create a virtualenv, install the package (editable, with dev extras), and run.
+The only OS difference is how the virtualenv is activated.
+
+**Linux / macOS**
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
@@ -11,18 +33,31 @@ pip install -e '.[dev]'
 sturddle-view
 ```
 
-The server binds to `127.0.0.1` by default and prints an `/auth?token=...`
-URL at startup. Open it once; the server sets an `HttpOnly` cookie and
-redirects to `/ui/`. To expose the server on the LAN/tailnet, pass
-`--host 0.0.0.0` (token still required, or add `--no-auth` if you trust
-the network). To serve over TLS, supply `--cert PATH --key PATH`. See
-[docs/spec.md#security](docs/spec.md#security) for the full model.
+**Windows (PowerShell)**
 
-### Submodules
-
-```bash
-git submodule update --init --recursive
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+sturddle-view
 ```
+
+**Windows (cmd)**
+
+```bat
+python -m venv .venv
+.venv\Scripts\activate.bat
+pip install -e ".[dev]"
+sturddle-view
+```
+
+The server binds to `127.0.0.1:8765` by default and prints the full
+startup URL (e.g. `http://127.0.0.1:8765/auth?token=...`). Open it once;
+the server sets an `HttpOnly` cookie and redirects to `/ui/`. To expose
+the server on the LAN/tailnet, pass `--host 0.0.0.0` (token still
+required, or add `--no-auth` if you trust the network). To serve over
+TLS, supply `--cert PATH --key PATH`. See
+[docs/spec.md#security](docs/spec.md#security) for the full model.
 
 ## Command-line flags
 
@@ -40,6 +75,39 @@ git submodule update --init --recursive
 | `--debug` | Verbose (DEBUG) logging for the app. |
 | `--server-debug` | Verbose (DEBUG) logging for uvicorn. |
 
+### Flag reference
+
+Every flag has an `SV_*` environment-variable equivalent (see
+[Environment variables](#environment-variables)); the flag wins when both are
+set.
+
+**Networking.** `--host` sets the bind address and `--port` the port (defaults
+`127.0.0.1:8765`). The loopback default keeps the server private; set
+`--host 0.0.0.0` to reach it from other machines on your LAN or tailnet. Token
+auth still applies on a non-loopback bind unless you also pass `--no-auth` --
+do that only on a network you trust, since it drops the only access control.
+
+**TLS.** `--cert PATH` and `--key PATH` serve HTTPS from a PEM certificate and
+key. They must be supplied together, and are rejected together with `--desktop`
+(the native window talks to the loopback server directly, so TLS adds nothing).
+
+**Desktop.** `--desktop` opens the app in a native window instead of a browser
+tab; `--width N` / `--height N` set its initial size (default `1280` x `1000`).
+Without `--desktop` the size flags are ignored.
+
+**Engine.** `--engine PATH` names a UCI binary to fall back on when the engine
+registry has no active selection. Normally you register engines from the
+Engines tab instead; this is a convenience for a one-off run.
+
+**Multiple instances.** `--instance TAG` namespaces the config and data
+directories so two servers (e.g. a stable and a dev build) can run at once
+without clobbering each other's settings, engine registry, or tournaments.
+
+**Dev / debug.** `--reload` auto-restarts the server on source changes (dev
+only). `--debug` raises the app's own logging to DEBUG; `--server-debug` does
+the same for uvicorn (request/transport noise). They are independent -- combine
+them for the full firehose.
+
 ## Environment variables
 
 All knobs use the `SV_` prefix; any CLI flag above has an `SV_*` equivalent
@@ -50,10 +118,28 @@ tunables are documented in full in [docs/env-vars.md](docs/env-vars.md).
 
 - Human-vs-engine play with engine eval/PV display and adjustable time control.
 - Engine roster: register UCI engines, edit per-engine options, set defaults (Hash, Threads, SyzygyPath, opening book).
-- Tournaments: round-robin or gauntlet via [fastchess](https://github.com/Disservin/fastchess); per-row Info, Start/Pause/Resume, sortable list, live game observation in floating windows.
-- Tournament settings (engine defaults, opening book) are snapshotted into the tournament's `state.json` at create time so Stop/Resume can't drift.
-- AI analysis & commentary: prose over the engine's eval/PV via Anthropic, Google Gemini, or local Ollama. Off by default; the engine stays the source of truth. See [docs/ai-analysis-spec.md](docs/ai-analysis-spec.md).
+- Tournaments: round-robin or gauntlet via [fastchess](https://github.com/Disservin/fastchess); per-row Info, Start/Stop/Restart, sortable list, live game observation in floating windows.
+- Tournament settings (engine defaults, opening book) are snapshotted into the tournament's `state.json` at create time, so every run is reproducible. Stop wipes and the next Start runs from scratch (there is no resume).
+- AI analysis & commentary: prose over the engine's eval/PV via Anthropic, Google Gemini, or local Ollama. Off by default; the engine stays the source of truth. Hosted providers need an API key (entered in Settings -> Analysis, stored in the OS keyring); Ollama runs locally with no key. See [docs/ai-analysis-spec.md](docs/ai-analysis-spec.md).
+
+- Native desktop window: run with `--desktop` to open in a PyWebView window instead of a browser tab (install the `desktop` extra: `pip install -e '.[dev,desktop]'`).
 
 See [docs/spec.md](docs/spec.md) and [docs/tournament-spec.md](docs/tournament-spec.md) for design details.
 
-> Also ships as a self-contained standalone desktop app.
+## Standalone desktop build
+
+The app can be packaged as a single self-contained executable (PyInstaller
+`--onefile --windowed`) that bundles the web assets and runs without a Python
+install. Build from the repository root:
+
+```bash
+python scripts/build_exe.py
+```
+
+This provisions an isolated `build_venv/`, installs the package with its
+`desktop` extra plus PyInstaller, and writes `dist/sturddle-view-<version>`
+(`.exe` on Windows) alongside a `.sha256` checksum. Useful flags:
+
+- `--reuse-venv` -- skip venv creation / dependency install when `build_venv/`
+  already exists (reinstalls only the local package to pick up code changes).
+- `--console` -- keep a console window for debugging (omit for release builds).
