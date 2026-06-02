@@ -1711,6 +1711,10 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   font: inherit;
   text-decoration: underline;
 }
+.xgame-nav-locked {
+  /* Don't scroll -- the media breakpoint at short height handles it. */
+  overflow-y: hidden;
+}
 .xgame-toast .xgame-link:hover { color: var(--accent); filter: brightness(1.15); }
 /* Analysis on: x-game nav links are greyed and inert (no jumping games
    mid-analysis). The expand arrow stays live so labels remain browsable. */
