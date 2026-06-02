@@ -391,9 +391,9 @@ class _SearchError(RuntimeError):
         self.detail = detail
 
 
-# Key into SearchCache: the position plus the root-move restriction. A free
-# search and a candidate-restricted one on the same FEN are different searches
-# (different `searchmoves`), so root_moves is part of the identity.
+# Key into SearchCache: the position (EPD) plus the root-move restriction. A
+# free search and a candidate-restricted one on the same position are
+# different searches (different `searchmoves`), so root_moves is part of it.
 _SearchKey = tuple[str, frozenset]
 
 
@@ -406,7 +406,7 @@ class SearchCache:
 
     Lifetime is one analysis turn -- the live board mutates between turns,
     so the coordinator clears this at turn start. Within a turn the position
-    is stable, which is what makes FEN keying safe.
+    is stable, which is what makes position keying safe.
 
     A reused result is returned without spawning an engine, so no
     engine_info events fire for it (the PV panel won't re-animate for a
@@ -422,8 +422,12 @@ class SearchCache:
 
     @staticmethod
     def _key(board: chess.Board, root_moves: list[chess.Move] | None) -> _SearchKey:
+        # epd(), not fen(): drops the halfmove/fullmove counters so the same
+        # board with different clocks shares a key. Matches the dedup
+        # normalizer (_canonical_fen) -- these searches are position- not
+        # history-dependent.
         roots = frozenset(m.uci() for m in root_moves) if root_moves else frozenset()
-        return (board.fen(), roots)
+        return (board.epd(), roots)
 
     async def get_or_search(
         self,
@@ -445,6 +449,7 @@ class SearchCache:
         key = self._key(board, root_moves)
         cached = self._entries.get(key)
         if cached is not None and cached[0] >= requested:
+            log.info("search cache hit: depth %d >= %d, key=%s", cached[0], requested, key)
             return cached[1], False
         last_info, cancelled = await _run_one_search(
             engine_launcher, board, limit,

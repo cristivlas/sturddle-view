@@ -70,14 +70,16 @@ async def _search(cache, board, depth, *, root_moves=None, token=None):
 
 
 @pytest.mark.asyncio
-async def test_reuse_at_or_below_reached_depth(_patched):
+async def test_reuse_at_or_below_reached_depth(_patched, caplog):
     cache = SearchCache()
     board = chess.Board()
     await _search(cache, board, 6)
-    info, cancelled = await _search(cache, board, 5)  # <= reached -> reuse
+    with caplog.at_level("INFO", logger="sturddle_view.play.tools_engine"):
+        info, cancelled = await _search(cache, board, 5)  # <= reached -> reuse
     assert _patched.calls == 1
     assert cancelled is False
     assert info.get("depth") == 6
+    assert any("search cache hit" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -112,6 +114,18 @@ async def test_different_position_is_distinct_key(_patched):
     await _search(cache, start, 6)
     await _search(cache, after_e4, 6)
     assert _patched.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_clocks_dont_split_key(_patched):
+    # Same board, different halfmove/fullmove counters -> one key (epd()).
+    cache = SearchCache()
+    fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    a = chess.Board(fen)
+    b = chess.Board(fen.replace("0 1", "9 42"))
+    await _search(cache, a, 6)
+    await _search(cache, b, 6)  # clocks differ, position same -> reuse
+    assert _patched.calls == 1
 
 
 @pytest.mark.asyncio
