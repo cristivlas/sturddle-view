@@ -39,6 +39,15 @@ const AI_VERIFIER_MAX_ROUNDS_KEY = "ai_verifier_max_rounds";
 // Server enforces the same floor; UI mirrors it for pre-roundtrip feedback.
 const AI_ROUNDS_MIN = 1;
 
+// Analysis-mode dropdown: a friendlier face for the ai_enabled bool.
+// "Engine only" = ai_enabled false (plain engine); "AI analysis" = true.
+const AI_MODE_OFF = "engine";
+const AI_MODE_ON = "ai";
+const AI_MODE_OPTIONS = [
+  [AI_MODE_OFF, "Engine only"],
+  [AI_MODE_ON, "AI analysis"],
+];
+
 // Persisted unit is always seconds (float). The UI picks the most natural
 // display unit on load (largest unit with no fractional remainder) and
 // converts back to seconds on save. UCI/cutechess/fastchess all support
@@ -897,15 +906,29 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const analysisPanel = document.createElement("wa-tab-panel");
       analysisPanel.name = "analysis";
 
-      const aiEnabledRow = document.createElement("div");
-      aiEnabledRow.className = "settings-row";
-      const aiEnabledLabel = document.createElement("label");
-      aiEnabledLabel.textContent = "Use AI analysis";
-      const aiEnabled = document.createElement("wa-switch");
-      aiEnabled.size = "small";
-      if (initial[AI_ENABLED_KEY]) aiEnabled.setAttribute("checked", "");
-      if (noEngine) aiEnabled.setAttribute("disabled", "");
-      aiEnabledRow.append(aiEnabledLabel, aiEnabled);
+      // Analysis mode + Provider share one row, split 50/50 (settings-pair-row).
+      // Mode "Engine only" disables every AI field below, same as the old
+      // ai_enabled toggle being off.
+      const aiModeRow = document.createElement("div");
+      aiModeRow.className = "settings-row";
+      const aiModeLabel = document.createElement("label");
+      aiModeLabel.textContent = "Analysis mode";
+      const aiMode = document.createElement("wa-select");
+      aiMode.size = "small";
+      aiMode.setAttribute("distance", "4");
+      for (const [val, label] of AI_MODE_OPTIONS) {
+        const opt = document.createElement("wa-option");
+        opt.value = val;
+        opt.textContent = label;
+        aiMode.append(opt);
+      }
+      aiMode.value = initial[AI_ENABLED_KEY] ? AI_MODE_ON : AI_MODE_OFF;
+      if (noEngine) {
+        aiMode.value = AI_MODE_OFF;
+        aiMode.setAttribute("disabled", "");
+      }
+      aiModeRow.append(aiModeLabel, aiMode);
+      const isAiOn = () => aiMode.value === AI_MODE_ON;
 
       // Inline hint when no engine is configured: AI analysis depends
       // on the same engine the play / view perspectives use, so it
@@ -937,6 +960,11 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       // (like native <select>) drops a value with no matching option.
       aiProvider.value = initial[AI_PROVIDER_KEY] || "anthropic";
       aiProviderRow.append(aiProviderLabel, aiProvider);
+
+      // Mode + Provider on one 50/50 row.
+      const aiModeProviderRow = document.createElement("div");
+      aiModeProviderRow.className = "settings-pair-row";
+      aiModeProviderRow.append(aiModeRow, aiProviderRow);
 
       // Model: a dropdown populated from the provider's list_models API.
       // If the fetch fails (no key / unreachable / not implemented), the
@@ -1291,7 +1319,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       // between the two lists. Pair each row with the input(s) inside it
       // that need the disabled attribute when the master toggle is off.
       const AI_ROWS = new Map([
-        ["provider",         { row: aiProviderRow,     inputs: [aiProvider] }],
+        ["mode-provider",    { row: aiModeProviderRow, inputs: [aiProvider] }],
         ["model",            { row: aiModelRow,        inputs: [aiModelSelect, aiModelInput] }],
         ["model-hint",       { row: aiModelHint,       inputs: [] }],
         ["api-key",          { row: aiKeyRow,          inputs: [aiKey] }],
@@ -1301,13 +1329,14 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         ["thinking",         { row: aiThinkingRow,     inputs: [aiThinkingMode, aiThinkingBudget] }],
       ]);
 
-      // Every AI-related input below the master toggle gets greyed
-      // out when the toggle is off. Values are retained (settings
-      // persist server-side); flipping the toggle back restores them.
+      // Every AI input gets greyed out when mode is "Engine only". The
+      // mode select itself is never locked -- it's the master control.
+      // Values are retained (settings persist server-side); switching back
+      // to "AI-driven" restores them.
       function applyAiEnabledLockout() {
-        const off = !aiEnabled.checked;
-        // Pull focus off the toggle before re-enabling fields so the
-        // user doesn't see a focus ring flash on an unrelated control.
+        const off = !isAiOn();
+        // Pull focus off the control before re-enabling fields so the user
+        // doesn't see a focus ring flash on an unrelated control.
         if (document.activeElement && typeof document.activeElement.blur === "function") {
           document.activeElement.blur();
         }
@@ -1318,21 +1347,20 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
           }
         }
       }
-      aiEnabled.addEventListener("change", () => {
-        putSettings({ [AI_ENABLED_KEY]: aiEnabled.checked });
+      aiMode.addEventListener("change", () => {
+        putSettings({ [AI_ENABLED_KEY]: isAiOn() });
         applyAiEnabledLockout();
-        if (aiEnabled.checked) refreshAiModels();
+        if (isAiOn()) refreshAiModels();
       });
 
-      analysisPanel.append(aiEnabledRow);
       if (aiNoEngineHint) analysisPanel.append(aiNoEngineHint);
       for (const { row } of AI_ROWS.values()) analysisPanel.append(row);
 
       // Initial state: hide the select until the first fetch tells us
-      // whether we have a real list. Lock fields based on the toggle.
+      // whether we have a real list. Lock fields based on the mode.
       showModelInput("");
       applyAiEnabledLockout();
-      if (aiEnabled.checked) refreshAiModels();
+      if (isAiOn()) refreshAiModels();
 
       // Map preserves insertion order by spec -- the iteration order here
       // IS the visual tab order. Each entry pairs the tab control with
