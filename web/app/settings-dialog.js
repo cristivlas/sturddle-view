@@ -36,8 +36,11 @@ const AI_THINKING_BUDGET_TOKENS_KEY = "ai_thinking_budget_tokens";
 const AI_THINKING_BUDGET_MIN = 1024;
 const AI_MAX_TOOL_ROUNDS_KEY = "ai_max_tool_rounds";
 const AI_VERIFIER_MAX_ROUNDS_KEY = "ai_verifier_max_rounds";
-// Server enforces the same floor; UI mirrors it for pre-roundtrip feedback.
+const AI_ANALYZE_MAX_DEPTH_KEY = "ai_analyze_max_depth";
+const AI_VERIFICATION_DEPTH_KEY = "ai_verification_depth";
+// Server enforces the same floors; UI mirrors them for pre-roundtrip feedback.
 const AI_ROUNDS_MIN = 1;
+const AI_DEPTH_MIN = 1;
 
 // Analysis-mode dropdown: a friendlier face for the ai_enabled bool.
 // "Engine only" = ai_enabled false (plain engine); "AI analysis" = true.
@@ -1207,31 +1210,47 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       const aiRoundsRow = document.createElement("div");
       aiRoundsRow.className = "settings-row ai-row ai-rounds-row";
 
-      const makeRoundsInput = (key, label) => {
+      const makeIntInput = (key, label, min) => {
         const input = document.createElement("wa-input");
         input.type = "number";
         input.size = "small";
         input.setAttribute("label", label);
         input.setAttribute("autocomplete", "off");
-        input.min = String(AI_ROUNDS_MIN);
+        input.min = String(min);
         input.step = "1";
-        input.value = String(initial[key] || AI_ROUNDS_MIN);
+        input.value = String(initial[key] || min);
         const persist = debounce(() => {
           const n = Number(input.value);
-          if (!Number.isFinite(n) || n < AI_ROUNDS_MIN) return;
+          if (!Number.isFinite(n) || n < min) return;
           putSettings({ [key]: n });
         }, 400);
         input.addEventListener("input", persist);
         return input;
       };
 
-      const aiMaxToolRounds = makeRoundsInput(AI_MAX_TOOL_ROUNDS_KEY, "Max rounds");
+      const aiMaxToolRounds = makeIntInput(
+        AI_MAX_TOOL_ROUNDS_KEY, "Max rounds", AI_ROUNDS_MIN
+      );
       aiMaxToolRounds.className = "ai-max-tool-rounds";
-      const aiVerifierMaxRounds = makeRoundsInput(
-        AI_VERIFIER_MAX_ROUNDS_KEY, "Verifier rounds"
+      const aiVerifierMaxRounds = makeIntInput(
+        AI_VERIFIER_MAX_ROUNDS_KEY, "Verifier rounds", AI_ROUNDS_MIN
       );
       aiVerifierMaxRounds.className = "ai-verifier-max-rounds";
       aiRoundsRow.append(aiMaxToolRounds, aiVerifierMaxRounds);
+
+      // Search-depth caps: the analyze/recommend clamp and the end-of-turn
+      // verifier floor. Mirrors the rounds row's structure.
+      const aiDepthRow = document.createElement("div");
+      aiDepthRow.className = "settings-row ai-row ai-depth-row";
+      const aiAnalyzeMaxDepth = makeIntInput(
+        AI_ANALYZE_MAX_DEPTH_KEY, "Max search depth", AI_DEPTH_MIN
+      );
+      aiAnalyzeMaxDepth.className = "ai-analyze-max-depth";
+      const aiVerificationDepth = makeIntInput(
+        AI_VERIFICATION_DEPTH_KEY, "Min verify depth", AI_DEPTH_MIN
+      );
+      aiVerificationDepth.className = "ai-verification-depth";
+      aiDepthRow.append(aiAnalyzeMaxDepth, aiVerificationDepth);
 
       // Credential shape per provider: key-based providers show the API
       // key row; URL-based (Ollama) shows the base URL row. A set keeps
@@ -1325,9 +1344,10 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         ["model-hint",       { row: aiModelHint,       inputs: [] }],
         ["api-key",          { row: aiKeyRow,          inputs: [aiKey] }],
         ["base-url",         { row: aiUrlRow,          inputs: [aiUrl] }],
+        ["thinking",         { row: aiThinkingRow,     inputs: [aiThinkingMode, aiThinkingBudget] }],
         ["thinking-divider", { row: aiThinkingDivider, inputs: [] }],
         ["rounds",           { row: aiRoundsRow,       inputs: [aiMaxToolRounds, aiVerifierMaxRounds] }],
-        ["thinking",         { row: aiThinkingRow,     inputs: [aiThinkingMode, aiThinkingBudget] }],
+        ["depth",            { row: aiDepthRow,        inputs: [aiAnalyzeMaxDepth, aiVerificationDepth] }],
       ]);
 
       // Every AI input gets greyed out when mode is "Engine only". The

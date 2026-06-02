@@ -2199,7 +2199,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 /* Form-style rows (label + input) inside a panel. */
 .settings-row { max-width: 360px; }
 .ai-thinking-row,
-.ai-rounds-row {
+.ai-rounds-row,
+.ai-depth-row {
   display: flex;
   align-items: flex-end;
   gap: 16px;
@@ -2207,12 +2208,16 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .ai-thinking-budget { width: 8em; max-width: 8em; }
 .ai-thinking-budget::part(base) { max-width: 8em; }
 .ai-thinking-budget::part(input) { width: 8em; min-width: 0; }
-.ai-max-tool-rounds, .ai-verifier-max-rounds { flex: 1; min-width: 0; }
+.ai-max-tool-rounds, .ai-verifier-max-rounds,
+.ai-analyze-max-depth, .ai-verification-depth { flex: 1; min-width: 0; }
 .ai-max-tool-rounds::part(input),
-.ai-verifier-max-rounds::part(input) { min-width: 0; }
+.ai-verifier-max-rounds::part(input),
+.ai-analyze-max-depth::part(input),
+.ai-verification-depth::part(input) { min-width: 0; }
 .ai-thinking-row wa-select::part(form-control-label),
 .ai-thinking-row wa-input::part(form-control-label),
-.ai-rounds-row wa-input::part(form-control-label) {
+.ai-rounds-row wa-input::part(form-control-label),
+.ai-depth-row wa-input::part(form-control-label) {
   color: var(--muted);
   font-size: 0.75rem;
   font-family: var(--wa-font-family-body);

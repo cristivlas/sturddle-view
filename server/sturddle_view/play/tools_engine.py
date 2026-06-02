@@ -21,6 +21,10 @@ from typing import Any, Awaitable, Callable
 import chess
 import chess.engine
 
+from ..config import (
+    _DEFAULT_AI_ANALYZE_MAX_DEPTH,
+    _DEFAULT_AI_VERIFICATION_DEPTH,
+)
 from ..env_utils import env_int
 from ..events import EVT_ENGINE_SEARCH_START, Event, EventBus
 from ..llm import ToolSpec
@@ -35,18 +39,18 @@ log = logging.getLogger(__name__)
 
 # TODO: dynamic cap -- allow deeper searches when few pieces remain
 # (endgames resolve deep cheaply and benefit from it).
-_DEFAULT_MAX_DEPTH = 30
 # Hard cap -- the agent can request any depth, but we clamp to this.
-# The env override is for ops; UI exposure is pending. Searches are
-# depth-only (no time limit): a timer firing before the depth completes
-# makes the bestmove non-deterministic.
-MAX_DEPTH = env_int("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_MAX_DEPTH)
+# Settings (ai_analyze_max_depth) override per call; the env default is the
+# fallback when no settings are wired (ops/tests). Searches are depth-only
+# (no time limit): a timer firing before the depth completes makes the
+# bestmove non-deterministic.
+MAX_DEPTH = env_int("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_AI_ANALYZE_MAX_DEPTH)
 
 # Floor for the end-of-turn recommendation check: it searches at least
 # this deep regardless of the (often shallow) depth the model picked, so
-# the authoritative verdict isn't a shallow rubber-stamp.
-_DEFAULT_VERIFICATION_DEPTH = 30
-VERIFICATION_DEPTH = env_int("SV_AI_VERIFICATION_DEPTH", _DEFAULT_VERIFICATION_DEPTH)
+# the authoritative verdict isn't a shallow rubber-stamp. Settings
+# (ai_verification_depth) override per call; env is the fallback.
+VERIFICATION_DEPTH = env_int("SV_AI_VERIFICATION_DEPTH", _DEFAULT_AI_VERIFICATION_DEPTH)
 
 # recommend_move dominance margin: rival must beat candidate by strictly
 # more than this many cp (STM POV) to reject. Filters cosmetic 1-30 cp
@@ -79,6 +83,25 @@ BoardProvider = Callable[[], chess.Board | None]
 # the same source HVE's analysis path uses.
 SettingsProvider = Callable[[], Any]
 AnalyzeTool = Callable[..., Awaitable[dict[str, Any]]]
+
+
+def _settings_int(
+    settings_provider: SettingsProvider | None, attr: str, fallback: int,
+) -> int:
+    """Read an int setting via the provider, falling back to the module
+    const when no provider/setting is wired. One source for the
+    settings-or-default depth-cap lookup the tools share."""
+    settings = settings_provider() if settings_provider else None
+    value = getattr(settings, attr, None) if settings is not None else None
+    return int(value) if isinstance(value, int) else fallback
+
+
+def _max_depth(settings_provider: SettingsProvider | None) -> int:
+    return _settings_int(settings_provider, "ai_analyze_max_depth", MAX_DEPTH)
+
+
+def _verification_depth(settings_provider: SettingsProvider | None) -> int:
+    return _settings_int(settings_provider, "ai_verification_depth", VERIFICATION_DEPTH)
 
 # Default fallback game_id when the tool runs outside a live HVE
 # session (e.g. unit tests, future post-game path). engine_info events
@@ -296,9 +319,11 @@ def board_from_fen_input(tool_input: dict) -> chess.Board | None:
     return None if err is not None else board
 
 
-def _depth_limit(input_: dict, default_depth: int) -> tuple[chess.engine.Limit, dict]:
+def _depth_limit(
+    input_: dict, default_depth: int, max_depth: int,
+) -> tuple[chess.engine.Limit, dict]:
     """Build a depth-only chess.engine.Limit from the agent's requested
-    depth (clamped to MAX_DEPTH), falling back to `default_depth`. Returns
+    depth (clamped to `max_depth`), falling back to `default_depth`. Returns
     the Limit and a dict echoing the effective depth (tool output + test
     assertions). Time limits are intentionally not supported: a timer that
     fires before the depth is reached makes the bestmove non-deterministic,
@@ -306,7 +331,7 @@ def _depth_limit(input_: dict, default_depth: int) -> tuple[chess.engine.Limit, 
     raw_depth = input_.get("depth")
     if raw_depth is not None:
         try:
-            depth = max(1, min(int(raw_depth), MAX_DEPTH))
+            depth = max(1, min(int(raw_depth), max_depth))
         except (TypeError, ValueError):
             depth = default_depth
     else:
@@ -553,7 +578,9 @@ def make_analyze_tool(
         if err is not None:
             return err
 
-        limit, limits_used = _depth_limit(input_, _DEFAULT_DEPTH)
+        limit, limits_used = _depth_limit(
+            input_, _DEFAULT_DEPTH, _max_depth(settings_provider)
+        )
 
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
         await bus.publish(Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={}))
@@ -685,7 +712,9 @@ def make_top_moves_tool(
             else:
                 parsed.append(move)
 
-        limit, limits_used = _depth_limit(input_, _DEFAULT_TOP_MOVES_DEPTH)
+        limit, limits_used = _depth_limit(
+            input_, _DEFAULT_TOP_MOVES_DEPTH, _max_depth(settings_provider)
+        )
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
         await bus.publish(Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={}))
 
@@ -916,11 +945,17 @@ def make_recommend_move_tool(
         scratch = board.copy(stack=False)
         scratch.push(parsed)
 
+        # Floor recommend_move's two searches at the verification depth so
+        # the dominance check can't confirm a move at a shallow depth the
+        # model picked; it may go deeper, never below the floor.
+        max_depth = _max_depth(settings_provider)
+        floor = min(_verification_depth(settings_provider), max_depth)
         raw_depth = input_.get("depth")
         try:
-            depth = max(1, min(int(raw_depth), MAX_DEPTH)) if raw_depth is not None else _DEFAULT_DEPTH
+            depth = min(int(raw_depth), max_depth) if raw_depth is not None else _DEFAULT_DEPTH
         except (TypeError, ValueError):
             depth = _DEFAULT_DEPTH
+        depth = max(depth, floor)
         limit = chess.engine.Limit(depth=depth)
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
 
@@ -1026,10 +1061,11 @@ def make_recommend_verifier(
         if board is None or move not in board.legal_moves:
             return None
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
-        # Verify at least VERIFICATION_DEPTH deep, going deeper if the
+        # Verify at least the verification floor deep, going deeper if the
         # model asked for more -- never shallower. Clamped to the cap.
         requested = int(depth) if depth else 0
-        d = min(max(requested, VERIFICATION_DEPTH), MAX_DEPTH)
+        floor = _verification_depth(settings_provider)
+        d = min(max(requested, floor), _max_depth(settings_provider))
         limit = chess.engine.Limit(depth=d)
         try:
             last_info, _cancelled = await cache.get_or_search(
