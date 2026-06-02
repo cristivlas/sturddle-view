@@ -1,7 +1,7 @@
 # Zoom and Responsiveness Fix Plan
 
 Date: 2026-05-19
-Status: Proposal (no code changes)
+Status: Implemented (Phases 1, 3-5 done; Phase 2 skipped; Phase 6 deferred). See "Sequencing and status".
 Companion: [zoom-responsiveness-audit.md](./zoom-responsiveness-audit.md)
 
 ## Goal
