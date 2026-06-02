@@ -718,6 +718,16 @@ def test_continuation_no_anchor_boards_returns_empty():
     assert find_illegal_continuations("e4 e5 Nf3 Nf3", []) == []
 
 
+def test_continuation_white_numbered_line_on_black_anchor_not_flagged():
+    # Black-to-move anchor; the quoted line is "20.e5 ..." -- white's move,
+    # a ply ahead. Numbered white, so not replayable here and not flagged.
+    board = chess.Board(
+        "rnb1k1nr/p2p1ppp/3B4/1pbN1N1P/4P1P1/3P1Q2/P1P1K3/q5R1 b kq - 1 19"
+    )
+    text = "20.e5 Na6 21.Nxg7+ Kd8 22.Qf6+ Nxf6 23.Be7#"
+    assert find_illegal_continuations(text, [board]) == []
+
+
 # --- prose-vs-line discrimination: descriptive prose must not be flagged ---
 # A run of bare squares in commentary ("doubled c3 c4 pawns") is not a
 # move line. Two guards prevent false positives: a line-proof token must

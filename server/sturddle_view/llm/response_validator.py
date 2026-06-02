@@ -87,13 +87,20 @@ def _is_san_label(bare: str, board: chess.Board) -> bool:
 _MOVE_NUM_SIDE_RE = re.compile(r"(\d+)(\.\.\.|\.)\s*$")
 
 
+def _side_from_number(num: str) -> chess.Color | None:
+    """Side a move-number prefix implies: plain "N." is white, "N..." is
+    black. None when empty/unnumbered. Single source for the dots->side rule."""
+    num = num.strip()
+    if not num:
+        return None
+    return chess.BLACK if "..." in num else chess.WHITE
+
+
 def _numbered_side(text: str, token_start: int) -> chess.Color | None:
     """Color implied by a move-number prefix right before `token_start`,
     or None if there is no such prefix. '17.' -> White, '16...' -> Black."""
     m = _MOVE_NUM_SIDE_RE.search(text[:token_start])
-    if not m:
-        return None
-    return chess.WHITE if m.group(2) == "." else chess.BLACK
+    return _side_from_number(m.group(0)) if m else None
 
 
 def find_illegal_moves(
@@ -262,7 +269,15 @@ def find_illegal_continuations(
         if key in seen or not _LINE_PROOF_RE.search(run):
             continue
         seen.add(key)
-        candidates = [a for a in anchors if _move_legal(moves[0], a)]
+        # The first token's number encodes its side ("20."=white,
+        # "19..."=black). A side opposite the anchor's turn means the line
+        # starts a ply ahead -- not replayable from here, so don't flag it.
+        first_side = _side_from_number(pairs[0][0])
+        candidates = [
+            a for a in anchors
+            if (first_side is None or first_side == a.turn)
+            and _move_legal(moves[0], a)
+        ]
         if candidates and not any(_line_plays(moves, a) for a in candidates):
             illegal.append(key)
     return illegal
