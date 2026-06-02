@@ -15,7 +15,12 @@ import {
   scrollToBottom,
 } from "./wb-utils.js";
 import { STORAGE_KEY } from "./storage-keys.js";
-import { openSettings, SETTINGS_TAB_ANALYSIS } from "./dialogs.js";
+import {
+  openSettings,
+  SETTINGS_TAB_ANALYSIS,
+  errorActionsFor,
+  buildToastActionButton,
+} from "./dialogs.js";
 
 const GEO_KEY       = STORAGE_KEY.AI_GEO;
 const WIN_STATE_KEY = STORAGE_KEY.AI_WIN_STATE;
@@ -500,10 +505,20 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
   if (!inst.body || !toolUseId) return;
   const line = inst.body._toolCallNodes.get(toolUseId);
   if (!line) return;
+  // Idempotent: replay-on-reconnect can re-dispatch this event for the same
+  // row; appending the suffix/gear twice would stack them.
+  if (line.classList.contains("play-ai-tool-call-failed")) return;
   line.classList.add("play-ai-tool-call-failed");
   const suffix = detail ? `${error}: ${detail}` : error;
   const pre = line.querySelector(".play-ai-tool-details-body");
-  if (pre) pre.textContent = `${pre.textContent}\n${suffix}`;
+  if (pre) {
+    pre.textContent = `${pre.textContent}\n${suffix}`;
+    // Known error codes get the same inline action (gear -> Settings) the
+    // toast path uses, appended inside the detail body next to the message.
+    for (const a of errorActionsFor(error)) {
+      pre.append(" ", buildToastActionButton(a));
+    }
+  }
 }
 
 export function noteAiRevision({ round, illegalMoves, illegalContinuations, falseClaims, castleViolations }) {
@@ -566,11 +581,35 @@ export function appendAiDelta(text, roundIndex = 0) {
   });
 }
 
+// A round-cap note with a gear that opens Settings -> Analysis. Shared by
+// the narrator tool-call cap and the verifier-rounds cap (same tab).
+function _roundCapNote(message) {
+  const note = document.createElement("div");
+  note.className = "play-ai-roundcap";
+  const text = document.createElement("span");
+  text.textContent = message;
+  const gear = document.createElement("wa-icon");
+  gear.name = "gear";
+  gear.className = "play-ai-roundcap-gear";
+  gear.setAttribute("role", "button");
+  gear.setAttribute("tabindex", "0");
+  gear.setAttribute("aria-label", "Open AI settings");
+  const open = () => openSettings(SETTINGS_TAB_ANALYSIS);
+  gear.addEventListener("click", open);
+  gear.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+  });
+  note.append(text, gear);
+  return note;
+}
+
+
 export function markAiDone({
   cancelled = false,
   error = null,
   errorDetail = null,
   roundCap = false,
+  verifierRoundCap = false,
   noResponse = false,
   noRecommendation = false,
 } = {}) {
@@ -620,24 +659,18 @@ export function markAiDone({
       slot.append(block);
       return;
     }
+    // Advisory: a verification step capped out. The main analysis may have
+    // completed fine, so render the note without returning -- it sits above
+    // any other terminal marker below.
+    if (verifierRoundCap) {
+      slot.append(_roundCapNote(
+        "A verification step stopped early at its round cap. Raise \"Verifier rounds\" for fuller checks.",
+      ));
+    }
     if (roundCap) {
-      const note = document.createElement("div");
-      note.className = "play-ai-roundcap";
-      const text = document.createElement("span");
-      text.textContent = "Stopped early at the tool-call cap. Raise \"Max rounds\" to allow more rounds.";
-      const gear = document.createElement("wa-icon");
-      gear.name = "gear";
-      gear.className = "play-ai-roundcap-gear";
-      gear.setAttribute("role", "button");
-      gear.setAttribute("tabindex", "0");
-      gear.setAttribute("aria-label", "Open AI settings");
-      const open = () => openSettings(SETTINGS_TAB_ANALYSIS);
-      gear.addEventListener("click", open);
-      gear.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
-      });
-      note.append(text, gear);
-      slot.append(note);
+      slot.append(_roundCapNote(
+        "Stopped early at the tool-call cap. Raise \"Max rounds\" to allow more rounds.",
+      ));
       return;
     }
     if (noResponse) {

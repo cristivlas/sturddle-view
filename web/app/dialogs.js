@@ -485,6 +485,13 @@ const ERROR_CODE_ACTIONS = {
     ariaLabel: "Open engine settings",
     onClick: () => openSettings(SETTINGS_TAB_ENGINES),
   }],
+  // A verifier sub-run that never concluded -- usually the verifier round
+  // cap is too low. Gear deep-links to the Analysis tab to raise it.
+  no_verdict: [{
+    icon: "gear",
+    ariaLabel: "Open AI settings",
+    onClick: () => openSettings(SETTINGS_TAB_ANALYSIS),
+  }],
 };
 
 /** Canonical "open the Engines settings tab" toast action. Use this in
@@ -495,6 +502,13 @@ export const OPEN_ENGINES_ACTION = {
   ariaLabel: "Open engine settings",
   onClick: () => openSettings(SETTINGS_TAB_ENGINES),
 };
+
+/** Canonical inline actions for a server error code, or [] if none.
+ *  Same source the toast path uses, so inline renderers (e.g. the AI
+ *  tool-call timeline) attach the identical gear affordance. */
+export function errorActionsFor(code) {
+  return ERROR_CODE_ACTIONS[code] || [];
+}
 
 /** Build a single inline toast action button. `action` is
  *  {icon|label, ariaLabel?, onClick}. */

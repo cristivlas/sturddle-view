@@ -971,6 +971,7 @@ export const playPerspective = {
               error: p.error || null,
               errorDetail: p.error_detail || null,
               roundCap: !!p.round_cap,
+              verifierRoundCap: !!p.verifier_round_cap,
               noResponse: !!p.no_response,
               noRecommendation: !!p.no_recommendation,
             });

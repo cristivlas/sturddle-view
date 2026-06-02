@@ -223,6 +223,39 @@ async def test_verifier_inherits_turn_position_context():
 
 
 @pytest.mark.asyncio
+async def test_verifier_round_cap_surfaces_on_done_payload():
+    # A delegate whose verifier never concludes (only ever calls tools)
+    # caps out; the narrator turn flags verifier_round_cap so the UI can
+    # show the gear note pointing at the verifier-rounds setting.
+    provider = _RecordingScriptedProvider(rounds=[
+        [_delegate_chunk("d1", "Is e4 sound?")],            # narrator round 0
+        [ProviderChunk(                                     # verifier: tool, never concludes
+            kind="tool_use", tool_use_id="v1",
+            tool_name="piece_at", tool_input={"square": "e2"},
+        )],
+        [ProviderChunk(                                     # verifier: still a tool -> cap=1 hit
+            kind="tool_use", tool_use_id="v2",
+            tool_name="piece_at", tool_input={"square": "e4"},
+        )],
+        [ProviderChunk(kind="text", text="Done.")],         # narrator round 1
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = _coordinator(bus, provider)
+
+    await coord.run(
+        game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n",
+        verifier_max_rounds=1,
+    )
+    events = await _drain_until_done(queue)
+
+    done = events[-1]
+    assert done.payload.get("verifier_round_cap") is True
+    # The narrator itself finished cleanly -- this is advisory, not a failure.
+    assert not done.payload.get("round_cap")
+
+
+@pytest.mark.asyncio
 async def test_verifier_thinking_forced_off_narrator_inherits():
     provider = _RecordingScriptedProvider(rounds=[
         [_delegate_chunk("d1", "check e4")],                # narrator

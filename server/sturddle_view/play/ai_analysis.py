@@ -300,7 +300,10 @@ def make_delegate_tool(
             return {"error": kind, "detail": detail, "fen": board.fen()}
         verdict = await runner(question.strip())
         if not verdict:
-            return {"error": "no_verdict", "detail": "verifier returned no conclusion"}
+            return {
+                "error": "no_verdict",
+                "detail": "no conclusion. Try increasing Verifier rounds:",
+            }
         return {"move_uci": move.uci(), "verdict": verdict}
 
     return delegate
@@ -626,6 +629,8 @@ class AIAnalysisCoordinator:
         # Round cap for verifier sub-runs this turn. Set in run() from the
         # caller's setting; the module default applies outside a turn.
         self._verifier_max_rounds: int = VERIFIER_MAX_ROUNDS
+        # True if any delegate's verifier sub-run capped out this turn.
+        self._verifier_round_cap_hit: bool = False
         # In-mem buffer of events emitted by the current/most-recent
         # turn. Reset on run() start, cleared on analysis stop. Lets a
         # client reconnecting mid-analysis rehydrate the panel.
@@ -675,6 +680,9 @@ class AIAnalysisCoordinator:
             self._turn_context = opening_user_content
             self._turn_game_id = game_id
             self._verifier_max_rounds = verifier_max_rounds
+            # OR'd true by any delegate whose verifier sub-run hits its round
+            # cap this turn; surfaced once on the done event (gear note).
+            self._verifier_round_cap_hit = False
             self._seq = 0
             self._replay_buffer = []
             messages: list[Message] = [{"role": "user", "content": opening_user_content}]
@@ -716,6 +724,11 @@ class AIAnalysisCoordinator:
                     result = await self._run_loop(messages, config)
                     recommended_uci = result.recommended_uci
                     recommended_depth = result.recommended_depth
+                    # A delegate's verifier sub-run that capped out this turn
+                    # never produced a verdict; surface the gear note so the
+                    # user can raise the verifier-rounds setting.
+                    if self._verifier_round_cap_hit:
+                        done_payload["verifier_round_cap"] = True
                     if result.round_cap_hit:
                         # Loop hit the guardrail, not a natural answer;
                         # lets the UI surface "stopped early; raise the
@@ -1204,9 +1217,12 @@ class AIAnalysisCoordinator:
                 result = await self._run_loop(messages, config)
                 if result.round_cap_hit:
                     done_payload["round_cap"] = True
-                    # final_text is "" on a verifier cap (see _run_loop);
-                    # delegate maps that to no_verdict. Warn so a model that
-                    # never concludes within the cap is diagnosable.
+                    # Flag the turn so the done event can show the gear note
+                    # pointing at the verifier-rounds setting. final_text is
+                    # "" on a cap (see _run_loop); delegate maps that to
+                    # no_verdict. Warn so a never-concluding model is
+                    # diagnosable.
+                    self._verifier_round_cap_hit = True
                     log.warning(
                         "verifier sub-run hit round cap (%d) without a verdict; question=%r",
                         self._verifier_max_rounds, question,
