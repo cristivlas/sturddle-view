@@ -1212,6 +1212,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         input.type = "number";
         input.size = "small";
         input.setAttribute("label", label);
+        input.setAttribute("autocomplete", "off");
         input.min = String(AI_ROUNDS_MIN);
         input.step = "1";
         input.value = String(initial[key] || AI_ROUNDS_MIN);
