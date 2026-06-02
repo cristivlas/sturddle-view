@@ -534,6 +534,16 @@ def test_committed_flags_claim_on_square_reused_by_later_piece():
     assert find_false_piece_claims(_REUSED_SQUARE_CLAIM, post) == ["pawn on b2"]
 
 
+def test_reachable_carveout_uses_live_board_not_oldest_in_walk():
+    # Regression: the commentator walk is current-first (boards[0] is live,
+    # pops append priors). The reachability carve-out must test the LIVE
+    # board, not boards[-1] (the start), or a plan square reachable now but
+    # not at the start gets falsely flagged. Live: black knight can reach d3.
+    live = chess.Board("r2qr1k1/5ppp/p4n2/1pbP1bB1/1n6/N1N2B2/PP1Q1PPP/3R1RK1 b - - 1 16")
+    walk = [live, chess.Board(), chess.Board()]  # live first, older priors after
+    assert find_false_piece_claims("The knight on d3 is a powerful anchor.", walk) == []
+
+
 # --- extra_boards: positions the model examined via tool calls ---------
 # A move/piece legal-or-present only in an examined (projected) position
 # is legitimate forward-looking reasoning, not a live-board hallucination.

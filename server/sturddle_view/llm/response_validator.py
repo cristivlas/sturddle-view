@@ -383,8 +383,9 @@ def find_false_piece_claims(
     A claim whose square is reachable by a legal move on the current board
     (a forward-looking plan named in prose, not SAN) is treated as a plan,
     not a live-board claim. The move belongs to the side to move, so a claim
-    for the other color never clears that way."""
-    current = boards[-1]
+    for the other color never clears that way. `boards` is current-first
+    (the walk appends priors), so the current board is boards[0]."""
+    current = boards[0]
     seen: set[str] = set()
     false: list[str] = []
     for color_word, piece_word, square_name in _iter_piece_claims(text):
