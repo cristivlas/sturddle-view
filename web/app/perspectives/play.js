@@ -475,9 +475,10 @@ export const playPerspective = {
       if (shouldShow) {
         if (!open) openCommentary();
         setCommentaryText(lastViewComment);
+        // Re-open rebuilds the body with nav buttons disabled; re-push the
+        // still-current targets (they survive a hide -- view-mode state).
+        pushNavToUi();
       } else if (open) {
-        commentNavPrev = null;
-        commentNavNext = null;
         closeCommentary();
       }
     }
