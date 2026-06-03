@@ -74,6 +74,11 @@ TOP_MOVES_MAX_N = env_int("SV_AI_TOP_MOVES_MAX_N", _DEFAULT_TOP_MOVES_MAX_N)
 # bounded and shallower defaults were producing weak candidate ranking.
 _DEFAULT_TOP_MOVES_DEPTH = _DEFAULT_DEPTH
 
+# report_line: hard cap on the reported continuation length. A line is
+# replayed move-by-move (no engine); the cap just bounds payload size.
+_DEFAULT_REPORT_LINE_MAX_PLIES = 40
+REPORT_LINE_MAX_PLIES = env_int("SV_AI_REPORT_LINE_MAX_PLIES", _DEFAULT_REPORT_LINE_MAX_PLIES)
+
 
 EngineLauncher = Callable[[], EngineSupervisor]
 GameIdProvider = Callable[[], str | None]
@@ -125,6 +130,7 @@ TOP_MOVES_TOOL_NAME = "top_moves"
 PIECE_AT_TOOL_NAME = "piece_at"
 VALIDATE_MOVE_TOOL_NAME = "validate_move"
 RECOMMEND_MOVE_TOOL_NAME = "recommend_move"
+REPORT_LINE_TOOL_NAME = "report_line"
 
 # Shared description for the `fen` arg across every FEN-taking tool spec
 # (analyze, material). One source so the startpos affordance stays in sync.
@@ -856,6 +862,100 @@ def make_validate_move_tool(board_provider: BoardProvider) -> AnalyzeTool:
         return {"legal": True, "uci": move.uci(), "san": board.san(move)}
 
     return validate_move
+
+
+_REPORT_LINE_CARD = (
+    "Report a continuation here before you narrate it in prose -- the "
+    "moves go through this tool, not invented in text. The line is "
+    "replayed and confirmed legal in sequence; once accepted you may name "
+    "its moves and the pieces they touch freely. Starts from the live "
+    "position unless you pass `from_fen`."
+)
+
+
+REPORT_LINE_TOOL_SPEC = ToolSpec(
+    name=REPORT_LINE_TOOL_NAME,
+    description=(
+        "Confirm a continuation (sequence of moves) is legal in order, so "
+        "you can discuss it in prose. Replays the moves from the live "
+        "position (or `from_fen`) and returns the rendered SAN and "
+        "resulting FEN, or the ply where it breaks. Report a line before "
+        "naming its moves in prose."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "moves": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "The line's moves in UCI or SAN, in order. Capped at "
+                    f"{REPORT_LINE_MAX_PLIES} plies."
+                    + _MOVE_NOTATION_CONSTRAINT
+                ),
+            },
+            "from_fen": {
+                "type": "string",
+                "description": (
+                    "Position the line starts from, or 'startpos'. Omit to "
+                    "start from the live position."
+                ),
+            },
+        },
+        "required": ["moves"],
+    },
+    card=_REPORT_LINE_CARD,
+)
+
+
+def make_report_line_tool(board_provider: BoardProvider) -> AnalyzeTool:
+    """Build the `report_line` async tool. Replays a model-supplied move
+    sequence from the live board (or `from_fen`), validating each move is
+    legal in order. On success returns the rendered SAN, the FEN after each
+    ply (`fens`, including the start), and the final FEN -- the coordinator
+    registers those positions as examined so the prose validators trust the
+    line's moves and pieces. No engine: pure legality replay."""
+    async def report_line(input_: dict, *, cancel_token: CancelToken) -> dict:
+        from_fen = input_.get("from_fen")
+        if from_fen is not None:
+            board, err = _parse_fen_arg({"fen": from_fen})
+            if err is not None:
+                return err
+        else:
+            board = board_provider()
+            if board is None:
+                return {"error": "no_live_position"}
+        board = board.copy(stack=False)
+
+        raw_moves = input_.get("moves")
+        if not isinstance(raw_moves, list) or not raw_moves:
+            return {"error": "invalid_input", "detail": "moves must be a non-empty list of strings"}
+        truncated = len(raw_moves) > REPORT_LINE_MAX_PLIES
+        raw_moves = raw_moves[:REPORT_LINE_MAX_PLIES]
+
+        san_line: list[str] = []
+        fens: list[str] = [board.fen()]
+        for ply, raw in enumerate(raw_moves):
+            if not isinstance(raw, str):
+                return {"error": "invalid_input", "detail": "move must be a string", "ply": ply}
+            move, kind, detail = _parse_move_or_error(board, _strip_move_prefix(raw))
+            if move is None:
+                return {"error": kind, "detail": detail, "ply": ply, "move_input": raw}
+            san_line.append(board.san(move))
+            board.push(move)
+            fens.append(board.fen())
+
+        out: dict = {
+            "ok": True,
+            "san": " ".join(san_line),
+            "fens": fens,
+            "end_fen": board.fen(),
+        }
+        if truncated:
+            out["truncated"] = True
+        return out
+
+    return report_line
 
 
 # Declarative (see _DELEGATE_TOOL_CARD): the move goes via the tool, not

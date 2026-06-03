@@ -291,6 +291,7 @@ const TOOL_FRIENDLY_LABELS = {
   recommend_move: "Picking move",
   material:       "Counting material",
   delegate:       "Verifying line",
+  report_line:    "Checking line",
 };
 
 // Tools whose label shows the actual move under consideration ("Considering

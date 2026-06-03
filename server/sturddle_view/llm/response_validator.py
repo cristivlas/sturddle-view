@@ -103,6 +103,44 @@ def _numbered_side(text: str, token_start: int) -> chess.Color | None:
     return _side_from_number(m.group(0)) if m else None
 
 
+# Possessive color naming a piece before a SAN-shape token, e.g.
+# "White's Nd5" -> WHITE. The color governs a whole list ("White's Nd5,
+# Nf5, and Bd6"), so allow intervening piece+square tokens and list
+# separators (", ", " and ") between the color word and the token.
+_PIECE_SQ = r"[KQRBN][a-h][1-8]"
+# Separator between list items: ", ", " and ", ", and ".
+_LIST_SEP = r"(?:,\s*|\s+and\s+|,\s+and\s+)(?:the\s+)?"
+_POSSESSIVE_COLOR_RE = re.compile(
+    rf"(white|black)(?:'s)?\s+(?:the\s+)?"
+    rf"(?:{_PIECE_SQ}(?:{_LIST_SEP}{_PIECE_SQ})*{_LIST_SEP})?$",
+    re.IGNORECASE,
+)
+
+
+def _possessive_color_before(text: str, token_start: int) -> chess.Color | None:
+    """Color of a possessive ("White's", "Black") naming the piece right
+    before `token_start`, or None when prose doesn't attribute one."""
+    m = _POSSESSIVE_COLOR_RE.search(text[:token_start])
+    return _COLOR_WORDS[m.group(1).lower()] if m else None
+
+
+def _is_san_label_for_color(bare: str, board: chess.Board, color: chess.Color) -> bool:
+    """Like _is_san_label but for an explicitly-named `color`: true when
+    `bare` is a piece+square shape and that color's piece of the right type
+    sits on the square. Lets 'White's Nd5' name White's knight even when
+    it's Black to move (a label, not a move claim)."""
+    if len(bare) != 3 or bare[0] not in _PIECE_LETTER_TO_TYPE:
+        return False
+    try:
+        square = chess.parse_square(bare[1:3])
+    except ValueError:
+        return False
+    piece = board.piece_at(square)
+    if piece is None or piece.piece_type != _PIECE_LETTER_TO_TYPE[bare[0]]:
+        return False
+    return piece.color == color
+
+
 def find_illegal_moves(
     text: str,
     boards: Sequence[chess.Board],
@@ -125,6 +163,17 @@ def find_illegal_moves(
             continue
         seen.add(token)
         bare = _strip_annotation_glyphs(token)
+        # An explicit color word ("White's Nd5") is decisive: the label is
+        # valid iff that color's piece sits there. A wrong-color label is
+        # flagged (skips the same-side carve-out below); no color word ->
+        # normal path.
+        owner = _possessive_color_before(text, match.start())
+        if owner is not None and current is not None:
+            if _is_san_label_for_color(bare, current, owner):
+                continue
+            if _is_san_label(bare, current):
+                illegal.append(token)
+                continue
         if _token_legal_or_played(bare, boards, extra_boards):
             continue
         numbered = _numbered_side(text, match.start())

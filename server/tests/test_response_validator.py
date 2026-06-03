@@ -218,6 +218,57 @@ def test_san_label_carveout_only_for_three_char_shape():
     assert out == ["Qxd1+"]
 
 
+# Immortal-Game position, Black to move; White has Nd5, Nf5, Bd6.
+_NDNF_FEN = "rnb1k1nr/p2p1ppp/3B4/1pbN1N1P/4P1P1/3P1Q2/P1P1K3/q5R1 b kq - 1 19"
+
+
+def test_possessive_color_label_for_opponents_piece_not_flagged():
+    # Black to move, but "White's Nd5" names White's knight actually on d5
+    # -- a label, not a Black move claim. Must not flag.
+    board = chess.Board(_NDNF_FEN)
+    text = "White's Nd5 dominates the center."
+    assert find_illegal_moves(text, [board]) == []
+
+
+def test_possessive_color_label_applies_across_a_list():
+    # The color word governs the whole list: Nf5 and Bd6 inherit "White's".
+    board = chess.Board(_NDNF_FEN)
+    text = "White's Nd5, Nf5, and Bd6 dominate every key square."
+    assert find_illegal_moves(text, [board]) == []
+
+
+def test_possessive_color_label_requires_piece_actually_there():
+    # "White's Qd5" -- d5 holds a knight, not a queen -> not a valid label,
+    # and Qd5 is no legal move here, so it flags.
+    board = chess.Board(_NDNF_FEN)
+    text = "White's Qd5 is decisive."
+    assert find_illegal_moves(text, [board]) == ["Qd5"]
+
+
+def test_bare_token_without_color_word_still_flagged():
+    # No possessive color -> "Nd5" reads as a move claim, illegal for Black
+    # here, so it flags (the carve-out needs the explicit color word).
+    board = chess.Board(_NDNF_FEN)
+    text = "Then Nd5 takes over."
+    assert find_illegal_moves(text, [board]) == ["Nd5"]
+
+
+def test_possessive_wrong_color_label_flagged():
+    # White to move, white knight on d5. Prose says "Black's Nd5" -- the
+    # piece is White's, so the wrong-color label must flag, not be excused
+    # by the same-side label carve-out.
+    board = chess.Board("4k3/8/8/3N4/8/8/8/4K3 w - - 0 1")
+    text = "Black's Nd5 anchors the position."
+    assert find_illegal_moves(text, [board]) == ["Nd5"]
+
+
+def test_possessive_color_legal_move_still_passes():
+    # "White's Nf3" with White to move: Nf3 is a legal move (no knight on
+    # f3 yet), so the color word must not turn a legal move into a flag.
+    text = "White's Nf3 develops with tempo."
+    assert find_illegal_moves(text, [chess.Board()]) == []
+
+
 # ---------- Piece-on-square claims ------------------------------------
 
 # Real FEN captured from a qwen3:30b hallucination logged in

@@ -82,8 +82,11 @@ Address the player in second person ("you"); the opponent is "your \
 opponent" -- never "White"/"Black" or "the engine". Don't reveal the \
 opponent's planned continuation. Before settling, submit at least one \
 different candidate via `recommend_move`, then submit your pick (retries \
-of a rejected pick are fine). End with a one-to-two sentence conclusion \
-naming the plan the move commits to.
+of a rejected pick are fine). Before naming a multi-move sequence in \
+prose, confirm it with `report_line` so you never narrate a line that \
+does not play; if it rejects a line, fix the move it names or drop the \
+line -- don't resubmit the same broken line. End with a one-to-two \
+sentence conclusion naming the plan the move commits to.
 """
 
 
@@ -99,6 +102,10 @@ critically, verify with tools, form your own conclusions. Do not \
 parrot or restate them. They may quote hypothetical lines and pieces \
 that never appeared in the actual game -- never treat a move or piece \
 from a note as present on the board; confirm against the position. \
+Before naming a multi-move sequence in prose, confirm it with \
+`report_line` so you never narrate a line that does not play; if it \
+rejects a line, fix the move it names or drop the line -- don't \
+resubmit the same broken line. \
 Treat the move played as a claim to test: \
 submit at least one alternative via `recommend_move` (not the move \
 played) before endorsing it. Call it best only if no recommended \

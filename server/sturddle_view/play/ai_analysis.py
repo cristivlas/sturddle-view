@@ -60,6 +60,7 @@ from .tools_engine import (
     MATERIAL_TOOL_NAME,
     PIECE_AT_TOOL_NAME,
     RECOMMEND_MOVE_TOOL_NAME,
+    REPORT_LINE_TOOL_NAME,
     TOP_MOVES_TOOL_NAME,
     VALIDATE_MOVE_TOOL_NAME,
     SearchCache,
@@ -314,6 +315,17 @@ def make_delegate_tool(
 # hashable key, or None to skip caching this call.
 
 
+def _board_from_fen(fen: str) -> chess.Board | None:
+    """Parse a FEN string to a board, or None if unparseable. For the
+    server-generated FENs report_line returns (always valid); defensive."""
+    if not isinstance(fen, str):
+        return None
+    try:
+        return chess.Board(fen)
+    except ValueError:
+        return None
+
+
 def _norm_move_arg(input_: dict, board: chess.Board | None) -> tuple | None:
     # depth is part of the key for recommend_move; harmless for
     # validate_move which doesn't accept it (always None).
@@ -392,6 +404,29 @@ def _canonical_fen(input_: dict) -> str | None:
     return " ".join(board_fen.split(" ")[:4])
 
 
+def _norm_report_line(input_: dict, board: chess.Board | None) -> tuple | None:
+    # Key on the start position (EPD) + the raw move strings in order. Raw
+    # (not canonical) so a broken line -- one a re-submit would repeat
+    # verbatim -- still dedups; order matters, so no sorting.
+    raw_moves = input_.get("moves")
+    if not isinstance(raw_moves, list) or not raw_moves:
+        return None
+    if not all(isinstance(m, str) for m in raw_moves):
+        return None
+    from_fen = input_.get("from_fen")
+    if isinstance(from_fen, str) and from_fen.strip():
+        try:
+            pos = chess.Board(from_fen.strip()).epd()
+        except ValueError:
+            return None
+    elif board is not None:
+        pos = board.epd()
+    else:
+        return None
+    moves = tuple(m.strip().lower() for m in raw_moves)
+    return (REPORT_LINE_TOOL_NAME, pos, moves)
+
+
 def _norm_analyze(input_: dict, board: chess.Board | None) -> tuple | None:
     canonical = _canonical_fen(input_)
     if canonical is None:
@@ -411,6 +446,7 @@ _NORMALIZERS: dict[str, Callable[[dict, chess.Board | None], tuple | None]] = {
     VALIDATE_MOVE_TOOL_NAME: _norm_move_arg,
     PIECE_AT_TOOL_NAME: _norm_square_arg,
     TOP_MOVES_TOOL_NAME: _norm_top_moves,
+    REPORT_LINE_TOOL_NAME: _norm_report_line,
     ANALYZE_TOOL_NAME: _norm_analyze,
     MATERIAL_TOOL_NAME: _norm_material,
 }
@@ -1061,6 +1097,16 @@ class AIAnalysisCoordinator:
                         examined = board_from_fen_input(pending_tool.tool_input)
                         if examined is not None:
                             examined_boards[examined.fen()] = examined
+                    # A reported line registers every position it traverses
+                    # (start + after each ply) so the validators trust the
+                    # line's moves and pieces -- the structured grounding
+                    # channel that lets capable models route around the
+                    # regex anchoring.
+                    elif pending_tool.tool_name == REPORT_LINE_TOOL_NAME:
+                        for fen in tool_output.get("fens", []):
+                            board = _board_from_fen(fen)
+                            if board is not None:
+                                examined_boards[board.fen()] = board
                 # Safe to read from a cached recommend_move result: the
                 # cached uci is identical to a fresh dispatch's. Gate runs
                 # before transcript/message so the model sees what we record.

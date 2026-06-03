@@ -148,3 +148,33 @@ def test_piece_at_fen_matching_live_dedups():
 
 def test_piece_at_no_board_no_fen_returns_none():
     assert _key("piece_at", {"square": "e1"}, None) is None
+
+
+# ---------- report_line (_norm_report_line) --------------------------
+
+
+def test_report_line_same_line_same_key():
+    board = chess.Board()
+    k1 = _key("report_line", {"moves": ["e4", "e5", "Nf3"]}, board)
+    k2 = _key("report_line", {"moves": ["E4", " e5 ", "Nf3"]}, board)  # case/space
+    assert k1 is not None and k1 == k2
+
+
+def test_report_line_order_matters():
+    board = chess.Board()
+    k1 = _key("report_line", {"moves": ["e4", "e5"]}, board)
+    k2 = _key("report_line", {"moves": ["e5", "e4"]}, board)
+    assert k1 != k2
+
+
+def test_report_line_keys_on_start_position():
+    board = chess.Board()
+    after_e4 = chess.Board()
+    after_e4.push_uci("e2e4")
+    k_live = _key("report_line", {"moves": ["e5"]}, board)
+    k_fen = _key("report_line", {"moves": ["e5"], "from_fen": after_e4.fen()}, board)
+    assert k_live != k_fen
+
+
+def test_report_line_no_board_no_fen_returns_none():
+    assert _key("report_line", {"moves": ["e4"]}, None) is None

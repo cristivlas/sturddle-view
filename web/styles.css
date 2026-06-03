@@ -471,6 +471,7 @@ wa-select::part(listbox) {
 .play-ai-tool-dot-recommend_move { background: #7c3aed; }
 .play-ai-tool-dot-material       { background: forestgreen; }
 .play-ai-tool-dot-delegate       { background: var(--wa-color-cyan-60, #0ea5b5); }
+.play-ai-tool-dot-report_line    { background: var(--wa-color-teal-60, #14b8a6); }
 /* Verifier sub-run's tool calls, nested under their "Verifying line"
    row. Full-width break (flex-wrap). A vertical spine runs through the
    child dot centers (dot is 8px wide -> center at x=4px), tying the
