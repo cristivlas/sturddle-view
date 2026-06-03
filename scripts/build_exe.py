@@ -53,10 +53,14 @@ _HIDDEN_IMPORTS: list[str] = [
 ]
 
 # Packages whose data files / non-Python resources must be collected.
+# keyring: backends load via entry-points at runtime, so static analysis
+# misses them -- without collect-all a frozen build falls back to the fail
+# backend and silently can't store API keys.
 _COLLECT_ALL: list[str] = [
     "webview",
     "pydantic",
     "pydantic_settings",
+    "keyring",
 ]
 
 
