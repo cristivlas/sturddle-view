@@ -1462,6 +1462,11 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
   padding: 6px;
 }
+/* No moves yet: drop the frame so an empty box isn't shown. */
+.game-view-moves:has(.move-list:empty) {
+  border-color: transparent;
+  padding: 0;
+}
 .game-view-engine:not(.is-empty) + .game-view-moves {
   margin-top: 14px;
 }
