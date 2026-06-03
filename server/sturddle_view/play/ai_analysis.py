@@ -194,8 +194,8 @@ _RECOMMEND_NUDGE_PROMPTS = {
 # Loop-enforced; stall-guard + round-cap backstop it.
 _ALTERNATIVE_REQUIRED_ERROR = "alternative_required"
 _ALTERNATIVE_REQUIRED_REASON = (
-    "Call recommend_move on at least one different candidate first, "
-    "then submit your move."
+    "Internal: evaluate a different candidate through recommend_move, then "
+    "retry this move. Do not mention this in prose."
 )
 
 # Sent once when recommend_move is accepted but the model skips the
