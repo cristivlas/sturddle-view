@@ -192,12 +192,14 @@ function buildRoundPanel() {
   };
 }
 
-function freezeThinkingLabel(entry) {
-  // Snap the disclosure summary from "Thinking" to "Thought for Ns" the
-  // first time any non-thinking chunk arrives for this round. Idempotent
-  // so prose + tool calls landing in either order both work.
+function freezeThinkingLabel(entry, serverMs = null) {
+  // Snap "Thinking" -> "Thought for Ns" on the first non-thinking chunk.
+  // Idempotent. Prefer serverMs (rides the event, correct on replay);
+  // fall back to the local Date.now() delta when absent.
   if (!entry || !entry.hasThinking || entry.thinkingDurationMs > 0) return;
-  const elapsedMs = entry.thinkingStartedAt
+  const elapsedMs = Number.isFinite(serverMs)
+    ? serverMs
+    : entry.thinkingStartedAt
     ? Date.now() - entry.thinkingStartedAt
     : 0;
   entry.thinkingDurationMs = Math.max(1, elapsedMs);
@@ -413,6 +415,14 @@ export function resetAi() {
   setAiStatus("waiting");
 }
 
+// Delta-less thinking event carrying only a server duration, for a round
+// whose thinking no prose/tool event surfaced (see _ThinkTimer.flush_ms).
+export function freezeAiThinking(roundIndex = 0, thinkingMs = null) {
+  if (!inst.body) return;
+  const entry = inst.body._roundPanels.get(roundIndex);
+  if (entry) freezeThinkingLabel(entry, thinkingMs);
+}
+
 export function appendAiThinking(text, roundIndex = 0) {
   if (!inst.body || !text) return;
   withStickyBottom(() => {
@@ -432,7 +442,7 @@ export function appendAiThinking(text, roundIndex = 0) {
 }
 
 export function appendAiToolCall({
-  round = 0, name, input, toolUseId, parentToolUseId = null,
+  round = 0, name, input, toolUseId, parentToolUseId = null, thinkingMs = null,
 }) {
   if (!inst.body || !name) return;
   withStickyBottom(() => {
@@ -456,7 +466,7 @@ export function appendAiToolCall({
     }
     if (!container) {
       const entry = ensureRoundPanel(inst.body, round);
-      freezeThinkingLabel(entry);
+      freezeThinkingLabel(entry, thinkingMs);
       container = entry.tools;
     }
     const dot = document.createElement("span");
@@ -560,7 +570,7 @@ export function setAiStatus(state) {
   if (spinner) spinner.style.display = (state === "done") ? "none" : "";
 }
 
-export function appendAiDelta(text, roundIndex = 0) {
+export function appendAiDelta(text, roundIndex = 0, thinkingMs = null) {
   if (!inst.body || !text) return;
   withStickyBottom(() => {
     const entry = ensureRoundPanel(inst.body, roundIndex);
@@ -569,7 +579,7 @@ export function appendAiDelta(text, roundIndex = 0) {
     // starts with stray newlines from the model.
     const out = entry.hasProse ? text : text.replace(/^\s+/, "");
     if (!out) return;
-    if (!entry.hasProse) freezeThinkingLabel(entry);
+    if (!entry.hasProse) freezeThinkingLabel(entry, thinkingMs);
     entry.hasProse = true;
     entry.para.append(document.createTextNode(out));
   });

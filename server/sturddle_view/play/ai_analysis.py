@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Sequence
 
@@ -505,6 +506,44 @@ def _assistant_message(chunks: list[ProviderChunk]) -> Message:
     return {"role": "assistant", "content": content}
 
 
+class _ThinkTimer:
+    """Times a round's thinking phase. Started on the first thinking chunk,
+    spent once into the first non-thinking event's payload as thinking_ms.
+    Spending is idempotent so prose and tool-call paths can both call it."""
+
+    def __init__(self) -> None:
+        self._start: float | None = None
+        self._spent = False
+
+    def start(self) -> None:
+        if self._start is None:
+            self._start = time.monotonic()
+
+    def spend_into(self, payload: dict) -> None:
+        ms = self.flush_ms()
+        if ms is not None:
+            payload["thinking_ms"] = ms
+
+    def flush_ms(self) -> int | None:
+        # Elapsed thinking, once. None if already spent or never started.
+        if self._start is None or self._spent:
+            return None
+        self._spent = True
+        return round((time.monotonic() - self._start) * 1000)
+
+
+async def _flush_think(emit, timer: _ThinkTimer, game_id, round_index: int) -> None:
+    # Carry unspent thinking on a delta-less ai_thinking when no prose/tool
+    # event surfaced it (thinking-only / cached / nested-tool rounds).
+    ms = timer.flush_ms()
+    if ms is not None:
+        await emit(Event(
+            kind=EVT_AI_THINKING,
+            game_id=game_id,
+            payload={"round": round_index, "thinking_ms": ms},
+        ))
+
+
 def _round_produced_output(chunks: list[ProviderChunk]) -> bool:
     """True iff the round produced real fed-back output -- a tool_use or
     non-whitespace text (thinking is not fed back, so it doesn't count).
@@ -927,6 +966,10 @@ class AIAnalysisCoordinator:
         for round_index in range(config.max_rounds):
             round_chunks: list[ProviderChunk] = []
             pending_tool: ProviderChunk | None = None
+            # Per-round thinking duration, carried on the first non-thinking
+            # event so the client shows it correctly on replay (a client-side
+            # Date.now() delta collapses to ~0 when replay fires at once).
+            think_timer = _ThinkTimer()
             provider_stream = config.provider.stream(
                 system=config.system_prompt,
                 messages=messages,
@@ -948,14 +991,13 @@ class AIAnalysisCoordinator:
                     if chunk.text.strip():
                         text_published = True
                     text_parts.append(chunk.text)
+                    payload = {"delta": chunk.text, "round": round_index}
+                    think_timer.spend_into(payload)
                     await emit(
-                        Event(
-                            kind=EVT_AI_INFO,
-                            game_id=game_id,
-                            payload={"delta": chunk.text, "round": round_index},
-                        )
+                        Event(kind=EVT_AI_INFO, game_id=game_id, payload=payload)
                     )
                 elif chunk.kind == "thinking" and chunk.text:
+                    think_timer.start()
                     await emit(
                         Event(
                             kind=EVT_AI_THINKING,
@@ -1027,6 +1069,7 @@ class AIAnalysisCoordinator:
                     )
                     continue
                 round_cap_hit = False
+                await _flush_think(emit, think_timer, game_id, round_index)
                 # Verdict = this final round's prose only, so cross-round
                 # tool-call self-talk ("I need the FEN", "let me check")
                 # doesn't leak up to the narrator.
@@ -1050,16 +1093,18 @@ class AIAnalysisCoordinator:
                     tool_output = last_call[1]
                 else:
                     # Surface the call to the UI only on a real dispatch.
+                    tool_payload = {
+                        "round": round_index,
+                        "name": pending_tool.tool_name,
+                        "input": pending_tool.tool_input,
+                        "tool_use_id": pending_tool.tool_use_id,
+                    }
+                    think_timer.spend_into(tool_payload)
                     await emit(
                         Event(
                             kind=EVT_AI_TOOL_CALL,
                             game_id=game_id,
-                            payload={
-                                "round": round_index,
-                                "name": pending_tool.tool_name,
-                                "input": pending_tool.tool_input,
-                                "tool_use_id": pending_tool.tool_use_id,
-                            },
+                            payload=tool_payload,
                         )
                     )
                     # Tag the verifier's nested events with this delegate's
@@ -1179,6 +1224,7 @@ class AIAnalysisCoordinator:
                     mode=mode,
                     emit=emit,
                 )
+            await _flush_think(emit, think_timer, game_id, round_index)
         # On round-cap the narrator falls back to all-rounds text (consumer
         # is recommended_uci). The verifier must NOT -- its prose IS the
         # verdict; cross-round self-talk would poison it. Empty -> no_verdict.
