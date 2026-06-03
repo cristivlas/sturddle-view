@@ -455,14 +455,22 @@ export function appendAiToolCall({
 }
 
 
+// Errors that mean "the tool ran, the loop is steering the model" rather
+// than "the tool failed" -- struck through, but not marked red. Keyed by
+// error code so the rule is the same for every tool that returns one.
+const SUPERSEDED_ERRORS = new Set(["recommendation_rejected", "compare_first"]);
+
 export function markAiToolCallFailed({ toolUseId, error, detail }) {
   if (!inst.body || !toolUseId) return;
   const line = inst.body._toolCallNodes.get(toolUseId);
   if (!line) return;
+  const cls = SUPERSEDED_ERRORS.has(error)
+    ? "play-ai-tool-call-superseded"
+    : "play-ai-tool-call-failed";
   // Idempotent: replay-on-reconnect can re-dispatch this event for the same
   // row; appending the suffix/gear twice would stack them.
-  if (line.classList.contains("play-ai-tool-call-failed")) return;
-  line.classList.add("play-ai-tool-call-failed");
+  if (line.classList.contains(cls)) return;
+  line.classList.add(cls);
   const suffix = detail ? `${error}: ${detail}` : error;
   const pre = line.querySelector(".play-ai-tool-details-body");
   if (pre) {
