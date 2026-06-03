@@ -653,6 +653,8 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   text-transform: uppercase;
   border: 1px solid;
   border-radius: 10px;
+  /* "1-0" / "0-1" must not wrap at the hyphen. */
+  white-space: nowrap;
 }
 .status-badge.hidden { display: none; }
 .status-badge--paused {

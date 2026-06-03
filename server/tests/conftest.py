@@ -288,10 +288,10 @@ def run_uvicorn(app, *, port: int | None = None) -> Iterator[tuple[str, object]]
     config = uvicorn.Config(
         app, host="127.0.0.1", port=port, log_level="warning", ws="wsproto"
     )
-    s, started = make_signalling_server(config)
+    s, signal = make_signalling_server(config)
     thread = threading.Thread(target=s.run, daemon=True)
     thread.start()
-    if not started.wait(timeout=_UVICORN_STARTUP_TIMEOUT):
+    if not signal.ready.wait(timeout=_UVICORN_STARTUP_TIMEOUT):
         s.should_exit = True
         thread.join(timeout=_UVICORN_SHUTDOWN_TIMEOUT)
         raise RuntimeError("uvicorn did not start within timeout")
