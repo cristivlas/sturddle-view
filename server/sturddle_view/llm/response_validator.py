@@ -87,13 +87,58 @@ def _is_san_label(bare: str, board: chess.Board) -> bool:
 _MOVE_NUM_SIDE_RE = re.compile(r"(\d+)(\.\.\.|\.)\s*$")
 
 
+def _side_from_number(num: str) -> chess.Color | None:
+    """Side a move-number prefix implies: plain "N." is white, "N..." is
+    black. None when empty/unnumbered. Single source for the dots->side rule."""
+    num = num.strip()
+    if not num:
+        return None
+    return chess.BLACK if "..." in num else chess.WHITE
+
+
 def _numbered_side(text: str, token_start: int) -> chess.Color | None:
     """Color implied by a move-number prefix right before `token_start`,
     or None if there is no such prefix. '17.' -> White, '16...' -> Black."""
     m = _MOVE_NUM_SIDE_RE.search(text[:token_start])
-    if not m:
-        return None
-    return chess.WHITE if m.group(2) == "." else chess.BLACK
+    return _side_from_number(m.group(0)) if m else None
+
+
+# Possessive color naming a piece before a SAN-shape token, e.g.
+# "White's Nd5" -> WHITE. The color governs a whole list ("White's Nd5,
+# Nf5, and Bd6"), so allow intervening piece+square tokens and list
+# separators (", ", " and ") between the color word and the token.
+_PIECE_SQ = r"[KQRBN][a-h][1-8]"
+# Separator between list items: ", ", " and ", ", and ".
+_LIST_SEP = r"(?:,\s*|\s+and\s+|,\s+and\s+)(?:the\s+)?"
+_POSSESSIVE_COLOR_RE = re.compile(
+    rf"(white|black)(?:'s)?\s+(?:the\s+)?"
+    rf"(?:{_PIECE_SQ}(?:{_LIST_SEP}{_PIECE_SQ})*{_LIST_SEP})?$",
+    re.IGNORECASE,
+)
+
+
+def _possessive_color_before(text: str, token_start: int) -> chess.Color | None:
+    """Color of a possessive ("White's", "Black") naming the piece right
+    before `token_start`, or None when prose doesn't attribute one."""
+    m = _POSSESSIVE_COLOR_RE.search(text[:token_start])
+    return _COLOR_WORDS[m.group(1).lower()] if m else None
+
+
+def _is_san_label_for_color(bare: str, board: chess.Board, color: chess.Color) -> bool:
+    """Like _is_san_label but for an explicitly-named `color`: true when
+    `bare` is a piece+square shape and that color's piece of the right type
+    sits on the square. Lets 'White's Nd5' name White's knight even when
+    it's Black to move (a label, not a move claim)."""
+    if len(bare) != 3 or bare[0] not in _PIECE_LETTER_TO_TYPE:
+        return False
+    try:
+        square = chess.parse_square(bare[1:3])
+    except ValueError:
+        return False
+    piece = board.piece_at(square)
+    if piece is None or piece.piece_type != _PIECE_LETTER_TO_TYPE[bare[0]]:
+        return False
+    return piece.color == color
 
 
 def find_illegal_moves(
@@ -118,6 +163,17 @@ def find_illegal_moves(
             continue
         seen.add(token)
         bare = _strip_annotation_glyphs(token)
+        # An explicit color word ("White's Nd5") is decisive: the label is
+        # valid iff that color's piece sits there. A wrong-color label is
+        # flagged (skips the same-side carve-out below); no color word ->
+        # normal path.
+        owner = _possessive_color_before(text, match.start())
+        if owner is not None and current is not None:
+            if _is_san_label_for_color(bare, current, owner):
+                continue
+            if _is_san_label(bare, current):
+                illegal.append(token)
+                continue
         if _token_legal_or_played(bare, boards, extra_boards):
             continue
         numbered = _numbered_side(text, match.start())
@@ -262,7 +318,15 @@ def find_illegal_continuations(
         if key in seen or not _LINE_PROOF_RE.search(run):
             continue
         seen.add(key)
-        candidates = [a for a in anchors if _move_legal(moves[0], a)]
+        # The first token's number encodes its side ("20."=white,
+        # "19..."=black). A side opposite the anchor's turn means the line
+        # starts a ply ahead -- not replayable from here, so don't flag it.
+        first_side = _side_from_number(pairs[0][0])
+        candidates = [
+            a for a in anchors
+            if (first_side is None or first_side == a.turn)
+            and _move_legal(moves[0], a)
+        ]
         if candidates and not any(_line_plays(moves, a) for a in candidates):
             illegal.append(key)
     return illegal
@@ -422,9 +486,15 @@ def find_false_piece_claims(
         claim_color = _COLOR_WORDS[color_word] if color_word else current.turn
         if _placement_is_legal_move(current, piece_type, claim_color, square):
             continue
-        if _claim_holds_on_any(boards, piece_type, square, color_word):
+        # A king is unique and always on the board, so a king-on-square
+        # claim is about the live position, not an earlier one -- skip the
+        # history walk (it would excuse "king on e8" after castling).
+        claim_boards = [current] if piece_type == chess.KING else boards
+        if _claim_holds_on_any(claim_boards, piece_type, square, color_word):
             continue
-        if _claim_holds_on_any(extra_boards, piece_type, square, color_word):
+        if piece_type != chess.KING and _claim_holds_on_any(
+            extra_boards, piece_type, square, color_word
+        ):
             continue
         prefix = f"{color_word} " if color_word else ""
         false.append(f"{prefix}{piece_word} on {square_name}")

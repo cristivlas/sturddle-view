@@ -2,6 +2,7 @@
   --bg: #1d1f24;
   --fg: #e8e8e8;
   --muted: #888;
+  --muted-bright: #aaa;
   --wb-outline: rgba(136, 136, 136, 0.4);
   --accent: #f59e0b;
   --accent-rgb: 245, 158, 11;
@@ -59,6 +60,7 @@
   --bp-narrow-dialog: 30rem;  /* 480px @ default font */
   --bp-mobile:        40rem;  /* 640px @ default font */
   --bp-mobile-h:      30rem;  /* 480px @ default font; height analog */
+  --bp-mobile-h-play: 46.25rem; /* 740px; play side-rail short-height gate */
   --bp-wide:          93.75rem; /* 1500px @ default font */
 }
 
@@ -470,6 +472,7 @@ wa-select::part(listbox) {
 .play-ai-tool-dot-recommend_move { background: #7c3aed; }
 .play-ai-tool-dot-material       { background: forestgreen; }
 .play-ai-tool-dot-delegate       { background: var(--wa-color-cyan-60, #0ea5b5); }
+.play-ai-tool-dot-report_line    { background: var(--wa-color-teal-60, #14b8a6); }
 /* Verifier sub-run's tool calls, nested under their "Verifying line"
    row. Full-width break (flex-wrap). A vertical spine runs through the
    child dot centers (dot is 8px wide -> center at x=4px), tying the
@@ -650,6 +653,8 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
   text-transform: uppercase;
   border: 1px solid;
   border-radius: 10px;
+  /* "1-0" / "0-1" must not wrap at the hyphen. */
+  white-space: nowrap;
 }
 .status-badge.hidden { display: none; }
 .status-badge--paused {
@@ -873,8 +878,32 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 640px = --bp-mobile, 740px = --bp-mobile-h-play (media queries can't
+   read custom props; keep these literals in sync with :root). */
 @media (max-width: 640px), (max-height: 740px) {
+  /* Non-play perspectives keep `main` as the scroller (their inner lists
+     are flex:1 + overflow-y:auto and need a bounded ancestor). */
   main { overflow-y: auto; }
+  /* Play only: single scroll context -- the document scrolls, not `main`.
+     Unlock the height:100% frame so body grows to content and `main`
+     overflow stays visible (no nested scroller -- the double-scrollbar
+     bug). */
+  body:has(#play-perspective) { height: auto; min-height: 100%; }
+  /* Both axes visible: a visible/hidden mix computes the visible axis to
+     auto, which would re-add main's scroller. Play mobile children are
+     width-bounded (align-items:center; width:100%) so x won't escape. */
+  #perspective-root:has(#play-perspective) { overflow: visible; }
+  /* Analysis locks body scroll (.xgame-nav-locked) on the assumption that
+     `main` is the scroller; in the play document-scroll model the body IS
+     the scroller, so re-enable it or content gets clipped with no bar. */
+  body.xgame-nav-locked:has(#play-perspective) { overflow-y: visible; }
+  /* Pin the footer to the viewport bottom while content scrolls above;
+     opaque bg so scrolling content doesn't show through. */
+  body:has(#play-perspective) #app-footer {
+    position: sticky;
+    bottom: 0;
+    background: var(--bg);
+  }
 }
 @media (max-width: 640px) {
   .desktop-only { display: none !important; }
@@ -1107,7 +1136,7 @@ body[data-ribbon-float] .tournaments-ribbon {
   display: flex;
   flex-direction: column;
   position: fixed;
-  /* left/top/width/max-height driven by JS on desktop; reset on mobile */
+  /* left/top/width/height driven by JS on desktop; reset on mobile */
 }
 /* Left dock: occupies the grid's first (left-gap) column, full board height.
    Hidden when empty; the column width is unchanged so the board stays put. */
@@ -1313,6 +1342,8 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   filter: grayscale(0.5) brightness(0.85);
 }
 
+/* 640px = --bp-mobile, 740px = --bp-mobile-h-play (media queries can't
+   read custom props; keep these literals in sync with :root). */
 @media (max-width: 640px), (max-height: 740px) {
   /* !important guards against any later .play-dock-left rule with
      higher specificity (e.g. modifier classes set from JS). Mobile
@@ -1375,6 +1406,16 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
     width: 100%;
     max-width: var(--board-max-px, 100%);
   }
+  /* Mobile flows in the document scroll: the move list expands to full
+     content height with no inner scroller, so the page is the only
+     scrollbar -- no nested second one. */
+  .game-view-side { height: auto; }
+  .game-view-moves { flex: 0 0 auto; }
+  .game-view-moves .move-list {
+    flex: 0 0 auto;
+    max-height: none;
+    overflow-y: visible;
+  }
 }
 .game-view-board {
   display: flex;
@@ -1420,11 +1461,16 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  padding: 6px;
+}
+/* No moves yet: drop the frame so an empty box isn't shown. */
+.game-view-moves:has(.move-list:empty) {
+  border-color: transparent;
+  padding: 0;
 }
 .game-view-engine:not(.is-empty) + .game-view-moves {
   margin-top: 14px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border, rgba(127, 127, 127, 0.25));
 }
 .game-view-moves .move-list {
   flex: 1 1 auto;
@@ -1500,7 +1546,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 .game-view-engine .engine-pv {
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 0.8125rem;
-  color: var(--muted);
+  color: var(--muted-bright, #aaa);
   margin-top: 22px;
   padding-top: 10px;
   border-top: 1px solid var(--border, rgba(127, 127, 127, 0.25));
@@ -1678,7 +1724,6 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.875rem;
   color: var(--fg);
 }
 .xgame-toast.xgame-toast-collapsible { flex-direction: column; align-items: stretch; }
@@ -1710,6 +1755,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   cursor: pointer;
   font: inherit;
   text-decoration: underline;
+  height: 22px;
 }
 .xgame-nav-locked {
   /* Don't scroll -- the media breakpoint at short height handles it. */
@@ -2199,7 +2245,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 /* Form-style rows (label + input) inside a panel. */
 .settings-row { max-width: 360px; }
 .ai-thinking-row,
-.ai-rounds-row {
+.ai-rounds-row,
+.ai-depth-row {
   display: flex;
   align-items: flex-end;
   gap: 16px;
@@ -2207,12 +2254,16 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .ai-thinking-budget { width: 8em; max-width: 8em; }
 .ai-thinking-budget::part(base) { max-width: 8em; }
 .ai-thinking-budget::part(input) { width: 8em; min-width: 0; }
-.ai-max-tool-rounds, .ai-verifier-max-rounds { flex: 1; min-width: 0; }
+.ai-max-tool-rounds, .ai-verifier-max-rounds,
+.ai-analyze-max-depth, .ai-verification-depth { flex: 1; min-width: 0; }
 .ai-max-tool-rounds::part(input),
-.ai-verifier-max-rounds::part(input) { min-width: 0; }
+.ai-verifier-max-rounds::part(input),
+.ai-analyze-max-depth::part(input),
+.ai-verification-depth::part(input) { min-width: 0; }
 .ai-thinking-row wa-select::part(form-control-label),
 .ai-thinking-row wa-input::part(form-control-label),
-.ai-rounds-row wa-input::part(form-control-label) {
+.ai-rounds-row wa-input::part(form-control-label),
+.ai-depth-row wa-input::part(form-control-label) {
   color: var(--muted);
   font-size: 0.75rem;
   font-family: var(--wa-font-family-body);

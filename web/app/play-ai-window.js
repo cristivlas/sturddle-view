@@ -13,6 +13,7 @@ import {
   AUTOSCROLL_SLACK_PROSE_PX,
   isPinnedToBottom,
   scrollToBottom,
+  selectContentsOnCtrlA,
 } from "./wb-utils.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import {
@@ -83,7 +84,6 @@ function trimTrailingWhitespace(el) {
 function buildBody() {
   const root = document.createElement("div");
   root.className = "play-ai-body";
-  root.tabIndex = 0;
 
   // Status line: spinner + text, hidden until a turn starts. Lives
   // above the rounds so they can stream in below without jumping.
@@ -118,25 +118,18 @@ function buildBody() {
     root._hoveredTarget = null;
   });
 
-  root.addEventListener("keydown", ev => {
-    if ((ev.ctrlKey || ev.metaKey) && (ev.key === "a" || ev.key === "A")) {
-      ev.preventDefault();
-      const hovered = root._hoveredTarget;
-      const detailPre = hovered?.closest(".play-ai-tool-details-body");
-      const errorBlock = hovered?.closest(".play-ai-error");
-      const prosePara = hovered?.closest(".play-ai-prose");
-      const target = (detailPre && !detailPre.hidden)
-        ? detailPre
-        : errorBlock
-        ?? prosePara
-        ?? root._roundPanels.get(root._currentRound)?.para;
-      if (!target) return;
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      const range = document.createRange();
-      range.selectNodeContents(target);
-      sel.addRange(range);
-    }
+  // Select the hovered block (tool detail / error / prose), falling
+  // back to the current round's prose paragraph.
+  selectContentsOnCtrlA(root, () => {
+    const hovered = root._hoveredTarget;
+    const detailPre = hovered?.closest(".play-ai-tool-details-body");
+    const errorBlock = hovered?.closest(".play-ai-error");
+    const prosePara = hovered?.closest(".play-ai-prose");
+    return (detailPre && !detailPre.hidden)
+      ? detailPre
+      : errorBlock
+      ?? prosePara
+      ?? root._roundPanels.get(root._currentRound)?.para;
   });
 
   root._status = status;
@@ -199,12 +192,14 @@ function buildRoundPanel() {
   };
 }
 
-function freezeThinkingLabel(entry) {
-  // Snap the disclosure summary from "Thinking" to "Thought for Ns" the
-  // first time any non-thinking chunk arrives for this round. Idempotent
-  // so prose + tool calls landing in either order both work.
+function freezeThinkingLabel(entry, serverMs = null) {
+  // Snap "Thinking" -> "Thought for Ns" on the first non-thinking chunk.
+  // Idempotent. Prefer serverMs (rides the event, correct on replay);
+  // fall back to the local Date.now() delta when absent.
   if (!entry || !entry.hasThinking || entry.thinkingDurationMs > 0) return;
-  const elapsedMs = entry.thinkingStartedAt
+  const elapsedMs = Number.isFinite(serverMs)
+    ? serverMs
+    : entry.thinkingStartedAt
     ? Date.now() - entry.thinkingStartedAt
     : 0;
   entry.thinkingDurationMs = Math.max(1, elapsedMs);
@@ -298,6 +293,7 @@ const TOOL_FRIENDLY_LABELS = {
   recommend_move: "Picking move",
   material:       "Counting material",
   delegate:       "Verifying line",
+  report_line:    "Checking line",
 };
 
 // Tools whose label shows the actual move under consideration ("Considering
@@ -419,6 +415,14 @@ export function resetAi() {
   setAiStatus("waiting");
 }
 
+// Delta-less thinking event carrying only a server duration, for a round
+// whose thinking no prose/tool event surfaced (see _ThinkTimer.flush_ms).
+export function freezeAiThinking(roundIndex = 0, thinkingMs = null) {
+  if (!inst.body) return;
+  const entry = inst.body._roundPanels.get(roundIndex);
+  if (entry) freezeThinkingLabel(entry, thinkingMs);
+}
+
 export function appendAiThinking(text, roundIndex = 0) {
   if (!inst.body || !text) return;
   withStickyBottom(() => {
@@ -438,7 +442,7 @@ export function appendAiThinking(text, roundIndex = 0) {
 }
 
 export function appendAiToolCall({
-  round = 0, name, input, toolUseId, parentToolUseId = null,
+  round = 0, name, input, toolUseId, parentToolUseId = null, thinkingMs = null,
 }) {
   if (!inst.body || !name) return;
   withStickyBottom(() => {
@@ -462,7 +466,7 @@ export function appendAiToolCall({
     }
     if (!container) {
       const entry = ensureRoundPanel(inst.body, round);
-      freezeThinkingLabel(entry);
+      freezeThinkingLabel(entry, thinkingMs);
       container = entry.tools;
     }
     const dot = document.createElement("span");
@@ -566,7 +570,7 @@ export function setAiStatus(state) {
   if (spinner) spinner.style.display = (state === "done") ? "none" : "";
 }
 
-export function appendAiDelta(text, roundIndex = 0) {
+export function appendAiDelta(text, roundIndex = 0, thinkingMs = null) {
   if (!inst.body || !text) return;
   withStickyBottom(() => {
     const entry = ensureRoundPanel(inst.body, roundIndex);
@@ -575,7 +579,7 @@ export function appendAiDelta(text, roundIndex = 0) {
     // starts with stray newlines from the model.
     const out = entry.hasProse ? text : text.replace(/^\s+/, "");
     if (!out) return;
-    if (!entry.hasProse) freezeThinkingLabel(entry);
+    if (!entry.hasProse) freezeThinkingLabel(entry, thinkingMs);
     entry.hasProse = true;
     entry.para.append(document.createTextNode(out));
   });

@@ -86,6 +86,54 @@ async def test_cancel_during_stream_emits_cancelled_done():
     assert terminal.payload.get("cancelled") is True
 
 
+class _ThinkingProvider(CannedProvider):
+    """Yields thinking chunks then optional text, for one round."""
+
+    def __init__(self, *, text: str | None) -> None:
+        super().__init__(())
+        self._text = text
+
+    async def stream(self, system, messages, tools=None, *, transcript=None, round_index=0, thinking=None):
+        yield ProviderChunk(kind="thinking", text="pondering...")
+        if self._text is not None:
+            yield ProviderChunk(kind="text", text=self._text)
+
+
+@pytest.mark.asyncio
+async def test_thinking_ms_rides_first_prose_event():
+    # The first prose event of a round carries the measured thinking_ms;
+    # value is wall-clock so we assert presence + a sane int, not an amount.
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, _ThinkingProvider(text="hi\n"))
+
+    await coord.run(game_id="g")
+    events = await _drain(bus, queue, until_done=True)
+
+    info = next(e for e in events if e.kind == "ai_info" and "delta" in e.payload)
+    assert isinstance(info.payload.get("thinking_ms"), int)
+    assert info.payload["thinking_ms"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_thinking_only_round_flushes_thinking_ms():
+    # A round that emits thinking but no surfaced non-thinking event still
+    # carries its duration on a delta-less ai_thinking flush (replay needs it).
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, _ThinkingProvider(text=None))
+
+    await coord.run(game_id="g")
+    events = await _drain(bus, queue, until_done=True)
+
+    flush = next(
+        e for e in events
+        if e.kind == "ai_thinking" and "delta" not in e.payload
+    )
+    assert isinstance(flush.payload.get("thinking_ms"), int)
+    assert flush.payload["thinking_ms"] >= 0
+
+
 @pytest.mark.asyncio
 async def test_concurrent_run_serializes_on_lock():
     # Two run() calls overlapping must not interleave events for the

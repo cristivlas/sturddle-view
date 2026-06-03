@@ -218,6 +218,57 @@ def test_san_label_carveout_only_for_three_char_shape():
     assert out == ["Qxd1+"]
 
 
+# Immortal-Game position, Black to move; White has Nd5, Nf5, Bd6.
+_NDNF_FEN = "rnb1k1nr/p2p1ppp/3B4/1pbN1N1P/4P1P1/3P1Q2/P1P1K3/q5R1 b kq - 1 19"
+
+
+def test_possessive_color_label_for_opponents_piece_not_flagged():
+    # Black to move, but "White's Nd5" names White's knight actually on d5
+    # -- a label, not a Black move claim. Must not flag.
+    board = chess.Board(_NDNF_FEN)
+    text = "White's Nd5 dominates the center."
+    assert find_illegal_moves(text, [board]) == []
+
+
+def test_possessive_color_label_applies_across_a_list():
+    # The color word governs the whole list: Nf5 and Bd6 inherit "White's".
+    board = chess.Board(_NDNF_FEN)
+    text = "White's Nd5, Nf5, and Bd6 dominate every key square."
+    assert find_illegal_moves(text, [board]) == []
+
+
+def test_possessive_color_label_requires_piece_actually_there():
+    # "White's Qd5" -- d5 holds a knight, not a queen -> not a valid label,
+    # and Qd5 is no legal move here, so it flags.
+    board = chess.Board(_NDNF_FEN)
+    text = "White's Qd5 is decisive."
+    assert find_illegal_moves(text, [board]) == ["Qd5"]
+
+
+def test_bare_token_without_color_word_still_flagged():
+    # No possessive color -> "Nd5" reads as a move claim, illegal for Black
+    # here, so it flags (the carve-out needs the explicit color word).
+    board = chess.Board(_NDNF_FEN)
+    text = "Then Nd5 takes over."
+    assert find_illegal_moves(text, [board]) == ["Nd5"]
+
+
+def test_possessive_wrong_color_label_flagged():
+    # White to move, white knight on d5. Prose says "Black's Nd5" -- the
+    # piece is White's, so the wrong-color label must flag, not be excused
+    # by the same-side label carve-out.
+    board = chess.Board("4k3/8/8/3N4/8/8/8/4K3 w - - 0 1")
+    text = "Black's Nd5 anchors the position."
+    assert find_illegal_moves(text, [board]) == ["Nd5"]
+
+
+def test_possessive_color_legal_move_still_passes():
+    # "White's Nf3" with White to move: Nf3 is a legal move (no knight on
+    # f3 yet), so the color word must not turn a legal move into a flag.
+    text = "White's Nf3 develops with tempo."
+    assert find_illegal_moves(text, [chess.Board()]) == []
+
+
 # ---------- Piece-on-square claims ------------------------------------
 
 # Real FEN captured from a qwen3:30b hallucination logged in
@@ -524,6 +575,17 @@ def test_history_walk_flags_piece_present_nowhere():
     assert find_false_piece_claims(text, boards) == ["knight on f6"]
 
 
+def test_history_walk_does_not_excuse_king_on_old_square():
+    # A king is unique and always present, so a king-on-square claim is
+    # about the live position. After castling the king left e8; the walk
+    # must NOT excuse "king on e8" just because it sat there at startpos.
+    boards = _history_boards_after(
+        ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "O-O", "Nf6", "d3", "O-O"]
+    )
+    text = "The king on e8 is not under attack."
+    assert find_false_piece_claims(text, boards) == ["king on e8"]
+
+
 def test_history_walk_accepts_san_legal_in_an_earlier_position():
     boards = _history_boards_after(["e4", "e5", "Nf3"])
     # Nf3 was actually played at ply 3; reference to it from a later
@@ -716,6 +778,16 @@ def test_continuation_no_anchor_boards_returns_empty():
     # No board to validate against -> nothing flagged (matches the
     # coordinator short-circuit when no live board is available).
     assert find_illegal_continuations("e4 e5 Nf3 Nf3", []) == []
+
+
+def test_continuation_white_numbered_line_on_black_anchor_not_flagged():
+    # Black-to-move anchor; the quoted line is "20.e5 ..." -- white's move,
+    # a ply ahead. Numbered white, so not replayable here and not flagged.
+    board = chess.Board(
+        "rnb1k1nr/p2p1ppp/3B4/1pbN1N1P/4P1P1/3P1Q2/P1P1K3/q5R1 b kq - 1 19"
+    )
+    text = "20.e5 Na6 21.Nxg7+ Kd8 22.Qf6+ Nxf6 23.Be7#"
+    assert find_illegal_continuations(text, [board]) == []
 
 
 # --- prose-vs-line discrimination: descriptive prose must not be flagged ---

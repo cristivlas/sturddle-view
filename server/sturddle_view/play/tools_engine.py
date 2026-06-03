@@ -21,6 +21,10 @@ from typing import Any, Awaitable, Callable
 import chess
 import chess.engine
 
+from ..config import (
+    _DEFAULT_AI_ANALYZE_MAX_DEPTH,
+    _DEFAULT_AI_VERIFICATION_DEPTH,
+)
 from ..env_utils import env_int
 from ..events import EVT_ENGINE_SEARCH_START, Event, EventBus
 from ..llm import ToolSpec
@@ -35,18 +39,18 @@ log = logging.getLogger(__name__)
 
 # TODO: dynamic cap -- allow deeper searches when few pieces remain
 # (endgames resolve deep cheaply and benefit from it).
-_DEFAULT_MAX_DEPTH = 30
 # Hard cap -- the agent can request any depth, but we clamp to this.
-# The env override is for ops; UI exposure is pending. Searches are
-# depth-only (no time limit): a timer firing before the depth completes
-# makes the bestmove non-deterministic.
-MAX_DEPTH = env_int("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_MAX_DEPTH)
+# Settings (ai_analyze_max_depth) override per call; the env default is the
+# fallback when no settings are wired (ops/tests). Searches are depth-only
+# (no time limit): a timer firing before the depth completes makes the
+# bestmove non-deterministic.
+MAX_DEPTH = env_int("SV_AI_ANALYZE_MAX_DEPTH", _DEFAULT_AI_ANALYZE_MAX_DEPTH)
 
 # Floor for the end-of-turn recommendation check: it searches at least
 # this deep regardless of the (often shallow) depth the model picked, so
-# the authoritative verdict isn't a shallow rubber-stamp.
-_DEFAULT_VERIFICATION_DEPTH = 30
-VERIFICATION_DEPTH = env_int("SV_AI_VERIFICATION_DEPTH", _DEFAULT_VERIFICATION_DEPTH)
+# the authoritative verdict isn't a shallow rubber-stamp. Settings
+# (ai_verification_depth) override per call; env is the fallback.
+VERIFICATION_DEPTH = env_int("SV_AI_VERIFICATION_DEPTH", _DEFAULT_AI_VERIFICATION_DEPTH)
 
 # recommend_move dominance margin: rival must beat candidate by strictly
 # more than this many cp (STM POV) to reject. Filters cosmetic 1-30 cp
@@ -70,6 +74,11 @@ TOP_MOVES_MAX_N = env_int("SV_AI_TOP_MOVES_MAX_N", _DEFAULT_TOP_MOVES_MAX_N)
 # bounded and shallower defaults were producing weak candidate ranking.
 _DEFAULT_TOP_MOVES_DEPTH = _DEFAULT_DEPTH
 
+# report_line: hard cap on the reported continuation length. A line is
+# replayed move-by-move (no engine); the cap just bounds payload size.
+_DEFAULT_REPORT_LINE_MAX_PLIES = 40
+REPORT_LINE_MAX_PLIES = env_int("SV_AI_REPORT_LINE_MAX_PLIES", _DEFAULT_REPORT_LINE_MAX_PLIES)
+
 
 EngineLauncher = Callable[[], EngineSupervisor]
 GameIdProvider = Callable[[], str | None]
@@ -79,6 +88,25 @@ BoardProvider = Callable[[], chess.Board | None]
 # the same source HVE's analysis path uses.
 SettingsProvider = Callable[[], Any]
 AnalyzeTool = Callable[..., Awaitable[dict[str, Any]]]
+
+
+def _settings_int(
+    settings_provider: SettingsProvider | None, attr: str, fallback: int,
+) -> int:
+    """Read an int setting via the provider, falling back to the module
+    const when no provider/setting is wired. One source for the
+    settings-or-default depth-cap lookup the tools share."""
+    settings = settings_provider() if settings_provider else None
+    value = getattr(settings, attr, None) if settings is not None else None
+    return int(value) if isinstance(value, int) else fallback
+
+
+def _max_depth(settings_provider: SettingsProvider | None) -> int:
+    return _settings_int(settings_provider, "ai_analyze_max_depth", MAX_DEPTH)
+
+
+def _verification_depth(settings_provider: SettingsProvider | None) -> int:
+    return _settings_int(settings_provider, "ai_verification_depth", VERIFICATION_DEPTH)
 
 # Default fallback game_id when the tool runs outside a live HVE
 # session (e.g. unit tests, future post-game path). engine_info events
@@ -102,6 +130,7 @@ TOP_MOVES_TOOL_NAME = "top_moves"
 PIECE_AT_TOOL_NAME = "piece_at"
 VALIDATE_MOVE_TOOL_NAME = "validate_move"
 RECOMMEND_MOVE_TOOL_NAME = "recommend_move"
+REPORT_LINE_TOOL_NAME = "report_line"
 
 # Shared description for the `fen` arg across every FEN-taking tool spec
 # (analyze, material). One source so the startpos affordance stays in sync.
@@ -147,19 +176,20 @@ TOP_MOVES_TOOL_SPEC = ToolSpec(
 
 
 _PIECE_AT_CARD = (
-    "Any piece-on-square claim about the live position is worth "
-    "confirming first -- explicit (\"knight on f3\") or implied "
-    "(centralize, push, capture, defend, pin, fork, etc). Result: piece "
-    "symbol (upper=white, lower=black) or null. Live position only, not "
-    "squares inside calculated lines."
+    "Any piece-on-square claim is worth confirming first -- explicit "
+    "(\"knight on f3\") or implied (centralize, push, capture, defend, "
+    "pin, fork, etc). Result: piece symbol (upper=white, lower=black) or "
+    "null. Defaults to the live position; pass `fen` to read a square in "
+    "any position you are reasoning about."
 )
 
 
 PIECE_AT_TOOL_SPEC = ToolSpec(
     name=PIECE_AT_TOOL_NAME,
     description=(
-        "Piece on a square in the live position, or null. Call before "
-        "naming any piece-on-square in prose."
+        "Piece on a square, or null. Reads the live position by default; "
+        "pass `fen` to read any position. Call before naming any "
+        "piece-on-square in prose."
     ),
     input_schema={
         "type": "object",
@@ -169,6 +199,13 @@ PIECE_AT_TOOL_SPEC = ToolSpec(
                 "description": (
                     "Algebraic square name, e.g. 'e4', 'a1', 'h8'. "
                     "Case-insensitive."
+                ),
+            },
+            "fen": {
+                "type": "string",
+                "description": (
+                    "Position to read, or 'startpos'. Omit to use the live "
+                    "position."
                 ),
             },
         },
@@ -296,9 +333,11 @@ def board_from_fen_input(tool_input: dict) -> chess.Board | None:
     return None if err is not None else board
 
 
-def _depth_limit(input_: dict, default_depth: int) -> tuple[chess.engine.Limit, dict]:
+def _depth_limit(
+    input_: dict, default_depth: int, max_depth: int,
+) -> tuple[chess.engine.Limit, dict]:
     """Build a depth-only chess.engine.Limit from the agent's requested
-    depth (clamped to MAX_DEPTH), falling back to `default_depth`. Returns
+    depth (clamped to `max_depth`), falling back to `default_depth`. Returns
     the Limit and a dict echoing the effective depth (tool output + test
     assertions). Time limits are intentionally not supported: a timer that
     fires before the depth is reached makes the bestmove non-deterministic,
@@ -306,7 +345,7 @@ def _depth_limit(input_: dict, default_depth: int) -> tuple[chess.engine.Limit, 
     raw_depth = input_.get("depth")
     if raw_depth is not None:
         try:
-            depth = max(1, min(int(raw_depth), MAX_DEPTH))
+            depth = max(1, min(int(raw_depth), max_depth))
         except (TypeError, ValueError):
             depth = default_depth
     else:
@@ -391,6 +430,78 @@ class _SearchError(RuntimeError):
         self.detail = detail
 
 
+# Key into SearchCache: the position (EPD) plus the root-move restriction. A
+# free search and a candidate-restricted one on the same position are
+# different searches (different `searchmoves`), so root_moves is part of it.
+_SearchKey = tuple[str, frozenset]
+
+
+class SearchCache:
+    """Per-turn cache of completed engine searches, shared across the
+    engine-backed tools (analyze, top_moves, recommend_move, the
+    recommend-verifier). A position+restriction searched once this turn is
+    not re-searched: the deepest completed result is authoritative, so a
+    cached search at depth >= the request is reused as-is.
+
+    Lifetime is one analysis turn -- the live board mutates between turns,
+    so the coordinator clears this at turn start. Within a turn the position
+    is stable, which is what makes position keying safe.
+
+    A reused result is returned without spawning an engine, so no
+    engine_info events fire for it (the PV panel won't re-animate for a
+    cache hit -- accepted: a redundant-looking re-search would be worse).
+    Cancelled searches are never cached: a partial result must not satisfy
+    a later request."""
+
+    def __init__(self) -> None:
+        self._entries: dict[_SearchKey, tuple[int, chess.engine.InfoDict]] = {}
+
+    def clear(self) -> None:
+        self._entries = {}
+
+    @staticmethod
+    def _key(board: chess.Board, root_moves: list[chess.Move] | None) -> _SearchKey:
+        # epd(), not fen(): drops the halfmove/fullmove counters so the same
+        # board with different clocks shares a key. Matches the dedup
+        # normalizer (_canonical_fen) -- these searches are position- not
+        # history-dependent.
+        roots = frozenset(m.uci() for m in root_moves) if root_moves else frozenset()
+        return (board.epd(), roots)
+
+    async def get_or_search(
+        self,
+        engine_launcher: EngineLauncher,
+        board: chess.Board,
+        limit: chess.engine.Limit,
+        *,
+        bus: EventBus,
+        game_id: str,
+        cancel_token: CancelToken,
+        root_moves: list[chess.Move] | None = None,
+        settings_provider: SettingsProvider | None = None,
+    ) -> tuple[chess.engine.InfoDict, bool]:
+        """Reuse a cached result when one this turn reached at least the
+        requested depth; otherwise run the search and cache it if deeper than
+        what's stored. Same return shape as _run_one_search. A reuse hit
+        reports (info, cancelled=False)."""
+        requested = limit.depth or 0
+        key = self._key(board, root_moves)
+        cached = self._entries.get(key)
+        if cached is not None and cached[0] >= requested:
+            log.info("search cache hit: depth %d >= %d, key=%s", cached[0], requested, key)
+            return cached[1], False
+        last_info, cancelled = await _run_one_search(
+            engine_launcher, board, limit,
+            bus=bus, game_id=game_id, cancel_token=cancel_token,
+            root_moves=root_moves, settings_provider=settings_provider,
+        )
+        if not cancelled:
+            reached = last_info.get("depth") or 0
+            if cached is None or reached > cached[0]:
+                self._entries[key] = (reached, last_info)
+        return last_info, cancelled
+
+
 async def _run_one_search(
     engine_launcher: EngineLauncher,
     board: chess.Board,
@@ -452,8 +563,11 @@ def make_analyze_tool(
     bus: EventBus,
     game_id_provider: GameIdProvider | None = None,
     settings_provider: SettingsProvider | None = None,
+    search_cache: SearchCache | None = None,
 ) -> AnalyzeTool:
-    """Build the `analyze` async tool.
+    """Build the `analyze` async tool. `search_cache` is the cross-tool
+    engine-search cache; an unshared fresh one (always-miss) is used when
+    the caller doesn't pass the shared instance.
 
     `engine_launcher()` returns a fresh `EngineSupervisor` per call --
     decouples the tool from how the production engine is resolved
@@ -471,18 +585,22 @@ def make_analyze_tool(
     engine inherits Threads/Hash/SyzygyPath via the shared spawn
     helper. None is acceptable (tests).
     """
+    cache = search_cache or SearchCache()
+
     async def analyze(input_: dict, *, cancel_token: CancelToken) -> dict:
         board, err = _parse_fen_arg(input_)
         if err is not None:
             return err
 
-        limit, limits_used = _depth_limit(input_, _DEFAULT_DEPTH)
+        limit, limits_used = _depth_limit(
+            input_, _DEFAULT_DEPTH, _max_depth(settings_provider)
+        )
 
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
         await bus.publish(Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={}))
 
         try:
-            last_info, cancelled = await _run_one_search(
+            last_info, cancelled = await cache.get_or_search(
                 engine_launcher, board, limit,
                 bus=bus, game_id=game_id, cancel_token=cancel_token,
                 settings_provider=settings_provider,
@@ -574,12 +692,15 @@ def make_top_moves_tool(
     board_provider: BoardProvider,
     game_id_provider: GameIdProvider | None = None,
     settings_provider: SettingsProvider | None = None,
+    search_cache: SearchCache | None = None,
 ) -> AnalyzeTool:
     """Deep-evaluate a model-supplied list of candidate moves. Each
     legal move runs a root-restricted search; illegal or unparseable
     moves come back as per-entry errors. Publishes one
     `engine_search_start` for the batch, then per-candidate
-    engine_info events."""
+    engine_info events. `search_cache`: see make_analyze_tool."""
+    cache = search_cache or SearchCache()
+
     async def top_moves(input_: dict, *, cancel_token: CancelToken) -> dict:
         board = board_provider()
         if board is None:
@@ -605,7 +726,9 @@ def make_top_moves_tool(
             else:
                 parsed.append(move)
 
-        limit, limits_used = _depth_limit(input_, _DEFAULT_TOP_MOVES_DEPTH)
+        limit, limits_used = _depth_limit(
+            input_, _DEFAULT_TOP_MOVES_DEPTH, _max_depth(settings_provider)
+        )
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
         await bus.publish(Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={}))
 
@@ -617,7 +740,7 @@ def make_top_moves_tool(
                 cancelled_any = True
                 break
             try:
-                last_info, cancelled = await _run_one_search(
+                last_info, cancelled = await cache.get_or_search(
                     engine_launcher, board, limit,
                     bus=bus, game_id=game_id, cancel_token=cancel_token,
                     root_moves=[move],
@@ -666,13 +789,20 @@ def make_top_moves_tool(
 
 
 def make_piece_at_tool(board_provider: BoardProvider) -> AnalyzeTool:
-    """Build the `piece_at` async tool. Reads the live board (via
-    board_provider) and reports what occupies the requested square --
-    the model's self-check against hallucinated piece placements."""
+    """Build the `piece_at` async tool. Reports what occupies a square --
+    the model's self-check against hallucinated piece placements. Reads the
+    live board (via board_provider) by default, or a supplied `fen` so the
+    model can ground a square in any position it is reasoning about."""
     async def piece_at(input_: dict, *, cancel_token: CancelToken) -> dict:
-        board = board_provider()
-        if board is None:
-            return {"error": "no_live_position"}
+        fen = input_.get("fen")
+        if fen is not None:
+            board, err = _parse_fen_arg(input_)
+            if err is not None:
+                return err
+        else:
+            board = board_provider()
+            if board is None:
+                return {"error": "no_live_position"}
         raw = input_.get("square")
         if not isinstance(raw, str) or not raw:
             return {"error": "invalid_square", "detail": "square must be a non-empty string"}
@@ -732,6 +862,100 @@ def make_validate_move_tool(board_provider: BoardProvider) -> AnalyzeTool:
         return {"legal": True, "uci": move.uci(), "san": board.san(move)}
 
     return validate_move
+
+
+_REPORT_LINE_CARD = (
+    "Report a continuation here before you narrate it in prose -- the "
+    "moves go through this tool, not invented in text. The line is "
+    "replayed and confirmed legal in sequence; once accepted you may name "
+    "its moves and the pieces they touch freely. Starts from the live "
+    "position unless you pass `from_fen`."
+)
+
+
+REPORT_LINE_TOOL_SPEC = ToolSpec(
+    name=REPORT_LINE_TOOL_NAME,
+    description=(
+        "Confirm a continuation (sequence of moves) is legal in order, so "
+        "you can discuss it in prose. Replays the moves from the live "
+        "position (or `from_fen`) and returns the rendered SAN and "
+        "resulting FEN, or the ply where it breaks. Report a line before "
+        "naming its moves in prose."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "moves": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "The line's moves in UCI or SAN, in order. Capped at "
+                    f"{REPORT_LINE_MAX_PLIES} plies."
+                    + _MOVE_NOTATION_CONSTRAINT
+                ),
+            },
+            "from_fen": {
+                "type": "string",
+                "description": (
+                    "Position the line starts from, or 'startpos'. Omit to "
+                    "start from the live position."
+                ),
+            },
+        },
+        "required": ["moves"],
+    },
+    card=_REPORT_LINE_CARD,
+)
+
+
+def make_report_line_tool(board_provider: BoardProvider) -> AnalyzeTool:
+    """Build the `report_line` async tool. Replays a model-supplied move
+    sequence from the live board (or `from_fen`), validating each move is
+    legal in order. On success returns the rendered SAN, the FEN after each
+    ply (`fens`, including the start), and the final FEN -- the coordinator
+    registers those positions as examined so the prose validators trust the
+    line's moves and pieces. No engine: pure legality replay."""
+    async def report_line(input_: dict, *, cancel_token: CancelToken) -> dict:
+        from_fen = input_.get("from_fen")
+        if from_fen is not None:
+            board, err = _parse_fen_arg({"fen": from_fen})
+            if err is not None:
+                return err
+        else:
+            board = board_provider()
+            if board is None:
+                return {"error": "no_live_position"}
+        board = board.copy(stack=False)
+
+        raw_moves = input_.get("moves")
+        if not isinstance(raw_moves, list) or not raw_moves:
+            return {"error": "invalid_input", "detail": "moves must be a non-empty list of strings"}
+        truncated = len(raw_moves) > REPORT_LINE_MAX_PLIES
+        raw_moves = raw_moves[:REPORT_LINE_MAX_PLIES]
+
+        san_line: list[str] = []
+        fens: list[str] = [board.fen()]
+        for ply, raw in enumerate(raw_moves):
+            if not isinstance(raw, str):
+                return {"error": "invalid_input", "detail": "move must be a string", "ply": ply}
+            move, kind, detail = _parse_move_or_error(board, _strip_move_prefix(raw))
+            if move is None:
+                return {"error": kind, "detail": detail, "ply": ply, "move_input": raw}
+            san_line.append(board.san(move))
+            board.push(move)
+            fens.append(board.fen())
+
+        out: dict = {
+            "ok": True,
+            "san": " ".join(san_line),
+            "fens": fens,
+            "end_fen": board.fen(),
+        }
+        if truncated:
+            out["truncated"] = True
+        return out
+
+    return report_line
 
 
 # Declarative (see _DELEGATE_TOOL_CARD): the move goes via the tool, not
@@ -810,13 +1034,17 @@ def make_recommend_move_tool(
     board_provider: BoardProvider,
     game_id_provider: GameIdProvider | None = None,
     settings_provider: SettingsProvider | None = None,
+    search_cache: SearchCache | None = None,
 ) -> AnalyzeTool:
     """Build the `recommend_move` async tool. Parses UCI/SAN, then runs
     two engine searches (candidate-restricted + free) at the requested
     depth on the live position; if the engine's bestmove scores better
     for the side to move, returns a structured error so the model can
     pivot. On acceptance returns `{ok, uci, san, post_move_fen,
-    candidate_score, engine_best_move, engine_best_score, depth}`."""
+    candidate_score, engine_best_move, engine_best_score, depth}`.
+    `search_cache`: see make_analyze_tool."""
+    cache = search_cache or SearchCache()
+
     async def recommend_move(input_: dict, *, cancel_token: CancelToken) -> dict:
         board = board_provider()
         if board is None:
@@ -832,11 +1060,17 @@ def make_recommend_move_tool(
         scratch = board.copy(stack=False)
         scratch.push(parsed)
 
+        # Floor recommend_move's two searches at the verification depth so
+        # the dominance check can't confirm a move at a shallow depth the
+        # model picked; it may go deeper, never below the floor.
+        max_depth = _max_depth(settings_provider)
+        floor = min(_verification_depth(settings_provider), max_depth)
         raw_depth = input_.get("depth")
         try:
-            depth = max(1, min(int(raw_depth), MAX_DEPTH)) if raw_depth is not None else _DEFAULT_DEPTH
+            depth = min(int(raw_depth), max_depth) if raw_depth is not None else _DEFAULT_DEPTH
         except (TypeError, ValueError):
             depth = _DEFAULT_DEPTH
+        depth = max(depth, floor)
         limit = chess.engine.Limit(depth=depth)
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
 
@@ -844,7 +1078,7 @@ def make_recommend_move_tool(
 
         # Search A: engine's free best move on the live position.
         try:
-            best_info, _ = await _run_one_search(
+            best_info, _ = await cache.get_or_search(
                 engine_launcher, scratch_live, limit,
                 bus=bus, game_id=game_id, cancel_token=cancel_token,
                 settings_provider=settings_provider,
@@ -860,7 +1094,7 @@ def make_recommend_move_tool(
 
         # Search B: same board, restricted to the candidate.
         try:
-            cand_info, _ = await _run_one_search(
+            cand_info, _ = await cache.get_or_search(
                 engine_launcher, board.copy(stack=False), limit,
                 bus=bus, game_id=game_id, cancel_token=cancel_token,
                 root_moves=[parsed],
@@ -925,12 +1159,16 @@ def make_recommend_verifier(
     board_provider: BoardProvider,
     game_id_provider: GameIdProvider | None = None,
     settings_provider: SettingsProvider | None = None,
+    search_cache: SearchCache | None = None,
 ):
     """Build the end-of-turn recommend-verifier. Returns a callable that
     runs a searchmoves-restricted deep search on the recommended move
     and returns a payload dict (or None on failure). The coordinator
     emits the `ai_recommendation` event through its own _emit so the
-    payload gets a seq stamp and lands in the replay buffer."""
+    payload gets a seq stamp and lands in the replay buffer.
+    `search_cache`: see make_analyze_tool."""
+    cache = search_cache or SearchCache()
+
     async def verify(
         move: chess.Move, depth: int | None, cancel_token: CancelToken,
     ) -> dict | None:
@@ -938,13 +1176,14 @@ def make_recommend_verifier(
         if board is None or move not in board.legal_moves:
             return None
         game_id = (game_id_provider() if game_id_provider else None) or _ANALYZE_GAME_ID_FALLBACK
-        # Verify at least VERIFICATION_DEPTH deep, going deeper if the
+        # Verify at least the verification floor deep, going deeper if the
         # model asked for more -- never shallower. Clamped to the cap.
         requested = int(depth) if depth else 0
-        d = min(max(requested, VERIFICATION_DEPTH), MAX_DEPTH)
+        floor = _verification_depth(settings_provider)
+        d = min(max(requested, floor), _max_depth(settings_provider))
         limit = chess.engine.Limit(depth=d)
         try:
-            last_info, _cancelled = await _run_one_search(
+            last_info, _cancelled = await cache.get_or_search(
                 engine_launcher, board.copy(stack=False), limit,
                 bus=bus, game_id=game_id, cancel_token=cancel_token,
                 root_moves=[move],

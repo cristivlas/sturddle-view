@@ -9,11 +9,15 @@ dialog -- by stubbing the window's ``create_file_dialog``.
 """
 from __future__ import annotations
 
+import errno
+import socket
 from pathlib import Path
 
 import pytest
+import uvicorn
 
-from sturddle_view.desktop import JsApi
+from sturddle_view._uvicorn_signal import make_signalling_server
+from sturddle_view.desktop import JsApi, _port_in_use
 
 
 class _FakeWindow:
@@ -132,3 +136,77 @@ def test_save_pgn_writes_utf8_bytes(tmp_path: Path) -> None:
 
     assert res["ok"] is True
     assert target.read_bytes() == pgn.encode("utf-8")
+
+
+# --- startup signal: a bind failure must be captured, not swallowed -----
+
+
+def _noop_app(scope, receive, send):  # minimal ASGI app, never run here
+    raise AssertionError("app should not run in these tests")
+
+
+@pytest.mark.asyncio
+async def test_signal_captures_startup_failure(monkeypatch) -> None:
+    # A failing startup() must set error + done, leave ready clear, and
+    # re-raise -- so the launcher surfaces it instead of timing out.
+    boom = OSError(errno.EADDRINUSE, "address already in use")
+
+    async def _fail(self, sockets=None):
+        raise boom
+
+    monkeypatch.setattr(uvicorn.Server, "startup", _fail)
+    server, signal = make_signalling_server(uvicorn.Config(_noop_app))
+
+    with pytest.raises(OSError):
+        await server.startup()
+
+    assert signal.done.is_set()
+    assert not signal.ready.is_set()
+    assert signal.error is boom
+
+
+@pytest.mark.asyncio
+async def test_signal_marks_ready_on_success(monkeypatch) -> None:
+    async def _ok(self, sockets=None):
+        return None
+
+    monkeypatch.setattr(uvicorn.Server, "startup", _ok)
+    server, signal = make_signalling_server(uvicorn.Config(_noop_app))
+
+    await server.startup()
+
+    assert signal.ready.is_set()
+    assert signal.done.is_set()
+    assert signal.error is None
+
+
+# --- port pre-flight: detect "in use" before launching uvicorn ----------
+
+
+def test_port_in_use_true_when_bound() -> None:
+    held = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    held.bind(("127.0.0.1", 0))
+    held.listen()
+    port = held.getsockname()[1]
+    try:
+        assert _port_in_use("127.0.0.1", port) is True
+    finally:
+        held.close()
+
+
+def test_port_in_use_false_when_free() -> None:
+    # Grab a free port, release it, then check -- almost certainly still free.
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    assert _port_in_use("127.0.0.1", port) is False
+
+
+def test_port_in_use_maps_wildcard_host() -> None:
+    # 0.0.0.0 is probed against the loopback bind host; a free port reads free.
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    assert _port_in_use("0.0.0.0", port) is False

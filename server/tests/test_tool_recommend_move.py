@@ -141,3 +141,25 @@ async def test_within_margin_accepted(tmp_path: Path):
     out = await tool({"move": "Nf3", "depth": 20}, cancel_token=CancelToken())
     assert out.get("ok") is True, out
     assert out["uci"] == "g1f3"
+
+
+@pytest.mark.asyncio
+async def test_shallow_request_floored_to_verification_depth(monkeypatch):
+    # A model asking depth 5 must search at the verification floor, not 5 --
+    # the dominance check can't confirm a move at a depth the model lowballed.
+    from sturddle_view.play import tools_engine
+
+    seen_depths = []
+
+    async def fake_search(engine_launcher, board, limit, **kw):
+        seen_depths.append(limit.depth)
+        return {"depth": limit.depth, "score": None, "pv": []}, False
+
+    monkeypatch.setattr(tools_engine, "_run_one_search", fake_search)
+    board = chess.Board()
+    tool = tools_engine.make_recommend_move_tool(
+        lambda: None, bus=EventBus(), board_provider=lambda: board,
+    )
+    await tool({"move": "Nf3", "depth": 5}, cancel_token=CancelToken())
+    # Both searches (free + candidate) floored to the default 25.
+    assert seen_depths == [25, 25], seen_depths

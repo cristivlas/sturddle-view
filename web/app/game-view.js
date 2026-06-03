@@ -6,6 +6,7 @@ import { toast } from "./dialogs.js";
 import { isMobileLayout } from "./play-dock-windows.js";
 import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 import { APP_EVT } from "./app-events.js";
+import { selectContentsOnCtrlA } from "./wb-utils.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -219,6 +220,7 @@ export function mountGameView(container, opts = {}) {
   const clockTopRow = container.querySelector(".clock-top");
   const clockBottomRow = container.querySelector(".clock-bottom");
   const moveListEl = sideHost.querySelector(".move-list");
+  if (moveListEl) selectContentsOnCtrlA(moveListEl);
   const engineDepth = sideHost.querySelector(".engine-depth");
   const engineScore = sideHost.querySelector(".engine-score");
   const engineNodes = sideHost.querySelector(".engine-nodes");
@@ -401,6 +403,9 @@ export function mountGameView(container, opts = {}) {
     // applies to the right rail. Shrink-when-empty still tracks the dock.
     let leftRailW;
     let availW;
+    // Whether the dock side has no docker visible. Defaults true (mobile
+    // branch never reads it for sizing); set in the desktop branch below.
+    let leftEmpty = true;
     // When the left dock is empty on desktop, shrink the left rail so the
     // board + right rail shift left as one block instead of being framed
     // by a wide empty band. Proportional to railW so it scales with width.
@@ -412,7 +417,7 @@ export function mountGameView(container, opts = {}) {
     } else {
       const usable = window.innerWidth - sidePad;
       railW = Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.floor(usable * 0.18)));
-      const leftEmpty =
+      leftEmpty =
         document.querySelector(".play-dock-left")?.classList.contains("dock-empty") !== false
         && document.querySelector(".play-comments-host")?.classList.contains("dock-empty") !== false;
       leftRailW = leftEmpty ? Math.floor(railW * LEFT_RAIL_EMPTY_RATIO) : railW;
@@ -449,49 +454,42 @@ export function mountGameView(container, opts = {}) {
         grid.style.removeProperty("--left-rail-w");
       }
       // Align the side rail's top with the board's top (the grid would
-       // otherwise place it next to the top clock row), and cap its height
-       // at the board's height so the moves panel stays within the board.
+      // otherwise place it next to the top clock row), and set its height
+      // to the board's so the moves panel fills down to the board bottom.
       const sideHost = grid.querySelector(".play-side-host");
       if (sideHost) {
         if (!mobile) {
           const boardRect = boardEl.getBoundingClientRect();
           const ribbonRight = document.body.dataset.ribbonSide === "right";
           const top = Math.ceil(boardRect.top);
-          // On wide viewports, cap the side rail at its natural width so it
-          // doesn't stretch all the way to the edge -- combined with the
-          // shrunken opposite rail (when dock is empty), this keeps the
-          // picture centered instead of framed by a wide empty band.
-          // Kept as a raw CSS-px threshold (not rem-derived): the
-          // below-WIDE branch lets the rail expand to fill `avail`, and
-          // scaling WIDE up with font-size pushes viewports into that
-          // expanding branch where the rail visibly slides as the text
-          // grows. The wide-viewport feel is a viewport property, not a
-          // font-size one.
+          // Cap the rail at its natural width only on wide viewports with an
+          // empty dock side (keeps the picture centered). A visible docker
+          // lets the rail fill `avail` at any width. WIDE stays raw px: a
+          // rem-derived threshold would slide the rail as font-size grows.
           const WIDE = 1500;
+          const capRail = leftEmpty && window.innerWidth >= WIDE;
+          // ribbonRight: rail sits left of the board; else it sits right.
+          // Both fill `avail` (capped to railW on wide+empty), differing
+          // only in which board edge the rail hangs off of.
           let left;
-          let avail;
+          let width;
           if (ribbonRight) {
-            avail = Math.max(0, Math.ceil(boardRect.left) - gapW - rem(1));
-            const width = window.innerWidth >= WIDE ? Math.min(railW, avail) : avail;
+            const avail = Math.max(0, Math.ceil(boardRect.left) - gapW - rem(1));
+            width = capRail ? Math.min(railW, avail) : avail;
             left = Math.max(rem(1), Math.ceil(boardRect.left) - gapW - width);
-            const height = Math.max(rem(10), Math.floor(boardRect.height));
-            sideHost.style.left = `${left}px`;
-            sideHost.style.top = `${top}px`;
-            sideHost.style.width = `${width}px`;
-            sideHost.style.setProperty("max-height", `${height}px`);
           } else {
             left = Math.ceil(boardRect.right) + gapW;
-            avail = Math.max(0, window.innerWidth - left - rem(1));
-            const width = window.innerWidth >= WIDE ? Math.min(railW, avail) : avail;
-            const height = Math.max(rem(10), Math.floor(boardRect.height));
-            sideHost.style.left = `${left}px`;
-            sideHost.style.top = `${top}px`;
-            sideHost.style.width = `${width}px`;
-            sideHost.style.setProperty("max-height", `${height}px`);
+            const avail = Math.max(0, window.innerWidth - left - rem(1));
+            width = capRail ? Math.min(railW, avail) : avail;
           }
+          const height = Math.max(rem(10), Math.floor(boardRect.height));
+          sideHost.style.left = `${left}px`;
+          sideHost.style.top = `${top}px`;
+          sideHost.style.width = `${width}px`;
+          sideHost.style.height = `${height}px`;
           sideHost.style.removeProperty("margin-top");
         } else {
-          sideHost.style.removeProperty("max-height");
+          sideHost.style.removeProperty("height");
           sideHost.style.removeProperty("margin-top");
           sideHost.style.removeProperty("left");
           sideHost.style.removeProperty("top");

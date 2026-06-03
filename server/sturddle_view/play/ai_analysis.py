@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Sequence
 
@@ -60,8 +61,10 @@ from .tools_engine import (
     MATERIAL_TOOL_NAME,
     PIECE_AT_TOOL_NAME,
     RECOMMEND_MOVE_TOOL_NAME,
+    REPORT_LINE_TOOL_NAME,
     TOP_MOVES_TOOL_NAME,
     VALIDATE_MOVE_TOOL_NAME,
+    SearchCache,
     board_from_fen_input,
     parse_move_canonical,
     parse_move_reporting,
@@ -191,8 +194,8 @@ _RECOMMEND_NUDGE_PROMPTS = {
 # Loop-enforced; stall-guard + round-cap backstop it.
 _ALTERNATIVE_REQUIRED_ERROR = "alternative_required"
 _ALTERNATIVE_REQUIRED_REASON = (
-    "Call recommend_move on at least one different candidate first, "
-    "then submit your move."
+    "Internal: evaluate a different candidate through recommend_move, then "
+    "retry this move. Do not mention this in prose."
 )
 
 # Sent once when recommend_move is accepted but the model skips the
@@ -313,6 +316,17 @@ def make_delegate_tool(
 # hashable key, or None to skip caching this call.
 
 
+def _board_from_fen(fen: str) -> chess.Board | None:
+    """Parse a FEN string to a board, or None if unparseable. For the
+    server-generated FENs report_line returns (always valid); defensive."""
+    if not isinstance(fen, str):
+        return None
+    try:
+        return chess.Board(fen)
+    except ValueError:
+        return None
+
+
 def _norm_move_arg(input_: dict, board: chess.Board | None) -> tuple | None:
     # depth is part of the key for recommend_move; harmless for
     # validate_move which doesn't accept it (always None).
@@ -328,9 +342,25 @@ def _norm_square_arg(input_: dict, board: chess.Board | None) -> tuple | None:
     if not isinstance(raw, str) or not raw.strip():
         return None
     try:
-        return ("square", chess.square_name(chess.parse_square(raw.lower())))
+        square = chess.square_name(chess.parse_square(raw.lower()))
     except ValueError:
         return None
+    # piece_at reads a supplied fen or the live board; key on the position
+    # (EPD -- clocks ignored) so a query against one position can't reuse a
+    # result from another. An explicit fen matching the live board dedups.
+    fen = input_.get("fen")
+    if isinstance(fen, str) and fen.strip():
+        try:
+            # 'startpos' isn't expanded here, so it won't dedup (matches
+            # _canonical_fen); the tool itself still resolves it.
+            pos = chess.Board(fen.strip()).epd()
+        except ValueError:
+            return None
+    elif board is not None:
+        pos = board.epd()
+    else:
+        return None
+    return ("square", pos, square)
 
 
 def _norm_top_moves(input_: dict, board: chess.Board | None) -> tuple | None:
@@ -375,6 +405,29 @@ def _canonical_fen(input_: dict) -> str | None:
     return " ".join(board_fen.split(" ")[:4])
 
 
+def _norm_report_line(input_: dict, board: chess.Board | None) -> tuple | None:
+    # Key on the start position (EPD) + the raw move strings in order. Raw
+    # (not canonical) so a broken line -- one a re-submit would repeat
+    # verbatim -- still dedups; order matters, so no sorting.
+    raw_moves = input_.get("moves")
+    if not isinstance(raw_moves, list) or not raw_moves:
+        return None
+    if not all(isinstance(m, str) for m in raw_moves):
+        return None
+    from_fen = input_.get("from_fen")
+    if isinstance(from_fen, str) and from_fen.strip():
+        try:
+            pos = chess.Board(from_fen.strip()).epd()
+        except ValueError:
+            return None
+    elif board is not None:
+        pos = board.epd()
+    else:
+        return None
+    moves = tuple(m.strip().lower() for m in raw_moves)
+    return (REPORT_LINE_TOOL_NAME, pos, moves)
+
+
 def _norm_analyze(input_: dict, board: chess.Board | None) -> tuple | None:
     canonical = _canonical_fen(input_)
     if canonical is None:
@@ -394,6 +447,7 @@ _NORMALIZERS: dict[str, Callable[[dict, chess.Board | None], tuple | None]] = {
     VALIDATE_MOVE_TOOL_NAME: _norm_move_arg,
     PIECE_AT_TOOL_NAME: _norm_square_arg,
     TOP_MOVES_TOOL_NAME: _norm_top_moves,
+    REPORT_LINE_TOOL_NAME: _norm_report_line,
     ANALYZE_TOOL_NAME: _norm_analyze,
     MATERIAL_TOOL_NAME: _norm_material,
 }
@@ -450,6 +504,44 @@ def _assistant_message(chunks: list[ProviderChunk]) -> Message:
     if not content:
         content.append({"type": "text", "text": _EMPTY_TURN_PLACEHOLDER})
     return {"role": "assistant", "content": content}
+
+
+class _ThinkTimer:
+    """Times a round's thinking phase. Started on the first thinking chunk,
+    spent once into the first non-thinking event's payload as thinking_ms.
+    Spending is idempotent so prose and tool-call paths can both call it."""
+
+    def __init__(self) -> None:
+        self._start: float | None = None
+        self._spent = False
+
+    def start(self) -> None:
+        if self._start is None:
+            self._start = time.monotonic()
+
+    def spend_into(self, payload: dict) -> None:
+        ms = self.flush_ms()
+        if ms is not None:
+            payload["thinking_ms"] = ms
+
+    def flush_ms(self) -> int | None:
+        # Elapsed thinking, once. None if already spent or never started.
+        if self._start is None or self._spent:
+            return None
+        self._spent = True
+        return round((time.monotonic() - self._start) * 1000)
+
+
+async def _flush_think(emit, timer: _ThinkTimer, game_id, round_index: int) -> None:
+    # Carry unspent thinking on a delta-less ai_thinking when no prose/tool
+    # event surfaced it (thinking-only / cached / nested-tool rounds).
+    ms = timer.flush_ms()
+    if ms is not None:
+        await emit(Event(
+            kind=EVT_AI_THINKING,
+            game_id=game_id,
+            payload={"round": round_index, "thinking_ms": ms},
+        ))
 
 
 def _round_produced_output(chunks: list[ProviderChunk]) -> bool:
@@ -590,6 +682,7 @@ class AIAnalysisCoordinator:
         board_provider: BoardProvider | None = None,
         recommend_verifier: RecommendVerifier | None = None,
         verifier_registry: ToolRegistry | None = None,
+        search_cache: SearchCache | None = None,
     ) -> None:
         self._bus = bus
         # Default provider for callers that don't supply one per turn.
@@ -607,6 +700,10 @@ class AIAnalysisCoordinator:
         self._board_provider = board_provider
         # End-of-turn verifier; None disables it.
         self._recommend_verifier = recommend_verifier
+        # Cross-tool engine-search cache, shared with the engine tools.
+        # Cleared at turn start (position is stable within a turn, not
+        # across). None when the tools aren't cache-wired (tests).
+        self._search_cache = search_cache
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
         self._cancel_token: CancelToken | None = None
@@ -685,6 +782,10 @@ class AIAnalysisCoordinator:
             self._verifier_round_cap_hit = False
             self._seq = 0
             self._replay_buffer = []
+            # New turn -> the live position has moved; stale searches must
+            # not satisfy this turn's requests.
+            if self._search_cache is not None:
+                self._search_cache.clear()
             messages: list[Message] = [{"role": "user", "content": opening_user_content}]
             tool_schemas = self._registry.schemas() or None
             has_recommend_move = any(
@@ -865,6 +966,10 @@ class AIAnalysisCoordinator:
         for round_index in range(config.max_rounds):
             round_chunks: list[ProviderChunk] = []
             pending_tool: ProviderChunk | None = None
+            # Per-round thinking duration, carried on the first non-thinking
+            # event so the client shows it correctly on replay (a client-side
+            # Date.now() delta collapses to ~0 when replay fires at once).
+            think_timer = _ThinkTimer()
             provider_stream = config.provider.stream(
                 system=config.system_prompt,
                 messages=messages,
@@ -886,14 +991,13 @@ class AIAnalysisCoordinator:
                     if chunk.text.strip():
                         text_published = True
                     text_parts.append(chunk.text)
+                    payload = {"delta": chunk.text, "round": round_index}
+                    think_timer.spend_into(payload)
                     await emit(
-                        Event(
-                            kind=EVT_AI_INFO,
-                            game_id=game_id,
-                            payload={"delta": chunk.text, "round": round_index},
-                        )
+                        Event(kind=EVT_AI_INFO, game_id=game_id, payload=payload)
                     )
                 elif chunk.kind == "thinking" and chunk.text:
+                    think_timer.start()
                     await emit(
                         Event(
                             kind=EVT_AI_THINKING,
@@ -965,6 +1069,7 @@ class AIAnalysisCoordinator:
                     )
                     continue
                 round_cap_hit = False
+                await _flush_think(emit, think_timer, game_id, round_index)
                 # Verdict = this final round's prose only, so cross-round
                 # tool-call self-talk ("I need the FEN", "let me check")
                 # doesn't leak up to the narrator.
@@ -988,16 +1093,18 @@ class AIAnalysisCoordinator:
                     tool_output = last_call[1]
                 else:
                     # Surface the call to the UI only on a real dispatch.
+                    tool_payload = {
+                        "round": round_index,
+                        "name": pending_tool.tool_name,
+                        "input": pending_tool.tool_input,
+                        "tool_use_id": pending_tool.tool_use_id,
+                    }
+                    think_timer.spend_into(tool_payload)
                     await emit(
                         Event(
                             kind=EVT_AI_TOOL_CALL,
                             game_id=game_id,
-                            payload={
-                                "round": round_index,
-                                "name": pending_tool.tool_name,
-                                "input": pending_tool.tool_input,
-                                "tool_use_id": pending_tool.tool_use_id,
-                            },
+                            payload=tool_payload,
                         )
                     )
                     # Tag the verifier's nested events with this delegate's
@@ -1035,6 +1142,16 @@ class AIAnalysisCoordinator:
                         examined = board_from_fen_input(pending_tool.tool_input)
                         if examined is not None:
                             examined_boards[examined.fen()] = examined
+                    # A reported line registers every position it traverses
+                    # (start + after each ply) so the validators trust the
+                    # line's moves and pieces -- the structured grounding
+                    # channel that lets capable models route around the
+                    # regex anchoring.
+                    elif pending_tool.tool_name == REPORT_LINE_TOOL_NAME:
+                        for fen in tool_output.get("fens", []):
+                            board = _board_from_fen(fen)
+                            if board is not None:
+                                examined_boards[board.fen()] = board
                 # Safe to read from a cached recommend_move result: the
                 # cached uci is identical to a fresh dispatch's. Gate runs
                 # before transcript/message so the model sees what we record.
@@ -1107,6 +1224,7 @@ class AIAnalysisCoordinator:
                     mode=mode,
                     emit=emit,
                 )
+            await _flush_think(emit, think_timer, game_id, round_index)
         # On round-cap the narrator falls back to all-rounds text (consumer
         # is recommended_uci). The verifier must NOT -- its prose IS the
         # verdict; cross-round self-talk would poison it. Empty -> no_verdict.

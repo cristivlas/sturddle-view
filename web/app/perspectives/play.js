@@ -24,6 +24,7 @@ import {
   resetAi,
   appendAiDelta,
   appendAiThinking,
+  freezeAiThinking,
   appendAiToolCall,
   markAiToolCallFailed,
   noteAiRevision,
@@ -474,9 +475,10 @@ export const playPerspective = {
       if (shouldShow) {
         if (!open) openCommentary();
         setCommentaryText(lastViewComment);
+        // Re-open rebuilds the body with nav buttons disabled; re-push the
+        // still-current targets (they survive a hide -- view-mode state).
+        pushNavToUi();
       } else if (open) {
-        commentNavPrev = null;
-        commentNavNext = null;
         closeCommentary();
       }
     }
@@ -961,7 +963,7 @@ export const playPerspective = {
       switch (evt.kind) {
         case "ai_info": {
           const p = evt.payload || {};
-          if (typeof p.delta === "string") appendAiDelta(p.delta, p.round ?? 0);
+          if (typeof p.delta === "string") appendAiDelta(p.delta, p.round ?? 0, p.thinking_ms ?? null);
           if (p.done) {
             // Defensive: tool-call lifecycle can drop the restore signal
             // (cancelled mid-call, round cap, etc.). Always snap back.
@@ -1001,6 +1003,7 @@ export const playPerspective = {
         case "ai_thinking": {
           const p = evt.payload || {};
           if (typeof p.delta === "string") appendAiThinking(p.delta, p.round ?? 0);
+          else if (Number.isFinite(p.thinking_ms)) freezeAiThinking(p.round ?? 0, p.thinking_ms);
           return true;
         }
         case "ai_tool_call": {
@@ -1011,6 +1014,7 @@ export const playPerspective = {
             input: p.input,
             toolUseId: p.tool_use_id,
             parentToolUseId: p.parent_tool_use_id,
+            thinkingMs: p.thinking_ms ?? null,
           });
           // When the model inspects a hypothetical position, mirror
           // the analyzed FEN on the board so the user can follow the

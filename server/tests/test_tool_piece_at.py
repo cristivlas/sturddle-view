@@ -85,3 +85,32 @@ async def test_piece_at_errors_on_missing_square():
     out = await tool({}, cancel_token=CancelToken())
 
     assert out["error"] == "invalid_square"
+
+
+@pytest.mark.asyncio
+async def test_piece_at_reads_supplied_fen_over_live_board():
+    # fen present -> read that position, not the live board. e4 is empty on
+    # the live startpos board but occupied after 1.e4 in the supplied fen.
+    board = chess.Board()  # live = startpos, e4 empty
+    tool = make_piece_at_tool(board_provider=lambda: board)
+    after_e4 = chess.Board()
+    after_e4.push_uci("e2e4")
+    out = await tool(
+        {"square": "e4", "fen": after_e4.fen()}, cancel_token=CancelToken()
+    )
+    assert out["piece"] == {"type": "pawn", "color": "white", "symbol": "P"}
+
+
+@pytest.mark.asyncio
+async def test_piece_at_fen_works_without_live_board():
+    # No live board, but a fen is supplied -> still answers.
+    tool = make_piece_at_tool(board_provider=lambda: None)
+    out = await tool({"square": "e1", "fen": "startpos"}, cancel_token=CancelToken())
+    assert out["piece"] == {"type": "king", "color": "white", "symbol": "K"}
+
+
+@pytest.mark.asyncio
+async def test_piece_at_errors_on_invalid_fen():
+    tool = make_piece_at_tool(board_provider=lambda: chess.Board())
+    out = await tool({"square": "e1", "fen": "not-a-fen"}, cancel_token=CancelToken())
+    assert out["error"] == "invalid_fen"

@@ -382,6 +382,42 @@ async def test_comment_nav_targets_new_game_after_switch(server, make_page):
 
 
 @pytest.mark.asyncio
+async def test_comment_nav_recovers_after_resize_hide_show(server, make_page):
+    """Resize past the hide-commentary breakpoint then back: the rebuilt
+    body's nav buttons start disabled and used to stay dead until the next
+    board_update (a move click). Recovery must happen with no navigation."""
+    base = server
+    _seed_view_mode(base)  # game A: comments at plies 1, 3
+    _ctx, page, errors = await _new_page(make_page)
+    await _goto_play_in_view_mode(page, base)
+    await page.wait_for_selector(COMMENTS_SLOT)
+    # Move to a ply with a populated prev target so the buttons are live.
+    await page.evaluate("document.querySelector('#view-forward')?.click()")
+    await page.wait_for_function(
+        f"() => !document.querySelector('{NAV_PREV}').disabled"
+    )
+    # Any view/goto after this point would mean recovery came from nav,
+    # not from the hide/show push -- which is what we are testing against.
+    gotos = []
+    page.on(
+        "request",
+        lambda r: gotos.append(r.url) if "view/goto" in r.url else None,
+    )
+    # Hide: short height crosses --bp-mobile-h-play (740px) -> isMobileLayout.
+    await page.set_viewport_size({"width": 1600, "height": 700})
+    await page.wait_for_function(f"() => !document.querySelector('{COMMENTS_SLOT}')")
+    # Show again: back to desktop height.
+    await page.set_viewport_size({"width": 1600, "height": 1000})
+    await page.wait_for_selector(COMMENTS_SLOT)
+    # prev-comment must be live again without a move click.
+    await page.wait_for_function(
+        f"() => !document.querySelector('{NAV_PREV}').disabled"
+    )
+    assert not gotos, f"recovery must not require navigation, saw: {gotos}"
+    _assert_no_errors(errors)
+
+
+@pytest.mark.asyncio
 async def test_setting_off_keeps_commentary_closed(server, make_page):
     """Entering view mode with setting=false -> no dock slot, no WinBox."""
     base = server

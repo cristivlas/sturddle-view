@@ -24,7 +24,7 @@
 
 import { attachColumnResize } from "./col-resize.js";
 import { toast } from "./dialogs.js";
-import { mqMobile } from "./breakpoints.js";
+import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import {
@@ -84,10 +84,12 @@ function saveDockGrows(grows) {
   try { localStorage.setItem(DOCK_GROW_KEY, JSON.stringify(grows)); } catch { /* */ }
 }
 
-// Mobile gate. Sourced from the shared --bp-mobile CSS custom property so
-// the breakpoint lives in one place (see styles.css :root + breakpoints.js).
+// Mobile gate. Width OR short-height crosses into the stacked layout,
+// matching the play perspective's CSS media query (see styles.css :root
+// + breakpoints.js). Short-but-wide must count so JS stops driving the
+// desktop fixed side-rail positioning the CSS no longer expects.
 export function isMobileLayout() {
-  return mqMobile.matches;
+  return mqMobile.matches || mqMobileHPlay.matches;
 }
 
 function applyDockBounds(el) {

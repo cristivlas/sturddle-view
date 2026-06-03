@@ -29,6 +29,13 @@ _DEFAULT_AI_THINKING_BUDGET_TOKENS = 4096
 _DEFAULT_AI_MAX_TOOL_ROUNDS = 32
 _DEFAULT_AI_VERIFIER_MAX_ROUNDS = 8
 
+# Search-depth caps (no-env defaults). tools_engine imports these so the
+# Settings field default and the tool-level clamp share one literal.
+# ANALYZE_MAX_DEPTH clamps any tool's per-call depth; VERIFICATION_DEPTH is
+# the end-of-turn recommend-verifier floor.
+_DEFAULT_AI_ANALYZE_MAX_DEPTH = 30
+_DEFAULT_AI_VERIFICATION_DEPTH = 25
+
 
 def default_settings_file() -> Path:
     """Path to persisted user settings.
@@ -75,6 +82,8 @@ PERSISTED_FIELDS = (
     "ai_thinking_budget_tokens",
     "ai_max_tool_rounds",
     "ai_verifier_max_rounds",
+    "ai_analyze_max_depth",
+    "ai_verification_depth",
     # ai_api_key intentionally NOT persisted: server mode reads SV_AI_API_KEY
     # from env; desktop mode will switch to OS keyring (later cycle). The
     # JSON settings file must never hold the plaintext key.
@@ -171,6 +180,10 @@ class Settings(BaseSettings):
     # SV_AI_VERIFIER_MAX_ROUNDS via the SV_ env prefix.
     ai_max_tool_rounds: int = _DEFAULT_AI_MAX_TOOL_ROUNDS
     ai_verifier_max_rounds: int = _DEFAULT_AI_VERIFIER_MAX_ROUNDS
+    # Search-depth caps. Mirror tools_engine.MAX_DEPTH / VERIFICATION_DEPTH;
+    # bind to SV_AI_ANALYZE_MAX_DEPTH / SV_AI_VERIFICATION_DEPTH via SV_.
+    ai_analyze_max_depth: int = _DEFAULT_AI_ANALYZE_MAX_DEPTH
+    ai_verification_depth: int = _DEFAULT_AI_VERIFICATION_DEPTH
 
     @property
     def ai_model(self) -> str:

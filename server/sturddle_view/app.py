@@ -48,13 +48,16 @@ from .play.tools_engine import (
     MATERIAL_TOOL_SPEC,
     PIECE_AT_TOOL_SPEC,
     RECOMMEND_MOVE_TOOL_SPEC,
+    REPORT_LINE_TOOL_SPEC,
     TOP_MOVES_TOOL_SPEC,
     VALIDATE_MOVE_TOOL_SPEC,
+    SearchCache,
     make_analyze_tool,
     make_material_tool,
     make_piece_at_tool,
     make_recommend_move_tool,
     make_recommend_verifier,
+    make_report_line_tool,
     make_top_moves_tool,
     make_validate_move_tool,
 )
@@ -367,6 +370,11 @@ def create_app(
     def _ai_settings_provider():
         return app.state.settings
 
+    # Shared across all engine-backed tools so a position searched once
+    # this turn (analyze, top_moves, recommend_move, the verifier) isn't
+    # re-searched. The coordinator clears it at turn start.
+    ai_search_cache = SearchCache()
+
     # Strict narrator/verifier split (docs/ai-analysis-spec.md):
     # the narrator plans + delegates + recommends but never searches; the
     # verifier sub-run owns all engine tools. This keeps raw eval numbers
@@ -380,6 +388,7 @@ def create_app(
             bus=app.state.event_bus,
             game_id_provider=_ai_game_id_provider,
             settings_provider=_ai_settings_provider,
+            search_cache=ai_search_cache,
         ),
     )
     ai_verifier_registry.register(
@@ -402,6 +411,7 @@ def create_app(
             board_provider=_ai_board_provider,
             game_id_provider=_ai_game_id_provider,
             settings_provider=_ai_settings_provider,
+            search_cache=ai_search_cache,
         ),
     )
 
@@ -416,7 +426,15 @@ def create_app(
             board_provider=_ai_board_provider,
             game_id_provider=_ai_game_id_provider,
             settings_provider=_ai_settings_provider,
+            search_cache=ai_search_cache,
         ),
+    )
+    # report_line: structured grounding for the narrator's prose. A
+    # reported line's positions are registered as examined, so the prose
+    # validators trust its moves/pieces (no engine -- pure legality replay).
+    ai_registry.register(
+        REPORT_LINE_TOOL_SPEC,
+        make_report_line_tool(board_provider=_ai_board_provider),
     )
     app.state.ai_tool_registry = ai_registry
     app.state.ai_verifier_registry = ai_verifier_registry
@@ -471,12 +489,14 @@ def create_app(
         board_provider=_ai_board_provider,
         game_id_provider=_ai_game_id_provider,
         settings_provider=_ai_settings_provider,
+        search_cache=ai_search_cache,
     )
     app.state.ai_coordinator = AIAnalysisCoordinator(
         app.state.event_bus, CannedProvider(), registry=ai_registry,
         board_provider=_ai_board_provider,
         recommend_verifier=_ai_recommend_verifier,
         verifier_registry=ai_verifier_registry,
+        search_cache=ai_search_cache,
     )
     # Register `delegate` last: it dispatches to the coordinator's verifier
     # sub-run, so the coordinator must exist first.
