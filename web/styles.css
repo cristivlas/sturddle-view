@@ -60,6 +60,7 @@
   --bp-narrow-dialog: 30rem;  /* 480px @ default font */
   --bp-mobile:        40rem;  /* 640px @ default font */
   --bp-mobile-h:      30rem;  /* 480px @ default font; height analog */
+  --bp-mobile-h-play: 46.25rem; /* 740px; play side-rail short-height gate */
   --bp-wide:          93.75rem; /* 1500px @ default font */
 }
 
@@ -875,8 +876,32 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 640px = --bp-mobile, 740px = --bp-mobile-h-play (media queries can't
+   read custom props; keep these literals in sync with :root). */
 @media (max-width: 640px), (max-height: 740px) {
+  /* Non-play perspectives keep `main` as the scroller (their inner lists
+     are flex:1 + overflow-y:auto and need a bounded ancestor). */
   main { overflow-y: auto; }
+  /* Play only: single scroll context -- the document scrolls, not `main`.
+     Unlock the height:100% frame so body grows to content and `main`
+     overflow stays visible (no nested scroller -- the double-scrollbar
+     bug). */
+  body:has(#play-perspective) { height: auto; min-height: 100%; }
+  /* Both axes visible: a visible/hidden mix computes the visible axis to
+     auto, which would re-add main's scroller. Play mobile children are
+     width-bounded (align-items:center; width:100%) so x won't escape. */
+  #perspective-root:has(#play-perspective) { overflow: visible; }
+  /* Analysis locks body scroll (.xgame-nav-locked) on the assumption that
+     `main` is the scroller; in the play document-scroll model the body IS
+     the scroller, so re-enable it or content gets clipped with no bar. */
+  body.xgame-nav-locked:has(#play-perspective) { overflow-y: visible; }
+  /* Pin the footer to the viewport bottom while content scrolls above;
+     opaque bg so scrolling content doesn't show through. */
+  body:has(#play-perspective) #app-footer {
+    position: sticky;
+    bottom: 0;
+    background: var(--bg);
+  }
 }
 @media (max-width: 640px) {
   .desktop-only { display: none !important; }
@@ -1315,6 +1340,8 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   filter: grayscale(0.5) brightness(0.85);
 }
 
+/* 640px = --bp-mobile, 740px = --bp-mobile-h-play (media queries can't
+   read custom props; keep these literals in sync with :root). */
 @media (max-width: 640px), (max-height: 740px) {
   /* !important guards against any later .play-dock-left rule with
      higher specificity (e.g. modifier classes set from JS). Mobile
@@ -1376,6 +1403,16 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
     align-self: center;
     width: 100%;
     max-width: var(--board-max-px, 100%);
+  }
+  /* Mobile flows in the document scroll: the move list expands to full
+     content height with no inner scroller, so the page is the only
+     scrollbar -- no nested second one. */
+  .game-view-side { height: auto; }
+  .game-view-moves { flex: 0 0 auto; }
+  .game-view-moves .move-list {
+    flex: 0 0 auto;
+    max-height: none;
+    overflow-y: visible;
   }
 }
 .game-view-board {
