@@ -121,3 +121,30 @@ def test_top_moves_depth_in_raw_path_key():
     k1 = _key("top_moves", {"moves": ["e2f4", "g4"], "depth": 20}, board)
     k2 = _key("top_moves", {"moves": ["e2f4", "g4"], "depth": 15}, board)
     assert k1 != k2
+
+
+# ---------- piece_at (_norm_square_arg, position-keyed) ---------------
+
+
+def test_piece_at_keys_on_position():
+    # Same square, different positions -> different keys (no cross-position
+    # cache reuse). fen present vs live board both key on the position.
+    live = chess.Board()
+    after_e4 = chess.Board()
+    after_e4.push_uci("e2e4")
+    k_live = _key("piece_at", {"square": "e4"}, live)
+    k_fen = _key("piece_at", {"square": "e4", "fen": after_e4.fen()}, live)
+    assert k_live != k_fen
+
+
+def test_piece_at_fen_matching_live_dedups():
+    # An explicit fen equal to the live board yields the same key (EPD-based,
+    # so clocks don't split it).
+    live = chess.Board()
+    k_live = _key("piece_at", {"square": "e1"}, live)
+    k_fen = _key("piece_at", {"square": "e1", "fen": live.fen()}, live)
+    assert k_live is not None and k_live == k_fen
+
+
+def test_piece_at_no_board_no_fen_returns_none():
+    assert _key("piece_at", {"square": "e1"}, None) is None

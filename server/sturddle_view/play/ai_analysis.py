@@ -329,9 +329,25 @@ def _norm_square_arg(input_: dict, board: chess.Board | None) -> tuple | None:
     if not isinstance(raw, str) or not raw.strip():
         return None
     try:
-        return ("square", chess.square_name(chess.parse_square(raw.lower())))
+        square = chess.square_name(chess.parse_square(raw.lower()))
     except ValueError:
         return None
+    # piece_at reads a supplied fen or the live board; key on the position
+    # (EPD -- clocks ignored) so a query against one position can't reuse a
+    # result from another. An explicit fen matching the live board dedups.
+    fen = input_.get("fen")
+    if isinstance(fen, str) and fen.strip():
+        try:
+            # 'startpos' isn't expanded here, so it won't dedup (matches
+            # _canonical_fen); the tool itself still resolves it.
+            pos = chess.Board(fen.strip()).epd()
+        except ValueError:
+            return None
+    elif board is not None:
+        pos = board.epd()
+    else:
+        return None
+    return ("square", pos, square)
 
 
 def _norm_top_moves(input_: dict, board: chess.Board | None) -> tuple | None:

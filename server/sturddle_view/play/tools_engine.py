@@ -170,19 +170,20 @@ TOP_MOVES_TOOL_SPEC = ToolSpec(
 
 
 _PIECE_AT_CARD = (
-    "Any piece-on-square claim about the live position is worth "
-    "confirming first -- explicit (\"knight on f3\") or implied "
-    "(centralize, push, capture, defend, pin, fork, etc). Result: piece "
-    "symbol (upper=white, lower=black) or null. Live position only, not "
-    "squares inside calculated lines."
+    "Any piece-on-square claim is worth confirming first -- explicit "
+    "(\"knight on f3\") or implied (centralize, push, capture, defend, "
+    "pin, fork, etc). Result: piece symbol (upper=white, lower=black) or "
+    "null. Defaults to the live position; pass `fen` to read a square in "
+    "any position you are reasoning about."
 )
 
 
 PIECE_AT_TOOL_SPEC = ToolSpec(
     name=PIECE_AT_TOOL_NAME,
     description=(
-        "Piece on a square in the live position, or null. Call before "
-        "naming any piece-on-square in prose."
+        "Piece on a square, or null. Reads the live position by default; "
+        "pass `fen` to read any position. Call before naming any "
+        "piece-on-square in prose."
     ),
     input_schema={
         "type": "object",
@@ -192,6 +193,13 @@ PIECE_AT_TOOL_SPEC = ToolSpec(
                 "description": (
                     "Algebraic square name, e.g. 'e4', 'a1', 'h8'. "
                     "Case-insensitive."
+                ),
+            },
+            "fen": {
+                "type": "string",
+                "description": (
+                    "Position to read, or 'startpos'. Omit to use the live "
+                    "position."
                 ),
             },
         },
@@ -775,13 +783,20 @@ def make_top_moves_tool(
 
 
 def make_piece_at_tool(board_provider: BoardProvider) -> AnalyzeTool:
-    """Build the `piece_at` async tool. Reads the live board (via
-    board_provider) and reports what occupies the requested square --
-    the model's self-check against hallucinated piece placements."""
+    """Build the `piece_at` async tool. Reports what occupies a square --
+    the model's self-check against hallucinated piece placements. Reads the
+    live board (via board_provider) by default, or a supplied `fen` so the
+    model can ground a square in any position it is reasoning about."""
     async def piece_at(input_: dict, *, cancel_token: CancelToken) -> dict:
-        board = board_provider()
-        if board is None:
-            return {"error": "no_live_position"}
+        fen = input_.get("fen")
+        if fen is not None:
+            board, err = _parse_fen_arg(input_)
+            if err is not None:
+                return err
+        else:
+            board = board_provider()
+            if board is None:
+                return {"error": "no_live_position"}
         raw = input_.get("square")
         if not isinstance(raw, str) or not raw:
             return {"error": "invalid_square", "detail": "square must be a non-empty string"}
