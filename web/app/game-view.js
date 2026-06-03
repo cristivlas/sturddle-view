@@ -401,6 +401,9 @@ export function mountGameView(container, opts = {}) {
     // applies to the right rail. Shrink-when-empty still tracks the dock.
     let leftRailW;
     let availW;
+    // Whether the dock side has no docker visible. Defaults true (mobile
+    // branch never reads it for sizing); set in the desktop branch below.
+    let leftEmpty = true;
     // When the left dock is empty on desktop, shrink the left rail so the
     // board + right rail shift left as one block instead of being framed
     // by a wide empty band. Proportional to railW so it scales with width.
@@ -412,7 +415,7 @@ export function mountGameView(container, opts = {}) {
     } else {
       const usable = window.innerWidth - sidePad;
       railW = Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.floor(usable * 0.18)));
-      const leftEmpty =
+      leftEmpty =
         document.querySelector(".play-dock-left")?.classList.contains("dock-empty") !== false
         && document.querySelector(".play-comments-host")?.classList.contains("dock-empty") !== false;
       leftRailW = leftEmpty ? Math.floor(railW * LEFT_RAIL_EMPTY_RATIO) : railW;
@@ -457,22 +460,17 @@ export function mountGameView(container, opts = {}) {
           const boardRect = boardEl.getBoundingClientRect();
           const ribbonRight = document.body.dataset.ribbonSide === "right";
           const top = Math.ceil(boardRect.top);
-          // On wide viewports, cap the side rail at its natural width so it
-          // doesn't stretch all the way to the edge -- combined with the
-          // shrunken opposite rail (when dock is empty), this keeps the
-          // picture centered instead of framed by a wide empty band.
-          // Kept as a raw CSS-px threshold (not rem-derived): the
-          // below-WIDE branch lets the rail expand to fill `avail`, and
-          // scaling WIDE up with font-size pushes viewports into that
-          // expanding branch where the rail visibly slides as the text
-          // grows. The wide-viewport feel is a viewport property, not a
-          // font-size one.
+          // Cap the rail at its natural width only on wide viewports with an
+          // empty dock side (keeps the picture centered). A visible docker
+          // lets the rail fill `avail` at any width. WIDE stays raw px: a
+          // rem-derived threshold would slide the rail as font-size grows.
           const WIDE = 1500;
+          const capRail = leftEmpty && window.innerWidth >= WIDE;
           let left;
           let avail;
           if (ribbonRight) {
             avail = Math.max(0, Math.ceil(boardRect.left) - gapW - rem(1));
-            const width = window.innerWidth >= WIDE ? Math.min(railW, avail) : avail;
+            const width = capRail ? Math.min(railW, avail) : avail;
             left = Math.max(rem(1), Math.ceil(boardRect.left) - gapW - width);
             const height = Math.max(rem(10), Math.floor(boardRect.height));
             sideHost.style.left = `${left}px`;
@@ -482,7 +480,7 @@ export function mountGameView(container, opts = {}) {
           } else {
             left = Math.ceil(boardRect.right) + gapW;
             avail = Math.max(0, window.innerWidth - left - rem(1));
-            const width = window.innerWidth >= WIDE ? Math.min(railW, avail) : avail;
+            const width = capRail ? Math.min(railW, avail) : avail;
             const height = Math.max(rem(10), Math.floor(boardRect.height));
             sideHost.style.left = `${left}px`;
             sideHost.style.top = `${top}px`;
