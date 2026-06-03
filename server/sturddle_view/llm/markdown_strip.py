@@ -1,9 +1,9 @@
 """Strip markdown emphasis markers from streamed text.
 
 Some models wrap chess content in markdown (`**f2**`, `__Qxh7+__`,
-`` `Nf3` ``). The validation layer reads prose for square/piece
-references; markdown around them hides the content. Inline tool-call
-recovery has the same problem when models wrap calls in `**...**`.
+`` `Nf3` ``). The UI renders prose as plain text, so the emphasis
+markers would show as literal noise. Inline tool-call recovery has the
+same problem when models wrap calls in `**...**`.
 
 This module strips paired emphasis markers (`**`, `__`, `` ` ``) so
 both downstream consumers see clean text. Single `*` and `_` are NOT
@@ -70,8 +70,8 @@ async def strip_markdown_stream(
     handle markers split across deltas. Non-text chunks pass through.
 
     Sits between the provider and any downstream consumer (inline
-    tool-call recovery, validation, UI). Wraps at the agent-runner
-    boundary so every provider gets it uniformly."""
+    tool-call recovery, UI). Wraps at the agent-runner boundary so
+    every provider gets it uniformly."""
     text_carry: list[str] = []
     think_carry: list[str] = []
     async for chunk in inner:

@@ -295,8 +295,8 @@ wa-select::part(listbox) {
 }
 
 /* Round panel: one per agent-loop round. Stacks under status; each
-   round shows (optional) revision banner, thinking, tool calls,
-   prose. Vertical spacing visually separates rounds. */
+   round shows thinking, tool calls, prose. Vertical spacing visually
+   separates rounds. */
 .play-ai-round {
   display: block;
   margin: 0 0 4px;
@@ -349,76 +349,6 @@ wa-select::part(listbox) {
   opacity: 0.18;
   pointer-events: none;
 }
-/* Overruled prose, tucked inside its round's Revision banner: muted +
-   strikethrough so the user sees what the model wrote without believing
-   it. Tool calls and thinking stay legible -- the prose is the wrong
-   claim, not them. */
-.play-ai-revision-body > .play-ai-prose {
-  /* Mute the text via color, not opacity, so the background stays
-     opaque and continues to cover the rounds-container vertical rule. */
-  color: var(--muted, #888);
-  text-decoration: line-through;
-  margin: 0;
-}
-/* Self-correct effect: the overruled prose shows struck-out in place
-   for a beat (timer in JS) before it collapses into the revision
-   banner, so the user sees the model scratch its own claim. */
-.play-ai-prose-overruling {
-  color: var(--muted, #888);
-  text-decoration: line-through;
-}
-/* Revision banner: <details> whose summary IS the banner; clicking
-   reveals the previous round's redacted prose inline. margin-left
-   matches .play-ai-thinking's absolute x so banner + Thinking arrow
-   share a single vertical column. The border/background/radius
-   resets undo Web Awesome native.css's generic details styling. */
-.play-ai-revision {
-  margin: 0 12px 6px 15px;
-  padding: 4px 8px;
-  border: none;
-  border-left: 3px solid var(--wa-color-warning-60, #d6a200);
-  border-radius: 0;
-  background: var(--play-ai-warning-bg);
-  font-size: 0.85em;
-}
-.play-ai-revision[open] {
-  /* native.css adds horizontal padding when open -- keep ours. */
-  padding: 4px 8px;
-}
-.play-ai-revision[open] > .play-ai-revision-summary {
-  /* native.css adds negative margin-inline on open; cancel it. */
-  margin-inline: 0;
-  border-radius: 0;
-}
-.play-ai-revision-summary {
-  cursor: pointer;
-  user-select: none;
-  list-style: none;
-  /* Override native.css summary padding + space-between layout. */
-  padding: 0;
-  margin: 0;
-  display: flex;
-  align-items: flex-start;
-  justify-content: flex-start;
-  gap: 8px;
-}
-.play-ai-revision-summary::-webkit-details-marker { display: none; }
-.play-ai-revision-summary::marker { content: ""; }
-.play-ai-revision-summary::after { display: none; mask: none; background: none; }
-/* Amber filled triangle matching the banner accent. */
-.play-ai-revision-summary::before {
-  content: "\25B6";
-  color: var(--wa-color-warning-60, #d6a200);
-  line-height: 1;
-  transition: transform 120ms ease;
-}
-.play-ai-revision[open] > .play-ai-revision-summary::before {
-  transform: rotate(90deg);
-}
-.play-ai-revision-body {
-  margin-top: 4px;
-}
-
 /* Tool-call lines: colored dot per tool family + compact label.
    Names mapped to dot color via .play-ai-tool-dot-<name>. */
 .play-ai-tools {

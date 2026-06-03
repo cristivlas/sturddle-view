@@ -27,7 +27,6 @@ import {
   freezeAiThinking,
   appendAiToolCall,
   markAiToolCallFailed,
-  noteAiRevision,
   markAiDone,
   setAiStatus,
   setAiTitle,
@@ -1043,17 +1042,6 @@ export const playPerspective = {
           if (p.name === ANALYZE_TOOL_NAME) view.restorePosition({ animate: false });
           view.clearArrows();
           view.clearEngineInfo();
-          return true;
-        }
-        case "ai_corrective": {
-          const p = evt.payload || {};
-          noteAiRevision({
-            round: p.round ?? 0,
-            illegalMoves: p.illegal_moves || [],
-            illegalContinuations: p.illegal_continuations || [],
-            falseClaims: p.false_claims || [],
-            castleViolations: p.castle_violations || [],
-          });
           return true;
         }
       }

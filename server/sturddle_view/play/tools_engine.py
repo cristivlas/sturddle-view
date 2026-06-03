@@ -13,7 +13,6 @@ so the agent never stalls on a guardrail.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from typing import Any, Awaitable, Callable
@@ -322,15 +321,6 @@ def _parse_fen_arg(input_: dict) -> tuple[chess.Board | None, dict | None]:
         return _parse_fen(fen.strip()), None
     except ValueError as exc:
         return None, {"error": "invalid_fen", "detail": str(exc)}
-
-
-def board_from_fen_input(tool_input: dict) -> chess.Board | None:
-    """Board for a fen-taking tool call's `fen` param, or None when
-    absent/unparseable. Same parse as the tools; no error envelope --
-    for callers (the coordinator's examined-position tracking) that just
-    want the board or nothing."""
-    board, err = _parse_fen_arg(tool_input)
-    return None if err is not None else board
 
 
 def _depth_limit(
