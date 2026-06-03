@@ -454,8 +454,8 @@ export function mountGameView(container, opts = {}) {
         grid.style.removeProperty("--left-rail-w");
       }
       // Align the side rail's top with the board's top (the grid would
-       // otherwise place it next to the top clock row), and cap its height
-       // at the board's height so the moves panel stays within the board.
+      // otherwise place it next to the top clock row), and set its height
+      // to the board's so the moves panel fills down to the board bottom.
       const sideHost = grid.querySelector(".play-side-host");
       if (sideHost) {
         if (!mobile) {
@@ -468,30 +468,28 @@ export function mountGameView(container, opts = {}) {
           // rem-derived threshold would slide the rail as font-size grows.
           const WIDE = 1500;
           const capRail = leftEmpty && window.innerWidth >= WIDE;
+          // ribbonRight: rail sits left of the board; else it sits right.
+          // Both fill `avail` (capped to railW on wide+empty), differing
+          // only in which board edge the rail hangs off of.
           let left;
-          let avail;
+          let width;
           if (ribbonRight) {
-            avail = Math.max(0, Math.ceil(boardRect.left) - gapW - rem(1));
-            const width = capRail ? Math.min(railW, avail) : avail;
+            const avail = Math.max(0, Math.ceil(boardRect.left) - gapW - rem(1));
+            width = capRail ? Math.min(railW, avail) : avail;
             left = Math.max(rem(1), Math.ceil(boardRect.left) - gapW - width);
-            const height = Math.max(rem(10), Math.floor(boardRect.height));
-            sideHost.style.left = `${left}px`;
-            sideHost.style.top = `${top}px`;
-            sideHost.style.width = `${width}px`;
-            sideHost.style.setProperty("max-height", `${height}px`);
           } else {
             left = Math.ceil(boardRect.right) + gapW;
-            avail = Math.max(0, window.innerWidth - left - rem(1));
-            const width = capRail ? Math.min(railW, avail) : avail;
-            const height = Math.max(rem(10), Math.floor(boardRect.height));
-            sideHost.style.left = `${left}px`;
-            sideHost.style.top = `${top}px`;
-            sideHost.style.width = `${width}px`;
-            sideHost.style.setProperty("max-height", `${height}px`);
+            const avail = Math.max(0, window.innerWidth - left - rem(1));
+            width = capRail ? Math.min(railW, avail) : avail;
           }
+          const height = Math.max(rem(10), Math.floor(boardRect.height));
+          sideHost.style.left = `${left}px`;
+          sideHost.style.top = `${top}px`;
+          sideHost.style.width = `${width}px`;
+          sideHost.style.height = `${height}px`;
           sideHost.style.removeProperty("margin-top");
         } else {
-          sideHost.style.removeProperty("max-height");
+          sideHost.style.removeProperty("height");
           sideHost.style.removeProperty("margin-top");
           sideHost.style.removeProperty("left");
           sideHost.style.removeProperty("top");

@@ -1109,7 +1109,7 @@ body[data-ribbon-float] .tournaments-ribbon {
   display: flex;
   flex-direction: column;
   position: fixed;
-  /* left/top/width/max-height driven by JS on desktop; reset on mobile */
+  /* left/top/width/height driven by JS on desktop; reset on mobile */
 }
 /* Left dock: occupies the grid's first (left-gap) column, full board height.
    Hidden when empty; the column width is unchanged so the board stays put. */
