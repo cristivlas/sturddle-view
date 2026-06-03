@@ -1678,7 +1678,6 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.875rem;
   color: var(--fg);
 }
 .xgame-toast.xgame-toast-collapsible { flex-direction: column; align-items: stretch; }
@@ -1710,6 +1709,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   cursor: pointer;
   font: inherit;
   text-decoration: underline;
+  height: 22px;
 }
 .xgame-nav-locked {
   /* Don't scroll -- the media breakpoint at short height handles it. */
