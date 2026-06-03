@@ -6,6 +6,7 @@ import { toast } from "./dialogs.js";
 import { isMobileLayout } from "./play-dock-windows.js";
 import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 import { APP_EVT } from "./app-events.js";
+import { selectContentsOnCtrlA } from "./wb-utils.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -219,21 +220,7 @@ export function mountGameView(container, opts = {}) {
   const clockTopRow = container.querySelector(".clock-top");
   const clockBottomRow = container.querySelector(".clock-bottom");
   const moveListEl = sideHost.querySelector(".move-list");
-  // Ctrl/Cmd+A inside the moves selects just the moves, not the whole
-  // page (mirrors the AI analysis panel's select-contents behavior).
-  if (moveListEl) {
-    moveListEl.tabIndex = 0;
-    moveListEl.addEventListener("keydown", ev => {
-      if ((ev.ctrlKey || ev.metaKey) && (ev.key === "a" || ev.key === "A")) {
-        ev.preventDefault();
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        const range = document.createRange();
-        range.selectNodeContents(moveListEl);
-        sel.addRange(range);
-      }
-    });
-  }
+  if (moveListEl) selectContentsOnCtrlA(moveListEl);
   const engineDepth = sideHost.querySelector(".engine-depth");
   const engineScore = sideHost.querySelector(".engine-score");
   const engineNodes = sideHost.querySelector(".engine-nodes");

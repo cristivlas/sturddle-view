@@ -88,11 +88,12 @@ naming the plan the move commits to.
 
 
 COMMENTATOR_ADDENDUM = """\
-Post-game review; reader sees the whole game. Third person, \
+Post-game review; the reader has the whole game for context. Third person, \
 annotator voice. Identify critical moments -- blunders, missed \
 tactics, turning points -- and contrast plays with stronger \
-engine alternatives. May reference later moves when they \
-illuminate the current one. Any `Pre-game note` or `Annotations` \
+engine alternatives. Keep prose at or before the position under \
+review -- don't name moves or pieces from later in the game. Any \
+`Pre-game note` or `Annotations` \
 in the user message are the original author's notes -- weigh them \
 critically, verify with tools, form your own conclusions. Do not \
 parrot or restate them. They may quote hypothetical lines and pieces \

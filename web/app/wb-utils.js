@@ -28,3 +28,21 @@ export function scrollToBottom(scroller) {
   if (!scroller) return;
   scroller.scrollTop = scroller.scrollHeight;
 }
+
+// Make Ctrl/Cmd+A inside `el` select just one node's contents instead
+// of the whole page. `targetFn(ev)` returns the node to select (default
+// `el`); returning falsy leaves the selection untouched.
+export function selectContentsOnCtrlA(el, targetFn = () => el) {
+  el.tabIndex = 0;
+  el.addEventListener("keydown", (ev) => {
+    if (!((ev.ctrlKey || ev.metaKey) && (ev.key === "a" || ev.key === "A"))) return;
+    ev.preventDefault();
+    const target = targetFn(ev);
+    if (!target) return;
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(target);
+    sel.addRange(range);
+  });
+}

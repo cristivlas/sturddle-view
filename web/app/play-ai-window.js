@@ -13,6 +13,7 @@ import {
   AUTOSCROLL_SLACK_PROSE_PX,
   isPinnedToBottom,
   scrollToBottom,
+  selectContentsOnCtrlA,
 } from "./wb-utils.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import {
@@ -83,7 +84,6 @@ function trimTrailingWhitespace(el) {
 function buildBody() {
   const root = document.createElement("div");
   root.className = "play-ai-body";
-  root.tabIndex = 0;
 
   // Status line: spinner + text, hidden until a turn starts. Lives
   // above the rounds so they can stream in below without jumping.
@@ -118,25 +118,18 @@ function buildBody() {
     root._hoveredTarget = null;
   });
 
-  root.addEventListener("keydown", ev => {
-    if ((ev.ctrlKey || ev.metaKey) && (ev.key === "a" || ev.key === "A")) {
-      ev.preventDefault();
-      const hovered = root._hoveredTarget;
-      const detailPre = hovered?.closest(".play-ai-tool-details-body");
-      const errorBlock = hovered?.closest(".play-ai-error");
-      const prosePara = hovered?.closest(".play-ai-prose");
-      const target = (detailPre && !detailPre.hidden)
-        ? detailPre
-        : errorBlock
-        ?? prosePara
-        ?? root._roundPanels.get(root._currentRound)?.para;
-      if (!target) return;
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      const range = document.createRange();
-      range.selectNodeContents(target);
-      sel.addRange(range);
-    }
+  // Select the hovered block (tool detail / error / prose), falling
+  // back to the current round's prose paragraph.
+  selectContentsOnCtrlA(root, () => {
+    const hovered = root._hoveredTarget;
+    const detailPre = hovered?.closest(".play-ai-tool-details-body");
+    const errorBlock = hovered?.closest(".play-ai-error");
+    const prosePara = hovered?.closest(".play-ai-prose");
+    return (detailPre && !detailPre.hidden)
+      ? detailPre
+      : errorBlock
+      ?? prosePara
+      ?? root._roundPanels.get(root._currentRound)?.para;
   });
 
   root._status = status;
