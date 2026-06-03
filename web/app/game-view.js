@@ -219,6 +219,21 @@ export function mountGameView(container, opts = {}) {
   const clockTopRow = container.querySelector(".clock-top");
   const clockBottomRow = container.querySelector(".clock-bottom");
   const moveListEl = sideHost.querySelector(".move-list");
+  // Ctrl/Cmd+A inside the moves selects just the moves, not the whole
+  // page (mirrors the AI analysis panel's select-contents behavior).
+  if (moveListEl) {
+    moveListEl.tabIndex = 0;
+    moveListEl.addEventListener("keydown", ev => {
+      if ((ev.ctrlKey || ev.metaKey) && (ev.key === "a" || ev.key === "A")) {
+        ev.preventDefault();
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        const range = document.createRange();
+        range.selectNodeContents(moveListEl);
+        sel.addRange(range);
+      }
+    });
+  }
   const engineDepth = sideHost.querySelector(".engine-depth");
   const engineScore = sideHost.querySelector(".engine-score");
   const engineNodes = sideHost.querySelector(".engine-nodes");
