@@ -143,7 +143,7 @@ TOP_MOVES_TOOL_SPEC = ToolSpec(
     name=TOP_MOVES_TOOL_NAME,
     description=(
         "Rank YOUR candidate moves in the live position. You supply "
-        "2-5 moves; engine searches each and returns entries sorted "
+        "2-5 moves; each is searched and returned sorted "
         f"best-first for the side to move (capped at {TOP_MOVES_MAX_N}). "
         "Fields per entry: move_uci, move_san, score_cp, score_text, "
         "score_pawns, mate, depth, pv (eval fields are white-POV). "
@@ -249,7 +249,7 @@ VALIDATE_MOVE_TOOL_SPEC = ToolSpec(
 ANALYZE_TOOL_SPEC = ToolSpec(
     name=ANALYZE_TOOL_NAME,
     description=(
-        "Engine search on a position. Returns white-POV eval: score_cp, "
+        "Deep search of a position. Returns white-POV eval: score_cp, "
         "score_text, mate (signed plies when forced), depth, pv, bestmove. "
         "Use the numbers internally; eval discipline still applies."
     ),
@@ -286,7 +286,7 @@ MATERIAL_TOOL_SPEC = ToolSpec(
         "Ground a material claim with exact piece counts before stating "
         "it. Returns per-color counts keyed by piece name (pawn, knight, "
         "bishop, rook, queen); kings are omitted. Pass a FEN. Raw counts "
-        "only -- no values, no engine: you judge the balance yourself."
+        "only -- no values assigned: you judge the balance yourself."
     ),
     input_schema={
         "type": "object",
@@ -388,21 +388,20 @@ def _pv_to_uci(board: chess.Board, pv: list[chess.Move] | None) -> list[str]:
     return [m.uci() for m in pv]
 
 
-# Sort key for white-POV PovScore: mate-for-white > +cp > -cp > mate-against.
+# Sort key for STM-POV PovScore: mate-for-stm > +cp > -cp > mate-against.
 # Used to rank top_moves candidates without re-scoring each comparison.
 _MATE_RANK = 10**9
 
 
-def _white_pov_sort_key(score: chess.engine.PovScore | None) -> int | None:
-    """White-POV ranking value, or None when the candidate has no score
-    (search returned none: early cancel, or an info line with only
-    pv/depth). None is handled by the caller (partitioned to the bottom);
-    a numeric sentinel can't work because top_moves sorts
-    reverse=stm_is_white, so any fixed scalar inverts for black and floats
-    a scoreless candidate to the top."""
+def _stm_pov_sort_key(
+    score: chess.engine.PovScore | None, stm: chess.Color,
+) -> int | None:
+    """STM-POV ranking value (higher = better for the side to move), or
+    None for a scoreless candidate (caller sorts those to the bottom).
+    STM POV means the caller sorts descending for either side."""
     if score is None:
         return None
-    s = score.white()
+    s = score.pov(stm)
     mate = s.mate()
     if mate is not None:
         return (_MATE_RANK - abs(mate)) if mate > 0 else (-_MATE_RANK + abs(mate))
@@ -648,6 +647,44 @@ def _parse_move_or_error(
     return None, "invalid_move", f"could not parse {candidate!r} as UCI or SAN"
 
 
+# SAN leading-letter -> piece type, for naming the piece an illegal move
+# meant. A bare-square/file token (no letter) means a pawn.
+_SAN_PIECE_LETTERS = {
+    "N": chess.KNIGHT, "B": chess.BISHOP, "R": chess.ROOK,
+    "Q": chess.QUEEN, "K": chess.KING,
+}
+
+
+def _intended_piece_type(board: chess.Board, raw: str) -> int | None:
+    """The piece type an illegal move string meant to move, or None when
+    it can't be inferred. SAN names it by leading letter (default pawn);
+    UCI names it by the piece standing on the from-square."""
+    raw = raw.strip()
+    if not raw:
+        return None
+    head = raw[0]
+    if head in _SAN_PIECE_LETTERS:
+        return _SAN_PIECE_LETTERS[head]
+    if head in "abcdefgh":  # SAN pawn move ('d7', 'exd7')
+        return chess.PAWN
+    try:  # UCI: read the piece on the from-square
+        from_sq = chess.parse_square(raw[:2].lower())
+    except ValueError:
+        return None
+    piece = board.piece_at(from_sq)
+    return piece.piece_type if piece is not None else None
+
+
+def _legal_moves_for_piece(board: chess.Board, piece_type: int) -> list[str]:
+    """SANs of every legal move by `piece_type` for the side to move, in
+    python-chess move order. Empty when that piece has no legal move."""
+    return [
+        board.san(m) for m in board.legal_moves
+        if (p := board.piece_at(m.from_square)) is not None
+        and p.piece_type == piece_type
+    ]
+
+
 def _parse_candidate_move(board: chess.Board, raw: str) -> tuple[chess.Move | None, dict | None]:
     """Try UCI then SAN. Returns (move, None) on success, (None, error_entry)
     on failure. Error entry carries `move_input` so the model can match
@@ -747,7 +784,7 @@ def make_top_moves_tool(
             pv = _pv_to_uci(board, last_info.get("pv"))
             if pv:
                 entry["pv"] = pv
-            entry["_sort_key"] = _white_pov_sort_key(score)
+            entry["_sort_key"] = _stm_pov_sort_key(score, board.turn)
             entries.append(entry)
             if cancelled:
                 cancelled_any = True
@@ -757,7 +794,7 @@ def make_top_moves_tool(
         # both directions; only the scored ones go through the POV sort.
         scored = [c for c in entries if c["_sort_key"] is not None]
         scoreless = [c for c in entries if c["_sort_key"] is None]
-        scored.sort(key=lambda c: c["_sort_key"], reverse=stm_is_white)
+        scored.sort(key=lambda c: c["_sort_key"], reverse=True)
         entries = scored + scoreless
         for c in entries:
             c.pop("_sort_key", None)
@@ -951,11 +988,13 @@ def make_report_line_tool(board_provider: BoardProvider) -> AnalyzeTool:
 # Declarative (see _DELEGATE_TOOL_CARD): the move goes via the tool, not
 # prose, and a one-to-two sentence conclusion follows the accepted call.
 _RECOMMEND_MOVE_CARD = (
-    "The move goes through this tool, not in prose. The engine compares "
-    "it to its own best at the requested depth; a meaningfully stronger "
-    "best returns error=recommendation_rejected, which a different move "
-    "(not a repeat) resolves. Once the call is accepted, a one-to-two "
-    "sentence conclusion follows it, naming the plan the move commits to."
+    "The move goes through this tool, not in prose. It is checked against "
+    "the strongest move at the requested depth; if a meaningfully stronger "
+    "move exists, the result names it -- submit that move next, do not hunt "
+    "for others. An illegal move comes back with `legal_moves` for that "
+    "piece -- pick one of those, never guess another. Once the call is "
+    "accepted, a one-to-two sentence conclusion follows it, naming the plan "
+    "the move reflects."
 )
 
 
@@ -963,10 +1002,10 @@ RECOMMEND_MOVE_TOOL_SPEC = ToolSpec(
     name=RECOMMEND_MOVE_TOOL_NAME,
     description=(
         "Submit your final move at end-of-turn. Validates legality and "
-        "compares against the engine's best at the requested depth. "
+        "checks it against the strongest move at the requested depth. "
         "Returns post-move FEN on acceptance, or "
-        "error=recommendation_rejected with a `reason` when the engine "
-        "has a meaningfully stronger move."
+        "error=recommendation_rejected with a `reason` naming the stronger "
+        "move when one is meaningfully better."
     ),
     input_schema={
         "type": "object",
@@ -1044,7 +1083,14 @@ def make_recommend_move_tool(
             return {"error": "invalid_input", "detail": "move must be a non-empty string"}
         parsed, kind, detail = _parse_move_or_error(board, _strip_move_prefix(raw))
         if parsed is None:
-            return {"error": kind, "detail": detail}
+            err: dict = {"error": kind, "detail": detail}
+            # On an illegal move, hand back the legal moves for the piece the
+            # model meant -- so it picks a real one instead of guessing again.
+            if kind == "illegal_move":
+                piece_type = _intended_piece_type(board, _strip_move_prefix(raw))
+                if piece_type is not None:
+                    err["legal_moves"] = _legal_moves_for_piece(board, piece_type)
+            return err
         san = board.san(parsed)
         uci = parsed.uci()
         scratch = board.copy(stack=False)
@@ -1132,8 +1178,8 @@ def make_recommend_move_tool(
             return {
                 "error": "recommendation_rejected",
                 "reason": (
-                    f"Engine prefers {best_san}. "
-                    "Submit a different move."
+                    f"A stronger move is available: {best_san}. Submit "
+                    f"{best_san} unless you can show it is worse."
                 ),
                 **result_common,
             }

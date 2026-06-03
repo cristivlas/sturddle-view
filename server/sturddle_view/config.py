@@ -29,6 +29,11 @@ _DEFAULT_AI_THINKING_BUDGET_TOKENS = 4096
 _DEFAULT_AI_MAX_TOOL_ROUNDS = 32
 _DEFAULT_AI_VERIFIER_MAX_ROUNDS = 8
 
+# Consecutive failed recommend_move calls (illegal/rejected) before the loop
+# force-nudges the model to rank candidates with top_moves instead of guessing
+# one move at a time. Env: SV_AI_MAX_RECOMMEND_FAILURES.
+_DEFAULT_AI_MAX_RECOMMEND_FAILURES = 2
+
 # Search-depth caps (no-env defaults). tools_engine imports these so the
 # Settings field default and the tool-level clamp share one literal.
 # ANALYZE_MAX_DEPTH clamps any tool's per-call depth; VERIFICATION_DEPTH is

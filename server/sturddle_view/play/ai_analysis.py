@@ -19,7 +19,11 @@ from typing import Awaitable, Callable
 
 import chess
 
-from ..config import _DEFAULT_AI_MAX_TOOL_ROUNDS, _DEFAULT_AI_VERIFIER_MAX_ROUNDS
+from ..config import (
+    _DEFAULT_AI_MAX_RECOMMEND_FAILURES,
+    _DEFAULT_AI_MAX_TOOL_ROUNDS,
+    _DEFAULT_AI_VERIFIER_MAX_ROUNDS,
+)
 from ..env_utils import env_int
 from ..events import (
     ENVELOPE_GAME_ID,
@@ -78,6 +82,12 @@ MAX_TOOL_ROUNDS = env_int("SV_AI_MAX_TOOL_ROUNDS", _DEFAULT_AI_MAX_TOOL_ROUNDS)
 # two, a verdict. UI-settable; env is the headless/no-UI default.
 VERIFIER_MAX_ROUNDS = env_int("SV_AI_VERIFIER_MAX_ROUNDS", _DEFAULT_AI_VERIFIER_MAX_ROUNDS)
 
+# Consecutive failed recommend_move calls before the loop force-nudges the
+# model to rank candidates with top_moves instead of guessing one at a time.
+MAX_RECOMMEND_FAILURES = env_int(
+    "SV_AI_MAX_RECOMMEND_FAILURES", _DEFAULT_AI_MAX_RECOMMEND_FAILURES
+)
+
 _COMMENTATOR_MODE: PromptMode = "commentator"
 _VERIFIER_MODE: PromptMode = "verifier"
 
@@ -99,27 +109,36 @@ _RECOMMEND_NUDGE_PROMPTS = {
     ),
 }
 
-# Alternative-examined gate: an otherwise-accepted recommend_move is held
-# back until a prior recommend_move this turn committed a different move.
-# Loop-enforced; stall-guard + round-cap backstop it.
-_ALTERNATIVE_REQUIRED_ERROR = "alternative_required"
-_ALTERNATIVE_REQUIRED_REASON = (
-    "Internal: evaluate a different candidate through recommend_move, then "
-    "retry this move. Do not mention this in prose."
-)
-
 # Sent once when recommend_move is accepted but the model skips the
 # closing conclusion (small models treat the call as the end). One-shot.
 _POST_RECOMMEND_NUDGE_PROMPTS = {
     "coach": (
         "The move is recorded. State the one-to-two sentence conclusion "
-        "now, naming the plan it commits to."
+        "now, naming the plan it carries out."
     ),
     "commentator": (
         "The move is recorded. State the one-to-two sentence conclusion "
         "now, naming the plan it reflects."
     ),
 }
+
+# Injected after MAX_RECOMMEND_FAILURES consecutive failed recommend_move
+# calls: stop guessing one move at a time, rank real candidates in one
+# top_moves call. Re-armed by any top_moves call.
+_RECOMMEND_FAILURE_NUDGE = (
+    "Stop submitting moves one at a time. Call `top_moves` with your "
+    "candidate moves, read the ranking, then recommend the best one."
+    + _NO_ACK_CLAUSE
+)
+
+# Commentator-only, one-shot: the model accepted a move without comparing
+# any alternative this turn. The reviewed move is the subject under review,
+# not a tested pick -- rank it against real alternatives before endorsing.
+_COMPARE_FIRST_ERROR = "compare_first"
+_COMPARE_FIRST_NUDGE = (
+    "Before settling, rank the move under review against at least one "
+    "real alternative in a single `top_moves` call, then recommend." + _NO_ACK_CLAUSE
+)
 
 # Verifier completeness nudge: if it issues a verdict without ever
 # calling a tool, force one tool call before it concludes. One-shot per
@@ -148,18 +167,16 @@ _DELEGATE_TOOL_NAME = "delegate"
 # removes the thing being acknowledged (same pattern across all cards).
 _DELEGATE_TOOL_CARD = (
     "One move per call. The result echoes the canonical `move_uci` and a "
-    "verdict about the live position, advisory not quotable. Checking a "
-    "move other than the one committed is what unlocks committing it."
+    "verdict about the live position, advisory not quotable."
 )
 
 
 DELEGATE_TOOL_SPEC = ToolSpec(
     name=_DELEGATE_TOOL_NAME,
     description=(
-        "Hand one move to the engine-backed checker. It searches the "
-        "live position and returns a short verdict (sound/unsound + "
-        "reason). Confirm a line before committing to it -- and weigh a "
-        "real alternative this way before settling on a move."
+        "Hand one move to a deep positional check. It searches the live "
+        "position and returns a short verdict (sound/unsound + reason). "
+        "Confirm a line before relying on it."
     ),
     input_schema={
         "type": "object",
@@ -189,9 +206,8 @@ def make_delegate_tool(
 ) -> Callable:
     """Build the `delegate` tool. Parses `move` to canonical UCI against
     the live board, dispatches the narrator's question to a verifier
-    sub-run, and echoes `move_uci` so the coordinator's alternative gate
-    knows which move was examined. Malformed input returns a structured
-    error so the narrator can recover."""
+    sub-run, and echoes the canonical `move_uci` back. Malformed input
+    returns a structured error so the narrator can recover."""
     async def delegate(input_: dict, *, cancel_token: CancelToken) -> dict:
         question = input_.get("question")
         if not isinstance(question, str) or not question.strip():
@@ -453,24 +469,6 @@ def _round_produced_output(chunks: list[ProviderChunk]) -> bool:
     return False
 
 
-def _alternative_examined(examined_uci: set[str], committed_uci: str) -> bool:
-    """True iff `examined_uci` holds a move OTHER than the one now being
-    committed. Populated by prior recommend_move calls this turn (delegate
-    and top_moves do not count) and, in commentator mode, seeded with the
-    played move so endorsing it requires a different recommend first."""
-    return bool(examined_uci - {committed_uci})
-
-
-def _alternative_required_result(tool_output: dict) -> dict:
-    """Rewrite an otherwise-accepted recommend_move into the gate
-    rejection the model sees, preserving the engine fields so it keeps
-    the context it already paid for."""
-    rejected = {k: v for k, v in tool_output.items() if k != "ok"}
-    rejected["error"] = _ALTERNATIVE_REQUIRED_ERROR
-    rejected["reason"] = _ALTERNATIVE_REQUIRED_REASON
-    return rejected
-
-
 def _inject_nudge(
     messages: list[Message], round_chunks: list[ProviderChunk], content: str,
 ) -> None:
@@ -541,11 +539,6 @@ class _LoopConfig:
     # True only for the narrator loop -- enables recommend_move tracking
     # so the end-of-turn verifier fires on the chosen move.
     track_recommend: bool = False
-    # Commentator only: UCI of the move actually played in the reviewed
-    # game. Seeds the alternative gate so endorsing the played move
-    # requires recommending a DIFFERENT move first -- the played move is
-    # the subject under review, not an alternative to it.
-    played_uci: str | None = None
     # Per-call thinking override passed to provider.stream(). None = use
     # the provider's setting (narrator); False = force off (verifier).
     thinking_override: bool | None = None
@@ -556,14 +549,10 @@ class _LoopResult:
     """What the shared loop reports back. `final_text` is the last round's
     prose -- the verifier verdict, with cross-round tool-call self-talk
     dropped (falls back to all-rounds text on round-cap). `recommended_uci`
-    is set only when the narrator tracked a recommend_move. `gated_uci` is
-    the latest move the alternative gate blocked, for the unvetted fallback
-    when no vetted recommendation lands."""
+    is set only when the narrator tracked an accepted recommend_move."""
     final_text: str = ""
     recommended_uci: str | None = None
     recommended_depth: int | None = None
-    gated_uci: str | None = None
-    gated_depth: int | None = None
     round_cap_hit: bool = False
     text_published: bool = False
 
@@ -639,7 +628,6 @@ class AIAnalysisCoordinator:
         provider: LLMProvider | None = None,
         mode: PromptMode = "coach",
         user_message: str | None = None,
-        played_uci: str | None = None,
         max_tool_rounds: int = MAX_TOOL_ROUNDS,
         verifier_max_rounds: int = VERIFIER_MAX_ROUNDS,
     ) -> None:
@@ -657,11 +645,6 @@ class AIAnalysisCoordinator:
         (`api/ai.py` for live play) via `build_initial_user_message`.
         None falls back to an empty user message for tests that don't
         care about position context.
-
-        `played_uci` is the move actually played from the reviewed
-        position (commentator mode); it seeds the alternative gate so the
-        model must recommend a DIFFERENT move before endorsing it. Ignored
-        outside commentator mode.
         """
         active = provider or self._provider
         system_prompt = assemble_system_prompt(mode, tools=self._registry.specs())
@@ -712,8 +695,6 @@ class AIAnalysisCoordinator:
                         _RECOMMEND_NUDGE_PROMPTS[mode] if has_recommend_move else None
                     ),
                     track_recommend=has_recommend_move,
-                    # Only the commentator reviews a played move; coach has none.
-                    played_uci=played_uci if mode == _COMMENTATOR_MODE else None,
                 )
                 recommended_uci: str | None = None
                 recommended_depth: int | None = None
@@ -740,22 +721,11 @@ class AIAnalysisCoordinator:
                         # text (reasoning-only models, refusals).
                         done_payload["no_response"] = True
                     elif has_recommend_move and recommended_uci is None:
-                        if result.gated_uci is not None:
-                            # The model committed a move but never examined an
-                            # alternative; rather than ship nothing, fall back
-                            # to its pick and flag it unvetted on the payload.
-                            # The verifier still runs on it. (No client renders
-                            # the flag yet -- see frontend follow-up.)
-                            recommended_uci = result.gated_uci
-                            recommended_depth = result.gated_depth
-                            done_payload["unvetted"] = True
-                            log.info("AI turn fell back to unvetted move %s", recommended_uci)
-                        else:
-                            # Naturally ended without any move despite the
-                            # repeated nudge -- distinct from a round-cap so the
-                            # UI says "no move chosen", not "raise the cap".
-                            done_payload["no_recommendation"] = True
-                            log.info("AI turn ended with no accepted recommend_move")
+                        # Naturally ended without any move despite the repeated
+                        # nudge -- distinct from a round-cap so the UI says "no
+                        # move chosen", not "raise the cap".
+                        done_payload["no_recommendation"] = True
+                        log.info("AI turn ended with no accepted recommend_move")
                 except asyncio.CancelledError:
                     done_payload["cancelled"] = True
                     raise
@@ -779,8 +749,6 @@ class AIAnalysisCoordinator:
                                 move, recommended_depth, self._cancel_token
                             )
                             if payload is not None:
-                                if done_payload.get("unvetted"):
-                                    payload["unvetted"] = True
                                 await self._emit(
                                     Event(
                                         kind=EVT_AI_RECOMMENDATION,
@@ -830,24 +798,23 @@ class AIAnalysisCoordinator:
         text_parts: list[str] = []
         recommended_uci: str | None = None
         recommended_depth: int | None = None
-        # Latest move the gate blocked for lack of an alternative; the
-        # turn falls back to it if it never gets a vetted recommendation.
-        gated_uci: str | None = None
-        gated_depth: int | None = None
         any_tool_called = False
-        # Alternative-examined gate: UCIs committed by prior recommend_move
-        # calls this turn. See _alternative_examined. Seeded with the played
-        # move (commentator) so endorsing it requires a different recommend
-        # first -- the played move is the subject, not an alternative to it.
-        examined_uci: set[str] = set()
-        if config.played_uci:
-            examined_uci.add(config.played_uci)
         nudge_sent = False
         # Narrator: re-nudge toward an accepted recommend_move each clean
         # exit until one lands, but stop once a nudge draws no new attempt.
         # These two track "progress since the last nudge" for that guard.
         recommend_attempts = 0
         attempts_at_last_nudge = -1
+        # Consecutive failed recommend_move calls (illegal/rejected); when it
+        # hits MAX_RECOMMEND_FAILURES the model is nudged to use top_moves.
+        # Reset by an accepted recommend or a top_moves call.
+        consecutive_recommend_failures = 0
+        recommend_failure_nudge_armed = True
+        # True once the model has compared candidates via top_moves this turn.
+        # Commentator mode uses it to nudge against endorsing the played move
+        # with zero contrast (the old alternative-examined gate's intent).
+        compared_candidates = False
+        compare_nudge_sent = False
         # Flips when prose lands after recommend_move is accepted (the
         # closing conclusion); gates the post-recommend nudge.
         prose_after_recommend = False
@@ -1011,39 +978,49 @@ class AIAnalysisCoordinator:
                         },
                     )
                 )
-            # Safe to read from a cached recommend_move result: the
-            # cached uci is identical to a fresh dispatch's. Gate runs
-            # before transcript/message so the model sees what we record.
+            # A top_moves call is the model doing the right thing -- reset the
+            # failure streak and re-arm the nudge for any later relapse.
+            if config.track_recommend and pending_tool.tool_name == TOP_MOVES_TOOL_NAME:
+                consecutive_recommend_failures = 0
+                recommend_failure_nudge_armed = True
+                compared_candidates = True
+            # An accepted recommend_move is the turn's pick. Safe to read a
+            # cached result: the cached uci matches a fresh dispatch's.
             if config.track_recommend and pending_tool.tool_name == RECOMMEND_MOVE_TOOL_NAME:
                 recommend_attempts += 1
-                if (
+                accepted = (
                     isinstance(tool_output, dict)
                     and tool_output.get("ok")
                     and isinstance(tool_output.get("uci"), str)
+                )
+                # Commentator: don't let the reviewed move be endorsed with no
+                # contrast. Hold the first such accept and ask for a top_moves
+                # comparison. One-shot -- a stalled model still gets its pick.
+                if (
+                    accepted
+                    and mode == _COMMENTATOR_MODE
+                    and not compared_candidates
+                    and not compare_nudge_sent
                 ):
-                    uci = tool_output["uci"]
-                    # Alternative-examined gate: hold an otherwise-good
-                    # move until a prior recommend_move committed a
-                    # different one this turn. Record every committed uci
-                    # (cleared or gated) so a later recommend can clear
-                    # against it.
-                    gate_cleared = _alternative_examined(examined_uci, uci)
-                    examined_uci.add(uci)
-                    if not gate_cleared:
-                        # Remember the latest gated move so a stalled
-                        # turn can fall back to it instead of shipping
-                        # nothing (see run() unvetted fallback).
-                        gated_uci = uci
-                        gated_depth = tool_output.get("depth")
-                        tool_output = _alternative_required_result(tool_output)
-                    else:
-                        recommended_uci = uci
-                        recommended_depth = tool_output.get("depth")
-                        # A conclusion alongside the accepting call counts
-                        # -- no separate post-move round needed. Prose in a
-                        # later round is handled at the natural-exit check.
-                        if round_had_text:
-                            prose_after_recommend = True
+                    accepted = False
+                    compare_nudge_sent = True
+                    tool_output = {
+                        k: v for k, v in tool_output.items() if k != "ok"
+                    }
+                    tool_output["error"] = _COMPARE_FIRST_ERROR
+                    tool_output["reason"] = _COMPARE_FIRST_NUDGE
+                    log.info("compare-first nudge (commentator): holding uncompared accept")
+                if accepted:
+                    consecutive_recommend_failures = 0
+                    recommended_uci = tool_output["uci"]
+                    recommended_depth = tool_output.get("depth")
+                    # A conclusion alongside the accepting call counts -- no
+                    # separate post-move round needed. Prose in a later round
+                    # is handled at the natural-exit check.
+                    if round_had_text:
+                        prose_after_recommend = True
+                elif tool_output.get("error") != _COMPARE_FIRST_ERROR:
+                    consecutive_recommend_failures += 1
             await config.transcript.tool_result(
                 round_index, pending_tool.tool_use_id, tool_output
             )
@@ -1068,6 +1045,21 @@ class AIAnalysisCoordinator:
                     pending_tool.tool_use_id, tool_output, card=card,
                 )
             )
+            # Force a top_moves call after enough failed recommend attempts.
+            # After the tool_result (every tool_use needs a matching result
+            # before a user-role nudge). One-shot until a top_moves re-arms it.
+            if (
+                recommend_failure_nudge_armed
+                and consecutive_recommend_failures >= MAX_RECOMMEND_FAILURES
+            ):
+                log.info(
+                    "recommend-failure nudge (%s): forcing top_moves after %d failures",
+                    mode, consecutive_recommend_failures,
+                )
+                recommend_failure_nudge_armed = False
+                messages.append(
+                    {"role": "user", "content": _RECOMMEND_FAILURE_NUDGE}
+                )
             await _flush_think(emit, think_timer, game_id, round_index)
         # On round-cap the narrator falls back to all-rounds text (consumer
         # is recommended_uci). The verifier must NOT -- its prose IS the
@@ -1077,8 +1069,6 @@ class AIAnalysisCoordinator:
             final_text=final,
             recommended_uci=recommended_uci,
             recommended_depth=recommended_depth,
-            gated_uci=gated_uci,
-            gated_depth=gated_depth,
             round_cap_hit=round_cap_hit,
             text_published=text_published,
         )

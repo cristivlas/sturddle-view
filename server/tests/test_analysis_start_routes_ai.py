@@ -146,3 +146,34 @@ async def test_analysis_stop_cancels_ai_turn(tmp_path):
         assert r.status_code == 200, r.text
 
         cancel_spy.assert_called_once()
+
+
+# The narrator (coach/commentator) registry the model actually calls
+# against. top_moves is here so the prompt's "compare your candidates in
+# one top_moves call" guidance points at a tool the narrator can dispatch
+# -- without it the call returns unknown_tool.
+_EXPECTED_NARRATOR_TOOLS = {
+    "recommend_move", "top_moves", "report_line", "delegate",
+}
+
+
+def test_narrator_registry_exposes_top_moves(tmp_path):
+    app, _client = _build_client(tmp_path, ai_enabled=True)
+    names = set(app.state.ai_tool_registry.names())
+    assert "top_moves" in names
+
+
+def test_narrator_registry_has_expected_toolset(tmp_path):
+    # Pins the narrator toolset: a tool named in the prompt but missing
+    # here would dispatch to unknown_tool at runtime.
+    app, _client = _build_client(tmp_path, ai_enabled=True)
+    assert set(app.state.ai_tool_registry.names()) == _EXPECTED_NARRATOR_TOOLS
+
+
+def test_top_moves_in_both_narrator_and_verifier_registries(tmp_path):
+    # top_moves is shared: the verifier searches with it, and the narrator
+    # ranks its own candidates with it. Both registries share one
+    # search_cache, so a repeated search isn't paid twice.
+    app, _client = _build_client(tmp_path, ai_enabled=True)
+    assert "top_moves" in set(app.state.ai_tool_registry.names())
+    assert "top_moves" in set(app.state.ai_verifier_registry.names())

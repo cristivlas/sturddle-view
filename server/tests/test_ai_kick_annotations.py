@@ -247,7 +247,7 @@ def test_build_user_message_viewing_mode_injects_annotations():
         view_comments=["sharp", None, None],
         view_root="famous miniature",
     )
-    msg = _build_turn_inputs(hve)[0]
+    msg = _build_turn_inputs(hve)
     assert msg is not None
     assert "Pre-game note: famous miniature" in msg
     assert "Annotations: 1.e4 {sharp}" in msg
@@ -263,7 +263,7 @@ def test_build_user_message_playing_mode_skips_view_comments_accessor():
         view_comments=["should not appear"],
         view_root="should not appear either",
     )
-    msg = _build_turn_inputs(hve)[0]
+    msg = _build_turn_inputs(hve)
     assert msg is not None
     assert "Annotations:" not in msg
     assert "Pre-game note:" not in msg
@@ -272,7 +272,7 @@ def test_build_user_message_playing_mode_skips_view_comments_accessor():
 
 def test_build_user_message_viewing_mode_with_no_comments_omits_lines():
     hve = _FakeHVE(mode=Mode.VIEWING, view_comments=None, view_root=None)
-    msg = _build_turn_inputs(hve)[0]
+    msg = _build_turn_inputs(hve)
     assert msg is not None
     assert "Annotations:" not in msg
     assert "Pre-game note:" not in msg
@@ -288,7 +288,7 @@ def test_build_user_message_viewing_mode_respects_env_caps(monkeypatch):
         view_comments=["x" * 200],
         view_root=None,
     )
-    msg = _build_turn_inputs(hve)[0]
+    msg = _build_turn_inputs(hve)
     assert msg is not None
     # Annotation should appear but truncated -- the "x" run must be
     # <= 10 chars (including the marker) inside the braces.

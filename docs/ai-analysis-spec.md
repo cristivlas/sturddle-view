@@ -30,16 +30,15 @@ Tournament mode is out of scope.
   `TablebaseProber` / `OpeningBook` siblings.
 - **Server providers:** `server/sturddle_view/llm/` package --
   `base.py`, `anthropic.py`, `ollama.py`, `gemini.py` (the last two
-  share `openai_compat.py`), plus shared `response_validator.py`,
-  `tools.py`, `prompts.py`, `transcript.py`, `inline_tool_calls.py`,
-  `harmony_strip.py`, `markdown_strip.py`.
+  share `openai_compat.py`), plus shared `tools.py`, `prompts.py`,
+  `transcript.py`, `inline_tool_calls.py`, `harmony_strip.py`,
+  `markdown_strip.py`.
 - **Engine tools:** `server/sturddle_view/play/tools_engine.py`
   (`analyze`, `top_moves`, `recommend_move`, `validate_move`,
   `piece_at`); the narrator additionally has `delegate` (spawns a
   verifier sub-run) -- see §Planner + verifier subagents.
 - **Events:** `ai_info` (prose stream), `ai_thinking`, `ai_tool_call`,
-  `ai_tool_call_failed`, `ai_corrective`, `ai_recommendation` on
-  `events.py` `EventKind`.
+  `ai_tool_call_failed`, `ai_recommendation` on `events.py` `EventKind`.
 - **Client panel:** `web/app/play-ai-window.js`; mirrors
   `play-commentary-window.js` (same `createDockableWindow` factory).
   `play.js` wires open/close + event subscription.
@@ -68,25 +67,17 @@ Round body, in order:
    `ai_thinking`. A `tool_use` chunk ends the round (v1 is sequential;
    downstream chunks would belong to the next round per Anthropic
    semantics).
-3. **Validate the round's assembled prose** against the live board
-   (see Round-end validators below). Runs unconditionally -- a round
-   that mixes prose with a tool_use still streams prose to the user,
-   and any illegal/hallucinated tokens must trigger a corrective.
-4. Decide exit / continuation:
-   - Clean round (no tool_use, no validator hits) -> break. Natural
-     end of turn.
-   - Tool_use pending OR validator hit -> append the assistant
-     message; continue to step 5.
-5. If a tool_use is pending: dispatch via the registry, append the
+3. Decide exit / continuation:
+   - Clean round (no tool_use) -> break. Natural end of turn (a
+     completeness nudge may run one more round if no `recommend_move`
+     landed yet).
+   - Tool_use pending -> append the assistant message; continue.
+4. If a tool_use is pending: dispatch via the registry, append the
    `tool_result` user message (matching `tool_use_id`). Failures
    surface as `ai_tool_call_failed` events but do not break the loop
    -- the model can read the structured error and recover.
-6. If the validator hit: append a corrective user message AFTER the
-   `tool_result` (when one exists), so every assistant `tool_use`
-   gets a matching `tool_result` before the next user-role message
-   (Anthropic message-shape requirement). Emit `ai_corrective`.
 
-The loop terminates on: clean exit (no tool_use, no hits),
+The loop terminates on: clean exit (no tool_use),
 `MAX_TOOL_ROUNDS` reached (`done.round_cap=true`), provider error,
 or user cancel. Every exit emits a terminal `ai_info` event with a
 `done` payload so the UI never hangs.
@@ -99,9 +90,12 @@ eval). Splitting them keeps raw eval out of the narrator's context (a
 structural fix for engine over-trust). Applies to both personas; only the
 base system prompt differs.
 
-**Strict split.** The narrator's registry holds only `recommend_move` +
-`delegate` -- it never searches. All engine tools (`analyze`, `top_moves`,
-`piece_at`, `validate_move`) live in a separate verifier registry.
+**Split.** The narrator's registry holds `recommend_move`, `top_moves`
+(rank its own candidate moves in one call), `report_line`, and
+`delegate`. The verifier registry holds the search/inspection tools
+(`analyze`, `top_moves`, `piece_at`, `validate_move`); both registries
+share one per-turn `search_cache`, so a position searched once isn't
+searched again across them.
 
 **Flow per turn:** the narrator names the critical lines and calls
 `delegate(question)` once per line; each spawns a verifier sub-run
@@ -117,67 +111,31 @@ via `parent_tool_use_id`); its prose/thinking are suppressed. Thinking is
 forced off for the verifier (the engine does the reasoning; thinking only
 adds latency x fan-out and risks Ollama `<think>` leaking into the verdict).
 
-**Anti-hallucination.** Two failure modes, two catches: fabricated tokens
-(illegal move, piece not on board) are caught by the round-end validators
-(which run on verifier output too); wrong tactical judgment is caught only
-by forcing the engine call before a verdict. The verifier skips
-*illegal-move* validation (it narrates calculated lines, so a line-internal
-move token is reasoning, not a live-move hallucination) but keeps the
-piece-claim and castle guards, which assert about the live board.
+**Anti-hallucination.** Grounding is prompt-driven plus the tools the
+model can consult: `piece_at` settles a square, `report_line` replays a
+line's legality, `top_moves`/`recommend_move` score moves. Wrong tactical
+judgment is caught by forcing a tool call before a verdict (the verifier
+must call a tool before concluding). There is no post-hoc prose validator
+layer (an earlier round-end legality/piece checker was removed -- see the
+branch history).
 
 Rejected: structured JSON verdicts (small Ollama models emit malformed
-JSON -> json-repair dependency). Prose + existing validators avoids it.
+JSON -> json-repair dependency). Prose avoids it.
 
-**Accepted limitation.** With the strict split, the narrator's only engine
+**Accepted limitation.** With the registry split, the narrator's only engine
 gate on its pick is `recommend_move`'s A/B dominance check; it does not
 separately validate the line behind the move. The dominance check rejects a
 move the engine's best beats by margin -- the guard that matters; deeper
 line-validation is the model's job via `delegate`.
 
-**Alternative-examined gate.** A `recommend_move` that passes the dominance
-check is still held back until a *prior* `recommend_move` this turn
-committed a *different* move. Only `recommend_move` counts -- examining via
-`delegate` or `top_moves` does not clear the gate. This forces the narrator
-to concretely commit at least one alternative before settling, rather than
-recommending the first move it names.
-
-### Round-end validators
-
-Pure functions over `(text, boards)` in
-`server/sturddle_view/llm/response_validator.py`. Four checks run
-in parallel on the assembled text of every round; a hit on any one
-triggers a corrective round:
-
-- `find_illegal_moves` -- single SAN-shaped tokens the board rejects
-  (piece moves, pawn captures, castles). Bare-square pawn moves are
-  out of scope (e.g. "e5" is ambiguous prose vs move).
-- `find_illegal_continuations` -- multi-move runs (2+ moves) that each
-  parse alone but do not play cleanly as a *sequence* from any legal
-  anchor. Catches incoherent lines that per-token validation misses.
-  White-only numbered shorthand ("1.e4 2.Nf3") is skipped (it omits
-  Black's plies, so it is not a ply sequence to replay).
-- `find_false_piece_claims` -- "<piece> on <square>" / "<square>
-  <piece>" claims whose square does not actually hold the named piece
-  (or holds a piece of the wrong color when the claim names one).
-- `find_castle_word_violations` -- natural-language "castle" /
-  "castling" / "castled" mentions when neither side has any legal
-  castling move available.
-
-**Examined positions.** All move/piece validators take the live board
-plus `extra_boards` -- the positions the model actually examined this
-turn via fen-taking tools (e.g. `analyze`). A move or piece claim
-that is legal/true in an examined line is not flagged, so the
-narrator can describe a calculated continuation without tripping a
-corrective round.
-
-Each validator returns the offending tokens (deduped, in order of
-first appearance). The coordinator routes them through per-category
-event fields (`illegal_moves`, `false_claims`, `castle_violations`,
-...) so the UI can render each category distinctly, and through
-category-specific corrective prompt fragments so the model sees
-targeted wording rather than a generic "rewrite" instruction.
-
-Disabled when no `board_provider` is wired (tests, non-live callers).
+**Settling on a move.** The narrator weighs its candidates with one
+`top_moves` call (all candidates ranked best-first for the side to move),
+then submits with a single `recommend_move`. When the submitted move is
+meaningfully weaker than the best, `recommend_move` rejects it and names
+the stronger move in the reason -- the narrator resubmits *that* move, so
+a rejection resolves in one step rather than open-ended probing. The last
+accepted `recommend_move` is the turn's pick and drives the on-board
+arrow (via the end-of-turn `ai_recommendation` verifier search).
 
 ### Tools (v1)
 
@@ -187,14 +145,10 @@ Disabled when no `board_provider` is wired (tests, non-live callers).
   non-deterministic on near-equal candidates. SHIPPED.
 - `validate_move(move)` - legality check for UCI or SAN move strings
   against the live position. Tool card asks the model to pre-check
-  before naming a move as playable; round-end validators catch
-  illegal SAN in prose after the fact and drive a corrective round.
-  SHIPPED.
+  before naming a move as playable. SHIPPED.
 - `piece_at(square)` - report the piece occupying a square in the
   live position (or null when empty). Tool card asks the model to
-  pre-check before naming a piece on a specific square; round-end
-  validators catch false piece claims in prose and drive a
-  corrective round. SHIPPED.
+  pre-check before naming a piece on a specific square. SHIPPED.
 - `top_moves(n=None, depth=None)` - rank top-N candidate
   moves in the live position (workaround for engines without native
   MultiPV). Operates on the live board via `board_provider` (no FEN
@@ -227,7 +181,7 @@ demand. The umbrella keeps the cold system prompt small as the toolkit
 grows; the current prompt already carries multi-paragraph usage rules
 per tool, and adding more tools the same way dilutes every rule's
 attention weight (the documented failure mode behind the chess
-hallucinations the validators suppress).
+hallucinations the tools and prompt grounding aim to prevent).
 
 Not to be confused with Anthropic Agent Skills (the product feature).
 Same underlying principle (lazy-load on demand), different unit,
