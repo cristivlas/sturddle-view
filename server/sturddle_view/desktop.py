@@ -19,6 +19,8 @@ from .config import Settings
 
 _SERVER_STARTUP_TIMEOUT = 5.0
 _SERVER_SHUTDOWN_TIMEOUT = 5.0
+_MIN_WINDOW_WIDTH = 960
+_MIN_WINDOW_HEIGHT = 720
 _STARTUP_ERROR_TITLE = "sturddle-view could not start"
 _PORT_IN_USE_MESSAGE = (
     "Port {port} is already in use -- another copy may be running. "
@@ -229,7 +231,8 @@ def run_desktop(host: str, port: int, width: int = 1280, height: int = 800) -> N
     url = f"http://{window_host}:{port}/auth?token={settings.token}"
     api = JsApi(save_dialog_kind=webview.FileDialog.SAVE)
     window = webview.create_window(
-        "sturddle-view", url, width=width, height=height, js_api=api,
+        "sturddle-view", url, width=width, height=height,
+        min_size=(_MIN_WINDOW_WIDTH, _MIN_WINDOW_HEIGHT), js_api=api,
     )
     api.attach(window)
     window.events.closing += _make_close_handler(app, window)

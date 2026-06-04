@@ -58,9 +58,9 @@
   /* Breakpoints. Expressed in rem so they scale with browser font-size and
      remain meaningful under zoom. JS reads these via getComputedStyle. */
   --bp-narrow-dialog: 30rem;  /* 480px @ default font */
-  --bp-mobile:        40rem;  /* 640px @ default font */
+  --bp-mobile:        50rem;  /* 800px @ default font */
   --bp-mobile-h:      30rem;  /* 480px @ default font; height analog */
-  --bp-mobile-h-play: 46.25rem; /* 740px; play side-rail short-height gate */
+  --bp-mobile-h-play: 42.5rem; /* 680px; play side-rail short-height gate */
   --bp-wide:          93.75rem; /* 1500px @ default font */
 }
 
@@ -816,9 +816,9 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 640px = --bp-mobile, 740px = --bp-mobile-h-play (media queries can't
+/* 800px = --bp-mobile, 680px = --bp-mobile-h-play (media queries can't
    read custom props; keep these literals in sync with :root). */
-@media (max-width: 640px), (max-height: 740px) {
+@media (max-width: 800px), (max-height: 680px) {
   /* Non-play perspectives keep `main` as the scroller (their inner lists
      are flex:1 + overflow-y:auto and need a bounded ancestor). */
   main { overflow-y: auto; }
@@ -843,7 +843,7 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
     background: var(--bg);
   }
 }
-@media (max-width: 640px) {
+@media (max-width: 800px) {
   .desktop-only { display: none !important; }
   header h1 { display: none; }
 }
@@ -1280,9 +1280,9 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   filter: grayscale(0.5) brightness(0.85);
 }
 
-/* 640px = --bp-mobile, 740px = --bp-mobile-h-play (media queries can't
+/* 800px = --bp-mobile, 680px = --bp-mobile-h-play (media queries can't
    read custom props; keep these literals in sync with :root). */
-@media (max-width: 640px), (max-height: 740px) {
+@media (max-width: 800px), (max-height: 680px) {
   /* !important guards against any later .play-dock-left rule with
      higher specificity (e.g. modifier classes set from JS). Mobile
      must hide the dock unconditionally. */
@@ -1361,6 +1361,10 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   gap: 8px;
   min-height: 0;
   align-items: center;
+  /* Board is a width-capped square; on tall windows this column has vertical
+     slack. Center the stack so the leftover splits top/bottom instead of
+     pooling into a dead band below the board. */
+  justify-content: center;
 }
 .game-view-side {
   display: flex;
@@ -2639,7 +2643,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .tournament-row-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 
-@media (max-width: 800px), (max-height: 740px) {
+@media (max-width: 800px), (max-height: 680px) {
   .tournaments-panel { gap: 0; }
   .tournaments-body { display: flex; flex-direction: column; }
   .tournaments-ribbon {
@@ -3292,7 +3296,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 /* ------------------------------------------------------------------
    Ribbon-side mirror: when body[data-ribbon-side="right"], flip the
    ribbon, board side rail, left dock, comments host, toast stack, and
-   tournament accent to the opposite edge. Mobile (<=640px) already
+   tournament accent to the opposite edge. Mobile (<=800px) already
    docks the ribbon horizontally and is unaffected.
    ------------------------------------------------------------------ */
 body[data-ribbon-side="right"] #toast-stack {
@@ -3301,7 +3305,7 @@ body[data-ribbon-side="right"] #toast-stack {
 body[data-ribbon-side="right"] #xgame-toast-stack {
   inset: auto auto 4px 36px;
 }
-@media (max-width: 640px) {
+@media (max-width: 800px) {
   /* Ribbon is horizontal at top on mobile, so toasts don't need a side
      gutter to clear it -- 16px side, 4px bottom edge inset. xgame
      stack collapses onto the same edge as the default stack since the
@@ -3316,7 +3320,7 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
   }
 }
 
-@media (min-width: 641px) {
+@media (min-width: 801px) {
   body[data-ribbon-side="right"] .board-ribbon {
     left: auto;
     right: 0;

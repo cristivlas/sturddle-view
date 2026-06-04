@@ -403,11 +403,17 @@ async def test_comment_nav_recovers_after_resize_hide_show(server, make_page):
         "request",
         lambda r: gotos.append(r.url) if "view/goto" in r.url else None,
     )
-    # Hide: short height crosses --bp-mobile-h-play (740px) -> isMobileLayout.
-    await page.set_viewport_size({"width": 1600, "height": 700})
+    # Hide: drop below --bp-mobile-h-play so isMobileLayout() hides the dock.
+    # Read the gate live (rem * 16 = its media-query px) so the test isn't
+    # pinned to a literal that drifts when the breakpoint changes.
+    gate_px = await page.evaluate(
+        "() => parseFloat(getComputedStyle(document.documentElement)"
+        ".getPropertyValue('--bp-mobile-h-play')) * 16"
+    )
+    await page.set_viewport_size({"width": 1600, "height": int(gate_px) - 40})
     await page.wait_for_function(f"() => !document.querySelector('{COMMENTS_SLOT}')")
-    # Show again: back to desktop height.
-    await page.set_viewport_size({"width": 1600, "height": 1000})
+    # Show again: back well above the gate.
+    await page.set_viewport_size({"width": 1600, "height": int(gate_px) + 320})
     await page.wait_for_selector(COMMENTS_SLOT)
     # prev-comment must be live again without a move click.
     await page.wait_for_function(
