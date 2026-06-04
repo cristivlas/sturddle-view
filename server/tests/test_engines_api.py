@@ -10,7 +10,14 @@ from fastapi.testclient import TestClient
 from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
-from sturddle_view.tournament.store import STATUS_DONE, STATUS_RUNNING, TournamentStore
+from sturddle_view.tournament.store import (
+    STATUS_DONE,
+    STATUS_FAILED,
+    STATUS_IDLE,
+    STATUS_RUNNING,
+    STATUS_STOPPED,
+    TournamentStore,
+)
 
 
 def _make_exec(path):
@@ -424,8 +431,9 @@ def test_locked_engine_patch_409(tmp_path, exe_a):
     assert "T1" in r.json()["detail"]
 
 
-def test_done_tourney_does_not_lock(tmp_path, exe_a):
-    c, eid = _make_client_with_tourney(tmp_path, exe_a, STATUS_DONE)
+@pytest.mark.parametrize("status", [STATUS_IDLE, STATUS_STOPPED, STATUS_FAILED, STATUS_DONE])
+def test_non_running_tourney_does_not_lock(tmp_path, exe_a, status):
+    c, eid = _make_client_with_tourney(tmp_path, exe_a, status)
     assert c.delete(f"/engines/{eid}").status_code == 204
 
 

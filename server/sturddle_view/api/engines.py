@@ -20,7 +20,7 @@ from ..engines import (
     resolve_selected,
     validate_launch_profile,
 )
-from ..tournament.store import STATUS_DONE, TournamentStore
+from ..tournament.store import STATUS_RUNNING, TournamentStore
 
 
 def _validate_engine_path(raw: str) -> str:
@@ -89,13 +89,16 @@ def _registry(request: Request) -> EngineRegistry:
 
 
 def _engine_locks(request: Request) -> dict[str, list[dict]]:
-    """Map engine registry id -> list of {name, status} for non-DONE tournaments."""
+    """Map engine registry id -> list of {name, status} for running tournaments.
+
+    Terminal states (stopped/failed/done) don't lock: restart is from scratch.
+    """
     ts: TournamentStore = getattr(request.app.state, "tournament_store", None)
     if ts is None:
         return {}
     locks: dict[str, list[dict]] = {}
     for t in ts.list():
-        if t.status == STATUS_DONE:
+        if t.status != STATUS_RUNNING:
             continue
         for ref in t.engines or []:
             eng_id = ref.get("id") if isinstance(ref, dict) else getattr(ref, "id", None)
@@ -105,7 +108,7 @@ def _engine_locks(request: Request) -> dict[str, list[dict]]:
 
 
 def _check_engine_locked(engine_id: str, request: Request) -> None:
-    """Raise 409 if the engine is referenced by any non-DONE tournament."""
+    """Raise 409 if the engine is referenced by a running tournament."""
     ts: TournamentStore = getattr(request.app.state, "tournament_store", None)
     if ts is None:
         return
