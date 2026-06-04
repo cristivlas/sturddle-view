@@ -22,6 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import chess
+import chess.engine
 import pytest
 
 from sturddle_view.events import EventBus
@@ -65,6 +66,11 @@ def _launcher_from_path(path: str, bus: EventBus):
     def _make() -> EngineSupervisor:
         return EngineSupervisor(engine_path=path, bus=bus)
     return _make
+
+
+def _cp(centipawns: int) -> chess.engine.PovScore:
+    # White-POV centipawn score, the shape _run_one_search results carry.
+    return chess.engine.PovScore(chess.engine.Cp(centipawns), chess.WHITE)
 
 
 def _tool(engine_path: str, board: chess.Board):
@@ -163,3 +169,82 @@ async def test_shallow_request_floored_to_verification_depth(monkeypatch):
     await tool({"move": "Nf3", "depth": 5}, cancel_token=CancelToken())
     # Both searches (free + candidate) floored to the default 25.
     assert seen_depths == [25, 25], seen_depths
+
+
+@pytest.mark.asyncio
+async def test_shared_cache_makes_free_best_stable_across_calls(monkeypatch):
+    # Flip-loop guard: the free "best" search is cached per turn, so a second
+    # recommend_move in the same turn reuses it instead of re-searching. The
+    # fake free search would return a DIFFERENT best on a re-run (e2e4 then
+    # g1f3); the cache must prevent that re-run, so best stays e2e4 and a
+    # resubmit of e4 (the named best) accepts via the exact-match short-circuit.
+    from sturddle_view.play import tools_engine
+
+    free_calls = {"n": 0}
+    flipping_best = ["e2e4", "g1f3"]  # would flip if the free search re-ran
+
+    async def fake_search(engine_launcher, board, limit, *, root_moves=None, **kw):
+        if root_moves:  # candidate-restricted (Search B): score the move low
+            return {"depth": limit.depth, "score": _cp(10), "pv": list(root_moves)}, False
+        # Free best (Search A): non-deterministic across calls -- but cached.
+        uci = flipping_best[min(free_calls["n"], 1)]
+        free_calls["n"] += 1
+        return {"depth": limit.depth, "score": _cp(300), "pv": [chess.Move.from_uci(uci)]}, False
+
+    monkeypatch.setattr(tools_engine, "_run_one_search", fake_search)
+    cache = tools_engine.SearchCache()
+    board = chess.Board()
+    tool = tools_engine.make_recommend_move_tool(
+        lambda: None, bus=EventBus(), board_provider=lambda: board, search_cache=cache,
+    )
+
+    # Call 1: recommend Nf3 -> free best is e2e4, Nf3 worse -> rejected, names e4.
+    out1 = await tool({"move": "Nf3"}, cancel_token=CancelToken())
+    assert out1.get("error") == "recommendation_rejected", out1
+    assert out1["engine_best_san"] == "e4"
+
+    # Call 2: resubmit the named best (e4). Free search is cached (not re-run),
+    # so best is still e2e4 == the candidate -> exact-match accept, no flip.
+    out2 = await tool({"move": "e4"}, cancel_token=CancelToken())
+    assert out2.get("ok") is True, out2
+    assert out2["uci"] == "e2e4"
+    assert free_calls["n"] == 1, "free best must be searched once, then cached"
+
+
+@pytest.mark.asyncio
+async def test_illegal_move_returns_legal_moves_for_that_piece():
+    # Screenshot regression: model kept guessing illegal knight moves (Nd7,
+    # Ne7, Nd8...). An illegal recommend must hand back the legal moves for
+    # the piece it meant, so the model picks a real one instead of guessing.
+    from sturddle_view.play import tools_engine
+
+    # Black to move; the only black knight is on c3 -- Nd7 is illegal.
+    board = chess.Board("r3r1k1/pp3pbp/1qp3p1/2B5/2BP2b1/Q1n2N2/P4PPP/3R1K1R b - - 3 17")
+    tool = tools_engine.make_recommend_move_tool(
+        lambda: None, bus=EventBus(), board_provider=lambda: board,
+    )
+    out = await tool({"move": "Nd7"}, cancel_token=CancelToken())
+    assert out["error"] == "illegal_move", out
+    # Exactly the c3-knight's legal destinations, no other piece's moves.
+    expected = {
+        board.san(m) for m in board.legal_moves
+        if board.piece_at(m.from_square).piece_type == chess.KNIGHT
+    }
+    assert set(out["legal_moves"]) == expected
+    assert "Nd7" not in out["legal_moves"]
+    assert all(s.startswith("N") for s in out["legal_moves"])
+
+
+@pytest.mark.asyncio
+async def test_illegal_pawn_move_returns_pawn_moves():
+    # A bare-square illegal pawn push reports pawn moves, not piece moves.
+    from sturddle_view.play import tools_engine
+
+    board = chess.Board()  # white to move; e5 is illegal from startpos
+    tool = tools_engine.make_recommend_move_tool(
+        lambda: None, bus=EventBus(), board_provider=lambda: board,
+    )
+    out = await tool({"move": "e5"}, cancel_token=CancelToken())
+    assert out["error"] == "illegal_move", out
+    assert "e4" in out["legal_moves"]  # the legal one-square push
+    assert all(s[0] in "abcdefgh" for s in out["legal_moves"])

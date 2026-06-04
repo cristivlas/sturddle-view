@@ -27,7 +27,6 @@ import {
   freezeAiThinking,
   appendAiToolCall,
   markAiToolCallFailed,
-  noteAiRevision,
   markAiDone,
   setAiStatus,
   setAiTitle,
@@ -1045,17 +1044,6 @@ export const playPerspective = {
           view.clearEngineInfo();
           return true;
         }
-        case "ai_corrective": {
-          const p = evt.payload || {};
-          noteAiRevision({
-            round: p.round ?? 0,
-            illegalMoves: p.illegal_moves || [],
-            illegalContinuations: p.illegal_continuations || [],
-            falseClaims: p.false_claims || [],
-            castleViolations: p.castle_violations || [],
-          });
-          return true;
-        }
       }
       return false;
     }
@@ -1789,6 +1777,10 @@ export const playPerspective = {
     // can't drift. openAi() before resetAi(): resetAi sets the spinner
     // and no-ops when the body is null.
     async function startAnalysisFromUi() {
+      // Engine-only analysis: close any leftover AI panel from a prior
+      // AI run before starting, so the dock shows engine-only output.
+      // Done first so the close can't race the new analysis state.
+      if (!aiEnabled && isAiOpen()) closeAi();
       await ctx.api("POST", "/game/analysis/start", {});
       restoreViewAnalysisWindows(ctx.events);
       aiTurnFinished = false;
@@ -1804,6 +1796,14 @@ export const playPerspective = {
     }
 
     const onAnalyze = async () => {
+      // Switching from a FINISHED AI session to engine-only: stop the AI
+      // session, then start engine analysis -- a plain Stop would just
+      // tear down and leave nothing running. While the AI run is still in
+      // progress (!aiTurnFinished), the ribbon is a plain Stop.
+      if (analyzing && aiTurnFinished && !aiEnabled && isAiOpen()) {
+        await onReanalyze();
+        return;
+      }
       if (analyzing) {
         await stopAnalysisFromUi();
         return;

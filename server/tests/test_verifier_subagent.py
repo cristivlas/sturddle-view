@@ -92,30 +92,6 @@ async def _noop_tool(_input, *, cancel_token):
     return {"ok": True}
 
 
-# The alternative-examined gate holds an accepted recommend_move until the
-# model has looked at a different move this turn. Tests that exercise the
-# accept path register this stub and play `_examine_round` first to clear
-# the gate without standing up a real verifier sub-run.
-async def _stub_top_moves(_input, *, cancel_token):
-    return {"candidates": [{"move_uci": "b1c3"}, {"move_uci": "g1f3"}]}
-
-
-def _register_top_moves(reg: ToolRegistry) -> None:
-    reg.register(
-        ToolSpec(name="top_moves", description="rank", input_schema={"type": "object"}),
-        _stub_top_moves,
-    )
-
-
-def _examine_round(tool_use_id: str) -> list:
-    """A scripted round that calls top_moves -- examines an alternative so
-    the gate accepts the subsequent recommend_move."""
-    return [ProviderChunk(
-        kind="tool_use", tool_use_id=tool_use_id,
-        tool_name="top_moves", tool_input={"moves": ["Nc3", "Nf3"]},
-    )]
-
-
 def _verifier_registry() -> ToolRegistry:
     """A verifier registry with one stand-in engine tool the sub-run can
     call. Real engine tools aren't needed to exercise the loop wiring."""
@@ -375,107 +351,24 @@ async def test_verifier_tool_events_carry_parent_id_and_prose_suppressed():
 
 
 @pytest.mark.asyncio
-async def test_committed_prose_validates_against_live_board_only():
-    # Commentator mode, a square reused by a later piece: a pawn lived on
-    # b2 for most of the game, then was captured and the queen ended up on
-    # b2. The history walk would excuse "pawn on b2", but the closing
-    # post-recommendation plan must validate against the live board, where
-    # b2 holds the queen -- so the false claim draws a corrective.
-    # Immortal Game through 17...Qxb2: a White pawn lived on b2 for most
-    # of the game, then the black queen captured it and now sits there.
-    board = chess.Board()
-    for san in (
-        "e4 e5 f4 exf4 Bc4 Qh4+ Kf1 b5 Bxb5 Nf6 Nf3 Qh6 d3 Nh5 Nh4 Qg5 "
-        "Nf5 c6 g4 Nf6 Rg1 cxb5 h4 Qg6 h5 Qg5 Qf3 Ng8 Bxf4 Qf6 Nc3 Bc5 "
-        "Nd5 Qxb2"
-    ).split():
-        board.push_san(san)
-    assert board.piece_at(chess.B2) is not None  # queen now on b2
-    assert board.piece_at(chess.B2).piece_type == chess.QUEEN
-
+async def test_post_recommend_nudge_fires_when_no_conclusion():
+    # Move accepted, then the model exits with no prose: the nudge runs
+    # one more round to extract the conclusion.
     async def recommend(_input, *, cancel_token):
-        # Echo the requested move so the gate sees distinct ucis.
-        return {"ok": True, "uci": board.parse_san(_input["move"]).uci()}
+        return {"ok": True, "uci": "e2e4"}
 
     reg = ToolRegistry()
     reg.register(
         ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
         recommend,
     )
-
     provider = _RecordingScriptedProvider(rounds=[
-        [ProviderChunk(                                       # round 0: commit Nd4 -> gate blocks
+        [ProviderChunk(                                       # round 0: accept e4, no prose
             kind="tool_use", tool_use_id="r0",
-            tool_name="recommend_move", tool_input={"move": "Nd4"},
-        )],
-        [ProviderChunk(                                       # round 1: accept a3
-            kind="tool_use", tool_use_id="r1",
-            tool_name="recommend_move", tool_input={"move": "a3"},
-        )],
-        [ProviderChunk(                                       # round 2: false closing claim
-            kind="text",
-            text="Capturing the pawn on b2 wins material for Black.",
-        )],
-        [ProviderChunk(kind="text", text="The queen on b2 stays active.")],  # round 3: rewrite
-    ])
-    bus = EventBus()
-    queue = await bus.subscribe()
-    coord = AIAnalysisCoordinator(
-        bus, provider, registry=reg, board_provider=(lambda: board),
-    )
-
-    await coord.run(game_id="g", mode="commentator", user_message=_TURN_CONTEXT + "\n")
-    events = await _drain_until_done(queue)
-
-    correctives = [e for e in events if e.kind == "ai_corrective"]
-    assert correctives, "committed prose should validate against the live board"
-    assert "pawn on b2" in correctives[0].payload["false_claims"]
-
-
-@pytest.mark.asyncio
-async def test_wrong_side_to_move_attribution_flagged():
-    # Black to move, but the prose credits the move to White: "White plays
-    # Nd3" when Nd3 is Black's move (and no white knight reaches d3). The
-    # attribution validator flags it via an ai_corrective.
-    board = chess.Board("r2qr1k1/5ppp/p4n2/1pbP1bB1/1n6/N1N2B2/PP1Q1PPP/3R1RK1 b - - 1 16")
-    provider = _RecordingScriptedProvider(rounds=[
-        [ProviderChunk(kind="text", text="White plays Nd3, seizing the center.")],
-        [ProviderChunk(kind="text", text="Black's knight eyes d3.")],  # rewrite
-    ])
-    bus = EventBus()
-    queue = await bus.subscribe()
-    coord = AIAnalysisCoordinator(
-        bus, provider, registry=ToolRegistry(), board_provider=(lambda: board),
-    )
-
-    await coord.run(game_id="g", mode="commentator", user_message=_TURN_CONTEXT + "\n")
-    events = await _drain_until_done(queue)
-
-    correctives = [e for e in events if e.kind == "ai_corrective"]
-    assert correctives, "wrong-side attribution should draw a corrective"
-    assert "White Nd3" in correctives[0].payload["attribution_errors"]
-
-
-@pytest.mark.asyncio
-async def test_post_recommend_nudge_fires_when_no_conclusion():
-    # Move accepted, then the model exits with no prose: the nudge runs
-    # one more round to extract the conclusion.
-    reg = ToolRegistry()
-    reg.register(
-        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
-        _recommend_move_handler,
-    )
-    provider = _RecordingScriptedProvider(rounds=[
-        [ProviderChunk(                                       # round 0: commit Nf3 -> gate blocks
-            kind="tool_use", tool_use_id="r0",
-            tool_name="recommend_move", tool_input={"move": "Nf3"},
-        )],
-        [ProviderChunk(                                       # round 1: accept e4, no prose
-            kind="tool_use", tool_use_id="r1",
             tool_name="recommend_move", tool_input={"move": "e4"},
         )],
-        [],                                                   # round 2: still no prose -> nudge
-        [ProviderChunk(kind="text", text="The plan is to control e5.")],  # round 3: conclusion
+        [],                                                   # round 1: still no prose -> nudge
+        [ProviderChunk(kind="text", text="The plan is to control e5.")],  # round 2: conclusion
     ])
     bus = EventBus()
     queue = await bus.subscribe()
@@ -486,11 +379,11 @@ async def test_post_recommend_nudge_fires_when_no_conclusion():
     await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
     await _drain_until_done(queue)
 
-    # Round 1 accepts the move; round 2 exits with no conclusion -> the
-    # nudge injects a prompt and runs round 3. The nudge's user message
-    # (last user message before round 3's stream) asks for the conclusion.
-    assert len(provider.calls) == 4
-    nudge_round = provider.calls[3]
+    # Round 0 accepts the move; round 1 exits with no conclusion -> the
+    # nudge injects a prompt and runs round 2. The nudge's user message
+    # (last user message before round 2's stream) asks for the conclusion.
+    assert len(provider.calls) == 3
+    nudge_round = provider.calls[2]
     last_user = next(
         m for m in reversed(nudge_round["messages"]) if m["role"] == "user"
     )
@@ -508,17 +401,15 @@ async def test_no_post_recommend_nudge_when_conclusion_same_round():
         ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
         recommend,
     )
-    _register_top_moves(reg)
     provider = _RecordingScriptedProvider(rounds=[
-        _examine_round("t0"),                                 # round 0: clear the gate
-        [                                                     # round 1: conclusion + move
-            ProviderChunk(kind="text", text="e4 grabs the center; committing."),
+        [                                                     # round 0: conclusion + move
+            ProviderChunk(kind="text", text="e4 grabs the center."),
             ProviderChunk(
-                kind="tool_use", tool_use_id="r1",
+                kind="tool_use", tool_use_id="r0",
                 tool_name="recommend_move", tool_input={"move": "e4"},
             ),
         ],
-        [],                                                   # round 2: model stops, no prose
+        [],                                                   # round 1: model stops, no prose
     ])
     bus = EventBus()
     queue = await bus.subscribe()
@@ -529,26 +420,25 @@ async def test_no_post_recommend_nudge_when_conclusion_same_round():
     await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
     await _drain_until_done(queue)
 
-    # A round always follows the accepting call (the call ends round 1).
-    # The same-round conclusion sets prose_after_recommend, so round 2's
-    # empty exit does NOT trigger the nudge: exactly 3 rounds, no 4th.
-    assert len(provider.calls) == 3
+    # A round always follows the accepting call (the call ends round 0).
+    # The same-round conclusion sets prose_after_recommend, so round 1's
+    # empty exit does NOT trigger the nudge: exactly 2 rounds, no 3rd.
+    assert len(provider.calls) == 2
 
 
 @pytest.mark.asyncio
 async def test_rejected_recommend_is_renudged_until_accepted():
-    # First attempt rejected; the completeness nudge re-fires (not one-shot)
-    # and the model's second, accepted attempt resolves the turn.
+    # First attempt rejected as not-the-strongest; the completeness nudge
+    # re-fires (not one-shot) and the second, accepted attempt resolves it.
     calls = {"n": 0}
 
     async def recommend(_input, *, cancel_token):
         calls["n"] += 1
-        # r0 commits Nc3 (gate-blocked, records the alternative); r1 attempt
-        # is engine-rejected; r2 attempt is accepted by the engine.
         board = chess.Board()
         uci = board.parse_san(_input["move"]).uci()
-        if calls["n"] == 2:
-            return {"error": "recommendation_rejected", "reason": "Engine prefers Nf3."}
+        # r0's move is rejected (a stronger move named); r1's is accepted.
+        if calls["n"] == 1:
+            return {"error": "recommendation_rejected", "reason": "A stronger move is available: Nf3."}
         return {"ok": True, "uci": uci}
 
     reg = ToolRegistry()
@@ -557,19 +447,15 @@ async def test_rejected_recommend_is_renudged_until_accepted():
         recommend,
     )
     provider = _RecordingScriptedProvider(rounds=[
-        [ProviderChunk(                                    # r0: commit Nc3 -> gate blocks
+        [ProviderChunk(                                    # r0: attempt e4 -> rejected
             kind="tool_use", tool_use_id="r0",
-            tool_name="recommend_move", tool_input={"move": "Nc3"},
-        )],
-        [ProviderChunk(                                    # r1: attempt e4 -> engine-rejected
-            kind="tool_use", tool_use_id="r1",
             tool_name="recommend_move", tool_input={"move": "e4"},
         )],
-        [ProviderChunk(                                    # r2 (nudged): second attempt
-            kind="tool_use", tool_use_id="r2",
+        [ProviderChunk(                                    # r1 (nudged): submit the named move
+            kind="tool_use", tool_use_id="r1",
             tool_name="recommend_move", tool_input={"move": "Nf3"},
         )],
-        [ProviderChunk(kind="text", text="Developing toward the center.")],  # r3: conclusion
+        [ProviderChunk(kind="text", text="Developing toward the center.")],  # r2: conclusion
     ])
     bus = EventBus()
     queue = await bus.subscribe()
@@ -580,11 +466,8 @@ async def test_rejected_recommend_is_renudged_until_accepted():
     await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
     events = await _drain_until_done(queue)
 
-    # r0's commit is gate-blocked (no prior recommend) but records Nc3 as an
-    # examined alternative; r1's attempt is engine-rejected and re-nudged;
-    # r2's attempt clears both the engine check and the alternative gate
-    # (Nc3 committed in r0), so the turn ends cleanly.
-    assert calls["n"] == 3
+    # r0 rejected and re-nudged; r1 accepted, so the turn ends cleanly.
+    assert calls["n"] == 2
     done = events[-1]
     assert not done.payload.get("no_recommendation")
     assert not done.payload.get("round_cap")
@@ -630,275 +513,312 @@ async def test_stalled_recommend_stops_nudging_and_flags_no_recommendation():
     assert not done.payload.get("round_cap")
 
 
-# --- Alternative-examined gate ---------------------------------------------
-# The gate holds an otherwise-accepted recommend_move until a PRIOR
-# recommend_move this turn committed a move OTHER than the one now being
-# committed. Only recommend_move counts -- examining via delegate or
-# top_moves does not clear the gate (draconian basis: the model must have
-# concretely committed an alternative, not merely looked at one).
-
-
-def _gate_reg():
-    reg = ToolRegistry()
-    reg.register(
-        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
-        _recommend_move_handler,
-    )
-    return reg
-
-
-async def _recommend_move_handler(_input, *, cancel_token):
-    # Echo the requested move as UCI so distinct recommend_move calls yield
-    # distinct ucis -- the gate now clears only on a prior recommend_move of
-    # a DIFFERENT move.
-    board = chess.Board()
-    move = board.parse_san(_input["move"])
-    return {"ok": True, "uci": move.uci()}
+async def _echo_verifier(move, depth, cancel_token):
+    # Stand-in end-of-turn verifier: echoes the move so an ai_recommendation
+    # event (the on-board arrow) fires for the accepted move.
+    return {"uci": move.uci(), "san": move.uci()}
 
 
 @pytest.mark.asyncio
-async def test_gate_blocks_in_turn_then_falls_back_to_unvetted():
-    # Straight to recommend_move, nothing else examined: the gate blocks the
-    # in-turn commit (alternative_required), and when the model stalls the
-    # turn falls back to the blocked move flagged unvetted -- not nothing.
-    reg = _gate_reg()
+async def test_commentator_accept_without_compare_is_held_once():
+    # Commentator must not endorse the reviewed move with zero contrast: the
+    # first accept with no prior top_moves is held with a compare_first error,
+    # one-shot. After a top_moves call the resubmit goes through.
+    async def recommend(_input, *, cancel_token):
+        return {"ok": True, "uci": chess.Board().parse_san(_input["move"]).uci()}
+
+    async def top_moves(_input, *, cancel_token):
+        return {"candidates": [{"move_uci": "e2e4", "move_san": "e4", "score_cp": 20}]}
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
+        recommend,
+    )
+    reg.register(
+        ToolSpec(name="top_moves", description="rank", input_schema={"type": "object"}),
+        top_moves,
+    )
     provider = _RecordingScriptedProvider(rounds=[
-        [ProviderChunk(                                    # r0: commit, gate blocks
-            kind="tool_use", tool_use_id="r1",
-            tool_name="recommend_move", tool_input={"move": "e4"},
-        )],
-        [ProviderChunk(kind="text", text="No alternative, sticking with it.")],  # r1: stall
-        [ProviderChunk(kind="text", text="Still nothing.")],  # r2: stall -> give up
+        [ProviderChunk(kind="tool_use", tool_use_id="r0",     # accept w/o compare -> held
+                       tool_name="recommend_move", tool_input={"move": "e4"})],
+        [ProviderChunk(kind="tool_use", tool_use_id="t0",     # comply: compare
+                       tool_name="top_moves", tool_input={"moves": ["e4", "d4"]})],
+        [ProviderChunk(kind="tool_use", tool_use_id="r1",     # resubmit -> accepted
+                       tool_name="recommend_move", tool_input={"move": "e4"})],
+        [ProviderChunk(kind="text", text="e4 is best on review.")],  # conclusion
     ])
     bus = EventBus()
     queue = await bus.subscribe()
     coord = AIAnalysisCoordinator(
         bus, provider, registry=reg, board_provider=(lambda: chess.Board()),
-        recommend_verifier=_accept_verifier,
+        recommend_verifier=_echo_verifier,
     )
 
     await coord.run(game_id="g", mode="commentator", user_message=_TURN_CONTEXT + "\n")
     events = await _drain_until_done(queue)
 
-    failures = [e for e in events if e.kind == "ai_tool_call_failed"]
-    assert any(e.payload.get("error") == "alternative_required" for e in failures)
-    # Fallback: the blocked move is surfaced, flagged unvetted, not withheld.
-    recs = [e for e in events if e.kind == "ai_recommendation"]
-    assert recs and recs[-1].payload.get("unvetted") is True
-    assert events[-1].payload.get("unvetted") is True
-    assert not events[-1].payload.get("no_recommendation")
-
-
-@pytest.mark.asyncio
-async def test_gate_accepts_after_recommending_a_different_move():
-    # A prior recommend_move on a move OTHER than the one committed clears
-    # the gate: the first commit (Nf3) is blocked but recorded, then the
-    # second commit (e4) goes through and the recommendation fires.
-    reg = _gate_reg()
-    bus = EventBus()
-    queue = await bus.subscribe()
-    coord = AIAnalysisCoordinator(
-        bus, _RecordingScriptedProvider(rounds=[
-            [ProviderChunk(                                         # r0: commit Nf3 -> blocked
-                kind="tool_use", tool_use_id="r0",
-                tool_name="recommend_move", tool_input={"move": "Nf3"},
-            )],
-            [ProviderChunk(                                         # r1: commit e4 -> allowed
-                kind="tool_use", tool_use_id="r1",
-                tool_name="recommend_move", tool_input={"move": "e4"},
-            )],
-            [ProviderChunk(kind="text", text="e4 grabs the center.")],  # r2: conclusion
-        ]),
-        registry=reg, board_provider=(lambda: chess.Board()),
-        recommend_verifier=_accept_verifier,
-    )
-
-    await coord.run(game_id="g", mode="commentator", user_message=_TURN_CONTEXT + "\n")
-    events = await _drain_until_done(queue)
-
-    # r0 (the alternative) is blocked; r1 (the real commit) clears -- so only
-    # the first call carries alternative_required, and a recommendation fires.
-    gated = [
+    held = [
         e for e in events if e.kind == "ai_tool_call_failed"
-        and e.payload.get("error") == "alternative_required"
+        and e.payload.get("error") == "compare_first"
     ]
-    assert [e.payload["tool_use_id"] for e in gated] == ["r0"]
-    assert [e for e in events if e.kind == "ai_recommendation"]
-
-
-@pytest.mark.asyncio
-async def test_commentator_gate_blocks_endorsing_played_move_without_alternative():
-    # played_uci seeds the gate: endorsing the played move (e4) on the first
-    # recommend is blocked, because the played move is the subject under
-    # review, not an alternative to it.
-    reg = _gate_reg()
-    bus = EventBus()
-    queue = await bus.subscribe()
-    coord = AIAnalysisCoordinator(
-        bus, _RecordingScriptedProvider(rounds=[
-            [ProviderChunk(                                       # r0: endorse e4 -> blocked
-                kind="tool_use", tool_use_id="r0",
-                tool_name="recommend_move", tool_input={"move": "e4"},
-            )],
-            [ProviderChunk(kind="text", text="Sticking with e4.")],  # r1: stall
-            [ProviderChunk(kind="text", text="Nothing new.")],       # r2: stall -> give up
-        ]),
-        registry=reg, board_provider=(lambda: chess.Board()),
-        recommend_verifier=_accept_verifier,
-    )
-
-    await coord.run(
-        game_id="g", mode="commentator",
-        user_message=_TURN_CONTEXT + "\n", played_uci="e2e4",
-    )
-    events = await _drain_until_done(queue)
-
-    failures = [e for e in events if e.kind == "ai_tool_call_failed"]
-    assert any(e.payload.get("error") == "alternative_required" for e in failures)
-
-
-@pytest.mark.asyncio
-async def test_commentator_gate_clears_when_alternative_to_played_move_recommended():
-    # With played_uci=e2e4, recommending a DIFFERENT move (Nf3) first clears
-    # the gate, so a later endorsement of the played move (e4) goes through.
-    reg = _gate_reg()
-    bus = EventBus()
-    queue = await bus.subscribe()
-    coord = AIAnalysisCoordinator(
-        bus, _RecordingScriptedProvider(rounds=[
-            [ProviderChunk(                                       # r0: recommend Nf3 (alt) -> clears
-                kind="tool_use", tool_use_id="r0",
-                tool_name="recommend_move", tool_input={"move": "Nf3"},
-            )],
-            [ProviderChunk(                                       # r1: endorse e4 -> allowed
-                kind="tool_use", tool_use_id="r1",
-                tool_name="recommend_move", tool_input={"move": "e4"},
-            )],
-            [ProviderChunk(kind="text", text="e4 was best after all.")],  # r2: conclusion
-        ]),
-        registry=reg, board_provider=(lambda: chess.Board()),
-        recommend_verifier=_accept_verifier,
-    )
-
-    await coord.run(
-        game_id="g", mode="commentator",
-        user_message=_TURN_CONTEXT + "\n", played_uci="e2e4",
-    )
-    events = await _drain_until_done(queue)
-
-    # Nf3 (r0) clears against the seeded played move immediately, so neither
-    # call is gated and a recommendation fires.
-    assert not [
-        e for e in events if e.kind == "ai_tool_call_failed"
-        and e.payload.get("error") == "alternative_required"
-    ]
-    assert [e for e in events if e.kind == "ai_recommendation"]
-
-
-@pytest.mark.asyncio
-async def test_final_recommend_of_played_move_wins_the_arrow():
-    # Screenshot regression: model tests the played move (e4) first -- gated,
-    # but recorded -- then an alternative (Nf3) which clears, then concludes
-    # the played move was best and re-recommends it. The final recommendation
-    # (the arrow) must be the played move, not the alternative that merely
-    # cleared the gate first.
-    reg = _gate_reg()
-    bus = EventBus()
-    queue = await bus.subscribe()
-    coord = AIAnalysisCoordinator(
-        bus, _RecordingScriptedProvider(rounds=[
-            [ProviderChunk(                                       # r0: e4 (played) -> gated
-                kind="tool_use", tool_use_id="r0",
-                tool_name="recommend_move", tool_input={"move": "e4"},
-            )],
-            [ProviderChunk(                                       # r1: Nf3 (alt) -> clears
-                kind="tool_use", tool_use_id="r1",
-                tool_name="recommend_move", tool_input={"move": "Nf3"},
-            )],
-            [ProviderChunk(                                       # r2: re-commit e4 -> clears
-                kind="tool_use", tool_use_id="r2",
-                tool_name="recommend_move", tool_input={"move": "e4"},
-            )],
-            [ProviderChunk(kind="text", text="e4 is the stronger choice.")],  # r3: conclusion
-        ]),
-        registry=reg, board_provider=(lambda: chess.Board()),
-        recommend_verifier=_accept_verifier,
-    )
-
-    await coord.run(
-        game_id="g", mode="commentator",
-        user_message=_TURN_CONTEXT + "\n", played_uci="e2e4",
-    )
-    events = await _drain_until_done(queue)
-
+    assert len(held) == 1, "first uncompared accept should be held once"
     recs = [e for e in events if e.kind == "ai_recommendation"]
     assert recs and recs[-1].payload.get("uci") == "e2e4"
 
 
 @pytest.mark.asyncio
-async def test_gate_rejects_when_only_the_committed_move_was_recommended():
-    # Recommending the SAME move twice is not examining an alternative --
-    # the gate blocks every attempt and the turn never clears.
-    reg = _gate_reg()
-    bus = EventBus()
-    queue = await bus.subscribe()
-    coord = AIAnalysisCoordinator(
-        bus, _RecordingScriptedProvider(rounds=[
-            [ProviderChunk(                                       # r0: commit e4 -> blocked
-                kind="tool_use", tool_use_id="r0",
-                tool_name="recommend_move", tool_input={"move": "e4"},
-            )],
-            [ProviderChunk(                                       # r1: commit e4 again -> blocked
-                kind="tool_use", tool_use_id="r1",
-                tool_name="recommend_move", tool_input={"move": "e4"},
-            )],
-            [ProviderChunk(kind="text", text="Sticking with e4.")],  # r2: stall
-            [ProviderChunk(kind="text", text="Nothing new.")],       # r3: stall -> give up
-        ]),
-        registry=reg, board_provider=(lambda: chess.Board()),
+async def test_commentator_accept_after_top_moves_not_held():
+    # A top_moves call before the accept satisfies the compare-first check:
+    # the recommend goes straight through, no compare_first hold.
+    async def recommend(_input, *, cancel_token):
+        return {"ok": True, "uci": chess.Board().parse_san(_input["move"]).uci()}
+
+    async def top_moves(_input, *, cancel_token):
+        return {"candidates": [{"move_uci": "e2e4", "move_san": "e4", "score_cp": 20}]}
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
+        recommend,
     )
-
-    await coord.run(game_id="g", mode="commentator", user_message=_TURN_CONTEXT + "\n")
-    events = await _drain_until_done(queue)
-
-    failures = [e for e in events if e.kind == "ai_tool_call_failed"]
-    assert any(e.payload.get("error") == "alternative_required" for e in failures)
-
-
-@pytest.mark.asyncio
-async def test_gate_not_cleared_by_top_moves():
-    # top_moves does NOT clear the gate (draconian: only a prior
-    # recommend_move counts). Ranking Nc3/Nf3 then committing e4 is still
-    # blocked.
-    reg = _gate_reg()
-    _register_top_moves(reg)
+    reg.register(
+        ToolSpec(name="top_moves", description="rank", input_schema={"type": "object"}),
+        top_moves,
+    )
     provider = _RecordingScriptedProvider(rounds=[
-        _examine_round("t0"),                              # r0: top_moves (Nc3, Nf3)
-        [ProviderChunk(                                    # r1: commit e4 -> still blocked
-            kind="tool_use", tool_use_id="r1",
-            tool_name="recommend_move", tool_input={"move": "e4"},
-        )],
-        [ProviderChunk(kind="text", text="Sticking with e4.")],  # r2: stall
-        [ProviderChunk(kind="text", text="Nothing new.")],       # r3: stall -> give up
+        [ProviderChunk(kind="tool_use", tool_use_id="t0",     # compare first
+                       tool_name="top_moves", tool_input={"moves": ["e4", "d4"]})],
+        [ProviderChunk(kind="tool_use", tool_use_id="r0",     # accept -> not held
+                       tool_name="recommend_move", tool_input={"move": "e4"})],
+        [ProviderChunk(kind="text", text="e4 holds up.")],    # conclusion
     ])
     bus = EventBus()
     queue = await bus.subscribe()
     coord = AIAnalysisCoordinator(
         bus, provider, registry=reg, board_provider=(lambda: chess.Board()),
-        recommend_verifier=_accept_verifier,
+        recommend_verifier=_echo_verifier,
     )
 
     await coord.run(game_id="g", mode="commentator", user_message=_TURN_CONTEXT + "\n")
     events = await _drain_until_done(queue)
 
-    failures = [e for e in events if e.kind == "ai_tool_call_failed"]
-    assert any(e.payload.get("error") == "alternative_required" for e in failures)
+    assert not [
+        e for e in events if e.kind == "ai_tool_call_failed"
+        and e.payload.get("error") == "compare_first"
+    ], "a prior top_moves should satisfy compare-first"
+    recs = [e for e in events if e.kind == "ai_recommendation"]
+    assert recs and recs[-1].payload.get("uci") == "e2e4"
 
 
-async def _accept_verifier(move, depth, cancel_token):
-    # Stand-in end-of-turn verifier: echoes the move so an ai_recommendation
-    # event fires when the gate accepts.
-    return {"uci": move.uci(), "san": "e4"}
+@pytest.mark.asyncio
+async def test_coach_accept_without_compare_not_held():
+    # The compare-first hold is commentator-only: coach (live play) accepts
+    # the first recommend directly, no top_moves required.
+    async def recommend(_input, *, cancel_token):
+        return {"ok": True, "uci": chess.Board().parse_san(_input["move"]).uci()}
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
+        recommend,
+    )
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(kind="tool_use", tool_use_id="r0",
+                       tool_name="recommend_move", tool_input={"move": "e4"})],
+        [ProviderChunk(kind="text", text="e4 grabs the center.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg, board_provider=(lambda: chess.Board()),
+        recommend_verifier=_echo_verifier,
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    assert not [
+        e for e in events if e.kind == "ai_tool_call_failed"
+        and e.payload.get("error") == "compare_first"
+    ]
+    recs = [e for e in events if e.kind == "ai_recommendation"]
+    assert recs and recs[-1].payload.get("uci") == "e2e4"
+
+
+@pytest.mark.asyncio
+async def test_accepted_recommend_drives_the_arrow():
+    # The accepted recommend_move move is the one the arrow (ai_recommendation)
+    # shows -- a single call, no second attempt needed.
+    async def recommend(_input, *, cancel_token):
+        board = chess.Board()
+        return {"ok": True, "uci": board.parse_san(_input["move"]).uci()}
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
+        recommend,
+    )
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, _RecordingScriptedProvider(rounds=[
+            [ProviderChunk(
+                kind="tool_use", tool_use_id="r0",
+                tool_name="recommend_move", tool_input={"move": "Nf3"},
+            )],
+            [ProviderChunk(kind="text", text="Nf3 develops with tempo.")],
+        ]),
+        registry=reg, board_provider=(lambda: chess.Board()),
+        recommend_verifier=_echo_verifier,
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    recs = [e for e in events if e.kind == "ai_recommendation"]
+    assert recs and recs[-1].payload.get("uci") == "g1f3"
+
+
+@pytest.mark.asyncio
+async def test_rejected_recommend_resolves_in_one_resubmit():
+    # A rejected move names the stronger move; submitting THAT resolves the
+    # turn in a single resubmit -- no open-ended probing of other moves.
+    async def recommend(_input, *, cancel_token):
+        board = chess.Board()
+        uci = board.parse_san(_input["move"]).uci()
+        if uci == "e2e4":
+            return {"error": "recommendation_rejected",
+                    "reason": "A stronger move is available: Nf3."}
+        return {"ok": True, "uci": uci}
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
+        recommend,
+    )
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, _RecordingScriptedProvider(rounds=[
+            [ProviderChunk(                                    # r0: e4 -> rejected, names Nf3
+                kind="tool_use", tool_use_id="r0",
+                tool_name="recommend_move", tool_input={"move": "e4"},
+            )],
+            [ProviderChunk(                                    # r1 (nudged): submit Nf3 -> ok
+                kind="tool_use", tool_use_id="r1",
+                tool_name="recommend_move", tool_input={"move": "Nf3"},
+            )],
+            [ProviderChunk(kind="text", text="Nf3 it is.")],   # r2: conclusion
+        ]),
+        registry=reg, board_provider=(lambda: chess.Board()),
+        recommend_verifier=_echo_verifier,
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    recs = [e for e in events if e.kind == "ai_recommendation"]
+    assert recs and recs[-1].payload.get("uci") == "g1f3"
+    assert not events[-1].payload.get("no_recommendation")
+
+
+@pytest.mark.asyncio
+async def test_repeated_recommend_failures_force_top_moves_nudge():
+    # Screenshot regression: the model guesses illegal moves one at a time
+    # via recommend_move. After MAX_RECOMMEND_FAILURES (2) failures, the loop
+    # injects a user nudge telling it to use top_moves instead.
+    from sturddle_view.play.ai_analysis import _RECOMMEND_FAILURE_NUDGE
+
+    async def recommend(_input, *, cancel_token):
+        # First two attempts fail; the third (after the nudge) is accepted so
+        # the turn ends cleanly.
+        if _input["move"] in ("Nd7", "Ne7"):
+            return {"error": "illegal_move", "detail": "illegal", "legal_moves": ["Nf3"]}
+        return {"ok": True, "uci": chess.Board().parse_san(_input["move"]).uci()}
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
+        recommend,
+    )
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(kind="tool_use", tool_use_id="r0",     # failure 1
+                       tool_name="recommend_move", tool_input={"move": "Nd7"})],
+        [ProviderChunk(kind="tool_use", tool_use_id="r1",     # failure 2 -> nudge after
+                       tool_name="recommend_move", tool_input={"move": "Ne7"})],
+        [ProviderChunk(kind="tool_use", tool_use_id="r2",     # r2: nudged -> accepts Nf3
+                       tool_name="recommend_move", tool_input={"move": "Nf3"})],
+        [ProviderChunk(kind="text", text="Develops the knight.")],  # r3: conclusion, clean exit
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg, board_provider=(lambda: chess.Board()),
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    await _drain_until_done(queue)
+
+    # The nudge user message is in the history the r2 round was sent.
+    r2_msgs = provider.calls[2]["messages"]
+    assert any(
+        m["role"] == "user" and m["content"] == _RECOMMEND_FAILURE_NUDGE
+        for m in r2_msgs
+    ), "top_moves nudge should fire after 2 failed recommend_move calls"
+
+
+@pytest.mark.asyncio
+async def test_top_moves_call_rearms_the_failure_nudge():
+    # A single failure does NOT trip the nudge (cap is 2). The nudge stays
+    # un-fired so long as the model never accumulates 2 failures in a row.
+    from sturddle_view.play.ai_analysis import _RECOMMEND_FAILURE_NUDGE
+
+    async def recommend(_input, *, cancel_token):
+        if _input["move"] in ("Nd7", "Ne7"):
+            return {"error": "illegal_move", "detail": "illegal", "legal_moves": ["Nf3"]}
+        return {"ok": True, "uci": chess.Board().parse_san(_input["move"]).uci()}
+
+    async def top_moves(_input, *, cancel_token):
+        return {"candidates": [{"move_uci": "g1f3", "move_san": "Nf3", "score_cp": 20}]}
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
+        recommend,
+    )
+    reg.register(
+        ToolSpec(name="top_moves", description="rank", input_schema={"type": "object"}),
+        top_moves,
+    )
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(kind="tool_use", tool_use_id="r0",     # failure 1
+                       tool_name="recommend_move", tool_input={"move": "Nd7"})],
+        [ProviderChunk(kind="tool_use", tool_use_id="t0",     # top_moves -> resets streak
+                       tool_name="top_moves", tool_input={"moves": ["Nf3"]})],
+        [ProviderChunk(kind="tool_use", tool_use_id="r1",     # failure 1 again (streak reset)
+                       tool_name="recommend_move", tool_input={"move": "Ne7"})],
+        [ProviderChunk(kind="tool_use", tool_use_id="r2",     # r3: accept, end the turn
+                       tool_name="recommend_move", tool_input={"move": "Nf3"})],
+        [ProviderChunk(kind="text", text="Develops the knight.")],  # r4: conclusion, clean exit
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg, board_provider=(lambda: chess.Board()),
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    await _drain_until_done(queue)
+
+    # top_moves reset the streak, so the lone failure on each side of it
+    # never reaches the cap -- the nudge never fired.
+    all_user_content = [
+        m.get("content")
+        for c in provider.calls for m in c["messages"]
+        if m.get("role") == "user"
+    ]
+    assert _RECOMMEND_FAILURE_NUDGE not in all_user_content
 
 
 @pytest.mark.asyncio
@@ -993,76 +913,6 @@ async def test_two_delegates_each_get_their_own_parent_id():
         if e.kind == "ai_tool_call" and e.payload.get("name") == "piece_at"
     }
     assert parents == {"vA": "dA", "vB": "dB"}
-
-
-@pytest.mark.asyncio
-async def test_verifier_line_internal_move_not_flagged():
-    # The verifier may narrate a refutation line ("after exd4..."); that
-    # token is illegal on the live board but is reasoning, not a live-move
-    # hallucination. It must NOT draw a corrective or burn an extra round.
-    board = chess.Board()  # startpos; "exd4" is illegal here
-    provider = _RecordingScriptedProvider(rounds=[
-        [_delegate_chunk("d1", "check e4")],               # narrator
-        [ProviderChunk(                                    # verifier: tool
-            kind="tool_use", tool_use_id="v1",
-            tool_name="piece_at", tool_input={"square": "e2"},
-        )],
-        [ProviderChunk(                                    # verifier: verdict naming a line
-            kind="text",
-            text="e4 is sound; after exd4 the center holds.",
-        )],
-        [ProviderChunk(kind="text", text="done.")],        # narrator
-    ])
-    bus = EventBus()
-    queue = await bus.subscribe()
-    coord = _coordinator(bus, provider, board=board)
-
-    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
-    events = await _drain_until_done(queue)
-
-    # No corrective fired for the line-internal "exd4".
-    assert not [e for e in events if e.kind == "ai_corrective"]
-    # The verifier concluded in its 2nd round (tool, then verdict) -- no
-    # extra correction round: exactly 4 stream calls total.
-    assert len(provider.calls) == 4
-
-
-@pytest.mark.asyncio
-async def test_verifier_false_live_piece_claim_still_flagged():
-    # Skipping illegal-move validation for the verifier must NOT disable
-    # the piece-claim guard: a fabricated live-board piece still corrects.
-    board = chess.Board()  # startpos: no knight on e4
-    provider = _RecordingScriptedProvider(rounds=[
-        [_delegate_chunk("d1", "check e4")],               # narrator
-        [ProviderChunk(                                    # verifier: tool
-            kind="tool_use", tool_use_id="v1",
-            tool_name="piece_at", tool_input={"square": "e2"},
-        )],
-        [ProviderChunk(                                    # verifier: false live claim
-            kind="text", text="The knight on e4 dominates.",
-        )],
-        [ProviderChunk(kind="text", text="e4 is sound.")],  # verifier: corrected verdict
-        [ProviderChunk(kind="text", text="done.")],         # narrator
-    ])
-    bus = EventBus()
-    queue = await bus.subscribe()
-    coord = _coordinator(bus, provider, board=board)
-
-    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
-    await _drain_until_done(queue)
-
-    # Verifier correctives are suppressed from the UI (silent sub-run), so
-    # the proof is in the message history: a corrective user message was
-    # injected after the false claim, asking the verifier to rewrite.
-    corrective_texts = [
-        m["content"]
-        for c in provider.calls
-        for m in c["messages"]
-        if m["role"] == "user" and isinstance(m["content"], str)
-        and "Not on the live board" in m["content"]
-    ]
-    assert corrective_texts, "false live piece claim should still be flagged"
-    assert any("e4" in t for t in corrective_texts)
 
 
 @pytest.mark.asyncio
@@ -1180,70 +1030,3 @@ def test_tool_signature_copied_onto_tool_use_block():
                       tool_input={}),
     ])
     assert TOOL_SIGNATURE_KEY not in msg2["content"][0]
-
-
-# --- extra-board validation: prose moves in an examined position --------
-_PROJ_KNIGHT_ON_F4 = "rnbqkb1r/pppppppp/8/8/5N2/8/PPPPPPPP/RNBQKB1R w KQkq - 0 1"
-
-
-async def _stub_analyze(input_, *, cancel_token):
-    # Body is irrelevant: the coordinator reads the examined FEN from the
-    # call's `fen` input, not the result.
-    return {"score_cp": 20, "depth": 20}
-
-
-@pytest.mark.asyncio
-async def test_prose_move_legal_only_in_examined_fen_not_flagged():
-    # Live board is the start position, where Nd5 is illegal. The model
-    # examines a projected position (knight on f4) via analyze, then names
-    # Nd5 in prose -- legal there, so no illegal-move corrective fires.
-    reg = ToolRegistry()
-    reg.register(
-        ToolSpec(name="analyze", description="search", input_schema={"type": "object"}),
-        _stub_analyze,
-    )
-    provider = _RecordingScriptedProvider(rounds=[
-        [ProviderChunk(                                    # r0: examine projected fen
-            kind="tool_use", tool_use_id="a1",
-            tool_name="analyze", tool_input={"fen": _PROJ_KNIGHT_ON_F4},
-        )],
-        [ProviderChunk(kind="text", text="The knight swings to d5: Nd5.")],  # r1: projected move
-    ])
-    bus = EventBus()
-    queue = await bus.subscribe()
-    coord = AIAnalysisCoordinator(
-        bus, provider, registry=reg, board_provider=(lambda: chess.Board()),
-    )
-
-    await coord.run(game_id="g", mode="commentator", user_message=_TURN_CONTEXT + "\n")
-    events = await _drain_until_done(queue)
-
-    correctives = [e for e in events if e.kind == "ai_corrective"]
-    assert not correctives, [e.payload for e in correctives]
-
-
-@pytest.mark.asyncio
-async def test_prose_move_illegal_everywhere_still_flagged():
-    # No analyze call: Nd5 is illegal on the live start board and examined
-    # nowhere, so the illegal-move corrective fires (guard against the
-    # extra-board change silencing real hallucinations).
-    reg = ToolRegistry()
-    reg.register(
-        ToolSpec(name="analyze", description="search", input_schema={"type": "object"}),
-        _stub_analyze,
-    )
-    provider = _RecordingScriptedProvider(rounds=[
-        [ProviderChunk(kind="text", text="The knight swings to d5: Nd5.")],  # r0: live-illegal
-        [ProviderChunk(kind="text", text="Rewriting.")],                     # r1: corrective round
-    ])
-    bus = EventBus()
-    queue = await bus.subscribe()
-    coord = AIAnalysisCoordinator(
-        bus, provider, registry=reg, board_provider=(lambda: chess.Board()),
-    )
-
-    await coord.run(game_id="g", mode="commentator", user_message=_TURN_CONTEXT + "\n")
-    events = await _drain_until_done(queue)
-
-    correctives = [e for e in events if e.kind == "ai_corrective"]
-    assert any("Nd5" in c.payload.get("illegal_moves", []) for c in correctives)

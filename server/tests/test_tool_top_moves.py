@@ -298,8 +298,8 @@ def _make_one_scoreless_fake(root: Path, name: str, scoreless_uci: str) -> str:
 @pytest.mark.asyncio
 async def test_top_moves_scoreless_candidate_sorts_last_for_black(tmp_path: Path):
     # Regression: a scoreless candidate must rank LAST, not float to
-    # black's top. black sorts ascending (reverse=stm_is_white), where a
-    # numeric sentinel would invert and put the scoreless entry first.
+    # black's top -- it's partitioned out of the STM-POV sort, where a
+    # numeric sentinel would otherwise misplace it.
     board = chess.Board()
     board.push_san("e4")  # black to move
     # a7a5 comes back scoreless; a7a6 and b7b6 score normally.

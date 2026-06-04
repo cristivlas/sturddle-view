@@ -180,14 +180,11 @@ async def test_dedup_material_keys_on_canonical_fen():
 
 
 @pytest.mark.asyncio
-async def test_dedup_survives_intervening_corrective():
-    """If a round has both an illegal-move-in-prose AND a tool_use, the
-    corrective fires *between* rounds. A subsequent identical tool_use
-    must still hit the dedup cache.
-
-    Real-world: model wrote `Ng2` in prose (illegal), validator fired
-    a corrective; in the next round the model emitted the same
-    top_moves call. We observed two dots in the panel -- regression."""
+async def test_dedup_across_prose_separated_rounds():
+    """An identical tool_use in a later round dedup-hits even when an
+    intervening round produced only prose. Real-world: the model emitted
+    the same top_moves call across two rounds -- we want one dispatch and
+    one panel dot, not two."""
     dispatch_count = 0
 
     async def fake_top_moves(payload, *, cancel_token):
@@ -198,13 +195,11 @@ async def test_dedup_survives_intervening_corrective():
     reg = _make_registry({"top_moves": fake_top_moves})
 
     same_input = {"moves": ["Nf3"], "depth": 12}
-    # Round 0: prose with an illegal SAN ("Nh6" white can't reach) + tool_use.
-    # Validator catches Nh6 -> corrective injected for round 1.
-    # Round 1: identical tool_use -- should dedup-hit.
-    # Round 2: terminal text.
+    # Round 0: prose + tool_use. Round 1: identical tool_use -- should
+    # dedup-hit. Round 2: terminal text.
     provider = ScriptedProvider(rounds=[
         [
-            ProviderChunk(kind="text", text="Consider Nh6, then probe."),
+            ProviderChunk(kind="text", text="Consider the knight, then probe."),
             ProviderChunk(
                 kind="tool_use", tool_use_id="tu_1", tool_name="top_moves",
                 tool_input=same_input,
@@ -220,7 +215,7 @@ async def test_dedup_survives_intervening_corrective():
     ])
     bus = EventBus()
     queue = await bus.subscribe()
-    board = chess.Board()  # white to move; Nh6 illegal here
+    board = chess.Board()
     coord = AIAnalysisCoordinator(
         bus, provider, registry=reg, board_provider=lambda: board,
     )
@@ -228,8 +223,6 @@ async def test_dedup_survives_intervening_corrective():
     await coord.run(game_id="g")
     events = await _drain_until_done(queue)
 
-    correctives = [e for e in events if e.kind == "ai_corrective"]
-    assert len(correctives) >= 1, "expected the validator to fire a corrective"
     assert dispatch_count == 1, f"expected 1 dispatch, got {dispatch_count}"
     tool_calls = [e for e in events if e.kind == "ai_tool_call"]
     assert len(tool_calls) == 1

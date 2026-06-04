@@ -429,9 +429,23 @@ def create_app(
             search_cache=ai_search_cache,
         ),
     )
-    # report_line: structured grounding for the narrator's prose. A
-    # reported line's positions are registered as examined, so the prose
-    # validators trust its moves/pieces (no engine -- pure legality replay).
+    # top_moves: the narrator's one-call way to rank its candidate moves
+    # against each other, so it weighs alternatives without probing them
+    # one at a time through recommend_move.
+    ai_registry.register(
+        TOP_MOVES_TOOL_SPEC,
+        make_top_moves_tool(
+            _ai_engine_launcher,
+            bus=app.state.event_bus,
+            board_provider=_ai_board_provider,
+            game_id_provider=_ai_game_id_provider,
+            settings_provider=_ai_settings_provider,
+            search_cache=ai_search_cache,
+        ),
+    )
+    # report_line: structured grounding for the narrator -- pure legality
+    # replay of a model-supplied line (no engine), returning SAN + per-ply
+    # FENs the model can reason from before naming the line in prose.
     ai_registry.register(
         REPORT_LINE_TOOL_SPEC,
         make_report_line_tool(board_provider=_ai_board_provider),

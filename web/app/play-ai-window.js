@@ -53,11 +53,6 @@ const THINKING_OPEN_KEY = STORAGE_KEY.AI_THINKING_OPEN;
 const THINKING_LABEL_ACTIVE = "Thinking";
 const THINKING_LABEL_DONE_PREFIX = "Thought for ";
 
-// Self-correct effect: how long the overruled prose lingers struck-out
-// in place before it collapses into the revision banner.
-const REVISION_STRIKE_MS = 2000;
-const PROSE_OVERRULING_CLASS = "play-ai-prose-overruling";
-
 function readThinkingOpen() {
   try { return localStorage.getItem(THINKING_OPEN_KEY) === "1"; } catch { return false; }
 }
@@ -138,7 +133,7 @@ function buildBody() {
   root._rounds = rounds;
   root._terminal = terminal;
   // Map roundIndex -> {panel, thinking:{details,body}, tools, para,
-  //   hasProse, revision}. Built lazily on first event per round.
+  //   hasProse}. Built lazily on first event per round.
   root._roundPanels = new Map();
   root._currentRound = null;
   // tool_use_id -> tool-call line DOM node, so a failure event can
@@ -150,17 +145,6 @@ function buildBody() {
 function buildRoundPanel() {
   const panel = document.createElement("section");
   panel.className = "play-ai-round";
-  // Optional revision banner (only on rounds triggered by a
-  // validator hit on the previous round). A <details> so clicking
-  // the banner reveals the previous round's redacted prose inline.
-  const revision = document.createElement("details");
-  revision.className = "play-ai-revision";
-  revision.hidden = true;
-  const revisionSummary = document.createElement("summary");
-  revisionSummary.className = "play-ai-revision-summary";
-  const revisionBody = document.createElement("div");
-  revisionBody.className = "play-ai-revision-body";
-  revision.append(revisionSummary, revisionBody);
   // Timeline: Thinking + tool calls share one container so a single
   // CSS left rule connects them visually. Prose is outside the
   // timeline so it isn't crossed by the rule.
@@ -179,10 +163,9 @@ function buildRoundPanel() {
   timeline.append(details, tools);
   const para = document.createElement("p");
   para.className = "play-ai-prose";
-  panel.append(revision, timeline, para);
+  panel.append(timeline, para);
   return {
     panel,
-    revision: { details: revision, summary: revisionSummary, body: revisionBody },
     thinking: { details, summary, body: thinkBody },
     tools, para,
     hasProse: false,
@@ -252,28 +235,6 @@ function ensureRoundPanel(root, roundIndex) {
   return entry;
 }
 
-function renderRevision({ details, summary }, { illegalMoves, illegalContinuations, falseClaims, castleViolations }) {
-  details.hidden = false;
-  summary.textContent = "";  // reset
-  const head = document.createElement("strong");
-  head.textContent = "Revision: ";
-  summary.append(head);
-  const parts = [];
-  if (illegalMoves && illegalMoves.length) {
-    parts.push(`not valid: ${illegalMoves.join(", ")}`);
-  }
-  if (illegalContinuations && illegalContinuations.length) {
-    parts.push(`bad line: ${illegalContinuations.join("; ")}`);
-  }
-  if (falseClaims && falseClaims.length) {
-    parts.push(falseClaims.map((c) => `no ${c}`).join(", "));
-  }
-  if (castleViolations && castleViolations.length) {
-    parts.push("castling not legal");
-  }
-  summary.append(document.createTextNode(parts.join("; ")));
-}
-
 function formatToolArgs(input) {
   // Compact one-line summary of the args. The full payload lives in
   // the transcript; the panel just needs a glanceable label.
@@ -310,17 +271,6 @@ function friendlyToolLabel(name, input) {
   if (verb && move) return `${verb} ${move}`;
   return TOOL_FRIENDLY_LABELS[name] || name;
 }
-
-// Tuck a round's overruled prose into its own revision banner body so
-// clicking the banner reveals the redacted text inline. Idempotent --
-// skips when the prose is already inside the banner.
-function _moveProseIntoRevision(entry) {
-  const para = entry.para;
-  if (!para || !para.isConnected) return;
-  if (para.parentNode === entry.revision.body) return;
-  entry.revision.body.append(para);
-}
-
 
 let userCloseHandler = null;
 let reanalyzeHandler = null;
@@ -505,14 +455,22 @@ export function appendAiToolCall({
 }
 
 
+// Errors that mean "the tool ran, the loop is steering the model" rather
+// than "the tool failed" -- struck through, but not marked red. Keyed by
+// error code so the rule is the same for every tool that returns one.
+const SUPERSEDED_ERRORS = new Set(["recommendation_rejected", "compare_first"]);
+
 export function markAiToolCallFailed({ toolUseId, error, detail }) {
   if (!inst.body || !toolUseId) return;
   const line = inst.body._toolCallNodes.get(toolUseId);
   if (!line) return;
+  const cls = SUPERSEDED_ERRORS.has(error)
+    ? "play-ai-tool-call-superseded"
+    : "play-ai-tool-call-failed";
   // Idempotent: replay-on-reconnect can re-dispatch this event for the same
   // row; appending the suffix/gear twice would stack them.
-  if (line.classList.contains("play-ai-tool-call-failed")) return;
-  line.classList.add("play-ai-tool-call-failed");
+  if (line.classList.contains(cls)) return;
+  line.classList.add(cls);
   const suffix = detail ? `${error}: ${detail}` : error;
   const pre = line.querySelector(".play-ai-tool-details-body");
   if (pre) {
@@ -522,34 +480,6 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
     for (const a of errorActionsFor(error)) {
       pre.append(" ", buildToastActionButton(a));
     }
-  }
-}
-
-export function noteAiRevision({ round, illegalMoves, illegalContinuations, falseClaims, castleViolations }) {
-  if (!inst.body) return;
-  // The correction at `round` overrules `round - 1`. Host the revision
-  // banner on the overruled round's OWN panel and tuck its prose into
-  // that banner -- so it always shows, even when `round` never renders
-  // a panel of its own (turn ends/caps right after the correction).
-  if (round <= 0) return;
-  const prev = inst.body._roundPanels.get(round - 1);
-  if (!prev) return;
-  const payload = { illegalMoves, illegalContinuations, falseClaims, castleViolations };
-  // Self-correct effect: strike the prose in place for a beat, THEN
-  // reveal the banner and collapse the prose into it -- so the user
-  // sees the model scratch its claim before it's tucked away. The
-  // timer is this effect's own cadence (not a sync wait).
-  const para = prev.para;
-  if (para && para.isConnected && para.parentNode !== prev.revision.body) {
-    para.classList.add(PROSE_OVERRULING_CLASS);
-    setTimeout(() => {
-      para.classList.remove(PROSE_OVERRULING_CLASS);
-      renderRevision(prev.revision, payload);
-      _moveProseIntoRevision(prev);
-    }, REVISION_STRIKE_MS);
-  } else {
-    renderRevision(prev.revision, payload);
-    _moveProseIntoRevision(prev);
   }
 }
 
@@ -642,11 +572,7 @@ export function markAiDone({
     const multiRound = inst.body._roundPanels.size > 1;
     if (multiRound && naturalCompletion) {
       const last = inst.body._roundPanels.get(inst.body._currentRound);
-      // Skip when the last round's prose was overruled and tucked into
-      // its (collapsed) Revision banner -- the border would land on
-      // text the user can't see.
-      const overruled = last && last.para.parentNode === last.revision.body;
-      if (last && !overruled) last.para.classList.add("play-ai-prose-final");
+      if (last) last.para.classList.add("play-ai-prose-final");
     }
     if (error) {
       const block = document.createElement("div");
