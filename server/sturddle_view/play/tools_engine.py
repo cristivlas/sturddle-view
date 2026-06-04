@@ -936,12 +936,10 @@ REPORT_LINE_TOOL_SPEC = ToolSpec(
 
 
 def make_report_line_tool(board_provider: BoardProvider) -> AnalyzeTool:
-    """Build the `report_line` async tool. Replays a model-supplied move
-    sequence from the live board (or `from_fen`), validating each move is
-    legal in order. On success returns the rendered SAN, the FEN after each
-    ply (`fens`, including the start), and the final FEN -- the coordinator
-    registers those positions as examined so the prose validators trust the
-    line's moves and pieces. No engine: pure legality replay."""
+    """Build the `report_line` async tool. Pure legality replay (no engine)
+    of a model-supplied move sequence from the live board (or `from_fen`),
+    validating each move in order. Returns the rendered SAN, per-ply FENs
+    (`fens`, including the start), and the final FEN."""
     async def report_line(input_: dict, *, cancel_token: CancelToken) -> dict:
         from_fen = input_.get("from_fen")
         if from_fen is not None:

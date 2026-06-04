@@ -5,16 +5,16 @@ fresh decisions that have not yet earned a place in the spec. Spec
 stays stable; this doc churns. When a decision proves load-bearing
 across phases, lift it into the spec and remove it from here.
 
-Shipped: walking skeleton, agent loop with round-end validators
-(illegal SAN / false piece claims / castle-word) and corrective
-rounds, inline tool-call recovery (call-syntax and fenced JSON),
-single-slot dedup, Anthropic + Ollama providers with extended
-thinking, Harmony marker stripping, tool registry (`analyze`,
-`validate_move`, `piece_at`, `top_moves`, `recommend_move` with
-centipawn dominance check) with lazy tool cards, live `play` path
-end-to-end, dockable AI panel with round-interleaved timeline and
-revision banner, Settings UI with OS-keyring API-key storage and
-per-provider model memory. See `git log main..HEAD` for detail.
+Shipped: walking skeleton, agent loop, inline tool-call recovery
+(call-syntax and fenced JSON), single-slot dedup, Anthropic + Ollama
+providers with extended thinking, Harmony marker stripping, tool
+registry (`analyze`, `validate_move`, `piece_at`, `top_moves`,
+`recommend_move` with centipawn dominance check) with lazy tool cards,
+live `play` path end-to-end, dockable AI panel with round-interleaved
+timeline, Settings UI with OS-keyring API-key storage and per-provider
+model memory. The round-end prose validators + corrective rounds and
+the revision banner were removed in favor of prompt + tool grounding
+(see `git log main..HEAD`).
 Remaining big items: token caps, path 3 (post-game PGN annotations),
 path 2 (live `view` mode) -- see §Open work. Past decisions that
 proved load-bearing have been lifted into `ai-analysis-spec.md`.

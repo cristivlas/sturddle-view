@@ -443,9 +443,9 @@ def create_app(
             search_cache=ai_search_cache,
         ),
     )
-    # report_line: structured grounding for the narrator's prose. A
-    # reported line's positions are registered as examined, so the prose
-    # validators trust its moves/pieces (no engine -- pure legality replay).
+    # report_line: structured grounding for the narrator -- pure legality
+    # replay of a model-supplied line (no engine), returning SAN + per-ply
+    # FENs the model can reason from before naming the line in prose.
     ai_registry.register(
         REPORT_LINE_TOOL_SPEC,
         make_report_line_tool(board_provider=_ai_board_provider),
