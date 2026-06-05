@@ -255,7 +255,7 @@ def make_delegate_tool(
         if not verdict:
             return {
                 "error": "no_verdict",
-                "detail": "no conclusion. Try increasing Verifier rounds:",
+                "detail": "no conclusion. Try increasing Max subagent rounds",
             }
         return {"move_uci": move.uci(), "verdict": verdict}
 

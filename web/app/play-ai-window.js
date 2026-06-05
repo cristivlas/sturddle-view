@@ -705,7 +705,7 @@ export function markAiDone({
     // any other terminal marker below.
     if (verifierRoundCap) {
       slot.append(_roundCapNote(
-        "A verification step stopped early at its round cap. Raise \"Verifier rounds\" for fuller checks.",
+        "A verification step stopped early at its round cap. Raise \"Max subagent rounds\" for fuller checks",
       ));
     }
     if (roundCap) {
