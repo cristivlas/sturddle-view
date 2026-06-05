@@ -258,12 +258,13 @@ _SQUARE_PIECE_RE = re.compile(
     rf"\b{_COLOR_OPT}([a-h][1-8])\s+({_PIECE_ALT})\b",
     re.IGNORECASE,
 )
-# "<piece> to <square>" -- the prose form of a move ("bishop to g6", "knight
-# goes to f5"). An optional movement verb sits between piece and "to"; the
-# verb set is closed so "bishop tied to g6's defense" doesn't match.
+# Optional movement verb between piece and "to" in a "<piece> to <square>"
+# move phrase. Closed set so "tied to"/"according to" don't match;
+# (?:re)?(?:direct|deploy)\w* covers direct/redirect/redeployment/etc.
 _MOVE_VERB = (
     r"(?:goes|moves|moving|jumps|hops|swings|lifts|drops|retreats|"
-    r"advances|heads|comes|returns|relocates|travels|slides)\s+"
+    r"advances|heads|comes|returns|relocates|travels|slides|"
+    r"(?:re)?(?:direct|deploy)\w*)\s+"
 )
 _PIECE_TO_SQUARE_RE = re.compile(
     rf"\b{_COLOR_OPT}({_PIECE_ALT})\s+(?:{_MOVE_VERB})?to\s+([a-h][1-8])\b",

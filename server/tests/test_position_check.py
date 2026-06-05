@@ -8,6 +8,7 @@ a legitimate past/hypothetical reference is the model's to explain.
 from __future__ import annotations
 
 import chess
+import pytest
 
 from sturddle_view.llm.position_check import (
     describe_square,
@@ -149,6 +150,35 @@ def test_non_move_to_phrase_not_matched():
     board = _board(_MIDGAME_FEN)
     assert find_illegal_piece_moves("the bishop tied to the defense", board) == []
     assert find_illegal_piece_moves("the pawn pinned to the king", board) == []
+
+
+@pytest.mark.parametrize("verb", [
+    "redirect", "redirects", "redirecting", "redirection",
+    "direct", "directs", "directing",
+    "deploy", "deploys", "deploying", "deployment",
+    "redeploy", "redeploys", "redeployment",
+])
+def test_redirect_deploy_verbs_flagged(verb):
+    # [re]direct / [re]deploy + any suffix reads as a move phrase. a1 is
+    # unreachable by any bishop here, so the move is flagged.
+    board = _board(_MIDGAME_FEN)
+    assert find_illegal_piece_moves(f"bishop {verb} to a1", board) == [
+        "bishop to a1"
+    ]
+
+
+def test_redirect_deploy_to_reachable_square_not_flagged():
+    # The f5 bishop can reach g6 -> a redirect plan that is legal, not flagged.
+    board = _board(_MIDGAME_FEN)
+    assert find_illegal_piece_moves("bishop redeployment to g6", board) == []
+
+
+def test_redirect_deploy_without_square_not_matched():
+    # The \w* verb still needs a bare square after "to"; "to defend" / "to the
+    # kingside" are not move phrases and must not match.
+    board = _board(_MIDGAME_FEN)
+    assert find_illegal_piece_moves("bishop directed to defend", board) == []
+    assert find_illegal_piece_moves("redirection of play to the kingside", board) == []
 
 
 # --- find_illegal_continuations -------------------------------------------
