@@ -153,19 +153,65 @@ wa-select::part(listbox) {
   display: none;
 }
 
-/* Self-correction line under the prose when a reference didn't match the
-   board. Indented past the timeline rule (left: 15px) so it sits clear
-   of the spine rather than painting over it. */
-.play-ai-position-note {
-  margin: 4px 12px 0 20px;
-  font-size: 0.92em;
-  font-style: italic;
+/* Revision: <details> that folds away prose the AI corrected. The summary
+   carries the model's own self-correction line; the body holds the struck
+   flawed prose. Neutral (not warning) accent -- a self-correction, not an
+   error. margin-left aligns with the timeline spine (15px). */
+.play-ai-revision {
+  margin: 4px 12px 6px 15px;
+  padding: 4px 8px;
+  border: none;
+  border-left: 3px solid var(--muted, #888);
+  border-radius: 0;
+  background: var(--play-ai-warning-bg);
+  font-size: 0.9em;
+}
+.play-ai-revision[hidden] { display: none; }
+.play-ai-revision[open] { padding: 4px 8px; }
+.play-ai-revision[open] > .play-ai-revision-summary {
+  margin-inline: 0;
+  border-radius: 0;
+}
+/* Mirrors the proven .play-ai-thinking disclosure exactly (same marker
+   override + ::before triangle); only color/italic differ. native.css
+   summary defaults (space-between) are overridden by flex-start. */
+.play-ai-revision-summary {
+  cursor: pointer;
+  user-select: none;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
   color: var(--muted, #888);
+  font-style: italic;
 }
-.play-ai-position-note[hidden] {
-  display: none;
+.play-ai-revision-summary::-webkit-details-marker { display: none; }
+.play-ai-revision-summary::marker { content: ""; }
+.play-ai-revision-summary::after { display: none; mask: none; background: none; }
+.play-ai-revision-summary::before {
+  content: "\25B6";
+  flex: 0 0 auto;
+  line-height: 1;
+  /* The summary is italic; without resetting it the triangle glyph is
+     skewed, reading as a tilted ~45deg arrow. */
+  font-style: normal;
+  transition: transform 120ms ease;
 }
-/* Flagged tokens crossed out in the prose where the AI corrects itself. */
+.play-ai-revision[open] > .play-ai-revision-summary::before {
+  transform: rotate(90deg);
+}
+.play-ai-revision-body { margin-top: 4px; }
+/* The folded prose sits muted + struck inside the revision body. */
+.play-ai-revision-body > .play-ai-prose {
+  color: var(--muted, #888);
+  margin: 0;
+  border: none;
+  background: none;
+}
+/* Flagged tokens crossed out where the AI corrects itself. */
 .play-ai-prose-struck {
   text-decoration: line-through;
   opacity: 0.6;

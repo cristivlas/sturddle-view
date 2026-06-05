@@ -132,13 +132,16 @@ function buildBody() {
   root._scroll = scroll;
   root._rounds = rounds;
   root._terminal = terminal;
-  // Map roundIndex -> {panel, thinking:{details,body}, tools, para, note,
-  //   hasProse}. Built lazily on first event per round.
+  // Map roundIndex -> {panel, thinking:{details,body}, tools, para,
+  //   revision, hasProse}. Built lazily on first event per round.
   root._roundPanels = new Map();
   root._currentRound = null;
   // tool_use_id -> tool-call line DOM node, so a failure event can
   // mark the exact row by id (not by tool name or position).
   root._toolCallNodes = new Map();
+  // roundIndex -> {entry, fallback}: a revision awaiting the next round's
+  // opening line as its summary (the model's own self-correction voice).
+  root._pendingRevisions = new Map();
   return root;
 }
 
@@ -163,17 +166,23 @@ function buildRoundPanel() {
   timeline.append(details, tools);
   const para = document.createElement("p");
   para.className = "play-ai-prose";
-  // Position note: a muted line when prose references something not on the
-  // cursor board. Hidden until a hit; no strike-out (the prose may be a
-  // legitimate past/hypothetical reference the model was asked to clarify).
-  const note = document.createElement("p");
-  note.className = "play-ai-position-note";
-  note.hidden = true;
-  panel.append(timeline, para, note);
+  // Revision: a collapsible that folds away prose the AI corrected. The
+  // summary carries the model's own self-correction line (backfilled from
+  // the next round); the body holds the struck-through flawed prose.
+  const revision = document.createElement("details");
+  revision.className = "play-ai-revision";
+  revision.hidden = true;
+  const revisionSummary = document.createElement("summary");
+  revisionSummary.className = "play-ai-revision-summary";
+  const revisionBody = document.createElement("div");
+  revisionBody.className = "play-ai-revision-body";
+  revision.append(revisionSummary, revisionBody);
+  panel.append(timeline, para, revision);
   return {
     panel,
     thinking: { details, summary, body: thinkBody },
-    tools, para, note,
+    tools, para,
+    revision: { details: revision, summary: revisionSummary, body: revisionBody },
     hasProse: false,
     hasThinking: false,
     thinkingStartedAt: 0,
@@ -367,6 +376,7 @@ export function resetAi() {
   inst.body._terminal.textContent = "";
   inst.body._roundPanels.clear();
   inst.body._toolCallNodes.clear();
+  inst.body._pendingRevisions.clear();
   inst.body._currentRound = null;
   setAiStatus("waiting");
 }
@@ -489,9 +499,25 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
   }
 }
 
-function positionNoteText(items) {
-  if (!items.length) return "";
-  return `Wait -- ${items.join(", ")} isn't right for this position. Let me reconsider.`;
+// Fallback summary when the next round produces no usable opening line:
+// the flagged items, stated plainly (no canned editorial sentence).
+function revisionFallbackText(items) {
+  if (!items.length) return "Reconsidering.";
+  return `Set aside: ${items.join(", ")}.`;
+}
+
+// First sentence (or clause) of the next round's prose, used as the
+// revision summary -- the model's own voice. Trimmed to a sane length so a
+// runaway opener doesn't bloat the collapsed summary.
+const REVISION_SUMMARY_MAX = 140;
+function leadSentence(text) {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  const stop = trimmed.search(/[.!?](\s|$)/);
+  const lead = stop >= 0 ? trimmed.slice(0, stop + 1) : trimmed;
+  return lead.length > REVISION_SUMMARY_MAX
+    ? lead.slice(0, REVISION_SUMMARY_MAX).trimEnd() + "..."
+    : lead;
 }
 
 function escapeRegExp(s) {
@@ -522,13 +548,31 @@ function strikeProseItems(para, items) {
 export function noteAiPosition({ round, illegalMoves, falseClaims, illegalContinuations }) {
   if (!inst.body) return;
   const entry = inst.body._roundPanels.get(round);
-  if (!entry || !entry.note) return;
+  if (!entry || !entry.revision) return;
   const items = [...illegalMoves, ...illegalContinuations, ...falseClaims];
-  const text = positionNoteText(items);
-  if (!text) return;
+  if (!items.length) return;
+  // Strike the flagged tokens, then tuck the flawed prose into the revision
+  // body so the clean (next-round) prose reads on its own. Summary starts as
+  // the fallback; the next round's opening line backfills it if it lands.
   strikeProseItems(entry.para, items);
-  entry.note.textContent = text;
-  entry.note.hidden = false;
+  const fallback = revisionFallbackText(items);
+  entry.revision.summary.textContent = fallback;
+  entry.revision.body.append(entry.para);
+  entry.revision.details.hidden = false;
+  inst.body._pendingRevisions.set(round, { entry, fallback });
+}
+
+// Backfill the prior round's revision summary with this round's opening line
+// (the model's own self-correction voice). Called on each delta: shows the
+// partial lead live, and stops updating once a full sentence has landed.
+function backfillPendingRevision(root, roundIndex, text) {
+  const pending = root._pendingRevisions.get(roundIndex - 1);
+  if (!pending) return;
+  const lead = leadSentence(text);
+  if (lead) pending.entry.revision.summary.textContent = lead;
+  // Finalize only when a sentence terminator is present -- before that the
+  // lead is still growing and the next delta should keep refining it.
+  if (/[.!?]/.test(text)) root._pendingRevisions.delete(roundIndex - 1);
 }
 
 export function setAiStatus(state) {
@@ -560,6 +604,10 @@ export function appendAiDelta(text, roundIndex = 0, thinkingMs = null) {
     if (!entry.hasProse) freezeThinkingLabel(entry, thinkingMs);
     entry.hasProse = true;
     entry.para.append(document.createTextNode(out));
+    // This round's prose answers any prior-round revision; its opening line
+    // becomes that revision's summary. Re-read accumulated text until a full
+    // sentence lands (deltas are token-sized, not sentence-sized).
+    backfillPendingRevision(inst.body, roundIndex, entry.para.textContent);
   });
 }
 
@@ -620,7 +668,10 @@ export function markAiDone({
     const multiRound = inst.body._roundPanels.size > 1;
     if (multiRound && naturalCompletion) {
       const last = inst.body._roundPanels.get(inst.body._currentRound);
-      if (last) last.para.classList.add("play-ai-prose-final");
+      // Skip when the last round's prose was folded into its revision -- the
+      // border would land on text tucked inside the collapsed disclosure.
+      const folded = last && last.para.parentNode === last.revision?.body;
+      if (last && !folded) last.para.classList.add("play-ai-prose-final");
     }
     if (error) {
       const block = document.createElement("div");
