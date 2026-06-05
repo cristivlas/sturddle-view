@@ -131,35 +131,6 @@ def ollama_native_tool_call_to_provider_chunk(
     )
 
 
-def openai_tool_call_to_provider_chunk(tool_call: dict) -> ProviderChunk:
-    """Accumulated OpenAI tool_call (from streamed deltas) -> Anthropic
-    tool_use ProviderChunk.
-
-    Raises `MalformedToolArgumentsError` on bad JSON rather than silently
-    coercing to `{}` -- a model that emits broken JSON is a real problem,
-    and silently passing `{}` to the tool just hides it. The transcript
-    will have already captured the raw byte trail.
-    """
-    fn = tool_call.get("function", {}) or {}
-    tool_name = fn.get("name", "") or ""
-    args_raw = fn.get("arguments", "")
-    if args_raw:
-        try:
-            args = json.loads(args_raw)
-        except json.JSONDecodeError as exc:
-            raise MalformedToolArgumentsError(
-                tool_name=tool_name, raw_arguments=args_raw, parse_error=str(exc),
-            ) from exc
-    else:
-        args = {}
-    return ProviderChunk(
-        kind="tool_use",
-        tool_use_id=tool_call.get("id", "") or "",
-        tool_name=tool_name,
-        tool_input=args,
-    )
-
-
 # ----- Provider -----
 
 
