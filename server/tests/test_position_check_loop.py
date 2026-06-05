@@ -81,7 +81,9 @@ async def test_false_claim_emits_note_and_injects_corrective():
 
     notes = [e for e in events if e.kind == EVT_AI_POSITION_NOTE]
     assert len(notes) == 1
-    assert notes[0].payload["false_claims"] == ["bishop on g6"]
+    # The note carries the exact prose span (with article) for the client to
+    # strike -- prose was "The bishop on g6 dominates."
+    assert notes[0].payload["surfaces"] == ["The bishop on g6"]
     # The corrective is injected, forcing a second round.
     assert provider.stream_calls == 2
     injected = _last_user_texts(provider)
@@ -114,8 +116,8 @@ async def test_repeat_of_reworded_claim_escalates():
 
 @pytest.mark.asyncio
 async def test_prose_move_to_unreachable_square_flagged():
-    # "bishop to a1" is an impossible move; it surfaces in the same
-    # illegal_moves bucket as SAN moves and injects a corrective.
+    # "bishop to a1" is an impossible move; the note carries the exact prose
+    # span (including the verb) for the client to strike.
     board = chess.Board(_FEN)
     provider = ScriptedProvider(rounds=[
         [ProviderChunk(kind="text", text="The bishop goes to a1 winning.")],
@@ -129,7 +131,7 @@ async def test_prose_move_to_unreachable_square_flagged():
 
     notes = [e for e in events if e.kind == EVT_AI_POSITION_NOTE]
     assert len(notes) == 1
-    assert notes[0].payload["illegal_moves"] == ["bishop to a1"]
+    assert notes[0].payload["surfaces"] == ["The bishop goes to a1"]
     assert provider.stream_calls == 2
 
 

@@ -55,10 +55,10 @@ from ..llm import (
 from ..llm.cancel import CancelToken
 from ..llm.position_check import (
     describe_square,
-    find_illegal_continuations,
-    find_illegal_moves,
-    find_illegal_piece_moves,
     iter_false_claim_squares,
+    iter_illegal_continuations,
+    iter_illegal_moves,
+    iter_illegal_piece_moves,
 )
 from .tools_engine import (
     ANALYZE_TOOL_NAME,
@@ -583,22 +583,41 @@ class _LoopResult:
 
 @dataclass(slots=True)
 class _PositionCheck:
-    """One round's prose-check result. `claim_pairs` are (label, square) for
-    false piece claims (square lets the corrective cite the real content);
-    board+text feed the corrective. Empty lists when the prose is clean."""
+    """One round's prose-check result. Each flagged item carries both its
+    exact prose `surface` (for the UI to strike) and a normalized `label`
+    (for facts/keys); claims also carry their `square`. Empty when clean."""
     board: chess.Board | None
     text: str
-    illegal_moves: list[str]
-    claim_pairs: list[tuple[str, str]]
-    illegal_continuations: list[str]
+    move_pairs: list[tuple[str, str]]
+    claim_triples: list[tuple[str, str, str]]
+    line_pairs: list[tuple[str, str]]
 
     @property
     def hit(self) -> bool:
-        return bool(self.illegal_moves or self.claim_pairs or self.illegal_continuations)
+        return bool(self.move_pairs or self.claim_triples or self.line_pairs)
 
     @property
-    def claims(self) -> list[str]:
-        return [label for label, _square in self.claim_pairs]
+    def move_labels(self) -> list[str]:
+        return [label for _surface, label in self.move_pairs]
+
+    @property
+    def claim_labels(self) -> list[str]:
+        return [label for _surface, label, _square in self.claim_triples]
+
+    @property
+    def line_labels(self) -> list[str]:
+        return [label for _surface, label in self.line_pairs]
+
+    @property
+    def surfaces(self) -> list[str]:
+        # Exact prose spans for the client to strike, longest first so a
+        # line isn't half-matched by a contained move token.
+        out = (
+            [s for s, _ in self.move_pairs]
+            + [s for s, _, _ in self.claim_triples]
+            + [s for s, _ in self.line_pairs]
+        )
+        return sorted(set(out), key=len, reverse=True)
 
 
 class AIAnalysisCoordinator:
@@ -925,16 +944,15 @@ class AIAnalysisCoordinator:
             if pc.hit:
                 await self._emit_position_note(
                     emit=emit, game_id=game_id, round_index=round_index,
-                    illegal_moves=pc.illegal_moves, false_claims=pc.claims,
-                    illegal_continuations=pc.illegal_continuations,
+                    surfaces=pc.surfaces,
                 )
                 # Repeat key is the square (claims) or the token (moves/lines),
                 # so "white knight on d3" and "knight on d3" count as the same
                 # error and a reworded repeat still escalates.
                 hit_keys = (
-                    {sq for _label, sq in pc.claim_pairs}
-                    | {m.lower() for m in pc.illegal_moves}
-                    | {ln.lower() for ln in pc.illegal_continuations}
+                    {sq for _surface, _label, sq in pc.claim_triples}
+                    | {m.lower() for m in pc.move_labels}
+                    | {ln.lower() for ln in pc.line_labels}
                 )
                 repeat = bool(hit_keys & corrected_items)
                 corrected_items |= hit_keys
@@ -1152,9 +1170,8 @@ class AIAnalysisCoordinator:
     def _position_check(
         self, chunks: list[ProviderChunk],
     ) -> _PositionCheck:
-        """Run the three single-board checks on a round's assembled prose.
-        False claims are returned as (label, square) pairs (walked once here)
-        so the corrective can cite the square's real content without re-walking.
+        """Run the single-board checks on a round's assembled prose, capturing
+        each flag's prose surface (for striking) plus its normalized label.
         Empty when no board_provider, no live board, or no prose."""
         board = self._board_provider() if self._board_provider else None
         if board is None:
@@ -1166,13 +1183,16 @@ class AIAnalysisCoordinator:
             return _PositionCheck(board, "", [], [], [])
         # SAN moves ('Bxe4') and prose moves ('bishop to a1') are the same
         # kind of error -- an impossible move -- so they share one bucket.
-        moves = find_illegal_moves(text, board) + find_illegal_piece_moves(text, board)
+        move_pairs = (
+            list(iter_illegal_moves(text, board))
+            + list(iter_illegal_piece_moves(text, board))
+        )
         return _PositionCheck(
             board,
             text,
-            moves,
+            move_pairs,
             list(iter_false_claim_squares(text, board)),
-            find_illegal_continuations(text, board),
+            list(iter_illegal_continuations(text, board)),
         )
 
     async def _emit_position_note(
@@ -1181,25 +1201,16 @@ class AIAnalysisCoordinator:
         emit: EmitSink,
         game_id: str | None,
         round_index: int,
-        illegal_moves: list[str],
-        false_claims: list[str],
-        illegal_continuations: list[str],
+        surfaces: list[str],
     ) -> None:
-        """Surface a position-check hit to the UI (human-facing note)."""
-        log.info(
-            "position check round %d: moves=%s claims=%s lines=%s",
-            round_index, illegal_moves, false_claims, illegal_continuations,
-        )
+        """Surface a position-check hit to the UI. `surfaces` are the exact
+        prose spans the client strikes in the round's folded prose."""
+        log.info("position check round %d: surfaces=%s", round_index, surfaces)
         await emit(
             Event(
                 kind=EVT_AI_POSITION_NOTE,
                 game_id=game_id,
-                payload={
-                    "round": round_index,
-                    "illegal_moves": illegal_moves,
-                    "false_claims": false_claims,
-                    "illegal_continuations": illegal_continuations,
-                },
+                payload={"round": round_index, "surfaces": surfaces},
             )
         )
 
@@ -1210,9 +1221,10 @@ class AIAnalysisCoordinator:
         `_position_check`), and for illegal moves / lines that they aren't
         legal here. `repeat` escalates when the model re-asserts an item."""
         facts: list[str] = [
-            describe_square(square, pc.board) for _label, square in pc.claim_pairs
+            describe_square(square, pc.board)
+            for _surface, _label, square in pc.claim_triples
         ]
-        for move in pc.illegal_moves + pc.illegal_continuations:
+        for move in pc.move_labels + pc.line_labels:
             facts.append(_ILLEGAL_MOVE_FACT.format(move=move))
         template = (
             _POSITION_CHECK_REPEAT_TEMPLATE if repeat else _POSITION_CHECK_TEMPLATE

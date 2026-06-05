@@ -104,10 +104,22 @@ def test_wrong_color_claim_flagged():
     ]
 
 
-def test_iter_false_claim_squares_pairs_label_with_square():
+def test_iter_false_claim_squares_yields_surface_label_square():
+    # Surface keeps the exact prose ("the rook on c1"); label is normalized.
     board = _board(_MIDGAME_FEN)
-    pairs = list(iter_false_claim_squares("the bishop on g6 and rook on c1", board))
-    assert pairs == [("bishop on g6", "g6"), ("rook on c1", "c1")]
+    rows = list(iter_false_claim_squares("the bishop on g6 and rook on c1", board))
+    assert rows == [
+        ("the bishop on g6", "bishop on g6", "g6"),
+        ("rook on c1", "rook on c1", "c1"),
+    ]
+
+
+def test_false_claim_surface_keeps_possessive():
+    # The strike target must be the exact prose ("White's knight on b1"), not
+    # the normalized label ("white knight on b1") -- they differ.
+    board = _board("r2qr1k1/5ppp/p4n2/1pbP1bB1/8/2Nn1B2/PP1Q1PPP/3R1RK1 w - - 0 1")
+    rows = list(iter_false_claim_squares("White's knight on b1 is passive", board))
+    assert rows == [("White's knight on b1", "white knight on b1", "b1")]
 
 
 # --- find_illegal_piece_moves ('<piece> to <square>') ---------------------

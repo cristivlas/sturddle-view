@@ -163,11 +163,13 @@ wa-select::part(listbox) {
   border: none;
   border-left: 3px solid var(--muted, #888);
   border-radius: 0;
-  background: var(--play-ai-warning-bg);
+  background: transparent;
   font-size: 0.9em;
 }
 .play-ai-revision[hidden] { display: none; }
-.play-ai-revision[open] { padding: 4px 8px; }
+/* Extra bottom padding only when expanded, so the folded draft has a
+   little breathing room below it. */
+.play-ai-revision[open] { padding: 4px 8px 6px; }
 .play-ai-revision[open] > .play-ai-revision-summary {
   margin-inline: 0;
   border-radius: 0;
@@ -185,7 +187,7 @@ wa-select::part(listbox) {
   align-items: center;
   justify-content: flex-start;
   gap: 8px;
-  color: var(--muted, #888);
+  color: var(--accent-line);
   font-style: italic;
 }
 .play-ai-revision-summary::-webkit-details-marker { display: none; }
@@ -204,17 +206,25 @@ wa-select::part(listbox) {
   transform: rotate(90deg);
 }
 .play-ai-revision-body { margin-top: 4px; }
-/* The folded prose sits muted + struck inside the revision body. */
+/* Folded prose sits on a warm off-white "marked-up draft" panel so the
+   black text reads clearly against the dark UI; only the flagged tokens
+   are struck. */
 .play-ai-revision-body > .play-ai-prose {
-  color: var(--muted, #888);
+  color: #000;
   margin: 0;
+  padding: 6px 8px;
   border: none;
-  background: none;
+  border-radius: 3px;
+  background: #e8e6e0;
 }
-/* Flagged tokens crossed out where the AI corrects itself. */
-.play-ai-prose-struck {
+/* Flagged tokens crossed out where the AI corrects itself. Scoped under the
+   prose so its (0,2,0) specificity beats the body's color: #000; the token
+   text is accent-colored so the marked-through claim reads as deliberate. */
+.play-ai-prose .play-ai-prose-struck {
   text-decoration: line-through;
-  opacity: 0.6;
+  text-decoration-color: #000;
+  text-decoration-thickness: 1px;
+  color: #c0392b;
 }
 
 /* AI analysis status line: spinner + short text. Sits above the prose

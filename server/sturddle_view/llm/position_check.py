@@ -113,14 +113,12 @@ def _token_is_illegal(bare: str, board: chess.Board) -> bool:
     return "x" in bare and not board.is_capture(move)
 
 
-def find_illegal_moves(text: str, board: chess.Board) -> list[str]:
-    """Distinct SAN tokens illegal from their own point of view. A leading
-    "..." validates from Black's POV ("...Nd3" is Black's reply, legal even
-    when White is to move); otherwise the side to move. A token passes when
-    it is legal there, names a piece already on its square (label carve-out,
-    e.g. 'Qd1'), or is a phantom-capture-free parse."""
+def iter_illegal_moves(text: str, board: chess.Board):
+    """Yield (surface, label) for each illegal SAN token. `surface` is the
+    exact prose span (with "..." and glyphs) to strike; `label` the bare token.
+    A leading "..." validates from Black's POV ("...Nd3"), else side to move.
+    Legal moves, square-labels ('Qd1'), and phantom-capture-free parses pass."""
     seen: set[str] = set()
-    illegal: list[str] = []
     for match in _SAN_TOKEN_RE.finditer(text):
         prefix, token = match.group(1), match.group(2)
         if token in seen:
@@ -135,8 +133,12 @@ def find_illegal_moves(text: str, board: chess.Board) -> list[str]:
         if _is_san_label(bare, pov_board):
             continue
         if _token_is_illegal(bare, pov_board):
-            illegal.append(token)
-    return illegal
+            yield match.group(0), bare
+
+
+def find_illegal_moves(text: str, board: chess.Board) -> list[str]:
+    """Bare illegal-move labels (see iter_illegal_moves for the surface form)."""
+    return [label for _surface, label in iter_illegal_moves(text, board)]
 
 
 # A single move inside a continuation. Adds bare pawn pushes (e4): inside a
@@ -184,15 +186,12 @@ def _line_plays(moves, board: chess.Board) -> bool:
     return True
 
 
-def find_illegal_continuations(text: str, board: chess.Board) -> list[str]:
-    """Continuation runs (2+ moves) whose first move is legal on `board` but
-    that do not replay cleanly in order from it. A floating line we cannot
-    anchor (first move illegal here) is left alone -- it may be a quote from
-    elsewhere, which the clarify question covers. White-only numbered
-    shorthand is skipped: it omits Black's plies, so it is not a sequence to
-    replay from here."""
+def iter_illegal_continuations(text: str, board: chess.Board):
+    """Yield (surface, label) for each illegal continuation run (2+ moves):
+    first move legal on `board` but the run does not replay cleanly in order.
+    `surface` is the matched run; `label` the normalized "Nf3 Nc6" key. A line
+    we cannot anchor, or white-only numbered shorthand, is left alone."""
     seen: set[str] = set()
-    illegal: list[str] = []
     for match in _CONTINUATION_RE.finditer(text):
         run = match.group(0)
         pairs = _CONT_PAIR_RE.findall(run)
@@ -204,8 +203,12 @@ def find_illegal_continuations(text: str, board: chess.Board) -> list[str]:
             continue
         seen.add(key)
         if _move_legal(moves[0], board) and not _line_plays(moves, board):
-            illegal.append(key)
-    return illegal
+            yield run.strip(), key
+
+
+def find_illegal_continuations(text: str, board: chess.Board) -> list[str]:
+    """Normalized illegal-line keys (see iter_illegal_continuations)."""
+    return [label for _surface, label in iter_illegal_continuations(text, board)]
 
 
 def projected_boards(text: str, board: chess.Board) -> list[chess.Board]:
@@ -269,15 +272,16 @@ _PIECE_TO_SQUARE_RE = re.compile(
 
 
 def _iter_piece_claims(text: str):
-    """Yield (color_word, piece_word, square_name) for every claim matched
-    by either phrasing. Positional groups expose (color, piece-or-square,
+    """Yield (surface, color_word, piece_word, square_name) for every claim
+    matched by either phrasing. `surface` is the exact prose span (for the UI
+    to strike). Positional groups expose (color, piece-or-square,
     square-or-piece) in a known order."""
     for m in _PIECE_ON_SQUARE_RE.finditer(text):
         color, piece, square = m.group(1), m.group(2), m.group(3)
-        yield (color or "").lower(), piece.lower(), square.lower()
+        yield m.group(0), (color or "").lower(), piece.lower(), square.lower()
     for m in _SQUARE_PIECE_RE.finditer(text):
         color, square, piece = m.group(1), m.group(2), m.group(3)
-        yield (color or "").lower(), piece.lower(), square.lower()
+        yield m.group(0), (color or "").lower(), piece.lower(), square.lower()
 
 
 _TYPE_TO_NAME = {t: n for n, t in _PIECE_WORDS.items()}
@@ -306,13 +310,14 @@ def _claim_holds(
 
 
 def iter_false_claim_squares(text: str, board: chess.Board):
-    """Yield (claim_label, square_name) for each false piece claim, so the
-    caller can pair the flagged phrase with the square's real content. A claim
-    holds when the piece sits there on the current board OR on a board reached
-    by a move named earlier in the prose ('a knight on d3 after ...Nd3')."""
+    """Yield (surface, label, square_name) for each false piece claim.
+    `surface` is the exact prose span ("White's knight on b1") for the UI to
+    strike; `label` is the normalized form for facts/keys. A claim holds when
+    the piece sits there on the current board OR on a board reached by a move
+    named earlier in the prose ('a knight on d3 after ...Nd3')."""
     boards = [board, *projected_boards(text, board)]
     seen: set[str] = set()
-    for color_word, piece_word, square_name in _iter_piece_claims(text):
+    for surface, color_word, piece_word, square_name in _iter_piece_claims(text):
         key = f"{color_word}|{piece_word}|{square_name}"
         if key in seen:
             continue
@@ -322,7 +327,7 @@ def iter_false_claim_squares(text: str, board: chess.Board):
         if any(_claim_holds(b, square, piece_type, color_word) for b in boards):
             continue
         prefix = f"{color_word} " if color_word else ""
-        yield f"{prefix}{piece_word} on {square_name}", square_name
+        yield surface, f"{prefix}{piece_word} on {square_name}", square_name
 
 
 def find_false_piece_claims(text: str, board: chess.Board) -> list[str]:
@@ -330,7 +335,7 @@ def find_false_piece_claims(text: str, board: chess.Board) -> list[str]:
     position reached by a move named in the prose. 'the bishop on g6' with no
     move putting a bishop there is flagged; 'a knight on d3 after ...Nd3' is
     cleared by the projected board."""
-    return [label for label, _square in iter_false_claim_squares(text, board)]
+    return [label for _surface, label, _square in iter_false_claim_squares(text, board)]
 
 
 def _reaches_for_color(
@@ -355,13 +360,13 @@ def _reaches_for_color(
     return False
 
 
-def find_illegal_piece_moves(text: str, board: chess.Board) -> list[str]:
-    """'<piece> to <square>' prose moves naming a destination no piece of that
-    type can legally reach. Forward-looking, so a plan that is reachable is
-    fine; only an impossible move ('bishop to a1' with no bishop able to go
-    there) is flagged. POV: the named color when given, else either side."""
+def iter_illegal_piece_moves(text: str, board: chess.Board):
+    """Yield (surface, label) for each '<piece> to <square>' prose move whose
+    destination no piece of that type can legally reach. `surface` is the exact
+    prose span for the UI to strike. Forward-looking, so a reachable plan is
+    fine; only an impossible move ('bishop to a1') is flagged. POV: the named
+    color when given, else either side."""
     seen: set[str] = set()
-    illegal: list[str] = []
     for m in _PIECE_TO_SQUARE_RE.finditer(text):
         color_word = (m.group(1) or "").lower()
         piece_word = m.group(2).lower()
@@ -378,5 +383,9 @@ def find_illegal_piece_moves(text: str, board: chess.Board) -> list[str]:
         if any(_reaches_for_color(board, square, piece_type, c) for c in colors):
             continue
         prefix = f"{color_word} " if color_word else ""
-        illegal.append(f"{prefix}{piece_word} to {square_name}")
-    return illegal
+        yield m.group(0), f"{prefix}{piece_word} to {square_name}"
+
+
+def find_illegal_piece_moves(text: str, board: chess.Board) -> list[str]:
+    """Normalized '<piece> to <square>' labels (see iter_illegal_piece_moves)."""
+    return [label for _surface, label in iter_illegal_piece_moves(text, board)]

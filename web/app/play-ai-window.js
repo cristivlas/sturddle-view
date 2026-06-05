@@ -499,17 +499,28 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
   }
 }
 
-// Fallback summary when the next round produces no usable opening line:
-// the flagged items, stated plainly (no canned editorial sentence).
+// Cap for the joined item list in a multi-item fallback before it is
+// ellipsis-trimmed (keeps the collapsed summary to one line).
+const REVISION_ITEMS_MAX = 48;
+
+// Fallback summary when the next round has no usable opening line: the AI
+// catching its own slip. Singular reads conversationally, plural lists the
+// items (ellipsis-trimmed); item leads lowercased to read mid-sentence.
 function revisionFallbackText(items) {
-  if (!items.length) return "Reconsidering.";
-  return `Set aside: ${items.join(", ")}.`;
+  if (!items.length) return "Actually, let me reconsider.";
+  const lc = items.map((s) => s.charAt(0).toLowerCase() + s.slice(1));
+  if (lc.length === 1) return `Actually, ${lc[0]} isn't right.`;
+  let joined = lc.join(", ");
+  if (joined.length > REVISION_ITEMS_MAX) {
+    joined = joined.slice(0, REVISION_ITEMS_MAX).trimEnd() + "...";
+  }
+  return `Wait, ${joined} look wrong.`;
 }
 
 // First sentence (or clause) of the next round's prose, used as the
 // revision summary -- the model's own voice. Trimmed to a sane length so a
 // runaway opener doesn't bloat the collapsed summary.
-const REVISION_SUMMARY_MAX = 140;
+const REVISION_SUMMARY_MAX = 64;
 function leadSentence(text) {
   const trimmed = text.trim();
   if (!trimmed) return "";
@@ -531,7 +542,9 @@ function strikeProseItems(para, items) {
   const text = para.textContent;
   if (!text || !items.length) return;
   const sorted = [...items].sort((a, b) => b.length - a.length);
-  const re = new RegExp(sorted.map(escapeRegExp).join("|"), "g");
+  // Case-insensitive: server lowercases flagged claims, but the prose keeps
+  // its original case ("Knight on b1" at a sentence start).
+  const re = new RegExp(sorted.map(escapeRegExp).join("|"), "gi");
   para.textContent = "";
   let last = 0;
   for (const m of text.matchAll(re)) {
@@ -545,17 +558,16 @@ function strikeProseItems(para, items) {
   if (last < text.length) para.append(document.createTextNode(text.slice(last)));
 }
 
-export function noteAiPosition({ round, illegalMoves, falseClaims, illegalContinuations }) {
+export function noteAiPosition({ round, surfaces }) {
   if (!inst.body) return;
   const entry = inst.body._roundPanels.get(round);
   if (!entry || !entry.revision) return;
-  const items = [...illegalMoves, ...illegalContinuations, ...falseClaims];
-  if (!items.length) return;
-  // Strike the flagged tokens, then tuck the flawed prose into the revision
-  // body so the clean (next-round) prose reads on its own. Summary starts as
-  // the fallback; the next round's opening line backfills it if it lands.
-  strikeProseItems(entry.para, items);
-  const fallback = revisionFallbackText(items);
+  if (!surfaces || !surfaces.length) return;
+  // Strike the flagged spans (exact prose), then tuck the flawed prose into
+  // the revision body so the clean (next-round) prose reads on its own.
+  // Summary starts as the fallback; the next round's opener backfills it.
+  strikeProseItems(entry.para, surfaces);
+  const fallback = revisionFallbackText(surfaces);
   entry.revision.summary.textContent = fallback;
   entry.revision.body.append(entry.para);
   entry.revision.details.hidden = false;

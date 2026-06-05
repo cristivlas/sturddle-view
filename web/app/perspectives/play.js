@@ -1047,12 +1047,7 @@ export const playPerspective = {
         }
         case "ai_position_note": {
           const p = evt.payload || {};
-          noteAiPosition({
-            round: p.round ?? 0,
-            illegalMoves: p.illegal_moves || [],
-            falseClaims: p.false_claims || [],
-            illegalContinuations: p.illegal_continuations || [],
-          });
+          noteAiPosition({ round: p.round ?? 0, surfaces: p.surfaces || [] });
           return true;
         }
       }
