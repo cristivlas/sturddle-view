@@ -1213,7 +1213,7 @@ export const playPerspective = {
             if (!analyzing) {
               dismissAnalysisToast?.();
               dismissAnalysisToast = null;
-              if (viewing) closeAnalysisOpenedWindows();
+              if (viewing) { if (isAiOpen()) closeAi(); closeAnalysisOpenedWindows(); }
             } else if (!dismissAnalysisToast) {
               // Server reports analysis active but no toast exists -- we
               // were re-mounted (e.g. user navigated to another
@@ -1234,7 +1234,7 @@ export const playPerspective = {
           setAnalyzing(false);
           dismissAnalysisToast?.();
           dismissAnalysisToast = null;
-          if (viewing) closeAnalysisOpenedWindows();
+          if (viewing) { if (isAiOpen()) closeAi(); closeAnalysisOpenedWindows(); }
           resignAvailable = false;
           setDisabled(newGameBtn, false);
           boardHost.classList.add("board-idle");
@@ -1769,6 +1769,9 @@ export const playPerspective = {
       aiTurnFinished = false;
       dismissAnalysisToast?.();
       dismissAnalysisToast = null;
+      // The AI window's lifecycle is tied to the analysis session, so it
+      // always closes on stop. PV/UCI close only if analysis opened them.
+      if (isAiOpen()) closeAi();
       closeAnalysisOpenedWindows();
     }
 
