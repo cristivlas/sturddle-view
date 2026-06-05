@@ -457,6 +457,7 @@ export function createDockableWindow(config) {
         // User-initiated close (WinBox X) when not flagged programmatic.
         // Persist the closed state so a hard refresh doesn't reopen.
         const userInitiated = !programmaticClose;
+        if (userInitiated) inst.openedByAnalysis = false;
         setOpen(openKey, false);
         if (off) { off(); off = null; }
         body = null;
@@ -506,6 +507,7 @@ export function createDockableWindow(config) {
   }
 
   function close() {
+    inst.openedByAnalysis = false;
     setOpen(openKey, false);
     if (wb) {
       programmaticClose = true;
@@ -556,6 +558,9 @@ export function createDockableWindow(config) {
     dockedKey,
     dockOrder,
     usesMainDock: !config.getDockEl,
+    // Set true when analysis opened this window (restoreViewAnalysisWindows);
+    // the stop path closes only these, leaving user-opened windows alone.
+    openedByAnalysis: false,
   };
   instances.push(inst);
   return inst;
@@ -857,16 +862,24 @@ const pvTable = createDockableWindow({
 const VIEW_UCI_OPEN_KEY = STORAGE_KEY.VIEW_UCILOG_OPEN;
 const VIEW_PV_OPEN_KEY  = STORAGE_KEY.VIEW_PVTABLE_OPEN;
 
-export function toggleUciLogWindow(events) { uciLog.toggle(events); }
-export function togglePvTableWindow(events) { pvTable.toggle(events); }
+// User-driven toggles (ribbon buttons, analysis toast): a manual open
+// transfers ownership, so the analysis stop path won't close the window.
+// (restore() across nav reuses inst.toggle directly and must NOT clear.)
+export function toggleUciLogWindow(events) { uciLog.openedByAnalysis = false; uciLog.toggle(events); }
+export function togglePvTableWindow(events) { pvTable.openedByAnalysis = false; pvTable.toggle(events); }
 
 export function closeDebugWindows() {
   instances.forEach(i => { if (i.usesMainDock) i.closeForNav(); });
   syncDockVisibility();
 }
 
-export function closeDebugWindowsPersist() {
-  instances.forEach(i => { if (i.usesMainDock) i.close(); });
+// Close only the windows analysis opened, leaving user-opened windows
+// alone. The flag is set in restoreViewAnalysisWindows at open time, so
+// there's nothing to reconstruct here.
+export function closeAnalysisOpenedWindows() {
+  instances.forEach(i => {
+    if (i.usesMainDock && i.openedByAnalysis) i.close();
+  });
   syncDockVisibility();
 }
 
@@ -887,6 +900,6 @@ export function restoreViewAnalysisWindows(events) {
     ? isOpen(VIEW_UCI_OPEN_KEY) : isOpen(UCI_OPEN_KEY);
   const pvShouldOpen  = localStorage.getItem(VIEW_PV_OPEN_KEY) !== null
     ? isOpen(VIEW_PV_OPEN_KEY)  : isOpen(PV_OPEN_KEY);
-  if (uciShouldOpen && !uciLog.wb && !uciLog.slot) uciLog.toggle(events);
-  if (pvShouldOpen  && !pvTable.wb && !pvTable.slot) pvTable.toggle(events);
+  if (uciShouldOpen && !uciLog.wb && !uciLog.slot) { uciLog.toggle(events); uciLog.openedByAnalysis = true; }
+  if (pvShouldOpen  && !pvTable.wb && !pvTable.slot) { pvTable.toggle(events); pvTable.openedByAnalysis = true; }
 }

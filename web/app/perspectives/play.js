@@ -7,7 +7,7 @@ import { APP_EVT } from "../app-events.js";
 import { STORAGE_KEY } from "../storage-keys.js";
 import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
-import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeDebugWindowsPersist, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, isMobileLayout } from "../play-dock-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, isMobileLayout } from "../play-dock-windows.js";
 import {
   setCommentaryDockContainer,
   setOnUserCloseCommentary,
@@ -1213,7 +1213,7 @@ export const playPerspective = {
             if (!analyzing) {
               dismissAnalysisToast?.();
               dismissAnalysisToast = null;
-              if (viewing) closeDebugWindowsPersist();
+              if (viewing) closeAnalysisOpenedWindows();
             } else if (!dismissAnalysisToast) {
               // Server reports analysis active but no toast exists -- we
               // were re-mounted (e.g. user navigated to another
@@ -1234,7 +1234,7 @@ export const playPerspective = {
           setAnalyzing(false);
           dismissAnalysisToast?.();
           dismissAnalysisToast = null;
-          if (viewing) closeDebugWindowsPersist();
+          if (viewing) closeAnalysisOpenedWindows();
           resignAvailable = false;
           setDisabled(newGameBtn, false);
           boardHost.classList.add("board-idle");
@@ -1769,7 +1769,7 @@ export const playPerspective = {
       aiTurnFinished = false;
       dismissAnalysisToast?.();
       dismissAnalysisToast = null;
-      closeDebugWindowsPersist();
+      closeAnalysisOpenedWindows();
     }
 
     // POST start + restore panels + toast + open/reset AI panel. Shared
