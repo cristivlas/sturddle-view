@@ -30,6 +30,7 @@ from ..events import (
     ENVELOPE_KIND,
     ENVELOPE_PAYLOAD,
     EVT_AI_INFO,
+    EVT_AI_POSITION_NOTE,
     EVT_AI_RECOMMENDATION,
     EVT_AI_THINKING,
     EVT_AI_TOOL_CALL,
@@ -52,6 +53,13 @@ from ..llm import (
     strip_markdown_stream,
 )
 from ..llm.cancel import CancelToken
+from ..llm.position_check import (
+    describe_square,
+    find_illegal_continuations,
+    find_illegal_moves,
+    find_illegal_piece_moves,
+    iter_false_claim_squares,
+)
 from .tools_engine import (
     ANALYZE_TOOL_NAME,
     MATERIAL_TOOL_NAME,
@@ -96,6 +104,25 @@ _VERIFIER_MODE: PromptMode = "verifier"
 # bus payload small even when a provider returns a wall of HTML / a
 # verbose stack trace. Full detail is in the transcript anyway.
 ERROR_DETAIL_MAX_LEN = 500
+
+# Per-round prose check against the live board. On a hit the model gets a
+# directive, fact-anchored correction (the square's real content) so a weak
+# model can't dodge by restating. Escalates when it repeats an item.
+_POSITION_CHECK_PREFIX = "[position check] "
+# First correction: state the facts, demand a redo grounded in them.
+_POSITION_CHECK_TEMPLATE = (
+    "Stop. Your last paragraph is wrong about the board. Facts: {facts}. "
+    "Do not repeat these claims. Rewrite that paragraph using only pieces "
+    "and moves that exist in the current position."
+)
+# Repeat of an item already corrected this turn: harder, name the loop.
+_POSITION_CHECK_REPEAT_TEMPLATE = (
+    "You are repeating errors after being corrected. Facts: {facts}. "
+    "These are not in the current position. Delete every mention of them "
+    "and continue without referencing them again."
+)
+# Joined fact line when an illegal move is flagged (no square to describe).
+_ILLEGAL_MOVE_FACT = "{move} is not a legal move in the current position"
 
 # Sent once at end-of-turn if the model never called recommend_move; a
 # completeness nudge. Trailing _NO_ACK_CLAUSE suppresses the
@@ -300,11 +327,9 @@ def _norm_top_moves(input_: dict, board: chess.Board | None) -> tuple | None:
 
 
 def _canonical_fen(input_: dict) -> str | None:
-    # Canonical key for a position. Board(fen).fen() normalizes
-    # whitespace/field spacing; we then drop the trailing halfmove and
-    # fullmove counters so the same board with different clocks shares a
-    # key -- safe because these tools are position- not history-dependent.
-    # 'startpos' isn't expanded here, so it won't dedup.
+    # Canonical key for a position: normalized FEN minus the halfmove and
+    # fullmove counters, so the same board with different clocks shares a
+    # key. 'startpos' isn't expanded here, so it won't dedup.
     fen = input_.get("fen")
     if not isinstance(fen, str) or not fen.strip():
         return None
@@ -406,9 +431,8 @@ def _assistant_message(chunks: list[ProviderChunk]) -> Message:
                 "input": c.tool_input,
             }
             # Carry an opaque provider signature (Gemini's thought_signature)
-            # so the provider can echo it back on the next round. Empty for
-            # providers that don't use it; the wire mapping lives in
-            # openai_compat.
+            # so it can be echoed back next round. Empty for providers that
+            # don't use it; the wire mapping lives in openai_compat.
             if c.tool_signature:
                 block[TOOL_SIGNATURE_KEY] = c.tool_signature
             content.append(block)
@@ -555,6 +579,26 @@ class _LoopResult:
     recommended_depth: int | None = None
     round_cap_hit: bool = False
     text_published: bool = False
+
+
+@dataclass(slots=True)
+class _PositionCheck:
+    """One round's prose-check result. `claim_pairs` are (label, square) for
+    false piece claims (square lets the corrective cite the real content);
+    board+text feed the corrective. Empty lists when the prose is clean."""
+    board: chess.Board | None
+    text: str
+    illegal_moves: list[str]
+    claim_pairs: list[tuple[str, str]]
+    illegal_continuations: list[str]
+
+    @property
+    def hit(self) -> bool:
+        return bool(self.illegal_moves or self.claim_pairs or self.illegal_continuations)
+
+    @property
+    def claims(self) -> list[str]:
+        return [label for label, _square in self.claim_pairs]
 
 
 class AIAnalysisCoordinator:
@@ -822,6 +866,9 @@ class AIAnalysisCoordinator:
         round_cap_hit = True  # flipped to False on natural exit
         text_published = False  # flips on first non-whitespace text chunk
         final_text = ""  # last round's prose only (verifier verdict)
+        # Position-check items already corrected this turn; a re-flagged item
+        # escalates the corrective wording (weak models loop otherwise).
+        corrected_items: set[str] = set()
         for round_index in range(config.max_rounds):
             round_chunks: list[ProviderChunk] = []
             pending_tool: ProviderChunk | None = None
@@ -872,6 +919,31 @@ class AIAnalysisCoordinator:
             round_had_text = any(
                 c.kind == "text" and c.text for c in round_chunks
             )
+            # Single-board prose check, every round. A hit surfaces a self-
+            # correction note and (below) injects a fact-anchored corrective.
+            pc = self._position_check(round_chunks)
+            if pc.hit:
+                await self._emit_position_note(
+                    emit=emit, game_id=game_id, round_index=round_index,
+                    illegal_moves=pc.illegal_moves, false_claims=pc.claims,
+                    illegal_continuations=pc.illegal_continuations,
+                )
+                # Repeat key is the square (claims) or the token (moves/lines),
+                # so "white knight on d3" and "knight on d3" count as the same
+                # error and a reworded repeat still escalates.
+                hit_keys = (
+                    {sq for _label, sq in pc.claim_pairs}
+                    | {m.lower() for m in pc.illegal_moves}
+                    | {ln.lower() for ln in pc.illegal_continuations}
+                )
+                repeat = bool(hit_keys & corrected_items)
+                corrected_items |= hit_keys
+                pc_message = self._position_check_message(pc, repeat=repeat)
+            if pending_tool is None and pc.hit:
+                # A mismatch blocks natural exit: append the round's prose and
+                # inject the corrective so the model self-corrects next round.
+                _inject_nudge(messages, round_chunks, pc_message)
+                continue
             if pending_tool is None:
                 # Natural exit. Completeness nudge: narrator re-nudges each
                 # clean exit until a move is accepted (stopping on a stall);
@@ -1045,6 +1117,10 @@ class AIAnalysisCoordinator:
                     pending_tool.tool_use_id, tool_output, card=card,
                 )
             )
+            # Correct a mismatch in this round's prose. After the tool_result
+            # so the assistant tool_use is paired before this user message.
+            if pc.hit:
+                messages.append({"role": "user", "content": pc_message})
             # Force a top_moves call after enough failed recommend attempts.
             # After the tool_result (every tool_use needs a matching result
             # before a user-role nudge). One-shot until a top_moves re-arms it.
@@ -1072,6 +1148,76 @@ class AIAnalysisCoordinator:
             round_cap_hit=round_cap_hit,
             text_published=text_published,
         )
+
+    def _position_check(
+        self, chunks: list[ProviderChunk],
+    ) -> _PositionCheck:
+        """Run the three single-board checks on a round's assembled prose.
+        False claims are returned as (label, square) pairs (walked once here)
+        so the corrective can cite the square's real content without re-walking.
+        Empty when no board_provider, no live board, or no prose."""
+        board = self._board_provider() if self._board_provider else None
+        if board is None:
+            return _PositionCheck(None, "", [], [], [])
+        text = "".join(
+            c.text for c in chunks if c.kind == "text" and c.text
+        )
+        if not text.strip():
+            return _PositionCheck(board, "", [], [], [])
+        # SAN moves ('Bxe4') and prose moves ('bishop to a1') are the same
+        # kind of error -- an impossible move -- so they share one bucket.
+        moves = find_illegal_moves(text, board) + find_illegal_piece_moves(text, board)
+        return _PositionCheck(
+            board,
+            text,
+            moves,
+            list(iter_false_claim_squares(text, board)),
+            find_illegal_continuations(text, board),
+        )
+
+    async def _emit_position_note(
+        self,
+        *,
+        emit: EmitSink,
+        game_id: str | None,
+        round_index: int,
+        illegal_moves: list[str],
+        false_claims: list[str],
+        illegal_continuations: list[str],
+    ) -> None:
+        """Surface a position-check hit to the UI (human-facing note)."""
+        log.info(
+            "position check round %d: moves=%s claims=%s lines=%s",
+            round_index, illegal_moves, false_claims, illegal_continuations,
+        )
+        await emit(
+            Event(
+                kind=EVT_AI_POSITION_NOTE,
+                game_id=game_id,
+                payload={
+                    "round": round_index,
+                    "illegal_moves": illegal_moves,
+                    "false_claims": false_claims,
+                    "illegal_continuations": illegal_continuations,
+                },
+            )
+        )
+
+    @staticmethod
+    def _position_check_message(pc: _PositionCheck, *, repeat: bool) -> str:
+        """Fact-anchored correction. For each false piece claim we state the
+        square's real content (reusing the pairs already walked in
+        `_position_check`), and for illegal moves / lines that they aren't
+        legal here. `repeat` escalates when the model re-asserts an item."""
+        facts: list[str] = [
+            describe_square(square, pc.board) for _label, square in pc.claim_pairs
+        ]
+        for move in pc.illegal_moves + pc.illegal_continuations:
+            facts.append(_ILLEGAL_MOVE_FACT.format(move=move))
+        template = (
+            _POSITION_CHECK_REPEAT_TEMPLATE if repeat else _POSITION_CHECK_TEMPLATE
+        )
+        return _POSITION_CHECK_PREFIX + template.format(facts="; ".join(facts))
 
     @staticmethod
     def _needs_nudge(
@@ -1169,11 +1315,9 @@ class AIAnalysisCoordinator:
                 result = await self._run_loop(messages, config)
                 if result.round_cap_hit:
                     done_payload["round_cap"] = True
-                    # Flag the turn so the done event can show the gear note
-                    # pointing at the verifier-rounds setting. final_text is
-                    # "" on a cap (see _run_loop); delegate maps that to
-                    # no_verdict. Warn so a never-concluding model is
-                    # diagnosable.
+                    # Flag the turn so the done event shows the gear note for
+                    # the verifier-rounds setting. final_text is "" on a cap
+                    # (delegate maps that to no_verdict); warn for diagnosis.
                     self._verifier_round_cap_hit = True
                     log.warning(
                         "verifier sub-run hit round cap (%d) without a verdict; question=%r",

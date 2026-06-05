@@ -132,7 +132,7 @@ function buildBody() {
   root._scroll = scroll;
   root._rounds = rounds;
   root._terminal = terminal;
-  // Map roundIndex -> {panel, thinking:{details,body}, tools, para,
+  // Map roundIndex -> {panel, thinking:{details,body}, tools, para, note,
   //   hasProse}. Built lazily on first event per round.
   root._roundPanels = new Map();
   root._currentRound = null;
@@ -163,11 +163,17 @@ function buildRoundPanel() {
   timeline.append(details, tools);
   const para = document.createElement("p");
   para.className = "play-ai-prose";
-  panel.append(timeline, para);
+  // Position note: a muted line when prose references something not on the
+  // cursor board. Hidden until a hit; no strike-out (the prose may be a
+  // legitimate past/hypothetical reference the model was asked to clarify).
+  const note = document.createElement("p");
+  note.className = "play-ai-position-note";
+  note.hidden = true;
+  panel.append(timeline, para, note);
   return {
     panel,
     thinking: { details, summary, body: thinkBody },
-    tools, para,
+    tools, para, note,
     hasProse: false,
     hasThinking: false,
     thinkingStartedAt: 0,
@@ -481,6 +487,48 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
       pre.append(" ", buildToastActionButton(a));
     }
   }
+}
+
+function positionNoteText(items) {
+  if (!items.length) return "";
+  return `Wait -- ${items.join(", ")} isn't right for this position. Let me reconsider.`;
+}
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Cross out each flagged token in the round's prose. Rebuilds the paragraph
+// with matched spans wrapped in <del> so the reader sees the self-correction
+// land on the actual text. Longest items first so a line isn't half-matched.
+function strikeProseItems(para, items) {
+  const text = para.textContent;
+  if (!text || !items.length) return;
+  const sorted = [...items].sort((a, b) => b.length - a.length);
+  const re = new RegExp(sorted.map(escapeRegExp).join("|"), "g");
+  para.textContent = "";
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    if (m.index > last) para.append(document.createTextNode(text.slice(last, m.index)));
+    const del = document.createElement("del");
+    del.className = "play-ai-prose-struck";
+    del.textContent = m[0];
+    para.append(del);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) para.append(document.createTextNode(text.slice(last)));
+}
+
+export function noteAiPosition({ round, illegalMoves, falseClaims, illegalContinuations }) {
+  if (!inst.body) return;
+  const entry = inst.body._roundPanels.get(round);
+  if (!entry || !entry.note) return;
+  const items = [...illegalMoves, ...illegalContinuations, ...falseClaims];
+  const text = positionNoteText(items);
+  if (!text) return;
+  strikeProseItems(entry.para, items);
+  entry.note.textContent = text;
+  entry.note.hidden = false;
 }
 
 export function setAiStatus(state) {
