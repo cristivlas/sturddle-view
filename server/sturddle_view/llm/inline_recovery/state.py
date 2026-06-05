@@ -15,10 +15,6 @@ Walks a flavor registry. Per chunk:
      all flavors; flush the safe prefix, hold the rest in text_buf.
 
 Stream end: flush any remaining buffers as text on the current channel.
-
-This replaces the flat state machine in `..inline_tool_calls` whose
-parallel buffers (xml_buf, fence_buf, call_buf, pre_buf) and capture
-flags became the documented refactor smell.
 """
 from __future__ import annotations
 
@@ -264,7 +260,6 @@ def _scan_and_capture(buf: str, flavors: List[Flavor], channel: str):
 
 
 def _max_trailing_hold(buf: str, flavors: List[Flavor]) -> int:
-    """Union trailing-hold across all flavors. Replaces the
-    cross-flavor coupling in legacy `_split_at_safe_boundary` /
-    `_split_at_sentinel_prefix`."""
+    """Union trailing-hold across all flavors: hold back the longest
+    tail any flavor might still need to complete a split sentinel."""
     return max((fl.trailing_hold(buf) for fl in flavors), default=0)

@@ -15,10 +15,15 @@ import re
 from typing import Iterable
 
 from ..protocol import Closed, CloseResult, Pending, Unparseable
-from ...inline_tool_calls import _parse_call_args, _synthesize_tool_use
+from ...inline_tool_calls import (
+    _parse_call_args,
+    _synthesize_tool_use,
+    log_recovered,
+)
 
 log = logging.getLogger(__name__)
 
+_SHAPE = "jinja-pipe"
 _OPEN = "{{"
 _CLOSE = "}}"
 _FILTER = "json_call:"
@@ -193,7 +198,7 @@ class JinjaPipeFlavor:
             # Filter found and braces balanced but args failed to
             # parse -- flush the whole span as text and move on.
             return Unparseable(consumed=close_end)
-        log.info("inline-jinja-pipe tool call recovered: %s(%s)", tool_name, params)
+        log_recovered(log, _SHAPE, tool_name, params)
         return Closed(
             chunk=_synthesize_tool_use(tool_name, params),
             tail=buf[close_end:],

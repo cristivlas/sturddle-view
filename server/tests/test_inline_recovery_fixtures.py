@@ -7,9 +7,6 @@ Each JSON file under fixtures/inline_recovery/ is a wild sample:
     means deliver as one chunk.
   - `expected`: list of {kind, text?, tool_name?, tool_input?} for
     each emitted ProviderChunk (tool_use_id is ignored -- it's a UUID).
-
-Tests run under the v2 implementation only; legacy doesn't recognize
-the newer flavors these fixtures cover.
 """
 from __future__ import annotations
 
@@ -20,7 +17,7 @@ from typing import Any, Dict, List
 import pytest
 
 from sturddle_view.llm.base import ProviderChunk
-from sturddle_view.llm.inline_recovery import recover_inline_tool_calls_v2
+from sturddle_view.llm.inline_recovery import recover_inline_tool_calls
 
 _FIXTURE_DIR = Path(__file__).parent / "fixtures" / "inline_recovery"
 
@@ -90,7 +87,7 @@ async def test_fixture(fixture_path: Path):
         for piece in _split_text(spec["text"], spec.get("splits", []))
     ]
     out = await _collect(
-        recover_inline_tool_calls_v2(
+        recover_inline_tool_calls(
             _from_iter(chunks),
             tool_names=set(spec.get("tool_names", [])),
             tool_schemas=spec.get("tool_schemas"),

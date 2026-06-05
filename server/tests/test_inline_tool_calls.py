@@ -1,15 +1,16 @@
-"""Inline-XML tool call recovery for prose-style tool emissions.
+"""Inline tool-call recovery for prose-style tool emissions.
 
 Some local models stream tool calls as text instead of using the
-OpenAI tool_call protocol. The wrapper buffers the XML, parses it,
-and emits a synthetic tool_use chunk in its place.
+OpenAI tool_call protocol. The wrapper buffers the matched span,
+parses it, and emits a synthetic tool_use chunk in its place. Covers
+the XML, call-syntax, and fenced-JSON shapes.
 """
 from __future__ import annotations
 
 import pytest
 
 from sturddle_view.llm.base import ProviderChunk
-from sturddle_view.llm.inline_tool_calls import recover_inline_tool_calls
+from sturddle_view.llm.inline_recovery import recover_inline_tool_calls
 
 
 async def _from_iter(chunks):
@@ -322,7 +323,7 @@ async def test_real_wire_tool_use_passes_through():
 
 @pytest.mark.asyncio
 async def test_no_tool_names_disables_call_recovery():
-    # Back-compat: legacy XML path still works; new patterns ignored.
+    # Without tool_names, call-syntax recovery is off; shape stays text.
     chunks = [ProviderChunk(kind="text", text='recommend_move{move: "e5"}')]
     out = await _collect(recover_inline_tool_calls(_from_iter(chunks)))
     assert all(c.kind == "text" for c in out)

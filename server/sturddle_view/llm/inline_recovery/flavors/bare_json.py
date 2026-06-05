@@ -20,15 +20,19 @@ import logging
 from typing import Iterable, Mapping, Optional, Sequence
 
 from ..protocol import Closed, CloseResult, Pending, Unparseable
-from ...inline_tool_calls import _synthesize_tool_use
+from ...inline_tool_calls import (
+    _QUOTE_CHARS,
+    _find_balanced_close,
+    _synthesize_tool_use,
+    log_recovered,
+)
 
 log = logging.getLogger(__name__)
 
 _OPEN = "{"
-_CLOSE = "}"
-_QUOTE_CHARS = ('"', "'")
 _NAME_KEY = "name"
 _ARGS_KEYS = ("parameters", "arguments")
+_SHAPE = "bare-JSON"
 
 
 def _try_parse_object(span: str) -> Optional[dict]:
@@ -41,40 +45,6 @@ def _try_parse_object(span: str) -> Optional[dict]:
     except ValueError:
         return None
     return obj if isinstance(obj, dict) else None
-
-
-def _find_balanced_close(buf: str) -> int | None:
-    """Index just past the `}` that balances `buf[0] == '{'`.
-    Quote-aware so braces inside string literals don't break the
-    count. Returns None if not closed."""
-    if not buf or buf[0] != _OPEN:
-        return None
-    depth = 0
-    i = 0
-    n = len(buf)
-    in_str: str | None = None
-    while i < n:
-        ch = buf[i]
-        if in_str is not None:
-            if ch == "\\" and i + 1 < n:
-                i += 2
-                continue
-            if ch == in_str:
-                in_str = None
-            i += 1
-            continue
-        if ch in _QUOTE_CHARS:
-            in_str = ch
-            i += 1
-            continue
-        if ch == _OPEN:
-            depth += 1
-        elif ch == _CLOSE:
-            depth -= 1
-            if depth == 0:
-                return i + 1
-        i += 1
-    return None
 
 
 class BareJsonFlavor:
@@ -112,15 +82,15 @@ class BareJsonFlavor:
         outer braces are consumed as part of the recovered span."""
         if not buf.startswith(_OPEN):
             return Unparseable(consumed=1)
-        close_end = _find_balanced_close(buf)
+        close_end = _find_balanced_close(buf, 0)
         if close_end is None:
             return Pending()
         obj = _try_parse_object(buf[:close_end])
         if obj is None and buf.startswith(_OPEN + _OPEN):
             # Doubled-brace wrapper: peel one `{` from each side.
-            inner_end = _find_balanced_close(buf[1:])
+            inner_end = _find_balanced_close(buf, 1)
             if inner_end is not None:
-                obj = _try_parse_object(buf[1:1 + inner_end])
+                obj = _try_parse_object(buf[1:inner_end])
         if obj is None:
             return Unparseable(consumed=1)
         raw_name = obj.get(_NAME_KEY)
@@ -129,7 +99,7 @@ class BareJsonFlavor:
         params = self._extract_params(obj, raw_name)
         if params is None:
             return Unparseable(consumed=1)
-        log.info("inline-bare-JSON tool call recovered: %s(%s)", raw_name, params)
+        log_recovered(log, _SHAPE, raw_name, params)
         return Closed(
             chunk=_synthesize_tool_use(raw_name, params),
             tail=buf[close_end:],
@@ -166,12 +136,9 @@ class BareJsonFlavor:
         return 1 if buf.endswith(_OPEN) else 0
 
 
-_DEQUOTE_CHARS = ('"', "'")
-
-
 def _dequote(s: str) -> str:
     """Strip a matching pair of surrounding single or double quotes."""
-    if len(s) >= 2 and s[0] == s[-1] and s[0] in _DEQUOTE_CHARS:
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in _QUOTE_CHARS:
         return s[1:-1]
     return s
 

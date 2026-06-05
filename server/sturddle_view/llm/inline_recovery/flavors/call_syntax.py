@@ -5,8 +5,8 @@ flavor out of the registry otherwise.
 
 The state-machine layer (find_sentinel / try_close / trailing_hold)
 is native here. Parsing helpers (`_parse_call_args`,
-`_find_balanced_close`, `_build_name_pattern`) are reused from the
-legacy module; they are pure utilities, orthogonal to the refactor.
+`_find_balanced_close`, `_build_name_pattern`) are the shared pure
+utilities in `...inline_tool_calls`.
 """
 from __future__ import annotations
 
@@ -21,9 +21,12 @@ from ...inline_tool_calls import (
     _find_balanced_close,
     _parse_call_args,
     _synthesize_tool_use,
+    log_recovered,
 )
 
 log = logging.getLogger(__name__)
+
+_SHAPE = "call"
 
 # Trailing prefix of `call:` plus optional identifier; covers
 # in-progress `call:<name>` so we don't flush the decoration before
@@ -71,7 +74,7 @@ class CallSyntaxFlavor:
         params = _parse_call_args(body, opener=buf[open_idx])
         if params is None:
             return Unparseable(consumed=close)
-        log.info("inline-call tool call recovered: %s(%s)", m.group(1), params)
+        log_recovered(log, _SHAPE, m.group(1), params)
         return Closed(
             chunk=_synthesize_tool_use(m.group(1), params),
             tail=buf[close:],

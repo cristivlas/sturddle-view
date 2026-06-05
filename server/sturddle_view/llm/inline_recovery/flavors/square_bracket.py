@@ -9,21 +9,25 @@ name list to validate against (raw `[` is too generic).
 """
 from __future__ import annotations
 
-import ast
-import json
 import logging
 import re
 from typing import Iterable
 
 from ..protocol import Closed, CloseResult, Pending, Unparseable
-from ...inline_tool_calls import _IDENT, _synthesize_tool_use
+from ...inline_tool_calls import (
+    _IDENT,
+    _QUOTE_CHARS,
+    _coerce_literal,
+    _synthesize_tool_use,
+    log_recovered,
+)
 
 log = logging.getLogger(__name__)
 
 _OPEN = "["
 _CLOSE = "]"
-_QUOTE_CHARS = ('"', "'")
 _KV_SEP = ":"
+_SHAPE = "square-bracket"
 
 
 def _build_open_pattern(tool_names: Iterable[str]) -> re.Pattern[str] | None:
@@ -115,24 +119,6 @@ def _scan_quoted(s: str, start: int) -> int | None:
     return None
 
 
-def _coerce_value(raw: str) -> object:
-    """JSON -> Python literal -> stripped-quote fallback -> bare string.
-    Mirrors the legacy `_coerce_literal` but kept local to keep this
-    flavor self-contained."""
-    s = raw.strip()
-    try:
-        return json.loads(s)
-    except ValueError:
-        pass
-    try:
-        return ast.literal_eval(s)
-    except (ValueError, SyntaxError):
-        pass
-    if len(s) >= 2 and s[0] == s[-1] and s[0] in _QUOTE_CHARS:
-        return s[1:-1]
-    return s
-
-
 def _parse_kv_tokens(tokens: list[str]) -> dict[str, object] | None:
     """Walk a token list expecting `key:` followed by a value token,
     repeated. Returns the parsed dict or None on shape failure.
@@ -150,7 +136,7 @@ def _parse_kv_tokens(tokens: list[str]) -> dict[str, object] | None:
             return None
         if i + 1 >= n:
             return None  # dangling key with no value
-        out[key] = _coerce_value(tokens[i + 1])
+        out[key] = _coerce_literal(tokens[i + 1])
         i += 2
     return out or None
 
@@ -186,7 +172,7 @@ class SquareBracketFlavor:
             return Pending()
         # Empty-args form: `[name]`.
         if buf[name_end] == _CLOSE:
-            log.info("inline-square-bracket tool call recovered: %s()", m.group(1))
+            log_recovered(log, _SHAPE, m.group(1), {})
             return Closed(
                 chunk=_synthesize_tool_use(m.group(1), {}),
                 tail=buf[name_end + 1:],
@@ -201,7 +187,7 @@ class SquareBracketFlavor:
         params = _parse_kv_tokens(tokens)
         if params is None:
             return Unparseable(consumed=close)
-        log.info("inline-square-bracket tool call recovered: %s(%s)", m.group(1), params)
+        log_recovered(log, _SHAPE, m.group(1), params)
         return Closed(
             chunk=_synthesize_tool_use(m.group(1), params),
             tail=buf[close:],

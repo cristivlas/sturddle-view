@@ -22,7 +22,7 @@ import httpx
 from ._errors import extract_error_message
 from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
 from .harmony_strip import flush_harmony_carry, strip_harmony_text
-from .inline_tool_calls import recover_inline_tool_calls
+from .inline_recovery import recover_inline_tool_calls
 from .openai_compat import (
     MalformedToolArgumentsError,
     inline_recovery_args,
@@ -128,35 +128,6 @@ def ollama_native_tool_call_to_provider_chunk(
         tool_use_id=synthetic_id,
         tool_name=fn.get("name", "") or "",
         tool_input=fn.get("arguments", {}) or {},
-    )
-
-
-def openai_tool_call_to_provider_chunk(tool_call: dict) -> ProviderChunk:
-    """Accumulated OpenAI tool_call (from streamed deltas) -> Anthropic
-    tool_use ProviderChunk.
-
-    Raises `MalformedToolArgumentsError` on bad JSON rather than silently
-    coercing to `{}` -- a model that emits broken JSON is a real problem,
-    and silently passing `{}` to the tool just hides it. The transcript
-    will have already captured the raw byte trail.
-    """
-    fn = tool_call.get("function", {}) or {}
-    tool_name = fn.get("name", "") or ""
-    args_raw = fn.get("arguments", "")
-    if args_raw:
-        try:
-            args = json.loads(args_raw)
-        except json.JSONDecodeError as exc:
-            raise MalformedToolArgumentsError(
-                tool_name=tool_name, raw_arguments=args_raw, parse_error=str(exc),
-            ) from exc
-    else:
-        args = {}
-    return ProviderChunk(
-        kind="tool_use",
-        tool_use_id=tool_call.get("id", "") or "",
-        tool_name=tool_name,
-        tool_input=args,
     )
 
 
