@@ -22,7 +22,7 @@ import httpx
 from ._errors import extract_error_message
 from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
 from .harmony_strip import flush_harmony_carry, strip_harmony_text
-from .inline_tool_calls import recover_inline_tool_calls
+from .inline_recovery import recover_inline_tool_calls
 from .openai_compat import (
     MalformedToolArgumentsError,
     inline_recovery_args,

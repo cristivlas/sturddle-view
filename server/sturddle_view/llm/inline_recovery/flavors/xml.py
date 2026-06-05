@@ -2,18 +2,23 @@
 
 Native implementation. Parsing helpers (`_parse_tool_call`,
 `_synthesize_tool_use`) are the shared pure utilities in
-`..inline_tool_calls`.
+`...inline_tool_calls`.
 """
 from __future__ import annotations
 
 import logging
 
 from ..protocol import Closed, CloseResult, Pending
-from ...inline_tool_calls import _parse_tool_call, _synthesize_tool_use
+from ...inline_tool_calls import (
+    _parse_tool_call,
+    _synthesize_tool_use,
+    log_recovered,
+)
 
 log = logging.getLogger(__name__)
 
 _SENTINEL = "<function="
+_SHAPE = "XML"
 
 
 class XmlFlavor:
@@ -28,7 +33,7 @@ class XmlFlavor:
         if result is None:
             return Pending()
         name, params, end = result
-        log.info("inline-XML tool call recovered: %s(%s)", name, params)
+        log_recovered(log, _SHAPE, name, params)
         return Closed(chunk=_synthesize_tool_use(name, params), tail=buf[end:])
 
     def trailing_hold(self, buf: str) -> int:

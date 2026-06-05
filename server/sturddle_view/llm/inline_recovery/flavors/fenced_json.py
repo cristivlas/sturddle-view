@@ -15,10 +15,11 @@ import logging
 import re
 
 from ..protocol import Closed, CloseResult, NotTool, Pending
-from ...inline_tool_calls import _synthesize_tool_use
+from ...inline_tool_calls import _synthesize_tool_use, log_recovered
 
 log = logging.getLogger(__name__)
 
+_SHAPE = "fenced-JSON"
 _FENCE_TICKS = "```"
 _FENCE_LANG = "json"
 _FENCE_TAIL_SLACK = 2  # optional whitespace + newline after the language tag
@@ -99,7 +100,7 @@ class FencedJsonFlavor:
             # as text -- it looked like a tool call but wasn't.
             return NotTool(flushed_text=buf[:end] + tail)
         tool_name, params = parsed
-        log.info("inline-fenced-JSON tool call recovered: %s(%s)", tool_name, params)
+        log_recovered(log, _SHAPE, tool_name, params)
         return Closed(chunk=_synthesize_tool_use(tool_name, params), tail=tail)
 
     def trailing_hold(self, buf: str) -> int:

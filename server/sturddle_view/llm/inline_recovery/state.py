@@ -15,10 +15,6 @@ Walks a flavor registry. Per chunk:
      all flavors; flush the safe prefix, hold the rest in text_buf.
 
 Stream end: flush any remaining buffers as text on the current channel.
-
-This replaces the flat state machine in `..inline_tool_calls` whose
-parallel buffers (xml_buf, fence_buf, call_buf, pre_buf) and capture
-flags became the documented refactor smell.
 """
 from __future__ import annotations
 

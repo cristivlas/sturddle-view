@@ -22,7 +22,7 @@ import httpx
 
 from ._errors import extract_error_message
 from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
-from .inline_tool_calls import recover_inline_tool_calls
+from .inline_recovery import recover_inline_tool_calls
 from .openai_compat import (
     inline_recovery_args,
     messages_anthropic_to_openai,

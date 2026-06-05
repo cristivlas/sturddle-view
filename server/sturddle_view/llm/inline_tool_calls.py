@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import re
 import uuid
 from typing import Iterable
@@ -76,6 +77,15 @@ def _synthesize_tool_use(name: str, params: dict[str, object]) -> ProviderChunk:
         tool_name=name,
         tool_input=params,
     )
+
+
+def log_recovered(
+    log: logging.Logger, shape: str, name: str, params: dict[str, object],
+) -> None:
+    """Uniform recovery log across flavors. `shape` is the flavor tag
+    (e.g. "XML", "call"). Passed each flavor's own module logger so the
+    record keeps that flavor's logger name."""
+    log.info("inline-%s tool call recovered: %s(%s)", shape, name, params)
 
 
 # ---------- Call-syntax recovery --------------------------------------
@@ -259,13 +269,3 @@ def _coerce_literal(raw: str) -> object:
     if len(s) >= 2 and s[0] == s[-1] and s[0] in _QUOTE_CHARS:
         return s[1:-1]
     return s
-
-
-# Public entry lives in the inline_recovery package; re-exported here
-# lazily via __getattr__ so direct imports of the inline_recovery
-# package (e.g. from test modules) don't trigger an import cycle.
-def __getattr__(attr_name):
-    if attr_name == "recover_inline_tool_calls":
-        from .inline_recovery import recover_inline_tool_calls as _impl
-        return _impl
-    raise AttributeError(attr_name)
