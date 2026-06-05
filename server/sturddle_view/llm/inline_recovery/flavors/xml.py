@@ -1,8 +1,8 @@
 """XML inline tool-call flavor: `<function=name>...</function>`.
 
 Native implementation. Parsing helpers (`_parse_tool_call`,
-`_synthesize_tool_use`) are reused from the legacy module -- they are
-pure utilities, orthogonal to the state machine being rewritten.
+`_synthesize_tool_use`) are the shared pure utilities in
+`..inline_tool_calls`.
 """
 from __future__ import annotations
 

@@ -117,8 +117,8 @@ def _scan_quoted(s: str, start: int) -> int | None:
 
 def _coerce_value(raw: str) -> object:
     """JSON -> Python literal -> stripped-quote fallback -> bare string.
-    Mirrors the legacy `_coerce_literal` but kept local to keep this
-    flavor self-contained."""
+    Mirrors `inline_tool_calls._coerce_literal` but kept local to keep
+    this flavor self-contained."""
     s = raw.strip()
     try:
         return json.loads(s)

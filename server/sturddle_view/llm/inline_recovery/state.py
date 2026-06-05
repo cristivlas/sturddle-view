@@ -264,7 +264,6 @@ def _scan_and_capture(buf: str, flavors: List[Flavor], channel: str):
 
 
 def _max_trailing_hold(buf: str, flavors: List[Flavor]) -> int:
-    """Union trailing-hold across all flavors. Replaces the
-    cross-flavor coupling in legacy `_split_at_safe_boundary` /
-    `_split_at_sentinel_prefix`."""
+    """Union trailing-hold across all flavors: hold back the longest
+    tail any flavor might still need to complete a split sentinel."""
     return max((fl.trailing_hold(buf) for fl in flavors), default=0)

@@ -5,8 +5,8 @@ flavor out of the registry otherwise.
 
 The state-machine layer (find_sentinel / try_close / trailing_hold)
 is native here. Parsing helpers (`_parse_call_args`,
-`_find_balanced_close`, `_build_name_pattern`) are reused from the
-legacy module; they are pure utilities, orthogonal to the refactor.
+`_find_balanced_close`, `_build_name_pattern`) are the shared pure
+utilities in `..inline_tool_calls`.
 """
 from __future__ import annotations
 
