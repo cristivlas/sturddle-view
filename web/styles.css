@@ -1301,6 +1301,24 @@ body[data-ribbon-float] .tournaments-ribbon {
   -webkit-mask-image: none !important; mask-image: none !important;
   background-color: transparent !important;
 }
+
+/* Mobile inline AI-analysis host. Hidden on desktop (the dock column and
+   floating WinBox cover that case); shown only in the stacked mobile layout
+   below the board. Empty -> no box. The panel grows with its content and the
+   page scrolls (no fixed height): the inline slot sizes to content. */
+.play-ai-inline { display: none; }
+.play-ai-inline.inline-empty { display: none !important; }
+/* Inline slot reuses .dock-slot chrome but folds via a .collapsed class
+   toggled by the header click. The parent .play-ai-inline is block flow, so
+   the slot sizes to content (no flex item rule needed). */
+.dock-slot.inline-slot .dock-slot-header { cursor: pointer; }
+.dock-slot.inline-slot .dock-slot-undock { display: none; } /* nowhere to pop to */
+.dock-slot.inline-slot.collapsed .dock-slot-body { display: none; }
+/* Vertical: grow with content, the page is the scroller. Horizontal: keep
+   dock mode's x-scroll so a long nowrap tool label can't bleed past the
+   panel and trigger a page-wide horizontal scrollbar. */
+.dock-slot.inline-slot .dock-slot-body { overflow-x: auto; overflow-y: visible; }
+.dock-slot.inline-slot .play-ai-scroll { max-height: none; overflow: visible; }
 .dock-slot-action.play-ai-reanalyze-ctrl::before {
   content: "";
   display: block;
@@ -1370,6 +1388,9 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
     height: auto;
   }
   .play-board-host { display: block; }
+  /* Inline AI panel: visible in the stacked layout, below the board.
+     Empty-state hiding is handled by the base .inline-empty rule. */
+  .play-ai-inline { display: block; }
   .board-ribbon {
     position: static;
     transform: none;
@@ -1403,16 +1424,18 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
     left: 0; top: auto; bottom: 100%;
     margin-left: 0; margin-bottom: 8px;
   }
-  /* Display order: ribbon on top, then board, then side panel.
-     The horizontal ribbon's accent line sits at the button bottom
+  /* Display order: ribbon on top, then board, then AI analysis, then side
+     panel. The horizontal ribbon's accent line sits at the button bottom
      (bottom: -1px above), which only reads correctly when the ribbon
      is above the board. */
+  #no-engine-banner,
   #board-controls,
   #view-controls,
   #edit-controls { order: 1; }
   .play-board-host { order: 2; }
+  .play-ai-inline { order: 3; }
   .play-side-host {
-    order: 3;
+    order: 4;
     position: static;
     align-self: center;
     width: 100%;

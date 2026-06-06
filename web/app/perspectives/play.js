@@ -33,6 +33,7 @@ import {
   setAiTitle,
   setOnUserCloseAi,
   setOnReanalyzeAi,
+  setAiInlineHost,
   isAiOpen,
 } from "../play-ai-window.js";
 import { terminationLabel } from "../format-termination.js";
@@ -182,6 +183,7 @@ export const playPerspective = {
             </button>
           </div>
           <div class="play-board-host"></div>
+          <div class="play-ai-inline inline-empty" aria-label="AI analysis"></div>
 
           <div id="board-controls" class="board-ribbon">
             <button id="new-game" class="ribbon-btn" aria-label="New game" title="New game">
@@ -460,6 +462,7 @@ export const playPerspective = {
     let suppressCommentsForEditTransition = false;
     const commentsHost = root.querySelector(".play-comments-host");
     setCommentaryDockContainer(commentsHost);
+    setAiInlineHost(root.querySelector(".play-ai-inline"));
     let lastViewComment = null;
     // X on the commentary window (dock slot or float) -> clear setting.
     setOnUserCloseCommentary(() => {
@@ -1952,6 +1955,7 @@ export const playPerspective = {
         setCommentaryDockContainer(null);
         setOnUserCloseCommentary(null);
         closeAi();
+        setAiInlineHost(null);
         setOnUserCloseAi(null);
         setOnReanalyzeAi(null);
         dismissAnalysisToast?.();

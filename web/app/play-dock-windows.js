@@ -131,6 +131,18 @@ window.addEventListener(APP_EVT.LAYOUT_CHANGED, () => {
     requestAnimationFrame(updateDockBounds));
 });
 
+// Migrate inline-capable panels across the mobile breakpoint. Each query can
+// fire independently (width vs height), so a single coalesced handler covers
+// both without double-running. relayout() no-ops for instances that aren't
+// open or have no inline host.
+function relayoutInlineInstances() {
+  for (const inst of instances) {
+    if (inst.relayout) inst.relayout();
+  }
+}
+mqMobile.addEventListener("change", relayoutInlineInstances);
+mqMobileHPlay.addEventListener("change", relayoutInlineInstances);
+
 // Width that fits in the space to the right of the board, with fallback.
 function rightColumnWidth(fallback = 480) {
   const board = document.querySelector(".play-board-host");
@@ -374,6 +386,7 @@ export function createDockableWindow(config) {
     title, className, geoKey, winStateKey, dockedKey, openKey,
     defaultW, defaultH, defaultY, build, dockOrder,
     getDockEl = () => dockEl,
+    getInlineEl = null,
     onUserClose,
     closable = false,
     titleActions = [],
@@ -381,6 +394,7 @@ export function createDockableWindow(config) {
 
   let wb = null;
   let slot = null;
+  let inlineSlot = null;
   let body = null;
   let off = null;
   let saved = null;
@@ -490,20 +504,59 @@ export function createDockableWindow(config) {
     else if (ws === "max") wb.maximize();
   }
 
+  // Inline placement: a stacked host below the board on mobile, where the
+  // dock column and floating WinBox are unavailable (dock is display:none,
+  // float chrome is unusable on a phone). Reuses the dock-slot chrome inside
+  // a <details open> so the panel folds; the host owns vertical sizing
+  // (natural grow, page scrolls). Mutually exclusive with dock()/float.
+  function inline() {
+    const host = getInlineEl?.();
+    if (!host) return;
+    // Reuse dock-slot chrome (title + close). Undock is meaningless inline
+    // (no column/float to pop to) and hidden via CSS. The header doubles as
+    // a fold toggle: clicking it collapses the body, like a <details>.
+    inlineSlot = makeDockSlot(currentTitle, body, undock, closable ? userClose : null, titleActions);
+    inlineSlot.classList.add("inline-slot");
+    const header = inlineSlot.querySelector(".dock-slot-header");
+    header.addEventListener("click", (e) => {
+      // Ignore clicks on the action buttons (close/undock/title actions).
+      if (e.target.closest("button")) return;
+      inlineSlot.classList.toggle("collapsed");
+    });
+    host.appendChild(inlineSlot);
+    host.classList.remove("inline-empty");
+  }
+
+  function uninline() {
+    if (!inlineSlot) return;
+    const host = inlineSlot.parentElement;
+    detachBody(inlineSlot, body);
+    inlineSlot.remove();
+    inlineSlot = null;
+    if (host && host.querySelectorAll(".inline-slot").length === 0) {
+      host.classList.add("inline-empty");
+    }
+  }
+
   function teardownSlot() {
-    if (!slot) return;
-    detachBody(slot, body);
-    slot.remove();
-    slot = null;
+    if (!slot && !inlineSlot) return;
+    if (slot) {
+      detachBody(slot, body);
+      slot.remove();
+      slot = null;
+    }
+    uninline();
     if (off) { off(); off = null; }
     body = null;
   }
 
   function detachSlotForNav() {
-    if (!slot) return;
-    detachBody(slot, body);
-    slot.remove();
-    slot = null;
+    if (slot) {
+      detachBody(slot, body);
+      slot.remove();
+      slot = null;
+    }
+    uninline();
   }
 
   function close() {
@@ -520,10 +573,12 @@ export function createDockableWindow(config) {
   }
 
   function toggle(events) {
-    if (wb || slot) { close(); return; }
+    if (wb || slot || inlineSlot) { close(); return; }
     setOpen(openKey, true);
     if (!body) body = build(events, { setOff });
-    if (isDocked(dockedKey) && getDockEl()) {
+    if (isMobileLayout() && getInlineEl?.()) {
+      inline();
+    } else if (isDocked(dockedKey) && getDockEl()) {
       dock();
     } else {
       openFloat();
@@ -536,24 +591,48 @@ export function createDockableWindow(config) {
   }
 
   function restore(events) {
-    if (wb || slot) return; // already open from a prior call
+    if (wb || slot || inlineSlot) return; // already open from a prior call
     if (body || saved || isOpen(openKey)) toggle(events);
+  }
+
+  // Migrate an open panel between inline (mobile) and dock/float (desktop)
+  // when the viewport crosses the mobile breakpoint. Preserves body +
+  // listeners; only the placement chrome is rebuilt.
+  function relayout() {
+    const open = wb || slot || inlineSlot;
+    if (!open || !getInlineEl) return;
+    const wantInline = isMobileLayout();
+    // Guard the destination host BEFORE tearing down the current placement:
+    // if the inline host is gone (e.g. mid-unmount), keep the float/dock
+    // rather than orphaning the body with nowhere to land.
+    if (wantInline && (wb || slot) && getInlineEl()) {
+      if (wb) { saveGeo(geoKey, wb); docking = true; wb.body.removeChild(body); wb.close(); docking = false; }
+      else { detachBody(slot, body); slot.remove(); slot = null; }
+      inline();
+      syncDockVisibility();
+    } else if (!wantInline && inlineSlot) {
+      uninline();
+      if (isDocked(dockedKey) && getDockEl()) dock();
+      else openFloat();
+    }
   }
 
   function setTitle(next) {
     if (typeof next !== "string" || next === currentTitle) return;
     currentTitle = next;
     if (wb) wb.setTitle(next);
-    if (slot) {
-      const el = slot.querySelector(".dock-slot-title");
+    const slotEl = slot || inlineSlot;
+    if (slotEl) {
+      const el = slotEl.querySelector(".dock-slot-title");
       if (el) el.textContent = next;
     }
   }
 
   const inst = {
-    toggle, close, teardownSlot, closeForNav, restore, setTitle,
+    toggle, close, teardownSlot, closeForNav, restore, relayout, setTitle,
     get wb() { return wb; },
     get slot() { return slot; },
+    get inlineSlot() { return inlineSlot; },
     get body() { return body; },
     dockedKey,
     dockOrder,

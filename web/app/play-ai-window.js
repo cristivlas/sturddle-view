@@ -300,6 +300,11 @@ const TITLE_ACTIONS = [
   },
 ];
 
+// Mobile inline host (set by play.js on mount). On phones the dock column is
+// hidden and floating chrome is unusable, so the panel mounts here, stacked
+// below the board. See createDockableWindow's inline placement.
+let inlineEl = null;
+
 const inst = createDockableWindow({
   title: "AI Analysis",
   className: "sturddle-wb-ai",
@@ -314,12 +319,17 @@ const inst = createDockableWindow({
     return buildBody();
   },
   dockOrder: DOCK_ORDER.AI_ANALYSIS,
+  getInlineEl: () => inlineEl,
   closable: true,
   onUserClose: () => {
     if (userCloseHandler) userCloseHandler();
   },
   titleActions: TITLE_ACTIONS,
 });
+
+export function setAiInlineHost(el) {
+  inlineEl = el || null;
+}
 
 export function setOnUserCloseAi(fn) {
   userCloseHandler = fn;
@@ -347,7 +357,7 @@ try {
 } catch { /* non-fatal */ }
 
 export function openAi() {
-  if (inst.wb || inst.slot) return;
+  if (inst.wb || inst.slot || inst.inlineSlot) return;
   inst.toggle(null);
 }
 
@@ -356,7 +366,7 @@ export function closeAi() {
 }
 
 export function isAiOpen() {
-  return !!(inst.wb || inst.slot);
+  return !!(inst.wb || inst.slot || inst.inlineSlot);
 }
 
 // The actual scroller is the inner .play-ai-scroll wrapper; the
