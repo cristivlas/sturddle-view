@@ -53,6 +53,21 @@ def test_phantom_capture_flagged():
     assert find_illegal_moves("threatening Nxf3", chess.Board()) == ["Nxf3"]
 
 
+def test_numbered_move_for_other_move_not_flagged():
+    # "17.Nab1" carries a move number that is not the current fullmove (16),
+    # so it cites a past/hypothetical line, not the live board -- left alone
+    # even though Nab1 is illegal here.
+    board = _board("r2qr1k1/5ppp/p4n2/1pbP1bB1/1n6/N1N2B2/PP1Q1PPP/3R1RK1 b - - 1 16")
+    assert find_illegal_moves("after 17.Nab1 Karpov was left with", board) == []
+
+
+def test_numbered_move_for_current_move_flagged():
+    # A move number equal to the current fullmove (16) IS about the live board,
+    # so it is still checked -- Nab1 is illegal and flagged.
+    board = _board("r2qr1k1/5ppp/p4n2/1pbP1bB1/1n6/N1N2B2/PP1Q1PPP/3R1RK1 b - - 1 16")
+    assert find_illegal_moves("the move 16...Nab1 fails", board) == ["Nab1"]
+
+
 def test_disambiguated_san_label_carve_out_not_flagged():
     # 'Ngf3' names the knight already on f3 -- a disambiguated label, not a
     # move (the g1->f3 hop is illegal, f3 occupied). It must not be flagged.

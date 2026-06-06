@@ -31,9 +31,20 @@ _SAN_GLYPHS = r"[!?]{0,2}"
 # "..." is glued to a preceding word ("develops...Nf3") it is ambiguous --
 # trailing punctuation or the marker -- and we deliberately read it as the
 # marker (validate from Black). Not a bug: do not "fix" the boundary.
+# An optional leading move number ("17.", "17...") is captured so a move
+# citing another ply (past or hypothetical line) can be left alone.
 _SAN_TOKEN_RE = re.compile(
-    rf"(\.\.\.)?\b((?:{_SAN_CASTLE}|{_SAN_PIECE_MOVE}|{_SAN_PAWN_CAPTURE}){_SAN_GLYPHS})"
+    rf"(?:(?P<num>\d+)\.+\s*)?(?P<prefix>\.\.\.)?\b"
+    rf"(?P<token>(?:{_SAN_CASTLE}|{_SAN_PIECE_MOVE}|{_SAN_PAWN_CAPTURE}){_SAN_GLYPHS})"
 )
+
+
+def _other_move_number(match: re.Match, board: chess.Board) -> bool:
+    """True iff the token carries a move number that is not the current move
+    ('17.Nab1' when the live position is at a different fullmove). Such tokens
+    cite a past or hypothetical line, not the live board, so we skip them."""
+    num = match.group("num")
+    return num is not None and int(num) != board.fullmove_number
 
 
 def _pov_for(prefix: str | None, board: chess.Board) -> chess.Color:
@@ -122,12 +133,14 @@ def iter_illegal_moves(text: str, board: chess.Board):
     Legal moves, square-labels ('Qd1'), and phantom-capture-free parses pass."""
     seen: set[str] = set()
     for match in _SAN_TOKEN_RE.finditer(text):
-        prefix, token = match.group(1), match.group(2)
+        token = match.group("token")
         if token in seen:
             continue
         seen.add(token)
+        if _other_move_number(match, board):
+            continue
         bare = _strip_annotation_glyphs(token)
-        pov_board = _board_for_pov(board, _pov_for(prefix, board))
+        pov_board = _board_for_pov(board, _pov_for(match.group("prefix"), board))
         if pov_board is None:
             continue
         if _parse_san_real(pov_board, bare) is not None:
@@ -229,11 +242,13 @@ def projected_boards(text: str, board: chess.Board) -> list[chess.Board]:
     out: list[chess.Board] = []
     seen: set[str] = set()
     for match in _SAN_TOKEN_RE.finditer(text):
-        prefix, token = match.group(1), match.group(2)
+        token = match.group("token")
         if token in seen:
             continue
         seen.add(token)
-        pov_board = _board_for_pov(board, _pov_for(prefix, board))
+        if _other_move_number(match, board):
+            continue
+        pov_board = _board_for_pov(board, _pov_for(match.group("prefix"), board))
         if pov_board is None:
             continue
         move = _parse_san_real(pov_board, _strip_annotation_glyphs(token))
