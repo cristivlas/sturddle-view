@@ -505,12 +505,12 @@ const REVISION_ITEMS_MAX = 48;
 
 // Fallback summary when the next round has no usable opening line: the AI
 // catching its own slip. Singular reads conversationally, plural lists the
-// items (ellipsis-trimmed); item leads lowercased to read mid-sentence.
+// items (ellipsis-trimmed). Items keep their exact case -- lowercasing the
+// lead would mangle SAN moves ("Nab1" -> "nab1").
 function revisionFallbackText(items) {
   if (!items.length) return "Actually, let me reconsider.";
-  const lc = items.map((s) => s.charAt(0).toLowerCase() + s.slice(1));
-  if (lc.length === 1) return `Actually, ${lc[0]} isn't right.`;
-  let joined = lc.join(", ");
+  if (items.length === 1) return `Actually, ${items[0]} isn't right.`;
+  let joined = items.join(", ");
   if (joined.length > REVISION_ITEMS_MAX) {
     joined = joined.slice(0, REVISION_ITEMS_MAX).trimEnd() + "...";
   }

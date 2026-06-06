@@ -77,11 +77,19 @@ def test_move_illegal_for_side_to_move_flagged():
 # --- find_false_piece_claims / iter_false_claim_squares --------------------
 
 def test_false_piece_claim_flagged():
-    # g6 is empty in this position; the claim is a present-tense board error.
+    # h6 is empty and no black bishop can reach it -- a present-tense board
+    # error with no reachable cover, so it is flagged.
     board = _board(_MIDGAME_FEN)
-    assert find_false_piece_claims("the bishop on g6 eyes the king", board) == [
-        "bishop on g6"
+    assert find_false_piece_claims("the bishop on h6 eyes the king", board) == [
+        "bishop on h6"
     ]
+
+
+def test_reachable_square_claim_not_flagged():
+    # g6 is empty, but the f5 bishop (side to move) can play to g6, so a
+    # colorless "bishop on g6" claim is cleared by reachability, not flagged.
+    board = _board(_MIDGAME_FEN)
+    assert find_false_piece_claims("the bishop on g6 eyes the king", board) == []
 
 
 def test_true_piece_claim_not_flagged():
@@ -104,6 +112,23 @@ def test_claim_cleared_by_projected_board():
     assert find_false_piece_claims(text, board) == []
 
 
+def test_colorless_claim_about_non_moving_side_flagged():
+    # _POV_FEN is White to move; the black knight on b4 can reach d3, but a
+    # bare "knight on d3" validates from the side to move (White), which cannot
+    # reach d3. Strict POV: flagged absent a color word or a named move.
+    board = _board(_POV_FEN)
+    assert find_false_piece_claims("a knight on d3 is strong", board) == [
+        "knight on d3"
+    ]
+
+
+def test_colored_claim_about_non_moving_side_cleared():
+    # Same square, but "black knight on d3" names the color -> validated from
+    # Black, who can reach d3 -> cleared. The color word picks the POV.
+    board = _board(_POV_FEN)
+    assert find_false_piece_claims("a black knight on d3 is strong", board) == []
+
+
 def test_wrong_color_claim_flagged():
     # A white knight is on c3; claiming a black knight there is a color error.
     board = _board(_MIDGAME_FEN)
@@ -114,20 +139,22 @@ def test_wrong_color_claim_flagged():
 
 def test_iter_false_claim_squares_yields_surface_label_square():
     # Surface keeps the exact prose ("the rook on c1"); label is normalized.
+    # h6 and c1 are both empty and unreachable here -> both flagged.
     board = _board(_MIDGAME_FEN)
-    rows = list(iter_false_claim_squares("the bishop on g6 and rook on c1", board))
+    rows = list(iter_false_claim_squares("the bishop on h6 and rook on c1", board))
     assert rows == [
-        ("the bishop on g6", "bishop on g6", "g6"),
+        ("the bishop on h6", "bishop on h6", "h6"),
         ("rook on c1", "rook on c1", "c1"),
     ]
 
 
 def test_false_claim_surface_keeps_possessive():
-    # The strike target must be the exact prose ("White's knight on b1"), not
-    # the normalized label ("white knight on b1") -- they differ.
+    # The strike target must be the exact prose ("White's knight on a1"), not
+    # the normalized label ("white knight on a1") -- they differ. a1 is empty
+    # and no white knight can reach it, so the claim is flagged.
     board = _board("r2qr1k1/5ppp/p4n2/1pbP1bB1/8/2Nn1B2/PP1Q1PPP/3R1RK1 w - - 0 1")
-    rows = list(iter_false_claim_squares("White's knight on b1 is passive", board))
-    assert rows == [("White's knight on b1", "white knight on b1", "b1")]
+    rows = list(iter_false_claim_squares("White's knight on a1 is passive", board))
+    assert rows == [("White's knight on a1", "white knight on a1", "a1")]
 
 
 # --- find_illegal_piece_moves ('<piece> to <square>') ---------------------

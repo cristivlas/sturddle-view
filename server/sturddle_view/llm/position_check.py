@@ -221,7 +221,11 @@ def projected_boards(text: str, board: chess.Board) -> list[chess.Board]:
 
     By design the claim and the move need not be linked: a claim clears if ANY
     move named anywhere in the prose reaches it. Loose by intent -- the check
-    only asks the model to clarify, so we bias toward not flagging."""
+    only asks the model to clarify, so we bias toward not flagging.
+
+    Still needed alongside plain reachability: a named opponent move can place
+    a piece where the next hop reaches a square unreachable from the current
+    board (white to move, "...Nd3" then a claim about d3->f2)."""
     out: list[chess.Board] = []
     seen: set[str] = set()
     for match in _SAN_TOKEN_RE.finditer(text):
@@ -316,12 +320,32 @@ def _claim_holds(
     return not color_word or actual.color == _COLOR_WORDS[color_word]
 
 
+def _prose_pov(color_word: str, board: chess.Board) -> chess.Color:
+    """Side a colorless prose claim/move is validated from: the named color
+    when given, else the side to move. Strict on purpose -- a bare "knight on
+    d3" about the side NOT to move is flagged (clarify, not rewrite). The
+    looser both-sides reading is the revert lever if this over-flags."""
+    return _COLOR_WORDS[color_word] if color_word else board.turn
+
+
+def _claim_reachable(
+    board: chess.Board, square: int, piece_type: int, color_word: str,
+) -> bool:
+    """True iff a legal move lands a piece of `piece_type` on `square`, from
+    the prose POV (named color, else STM). Clears a claim about a square a move
+    can reach this turn ('a knight on d3' when a knight can play there)."""
+    color = _prose_pov(color_word, board)
+    return _reaches_for_color(board, square, piece_type, color)
+
+
 def iter_false_claim_squares(text: str, board: chess.Board):
     """Yield (surface, label, square_name) for each false piece claim.
     `surface` is the exact prose span ("White's knight on b1") for the UI to
     strike; `label` is the normalized form for facts/keys. A claim holds when
-    the piece sits there on the current board OR on a board reached by a move
-    named earlier in the prose ('a knight on d3 after ...Nd3')."""
+    the piece sits there now, OR a legal move can land it there this turn, OR
+    it sits there on a board reached by a move named earlier in the prose --
+    the last covers opponent continuations a single hop can't ('after ...Nd3
+    the knight hits f2', unreachable until ...Nd3 is played)."""
     boards = [board, *projected_boards(text, board)]
     seen: set[str] = set()
     for surface, color_word, piece_word, square_name in _iter_piece_claims(text):
@@ -333,15 +357,16 @@ def iter_false_claim_squares(text: str, board: chess.Board):
         piece_type = _PIECE_WORDS[piece_word]
         if any(_claim_holds(b, square, piece_type, color_word) for b in boards):
             continue
+        if _claim_reachable(board, square, piece_type, color_word):
+            continue
         prefix = f"{color_word} " if color_word else ""
         yield surface, f"{prefix}{piece_word} on {square_name}", square_name
 
 
 def find_false_piece_claims(text: str, board: chess.Board) -> list[str]:
-    """'piece on square' claims that hold on neither the current board nor any
-    position reached by a move named in the prose. 'the bishop on g6' with no
-    move putting a bishop there is flagged; 'a knight on d3 after ...Nd3' is
-    cleared by the projected board."""
+    """'piece on square' claims that hold on no current/reachable/projected
+    board. 'the bishop on g6' with no bishop there and none able to reach it is
+    flagged; 'a knight on d3' is cleared once a knight can play to d3."""
     return [label for _surface, label, _square in iter_false_claim_squares(text, board)]
 
 
@@ -372,7 +397,7 @@ def iter_illegal_piece_moves(text: str, board: chess.Board):
     destination no piece of that type can legally reach. `surface` is the exact
     prose span for the UI to strike. Forward-looking, so a reachable plan is
     fine; only an impossible move ('bishop to a1') is flagged. POV: the named
-    color when given, else either side."""
+    color when given, else the side to move (see _prose_pov)."""
     seen: set[str] = set()
     for m in _PIECE_TO_SQUARE_RE.finditer(text):
         color_word = (m.group(1) or "").lower()
@@ -384,10 +409,8 @@ def iter_illegal_piece_moves(text: str, board: chess.Board):
         seen.add(key)
         piece_type = _PIECE_WORDS[piece_word]
         square = chess.parse_square(square_name)
-        colors = (
-            [_COLOR_WORDS[color_word]] if color_word else [chess.WHITE, chess.BLACK]
-        )
-        if any(_reaches_for_color(board, square, piece_type, c) for c in colors):
+        color = _prose_pov(color_word, board)
+        if _reaches_for_color(board, square, piece_type, color):
             continue
         prefix = f"{color_word} " if color_word else ""
         yield m.group(0), f"{prefix}{piece_word} to {square_name}"

@@ -70,7 +70,7 @@ async def test_clean_prose_emits_no_note_and_no_injection():
 async def test_false_claim_emits_note_and_injects_corrective():
     board = chess.Board(_FEN)
     provider = ScriptedProvider(rounds=[
-        [ProviderChunk(kind="text", text="The bishop on g6 dominates.")],
+        [ProviderChunk(kind="text", text="The bishop on h6 dominates.")],
         [ProviderChunk(kind="text", text="Corrected: the bishop is on f5.")],
     ])
     coord, bus = _coord(provider, board)
@@ -82,24 +82,25 @@ async def test_false_claim_emits_note_and_injects_corrective():
     notes = [e for e in events if e.kind == EVT_AI_POSITION_NOTE]
     assert len(notes) == 1
     # The note carries the exact prose span (with article) for the client to
-    # strike -- prose was "The bishop on g6 dominates."
-    assert notes[0].payload["surfaces"] == ["The bishop on g6"]
+    # strike -- prose was "The bishop on h6 dominates."
+    assert notes[0].payload["surfaces"] == ["The bishop on h6"]
     # The corrective is injected, forcing a second round.
     assert provider.stream_calls == 2
     injected = _last_user_texts(provider)
     assert any(t.startswith(_POSITION_CHECK_PREFIX) for t in injected)
     # Fact-anchored: the corrective states the square is empty.
-    assert any("g6 is empty" in t for t in injected)
+    assert any("h6 is empty" in t for t in injected)
 
 
 @pytest.mark.asyncio
 async def test_repeat_of_reworded_claim_escalates():
-    # Round 1: "white bishop on g6"; round 2 re-asserts it as "bishop on g6".
+    # Round 1: "white bishop on c6"; round 2 re-asserts it as "bishop on c6".
     # The repeat key is the square, so the reworded repeat still escalates.
+    # c6 is empty and unreachable by either bishop, so both rounds flag.
     board = chess.Board(_FEN)
     provider = ScriptedProvider(rounds=[
-        [ProviderChunk(kind="text", text="White bishop on g6 is strong.")],
-        [ProviderChunk(kind="text", text="The bishop on g6 stays.")],
+        [ProviderChunk(kind="text", text="White bishop on c6 is strong.")],
+        [ProviderChunk(kind="text", text="The bishop on c6 stays.")],
         [ProviderChunk(kind="text", text="Fine, the bishop is on f5.")],
     ])
     coord, bus = _coord(provider, board)
