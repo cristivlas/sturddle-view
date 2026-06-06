@@ -516,16 +516,27 @@ const REVISION_PHRASES = [
   ["Rethinking this.",           "Strike {}; it's wrong.",       "Strike {}; they're wrong."],
 ];
 
+// A SAN move ("Nab1", "Qd1", "O-O") whose leading capital is the piece letter
+// and must be kept; prose claims ("White's bishop on g3") read better with the
+// lead lowercased mid-sentence. Castling and a piece letter + SAN body char.
+const SAN_LEAD_RE = /^(?:O-O|[KQRBN][a-h1-8x])/;
+
+// Lowercase the first letter of a prose item so it reads mid-sentence
+// ("White's bishop" -> "white's bishop"); leave SAN moves untouched.
+function decapLead(s) {
+  return SAN_LEAD_RE.test(s) ? s : s.charAt(0).toLowerCase() + s.slice(1);
+}
+
 // Fallback summary when the next round has no usable opening line: the AI
 // catching its own slip. `seed` (the round) picks the phrasing deterministically
-// so a rehydrated panel shows the same one. Items keep their exact case --
-// lowercasing the lead would mangle SAN moves ("Nab1" -> "nab1").
+// so a rehydrated panel shows the same one. Prose leads are decapitalized;
+// SAN moves keep their case so "Nab1" isn't mangled to "nab1".
 function revisionFallbackText(items, seed = 0) {
   const n = REVISION_PHRASES.length;
   const [none, one, many] = REVISION_PHRASES[((seed % n) + n) % n];
   if (!items.length) return none;
-  if (items.length === 1) return one.replace("{}", items[0]);
-  let joined = items.join(", ");
+  if (items.length === 1) return one.replace("{}", decapLead(items[0]));
+  let joined = items.map(decapLead).join(", ");
   if (joined.length > REVISION_ITEMS_MAX) {
     joined = joined.slice(0, REVISION_ITEMS_MAX).trimEnd() + "...";
   }
