@@ -581,19 +581,22 @@ function revisionFallbackText(items, seed = 0) {
 // right,") as the opening prose despite the prompt forbidding it. Replace that
 // lead with a board-oriented opener so the prose reads as analysis, not
 // compliance. Matches the phrase then its terminator -- period, exclamation,
-// or comma -- or an "..., I'll ..." continuation; never a bare run of text
-// that could be real analysis. The terminator is captured and re-appended so
-// the original punctuation (and sentence flow) is preserved: "Understood, x"
-// keeps its comma. The apostrophe class covers straight and curly quotes
-// (U+2018/U+2019) since models emit both for "you're".
+// comma, or em/en dash -- or an "..., I'll ..." continuation; never a bare run
+// of text that could be real analysis. The terminator is captured and
+// re-appended so the original punctuation (and sentence flow) is preserved:
+// "Understood, x" keeps its comma. The apostrophe class covers straight and
+// curly quotes (U+2018/U+2019) since models emit both for "you're".
 // Straight or curly apostrophe -- models emit both in contractions.
 const APOS = "['\\u2018\\u2019]";
+// Sentence terminator the ack lead ends on, including em/en dash (models
+// write "You're correct--I misread" with a dash, no period).
+const ACK_TERM = "[.!,\\u2013\\u2014]";
 // "you're right" / "you are correct" etc.: full or contracted "are", and
 // either affirmation word.
 const YOU_ARE = `you(?:${APOS}re| are)`;
 const ACK_PHRASE = `understood|got it|${YOU_ARE} (?:right|correct)`;
 const ACK_LEAD_RE = new RegExp(
-  `^(?:${ACK_PHRASE})(?:,?\\s+i(?:${APOS}ll| will)[^.!?]*)?([.!,]) *`, "i",
+  `^(?:${ACK_PHRASE})(?:,?\\s+i(?:${APOS}ll| will)[^.!?]*)?(${ACK_TERM}) *`, "i",
 );
 // Bare clauses -- no trailing punctuation; the captured terminator is appended.
 const ACK_OPENERS = [
@@ -607,12 +610,16 @@ const ACK_OPENERS = [
 // Replace a leaked acknowledgment opener on the accumulated prose. Operates on
 // the whole paragraph text (deltas may split the ack), idempotent -- once the
 // ack is gone the regex no longer matches. `seed` (round) varies the opener.
+// A dash binds tight to the next word ("position--I"), so no trailing space
+// after it; comma/period keep theirs.
+const ACK_DASH_RE = new RegExp("[\\u2013\\u2014]");
 function scrubAckLead(para, seed) {
   const text = para.textContent;
   if (!ACK_LEAD_RE.test(text)) return;
-  para.textContent = text.replace(
-    ACK_LEAD_RE, (_m, term) => pickBySeed(ACK_OPENERS, seed) + term + " ",
-  );
+  para.textContent = text.replace(ACK_LEAD_RE, (_m, term) => {
+    const tail = ACK_DASH_RE.test(term) ? "" : " ";
+    return pickBySeed(ACK_OPENERS, seed) + term + tail;
+  });
 }
 
 // Disabled (kept for easy re-enable): first sentence of the next round's

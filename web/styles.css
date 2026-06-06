@@ -1697,7 +1697,7 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
   --ss-light: teal;
   --ss-marker: turquoise;
   --ss-arrow: turquoise;
-  --ss-arrow-secondary: rgb(76, 128, 180);
+  --ss-arrow-secondary: rgb(18, 98, 179);
 }
 .cm-chessboard.sturddle-staunty .board .square.white { fill: var(--ss-light); }
 .cm-chessboard.sturddle-staunty .board .square.black { fill: var(--ss-dark); }

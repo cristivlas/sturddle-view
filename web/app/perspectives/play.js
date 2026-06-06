@@ -923,13 +923,17 @@ export const playPerspective = {
         return;
       }
       const humanToMove = humanWhite ? turn === "white" : turn === "black";
-      // Pause is restricted to the human's turn; Resume (paused=true) is
-      // always allowed so a game paused on the engine's turn — e.g. after
-      // exiting Analysis — can be unpaused.
+      // Completed AI analysis in play mode reads as paused to the user (board
+      // frozen in ANALYZING). Present the button as Resume: one click exits
+      // analysis and resumes play (see onPause). Engine-only analysis and
+      // in-progress runs keep the plain Pause/Resume toggle.
+      const aiAnalysisDone = analyzing && aiTurnFinished && aiEnabled;
+      const showResume = paused || aiAnalysisDone;
+      // Pause needs the human's turn; Resume is always allowed.
       configureBtn(pauseBtn, {
-        disabled: gameOver || analyzing || (!paused && !humanToMove),
-        label: paused ? "Resume" : "Pause",
-        icon: paused ? "forward-step" : "pause",
+        disabled: gameOver || (!aiAnalysisDone && analyzing) || (!showResume && !humanToMove),
+        label: showResume ? "Resume" : "Pause",
+        icon: showResume ? "forward-step" : "pause",
       });
       configureBtn(takebackBtn, {
         disabled: analyzing || gameOver || !allowTakeback || movesPlayed === 0,
@@ -1454,6 +1458,18 @@ export const playPerspective = {
     };
 
     const onPause = async () => {
+      // Completed AI analysis in play mode: Resume exits analysis (server
+      // lands in PAUSED) then resumes to PLAY, so one click returns to the
+      // game. stopAnalysisFromUi tears down the AI window and replay buffer.
+      if (analyzing && aiTurnFinished && aiEnabled) {
+        try {
+          await stopAnalysisFromUi();
+          await ctx.api("POST", "/game/resume", {});
+        } catch (e) {
+          reportError(ctx, "Resume failed", e);
+        }
+        return;
+      }
       try {
         await ctx.api("POST", paused ? "/game/resume" : "/game/pause", {});
       } catch (e) {
