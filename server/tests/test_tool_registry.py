@@ -37,8 +37,8 @@ def test_schemas_exports_provider_tools_shape():
     reg.register(spec_a, _noop)
     reg.register(spec_b, _noop)
     out = reg.schemas()
-    # Anthropic shape: list of {name, description, input_schema}. Stable
-    # order across calls so prompt-cache keys don't shift round to round.
+    # Anthropic shape: list of {name, description, input_schema}, in
+    # registration order so the tool block doesn't reshuffle.
     assert out == [
         {"name": "a", "description": "A", "input_schema": {"type": "object"}},
         {"name": "b", "description": "B", "input_schema": {"type": "object"}},

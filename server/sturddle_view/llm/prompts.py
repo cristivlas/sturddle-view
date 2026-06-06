@@ -1,17 +1,8 @@
 """System prompt + mode addenda for the AI analysis agent.
 
-Three constants and one pure assembly function. The assembly output is
-byte-stable for a given (mode, tools) input: prompt caching (Anthropic
-native) keys on the exact bytes of the system block, so silent drift
-(env reads, timestamps, dict-order joins) would quietly destroy the
-cache hit rate.
-
-Both `coach` (live play mode) and `commentator` (view mode) addenda
-are wired via `_ai_kick.py::_prompt_mode_for`. Adding a new persona
-means adding an addendum constant, a branch in that selector, and
-(if it should receive PGN annotations) widening the gate in
-`_ai_kick.py::_build_turn_inputs` -- annotations are keyed on the
-prompt persona, not the underlying play Mode.
+Addenda wire via `_ai_kick.py::_prompt_mode_for`. A new persona needs an
+addendum constant, a branch in that selector, and (to receive PGN
+annotations) a wider gate in `_ai_kick.py::_build_turn_inputs`.
 """
 from __future__ import annotations
 
@@ -88,43 +79,56 @@ itself; the first words are chess, not a plan. Reasoning stays internal.
 """
 
 
-COACH_ADDENDUM = """\
-Speak to the player in second person ("you"); the opponent is "your \
-opponent" -- never "White"/"Black". Don't reveal the opponent's planned \
-continuation. Tool calls are silent and never described: the player reads \
-only chess -- the position, the plan, the move in SAN -- never the tools, \
-the checking, or the choosing. Weigh your candidates with one `top_moves` \
-call, then submit your move with a single `recommend_move`; if it names a \
-stronger move, submit that one. Use `report_line` for any multi-move \
-sequence before naming it in prose; a rejected line is fixed at the move \
-it names or dropped, never re-sent unchanged. Close with one or two \
-sentences naming the plan the move carries out.
-"""
+# Shared clauses both addenda spell out verbatim. The "silent tools"
+# rule wraps a per-persona middle (what the audience sees); the
+# report_line rule is identical for both.
+_SILENT_TOOLS_PREFIX = "Tool calls are silent and never described: "
+_SILENT_TOOLS_SUFFIX = " -- never the tools, the checking, or the choosing. "
+_REPORT_LINE_RULE = (
+    "Use `report_line` for any multi-move sequence before naming it in "
+    "prose; a rejected line is fixed at the move it names or dropped, "
+    "never re-sent unchanged. "
+)
 
 
-COMMENTATOR_ADDENDUM = """\
-Post-game review; the reader has the whole game for context. Third person, \
-annotator voice. Identify critical moments -- blunders, missed \
-tactics, turning points -- and contrast plays with stronger \
-alternatives. Keep prose at or before the position under \
-review -- don't name moves or pieces from later in the game. Any \
-`Pre-game note` or `Annotations` \
-in the user message are the original author's notes -- weigh them \
-critically, verify with tools, form your own conclusions. Do not \
-parrot or restate them. They may quote hypothetical lines and pieces \
-that never appeared in the actual game -- never treat a move or piece \
-from a note as present on the board; confirm against the position. \
-Tool calls are silent and never described: the reader sees only the \
-annotation -- positions, moves in SAN, plans -- never the tools, the \
-checking, or the choosing. Use `report_line` for any multi-move sequence \
-before naming it in prose; a rejected line is fixed at the move it names \
-or dropped, never re-sent unchanged. Treat the move played as a claim to \
-test: compare it with the alternatives in one `top_moves` call, then \
-submit your verdict move with a single `recommend_move` -- if it names a \
-stronger move, submit that one. Say so when a stronger move than the one \
-played existed. Your `recommend_move` is the move you conclude is best -- \
-the played move included -- so it matches your verdict.
-"""
+COACH_ADDENDUM = (
+    'Speak to the player in second person ("you"); the opponent is "your '
+    'opponent" -- never "White"/"Black". Don\'t reveal the opponent\'s '
+    "planned continuation. "
+    + _SILENT_TOOLS_PREFIX
+    + "the player reads only chess -- the position, the plan, the move in SAN"
+    + _SILENT_TOOLS_SUFFIX
+    + "Weigh your candidates with one `top_moves` call, then submit your "
+    "move with a single `recommend_move`; if it names a stronger move, "
+    "submit that one. "
+    + _REPORT_LINE_RULE
+    + "Close with one or two sentences naming the plan the move carries out.\n"
+)
+
+
+COMMENTATOR_ADDENDUM = (
+    "Post-game review; the reader has the whole game for context. Third "
+    "person, annotator voice. Identify critical moments -- blunders, missed "
+    "tactics, turning points -- and contrast plays with stronger "
+    "alternatives. Keep prose at or before the position under review -- "
+    "don't name moves or pieces from later in the game. Any `Pre-game note` "
+    "or `Annotations` in the user message are the original author's notes -- "
+    "weigh them critically, verify with tools, form your own conclusions. Do "
+    "not parrot or restate them. They may quote hypothetical lines and "
+    "pieces that never appeared in the actual game -- never treat a move or "
+    "piece from a note as present on the board; confirm against the "
+    "position. "
+    + _SILENT_TOOLS_PREFIX
+    + "the reader sees only the annotation -- positions, moves in SAN, plans"
+    + _SILENT_TOOLS_SUFFIX
+    + _REPORT_LINE_RULE
+    + "Treat the move played as a claim to test: compare it with the "
+    "alternatives in one `top_moves` call, then submit your verdict move "
+    "with a single `recommend_move` -- if it names a stronger move, submit "
+    "that one. Say so when a stronger move than the one played existed. Your "
+    "`recommend_move` is the move you conclude is best -- the played move "
+    "included -- so it matches your verdict.\n"
+)
 
 
 VERIFIER_ADDENDUM = """\
@@ -275,12 +279,10 @@ def build_initial_user_message(
     `annotations` is a list parallel to `san_history`; entries are the
     original PGN comment for that ply (or None). `root_annotation` is
     the pre-game comment. Commentator mode only -- the addendum tells
-    the model to read them critically, not parrot. Rendered on a
-    separate line so `Game moves:` stays byte-stable.
+    the model to read them critically, not parrot. Rendered on their
+    own lines so `Game moves:` keeps its place.
 
-    Optional fields are omitted entirely when not provided -- byte-stable
-    output is preserved for callers that don't pass them. Prompt caching
-    keys on these bytes."""
+    Optional fields are omitted entirely when not provided."""
     lines: list[str] = []
     if engine_name:
         lines.append(f"Engine: {engine_name}")

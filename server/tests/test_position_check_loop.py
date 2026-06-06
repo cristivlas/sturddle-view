@@ -15,7 +15,7 @@ from sturddle_view.llm import ProviderChunk, ScriptedProvider, ToolRegistry
 from sturddle_view.play.ai_analysis import (
     AIAnalysisCoordinator,
     _POSITION_CHECK_PREFIX,
-    _POSITION_CHECK_REPEAT_TEMPLATE,
+    _POSITION_CHECK_REPEAT_LEAD,
 )
 
 
@@ -111,8 +111,7 @@ async def test_repeat_of_reworded_claim_escalates():
 
     # The third round's input carries the escalated (repeat) corrective.
     injected = _last_user_texts(provider)
-    escalated_marker = _POSITION_CHECK_REPEAT_TEMPLATE.split("{")[0]
-    assert any(escalated_marker in t for t in injected)
+    assert any(_POSITION_CHECK_REPEAT_LEAD in t for t in injected)
 
 
 @pytest.mark.asyncio

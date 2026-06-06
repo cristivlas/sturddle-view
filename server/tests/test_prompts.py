@@ -75,8 +75,8 @@ def test_no_tools_block_when_registry_empty():
 
 
 def test_assembly_is_deterministic_across_calls():
-    # Same input -> same bytes, every call. If anyone slips in an env
-    # read or a timestamp later, repeated calls will diverge.
+    # Same input -> same bytes, every call. Guards against an env read or
+    # timestamp slipping in and making repeated calls diverge.
     a = assemble_system_prompt("coach")
     b = assemble_system_prompt("coach")
     assert a == b
@@ -191,7 +191,7 @@ def test_user_message_pairs_handle_odd_length():
 
 
 # Annotations: imported PGN comments are surfaced to the commentator on a
-# dedicated line so Game moves: stays byte-stable (prompt cache key).
+# dedicated line, leaving the Game moves: line unshifted.
 
 _SAN5 = ["e4", "e5", "Nf3", "Nc6", "Bb5"]
 
@@ -206,8 +206,7 @@ def test_user_message_omits_annotations_when_none():
         annotations=None,
         root_annotation=None,
     )
-    # Byte-stable: passing the new kwargs as None must not change output.
-    # Prompt caching keys on these exact bytes.
+    # Passing the new kwargs as None must not change the output at all.
     assert with_nones == baseline
     assert "Annotations:" not in baseline
     assert "Pre-game note:" not in baseline
@@ -274,9 +273,8 @@ def test_user_message_renders_root_and_per_ply_together():
 
 
 def test_user_message_game_moves_position_stable_when_annotations_added():
-    # Game moves: position relative to surrounding lines must not shift
-    # when annotations are present. Anything that changes the byte
-    # offset of Game moves: breaks the prompt cache key.
+    # Adding annotations must not shift the Game moves: line: the fields
+    # above the new lines keep their offsets.
     baseline = build_initial_user_message(
         fen=_STARTPOS_FEN,
         san_history=_SAN5,
@@ -291,9 +289,8 @@ def test_user_message_game_moves_position_stable_when_annotations_added():
         root_annotation="Note.",
         annotations=["c", None, None, None, None],
     )
-    # baseline is a strict prefix of annotated up to and including the
-    # last line they share (Game result), so every cacheable field above
-    # the new lines lands at byte-identical offsets.
+    # baseline is a strict prefix of annotated up to the last shared line
+    # (Game result), so every field above the new lines keeps its offset.
     head = baseline.rstrip("\n")
     assert annotated.startswith(head)
 

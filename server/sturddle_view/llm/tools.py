@@ -40,15 +40,15 @@ class ToolSpec:
 
 
 # Forward reference for the cancel token; concrete class lives in
-# llm/cancel.py (Step 2). Typed as Any here to avoid a back-import that
-# would couple the two modules before the cancel token contract is set.
+# llm/cancel.py. Typed as Any here to avoid a back-import that would
+# couple the two modules.
 ToolCallable = Callable[..., Awaitable[dict[str, Any]]]
 
 
 class ToolRegistry:
     def __init__(self) -> None:
         # Insertion-ordered dict so schemas() output is stable across
-        # calls -- prompt cache keys depend on byte-stable tool blocks.
+        # calls -- the tool block the model sees doesn't reshuffle.
         self._tools: dict[str, tuple[ToolSpec, ToolCallable]] = {}
 
     def register(self, spec: ToolSpec, fn: ToolCallable) -> None:

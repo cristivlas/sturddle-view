@@ -109,23 +109,24 @@ _VERIFIER_MODE: PromptMode = "verifier"
 ERROR_DETAIL_MAX_LEN = 500
 
 # Per-round prose check against the live board. On a hit the model gets a
-# directive, fact-anchored correction (the square's real content) so a weak
-# model can't dodge by restating. Escalates when it repeats an item.
+# gentle, fact-anchored correction. Move and claim errors get separate asks:
+# a bad move may just be the other side's reply or another ply (the checker
+# accepts "..." or a move number), but a square's content is plain truth.
 _POSITION_CHECK_PREFIX = "[position check] "
-# First correction: state the facts, demand a redo grounded in them.
-_POSITION_CHECK_TEMPLATE = (
-    "Stop. Your last paragraph is wrong about the board. Facts: {facts}. "
-    "Do not repeat these claims. Rewrite that paragraph using only pieces "
-    "and moves that exist in the current position."
+_POSITION_CHECK_LEAD = "Quick check on the current position."
+_POSITION_CHECK_REPEAT_LEAD = "Still doesn't fit the current position."
+# Move/line clause: offer the outs the checker honors before asking to restate.
+_POSITION_CHECK_MOVE_CLAUSE = (
+    "{facts}. If you meant one of black's moves, write it with a leading "
+    "\"...\" (like ...Nf6); if you meant a move from a different turn, write "
+    "its move number. Otherwise restate it for the position as it stands now."
 )
-# Repeat of an item already corrected this turn: harder, name the loop.
-_POSITION_CHECK_REPEAT_TEMPLATE = (
-    "You are repeating errors after being corrected. Facts: {facts}. "
-    "These are not in the current position. Delete every mention of them "
-    "and continue without referencing them again."
+# Claim clause: square content is POV-independent, so just ask for a restate.
+_POSITION_CHECK_CLAIM_CLAUSE = (
+    "{facts}. Restate this using only the pieces in the current position."
 )
 # Joined fact line when an illegal move is flagged (no square to describe).
-_ILLEGAL_MOVE_FACT = "{move} is not a legal move in the current position"
+_ILLEGAL_MOVE_FACT = "{move} isn't legal for the side to move"
 
 # Sent once at end-of-turn if the model never called recommend_move; a
 # completeness nudge. Trailing _NO_ACK_CLAUSE suppresses the
@@ -141,15 +142,13 @@ _RECOMMEND_NUDGE_PROMPTS = {
 
 # Sent once when recommend_move is accepted but the model skips the
 # closing conclusion (small models treat the call as the end). One-shot.
+_POST_RECOMMEND_NUDGE_PREFIX = (
+    "The move is recorded. State the one-to-two sentence conclusion "
+    "now, naming the plan it "
+)
 _POST_RECOMMEND_NUDGE_PROMPTS = {
-    "coach": (
-        "The move is recorded. State the one-to-two sentence conclusion "
-        "now, naming the plan it carries out."
-    ),
-    "commentator": (
-        "The move is recorded. State the one-to-two sentence conclusion "
-        "now, naming the plan it reflects."
-    ),
+    "coach": _POST_RECOMMEND_NUDGE_PREFIX + "carries out.",
+    "commentator": _POST_RECOMMEND_NUDGE_PREFIX + "reflects.",
 }
 
 # Injected after MAX_RECOMMEND_FAILURES consecutive failed recommend_move
@@ -1222,20 +1221,25 @@ class AIAnalysisCoordinator:
 
     @staticmethod
     def _position_check_message(pc: _PositionCheck, *, repeat: bool) -> str:
-        """Fact-anchored correction. For each false piece claim we state the
-        square's real content (reusing the pairs already walked in
-        `_position_check`), and for illegal moves / lines that they aren't
-        legal here. `repeat` escalates when the model re-asserts an item."""
-        facts: list[str] = [
+        """Fact-anchored correction with separate asks per error type. Illegal
+        moves/lines get the "..."/move-number outs (they may be another side or
+        ply); false piece claims state the square's real content and ask only
+        for a restate. `repeat` swaps in firmer lead-ins on re-assertion."""
+        clauses: list[str] = []
+        move_facts = [
+            _ILLEGAL_MOVE_FACT.format(move=move)
+            for move in pc.move_labels + pc.line_labels
+        ]
+        if move_facts:
+            clauses.append(_POSITION_CHECK_MOVE_CLAUSE.format(facts="; ".join(move_facts)))
+        claim_facts = [
             describe_square(square, pc.board)
             for _surface, _label, square in pc.claim_triples
         ]
-        for move in pc.move_labels + pc.line_labels:
-            facts.append(_ILLEGAL_MOVE_FACT.format(move=move))
-        template = (
-            _POSITION_CHECK_REPEAT_TEMPLATE if repeat else _POSITION_CHECK_TEMPLATE
-        )
-        return _POSITION_CHECK_PREFIX + template.format(facts="; ".join(facts))
+        if claim_facts:
+            clauses.append(_POSITION_CHECK_CLAIM_CLAUSE.format(facts="; ".join(claim_facts)))
+        lead = _POSITION_CHECK_REPEAT_LEAD if repeat else _POSITION_CHECK_LEAD
+        return _POSITION_CHECK_PREFIX + " ".join([lead, *clauses])
 
     @staticmethod
     def _needs_nudge(
