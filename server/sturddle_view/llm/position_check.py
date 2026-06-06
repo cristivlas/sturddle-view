@@ -709,3 +709,28 @@ def iter_illegal_square_moves(text: str, board: chess.Board, seen: set[str] | No
 def find_illegal_square_moves(text: str, board: chess.Board) -> list[str]:
     """Normalized '<square> to <square>' labels (see iter_illegal_square_moves)."""
     return [label for _surface, label in iter_illegal_square_moves(text, board)]
+
+
+# Self-reference to the machinery the prose must never name. Board-independent
+# -- a style violation, not a board-fact check. Tight on purpose: "the tool",
+# "the tools", "the engine", "the system" as whole phrases. Tool names and
+# verbs like "analyze" are left out (they read as ordinary chess prose); extend
+# the set if real leaks warrant it.
+_TOOL_MENTION_RE = re.compile(
+    r"\bthe\s+(?:tools?|engine|system)\b", re.IGNORECASE,
+)
+
+
+def find_tool_mentions(text: str) -> list[str]:
+    """Lowercased, de-duplicated self-references to the tools/engine/system in
+    `text` ('the tool', 'the engine'). Order-preserving. Empty when clean. The
+    coordinator turns these into a corrective; nothing is struck, since the
+    phrase is woven into the sentence and a strike would leave a fragment."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in _TOOL_MENTION_RE.finditer(text):
+        phrase = " ".join(m.group(0).lower().split())
+        if phrase not in seen:
+            seen.add(phrase)
+            out.append(phrase)
+    return out

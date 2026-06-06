@@ -18,6 +18,7 @@ from sturddle_view.llm.position_check import (
     find_illegal_pawn_moves,
     find_illegal_piece_moves,
     find_illegal_square_moves,
+    find_tool_mentions,
     handled_continuation_spans,
     iter_false_claim_squares,
     iter_illegal_continuations,
@@ -465,6 +466,26 @@ def test_black_led_run_illegal_at_its_anchor_flagged():
     # reach c6), so only the breaking move Bxc6 is flagged.
     board = _played(["e4", "e5", "Nf3", "Nc6"])
     assert _all_flags("the line 2...Nc6 3.Bxc6 fails", board) == ["Bxc6"]
+
+
+# --- find_tool_mentions ----------------------------------------------------
+
+def test_tool_mention_flagged():
+    assert find_tool_mentions("The tool identified 35.Rd6 as stronger.") == [
+        "the tool"
+    ]
+
+
+def test_tool_mention_variants_and_dedup():
+    text = "The engine likes it; the tools agree, and the tool confirms."
+    assert find_tool_mentions(text) == ["the engine", "the tools", "the tool"]
+
+
+def test_tool_mention_clean_prose_not_flagged():
+    # No self-reference -> nothing flagged. "the toolbox" is not a whole-word
+    # match for "tool".
+    assert find_tool_mentions("White attacks on the kingside.") == []
+    assert find_tool_mentions("the toolbox stays shut") == []
 
 
 # --- projected_boards ------------------------------------------------------

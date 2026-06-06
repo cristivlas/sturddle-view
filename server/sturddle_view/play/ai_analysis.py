@@ -14,7 +14,7 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 import chess
@@ -55,6 +55,7 @@ from ..llm import (
 from ..llm.cancel import CancelToken
 from ..llm.position_check import (
     describe_square,
+    find_tool_mentions,
     iter_false_claim_squares,
     handled_continuation_spans,
     iter_illegal_continuations,
@@ -125,6 +126,12 @@ _POSITION_CHECK_MOVE_CLAUSE = (
 # Claim clause: square content is POV-independent, so just ask for a restate.
 _POSITION_CHECK_CLAIM_CLAUSE = (
     "{facts}. Restate this using only the pieces in the current position."
+)
+# Tool-mention clause: the reader sees chess only, never the machinery. No
+# strike (the phrase is woven into the sentence) -- ask for a rewrite instead.
+_POSITION_CHECK_TOOL_CLAUSE = (
+    "The reader sees chess only -- never name the tools or engine. Remove "
+    "{mentions} and rewrite that sentence to describe only the position."
 )
 # Joined fact line when an illegal move is flagged (no square to describe).
 _ILLEGAL_MOVE_FACT = "{move} isn't legal for the side to move"
@@ -593,10 +600,16 @@ class _PositionCheck:
     move_pairs: list[tuple[str, str]]
     claim_triples: list[tuple[str, str, str]]
     line_pairs: list[tuple[str, str]]
+    # Tool/engine self-references caught in the prose. Corrective-only -- not
+    # struck, since the phrase is woven into the sentence (see find_tool_mentions).
+    tool_mentions: list[str] = field(default_factory=list)
 
     @property
     def hit(self) -> bool:
-        return bool(self.move_pairs or self.claim_triples or self.line_pairs)
+        return bool(
+            self.move_pairs or self.claim_triples
+            or self.line_pairs or self.tool_mentions
+        )
 
     @property
     def move_labels(self) -> list[str]:
@@ -940,10 +953,14 @@ class AIAnalysisCoordinator:
             # correction note and (below) injects a fact-anchored corrective.
             pc = self._position_check(round_chunks)
             if pc.hit:
-                await self._emit_position_note(
-                    emit=emit, game_id=game_id, round_index=round_index,
-                    surfaces=pc.surfaces,
-                )
+                # Tool-mention-only hits carry no surface to strike; skip the
+                # UI note (it would mark nothing) but still inject the
+                # corrective below so the model rewrites the sentence.
+                if pc.surfaces:
+                    await self._emit_position_note(
+                        emit=emit, game_id=game_id, round_index=round_index,
+                        surfaces=pc.surfaces,
+                    )
                 # Repeat key is the square (claims) or the token (moves/lines),
                 # so "white knight on d3" and "knight on d3" count as the same
                 # error and a reworded repeat still escalates.
@@ -951,6 +968,7 @@ class AIAnalysisCoordinator:
                     {sq for _surface, _label, sq in pc.claim_triples}
                     | {m.lower() for m in pc.move_labels}
                     | {ln.lower() for ln in pc.line_labels}
+                    | set(pc.tool_mentions)
                 )
                 repeat = bool(hit_keys & corrected_items)
                 corrected_items |= hit_keys
@@ -1174,14 +1192,18 @@ class AIAnalysisCoordinator:
         board = self._board_provider() if self._board_provider else None
         if board is None:
             return _PositionCheck(None, [], [], [])
-        text = "".join(
+        full_text = "".join(
             c.text for c in chunks if c.kind == "text" and c.text
         )
+        # Tool mentions are a style violation, wrong anywhere -- scanned on the
+        # full prose, not the truncated board view, so a leak after a future
+        # line still counts.
+        tool_mentions = find_tool_mentions(full_text)
         # Stop at the first move number past the live ply: beyond it the model
         # is in a hypothetical line, not describing the board.
-        text = truncate_at_future_line(text, board)
+        text = truncate_at_future_line(full_text, board)
         if not text.strip():
-            return _PositionCheck(board, [], [], [])
+            return _PositionCheck(board, [], [], [], tool_mentions)
         # SAN moves ('Bxe4') and prose moves ('bishop to a1') are the same
         # kind of error -- an impossible move -- so they share one bucket.
         # One shared dedup set across the move recognizers: a move flagged by
@@ -1210,6 +1232,7 @@ class AIAnalysisCoordinator:
             move_pairs,
             list(iter_false_claim_squares(text, board)),
             line_pairs,
+            tool_mentions,
         )
 
     async def _emit_position_note(
@@ -1252,6 +1275,9 @@ class AIAnalysisCoordinator:
         ]
         if claim_facts:
             clauses.append(_POSITION_CHECK_CLAIM_CLAUSE.format(facts="; ".join(claim_facts)))
+        if pc.tool_mentions:
+            quoted = ", ".join(f'"{m}"' for m in pc.tool_mentions)
+            clauses.append(_POSITION_CHECK_TOOL_CLAUSE.format(mentions=quoted))
         lead = _POSITION_CHECK_REPEAT_LEAD if repeat else _POSITION_CHECK_LEAD
         return _POSITION_CHECK_PREFIX + " ".join([lead, *clauses])
 

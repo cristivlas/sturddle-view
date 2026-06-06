@@ -93,6 +93,34 @@ async def test_false_claim_emits_note_and_injects_corrective():
     assert any("h6 is empty" in t for t in injected)
 
 
+def test_tool_mention_after_future_line_still_caught():
+    # A future move number truncates the board view, but a tool mention past it
+    # is a style violation everywhere -- scanned on the full prose.
+    board = chess.Board()  # move 1, so "2.Nf3" is a future line
+    coord, _bus = _coord(None, board)
+    pc = coord._position_check([
+        ProviderChunk(kind="text", text="Then 2.Nf3 develops. The tool agrees."),
+    ])
+    assert pc.tool_mentions == ["the tool"]
+    assert pc.hit
+
+
+def test_tool_mention_produces_corrective_clause():
+    # A caught tool reference asks the model to remove it and rewrite -- no
+    # strike, no "isn't legal" wording.
+    pc = _PositionCheck(
+        chess.Board(_FEN),
+        move_pairs=[],
+        claim_triples=[],
+        line_pairs=[],
+        tool_mentions=["the tool"],
+    )
+    msg = AIAnalysisCoordinator._position_check_message(pc, repeat=False)
+    assert '"the tool"' in msg
+    assert "never name the tools or engine" in msg
+    assert "isn't legal" not in msg
+
+
 def test_move_named_as_line_and_token_appears_once_in_corrective():
     # A move flagged both as a broken line and standalone in prose must not
     # repeat its fact in the corrective sent to the model.
