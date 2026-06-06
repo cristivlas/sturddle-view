@@ -577,21 +577,31 @@ function revisionFallbackText(items, seed = 0) {
   return fill(many, joined);
 }
 
-// Weak models leak a standalone acknowledgment ("Understood.") as the opening
-// prose despite the prompt forbidding it. Replace that lead with a board-
-// oriented opener so the prose reads as analysis, not compliance. Matches the
-// phrase then its terminator (or an "..., I'll ..." continuation), never a
-// bare run of text that could be real analysis.
-const ACK_PHRASE = "understood|got it";
+// Weak models leak a standalone acknowledgment ("Understood.", "You're
+// right,") as the opening prose despite the prompt forbidding it. Replace that
+// lead with a board-oriented opener so the prose reads as analysis, not
+// compliance. Matches the phrase then its terminator -- period, exclamation,
+// or comma -- or an "..., I'll ..." continuation; never a bare run of text
+// that could be real analysis. The terminator is captured and re-appended so
+// the original punctuation (and sentence flow) is preserved: "Understood, x"
+// keeps its comma. The apostrophe class covers straight and curly quotes
+// (U+2018/U+2019) since models emit both for "you're".
+// Straight or curly apostrophe -- models emit both in contractions.
+const APOS = "['\\u2018\\u2019]";
+// "you're right" / "you are correct" etc.: full or contracted "are", and
+// either affirmation word.
+const YOU_ARE = `you(?:${APOS}re| are)`;
+const ACK_PHRASE = `understood|got it|${YOU_ARE} (?:right|correct)`;
 const ACK_LEAD_RE = new RegExp(
-  `^(?:${ACK_PHRASE})(?:,?\\s+i(?:'ll| will)[^.!?]*)?[.!]\\s*`, "i",
+  `^(?:${ACK_PHRASE})(?:,?\\s+i(?:${APOS}ll| will)[^.!?]*)?([.!,]) *`, "i",
 );
+// Bare clauses -- no trailing punctuation; the captured terminator is appended.
 const ACK_OPENERS = [
-  "Now I see the board. ",
-  "Looking at the position. ",
-  "Reading the position. ",
-  "On the board: ",
-  "Here is the position. ",
+  "Now I see the board",
+  "Looking at the position",
+  "Reading the position",
+  "Here is the position",
+  "Assessing the position",
 ];
 
 // Replace a leaked acknowledgment opener on the accumulated prose. Operates on
@@ -600,7 +610,9 @@ const ACK_OPENERS = [
 function scrubAckLead(para, seed) {
   const text = para.textContent;
   if (!ACK_LEAD_RE.test(text)) return;
-  para.textContent = text.replace(ACK_LEAD_RE, pickBySeed(ACK_OPENERS, seed));
+  para.textContent = text.replace(
+    ACK_LEAD_RE, (_m, term) => pickBySeed(ACK_OPENERS, seed) + term + " ",
+  );
 }
 
 // Disabled (kept for easy re-enable): first sentence of the next round's

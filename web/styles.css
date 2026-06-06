@@ -1694,10 +1694,10 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
    here in app CSS (loaded after chessboard.css) so the vendored set is untouched. */
 .cm-chessboard.sturddle-staunty {
   --ss-dark: #2a3a4a;
-  --ss-light: #a0b3c3;
+  --ss-light: teal;
   --ss-marker: turquoise;
   --ss-arrow: turquoise;
-  --ss-arrow-secondary: teal;
+  --ss-arrow-secondary: rgb(76, 128, 180);
 }
 .cm-chessboard.sturddle-staunty .board .square.white { fill: var(--ss-light); }
 .cm-chessboard.sturddle-staunty .board .square.black { fill: var(--ss-dark); }
