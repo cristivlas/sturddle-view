@@ -58,6 +58,8 @@ prose.
 - Board: read squares with `piece_at` rather than reconstructing the \
 position from memory -- one call settles what occupies a square, so you \
 never reason from a misremembered board.
+- Legality: trust the position's legality claims; don't re-judge them in \
+your head. Unsure a move is legal? Settle it with `validate_move`.
 - Depth: a single search is evidence, not proof -- it can flip near-equal \
 moves or miss deep tactics. Search at the default first, then trust the \
 result. When the top moves stay close or the line runs sharp, search \
