@@ -1664,6 +1664,34 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 /* AI recommendation arrow: purple. */
 .cm-chessboard .arrow-secondary .arrow-head { fill: #7c3aed; }
 .cm-chessboard .arrow-secondary .arrow-line { stroke: #7c3aed; opacity: 0.55; }
+/* Sturddle Staunty theme: staunty pieces (set in board-styles.js) over navy
+   squares. Dark square = the tournament selected-row color (--row-bg-selected);
+   light square is that navy lifted toward slate-blue. cm-chessboard only
+   applies the cssClass to the SVG; these square/border/coordinate fills live
+   here in app CSS (loaded after chessboard.css) so the vendored set is untouched. */
+.cm-chessboard.sturddle-staunty {
+  --ss-dark: #2a3a4a;
+  --ss-light: #a0b3c3;
+  --ss-marker: turquoise;
+  --ss-arrow: turquoise;
+  --ss-arrow-secondary: teal;
+}
+.cm-chessboard.sturddle-staunty .board .square.white { fill: var(--ss-light); }
+.cm-chessboard.sturddle-staunty .board .square.black { fill: var(--ss-dark); }
+.cm-chessboard.sturddle-staunty.border-type-thin .board .border { stroke: var(--ss-dark); stroke-width: 0.7%; fill: var(--ss-dark); }
+.cm-chessboard.sturddle-staunty.border-type-none .board .border { stroke: var(--ss-dark); stroke-width: 0; fill: var(--ss-dark); }
+.cm-chessboard.sturddle-staunty.border-type-frame .board .border { fill: var(--ss-light); stroke: none; }
+.cm-chessboard.sturddle-staunty.border-type-frame .board .border-inner { fill: var(--ss-dark); stroke: var(--ss-dark); stroke-width: 0.7%; }
+.cm-chessboard.sturddle-staunty .coordinates .coordinate { fill: var(--ss-dark); }
+.cm-chessboard.sturddle-staunty .coordinates .coordinate.black { fill: var(--ss-light); }
+.cm-chessboard.sturddle-staunty .coordinates .coordinate.white { fill: var(--ss-dark); }
+/* Teal markers/arrows, readable on both square colors. */
+.cm-chessboard.sturddle-staunty .markers .marker.marker-frame { stroke: var(--ss-marker); }
+.cm-chessboard.sturddle-staunty .markers .marker.marker-dot { stroke: var(--ss-marker); fill: var(--ss-marker); opacity: 0.65; }
+.cm-chessboard.sturddle-staunty .arrow-success .arrow-head { fill: var(--ss-arrow); }
+.cm-chessboard.sturddle-staunty .arrow-success .arrow-line { stroke: var(--ss-arrow); opacity: 0.75; }
+.cm-chessboard.sturddle-staunty .arrow-secondary .arrow-head { fill: var(--ss-arrow-secondary); }
+.cm-chessboard.sturddle-staunty .arrow-secondary .arrow-line { stroke: var(--ss-arrow-secondary); opacity: 0.75; }
 .clock-row .clock-name {
   font-size: 0.8125rem;
   color: inherit;
