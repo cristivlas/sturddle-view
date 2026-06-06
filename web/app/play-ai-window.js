@@ -594,7 +594,7 @@ const ACK_TERM = "[.!,\\u2013\\u2014]";
 // "you're right" / "you are correct" etc.: full or contracted "are", and
 // either affirmation word.
 const YOU_ARE = `you(?:${APOS}re| are)`;
-const ACK_PHRASE = `understood|got it|${YOU_ARE} (?:right|correct)`;
+const ACK_PHRASE = `understood|i understand|got it|${YOU_ARE} (?:right|correct)`;
 const ACK_LEAD_RE = new RegExp(
   `^(?:${ACK_PHRASE})(?:,?\\s+i(?:${APOS}ll| will)[^.!?]*)?(${ACK_TERM}) *`, "i",
 );
