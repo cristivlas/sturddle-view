@@ -58,7 +58,9 @@ from ..llm.position_check import (
     iter_false_claim_squares,
     iter_illegal_continuations,
     iter_illegal_moves,
+    iter_illegal_pawn_moves,
     iter_illegal_piece_moves,
+    iter_illegal_square_moves,
     truncate_at_future_line,
 )
 from .tools_engine import (
@@ -1182,9 +1184,15 @@ class AIAnalysisCoordinator:
             return _PositionCheck(board, [], [], [])
         # SAN moves ('Bxe4') and prose moves ('bishop to a1') are the same
         # kind of error -- an impossible move -- so they share one bucket.
+        # One shared dedup set across the move recognizers: a move flagged by
+        # an earlier one (keyed by from+to uci, or label) is skipped by later
+        # ones, so the same move is never struck twice via different phrasings.
+        seen_moves: set[str] = set()
         move_pairs = (
-            list(iter_illegal_moves(text, board))
-            + list(iter_illegal_piece_moves(text, board))
+            list(iter_illegal_moves(text, board, seen_moves))
+            + list(iter_illegal_piece_moves(text, board, seen_moves))
+            + list(iter_illegal_square_moves(text, board, seen_moves))
+            + list(iter_illegal_pawn_moves(text, board, seen_moves))
         )
         return _PositionCheck(
             board,

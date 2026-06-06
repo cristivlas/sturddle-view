@@ -15,8 +15,13 @@ from sturddle_view.llm.position_check import (
     find_false_piece_claims,
     find_illegal_continuations,
     find_illegal_moves,
+    find_illegal_pawn_moves,
     find_illegal_piece_moves,
+    find_illegal_square_moves,
     iter_false_claim_squares,
+    iter_illegal_moves,
+    iter_illegal_piece_moves,
+    iter_illegal_square_moves,
     projected_boards,
     truncate_at_future_line,
 )
@@ -263,6 +268,83 @@ def test_redirect_deploy_without_square_not_matched():
     board = _board(_MIDGAME_FEN)
     assert find_illegal_piece_moves("bishop directed to defend", board) == []
     assert find_illegal_piece_moves("redirection of play to the kingside", board) == []
+
+
+# --- find_illegal_square_moves ('<square> to <square>') -------------------
+
+_SQ_FEN = "r1br2k1/pp2qppp/2n1p3/2pn4/2NP4/4QNP1/PP2PPBP/R2R2K1 w - - 5 13"
+
+
+def test_square_move_unreachable_flagged():
+    # g2 holds a bishop that cannot reach b3 -> the prose move is impossible.
+    board = _board(_SQ_FEN)
+    assert find_illegal_square_moves("g2 moves to b3 fails", board) == ["g2 to b3"]
+
+
+def test_square_move_from_and_bare_phrasings_flagged():
+    # "from g2 to b3" and bare "g2 to b3" both read as the same move phrase.
+    board = _board(_SQ_FEN)
+    assert find_illegal_square_moves("the bishop from g2 to b3", board) == ["g2 to b3"]
+    assert find_illegal_square_moves("g2 to b3", board) == ["g2 to b3"]
+
+
+def test_legal_square_move_not_flagged():
+    # The c4 knight can play to e5 -> a legitimate move, not flagged.
+    board = _board(_SQ_FEN)
+    assert find_illegal_square_moves("c4 to e5 jumps", board) == []
+
+
+def test_empty_source_square_move_flagged():
+    # b3 is empty -> nothing can move from it.
+    board = _board(_SQ_FEN)
+    assert find_illegal_square_moves("b3 to c2", board) == ["b3 to c2"]
+
+
+def test_promotion_move_not_flagged():
+    # A pawn to the back rank is legal via promotion; the move-legality check
+    # must allow it ("pawn to e8", "e7 to e8") rather than flag a phantom.
+    board = _board("8/4P3/8/8/8/8/8/K6k w - - 0 1")  # white pawn e7
+    assert find_illegal_piece_moves("the pawn to e8 queens", board) == []
+    assert find_illegal_square_moves("e7 to e8", board) == []
+
+
+def _run_move_checks(text, board):
+    # Mirror the coordinator: one shared dedup set across the move recognizers.
+    seen: set[str] = set()
+    pairs = (
+        list(iter_illegal_moves(text, board, seen))
+        + list(iter_illegal_piece_moves(text, board, seen))
+        + list(iter_illegal_square_moves(text, board, seen))
+    )
+    return [label for _surface, label in pairs]
+
+
+def test_same_move_flagged_once_across_recognizers():
+    # "g2 to b3" (square form) and "bishop to b3" (piece form) name the same
+    # impossible move; the shared uci key (g2b3) dedups them to one flag. The
+    # piece recognizer runs before the square one, so its label wins.
+    board = _board(_SQ_FEN)
+    assert _run_move_checks("g2 to b3 and the bishop to b3 both fail", board) == [
+        "bishop to b3"
+    ]
+
+
+# --- find_illegal_pawn_moves ('move e4') ----------------------------------
+
+def test_move_word_illegal_pawn_push_flagged():
+    # "e5" reads as a square in prose, but "move e5" marks it a move; e5 is
+    # illegal for White at startpos, so it is flagged.
+    assert find_illegal_pawn_moves("the move e5 here", chess.Board()) == ["e5"]
+
+
+def test_move_word_legal_pawn_push_not_flagged():
+    # "move e4" is a legal push at startpos -> not flagged.
+    assert find_illegal_pawn_moves("the move e4 opens", chess.Board()) == []
+
+
+def test_bare_pawn_square_without_move_word_ignored():
+    # Without "move", a bare pawn square is a square reference, not a move.
+    assert find_illegal_pawn_moves("e5 is a weak square", chess.Board()) == []
 
 
 # --- find_illegal_continuations -------------------------------------------

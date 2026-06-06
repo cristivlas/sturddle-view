@@ -106,6 +106,22 @@ def _board_for_pov(board: chess.Board, color: chess.Color) -> chess.Board | None
     return probe
 
 
+def _uci_key(move: chess.Move) -> str:
+    """A move's from+to squares ('g2b3'), dropping any promotion suffix -- the
+    destination's reachability is what dedup turns on, so 'e8=Q' and 'e8=R'
+    share a key. The cross-recognizer dedup token for a concrete move."""
+    return chess.square_name(move.from_square) + chess.square_name(move.to_square)
+
+
+def _first_seen(seen: set[str], keys: list[str]) -> bool:
+    """True if none of `keys` were in `seen` (this flag is new); records them.
+    False if any key was already flagged by an earlier recognizer -- skip it."""
+    if seen.intersection(keys):
+        return False
+    seen.update(keys)
+    return True
+
+
 _PIECE_LETTER_TO_TYPE = {
     "K": chess.KING,
     "Q": chess.QUEEN,
@@ -166,17 +182,27 @@ def _token_is_illegal(bare: str, board: chess.Board) -> bool:
     return "x" in bare and not board.is_capture(move)
 
 
-def iter_illegal_moves(text: str, board: chess.Board):
+def _san_uci_or_label(bare: str, board: chess.Board) -> str:
+    """Dedup key for a SAN token: its from+to uci when it parses to a move
+    (even an illegal one), else the bare token -- so an unparseable SAN still
+    has a stable key for cross-recognizer dedup."""
+    try:
+        return _uci_key(board.parse_san(bare))
+    except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
+        # SAN case is meaningful (piece letter); keep it so 'Be5' != 'be5'.
+        return bare
+
+
+def iter_illegal_moves(text: str, board: chess.Board, seen: set[str] | None = None):
     """Yield (surface, label) for each illegal SAN token. `surface` is the
     exact prose span (with "..." and glyphs) to strike; `label` the bare token.
     A leading "..." validates from Black's POV ("...Nd3"), else side to move.
-    Legal moves, square-labels ('Qd1'), and phantom-capture-free parses pass."""
-    seen: set[str] = set()
+    Legal moves, square-labels ('Qd1'), and phantom-capture-free parses pass.
+    `seen` is the shared cross-recognizer dedup set (uci or label keys)."""
+    if seen is None:
+        seen = set()
     for match in _SAN_TOKEN_RE.finditer(text):
         token = match.group("token")
-        if token in seen:
-            continue
-        seen.add(token)
         bare = _strip_annotation_glyphs(token)
         num = match.group("num")
         # Free pass: a numbered move that matches what was actually played at
@@ -193,12 +219,41 @@ def iter_illegal_moves(text: str, board: chess.Board):
         if _is_san_label(bare, pov_board):
             continue
         if _token_is_illegal(bare, pov_board):
-            yield match.group(0), bare
+            if _first_seen(seen, [_san_uci_or_label(bare, pov_board)]):
+                yield match.group(0), bare
 
 
 def find_illegal_moves(text: str, board: chess.Board) -> list[str]:
     """Bare illegal-move labels (see iter_illegal_moves for the surface form)."""
     return [label for _surface, label in iter_illegal_moves(text, board)]
+
+
+# A bare pawn push ("e4") reads as a square in prose, so the bare-token
+# recognizer skips it; the word "move" disambiguates it as a move to check.
+# Pawn captures ("dxc4") are unambiguous and already matched there -- pushes
+# only here.
+_MOVE_WORD_PAWN_RE = re.compile(
+    rf"\bmove\s+(?P<token>{_SAN_PAWN_PUSH}{_SAN_GLYPHS})",
+)
+
+
+def iter_illegal_pawn_moves(text: str, board: chess.Board, seen: set[str] | None = None):
+    """Yield (surface, label) for an illegal pawn push named as 'move e5'. The
+    'move' marker tells a push from a square reference; validated from the side
+    to move (a pawn push carries no color marker). `seen` is the shared dedup
+    set (uci or label keys)."""
+    if seen is None:
+        seen = set()
+    for m in _MOVE_WORD_PAWN_RE.finditer(text):
+        bare = _strip_annotation_glyphs(m.group("token"))
+        if _parse_san_real(board, bare) is None:
+            if _first_seen(seen, [_san_uci_or_label(bare, board)]):
+                yield m.group(0), bare
+
+
+def find_illegal_pawn_moves(text: str, board: chess.Board) -> list[str]:
+    """Bare illegal pawn-move labels (see iter_illegal_pawn_moves)."""
+    return [label for _surface, label in iter_illegal_pawn_moves(text, board)]
 
 
 # A single move inside a continuation. Adds bare pawn pushes (e4): inside a
@@ -343,6 +398,12 @@ _PIECE_TO_SQUARE_RE = re.compile(
     rf"\b{_COLOR_OPT}(?P<piece>{_PIECE_ALT})\s+(?:{_MOVE_VERB})?to\s+(?P<square>[a-h][1-8])\b",
     re.IGNORECASE,
 )
+# A move named by source square: "g2 to b3", "g2 moves to b3", "from g2 to b3".
+# Flagged when the source piece cannot legally reach the destination.
+_SQUARE_TO_SQUARE_RE = re.compile(
+    rf"\b(?:from\s+)?(?P<src>[a-h][1-8])\s+(?:{_MOVE_VERB})?to\s+(?P<dst>[a-h][1-8])\b",
+    re.IGNORECASE,
+)
 
 
 def _iter_piece_claims(text: str):
@@ -455,30 +516,94 @@ def _reaches_for_color(
     return False
 
 
-def iter_illegal_piece_moves(text: str, board: chess.Board):
+def _can_move(board: chess.Board, from_sq: int, to_sq: int) -> bool:
+    """Legal `from->to` move, allowing promotion: a pawn to the back rank needs
+    a promotion piece, so try a queen-promotion when the plain move is not
+    legal (any promotion piece shares the same legality)."""
+    if board.is_legal(chess.Move(from_sq, to_sq)):
+        return True
+    return board.is_legal(chess.Move(from_sq, to_sq, promotion=chess.QUEEN))
+
+
+def _piece_move_keys(
+    board: chess.Board, square: int, piece_type: int, color: chess.Color,
+) -> list[str] | None:
+    """Dedup keys for a '<piece> to <square>' flag: the from+to uci of every
+    piece of that type/color, paired with `square`. None when one can legally
+    reach it (not a flag). Empty list when no such piece exists at all."""
+    pov = _board_for_pov(board, color)
+    if pov is None:
+        return []
+    keys: list[str] = []
+    for from_sq in pov.pieces(piece_type, color):
+        if _can_move(pov, from_sq, square):
+            return None
+        keys.append(chess.square_name(from_sq) + chess.square_name(square))
+    return keys
+
+
+def iter_illegal_piece_moves(text: str, board: chess.Board, seen: set[str] | None = None):
     """Yield (surface, label) for each '<piece> to <square>' prose move whose
     destination no piece of that type can legally reach. `surface` is the exact
     prose span for the UI to strike. Forward-looking, so a reachable plan is
     fine; only an impossible move ('bishop to a1') is flagged. POV: the named
-    color when given, else the side to move (see _prose_pov)."""
-    seen: set[str] = set()
+    color when given, else the side to move (see _prose_pov). `seen` is the
+    shared dedup set (per-piece from+to ucis, or the label when none exist)."""
+    if seen is None:
+        seen = set()
     for m in _PIECE_TO_SQUARE_RE.finditer(text):
         color_word = (m.group("color") or "").lower()
         piece_word = m.group("piece").lower()
         square_name = m.group("square").lower()
-        key = f"{color_word}|{piece_word}|{square_name}"
-        if key in seen:
-            continue
-        seen.add(key)
         piece_type = _PIECE_WORDS[piece_word]
-        square = chess.parse_square(square_name)
         color = _prose_pov(color_word, board)
-        if _reaches_for_color(board, square, piece_type, color):
+        keys = _piece_move_keys(
+            board, chess.parse_square(square_name), piece_type, color,
+        )
+        if keys is None:
             continue
         prefix = f"{color_word} " if color_word else ""
-        yield m.group(0), f"{prefix}{piece_word} to {square_name}"
+        label = f"{prefix}{piece_word} to {square_name}"
+        if _first_seen(seen, keys or [label]):
+            yield m.group(0), label
 
 
 def find_illegal_piece_moves(text: str, board: chess.Board) -> list[str]:
     """Normalized '<piece> to <square>' labels (see iter_illegal_piece_moves)."""
     return [label for _surface, label in iter_illegal_piece_moves(text, board)]
+
+
+def _square_move_legal(src: int, dst: int, board: chess.Board) -> bool:
+    """True iff the piece on `src` has a legal move to `dst`. Tries both turns
+    (the mover's color may not be the side to move); an empty source is never
+    legal."""
+    mover = board.piece_at(src)
+    if mover is None:
+        return False
+    pov = _board_for_pov(board, mover.color)
+    if pov is None:
+        return False
+    return _can_move(pov, src, dst)
+
+
+def iter_illegal_square_moves(text: str, board: chess.Board, seen: set[str] | None = None):
+    """Yield (surface, label) for each '<square> to <square>' prose move whose
+    source piece cannot legally reach the destination ('g2 to b3' when the g2
+    bishop has no such move). An empty source square is flagged too. `seen` is
+    the shared dedup set; the key is the src+dst uci ('g2b3')."""
+    if seen is None:
+        seen = set()
+    for m in _SQUARE_TO_SQUARE_RE.finditer(text):
+        src_name = m.group("src").lower()
+        dst_name = m.group("dst").lower()
+        if _square_move_legal(
+            chess.parse_square(src_name), chess.parse_square(dst_name), board,
+        ):
+            continue
+        if _first_seen(seen, [src_name + dst_name]):
+            yield m.group(0), f"{src_name} to {dst_name}"
+
+
+def find_illegal_square_moves(text: str, board: chess.Board) -> list[str]:
+    """Normalized '<square> to <square>' labels (see iter_illegal_square_moves)."""
+    return [label for _surface, label in iter_illegal_square_moves(text, board)]
