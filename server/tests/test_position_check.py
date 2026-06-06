@@ -18,7 +18,9 @@ from sturddle_view.llm.position_check import (
     find_illegal_pawn_moves,
     find_illegal_piece_moves,
     find_illegal_square_moves,
+    handled_continuation_spans,
     iter_false_claim_squares,
+    iter_illegal_continuations,
     iter_illegal_moves,
     iter_illegal_piece_moves,
     iter_illegal_square_moves,
@@ -349,12 +351,25 @@ def test_bare_pawn_square_without_move_word_ignored():
 
 # --- find_illegal_continuations -------------------------------------------
 
-def test_broken_continuation_flagged():
-    # From startpos, Bb5 is illegal (e-pawn unmoved) -> the line does not play.
+def test_broken_continuation_flags_breaking_move_only():
+    # From startpos: Nf3, Nc6 play; Bb5 is illegal (e-pawn unmoved) -> the line
+    # breaks at Bb5. Only that move is flagged -- Nf3/Nc6 are valid, and moves
+    # after the break can't be judged from a position never legally reached.
     board = chess.Board()
-    assert find_illegal_continuations("We try Nf3 Nc6 Bb5 a6 here", board) == [
-        "Nf3 Nc6 Bb5 a6"
-    ]
+    assert find_illegal_continuations("We try Nf3 Nc6 Bb5 a6 here", board) == ["Bb5"]
+
+
+def test_broken_continuation_surface_and_span_isolate_the_move():
+    # The struck surface and its char span cover only the breaking move, so the
+    # UI strikes Bb5 alone, not the whole run.
+    board = chess.Board()
+    text = "We try Nf3 Nc6 Bb5 a6 here"
+    out = list(iter_illegal_continuations(text, board))
+    assert len(out) == 1
+    surface, label, span = out[0]
+    assert surface == "Bb5"
+    assert label == "Bb5"
+    assert text[span[0]:span[1]] == "Bb5"
 
 
 def test_legal_continuation_not_flagged():
@@ -369,6 +384,87 @@ def test_white_only_numbered_shorthand_skipped():
     # "1.e4 2.Nf3" omits Black's plies -> not a replayable sequence, skipped.
     board = chess.Board()
     assert find_illegal_continuations("the plan 1.e4 2.Nf3 develops", board) == []
+
+
+# A numbered run anchored at the current move: 24.Nf6+ Qxf6 25.Qc7 ... 25...Bg4.
+# Qxf6 is Black's reply with no "..." (the number sits on White's move), so the
+# per-token check must not validate it from White's POV and flag it.
+_PAIR_FEN = "r1b2rk1/pp2qp1p/1n4p1/4p3/4P1N1/P1Q3P1/1P3P1P/2RR1BK1 w - - 0 24"
+
+
+def _all_flags(text: str, board: chess.Board) -> list[str]:
+    # Mirror the coordinator: the line check claims spans of runs it handles, so
+    # the per-token recognizer skips a numbered pair's moves inside them.
+    spans = handled_continuation_spans(text, board)
+    moves = [lbl for _s, lbl in iter_illegal_moves(text, board, None, spans)]
+    lines = [lbl for _s, lbl, _sp in iter_illegal_continuations(text, board)]
+    return moves + lines
+
+
+def test_black_reply_in_numbered_pair_not_flagged():
+    board = _board(_PAIR_FEN)
+    text = (
+        "The check on f6 backfires catastrophically. After 24.Nf6+ Qxf6 "
+        "25.Qc7, Black has 25...Bg4, attacking the rook and pinning it to "
+        "the king -- White's queen on c7 cannot defend. The knight "
+        "sacrifice collapses."
+    )
+    text = truncate_at_future_line(text, board)
+    assert _all_flags(text, board) == []
+
+
+def test_black_reply_in_bare_pair_not_flagged():
+    board = _board(_PAIR_FEN)
+    text = (
+        "After 24.Nf6+ Qxf6, Black's queen captures on f6, not White's. The "
+        "key point stands: 24.Nf6+ fails because Black has 25...Bg4, "
+        "attacking the rook."
+    )
+    text = truncate_at_future_line(text, board)
+    assert _all_flags(text, board) == []
+
+
+def _played(sans: list[str]) -> chess.Board:
+    board = chess.Board()
+    for san in sans:
+        board.push_san(san)
+    return board
+
+
+def test_past_run_anchored_via_history_not_flagged():
+    # After 1.e4 e5 2.Nf3 it is move 2, Black to move. "1.e4 e5" replays from
+    # the popped move-1 position, not the live board (where e4 is illegal).
+    board = _played(["e4", "e5", "Nf3"])
+    assert _all_flags("the symmetric 1.e4 e5 opening", board) == []
+
+
+def test_past_run_illegal_at_its_anchor_flagged():
+    # Anchored at move 1, "1.e4 e5" plays; "2.Nf6" breaks there (no knight can
+    # reach f6), so only the breaking move is flagged, not the valid prefix.
+    board = _played(["e4", "e5", "Nf3"])
+    assert _all_flags("the line 1.e4 e5 2.Nf6", board) == ["Nf6"]
+
+
+def test_run_before_stack_base_skipped():
+    # Imported position (FEN, no history) at move 24; a run citing move 5
+    # predates the stack base and cannot be anchored -> left alone.
+    board = _board(_PAIR_FEN)
+    assert _all_flags("recall 5.Bb5 a6 from the opening", board) == []
+
+
+def test_black_led_past_run_anchored_at_black_ply():
+    # After 1.e4 e5 2.Nf3 Nc6 it is move 3, White to move. "2...Nc6 3.Bb5"
+    # leads with Black's move 2 and must anchor there (after 2.Nf3), where Nc6
+    # is legal; anchoring at White's move 2 would misjudge it.
+    board = _played(["e4", "e5", "Nf3", "Nc6"])
+    assert _all_flags("the line 2...Nc6 3.Bb5 holds", board) == []
+
+
+def test_black_led_run_illegal_at_its_anchor_flagged():
+    # Same anchor (after 2.Nf3): Nc6 plays, Bxc6 is illegal there (bishop can't
+    # reach c6), so only the breaking move Bxc6 is flagged.
+    board = _played(["e4", "e5", "Nf3", "Nc6"])
+    assert _all_flags("the line 2...Nc6 3.Bxc6 fails", board) == ["Bxc6"]
 
 
 # --- projected_boards ------------------------------------------------------

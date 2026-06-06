@@ -56,6 +56,7 @@ from ..llm.cancel import CancelToken
 from ..llm.position_check import (
     describe_square,
     iter_false_claim_squares,
+    handled_continuation_spans,
     iter_illegal_continuations,
     iter_illegal_moves,
     iter_illegal_pawn_moves,
@@ -608,7 +609,7 @@ class _PositionCheck:
     @property
     def surfaces(self) -> list[str]:
         # Exact prose spans for the client to strike, longest first so a
-        # line isn't half-matched by a contained move token.
+        # span isn't half-matched by a shorter one nested inside it.
         out = (
             [s for s, _ in self.move_pairs]
             + [s for s, _, _ in self.claim_triples]
@@ -1186,18 +1187,29 @@ class AIAnalysisCoordinator:
         # One shared dedup set across the move recognizers: a move flagged by
         # an earlier one (keyed by from+to uci, or label) is skipped by later
         # ones, so the same move is never struck twice via different phrasings.
+        # The line check owns numbered continuation runs it can anchor: the
+        # SAN-token recognizer skips moves inside those spans, so a numbered
+        # pair's unmarked Black reply ('24.Nf6+ Qxf6') is neither re-checked
+        # from the wrong POV (cleared line) nor struck twice (broken line).
+        # Only the bare-token recognizer reads inside a run, so only it takes
+        # the spans.
+        handled_spans = handled_continuation_spans(text, board)
         seen_moves: set[str] = set()
         move_pairs = (
-            list(iter_illegal_moves(text, board, seen_moves))
+            list(iter_illegal_moves(text, board, seen_moves, handled_spans))
             + list(iter_illegal_piece_moves(text, board, seen_moves))
             + list(iter_illegal_square_moves(text, board, seen_moves))
             + list(iter_illegal_pawn_moves(text, board, seen_moves))
         )
+        line_pairs = [
+            (surface, label)
+            for surface, label, _span in iter_illegal_continuations(text, board)
+        ]
         return _PositionCheck(
             board,
             move_pairs,
             list(iter_false_claim_squares(text, board)),
-            list(iter_illegal_continuations(text, board)),
+            line_pairs,
         )
 
     async def _emit_position_note(
@@ -1226,9 +1238,11 @@ class AIAnalysisCoordinator:
         ply); false piece claims state the square's real content and ask only
         for a restate. `repeat` swaps in firmer lead-ins on re-assertion."""
         clauses: list[str] = []
+        # Dedup: a move named both in a broken line and standalone in the prose
+        # would otherwise repeat its fact. Order-preserving via dict.fromkeys.
         move_facts = [
             _ILLEGAL_MOVE_FACT.format(move=move)
-            for move in pc.move_labels + pc.line_labels
+            for move in dict.fromkeys(pc.move_labels + pc.line_labels)
         ]
         if move_facts:
             clauses.append(_POSITION_CHECK_MOVE_CLAUSE.format(facts="; ".join(move_facts)))

@@ -193,18 +193,33 @@ def _san_uci_or_label(bare: str, board: chess.Board) -> str:
         return bare
 
 
-def iter_illegal_moves(text: str, board: chess.Board, seen: set[str] | None = None):
+def _in_spans(pos: int, spans: list[tuple[int, int]]) -> bool:
+    """True if `pos` falls within any (start, end) span -- used to skip a token
+    that sits inside a continuation run already validated as a whole."""
+    return any(start <= pos < end for start, end in spans)
+
+
+def iter_illegal_moves(
+    text: str,
+    board: chess.Board,
+    seen: set[str] | None = None,
+    skip_spans: list[tuple[int, int]] | None = None,
+):
     """Yield (surface, label) for each illegal SAN token. `surface` is the
     exact prose span (with "..." and glyphs) to strike; `label` the bare token.
     A leading "..." validates from Black's POV ("...Nd3"), else side to move.
     Legal moves, square-labels ('Qd1'), and phantom-capture-free parses pass.
-    `seen` is the shared cross-recognizer dedup set (uci or label keys)."""
+    `seen` is the shared cross-recognizer dedup set (uci or label keys).
+    `skip_spans` are char ranges of validated continuation runs whose moves
+    must not be re-checked in isolation."""
     if seen is None:
         seen = set()
     for match in _SAN_TOKEN_RE.finditer(text):
         token = match.group("token")
         bare = _strip_annotation_glyphs(token)
         num = match.group("num")
+        if skip_spans and _in_spans(match.start("token"), skip_spans):
+            continue
         # Free pass: a numbered move that matches what was actually played at
         # that ply is a correct history reference -- skip it.
         if num and _matches_played(int(num), _marks_black(match), bare, board):
@@ -277,10 +292,16 @@ _CONT_PAIR_RE = re.compile(rf"{_MOVE_NUM}({_CONT_MOVE})")
 _LINE_PROOF_RE = re.compile(r"\d+\.|[KQRBN]|O-O|[a-h]x|=[QRBN]")
 
 
-def _every_move_numbered(pairs) -> bool:
-    """True iff every move carries its own move number, i.e. white-only
-    shorthand ("1.e4 2.Nf3") that skips Black's replies."""
-    return len(pairs) >= 2 and all(num for num, _move in pairs)
+def _is_white_only_shorthand(pairs) -> bool:
+    """True iff the run is white-only numbered shorthand ("1.e4 2.Nf3") that
+    skips Black's replies -- every move numbered and none marked Black ("...").
+    A "2...Nc6 3.Bxc6" pair carries a Black marker, so it alternates and is a
+    real replayable line, not shorthand."""
+    return (
+        len(pairs) >= 2
+        and all(num for num, _move in pairs)
+        and not any("..." in num for num, _move in pairs)
+    )
 
 
 def _move_legal(san: str, board: chess.Board) -> bool:
@@ -291,39 +312,120 @@ def _move_legal(san: str, board: chess.Board) -> bool:
     return True
 
 
-def _line_plays(moves, board: chess.Board) -> bool:
-    """True iff every move parses+pushes in order from a copy of `board`."""
+def _first_broken_move(moves, board: chess.Board) -> int | None:
+    """Index of the first move that won't play in order from a copy of `board`,
+    or None if the whole line plays. Moves after the break can't be judged --
+    the board never legally reaches that point -- so only this one is the flag."""
     walker = board.copy()
-    for san in moves:
+    for i, san in enumerate(moves):
         if not _move_legal(san, walker):
-            return False
+            return i
         walker.push_san(san)
-    return True
+    return None
+
+
+_LEADING_NUM_RE = re.compile(r"^\s*(\d+)(\.\.\.|\.)")
+
+
+def _anchor_board(run: str, board: chess.Board) -> chess.Board | None:
+    """Position the run is anchored at, from its leading move number N. A "N."
+    lead anchors at the start of White's move N, "N..." at Black's. N == the
+    current ply needs no popping; an earlier ply pops back to it (when the move
+    stack reaches that far); a future ply, or one earlier than the stack's base,
+    is unanchorable -> None."""
+    m = _LEADING_NUM_RE.match(run)
+    if m is None:
+        return board
+    num = int(m.group(1))
+    target_color = chess.BLACK if m.group(2) == "..." else chess.WHITE
+    if board.fullmove_number == num and board.turn == target_color:
+        return board
+    # Pop plies until the board sits at the target ply, measured against the
+    # live board so an import FEN's base number is honored. Running out of
+    # history means the target predates the stack base -> unanchorable.
+    anchor = board.copy()
+    while not (anchor.fullmove_number == num and anchor.turn == target_color):
+        if not anchor.move_stack:
+            return None
+        anchor.pop()
+    return anchor
 
 
 def iter_illegal_continuations(text: str, board: chess.Board):
-    """Yield (surface, label) for each illegal continuation run (2+ moves):
-    first move legal on `board` but the run does not replay cleanly in order.
-    `surface` is the matched run; `label` the normalized "Nf3 Nc6" key. A line
-    we cannot anchor, or white-only numbered shorthand, is left alone."""
+    """Yield (surface, label, span) for the breaking move of each illegal
+    continuation run (2+ moves): replayed from its anchor (see `_anchor_board`),
+    the first move that won't play is the flag. `surface` is that move's exact
+    prose span (with glyphs) to strike; `label` its bare SAN; `span` its (start,
+    end) char offsets. Earlier moves in the run are legal, and moves after the
+    break can't be judged from a position never legally reached, so neither is
+    flagged. White-only shorthand, and unanchorable runs, are left alone.
+
+    A run that replays cleanly yields nothing here, but its span is returned by
+    `handled_continuation_spans` so per-token recognizers skip its moves -- e.g.
+    Black's "Qxf6" in "24.Nf6+ Qxf6" carries no "..." marker and would
+    otherwise read as an illegal White move."""
+    for _run, _span, moves, move_spans, anchor in _iter_anchored_runs(text, board):
+        if not _move_legal(moves[0], anchor):
+            continue
+        broken = _first_broken_move(moves, anchor)
+        if broken is None:
+            continue
+        surface, m_span = move_spans[broken]
+        yield surface, moves[broken], m_span
+
+
+def _iter_anchored_runs(text: str, board: chess.Board):
+    """Yield (run, span, moves, move_spans, anchor_board) for each well-formed,
+    anchorable continuation run. `move_spans` is a list parallel to `moves` of
+    (surface, (start, end)) for each move token's absolute prose position.
+    Shared by the illegal-line check and the handled-span scan so both apply the
+    same anchoring and run-shape rules."""
     seen: set[str] = set()
     for match in _CONTINUATION_RE.finditer(text):
         run = match.group(0)
         pairs = _CONT_PAIR_RE.findall(run)
         moves = [_strip_annotation_glyphs(move) for _num, move in pairs]
-        if len(moves) < 2 or _every_move_numbered(pairs):
+        if len(moves) < 2 or _is_white_only_shorthand(pairs):
             continue
         key = " ".join(moves)
         if key in seen or not _LINE_PROOF_RE.search(run):
             continue
         seen.add(key)
-        if _move_legal(moves[0], board) and not _line_plays(moves, board):
-            yield run.strip(), key
+        anchor = _anchor_board(run, board)
+        if anchor is None:
+            continue
+        move_spans = _run_move_spans(run, match.start())
+        yield run, match.span(), moves, move_spans, anchor
+
+
+def _run_move_spans(run: str, base: int) -> list[tuple[str, tuple[int, int]]]:
+    """(surface, (start, end)) for each move token in `run`, offsets absolute in
+    the source text (`base` is the run's start). The surface is the move token
+    only -- not its move-number prefix -- so a flagged break strikes the move."""
+    out: list[tuple[str, tuple[int, int]]] = []
+    for m in _CONT_PAIR_RE.finditer(run):
+        out.append((m.group(2), (base + m.start(2), base + m.end(2))))
+    return out
+
+
+def handled_continuation_spans(text: str, board: chess.Board) -> list[tuple[int, int]]:
+    """(start, end) char spans of continuation runs the line check takes
+    responsibility for: the first move is legal at the anchor, so the run is
+    either cleared (replays whole) or flagged as a broken line. A later
+    move-token recognizer skips any match inside these, so a move in a handled
+    line is not re-checked in isolation -- avoiding a wrong-POV false flag on a
+    cleared line, or a double strike on a flagged one. A run whose first move is
+    already illegal is NOT handled here; its tokens stay visible to per-token."""
+    return [
+        span
+        for _run, span, moves, _move_spans, anchor in _iter_anchored_runs(text, board)
+        if _move_legal(moves[0], anchor)
+    ]
 
 
 def find_illegal_continuations(text: str, board: chess.Board) -> list[str]:
-    """Normalized illegal-line keys (see iter_illegal_continuations)."""
-    return [label for _surface, label in iter_illegal_continuations(text, board)]
+    """Breaking-move SAN of each illegal line (see iter_illegal_continuations)."""
+    return [label for _surface, label, _span in iter_illegal_continuations(text, board)]
 
 
 def projected_boards(text: str, board: chess.Board) -> list[chess.Board]:

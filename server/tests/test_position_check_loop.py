@@ -14,6 +14,7 @@ from sturddle_view.events import EVT_AI_POSITION_NOTE, EventBus
 from sturddle_view.llm import ProviderChunk, ScriptedProvider, ToolRegistry
 from sturddle_view.play.ai_analysis import (
     AIAnalysisCoordinator,
+    _PositionCheck,
     _POSITION_CHECK_PREFIX,
     _POSITION_CHECK_REPEAT_LEAD,
 )
@@ -90,6 +91,19 @@ async def test_false_claim_emits_note_and_injects_corrective():
     assert any(t.startswith(_POSITION_CHECK_PREFIX) for t in injected)
     # Fact-anchored: the corrective states the square is empty.
     assert any("h6 is empty" in t for t in injected)
+
+
+def test_move_named_as_line_and_token_appears_once_in_corrective():
+    # A move flagged both as a broken line and standalone in prose must not
+    # repeat its fact in the corrective sent to the model.
+    pc = _PositionCheck(
+        chess.Board(_FEN),
+        move_pairs=[("Bb5", "Bb5")],
+        claim_triples=[],
+        line_pairs=[("Bb5", "Bb5")],
+    )
+    msg = AIAnalysisCoordinator._position_check_message(pc, repeat=False)
+    assert msg.count("Bb5 isn't legal") == 1
 
 
 @pytest.mark.asyncio
