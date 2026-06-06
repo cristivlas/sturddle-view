@@ -517,19 +517,18 @@ function revisionFallbackText(items) {
   return `Wait, ${joined} look wrong.`;
 }
 
-// First sentence (or clause) of the next round's prose, used as the
-// revision summary -- the model's own voice. Trimmed to a sane length so a
-// runaway opener doesn't bloat the collapsed summary.
-const REVISION_SUMMARY_MAX = 64;
-function leadSentence(text) {
-  const trimmed = text.trim();
-  if (!trimmed) return "";
-  const stop = trimmed.search(/[.!?](\s|$)/);
-  const lead = stop >= 0 ? trimmed.slice(0, stop + 1) : trimmed;
-  return lead.length > REVISION_SUMMARY_MAX
-    ? lead.slice(0, REVISION_SUMMARY_MAX).trimEnd() + "..."
-    : lead;
-}
+// Disabled (kept for easy re-enable): first sentence of the next round's
+// prose, used as the revision summary. Only used by backfillPendingRevision.
+// const REVISION_SUMMARY_MAX = 64;
+// function leadSentence(text) {
+//   const trimmed = text.trim();
+//   if (!trimmed) return "";
+//   const stop = trimmed.search(/[.!?](\s|$)/);
+//   const lead = stop >= 0 ? trimmed.slice(0, stop + 1) : trimmed;
+//   return lead.length > REVISION_SUMMARY_MAX
+//     ? lead.slice(0, REVISION_SUMMARY_MAX).trimEnd() + "..."
+//     : lead;
+// }
 
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -574,18 +573,19 @@ export function noteAiPosition({ round, surfaces }) {
   inst.body._pendingRevisions.set(round, { entry, fallback });
 }
 
-// Backfill the prior round's revision summary with this round's opening line
-// (the model's own self-correction voice). Called on each delta: shows the
-// partial lead live, and stops updating once a full sentence has landed.
-function backfillPendingRevision(root, roundIndex, text) {
-  const pending = root._pendingRevisions.get(roundIndex - 1);
-  if (!pending) return;
-  const lead = leadSentence(text);
-  if (lead) pending.entry.revision.summary.textContent = lead;
-  // Finalize only when a sentence terminator is present -- before that the
-  // lead is still growing and the next delta should keep refining it.
-  if (/[.!?]/.test(text)) root._pendingRevisions.delete(roundIndex - 1);
-}
+// Disabled (kept for easy re-enable): backfill the prior round's revision
+// summary with this round's opening line (the model's own self-correction
+// voice). Called on each delta: showed the partial lead live, stopping once a
+// full sentence landed. The static "Actually.../Wait..." fallback now stands.
+// function backfillPendingRevision(root, roundIndex, text) {
+//   const pending = root._pendingRevisions.get(roundIndex - 1);
+//   if (!pending) return;
+//   const lead = leadSentence(text);
+//   if (lead) pending.entry.revision.summary.textContent = lead;
+//   // Finalize only when a sentence terminator is present -- before that the
+//   // lead is still growing and the next delta should keep refining it.
+//   if (/[.!?]/.test(text)) root._pendingRevisions.delete(roundIndex - 1);
+// }
 
 export function setAiStatus(state) {
   // `state` in: idle | waiting | engine | done.
@@ -616,10 +616,10 @@ export function appendAiDelta(text, roundIndex = 0, thinkingMs = null) {
     if (!entry.hasProse) freezeThinkingLabel(entry, thinkingMs);
     entry.hasProse = true;
     entry.para.append(document.createTextNode(out));
-    // This round's prose answers any prior-round revision; its opening line
-    // becomes that revision's summary. Re-read accumulated text until a full
-    // sentence lands (deltas are token-sized, not sentence-sized).
-    backfillPendingRevision(inst.body, roundIndex, entry.para.textContent);
+    // Disabled: backfilling the prior revision's summary with this round's
+    // opening line. Kept for easy re-enable; the static "Actually.../Wait..."
+    // fallback now stands as the revision summary.
+    // backfillPendingRevision(inst.body, roundIndex, entry.para.textContent);
   });
 }
 
