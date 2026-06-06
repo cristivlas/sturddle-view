@@ -167,8 +167,8 @@ function buildRoundPanel() {
   const para = document.createElement("p");
   para.className = "play-ai-prose";
   // Revision: a collapsible that folds away prose the AI corrected. The
-  // summary carries the model's own self-correction line (backfilled from
-  // the next round); the body holds the struck-through flawed prose.
+  // summary carries a self-correction line; the body holds the struck-through
+  // flawed prose.
   const revision = document.createElement("details");
   revision.className = "play-ai-revision";
   revision.hidden = true;
@@ -590,7 +590,7 @@ export function noteAiPosition({ round, surfaces }) {
   if (!surfaces || !surfaces.length) return;
   // Strike the flagged spans (exact prose), then tuck the flawed prose into
   // the revision body so the clean (next-round) prose reads on its own.
-  // Summary starts as the fallback; the next round's opener backfills it.
+  // The summary is the canned self-correction line.
   strikeProseItems(entry.para, surfaces);
   const fallback = revisionFallbackText(surfaces, round);
   entry.revision.summary.textContent = fallback;

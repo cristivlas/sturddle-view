@@ -587,7 +587,6 @@ class _PositionCheck:
     exact prose `surface` (for the UI to strike) and a normalized `label`
     (for facts/keys); claims also carry their `square`. Empty when clean."""
     board: chess.Board | None
-    text: str
     move_pairs: list[tuple[str, str]]
     claim_triples: list[tuple[str, str, str]]
     line_pairs: list[tuple[str, str]]
@@ -599,10 +598,6 @@ class _PositionCheck:
     @property
     def move_labels(self) -> list[str]:
         return [label for _surface, label in self.move_pairs]
-
-    @property
-    def claim_labels(self) -> list[str]:
-        return [label for _surface, label, _square in self.claim_triples]
 
     @property
     def line_labels(self) -> list[str]:
@@ -1175,12 +1170,12 @@ class AIAnalysisCoordinator:
         Empty when no board_provider, no live board, or no prose."""
         board = self._board_provider() if self._board_provider else None
         if board is None:
-            return _PositionCheck(None, "", [], [], [])
+            return _PositionCheck(None, [], [], [])
         text = "".join(
             c.text for c in chunks if c.kind == "text" and c.text
         )
         if not text.strip():
-            return _PositionCheck(board, "", [], [], [])
+            return _PositionCheck(board, [], [], [])
         # SAN moves ('Bxe4') and prose moves ('bishop to a1') are the same
         # kind of error -- an impossible move -- so they share one bucket.
         move_pairs = (
@@ -1189,7 +1184,6 @@ class AIAnalysisCoordinator:
         )
         return _PositionCheck(
             board,
-            text,
             move_pairs,
             list(iter_false_claim_squares(text, board)),
             list(iter_illegal_continuations(text, board)),
