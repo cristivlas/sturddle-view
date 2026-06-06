@@ -32,25 +32,35 @@ _SAN_GLYPHS = r"[!?]{0,2}"
 # trailing punctuation or the marker -- and we deliberately read it as the
 # marker (validate from Black). Not a bug: do not "fix" the boundary.
 # An optional leading move number ("17.", "17...") is captured so a move
-# citing another ply (past or hypothetical line) can be left alone.
+# citing another ply (past or hypothetical line) can be left alone. The dot
+# run is its own group: "..." (after a number or standalone) marks Black.
 _SAN_TOKEN_RE = re.compile(
-    rf"(?:(?P<num>\d+)\.+\s*)?(?P<prefix>\.\.\.)?\b"
+    rf"(?:(?P<num>\d+)(?P<dots>\.{{1,3}})\s*)?(?P<prefix>\.\.\.)?\b"
     rf"(?P<token>(?:{_SAN_CASTLE}|{_SAN_PIECE_MOVE}|{_SAN_PAWN_CAPTURE}){_SAN_GLYPHS})"
 )
 
 
-def _other_move_number(match: re.Match, board: chess.Board) -> bool:
-    """True iff the token carries a move number that is not the current move
-    ('17.Nab1' when the live position is at a different fullmove). Such tokens
-    cite a past or hypothetical line, not the live board, so we skip them."""
+def _marks_black(match: re.Match) -> bool:
+    """Black-move marker: a standalone "..." prefix, or a numbered move whose
+    dot run is "..." ("16...Nd3" is Black's 16th)."""
+    return match.group("prefix") == "..." or match.group("dots") == "..."
+
+
+def _cites_other_ply(match: re.Match, board: chess.Board) -> bool:
+    """True iff a numbered token cites a non-live ply (past/hypothetical), so we
+    skip it. Live = number is the current fullmove AND the move's color is to
+    move; '19.Ke2' once it is Black's turn is already played, not live."""
     num = match.group("num")
-    return num is not None and int(num) != board.fullmove_number
+    if num is None:
+        return False
+    move_color = chess.BLACK if _marks_black(match) else chess.WHITE
+    return not (int(num) == board.fullmove_number and move_color == board.turn)
 
 
-def _pov_for(prefix: str | None, board: chess.Board) -> chess.Color:
-    """Side a SAN is validated from: Black when the prose marks it with a
-    leading "..." (PGN convention for a Black move), else the side to move."""
-    return chess.BLACK if prefix else board.turn
+def _pov_for(match: re.Match, board: chess.Board) -> chess.Color:
+    """Side a SAN is validated from: Black when the token is marked Black (a
+    leading "..." or "16..."), else the side to move."""
+    return chess.BLACK if _marks_black(match) else board.turn
 
 
 def _board_for_pov(board: chess.Board, color: chess.Color) -> chess.Board | None:
@@ -137,10 +147,10 @@ def iter_illegal_moves(text: str, board: chess.Board):
         if token in seen:
             continue
         seen.add(token)
-        if _other_move_number(match, board):
+        if _cites_other_ply(match, board):
             continue
         bare = _strip_annotation_glyphs(token)
-        pov_board = _board_for_pov(board, _pov_for(match.group("prefix"), board))
+        pov_board = _board_for_pov(board, _pov_for(match, board))
         if pov_board is None:
             continue
         if _parse_san_real(pov_board, bare) is not None:
@@ -246,9 +256,9 @@ def projected_boards(text: str, board: chess.Board) -> list[chess.Board]:
         if token in seen:
             continue
         seen.add(token)
-        if _other_move_number(match, board):
+        if _cites_other_ply(match, board):
             continue
-        pov_board = _board_for_pov(board, _pov_for(match.group("prefix"), board))
+        pov_board = _board_for_pov(board, _pov_for(match, board))
         if pov_board is None:
             continue
         move = _parse_san_real(pov_board, _strip_annotation_glyphs(token))

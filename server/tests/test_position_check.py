@@ -62,10 +62,18 @@ def test_numbered_move_for_other_move_not_flagged():
 
 
 def test_numbered_move_for_current_move_flagged():
-    # A move number equal to the current fullmove (16) IS about the live board,
-    # so it is still checked -- Nab1 is illegal and flagged.
+    # "16...Nab1" is the live ply (current fullmove and Black to move), so it
+    # is checked -- Nab1 is illegal and flagged.
     board = _board("r2qr1k1/5ppp/p4n2/1pbP1bB1/1n6/N1N2B2/PP1Q1PPP/3R1RK1 b - - 1 16")
     assert find_illegal_moves("the move 16...Nab1 fails", board) == ["Nab1"]
+
+
+def test_just_played_move_at_current_number_not_flagged():
+    # White's 19th was just played (now Black to move at fullmove 19), so
+    # "19.Ke2" cites that already-played move -- the number matches the current
+    # fullmove but the color isn't to move, so it is not flagged.
+    board = _board("rnb1k1nr/p2p1ppp/3B4/1pbN1N1P/4P1P1/3P1Q2/P1P1K3/q5R1 b kq - 1 19")
+    assert find_illegal_moves("after 18...Qxa1+ 19.Ke2 Black played Bxg1", board) == []
 
 
 def test_disambiguated_san_label_carve_out_not_flagged():
