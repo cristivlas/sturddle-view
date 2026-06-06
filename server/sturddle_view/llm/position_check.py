@@ -35,7 +35,7 @@ _SAN_GLYPHS = r"[!?]{0,2}"
 # citing another ply (past or hypothetical line) can be left alone. The dot
 # run is its own group: "..." (after a number or standalone) marks Black.
 _SAN_TOKEN_RE = re.compile(
-    rf"(?:(?P<num>\d+)(?P<dots>\.{{1,3}})\s*)?(?P<prefix>\.\.\.)?\b"
+    rf"(?:(?P<num>\d+)(?P<dots>\.{{0,3}})\s*)?(?P<prefix>\.\.\.)?\b"
     rf"(?P<token>(?:{_SAN_CASTLE}|{_SAN_PIECE_MOVE}|{_SAN_PAWN_CAPTURE}){_SAN_GLYPHS})"
 )
 
@@ -55,6 +55,23 @@ def _cites_other_ply(match: re.Match, board: chess.Board) -> bool:
         return False
     move_color = chess.BLACK if _marks_black(match) else chess.WHITE
     return not (int(num) == board.fullmove_number and move_color == board.turn)
+
+
+def _matches_played(num: int, is_black: bool, bare: str, board: chess.Board) -> bool:
+    """True iff prose move `bare` is the move actually played at that ply --
+    parsed in its pre-move position and compared by from/to, so a correct
+    history reference (even one illegal now) is left alone."""
+    ply = 2 * (num - 1) + (1 if is_black else 0)
+    if ply < 0 or ply >= len(board.move_stack):
+        return False
+    played = board.move_stack[ply]
+    before = board.copy()
+    while len(before.move_stack) > ply:
+        before.pop()
+    try:
+        return before.parse_san(bare) == played
+    except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
+        return False
 
 
 _MOVE_NUMBER_RE = re.compile(r"\b(\d+)\.")
@@ -160,9 +177,14 @@ def iter_illegal_moves(text: str, board: chess.Board):
         if token in seen:
             continue
         seen.add(token)
+        bare = _strip_annotation_glyphs(token)
+        num = match.group("num")
+        # Free pass: a numbered move that matches what was actually played at
+        # that ply is a correct history reference -- skip it.
+        if num and _matches_played(int(num), _marks_black(match), bare, board):
+            continue
         if _cites_other_ply(match, board):
             continue
-        bare = _strip_annotation_glyphs(token)
         pov_board = _board_for_pov(board, _pov_for(match, board))
         if pov_board is None:
             continue

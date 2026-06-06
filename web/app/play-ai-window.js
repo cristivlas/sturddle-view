@@ -512,7 +512,7 @@ const REVISION_PHRASES = [
   ["Scratch that.",               "Scratch that -- {} is wrong.", "Hold on -- {} are off."],
   ["Let me correct myself.",      "Correcting myself: {} is off.", "My mistake -- {} are wrong."],
   ["One moment.",                 "I had {} wrong.",              "{} -- incorrect."],
-  ["Let me back up.",             "{} doesn't hold up.",          "Those -- {} -- don't hold up."],
+  ["Let me back up.",             "{} is nonsense.",              "{} are suspect."],
   ["Rethinking this.",           "Strike {}; it's wrong.",       "Strike {}; they're wrong."],
 ];
 
@@ -527,13 +527,18 @@ function decapLead(s) {
   return SAN_LEAD_RE.test(s) ? s : s.charAt(0).toLowerCase() + s.slice(1);
 }
 
+// Deterministic pick from `pool` by `seed` (the round), stable across panel
+// rehydration on reconnect -- never random.
+function pickBySeed(pool, seed) {
+  const n = pool.length;
+  return pool[((seed % n) + n) % n];
+}
+
 // Fallback summary when the next round has no usable opening line: the AI
-// catching its own slip. `seed` (the round) picks the phrasing deterministically
-// so a rehydrated panel shows the same one. Prose leads are decapitalized;
-// SAN moves keep their case so "Nab1" isn't mangled to "nab1".
+// catching its own slip. Prose leads are decapitalized; SAN moves keep their
+// case so "Nab1" isn't mangled to "nab1".
 function revisionFallbackText(items, seed = 0) {
-  const n = REVISION_PHRASES.length;
-  const [none, one, many] = REVISION_PHRASES[((seed % n) + n) % n];
+  const [none, one, many] = pickBySeed(REVISION_PHRASES, seed);
   if (!items.length) return none;
   if (items.length === 1) return one.replace("{}", decapLead(items[0]));
   let joined = items.map(decapLead).join(", ");
@@ -541,6 +546,32 @@ function revisionFallbackText(items, seed = 0) {
     joined = joined.slice(0, REVISION_ITEMS_MAX).trimEnd() + "...";
   }
   return many.replace("{}", joined);
+}
+
+// Weak models leak a standalone acknowledgment ("Understood.") as the opening
+// prose despite the prompt forbidding it. Replace that lead with a board-
+// oriented opener so the prose reads as analysis, not compliance. Matches the
+// phrase then its terminator (or an "..., I'll ..." continuation), never a
+// bare run of text that could be real analysis.
+const ACK_PHRASE = "understood|got it";
+const ACK_LEAD_RE = new RegExp(
+  `^(?:${ACK_PHRASE})(?:,?\\s+i(?:'ll| will)[^.!?]*)?[.!]\\s*`, "i",
+);
+const ACK_OPENERS = [
+  "Now I see the board. ",
+  "Looking at the position. ",
+  "Reading the position. ",
+  "On the board: ",
+  "Here is the position. ",
+];
+
+// Replace a leaked acknowledgment opener on the accumulated prose. Operates on
+// the whole paragraph text (deltas may split the ack), idempotent -- once the
+// ack is gone the regex no longer matches. `seed` (round) varies the opener.
+function scrubAckLead(para, seed) {
+  const text = para.textContent;
+  if (!ACK_LEAD_RE.test(text)) return;
+  para.textContent = text.replace(ACK_LEAD_RE, pickBySeed(ACK_OPENERS, seed));
 }
 
 // Disabled (kept for easy re-enable): first sentence of the next round's
@@ -642,6 +673,9 @@ export function appendAiDelta(text, roundIndex = 0, thinkingMs = null) {
     if (!entry.hasProse) freezeThinkingLabel(entry, thinkingMs);
     entry.hasProse = true;
     entry.para.append(document.createTextNode(out));
+    // Strip a leaked "Understood."-style ack opener once enough text has
+    // landed to recognize it (the ack may span deltas).
+    scrubAckLead(entry.para, roundIndex);
     // Disabled: backfilling the prior revision's summary with this round's
     // opening line. Kept for easy re-enable; the static "Actually.../Wait..."
     // fallback now stands as the revision summary.

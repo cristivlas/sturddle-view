@@ -158,7 +158,7 @@ wa-select::part(listbox) {
    flawed prose. Neutral (not warning) accent -- a self-correction, not an
    error. margin-left aligns with the timeline spine (15px). */
 .play-ai-revision {
-  margin: 4px 12px 6px 15px;
+  margin: 0 12px 0 15px;
   padding: 4px 8px;
   border: none;
   border-left: 3px solid var(--muted, #888);

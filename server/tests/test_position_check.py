@@ -77,6 +77,16 @@ def test_just_played_move_at_current_number_not_flagged():
     assert find_illegal_moves("after 18...Qxa1+ 19.Ke2 Black played Bxg1", board) == []
 
 
+def test_numbered_move_matching_history_not_flagged():
+    # "3.Bb5" was actually played; even though it is illegal on the current
+    # board, a numbered move matching the move_stack gets a free pass.
+    board = chess.Board()
+    for m in ["e4", "e5", "Nf3", "Nc6", "Bb5", "a6"]:
+        board.push_san(m)
+    assert find_illegal_moves("the pin with 3.Bb5 was strong", board) == []
+    assert find_illegal_moves("Black replied 2...Nc6 developing", board) == []
+
+
 def test_disambiguated_san_label_carve_out_not_flagged():
     # 'Ngf3' names the knight already on f3 -- a disambiguated label, not a
     # move (the g1->f3 hop is illegal, f3 occupied). It must not be flagged.
