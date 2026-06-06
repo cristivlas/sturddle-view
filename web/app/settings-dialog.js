@@ -506,7 +506,9 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       playPanel.append(playCol);
       // Display tab: presentation-only preferences (no gameplay effect).
       const showCommentsDisplayRow = document.createElement("div");
-      showCommentsDisplayRow.className = "settings-row";
+      // PGN comments render in the left column, which is hidden on mobile;
+      // hide the toggle there too (desktop-only).
+      showCommentsDisplayRow.className = "settings-row desktop-only";
       showCommentsDisplayRow.append(showComments);
       const displayCol = document.createElement("div");
       displayCol.className = "settings-panel-col";
