@@ -233,6 +233,15 @@ def _side_to_move_from_fen(fen: str) -> str:
     return "white"
 
 
+def _position_under_review(fen: str) -> str:
+    """'move 19 (Black to move)' from the FEN's fullmove + side, so the model
+    knows which ply commentary is anchored at. Fullmove falls back to 1."""
+    side = _side_to_move_from_fen(fen)
+    parts = fen.split()
+    fullmove = parts[5] if len(parts) >= 6 and parts[5].isdigit() else "1"
+    return f"move {fullmove} ({side.capitalize()} to move)"
+
+
 def build_initial_user_message(
     *,
     fen: str,
@@ -280,6 +289,7 @@ def build_initial_user_message(
         lines.append(f"Opening: {eco_prefix}{opening_name}")
     lines.append(f"Current position (FEN): {fen}")
     lines.append(f"Side to move: {_side_to_move_from_fen(fen)}")
+    lines.append(f"Position under review: {_position_under_review(fen)}")
     lines.append(f"Game moves: {_render_san_pairs(san_history)}")
     if move_played:
         lines.append(f"Move played here: {move_played}")
