@@ -57,6 +57,19 @@ def _cites_other_ply(match: re.Match, board: chess.Board) -> bool:
     return not (int(num) == board.fullmove_number and move_color == board.turn)
 
 
+_MOVE_NUMBER_RE = re.compile(r"\b(\d+)\.")
+
+
+def truncate_at_future_line(text: str, board: chess.Board) -> str:
+    """Prose up to the first move number past the current fullmove. Beyond that
+    the model has entered a hypothetical line ('20.Nf3 ...' at move 19), so we
+    stop validating the rest -- everything after is analysis, not the board."""
+    for m in _MOVE_NUMBER_RE.finditer(text):
+        if int(m.group(1)) > board.fullmove_number:
+            return text[: m.start()]
+    return text
+
+
 def _pov_for(match: re.Match, board: chess.Board) -> chess.Color:
     """Side a SAN is validated from: Black when the token is marked Black (a
     leading "..." or "16..."), else the side to move."""
@@ -283,14 +296,17 @@ _PIECE_WORDS = {
 }
 _COLOR_WORDS = {"white": chess.WHITE, "black": chess.BLACK}
 _PIECE_ALT = "|".join(_PIECE_WORDS)
-_COLOR_OPT = r"(?:(white|black)(?:'s)?\s+)?(?:the\s+)?"
-# Group layout (positional): (color, piece, square) in both regexes.
+_COLOR_OPT = r"(?:(?P<color>white|black)(?:'s)?\s+)?(?:the\s+)?"
+# Optional capture verb before a claim ("captured the rook on a1"). A captured
+# piece is a past event, not a live-board claim, so such matches are skipped.
+_CAPTURE_VERB = r"(?P<cap>captured|took|exchanged|traded)\s+"
+_CAPTURE_OPT = rf"(?:{_CAPTURE_VERB})?"
 _PIECE_ON_SQUARE_RE = re.compile(
-    rf"\b{_COLOR_OPT}({_PIECE_ALT})\s+on\s+([a-h][1-8])\b",
+    rf"\b{_CAPTURE_OPT}{_COLOR_OPT}(?P<piece>{_PIECE_ALT})\s+on\s+(?P<square>[a-h][1-8])\b",
     re.IGNORECASE,
 )
 _SQUARE_PIECE_RE = re.compile(
-    rf"\b{_COLOR_OPT}([a-h][1-8])\s+({_PIECE_ALT})\b",
+    rf"\b{_CAPTURE_OPT}{_COLOR_OPT}(?P<square>[a-h][1-8])\s+(?P<piece>{_PIECE_ALT})\b",
     re.IGNORECASE,
 )
 # Optional movement verb between piece and "to" in a "<piece> to <square>"
@@ -302,7 +318,7 @@ _MOVE_VERB = (
     r"(?:re)?(?:direct|deploy)\w*)\s+"
 )
 _PIECE_TO_SQUARE_RE = re.compile(
-    rf"\b{_COLOR_OPT}({_PIECE_ALT})\s+(?:{_MOVE_VERB})?to\s+([a-h][1-8])\b",
+    rf"\b{_COLOR_OPT}(?P<piece>{_PIECE_ALT})\s+(?:{_MOVE_VERB})?to\s+(?P<square>[a-h][1-8])\b",
     re.IGNORECASE,
 )
 
@@ -310,14 +326,14 @@ _PIECE_TO_SQUARE_RE = re.compile(
 def _iter_piece_claims(text: str):
     """Yield (surface, color_word, piece_word, square_name) for every claim
     matched by either phrasing. `surface` is the exact prose span (for the UI
-    to strike). Positional groups expose (color, piece-or-square,
-    square-or-piece) in a known order."""
-    for m in _PIECE_ON_SQUARE_RE.finditer(text):
-        color, piece, square = m.group(1), m.group(2), m.group(3)
-        yield m.group(0), (color or "").lower(), piece.lower(), square.lower()
-    for m in _SQUARE_PIECE_RE.finditer(text):
-        color, square, piece = m.group(1), m.group(2), m.group(3)
-        yield m.group(0), (color or "").lower(), piece.lower(), square.lower()
+    to strike). A claim led by a capture verb ('captured the rook on a1')
+    describes a past event, not the live board, and is skipped."""
+    for regex in (_PIECE_ON_SQUARE_RE, _SQUARE_PIECE_RE):
+        for m in regex.finditer(text):
+            if m.group("cap"):
+                continue
+            color = (m.group("color") or "").lower()
+            yield m.group(0), color, m.group("piece").lower(), m.group("square").lower()
 
 
 _TYPE_TO_NAME = {t: n for n, t in _PIECE_WORDS.items()}
@@ -425,9 +441,9 @@ def iter_illegal_piece_moves(text: str, board: chess.Board):
     color when given, else the side to move (see _prose_pov)."""
     seen: set[str] = set()
     for m in _PIECE_TO_SQUARE_RE.finditer(text):
-        color_word = (m.group(1) or "").lower()
-        piece_word = m.group(2).lower()
-        square_name = m.group(3).lower()
+        color_word = (m.group("color") or "").lower()
+        piece_word = m.group("piece").lower()
+        square_name = m.group("square").lower()
         key = f"{color_word}|{piece_word}|{square_name}"
         if key in seen:
             continue

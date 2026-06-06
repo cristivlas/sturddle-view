@@ -59,6 +59,7 @@ from ..llm.position_check import (
     iter_illegal_continuations,
     iter_illegal_moves,
     iter_illegal_piece_moves,
+    truncate_at_future_line,
 )
 from .tools_engine import (
     ANALYZE_TOOL_NAME,
@@ -1174,6 +1175,9 @@ class AIAnalysisCoordinator:
         text = "".join(
             c.text for c in chunks if c.kind == "text" and c.text
         )
+        # Stop at the first move number past the live ply: beyond it the model
+        # is in a hypothetical line, not describing the board.
+        text = truncate_at_future_line(text, board)
         if not text.strip():
             return _PositionCheck(board, [], [], [])
         # SAN moves ('Bxe4') and prose moves ('bishop to a1') are the same

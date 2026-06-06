@@ -18,6 +18,7 @@ from sturddle_view.llm.position_check import (
     find_illegal_piece_moves,
     iter_false_claim_squares,
     projected_boards,
+    truncate_at_future_line,
 )
 
 
@@ -125,6 +126,22 @@ def test_square_piece_phrasing_flagged():
     # "the c1 rook" phrasing (square then piece); c1 is empty here.
     board = _board(_MIDGAME_FEN)
     assert find_false_piece_claims("the c1 rook is active", board) == ["rook on c1"]
+
+
+@pytest.mark.parametrize("verb", ["captured", "took", "exchanged", "traded"])
+def test_captured_piece_claim_not_flagged(verb):
+    # A capture verb marks a past event ("captured the rook on h6"), not a
+    # live-board claim -- h6 is empty/unreachable but the claim is skipped.
+    board = _board(_MIDGAME_FEN)
+    assert find_false_piece_claims(f"White {verb} the rook on h6 earlier", board) == []
+    assert find_false_piece_claims(f"White {verb} the h6 rook earlier", board) == []
+
+
+def test_non_capture_verb_still_flags():
+    # An ordinary verb before the claim ("planted the rook on h6") is not a
+    # capture, so the false claim is still flagged.
+    board = _board(_MIDGAME_FEN)
+    assert find_false_piece_claims("Black planted the rook on h6", board) == ["rook on h6"]
 
 
 def test_claim_cleared_by_projected_board():
@@ -293,3 +310,24 @@ def test_describe_square_empty():
 
 def test_describe_square_occupied():
     assert describe_square("g1", chess.Board()) == "g1 has a white knight"
+
+
+# --- truncate_at_future_line -----------------------------------------------
+
+_FUTURE_FEN = "rnb1k1nr/p2p1ppp/3B4/1pbN1N1P/4P1P1/3P1Q2/P1P1K3/q5R1 b kq - 1 19"
+
+
+def test_future_line_forgoes_rest_of_prose():
+    # At move 19, "20.Nf3 ..." enters a hypothetical line; everything from the
+    # future move number on is dropped, so its bogus claims aren't flagged.
+    board = _board(_FUTURE_FEN)
+    text = "Black is solid. Then 20.Nf3 wins the rook on h6 after Bxa1."
+    assert truncate_at_future_line(text, board) == "Black is solid. Then "
+    assert find_false_piece_claims(text[: len("Black is solid. Then ")], board) == []
+
+
+def test_current_and_past_numbers_do_not_truncate():
+    # Numbers at or below the current fullmove keep the prose intact.
+    board = _board(_FUTURE_FEN)
+    text = "After 18...Qxa1+ 19.Ke2 Black is winning."
+    assert truncate_at_future_line(text, board) == text
