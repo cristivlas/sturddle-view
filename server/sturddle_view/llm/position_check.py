@@ -299,7 +299,7 @@ _PIECE_ALT = "|".join(_PIECE_WORDS)
 _COLOR_OPT = r"(?:(?P<color>white|black)(?:'s)?\s+)?(?:the\s+)?"
 # Optional capture verb before a claim ("captured the rook on a1"). A captured
 # piece is a past event, not a live-board claim, so such matches are skipped.
-_CAPTURE_VERB = r"(?P<cap>captured|took|exchanged|traded)\s+"
+_CAPTURE_VERB = r"(?P<cap>captured|took|exchanged|traded|sacrificed)\s+"
 _CAPTURE_OPT = rf"(?:{_CAPTURE_VERB})?"
 _PIECE_ON_SQUARE_RE = re.compile(
     rf"\b{_CAPTURE_OPT}{_COLOR_OPT}(?P<piece>{_PIECE_ALT})\s+on\s+(?P<square>[a-h][1-8])\b",

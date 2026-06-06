@@ -128,7 +128,7 @@ def test_square_piece_phrasing_flagged():
     assert find_false_piece_claims("the c1 rook is active", board) == ["rook on c1"]
 
 
-@pytest.mark.parametrize("verb", ["captured", "took", "exchanged", "traded"])
+@pytest.mark.parametrize("verb", ["captured", "took", "exchanged", "traded", "sacrificed"])
 def test_captured_piece_claim_not_flagged(verb):
     # A capture verb marks a past event ("captured the rook on h6"), not a
     # live-board claim -- h6 is empty/unreachable but the claim is skipped.

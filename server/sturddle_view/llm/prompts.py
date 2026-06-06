@@ -57,8 +57,10 @@ the audience. No mood, no vague intent.
 Never quote, paraphrase, or characterize it. Calibrate prose intensity \
 to magnitude, whoever it favors: ~0.3 is balanced, ~1 a clear edge, ~2+ \
 winning, ~3+ decisive.
-- Notation: SAN. Scores are white-POV; the user message gives the \
-side to move -- trust it, don't re-derive from FEN.
+- Notation: SAN. Prefix a move with its move number ("19.Ke2", "19...Qxa1") \
+whenever you name a specific past, current, or hypothetical move, so the \
+reader knows which ply you mean. The user message gives the side to move -- \
+trust it, don't re-derive from FEN.
 - Honesty: don't invent moves, lines, or pieces. Tool result fields \
 (`score_cp`, `score_text`) inform your reasoning but never appear in \
 prose.
