@@ -503,18 +503,33 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
 // ellipsis-trimmed (keeps the collapsed summary to one line).
 const REVISION_ITEMS_MAX = 48;
 
+// Self-correction phrasings, picked from so the revision summary doesn't read
+// robotically. Each row is [no-items, one, many]; "{}" is the item slot, and
+// every opener is distinct. The original wording is the first row. Pick is
+// deterministic on the round (stable across panel rehydration -- never random).
+const REVISION_PHRASES = [
+  ["Actually, let me reconsider.", "Actually, {} isn't right.",  "Wait, {} look wrong."],
+  ["Scratch that.",               "Scratch that -- {} is wrong.", "Hold on -- {} are off."],
+  ["Let me correct myself.",      "Correcting myself: {} is off.", "My mistake -- {} are wrong."],
+  ["One moment.",                 "I had {} wrong.",              "{} -- incorrect."],
+  ["Let me back up.",             "{} doesn't hold up.",          "Those -- {} -- don't hold up."],
+  ["Rethinking this.",           "Strike {}; it's wrong.",       "Strike {}; they're wrong."],
+];
+
 // Fallback summary when the next round has no usable opening line: the AI
-// catching its own slip. Singular reads conversationally, plural lists the
-// items (ellipsis-trimmed). Items keep their exact case -- lowercasing the
-// lead would mangle SAN moves ("Nab1" -> "nab1").
-function revisionFallbackText(items) {
-  if (!items.length) return "Actually, let me reconsider.";
-  if (items.length === 1) return `Actually, ${items[0]} isn't right.`;
+// catching its own slip. `seed` (the round) picks the phrasing deterministically
+// so a rehydrated panel shows the same one. Items keep their exact case --
+// lowercasing the lead would mangle SAN moves ("Nab1" -> "nab1").
+function revisionFallbackText(items, seed = 0) {
+  const n = REVISION_PHRASES.length;
+  const [none, one, many] = REVISION_PHRASES[((seed % n) + n) % n];
+  if (!items.length) return none;
+  if (items.length === 1) return one.replace("{}", items[0]);
   let joined = items.join(", ");
   if (joined.length > REVISION_ITEMS_MAX) {
     joined = joined.slice(0, REVISION_ITEMS_MAX).trimEnd() + "...";
   }
-  return `Wait, ${joined} look wrong.`;
+  return many.replace("{}", joined);
 }
 
 // Disabled (kept for easy re-enable): first sentence of the next round's
@@ -566,7 +581,7 @@ export function noteAiPosition({ round, surfaces }) {
   // the revision body so the clean (next-round) prose reads on its own.
   // Summary starts as the fallback; the next round's opener backfills it.
   strikeProseItems(entry.para, surfaces);
-  const fallback = revisionFallbackText(surfaces);
+  const fallback = revisionFallbackText(surfaces, round);
   entry.revision.summary.textContent = fallback;
   entry.revision.body.append(entry.para);
   entry.revision.details.hidden = false;
