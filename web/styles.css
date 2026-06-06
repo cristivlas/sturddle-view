@@ -2184,7 +2184,7 @@ wa-dialog::part(header-actions) { gap: 6px; }
 }
 .replace-view-warning {
   margin-top: 4px;
-  color: #d8a43a;
+  color: var(--accent);
   font-size: 0.8125rem;
 }
 wa-dialog[no-header] {
