@@ -53,6 +53,13 @@ def test_phantom_capture_flagged():
     assert find_illegal_moves("threatening Nxf3", chess.Board()) == ["Nxf3"]
 
 
+def test_disambiguated_san_label_carve_out_not_flagged():
+    # 'Ngf3' names the knight already on f3 -- a disambiguated label, not a
+    # move (the g1->f3 hop is illegal, f3 occupied). It must not be flagged.
+    board = _board("4k3/8/8/8/8/5N2/8/4K1N1 w - - 0 1")  # knights f3 and g1
+    assert find_illegal_moves("the Ngf3 knight anchors", board) == []
+
+
 def test_ellipsis_prefix_validates_from_black_pov():
     # ...Nd3 is a Black reply (black knight b4->d3), legal even though it is
     # White to move. The "..." marks Black's POV, so it is not flagged.

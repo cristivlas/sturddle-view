@@ -27,7 +27,10 @@ _SAN_GLYPHS = r"[!?]{0,2}"
 
 # SAN-like token recognizer. Bare pawn pushes (e4) are NOT matched: prose
 # names squares constantly with no marker to tell description from move.
-# A leading "..." marks a Black move per SAN convention ("...Nd3").
+# A leading "..." marks a Black move per SAN convention ("...Nd3"). When the
+# "..." is glued to a preceding word ("develops...Nf3") it is ambiguous --
+# trailing punctuation or the marker -- and we deliberately read it as the
+# marker (validate from Black). Not a bug: do not "fix" the boundary.
 _SAN_TOKEN_RE = re.compile(
     rf"(\.\.\.)?\b((?:{_SAN_CASTLE}|{_SAN_PIECE_MOVE}|{_SAN_PAWN_CAPTURE}){_SAN_GLYPHS})"
 )
@@ -68,23 +71,22 @@ def _strip_annotation_glyphs(token: str) -> str:
     return _GLYPH_RE.sub("", token)
 
 
+_SAN_LABEL_RE = re.compile(r"^([KQRBN])[a-h]?[1-8]?([a-h][1-8])$")
+
+
 def _is_san_label(bare: str, board: chess.Board) -> bool:
-    """True when `bare` is a 'piece+square' SAN-shape naming a piece already
-    on that square for the side to move -- e.g. 'Qd1' when the queen is on
-    d1. Such tokens are labels in prose, not move proposals."""
-    if len(bare) != 3:
+    """True when `bare` is a 'piece(+disambiguator)+square' SAN-shape naming a
+    piece already on that square for the side to move -- 'Qd1' (queen on d1) or
+    the disambiguated 'Ngf3' (knight on f3). Such tokens are labels in prose,
+    not move proposals. The trailing two chars are always the named square."""
+    m = _SAN_LABEL_RE.match(bare)
+    if m is None:
         return False
-    piece_char = bare[0]
-    if piece_char not in _PIECE_LETTER_TO_TYPE:
-        return False
-    try:
-        square = chess.parse_square(bare[1:3])
-    except ValueError:
-        return False
+    square = chess.parse_square(m.group(2))
     piece = board.piece_at(square)
     if piece is None:
         return False
-    if piece.piece_type != _PIECE_LETTER_TO_TYPE[piece_char]:
+    if piece.piece_type != _PIECE_LETTER_TO_TYPE[m.group(1)]:
         return False
     return piece.color == board.turn
 
@@ -215,7 +217,11 @@ def projected_boards(text: str, board: chess.Board) -> list[chess.Board]:
     """Boards reachable by the valid SAN moves named in `text`, one 1-ply hop
     each from `board`. Lets a piece-claim about a square a named move reaches
     ("a knight on d3 after ...Nd3") validate against the projected position.
-    POV per token: Black on a leading "...", else the side to move."""
+    POV per token: Black on a leading "...", else the side to move.
+
+    By design the claim and the move need not be linked: a claim clears if ANY
+    move named anywhere in the prose reaches it. Loose by intent -- the check
+    only asks the model to clarify, so we bias toward not flagging."""
     out: list[chess.Board] = []
     seen: set[str] = set()
     for match in _SAN_TOKEN_RE.finditer(text):
