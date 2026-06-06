@@ -521,10 +521,22 @@ const REVISION_PHRASES = [
 // lead lowercased mid-sentence. Castling and a piece letter + SAN body char.
 const SAN_LEAD_RE = /^(?:O-O|[KQRBN][a-h1-8x])/;
 
+// A lowercase chess move whose case is meaningful and must be kept -- a pawn
+// push or capture ("e4", "exd5", "fxg1=Q"). Distinct from SAN_LEAD_RE (which
+// is piece moves); a pawn move starts with a file letter.
+const PAWN_MOVE_RE = /^[a-h](?:[1-8]|x[a-h][1-8])/;
+
 // Lowercase the first letter of a prose item so it reads mid-sentence
 // ("White's bishop" -> "white's bishop"); leave SAN moves untouched.
 function decapLead(s) {
   return SAN_LEAD_RE.test(s) ? s : s.charAt(0).toLowerCase() + s.slice(1);
+}
+
+// Capitalize a prose item at a sentence start ("white bishop" -> "White
+// bishop"); leave chess moves untouched so "e4"/"Nf3" keep their case.
+function capLead(s) {
+  if (SAN_LEAD_RE.test(s) || PAWN_MOVE_RE.test(s)) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 // Deterministic pick from `pool` by `seed` (the round), stable across panel
@@ -534,18 +546,25 @@ function pickBySeed(pool, seed) {
   return pool[((seed % n) + n) % n];
 }
 
+// Case the item to its position: capitalized when "{}" leads the phrase
+// (sentence start), lowercased when a prefix precedes it. Chess moves keep
+// their case either way.
+function fill(template, joined) {
+  const lead = template.startsWith("{}");
+  return template.replace("{}", lead ? capLead(joined) : decapLead(joined));
+}
+
 // Fallback summary when the next round has no usable opening line: the AI
-// catching its own slip. Prose leads are decapitalized; SAN moves keep their
-// case so "Nab1" isn't mangled to "nab1".
+// catching its own slip. SAN moves keep their case so "Nab1" isn't mangled.
 function revisionFallbackText(items, seed = 0) {
   const [none, one, many] = pickBySeed(REVISION_PHRASES, seed);
   if (!items.length) return none;
-  if (items.length === 1) return one.replace("{}", decapLead(items[0]));
-  let joined = items.map(decapLead).join(", ");
+  if (items.length === 1) return fill(one, items[0]);
+  let joined = items.join(", ");
   if (joined.length > REVISION_ITEMS_MAX) {
     joined = joined.slice(0, REVISION_ITEMS_MAX).trimEnd() + "...";
   }
-  return many.replace("{}", joined);
+  return fill(many, joined);
 }
 
 // Weak models leak a standalone acknowledgment ("Understood.") as the opening
