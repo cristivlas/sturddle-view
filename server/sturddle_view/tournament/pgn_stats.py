@@ -12,11 +12,7 @@ import logging
 import math
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
-
-log = logging.getLogger(__name__)
-
 
 from ..play.canonical_hash import canonical_hash_from_game
 from ..chess.results import (
@@ -24,6 +20,8 @@ from ..chess.results import (
     DECISIVE_RESULTS,
     WHITE_WIN as _WHITE_WIN,
 )
+
+log = logging.getLogger(__name__)
 
 _DECISIVE_RESULTS = DECISIVE_RESULTS
 
@@ -617,7 +615,8 @@ def _ordo_fit_margins(
         margins = {}
         info = 0.0
         for w, b, _ws, np_ in encounters:
-            ra = ratings[w]; rb = ratings[b]
+            ra = ratings[w]
+            rb = ratings[b]
             p = 1.0 / (1.0 + math.exp((rb - ra) * _ORDO_BETA))
             info += np_ * _ORDO_BETA * _ORDO_BETA * p * (1.0 - p)
         if info <= 0.0:
@@ -632,7 +631,8 @@ def _ordo_fit_margins(
     info = [[0.0] * n for _ in range(n)]
     for w, b, _ws, np_ in encounters:
         iw, ib = idx[w], idx[b]
-        ra = ratings[w]; rb = ratings[b]
+        ra = ratings[w]
+        rb = ratings[b]
         p = 1.0 / (1.0 + math.exp((rb - ra) * _ORDO_BETA))
         c = np_ * _ORDO_BETA * _ORDO_BETA * p * (1.0 - p)
         info[iw][iw] += c
@@ -1138,7 +1138,7 @@ def _compute_sprt_logistic(
         )
 
     a_name, b_name = engine_a, engine_b
-    w = l = d = 0
+    wins = losses = draws = 0
     for white, black, result in games:
         if {white, black} != {a_name, b_name}:
             log.warning(
@@ -1148,18 +1148,18 @@ def _compute_sprt_logistic(
             continue
         if result == _WHITE_WIN:
             if white == a_name:
-                w += 1
+                wins += 1
             else:
-                l += 1
+                losses += 1
         elif result == _BLACK_WIN:
             if black == a_name:
-                w += 1
+                wins += 1
             else:
-                l += 1
+                losses += 1
         else:
-            d += 1
+            draws += 1
 
-    n = w + l + d
+    n = wins + losses + draws
     if n == 0:
         return SprtResult(
             llr=0.0, lower_bound=lower, upper_bound=upper,
@@ -1167,7 +1167,7 @@ def _compute_sprt_logistic(
             elo0=elo0, elo1=elo1, model="logistic",
         )
 
-    d_obs = d / n
+    d_obs = draws / n
     s0 = 1.0 / (1.0 + math.pow(10.0, -elo0 / 400.0))
     s1 = 1.0 / (1.0 + math.pow(10.0, -elo1 / 400.0))
     pw0, pl0 = s0 - d_obs / 2.0, 1.0 - s0 - d_obs / 2.0
@@ -1179,7 +1179,7 @@ def _compute_sprt_logistic(
             elo0=elo0, elo1=elo1, model="logistic",
         )
 
-    llr = w * math.log(pw1 / pw0) + l * math.log(pl1 / pl0)
+    llr = wins * math.log(pw1 / pw0) + losses * math.log(pl1 / pl0)
     if llr >= upper:
         status = "H1"
     elif llr <= lower:

@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 from ..chess.board import board_from, moves_san as _moves_san, side_to_move
 from ..chess.pgn_build import build_pgn
 from .canonical_hash import canonical_hash
-from ..chess.results import DRAW, loser_result, winner_result
+from ..chess.results import DRAW, loser_result
 from ..events import (
     EVT_BOARD_UPDATE,
     EVT_CLOCK_TICK,
