@@ -139,9 +139,6 @@ function buildBody() {
   // tool_use_id -> tool-call line DOM node, so a failure event can
   // mark the exact row by id (not by tool name or position).
   root._toolCallNodes = new Map();
-  // roundIndex -> {entry, fallback}: a revision awaiting the next round's
-  // opening line as its summary (the model's own self-correction voice).
-  root._pendingRevisions = new Map();
   return root;
 }
 
@@ -386,7 +383,6 @@ export function resetAi() {
   inst.body._terminal.textContent = "";
   inst.body._roundPanels.clear();
   inst.body._toolCallNodes.clear();
-  inst.body._pendingRevisions.clear();
   inst.body._currentRound = null;
   setAiStatus("waiting");
 }
@@ -622,19 +618,6 @@ function scrubAckLead(para, seed) {
   });
 }
 
-// Disabled (kept for easy re-enable): first sentence of the next round's
-// prose, used as the revision summary. Only used by backfillPendingRevision.
-// const REVISION_SUMMARY_MAX = 64;
-// function leadSentence(text) {
-//   const trimmed = text.trim();
-//   if (!trimmed) return "";
-//   const stop = trimmed.search(/[.!?](\s|$)/);
-//   const lead = stop >= 0 ? trimmed.slice(0, stop + 1) : trimmed;
-//   return lead.length > REVISION_SUMMARY_MAX
-//     ? lead.slice(0, REVISION_SUMMARY_MAX).trimEnd() + "..."
-//     : lead;
-// }
-
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -671,26 +654,10 @@ export function noteAiPosition({ round, surfaces }) {
   // the revision body so the clean (next-round) prose reads on its own.
   // The summary is the canned self-correction line.
   strikeProseItems(entry.para, surfaces);
-  const fallback = revisionFallbackText(surfaces, round);
-  entry.revision.summary.textContent = fallback;
+  entry.revision.summary.textContent = revisionFallbackText(surfaces, round);
   entry.revision.body.append(entry.para);
   entry.revision.details.hidden = false;
-  inst.body._pendingRevisions.set(round, { entry, fallback });
 }
-
-// Disabled (kept for easy re-enable): backfill the prior round's revision
-// summary with this round's opening line (the model's own self-correction
-// voice). Called on each delta: showed the partial lead live, stopping once a
-// full sentence landed. The static "Actually.../Wait..." fallback now stands.
-// function backfillPendingRevision(root, roundIndex, text) {
-//   const pending = root._pendingRevisions.get(roundIndex - 1);
-//   if (!pending) return;
-//   const lead = leadSentence(text);
-//   if (lead) pending.entry.revision.summary.textContent = lead;
-//   // Finalize only when a sentence terminator is present -- before that the
-//   // lead is still growing and the next delta should keep refining it.
-//   if (/[.!?]/.test(text)) root._pendingRevisions.delete(roundIndex - 1);
-// }
 
 export function setAiStatus(state) {
   // `state` in: idle | waiting | engine | done.
@@ -724,10 +691,6 @@ export function appendAiDelta(text, roundIndex = 0, thinkingMs = null) {
     // Strip a leaked "Understood."-style ack opener once enough text has
     // landed to recognize it (the ack may span deltas).
     scrubAckLead(entry.para, roundIndex);
-    // Disabled: backfilling the prior revision's summary with this round's
-    // opening line. Kept for easy re-enable; the static "Actually.../Wait..."
-    // fallback now stands as the revision summary.
-    // backfillPendingRevision(inst.body, roundIndex, entry.para.textContent);
   });
 }
 
