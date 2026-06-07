@@ -87,6 +87,9 @@ function setLayout(mode) {
 }
 
 
+// oversized-ok: stateful UI controller -- ~30 closures over shared mutable
+// state (windows, slotGrid, detail, ...) plus cohesive layout algorithms
+// (snap/partition BSP). Splitting would scatter the flow and hurt locality.
 export function openTournamentWorkspace({ api, events, log, token, tournament, top = 0, left = 0, getRight = () => window.innerWidth }) {
   // Single-active model. Re-clicking the workspace icon for the
   // already-open tournament is a no-op (just focus its windows) so
