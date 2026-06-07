@@ -1715,10 +1715,10 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
    toward slate-blue. */
 .cm-chessboard.sturddle-staunty {
   --sb-dark: #2a3a4a;
-  --sb-light: teal;
+  --sb-light: rgb(112, 134, 134);
   --sb-marker: turquoise;
   --sb-arrow: turquoise;
-  --sb-arrow-secondary: rgb(18, 98, 179);
+  --sb-arrow-secondary: rgb(18, 82, 179);
 }
 
 /* Sturddle Wine: classic pieces over a darkish wine board. */
