@@ -3175,6 +3175,19 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   top: 6px; bottom: 6px; right: -1px; left: auto;
   height: auto; width: 2px;
 }
+/* Floating vertical ribbon: full border around active/hovered buttons instead
+   of the one-side accent stripe. Suppress the ::before stripe and use an
+   inset box-shadow so the ring stays inside the fixed button dimensions. */
+.winbox.sturddle-wb-ribbon.ribbon-vertical .wb-body .ribbon-btn::before {
+  display: none;
+}
+.winbox.sturddle-wb-ribbon.ribbon-vertical .wb-body .ribbon-btn:hover:not(:disabled),
+.winbox.sturddle-wb-ribbon.ribbon-vertical .wb-body .ribbon-btn.is-active {
+  box-shadow: inset 0 0 0 2px var(--wa-color-brand-fill-loud, #b45309);
+}
+.winbox.sturddle-wb-ribbon.ribbon-vertical .wb-body .ribbon-btn:focus-visible {
+  outline-offset: 2px;
+}
 @keyframes wb-attention {
   0%, 40% { outline: 2px solid var(--accent); outline-offset: -1px; }
   100%     { outline: 2px solid transparent;  outline-offset: -1px; }
