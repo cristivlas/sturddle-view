@@ -25,7 +25,7 @@ const ANALYSIS_ENGINE_KEY = "analysis_engine_id";
 // is repurposed to pick the analysis engine.
 const ENGINE_ONLY = "engine-only";
 const AI_PROVIDER_OPTIONS = [
-  [ENGINE_ONLY, "Engine only"],
+  [ENGINE_ONLY, "Engine"],
   ["anthropic", "Anthropic"],
   ["gemini", "Gemini"],
   ["ollama", "Ollama"],
