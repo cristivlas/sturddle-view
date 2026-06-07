@@ -1687,59 +1687,48 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 /* AI recommendation arrow: purple. */
 .cm-chessboard .arrow-secondary .arrow-head { fill: #7c3aed; }
 .cm-chessboard .arrow-secondary .arrow-line { stroke: #7c3aed; opacity: 0.55; }
-/* Sturddle Staunty theme: staunty pieces (set in board-styles.js) over navy
-   squares. Dark square = the tournament selected-row color (--row-bg-selected);
-   light square is that navy lifted toward slate-blue. cm-chessboard only
+/* Sturddle board themes (Staunty, Wine, ...). Each carries the shared
+   `sturddle-board` class plus its own variant class; the variant sets the
+   --sb-* palette and the rules below paint from it. cm-chessboard only
    applies the cssClass to the SVG; these square/border/coordinate fills live
-   here in app CSS (loaded after chessboard.css) so the vendored set is untouched. */
-.cm-chessboard.sturddle-staunty {
-  --ss-dark: #2a3a4a;
-  --ss-light: teal;
-  --ss-marker: turquoise;
-  --ss-arrow: turquoise;
-  --ss-arrow-secondary: rgb(18, 98, 179);
-}
-.cm-chessboard.sturddle-staunty .board .square.white { fill: var(--ss-light); }
-.cm-chessboard.sturddle-staunty .board .square.black { fill: var(--ss-dark); }
-.cm-chessboard.sturddle-staunty.border-type-thin .board .border { stroke: var(--ss-dark); stroke-width: 0.7%; fill: var(--ss-dark); }
-.cm-chessboard.sturddle-staunty.border-type-none .board .border { stroke: var(--ss-dark); stroke-width: 0; fill: var(--ss-dark); }
-.cm-chessboard.sturddle-staunty.border-type-frame .board .border { fill: var(--ss-light); stroke: none; }
-.cm-chessboard.sturddle-staunty.border-type-frame .board .border-inner { fill: var(--ss-dark); stroke: var(--ss-dark); stroke-width: 0.7%; }
-.cm-chessboard.sturddle-staunty .coordinates .coordinate { fill: var(--ss-dark); }
-.cm-chessboard.sturddle-staunty .coordinates .coordinate.black { fill: var(--ss-light); }
-.cm-chessboard.sturddle-staunty .coordinates .coordinate.white { fill: var(--ss-dark); }
-/* Teal markers/arrows, readable on both square colors. */
-.cm-chessboard.sturddle-staunty .markers .marker.marker-frame { stroke: var(--ss-marker); }
-.cm-chessboard.sturddle-staunty .markers .marker.marker-dot { stroke: var(--ss-marker); fill: var(--ss-marker); opacity: 0.65; }
-.cm-chessboard.sturddle-staunty .arrow-success .arrow-head { fill: var(--ss-arrow); }
-.cm-chessboard.sturddle-staunty .arrow-success .arrow-line { stroke: var(--ss-arrow); opacity: 0.75; }
-.cm-chessboard.sturddle-staunty .arrow-secondary .arrow-head { fill: var(--ss-arrow-secondary); }
-.cm-chessboard.sturddle-staunty .arrow-secondary .arrow-line { stroke: var(--ss-arrow-secondary); opacity: 0.75; }
+   here in app CSS (loaded after chessboard.css) so the vendored set is
+   untouched. Adding a theme = one var block + the board-styles.js entry. */
+.cm-chessboard.sturddle-board .board .square.white { fill: var(--sb-light); }
+.cm-chessboard.sturddle-board .board .square.black { fill: var(--sb-dark); }
+.cm-chessboard.sturddle-board.border-type-thin .board .border { stroke: var(--sb-dark); stroke-width: 0.7%; fill: var(--sb-dark); }
+.cm-chessboard.sturddle-board.border-type-none .board .border { stroke: var(--sb-dark); stroke-width: 0; fill: var(--sb-dark); }
+.cm-chessboard.sturddle-board.border-type-frame .board .border { fill: var(--sb-light); stroke: none; }
+.cm-chessboard.sturddle-board.border-type-frame .board .border-inner { fill: var(--sb-dark); stroke: var(--sb-dark); stroke-width: 0.7%; }
+.cm-chessboard.sturddle-board .coordinates .coordinate { fill: var(--sb-dark); }
+.cm-chessboard.sturddle-board .coordinates .coordinate.black { fill: var(--sb-light); }
+.cm-chessboard.sturddle-board .coordinates .coordinate.white { fill: var(--sb-dark); }
+/* Markers/arrows, readable on both square colors. */
+.cm-chessboard.sturddle-board .markers .marker.marker-frame { stroke: var(--sb-marker); }
+.cm-chessboard.sturddle-board .markers .marker.marker-dot { stroke: var(--sb-marker); fill: var(--sb-marker); opacity: 0.65; }
+.cm-chessboard.sturddle-board .arrow-success .arrow-head { fill: var(--sb-arrow); }
+.cm-chessboard.sturddle-board .arrow-success .arrow-line { stroke: var(--sb-arrow); opacity: 0.75; }
+.cm-chessboard.sturddle-board .arrow-secondary .arrow-head { fill: var(--sb-arrow-secondary); }
+.cm-chessboard.sturddle-board .arrow-secondary .arrow-line { stroke: var(--sb-arrow-secondary); opacity: 0.75; }
 
-/* Sturddle Wine theme: classic pieces over a darkish wine board.
-   App-CSS-only, like Sturddle Staunty -- vendored set untouched. */
-.cm-chessboard.sturddle-wine {
-  --sw-dark: #743042;
-  --sw-light: #c3a3aa;
-  --sw-arrow: #FF4500;
-  --sw-arrow-secondary: darkorchid;
-  --sw-marker: var(--sw-arrow);
+/* Sturddle Staunty: staunty pieces (set in board-styles.js) over navy squares.
+   Dark square = the tournament selected-row color; light is that navy lifted
+   toward slate-blue. */
+.cm-chessboard.sturddle-staunty {
+  --sb-dark: #2a3a4a;
+  --sb-light: teal;
+  --sb-marker: turquoise;
+  --sb-arrow: turquoise;
+  --sb-arrow-secondary: rgb(18, 98, 179);
 }
-.cm-chessboard.sturddle-wine .board .square.white { fill: var(--sw-light); }
-.cm-chessboard.sturddle-wine .board .square.black { fill: var(--sw-dark); }
-.cm-chessboard.sturddle-wine.border-type-thin .board .border { stroke: var(--sw-dark); stroke-width: 0.7%; fill: var(--sw-dark); }
-.cm-chessboard.sturddle-wine.border-type-none .board .border { stroke: var(--sw-dark); stroke-width: 0; fill: var(--sw-dark); }
-.cm-chessboard.sturddle-wine.border-type-frame .board .border { fill: var(--sw-light); stroke: none; }
-.cm-chessboard.sturddle-wine.border-type-frame .board .border-inner { fill: var(--sw-dark); stroke: var(--sw-dark); stroke-width: 0.7%; }
-.cm-chessboard.sturddle-wine .coordinates .coordinate { fill: var(--sw-dark); }
-.cm-chessboard.sturddle-wine .coordinates .coordinate.black { fill: var(--sw-light); }
-.cm-chessboard.sturddle-wine .coordinates .coordinate.white { fill: var(--sw-dark); }
-.cm-chessboard.sturddle-wine .markers .marker.marker-frame { stroke: var(--sw-marker); }
-.cm-chessboard.sturddle-wine .markers .marker.marker-dot { stroke: var(--sw-marker); fill: var(--sw-marker); opacity: 0.65; }
-.cm-chessboard.sturddle-wine .arrow-success .arrow-head { fill: var(--sw-arrow); }
-.cm-chessboard.sturddle-wine .arrow-success .arrow-line { stroke: var(--sw-arrow); opacity: 0.75; }
-.cm-chessboard.sturddle-wine .arrow-secondary .arrow-head { fill: var(--sw-arrow-secondary); }
-.cm-chessboard.sturddle-wine .arrow-secondary .arrow-line { stroke: var(--sw-arrow-secondary); opacity: 0.75; }
+
+/* Sturddle Wine: classic pieces over a darkish wine board. */
+.cm-chessboard.sturddle-wine {
+  --sb-dark: #743042;
+  --sb-light: #c3a3aa;
+  --sb-arrow: #FF4500;
+  --sb-arrow-secondary: darkorchid;
+  --sb-marker: var(--sb-arrow);
+}
 .clock-row .clock-name {
   font-size: 0.8125rem;
   color: inherit;
