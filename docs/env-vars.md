@@ -20,6 +20,22 @@ by the CLI or by `desktop.py`.
 | `SV_TLS_CERT` | `--cert` | TLS certificate path. Requires `SV_TLS_KEY`. |
 | `SV_TLS_KEY` | `--key` | TLS private key path. Requires `SV_TLS_CERT`. |
 | `SV_ENGINE_PATH` | `--engine` | Fallback engine when registry has no selection. |
+| `SV_INSTANCE` | `--instance` | Instance suffix isolating config/data dirs (`SV_INSTANCE=2` -> `sturddle-view-2`). Empty = default. |
+
+## Paths and storage
+
+Override the default config/data file locations (chiefly for tests and
+isolated instances). Each falls back to the platform default when unset.
+
+| Var | Default | Effect |
+|---|---|---|
+| `SV_SETTINGS_FILE` | platform config dir | Path to the persisted user settings JSON. |
+| `SV_ENGINE_REGISTRY_PATH` | platform config dir | Path to the persisted engine registry JSON. |
+| `SV_GAME_STATE_PATH` | platform data dir | Path to the live game-state snapshot. |
+| `SV_IMPORTS_DIR` | platform data dir | Directory for the imported PGN/FEN history store. |
+| `SV_ENGINE_PROBE_TIMEOUT_SEC` | `3.0` | Timeout for the engine UCI handshake probe (floored at `0.05`). |
+| `SV_MAX_IMPORT_BYTES` | `2097152` | Cap on `/game/import` payload size (2 MiB). |
+| `SV_MAX_ANNOTATION_LENGTH` | `10000` | Cap on individual move-annotation text length. |
 
 ## Debug flags
 
@@ -52,6 +68,15 @@ properties of the fastchess + UCI protocol, not operator tunables.
 Invalid (non-numeric) overrides log a warning and fall back to the
 default.
 
+## Tournament engine proxy
+
+Set on the proxy subprocess environment, not via the CLI.
+
+| Var | Default | Effect | Where |
+|---|---|---|---|
+| `SV_PROXY_SECRET` | per-run random | Per-tournament secret for the engine-proxy stdio broadcast; passed via env (never argv) and popped on read. | [tournament-spec.md](tournament-spec.md) |
+| `SV_BROADCAST_INFO` | `1` | Kill-switch: `0` suppresses UCI `info` lines from the broadcast tap. | [tournament-spec.md](tournament-spec.md) |
+
 ## AI agent
 
 Tunables and toggles for the AI analysis coordinator. See
@@ -66,10 +91,14 @@ source; check the file when a precise value matters.
 | `SV_AI_MAX_TOOL_ROUNDS` | `32` | Hard cap on agent loop rounds per turn. Hit emits `done.round_cap=true`. | `server/sturddle_view/play/ai_analysis.py` |
 | `SV_AI_VERIFIER_MAX_ROUNDS` | `8` | Round cap for a verifier sub-run (one move, a tool call or two, a verdict). | `server/sturddle_view/play/ai_analysis.py` |
 | `SV_AI_THINKING_BUDGET_TOKENS` | `4096` | Default Anthropic extended-thinking budget; UI override persists per-settings. | `server/sturddle_view/config.py` |
-| `SV_AI_ANALYZE_MAX_DEPTH` | module const | `analyze`/`top_moves` per-call depth cap; caller's `depth` clamped down. Searches are depth-only (no time limit) for determinism. | `server/sturddle_view/play/tools_engine.py` |
-| `SV_AI_RECOMMEND_MARGIN` | module const | Centipawn dominance margin for `recommend_move` to accept the model's pick over the engine's top line. | `server/sturddle_view/play/tools_engine.py` |
-| `SV_AI_VERIFICATION_DEPTH` | `30` | Floor depth for the end-of-turn recommendation check; searches at least this deep (deeper if the model asked for more). | `server/sturddle_view/play/tools_engine.py` |
-| `SV_AI_TOP_MOVES_MAX_N` | module const | Hard cap on `top_moves` candidate count; over-large `n` clamped. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_MAX_RECOMMEND_FAILURES` | `2` | Consecutive failed `recommend_move` calls before the loop nudges the model to `top_moves`. | `server/sturddle_view/play/ai_analysis.py` |
+| `SV_AI_ANALYZE_MAX_DEPTH` | `30` | `analyze`/`top_moves` per-call depth cap; caller's `depth` clamped down. Searches are depth-only (no time limit) for determinism. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_RECOMMEND_MARGIN` | `50` | Centipawn dominance margin for `recommend_move` to accept the model's pick over the engine's top line. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_VERIFICATION_DEPTH` | `25` | Floor depth for the end-of-turn recommendation check; searches at least this deep (deeper if the model asked for more). | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_TOP_MOVES_MAX_N` | `5` | Hard cap on `top_moves` candidate count; over-large `n` clamped. | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_REPORT_LINE_MAX_PLIES` | `40` | Hard cap on `report_line` continuation length; bounds payload size (no engine search). | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_ANNOTATION_PER_COMMENT_MAX` | `200` | Max characters per PGN annotation before truncation. | `server/sturddle_view/api/_ai_kick.py` |
+| `SV_AI_ANNOTATION_TOTAL_MAX` | `1500` | Max total characters across annotations before trailing entries are dropped. | `server/sturddle_view/api/_ai_kick.py` |
 | `SV_AI_INLINE_TOOL_ID_LEN` | module const | Synthetic `tool_use_id` length for inline-tool-call recovery. | `server/sturddle_view/llm/inline_tool_calls.py` |
 
 ### AI debug flags
@@ -78,3 +107,4 @@ source; check the file when a precise value matters.
 |---|---|---|---|
 | `SV_AI_TRANSCRIPT` | unset | Opt-in: write per-turn transcripts to disk. | `server/sturddle_view/llm/transcript.py` |
 | `SV_AI_DEBUG` | `0` | Flip AI loggers to DEBUG when `--debug` is also on. | `server/sturddle_view/app.py` |
+| `SV_AI_FORCE_INLINE_CALLS` | `0` | Force the model to emit tool calls as inline text (exercises the inline-call recovery path). Accepts `1`/`true`/`yes`/`on`. | `server/sturddle_view/llm/prompts.py` |
