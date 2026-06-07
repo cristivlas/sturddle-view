@@ -1715,6 +1715,31 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
 .cm-chessboard.sturddle-staunty .arrow-success .arrow-line { stroke: var(--ss-arrow); opacity: 0.75; }
 .cm-chessboard.sturddle-staunty .arrow-secondary .arrow-head { fill: var(--ss-arrow-secondary); }
 .cm-chessboard.sturddle-staunty .arrow-secondary .arrow-line { stroke: var(--ss-arrow-secondary); opacity: 0.75; }
+
+/* Sturddle Wine theme: classic pieces over a darkish wine board.
+   App-CSS-only, like Sturddle Staunty -- vendored set untouched. */
+.cm-chessboard.sturddle-wine {
+  --sw-dark: #743042;
+  --sw-light: #c3a3aa;
+  --sw-arrow: #FF4500;
+  --sw-arrow-secondary: darkorchid;
+  --sw-marker: var(--sw-arrow);
+}
+.cm-chessboard.sturddle-wine .board .square.white { fill: var(--sw-light); }
+.cm-chessboard.sturddle-wine .board .square.black { fill: var(--sw-dark); }
+.cm-chessboard.sturddle-wine.border-type-thin .board .border { stroke: var(--sw-dark); stroke-width: 0.7%; fill: var(--sw-dark); }
+.cm-chessboard.sturddle-wine.border-type-none .board .border { stroke: var(--sw-dark); stroke-width: 0; fill: var(--sw-dark); }
+.cm-chessboard.sturddle-wine.border-type-frame .board .border { fill: var(--sw-light); stroke: none; }
+.cm-chessboard.sturddle-wine.border-type-frame .board .border-inner { fill: var(--sw-dark); stroke: var(--sw-dark); stroke-width: 0.7%; }
+.cm-chessboard.sturddle-wine .coordinates .coordinate { fill: var(--sw-dark); }
+.cm-chessboard.sturddle-wine .coordinates .coordinate.black { fill: var(--sw-light); }
+.cm-chessboard.sturddle-wine .coordinates .coordinate.white { fill: var(--sw-dark); }
+.cm-chessboard.sturddle-wine .markers .marker.marker-frame { stroke: var(--sw-marker); }
+.cm-chessboard.sturddle-wine .markers .marker.marker-dot { stroke: var(--sw-marker); fill: var(--sw-marker); opacity: 0.65; }
+.cm-chessboard.sturddle-wine .arrow-success .arrow-head { fill: var(--sw-arrow); }
+.cm-chessboard.sturddle-wine .arrow-success .arrow-line { stroke: var(--sw-arrow); opacity: 0.75; }
+.cm-chessboard.sturddle-wine .arrow-secondary .arrow-head { fill: var(--sw-arrow-secondary); }
+.cm-chessboard.sturddle-wine .arrow-secondary .arrow-line { stroke: var(--sw-arrow-secondary); opacity: 0.75; }
 .clock-row .clock-name {
   font-size: 0.8125rem;
   color: inherit;
