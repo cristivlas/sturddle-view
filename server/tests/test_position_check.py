@@ -237,6 +237,31 @@ def test_piece_to_bare_phrasing_flagged():
     assert find_illegal_piece_moves("rook to h8 wins", board) == ["rook to h8"]
 
 
+# White to move; Black king on f8 can play Kg7. Colorless "the king to g7"
+# defaults to White's POV (king on g2, can't reach g7) and would false-flag.
+# "opponent" names the not-to-move side, so it must validate from Black.
+_OPP_FEN = "r4k2/p1R2p2/1nN3p1/1P5p/3RP2P/1b4P1/5PK1/r4B2 w - - 5 35"
+
+
+def test_opponent_piece_move_validated_from_other_side():
+    board = _board(_OPP_FEN)
+    text = "Your opponent must move the king to g7 or another safe square."
+    assert find_illegal_piece_moves(text, board) == []
+
+
+def test_opponent_possessive_piece_move_validated_from_other_side():
+    board = _board(_OPP_FEN)
+    assert find_illegal_piece_moves("the opponent's king moves to g7", board) == []
+
+
+def test_opponent_cue_does_not_clear_a_truly_illegal_move():
+    # Even as Black's, the king on f8 cannot reach a1 -> still flagged.
+    board = _board(_OPP_FEN)
+    assert find_illegal_piece_moves("the opponent king goes to a1", board) == [
+        "king to a1"
+    ]
+
+
 def test_non_move_to_phrase_not_matched():
     # "tied to" / "according to" / "pinned to" are not move phrases.
     board = _board(_MIDGAME_FEN)

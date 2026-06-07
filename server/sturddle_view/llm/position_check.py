@@ -475,7 +475,16 @@ _PIECE_WORDS = {
 }
 _COLOR_WORDS = {"white": chess.WHITE, "black": chess.BLACK}
 _PIECE_ALT = "|".join(_PIECE_WORDS)
-_COLOR_OPT = r"(?:(?P<color>white|black)(?:'s)?\s+)?(?:the\s+)?"
+# Color cue before a piece: an explicit "white"/"black", or "(your) opponent"
+# which names the side NOT to move (the AI plays the side to move). The
+# opponent cue may govern the move through a short modal+verb gap ("opponent
+# must move the king to g7"), so a few filler words are allowed between it and
+# the piece. Each part is optional, as is a leading article.
+_OPP_GAP = r"(?:\w+\s+){0,3}"
+_COLOR_OPT = (
+    rf"(?:(?:your\s+)?(?P<opp>opponent)(?:'s)?\s+{_OPP_GAP})?"
+    r"(?:(?P<color>white|black)(?:'s)?\s+)?(?:the\s+)?"
+)
 # Optional capture verb before a claim ("captured the rook on a1"). A captured
 # piece is a past event, not a live-board claim, so such matches are skipped.
 _CAPTURE_VERB = r"(?P<cap>captured|took|exchanged|traded|sacrificed)\s+"
@@ -546,12 +555,17 @@ def _claim_holds(
     return not color_word or actual.color == _COLOR_WORDS[color_word]
 
 
-def _prose_pov(color_word: str, board: chess.Board) -> chess.Color:
-    """Side a colorless prose claim/move is validated from: the named color
-    when given, else the side to move. Strict on purpose -- a bare "knight on
-    d3" about the side NOT to move is flagged (clarify, not rewrite). The
-    looser both-sides reading is the revert lever if this over-flags."""
-    return _COLOR_WORDS[color_word] if color_word else board.turn
+def _prose_pov(color_word: str, board: chess.Board, opponent: bool = False) -> chess.Color:
+    """Side a prose claim/move is validated from: the named color when given,
+    else the opponent's side when "opponent" cued it ("your opponent must move
+    the king"), else the side to move. The AI plays the side to move, so
+    "opponent" is the not-to-move side. Strict otherwise -- a bare "knight on
+    d3" about the side NOT to move is still flagged (clarify, not rewrite)."""
+    if color_word:
+        return _COLOR_WORDS[color_word]
+    if opponent:
+        return not board.turn
+    return board.turn
 
 
 def _claim_reachable(
@@ -658,7 +672,7 @@ def iter_illegal_piece_moves(text: str, board: chess.Board, seen: set[str] | Non
         piece_word = m.group("piece").lower()
         square_name = m.group("square").lower()
         piece_type = _PIECE_WORDS[piece_word]
-        color = _prose_pov(color_word, board)
+        color = _prose_pov(color_word, board, bool(m.group("opp")))
         keys = _piece_move_keys(
             board, chess.parse_square(square_name), piece_type, color,
         )
