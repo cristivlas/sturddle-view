@@ -17,6 +17,10 @@ const SORT_KEY_LS = STORAGE_KEY.ENGINES_SORT_ORDER;
 // above the bar.
 const INLINE_SEARCH_RESERVED_PX = 48;
 
+// oversized-ok: stateful list controller -- refresh/render/sort/activate and
+// the resize observer all close over shared state (engines, selectedDetailId,
+// activeId, filterText, sortOrder). renderList wires per-row click handlers to
+// controller actions; splitting would thread the state out and scatter it.
 export function mountEngineList(container, api, opts = {}) {
   const { colPctsKey = COL_PCTS_KEY } = opts;
 

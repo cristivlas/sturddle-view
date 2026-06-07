@@ -15,6 +15,10 @@ import { inlineSvgIcon } from "./dialogs.js";
 import { CHESS_CLOCK_SVG_INNER, CHESS_CLOCK_VIEW_BOX } from "./icons.js";
 import { mqMobile } from "./breakpoints.js";
 
+// oversized-ok: linear DOM construction for two sibling tabs sharing a few
+// helpers (dividers, sections, board-style preview). Widgets don't
+// cross-interact -- each owns its change->putSettings. Splittable into
+// buildPlayTab/buildDisplayTab but deferred; the length is flat, not tangled.
 export function buildPlayDisplayTabs({
   initial, putSettings, putSettingsDebounced, makeDurationRow,
   initialStyle, onBoardStyleChange,

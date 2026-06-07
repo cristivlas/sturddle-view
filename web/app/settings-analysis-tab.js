@@ -34,6 +34,11 @@ const AI_PROVIDER_OPTIONS = [
 // Builds the Analysis settings tab. Returns { tab, panel } for insertion
 // into the settings dialog's tab list. All server I/O flows through the
 // passed-in helpers so this module stays UI-only.
+//
+// oversized-ok: reactive controller -- provider selection drives derived
+// visibility/lockout/model-routing across every row (applyAiProviderVisibility,
+// applyAiEnabledLockout, refreshModelRow, syncThinkingOptions). The rows aren't
+// independent; splitting would scatter the coordination logic.
 export function buildAnalysisTab({ api, initial, dialog, noEngine, engineList, activeEngineId, putSettings, putSettingsDebounced, debounce }) {
   // --- AI Analysis tab ---
   // Flat layout per spec: master toggle + provider + model + key/url.
