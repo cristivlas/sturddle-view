@@ -9,6 +9,8 @@ export const BOARD_STYLES = {
   "chess-club":      { label: "Chess Club",      cssClass: "chess-club",       piecesFile: "pieces/staunty.svg"  },
   "black-and-white": { label: "Black & White",   cssClass: "black-and-white",  piecesFile: "pieces/standard.svg" },
   "high-contrast":   { label: "High Contrast",   cssClass: "default-contrast", piecesFile: "pieces/standard.svg" },
+  "sturddle-staunty":{ label: "Sturddle Staunty", cssClass: "sturddle-board sturddle-staunty", piecesFile: "pieces/staunty.svg"  },
+  "sturddle-wine":   { label: "Sturddle Wine",    cssClass: "sturddle-board sturddle-wine",    piecesFile: "pieces/standard.svg" },
 };
 
 export const DEFAULT_BOARD_STYLE = "classic";

@@ -26,8 +26,8 @@ from ..play.mode import Mode
 log = logging.getLogger(__name__)
 
 
-# Per-comment + total annotation budgets (chars). Caps prompt size and
-# the prompt-cache key. Raise via env for larger-context models.
+# Per-comment + total annotation budgets (chars). Caps prompt size.
+# Raise via env for larger-context models.
 _PER_COMMENT_MAX_DEFAULT = 200
 _TOTAL_COMMENT_MAX_DEFAULT = 1500
 _PER_COMMENT_MAX_ENV = "SV_AI_ANNOTATION_PER_COMMENT_MAX"

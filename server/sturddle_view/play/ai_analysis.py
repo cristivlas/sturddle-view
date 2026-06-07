@@ -14,7 +14,7 @@ import asyncio
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
 import chess
@@ -30,6 +30,7 @@ from ..events import (
     ENVELOPE_KIND,
     ENVELOPE_PAYLOAD,
     EVT_AI_INFO,
+    EVT_AI_POSITION_NOTE,
     EVT_AI_RECOMMENDATION,
     EVT_AI_THINKING,
     EVT_AI_TOOL_CALL,
@@ -52,6 +53,19 @@ from ..llm import (
     strip_markdown_stream,
 )
 from ..llm.cancel import CancelToken
+from ..llm.position_check import (
+    describe_square,
+    find_tool_mentions,
+    iter_false_bishop_color_refs,
+    iter_false_claim_squares,
+    handled_continuation_spans,
+    iter_illegal_continuations,
+    iter_illegal_moves,
+    iter_illegal_pawn_moves,
+    iter_illegal_piece_moves,
+    iter_illegal_square_moves,
+    truncate_at_future_line,
+)
 from .tools_engine import (
     ANALYZE_TOOL_NAME,
     MATERIAL_TOOL_NAME,
@@ -97,6 +111,32 @@ _VERIFIER_MODE: PromptMode = "verifier"
 # verbose stack trace. Full detail is in the transcript anyway.
 ERROR_DETAIL_MAX_LEN = 500
 
+# Per-round prose check against the live board. On a hit the model gets a
+# gentle, fact-anchored correction. Move and claim errors get separate asks:
+# a bad move may just be the other side's reply or another ply (the checker
+# accepts "..." or a move number), but a square's content is plain truth.
+_POSITION_CHECK_PREFIX = "[position check] "
+_POSITION_CHECK_LEAD = "Quick check on the current position."
+_POSITION_CHECK_REPEAT_LEAD = "Still doesn't fit the current position."
+# Move/line clause: offer the outs the checker honors before asking to restate.
+_POSITION_CHECK_MOVE_CLAUSE = (
+    "{facts}. If you meant one of black's moves, write it with a leading "
+    "\"...\" (like ...Nf6); if you meant a move from a different turn, write "
+    "its move number. Otherwise restate it for the position as it stands now."
+)
+# Claim clause: square content is POV-independent, so just ask for a restate.
+_POSITION_CHECK_CLAIM_CLAUSE = (
+    "{facts}. Restate this using only the pieces in the current position."
+)
+# Tool-mention clause: the reader sees chess only, never the machinery. No
+# strike (the phrase is woven into the sentence) -- ask for a rewrite instead.
+_POSITION_CHECK_TOOL_CLAUSE = (
+    "The reader sees chess only -- never name the tools or engine. Remove "
+    "{mentions} and rewrite that sentence to describe only the position."
+)
+# Joined fact line when an illegal move is flagged (no square to describe).
+_ILLEGAL_MOVE_FACT = "{move} isn't legal for the side to move"
+
 # Sent once at end-of-turn if the model never called recommend_move; a
 # completeness nudge. Trailing _NO_ACK_CLAUSE suppresses the
 # "Understood, I'll..." preamble.
@@ -111,15 +151,13 @@ _RECOMMEND_NUDGE_PROMPTS = {
 
 # Sent once when recommend_move is accepted but the model skips the
 # closing conclusion (small models treat the call as the end). One-shot.
+_POST_RECOMMEND_NUDGE_PREFIX = (
+    "The move is recorded. State the one-to-two sentence conclusion "
+    "now, naming the plan it "
+)
 _POST_RECOMMEND_NUDGE_PROMPTS = {
-    "coach": (
-        "The move is recorded. State the one-to-two sentence conclusion "
-        "now, naming the plan it carries out."
-    ),
-    "commentator": (
-        "The move is recorded. State the one-to-two sentence conclusion "
-        "now, naming the plan it reflects."
-    ),
+    "coach": _POST_RECOMMEND_NUDGE_PREFIX + "carries out.",
+    "commentator": _POST_RECOMMEND_NUDGE_PREFIX + "reflects.",
 }
 
 # Injected after MAX_RECOMMEND_FAILURES consecutive failed recommend_move
@@ -228,7 +266,7 @@ def make_delegate_tool(
         if not verdict:
             return {
                 "error": "no_verdict",
-                "detail": "no conclusion. Try increasing Verifier rounds:",
+                "detail": 'no conclusion. Try increasing "Max subagent rounds"',
             }
         return {"move_uci": move.uci(), "verdict": verdict}
 
@@ -300,11 +338,9 @@ def _norm_top_moves(input_: dict, board: chess.Board | None) -> tuple | None:
 
 
 def _canonical_fen(input_: dict) -> str | None:
-    # Canonical key for a position. Board(fen).fen() normalizes
-    # whitespace/field spacing; we then drop the trailing halfmove and
-    # fullmove counters so the same board with different clocks shares a
-    # key -- safe because these tools are position- not history-dependent.
-    # 'startpos' isn't expanded here, so it won't dedup.
+    # Canonical key for a position: normalized FEN minus the halfmove and
+    # fullmove counters, so the same board with different clocks shares a
+    # key. 'startpos' isn't expanded here, so it won't dedup.
     fen = input_.get("fen")
     if not isinstance(fen, str) or not fen.strip():
         return None
@@ -406,9 +442,8 @@ def _assistant_message(chunks: list[ProviderChunk]) -> Message:
                 "input": c.tool_input,
             }
             # Carry an opaque provider signature (Gemini's thought_signature)
-            # so the provider can echo it back on the next round. Empty for
-            # providers that don't use it; the wire mapping lives in
-            # openai_compat.
+            # so it can be echoed back next round. Empty for providers that
+            # don't use it; the wire mapping lives in openai_compat.
             if c.tool_signature:
                 block[TOOL_SIGNATURE_KEY] = c.tool_signature
             content.append(block)
@@ -555,6 +590,56 @@ class _LoopResult:
     recommended_depth: int | None = None
     round_cap_hit: bool = False
     text_published: bool = False
+
+
+@dataclass(slots=True)
+class _PositionCheck:
+    """One round's prose-check result. Each flagged item carries both its
+    exact prose `surface` (for the UI to strike) and a normalized `label`
+    (for facts/keys); claims also carry their `square`. Empty when clean."""
+    board: chess.Board | None
+    move_pairs: list[tuple[str, str]]
+    claim_triples: list[tuple[str, str, str]]
+    line_pairs: list[tuple[str, str]]
+    # Tool/engine self-references caught in the prose. Corrective-only -- not
+    # struck, since the phrase is woven into the sentence (see find_tool_mentions).
+    tool_mentions: list[str] = field(default_factory=list)
+    # Light/dark-squared bishop references that match no bishop present. Each
+    # carries (surface, label, fact); the fact is precomputed (square color is
+    # invariant, so there's no square to describe later).
+    bishop_triples: list[tuple[str, str, str]] = field(default_factory=list)
+
+    @property
+    def hit(self) -> bool:
+        return bool(
+            self.move_pairs or self.claim_triples
+            or self.line_pairs or self.tool_mentions
+            or self.bishop_triples
+        )
+
+    @property
+    def move_labels(self) -> list[str]:
+        return [label for _surface, label in self.move_pairs]
+
+    @property
+    def line_labels(self) -> list[str]:
+        return [label for _surface, label in self.line_pairs]
+
+    @property
+    def bishop_labels(self) -> list[str]:
+        return [label for _surface, label, _fact in self.bishop_triples]
+
+    @property
+    def surfaces(self) -> list[str]:
+        # Exact prose spans for the client to strike, longest first so a
+        # span isn't half-matched by a shorter one nested inside it.
+        out = (
+            [s for s, _ in self.move_pairs]
+            + [s for s, _, _ in self.claim_triples]
+            + [s for s, _ in self.line_pairs]
+            + [s for s, _, _ in self.bishop_triples]
+        )
+        return sorted(set(out), key=len, reverse=True)
 
 
 class AIAnalysisCoordinator:
@@ -822,6 +907,9 @@ class AIAnalysisCoordinator:
         round_cap_hit = True  # flipped to False on natural exit
         text_published = False  # flips on first non-whitespace text chunk
         final_text = ""  # last round's prose only (verifier verdict)
+        # Position-check items already corrected this turn; a re-flagged item
+        # escalates the corrective wording (weak models loop otherwise).
+        corrected_items: set[str] = set()
         for round_index in range(config.max_rounds):
             round_chunks: list[ProviderChunk] = []
             pending_tool: ProviderChunk | None = None
@@ -872,6 +960,36 @@ class AIAnalysisCoordinator:
             round_had_text = any(
                 c.kind == "text" and c.text for c in round_chunks
             )
+            # Single-board prose check, every round. A hit surfaces a self-
+            # correction note and (below) injects a fact-anchored corrective.
+            pc = self._position_check(round_chunks)
+            if pc.hit:
+                # Tool-mention-only hits carry no surface to strike; skip the
+                # UI note (it would mark nothing) but still inject the
+                # corrective below so the model rewrites the sentence.
+                if pc.surfaces:
+                    await self._emit_position_note(
+                        emit=emit, game_id=game_id, round_index=round_index,
+                        surfaces=pc.surfaces,
+                    )
+                # Repeat key is the square (claims) or the token (moves/lines),
+                # so "white knight on d3" and "knight on d3" count as the same
+                # error and a reworded repeat still escalates.
+                hit_keys = (
+                    {sq for _surface, _label, sq in pc.claim_triples}
+                    | {m.lower() for m in pc.move_labels}
+                    | {ln.lower() for ln in pc.line_labels}
+                    | set(pc.tool_mentions)
+                    | {b.lower() for b in pc.bishop_labels}
+                )
+                repeat = bool(hit_keys & corrected_items)
+                corrected_items |= hit_keys
+                pc_message = self._position_check_message(pc, repeat=repeat)
+            if pending_tool is None and pc.hit:
+                # A mismatch blocks natural exit: append the round's prose and
+                # inject the corrective so the model self-corrects next round.
+                _inject_nudge(messages, round_chunks, pc_message)
+                continue
             if pending_tool is None:
                 # Natural exit. Completeness nudge: narrator re-nudges each
                 # clean exit until a move is accepted (stopping on a stall);
@@ -1045,6 +1163,10 @@ class AIAnalysisCoordinator:
                     pending_tool.tool_use_id, tool_output, card=card,
                 )
             )
+            # Correct a mismatch in this round's prose. After the tool_result
+            # so the assistant tool_use is paired before this user message.
+            if pc.hit:
+                messages.append({"role": "user", "content": pc_message})
             # Force a top_moves call after enough failed recommend attempts.
             # After the tool_result (every tool_use needs a matching result
             # before a user-role nudge). One-shot until a top_moves re-arms it.
@@ -1072,6 +1194,108 @@ class AIAnalysisCoordinator:
             round_cap_hit=round_cap_hit,
             text_published=text_published,
         )
+
+    def _position_check(
+        self, chunks: list[ProviderChunk],
+    ) -> _PositionCheck:
+        """Run the single-board checks on a round's assembled prose, capturing
+        each flag's prose surface (for striking) plus its normalized label.
+        Empty when no board_provider, no live board, or no prose."""
+        board = self._board_provider() if self._board_provider else None
+        if board is None:
+            return _PositionCheck(None, [], [], [])
+        full_text = "".join(
+            c.text for c in chunks if c.kind == "text" and c.text
+        )
+        # Tool mentions are a style violation, wrong anywhere -- scanned on the
+        # full prose, not the truncated board view, so a leak after a future
+        # line still counts.
+        tool_mentions = find_tool_mentions(full_text)
+        # Stop at the first move number past the live ply: beyond it the model
+        # is in a hypothetical line, not describing the board.
+        text = truncate_at_future_line(full_text, board)
+        if not text.strip():
+            return _PositionCheck(board, [], [], [], tool_mentions)
+        # SAN moves ('Bxe4') and prose moves ('bishop to a1') are the same
+        # kind of error -- an impossible move -- so they share one bucket.
+        # One shared dedup set across the move recognizers: a move flagged by
+        # an earlier one (keyed by from+to uci, or label) is skipped by later
+        # ones, so the same move is never struck twice via different phrasings.
+        # The line check owns numbered continuation runs it can anchor: the
+        # SAN-token recognizer skips moves inside those spans, so a numbered
+        # pair's unmarked Black reply ('24.Nf6+ Qxf6') is neither re-checked
+        # from the wrong POV (cleared line) nor struck twice (broken line).
+        # Only the bare-token recognizer reads inside a run, so only it takes
+        # the spans.
+        handled_spans = handled_continuation_spans(text, board)
+        seen_moves: set[str] = set()
+        move_pairs = (
+            list(iter_illegal_moves(text, board, seen_moves, handled_spans))
+            + list(iter_illegal_piece_moves(text, board, seen_moves))
+            + list(iter_illegal_square_moves(text, board, seen_moves))
+            + list(iter_illegal_pawn_moves(text, board, seen_moves))
+        )
+        line_pairs = [
+            (surface, label)
+            for surface, label, _span in iter_illegal_continuations(text, board)
+        ]
+        return _PositionCheck(
+            board,
+            move_pairs,
+            list(iter_false_claim_squares(text, board)),
+            line_pairs,
+            tool_mentions,
+            list(iter_false_bishop_color_refs(text, board)),
+        )
+
+    async def _emit_position_note(
+        self,
+        *,
+        emit: EmitSink,
+        game_id: str | None,
+        round_index: int,
+        surfaces: list[str],
+    ) -> None:
+        """Surface a position-check hit to the UI. `surfaces` are the exact
+        prose spans the client strikes in the round's folded prose."""
+        log.info("position check round %d: surfaces=%s", round_index, surfaces)
+        await emit(
+            Event(
+                kind=EVT_AI_POSITION_NOTE,
+                game_id=game_id,
+                payload={"round": round_index, "surfaces": surfaces},
+            )
+        )
+
+    @staticmethod
+    def _position_check_message(pc: _PositionCheck, *, repeat: bool) -> str:
+        """Fact-anchored correction with separate asks per error type. Illegal
+        moves/lines get the "..."/move-number outs (they may be another side or
+        ply); false piece claims state the square's real content and ask only
+        for a restate. `repeat` swaps in firmer lead-ins on re-assertion."""
+        clauses: list[str] = []
+        # Dedup: a move named both in a broken line and standalone in the prose
+        # would otherwise repeat its fact. Order-preserving via dict.fromkeys.
+        move_facts = [
+            _ILLEGAL_MOVE_FACT.format(move=move)
+            for move in dict.fromkeys(pc.move_labels + pc.line_labels)
+        ]
+        if move_facts:
+            clauses.append(_POSITION_CHECK_MOVE_CLAUSE.format(facts="; ".join(move_facts)))
+        # Square-content claims and bishop-by-square-color refs are both plain
+        # board truth -- one "restate" clause, facts joined. Bishop facts are
+        # precomputed (no square to describe; square color is invariant).
+        claim_facts = [
+            describe_square(square, pc.board)
+            for _surface, _label, square in pc.claim_triples
+        ] + [fact for _surface, _label, fact in pc.bishop_triples]
+        if claim_facts:
+            clauses.append(_POSITION_CHECK_CLAIM_CLAUSE.format(facts="; ".join(claim_facts)))
+        if pc.tool_mentions:
+            quoted = ", ".join(f'"{m}"' for m in pc.tool_mentions)
+            clauses.append(_POSITION_CHECK_TOOL_CLAUSE.format(mentions=quoted))
+        lead = _POSITION_CHECK_REPEAT_LEAD if repeat else _POSITION_CHECK_LEAD
+        return _POSITION_CHECK_PREFIX + " ".join([lead, *clauses])
 
     @staticmethod
     def _needs_nudge(
@@ -1169,11 +1393,9 @@ class AIAnalysisCoordinator:
                 result = await self._run_loop(messages, config)
                 if result.round_cap_hit:
                     done_payload["round_cap"] = True
-                    # Flag the turn so the done event can show the gear note
-                    # pointing at the verifier-rounds setting. final_text is
-                    # "" on a cap (see _run_loop); delegate maps that to
-                    # no_verdict. Warn so a never-concluding model is
-                    # diagnosable.
+                    # Flag the turn so the done event shows the gear note for
+                    # the verifier-rounds setting. final_text is "" on a cap
+                    # (delegate maps that to no_verdict); warn for diagnosis.
                     self._verifier_round_cap_hit = True
                     log.warning(
                         "verifier sub-run hit round cap (%d) without a verdict; question=%r",

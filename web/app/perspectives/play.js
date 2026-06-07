@@ -27,11 +27,13 @@ import {
   freezeAiThinking,
   appendAiToolCall,
   markAiToolCallFailed,
+  noteAiPosition,
   markAiDone,
   setAiStatus,
   setAiTitle,
   setOnUserCloseAi,
   setOnReanalyzeAi,
+  setAiInlineHost,
   isAiOpen,
 } from "../play-ai-window.js";
 import { terminationLabel } from "../format-termination.js";
@@ -181,6 +183,7 @@ export const playPerspective = {
             </button>
           </div>
           <div class="play-board-host"></div>
+          <div class="play-ai-inline inline-empty" aria-label="AI analysis"></div>
 
           <div id="board-controls" class="board-ribbon">
             <button id="new-game" class="ribbon-btn" aria-label="New game" title="New game">
@@ -459,6 +462,7 @@ export const playPerspective = {
     let suppressCommentsForEditTransition = false;
     const commentsHost = root.querySelector(".play-comments-host");
     setCommentaryDockContainer(commentsHost);
+    setAiInlineHost(root.querySelector(".play-ai-inline"));
     let lastViewComment = null;
     // X on the commentary window (dock slot or float) -> clear setting.
     setOnUserCloseCommentary(() => {
@@ -587,6 +591,12 @@ export const playPerspective = {
       // so the ribbon can re-enable when the game is paused again.
       if (!analyzing) aiTurnFinished = false;
       document.body.classList.toggle(XGAME_LOCK_CLASS, analyzing);
+    }
+    // A finished AI-analysis turn in play mode: the board is frozen in
+    // ANALYZING and reads as paused, so the ribbon shows Resume (one click
+    // exits analysis and resumes play). Reads live state -- call, don't cache.
+    function aiAnalysisDone() {
+      return analyzing && aiTurnFinished && aiEnabled;
     }
     // View mode state (set from board_update.view payload).
     let viewing = false;
@@ -919,13 +929,16 @@ export const playPerspective = {
         return;
       }
       const humanToMove = humanWhite ? turn === "white" : turn === "black";
-      // Pause is restricted to the human's turn; Resume (paused=true) is
-      // always allowed so a game paused on the engine's turn — e.g. after
-      // exiting Analysis — can be unpaused.
+      // Completed AI analysis in play mode reads as paused to the user; show
+      // Resume (see aiAnalysisDone / onPause). Engine-only analysis and
+      // in-progress runs keep the plain Pause/Resume toggle.
+      const aiDone = aiAnalysisDone();
+      const showResume = paused || aiDone;
+      // Pause needs the human's turn; Resume is always allowed.
       configureBtn(pauseBtn, {
-        disabled: gameOver || analyzing || (!paused && !humanToMove),
-        label: paused ? "Resume" : "Pause",
-        icon: paused ? "forward-step" : "pause",
+        disabled: gameOver || (!aiDone && analyzing) || (!showResume && !humanToMove),
+        label: showResume ? "Resume" : "Pause",
+        icon: showResume ? "forward-step" : "pause",
       });
       configureBtn(takebackBtn, {
         disabled: analyzing || gameOver || !allowTakeback || movesPlayed === 0,
@@ -1042,6 +1055,11 @@ export const playPerspective = {
           if (p.name === ANALYZE_TOOL_NAME) view.restorePosition({ animate: false });
           view.clearArrows();
           view.clearEngineInfo();
+          return true;
+        }
+        case "ai_position_note": {
+          const p = evt.payload || {};
+          noteAiPosition({ round: p.round ?? 0, surfaces: p.surfaces || [] });
           return true;
         }
       }
@@ -1445,6 +1463,18 @@ export const playPerspective = {
     };
 
     const onPause = async () => {
+      // Completed AI analysis in play mode: Resume exits analysis (server
+      // lands in PAUSED) then resumes to PLAY, so one click returns to the
+      // game. stopAnalysisFromUi tears down the AI window and replay buffer.
+      if (aiAnalysisDone()) {
+        try {
+          await stopAnalysisFromUi();
+          await ctx.api("POST", "/game/resume", {});
+        } catch (e) {
+          reportError(ctx, "Resume failed", e);
+        }
+        return;
+      }
       try {
         await ctx.api("POST", paused ? "/game/resume" : "/game/pause", {});
       } catch (e) {
@@ -1946,6 +1976,7 @@ export const playPerspective = {
         setCommentaryDockContainer(null);
         setOnUserCloseCommentary(null);
         closeAi();
+        setAiInlineHost(null);
         setOnUserCloseAi(null);
         setOnReanalyzeAi(null);
         dismissAnalysisToast?.();

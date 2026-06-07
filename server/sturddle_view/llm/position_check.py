@@ -1,0 +1,886 @@
+"""Lightweight prose check against the single current board.
+
+Pure functions over (text, board) -> list[str]. A claim is flagged when
+it does not match the board at the cursor. Unlike the removed multi-board
+validator, there is no history walk and no examined-position carve-out:
+the coordinator surfaces a flag as a clarifying question ("do you mean a
+past or hypothetical position?"), not a rewrite demand, so a legitimate
+reference to another position is the model's to explain rather than ours
+to prove.
+"""
+from __future__ import annotations
+
+import re
+
+import chess
+
+
+# Shared SAN sub-patterns, factored so the per-token and continuation
+# recognizers can't drift. All groups non-capturing so finditer/findall
+# return whole tokens.
+_SAN_CASTLE = r"O-O-O|O-O"
+_SAN_PIECE_MOVE = r"[KQRBN][a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?"
+_SAN_PAWN_CAPTURE = r"[a-h]x[a-h][1-8](?:=[QRBN])?[+#]?"
+_SAN_PAWN_PUSH = r"[a-h][1-8](?:=[QRBN])?[+#]?"
+_SAN_GLYPHS = r"[!?]{0,2}"
+
+
+# SAN-like token recognizer. Bare pawn pushes (e4) are NOT matched: prose
+# names squares constantly with no marker to tell description from move.
+# A leading "..." marks a Black move per SAN convention ("...Nd3"). When the
+# "..." is glued to a preceding word ("develops...Nf3") it is ambiguous --
+# trailing punctuation or the marker -- and we deliberately read it as the
+# marker (validate from Black). Not a bug: do not "fix" the boundary.
+# An optional leading move number ("17.", "17...") is captured so a move
+# citing another ply (past or hypothetical line) can be left alone. The dot
+# run is its own group: "..." (after a number or standalone) marks Black.
+_SAN_TOKEN_RE = re.compile(
+    rf"(?:(?P<num>\d+)(?P<dots>\.{{0,3}})\s*)?(?P<prefix>\.\.\.)?\b"
+    rf"(?P<token>(?:{_SAN_CASTLE}|{_SAN_PIECE_MOVE}|{_SAN_PAWN_CAPTURE}){_SAN_GLYPHS})"
+)
+
+
+def _marks_black(match: re.Match) -> bool:
+    """Black-move marker: a standalone "..." prefix, or a numbered move whose
+    dot run is "..." ("16...Nd3" is Black's 16th)."""
+    return match.group("prefix") == "..." or match.group("dots") == "..."
+
+
+def _cites_other_ply(match: re.Match, board: chess.Board) -> bool:
+    """True iff a numbered token cites a non-live ply (past/hypothetical), so we
+    skip it. Live = number is the current fullmove AND the move's color is to
+    move; '19.Ke2' once it is Black's turn is already played, not live."""
+    num = match.group("num")
+    if num is None:
+        return False
+    move_color = chess.BLACK if _marks_black(match) else chess.WHITE
+    return not (int(num) == board.fullmove_number and move_color == board.turn)
+
+
+def _matches_played(num: int, is_black: bool, bare: str, board: chess.Board) -> bool:
+    """True iff prose move `bare` is the move actually played at that ply --
+    parsed in its pre-move position and compared by from/to, so a correct
+    history reference (even one illegal now) is left alone."""
+    ply = 2 * (num - 1) + (1 if is_black else 0)
+    if ply < 0 or ply >= len(board.move_stack):
+        return False
+    played = board.move_stack[ply]
+    before = board.copy()
+    while len(before.move_stack) > ply:
+        before.pop()
+    try:
+        return before.parse_san(bare) == played
+    except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
+        return False
+
+
+_MOVE_NUMBER_RE = re.compile(r"\b(\d+)\.")
+
+
+def truncate_at_future_line(text: str, board: chess.Board) -> str:
+    """Prose up to the first move number past the current fullmove. Beyond that
+    the model has entered a hypothetical line ('20.Nf3 ...' at move 19), so we
+    stop validating the rest -- everything after is analysis, not the board."""
+    for m in _MOVE_NUMBER_RE.finditer(text):
+        if int(m.group(1)) > board.fullmove_number:
+            return text[: m.start()]
+    return text
+
+
+def _pov_for(match: re.Match, board: chess.Board) -> chess.Color:
+    """Side a SAN is validated from: Black when the token is marked Black (a
+    leading "..." or "16..."), else the side to move."""
+    return chess.BLACK if _marks_black(match) else board.turn
+
+
+def _board_for_pov(board: chess.Board, color: chess.Color) -> chess.Board | None:
+    """A copy of `board` with `color` to move. None when flipping the turn
+    would be illegal (the side to move is in check, so the other side can't
+    be on move). The same-color case returns the board unflipped."""
+    if board.turn == color:
+        return board
+    if board.is_check():
+        return None
+    probe = board.copy(stack=False)
+    probe.turn = color
+    return probe
+
+
+def _uci_key(move: chess.Move) -> str:
+    """A move's from+to squares ('g2b3'), dropping any promotion suffix -- the
+    destination's reachability is what dedup turns on, so 'e8=Q' and 'e8=R'
+    share a key. The cross-recognizer dedup token for a concrete move."""
+    return chess.square_name(move.from_square) + chess.square_name(move.to_square)
+
+
+def _first_seen(seen: set[str], keys: list[str]) -> bool:
+    """True if none of `keys` were in `seen` (this flag is new); records them.
+    False if any key was already flagged by an earlier recognizer -- skip it."""
+    if seen.intersection(keys):
+        return False
+    seen.update(keys)
+    return True
+
+
+_GLYPH_RE = re.compile(r"[!?]{1,2}$")
+
+
+def _strip_annotation_glyphs(token: str) -> str:
+    return _GLYPH_RE.sub("", token)
+
+
+_SAN_LABEL_RE = re.compile(r"^([KQRBN])[a-h]?[1-8]?([a-h][1-8])$")
+
+
+def _is_san_label(bare: str, board: chess.Board) -> bool:
+    """True when `bare` is a 'piece(+disambiguator)+square' SAN-shape naming a
+    piece already on that square for the side to move -- 'Qd1' (queen on d1) or
+    the disambiguated 'Ngf3' (knight on f3). Such tokens are labels in prose,
+    not move proposals. The trailing two chars are always the named square."""
+    m = _SAN_LABEL_RE.match(bare)
+    if m is None:
+        return False
+    square = chess.parse_square(m.group(2))
+    piece = board.piece_at(square)
+    if piece is None:
+        return False
+    # group(1) is regex-constrained to [KQRBN]; from_symbol's color is
+    # irrelevant -- we compare piece_type only.
+    if piece.piece_type != chess.Piece.from_symbol(m.group(1)).piece_type:
+        return False
+    return piece.color == board.turn
+
+
+def _is_phantom_capture(bare: str, move: chess.Move, board: chess.Board) -> bool:
+    """True when `bare` writes a capture (`x`) but `move` takes nothing.
+    python-chess parses 'Bxe4' onto an empty e4 as a quiet move, masking a
+    false capture claim; both the parse and the legality check reject it."""
+    return "x" in bare and not board.is_capture(move)
+
+
+def _parse_san_real(board: chess.Board, bare: str) -> chess.Move | None:
+    """parse_san, but reject a phantom capture (see `_is_phantom_capture`)."""
+    try:
+        move = board.parse_san(bare)
+    except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
+        return None
+    return None if _is_phantom_capture(bare, move, board) else move
+
+
+def _token_is_illegal(bare: str, board: chess.Board) -> bool:
+    try:
+        move = board.parse_san(bare)
+    except chess.IllegalMoveError:
+        return not _is_san_label(bare, board)
+    except (chess.InvalidMoveError, chess.AmbiguousMoveError):
+        return False
+    # Parsed cleanly -- illegal only if it claims a capture but takes nothing.
+    return _is_phantom_capture(bare, move, board)
+
+
+def _san_uci_or_label(bare: str, board: chess.Board) -> str:
+    """Dedup key for a SAN token: its from+to uci when it parses to a move
+    (even an illegal one), else the bare token -- so an unparseable SAN still
+    has a stable key for cross-recognizer dedup."""
+    try:
+        return _uci_key(board.parse_san(bare))
+    except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
+        # SAN case is meaningful (piece letter); keep it so 'Be5' != 'be5'.
+        return bare
+
+
+def _in_spans(pos: int, spans: list[tuple[int, int]]) -> bool:
+    """True if `pos` falls within any (start, end) span -- used to skip a token
+    that sits inside a continuation run already validated as a whole."""
+    return any(start <= pos < end for start, end in spans)
+
+
+def iter_illegal_moves(
+    text: str,
+    board: chess.Board,
+    seen: set[str] | None = None,
+    skip_spans: list[tuple[int, int]] | None = None,
+):
+    """Yield (surface, label) for each illegal SAN token. `surface` is the
+    exact prose span (with "..." and glyphs) to strike; `label` the bare token.
+    A leading "..." validates from Black's POV ("...Nd3"), else side to move.
+    Legal moves, square-labels ('Qd1'), and phantom-capture-free parses pass.
+    `seen` is the shared cross-recognizer dedup set (uci or label keys).
+    `skip_spans` are char ranges of validated continuation runs whose moves
+    must not be re-checked in isolation."""
+    if seen is None:
+        seen = set()
+    for match in _SAN_TOKEN_RE.finditer(text):
+        token = match.group("token")
+        bare = _strip_annotation_glyphs(token)
+        num = match.group("num")
+        if skip_spans and _in_spans(match.start("token"), skip_spans):
+            continue
+        # Free pass: a numbered move that matches what was actually played at
+        # that ply is a correct history reference -- skip it.
+        if num and _matches_played(int(num), _marks_black(match), bare, board):
+            continue
+        if _cites_other_ply(match, board):
+            continue
+        pov_board = _board_for_pov(board, _pov_for(match, board))
+        if pov_board is None:
+            continue
+        if _parse_san_real(pov_board, bare) is not None:
+            continue
+        if _is_san_label(bare, pov_board):
+            continue
+        if _token_is_illegal(bare, pov_board):
+            if _first_seen(seen, [_san_uci_or_label(bare, pov_board)]):
+                yield match.group(0), bare
+
+
+def find_illegal_moves(text: str, board: chess.Board) -> list[str]:
+    """Bare illegal-move labels (see iter_illegal_moves for the surface form)."""
+    return [label for _surface, label in iter_illegal_moves(text, board)]
+
+
+# A bare pawn push ("e4") reads as a square in prose, so the bare-token
+# recognizer skips it; the word "move" disambiguates it as a move to check.
+# Pawn captures ("dxc4") are unambiguous and already matched there -- pushes
+# only here.
+_MOVE_WORD_PAWN_RE = re.compile(
+    rf"\bmove\s+(?P<token>{_SAN_PAWN_PUSH}{_SAN_GLYPHS})",
+)
+
+
+def iter_illegal_pawn_moves(text: str, board: chess.Board, seen: set[str] | None = None):
+    """Yield (surface, label) for an illegal pawn push named as 'move e5'. The
+    'move' marker tells a push from a square reference; validated from the side
+    to move (a pawn push carries no color marker). `seen` is the shared dedup
+    set (uci or label keys)."""
+    if seen is None:
+        seen = set()
+    for m in _MOVE_WORD_PAWN_RE.finditer(text):
+        bare = _strip_annotation_glyphs(m.group("token"))
+        if _parse_san_real(board, bare) is None:
+            if _first_seen(seen, [_san_uci_or_label(bare, board)]):
+                yield m.group(0), bare
+
+
+def find_illegal_pawn_moves(text: str, board: chess.Board) -> list[str]:
+    """Bare illegal pawn-move labels (see iter_illegal_pawn_moves)."""
+    return [label for _surface, label in iter_illegal_pawn_moves(text, board)]
+
+
+# A single move inside a continuation. Adds bare pawn pushes (e4): inside a
+# whitespace-delimited run a push reads as a move, not a square reference.
+_CONT_MOVE = (
+    rf"(?:{_SAN_CASTLE}|{_SAN_PIECE_MOVE}|{_SAN_PAWN_CAPTURE}|{_SAN_PAWN_PUSH})"
+    rf"{_SAN_GLYPHS}"
+)
+# Per-move move-number prefix: "1.", "12.", "3...". Captured so a white-only
+# shorthand ("1.e4 2.Nf3", skipping Black) can be told from a true sequence.
+_MOVE_NUM = r"(\d+\.(?:\.\.)?\s*)?"
+# Two or more moves separated only by whitespace and optional move numbers.
+# A prose word between moves breaks the run, so only genuine lines (not
+# "Nf3 is strong, and Bb5 too") are captured.
+_CONTINUATION_RE = re.compile(
+    rf"\b{_MOVE_NUM}(?:{_CONT_MOVE})(?:\s+{_MOVE_NUM}(?:{_CONT_MOVE}))+"
+)
+_CONT_PAIR_RE = re.compile(rf"{_MOVE_NUM}({_CONT_MOVE})")
+# A run is a real line (not prose listing squares) only with a move number,
+# piece letter, castle, capture, or promotion somewhere in it.
+_LINE_PROOF_RE = re.compile(r"\d+\.|[KQRBN]|O-O|[a-h]x|=[QRBN]")
+
+
+def _is_white_only_shorthand(pairs) -> bool:
+    """True iff the run is white-only numbered shorthand ("1.e4 2.Nf3") that
+    skips Black's replies -- every move numbered and none marked Black ("...").
+    A "2...Nc6 3.Bxc6" pair carries a Black marker, so it alternates and is a
+    real replayable line, not shorthand."""
+    return (
+        len(pairs) >= 2
+        and all(num for num, _move in pairs)
+        and not any("..." in num for num, _move in pairs)
+    )
+
+
+def _move_legal(san: str, board: chess.Board) -> bool:
+    try:
+        board.parse_san(san)
+    except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
+        return False
+    return True
+
+
+def _line_check_owns_run(moves, anchor: chess.Board) -> bool:
+    """True iff the line check takes responsibility for this run: its first move
+    is legal at the anchor. Such a run is either cleared (replays whole) or
+    flagged at its breaking move. A run whose first move is already illegal is
+    left to the per-token recognizer instead, so the shared guard lives here."""
+    return _move_legal(moves[0], anchor)
+
+
+def _first_broken_move(moves, board: chess.Board) -> int | None:
+    """Index of the first move that won't play in order from a copy of `board`,
+    or None if the whole line plays. Moves after the break can't be judged --
+    the board never legally reaches that point -- so only this one is the flag."""
+    walker = board.copy()
+    for i, san in enumerate(moves):
+        if not _move_legal(san, walker):
+            return i
+        walker.push_san(san)
+    return None
+
+
+_LEADING_NUM_RE = re.compile(r"^\s*(\d+)(\.\.\.|\.)")
+
+
+def _anchor_board(run: str, board: chess.Board) -> chess.Board | None:
+    """Position the run is anchored at, from its leading move number N. A "N."
+    lead anchors at the start of White's move N, "N..." at Black's. N == the
+    current ply needs no popping; an earlier ply pops back to it (when the move
+    stack reaches that far); a future ply, or one earlier than the stack's base,
+    is unanchorable -> None."""
+    m = _LEADING_NUM_RE.match(run)
+    if m is None:
+        return board
+    num = int(m.group(1))
+    target_color = chess.BLACK if m.group(2) == "..." else chess.WHITE
+    if board.fullmove_number == num and board.turn == target_color:
+        return board
+    # Pop plies until the board sits at the target ply, measured against the
+    # live board so an import FEN's base number is honored. Running out of
+    # history means the target predates the stack base -> unanchorable.
+    anchor = board.copy()
+    while not (anchor.fullmove_number == num and anchor.turn == target_color):
+        if not anchor.move_stack:
+            return None
+        anchor.pop()
+    return anchor
+
+
+def iter_illegal_continuations(text: str, board: chess.Board):
+    """Yield (surface, label, span) for the breaking move of each illegal
+    continuation run (2+ moves): replayed from its anchor (see `_anchor_board`),
+    the first move that won't play is the flag. `surface` is that move's exact
+    prose span (with glyphs) to strike; `label` its bare SAN; `span` its (start,
+    end) char offsets. Earlier moves in the run are legal, and moves after the
+    break can't be judged from a position never legally reached, so neither is
+    flagged. White-only shorthand, and unanchorable runs, are left alone.
+
+    A run that replays cleanly yields nothing here, but its span is returned by
+    `handled_continuation_spans` so per-token recognizers skip its moves -- e.g.
+    Black's "Qxf6" in "24.Nf6+ Qxf6" carries no "..." marker and would
+    otherwise read as an illegal White move."""
+    for _run, _span, moves, move_spans, anchor in _iter_anchored_runs(text, board):
+        if not _line_check_owns_run(moves, anchor):
+            continue
+        broken = _first_broken_move(moves, anchor)
+        if broken is None:
+            continue
+        surface, m_span = move_spans[broken]
+        yield surface, moves[broken], m_span
+
+
+def _iter_anchored_runs(text: str, board: chess.Board):
+    """Yield (run, span, moves, move_spans, anchor_board) for each well-formed,
+    anchorable continuation run. `move_spans` is a list parallel to `moves` of
+    (surface, (start, end)) for each move token's absolute prose position.
+    Shared by the illegal-line check and the handled-span scan so both apply the
+    same anchoring and run-shape rules."""
+    seen: set[str] = set()
+    for match in _CONTINUATION_RE.finditer(text):
+        run = match.group(0)
+        pairs = _CONT_PAIR_RE.findall(run)
+        moves = [_strip_annotation_glyphs(move) for _num, move in pairs]
+        if len(moves) < 2 or _is_white_only_shorthand(pairs):
+            continue
+        key = " ".join(moves)
+        if key in seen or not _LINE_PROOF_RE.search(run):
+            continue
+        seen.add(key)
+        anchor = _anchor_board(run, board)
+        if anchor is None:
+            continue
+        move_spans = _run_move_spans(run, match.start())
+        yield run, match.span(), moves, move_spans, anchor
+
+
+def _run_move_spans(run: str, base: int) -> list[tuple[str, tuple[int, int]]]:
+    """(surface, (start, end)) for each move token in `run`, offsets absolute in
+    the source text (`base` is the run's start). The surface is the move token
+    only -- not its move-number prefix -- so a flagged break strikes the move."""
+    out: list[tuple[str, tuple[int, int]]] = []
+    for m in _CONT_PAIR_RE.finditer(run):
+        out.append((m.group(2), (base + m.start(2), base + m.end(2))))
+    return out
+
+
+def handled_continuation_spans(text: str, board: chess.Board) -> list[tuple[int, int]]:
+    """(start, end) char spans of continuation runs the line check takes
+    responsibility for: the first move is legal at the anchor, so the run is
+    either cleared (replays whole) or flagged as a broken line. A later
+    move-token recognizer skips any match inside these, so a move in a handled
+    line is not re-checked in isolation -- avoiding a wrong-POV false flag on a
+    cleared line, or a double strike on a flagged one. A run whose first move is
+    already illegal is NOT handled here; its tokens stay visible to per-token."""
+    return [
+        span
+        for _run, span, moves, _move_spans, anchor in _iter_anchored_runs(text, board)
+        if _line_check_owns_run(moves, anchor)
+    ]
+
+
+def find_illegal_continuations(text: str, board: chess.Board) -> list[str]:
+    """Breaking-move SAN of each illegal line (see iter_illegal_continuations)."""
+    return [label for _surface, label, _span in iter_illegal_continuations(text, board)]
+
+
+def projected_boards(text: str, board: chess.Board) -> list[chess.Board]:
+    """Boards reachable by the valid SAN moves named in `text`, one 1-ply hop
+    each from `board`. Lets a piece-claim about a square a named move reaches
+    ("a knight on d3 after ...Nd3") validate against the projected position.
+    POV per token: Black on a leading "...", else the side to move.
+
+    By design the claim and the move need not be linked: a claim clears if ANY
+    move named anywhere in the prose reaches it. Loose by intent -- the check
+    only asks the model to clarify, so we bias toward not flagging.
+
+    Still needed alongside plain reachability: a named opponent move can place
+    a piece where the next hop reaches a square unreachable from the current
+    board (white to move, "...Nd3" then a claim about d3->f2)."""
+    out: list[chess.Board] = []
+    seen: set[str] = set()
+    for match in _SAN_TOKEN_RE.finditer(text):
+        token = match.group("token")
+        if token in seen:
+            continue
+        seen.add(token)
+        if _cites_other_ply(match, board):
+            continue
+        pov_board = _board_for_pov(board, _pov_for(match, board))
+        if pov_board is None:
+            continue
+        move = _parse_san_real(pov_board, _strip_annotation_glyphs(token))
+        if move is None:
+            continue
+        hop = pov_board.copy(stack=False)
+        hop.push(move)
+        out.append(hop)
+    return out
+
+
+# Piece-on-square claim recognizer. Two phrasings: "<piece> on <square>"
+# ("the knight on f1") and "<square> <piece>" ("the b5 pawn"), each with
+# optional leading color and article. Case-insensitive words, exact coords.
+_PIECE_WORDS = {
+    "king":   chess.KING,
+    "queen":  chess.QUEEN,
+    "rook":   chess.ROOK,
+    "bishop": chess.BISHOP,
+    "knight": chess.KNIGHT,
+    "pawn":   chess.PAWN,
+}
+_COLOR_WORDS = {"white": chess.WHITE, "black": chess.BLACK}
+_PIECE_ALT = "|".join(_PIECE_WORDS)
+# Color cue before a piece: an explicit "white"/"black", or "(your) opponent"
+# which names the side NOT to move (the AI plays the side to move). The
+# opponent cue may govern the move through a short modal+verb gap ("opponent
+# must move the king to g7"), so a few filler words are allowed between it and
+# the piece. Each part is optional, as is a leading article.
+_OPP_GAP = r"(?:\w+\s+){0,3}"
+_COLOR_OPT = (
+    rf"(?:(?:your\s+)?(?P<opp>opponent)(?:'s)?\s+{_OPP_GAP})?"
+    r"(?:(?P<color>white|black)(?:'s)?\s+)?(?:the\s+)?"
+)
+# Optional capture verb before a claim ("captured the rook on a1"). A captured
+# piece is a past event, not a live-board claim, so such matches are skipped.
+_CAPTURE_VERB = r"(?P<cap>captured|took|exchanged|traded|sacrificed)\s+"
+_CAPTURE_OPT = rf"(?:{_CAPTURE_VERB})?"
+_PIECE_ON_SQUARE_RE = re.compile(
+    rf"\b{_CAPTURE_OPT}{_COLOR_OPT}(?P<piece>{_PIECE_ALT})\s+on\s+(?P<square>[a-h][1-8])\b",
+    re.IGNORECASE,
+)
+_SQUARE_PIECE_RE = re.compile(
+    rf"\b{_CAPTURE_OPT}{_COLOR_OPT}(?P<square>[a-h][1-8])\s+(?P<piece>{_PIECE_ALT})\b",
+    re.IGNORECASE,
+)
+# Optional movement verb between piece and "to" in a "<piece> to <square>"
+# move phrase. Closed set so "tied to"/"according to" don't match;
+# (?:re)?(?:direct|deploy)\w* covers direct/redirect/redeployment/etc.
+_MOVE_VERB = (
+    r"(?:goes|moves|moving|jumps|hops|swings|lifts|drops|retreats|"
+    r"advances|heads|comes|returns|relocates|travels|slides|"
+    r"(?:re)?(?:direct|deploy)\w*)\s+"
+)
+_PIECE_TO_SQUARE_RE = re.compile(
+    rf"\b{_COLOR_OPT}(?P<piece>{_PIECE_ALT})\s+(?:{_MOVE_VERB})?to\s+(?P<square>[a-h][1-8])\b",
+    re.IGNORECASE,
+)
+# A move named by source square: "g2 to b3", "g2 moves to b3", "from g2 to b3".
+# Flagged when the source piece cannot legally reach the destination.
+_SQUARE_TO_SQUARE_RE = re.compile(
+    rf"\b(?:from\s+)?(?P<src>[a-h][1-8])\s+(?:{_MOVE_VERB})?to\s+(?P<dst>[a-h][1-8])\b",
+    re.IGNORECASE,
+)
+
+
+def _iter_piece_claims(text: str):
+    """Yield (surface, color_word, piece_word, square_name) for every claim
+    matched by either phrasing. `surface` is the exact prose span (for the UI
+    to strike). A claim led by a capture verb ('captured the rook on a1')
+    describes a past event, not the live board, and is skipped."""
+    for regex in (_PIECE_ON_SQUARE_RE, _SQUARE_PIECE_RE):
+        for m in regex.finditer(text):
+            if m.group("cap"):
+                continue
+            color = (m.group("color") or "").lower()
+            yield m.group(0), color, m.group("piece").lower(), m.group("square").lower()
+
+
+_TYPE_TO_NAME = {t: n for n, t in _PIECE_WORDS.items()}
+
+
+def describe_square(square_name: str, board: chess.Board) -> str:
+    """Ground truth for a square: 'd5 is empty' or 'd5 has a white knight'.
+    Used to anchor the corrective so a weak model can't just restate."""
+    square = chess.parse_square(square_name)
+    piece = board.piece_at(square)
+    if piece is None:
+        return f"{square_name} is empty"
+    color = "white" if piece.color == chess.WHITE else "black"
+    return f"{square_name} has a {color} {_TYPE_TO_NAME[piece.piece_type]}"
+
+
+def _claim_holds(
+    board: chess.Board, square: int, piece_type: int, color_word: str,
+) -> bool:
+    """True iff `board` has a piece of `piece_type` (and matching color word,
+    if given) on `square`."""
+    actual = board.piece_at(square)
+    if actual is None or actual.piece_type != piece_type:
+        return False
+    return not color_word or actual.color == _COLOR_WORDS[color_word]
+
+
+def _prose_pov(color_word: str, board: chess.Board, opponent: bool = False) -> chess.Color:
+    """Side a prose claim/move is validated from: the named color when given,
+    else the opponent's side when "opponent" cued it ("your opponent must move
+    the king"), else the side to move. The AI plays the side to move, so
+    "opponent" is the not-to-move side. Strict otherwise -- a bare "knight on
+    d3" about the side NOT to move is still flagged (clarify, not rewrite)."""
+    if color_word:
+        return _COLOR_WORDS[color_word]
+    if opponent:
+        return not board.turn
+    return board.turn
+
+
+def _claim_reachable(
+    board: chess.Board, square: int, piece_type: int, color_word: str,
+) -> bool:
+    """True iff a legal move lands a piece of `piece_type` on `square`, from
+    the prose POV (named color, else STM). Clears a claim about a square a move
+    can reach this turn ('a knight on d3' when a knight can play there)."""
+    color = _prose_pov(color_word, board)
+    return _reaches_for_color(board, square, piece_type, color)
+
+
+def iter_false_claim_squares(text: str, board: chess.Board):
+    """Yield (surface, label, square_name) for each false piece claim.
+    `surface` is the exact prose span ("White's knight on b1") for the UI to
+    strike; `label` is the normalized form for facts/keys. A claim holds when
+    the piece sits there now, OR a legal move can land it there this turn, OR
+    it sits there on a board reached by a move named earlier in the prose --
+    the last covers opponent continuations a single hop can't ('after ...Nd3
+    the knight hits f2', unreachable until ...Nd3 is played)."""
+    boards = [board, *projected_boards(text, board)]
+    seen: set[str] = set()
+    for surface, color_word, piece_word, square_name in _iter_piece_claims(text):
+        key = f"{color_word}|{piece_word}|{square_name}"
+        if key in seen:
+            continue
+        seen.add(key)
+        square = chess.parse_square(square_name)
+        piece_type = _PIECE_WORDS[piece_word]
+        if any(_claim_holds(b, square, piece_type, color_word) for b in boards):
+            continue
+        if _claim_reachable(board, square, piece_type, color_word):
+            continue
+        prefix = f"{color_word} " if color_word else ""
+        yield surface, f"{prefix}{piece_word} on {square_name}", square_name
+
+
+def find_false_piece_claims(text: str, board: chess.Board) -> list[str]:
+    """'piece on square' claims that hold on no current/reachable/projected
+    board. 'the bishop on g6' with no bishop there and none able to reach it is
+    flagged; 'a knight on d3' is cleared once a knight can play to d3."""
+    return [label for _surface, label, _square in iter_false_claim_squares(text, board)]
+
+
+# A bishop named by the color of squares it travels on. True = light. Unlike a
+# piece-on-square claim, square color is invariant -- a bishop never changes it
+# -- so these are pure board-state checks: no reachability, no projection.
+_SQUARE_COLOR_WORDS = {"light": True, "dark": False}
+_SQUARE_COLOR_ALT = "|".join(_SQUARE_COLOR_WORDS)
+# Adjective form: "dark-squared bishop", "light squared bishop", "dark-square
+# bishop", or the bare "dark bishop". The "squared"/"square"/"squares" middle
+# is optional; hyphen or space joins it.
+_BISHOP_COLOR_ADJ_RE = re.compile(
+    rf"\b{_CAPTURE_OPT}{_COLOR_OPT}(?P<sqcolor>{_SQUARE_COLOR_ALT})"
+    rf"(?:[-\s](?:squares?|squared))?\s+bishop\b",
+    re.IGNORECASE,
+)
+# Reversed form: "bishop on the dark squares", "bishop on light square". A
+# leading color word ("Black's bishop on the dark squares") is honored.
+_BISHOP_ON_COLOR_RE = re.compile(
+    rf"\b{_CAPTURE_OPT}{_COLOR_OPT}bishop\s+on\s+(?:the\s+)?"
+    rf"(?P<sqcolor>{_SQUARE_COLOR_ALT})\s+squares?\b",
+    re.IGNORECASE,
+)
+
+
+def _bishop_square_colors(board: chess.Board, color: chess.Color | None) -> set[bool]:
+    """Square colors (True=light) carried by `color`'s bishops, or both sides'
+    when `color` is None. Empty when no such bishop exists."""
+    out: set[bool] = set()
+    for square in board.pieces(chess.BISHOP, chess.WHITE) if color in (None, chess.WHITE) else []:
+        out.add(bool(chess.BB_LIGHT_SQUARES & chess.BB_SQUARES[square]))
+    for square in board.pieces(chess.BISHOP, chess.BLACK) if color in (None, chess.BLACK) else []:
+        out.add(bool(chess.BB_LIGHT_SQUARES & chess.BB_SQUARES[square]))
+    return out
+
+
+def _bishop_color_ref_holds(board: chess.Board, color_word: str, light: bool) -> bool:
+    """True iff a bishop of the named side (or either side, bare) sits on a
+    square of the claimed color. Bare references clear if ANY side has one --
+    lenient, since the prose didn't say whose bishop it is."""
+    color = _COLOR_WORDS[color_word] if color_word else None
+    return light in _bishop_square_colors(board, color)
+
+
+def _square_color_name(light: bool) -> str:
+    return "light" if light else "dark"
+
+
+def _bishop_square_part(square: int) -> str:
+    light = bool(chess.BB_LIGHT_SQUARES & chess.BB_SQUARES[square])
+    return f"{chess.square_name(square)} is {_square_color_name(light)}-squared"
+
+
+def _bishop_parts(squares: list[int]) -> str:
+    """The bishops' real square colors as one list: 'f1 is light-squared; h3 is
+    light-squared'. The shared body of every corrective parenthetical; callers
+    add the agreeing prefix ('its bishop on' / 'bishops:')."""
+    return "; ".join(_bishop_square_part(sq) for sq in squares)
+
+
+def _bishop_squares_phrase(squares: list[int]) -> str:
+    """The possessive parenthetical for a named side, agreeing in number: '' (no
+    bishops -- caller words that case), 'its bishop on e6 is light-squared'
+    (one), or 'its bishops: f1 is light-squared; h3 is light-squared' (two+,
+    e.g. promotion)."""
+    if not squares:
+        return ""
+    parts = _bishop_parts(squares)
+    if len(squares) == 1:
+        return f"its bishop on {parts}"
+    return f"its bishops: {parts}"
+
+
+def describe_bishops(board: chess.Board, color_word: str, light: bool) -> str:
+    """Ground truth for a bishop-by-square-color claim, anchoring the corrective
+    with the actual bishop squares so a weak model can't just restate the false
+    color. Named side: 'Black has no dark-squared bishop (its bishop on e6 is
+    light-squared)'. Bare (no side named): describes every bishop on the board,
+    since the prose didn't say whose -- 'no dark-squared bishop on the board
+    (bishops: d3 is light-squared; e6 is light-squared)'."""
+    want = _square_color_name(light)
+    if color_word:
+        squares = list(board.pieces(chess.BISHOP, _COLOR_WORDS[color_word]))
+        if not squares:
+            return f"{color_word} has no {want}-squared bishop (no bishop on the board)"
+        return f"{color_word} has no {want}-squared bishop ({_bishop_squares_phrase(squares)})"
+    squares = list(board.pieces(chess.BISHOP, chess.WHITE)) + list(
+        board.pieces(chess.BISHOP, chess.BLACK)
+    )
+    if not squares:
+        return f"no {want}-squared bishop (no bishop on the board)"
+    return f"no {want}-squared bishop on the board (bishops: {_bishop_parts(squares)})"
+
+
+def _iter_bishop_color_refs(text: str):
+    """Yield (surface, color_word, light) for every light/dark-squared bishop
+    reference, both phrasings. A capture-verb lead marks a past trade, not a
+    live-board claim, and is skipped."""
+    for regex in (_BISHOP_COLOR_ADJ_RE, _BISHOP_ON_COLOR_RE):
+        for m in regex.finditer(text):
+            if m.group("cap"):
+                continue
+            color_word = (m.group("color") or "").lower()
+            light = _SQUARE_COLOR_WORDS[m.group("sqcolor").lower()]
+            yield m.group(0), color_word, light
+
+
+def iter_false_bishop_color_refs(text: str, board: chess.Board):
+    """Yield (surface, label, fact) for each light/dark-squared bishop
+    reference that holds on no bishop present. `surface` is the exact prose
+    span for the UI to strike; `label` the normalized '<color >dark-squared
+    bishop'; `fact` the corrective ground truth (see `describe_bishops`).
+    Square color is invariant, so this is board-state only -- no reachability."""
+    seen: set[str] = set()
+    for surface, color_word, light in _iter_bishop_color_refs(text):
+        want = _square_color_name(light)
+        key = f"{color_word}|{want}"
+        if key in seen:
+            continue
+        seen.add(key)
+        if _bishop_color_ref_holds(board, color_word, light):
+            continue
+        prefix = f"{color_word} " if color_word else ""
+        yield surface, f"{prefix}{want}-squared bishop", describe_bishops(
+            board, color_word, light,
+        )
+
+
+def find_false_bishop_color_refs(text: str, board: chess.Board) -> list[str]:
+    """Normalized labels of light/dark-squared bishop references that match no
+    bishop on the board (see iter_false_bishop_color_refs). 'Black's
+    dark-squared bishop' when Black's only bishop is light-squared is flagged."""
+    return [label for _surface, label, _fact in iter_false_bishop_color_refs(text, board)]
+
+
+def _reaches_for_color(
+    board: chess.Board, square: int, piece_type: int, color: chess.Color,
+) -> bool:
+    """True iff `color` has a legal move landing a piece of `piece_type` on
+    `square`. Tests the named side by flipping turn when it isn't theirs;
+    flipping into check is illegal, so that case is False. Promotions resolve
+    to the promoted type."""
+    pov = _board_for_pov(board, color)
+    if pov is None:
+        return False
+    for move in pov.legal_moves:
+        if move.to_square != square:
+            continue
+        mover = pov.piece_at(move.from_square)
+        if mover is None:
+            continue
+        landed = move.promotion if move.promotion else mover.piece_type
+        if landed == piece_type:
+            return True
+    return False
+
+
+def _can_move(board: chess.Board, from_sq: int, to_sq: int) -> bool:
+    """Legal `from->to` move, allowing promotion: a pawn to the back rank needs
+    a promotion piece, so try a queen-promotion when the plain move is not
+    legal (any promotion piece shares the same legality)."""
+    if board.is_legal(chess.Move(from_sq, to_sq)):
+        return True
+    return board.is_legal(chess.Move(from_sq, to_sq, promotion=chess.QUEEN))
+
+
+def _piece_move_keys(
+    board: chess.Board, square: int, piece_type: int, color: chess.Color,
+) -> list[str] | None:
+    """Dedup keys for a '<piece> to <square>' flag: the from+to uci of every
+    piece of that type/color, paired with `square`. None when one can legally
+    reach it (not a flag). Empty list when no such piece exists at all."""
+    pov = _board_for_pov(board, color)
+    if pov is None:
+        return []
+    keys: list[str] = []
+    for from_sq in pov.pieces(piece_type, color):
+        if _can_move(pov, from_sq, square):
+            return None
+        keys.append(chess.square_name(from_sq) + chess.square_name(square))
+    return keys
+
+
+def iter_illegal_piece_moves(text: str, board: chess.Board, seen: set[str] | None = None):
+    """Yield (surface, label) for each '<piece> to <square>' prose move whose
+    destination no piece of that type can legally reach. `surface` is the exact
+    prose span for the UI to strike. Forward-looking, so a reachable plan is
+    fine; only an impossible move ('bishop to a1') is flagged. POV: the named
+    color when given, else the side to move (see _prose_pov). `seen` is the
+    shared dedup set (per-piece from+to ucis, or the label when none exist)."""
+    if seen is None:
+        seen = set()
+    for m in _PIECE_TO_SQUARE_RE.finditer(text):
+        color_word = (m.group("color") or "").lower()
+        piece_word = m.group("piece").lower()
+        square_name = m.group("square").lower()
+        piece_type = _PIECE_WORDS[piece_word]
+        color = _prose_pov(color_word, board, bool(m.group("opp")))
+        keys = _piece_move_keys(
+            board, chess.parse_square(square_name), piece_type, color,
+        )
+        if keys is None:
+            continue
+        prefix = f"{color_word} " if color_word else ""
+        label = f"{prefix}{piece_word} to {square_name}"
+        if _first_seen(seen, keys or [label]):
+            yield m.group(0), label
+
+
+def find_illegal_piece_moves(text: str, board: chess.Board) -> list[str]:
+    """Normalized '<piece> to <square>' labels (see iter_illegal_piece_moves)."""
+    return [label for _surface, label in iter_illegal_piece_moves(text, board)]
+
+
+def _square_move_legal(src: int, dst: int, board: chess.Board) -> bool:
+    """True iff the piece on `src` has a legal move to `dst`. Tries both turns
+    (the mover's color may not be the side to move); an empty source is never
+    legal."""
+    mover = board.piece_at(src)
+    if mover is None:
+        return False
+    pov = _board_for_pov(board, mover.color)
+    if pov is None:
+        return False
+    return _can_move(pov, src, dst)
+
+
+def iter_illegal_square_moves(text: str, board: chess.Board, seen: set[str] | None = None):
+    """Yield (surface, label) for each '<square> to <square>' prose move whose
+    source piece cannot legally reach the destination ('g2 to b3' when the g2
+    bishop has no such move). An empty source square is flagged too. `seen` is
+    the shared dedup set; the key is the src+dst uci ('g2b3')."""
+    if seen is None:
+        seen = set()
+    for m in _SQUARE_TO_SQUARE_RE.finditer(text):
+        src_name = m.group("src").lower()
+        dst_name = m.group("dst").lower()
+        if _square_move_legal(
+            chess.parse_square(src_name), chess.parse_square(dst_name), board,
+        ):
+            continue
+        if _first_seen(seen, [src_name + dst_name]):
+            yield m.group(0), f"{src_name} to {dst_name}"
+
+
+def find_illegal_square_moves(text: str, board: chess.Board) -> list[str]:
+    """Normalized '<square> to <square>' labels (see iter_illegal_square_moves)."""
+    return [label for _surface, label in iter_illegal_square_moves(text, board)]
+
+
+# Self-reference to the machinery the prose must never name. Board-independent
+# -- a style violation, not a board-fact check. Tight on purpose: "the tool",
+# "the tools", "the engine", "the system" as whole phrases. Tool names and
+# verbs like "analyze" are left out (they read as ordinary chess prose); extend
+# the set if real leaks warrant it.
+_TOOL_MENTION_RE = re.compile(
+    r"\bthe\s+(?:tools?|engine|system)\b", re.IGNORECASE,
+)
+
+
+def find_tool_mentions(text: str) -> list[str]:
+    """Lowercased, de-duplicated self-references to the tools/engine/system in
+    `text` ('the tool', 'the engine'). Order-preserving. Empty when clean. The
+    coordinator turns these into a corrective; nothing is struck, since the
+    phrase is woven into the sentence and a strike would leave a fragment."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in _TOOL_MENTION_RE.finditer(text):
+        phrase = " ".join(m.group(0).lower().split())
+        if phrase not in seen:
+            seen.add(phrase)
+            out.append(phrase)
+    return out

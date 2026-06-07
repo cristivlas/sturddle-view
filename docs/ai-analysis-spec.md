@@ -229,9 +229,11 @@ transcripts/replay), stays within one user message per assistant turn
 enabled later (N tool_results + N cards in one message), and Ollama
 translation already splits mixed-content user messages correctly.
 
-**Caching interaction.** Anthropic prompt caching keys on the system +
-initial message prefix. Cards land deep in the message list (after
-tool calls), so they do not invalidate the cached prefix.
+**Caching interaction.** Prompt caching is not wired up today (the
+system block is sent with no `cache_control` markers). The card
+placement is forward-compatible if it is added later: cards land deep
+in the message list (after tool calls), so they would not invalidate a
+cached system + initial-message prefix.
 
 #### Future skills (not v1)
 

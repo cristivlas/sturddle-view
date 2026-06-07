@@ -51,6 +51,7 @@ _VALID_BOARD_STYLES = {
     "green", "green-staunty",
     "blue", "chess-club",
     "black-and-white", "high-contrast",
+    "sturddle-staunty", "sturddle-wine",
 }
 
 

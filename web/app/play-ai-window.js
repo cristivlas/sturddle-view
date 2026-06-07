@@ -133,7 +133,7 @@ function buildBody() {
   root._rounds = rounds;
   root._terminal = terminal;
   // Map roundIndex -> {panel, thinking:{details,body}, tools, para,
-  //   hasProse}. Built lazily on first event per round.
+  //   revision, hasProse}. Built lazily on first event per round.
   root._roundPanels = new Map();
   root._currentRound = null;
   // tool_use_id -> tool-call line DOM node, so a failure event can
@@ -163,11 +163,23 @@ function buildRoundPanel() {
   timeline.append(details, tools);
   const para = document.createElement("p");
   para.className = "play-ai-prose";
-  panel.append(timeline, para);
+  // Revision: a collapsible that folds away prose the AI corrected. The
+  // summary carries a self-correction line; the body holds the struck-through
+  // flawed prose.
+  const revision = document.createElement("details");
+  revision.className = "play-ai-revision";
+  revision.hidden = true;
+  const revisionSummary = document.createElement("summary");
+  revisionSummary.className = "play-ai-revision-summary";
+  const revisionBody = document.createElement("div");
+  revisionBody.className = "play-ai-revision-body";
+  revision.append(revisionSummary, revisionBody);
+  panel.append(timeline, para, revision);
   return {
     panel,
     thinking: { details, summary, body: thinkBody },
     tools, para,
+    revision: { details: revision, summary: revisionSummary, body: revisionBody },
     hasProse: false,
     hasThinking: false,
     thinkingStartedAt: 0,
@@ -285,6 +297,11 @@ const TITLE_ACTIONS = [
   },
 ];
 
+// Mobile inline host (set by play.js on mount). On phones the dock column is
+// hidden and floating chrome is unusable, so the panel mounts here, stacked
+// below the board. See createDockableWindow's inline placement.
+let inlineEl = null;
+
 const inst = createDockableWindow({
   title: "AI Analysis",
   className: "sturddle-wb-ai",
@@ -299,12 +316,17 @@ const inst = createDockableWindow({
     return buildBody();
   },
   dockOrder: DOCK_ORDER.AI_ANALYSIS,
+  getInlineEl: () => inlineEl,
   closable: true,
   onUserClose: () => {
     if (userCloseHandler) userCloseHandler();
   },
   titleActions: TITLE_ACTIONS,
 });
+
+export function setAiInlineHost(el) {
+  inlineEl = el || null;
+}
 
 export function setOnUserCloseAi(fn) {
   userCloseHandler = fn;
@@ -332,7 +354,7 @@ try {
 } catch { /* non-fatal */ }
 
 export function openAi() {
-  if (inst.wb || inst.slot) return;
+  if (inst.wb || inst.slot || inst.inlineSlot) return;
   inst.toggle(null);
 }
 
@@ -341,7 +363,7 @@ export function closeAi() {
 }
 
 export function isAiOpen() {
-  return !!(inst.wb || inst.slot);
+  return !!(inst.wb || inst.slot || inst.inlineSlot);
 }
 
 // The actual scroller is the inner .play-ai-scroll wrapper; the
@@ -483,6 +505,160 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
   }
 }
 
+// Cap for the joined item list in a multi-item fallback before it is
+// ellipsis-trimmed (keeps the collapsed summary to one line).
+const REVISION_ITEMS_MAX = 48;
+
+// Self-correction phrasings, picked from so the revision summary doesn't read
+// robotically. Each row is [no-items, one, many]; "{}" is the item slot, and
+// every opener is distinct. The original wording is the first row. Pick is
+// deterministic on the round (stable across panel rehydration -- never random).
+const REVISION_PHRASES = [
+  ["Actually, let me reconsider.", "Actually, {} isn't right.",  "Wait, {} look wrong."],
+  ["Scratch that.",               "Scratch that -- {} is wrong.", "Hold on -- {} are off."],
+  ["Let me correct myself.",      "Correcting myself: {} is off.", "My mistake -- {} are wrong."],
+  ["One moment.",                 "I had {} wrong.",              "{} -- incorrect."],
+  ["Let me back up.",             "{} is nonsense.",              "{} are suspect."],
+  ["Rethinking this.",           "Strike {}; it's wrong.",       "Strike {}; they're wrong."],
+];
+
+// A SAN move ("Nab1", "Qd1", "O-O") whose leading capital is the piece letter
+// and must be kept; prose claims ("White's bishop on g3") read better with the
+// lead lowercased mid-sentence. Castling and a piece letter + SAN body char.
+const SAN_LEAD_RE = /^(?:O-O|[KQRBN][a-h1-8x])/;
+
+// A lowercase chess move whose case is meaningful and must be kept -- a pawn
+// push or capture ("e4", "exd5", "fxg1=Q"). Distinct from SAN_LEAD_RE (which
+// is piece moves); a pawn move starts with a file letter.
+const PAWN_MOVE_RE = /^[a-h](?:[1-8]|x[a-h][1-8])/;
+
+// Lowercase the first letter of a prose item so it reads mid-sentence
+// ("White's bishop" -> "white's bishop"); leave SAN moves untouched.
+function decapLead(s) {
+  return SAN_LEAD_RE.test(s) ? s : s.charAt(0).toLowerCase() + s.slice(1);
+}
+
+// Capitalize a prose item at a sentence start ("white bishop" -> "White
+// bishop"); leave chess moves untouched so "e4"/"Nf3" keep their case.
+function capLead(s) {
+  if (SAN_LEAD_RE.test(s) || PAWN_MOVE_RE.test(s)) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// Deterministic pick from `pool` by `seed` (the round), stable across panel
+// rehydration on reconnect -- never random.
+function pickBySeed(pool, seed) {
+  const n = pool.length;
+  return pool[((seed % n) + n) % n];
+}
+
+// Case the item to its position: capitalized when "{}" leads the phrase
+// (sentence start), lowercased when a prefix precedes it. Chess moves keep
+// their case either way.
+function fill(template, joined) {
+  const lead = template.startsWith("{}");
+  return template.replace("{}", lead ? capLead(joined) : decapLead(joined));
+}
+
+// Fallback summary when the next round has no usable opening line: the AI
+// catching its own slip. SAN moves keep their case so "Nab1" isn't mangled.
+function revisionFallbackText(items, seed = 0) {
+  const [none, one, many] = pickBySeed(REVISION_PHRASES, seed);
+  if (!items.length) return none;
+  if (items.length === 1) return fill(one, items[0]);
+  let joined = items.join(", ");
+  if (joined.length > REVISION_ITEMS_MAX) {
+    joined = joined.slice(0, REVISION_ITEMS_MAX).trimEnd() + "...";
+  }
+  return fill(many, joined);
+}
+
+// Weak models leak a standalone acknowledgment ("Understood.", "You're
+// right,") as the opening prose despite the prompt forbidding it. Replace that
+// lead with a board-oriented opener so the prose reads as analysis, not
+// compliance. Matches the phrase then its terminator -- period, exclamation,
+// comma, or em/en dash -- or an "..., I'll ..." continuation; never a bare run
+// of text that could be real analysis. The terminator is captured and
+// re-appended so the original punctuation (and sentence flow) is preserved:
+// "Understood, x" keeps its comma. The apostrophe class covers straight and
+// curly quotes (U+2018/U+2019) since models emit both for "you're".
+// Straight or curly apostrophe -- models emit both in contractions.
+const APOS = "['\\u2018\\u2019]";
+// Sentence terminator the ack lead ends on, including em/en dash (models
+// write "You're correct--I misread" with a dash, no period).
+const ACK_TERM = "[.!,\\u2013\\u2014]";
+// "you're right" / "you are correct" etc.: full or contracted "are", and
+// either affirmation word.
+const YOU_ARE = `you(?:${APOS}re| are)`;
+const ACK_PHRASE = `understood|i understand|got it|${YOU_ARE} (?:right|correct)`;
+const ACK_LEAD_RE = new RegExp(
+  `^(?:${ACK_PHRASE})(?:,?\\s+i(?:${APOS}ll| will)[^.!?]*)?(${ACK_TERM}) *`, "i",
+);
+// Bare clauses -- no trailing punctuation; the captured terminator is appended.
+const ACK_OPENERS = [
+  "Now I see the board",
+  "Looking at the position",
+  "Reading the position",
+  "Here is the position",
+  "Assessing the position",
+];
+
+// Replace a leaked acknowledgment opener on the accumulated prose. Operates on
+// the whole paragraph text (deltas may split the ack), idempotent -- once the
+// ack is gone the regex no longer matches. `seed` (round) varies the opener.
+// A dash binds tight to the next word ("position--I"), so no trailing space
+// after it; comma/period keep theirs.
+const ACK_DASH_RE = new RegExp("[\\u2013\\u2014]");
+function scrubAckLead(para, seed) {
+  const text = para.textContent;
+  if (!ACK_LEAD_RE.test(text)) return;
+  para.textContent = text.replace(ACK_LEAD_RE, (_m, term) => {
+    const tail = ACK_DASH_RE.test(term) ? "" : " ";
+    return pickBySeed(ACK_OPENERS, seed) + term + tail;
+  });
+}
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Cross out each flagged token in the round's prose. Rebuilds the paragraph
+// with matched spans wrapped in <del> so the reader sees the self-correction
+// land on the actual text. Longest items first so a line isn't half-matched.
+function strikeProseItems(para, items) {
+  const text = para.textContent;
+  if (!text || !items.length) return;
+  const sorted = [...items].sort((a, b) => b.length - a.length);
+  // Case-insensitive: server lowercases flagged claims, but the prose keeps
+  // its original case ("Knight on b1" at a sentence start).
+  const re = new RegExp(sorted.map(escapeRegExp).join("|"), "gi");
+  para.textContent = "";
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    if (m.index > last) para.append(document.createTextNode(text.slice(last, m.index)));
+    const del = document.createElement("del");
+    del.className = "play-ai-prose-struck";
+    del.textContent = m[0];
+    para.append(del);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) para.append(document.createTextNode(text.slice(last)));
+}
+
+export function noteAiPosition({ round, surfaces }) {
+  if (!inst.body) return;
+  const entry = inst.body._roundPanels.get(round);
+  if (!entry || !entry.revision) return;
+  if (!surfaces || !surfaces.length) return;
+  // Strike the flagged spans (exact prose), then tuck the flawed prose into
+  // the revision body so the clean (next-round) prose reads on its own.
+  // The summary is the canned self-correction line.
+  strikeProseItems(entry.para, surfaces);
+  entry.revision.summary.textContent = revisionFallbackText(surfaces, round);
+  entry.revision.body.append(entry.para);
+  entry.revision.details.hidden = false;
+}
+
 export function setAiStatus(state) {
   // `state` in: idle | waiting | engine | done.
   // Spinner shows on waiting/engine; hidden on idle/done. First text
@@ -512,6 +688,9 @@ export function appendAiDelta(text, roundIndex = 0, thinkingMs = null) {
     if (!entry.hasProse) freezeThinkingLabel(entry, thinkingMs);
     entry.hasProse = true;
     entry.para.append(document.createTextNode(out));
+    // Strip a leaked "Understood."-style ack opener once enough text has
+    // landed to recognize it (the ack may span deltas).
+    scrubAckLead(entry.para, roundIndex);
   });
 }
 
@@ -572,7 +751,10 @@ export function markAiDone({
     const multiRound = inst.body._roundPanels.size > 1;
     if (multiRound && naturalCompletion) {
       const last = inst.body._roundPanels.get(inst.body._currentRound);
-      if (last) last.para.classList.add("play-ai-prose-final");
+      // Skip when the last round's prose was folded into its revision -- the
+      // border would land on text tucked inside the collapsed disclosure.
+      const folded = last && last.para.parentNode === last.revision?.body;
+      if (last && !folded) last.para.classList.add("play-ai-prose-final");
     }
     if (error) {
       const block = document.createElement("div");
@@ -594,7 +776,7 @@ export function markAiDone({
     // any other terminal marker below.
     if (verifierRoundCap) {
       slot.append(_roundCapNote(
-        "A verification step stopped early at its round cap. Raise \"Verifier rounds\" for fuller checks.",
+        "A verification step stopped early at its round cap. Raise \"Max subagent rounds\" for fuller checks",
       ));
     }
     if (roundCap) {
