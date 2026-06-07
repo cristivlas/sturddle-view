@@ -614,6 +614,138 @@ def find_false_piece_claims(text: str, board: chess.Board) -> list[str]:
     return [label for _surface, label, _square in iter_false_claim_squares(text, board)]
 
 
+# A bishop named by the color of squares it travels on. True = light. Unlike a
+# piece-on-square claim, square color is invariant -- a bishop never changes it
+# -- so these are pure board-state checks: no reachability, no projection.
+_SQUARE_COLOR_WORDS = {"light": True, "dark": False}
+_SQUARE_COLOR_ALT = "|".join(_SQUARE_COLOR_WORDS)
+# Adjective form: "dark-squared bishop", "light squared bishop", "dark-square
+# bishop", or the bare "dark bishop". The "squared"/"square"/"squares" middle
+# is optional; hyphen or space joins it.
+_BISHOP_COLOR_ADJ_RE = re.compile(
+    rf"\b{_CAPTURE_OPT}{_COLOR_OPT}(?P<sqcolor>{_SQUARE_COLOR_ALT})"
+    rf"(?:[-\s](?:squares?|squared))?\s+bishop\b",
+    re.IGNORECASE,
+)
+# Reversed form: "bishop on the dark squares", "bishop on light square". A
+# leading color word ("Black's bishop on the dark squares") is honored.
+_BISHOP_ON_COLOR_RE = re.compile(
+    rf"\b{_CAPTURE_OPT}{_COLOR_OPT}bishop\s+on\s+(?:the\s+)?"
+    rf"(?P<sqcolor>{_SQUARE_COLOR_ALT})\s+squares?\b",
+    re.IGNORECASE,
+)
+
+
+def _bishop_square_colors(board: chess.Board, color: chess.Color | None) -> set[bool]:
+    """Square colors (True=light) carried by `color`'s bishops, or both sides'
+    when `color` is None. Empty when no such bishop exists."""
+    out: set[bool] = set()
+    for square in board.pieces(chess.BISHOP, chess.WHITE) if color in (None, chess.WHITE) else []:
+        out.add(bool(chess.BB_LIGHT_SQUARES & chess.BB_SQUARES[square]))
+    for square in board.pieces(chess.BISHOP, chess.BLACK) if color in (None, chess.BLACK) else []:
+        out.add(bool(chess.BB_LIGHT_SQUARES & chess.BB_SQUARES[square]))
+    return out
+
+
+def _bishop_color_ref_holds(board: chess.Board, color_word: str, light: bool) -> bool:
+    """True iff a bishop of the named side (or either side, bare) sits on a
+    square of the claimed color. Bare references clear if ANY side has one --
+    lenient, since the prose didn't say whose bishop it is."""
+    color = _COLOR_WORDS[color_word] if color_word else None
+    return light in _bishop_square_colors(board, color)
+
+
+def _square_color_name(light: bool) -> str:
+    return "light" if light else "dark"
+
+
+def _bishop_square_part(square: int) -> str:
+    light = bool(chess.BB_LIGHT_SQUARES & chess.BB_SQUARES[square])
+    return f"{chess.square_name(square)} is {_square_color_name(light)}-squared"
+
+
+def _bishop_parts(squares: list[int]) -> str:
+    """The bishops' real square colors as one list: 'f1 is light-squared; h3 is
+    light-squared'. The shared body of every corrective parenthetical; callers
+    add the agreeing prefix ('its bishop on' / 'bishops:')."""
+    return "; ".join(_bishop_square_part(sq) for sq in squares)
+
+
+def _bishop_squares_phrase(squares: list[int]) -> str:
+    """The possessive parenthetical for a named side, agreeing in number: '' (no
+    bishops -- caller words that case), 'its bishop on e6 is light-squared'
+    (one), or 'its bishops: f1 is light-squared; h3 is light-squared' (two+,
+    e.g. promotion)."""
+    if not squares:
+        return ""
+    parts = _bishop_parts(squares)
+    if len(squares) == 1:
+        return f"its bishop on {parts}"
+    return f"its bishops: {parts}"
+
+
+def describe_bishops(board: chess.Board, color_word: str, light: bool) -> str:
+    """Ground truth for a bishop-by-square-color claim, anchoring the corrective
+    with the actual bishop squares so a weak model can't just restate the false
+    color. Named side: 'Black has no dark-squared bishop (its bishop on e6 is
+    light-squared)'. Bare (no side named): describes every bishop on the board,
+    since the prose didn't say whose -- 'no dark-squared bishop on the board
+    (bishops: d3 is light-squared; e6 is light-squared)'."""
+    want = _square_color_name(light)
+    if color_word:
+        squares = list(board.pieces(chess.BISHOP, _COLOR_WORDS[color_word]))
+        if not squares:
+            return f"{color_word} has no {want}-squared bishop (no bishop on the board)"
+        return f"{color_word} has no {want}-squared bishop ({_bishop_squares_phrase(squares)})"
+    squares = list(board.pieces(chess.BISHOP, chess.WHITE)) + list(
+        board.pieces(chess.BISHOP, chess.BLACK)
+    )
+    if not squares:
+        return f"no {want}-squared bishop (no bishop on the board)"
+    return f"no {want}-squared bishop on the board (bishops: {_bishop_parts(squares)})"
+
+
+def _iter_bishop_color_refs(text: str):
+    """Yield (surface, color_word, light) for every light/dark-squared bishop
+    reference, both phrasings. A capture-verb lead marks a past trade, not a
+    live-board claim, and is skipped."""
+    for regex in (_BISHOP_COLOR_ADJ_RE, _BISHOP_ON_COLOR_RE):
+        for m in regex.finditer(text):
+            if m.group("cap"):
+                continue
+            color_word = (m.group("color") or "").lower()
+            light = _SQUARE_COLOR_WORDS[m.group("sqcolor").lower()]
+            yield m.group(0), color_word, light
+
+
+def iter_false_bishop_color_refs(text: str, board: chess.Board):
+    """Yield (surface, label, fact) for each light/dark-squared bishop
+    reference that holds on no bishop present. `surface` is the exact prose
+    span for the UI to strike; `label` the normalized '<color >dark-squared
+    bishop'; `fact` the corrective ground truth (see `describe_bishops`).
+    Square color is invariant, so this is board-state only -- no reachability."""
+    seen: set[str] = set()
+    for surface, color_word, light in _iter_bishop_color_refs(text):
+        want = _square_color_name(light)
+        key = f"{color_word}|{want}"
+        if key in seen:
+            continue
+        seen.add(key)
+        if _bishop_color_ref_holds(board, color_word, light):
+            continue
+        prefix = f"{color_word} " if color_word else ""
+        yield surface, f"{prefix}{want}-squared bishop", describe_bishops(
+            board, color_word, light,
+        )
+
+
+def find_false_bishop_color_refs(text: str, board: chess.Board) -> list[str]:
+    """Normalized labels of light/dark-squared bishop references that match no
+    bishop on the board (see iter_false_bishop_color_refs). 'Black's
+    dark-squared bishop' when Black's only bishop is light-squared is flagged."""
+    return [label for _surface, label, _fact in iter_false_bishop_color_refs(text, board)]
+
+
 def _reaches_for_color(
     board: chess.Board, square: int, piece_type: int, color: chess.Color,
 ) -> bool:

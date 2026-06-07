@@ -93,6 +93,41 @@ async def test_false_claim_emits_note_and_injects_corrective():
     assert any("h6 is empty" in t for t in injected)
 
 
+# White to move; both bishops (d3, e6) are light-squared, so a "dark-squared
+# bishop" reference matches nothing -- the reported hallucination.
+_BISHOP_FEN = "2n1rk2/p1R2p2/2NRb1p1/1P5p/4P2P/3B1PP1/5K2/2r5 w - - 3 41"
+
+
+@pytest.mark.asyncio
+async def test_false_bishop_color_emits_note_and_injects_corrective():
+    board = chess.Board(_BISHOP_FEN)
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(kind="text", text="Rd4 hits the dark-squared bishop.")],
+        [ProviderChunk(kind="text", text="Corrected: the bishop on e6 is light-squared.")],
+    ])
+    coord, bus = _coord(provider, board)
+    queue = await bus.subscribe()
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    notes = [e for e in events if e.kind == EVT_AI_POSITION_NOTE]
+    assert len(notes) == 1
+    # Surface includes the article (like piece claims) so the client strikes
+    # "the dark-squared bishop" whole, not a dangling "the".
+    assert notes[0].payload["surfaces"] == ["the dark-squared bishop"]
+    assert provider.stream_calls == 2
+    injected = _last_user_texts(provider)
+    assert any(t.startswith(_POSITION_CHECK_PREFIX) for t in injected)
+    # Fact-anchored: bare ref (no side named) lists the real bishops, both
+    # light-squared, so the model sees there is no dark-squared bishop at all.
+    assert any(
+        "no dark-squared bishop on the board" in t
+        and "d3 is light-squared" in t and "e6 is light-squared" in t
+        for t in injected
+    )
+
+
 def test_tool_mention_after_future_line_still_caught():
     # A future move number truncates the board view, but a tool mention past it
     # is a style violation everywhere -- scanned on the full prose.

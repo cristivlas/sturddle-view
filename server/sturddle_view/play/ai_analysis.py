@@ -56,6 +56,7 @@ from ..llm.cancel import CancelToken
 from ..llm.position_check import (
     describe_square,
     find_tool_mentions,
+    iter_false_bishop_color_refs,
     iter_false_claim_squares,
     handled_continuation_spans,
     iter_illegal_continuations,
@@ -603,12 +604,17 @@ class _PositionCheck:
     # Tool/engine self-references caught in the prose. Corrective-only -- not
     # struck, since the phrase is woven into the sentence (see find_tool_mentions).
     tool_mentions: list[str] = field(default_factory=list)
+    # Light/dark-squared bishop references that match no bishop present. Each
+    # carries (surface, label, fact); the fact is precomputed (square color is
+    # invariant, so there's no square to describe later).
+    bishop_triples: list[tuple[str, str, str]] = field(default_factory=list)
 
     @property
     def hit(self) -> bool:
         return bool(
             self.move_pairs or self.claim_triples
             or self.line_pairs or self.tool_mentions
+            or self.bishop_triples
         )
 
     @property
@@ -620,6 +626,10 @@ class _PositionCheck:
         return [label for _surface, label in self.line_pairs]
 
     @property
+    def bishop_labels(self) -> list[str]:
+        return [label for _surface, label, _fact in self.bishop_triples]
+
+    @property
     def surfaces(self) -> list[str]:
         # Exact prose spans for the client to strike, longest first so a
         # span isn't half-matched by a shorter one nested inside it.
@@ -627,6 +637,7 @@ class _PositionCheck:
             [s for s, _ in self.move_pairs]
             + [s for s, _, _ in self.claim_triples]
             + [s for s, _ in self.line_pairs]
+            + [s for s, _, _ in self.bishop_triples]
         )
         return sorted(set(out), key=len, reverse=True)
 
@@ -969,6 +980,7 @@ class AIAnalysisCoordinator:
                     | {m.lower() for m in pc.move_labels}
                     | {ln.lower() for ln in pc.line_labels}
                     | set(pc.tool_mentions)
+                    | {b.lower() for b in pc.bishop_labels}
                 )
                 repeat = bool(hit_keys & corrected_items)
                 corrected_items |= hit_keys
@@ -1233,6 +1245,7 @@ class AIAnalysisCoordinator:
             list(iter_false_claim_squares(text, board)),
             line_pairs,
             tool_mentions,
+            list(iter_false_bishop_color_refs(text, board)),
         )
 
     async def _emit_position_note(
@@ -1269,10 +1282,13 @@ class AIAnalysisCoordinator:
         ]
         if move_facts:
             clauses.append(_POSITION_CHECK_MOVE_CLAUSE.format(facts="; ".join(move_facts)))
+        # Square-content claims and bishop-by-square-color refs are both plain
+        # board truth -- one "restate" clause, facts joined. Bishop facts are
+        # precomputed (no square to describe; square color is invariant).
         claim_facts = [
             describe_square(square, pc.board)
             for _surface, _label, square in pc.claim_triples
-        ]
+        ] + [fact for _surface, _label, fact in pc.bishop_triples]
         if claim_facts:
             clauses.append(_POSITION_CHECK_CLAIM_CLAUSE.format(facts="; ".join(claim_facts)))
         if pc.tool_mentions:

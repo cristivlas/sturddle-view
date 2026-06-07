@@ -12,6 +12,7 @@ import pytest
 
 from sturddle_view.llm.position_check import (
     describe_square,
+    find_false_bishop_color_refs,
     find_false_piece_claims,
     find_illegal_continuations,
     find_illegal_moves,
@@ -20,6 +21,7 @@ from sturddle_view.llm.position_check import (
     find_illegal_square_moves,
     find_tool_mentions,
     handled_continuation_spans,
+    iter_false_bishop_color_refs,
     iter_false_claim_squares,
     iter_illegal_continuations,
     iter_illegal_moves,
@@ -221,6 +223,139 @@ def test_false_claim_surface_keeps_possessive():
     board = _board("r2qr1k1/5ppp/p4n2/1pbP1bB1/8/2Nn1B2/PP1Q1PPP/3R1RK1 w - - 0 1")
     rows = list(iter_false_claim_squares("White's knight on a1 is passive", board))
     assert rows == [("White's knight on a1", "white knight on a1", "a1")]
+
+
+# --- find_false_bishop_color_refs (light/dark-squared bishop) -------------
+
+# The reported hallucination: "Black's isolated dark-squared bishop" on a board
+# where Black's only bishop (e6) is light-squared. Square color is invariant,
+# so this is a pure board-fact error -- no bishop of that square color exists.
+_BISHOP_HALLUCINATION_FEN = "2n1rk2/p1R2p2/2NRb1p1/1P5p/4P2P/3B1PP1/5K2/2r5 w - - 3 41"
+# White bishop c1 (dark), black bishop f8 (dark): neither side has a
+# light-squared bishop. python-chess square-color convention, not the
+# over-the-board mnemonic -- trust the board, assert from it.
+_BISHOP_DARK_ONLY_FEN = "5bk1/8/8/8/8/8/8/2B2K2 w - - 0 1"
+_NO_BISHOP_FEN = "4k3/8/8/8/8/8/8/4K3 w - - 0 1"
+
+
+def test_bishop_color_hallucination_flagged():
+    # "Black's isolated dark-squared bishop": the adjective "isolated" between
+    # the color word and "dark" drops the color prefix (same as the other
+    # piece-claim recognizers -- they don't span an adjective). The bare label
+    # still flags: neither side has a dark-squared bishop here.
+    board = _board(_BISHOP_HALLUCINATION_FEN)
+    text = (
+        "Rd4 attacks Black's isolated dark-squared bishop and gains space."
+    )
+    assert find_false_bishop_color_refs(text, board) == ["dark-squared bishop"]
+
+
+def test_true_bishop_color_ref_not_flagged():
+    # The e6 bishop really is light-squared, so "Black's light-squared bishop"
+    # is a correct reference -- not flagged.
+    board = _board(_BISHOP_HALLUCINATION_FEN)
+    assert find_false_bishop_color_refs("Black's light-squared bishop is strong", board) == []
+
+
+def test_bare_bishop_color_ref_flagged_when_neither_side_has_one():
+    # No color word: "the light-squared bishop" is flagged only if NEITHER side
+    # has a light-squared bishop. Both bishops here are dark -> flagged.
+    board = _board(_BISHOP_DARK_ONLY_FEN)
+    assert find_false_bishop_color_refs("the light-squared bishop dominates", board) == [
+        "light-squared bishop"
+    ]
+
+
+def test_bare_bishop_color_ref_not_flagged_when_one_side_has_one():
+    # Bare reference, lenient: White's c1 bishop is dark-squared, so a bare
+    # "the dark-squared bishop" is plausibly correct -> not flagged, even though
+    # Black has no dark-squared bishop (the bare form doesn't name a side).
+    board = _board(_BISHOP_HALLUCINATION_FEN)  # both bishops light
+    assert find_false_bishop_color_refs(
+        "the light-squared bishop eyes the king", board
+    ) == []
+
+
+def test_colored_bishop_ref_checks_named_side_only():
+    # Both existing bishops are dark. "White's light-squared bishop" names a
+    # side that has no light-squared bishop -> flagged (strict with a color
+    # word). The dark bishop White does have doesn't satisfy a light claim.
+    board = _board(_BISHOP_DARK_ONLY_FEN)
+    assert find_false_bishop_color_refs("White's light-squared bishop", board) == [
+        "white light-squared bishop"
+    ]
+
+
+def test_dark_squared_ref_with_dark_bishop_present_not_flagged():
+    # White's c1 bishop is dark-squared -> "White's dark-squared bishop" holds.
+    board = _board(_BISHOP_DARK_ONLY_FEN)
+    assert find_false_bishop_color_refs("White's dark-squared bishop", board) == []
+
+
+def test_no_bishops_color_ref_flagged():
+    # No bishops at all -> any square-color reference is false.
+    board = _board(_NO_BISHOP_FEN)
+    assert find_false_bishop_color_refs("the dark-squared bishop", board) == [
+        "dark-squared bishop"
+    ]
+
+
+@pytest.mark.parametrize("phrase", [
+    "dark-squared bishop",
+    "dark squared bishop",
+    "dark-square bishop",
+    "dark bishop",
+    "bishop on the dark squares",
+    "bishop on dark squares",
+    "bishop on the dark square",
+])
+def test_bishop_color_phrasing_variants_flagged(phrase):
+    # Every spelling resolves to the same normalized label. _BISHOP_HALLUCINATION
+    # has no dark-squared bishop on either side, so the bare phrasing flags.
+    board = _board(_BISHOP_HALLUCINATION_FEN)
+    assert find_false_bishop_color_refs(f"note the {phrase} here", board) == [
+        "dark-squared bishop"
+    ]
+
+
+def test_captured_bishop_color_ref_not_flagged():
+    # A capture verb marks a past event ("traded the dark-squared bishop"),
+    # not a live-board claim -> skipped even with no dark-squared bishop now.
+    board = _board(_BISHOP_HALLUCINATION_FEN)
+    assert find_false_bishop_color_refs("White traded the dark-squared bishop", board) == []
+
+
+def test_iter_false_bishop_color_refs_yields_surface_label_fact():
+    # Surface keeps the exact prose; label is normalized; fact anchors the
+    # corrective with the side's actual bishop(s).
+    board = _board(_BISHOP_HALLUCINATION_FEN)
+    rows = list(iter_false_bishop_color_refs("Black's dark-squared bishop", board))
+    assert len(rows) == 1
+    surface, label, fact = rows[0]
+    assert surface == "Black's dark-squared bishop"
+    assert label == "black dark-squared bishop"
+    assert "no dark-squared bishop" in fact
+    assert "e6 is light-squared" in fact
+
+
+def test_bishop_color_surface_includes_leading_article():
+    # A leading "the" is part of the strike surface (like piece claims), so the
+    # client strikes "the dark-squared bishop" whole, not a dangling "the".
+    board = _board(_BISHOP_HALLUCINATION_FEN)
+    rows = list(iter_false_bishop_color_refs("the dark-squared bishop is weak", board))
+    assert rows[0][0] == "the dark-squared bishop"
+
+
+def test_named_side_two_wrong_color_bishops_pluralizes_fact():
+    # Promotion edge: White has two light-squared bishops (f1, h3) and no dark
+    # one. The corrective must agree in number -- "its bishops: ..." not a
+    # singular "its bishop on f1 is light-squared; h3 ...".
+    board = _board("4k3/8/8/8/8/7B/8/4KB2 w - - 0 1")
+    rows = list(iter_false_bishop_color_refs("White's dark-squared bishop", board))
+    assert len(rows) == 1
+    fact = rows[0][2]
+    assert "its bishops: f1 is light-squared; h3 is light-squared" in fact
+    assert "its bishop on" not in fact
 
 
 # --- find_illegal_piece_moves ('<piece> to <square>') ---------------------
