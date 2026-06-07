@@ -8,6 +8,7 @@ from sturddle_view.engines import (
     DuplicateEngineError,
     EngineNotFoundError,
     EngineRegistry,
+    resolve_analysis,
 )
 
 
@@ -16,20 +17,28 @@ def registry(tmp_path):
     return EngineRegistry(path=tmp_path / "engines.json")
 
 
+class _FakeSettings:
+    """Minimal stand-in: resolve_analysis/resolve_selected read just these
+    two attrs off the settings object."""
+    def __init__(self, *, analysis_engine_id="", engine_path=None):
+        self.analysis_engine_id = analysis_engine_id
+        self.engine_path = engine_path
+
+
 def test_empty_when_no_file(registry):
     assert registry.list() == []
 
 
 def test_add_persists(registry):
-    e = registry.add(name="Stockfish", path="/usr/bin/stockfish", options={"Hash": 256})
-    assert e.id and e.name == "Stockfish"
+    e = registry.add(name="MyEngine", path="/usr/bin/myengine", options={"Hash": 256})
+    assert e.id and e.name == "MyEngine"
 
     # New instance, same path: should re-load from disk.
     fresh = EngineRegistry(path=registry.path)
     [loaded] = fresh.list()
     assert loaded.id == e.id
-    assert loaded.name == "Stockfish"
-    assert loaded.path == "/usr/bin/stockfish"
+    assert loaded.name == "MyEngine"
+    assert loaded.path == "/usr/bin/myengine"
     assert loaded.options == {"Hash": 256}
 
 
@@ -217,3 +226,38 @@ def test_load_ignores_unknown_fields(tmp_path):
     reg = EngineRegistry(path=path)
     [e] = reg.list()
     assert e.id == "abc"
+
+
+def test_resolve_analysis_prefers_pinned_engine(registry):
+    sel = registry.add(name="Active", path="/p/active")
+    pin = registry.add(name="Pinned", path="/p/pinned")
+    registry.select(sel.id)
+    settings = _FakeSettings(analysis_engine_id=pin.id)
+    launch = resolve_analysis(registry, settings)
+    assert launch.path == "/p/pinned"
+    assert launch.name == "Pinned"
+
+
+def test_resolve_analysis_falls_back_to_selected_when_no_pin(registry):
+    sel = registry.add(name="Active", path="/p/active")
+    registry.select(sel.id)
+    settings = _FakeSettings(analysis_engine_id="")
+    launch = resolve_analysis(registry, settings)
+    assert launch.path == "/p/active"
+    assert launch.name == "Active"
+
+
+def test_resolve_analysis_falls_back_when_pin_unknown(registry):
+    sel = registry.add(name="Active", path="/p/active")
+    registry.select(sel.id)
+    # A dangling pin (engine deleted after pinning) must not error -- it
+    # falls back to the active engine.
+    settings = _FakeSettings(analysis_engine_id="does-not-exist")
+    launch = resolve_analysis(registry, settings)
+    assert launch.path == "/p/active"
+
+
+def test_resolve_analysis_empty_when_nothing_configured(registry):
+    settings = _FakeSettings(analysis_engine_id="", engine_path=None)
+    launch = resolve_analysis(registry, settings)
+    assert launch.path is None

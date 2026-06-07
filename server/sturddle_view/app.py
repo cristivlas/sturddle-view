@@ -26,7 +26,7 @@ from .api import settings as settings_api
 from .api import tournaments as tournaments_api
 from .api import ws as ws_api
 from .config import Settings
-from .engines import EngineRegistry, resolve_selected
+from .engines import EngineRegistry, resolve_analysis, resolve_selected
 from .events import Event, EventBus
 from .llm import CannedProvider, LLMProvider, ToolRegistry
 from .llm.anthropic import AnthropicProvider
@@ -349,7 +349,7 @@ def create_app(
     # call via resolve_selected(), so engine swaps in Settings are
     # honored without rebuilding the coordinator.
     def _ai_engine_launcher() -> EngineSupervisor:
-        launch = resolve_selected(app.state.engines, app.state.settings)
+        launch = resolve_analysis(app.state.engines, app.state.settings)
         sup = EngineSupervisor(launch.path, app.state.event_bus, settings=app.state.settings)
         if launch.options:
             sup.options = launch.options

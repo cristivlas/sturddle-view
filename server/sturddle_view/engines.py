@@ -465,6 +465,29 @@ class ResolvedLaunch:
     env: dict[str, str] = field(default_factory=dict)
 
 
+def resolve_analysis(
+    registry: EngineRegistry, settings,
+) -> ResolvedLaunch:
+    """Launch profile for the analysis engine.
+
+    Prefers settings.analysis_engine_id when set; falls back to
+    resolve_selected() (active HvE engine).
+    """
+    if settings.analysis_engine_id:
+        try:
+            e = registry.get(settings.analysis_engine_id)
+            return ResolvedLaunch(
+                path=e.path,
+                name=e.name,
+                options=dict(e.options or {}),
+                args=list(e.args or []),
+                env=dict(e.env or {}),
+            )
+        except EngineNotFoundError:
+            pass
+    return resolve_selected(registry, settings)
+
+
 def resolve_selected(
     registry: EngineRegistry, settings,
 ) -> ResolvedLaunch:

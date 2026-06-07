@@ -89,6 +89,7 @@ PERSISTED_FIELDS = (
     "ai_verifier_max_rounds",
     "ai_analyze_max_depth",
     "ai_verification_depth",
+    "analysis_engine_id",
     # ai_api_key intentionally NOT persisted: server mode reads SV_AI_API_KEY
     # from env; desktop mode will switch to OS keyring (later cycle). The
     # JSON settings file must never hold the plaintext key.
@@ -189,6 +190,9 @@ class Settings(BaseSettings):
     # bind to SV_AI_ANALYZE_MAX_DEPTH / SV_AI_VERIFICATION_DEPTH via SV_.
     ai_analyze_max_depth: int = _DEFAULT_AI_ANALYZE_MAX_DEPTH
     ai_verification_depth: int = _DEFAULT_AI_VERIFICATION_DEPTH
+    # Engine pinned for analysis (both engine-only and AI-driven tool calls).
+    # Empty string means "use the active HvE engine".
+    analysis_engine_id: str = ""
 
     @property
     def ai_model(self) -> str:
