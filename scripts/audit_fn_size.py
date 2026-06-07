@@ -22,12 +22,26 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 PY_ROOT = REPO / "server" / "sturddle_view"
 JS_ROOT = REPO / "web" / "app"
 EXEMPT_MARKER = "oversized-ok"
-_EXEMPT_LOOKBACK = 4
+_COMMENT_PREFIXES = ("//", "#", "*", "/*")
 
 
 def _exempt_above(lines: list[str], decl_idx: int) -> bool:
-    lo = max(0, decl_idx - _EXEMPT_LOOKBACK)
-    return any(EXEMPT_MARKER in lines[i] for i in range(lo, decl_idx))
+    """Marker is exempt if it appears in the contiguous comment block
+    directly above the declaration (any length), tolerating decorators and
+    blank lines between the block and the decl."""
+    i = decl_idx - 1
+    while i >= 0:
+        s = lines[i].strip()
+        if not s or s.startswith("@"):  # blank line / decorator
+            i -= 1
+            continue
+        if s.startswith(_COMMENT_PREFIXES):
+            if EXEMPT_MARKER in lines[i]:
+                return True
+            i -= 1
+            continue
+        break  # first non-comment, non-blank line ends the block
+    return False
 
 
 def scan_python(cap: int):

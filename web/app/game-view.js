@@ -130,6 +130,10 @@ function fmtScore(score) {
   return "";
 }
 
+// oversized-ok: stateful view controller -- ~40 closures over shared mutable
+// view state (humanWhite, gameId, viewing, editing, analyzing, names, board
+// refs) and a kind-dispatch applyEvent that mutates it. Returns the view API.
+// Splitting handlers out would thread that state in/out and scatter the flow.
 export function mountGameView(container, opts = {}) {
   const {
     events,

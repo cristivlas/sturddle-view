@@ -6,12 +6,13 @@ import { apiErrorDetail, inlineSvgIcon, pickFile, showDialog, toast } from "./di
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { mountEngineList } from "./engines.js";
-import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
 import { CHESS_CLOCK_SVG_INNER, CHESS_CLOCK_VIEW_BOX } from "./icons.js";
 import { mqMobile, mqNarrowDialog } from "./breakpoints.js";
 import { RIBBON_SIDE_KEY } from "./ribbon-window.js";
 import { buildAnalysisTab } from "./settings-analysis-tab.js";
+import { buildSprtTab } from "./settings-sprt-tab.js";
+import { buildTournamentTab } from "./settings-tournament-tab.js";
 
 const SETTINGS_ENGINES_COL_PCTS_KEY = STORAGE_KEY.ENGINES_SETTINGS_COL_PCTS;
 export const PLAYER_NAME_KEY = STORAGE_KEY.PLAYER_NAME;
@@ -728,154 +729,14 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       }
 
       // --- Tournament tab ---
-      const tournamentTab = document.createElement("wa-tab");
-      tournamentTab.panel = "tournament";
-      tournamentTab.textContent = "Tournament";
-      const tournamentPanel = document.createElement("wa-tab-panel");
-      tournamentPanel.name = "tournament";
-
-      const fastchessLabel = document.createDocumentFragment();
-      const fastchessLink = document.createElement("a");
-      fastchessLink.href = "https://github.com/Disservin/fastchess";
-      fastchessLink.target = "_blank";
-      fastchessLink.rel = "noopener noreferrer";
-      fastchessLink.textContent = "Fastchess";
-      fastchessLabel.append(fastchessLink, document.createTextNode(" binary"));
-
-      tournamentPanel.append(
-        pathRow(
-          fastchessLabel,
-          tournamentInitial.fastchess_path || tournamentInitial.fastchess_detected || "",
-          "executable",
-          "Pick fastchess binary",
-          (p) => putTournamentSettings({ fastchess_path: p }),
-        ),
-        pathRow(
-          "Tournaments root",
-          tournamentInitial.tournaments_root || "",
-          "directory",
-          "Pick tournaments root",
-          (p) => putTournamentSettings({ tournaments_root: p }),
-        ),
-      );
-
-      const tplHost = document.createElement("div");
-      tplHost.className = "settings-tournament-tpl-mount";
-      const tplCtl = mountTournamentTemplateForm({
-        container: tplHost,
-        initialValues: tournamentInitial.default_template || {},
+      const { tab: tournamentTab, panel: tournamentPanel } = buildTournamentTab({
+        tournamentInitial, putTournamentSettings, pathRow, debounce,
       });
-      tournamentPanel.appendChild(tplHost);
-
-      // Auto-save the template on input changes (debounced).
-      const persistTemplate = debounce(() => {
-        let template;
-        try {
-          template = tplCtl.getValues();
-        } catch (e) {
-          toast(e.message, { variant: "danger" });
-          return;
-        }
-        putTournamentSettings({ default_template: template });
-      }, 400);
-      tplHost.addEventListener("input", persistTemplate);
-      tplHost.addEventListener("change", persistTemplate);
 
       // --- SPRT tab ---
-      const SPRT_FIELD_DEFAULTS = { elo0: 0, elo1: 10, alpha: 0.05, beta: 0.05, model: "normalized" };
-      const sprtTab = document.createElement("wa-tab");
-      sprtTab.panel = "sprt";
-      sprtTab.textContent = "SPRT";
-      const sprtPanel = document.createElement("wa-tab-panel");
-      sprtPanel.name = "sprt";
-
-      const sprtInitial = tournamentInitial.sprt_defaults || {};
-
-      function makeSprtField(key, labelText, { step } = {}) {
-        const row = document.createElement("div");
-        row.className = "settings-row";
-        const lab = document.createElement("label");
-        lab.textContent = labelText;
-        const el = document.createElement("wa-input");
-        el.size = "small";
-        el.type = "number";
-        el.setAttribute("autocomplete", "off");
-        if (step != null) el.setAttribute("step", String(step));
-        const v = sprtInitial[key] != null ? sprtInitial[key] : SPRT_FIELD_DEFAULTS[key];
-        el.value = String(v);
-        el.dataset.key = key;
-        row.append(lab, el);
-        return { row, el };
-      }
-
-      const sprtElo0F  = makeSprtField("elo0",  "Elo0");
-      const sprtElo1F  = makeSprtField("elo1",  "Elo1");
-      const sprtAlphaF = makeSprtField("alpha", "Alpha", { step: 0.01 });
-      const sprtBetaF  = makeSprtField("beta",  "Beta",  { step: 0.01 });
-      const sprtElo0  = sprtElo0F.el;
-      const sprtElo1  = sprtElo1F.el;
-      const sprtAlpha = sprtAlphaF.el;
-      const sprtBeta  = sprtBetaF.el;
-
-      const sprtModelRow = document.createElement("div");
-      sprtModelRow.className = "settings-row";
-      const sprtModelLabel = document.createElement("label");
-      sprtModelLabel.textContent = "Model";
-      const sprtModelSelect = document.createElement("wa-select");
-      sprtModelSelect.size = "small";
-      sprtModelSelect.setAttribute("distance", "4");
-      for (const [val, lbl] of [["normalized", "Pentanomial (logistic Elo)"], ["logistic", "Logistic (trinomial)"]]) {
-        const o = document.createElement("wa-option");
-        o.value = val;
-        o.textContent = lbl;
-        sprtModelSelect.appendChild(o);
-      }
-      sprtModelSelect.value = sprtInitial.model || "normalized";
-      sprtModelRow.append(sprtModelLabel, sprtModelSelect);
-
-      const sprtGrid = document.createElement("div");
-      sprtGrid.className = "sprt-settings-grid";
-      sprtGrid.append(sprtElo0F.row, sprtElo1F.row, sprtAlphaF.row, sprtBetaF.row, sprtModelRow);
-      sprtPanel.appendChild(sprtGrid);
-
-      function readSprtDefaults() {
-        return {
-          elo0:  Number(sprtElo0.value),
-          elo1:  Number(sprtElo1.value),
-          alpha: Number(sprtAlpha.value),
-          beta:  Number(sprtBeta.value),
-          model: sprtModelSelect.value || "normalized",
-        };
-      }
-
-      // Validation mirrors server-side compute_sprt: elo0<elo1, 0<alpha<1,
-      // 0<beta<1, all finite. Invalid fields get .sprt-invalid; persistence
-      // is skipped while any field is invalid (last-valid wins, no block
-      // on dialog close).
-      function validateSprtDefaults() {
-        const v = readSprtDefaults();
-        const bad = new Set();
-        if (!Number.isFinite(v.elo0)) bad.add("elo0");
-        if (!Number.isFinite(v.elo1)) bad.add("elo1");
-        if (Number.isFinite(v.elo0) && Number.isFinite(v.elo1) && v.elo0 >= v.elo1) {
-          bad.add("elo0"); bad.add("elo1");
-        }
-        if (!(Number.isFinite(v.alpha) && v.alpha > 0 && v.alpha < 1)) bad.add("alpha");
-        if (!(Number.isFinite(v.beta)  && v.beta  > 0 && v.beta  < 1)) bad.add("beta");
-        for (const [key, el] of [["elo0", sprtElo0], ["elo1", sprtElo1], ["alpha", sprtAlpha], ["beta", sprtBeta]]) {
-          el.classList.toggle("sprt-invalid", bad.has(key));
-        }
-        return bad.size === 0;
-      }
-
-      const persistSprt = debounce(() => {
-        if (!validateSprtDefaults()) return;
-        putTournamentSettings({ sprt_defaults: readSprtDefaults() });
-      }, 400);
-
-      sprtPanel.addEventListener("input", () => { validateSprtDefaults(); persistSprt(); });
-      sprtPanel.addEventListener("change", () => { validateSprtDefaults(); persistSprt(); });
-      validateSprtDefaults();
+      const { tab: sprtTab, panel: sprtPanel } = buildSprtTab({
+        tournamentInitial, putTournamentSettings, debounce,
+      });
 
       // --- AI Analysis tab ---
       const { tab: analysisTab, panel: analysisPanel } = buildAnalysisTab({

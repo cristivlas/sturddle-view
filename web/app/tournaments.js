@@ -22,6 +22,11 @@ const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
 // matches the `--ribbon-w` CSS var on .tournaments-body.
 const RIBBON_W_FALLBACK_PX = 36;
 
+// oversized-ok: stateful list controller -- rendering, verbs (start/stop/
+// remove), live WS updates, and dialogs all close over shared state
+// (tournaments, activeId, selectedId, settings). The pure formatters could
+// split out but the dialog builders stay coupled, so the core remains over
+// cap regardless; splitting would scatter the controller flow.
 export function mountTournaments({ container, api, events, log, token }) {
   container.innerHTML = `
     <div class="tournaments-panel">
