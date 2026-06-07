@@ -116,6 +116,14 @@ def test_move_illegal_for_side_to_move_flagged():
     assert "Qd4" in find_illegal_moves("Black should consider Qd4", board)
 
 
+def test_ambiguous_san_not_flagged():
+    # Two rooks (a1, f1) can both reach d1, so "Rd1" is a real but ambiguous
+    # SAN -- python-chess raises AmbiguousMoveError. The checker treats that as
+    # a legal move named imprecisely, not an illegal one, so it stays quiet.
+    board = _board("4k3/8/8/8/8/8/8/R4RK1 w - - 0 1")
+    assert find_illegal_moves("consider Rd1 now", board) == []
+
+
 # --- find_false_piece_claims / iter_false_claim_squares --------------------
 
 def test_false_piece_claim_flagged():
@@ -410,6 +418,16 @@ def test_white_only_numbered_shorthand_skipped():
     # "1.e4 2.Nf3" omits Black's plies -> not a replayable sequence, skipped.
     board = chess.Board()
     assert find_illegal_continuations("the plan 1.e4 2.Nf3 develops", board) == []
+
+
+def test_run_with_illegal_first_move_not_a_line_flag():
+    # "Bb5 Nc6" at startpos: the FIRST move is illegal (e-pawn unmoved), so the
+    # line check does not own the run -- it yields no line flag and claims no
+    # handled span, leaving the bad token to the per-token recognizer.
+    board = chess.Board()
+    text = "the line Bb5 Nc6 holds"
+    assert find_illegal_continuations(text, board) == []
+    assert handled_continuation_spans(text, board) == []
 
 
 # A numbered run anchored at the current move: 24.Nf6+ Qxf6 25.Qc7 ... 25...Bg4.

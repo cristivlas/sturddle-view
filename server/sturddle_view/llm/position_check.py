@@ -122,15 +122,6 @@ def _first_seen(seen: set[str], keys: list[str]) -> bool:
     return True
 
 
-_PIECE_LETTER_TO_TYPE = {
-    "K": chess.KING,
-    "Q": chess.QUEEN,
-    "R": chess.ROOK,
-    "B": chess.BISHOP,
-    "N": chess.KNIGHT,
-}
-
-
 _GLYPH_RE = re.compile(r"[!?]{1,2}$")
 
 
@@ -153,22 +144,27 @@ def _is_san_label(bare: str, board: chess.Board) -> bool:
     piece = board.piece_at(square)
     if piece is None:
         return False
-    if piece.piece_type != _PIECE_LETTER_TO_TYPE[m.group(1)]:
+    # group(1) is regex-constrained to [KQRBN]; from_symbol's color is
+    # irrelevant -- we compare piece_type only.
+    if piece.piece_type != chess.Piece.from_symbol(m.group(1)).piece_type:
         return False
     return piece.color == board.turn
 
 
+def _is_phantom_capture(bare: str, move: chess.Move, board: chess.Board) -> bool:
+    """True when `bare` writes a capture (`x`) but `move` takes nothing.
+    python-chess parses 'Bxe4' onto an empty e4 as a quiet move, masking a
+    false capture claim; both the parse and the legality check reject it."""
+    return "x" in bare and not board.is_capture(move)
+
+
 def _parse_san_real(board: chess.Board, bare: str) -> chess.Move | None:
-    """parse_san, but reject a phantom capture: `x` in the token while the
-    parsed move captures nothing. python-chess parses 'Bxe4' onto an empty
-    e4 as a quiet move, masking a false capture claim."""
+    """parse_san, but reject a phantom capture (see `_is_phantom_capture`)."""
     try:
         move = board.parse_san(bare)
     except (chess.IllegalMoveError, chess.InvalidMoveError, chess.AmbiguousMoveError):
         return None
-    if "x" in bare and not board.is_capture(move):
-        return None
-    return move
+    return None if _is_phantom_capture(bare, move, board) else move
 
 
 def _token_is_illegal(bare: str, board: chess.Board) -> bool:
@@ -179,7 +175,7 @@ def _token_is_illegal(bare: str, board: chess.Board) -> bool:
     except (chess.InvalidMoveError, chess.AmbiguousMoveError):
         return False
     # Parsed cleanly -- illegal only if it claims a capture but takes nothing.
-    return "x" in bare and not board.is_capture(move)
+    return _is_phantom_capture(bare, move, board)
 
 
 def _san_uci_or_label(bare: str, board: chess.Board) -> str:
@@ -312,6 +308,14 @@ def _move_legal(san: str, board: chess.Board) -> bool:
     return True
 
 
+def _line_check_owns_run(moves, anchor: chess.Board) -> bool:
+    """True iff the line check takes responsibility for this run: its first move
+    is legal at the anchor. Such a run is either cleared (replays whole) or
+    flagged at its breaking move. A run whose first move is already illegal is
+    left to the per-token recognizer instead, so the shared guard lives here."""
+    return _move_legal(moves[0], anchor)
+
+
 def _first_broken_move(moves, board: chess.Board) -> int | None:
     """Index of the first move that won't play in order from a copy of `board`,
     or None if the whole line plays. Moves after the break can't be judged --
@@ -365,7 +369,7 @@ def iter_illegal_continuations(text: str, board: chess.Board):
     Black's "Qxf6" in "24.Nf6+ Qxf6" carries no "..." marker and would
     otherwise read as an illegal White move."""
     for _run, _span, moves, move_spans, anchor in _iter_anchored_runs(text, board):
-        if not _move_legal(moves[0], anchor):
+        if not _line_check_owns_run(moves, anchor):
             continue
         broken = _first_broken_move(moves, anchor)
         if broken is None:
@@ -419,7 +423,7 @@ def handled_continuation_spans(text: str, board: chess.Board) -> list[tuple[int,
     return [
         span
         for _run, span, moves, _move_spans, anchor in _iter_anchored_runs(text, board)
-        if _move_legal(moves[0], anchor)
+        if _line_check_owns_run(moves, anchor)
     ]
 
 
