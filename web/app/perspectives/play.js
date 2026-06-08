@@ -978,6 +978,258 @@ function refreshButtons(state) {
   });
 }
 
+// Play/edit action handlers. Thin mount thunks delegate here with `state`.
+
+async function onResignImpl(state) {
+  const ok = await confirm({
+    message: MSG.CONFIRM_RESIGN,
+    okLabel: MSG.RESIGN,
+    cancelLabel: MSG.KEEP_PLAYING,
+    destructive: true,
+  });
+  if (!ok) return;
+  try {
+    await state.ctx.api("POST", "/game/resign", {});
+  } catch (e) {
+    reportError(state.ctx, MSG.RESIGN_FAILED, e);
+  }
+}
+
+async function onSavePgnImpl(state) {
+  const needsPause = !state.viewing && !state.paused && !state.gameOver && state.resignAvailable;
+  if (needsPause) {
+    try { await state.ctx.api("POST", "/game/pause", {}); } catch (e) {
+      reportError(state.ctx, MSG.SAVE_PGN_FAILED, e);
+      return;
+    }
+  }
+  try {
+    const r = await fetch("/game/pgn");
+    if (!r.ok) {
+      const detail = await r.text();
+      throw new Error(`GET /game/pgn -> ${r.status} ${detail}`);
+    }
+    const cd = r.headers.get("Content-Disposition") || "";
+    const match = cd.match(/filename="([^"]+)"/);
+    const filename = match ? match[1] : "game.pgn";
+    const bridge = window.pywebview && window.pywebview.api && window.pywebview.api.save_pgn;
+    if (bridge) {
+      // Desktop (PyWebView/WebView2): blob downloads don't trigger a
+      // save dialog, so route through the native bridge instead.
+      const text = await r.text();
+      const res = await window.pywebview.api.save_pgn(text, filename);
+      if (res && res.ok) {
+        toast(`Saved to ${res.path}`, { variant: "success" });
+      } else if (res && res.cancelled) {
+        // user dismissed dialog; stay silent
+      } else {
+        throw new Error((res && res.error) || "save failed");
+      }
+    } else {
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  } catch (e) {
+    reportError(state.ctx, MSG.SAVE_PGN_FAILED, e);
+  } finally {
+    if (needsPause) {
+      try { await state.ctx.api("POST", "/game/resume", {}); } catch (_) { /* best-effort */ }
+    }
+  }
+}
+
+async function onTakebackImpl(state) {
+  if (state.takebackPending) return;
+  state.takebackPending = true;
+  try {
+    await state.ctx.api("POST", "/game/takeback", {});
+  } catch (e) {
+    reportError(state.ctx, MSG.TAKEBACK_FAILED, e);
+  } finally {
+    state.takebackPending = false;
+  }
+}
+
+async function onSwitchSidesImpl(state) {
+  try {
+    await state.ctx.api("POST", "/game/switch-sides", {});
+  } catch (e) {
+    reportError(state.ctx, MSG.SWITCH_SIDES_FAILED, e);
+  }
+}
+
+async function onPauseImpl(state) {
+  // Completed AI analysis in play mode: Resume exits analysis (server
+  // lands in PAUSED) then resumes to PLAY, so one click returns to the
+  // game. stopAnalysisFromUi tears down the AI window and replay buffer.
+  if (aiAnalysisDone(state)) {
+    try {
+      await stopAnalysisFromUi(state);
+      await state.ctx.api("POST", "/game/resume", {});
+    } catch (e) {
+      reportError(state.ctx, MSG.RESUME_FAILED, e);
+    }
+    return;
+  }
+  try {
+    await state.ctx.api("POST", state.paused ? "/game/resume" : "/game/pause", {});
+  } catch (e) {
+    reportError(state.ctx, state.paused ? MSG.RESUME_FAILED : MSG.PAUSE_FAILED, e);
+  }
+}
+
+async function onNewGameImpl(state) {
+  if (_playInProgress) {
+    if (!await _confirmDiscardActiveGame({
+      message: MSG.CONFIRM_NEW_GAME,
+      okLabel: MSG.NEW_GAME,
+    })) return;
+  } else {
+    const ok = await confirmDiscardViewedGame({
+      viewing: state.viewing,
+      currentSummary: _viewingSummary,
+      analysisRunning: state.analyzing,
+    });
+    if (!ok) return;
+  }
+  try {
+    const playerName = getConfiguredPlayerName();
+    state.view.setGameId(null);
+    state.view.setPlayerName(playerName);
+    closeAi();
+    const r = await state.ctx.api("POST", "/game/new", { player_name: playerName });
+    state.view.setGameId(r.game_id);
+    state.view.setHumanWhite(!!r.human_white);
+    state.view.reset();
+    state.resignAvailable = true;
+    // Snapshot the TC settings used for THIS game so a later mid-game
+    // edit can detect drift.
+    try {
+      const s = await state.ctx.api("GET", "/settings");
+      state.gameTcInitial = Number(s.tc_initial_seconds);
+      state.gameTcIncrement = Number(s.tc_increment_seconds);
+    } catch {
+      // ignore — drift detection just won't trigger for TC.
+    }
+    state.refreshButtons();
+  } catch (e) {
+    reportError(state.ctx, MSG.NEW_GAME_FAILED, e);
+  }
+}
+
+async function onImportImpl(state) {
+  if (!await _confirmDiscardActiveGame({
+    message: MSG.CONFIRM_IMPORT,
+    okLabel: MSG.IMPORT,
+  })) return;
+  // Dialog validates (parse errors surface inline) but does not import.
+  const result = await showImportPositionDialog({ api: state.ctx.api });
+  if (!result) return;
+  // Same game already in view -- stay put, no re-import needed.
+  if (state.viewing && result.hash && result.hash === _viewingHash) {
+    if (state.viewingGameId) toast(`Viewing ${state.viewingGameId}`);
+    return;
+  }
+  // Different game while viewing -- confirm before replacing.
+  if (!await _confirmReplaceViewedGame(state, { incomingHash: result.hash, incomingSummary: result.summary })) return;
+  try {
+    closeAi();
+    const r = await state.ctx.api("POST", "/game/import", {
+      format: result.format, text: result.text, opening: result.opening || undefined,
+    });
+    state.view.setGameId(r.game_id);
+    state.ctx.api("POST", "/game/sync", {}).catch(() => {});
+  } catch (e) {
+    reportError(state.ctx, MSG.IMPORT_FAILED, e);
+  }
+}
+
+async function onPlayFromHereImpl(state) {
+  if (state.playFromHereInflight) return;  // debounce double-click
+  state.playFromHereInflight = true;
+  setDisabled(state.el.viewPlayFromHereBtn, true);
+  // Reset gameId so the racing board_update from new_game (which fires
+  // BEFORE the API response carrying the new id) isn't dropped by the
+  // game_id filter — that drop loses the human_white/name swap.
+  state.view.setGameId(null);
+  try {
+    const playerName = getConfiguredPlayerName();
+    state.view.setPlayerName(playerName);
+    closeAi();
+    const r = await state.ctx.api("POST", "/game/view/play-from-here", { player_name: playerName });
+    state.view.setGameId(r.game_id);
+    // Snapshot TC for drift detection (mirrors onNewGame).
+    try {
+      const s = await state.ctx.api("GET", "/settings");
+      state.gameTcInitial = Number(s.tc_initial_seconds);
+      state.gameTcIncrement = Number(s.tc_increment_seconds);
+    } catch {
+      // ignore
+    }
+  } catch (e) {
+    reportError(state.ctx, MSG.PLAY_FROM_HERE_FAILED, e);
+  } finally {
+    state.playFromHereInflight = false;
+    // Don't re-enable directly; state.refreshButtons() drives it next time
+    // viewing flips, and by then the button is hidden anyway.
+  }
+}
+
+async function onEditCancelImpl(state) {
+  try {
+    const r = await state.ctx.api("POST", "/game/edit/cancel", {});
+    if (r?.game_id) state.view.setGameId(r.game_id);
+  } catch (e) {
+    reportError(state.ctx, MSG.CANCEL_EDIT_FAILED, e);
+  }
+}
+
+async function onEditConfirmImpl(state) {
+  const fen = state.view.getEditFen();
+  // Server mints a fresh game_id on a real position change. Clear the
+  // filter so the board_update SSE (which races the POST response) isn't
+  // dropped for not matching our stale id.
+  state.view.setGameId(null);
+  const payload = { fen };
+  if (state.pendingAnnotation !== null) {
+    payload.apply_comment = true;
+    payload.comment_text = state.pendingAnnotation;
+  }
+  try {
+    const r = await state.ctx.api("POST", "/game/edit/commit", payload);
+    state.view.setGameId(r.game_id);
+    // Annotation-only commit can promote an unsaved fork child to
+    // recents (xgame nav "lazy commit"). Game_id is unchanged so
+    // the board_update doesn't trigger fetchXgameInfo -- refetch
+    // explicitly so the fork glyph + banner state catch up.
+    if (r.game_id) fetchXgameInfo(state, r.game_id);
+  } catch (e) {
+    reportError(state.ctx, MSG.INVALID_POSITION, e);
+  }
+}
+
+async function onEditAnnotateImpl(state) {
+  // Preload from pendingAnnotation (if user already staged something
+  // this edit session) or fall back to the server's current comment.
+  const preload = state.pendingAnnotation ?? (state.lastViewComment ?? "");
+  const result = await editAnnotation({ currentText: preload });
+  if (result?.apply) {
+    state.pendingAnnotation = result.text;
+    // Optimistically reflect the staged text in the commentary dock
+    // so the user sees their pending change. Lives until edit-commit
+    // (server then makes it real) or edit-cancel (we restore the
+    // pre-edit text from lastViewComment).
+    if (isCommentaryOpen()) {
+      setCommentaryText(state.pendingAnnotation || null);
+    }
+  }
+}
+
 export const playPerspective = {
   id: "play",
   label: "Play",
@@ -995,6 +1247,20 @@ export const playPerspective = {
       viewingGameId: null,
       lastViewNavKind: "precise",
       editing: false,
+      showPgnComments: true,
+      suppressCommentsForEditTransition: false,
+      lastViewComment: null,
+      gameTcInitial: null,
+      gameTcIncrement: null,
+      viewGameOverAlertShown: false,
+      dismissGameOverToast: null,
+      pendingAnnotation: null,
+      viewFlipped: false,
+      takebackPending: false,
+      commentNavPrev: null,
+      commentNavNext: null,
+      playFromHereInflight: false,
+      reanalyzeInFlight: false,
       aiEnabled: false,
       aiTitleModel: "",
       noEngine: false,
@@ -1182,30 +1448,27 @@ export const playPerspective = {
     state.view = view;
 
     // Settings cache (refreshed on settings-changed).
-    let showPgnComments = true; // view-mode commentary window
     // True only while play->view->edit is in flight. Opening the dock
     // mid-transition fires a seeding /view/goto with the stale (pre-flip)
     // viewCursor=0, clobbering the live-position cursor the server lands
     // at via view_last(). Cleared in _onServerEditingStop.
-    let suppressCommentsForEditTransition = false;
     const commentsHost = root.querySelector(".play-comments-host");
     setCommentaryDockContainer(commentsHost);
     setAiInlineHost(root.querySelector(".play-ai-inline"));
-    let lastViewComment = null;
     // X on the commentary window (dock slot or float) -> clear setting.
     setOnUserCloseCommentary(() => {
-      showPgnComments = false;
+      state.showPgnComments = false;
       ctx.api("PUT", "/settings", { view_show_pgn_comments: false })
         .catch((e) => reportError(ctx, MSG.SETTING_SAVE_FAILED, e));
     });
     function syncCommentsVisibility() {
       if (!commentsHost) return;
-      const shouldShow = state.viewing && showPgnComments && !isMobileLayout()
-        && !suppressCommentsForEditTransition;
+      const shouldShow = state.viewing && state.showPgnComments && !isMobileLayout()
+        && !state.suppressCommentsForEditTransition;
       const open = isCommentaryOpen();
       if (shouldShow) {
         if (!open) openCommentary();
-        setCommentaryText(lastViewComment);
+        setCommentaryText(state.lastViewComment);
         // Re-open rebuilds the body with nav buttons disabled; re-push the
         // still-current targets (they survive a hide -- view-mode state).
         pushNavToUi();
@@ -1226,8 +1489,6 @@ export const playPerspective = {
     setOnUserCloseAi(() => { stopAnalysisFromUi(state); });
     // Snapshot of TC fields used at the start of the current game; lets
     // us tell the user "applies on next game" if they edit TC mid-play.
-    let gameTcInitial = null;
-    let gameTcIncrement = null;
     // Latest AI provider/model from settings, captured at analyze-start
     // time. We do not write to setAiTitle on every settings refresh --
     // the panel title should reflect what is actually running, not what
@@ -1236,7 +1497,7 @@ export const playPerspective = {
       try {
         const s = await ctx.api("GET", "/settings");
         state.allowTakeback = s.allow_takeback !== false;
-        showPgnComments = s.view_show_pgn_comments !== false;
+        state.showPgnComments = s.view_show_pgn_comments !== false;
         state.aiEnabled = !!s.ai_enabled;
         state.aiTitleModel = s.ai_enabled ? (s.ai_model || "") : "";
         syncCommentsVisibility();
@@ -1244,9 +1505,9 @@ export const playPerspective = {
           const drift = [];
           // TC: compare against the snapshot taken at game start.
           if (
-            gameTcInitial !== null &&
-            (Number(s.tc_initial_seconds) !== gameTcInitial ||
-              Number(s.tc_increment_seconds) !== gameTcIncrement)
+            state.gameTcInitial !== null &&
+            (Number(s.tc_initial_seconds) !== state.gameTcInitial ||
+              Number(s.tc_increment_seconds) !== state.gameTcIncrement)
           ) {
             drift.push("time control");
           }
@@ -1260,8 +1521,8 @@ export const playPerspective = {
         // Always refresh the snapshot from current settings when there is
         // no active game (so the "next game" comparison is accurate).
         if (!state.resignAvailable) {
-          gameTcInitial = Number(s.tc_initial_seconds);
-          gameTcIncrement = Number(s.tc_increment_seconds);
+          state.gameTcInitial = Number(s.tc_initial_seconds);
+          state.gameTcIncrement = Number(s.tc_increment_seconds);
         }
       } catch {
         // ignore
@@ -1292,14 +1553,11 @@ export const playPerspective = {
     ctx.api("POST", "/game/sync", {}).catch(() => {});
 
     // View mode state (set from board_update.view payload).
-    let viewGameOverAlertShown = false;
-    let dismissGameOverToast = null;
     // Annotation staged by the user via the edit-mode annotation modal.
     // null  -> no pending change; /edit/commit goes with apply_comment=false.
     // ""    -> user explicitly cleared; server treats as delete.
     // "text"-> set/replace at the edit-entry ply.
     // Reset on every entry to edit mode and on /edit/cancel.
-    let pendingAnnotation = null;
     const pausedBadge = document.getElementById("paused-badge");
     const finishedBadge = document.getElementById("finished-badge");
     function syncPausedUi() {
@@ -1323,8 +1581,7 @@ export const playPerspective = {
     // playing yet so "which side am I" is meaningless). Persisted so it
     // survives perspective remounts; applied on each entry into view mode.
     const VIEW_FLIP_KEY = STORAGE_KEY.VIEW_FLIPPED;
-    let viewFlipped = false;
-    try { viewFlipped = localStorage.getItem(VIEW_FLIP_KEY) === "1"; } catch { /* */ }
+    try { state.viewFlipped = localStorage.getItem(VIEW_FLIP_KEY) === "1"; } catch { /* */ }
 
     // Private replay-buffer state + the deps the AI dispatch needs.
     const ai = { rehydrating: true, liveBuffer: [], maxSeq: 0 };
@@ -1380,9 +1637,9 @@ export const playPerspective = {
           if (typeof evt.payload.analyzing === "boolean") setAnalyzing(state, evt.payload.analyzing);
           if (state.viewing) {
             if (!wasViewing || state.viewingGameId !== prevGameId) {
-              viewGameOverAlertShown = false;
-              dismissGameOverToast?.();
-              dismissGameOverToast = null;
+              state.viewGameOverAlertShown = false;
+              state.dismissGameOverToast?.();
+              state.dismissGameOverToast = null;
               // Game switched (or first entry into view). Clear stale
               // x-game state synchronously and close any live toasts
               // BEFORE the in-band refreshXgameToasts (called later
@@ -1395,40 +1652,40 @@ export const playPerspective = {
             state.viewCursor = v.cursor ?? 0;
             state.viewTotalPlies = v.total_plies ?? 0;
             state.viewGameOver = !!v.game_over;
-            lastViewComment = v.comment ?? null;
+            state.lastViewComment = v.comment ?? null;
             _viewingHash = v.view_hash ?? null;
             _viewingSummary = v.view_summary ?? null;
             _viewing = true;
             // Single source of truth for commentary navigation. The server
             // ships fresh prev/next with every view payload, so game
             // switches (import while open) can't leave stale plies behind.
-            commentNavPrev = v.prev_comment ?? null;
-            commentNavNext = v.next_comment ?? null;
+            state.commentNavPrev = v.prev_comment ?? null;
+            state.commentNavNext = v.next_comment ?? null;
             pushNavToUi();
             syncCommentsVisibility();
             if (v.result) showFinishedBadge(resultBadge(v.result));
-            if (state.viewGameOver && state.viewCursor === state.viewTotalPlies && v.result && !viewGameOverAlertShown) {
-              viewGameOverAlertShown = true;
+            if (state.viewGameOver && state.viewCursor === state.viewTotalPlies && v.result && !state.viewGameOverAlertShown) {
+              state.viewGameOverAlertShown = true;
               const node = document.createElement("span");
               node.className = "toast-sort-msg";
               const msg = document.createElement("span");
               msg.className = "toast-grow";
               msg.textContent = formatViewGameOver(v);
-              node.append(msg, makeToastDismissBtn(() => { dismissGameOverToast?.(); dismissGameOverToast = null; }));
-              dismissGameOverToast = toast(node, { variant: "neutral", duration: 6000 });
+              node.append(msg, makeToastDismissBtn(() => { state.dismissGameOverToast?.(); state.dismissGameOverToast = null; }));
+              state.dismissGameOverToast = toast(node, { variant: "neutral", duration: 6000 });
             }
             state.resignAvailable = false;
             // Board is read-only in view mode; the user navigates via ribbon.
             view.setEnabled(false);
             // Restore the user's prior flip preference on entry into view mode.
-            if (!wasViewing) view.setHumanWhite(!viewFlipped);
+            if (!wasViewing) view.setHumanWhite(!state.viewFlipped);
           } else {
-            lastViewComment = null;
+            state.lastViewComment = null;
             _viewingHash = null;
             _viewingSummary = null;
             _viewing = false;
-            commentNavPrev = null;
-            commentNavNext = null;
+            state.commentNavPrev = null;
+            state.commentNavNext = null;
             pushNavToUi();
             syncCommentsVisibility();
             if (wasViewing) restoreDebugWindows(ctx.events);
@@ -1518,175 +1775,19 @@ export const playPerspective = {
       view.applyEvent(_cachedBoardUpdate);
     }
 
-    const onNewGame = async () => {
-      if (_playInProgress) {
-        if (!await _confirmDiscardActiveGame({
-          message: MSG.CONFIRM_NEW_GAME,
-          okLabel: MSG.NEW_GAME,
-        })) return;
-      } else {
-        const ok = await confirmDiscardViewedGame({
-          viewing: state.viewing,
-          currentSummary: _viewingSummary,
-          analysisRunning: state.analyzing,
-        });
-        if (!ok) return;
-      }
-      try {
-        const playerName = getConfiguredPlayerName();
-        view.setGameId(null);
-        view.setPlayerName(playerName);
-        closeAi();
-        const r = await ctx.api("POST", "/game/new", { player_name: playerName });
-        view.setGameId(r.game_id);
-        view.setHumanWhite(!!r.human_white);
-        view.reset();
-        state.resignAvailable = true;
-        // Snapshot the TC settings used for THIS game so a later mid-game
-        // edit can detect drift.
-        try {
-          const s = await ctx.api("GET", "/settings");
-          gameTcInitial = Number(s.tc_initial_seconds);
-          gameTcIncrement = Number(s.tc_increment_seconds);
-        } catch {
-          // ignore — drift detection just won't trigger for TC.
-        }
-        refreshButtons(state);
-      } catch (e) {
-        reportError(ctx, MSG.NEW_GAME_FAILED, e);
-      }
-    };
+    const onNewGame = () => onNewGameImpl(state);
 
-    const onResign = async () => {
-      const ok = await confirm({
-        message: MSG.CONFIRM_RESIGN,
-        okLabel: MSG.RESIGN,
-        cancelLabel: MSG.KEEP_PLAYING,
-        destructive: true,
-      });
-      if (!ok) return;
-      try {
-        await ctx.api("POST", "/game/resign", {});
-      } catch (e) {
-        reportError(ctx, MSG.RESIGN_FAILED, e);
-      }
-    };
+    const onResign = () => onResignImpl(state);
 
-    const onSavePgn = async () => {
-      const needsPause = !state.viewing && !state.paused && !state.gameOver && state.resignAvailable;
-      if (needsPause) {
-        try { await ctx.api("POST", "/game/pause", {}); } catch (e) {
-          reportError(ctx, MSG.SAVE_PGN_FAILED, e);
-          return;
-        }
-      }
-      try {
-        const r = await fetch("/game/pgn");
-        if (!r.ok) {
-          const detail = await r.text();
-          throw new Error(`GET /game/pgn -> ${r.status} ${detail}`);
-        }
-        const cd = r.headers.get("Content-Disposition") || "";
-        const match = cd.match(/filename="([^"]+)"/);
-        const filename = match ? match[1] : "game.pgn";
-        const bridge = window.pywebview && window.pywebview.api && window.pywebview.api.save_pgn;
-        if (bridge) {
-          // Desktop (PyWebView/WebView2): blob downloads don't trigger a
-          // save dialog, so route through the native bridge instead.
-          const text = await r.text();
-          const res = await window.pywebview.api.save_pgn(text, filename);
-          if (res && res.ok) {
-            toast(`Saved to ${res.path}`, { variant: "success" });
-          } else if (res && res.cancelled) {
-            // user dismissed dialog; stay silent
-          } else {
-            throw new Error((res && res.error) || "save failed");
-          }
-        } else {
-          const blob = await r.blob();
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = filename;
-          a.click();
-          URL.revokeObjectURL(url);
-        }
-      } catch (e) {
-        reportError(ctx, MSG.SAVE_PGN_FAILED, e);
-      } finally {
-        if (needsPause) {
-          try { await ctx.api("POST", "/game/resume", {}); } catch (_) { /* best-effort */ }
-        }
-      }
-    };
+    const onSavePgn = () => onSavePgnImpl(state);
 
-    let takebackPending = false;
-    const onTakeback = async () => {
-      if (takebackPending) return;
-      takebackPending = true;
-      try {
-        await ctx.api("POST", "/game/takeback", {});
-      } catch (e) {
-        reportError(ctx, MSG.TAKEBACK_FAILED, e);
-      } finally {
-        takebackPending = false;
-      }
-    };
+    const onTakeback = () => onTakebackImpl(state);
 
-    const onImport = async () => {
-      if (!await _confirmDiscardActiveGame({
-        message: MSG.CONFIRM_IMPORT,
-        okLabel: MSG.IMPORT,
-      })) return;
-      // Dialog validates (parse errors surface inline) but does not import.
-      const result = await showImportPositionDialog({ api: ctx.api });
-      if (!result) return;
-      // Same game already in view -- stay put, no re-import needed.
-      if (state.viewing && result.hash && result.hash === _viewingHash) {
-        if (state.viewingGameId) toast(`Viewing ${state.viewingGameId}`);
-        return;
-      }
-      // Different game while viewing -- confirm before replacing.
-      if (!await _confirmReplaceViewedGame(state, { incomingHash: result.hash, incomingSummary: result.summary })) return;
-      try {
-        closeAi();
-        const r = await ctx.api("POST", "/game/import", {
-          format: result.format, text: result.text, opening: result.opening || undefined,
-        });
-        view.setGameId(r.game_id);
-        ctx.api("POST", "/game/sync", {}).catch(() => {});
-      } catch (e) {
-        reportError(ctx, MSG.IMPORT_FAILED, e);
-      }
-    };
+    const onImport = () => onImportImpl(state);
 
-    const onSwitchSides = async () => {
-      try {
-        await ctx.api("POST", "/game/switch-sides", {});
-      } catch (e) {
-        reportError(ctx, MSG.SWITCH_SIDES_FAILED, e);
-      }
-    };
+    const onSwitchSides = () => onSwitchSidesImpl(state);
 
-    const onPause = async () => {
-      // Completed AI analysis in play mode: Resume exits analysis (server
-      // lands in PAUSED) then resumes to PLAY, so one click returns to the
-      // game. stopAnalysisFromUi tears down the AI window and replay buffer.
-      if (aiAnalysisDone(state)) {
-        try {
-          await stopAnalysisFromUi(state);
-          await ctx.api("POST", "/game/resume", {});
-        } catch (e) {
-          reportError(ctx, MSG.RESUME_FAILED, e);
-        }
-        return;
-      }
-      try {
-        await ctx.api("POST", state.paused ? "/game/resume" : "/game/pause", {});
-      } catch (e) {
-        reportError(ctx, state.paused ? MSG.RESUME_FAILED : MSG.PAUSE_FAILED, e);
-      }
-    };
+    const onPause = () => onPauseImpl(state);
 
     // Server is authoritative for edit state. We start editing by POSTing
     // /game/edit/start; the resulting board_update flips `editing` true,
@@ -1694,21 +1795,21 @@ export const playPerspective = {
     function _onServerEditingStart() {
       const seed = _seedFromFen(view.getFen());
       view.enterEditMode(() => refreshButtons(state), seed);
-      pendingAnnotation = null;
+      state.pendingAnnotation = null;
       pushNavToUi();
       refreshButtons(state);
     }
 
     function _clearEditTransitionSuppression() {
-      if (!suppressCommentsForEditTransition) return;
-      suppressCommentsForEditTransition = false;
+      if (!state.suppressCommentsForEditTransition) return;
+      state.suppressCommentsForEditTransition = false;
       syncCommentsVisibility();
     }
 
     function _onServerEditingStop() {
       view.exitEditMode();
       _clearEditTransitionSuppression();
-      pendingAnnotation = null;
+      state.pendingAnnotation = null;
       pushNavToUi();
       refreshButtons(state);
     }
@@ -1725,7 +1826,7 @@ export const playPerspective = {
         // Suppress the commentary dock for the duration of the transient
         // play->view->edit flip. Without this, syncCommentsVisibility
         // races view_last() and resets the cursor to 0.
-        suppressCommentsForEditTransition = true;
+        state.suppressCommentsForEditTransition = true;
         try {
           closeAi();
           const r = await ctx.api("POST", "/game/view/start", {});
@@ -1767,72 +1868,26 @@ export const playPerspective = {
     const onEditCastleBtn = (ev) => editCastlePopoverToggle(state, ev);
     const onDocClickClosePopover = (ev) => editDocClickClose(state, ev);
 
-    const onEditAnnotate = async () => {
-      // Preload from pendingAnnotation (if user already staged something
-      // this edit session) or fall back to the server's current comment.
-      const preload = pendingAnnotation ?? (lastViewComment ?? "");
-      const result = await editAnnotation({ currentText: preload });
-      if (result?.apply) {
-        pendingAnnotation = result.text;
-        // Optimistically reflect the staged text in the commentary dock
-        // so the user sees their pending change. Lives until edit-commit
-        // (server then makes it real) or edit-cancel (we restore the
-        // pre-edit text from lastViewComment).
-        if (isCommentaryOpen()) {
-          setCommentaryText(pendingAnnotation || null);
-        }
-      }
-    };
+    const onEditAnnotate = () => onEditAnnotateImpl(state);
 
-    const onEditConfirm = async () => {
-      const fen = view.getEditFen();
-      // Server mints a fresh game_id on a real position change. Clear the
-      // filter so the board_update SSE (which races the POST response) isn't
-      // dropped for not matching our stale id.
-      view.setGameId(null);
-      const payload = { fen };
-      if (pendingAnnotation !== null) {
-        payload.apply_comment = true;
-        payload.comment_text = pendingAnnotation;
-      }
-      try {
-        const r = await ctx.api("POST", "/game/edit/commit", payload);
-        view.setGameId(r.game_id);
-        // Annotation-only commit can promote an unsaved fork child to
-        // recents (xgame nav "lazy commit"). Game_id is unchanged so
-        // the board_update doesn't trigger fetchXgameInfo -- refetch
-        // explicitly so the fork glyph + banner state catch up.
-        if (r.game_id) fetchXgameInfo(state, r.game_id);
-      } catch (e) {
-        reportError(ctx, MSG.INVALID_POSITION, e);
-      }
-    };
+    const onEditConfirm = () => onEditConfirmImpl(state);
 
-    const onEditCancel = async () => {
-      try {
-        const r = await ctx.api("POST", "/game/edit/cancel", {});
-        if (r?.game_id) view.setGameId(r.game_id);
-      } catch (e) {
-        reportError(ctx, MSG.CANCEL_EDIT_FAILED, e);
-      }
-    };
+    const onEditCancel = () => onEditCancelImpl(state);
 
-    let commentNavPrev = null;
-    let commentNavNext = null;
 
     // Single push of the gated nav state to the UI. Buttons are forced
     // null while analyzing or editing (view/goto is rejected in those
     // modes, so the targets would be unreachable anyway).
     const pushNavToUi = () => {
       const gated = state.analyzing || state.editing;
-      setCommentaryNavState(gated ? null : commentNavPrev, gated ? null : commentNavNext);
+      setCommentaryNavState(gated ? null : state.commentNavPrev, gated ? null : state.commentNavNext);
     };
 
     const onViewNav = (endpoint) => () => doViewNav(state, endpoint);
     const onViewFlip = () => {
-      viewFlipped = !viewFlipped;
-      try { localStorage.setItem(VIEW_FLIP_KEY, viewFlipped ? "1" : "0"); } catch { /* */ }
-      view.setHumanWhite(!viewFlipped);
+      state.viewFlipped = !state.viewFlipped;
+      try { localStorage.setItem(VIEW_FLIP_KEY, state.viewFlipped ? "1" : "0"); } catch { /* */ }
+      view.setHumanWhite(!state.viewFlipped);
     };
 
     const onViewFirst = onViewNav("/game/view/first");
@@ -1841,41 +1896,11 @@ export const playPerspective = {
     const onViewLast = onViewNav("/game/view/last");
 
     setCommentaryNavHandlers(
-      () => { if (commentNavPrev != null) doViewNav(state, "/game/view/goto", { ply: commentNavPrev }); },
-      () => { if (commentNavNext != null) doViewNav(state, "/game/view/goto", { ply: commentNavNext }); },
+      () => { if (state.commentNavPrev != null) doViewNav(state, "/game/view/goto", { ply: state.commentNavPrev }); },
+      () => { if (state.commentNavNext != null) doViewNav(state, "/game/view/goto", { ply: state.commentNavNext }); },
     );
 
-    let playFromHereInflight = false;
-    const onPlayFromHere = async () => {
-      if (playFromHereInflight) return;  // debounce double-click
-      playFromHereInflight = true;
-      setDisabled(viewPlayFromHereBtn, true);
-      // Reset gameId so the racing board_update from new_game (which fires
-      // BEFORE the API response carrying the new id) isn't dropped by the
-      // game_id filter — that drop loses the human_white/name swap.
-      view.setGameId(null);
-      try {
-        const playerName = getConfiguredPlayerName();
-        view.setPlayerName(playerName);
-        closeAi();
-        const r = await ctx.api("POST", "/game/view/play-from-here", { player_name: playerName });
-        view.setGameId(r.game_id);
-        // Snapshot TC for drift detection (mirrors onNewGame).
-        try {
-          const s = await ctx.api("GET", "/settings");
-          gameTcInitial = Number(s.tc_initial_seconds);
-          gameTcIncrement = Number(s.tc_increment_seconds);
-        } catch {
-          // ignore
-        }
-      } catch (e) {
-        reportError(ctx, MSG.PLAY_FROM_HERE_FAILED, e);
-      } finally {
-        playFromHereInflight = false;
-        // Don't re-enable directly; refreshButtons(state) drives it next time
-        // viewing flips, and by then the button is hidden anyway.
-      }
-    };
+    const onPlayFromHere = () => onPlayFromHereImpl(state);
 
     // Show the persistent "Analysis mode on" toast. Called both from
     // onAnalyze (user toggle) and from the board_update handler so the
@@ -1951,10 +1976,9 @@ export const playPerspective = {
     // mode panels survive the round-trip. `reanalyzeInFlight` guards
     // against rapid double-clicks producing a spurious second start
     // that the server would reject with ModeConflictError.
-    let reanalyzeInFlight = false;
     const onReanalyze = async () => {
-      if (reanalyzeInFlight) return;
-      reanalyzeInFlight = true;
+      if (state.reanalyzeInFlight) return;
+      state.reanalyzeInFlight = true;
       try {
         if (state.analyzing) {
           snapshotViewAnalysisState();
@@ -1964,7 +1988,7 @@ export const playPerspective = {
       } catch (e) {
         reportError(ctx, MSG.REANALYZE_FAILED, e);
       } finally {
-        reanalyzeInFlight = false;
+        state.reanalyzeInFlight = false;
       }
     };
     setOnReanalyzeAi(onReanalyze);
@@ -2077,8 +2101,8 @@ export const playPerspective = {
         setOnReanalyzeAi(null);
         state.aiShared.dismissAnalysisToast?.();
         state.aiShared.dismissAnalysisToast = null;
-        dismissGameOverToast?.();
-        dismissGameOverToast = null;
+        state.dismissGameOverToast?.();
+        state.dismissGameOverToast = null;
         pausedBadge?.classList.add("hidden");
         showFinishedBadge("");
         offCrash();
