@@ -301,7 +301,7 @@ function dispatchAiEvent(aiCtx, evt) {
           aiShared.turnFinished = true;
           aiShared.dismissAnalysisToast?.();
           aiShared.dismissAnalysisToast = null;
-          refreshButtons(state);
+          refreshButtons();
         }
       }
       return true;
