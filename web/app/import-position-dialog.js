@@ -266,6 +266,10 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
     onChange?.();
   }
 
+  function scrollSelectedIntoView() {
+    list.querySelector("tr.selected")?.scrollIntoView({ block: "nearest" });
+  }
+
   function renderList() {
     list.replaceChildren();
     const visible = filtered();
@@ -298,6 +302,9 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
       movesTd.title = row.pgn;
 
       tr.append(ecoTd, nameTd, movesTd);
+      // Re-apply the highlight to the still-selected row after a re-render
+      // so the pick stays visible (e.g. when the search filter is cleared).
+      if (selectedRow && row === selectedRow) tr.classList.add("selected");
       const pick = () => {
         for (const r of list.querySelectorAll("tr.selected")) r.classList.remove("selected");
         tr.classList.add("selected");
@@ -335,6 +342,9 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
       searchInput.value = "";
       filterText = "";
       renderList();
+      // Clearing the filter re-renders the full list; keep the picked row
+      // in view so the selection doesn't scroll off-screen.
+      scrollSelectedIntoView();
       document.removeEventListener("pointerdown", onOutsideClick);
       document.removeEventListener("keydown", onSearchKey, true);
     }
