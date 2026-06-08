@@ -1761,6 +1761,9 @@ class HumanVsEngine:
             with await engine.analysis(board) as analysis:
                 self._analysis = analysis
                 await self._pump_engine_info(analysis, game_id, board, cache_payload=True)
+                best = await analysis.wait()
+                if best.move:
+                    await self._bus.publish(Event(kind=EVT_ENGINE_INFO, game_id=game_id, payload={"pv_uci": [best.move.uci()]}))
         except chess.engine.EngineTerminatedError:
             log.error("engine crashed mid-analysis")
             await self._bus.publish(
