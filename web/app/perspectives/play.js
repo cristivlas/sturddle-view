@@ -756,7 +756,6 @@ async function openXgameTarget(state, gameId, opts = {}) {
   }
 }
 
-
 // Confirm/import/nav helpers operating on the shared `state`.
 
 // Prompt before discarding an active play game. Returns true if the
@@ -1232,7 +1231,7 @@ async function onEditAnnotateImpl(state) {
 
 // Analysis toggle cluster. The persistent "Analysis mode" toast wires Search
 // Lines / UCI log / Stop; start/stop/reanalyze drive the server + AI panel.
-function showAnalysisToastModule(state) {
+function showAnalysisToastImpl(state) {
   state.aiShared.dismissAnalysisToast?.();
   const msg = document.createElement("span");
   msg.className = "toast-sort-msg";
@@ -1242,7 +1241,7 @@ function showAnalysisToastModule(state) {
   msg.append(label);
   msg.append(makeToastIconBtn("table-list", MSG.SEARCH_LINES, () => togglePvTableWindow(state.ctx.events)));
   msg.append(makeToastIconBtn("terminal", MSG.UCI_LOG, () => toggleUciLogWindow(state.ctx.events)));
-  const stopBtn = makeToastIconBtn(ANALYZE_ICON_STOP, MSG.STOP_ANALYSIS, () => onAnalyzeModule(state));
+  const stopBtn = makeToastIconBtn(ANALYZE_ICON_STOP, MSG.STOP_ANALYSIS, () => onAnalyzeImpl(state));
   stopBtn.classList.add("is-active");
   msg.append(stopBtn);
   state.aiShared.dismissAnalysisToast = toast(msg, {
@@ -1254,7 +1253,7 @@ function showAnalysisToastModule(state) {
 // POST start + restore panels + toast + open/reset AI panel. Shared by the
 // analyze toggle and the re-analyze button so the two paths can't drift.
 // openAi() before resetAi(): resetAi sets the spinner and no-ops when null.
-async function startAnalysisFromUiModule(state) {
+async function startAnalysisFromUiImpl(state) {
   // Engine-only analysis: close any leftover AI panel from a prior AI run
   // before starting, so the dock shows engine-only output. Done first so
   // the close can't race the new analysis state.
@@ -1262,7 +1261,7 @@ async function startAnalysisFromUiModule(state) {
   await state.ctx.api("POST", "/game/analysis/start", {});
   restoreViewAnalysisWindows(state.ctx.events);
   state.aiShared.turnFinished = false;
-  showAnalysisToastModule(state);
+  showAnalysisToastImpl(state);
   if (state.aiEnabled) {
     // Pin the title to the model actually about to run. Mid-session
     // provider/model edits do not retitle until the next Analyze click.
@@ -1272,12 +1271,12 @@ async function startAnalysisFromUiModule(state) {
   }
 }
 
-async function onAnalyzeModule(state) {
+async function onAnalyzeImpl(state) {
   // Switching from a FINISHED AI session to engine-only: stop the AI session,
   // then start engine analysis -- a plain Stop would tear down and leave
   // nothing running. While the AI run is in progress the ribbon is a plain Stop.
   if (state.analyzing && state.aiShared.turnFinished && !state.aiEnabled && isAiOpen()) {
-    await onReanalyzeModule(state);
+    await onReanalyzeImpl(state);
     return;
   }
   if (state.analyzing) {
@@ -1285,7 +1284,7 @@ async function onAnalyzeModule(state) {
     return;
   }
   try {
-    await startAnalysisFromUiModule(state);
+    await startAnalysisFromUiImpl(state);
   } catch (e) {
     reportError(state.ctx, MSG.START_ANALYSIS_FAILED, e);
   }
@@ -1294,7 +1293,7 @@ async function onAnalyzeModule(state) {
 // Re-analyze: stop the current turn server-side (if any), then start a fresh
 // one, keeping the AI panel open. reanalyzeInFlight guards against rapid
 // double-clicks producing a spurious second start (server -> ModeConflictError).
-async function onReanalyzeModule(state) {
+async function onReanalyzeImpl(state) {
   if (state.reanalyzeInFlight) return;
   state.reanalyzeInFlight = true;
   try {
@@ -1302,12 +1301,41 @@ async function onReanalyzeModule(state) {
       snapshotViewAnalysisState();
       await state.ctx.api("POST", "/game/analysis/stop", {});
     }
-    await startAnalysisFromUiModule(state);
+    await startAnalysisFromUiImpl(state);
   } catch (e) {
     reportError(state.ctx, MSG.REANALYZE_FAILED, e);
   } finally {
     state.reanalyzeInFlight = false;
   }
+}
+
+const VIEW_FLIP_KEY = STORAGE_KEY.VIEW_FLIPPED;
+
+// View-mode flip is purely visual (no backend state; the user isn't playing
+// yet so "which side am I" is meaningless). Persisted across remounts.
+function onViewFlipImpl(state) {
+  state.viewFlipped = !state.viewFlipped;
+  try { localStorage.setItem(VIEW_FLIP_KEY, state.viewFlipped ? "1" : "0"); } catch { /* */ }
+  state.view.setHumanWhite(!state.viewFlipped);
+}
+
+// Single push of the gated nav state to the UI. Buttons are forced null while
+// analyzing or editing (view/goto is rejected in those modes, so the targets
+// would be unreachable anyway).
+function pushNavToUi(state) {
+  const gated = state.analyzing || state.editing;
+  setCommentaryNavState(gated ? null : state.commentNavPrev, gated ? null : state.commentNavNext);
+}
+
+function showEngineCrashToast() {
+  const msg = document.createElement("span");
+  msg.className = "toast-grow";
+  msg.textContent = MSG.ENGINE_CRASHED;
+  const node = document.createElement("span");
+  node.className = "toast-sort-msg";
+  let dismissCrashToast;
+  node.append(msg, makeToastDismissBtn(() => dismissCrashToast?.()));
+  dismissCrashToast = toast(node, { variant: "danger", duration: 0 });
 }
 
 export const playPerspective = {
@@ -1551,7 +1579,7 @@ export const playPerspective = {
         setCommentaryText(state.lastViewComment);
         // Re-open rebuilds the body with nav buttons disabled; re-push the
         // still-current targets (they survive a hide -- view-mode state).
-        pushNavToUi();
+        pushNavToUi(state);
       } else if (open) {
         closeCommentary();
       }
@@ -1657,10 +1685,7 @@ export const playPerspective = {
     buttonsReady = true;
     state.refreshButtons = () => refreshButtons(state);
 
-    // View-mode flip is purely visual (no backend state; the user isn't
-    // playing yet so "which side am I" is meaningless). Persisted so it
-    // survives perspective remounts; applied on each entry into view mode.
-    const VIEW_FLIP_KEY = STORAGE_KEY.VIEW_FLIPPED;
+    // Hydrate the persisted flip preference (see onViewFlipImpl for rationale).
     try { state.viewFlipped = localStorage.getItem(VIEW_FLIP_KEY) === "1"; } catch { /* */ }
 
     // Private replay-buffer state + the deps the AI dispatch needs.
@@ -1741,7 +1766,7 @@ export const playPerspective = {
             // switches (import while open) can't leave stale plies behind.
             state.commentNavPrev = v.prev_comment ?? null;
             state.commentNavNext = v.next_comment ?? null;
-            pushNavToUi();
+            pushNavToUi(state);
             syncCommentsVisibility();
             if (v.result) showFinishedBadge(resultBadge(v.result));
             if (state.viewGameOver && state.viewCursor === state.viewTotalPlies && v.result && !state.viewGameOverAlertShown) {
@@ -1766,7 +1791,7 @@ export const playPerspective = {
             _viewing = false;
             state.commentNavPrev = null;
             state.commentNavNext = null;
-            pushNavToUi();
+            pushNavToUi(state);
             syncCommentsVisibility();
             if (wasViewing) restoreDebugWindows(ctx.events);
             // Leaving view mode -- x-game state is per-viewed-game; drop it.
@@ -1793,7 +1818,7 @@ export const playPerspective = {
             // analysis state.
             if (!state.viewing) view.setEnabled(!state.analyzing && !state.paused);
             syncPausedUi();
-            pushNavToUi();
+            pushNavToUi(state);
             if (!state.analyzing) {
               state.aiShared.dismissAnalysisToast?.();
               state.aiShared.dismissAnalysisToast = null;
@@ -1856,17 +1881,11 @@ export const playPerspective = {
     }
 
     const onNewGame = () => onNewGameImpl(state);
-
     const onResign = () => onResignImpl(state);
-
     const onSavePgn = () => onSavePgnImpl(state);
-
     const onTakeback = () => onTakebackImpl(state);
-
     const onImport = () => onImportImpl(state);
-
     const onSwitchSides = () => onSwitchSidesImpl(state);
-
     const onPause = () => onPauseImpl(state);
 
     // Server is authoritative for edit state. We start editing by POSTing
@@ -1876,7 +1895,7 @@ export const playPerspective = {
       const seed = _seedFromFen(view.getFen());
       view.enterEditMode(() => refreshButtons(state), seed);
       state.pendingAnnotation = null;
-      pushNavToUi();
+      pushNavToUi(state);
       refreshButtons(state);
     }
 
@@ -1890,7 +1909,7 @@ export const playPerspective = {
       view.exitEditMode();
       _clearEditTransitionSuppression();
       state.pendingAnnotation = null;
-      pushNavToUi();
+      pushNavToUi(state);
       refreshButtons(state);
     }
 
@@ -1941,35 +1960,16 @@ export const playPerspective = {
 
     const onEditPosition = _enterEditFromCurrentMode;
     const onViewEditPosition = _enterEditFromCurrentMode;
-
     const onEditSide = (ev) => editSidePopoverToggle(state, ev);
     const onEditSideToggle = () => editSideFlip(state);
     const onEditCastleCb = (right) => () => editCastleToggle(state, right);
     const onEditCastleBtn = (ev) => editCastlePopoverToggle(state, ev);
     const onDocClickClosePopover = (ev) => editDocClickClose(state, ev);
-
     const onEditAnnotate = () => onEditAnnotateImpl(state);
-
     const onEditConfirm = () => onEditConfirmImpl(state);
-
     const onEditCancel = () => onEditCancelImpl(state);
-
-
-    // Single push of the gated nav state to the UI. Buttons are forced
-    // null while analyzing or editing (view/goto is rejected in those
-    // modes, so the targets would be unreachable anyway).
-    const pushNavToUi = () => {
-      const gated = state.analyzing || state.editing;
-      setCommentaryNavState(gated ? null : state.commentNavPrev, gated ? null : state.commentNavNext);
-    };
-
     const onViewNav = (endpoint) => () => doViewNav(state, endpoint);
-    const onViewFlip = () => {
-      state.viewFlipped = !state.viewFlipped;
-      try { localStorage.setItem(VIEW_FLIP_KEY, state.viewFlipped ? "1" : "0"); } catch { /* */ }
-      view.setHumanWhite(!state.viewFlipped);
-    };
-
+    const onViewFlip = () => onViewFlipImpl(state);
     const onViewFirst = onViewNav("/game/view/first");
     const onViewBack = onViewNav("/game/view/back");
     const onViewForward = onViewNav("/game/view/forward");
@@ -1981,10 +1981,9 @@ export const playPerspective = {
     );
 
     const onPlayFromHere = () => onPlayFromHereImpl(state);
-
-    const showAnalysisToast = () => showAnalysisToastModule(state);
-    const onAnalyze = () => onAnalyzeModule(state);
-    const onReanalyze = () => onReanalyzeModule(state);
+    const showAnalysisToast = () => showAnalysisToastImpl(state);
+    const onAnalyze = () => onAnalyzeImpl(state);
+    const onReanalyze = () => onReanalyzeImpl(state);
     setOnReanalyzeAi(onReanalyze);
 
     // Cmd/Ctrl+O opens the import dialog. Skip when typing in an input or
@@ -2043,17 +2042,6 @@ export const playPerspective = {
     editAnnotateBtn.addEventListener("click", onEditAnnotate);
     editConfirmBtn.addEventListener("click", onEditConfirm);
     editCancelBtn.addEventListener("click", onEditCancel);
-
-    function showEngineCrashToast() {
-      const msg = document.createElement("span");
-      msg.className = "toast-grow";
-      msg.textContent = MSG.ENGINE_CRASHED;
-      const node = document.createElement("span");
-      node.className = "toast-sort-msg";
-      let dismissCrashToast;
-      node.append(msg, makeToastDismissBtn(() => dismissCrashToast?.()));
-      dismissCrashToast = toast(node, { variant: "danger", duration: 0 });
-    }
 
     const offCrash = ctx.events.on(async (evt) => {
       if (evt.kind !== "system" || evt.payload?.error !== "engine_terminated") return;
