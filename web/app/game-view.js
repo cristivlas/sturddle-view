@@ -6,7 +6,7 @@ import { toast } from "./dialogs.js";
 import { isMobileLayout } from "./play-dock-windows.js";
 import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 import { APP_EVT } from "./app-events.js";
-import { selectContentsOnCtrlA } from "./wb-utils.js";
+import { fmtClock, fmtScore, selectContentsOnCtrlA } from "./wb-utils.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -15,26 +15,36 @@ const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const MAX_CLOCK_NAME_DESKTOP = 48;
 const MAX_CLOCK_NAME_MOBILE = 24;
 
-function fmtClock(seconds) {
-  if (!Number.isFinite(seconds)) return "—";
-  const t = Math.max(0, seconds);
-  // Sub-10s: show tenths so bullet/sub-second-increment games are readable.
-  if (t < 10) return t.toFixed(1);
-  const s = Math.floor(t);
-  const m = Math.floor(s / 60);
-  const ss = s % 60;
-  return `${m}:${ss.toString().padStart(2, "0")}`;
-}
+const FEN_COPY_TOAST_MS = 1500;
+// 50-move-rule warning: highlight the halfmove clock at/after this many plies.
+const HALFMOVE_WARN_PLIES = 40;
 
-function renderMoveList(
-  el, sanList, currentIdx = null, onMoveClick = null,
-  forkInfo = null, onForkClick = null,
-) {
-  // currentIdx: highlighted ply, or null = last (play mode).
-  // onMoveClick(plyIndex): makes cells clickable for view-mode goto.
-  // forkInfo: Map<plyIdx, {childCount, isOwnForkPly}> for fork glyphs.
-  // onForkClick(plyIdx): glyph-only click; used to re-show a dismissed
-  // parent->child banner.
+// Board/rail sizing. Lengths in px unless suffixed _REM (multiplied by the
+// root font-size at use so they honor the user's browser font preference).
+const DEFAULT_MAIN_PAD_BOTTOM_PX = 16;
+const COL_SIBLING_GAP_PX = 8;
+const NESTED_SIBLING_GAP_PX = 12;
+const BOTTOM_MARGIN_EXTRA_PX = 24;
+const DEFAULT_GRID_GAP_PX = 16;
+const DEFAULT_SIDE_PAD_PX = 32;
+const DEFAULT_ROOT_FONT_PX = 16;
+const MIN_BOARD_REM = 20;     // 320px @ default fs
+const RAIL_MIN_REM = 11.25;   // 180px @ default fs
+const RAIL_MAX_REM = 20;      // 320px @ default fs
+const MIN_AVAIL_REM = 10;
+const RAIL_EDGE_GAP_REM = 1; // viewport-edge breathing room beside the rail
+const RAIL_WIDTH_FRACTION = 0.18;
+const DEFAULT_LEFT_RAIL_EMPTY_RATIO = 0.4;
+// Viewport >= this caps the rail at its natural width (raw px on purpose:
+// a rem-derived threshold would slide the rail as font-size grows).
+const RAIL_NATURAL_CAP_VIEWPORT_PX = 1500;
+
+function renderMoveList(el, sanList, {
+  currentIdx = null,   // highlighted ply, or null = last (play mode)
+  onMoveClick = null,  // (plyIndex) => void; makes cells clickable (view goto)
+  forkInfo = null,     // Map<plyIdx, {childCount, isOwnForkPly}> for fork glyphs
+  onForkClick = null,  // (plyIdx) => void; glyph-only click re-shows a banner
+} = {}) {
   el.innerHTML = "";
   const lastIdx = sanList.length - 1;
   const highlightIdx = currentIdx == null ? lastIdx : currentIdx;
@@ -120,39 +130,574 @@ function fmtCount(n) {
   return String(n);
 }
 
-function fmtScore(score) {
-  if (!score) return "";
-  if ("mate" in score) return `#${score.mate}`;
-  if ("cp" in score) {
-    const cp = score.cp;
-    return `${cp >= 0 ? "+" : ""}${(cp / 100).toFixed(2)}`;
-  }
-  return "";
+// Unicode ellipsis is intentional: this glyph is rendered into the
+// clock-name span (user-facing), not a code token.
+function truncName(s) {
+  if (!s) return s;
+  const max = isMobileLayout() ? MAX_CLOCK_NAME_MOBILE : MAX_CLOCK_NAME_DESKTOP;
+  return s.length > max ? s.slice(0, max - 1) + "…" : s;
 }
 
-// oversized-ok: stateful view controller -- ~40 closures over shared mutable
-// view state (humanWhite, gameId, viewing, editing, analyzing, names, board
-// refs) and a kind-dispatch applyEvent that mutates it. Returns the view API.
-// Splitting handlers out would thread that state in/out and scatter the flow.
-export function mountGameView(container, opts = {}) {
-  const {
-    events,
-    onMove,
-    onMoveJump = null, // view-mode click on a move; (plyIndex) => void
-    forkInfoFn = null, // () => Map<plyIdx, {childCount, isOwnForkPly}>
-    onForkClick = null, // (plyIdx) => void when glyph itself is clicked
-    show = {},
-    interactive = false,
-    sideContainer = null, // optional: separate host for the side rail
-    boardStyle = null,    // preset id from settings; null = library default
-  } = opts;
-  const showClocks = show.clocks !== false;
-  const showMoves = show.moves !== false;
-  const showEngineInfo = show.engineInfo !== false;
+// ---- FEN / opening / tablebase lines ------------------------------------
 
-  // The board area always lives in `container`. The side rail goes into
-  // `sideContainer` if provided, else inline below the board.
-  container.innerHTML = `
+function setFen(ctx, fen) {
+  ctx.currentFen = fen || "";
+  if (ctx.fenText) ctx.fenText.textContent = ctx.currentFen;
+}
+
+async function copyFen(ctx) {
+  if (!ctx.currentFen) return;
+  // Prefer the async Clipboard API (works on https + localhost). Fall
+  // back to the legacy execCommand path for plain-http hosts where the
+  // async API is blocked.
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(ctx.currentFen);
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = ctx.currentFen;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      if (!ok) throw new Error("execCommand failed");
+    }
+    toast("FEN copied", { variant: "success", duration: FEN_COPY_TOAST_MS });
+  } catch {
+    toast("Could not copy FEN", { variant: "danger" });
+  }
+}
+
+function setOpening(ctx, opening) {
+  if (!ctx.openingLine) return;
+  if (!opening || (!opening.eco && !opening.name)) {
+    ctx.openingLine.classList.add("is-empty");
+    return;
+  }
+  ctx.openingEco.textContent = opening.eco ?? "";
+  ctx.openingName.textContent = opening.name ?? "";
+  ctx.openingLine.classList.remove("is-empty");
+}
+
+function setTablebase(ctx, tb) {
+  if (!ctx.tbLine) return;
+  const hm = tb && Number.isFinite(tb.halfmove_clock) ? tb.halfmove_clock : null;
+  const hasTb = tb && tb.wdl !== undefined && tb.wdl !== null;
+  if (!hasTb && hm === null) {
+    ctx.tbLine.classList.add("is-empty");
+    return;
+  }
+  if (ctx.tbInfo) {
+    if (hasTb) {
+      const wdl = ({ 2: "Win", 1: "Cursed win", 0: "Draw", "-1": "Blessed loss", "-2": "Loss" })[tb.wdl] ?? "--";
+      let s = hm !== null ? ` · ${wdl}` : wdl;
+      if (Number.isFinite(tb.dtz)) s += ` · DTZ ${tb.dtz}`;
+      if (Number.isFinite(tb.dtm)) s += ` · DTM ${tb.dtm}`;
+      if (tb.best) s += ` · ${tb.best}`;
+      ctx.tbInfo.textContent = s;
+    } else {
+      ctx.tbInfo.textContent = "";
+    }
+  }
+  if (ctx.hmClock) {
+    ctx.hmClock.textContent = hm !== null ? `50-move rule: ${hm}/100` : "";
+    ctx.hmClock.classList.toggle("hm-clock-warn", hm !== null && hm >= HALFMOVE_WARN_PLIES);
+  }
+  ctx.tbLine.classList.remove("is-empty");
+}
+
+// ---- Names / clocks -----------------------------------------------------
+
+// PV row hides only in pure view mode (navigating an imported game
+// with no engine running). Play mode and analysis mode both produce
+// a meaningful PV.
+function syncPvVisibility(ctx) {
+  const hidePv = ctx.viewing && !ctx.analyzing;
+  if (ctx.enginePv) ctx.enginePv.classList.toggle("hidden", hidePv);
+  if (ctx.engineSection) ctx.engineSection.classList.toggle("no-pv", hidePv);
+}
+
+function setNames(ctx, { top, bottom } = {}) {
+  if (top !== undefined) {
+    if (ctx.clockTopName) {
+      ctx.clockTopName.textContent = truncName(top);
+      ctx.clockTopName.title = top || "";
+    }
+  }
+  if (bottom !== undefined) {
+    if (ctx.clockBottomName) {
+      ctx.clockBottomName.textContent = truncName(bottom);
+      ctx.clockBottomName.title = bottom || "";
+    }
+  }
+}
+
+function setHumanWhite(ctx, value) {
+  ctx.humanWhite = !!value;
+  ctx.board.setSide(ctx.humanWhite ? "white" : "black");
+  // In interactive (Play) mode, bottom = human, top = engine. In view
+  // mode, re-swap cached PGN names to match the new orientation.
+  if (ctx.interactive && !ctx.viewing) {
+    setNames(ctx, { bottom: ctx.playerName, top: ctx.engineName });
+  } else if (ctx.viewing && ctx.viewWhiteName !== null) {
+    if (ctx.humanWhite) setNames(ctx, { bottom: ctx.viewWhiteName, top: ctx.viewBlackName });
+    else setNames(ctx, { bottom: ctx.viewBlackName, top: ctx.viewWhiteName });
+  }
+  // Re-apply clock colors and active state: clock_tick won't fire until
+  // the next server event, so do it eagerly here for both edit and view.
+  if (ctx.showClocks) {
+    applyClockColors(ctx);
+    if (ctx.editing) {
+      applyClockActive(ctx, ctx.editStm === "b" ? "black" : "white", true);
+    } else {
+      applyClockActive(ctx, ctx.lastTurn, ctx.lastClockRunning);
+    }
+  }
+}
+
+function bottomIsWhite(ctx) {
+  // In Observe (non-interactive) the bottom row is always white. In Play
+  // the bottom is the human's side.
+  return ctx.interactive ? ctx.humanWhite : true;
+}
+
+function applyClockActive(ctx, turn, active) {
+  const bottomWhite = bottomIsWhite(ctx);
+  const bottomToMove =
+    (turn === "white" && bottomWhite) || (turn === "black" && !bottomWhite);
+  ctx.clockBottomRow?.classList.toggle("active", active && bottomToMove);
+  ctx.clockTopRow?.classList.toggle("active", active && !bottomToMove);
+}
+
+function applyClockColors(ctx) {
+  if (!ctx.showClocks) return;
+  const bottomWhite = bottomIsWhite(ctx);
+  if (ctx.clockBottomRow) ctx.clockBottomRow.dataset.color = bottomWhite ? "white" : "black";
+  if (ctx.clockTopRow) ctx.clockTopRow.dataset.color = bottomWhite ? "black" : "white";
+}
+
+// `viewing` here is the event's clock flag, distinct from ctx.viewing.
+function setClock(ctx, { white_time, black_time, turn, running, viewing }) {
+  if (!ctx.showClocks) return;
+  ctx.lastTurn = turn || "white";
+  ctx.lastClockRunning = running || !!viewing;
+  const bottomWhite = bottomIsWhite(ctx);
+  const bottomTime = bottomWhite ? white_time : black_time;
+  const topTime = bottomWhite ? black_time : white_time;
+  if (ctx.clockBottomTime) ctx.clockBottomTime.textContent = fmtClock(bottomTime);
+  if (ctx.clockTopTime) ctx.clockTopTime.textContent = fmtClock(topTime);
+  applyClockColors(ctx);
+  applyClockActive(ctx, ctx.lastTurn, ctx.lastClockRunning);
+}
+
+function clearEngineInfoFields(ctx) {
+  if (ctx.engineDepth) ctx.engineDepth.textContent = "";
+  if (ctx.engineScore) ctx.engineScore.textContent = "";
+  if (ctx.engineNodes) ctx.engineNodes.textContent = "";
+  if (ctx.engineNps) ctx.engineNps.textContent = "";
+  if (ctx.engineTbhits) ctx.engineTbhits.textContent = "";
+  if (ctx.engineHashfull) ctx.engineHashfull.textContent = "";
+  if (ctx.enginePv) { ctx.enginePv.textContent = ""; ctx.enginePv.removeAttribute("title"); }
+}
+
+// ---- Board sizing -------------------------------------------------------
+
+function sumSiblingsBelow(node, gap) {
+  // Only count siblings that are visually below `node` (greater top).
+  // Grid layouts can place siblings beside, not below.
+  const nodeRect = node.getBoundingClientRect();
+  const nodeBottom = nodeRect.top + nodeRect.height;
+  let total = 0;
+  for (const sib of node.parentElement?.children ?? []) {
+    if (sib === node) continue;
+    if (sib.offsetParent === null) continue;
+    const r = sib.getBoundingClientRect();
+    if (r.top + 1 < nodeBottom) continue; // beside, not below
+    total += r.height + gap;
+  }
+  return total;
+}
+
+function readMainPaddingBottom() {
+  const main = document.querySelector("main");
+  if (!main) return DEFAULT_MAIN_PAD_BOTTOM_PX;
+  const v = parseFloat(getComputedStyle(main).paddingBottom);
+  return Number.isFinite(v) ? v : DEFAULT_MAIN_PAD_BOTTOM_PX;
+}
+
+// Position the side rail (moves/engine panel) flush with the board on
+// desktop; clear inline geometry on mobile so the flex layout takes over.
+function positionSideRail(ctx, geom) {
+  const { grid, gapW, railW, leftEmpty, rem, mobile } = geom;
+  const sideHost = grid.querySelector(".play-side-host");
+  if (!sideHost) return;
+  if (mobile) {
+    sideHost.style.removeProperty("height");
+    sideHost.style.removeProperty("margin-top");
+    sideHost.style.removeProperty("left");
+    sideHost.style.removeProperty("top");
+    sideHost.style.removeProperty("width");
+    return;
+  }
+  const boardRect = ctx.boardEl.getBoundingClientRect();
+  const ribbonRight = document.body.dataset.ribbonSide === "right";
+  const top = Math.ceil(boardRect.top);
+  // Cap the rail at its natural width only on wide viewports with an
+  // empty dock side (keeps the picture centered). A visible docker
+  // lets the rail fill `avail` at any width.
+  const capRail = leftEmpty && window.innerWidth >= RAIL_NATURAL_CAP_VIEWPORT_PX;
+  // ribbonRight: rail sits left of the board; else it sits right.
+  // Both fill `avail` (capped to railW on wide+empty), differing
+  // only in which board edge the rail hangs off of.
+  let left;
+  let width;
+  if (ribbonRight) {
+    const avail = Math.max(0, Math.ceil(boardRect.left) - gapW - rem(RAIL_EDGE_GAP_REM));
+    width = capRail ? Math.min(railW, avail) : avail;
+    left = Math.max(rem(RAIL_EDGE_GAP_REM), Math.ceil(boardRect.left) - gapW - width);
+  } else {
+    left = Math.ceil(boardRect.right) + gapW;
+    const avail = Math.max(0, window.innerWidth - left - rem(RAIL_EDGE_GAP_REM));
+    width = capRail ? Math.min(railW, avail) : avail;
+  }
+  const height = Math.max(rem(MIN_AVAIL_REM), Math.floor(boardRect.height));
+  sideHost.style.left = `${left}px`;
+  sideHost.style.top = `${top}px`;
+  sideHost.style.width = `${width}px`;
+  sideHost.style.height = `${height}px`;
+  sideHost.style.removeProperty("margin-top");
+}
+
+function recomputeNow(ctx) {
+  const { boardCol, boardEl, board } = ctx;
+  if (!boardCol) return;
+  boardEl.style.width = "0";
+  const colRect = boardCol.getBoundingClientRect();
+
+  let siblingsInCol = 0;
+  for (const child of boardCol.children) {
+    if (child === boardEl) continue;
+    if (child.offsetParent === null) continue;
+    siblingsInCol += child.getBoundingClientRect().height + COL_SIBLING_GAP_PX;
+  }
+
+  let belowGameView = 0;
+  let node = boardCol;
+  while (node?.parentElement && node !== document.body) {
+    belowGameView += sumSiblingsBelow(node, NESTED_SIBLING_GAP_PX);
+    const parent = node.parentElement;
+    if (parent.id === "play-perspective" || parent.tagName === "MAIN") break;
+    node = parent;
+  }
+
+  const bottomMargin = readMainPaddingBottom() + BOTTOM_MARGIN_EXTRA_PX;
+  const availH = Math.max(
+    0,
+    window.innerHeight - colRect.top - siblingsInCol - belowGameView - bottomMargin
+  );
+
+  // Layout (wide viewports): [left-filler][board][rail], where the rail
+  // and the left filler are the same width, so the board sits dead-center
+  // horizontally. Rail width is viewport-driven (not board-driven) to
+  // avoid a feedback loop with the board sizing below.
+  // Rail/board minimums are derived from root font-size so they honor
+  // the user's browser font-size preference. Mobile branch is gated by
+  // isMobileLayout() so a short-but-wide viewport (height breakpoint)
+  // also clears the desktop rail positioning instead of stranding the
+  // side rail at fixed coordinates.
+  const rootFs = parseFloat(getComputedStyle(document.documentElement).fontSize) || DEFAULT_ROOT_FONT_PX;
+  const rem = (n) => Math.round(n * rootFs);
+  const MIN_BOARD = rem(MIN_BOARD_REM);
+  const RAIL_MIN = rem(RAIL_MIN_REM);
+  const RAIL_MAX = rem(RAIL_MAX_REM);
+  const grid = boardCol.closest(".play-grid") || boardCol.closest("#play-perspective");
+  const gridStyle = grid ? getComputedStyle(grid) : null;
+  const gapW = gridStyle
+    ? parseFloat(gridStyle.getPropertyValue("--grid-gap")) || DEFAULT_GRID_GAP_PX
+    : DEFAULT_GRID_GAP_PX;
+  const main = document.querySelector("main");
+  const mainStyle = main ? getComputedStyle(main) : null;
+  const sidePad = mainStyle
+    ? parseFloat(mainStyle.paddingLeft) + parseFloat(mainStyle.paddingRight)
+    : DEFAULT_SIDE_PAD_PX;
+
+  let railW;
+  // leftRailW / --left-rail-w name the dock-side column, not a screen side:
+  // when ribbon_side="right", the mirror swaps grid columns so this width
+  // applies to the right rail. Shrink-when-empty still tracks the dock.
+  let leftRailW;
+  let availW;
+  // Whether the dock side has no docker visible. Defaults true (mobile
+  // branch never reads it for sizing); set in the desktop branch below.
+  let leftEmpty = true;
+  // When the left dock is empty on desktop, shrink the left rail so the
+  // board + right rail shift left as one block instead of being framed
+  // by a wide empty band. Proportional to railW so it scales with width.
+  const LEFT_RAIL_EMPTY_RATIO = window.__leftRailEmptyRatio ?? DEFAULT_LEFT_RAIL_EMPTY_RATIO;
+  if (isMobileLayout() || !grid) {
+    railW = 0;
+    leftRailW = 0;
+    availW = Math.max(rem(MIN_AVAIL_REM), Math.floor(colRect.width));
+  } else {
+    const usable = window.innerWidth - sidePad;
+    railW = Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.floor(usable * RAIL_WIDTH_FRACTION)));
+    leftEmpty =
+      document.querySelector(".play-dock-left")?.classList.contains("dock-empty") !== false
+      && document.querySelector(".play-comments-host")?.classList.contains("dock-empty") !== false;
+    leftRailW = leftEmpty ? Math.floor(railW * LEFT_RAIL_EMPTY_RATIO) : railW;
+    availW = Math.max(rem(MIN_AVAIL_REM), Math.floor(usable - railW - leftRailW - 2 * gapW));
+  }
+
+  const max = isMobileLayout()
+    ? availW
+    // Honor the CSS minmax(320px, ...) floor so the board doesn't go
+    // below MIN_BOARD on awkward width-bound viewports (~800-900px).
+    : Math.max(MIN_BOARD, Math.floor(Math.min(availW, availH)));
+
+  boardEl.style.width = `${max}px`;
+  const inner = boardEl.firstElementChild;
+  if (inner) {
+    inner.style.width = `${max}px`;
+    inner.style.height = `${max}px`;
+  }
+  // Publish the computed board width so siblings (clocks, opening line,
+  // controls bar) can clamp to the same width -- and so the grid's
+  // board column shrinks to that width, gluing the side rail next to it.
+  boardCol.style.setProperty("--board-max-px", `${max}px`);
+  if (grid) {
+    grid.style.setProperty("--board-max-px", `${max}px`);
+    // Only drive the column width on desktop; in mobile layout
+    // (narrow width OR short height -- see media query in styles.css)
+    // the grid collapses to a vertical flex layout.
+    const mobile = isMobileLayout();
+    if (!mobile) {
+      grid.style.setProperty("--board-col-px", `${max}px`);
+      grid.style.setProperty("--left-rail-w", `${leftRailW}px`);
+    } else {
+      grid.style.removeProperty("--board-col-px");
+      grid.style.removeProperty("--left-rail-w");
+    }
+    // Align the side rail's top with the board's top (the grid would
+    // otherwise place it next to the top clock row), and set its height
+    // to the board's so the moves panel fills down to the board bottom.
+    positionSideRail(ctx, { grid, gapW, railW, leftEmpty, mobile, rem });
+  }
+  board.forceResize();
+}
+
+function recomputeBoardSize(ctx) {
+  if (ctx.recomputeRaf) return;
+  ctx.recomputeRaf = requestAnimationFrame(() => {
+    ctx.recomputeRaf = 0;
+    recomputeNow(ctx);
+    // Run again after the next paint so secondary measurements reflect
+    // the new layout (e.g. controls/clocks settled into final positions).
+    requestAnimationFrame(() => recomputeNow(ctx));
+  });
+}
+
+// ---- Event handlers -----------------------------------------------------
+
+function applyBoardUpdate(ctx, evt) {
+  const { board } = ctx;
+  ctx.viewing = !!evt.payload.view;
+  if (typeof evt.payload.editing === "boolean") {
+    const wasEditing = ctx.editing;
+    ctx.editing = evt.payload.editing;
+    if (ctx.editing && !wasEditing) board.clearArrows();
+  }
+  if (typeof evt.payload.analyzing === "boolean") {
+    ctx.analyzing = evt.payload.analyzing;
+  }
+  syncPvVisibility(ctx);
+  if (evt.payload.engine_name) {
+    ctx.engineName = evt.payload.engine_name;
+    if (ctx.interactive) setNames(ctx, { top: ctx.engineName });
+  }
+  if (evt.payload.player_name) {
+    ctx.playerName = evt.payload.player_name;
+    if (ctx.interactive && !ctx.viewing) setNames(ctx, { bottom: ctx.playerName });
+  }
+  if (typeof evt.payload.human_white === "boolean") {
+    ctx.humanWhite = evt.payload.human_white;
+    board.setSide(ctx.humanWhite ? "white" : "black");
+    if (ctx.interactive) setNames(ctx, { bottom: ctx.playerName, top: ctx.engineName });
+  }
+  // View mode: surface the PGN's player names instead of Human/engine.
+  if (ctx.interactive && evt.payload.view) {
+    const w = evt.payload.view.white_name || "White";
+    const b = evt.payload.view.black_name || "Black";
+    ctx.viewWhiteName = w;
+    ctx.viewBlackName = b;
+    // Bottom is white when not flipped (humanWhite acts as the orient
+    // toggle even in view mode).
+    if (ctx.humanWhite) setNames(ctx, { bottom: w, top: b });
+    else setNames(ctx, { bottom: b, top: w });
+  }
+  // Skip setPosition during edit so the user's in-progress board edits
+  // aren't clobbered by server state. Exception: cold mount mid-edit
+  // (firstBoardUpdate) -- there are no in-progress edits yet, and the
+  // board is at the cm-chessboard default startpos; we must seed it from
+  // the server's authoritative FEN.
+  if (!ctx.editing || ctx.firstBoardUpdate) {
+    // Live update overrides any AI preview; drop the preview flag so
+    // input lock and stale restore-target don't linger.
+    if (ctx.previewActive) {
+      ctx.previewActive = false;
+      board.enableInput(ctx.previewInputWasEnabled);
+    }
+    // Suppress animation when the incoming FEN matches the current one.
+    // cm-chessboard otherwise re-runs its 200ms animation queue on a
+    // no-op move (visible flicker), e.g. when x-game nav opens the parent
+    // at the same fork ply.
+    const sameFen = !ctx.firstBoardUpdate && ctx.currentFen === evt.payload.fen;
+    const animate = !ctx.firstBoardUpdate && !sameFen;
+    board.setPosition(evt.payload.fen, evt.payload.last_move, animate);
+  }
+  if (ctx.firstBoardUpdate) {
+    ctx.firstBoardUpdate = false;
+    ctx.resolveReady();
+  }
+  setFen(ctx, evt.payload.fen);
+  if (!ctx.editing) board.clearArrows();
+  if (ctx.showMoves && ctx.moveListEl) {
+    // View mode highlights the cursor's ply (cursor-1 = last played move;
+    // cursor=0 means initial position -> no highlight) and lets the user
+    // jump by clicking a move in the list.
+    let currentIdx = null;
+    let clickHandler = null;
+    if (evt.payload.view && !ctx.editing) {
+      currentIdx = (evt.payload.view.cursor ?? 0) - 1;
+      // No ply-jump (and no clickable cursor) while analyzing.
+      if (!ctx.analyzing) clickHandler = ctx.onMoveJump;
+    }
+    // Fork glyphs only in view mode; snapshot at render time.
+    const forkInfo = (evt.payload.view && !ctx.editing && ctx.forkInfoFn)
+      ? ctx.forkInfoFn()
+      : null;
+    renderMoveList(ctx.moveListEl, evt.payload.moves_san || [], {
+      currentIdx,
+      onMoveClick: clickHandler,
+      forkInfo,
+      onForkClick: ctx.onForkClick,
+    });
+  }
+  setOpening(ctx, evt.payload.opening);
+  setTablebase(ctx, evt.payload.tablebase);
+  if (ctx.showEngineInfo && evt.payload.view) applyViewEval(ctx, evt);
+  if (ctx.interactive && !ctx.editing) board.enableInput(true);
+}
+
+// View mode: surface PGN-derived eval (white POV) in the engine info
+// panel so scrubbing through the game shows per-ply scores.
+function applyViewEval(ctx, evt) {
+  const ev = evt.payload.view.eval;
+  const hasAnyEval = !!evt.payload.view.has_eval;
+  if (ev) {
+    ctx.engineSection?.classList.remove("is-empty");
+    clearEngineInfoFields(ctx);
+    if (ctx.engineScore) ctx.engineScore.textContent = fmtScore(ev, { signed: true });
+    if (ctx.engineDepth) ctx.engineDepth.textContent = ev.depth ?? "";
+  } else if (!hasAnyEval) {
+    // PGN has no eval anywhere -- hide the panel so subsequent imports of
+    // bare PGNs don't inherit visibility from a prior import that had evals.
+    if (ctx.engineScore) ctx.engineScore.textContent = "";
+    if (ctx.engineDepth) ctx.engineDepth.textContent = "";
+    ctx.engineSection?.classList.add("is-empty");
+  } else {
+    // PGN has evals elsewhere but this specific ply doesn't (e.g. last
+    // move of a fastchess game tends to lack an eval). Keep the panel
+    // visible so it doesn't disappear when scrubbing across plies, but
+    // blank the per-ply fields so stale values don't leak through.
+    ctx.engineSection?.classList.remove("is-empty");
+    clearEngineInfoFields(ctx);
+  }
+}
+
+function applyEngineInfo(ctx, evt) {
+  ctx.engineSection?.classList.remove("is-empty");
+  if (ctx.engineDepth && evt.payload.depth != null) {
+    ctx.engineDepth.textContent = evt.payload.depth;
+  }
+  if (ctx.engineScore && evt.payload.score) {
+    ctx.engineScore.textContent = fmtScore(evt.payload.score, { signed: true });
+  }
+  if (ctx.engineNodes && evt.payload.nodes != null) {
+    ctx.engineNodes.textContent = fmtCount(evt.payload.nodes);
+  }
+  if (ctx.engineNps && evt.payload.nps != null) {
+    ctx.engineNps.textContent = fmtCount(evt.payload.nps);
+  }
+  if (ctx.engineTbhits) {
+    ctx.engineTbhits.textContent = evt.payload.tbhits ? fmtCount(evt.payload.tbhits) : "";
+  }
+  if (ctx.engineHashfull && evt.payload.hashfull != null) {
+    ctx.engineHashfull.textContent = `${(evt.payload.hashfull / 10).toFixed(0)}%`;
+  }
+  if (ctx.enginePv && evt.payload.pv && evt.payload.pv.length > 0) {
+    const full = evt.payload.pv.join(" ");
+    ctx.enginePv.textContent = full;
+    ctx.enginePv.setAttribute("title", full);
+  }
+  syncPvVisibility(ctx);
+  if (!ctx.editing && evt.payload.pv_uci && evt.payload.pv_uci.length > 0) {
+    const m = evt.payload.pv_uci[0];
+    if (m && m.length >= 4) {
+      ctx.board.setArrow(m.slice(0, 2), m.slice(2, 4));
+    }
+  }
+}
+
+function applyEvent(ctx, evt) {
+  if (!evt) return;
+  if (ctx.gameId !== null && evt.game_id && evt.game_id !== ctx.gameId) return;
+  switch (evt.kind) {
+    case "board_update":
+      applyBoardUpdate(ctx, evt);
+      break;
+    case "clock_tick":
+      setClock(ctx, evt.payload);
+      break;
+    case "engine_search_start":
+      if (ctx.showEngineInfo) clearEngineInfoFields(ctx);
+      break;
+    case "engine_info":
+      if (ctx.showEngineInfo) applyEngineInfo(ctx, evt);
+      break;
+    case "ai_recommendation":
+      if (!ctx.editing && evt.payload.uci && evt.payload.uci.length >= 4) {
+        const u = evt.payload.uci;
+        ctx.board.setRecommendArrow(u.slice(0, 2), u.slice(2, 4));
+      }
+      break;
+    case "game_result":
+      if (ctx.interactive && !ctx.editing) ctx.board.enableInput(false);
+      if (!ctx.editing) ctx.board.cancelAnimations();
+      break;
+  }
+}
+
+// FEN reflecting the in-flight edit: live piece placement + the
+// user-chosen STM + castling rights. ep/halfmove/fullmove reset because
+// edits forget move history.
+function computeEditFen(ctx) {
+  const pieces = ctx.board.getPiecePlacement();
+  const rights = ctx.board.getCastlingRights();
+  const castling = [
+    rights.wK ? "K" : "",
+    rights.wQ ? "Q" : "",
+    rights.bK ? "k" : "",
+    rights.bQ ? "q" : "",
+  ].join("") || "-";
+  return `${pieces} ${ctx.editStm} ${castling} - 0 1`;
+}
+
+// ---- Markup -------------------------------------------------------------
+
+function boardHTML(showClocks) {
+  return `
     <div class="game-view-board">
       ${showClocks ? `
       <div class="clock-row clock-top">
@@ -187,9 +732,10 @@ export function mountGameView(container, opts = {}) {
       </div>` : ""}
     </div>
   `;
+}
 
-  const sideHost = sideContainer ?? container;
-  const sideHTML = `
+function sideHTML(showEngineInfo, showMoves) {
+  return `
     <aside class="game-view-side">
       ${showEngineInfo ? `
       <section class="game-view-engine is-empty">
@@ -210,748 +756,210 @@ export function mountGameView(container, opts = {}) {
       </section>` : ""}
     </aside>
   `;
-  if (sideContainer) {
-    sideContainer.innerHTML = sideHTML;
-  } else {
-    container.insertAdjacentHTML("beforeend", sideHTML);
-  }
+}
 
-  const boardEl = container.querySelector(".board");
-  const clockTopName = container.querySelector('[data-side="top"]');
-  const clockTopTime = container.querySelector('[data-time="top"]');
-  const clockBottomName = container.querySelector('[data-side="bottom"]');
-  const clockBottomTime = container.querySelector('[data-time="bottom"]');
-  const clockTopRow = container.querySelector(".clock-top");
-  const clockBottomRow = container.querySelector(".clock-bottom");
-  const moveListEl = sideHost.querySelector(".move-list");
-  if (moveListEl) selectContentsOnCtrlA(moveListEl);
-  const engineDepth = sideHost.querySelector(".engine-depth");
-  const engineScore = sideHost.querySelector(".engine-score");
-  const engineNodes = sideHost.querySelector(".engine-nodes");
-  const engineNps = sideHost.querySelector(".engine-nps");
-  const engineTbhits = sideHost.querySelector(".engine-tbhits");
-  const engineHashfull = sideHost.querySelector(".engine-hashfull");
-  const engineSection = sideHost.querySelector(".game-view-engine");
-  const enginePv = sideHost.querySelector(".engine-pv");
-  const openingLine = container.querySelector(".opening-line");
-  const openingEco = container.querySelector(".opening-eco");
-  const openingName = container.querySelector(".opening-name");
-  const tbLine = container.querySelector(".tablebase-line");
-  const tbInfo = container.querySelector(".tb-info");
-  const hmClock = container.querySelector(".hm-clock");
-  const fenText = container.querySelector(".fen-text");
-  const fenCopyBtn = container.querySelector(".fen-copy");
+function queryRefs(ctx, container, sideHost) {
+  ctx.boardEl = container.querySelector(".board");
+  ctx.clockTopName = container.querySelector('[data-side="top"]');
+  ctx.clockTopTime = container.querySelector('[data-time="top"]');
+  ctx.clockBottomName = container.querySelector('[data-side="bottom"]');
+  ctx.clockBottomTime = container.querySelector('[data-time="bottom"]');
+  ctx.clockTopRow = container.querySelector(".clock-top");
+  ctx.clockBottomRow = container.querySelector(".clock-bottom");
+  ctx.moveListEl = sideHost.querySelector(".move-list");
+  ctx.engineDepth = sideHost.querySelector(".engine-depth");
+  ctx.engineScore = sideHost.querySelector(".engine-score");
+  ctx.engineNodes = sideHost.querySelector(".engine-nodes");
+  ctx.engineNps = sideHost.querySelector(".engine-nps");
+  ctx.engineTbhits = sideHost.querySelector(".engine-tbhits");
+  ctx.engineHashfull = sideHost.querySelector(".engine-hashfull");
+  ctx.engineSection = sideHost.querySelector(".game-view-engine");
+  ctx.enginePv = sideHost.querySelector(".engine-pv");
+  ctx.openingLine = container.querySelector(".opening-line");
+  ctx.openingEco = container.querySelector(".opening-eco");
+  ctx.openingName = container.querySelector(".opening-name");
+  ctx.tbLine = container.querySelector(".tablebase-line");
+  ctx.tbInfo = container.querySelector(".tb-info");
+  ctx.hmClock = container.querySelector(".hm-clock");
+  ctx.fenText = container.querySelector(".fen-text");
+  ctx.fenCopyBtn = container.querySelector(".fen-copy");
+}
 
-  let currentFen = INITIAL_FEN;
-  if (fenText) fenText.textContent = INITIAL_FEN;
-  function setFen(fen) {
-    currentFen = fen || "";
-    if (fenText) fenText.textContent = currentFen;
-  }
-  async function copyFen() {
-    if (!currentFen) return;
-    // Prefer the async Clipboard API (works on https + localhost). Fall
-    // back to the legacy execCommand path for plain-http hosts where the
-    // async API is blocked.
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(currentFen);
-      } else {
-        const ta = document.createElement("textarea");
-        ta.value = currentFen;
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.select();
-        const ok = document.execCommand("copy");
-        ta.remove();
-        if (!ok) throw new Error("execCommand failed");
-      }
-      toast("FEN copied", { variant: "success", duration: 1500 });
-    } catch {
-      toast("Could not copy FEN", { variant: "danger" });
-    }
-  }
-  fenCopyBtn?.addEventListener("click", copyFen);
-  fenText?.addEventListener("click", copyFen);
-
-  function setOpening(opening) {
-    if (!openingLine) return;
-    if (!opening || (!opening.eco && !opening.name)) {
-      openingLine.classList.add("is-empty");
-      return;
-    }
-    openingEco.textContent = opening.eco ?? "";
-    openingName.textContent = opening.name ?? "";
-    openingLine.classList.remove("is-empty");
-  }
-
-  function setTablebase(tb) {
-    if (!tbLine) return;
-    const hm = tb && Number.isFinite(tb.halfmove_clock) ? tb.halfmove_clock : null;
-    const hasTb = tb && tb.wdl !== undefined && tb.wdl !== null;
-    if (!hasTb && hm === null) {
-      tbLine.classList.add("is-empty");
-      return;
-    }
-    if (tbInfo) {
-      if (hasTb) {
-        const wdl = ({ 2: "Win", 1: "Cursed win", 0: "Draw", "-1": "Blessed loss", "-2": "Loss" })[tb.wdl] ?? "--";
-        let s = hm !== null ? ` · ${wdl}` : wdl;
-        if (Number.isFinite(tb.dtz)) s += ` · DTZ ${tb.dtz}`;
-        if (Number.isFinite(tb.dtm)) s += ` · DTM ${tb.dtm}`;
-        if (tb.best) s += ` · ${tb.best}`;
-        tbInfo.textContent = s;
-      } else {
-        tbInfo.textContent = "";
-      }
-    }
-    if (hmClock) {
-      hmClock.textContent = hm !== null ? `50-move rule: ${hm}/100` : "";
-      hmClock.classList.toggle("hm-clock-warn", hm !== null && hm >= 40);
-    }
-    tbLine.classList.remove("is-empty");
-  }
-
-  const board = mountBoard({
-    element: boardEl,
-    styleId: boardStyle,
-    onMove: (uci) => {
-      if (interactive) onMove?.(uci);
-    },
-  });
-
-  // cm-chessboard sizes its SVG off boardEl.clientWidth (squared), ignoring
-  // height. We compute a square that fits the column width AND the viewport
-  // height, then drive cm-chessboard's measurement.
-  const boardCol = container.querySelector(".game-view-board") || container;
-
-  function sumSiblingsBelow(node, gap) {
-    // Only count siblings that are visually below `node` (greater top).
-    // Grid layouts can place siblings beside, not below.
-    const nodeRect = node.getBoundingClientRect();
-    const nodeBottom = nodeRect.top + nodeRect.height;
-    let total = 0;
-    for (const sib of node.parentElement?.children ?? []) {
-      if (sib === node) continue;
-      if (sib.offsetParent === null) continue;
-      const r = sib.getBoundingClientRect();
-      if (r.top + 1 < nodeBottom) continue; // beside, not below
-      total += r.height + gap;
-    }
-    return total;
-  }
-
-  function _readMainPaddingBottom() {
-    const main = document.querySelector("main");
-    if (!main) return 16;
-    const v = parseFloat(getComputedStyle(main).paddingBottom);
-    return Number.isFinite(v) ? v : 16;
-  }
-
-  function _recomputeNow() {
-    if (!boardCol) return;
-    boardEl.style.width = "0";
-    const colRect = boardCol.getBoundingClientRect();
-
-    let siblingsInCol = 0;
-    for (const child of boardCol.children) {
-      if (child === boardEl) continue;
-      if (child.offsetParent === null) continue;
-      siblingsInCol += child.getBoundingClientRect().height + 8;
-    }
-
-    let belowGameView = 0;
-    let node = boardCol;
-    while (node?.parentElement && node !== document.body) {
-      belowGameView += sumSiblingsBelow(node, 12);
-      const parent = node.parentElement;
-      if (parent.id === "play-perspective" || parent.tagName === "MAIN") break;
-      node = parent;
-    }
-
-    const bottomMargin = _readMainPaddingBottom() + 24;
-    const availH = Math.max(
-      0,
-      window.innerHeight - colRect.top - siblingsInCol - belowGameView - bottomMargin
-    );
-
-    // Layout (wide viewports): [left-filler][board][rail], where the rail
-    // and the left filler are the same width, so the board sits dead-center
-    // horizontally. Rail width is viewport-driven (not board-driven) to
-    // avoid a feedback loop with the board sizing below.
-    // Rail/board minimums are derived from root font-size so they honor
-    // the user's browser font-size preference. Mobile branch is gated by
-    // isMobileLayout() so a short-but-wide viewport (height breakpoint)
-    // also clears the desktop rail positioning instead of stranding the
-    // side rail at fixed coordinates.
-    const rootFs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
-    const rem = (n) => Math.round(n * rootFs);
-    const MIN_BOARD = rem(20);   // 320px @ default fs
-    const RAIL_MIN = rem(11.25); // 180px @ default fs
-    const RAIL_MAX = rem(20);    // 320px @ default fs
-    const grid = boardCol.closest(".play-grid") || boardCol.closest("#play-perspective");
-    const gridStyle = grid ? getComputedStyle(grid) : null;
-    const gapW = gridStyle
-      ? parseFloat(gridStyle.getPropertyValue("--grid-gap")) || 16
-      : 16;
-    const main = document.querySelector("main");
-    const mainStyle = main ? getComputedStyle(main) : null;
-    const sidePad = mainStyle
-      ? parseFloat(mainStyle.paddingLeft) + parseFloat(mainStyle.paddingRight)
-      : 32;
-
-    let railW;
-    // leftRailW / --left-rail-w name the dock-side column, not a screen side:
-    // when ribbon_side="right", the mirror swaps grid columns so this width
-    // applies to the right rail. Shrink-when-empty still tracks the dock.
-    let leftRailW;
-    let availW;
-    // Whether the dock side has no docker visible. Defaults true (mobile
-    // branch never reads it for sizing); set in the desktop branch below.
-    let leftEmpty = true;
-    // When the left dock is empty on desktop, shrink the left rail so the
-    // board + right rail shift left as one block instead of being framed
-    // by a wide empty band. Proportional to railW so it scales with width.
-    const LEFT_RAIL_EMPTY_RATIO = window.__leftRailEmptyRatio ?? 0.4;
-    if (isMobileLayout() || !grid) {
-      railW = 0;
-      leftRailW = 0;
-      availW = Math.max(rem(10), Math.floor(colRect.width));
-    } else {
-      const usable = window.innerWidth - sidePad;
-      railW = Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.floor(usable * 0.18)));
-      leftEmpty =
-        document.querySelector(".play-dock-left")?.classList.contains("dock-empty") !== false
-        && document.querySelector(".play-comments-host")?.classList.contains("dock-empty") !== false;
-      leftRailW = leftEmpty ? Math.floor(railW * LEFT_RAIL_EMPTY_RATIO) : railW;
-      availW = Math.max(rem(10), Math.floor(usable - railW - leftRailW - 2 * gapW));
-    }
-
-    const max = isMobileLayout()
-      ? availW
-      // Honor the CSS minmax(320px, ...) floor so the board doesn't go
-      // below MIN_BOARD on awkward width-bound viewports (~800-900px).
-      : Math.max(MIN_BOARD, Math.floor(Math.min(availW, availH)));
-
-    boardEl.style.width = `${max}px`;
-    const inner = boardEl.firstElementChild;
-    if (inner) {
-      inner.style.width = `${max}px`;
-      inner.style.height = `${max}px`;
-    }
-    // Publish the computed board width so siblings (clocks, opening line,
-    // controls bar) can clamp to the same width — and so the grid's
-    // board column shrinks to that width, gluing the side rail next to it.
-    boardCol.style.setProperty("--board-max-px", `${max}px`);
-    if (grid) {
-      grid.style.setProperty("--board-max-px", `${max}px`);
-      // Only drive the column width on desktop; in mobile layout
-      // (narrow width OR short height -- see media query in styles.css)
-      // the grid collapses to a vertical flex layout.
-      const mobile = isMobileLayout();
-      if (!mobile) {
-        grid.style.setProperty("--board-col-px", `${max}px`);
-        grid.style.setProperty("--left-rail-w", `${leftRailW}px`);
-      } else {
-        grid.style.removeProperty("--board-col-px");
-        grid.style.removeProperty("--left-rail-w");
-      }
-      // Align the side rail's top with the board's top (the grid would
-      // otherwise place it next to the top clock row), and set its height
-      // to the board's so the moves panel fills down to the board bottom.
-      const sideHost = grid.querySelector(".play-side-host");
-      if (sideHost) {
-        if (!mobile) {
-          const boardRect = boardEl.getBoundingClientRect();
-          const ribbonRight = document.body.dataset.ribbonSide === "right";
-          const top = Math.ceil(boardRect.top);
-          // Cap the rail at its natural width only on wide viewports with an
-          // empty dock side (keeps the picture centered). A visible docker
-          // lets the rail fill `avail` at any width. WIDE stays raw px: a
-          // rem-derived threshold would slide the rail as font-size grows.
-          const WIDE = 1500;
-          const capRail = leftEmpty && window.innerWidth >= WIDE;
-          // ribbonRight: rail sits left of the board; else it sits right.
-          // Both fill `avail` (capped to railW on wide+empty), differing
-          // only in which board edge the rail hangs off of.
-          let left;
-          let width;
-          if (ribbonRight) {
-            const avail = Math.max(0, Math.ceil(boardRect.left) - gapW - rem(1));
-            width = capRail ? Math.min(railW, avail) : avail;
-            left = Math.max(rem(1), Math.ceil(boardRect.left) - gapW - width);
-          } else {
-            left = Math.ceil(boardRect.right) + gapW;
-            const avail = Math.max(0, window.innerWidth - left - rem(1));
-            width = capRail ? Math.min(railW, avail) : avail;
-          }
-          const height = Math.max(rem(10), Math.floor(boardRect.height));
-          sideHost.style.left = `${left}px`;
-          sideHost.style.top = `${top}px`;
-          sideHost.style.width = `${width}px`;
-          sideHost.style.height = `${height}px`;
-          sideHost.style.removeProperty("margin-top");
-        } else {
-          sideHost.style.removeProperty("height");
-          sideHost.style.removeProperty("margin-top");
-          sideHost.style.removeProperty("left");
-          sideHost.style.removeProperty("top");
-          sideHost.style.removeProperty("width");
-        }
-      }
-    }
-    board.forceResize();
-  }
-
-  let recomputeRaf = 0;
-  function recomputeBoardSize() {
-    if (recomputeRaf) return;
-    recomputeRaf = requestAnimationFrame(() => {
-      recomputeRaf = 0;
-      _recomputeNow();
-      // Run again after the next paint so secondary measurements reflect
-      // the new layout (e.g. controls/clocks settled into final positions).
-      requestAnimationFrame(_recomputeNow);
-    });
-  }
-  const ro = new ResizeObserver(recomputeBoardSize);
-  ro.observe(boardCol);
-  ro.observe(document.body);
-  window.addEventListener("resize", recomputeBoardSize);
-  window.addEventListener(APP_EVT.LAYOUT_CHANGED, recomputeBoardSize);
-  requestAnimationFrame(recomputeBoardSize);
-
-  function onVisibilityChange() {
-    if (!document.hidden) board.cancelAnimations();
-  }
-  function onWindowFocus() {
-    board.cancelAnimations();
-  }
-  document.addEventListener("visibilitychange", onVisibilityChange);
-  window.addEventListener("focus", onWindowFocus);
-
-  let humanWhite = true;
-  let gameId = null;
-  let engineName = "Engine";
-  let playerName = PLAYER_NAME_DEFAULT;
-  let names = { top: "—", bottom: "—" };
-  let lastTurn = "white";
-  let lastClockRunning = false;
-  let viewing = false;
-  let editing = false;
-  // First board_update after (re)mount: snap pieces to position instead
-  // of animating from startpos, and resolve the `ready` Promise so the
-  // PerspectiveRouter can reveal the perspective. Otherwise the user
-  // sees clocks/side-rail render before the board, and pieces animate
-  // from cm-chessboard's default startpos to the real FEN.
-  let firstBoardUpdate = true;
-  let resolveReady;
-  const ready = new Promise((r) => { resolveReady = r; });
-  // Edit-mode side-to-move ("w"|"b"). Authoritative while editing; play.js
-  // mirrors it for its ribbon UI but defers to setEditSide for writes.
-  let editStm = "w";
-  // Analysis mode: streams PV from a dedicated engine even while
-  // viewing. PV row should hide when "view-only" (viewing && !analyzing)
-  // and show otherwise -- play mode has PV from the play engine,
-  // analysis mode has PV from the analysis engine.
-  let analyzing = false;
-  // Cached PGN names so flipping the board in view mode can re-swap
-  // top/bottom without waiting for a fresh board_update.
-  let viewWhiteName = null;
-  let viewBlackName = null;
-
-  function _truncName(s) {
-    if (!s) return s;
-    const max = isMobileLayout() ? MAX_CLOCK_NAME_MOBILE : MAX_CLOCK_NAME_DESKTOP;
-    return s.length > max ? s.slice(0, max - 1) + "…" : s;
-  }
-  // PV row hides only in pure view mode (navigating an imported game
-  // with no engine running). Play mode and analysis mode both produce
-  // a meaningful PV.
-  function syncPvVisibility() {
-    const hidePv = viewing && !analyzing;
-    if (enginePv) enginePv.classList.toggle("hidden", hidePv);
-    if (engineSection) engineSection.classList.toggle("no-pv", hidePv);
-  }
-  function setNames({ top, bottom } = {}) {
-    if (top !== undefined) {
-      names.top = top;
-      if (clockTopName) {
-        clockTopName.textContent = _truncName(top);
-        clockTopName.title = top || "";
-      }
-    }
-    if (bottom !== undefined) {
-      names.bottom = bottom;
-      if (clockBottomName) {
-        clockBottomName.textContent = _truncName(bottom);
-        clockBottomName.title = bottom || "";
-      }
-    }
-  }
-
-  function setHumanWhite(value) {
-    humanWhite = !!value;
-    board.setSide(humanWhite ? "white" : "black");
-    // In interactive (Play) mode, bottom = human, top = engine. In view
-    // mode, re-swap cached PGN names to match the new orientation.
-    if (interactive && !viewing) {
-      setNames({ bottom: playerName, top: engineName });
-    } else if (viewing && viewWhiteName !== null) {
-      if (humanWhite) setNames({ bottom: viewWhiteName, top: viewBlackName });
-      else setNames({ bottom: viewBlackName, top: viewWhiteName });
-    }
-    // Re-apply clock colors and active state: clock_tick won't fire until
-    // the next server event, so do it eagerly here for both edit and view.
-    if (showClocks) {
-      _applyClockColors();
-      if (editing) {
-        _applyClockActive(editStm === "b" ? "black" : "white", true);
-      } else {
-        _applyClockActive(lastTurn, lastClockRunning);
-      }
-    }
-  }
-  setHumanWhite(humanWhite);
-
-  function _bottomIsWhite() {
-    // In Observe (non-interactive) the bottom row is always white. In Play
-    // the bottom is the human's side.
-    return interactive ? humanWhite : true;
-  }
-
-  function _applyClockActive(turn, active) {
-    const bottomIsWhite = _bottomIsWhite();
-    const bottomToMove =
-      (turn === "white" && bottomIsWhite) || (turn === "black" && !bottomIsWhite);
-    clockBottomRow?.classList.toggle("active", active && bottomToMove);
-    clockTopRow?.classList.toggle("active", active && !bottomToMove);
-  }
-
-  function _applyClockColors() {
-    if (!showClocks) return;
-    const bottomIsWhite = _bottomIsWhite();
-    if (clockBottomRow) clockBottomRow.dataset.color = bottomIsWhite ? "white" : "black";
-    if (clockTopRow) clockTopRow.dataset.color = bottomIsWhite ? "black" : "white";
-  }
-
-  function setClock({ white_time, black_time, turn, running, viewing }) {
-    if (!showClocks) return;
-    lastTurn = turn || "white";
-    lastClockRunning = running || !!viewing;
-    const bottomIsWhite = _bottomIsWhite();
-    const bottomTime = bottomIsWhite ? white_time : black_time;
-    const topTime = bottomIsWhite ? black_time : white_time;
-    if (clockBottomTime) clockBottomTime.textContent = fmtClock(bottomTime);
-    if (clockTopTime) clockTopTime.textContent = fmtClock(topTime);
-    _applyClockColors();
-    _applyClockActive(lastTurn, lastClockRunning);
-  }
-
-  function clearEngineInfoFields() {
-    if (engineDepth) engineDepth.textContent = "";
-    if (engineScore) engineScore.textContent = "";
-    if (engineNodes) engineNodes.textContent = "";
-    if (engineNps) engineNps.textContent = "";
-    if (engineTbhits) engineTbhits.textContent = "";
-    if (engineHashfull) engineHashfull.textContent = "";
-    if (enginePv) { enginePv.textContent = ""; enginePv.removeAttribute("title"); }
-  }
-
-  // Preview overlay state: while previewActive, the board shows a
-  // hypothetical FEN (typically an AI `analyze` arg) and user input
-  // is suppressed. restorePosition() reverts to currentFen; a live
-  // board_update also clears the flag and snaps to authoritative state.
-  let previewActive = false;
-  let previewInputWasEnabled = false;
-
-  function applyEvent(evt) {
-    if (!evt) return;
-    if (gameId !== null && evt.game_id && evt.game_id !== gameId) return;
-    switch (evt.kind) {
-      case "board_update":
-        viewing = !!evt.payload.view;
-        if (typeof evt.payload.editing === "boolean") {
-          const wasEditing = editing;
-          editing = evt.payload.editing;
-          if (editing && !wasEditing) board.clearArrows();
-        }
-        if (typeof evt.payload.analyzing === "boolean") {
-          analyzing = evt.payload.analyzing;
-        }
-        syncPvVisibility();
-        if (evt.payload.engine_name) {
-          engineName = evt.payload.engine_name;
-          if (interactive) setNames({ top: engineName });
-        }
-        if (evt.payload.player_name) {
-          playerName = evt.payload.player_name;
-          if (interactive && !viewing) setNames({ bottom: playerName });
-        }
-        if (typeof evt.payload.human_white === "boolean") {
-          humanWhite = evt.payload.human_white;
-          board.setSide(humanWhite ? "white" : "black");
-          if (interactive) setNames({ bottom: playerName, top: engineName });
-        }
-        // View mode: surface the PGN's player names instead of Human/engine.
-        if (interactive && evt.payload.view) {
-          const w = evt.payload.view.white_name || "White";
-          const b = evt.payload.view.black_name || "Black";
-          viewWhiteName = w;
-          viewBlackName = b;
-          // Bottom is white when not flipped (humanWhite acts as the orient
-          // toggle even in view mode).
-          if (humanWhite) setNames({ bottom: w, top: b });
-          else setNames({ bottom: b, top: w });
-        }
-        // Skip setPosition during edit so the user's in-progress board
-        // edits aren't clobbered by server state. Exception: cold mount
-        // mid-edit (firstBoardUpdate) -- there are no in-progress edits
-        // yet, and the board is at the cm-chessboard default startpos;
-        // we must seed it from the server's authoritative FEN.
-        if (!editing || firstBoardUpdate) {
-          // Live update overrides any AI preview; drop the preview
-          // flag so input lock and stale restore-target don't linger.
-          if (previewActive) {
-            previewActive = false;
-            board.enableInput(previewInputWasEnabled);
-          }
-          // Suppress animation when the incoming FEN matches the
-          // current one. cm-chessboard otherwise re-runs its 200ms
-          // animation queue on a no-op move (visible flicker), e.g.
-          // when x-game nav opens the parent at the same fork ply.
-          const sameFen = !firstBoardUpdate && currentFen === evt.payload.fen;
-          const animate = !firstBoardUpdate && !sameFen;
-          board.setPosition(evt.payload.fen, evt.payload.last_move, animate);
-        }
-        if (firstBoardUpdate) {
-          firstBoardUpdate = false;
-          resolveReady();
-        }
-        setFen(evt.payload.fen);
-        if (!editing) board.clearArrows();
-        if (showMoves && moveListEl) {
-          // View mode highlights the cursor's ply (cursor-1 = last played
-          // move; cursor=0 means initial position → no highlight) and lets
-          // the user jump by clicking a move in the list.
-          let currentIdx = null;
-          let clickHandler = null;
-          if (evt.payload.view && !editing) {
-            currentIdx = (evt.payload.view.cursor ?? 0) - 1;
-            // No ply-jump (and no clickable cursor) while analyzing.
-            if (!analyzing) clickHandler = onMoveJump;
-          }
-          // Fork glyphs only in view mode; snapshot at render time.
-          const forkInfo = (evt.payload.view && !editing && forkInfoFn)
-            ? forkInfoFn()
-            : null;
-          renderMoveList(
-            moveListEl, evt.payload.moves_san || [], currentIdx, clickHandler,
-            forkInfo, onForkClick,
-          );
-        }
-        setOpening(evt.payload.opening);
-        setTablebase(evt.payload.tablebase);
-        // View mode: surface PGN-derived eval (white POV) in the engine
-        // info panel so scrubbing through the game shows per-ply scores.
-        if (showEngineInfo && evt.payload.view) {
-          const ev = evt.payload.view.eval;
-          const hasAnyEval = !!evt.payload.view.has_eval;
-          if (ev) {
-            engineSection?.classList.remove("is-empty");
-            if (engineScore) engineScore.textContent = fmtScore(ev);
-            if (engineDepth) engineDepth.textContent = ev.depth ?? "";
-            // Clear live-only fields that have no PGN equivalent.
-            if (engineNodes) engineNodes.textContent = "";
-            if (engineNps) engineNps.textContent = "";
-            if (engineTbhits) engineTbhits.textContent = "";
-            if (engineHashfull) engineHashfull.textContent = "";
-            if (enginePv) { enginePv.textContent = ""; enginePv.removeAttribute("title"); }
-          } else if (!hasAnyEval) {
-            // PGN has no eval anywhere -- hide the panel so subsequent
-            // imports of bare PGNs don't inherit visibility from a prior
-            // import that had evals.
-            if (engineScore) engineScore.textContent = "";
-            if (engineDepth) engineDepth.textContent = "";
-            engineSection?.classList.add("is-empty");
-          } else {
-            // PGN has evals elsewhere but this specific ply doesn't
-            // (e.g. last move of a fastchess game tends to lack an
-            // eval). Keep the panel visible so it doesn't disappear
-            // when scrubbing across plies, but blank the per-ply
-            // fields so stale values from the previous ply don't
-            // leak through.
-            engineSection?.classList.remove("is-empty");
-            if (engineScore) engineScore.textContent = "";
-            if (engineDepth) engineDepth.textContent = "";
-            if (engineNodes) engineNodes.textContent = "";
-            if (engineNps) engineNps.textContent = "";
-            if (engineTbhits) engineTbhits.textContent = "";
-            if (engineHashfull) engineHashfull.textContent = "";
-            if (enginePv) { enginePv.textContent = ""; enginePv.removeAttribute("title"); }
-          }
-        }
-        if (interactive && !editing) board.enableInput(true);
-        break;
-      case "clock_tick":
-        setClock(evt.payload);
-        break;
-      case "engine_search_start":
-        if (!showEngineInfo) break;
-        clearEngineInfoFields();
-        break;
-      case "engine_info":
-        if (!showEngineInfo) break;
-        engineSection?.classList.remove("is-empty");
-        if (engineDepth && evt.payload.depth != null) {
-          engineDepth.textContent = evt.payload.depth;
-        }
-        if (engineScore && evt.payload.score) {
-          engineScore.textContent = fmtScore(evt.payload.score);
-        }
-        if (engineNodes && evt.payload.nodes != null) {
-          engineNodes.textContent = fmtCount(evt.payload.nodes);
-        }
-        if (engineNps && evt.payload.nps != null) {
-          engineNps.textContent = fmtCount(evt.payload.nps);
-        }
-        if (engineTbhits) {
-          engineTbhits.textContent = evt.payload.tbhits ? fmtCount(evt.payload.tbhits) : "";
-        }
-        if (engineHashfull && evt.payload.hashfull != null) {
-          engineHashfull.textContent = `${(evt.payload.hashfull / 10).toFixed(0)}%`;
-        }
-        if (enginePv && evt.payload.pv && evt.payload.pv.length > 0) {
-          const full = evt.payload.pv.join(" ");
-          enginePv.textContent = full;
-          enginePv.setAttribute("title", full);
-        }
-        syncPvVisibility();
-        if (!editing && evt.payload.pv_uci && evt.payload.pv_uci.length > 0) {
-          const m = evt.payload.pv_uci[0];
-          if (m && m.length >= 4) {
-            board.setArrow(m.slice(0, 2), m.slice(2, 4));
-          }
-        }
-        break;
-      case "ai_recommendation":
-        if (!editing && evt.payload.uci && evt.payload.uci.length >= 4) {
-          const u = evt.payload.uci;
-          board.setRecommendArrow(u.slice(0, 2), u.slice(2, 4));
-        }
-        break;
-      case "game_result":
-        if (interactive && !editing) board.enableInput(false);
-        if (!editing) board.cancelAnimations();
-        break;
-    }
-  }
-
-  let off = null;
-  if (events) {
-    off = events.on(applyEvent);
-  }
-
+function buildViewApi(ctx) {
   return {
-    ready,
-    setGameId(id) {
-      gameId = id;
-    },
-    setHumanWhite,
-    setNames,
-    setPlayerName(name) { playerName = name || PLAYER_NAME_DEFAULT; },
-    applyEvent,
+    ready: ctx.ready,
+    setGameId(id) { ctx.gameId = id; },
+    setHumanWhite: (v) => setHumanWhite(ctx, v),
+    setNames: (n) => setNames(ctx, n),
+    setPlayerName(name) { ctx.playerName = name || PLAYER_NAME_DEFAULT; },
+    applyEvent: (evt) => applyEvent(ctx, evt),
     previewPosition(fen, { animate = true } = {}) {
-      if (!fen || fen === currentFen) return;
-      if (!previewActive) previewInputWasEnabled = board.isInputEnabled();
-      previewActive = true;
-      board.enableInput(false);
-      board.setPosition(fen, null, animate);
+      if (!fen || fen === ctx.currentFen) return;
+      if (!ctx.previewActive) ctx.previewInputWasEnabled = ctx.board.isInputEnabled();
+      ctx.previewActive = true;
+      ctx.board.enableInput(false);
+      ctx.board.setPosition(fen, null, animate);
     },
     restorePosition({ animate = true } = {}) {
-      if (!previewActive) return;
-      previewActive = false;
-      board.setPosition(currentFen, null, animate);
-      board.enableInput(previewInputWasEnabled);
+      if (!ctx.previewActive) return;
+      ctx.previewActive = false;
+      ctx.board.setPosition(ctx.currentFen, null, animate);
+      ctx.board.enableInput(ctx.previewInputWasEnabled);
     },
-    clearArrows() {
-      board.clearArrows();
-    },
+    clearArrows() { ctx.board.clearArrows(); },
     clearEngineInfo() {
-      clearEngineInfoFields();
-      engineSection?.classList.add("is-empty");
+      clearEngineInfoFields(ctx);
+      ctx.engineSection?.classList.add("is-empty");
     },
-    setEnabled(enabled) {
-      board.enableInput(interactive && enabled);
-    },
+    setEnabled(enabled) { ctx.board.enableInput(ctx.interactive && enabled); },
     reset() {
       // Reset visible game state for a fresh game; the next board_update
       // from the server will set the new starting position.
-      board.setPosition(INITIAL_FEN, null);
-      if (moveListEl) moveListEl.innerHTML = "";
-      clearEngineInfoFields();
-      engineSection?.classList.add("is-empty");
-      setOpening(null);
-      setTablebase(null);
-      setFen(INITIAL_FEN);
+      ctx.board.setPosition(INITIAL_FEN, null);
+      if (ctx.moveListEl) ctx.moveListEl.innerHTML = "";
+      clearEngineInfoFields(ctx);
+      ctx.engineSection?.classList.add("is-empty");
+      setOpening(ctx, null);
+      setTablebase(ctx, null);
+      setFen(ctx, INITIAL_FEN);
     },
     enterEditMode(onPositionChange, seed) {
-      board.enterEditMode(onPositionChange, seed);
+      ctx.board.enterEditMode(onPositionChange, seed);
       this.setEditSide(seed?.stm);
     },
     setEditSide(stm) {
       // Authoritative setter for the in-edit STM. Updates clock-active
       // styling immediately since the server isn't ticking during edit.
-      editStm = stm === "b" ? "b" : "w";
-      if (showClocks) {
-        _applyClockActive(editStm === "b" ? "black" : "white", true);
+      ctx.editStm = stm === "b" ? "b" : "w";
+      if (ctx.showClocks) {
+        applyClockActive(ctx, ctx.editStm === "b" ? "black" : "white", true);
       }
     },
-    getEditSide() {
-      return editStm;
-    },
+    getEditSide() { return ctx.editStm; },
     exitEditMode() {
-      board.exitEditMode();
+      ctx.board.exitEditMode();
       // Clear .active so the stale STM highlight doesn't persist past the
       // edit; the next clock_tick from a real board_update re-applies it.
-      if (showClocks) _applyClockActive("white", false);
+      if (ctx.showClocks) applyClockActive(ctx, "white", false);
     },
-    toggleCastlingRight(right) {
-      board.toggleCastlingRight(right);
-    },
-    getCastlingRights() {
-      return board.getCastlingRights();
-    },
+    toggleCastlingRight(right) { ctx.board.toggleCastlingRight(right); },
+    getCastlingRights() { return ctx.board.getCastlingRights(); },
     getFen() {
       // Full server-emitted FEN (with STM/castling/ep/clocks). The canonical
       // "what does the server think the position is" accessor.
-      return currentFen;
+      return ctx.currentFen;
     },
-    getEditFen() {
-      // FEN reflecting the in-flight edit: live piece placement + the
-      // user-chosen STM + castling rights. ep/halfmove/fullmove reset
-      // because edits forget move history.
-      const pieces = board.getPiecePlacement();
-      const rights = board.getCastlingRights();
-      const castling = [
-        rights.wK ? "K" : "",
-        rights.wQ ? "Q" : "",
-        rights.bK ? "k" : "",
-        rights.bQ ? "q" : "",
-      ].join("") || "-";
-      return `${pieces} ${editStm} ${castling} - 0 1`;
-    },
+    getEditFen() { return computeEditFen(ctx); },
     unmount() {
-      editing = false;
-      board.destroy();
-      off?.();
-      try { ro.disconnect(); } catch {}
-      window.removeEventListener("resize", recomputeBoardSize);
-      window.removeEventListener(APP_EVT.LAYOUT_CHANGED, recomputeBoardSize);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      window.removeEventListener("focus", onWindowFocus);
-      if (recomputeRaf) cancelAnimationFrame(recomputeRaf);
+      ctx.editing = false;
+      ctx.board.destroy();
+      ctx.off?.();
+      try { ctx.ro.disconnect(); } catch {}
+      window.removeEventListener("resize", ctx.onRecompute);
+      window.removeEventListener(APP_EVT.LAYOUT_CHANGED, ctx.onRecompute);
+      document.removeEventListener("visibilitychange", ctx.onVisibilityChange);
+      window.removeEventListener("focus", ctx.onWindowFocus);
+      if (ctx.recomputeRaf) cancelAnimationFrame(ctx.recomputeRaf);
     },
   };
+}
+
+export function mountGameView(container, opts = {}) {
+  const {
+    events,
+    onMove,
+    onMoveJump = null, // view-mode click on a move; (plyIndex) => void
+    forkInfoFn = null, // () => Map<plyIdx, {childCount, isOwnForkPly}>
+    onForkClick = null, // (plyIdx) => void when glyph itself is clicked
+    show = {},
+    interactive = false,
+    sideContainer = null, // optional: separate host for the side rail
+    boardStyle = null,    // preset id from settings; null = library default
+  } = opts;
+  const showClocks = show.clocks !== false;
+  const showMoves = show.moves !== false;
+  const showEngineInfo = show.engineInfo !== false;
+
+  // The board area always lives in `container`. The side rail goes into
+  // `sideContainer` if provided, else inline below the board.
+  container.innerHTML = boardHTML(showClocks);
+  const sideHost = sideContainer ?? container;
+  if (sideContainer) {
+    sideContainer.innerHTML = sideHTML(showEngineInfo, showMoves);
+  } else {
+    container.insertAdjacentHTML("beforeend", sideHTML(showEngineInfo, showMoves));
+  }
+
+  let resolveReady;
+  const ready = new Promise((r) => { resolveReady = r; });
+
+  const ctx = {
+    onMoveJump, forkInfoFn, onForkClick,
+    interactive, showClocks, showMoves, showEngineInfo,
+    ready, resolveReady,
+
+    currentFen: INITIAL_FEN,
+    humanWhite: true,
+    gameId: null,
+    engineName: "Engine",
+    playerName: PLAYER_NAME_DEFAULT,
+    lastTurn: "white",
+    lastClockRunning: false,
+    viewing: false,
+    editing: false,
+    // First board_update after (re)mount: snap pieces to position instead
+    // of animating from startpos, and resolve `ready` so the router can
+    // reveal the perspective without a render-order flicker.
+    firstBoardUpdate: true,
+    // Edit-mode side-to-move ("w"|"b"). Authoritative while editing.
+    editStm: "w",
+    // Analysis mode: streams PV from a dedicated engine even while viewing.
+    analyzing: false,
+    // Cached PGN names so flipping the board in view mode can re-swap
+    // top/bottom without waiting for a fresh board_update.
+    viewWhiteName: null,
+    viewBlackName: null,
+    // Preview overlay: while previewActive the board shows a hypothetical
+    // FEN (typically an AI `analyze` arg) and input is suppressed.
+    previewActive: false,
+    previewInputWasEnabled: false,
+    recomputeRaf: 0,
+    off: null,
+  };
+
+  queryRefs(ctx, container, sideHost);
+  if (ctx.moveListEl) selectContentsOnCtrlA(ctx.moveListEl);
+  if (ctx.fenText) ctx.fenText.textContent = INITIAL_FEN;
+  ctx.fenCopyBtn?.addEventListener("click", () => copyFen(ctx));
+  ctx.fenText?.addEventListener("click", () => copyFen(ctx));
+
+  ctx.board = mountBoard({
+    element: ctx.boardEl,
+    styleId: boardStyle,
+    onMove: (uci) => { if (interactive) onMove?.(uci); },
+  });
+
+  // cm-chessboard sizes its SVG off boardEl.clientWidth (squared), ignoring
+  // height. We compute a square that fits the column width AND the viewport
+  // height, then drive cm-chessboard's measurement.
+  ctx.boardCol = container.querySelector(".game-view-board") || container;
+
+  setHumanWhite(ctx, ctx.humanWhite);
+
+  ctx.onRecompute = () => recomputeBoardSize(ctx);
+  ctx.ro = new ResizeObserver(ctx.onRecompute);
+  ctx.ro.observe(ctx.boardCol);
+  ctx.ro.observe(document.body);
+  window.addEventListener("resize", ctx.onRecompute);
+  window.addEventListener(APP_EVT.LAYOUT_CHANGED, ctx.onRecompute);
+  requestAnimationFrame(ctx.onRecompute);
+
+  ctx.onVisibilityChange = () => { if (!document.hidden) ctx.board.cancelAnimations(); };
+  ctx.onWindowFocus = () => ctx.board.cancelAnimations();
+  document.addEventListener("visibilitychange", ctx.onVisibilityChange);
+  window.addEventListener("focus", ctx.onWindowFocus);
+
+  if (events) ctx.off = events.on((evt) => applyEvent(ctx, evt));
+
+  return buildViewApi(ctx);
 }

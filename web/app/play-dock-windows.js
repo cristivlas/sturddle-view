@@ -30,6 +30,7 @@ import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, loadRaw, saveRaw } from "./storage.js";
 import {
   AUTOSCROLL_SLACK_LINE_PX,
+  fmtScore,
   isPinnedToBottom,
   scrollToBottom,
 } from "./wb-utils.js";
@@ -781,12 +782,6 @@ const PV_GEO_KEY       = STORAGE_KEY.PVTABLE_GEO;
 const PV_WIN_STATE_KEY = STORAGE_KEY.PVTABLE_WIN_STATE;
 const PV_DOCKED_KEY    = STORAGE_KEY.PVTABLE_DOCKED;
 const PV_OPEN_KEY      = STORAGE_KEY.PVTABLE_OPEN;
-
-function fmtScore(score) {
-  if (!score) return "";
-  if (score.mate != null) return `#${score.mate}`;
-  return (score.cp / 100).toFixed(2);
-}
 
 function fmtK(n) {
   if (n == null) return "";

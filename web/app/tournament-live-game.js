@@ -8,7 +8,7 @@ import { confirm, reportError, toast } from "./dialogs.js";
 import { isPlayInProgress, isViewing, isAnalyzing, getViewingHash, getViewingSummary } from "./perspectives/play.js";
 import { confirmReplaceViewedGame } from "./import-position-dialog.js";
 import { APP_EVT } from "./app-events.js";
-import { flashWindow } from "./wb-utils.js";
+import { fmtClock, fmtScore, flashWindow } from "./wb-utils.js";
 import { terminationPhrase } from "./format-termination.js";
 
 async function replayTournamentGame({ tournamentId, gameN, token, pairId = null }) {
@@ -560,8 +560,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 
   function updateClocks(wtime, btime) {
     if (!engineColor || wtime == null || btime == null) return;
-    bottomTimeEl.textContent = formatMs(engineColor === "white" ? wtime : btime);
-    topTimeEl.textContent = formatMs(engineColor === "white" ? btime : wtime);
+    bottomTimeEl.textContent = fmtClock((engineColor === "white" ? wtime : btime) / 1000, { tenthsBelow: 60 });
+    topTimeEl.textContent = fmtClock((engineColor === "white" ? btime : wtime) / 1000, { tenthsBelow: 60 });
   }
 
   async function applyBestMove(uciMove) {
@@ -615,7 +615,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
           activeDeadline = Date.now() + startMs;
           const tick = () => {
             const remaining = Math.max(0, activeDeadline - Date.now());
-            bottomTimeEl.textContent = formatMs(remaining);
+            bottomTimeEl.textContent = fmtClock(remaining / 1000, { tenthsBelow: 60 });
             if (remaining === 0 && timerInterval) {
               clearInterval(timerInterval);
               timerInterval = null;
@@ -635,7 +635,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
           activeDeadline = Date.now() + oppMs;
           const tick = () => {
             const remaining = Math.max(0, activeDeadline - Date.now());
-            topTimeEl.textContent = formatMs(remaining);
+            topTimeEl.textContent = fmtClock(remaining / 1000, { tenthsBelow: 60 });
             if (remaining === 0 && timerInterval) {
               clearInterval(timerInterval);
               timerInterval = null;
@@ -666,16 +666,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     if (m) board.setOpponentArrow(m.slice(0, 2), m.slice(2, 4));
   }
 
-  function fmtScore(p) {
-    const score = p.score;
-    if (!score) return "--";
-    if (score.cp != null) return (score.cp >= 0 ? "+" : "") + (score.cp / 100).toFixed(2);
-    if (score.mate != null) return `M${score.mate}`;
-    return "--";
-  }
-
   function renderOpponentEval(p) {
-    oppEvalScoreEl.textContent = fmtScore(p);
+    oppEvalScoreEl.textContent = fmtScore(p.score, { empty: "--", matePrefix: "M", signed: true });
     oppEvalDepthEl.textContent = p.depth != null
       ? (p.seldepth != null ? `d${p.depth}/${p.seldepth}` : `d${p.depth}`)
       : "";
@@ -685,7 +677,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   }
 
   function renderEval(p) {
-    evalScoreEl.textContent = fmtScore(p);
+    evalScoreEl.textContent = fmtScore(p.score, { empty: "--", matePrefix: "M", signed: true });
     evalDepthEl.textContent = p.depth != null
       ? (p.seldepth != null ? `d${p.depth}/${p.seldepth}` : `d${p.depth}`)
       : "";
@@ -696,17 +688,6 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
       const m = pvArrowMove(p);
       if (m) board.setArrow(m.slice(0, 2), m.slice(2, 4));
     }
-  }
-
-  function formatMs(ms) {
-    if (ms < 0) return "0.0";
-    const s = ms / 1000;
-    if (s >= 60) {
-      const m = Math.floor(s / 60);
-      const r = (s - m * 60).toFixed(0);
-      return `${m}:${r.padStart(2, "0")}`;
-    }
-    return s.toFixed(1);
   }
 
   return {
