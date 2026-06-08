@@ -834,12 +834,94 @@ async function stopAnalysisFromUi(state) {
   closeAnalysisOpenedWindows();
 }
 
+// Edit-mode side/castling popover handlers. Operate on the shared `state`
+// (state.el DOM refs, state.view, state.refreshButtons, state.editing).
+function _closeSidePopover(state) {
+  state.el.editSidePopover.classList.add("hidden");
+  state.el.editSideBtn.setAttribute("aria-expanded", "false");
+}
+function _closeCastlePopover(state) {
+  state.el.editCastlePopover.classList.add("hidden");
+  state.el.editCastleBtn.setAttribute("aria-expanded", "false");
+}
+function editSidePopoverToggle(state, ev) {
+  ev.stopPropagation();
+  if (!state.el.editSidePopover.classList.contains("hidden")) {
+    _closeSidePopover(state);
+  } else {
+    state.el.editSidePopover.classList.remove("hidden");
+    state.el.editSideBtn.setAttribute("aria-expanded", "true");
+  }
+}
+function editSideFlip(state) {
+  state.view.setEditSide(state.view.getEditSide() === "w" ? "b" : "w");
+  state.refreshButtons();
+}
+function editCastleToggle(state, right) {
+  state.view.toggleCastlingRight(right);
+  state.refreshButtons();
+}
+function editCastlePopoverToggle(state, ev) {
+  ev.stopPropagation();
+  if (!state.el.editCastlePopover.classList.contains("hidden")) {
+    _closeCastlePopover(state);
+  } else {
+    state.el.editCastlePopover.classList.remove("hidden");
+    state.el.editCastleBtn.setAttribute("aria-expanded", "true");
+  }
+}
+function editDocClickClose(state, ev) {
+  if (!state.editing) return;
+  const { editCastlePopover, editCastleBtn, editSidePopover, editSideBtn } = state.el;
+  if (!editCastlePopover.classList.contains("hidden") &&
+      !editCastlePopover.contains(ev.target) && !editCastleBtn.contains(ev.target)) {
+    _closeCastlePopover(state);
+  }
+  if (!editSidePopover.classList.contains("hidden") &&
+      !editSidePopover.contains(ev.target) && !editSideBtn.contains(ev.target)) {
+    _closeSidePopover(state);
+  }
+}
+
 export const playPerspective = {
   id: "play",
   label: "Play",
 
   async mount(root, ctx) {
     root.innerHTML = PLAY_PERSPECTIVE_HTML;
+
+    // Shared mutable view/x-game state, passed by ref to the extracted
+    // x-game helpers so they can read/write the same scalars as mount.
+    // `view` is filled in right after mountGameView returns below.
+    const state = {
+      analyzing: false,
+      viewing: false,
+      viewCursor: 0,
+      viewingGameId: null,
+      lastViewNavKind: "precise",
+      editing: false,
+      ctx,
+      api: ctx.api,
+      view: null,
+      // Edit-mode DOM refs + refreshButtons, filled in below once they exist.
+      el: null,
+      refreshButtons: null,
+      // turnFinished: AI turn ended naturally (server stays in ANALYSIS, board
+      // locked, ribbon stops "stopping"); reset on next analyze start.
+      // dismissAnalysisToast: handle to the persistent "Analysis mode" toast.
+      aiShared: { turnFinished: false, dismissAnalysisToast: null },
+      xgame: {
+        gameId: null,
+        parentGameId: null,
+        parentSummary: null,
+        forkPly: null,
+        children: [],
+        parentToastDismissed: false,
+        childrenToastDismissed: false,
+        parentToastHandle: null,
+        childrenToastHandle: null,
+      },
+    };
 
     const boardHost = root.querySelector(".play-board-host");
     const dockLeft = root.querySelector(".play-dock-left");
@@ -889,6 +971,8 @@ export const playPerspective = {
     const editCancelBtn = root.querySelector("#edit-cancel");
     const noEngineBanner = root.querySelector("#no-engine-banner");
     const noEngineBannerBtn = noEngineBanner.querySelector(".no-engine-banner__btn");
+    // DOM refs the lifted edit-popover handlers read.
+    state.el = { editSideBtn, editSidePopover, editCastleBtn, editCastlePopover };
 
     // Tracks "server has zero engines registered." Drives both the
     // CTA banner and per-button gating (view-analyze, AI settings).
@@ -926,35 +1010,6 @@ export const playPerspective = {
     } catch {
       // ignore — fall back to default style
     }
-
-    // Shared mutable view/x-game state, passed by ref to the extracted
-    // x-game helpers so they can read/write the same scalars as mount.
-    // `view` is filled in right after mountGameView returns below.
-    const state = {
-      analyzing: false,
-      viewing: false,
-      viewCursor: 0,
-      viewingGameId: null,
-      lastViewNavKind: "precise",
-      ctx,
-      api: ctx.api,
-      view: null,
-      // turnFinished: AI turn ended naturally (server stays in ANALYSIS, board
-      // locked, ribbon stops "stopping"); reset on next analyze start.
-      // dismissAnalysisToast: handle to the persistent "Analysis mode" toast.
-      aiShared: { turnFinished: false, dismissAnalysisToast: null },
-      xgame: {
-        gameId: null,
-        parentGameId: null,
-        parentSummary: null,
-        forkPly: null,
-        children: [],
-        parentToastDismissed: false,
-        childrenToastDismissed: false,
-        parentToastHandle: null,
-        childrenToastHandle: null,
-      },
-    };
 
     // --- GameView: board host on top, side host (moves+engine) below. ---
     const view = mountGameView(boardHost, {
@@ -1151,7 +1206,6 @@ export const playPerspective = {
     // are per-game don't-nag (only explicit X resets them; ply-change
     // auto-close does NOT count). Toast handles are dismiss callbacks
     // from toast() -- kept so we can close on ply change.
-    let editing = false;
     // Annotation staged by the user via the edit-mode annotation modal.
     // null  -> no pending change; /edit/commit goes with apply_comment=false.
     // ""    -> user explicitly cleared; server treats as delete.
@@ -1178,12 +1232,12 @@ export const playPerspective = {
     buttonsReady = true;
     function refreshButtons() {
       // Swap ribbons: edit overrides view, which overrides play.
-      const activeRibbon = editing ? editRibbon : state.viewing ? viewRibbon : playRibbon;
-      playRibbon.style.display = (state.viewing || editing) ? "none" : "";
-      viewRibbon.style.display = (state.viewing && !editing) ? "" : "none";
-      editRibbon.style.display = editing ? "" : "none";
+      const activeRibbon = state.editing ? editRibbon : state.viewing ? viewRibbon : playRibbon;
+      playRibbon.style.display = (state.viewing || state.editing) ? "none" : "";
+      viewRibbon.style.display = (state.viewing && !state.editing) ? "" : "none";
+      editRibbon.style.display = state.editing ? "" : "none";
       window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_ACTIVE, { detail: { el: activeRibbon } }));
-      if (editing) {
+      if (state.editing) {
         const isWhite = view.getEditSide() === "w";
         editSideBtn.setAttribute("aria-label", `Side to move: ${isWhite ? "White" : "Black"}`);
         editSideBtn.setAttribute("title", `Side to move: ${isWhite ? "White" : "Black"}`);
@@ -1261,6 +1315,7 @@ export const playPerspective = {
         icon: showAsActive ? ANALYZE_ICON_STOP : ANALYZE_ICON_START,
       });
     }
+    state.refreshButtons = refreshButtons;
 
     // View-mode flip is purely visual (no backend state; the user isn't
     // playing yet so "which side am I" is meaningless). Persisted so it
@@ -1306,10 +1361,10 @@ export const playPerspective = {
           showFinishedBadge("");
           // Server-authoritative edit state. Transitions drive the client
           // editor extension on/off; the ribbon UI follows `editing`.
-          const wasEditing = editing;
-          editing = !!evt.payload.editing;
-          if (editing && !wasEditing) _onServerEditingStart();
-          else if (!editing && wasEditing) _onServerEditingStop();
+          const wasEditing = state.editing;
+          state.editing = !!evt.payload.editing;
+          if (state.editing && !wasEditing) _onServerEditingStart();
+          else if (!state.editing && wasEditing) _onServerEditingStop();
           // View mode swaps the ribbon and suppresses play-mode signals
           // (resignAvailable, etc.) — the user isn't playing yet.
           const v = evt.payload.view;
@@ -1704,55 +1759,11 @@ export const playPerspective = {
     const onEditPosition = _enterEditFromCurrentMode;
     const onViewEditPosition = _enterEditFromCurrentMode;
 
-    function _closeSidePopover() {
-      editSidePopover.classList.add("hidden");
-      editSideBtn.setAttribute("aria-expanded", "false");
-    }
-    const onEditSide = (ev) => {
-      ev.stopPropagation();
-      const isOpen = !editSidePopover.classList.contains("hidden");
-      if (isOpen) {
-        _closeSidePopover();
-      } else {
-        editSidePopover.classList.remove("hidden");
-        editSideBtn.setAttribute("aria-expanded", "true");
-      }
-    };
-    const onEditSideToggle = () => {
-      view.setEditSide(view.getEditSide() === "w" ? "b" : "w");
-      refreshButtons();
-    };
-
-    const onEditCastleCb = (right) => () => {
-      view.toggleCastlingRight(right);
-      refreshButtons();
-    };
-
-    function _closeCastlePopover() {
-      editCastlePopover.classList.add("hidden");
-      editCastleBtn.setAttribute("aria-expanded", "false");
-    }
-    const onEditCastleBtn = (ev) => {
-      ev.stopPropagation();
-      const isOpen = !editCastlePopover.classList.contains("hidden");
-      if (isOpen) {
-        _closeCastlePopover();
-      } else {
-        editCastlePopover.classList.remove("hidden");
-        editCastleBtn.setAttribute("aria-expanded", "true");
-      }
-    };
-    const onDocClickClosePopover = (ev) => {
-      if (!editing) return;
-      if (!editCastlePopover.classList.contains("hidden") &&
-          !editCastlePopover.contains(ev.target) && !editCastleBtn.contains(ev.target)) {
-        _closeCastlePopover();
-      }
-      if (!editSidePopover.classList.contains("hidden") &&
-          !editSidePopover.contains(ev.target) && !editSideBtn.contains(ev.target)) {
-        _closeSidePopover();
-      }
-    };
+    const onEditSide = (ev) => editSidePopoverToggle(state, ev);
+    const onEditSideToggle = () => editSideFlip(state);
+    const onEditCastleCb = (right) => () => editCastleToggle(state, right);
+    const onEditCastleBtn = (ev) => editCastlePopoverToggle(state, ev);
+    const onDocClickClosePopover = (ev) => editDocClickClose(state, ev);
 
     const onEditAnnotate = async () => {
       // Preload from pendingAnnotation (if user already staged something
@@ -1811,7 +1822,7 @@ export const playPerspective = {
     // null while analyzing or editing (view/goto is rejected in those
     // modes, so the targets would be unreachable anyway).
     const pushNavToUi = () => {
-      const gated = state.analyzing || editing;
+      const gated = state.analyzing || state.editing;
       setCommentaryNavState(gated ? null : commentNavPrev, gated ? null : commentNavNext);
     };
 
@@ -2036,7 +2047,7 @@ export const playPerspective = {
     return {
       ready: Promise.resolve(),
       async canUnmount() {
-        if (!editing) return true;
+        if (!state.editing) return true;
         return await confirm({
           message: MSG.CONFIRM_LEAVE_EDIT,
           okLabel: MSG.LEAVE,
@@ -2045,7 +2056,7 @@ export const playPerspective = {
         });
       },
       unmount() {
-        if (editing) {
+        if (state.editing) {
           // Fire-and-forget cancel so the server doesn't stay stuck in
           // edit mode if the user navigates away.
           ctx.api("POST", "/game/edit/cancel", {}).catch(() => {});
