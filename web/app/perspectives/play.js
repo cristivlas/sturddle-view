@@ -1230,6 +1230,86 @@ async function onEditAnnotateImpl(state) {
   }
 }
 
+// Analysis toggle cluster. The persistent "Analysis mode" toast wires Search
+// Lines / UCI log / Stop; start/stop/reanalyze drive the server + AI panel.
+function showAnalysisToastModule(state) {
+  state.aiShared.dismissAnalysisToast?.();
+  const msg = document.createElement("span");
+  msg.className = "toast-sort-msg";
+  const label = document.createElement("span");
+  label.className = "toast-grow is-active";
+  label.textContent = MSG.ANALYSIS_MODE;
+  msg.append(label);
+  msg.append(makeToastIconBtn("table-list", MSG.SEARCH_LINES, () => togglePvTableWindow(state.ctx.events)));
+  msg.append(makeToastIconBtn("terminal", MSG.UCI_LOG, () => toggleUciLogWindow(state.ctx.events)));
+  const stopBtn = makeToastIconBtn(ANALYZE_ICON_STOP, MSG.STOP_ANALYSIS, () => onAnalyzeModule(state));
+  stopBtn.classList.add("is-active");
+  msg.append(stopBtn);
+  state.aiShared.dismissAnalysisToast = toast(msg, {
+    variant: "neutral",
+    duration: 0,
+  });
+}
+
+// POST start + restore panels + toast + open/reset AI panel. Shared by the
+// analyze toggle and the re-analyze button so the two paths can't drift.
+// openAi() before resetAi(): resetAi sets the spinner and no-ops when null.
+async function startAnalysisFromUiModule(state) {
+  // Engine-only analysis: close any leftover AI panel from a prior AI run
+  // before starting, so the dock shows engine-only output. Done first so
+  // the close can't race the new analysis state.
+  if (!state.aiEnabled && isAiOpen()) closeAi();
+  await state.ctx.api("POST", "/game/analysis/start", {});
+  restoreViewAnalysisWindows(state.ctx.events);
+  state.aiShared.turnFinished = false;
+  showAnalysisToastModule(state);
+  if (state.aiEnabled) {
+    // Pin the title to the model actually about to run. Mid-session
+    // provider/model edits do not retitle until the next Analyze click.
+    setAiTitle(state.aiTitleModel);
+    openAi();
+    resetAi();
+  }
+}
+
+async function onAnalyzeModule(state) {
+  // Switching from a FINISHED AI session to engine-only: stop the AI session,
+  // then start engine analysis -- a plain Stop would tear down and leave
+  // nothing running. While the AI run is in progress the ribbon is a plain Stop.
+  if (state.analyzing && state.aiShared.turnFinished && !state.aiEnabled && isAiOpen()) {
+    await onReanalyzeModule(state);
+    return;
+  }
+  if (state.analyzing) {
+    await stopAnalysisFromUi(state);
+    return;
+  }
+  try {
+    await startAnalysisFromUiModule(state);
+  } catch (e) {
+    reportError(state.ctx, MSG.START_ANALYSIS_FAILED, e);
+  }
+}
+
+// Re-analyze: stop the current turn server-side (if any), then start a fresh
+// one, keeping the AI panel open. reanalyzeInFlight guards against rapid
+// double-clicks producing a spurious second start (server -> ModeConflictError).
+async function onReanalyzeModule(state) {
+  if (state.reanalyzeInFlight) return;
+  state.reanalyzeInFlight = true;
+  try {
+    if (state.analyzing) {
+      snapshotViewAnalysisState();
+      await state.ctx.api("POST", "/game/analysis/stop", {});
+    }
+    await startAnalysisFromUiModule(state);
+  } catch (e) {
+    reportError(state.ctx, MSG.REANALYZE_FAILED, e);
+  } finally {
+    state.reanalyzeInFlight = false;
+  }
+}
+
 export const playPerspective = {
   id: "play",
   label: "Play",
@@ -1902,95 +1982,9 @@ export const playPerspective = {
 
     const onPlayFromHere = () => onPlayFromHereImpl(state);
 
-    // Show the persistent "Analysis mode on" toast. Called both from
-    // onAnalyze (user toggle) and from the board_update handler so the
-    // toast restores itself when the perspective remounts (navigate away
-    // and back) and the server re-emits analyzing: true.
-
-    function showAnalysisToast() {
-      state.aiShared.dismissAnalysisToast?.();
-      const msg = document.createElement("span");
-      msg.className = "toast-sort-msg";
-      const label = document.createElement("span");
-      label.className = "toast-grow is-active";
-      label.textContent = MSG.ANALYSIS_MODE;
-      msg.append(label);
-      msg.append(makeToastIconBtn("table-list", MSG.SEARCH_LINES, onPvTable));
-      msg.append(makeToastIconBtn("terminal", MSG.UCI_LOG, onUciLog));
-      const stopBtn = makeToastIconBtn(ANALYZE_ICON_STOP, MSG.STOP_ANALYSIS, onAnalyze);
-      stopBtn.classList.add("is-active");
-      msg.append(stopBtn);
-      state.aiShared.dismissAnalysisToast = toast(msg, {
-        variant: "neutral",
-        duration: 0,
-      });
-    }
-
-    // POST start + restore panels + toast + open/reset AI panel. Shared
-    // by the analyze toggle and the re-analyze button so the two paths
-    // can't drift. openAi() before resetAi(): resetAi sets the spinner
-    // and no-ops when the body is null.
-    async function startAnalysisFromUi() {
-      // Engine-only analysis: close any leftover AI panel from a prior
-      // AI run before starting, so the dock shows engine-only output.
-      // Done first so the close can't race the new analysis state.
-      if (!state.aiEnabled && isAiOpen()) closeAi();
-      await ctx.api("POST", "/game/analysis/start", {});
-      restoreViewAnalysisWindows(ctx.events);
-      state.aiShared.turnFinished = false;
-      showAnalysisToast();
-      if (state.aiEnabled) {
-        // Pin the title to the model that is actually about to run.
-        // Mid-session provider/model edits do not retitle until the
-        // user clicks Analyze (or the re-analyze button) again.
-        setAiTitle(state.aiTitleModel);
-        openAi();
-        resetAi();
-      }
-    }
-
-    const onAnalyze = async () => {
-      // Switching from a FINISHED AI session to engine-only: stop the AI
-      // session, then start engine analysis -- a plain Stop would just
-      // tear down and leave nothing running. While the AI run is still in
-      // progress (!aiShared.turnFinished), the ribbon is a plain Stop.
-      if (state.analyzing && state.aiShared.turnFinished && !state.aiEnabled && isAiOpen()) {
-        await onReanalyze();
-        return;
-      }
-      if (state.analyzing) {
-        await stopAnalysisFromUi(state);
-        return;
-      }
-      try {
-        await startAnalysisFromUi();
-      } catch (e) {
-        reportError(ctx, MSG.START_ANALYSIS_FAILED, e);
-      }
-    };
-
-    // Re-analyze: stop the current turn server-side (if any), then start
-    // a fresh one. Distinct from the Analyze toggle which closes on a
-    // second click; this path keeps the AI panel open and mirrors the
-    // snapshot/restore dance of stopAnalysisFromUi + onAnalyze so view
-    // mode panels survive the round-trip. `reanalyzeInFlight` guards
-    // against rapid double-clicks producing a spurious second start
-    // that the server would reject with ModeConflictError.
-    const onReanalyze = async () => {
-      if (state.reanalyzeInFlight) return;
-      state.reanalyzeInFlight = true;
-      try {
-        if (state.analyzing) {
-          snapshotViewAnalysisState();
-          await ctx.api("POST", "/game/analysis/stop", {});
-        }
-        await startAnalysisFromUi();
-      } catch (e) {
-        reportError(ctx, MSG.REANALYZE_FAILED, e);
-      } finally {
-        state.reanalyzeInFlight = false;
-      }
-    };
+    const showAnalysisToast = () => showAnalysisToastModule(state);
+    const onAnalyze = () => onAnalyzeModule(state);
+    const onReanalyze = () => onReanalyzeModule(state);
     setOnReanalyzeAi(onReanalyze);
 
     // Cmd/Ctrl+O opens the import dialog. Skip when typing in an input or
