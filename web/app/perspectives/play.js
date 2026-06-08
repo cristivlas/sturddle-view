@@ -301,7 +301,7 @@ function dispatchAiEvent(aiCtx, evt) {
           aiShared.turnFinished = true;
           aiShared.dismissAnalysisToast?.();
           aiShared.dismissAnalysisToast = null;
-          refreshButtons();
+          refreshButtons(state);
         }
       }
       return true;
@@ -883,6 +883,101 @@ function editDocClickClose(state, ev) {
   }
 }
 
+// Ribbon button state, computed from the shared `state`.
+
+// A finished AI-analysis turn in play mode: board frozen in ANALYZING, reads as
+// paused, so the ribbon shows Resume (one click exits analysis + resumes play).
+// Reads live state -- call, don't cache.
+function aiAnalysisDone(state) {
+  return state.analyzing && state.aiShared.turnFinished && state.aiEnabled;
+}
+
+function refreshButtons(state) {
+  // Swap ribbons: edit overrides view, which overrides play.
+  const activeRibbon = state.editing ? state.el.editRibbon : state.viewing ? state.el.viewRibbon : state.el.playRibbon;
+  state.el.playRibbon.style.display = (state.viewing || state.editing) ? "none" : "";
+  state.el.viewRibbon.style.display = (state.viewing && !state.editing) ? "" : "none";
+  state.el.editRibbon.style.display = state.editing ? "" : "none";
+  window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_ACTIVE, { detail: { el: activeRibbon } }));
+  if (state.editing) {
+    const isWhite = state.view.getEditSide() === "w";
+    state.el.editSideBtn.setAttribute("aria-label", `Side to move: ${isWhite ? "White" : "Black"}`);
+    state.el.editSideBtn.setAttribute("title", `Side to move: ${isWhite ? "White" : "Black"}`);
+    state.el.editSideBtn.classList.toggle("is-active", !isWhite);
+    state.el.editSideTogglePill.textContent = isWhite ? MSG.WHITE_TO_MOVE : MSG.BLACK_TO_MOVE;
+    state.el.editSideTogglePill.classList.toggle("is-black", !isWhite);
+    state.el.editSideTogglePill.setAttribute("aria-pressed", isWhite ? "false" : "true");
+    const rights = state.view.getCastlingRights();
+    for (const [k, btn] of Object.entries(state.el.editCastleCb)) {
+      btn.setAttribute("aria-pressed", rights[k] ? "true" : "false");
+      btn.classList.toggle("is-active", rights[k]);
+    }
+    const anyRight = rights.wK || rights.wQ || rights.bK || rights.bQ;
+    state.el.editCastleBtn.classList.toggle("is-active", anyRight);
+    return;
+  }
+  if (state.viewing) {
+    const atStart = state.viewCursor === 0;
+    const atEnd = state.viewCursor === state.viewTotalPlies;
+    configureBtn(state.el.viewFirstBtn, { disabled: state.analyzing || atStart });
+    configureBtn(state.el.viewBackBtn, { disabled: state.analyzing || atStart });
+    configureBtn(state.el.viewForwardBtn, { disabled: state.analyzing || atEnd });
+    configureBtn(state.el.viewLastBtn, { disabled: state.analyzing || atEnd });
+    configureBtn(state.el.viewSavePgnBtn, { disabled: state.analyzing || state.viewTotalPlies === 0 });
+    // Play-from-here is rejected at game-over plies (checkmate /
+    // stalemate / draw). Backed by a backend guard that prevents
+    // half-cleared state if the UI is bypassed.
+    configureBtn(state.el.viewPlayFromHereBtn, { disabled: state.analyzing || state.viewGameOver });
+    // Engine-less view: analyze is unreachable. Tooltip points at
+    // Engines tab so the user knows the next step.
+    // AI turn finished but server still ANALYZING: show ribbon as
+    // normal ("Analysis mode") even though `analyzing` is true.
+    const viewShowAsActive = state.analyzing && !state.aiShared.turnFinished;
+    configureBtn(state.el.viewAnalyzeBtn, {
+      disabled: state.noEngine && !viewShowAsActive,
+      active: viewShowAsActive,
+      label: viewShowAsActive
+        ? MSG.STOP_ANALYSIS
+        : state.noEngine
+          ? MSG.ANALYZE_NEEDS_ENGINE
+          : MSG.ANALYSIS_MODE,
+      icon: viewShowAsActive ? ANALYZE_ICON_STOP : ANALYZE_ICON_START,
+    });
+    return;
+  }
+  const humanToMove = state.humanWhite ? state.turn === "white" : state.turn === "black";
+  // Completed AI analysis in play mode reads as paused to the user; show
+  // Resume (see aiAnalysisDone / onPause). Engine-only analysis and
+  // in-progress runs keep the plain Pause/Resume toggle.
+  const aiDone = aiAnalysisDone(state);
+  const showResume = state.paused || aiDone;
+  // Pause needs the human's turn; Resume is always allowed.
+  configureBtn(state.el.pauseBtn, {
+    disabled: state.gameOver || (!aiDone && state.analyzing) || (!showResume && !humanToMove),
+    label: showResume ? "Resume" : "Pause",
+    icon: showResume ? "forward-step" : "pause",
+  });
+  configureBtn(state.el.takebackBtn, {
+    disabled: state.analyzing || state.gameOver || !state.allowTakeback || state.movesPlayed === 0,
+  });
+  configureBtn(state.el.savePgnBtn, { disabled: state.analyzing || state.movesPlayed === 0 });
+  configureBtn(state.el.switchSidesBtn, { disabled: state.analyzing || state.gameOver || !state.resignAvailable });
+  configureBtn(state.el.resignBtn, { disabled: state.paused || state.analyzing || state.gameOver || !state.resignAvailable });
+  // AI turn finished but server is still ANALYZING (user hasn't
+  // closed the AI window yet). Show the ribbon button as normal
+  // ("Analysis mode", magnifying-glass, enabled) -- the rest of
+  // the reachability gates (gameOver / no engine / not paused)
+  // still apply.
+  const showAsActive = state.analyzing && !state.aiShared.turnFinished;
+  const analyzeReachable = !state.gameOver && state.resignAvailable && (state.paused || state.aiShared.turnFinished);
+  configureBtn(state.el.analyzeBtn, {
+    disabled: !showAsActive && !analyzeReachable,
+    active: showAsActive,
+    label: showAsActive ? MSG.STOP_ANALYSIS : MSG.ANALYSIS_MODE,
+    icon: showAsActive ? ANALYZE_ICON_STOP : ANALYZE_ICON_START,
+  });
+}
+
 export const playPerspective = {
   id: "play",
   label: "Play",
@@ -900,6 +995,18 @@ export const playPerspective = {
       viewingGameId: null,
       lastViewNavKind: "precise",
       editing: false,
+      aiEnabled: false,
+      aiTitleModel: "",
+      noEngine: false,
+      allowTakeback: true,
+      movesPlayed: 0,
+      viewTotalPlies: 0,
+      viewGameOver: false,
+      humanWhite: true,
+      turn: "white",
+      resignAvailable: false,
+      gameOver: false,
+      paused: false,
       ctx,
       api: ctx.api,
       view: null,
@@ -971,19 +1078,25 @@ export const playPerspective = {
     const editCancelBtn = root.querySelector("#edit-cancel");
     const noEngineBanner = root.querySelector("#no-engine-banner");
     const noEngineBannerBtn = noEngineBanner.querySelector(".no-engine-banner__btn");
-    // DOM refs the lifted edit-popover handlers read.
-    state.el = { editSideBtn, editSidePopover, editCastleBtn, editCastlePopover };
+    // DOM refs read by lifted module-level handlers (edit popovers,
+    // refreshButtons). Mount keeps the bare consts for listener wiring.
+    state.el = {
+      editSideBtn, editSidePopover, editCastleBtn, editCastlePopover,
+      editSideTogglePill, editCastleCb, editRibbon, playRibbon, viewRibbon,
+      pauseBtn, takebackBtn, savePgnBtn, switchSidesBtn, resignBtn, analyzeBtn,
+      viewFirstBtn, viewBackBtn, viewForwardBtn, viewLastBtn, viewSavePgnBtn,
+      viewPlayFromHereBtn, viewAnalyzeBtn,
+    };
 
     // Tracks "server has zero engines registered." Drives both the
     // CTA banner and per-button gating (view-analyze, AI settings).
-    // Mirrored in JS state so refreshButtons() can read it without an
+    // Mirrored in JS state so refreshButtons(state) can read it without an
     // extra DOM query each call.
-    let noEngine = false;
-    let buttonsReady = false; // refreshButtons reads `editing` etc.; safe only after their let-bindings
+    let buttonsReady = false; // gate setNoEngine's early refreshButtons until state.view is wired
     function setNoEngine(v) {
-      noEngine = !!v;
-      noEngineBanner.classList.toggle("hidden", !noEngine);
-      if (buttonsReady) refreshButtons();
+      state.noEngine = !!v;
+      noEngineBanner.classList.toggle("hidden", !state.noEngine);
+      if (buttonsReady) refreshButtons(state);
     }
     async function checkEngines() {
       try {
@@ -1069,7 +1182,6 @@ export const playPerspective = {
     state.view = view;
 
     // Settings cache (refreshed on settings-changed).
-    let allowTakeback = true;
     let showPgnComments = true; // view-mode commentary window
     // True only while play->view->edit is in flight. Opening the dock
     // mid-transition fires a seeding /view/goto with the stale (pre-flip)
@@ -1108,7 +1220,6 @@ export const playPerspective = {
     // Master toggle from settings; gates the AI panel + the server-side
     // start_analysis branch. The AI window lives in the main dock
     // alongside Search Lines + UCI Log.
-    let aiEnabled = false;
     // Closing the AI window mid-turn = same effect as clicking
     // toolbar Stop: snapshot view state, stop analysis, close all
     // dock panels. stopAnalysisFromUi is defined further down.
@@ -1121,16 +1232,15 @@ export const playPerspective = {
     // time. We do not write to setAiTitle on every settings refresh --
     // the panel title should reflect what is actually running, not what
     // is selected in Settings.
-    let aiTitleModel = "";
     async function refreshSettings({ notifyOnDrift = false } = {}) {
       try {
         const s = await ctx.api("GET", "/settings");
-        allowTakeback = s.allow_takeback !== false;
+        state.allowTakeback = s.allow_takeback !== false;
         showPgnComments = s.view_show_pgn_comments !== false;
-        aiEnabled = !!s.ai_enabled;
-        aiTitleModel = s.ai_enabled ? (s.ai_model || "") : "";
+        state.aiEnabled = !!s.ai_enabled;
+        state.aiTitleModel = s.ai_enabled ? (s.ai_model || "") : "";
         syncCommentsVisibility();
-        if (notifyOnDrift && !gameOver && resignAvailable) {
+        if (notifyOnDrift && !state.gameOver && state.resignAvailable) {
           const drift = [];
           // TC: compare against the snapshot taken at game start.
           if (
@@ -1149,7 +1259,7 @@ export const playPerspective = {
         }
         // Always refresh the snapshot from current settings when there is
         // no active game (so the "next game" comparison is accurate).
-        if (!resignAvailable) {
+        if (!state.resignAvailable) {
           gameTcInitial = Number(s.tc_initial_seconds);
           gameTcIncrement = Number(s.tc_increment_seconds);
         }
@@ -1159,14 +1269,14 @@ export const playPerspective = {
     }
     await refreshSettings();
     const onSettingsChanged = () => {
-      refreshSettings({ notifyOnDrift: true }).then(() => refreshButtons());
+      refreshSettings({ notifyOnDrift: true }).then(() => refreshButtons(state));
     };
     window.addEventListener(APP_EVT.SETTINGS_CHANGED, onSettingsChanged);
 
     // sturddle:layout-changed fires when ribbon_float toggled in main.js or
     // when the user closes the ribbon WinBox. Re-run refreshButtons so the
     // active ribbon is mounted in the WinBox (or unhidden from the DOM).
-    const onLayoutChanged = () => { refreshButtons(); };
+    const onLayoutChanged = () => { refreshButtons(state); };
     window.addEventListener(APP_EVT.LAYOUT_CHANGED, onLayoutChanged);
 
     // sturddle:recents-changed fires when another perspective (e.g. the
@@ -1181,31 +1291,9 @@ export const playPerspective = {
     // Ask server to re-emit current state so the freshly-mounted view syncs.
     ctx.api("POST", "/game/sync", {}).catch(() => {});
 
-    // Track whether the current game is in progress (any moves played and
-    // not yet ended). Drives New Game enable + confirm semantics.
-    // TODO: humanWhite + turn are also held inside GameView; consider
-    // exposing getters on `view` and dropping these locals (single source).
-    let movesPlayed = 0;
-    let gameOver = false;
-    let humanWhite = true;
-    let turn = "white";
-    let paused = false;
-    // A finished AI-analysis turn in play mode: the board is frozen in
-    // ANALYZING and reads as paused, so the ribbon shows Resume (one click
-    // exits analysis and resumes play). Reads live state -- call, don't cache.
-    function aiAnalysisDone() {
-      return state.analyzing && state.aiShared.turnFinished && aiEnabled;
-    }
     // View mode state (set from board_update.view payload).
-    let viewTotalPlies = 0;
-    let viewGameOver = false;
     let viewGameOverAlertShown = false;
     let dismissGameOverToast = null;
-    // X-game navigation state. Populated by fetchXgameInfo after every
-    // view-game change; cleared when game_id flips. Toast dismiss flags
-    // are per-game don't-nag (only explicit X resets them; ply-change
-    // auto-close does NOT count). Toast handles are dismiss callbacks
-    // from toast() -- kept so we can close on ply change.
     // Annotation staged by the user via the edit-mode annotation modal.
     // null  -> no pending change; /edit/commit goes with apply_comment=false.
     // ""    -> user explicitly cleared; server treats as delete.
@@ -1215,7 +1303,7 @@ export const playPerspective = {
     const pausedBadge = document.getElementById("paused-badge");
     const finishedBadge = document.getElementById("finished-badge");
     function syncPausedUi() {
-      const show = paused && !state.analyzing;
+      const show = state.paused && !state.analyzing;
       boardHost.classList.toggle("board-paused", show);
       pausedBadge?.classList.toggle("hidden", !show);
     }
@@ -1228,94 +1316,8 @@ export const playPerspective = {
     // Resign is enabled whenever there is an active game; cleared on
     // game_result. We track it explicitly so paused-state can additionally
     // gate it without losing the "active game" signal.
-    let resignAvailable = false;
     buttonsReady = true;
-    function refreshButtons() {
-      // Swap ribbons: edit overrides view, which overrides play.
-      const activeRibbon = state.editing ? editRibbon : state.viewing ? viewRibbon : playRibbon;
-      playRibbon.style.display = (state.viewing || state.editing) ? "none" : "";
-      viewRibbon.style.display = (state.viewing && !state.editing) ? "" : "none";
-      editRibbon.style.display = state.editing ? "" : "none";
-      window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_ACTIVE, { detail: { el: activeRibbon } }));
-      if (state.editing) {
-        const isWhite = view.getEditSide() === "w";
-        editSideBtn.setAttribute("aria-label", `Side to move: ${isWhite ? "White" : "Black"}`);
-        editSideBtn.setAttribute("title", `Side to move: ${isWhite ? "White" : "Black"}`);
-        editSideBtn.classList.toggle("is-active", !isWhite);
-        editSideTogglePill.textContent = isWhite ? MSG.WHITE_TO_MOVE : MSG.BLACK_TO_MOVE;
-        editSideTogglePill.classList.toggle("is-black", !isWhite);
-        editSideTogglePill.setAttribute("aria-pressed", isWhite ? "false" : "true");
-        const rights = view.getCastlingRights();
-        for (const [k, btn] of Object.entries(editCastleCb)) {
-          btn.setAttribute("aria-pressed", rights[k] ? "true" : "false");
-          btn.classList.toggle("is-active", rights[k]);
-        }
-        const anyRight = rights.wK || rights.wQ || rights.bK || rights.bQ;
-        editCastleBtn.classList.toggle("is-active", anyRight);
-        return;
-      }
-      if (state.viewing) {
-        const atStart = state.viewCursor === 0;
-        const atEnd = state.viewCursor === viewTotalPlies;
-        configureBtn(viewFirstBtn, { disabled: state.analyzing || atStart });
-        configureBtn(viewBackBtn, { disabled: state.analyzing || atStart });
-        configureBtn(viewForwardBtn, { disabled: state.analyzing || atEnd });
-        configureBtn(viewLastBtn, { disabled: state.analyzing || atEnd });
-        configureBtn(viewSavePgnBtn, { disabled: state.analyzing || viewTotalPlies === 0 });
-        // Play-from-here is rejected at game-over plies (checkmate /
-        // stalemate / draw). Backed by a backend guard that prevents
-        // half-cleared state if the UI is bypassed.
-        configureBtn(viewPlayFromHereBtn, { disabled: state.analyzing || viewGameOver });
-        // Engine-less view: analyze is unreachable. Tooltip points at
-        // Engines tab so the user knows the next step.
-        // AI turn finished but server still ANALYZING: show ribbon as
-        // normal ("Analysis mode") even though `analyzing` is true.
-        const viewShowAsActive = state.analyzing && !state.aiShared.turnFinished;
-        configureBtn(viewAnalyzeBtn, {
-          disabled: noEngine && !viewShowAsActive,
-          active: viewShowAsActive,
-          label: viewShowAsActive
-            ? MSG.STOP_ANALYSIS
-            : noEngine
-              ? MSG.ANALYZE_NEEDS_ENGINE
-              : MSG.ANALYSIS_MODE,
-          icon: viewShowAsActive ? ANALYZE_ICON_STOP : ANALYZE_ICON_START,
-        });
-        return;
-      }
-      const humanToMove = humanWhite ? turn === "white" : turn === "black";
-      // Completed AI analysis in play mode reads as paused to the user; show
-      // Resume (see aiAnalysisDone / onPause). Engine-only analysis and
-      // in-progress runs keep the plain Pause/Resume toggle.
-      const aiDone = aiAnalysisDone();
-      const showResume = paused || aiDone;
-      // Pause needs the human's turn; Resume is always allowed.
-      configureBtn(pauseBtn, {
-        disabled: gameOver || (!aiDone && state.analyzing) || (!showResume && !humanToMove),
-        label: showResume ? "Resume" : "Pause",
-        icon: showResume ? "forward-step" : "pause",
-      });
-      configureBtn(takebackBtn, {
-        disabled: state.analyzing || gameOver || !allowTakeback || movesPlayed === 0,
-      });
-      configureBtn(savePgnBtn, { disabled: state.analyzing || movesPlayed === 0 });
-      configureBtn(switchSidesBtn, { disabled: state.analyzing || gameOver || !resignAvailable });
-      configureBtn(resignBtn, { disabled: paused || state.analyzing || gameOver || !resignAvailable });
-      // AI turn finished but server is still ANALYZING (user hasn't
-      // closed the AI window yet). Show the ribbon button as normal
-      // ("Analysis mode", magnifying-glass, enabled) -- the rest of
-      // the reachability gates (gameOver / no engine / not paused)
-      // still apply.
-      const showAsActive = state.analyzing && !state.aiShared.turnFinished;
-      const analyzeReachable = !gameOver && resignAvailable && (paused || state.aiShared.turnFinished);
-      configureBtn(analyzeBtn, {
-        disabled: !showAsActive && !analyzeReachable,
-        active: showAsActive,
-        label: showAsActive ? MSG.STOP_ANALYSIS : MSG.ANALYSIS_MODE,
-        icon: showAsActive ? ANALYZE_ICON_STOP : ANALYZE_ICON_START,
-      });
-    }
-    state.refreshButtons = refreshButtons;
+    state.refreshButtons = () => refreshButtons(state);
 
     // View-mode flip is purely visual (no backend state; the user isn't
     // playing yet so "which side am I" is meaningless). Persisted so it
@@ -1326,7 +1328,7 @@ export const playPerspective = {
 
     // Private replay-buffer state + the deps the AI dispatch needs.
     const ai = { rehydrating: true, liveBuffer: [], maxSeq: 0 };
-    const aiCtx = { view, api: ctx.api, refreshButtons, aiShared: state.aiShared };
+    const aiCtx = { view, api: ctx.api, refreshButtons: () => refreshButtons(state), aiShared: state.aiShared };
     rehydrateAiPanel(ai, aiCtx);
 
     // --- Hook events for control-bar state changes (board state changes
@@ -1356,8 +1358,8 @@ export const playPerspective = {
         }
         case "board_update": {
           _cachedBoardUpdate = evt;
-          movesPlayed = evt.payload.moves_san?.length ?? 0;
-          gameOver = false;
+          state.movesPlayed = evt.payload.moves_san?.length ?? 0;
+          state.gameOver = false;
           showFinishedBadge("");
           // Server-authoritative edit state. Transitions drive the client
           // editor extension on/off; the ribbon UI follows `editing`.
@@ -1391,8 +1393,8 @@ export const playPerspective = {
               fetchXgameInfo(state, state.viewingGameId);
             }
             state.viewCursor = v.cursor ?? 0;
-            viewTotalPlies = v.total_plies ?? 0;
-            viewGameOver = !!v.game_over;
+            state.viewTotalPlies = v.total_plies ?? 0;
+            state.viewGameOver = !!v.game_over;
             lastViewComment = v.comment ?? null;
             _viewingHash = v.view_hash ?? null;
             _viewingSummary = v.view_summary ?? null;
@@ -1405,7 +1407,7 @@ export const playPerspective = {
             pushNavToUi();
             syncCommentsVisibility();
             if (v.result) showFinishedBadge(resultBadge(v.result));
-            if (viewGameOver && state.viewCursor === viewTotalPlies && v.result && !viewGameOverAlertShown) {
+            if (state.viewGameOver && state.viewCursor === state.viewTotalPlies && v.result && !viewGameOverAlertShown) {
               viewGameOverAlertShown = true;
               const node = document.createElement("span");
               node.className = "toast-sort-msg";
@@ -1415,7 +1417,7 @@ export const playPerspective = {
               node.append(msg, makeToastDismissBtn(() => { dismissGameOverToast?.(); dismissGameOverToast = null; }));
               dismissGameOverToast = toast(node, { variant: "neutral", duration: 6000 });
             }
-            resignAvailable = false;
+            state.resignAvailable = false;
             // Board is read-only in view mode; the user navigates via ribbon.
             view.setEnabled(false);
             // Restore the user's prior flip preference on entry into view mode.
@@ -1432,7 +1434,7 @@ export const playPerspective = {
             if (wasViewing) restoreDebugWindows(ctx.events);
             // Leaving view mode -- x-game state is per-viewed-game; drop it.
             if (wasViewing) resetXgame(state);
-            resignAvailable = true;
+            state.resignAvailable = true;
           }
           // Cursor or viewing state may have just changed -- re-evaluate
           // the parent / children toasts. Open/close as needed.
@@ -1445,14 +1447,14 @@ export const playPerspective = {
             }));
           }
           if (typeof evt.payload.human_white === "boolean") {
-            humanWhite = evt.payload.human_white;
+            state.humanWhite = evt.payload.human_white;
           }
-          if (evt.payload.turn) turn = evt.payload.turn;
+          if (evt.payload.turn) state.turn = evt.payload.turn;
           if (typeof evt.payload.analyzing === "boolean") {
             setAnalyzing(state, evt.payload.analyzing);
             // Don't re-enable interactivity in view mode regardless of
             // analysis state.
-            if (!state.viewing) view.setEnabled(!state.analyzing && !paused);
+            if (!state.viewing) view.setEnabled(!state.analyzing && !state.paused);
             syncPausedUi();
             pushNavToUi();
             if (!state.analyzing) {
@@ -1469,35 +1471,35 @@ export const playPerspective = {
           }
           boardHost.classList.remove("board-idle");
           setDisabled(newGameBtn, false);
-          refreshButtons();
-          _playInProgress = movesPlayed > 0 && !gameOver && !state.viewing;
+          refreshButtons(state);
+          _playInProgress = state.movesPlayed > 0 && !state.gameOver && !state.viewing;
           break;
         }
         case "game_result":
-          gameOver = true;
-          paused = false;
+          state.gameOver = true;
+          state.paused = false;
           setAnalyzing(state, false);
           state.aiShared.dismissAnalysisToast?.();
           state.aiShared.dismissAnalysisToast = null;
           if (state.viewing) { if (isAiOpen()) closeAi(); closeAnalysisOpenedWindows(); }
-          resignAvailable = false;
+          state.resignAvailable = false;
           setDisabled(newGameBtn, false);
           boardHost.classList.add("board-idle");
           syncPausedUi();
-          showFinishedBadge(formatResult(evt.payload, humanWhite));
-          refreshButtons();
+          showFinishedBadge(formatResult(evt.payload, state.humanWhite));
+          refreshButtons(state);
           _playInProgress = false;
           showAlert({
-            message: formatGameOver(evt.payload, humanWhite),
+            message: formatGameOver(evt.payload, state.humanWhite),
             messageClass: "game-over-message",
           });
           break;
         case "clock_tick":
-          if (typeof evt.payload.paused === "boolean" && evt.payload.paused !== paused) {
-            paused = evt.payload.paused;
-            view.setEnabled(!paused);
+          if (typeof evt.payload.paused === "boolean" && evt.payload.paused !== state.paused) {
+            state.paused = evt.payload.paused;
+            view.setEnabled(!state.paused);
             syncPausedUi();
-            refreshButtons();
+            refreshButtons(state);
           }
           break;
       }
@@ -1539,7 +1541,7 @@ export const playPerspective = {
         view.setGameId(r.game_id);
         view.setHumanWhite(!!r.human_white);
         view.reset();
-        resignAvailable = true;
+        state.resignAvailable = true;
         // Snapshot the TC settings used for THIS game so a later mid-game
         // edit can detect drift.
         try {
@@ -1549,7 +1551,7 @@ export const playPerspective = {
         } catch {
           // ignore — drift detection just won't trigger for TC.
         }
-        refreshButtons();
+        refreshButtons(state);
       } catch (e) {
         reportError(ctx, MSG.NEW_GAME_FAILED, e);
       }
@@ -1571,7 +1573,7 @@ export const playPerspective = {
     };
 
     const onSavePgn = async () => {
-      const needsPause = !state.viewing && !paused && !gameOver && resignAvailable;
+      const needsPause = !state.viewing && !state.paused && !state.gameOver && state.resignAvailable;
       if (needsPause) {
         try { await ctx.api("POST", "/game/pause", {}); } catch (e) {
           reportError(ctx, MSG.SAVE_PGN_FAILED, e);
@@ -1670,7 +1672,7 @@ export const playPerspective = {
       // Completed AI analysis in play mode: Resume exits analysis (server
       // lands in PAUSED) then resumes to PLAY, so one click returns to the
       // game. stopAnalysisFromUi tears down the AI window and replay buffer.
-      if (aiAnalysisDone()) {
+      if (aiAnalysisDone(state)) {
         try {
           await stopAnalysisFromUi(state);
           await ctx.api("POST", "/game/resume", {});
@@ -1680,9 +1682,9 @@ export const playPerspective = {
         return;
       }
       try {
-        await ctx.api("POST", paused ? "/game/resume" : "/game/pause", {});
+        await ctx.api("POST", state.paused ? "/game/resume" : "/game/pause", {});
       } catch (e) {
-        reportError(ctx, paused ? MSG.RESUME_FAILED : MSG.PAUSE_FAILED, e);
+        reportError(ctx, state.paused ? MSG.RESUME_FAILED : MSG.PAUSE_FAILED, e);
       }
     };
 
@@ -1691,10 +1693,10 @@ export const playPerspective = {
     // and we then enable the client-side board editor extension.
     function _onServerEditingStart() {
       const seed = _seedFromFen(view.getFen());
-      view.enterEditMode(() => refreshButtons(), seed);
+      view.enterEditMode(() => refreshButtons(state), seed);
       pendingAnnotation = null;
       pushNavToUi();
-      refreshButtons();
+      refreshButtons(state);
     }
 
     function _clearEditTransitionSuppression() {
@@ -1708,7 +1710,7 @@ export const playPerspective = {
       _clearEditTransitionSuppression();
       pendingAnnotation = null;
       pushNavToUi();
-      refreshButtons();
+      refreshButtons(state);
     }
 
     async function _enterEditFromCurrentMode() {
@@ -1870,7 +1872,7 @@ export const playPerspective = {
         reportError(ctx, MSG.PLAY_FROM_HERE_FAILED, e);
       } finally {
         playFromHereInflight = false;
-        // Don't re-enable directly; refreshButtons() drives it next time
+        // Don't re-enable directly; refreshButtons(state) drives it next time
         // viewing flips, and by then the button is hidden anyway.
       }
     };
@@ -1907,16 +1909,16 @@ export const playPerspective = {
       // Engine-only analysis: close any leftover AI panel from a prior
       // AI run before starting, so the dock shows engine-only output.
       // Done first so the close can't race the new analysis state.
-      if (!aiEnabled && isAiOpen()) closeAi();
+      if (!state.aiEnabled && isAiOpen()) closeAi();
       await ctx.api("POST", "/game/analysis/start", {});
       restoreViewAnalysisWindows(ctx.events);
       state.aiShared.turnFinished = false;
       showAnalysisToast();
-      if (aiEnabled) {
+      if (state.aiEnabled) {
         // Pin the title to the model that is actually about to run.
         // Mid-session provider/model edits do not retitle until the
         // user clicks Analyze (or the re-analyze button) again.
-        setAiTitle(aiTitleModel);
+        setAiTitle(state.aiTitleModel);
         openAi();
         resetAi();
       }
@@ -1927,7 +1929,7 @@ export const playPerspective = {
       // session, then start engine analysis -- a plain Stop would just
       // tear down and leave nothing running. While the AI run is still in
       // progress (!aiShared.turnFinished), the ribbon is a plain Stop.
-      if (state.analyzing && state.aiShared.turnFinished && !aiEnabled && isAiOpen()) {
+      if (state.analyzing && state.aiShared.turnFinished && !state.aiEnabled && isAiOpen()) {
         await onReanalyze();
         return;
       }
