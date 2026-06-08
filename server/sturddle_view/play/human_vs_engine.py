@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 
 import chess
 import chess.engine
-import chess.pgn
 
 from .._atomic import atomic_write_text
 

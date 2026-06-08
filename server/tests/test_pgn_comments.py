@@ -1,6 +1,13 @@
 """Unit tests for PGN comment sanitization (view-mode commentary)."""
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
+import pytest
+
+from sturddle_view.config import Settings
+from sturddle_view.events import EventBus
+from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
 from sturddle_view.play.import_position import _sanitize_comment, parse_pgn
 
 
@@ -142,14 +149,6 @@ def test_parse_pgn_root_comment_none_when_absent():
 
 
 # --- HumanVsEngine view_payload plumbing ----------------------------------
-
-
-import pytest
-from unittest.mock import AsyncMock
-
-from sturddle_view.config import Settings
-from sturddle_view.events import EventBus
-from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
 
 
 class _StubEngine:

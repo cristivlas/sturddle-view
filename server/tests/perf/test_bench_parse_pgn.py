@@ -6,9 +6,9 @@ import pathlib
 import chess.pgn
 import pytest
 
-pytestmark = pytest.mark.perf
-
 from sturddle_view.play.import_position import parse_pgn
+
+pytestmark = pytest.mark.perf
 
 FIXTURE = pathlib.Path(__file__).parent.parent / "fixtures" / "perf_200_games.pgn"
 TOLERANCE = 0.15

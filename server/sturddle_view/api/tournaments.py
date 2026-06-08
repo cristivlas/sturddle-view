@@ -131,6 +131,7 @@ _WIPE_REQUIRED_DETAIL = {
     "message": _WIPE_REQUIRED_MESSAGE,
 }
 
+
 def _resolve_sprt(template: dict, settings) -> dict:
     """If template.sprt is truthy but not a full dict, merge with sprt_defaults."""
     sprt = template.get("sprt")

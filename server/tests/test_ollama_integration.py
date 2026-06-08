@@ -11,7 +11,6 @@ not CONTENT (LLM output is non-deterministic).
 """
 from __future__ import annotations
 
-import asyncio
 
 import pytest
 

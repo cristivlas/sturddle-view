@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from typing import Any
 from unittest.mock import patch
 
 import chess.engine
@@ -107,10 +106,12 @@ def supervisor(bus, stub_engine) -> EngineSupervisor:
     sup = EngineSupervisor(engine_path="/fake/engine", bus=bus)
 
     async def fake_popen_uci(command, **kwargs):
+        fake_popen_uci.call_count += 1
         fake_popen_uci.last_command = command
         fake_popen_uci.last_kwargs = kwargs
         return (stub_engine.transport, stub_engine)
 
+    fake_popen_uci.call_count = 0
     fake_popen_uci.last_command = None
     fake_popen_uci.last_kwargs = None
     sup._popen_uci = fake_popen_uci  # injection point for tests
@@ -193,9 +194,10 @@ async def test_ensure_spawns_on_first_call(supervisor, stub_engine):
 
 async def test_ensure_reuses_existing_engine(supervisor, stub_engine):
     await supervisor.ensure()
-    spawn_count_before = supervisor._popen_uci.last_command  # sentinel
     e2 = await supervisor.ensure()
     assert e2 is stub_engine
+    # The second ensure() must hit the cached singleton, not re-spawn.
+    assert supervisor._popen_uci.call_count == 1
 
 
 async def test_ensure_fills_engine_name_from_uci_id(supervisor):

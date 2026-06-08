@@ -43,6 +43,14 @@ where = ["server"]
 line-length = 100
 target-version = "py310"
 
+[tool.ruff.lint]
+# Default set (E4/E7/E9, F) plus E302 (2 blank lines before a top-level def).
+# E302 is preview-gated in this ruff version, so preview is on but scoped to
+# exactly these codes -- no other preview rules are pulled in.
+preview = true
+explicit-preview-rules = true
+select = ["E4", "E7", "E9", "F", "E302"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"

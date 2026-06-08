@@ -7,7 +7,6 @@ we can inject the engine's "reply" by calling internal methods deterministically
 from __future__ import annotations
 
 import asyncio
-import time
 from unittest.mock import AsyncMock
 
 import chess
@@ -73,7 +72,6 @@ async def test_takeback_restores_both_clocks_after_engine_reply(hve):
     # Engine "thinks" 0.05s and replies.
     await asyncio.sleep(0.05)
     await _engine_reply(hve, "e7e5")
-    white_after_engine = hve._clock.white_time
     black_after_engine = hve._clock.black_time
     assert black_after_engine < 60.0  # engine consumed time
 

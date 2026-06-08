@@ -6,7 +6,6 @@ factory is covered too.
 """
 from __future__ import annotations
 
-from typing import AsyncIterator
 
 import pytest
 from fastapi.testclient import TestClient

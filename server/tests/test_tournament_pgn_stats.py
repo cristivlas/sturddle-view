@@ -13,8 +13,6 @@ import pytest
 import json
 
 from sturddle_view.tournament.pgn_stats import (
-    Standings,
-    SprtResult,
     compute_sprt,
     compute_standings,
     count_partial_pairs,
@@ -1116,7 +1114,6 @@ def test_standings_populates_elo_ordo_for_two_engines(tmp_path):
 
 
 def test_standings_elo_ordo_serializes_to_dict():
-    e_dict = compute_standings  # just sanity-check the import; details below
     from sturddle_view.tournament.pgn_stats import EngineRecord
     r = EngineRecord(name="x", elo_ordo=12.3, elo_ordo_margin_95=4.5)
     d = r.to_dict()
@@ -1152,7 +1149,6 @@ def test_iter_games_cached_when_file_unchanged(tmp_path, monkeypatch):
 
 def test_iter_games_reparses_when_file_grows(tmp_path, monkeypatch):
     import os
-    import time
     from sturddle_view.tournament import pgn_stats
 
     p = _write_pgn(tmp_path, _game("A", "B", "1-0"))
@@ -1712,7 +1708,7 @@ def test_sprt_logistic_exact_llr_with_nonzero_elo0(tmp_path):
     in the s0 line (elo0=0 makes base-mutations equivalent because
     `b^0 == 1` for any b)."""
     import math as _m
-    w, l, d = 3, 1, 1
+    wins, losses, draws = 3, 1, 1
     body = (
         _game("A", "B", "1-0") * 3
         + _game("A", "B", "0-1")
@@ -1722,13 +1718,13 @@ def test_sprt_logistic_exact_llr_with_nonzero_elo0(tmp_path):
     r = _sprt(p, _params(elo0=-5.0, elo1=10.0, model="logistic"))
 
     # Reference computation
-    n = w + l + d
-    d_obs = d / n
+    n = wins + losses + draws
+    d_obs = draws / n
     def _s(elo): return 1.0 / (1.0 + _m.pow(10.0, -elo / 400.0))
     s0, s1 = _s(-5.0), _s(10.0)
     pw0, pl0 = s0 - d_obs/2, 1.0 - s0 - d_obs/2
     pw1, pl1 = s1 - d_obs/2, 1.0 - s1 - d_obs/2
-    expected = w*_m.log(pw1/pw0) + l*_m.log(pl1/pl0)
+    expected = wins*_m.log(pw1/pw0) + losses*_m.log(pl1/pl0)
     assert r.llr == pytest.approx(expected, abs=1e-9)
 
 
@@ -1746,15 +1742,15 @@ def test_sprt_logistic_color_routing_engine_a_alphabetically_greater(tmp_path):
     p = _write_pgn(tmp_path, body)
     r = compute_sprt(p, _params(elo0=0.0, elo1=5.0, model="logistic"),
                      engine_a="Z", engine_b="A")
-    # Reference: w=0, l=2, d=0 from Z's perspective.
-    w, l, d = 0, 2, 0
-    n = w + l + d
-    d_obs = d / n
+    # Reference: wins=0, losses=2, draws=0 from Z's perspective.
+    wins, losses, draws = 0, 2, 0
+    n = wins + losses + draws
+    d_obs = draws / n
     def _s(elo): return 1.0 / (1.0 + _m.pow(10.0, -elo / 400.0))
     s0, s1 = _s(0.0), _s(5.0)
     pw0, pl0 = s0 - d_obs/2, 1.0 - s0 - d_obs/2
     pw1, pl1 = s1 - d_obs/2, 1.0 - s1 - d_obs/2
-    expected = w*_m.log(pw1/pw0) + l*_m.log(pl1/pl0)
+    expected = wins*_m.log(pw1/pw0) + losses*_m.log(pl1/pl0)
     assert r.llr == pytest.approx(expected, abs=1e-9)
 
 
@@ -1768,14 +1764,14 @@ def test_sprt_logistic_color_routing_black_win_path(tmp_path):
     p = _write_pgn(tmp_path, body)
     r = compute_sprt(p, _params(elo0=0.0, elo1=5.0, model="logistic"),
                      engine_a="Z", engine_b="A")
-    w, l, d = 0, 2, 0
-    n = w + l + d
-    d_obs = d / n
+    wins, losses, draws = 0, 2, 0
+    n = wins + losses + draws
+    d_obs = draws / n
     def _s(elo): return 1.0 / (1.0 + _m.pow(10.0, -elo / 400.0))
     s0, s1 = _s(0.0), _s(5.0)
     pw0, pl0 = s0 - d_obs/2, 1.0 - s0 - d_obs/2
     pw1, pl1 = s1 - d_obs/2, 1.0 - s1 - d_obs/2
-    expected = w*_m.log(pw1/pw0) + l*_m.log(pl1/pl0)
+    expected = wins*_m.log(pw1/pw0) + losses*_m.log(pl1/pl0)
     assert r.llr == pytest.approx(expected, abs=1e-9)
 
 
@@ -2148,12 +2144,8 @@ def test_read_game_record_cache_invalidates_when_size_grows(tmp_path):
     p = _write_pgn(tmp_path, body1)
     rec1 = read_game_record(p, 1)
     assert rec1 is not None
-    # Capture the cached mtime so we can re-stamp it after the rewrite.
-    cached_mtime = _mod._game_offsets_cache[p][0]
-
     # Append a 2nd game and force-restore the mtime so the size check
     # is the only differing predicate.
-    import os
     body2 = body1 + _game("C", "D", "0-1")
     p.write_text(body2, encoding="utf-8")
     # Patch the cache entry: pretend the cached mtime equals the new file

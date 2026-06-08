@@ -11,7 +11,6 @@ wire shape (cp / pawns / score_text / mate) without spawning anything.
 """
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 import chess

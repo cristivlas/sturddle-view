@@ -6,12 +6,11 @@ the cheap, hard-edge guards: board-None early exit, ensure_engine
 failure, and the lock-re-entry consistency checks."""
 from __future__ import annotations
 
-import asyncio
 
 import pytest
 
 from sturddle_view.events import EventBus
-from sturddle_view.play.human_vs_engine import HumanVsEngine, TimeControl
+from sturddle_view.play.human_vs_engine import HumanVsEngine
 
 
 @pytest.fixture

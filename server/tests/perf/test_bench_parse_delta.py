@@ -5,9 +5,9 @@ import pathlib
 
 import pytest
 
-pytestmark = pytest.mark.perf
-
 from sturddle_view.tournament.pgn_tail import PgnTailer
+
+pytestmark = pytest.mark.perf
 
 FIXTURE = pathlib.Path(__file__).parent.parent / "fixtures" / "perf_200_games.pgn"
 TOLERANCE = 0.10

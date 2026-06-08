@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
 
 from sturddle_view.llm.ollama import (
     messages_anthropic_to_openai,

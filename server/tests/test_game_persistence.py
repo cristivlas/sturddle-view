@@ -1,11 +1,9 @@
 """Persistence of in-progress human-vs-engine games across server restarts."""
 from __future__ import annotations
 
-import time
 from unittest.mock import AsyncMock, MagicMock
 
 import chess
-import pytest
 from fastapi.testclient import TestClient
 
 from sturddle_view.app import create_app
