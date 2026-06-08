@@ -69,9 +69,9 @@ def scan_python(cap: int):
 
 
 _JS_DECL = re.compile(
-    r"(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(|"
+    r"(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*(\w+)\s*\(|"
     r"(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>\s*\{|"
-    r"^\s*(\w+)\s*\([^)]*\)\s*\{"
+    r"^\s*(?:async\s+|get\s+|set\s+|static\s+)*(\w+)\s*\([^)]*\)\s*\{"
 )
 _JS_SKIP = {"if", "for", "while", "switch", "catch", "function", "return"}
 
