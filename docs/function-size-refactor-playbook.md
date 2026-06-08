@@ -183,75 +183,75 @@ Known harness flake (leave it): a Windows Proactor `ResourceWarning`
 
 ## Remaining offenders, WORST (largest) first -- work this order
 
-All 15 offenders by line count, descending. `[E]` = has an `oversized-ok`
-marker to remove; `[V]` = plain violation (no marker). Difficulty (driven by
-shared-mutable-state coupling, NOT size) is noted per entry as guidance, but
-the WORK ORDER is strictly largest-to-smallest. Re-run
-`scripts/audit_fn_size.py` before starting -- counts drift as files change.
+Current audit (re-run `scripts/audit_fn_size.py` before starting -- counts
+drift as files change). `[E]` = has an `oversized-ok` marker to remove; `[V]` =
+plain violation (no marker). Difficulty (driven by shared-mutable-state
+coupling, NOT size) is guidance only; the WORK ORDER is strictly
+largest-to-smallest.
 
-1. **`mountTournaments`** (1363, tournaments.js:31) `[E]` -- HARD. Closest
-   analogue to the workspace one just done: a stateful list + ribbon + WS +
-   dialogs controller. Apply the exact ctx playbook. Largest payoff; expect a
-   multi-step, multi-commit effort.
+Done so far: `openTournamentWorkspace` (the method this playbook distills),
+`mountTournaments`, `mountGameView`, `mountEngineList` (-> single `ctx` +
+engines-list-layout.js; the col-resize/wrap-sizer extraction pattern there is a
+good template for the other list controllers).
 
-2. **`mountGameView`** (821, game-view.js:137) `[E]` -- HARD. ~40 closures over
-   view state (humanWhite/gameId/viewing/editing/analyzing/names/board refs)
-   with a kind-dispatch applyEvent. ctx playbook applies; large.
+1. **`mount`** (1869, perspectives/play.js:173) `[V]` -- HARDEST. The play
+   perspective: ~38 reassigned `let`s + ~30 closures in one lexical scope, and a
+   dense forward-reference web (analysis <-> toast <-> view-nav, edit <-> xgame
+   <-> nav; the `board_update` handler touches every cluster). The two clean
+   leaf clusters (x-game toasts; AI event bridge) extract to their own modules
+   taking a `state` object; the rest needs `state` + a cross-cluster function
+   table. Expect multi-commit. Do NOT attempt as one atomic mechanical pass.
 
-3. **`mountEngineList`** (525, engines.js:25) `[E]` -- MED-HARD. List render
-   coupled to `engines/selectedDetailId/activeId/filterText/sortOrder` (all
-   reassigned). Search/sort/sizing extract first; core needs full ctx.
-
-4. **`buildAnalysisTab`** (513, settings-analysis-tab.js:42) `[E]` -- MED. ~14
+2. **`buildAnalysisTab`** (513, settings-analysis-tab.js:42) `[E]` -- MED. ~14
    inner fns, ~5 reassigned vars (`aiKeyRevealed/aiKeyDirty/thinkingEnabled/
    _modelsFetchSeq` + `initial[...]`). Key-masking and thinking-options clusters
    interlock; model-selection is a cohesive unit; the bulk is declarative row
    construction that bulk-extracts easily.
 
-5. **`openLiveGameWindow`** (338, tournament-live-game.js:382) `[E]` -- HARD.
-   THREE intertwined state machines (position/animation coalescer,
-   clock/timers, WebSocket lifecycle) over 10+ reassigned vars. Encapsulate each
-   machine (PositionCoalescer/ClockManager-style helper), don't just lift.
+3. **`showImportPositionDialog`** (341, import-position-dialog.js:500) `[V]` --
+   MED. State `format` (reassigned -> ctx), `submitting`, `recentsCache`. Recents
+   dropdown + submit extractable; `format` threads through several handlers.
 
-6. **`_run_loop`** (331, server/.../ai_analysis.py:870) `[E]` -- HARD (Python).
+4. **`_run_loop`** (331, server/.../ai_analysis.py:870) `[E]` -- HARD (Python).
    18+ reassigned flags/counters in one agent-loop state machine. Extract pure
    decision helpers (`_should_nudge_*`) + a per-round state dataclass; the core
    loop stays largely intact.
 
-7. **`showImportPositionDialog`** (328, import-position-dialog.js:494) `[V]` --
-   MED. State `format` (reassigned -> ctx), `submitting`, `recentsCache`. Recents
-   dropdown + submit extractable; `format` threads through several handlers.
+5. **`openLiveGameWindow`** (319, tournament-live-game.js:382) `[E]` -- HARD.
+   THREE intertwined state machines (position/animation coalescer,
+   clock/timers, WebSocket lifecycle) over 10+ reassigned vars. Encapsulate each
+   machine (PositionCoalescer/ClockManager-style helper), don't just lift.
 
-8. **`mountTournamentTemplateForm`** (318, tournament-template-form.js:31) `[E]`
+6. **`mountTournamentTemplateForm`** (318, tournament-template-form.js:31) `[E]`
    -- EASY. Only shared state is one `inputs` map (in-place, never reassigned).
    `getValues`/`validate` already pure. Sections: grid, switch row, adjudication
-   -> one builder each. (Easiest of all -- a good warm-up if you want to validate
-   the playbook before the big ones, but it is NOT first in size order.)
+   -> one builder each. (Easiest of the remaining -- a good warm-up, but NOT
+   first in size order.)
 
-9. **`createDockableWindow`** (263, play-dock-windows.js:385) `[V]` -- MED.
+7. **`createDockableWindow`** (263, play-dock-windows.js:386) `[V]` -- MED.
    Float/dock state machine; reassigned dock/geometry state. Some inner handlers
    extract; the dock-vs-float lifecycle is the coupled core.
 
-10. **`createOpeningsPanel`** (257, import-position-dialog.js:206) `[V]` --
-    EASY-MED. Simple 5-var state
-    (`selectedPgn/selectedRow/rows/filterText/sortOrder`), mostly read-only or
-    set-together. Independent search/sort/column-resize blocks; `filtered()`
-    pure.
+8. **`createOpeningsPanel`** (257, import-position-dialog.js:212) `[V]` --
+   EASY-MED. Simple 5-var state
+   (`selectedPgn/selectedRow/rows/filterText/sortOrder`), mostly read-only or
+   set-together. Independent search/sort/column-resize blocks; `filtered()`
+   pure. The engines-list-layout.js col-resize helper is directly reusable here.
 
-11. **`pickFile`** (235, dialogs.js:168) `[V]` -- likely EASY. Probably a
-    sequential builder/flow; low coupling. Verify by reading.
+9. **`pickFile`** (235, dialogs.js:168) `[V]` -- likely EASY. Probably a
+   sequential builder/flow; low coupling. Verify by reading.
 
-12. **`mountBoard`** (229, board.js:140) `[V]` -- read to assess; board setup +
+10. **`mountBoard`** (229, board.js:140) `[V]` -- read to assess; board setup +
     interaction wiring, coupling unknown.
 
-13. **`build_command`** (219, server/.../tournament/fastchess.py:64) `[V]` --
+11. **`build_command`** (219, server/.../tournament/fastchess.py:64) `[V]` --
     likely EASY (Python). Sequential CLI-arg builder; low coupling. Extract
     per-section arg helpers.
 
-14. **`buildLiveGameBox`** (207, tournament-live-game.js:170) `[V]` -- read to
+12. **`buildLiveGameBox`** (207, tournament-live-game.js:170) `[V]` -- read to
     assess; likely DOM construction for the live-game box, low-med coupling.
 
-15. **`showEngineOptionsDialog`** (204, engine-options-dialog.js:320) `[V]` --
+13. **`showEngineOptionsDialog`** (204, engine-options-dialog.js:320) `[V]` --
     just over cap; smallest. Likely a per-option-row builder + submit; extract
     the row builder.
 

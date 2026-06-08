@@ -166,149 +166,282 @@ function configureBtn(btn, {
   }
 }
 
+// Apply one AI analysis event to the panel/board. `aiCtx` holds view, api,
+// refreshButtons, aiShared. Returns true if the event was an ai_* kind.
+function dispatchAiEvent(aiCtx, evt) {
+  const { view, refreshButtons, aiShared } = aiCtx;
+  switch (evt.kind) {
+    case "ai_info": {
+      const p = evt.payload || {};
+      if (typeof p.delta === "string") appendAiDelta(p.delta, p.round ?? 0, p.thinking_ms ?? null);
+      if (p.done) {
+        // Defensive: tool-call lifecycle can drop the restore signal
+        // (cancelled mid-call, round cap, etc.). Always snap back.
+        view.restorePosition({ animate: false });
+        markAiDone({
+          cancelled: !!p.cancelled,
+          error: p.error || null,
+          errorDetail: p.error_detail || null,
+          roundCap: !!p.round_cap,
+          verifierRoundCap: !!p.verifier_round_cap,
+          noResponse: !!p.no_response,
+          noRecommendation: !!p.no_recommendation,
+        });
+        if (p.error) {
+          toast(p.error_detail || p.error, {
+            variant: "danger",
+            duration: 6000,
+          });
+        }
+        // Natural completion: hide the "stopping" affordances --
+        // toast and ribbon active look. Server stays in ANALYSIS;
+        // closing the AI window is what exits. Skipped on
+        // cancelled/error to preserve normal cleanup behavior.
+        // Per-turn dismissal is correct because each Analyze click
+        // is a one-shot turn (no rolling session; see
+        // ai-analysis-spec.md §Live session model -- indefinitely
+        // postponed).
+        if (!p.cancelled && !p.error) {
+          aiShared.turnFinished = true;
+          aiShared.dismissAnalysisToast?.();
+          aiShared.dismissAnalysisToast = null;
+          refreshButtons();
+        }
+      }
+      return true;
+    }
+    case "ai_thinking": {
+      const p = evt.payload || {};
+      if (typeof p.delta === "string") appendAiThinking(p.delta, p.round ?? 0);
+      else if (Number.isFinite(p.thinking_ms)) freezeAiThinking(p.round ?? 0, p.thinking_ms);
+      return true;
+    }
+    case "ai_tool_call": {
+      const p = evt.payload || {};
+      appendAiToolCall({
+        round: p.round ?? 0,
+        name: p.name,
+        input: p.input,
+        toolUseId: p.tool_use_id,
+        parentToolUseId: p.parent_tool_use_id,
+        thinkingMs: p.thinking_ms ?? null,
+      });
+      // When the model inspects a hypothetical position, mirror
+      // the analyzed FEN on the board so the user can follow the
+      // AI's reasoning. Restored on ai_tool_call_complete.
+      if (p.name === ANALYZE_TOOL_NAME && p.input && typeof p.input.fen === "string") {
+        // No animation: tool calls fire faster than the cm-chessboard
+        // queue drains while the perspective is hidden (rAF throttled
+        // off-screen), producing a "fast replay" on return.
+        view.previewPosition(p.input.fen, { animate: false });
+      }
+      return true;
+    }
+    case "ai_tool_call_failed": {
+      const p = evt.payload || {};
+      markAiToolCallFailed({
+        toolUseId: p.tool_use_id,
+        error: p.error,
+        detail: p.detail,
+      });
+      // Restore in case the failed call was an analyze preview.
+      view.restorePosition({ animate: false });
+      return true;
+    }
+    case "ai_tool_call_complete": {
+      const p = evt.payload || {};
+      if (p.name === ANALYZE_TOOL_NAME) view.restorePosition({ animate: false });
+      view.clearArrows();
+      view.clearEngineInfo();
+      return true;
+    }
+    case "ai_position_note": {
+      const p = evt.payload || {};
+      noteAiPosition({ round: p.round ?? 0, surfaces: p.surfaces || [] });
+      return true;
+    }
+  }
+  return false;
+}
+
+// Dedupe by seq. Server resets seq to 1 at the start of each turn, so seq=1
+// unconditionally marks a new turn and resets the high-water mark. Otherwise a
+// single-event turn (e.g. instant error) following a prior turn whose maxSeq is
+// also 1 would be swallowed.
+function dispatchAiEventOrdered(ai, aiCtx, evt) {
+  const seq = evt?.payload?.seq ?? 0;
+  if (seq === 1) ai.maxSeq = 0;
+  else if (seq && seq <= ai.maxSeq) return;
+  if (seq) ai.maxSeq = seq;
+  dispatchAiEvent(aiCtx, evt);
+}
+
+// Buffer live AI events while the replay GET is in flight, then drain in seq
+// order with dedupe. Avoids the GET-then-subscribe race: live events that fire
+// between subscribe and replay arrival are held instead of dispatched
+// out-of-order.
+async function rehydrateAiPanel(ai, aiCtx) {
+  try {
+    const r = await aiCtx.api("GET", "/game/analysis/replay");
+    const events = Array.isArray(r?.events) ? r.events : [];
+    if (events.length > 0) {
+      openAi();
+      resetAi();
+      for (const evt of events) dispatchAiEventOrdered(ai, aiCtx, evt);
+    }
+  } catch { /* */ } finally {
+    ai.rehydrating = false;
+    const buffered = ai.liveBuffer;
+    ai.liveBuffer = [];
+    for (const evt of buffered) dispatchAiEventOrdered(ai, aiCtx, evt);
+  }
+}
+
+const PLAY_PERSPECTIVE_HTML = `
+  <section id="play-perspective">
+    <div class="play-grid">
+      <div class="play-dock-left"></div>
+      <aside class="play-comments-host dock-empty" aria-label="PGN commentary"></aside>
+      <div id="no-engine-banner" class="no-engine-banner hidden" role="status">
+        <span class="no-engine-banner__msg">No engine configured.</span>
+        <button type="button" class="no-engine-banner__btn" aria-label="Open engine settings" title="Open engine settings">
+          <wa-icon name="gear"></wa-icon>
+        </button>
+      </div>
+      <div class="play-board-host"></div>
+      <div class="play-ai-inline inline-empty" aria-label="AI analysis"></div>
+
+      <div id="board-controls" class="board-ribbon">
+        <button id="new-game" class="ribbon-btn" aria-label="New game" title="New game">
+          <wa-icon name="plus"></wa-icon>
+        </button>
+        <button id="import-pos" class="ribbon-btn desktop-only" aria-label="Open position from FEN or PGN" title="Open">
+          <wa-icon name="folder-open"></wa-icon>
+        </button>
+        <button id="edit-pos" class="ribbon-btn" aria-label="Edit position" title="Edit position">
+          <wa-icon name="pencil"></wa-icon>
+        </button>
+        <button id="save-pgn" class="ribbon-btn desktop-only" aria-label="Save game as PGN" title="Save PGN">
+          <wa-icon name="download"></wa-icon>
+        </button>
+        <span class="ribbon-sep" aria-hidden="true"></span>
+        <button id="takeback" class="ribbon-btn" disabled aria-label="Take back" title="Take back">
+          <wa-icon name="rotate-left"></wa-icon>
+        </button>
+        <button id="pause" class="ribbon-btn" disabled aria-label="Pause" title="Pause">
+          <wa-icon name="pause"></wa-icon>
+        </button>
+        <span class="ribbon-sep" aria-hidden="true"></span>
+        <button id="analyze" class="ribbon-btn" disabled aria-label="Analysis mode" title="Analysis mode">
+          <wa-icon name="magnifying-glass-plus"></wa-icon>
+        </button>
+        <button id="switch-sides" class="ribbon-btn" disabled aria-label="Switch sides" title="Switch sides">
+          <wa-icon name="arrows-rotate"></wa-icon>
+        </button>
+        <button id="resign" class="ribbon-btn ribbon-btn--danger" disabled aria-label="Resign" title="Resign">
+          <wa-icon name="flag"></wa-icon>
+        </button>
+        <span class="ribbon-sep ribbon-sep--push desktop-only" aria-hidden="true"></span>
+        <button id="pv-table-btn" class="ribbon-btn desktop-only" aria-label="Search Lines" title="Search Lines">
+          <wa-icon name="table-list"></wa-icon>
+        </button>
+        <button id="uci-log-btn" class="ribbon-btn desktop-only" aria-label="UCI log" title="UCI log">
+          <wa-icon name="terminal"></wa-icon>
+        </button>
+      </div>
+
+      <div id="view-controls" class="board-ribbon" style="display: none">
+        <button id="view-new-game" class="ribbon-btn" aria-label="New game" title="New game">
+          <wa-icon name="plus"></wa-icon>
+        </button>
+        <button id="view-import" class="ribbon-btn desktop-only" aria-label="Open another position" title="Open">
+          <wa-icon name="folder-open"></wa-icon>
+        </button>
+        <button id="view-edit" class="ribbon-btn" aria-label="Edit position" title="Edit position">
+          <wa-icon name="pencil"></wa-icon>
+        </button>
+        <button id="view-save-pgn" class="ribbon-btn desktop-only" aria-label="Save game as PGN" title="Save PGN">
+          <wa-icon name="download"></wa-icon>
+        </button>
+        <span class="ribbon-sep" aria-hidden="true"></span>
+        <button id="view-first" class="ribbon-btn" aria-label="First move" title="First move">
+          <wa-icon name="backward-fast"></wa-icon>
+        </button>
+        <button id="view-back" class="ribbon-btn" aria-label="Previous move" title="Previous move">
+          <wa-icon name="backward-step"></wa-icon>
+        </button>
+        <button id="view-forward" class="ribbon-btn" aria-label="Next move" title="Next move">
+          <wa-icon name="forward-step"></wa-icon>
+        </button>
+        <button id="view-last" class="ribbon-btn" aria-label="Last move" title="Last move">
+          <wa-icon name="forward-fast"></wa-icon>
+        </button>
+        <span class="ribbon-sep" aria-hidden="true"></span>
+        <button id="view-analyze" class="ribbon-btn" aria-label="Analysis mode" title="Analysis mode">
+          <wa-icon name="magnifying-glass-plus"></wa-icon>
+        </button>
+        <button id="view-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
+          <wa-icon name="arrows-rotate"></wa-icon>
+        </button>
+        <button id="view-play-from-here" class="ribbon-btn" aria-label="Play from here" title="Play from here">
+          <wa-icon name="play"></wa-icon>
+        </button>
+      </div>
+
+      <div id="edit-controls" class="board-ribbon" style="display: none">
+        <div class="side-popover-wrap">
+          <button id="edit-side" class="ribbon-btn" aria-label="Side to move" title="Side to move" aria-haspopup="true" aria-expanded="false">
+            <wa-icon name="circle-half-stroke"></wa-icon>
+          </button>
+          <div id="edit-side-popover" class="side-popover hidden" role="dialog" aria-label="Side to move">
+            <button type="button" id="edit-side-toggle" class="castle-pill side-toggle-pill" aria-pressed="true">White to move</button>
+          </div>
+        </div>
+        <span class="ribbon-sep" aria-hidden="true"></span>
+        <div class="castle-popover-wrap">
+          <button id="edit-castle-btn" class="ribbon-btn" aria-label="Castling rights" title="Castling rights" aria-haspopup="true" aria-expanded="false">
+            <wa-icon name="chess-rook"></wa-icon>
+          </button>
+          <div id="edit-castle-popover" class="castle-popover hidden" role="dialog" aria-label="Castling rights">
+            <div class="castle-row" data-color="white">
+              <span class="castle-row-label">White</span>
+              <button type="button" id="edit-castle-cb-wk" class="castle-pill" aria-pressed="false">O-O</button>
+              <button type="button" id="edit-castle-cb-wq" class="castle-pill" aria-pressed="false">O-O-O</button>
+            </div>
+            <div class="castle-row" data-color="black">
+              <span class="castle-row-label">Black</span>
+              <button type="button" id="edit-castle-cb-bk" class="castle-pill" aria-pressed="false">O-O</button>
+              <button type="button" id="edit-castle-cb-bq" class="castle-pill" aria-pressed="false">O-O-O</button>
+            </div>
+          </div>
+        </div>
+        <span class="ribbon-sep" aria-hidden="true"></span>
+        <button id="edit-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
+          <wa-icon name="arrows-rotate"></wa-icon>
+        </button>
+        <button id="edit-annotate" class="ribbon-btn" aria-label="Edit annotation" title="Edit annotation">
+          <wa-icon name="align-left"></wa-icon>
+        </button>
+        <span class="ribbon-sep ribbon-sep--push" aria-hidden="true"></span>
+        <button id="edit-confirm" class="ribbon-btn" aria-label="Confirm position" title="Confirm">
+          <wa-icon name="check"></wa-icon>
+        </button>
+        <button id="edit-cancel" class="ribbon-btn" aria-label="Cancel editing" title="Cancel">
+          <wa-icon name="xmark"></wa-icon>
+        </button>
+      </div>
+
+      <div class="play-side-host"></div>
+    </div>
+  </section>
+`;
+
 export const playPerspective = {
   id: "play",
   label: "Play",
 
   async mount(root, ctx) {
-    root.innerHTML = `
-      <section id="play-perspective">
-        <div class="play-grid">
-          <div class="play-dock-left"></div>
-          <aside class="play-comments-host dock-empty" aria-label="PGN commentary"></aside>
-          <div id="no-engine-banner" class="no-engine-banner hidden" role="status">
-            <span class="no-engine-banner__msg">No engine configured.</span>
-            <button type="button" class="no-engine-banner__btn" aria-label="Open engine settings" title="Open engine settings">
-              <wa-icon name="gear"></wa-icon>
-            </button>
-          </div>
-          <div class="play-board-host"></div>
-          <div class="play-ai-inline inline-empty" aria-label="AI analysis"></div>
-
-          <div id="board-controls" class="board-ribbon">
-            <button id="new-game" class="ribbon-btn" aria-label="New game" title="New game">
-              <wa-icon name="plus"></wa-icon>
-            </button>
-            <button id="import-pos" class="ribbon-btn desktop-only" aria-label="Open position from FEN or PGN" title="Open">
-              <wa-icon name="folder-open"></wa-icon>
-            </button>
-            <button id="edit-pos" class="ribbon-btn" aria-label="Edit position" title="Edit position">
-              <wa-icon name="pencil"></wa-icon>
-            </button>
-            <button id="save-pgn" class="ribbon-btn desktop-only" aria-label="Save game as PGN" title="Save PGN">
-              <wa-icon name="download"></wa-icon>
-            </button>
-            <span class="ribbon-sep" aria-hidden="true"></span>
-            <button id="takeback" class="ribbon-btn" disabled aria-label="Take back" title="Take back">
-              <wa-icon name="rotate-left"></wa-icon>
-            </button>
-            <button id="pause" class="ribbon-btn" disabled aria-label="Pause" title="Pause">
-              <wa-icon name="pause"></wa-icon>
-            </button>
-            <span class="ribbon-sep" aria-hidden="true"></span>
-            <button id="analyze" class="ribbon-btn" disabled aria-label="Analysis mode" title="Analysis mode">
-              <wa-icon name="magnifying-glass-plus"></wa-icon>
-            </button>
-            <button id="switch-sides" class="ribbon-btn" disabled aria-label="Switch sides" title="Switch sides">
-              <wa-icon name="arrows-rotate"></wa-icon>
-            </button>
-            <button id="resign" class="ribbon-btn ribbon-btn--danger" disabled aria-label="Resign" title="Resign">
-              <wa-icon name="flag"></wa-icon>
-            </button>
-            <span class="ribbon-sep ribbon-sep--push desktop-only" aria-hidden="true"></span>
-            <button id="pv-table-btn" class="ribbon-btn desktop-only" aria-label="Search Lines" title="Search Lines">
-              <wa-icon name="table-list"></wa-icon>
-            </button>
-            <button id="uci-log-btn" class="ribbon-btn desktop-only" aria-label="UCI log" title="UCI log">
-              <wa-icon name="terminal"></wa-icon>
-            </button>
-          </div>
-
-          <div id="view-controls" class="board-ribbon" style="display: none">
-            <button id="view-new-game" class="ribbon-btn" aria-label="New game" title="New game">
-              <wa-icon name="plus"></wa-icon>
-            </button>
-            <button id="view-import" class="ribbon-btn desktop-only" aria-label="Open another position" title="Open">
-              <wa-icon name="folder-open"></wa-icon>
-            </button>
-            <button id="view-edit" class="ribbon-btn" aria-label="Edit position" title="Edit position">
-              <wa-icon name="pencil"></wa-icon>
-            </button>
-            <button id="view-save-pgn" class="ribbon-btn desktop-only" aria-label="Save game as PGN" title="Save PGN">
-              <wa-icon name="download"></wa-icon>
-            </button>
-            <span class="ribbon-sep" aria-hidden="true"></span>
-            <button id="view-first" class="ribbon-btn" aria-label="First move" title="First move">
-              <wa-icon name="backward-fast"></wa-icon>
-            </button>
-            <button id="view-back" class="ribbon-btn" aria-label="Previous move" title="Previous move">
-              <wa-icon name="backward-step"></wa-icon>
-            </button>
-            <button id="view-forward" class="ribbon-btn" aria-label="Next move" title="Next move">
-              <wa-icon name="forward-step"></wa-icon>
-            </button>
-            <button id="view-last" class="ribbon-btn" aria-label="Last move" title="Last move">
-              <wa-icon name="forward-fast"></wa-icon>
-            </button>
-            <span class="ribbon-sep" aria-hidden="true"></span>
-            <button id="view-analyze" class="ribbon-btn" aria-label="Analysis mode" title="Analysis mode">
-              <wa-icon name="magnifying-glass-plus"></wa-icon>
-            </button>
-            <button id="view-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
-              <wa-icon name="arrows-rotate"></wa-icon>
-            </button>
-            <button id="view-play-from-here" class="ribbon-btn" aria-label="Play from here" title="Play from here">
-              <wa-icon name="play"></wa-icon>
-            </button>
-          </div>
-
-          <div id="edit-controls" class="board-ribbon" style="display: none">
-            <div class="side-popover-wrap">
-              <button id="edit-side" class="ribbon-btn" aria-label="Side to move" title="Side to move" aria-haspopup="true" aria-expanded="false">
-                <wa-icon name="circle-half-stroke"></wa-icon>
-              </button>
-              <div id="edit-side-popover" class="side-popover hidden" role="dialog" aria-label="Side to move">
-                <button type="button" id="edit-side-toggle" class="castle-pill side-toggle-pill" aria-pressed="true">White to move</button>
-              </div>
-            </div>
-            <span class="ribbon-sep" aria-hidden="true"></span>
-            <div class="castle-popover-wrap">
-              <button id="edit-castle-btn" class="ribbon-btn" aria-label="Castling rights" title="Castling rights" aria-haspopup="true" aria-expanded="false">
-                <wa-icon name="chess-rook"></wa-icon>
-              </button>
-              <div id="edit-castle-popover" class="castle-popover hidden" role="dialog" aria-label="Castling rights">
-                <div class="castle-row" data-color="white">
-                  <span class="castle-row-label">White</span>
-                  <button type="button" id="edit-castle-cb-wk" class="castle-pill" aria-pressed="false">O-O</button>
-                  <button type="button" id="edit-castle-cb-wq" class="castle-pill" aria-pressed="false">O-O-O</button>
-                </div>
-                <div class="castle-row" data-color="black">
-                  <span class="castle-row-label">Black</span>
-                  <button type="button" id="edit-castle-cb-bk" class="castle-pill" aria-pressed="false">O-O</button>
-                  <button type="button" id="edit-castle-cb-bq" class="castle-pill" aria-pressed="false">O-O-O</button>
-                </div>
-              </div>
-            </div>
-            <span class="ribbon-sep" aria-hidden="true"></span>
-            <button id="edit-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
-              <wa-icon name="arrows-rotate"></wa-icon>
-            </button>
-            <button id="edit-annotate" class="ribbon-btn" aria-label="Edit annotation" title="Edit annotation">
-              <wa-icon name="align-left"></wa-icon>
-            </button>
-            <span class="ribbon-sep ribbon-sep--push" aria-hidden="true"></span>
-            <button id="edit-confirm" class="ribbon-btn" aria-label="Confirm position" title="Confirm">
-              <wa-icon name="check"></wa-icon>
-            </button>
-            <button id="edit-cancel" class="ribbon-btn" aria-label="Cancel editing" title="Cancel">
-              <wa-icon name="xmark"></wa-icon>
-            </button>
-          </div>
-
-          <div class="play-side-host"></div>
-        </div>
-      </section>
-    `;
+    root.innerHTML = PLAY_PERSPECTIVE_HTML;
 
     const boardHost = root.querySelector(".play-board-host");
     const dockLeft = root.querySelector(".play-dock-left");
@@ -579,7 +712,7 @@ export const playPerspective = {
     // (not cancelled/error). Server stays in ANALYSIS so the board is
     // locked, but the ribbon stops shouting "stopping..." and the
     // toast disappears. Reset on next analyze start.
-    let aiTurnFinished = false;
+    const aiShared = { turnFinished: false, dismissAnalysisToast: null };
     // Single sync point: every analyzing write goes through this setter so
     // the module-scope mirror (_analyzing) used by isAnalyzing() stays
     // current. Direct `analyzing = ...` writes will drift -- always call
@@ -589,14 +722,14 @@ export const playPerspective = {
       _analyzing = analyzing;
       // Server flipped out of ANALYSIS -- clear the AI-finished latch
       // so the ribbon can re-enable when the game is paused again.
-      if (!analyzing) aiTurnFinished = false;
+      if (!analyzing) aiShared.turnFinished = false;
       document.body.classList.toggle(XGAME_LOCK_CLASS, analyzing);
     }
     // A finished AI-analysis turn in play mode: the board is frozen in
     // ANALYZING and reads as paused, so the ribbon shows Resume (one click
     // exits analysis and resumes play). Reads live state -- call, don't cache.
     function aiAnalysisDone() {
-      return analyzing && aiTurnFinished && aiEnabled;
+      return analyzing && aiShared.turnFinished && aiEnabled;
     }
     // View mode state (set from board_update.view payload).
     let viewing = false;
@@ -868,7 +1001,6 @@ export const playPerspective = {
       finishedBadge.textContent = text;
       finishedBadge.classList.toggle("hidden", !text);
     }
-    let dismissAnalysisToast = null;
 
     // Resign is enabled whenever there is an active game; cleared on
     // game_result. We track it explicitly so paused-state can additionally
@@ -915,7 +1047,7 @@ export const playPerspective = {
         // Engines tab so the user knows the next step.
         // AI turn finished but server still ANALYZING: show ribbon as
         // normal ("Analysis mode") even though `analyzing` is true.
-        const viewShowAsActive = analyzing && !aiTurnFinished;
+        const viewShowAsActive = analyzing && !aiShared.turnFinished;
         configureBtn(viewAnalyzeBtn, {
           disabled: noEngine && !viewShowAsActive,
           active: viewShowAsActive,
@@ -951,8 +1083,8 @@ export const playPerspective = {
       // ("Analysis mode", magnifying-glass, enabled) -- the rest of
       // the reachability gates (gameOver / no engine / not paused)
       // still apply.
-      const showAsActive = analyzing && !aiTurnFinished;
-      const analyzeReachable = !gameOver && resignAvailable && (paused || aiTurnFinished);
+      const showAsActive = analyzing && !aiShared.turnFinished;
+      const analyzeReachable = !gameOver && resignAvailable && (paused || aiShared.turnFinished);
       configureBtn(analyzeBtn, {
         disabled: !showAsActive && !analyzeReachable,
         active: showAsActive,
@@ -968,147 +1100,18 @@ export const playPerspective = {
     let viewFlipped = false;
     try { viewFlipped = localStorage.getItem(VIEW_FLIP_KEY) === "1"; } catch { /* */ }
 
-    // AI event handling extracted so the same dispatch can replay
-    // buffered events on perspective remount (panel rehydration when a
-    // mid-turn reconnect happens).
-    function dispatchAiEvent(evt) {
-      switch (evt.kind) {
-        case "ai_info": {
-          const p = evt.payload || {};
-          if (typeof p.delta === "string") appendAiDelta(p.delta, p.round ?? 0, p.thinking_ms ?? null);
-          if (p.done) {
-            // Defensive: tool-call lifecycle can drop the restore signal
-            // (cancelled mid-call, round cap, etc.). Always snap back.
-            view.restorePosition({ animate: false });
-            markAiDone({
-              cancelled: !!p.cancelled,
-              error: p.error || null,
-              errorDetail: p.error_detail || null,
-              roundCap: !!p.round_cap,
-              verifierRoundCap: !!p.verifier_round_cap,
-              noResponse: !!p.no_response,
-              noRecommendation: !!p.no_recommendation,
-            });
-            if (p.error) {
-              toast(p.error_detail || p.error, {
-                variant: "danger",
-                duration: 6000,
-              });
-            }
-            // Natural completion: hide the "stopping" affordances --
-            // toast and ribbon active look. Server stays in ANALYSIS;
-            // closing the AI window is what exits. Skipped on
-            // cancelled/error to preserve normal cleanup behavior.
-            // Per-turn dismissal is correct because each Analyze click
-            // is a one-shot turn (no rolling session; see
-            // ai-analysis-spec.md §Live session model -- indefinitely
-            // postponed).
-            if (!p.cancelled && !p.error) {
-              aiTurnFinished = true;
-              dismissAnalysisToast?.();
-              dismissAnalysisToast = null;
-              refreshButtons();
-            }
-          }
-          return true;
-        }
-        case "ai_thinking": {
-          const p = evt.payload || {};
-          if (typeof p.delta === "string") appendAiThinking(p.delta, p.round ?? 0);
-          else if (Number.isFinite(p.thinking_ms)) freezeAiThinking(p.round ?? 0, p.thinking_ms);
-          return true;
-        }
-        case "ai_tool_call": {
-          const p = evt.payload || {};
-          appendAiToolCall({
-            round: p.round ?? 0,
-            name: p.name,
-            input: p.input,
-            toolUseId: p.tool_use_id,
-            parentToolUseId: p.parent_tool_use_id,
-            thinkingMs: p.thinking_ms ?? null,
-          });
-          // When the model inspects a hypothetical position, mirror
-          // the analyzed FEN on the board so the user can follow the
-          // AI's reasoning. Restored on ai_tool_call_complete.
-          if (p.name === ANALYZE_TOOL_NAME && p.input && typeof p.input.fen === "string") {
-            // No animation: tool calls fire faster than the cm-chessboard
-            // queue drains while the perspective is hidden (rAF throttled
-            // off-screen), producing a "fast replay" on return.
-            view.previewPosition(p.input.fen, { animate: false });
-          }
-          return true;
-        }
-        case "ai_tool_call_failed": {
-          const p = evt.payload || {};
-          markAiToolCallFailed({
-            toolUseId: p.tool_use_id,
-            error: p.error,
-            detail: p.detail,
-          });
-          // Restore in case the failed call was an analyze preview.
-          view.restorePosition({ animate: false });
-          return true;
-        }
-        case "ai_tool_call_complete": {
-          const p = evt.payload || {};
-          if (p.name === ANALYZE_TOOL_NAME) view.restorePosition({ animate: false });
-          view.clearArrows();
-          view.clearEngineInfo();
-          return true;
-        }
-        case "ai_position_note": {
-          const p = evt.payload || {};
-          noteAiPosition({ round: p.round ?? 0, surfaces: p.surfaces || [] });
-          return true;
-        }
-      }
-      return false;
-    }
-
-    // Buffer live AI events while the replay GET is in flight, then
-    // drain in seq order with dedupe. Avoids the GET-then-subscribe
-    // race: live events that fire between subscribe and replay arrival
-    // are held instead of dispatched out-of-order.
-    let aiRehydrating = true;
-    let aiLiveBuffer = [];
-    let aiMaxSeq = 0;
-    function dispatchAiEventOrdered(evt) {
-      const seq = evt?.payload?.seq ?? 0;
-      // Server resets seq to 1 at the start of each turn, so seq=1
-      // unconditionally marks a new turn and resets the high-water mark.
-      // Otherwise a single-event turn (e.g. instant error) following a
-      // prior turn whose aiMaxSeq is also 1 would be swallowed.
-      if (seq === 1) aiMaxSeq = 0;
-      else if (seq && seq <= aiMaxSeq) return;
-      if (seq) aiMaxSeq = seq;
-      dispatchAiEvent(evt);
-    }
-    async function rehydrateAiPanel() {
-      try {
-        const r = await ctx.api("GET", "/game/analysis/replay");
-        const events = Array.isArray(r?.events) ? r.events : [];
-        if (events.length > 0) {
-          openAi();
-          resetAi();
-          for (const evt of events) dispatchAiEventOrdered(evt);
-        }
-      } catch { /* */ } finally {
-        aiRehydrating = false;
-        const buffered = aiLiveBuffer;
-        aiLiveBuffer = [];
-        for (const evt of buffered) dispatchAiEventOrdered(evt);
-      }
-    }
-    rehydrateAiPanel();
+    // Private replay-buffer state + the deps the AI dispatch needs.
+    const ai = { rehydrating: true, liveBuffer: [], maxSeq: 0 };
+    const aiCtx = { view, api: ctx.api, refreshButtons, aiShared };
+    rehydrateAiPanel(ai, aiCtx);
 
     // --- Hook events for control-bar state changes (board state changes
     //     are GameView's responsibility). ---
     const offEvent = ctx.events.on((evt) => {
       // AI events: buffer until replay completes, then dedupe by seq.
       if (evt.kind?.startsWith("ai_")) {
-        if (aiRehydrating) aiLiveBuffer.push(evt);
-        else dispatchAiEventOrdered(evt);
+        if (ai.rehydrating) ai.liveBuffer.push(evt);
+        else dispatchAiEventOrdered(ai, aiCtx, evt);
         return;
       }
       switch (evt.kind) {
@@ -1229,10 +1232,10 @@ export const playPerspective = {
             syncPausedUi();
             pushNavToUi();
             if (!analyzing) {
-              dismissAnalysisToast?.();
-              dismissAnalysisToast = null;
+              aiShared.dismissAnalysisToast?.();
+              aiShared.dismissAnalysisToast = null;
               if (viewing) { if (isAiOpen()) closeAi(); closeAnalysisOpenedWindows(); }
-            } else if (!dismissAnalysisToast) {
+            } else if (!aiShared.dismissAnalysisToast) {
               // Server reports analysis active but no toast exists -- we
               // were re-mounted (e.g. user navigated to another
               // perspective and came back). Restore the toast so the
@@ -1250,8 +1253,8 @@ export const playPerspective = {
           gameOver = true;
           paused = false;
           setAnalyzing(false);
-          dismissAnalysisToast?.();
-          dismissAnalysisToast = null;
+          aiShared.dismissAnalysisToast?.();
+          aiShared.dismissAnalysisToast = null;
           if (viewing) { if (isAiOpen()) closeAi(); closeAnalysisOpenedWindows(); }
           resignAvailable = false;
           setDisabled(newGameBtn, false);
@@ -1768,7 +1771,7 @@ export const playPerspective = {
     }
 
     function showAnalysisToast() {
-      dismissAnalysisToast?.();
+      aiShared.dismissAnalysisToast?.();
       const msg = document.createElement("span");
       msg.className = "toast-sort-msg";
       const label = document.createElement("span");
@@ -1780,7 +1783,7 @@ export const playPerspective = {
       const stopBtn = makeToastIconBtn("magnifying-glass-minus", "Stop analysis", onAnalyze);
       stopBtn.classList.add("is-active");
       msg.append(stopBtn);
-      dismissAnalysisToast = toast(msg, {
+      aiShared.dismissAnalysisToast = toast(msg, {
         variant: "neutral",
         duration: 0,
       });
@@ -1798,9 +1801,9 @@ export const playPerspective = {
         reportError(ctx, "Stop analysis failed", e);
         return;
       }
-      aiTurnFinished = false;
-      dismissAnalysisToast?.();
-      dismissAnalysisToast = null;
+      aiShared.turnFinished = false;
+      aiShared.dismissAnalysisToast?.();
+      aiShared.dismissAnalysisToast = null;
       // The AI window's lifecycle is tied to the analysis session, so it
       // always closes on stop. PV/UCI close only if analysis opened them.
       if (isAiOpen()) closeAi();
@@ -1818,7 +1821,7 @@ export const playPerspective = {
       if (!aiEnabled && isAiOpen()) closeAi();
       await ctx.api("POST", "/game/analysis/start", {});
       restoreViewAnalysisWindows(ctx.events);
-      aiTurnFinished = false;
+      aiShared.turnFinished = false;
       showAnalysisToast();
       if (aiEnabled) {
         // Pin the title to the model that is actually about to run.
@@ -1834,8 +1837,8 @@ export const playPerspective = {
       // Switching from a FINISHED AI session to engine-only: stop the AI
       // session, then start engine analysis -- a plain Stop would just
       // tear down and leave nothing running. While the AI run is still in
-      // progress (!aiTurnFinished), the ribbon is a plain Stop.
-      if (analyzing && aiTurnFinished && !aiEnabled && isAiOpen()) {
+      // progress (!aiShared.turnFinished), the ribbon is a plain Stop.
+      if (analyzing && aiShared.turnFinished && !aiEnabled && isAiOpen()) {
         await onReanalyze();
         return;
       }
@@ -1981,8 +1984,8 @@ export const playPerspective = {
         setAiInlineHost(null);
         setOnUserCloseAi(null);
         setOnReanalyzeAi(null);
-        dismissAnalysisToast?.();
-        dismissAnalysisToast = null;
+        aiShared.dismissAnalysisToast?.();
+        aiShared.dismissAnalysisToast = null;
         dismissGameOverToast?.();
         dismissGameOverToast = null;
         pausedBadge?.classList.add("hidden");
