@@ -23,12 +23,10 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from sturddle_view.app import create_app  # noqa: E402
-from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
-from sturddle_view.tournament.fastchess import FastchessRunner  # noqa: E402
+from sturddle_view.tournament.store import TournamentStore  # noqa: E402
 
-from .conftest import run_uvicorn, wait_perspective_ready  # noqa: E402
+from .conftest import run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
 
 # Title text WinBox renders for each system window; the only stable way
 # to map a .winbox element back to its workspace key from the DOM.
@@ -45,15 +43,12 @@ ROUND_SLACK = 2
 
 
 @pytest.fixture
-def server(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        FastchessRunner, "detect_binary",
-        staticmethod(lambda configured: configured),
-    )
-    settings = Settings(token="test-token", auth_disabled=True)
-    settings.pgn_dir = tmp_path / "pgn"
-    settings.tournament_root = str(tmp_path / "tournaments")
-    settings.tournament_fastchess_path = sys.executable
+def server(tmp_path):
+    # Seed engine registry and one tournament on disk, then launch an
+    # out-of-process server pointed at those paths (SV_* -> Settings).
+    # tournament_fastchess_path is sys.executable (a real file detect_binary
+    # echoes back), but fastchess is never spawned -- this test only opens
+    # and lays out workspace windows.
     registry = EngineRegistry(path=tmp_path / "engines.json")
     # Seed a non-empty option_schema so listing engines doesn't lazily
     # probe sys.executable (not a real UCI engine) and log a handshake
@@ -61,13 +56,19 @@ def server(tmp_path, monkeypatch):
     stub_schema = {"options": []}
     registry.add(name="engine-A", path=sys.executable, option_schema=stub_schema)
     registry.add(name="engine-B", path=sys.executable, option_schema=stub_schema)
-    app = create_app(settings=settings, engine_registry=registry)
-    app.state.tournament_store.create(
+    TournamentStore(tmp_path / "tournaments").create(
         name="alpha",
         template={"tc": "10+0.1"},
         engines=[{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
     )
-    with run_uvicorn(app) as (base, _s):
+    env = {
+        "SV_PGN_DIR": str(tmp_path / "pgn"),
+        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
+        "SV_ENGINE_REGISTRY_PATH": str(tmp_path / "engines.json"),
+        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
+        "SV_TOURNAMENT_FASTCHESS_PATH": sys.executable,
+    }
+    with run_uvicorn_subprocess(env_overrides=env) as base:
         yield base
 
 

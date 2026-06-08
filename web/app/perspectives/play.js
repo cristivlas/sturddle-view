@@ -201,6 +201,45 @@ const MSG = {
 // nav links so the user can't jump games mid-analysis.
 const XGAME_LOCK_CLASS = "xgame-nav-locked";
 
+// "White vs Black (result)" label for an x-game summary.
+function formatGameLabel(summary) {
+  const s = summary || {};
+  const white = s.white || "?";
+  const black = s.black || "?";
+  const result = s.result && s.result !== "*" ? ` (${s.result})` : "";
+  return `${white} vs ${black}${result}`;
+}
+
+// Parse a FEN's side-to-move letter and {wK,wQ,bK,bQ} castling-rights map.
+function _seedFromFen(fen) {
+  const parts = (fen || "").split(" ");
+  const stm = parts[1] === "b" ? "b" : "w";
+  const rights = parts[2] || "";
+  return {
+    stm,
+    castling: {
+      wK: rights.includes("K"),
+      wQ: rights.includes("Q"),
+      bK: rights.includes("k"),
+      bQ: rights.includes("q"),
+    },
+  };
+}
+
+// Toast button with an icon + accessible label.
+function makeToastIconBtn(iconName, label, onClick) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "toast-icon-btn";
+  btn.setAttribute("aria-label", label);
+  btn.setAttribute("title", label);
+  const ic = document.createElement("wa-icon");
+  ic.setAttribute("name", iconName);
+  btn.appendChild(ic);
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
 function setDisabled(btn, disabled) {
   if (disabled) btn.setAttribute("disabled", "");
   else btn.removeAttribute("disabled");
@@ -857,13 +896,6 @@ export const playPerspective = {
         resetXgame();
         refreshXgameToasts();
       }
-    }
-    function formatGameLabel(summary) {
-      const s = summary || {};
-      const white = s.white || "?";
-      const black = s.black || "?";
-      const result = s.result && s.result !== "*" ? ` (${s.result})` : "";
-      return `${white} vs ${black}${result}`;
     }
     function buildParentToast() {
       // "Forked from <parent> at ply N." Single clickable link, X to
@@ -1544,22 +1576,6 @@ export const playPerspective = {
       }
     };
 
-    // Parse FEN fields: side-to-move letter and a {wK,wQ,bK,bQ} castling map.
-    function _seedFromFen(fen) {
-      const parts = (fen || "").split(" ");
-      const stm = parts[1] === "b" ? "b" : "w";
-      const rights = parts[2] || "";
-      return {
-        stm,
-        castling: {
-          wK: rights.includes("K"),
-          wQ: rights.includes("Q"),
-          bK: rights.includes("k"),
-          bQ: rights.includes("q"),
-        },
-      };
-    }
-
     // Server is authoritative for edit state. We start editing by POSTing
     // /game/edit/start; the resulting board_update flips `editing` true,
     // and we then enable the client-side board editor extension.
@@ -1814,18 +1830,6 @@ export const playPerspective = {
     // onAnalyze (user toggle) and from the board_update handler so the
     // toast restores itself when the perspective remounts (navigate away
     // and back) and the server re-emits analyzing: true.
-    function makeToastIconBtn(iconName, label, onClick) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "toast-icon-btn";
-      btn.setAttribute("aria-label", label);
-      btn.setAttribute("title", label);
-      const ic = document.createElement("wa-icon");
-      ic.setAttribute("name", iconName);
-      btn.appendChild(ic);
-      btn.addEventListener("click", onClick);
-      return btn;
-    }
 
     function showAnalysisToast() {
       aiShared.dismissAnalysisToast?.();
