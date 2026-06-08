@@ -5,6 +5,7 @@
 import { apiErrorDetail, showDialog, toast } from "./dialogs.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
+import { loadRaw } from "./storage.js";
 import { mountEngineList } from "./engines.js";
 import { DEFAULT_BOARD_STYLE } from "./board-styles.js";
 import { mqNarrowDialog } from "./breakpoints.js";
@@ -22,7 +23,7 @@ export const PLAYER_NAME_DEFAULT = "Human";
 const PLAYER_NAME_MAX_LEN = 32;
 
 export function getConfiguredPlayerName() {
-  return localStorage.getItem(PLAYER_NAME_KEY) || PLAYER_NAME_DEFAULT;
+  return loadRaw(PLAYER_NAME_KEY) || PLAYER_NAME_DEFAULT;
 }
 
 // Persisted unit is always seconds (float). The UI picks the most natural

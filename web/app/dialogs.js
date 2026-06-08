@@ -4,6 +4,7 @@
 
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
+import { loadRaw, saveRaw } from "./storage.js";
 
 function ensureContainer() {
   let c = document.getElementById("dialog-host");
@@ -153,20 +154,12 @@ export function prompt({
 const LAST_DIR_KEY_PREFIX = STORAGE_KEY.FS_PICKER_LAST_PREFIX;
 
 function recallLastDir(key) {
-  try {
-    return localStorage.getItem(LAST_DIR_KEY_PREFIX + key) || null;
-  } catch {
-    return null;
-  }
+  return loadRaw(LAST_DIR_KEY_PREFIX + key) || null;
 }
 
 function rememberLastDir(key, dir) {
   if (!dir) return;
-  try {
-    localStorage.setItem(LAST_DIR_KEY_PREFIX + key, dir);
-  } catch {
-    // localStorage may be unavailable (private mode quotas, disabled). Best-effort.
-  }
+  saveRaw(LAST_DIR_KEY_PREFIX + key, dir);
 }
 
 

@@ -4,6 +4,7 @@
 import { inlineSvgIcon } from "./dialogs.js";
 import { CHESS_CLOCK_SVG_INNER, CHESS_CLOCK_VIEW_BOX } from "./icons.js";
 import { makeDivider, makeSection } from "./settings-ui-helpers.js";
+import { loadRaw, saveRaw } from "./storage.js";
 
 export function buildPlayTab({
   initial, putSettings, putSettingsDebounced, makeDurationRow,
@@ -51,11 +52,10 @@ export function buildPlayTab({
   playerNameInput.size = "small";
   playerNameInput.placeholder = playerNameDefault;
   playerNameInput.maxlength = playerNameMaxLen;
-  playerNameInput.value = localStorage.getItem(playerNameKey) || "";
+  playerNameInput.value = loadRaw(playerNameKey, "");
   playerNameInput.addEventListener("change", () => {
     const v = playerNameInput.value.trim().slice(0, playerNameMaxLen);
-    if (v) localStorage.setItem(playerNameKey, v);
-    else localStorage.removeItem(playerNameKey);
+    saveRaw(playerNameKey, v || null);
   });
   const playerNameRow = document.createElement("div");
   playerNameRow.className = "settings-row settings-row-spaced";

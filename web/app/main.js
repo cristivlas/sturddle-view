@@ -5,6 +5,7 @@ import { enginesPerspective } from "./perspectives/engines.js";
 import { openSettingsDialog } from "./settings-dialog.js";
 import { openAboutDialog } from "./about-dialog.js";
 import { openRibbonWindow, closeRibbonWindow, mountRibbonElement, isRibbonFloating, nudgeRibbonToViewport, RIBBON_SIDE_KEY } from "./ribbon-window.js";
+import { loadRaw, saveRaw } from "./storage.js";
 import { mqMobile } from "./breakpoints.js";
 import { APP_EVT } from "./app-events.js";
 
@@ -96,7 +97,7 @@ function applyRibbonSide(side) {
 }
 
 async function refreshRibbonSide() {
-  const stored = localStorage.getItem(RIBBON_SIDE_KEY);
+  const stored = loadRaw(RIBBON_SIDE_KEY);
   let side = stored || "left";
   // Always fetch the server's ribbon_side so lastDockedSide reflects the
   // user's left/right preference even when float is the current mode.
@@ -151,7 +152,7 @@ window.addEventListener("resize", () => {
 
 // When the user closes the floating ribbon WinBox, revert to last docked side.
 window.addEventListener(APP_EVT.RIBBON_FLOAT_CLOSED, () => {
-  localStorage.setItem(RIBBON_SIDE_KEY, lastDockedSide);
+  saveRaw(RIBBON_SIDE_KEY, lastDockedSide);
   delete document.body.dataset.ribbonFloat;
   window.dispatchEvent(new CustomEvent(APP_EVT.LAYOUT_CHANGED));
 });

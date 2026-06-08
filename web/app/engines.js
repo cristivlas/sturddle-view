@@ -6,6 +6,7 @@
 import { attachColumnResize } from "./col-resize.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
+import { loadRaw, saveRaw } from "./storage.js";
 import { apiErrorDetail, confirm, pickFile, reportError, toast } from "./dialogs.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 
@@ -106,8 +107,8 @@ export function mountEngineList(container, api, opts = {}) {
   let selectedDetailId = null;
   let activeId = null;
   let filterText = "";
-  let sortOrder = ["asc", "desc", "none"].includes(localStorage.getItem(SORT_KEY_LS))
-    ? localStorage.getItem(SORT_KEY_LS) : "none";
+  let sortOrder = ["asc", "desc", "none"].includes(loadRaw(SORT_KEY_LS))
+    ? loadRaw(SORT_KEY_LS) : "none";
 
   // Last (count, activeId) pair we broadcast on sturddle:engines-changed.
   // Tracks across refreshes so the initial mount doesn't fire spuriously
@@ -243,7 +244,7 @@ export function mountEngineList(container, api, opts = {}) {
   }
   function setSort(next) {
     sortOrder = sortOrder === next ? "none" : next;
-    localStorage.setItem(SORT_KEY_LS, sortOrder);
+    saveRaw(SORT_KEY_LS, sortOrder);
     syncSortButtons();
     renderList();
   }

@@ -13,6 +13,7 @@ import { openSettingsDialog } from "./settings-dialog.js";
 import { EVT, KIND, POLL_INTERVAL_MS, STATUS } from "./tournament-events.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
+import { loadRaw, saveRaw } from "./storage.js";
 import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
@@ -122,9 +123,9 @@ export function mountTournaments({ container, api, events, log, token }) {
   const SORT_KEY_LS = STORAGE_KEY.TOURNAMENTS_SORT_BY;
   const SORT_ASC_LS = STORAGE_KEY.TOURNAMENTS_SORT_ASC;
   const VALID_SORTS = new Set(["name", "status", "created_at", "started_at"]);
-  let sortBy = VALID_SORTS.has(localStorage.getItem(SORT_KEY_LS))
-    ? localStorage.getItem(SORT_KEY_LS) : "created_at";
-  let sortAsc = localStorage.getItem(SORT_ASC_LS) !== "false";
+  let sortBy = VALID_SORTS.has(loadRaw(SORT_KEY_LS))
+    ? loadRaw(SORT_KEY_LS) : "created_at";
+  let sortAsc = loadRaw(SORT_ASC_LS) !== "false";
 
   let tournaments = [];
   let activeId = null;
@@ -1091,8 +1092,8 @@ export function mountTournaments({ container, api, events, log, token }) {
   function applySort(nextBy, nextAsc) {
     sortBy = nextBy;
     sortAsc = nextAsc;
-    localStorage.setItem(SORT_KEY_LS, sortBy);
-    localStorage.setItem(SORT_ASC_LS, String(sortAsc));
+    saveRaw(SORT_KEY_LS, sortBy);
+    saveRaw(SORT_ASC_LS, String(sortAsc));
     syncSortMenu();
     renderList();
   }

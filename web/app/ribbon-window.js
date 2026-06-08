@@ -6,6 +6,7 @@
 
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
+import { loadJson, saveJson, loadRaw, saveRaw } from "./storage.js";
 
 // LocalStorage keys: side selection ("left"|"right"|"float"), the
 // WinBox geometry, and orientation ("h"|"v") for the floating mode.
@@ -32,7 +33,7 @@ let originalNextSibling = null; // sibling to insertBefore on restore
 let programmaticClose = false;
 
 function loadGeo() {
-  try { return JSON.parse(localStorage.getItem(GEO_KEY)) || null; } catch { return null; }
+  return loadJson(GEO_KEY);
 }
 
 function clampGeo(x, y, w, h) {
@@ -47,15 +48,15 @@ function clampGeo(x, y, w, h) {
 function saveGeo() {
   if (!wb) return;
   const clamped = clampGeo(wb.x, wb.y, wb.width, wb.height);
-  localStorage.setItem(GEO_KEY, JSON.stringify(clamped));
+  saveJson(GEO_KEY, clamped);
 }
 
 function loadOrient() {
-  return localStorage.getItem(ORIENT_KEY) === ORIENT_V ? ORIENT_V : ORIENT_H;
+  return loadRaw(ORIENT_KEY) === ORIENT_V ? ORIENT_V : ORIENT_H;
 }
 
 function saveOrient(o) {
-  localStorage.setItem(ORIENT_KEY, o);
+  saveRaw(ORIENT_KEY, o);
 }
 
 export function isRibbonFloating() {

@@ -27,6 +27,7 @@ import { toast } from "./dialogs.js";
 import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
+import { loadJson, saveJson, loadRaw, saveRaw } from "./storage.js";
 import {
   AUTOSCROLL_SLACK_LINE_PX,
   isPinnedToBottom,
@@ -72,16 +73,12 @@ const DOCK_GROW_KEY = STORAGE_KEY.PLAY_DOCK_GROW;
 const DEFAULT_DOCK_GROW = 1.0;
 
 function loadDockGrows() {
-  try {
-    const raw = localStorage.getItem(DOCK_GROW_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return (parsed && typeof parsed === "object") ? parsed : {};
-  } catch { return {}; }
+  const parsed = loadJson(DOCK_GROW_KEY, {});
+  return (parsed && typeof parsed === "object") ? parsed : {};
 }
 
 function saveDockGrows(grows) {
-  try { localStorage.setItem(DOCK_GROW_KEY, JSON.stringify(grows)); } catch { /* */ }
+  saveJson(DOCK_GROW_KEY, grows);
 }
 
 // Mobile gate. Width OR short-height crosses into the stacked layout,
@@ -166,34 +163,38 @@ function winboxBase(title, className, width, height, x, y) {
   };
 }
 
-function wbGeometry(wb) {
+// Geometry as raw numbers. Distinct from tournament-workspace.js's
+// wbGeometryPx, which returns CSS px-strings -- not interchangeable.
+function wbGeometryNum(wb) {
   return { x: wb.x, y: wb.y, width: wb.width, height: wb.height };
 }
 
 function loadGeo(key) {
-  try { return JSON.parse(localStorage.getItem(key)) || null; } catch { return null; }
+  return loadJson(key);
 }
 
 function saveGeo(key, wb) {
   if (!wb) return;
-  localStorage.setItem(key, JSON.stringify(wbGeometry(wb)));
+  // Best-effort write (saveJson swallows quota/disabled-storage errors);
+  // losing a geometry persist is harmless.
+  saveJson(key, wbGeometryNum(wb));
 }
 
 function isDocked(key) {
-  const v = localStorage.getItem(key);
+  const v = loadRaw(key);
   return v === null ? true : v === "1"; // default: docked
 }
 
 function setDocked(key, val) {
-  localStorage.setItem(key, val ? "1" : "0");
+  saveRaw(key, val ? "1" : "0");
 }
 
 function isOpen(key) {
-  return localStorage.getItem(key) === "1";
+  return loadRaw(key) === "1";
 }
 
 function setOpen(key, val) {
-  localStorage.setItem(key, val ? "1" : "0");
+  saveRaw(key, val ? "1" : "0");
 }
 
 // -- dock container ----------------------------------------------------------
@@ -403,8 +404,8 @@ export function createDockableWindow(config) {
   let programmaticClose = false; // close() -> wb.close(); onclose skips onUserClose
   let currentTitle = title;
 
-  function loadWinState() { return localStorage.getItem(winStateKey); }
-  function saveWinState(v) { if (v) localStorage.setItem(winStateKey, v); else localStorage.removeItem(winStateKey); }
+  function loadWinState() { return loadRaw(winStateKey); }
+  function saveWinState(v) { saveRaw(winStateKey, v || null); }
 
   function setOff(fn) { off = fn; }
 
@@ -586,7 +587,7 @@ export function createDockableWindow(config) {
   }
 
   function closeForNav() {
-    if (wb) { saved = wbGeometry(wb); navAway = true; wb.close(); navAway = false; }
+    if (wb) { saved = wbGeometryNum(wb); navAway = true; wb.close(); navAway = false; }
     detachSlotForNav();
   }
 
@@ -975,9 +976,9 @@ export function snapshotViewAnalysisState() {
 // Open debug windows based on the last view-mode analysis snapshot.
 // Falls back to the shared open key on first use (before any snapshot exists).
 export function restoreViewAnalysisWindows(events) {
-  const uciShouldOpen = localStorage.getItem(VIEW_UCI_OPEN_KEY) !== null
+  const uciShouldOpen = loadRaw(VIEW_UCI_OPEN_KEY) !== null
     ? isOpen(VIEW_UCI_OPEN_KEY) : isOpen(UCI_OPEN_KEY);
-  const pvShouldOpen  = localStorage.getItem(VIEW_PV_OPEN_KEY) !== null
+  const pvShouldOpen  = loadRaw(VIEW_PV_OPEN_KEY) !== null
     ? isOpen(VIEW_PV_OPEN_KEY)  : isOpen(PV_OPEN_KEY);
   if (uciShouldOpen && !uciLog.wb && !uciLog.slot) { uciLog.toggle(events); uciLog.openedByAnalysis = true; }
   if (pvShouldOpen  && !pvTable.wb && !pvTable.slot) { pvTable.toggle(events); pvTable.openedByAnalysis = true; }

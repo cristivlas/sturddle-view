@@ -10,6 +10,7 @@ import { apiErrorDetail, apiErrorObject, showDialog, toast } from "./dialogs.js"
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize } from "./col-resize.js";
+import { loadJson, saveJson } from "./storage.js";
 
 // Format a summary dict {white, black, result, side_to_move, fen} into a
 // display string. `short: true` returns a compact form for tight UI (e.g.
@@ -464,12 +465,8 @@ const RECENTS_CACHE_KEY = STORAGE_KEY.IMPORT_RECENTS;
 const RECENTS_DISPLAY_CAP = 10;
 
 function loadRecentsCache() {
-  try {
-    const v = JSON.parse(localStorage.getItem(RECENTS_CACHE_KEY) || "[]");
-    return Array.isArray(v) ? v.filter((e) => e && e.hash).slice(0, RECENTS_DISPLAY_CAP) : [];
-  } catch {
-    return [];
-  }
+  const v = loadJson(RECENTS_CACHE_KEY, []);
+  return Array.isArray(v) ? v.filter((e) => e && e.hash).slice(0, RECENTS_DISPLAY_CAP) : [];
 }
 
 function saveRecentsCache(entries) {
@@ -480,11 +477,7 @@ function saveRecentsCache(entries) {
     summary: e.summary,
     ts: e.ts,
   }));
-  try {
-    localStorage.setItem(RECENTS_CACHE_KEY, JSON.stringify(lean));
-  } catch {
-    // localStorage may be disabled -- silently skip
-  }
+  saveJson(RECENTS_CACHE_KEY, lean);
 }
 
 function detectFormatFromName(name) {

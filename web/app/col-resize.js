@@ -3,6 +3,8 @@
 // cleanup. The caller owns units (% vs px), clamping, and DOM writes via
 // the applySizes callback.
 
+import { loadJson, saveJson } from "./storage.js";
+
 const DRAG_LINE_CLASS = "col-drag-line";
 
 export function attachColumnResize({
@@ -17,12 +19,10 @@ export function attachColumnResize({
 }) {
   const persistArity = sizes.length;
 
-  try {
-    const saved = JSON.parse(localStorage.getItem(storageKey));
-    if (Array.isArray(saved) && saved.length === persistArity) {
-      for (let i = 0; i < persistArity; i++) sizes[i] = saved[i];
-    }
-  } catch (e) { /* use defaults */ }
+  const saved = loadJson(storageKey);
+  if (Array.isArray(saved) && saved.length === persistArity) {
+    for (let i = 0; i < persistArity; i++) sizes[i] = saved[i];
+  }
   applySizes(sizes);
 
   const cleanups = [];
@@ -70,7 +70,7 @@ export function attachColumnResize({
         grip.classList.remove("dragging");
         rightLine.remove();
         leftLine.remove();
-        localStorage.setItem(storageKey, JSON.stringify(sizes.slice(0, persistArity)));
+        saveJson(storageKey, sizes.slice(0, persistArity));
         grip.removeEventListener("pointermove", onMove);
         grip.removeEventListener("pointerup", onUp);
         grip.removeEventListener("pointercancel", onUp);

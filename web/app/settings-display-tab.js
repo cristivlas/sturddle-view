@@ -11,6 +11,7 @@ import { APP_EVT } from "./app-events.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
 import { mqMobile } from "./breakpoints.js";
 import { makeDivider } from "./settings-ui-helpers.js";
+import { loadRaw, saveRaw } from "./storage.js";
 
 export function buildDisplayTab({ initial, putSettings, initialStyle, onBoardStyleChange, signal }) {
   const displayTab = document.createElement("wa-tab");
@@ -22,7 +23,7 @@ export function buildDisplayTab({ initial, putSettings, initialStyle, onBoardSty
   const ribbonSide = document.createElement("wa-select");
   ribbonSide.size = "small";
   ribbonSide.setAttribute("distance", "4");
-  ribbonSide.value = localStorage.getItem(RIBBON_SIDE_KEY) || initial.ribbon_side || "left";
+  ribbonSide.value = loadRaw(RIBBON_SIDE_KEY) || initial.ribbon_side || "left";
   for (const [val, label] of [["left", "Left Ribbon"], ["right", "Right Ribbon"], ["float", "Floating"]]) {
     const opt = document.createElement("wa-option");
     opt.value = val;
@@ -31,7 +32,7 @@ export function buildDisplayTab({ initial, putSettings, initialStyle, onBoardSty
   }
   ribbonSide.addEventListener("change", () => {
     const val = ribbonSide.value;
-    localStorage.setItem(RIBBON_SIDE_KEY, val);
+    saveRaw(RIBBON_SIDE_KEY, val);
     if (val === "float") {
       // Float is client-only -- no server PUT, so we must dispatch ourselves.
       window.dispatchEvent(new CustomEvent(APP_EVT.SETTINGS_CHANGED));

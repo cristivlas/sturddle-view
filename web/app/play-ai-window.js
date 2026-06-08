@@ -16,6 +16,7 @@ import {
   selectContentsOnCtrlA,
 } from "./wb-utils.js";
 import { STORAGE_KEY } from "./storage-keys.js";
+import { loadRaw, saveRaw } from "./storage.js";
 import {
   openSettings,
   SETTINGS_TAB_ANALYSIS,
@@ -54,11 +55,11 @@ const THINKING_LABEL_ACTIVE = "Thinking";
 const THINKING_LABEL_DONE_PREFIX = "Thought for ";
 
 function readThinkingOpen() {
-  try { return localStorage.getItem(THINKING_OPEN_KEY) === "1"; } catch { return false; }
+  return loadRaw(THINKING_OPEN_KEY) === "1";
 }
 
 function writeThinkingOpen(open) {
-  try { localStorage.setItem(THINKING_OPEN_KEY, open ? "1" : "0"); } catch { /* */ }
+  saveRaw(THINKING_OPEN_KEY, open ? "1" : "0");
 }
 
 function trimTrailingWhitespace(el) {
@@ -340,18 +341,13 @@ export function setAiTitle(modelName) {
   const name = modelName || "";
   const t = name ? `AI Analysis (${name})` : "AI Analysis";
   inst.setTitle(t);
-  try {
-    if (name) localStorage.setItem(TITLE_MODEL_KEY, name);
-    else localStorage.removeItem(TITLE_MODEL_KEY);
-  } catch { /* quota / disabled storage; non-fatal */ }
+  saveRaw(TITLE_MODEL_KEY, name || null);
 }
 
 // Restore the last-run title on module load so a page reload does not
 // reset the panel to the bare "AI Analysis" label.
-try {
-  const saved = localStorage.getItem(TITLE_MODEL_KEY);
-  if (saved) inst.setTitle(`AI Analysis (${saved})`);
-} catch { /* non-fatal */ }
+const saved = loadRaw(TITLE_MODEL_KEY);
+if (saved) inst.setTitle(`AI Analysis (${saved})`);
 
 export function openAi() {
   if (inst.wb || inst.slot || inst.inlineSlot) return;
