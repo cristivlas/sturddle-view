@@ -799,6 +799,41 @@ async function doViewNav(state, endpoint, payload = {}) {
   }
 }
 
+// Analysis state setter + stop flow operating on shared `state`.
+
+// Single sync point: every analyzing write goes through this setter so the
+// module-scope mirror (_analyzing) used by isAnalyzing() stays current.
+// Direct `state.analyzing = ...` writes will drift -- always call setAnalyzing.
+function setAnalyzing(state, v) {
+  state.analyzing = !!v;
+  _analyzing = state.analyzing;
+  // Server flipped out of ANALYSIS -- clear the AI-finished latch
+  // so the ribbon can re-enable when the game is paused again.
+  if (!state.analyzing) state.aiShared.turnFinished = false;
+  document.body.classList.toggle(XGAME_LOCK_CLASS, state.analyzing);
+}
+
+// Stop side of the analyze toggle, shared so the AI-window close handler can
+// trigger the same flow (snapshot + endpoint + toast + panels) as the toolbar
+// Stop button.
+async function stopAnalysisFromUi(state) {
+  if (!state.analyzing) return;
+  snapshotViewAnalysisState();
+  try {
+    await state.ctx.api("POST", "/game/analysis/stop", {});
+  } catch (e) {
+    reportError(state.ctx, MSG.STOP_ANALYSIS_FAILED, e);
+    return;
+  }
+  state.aiShared.turnFinished = false;
+  state.aiShared.dismissAnalysisToast?.();
+  state.aiShared.dismissAnalysisToast = null;
+  // The AI window's lifecycle is tied to the analysis session, so it
+  // always closes on stop. PV/UCI close only if analysis opened them.
+  if (isAiOpen()) closeAi();
+  closeAnalysisOpenedWindows();
+}
+
 export const playPerspective = {
   id: "play",
   label: "Play",
@@ -904,6 +939,10 @@ export const playPerspective = {
       ctx,
       api: ctx.api,
       view: null,
+      // turnFinished: AI turn ended naturally (server stays in ANALYSIS, board
+      // locked, ribbon stops "stopping"); reset on next analyze start.
+      // dismissAnalysisToast: handle to the persistent "Analysis mode" toast.
+      aiShared: { turnFinished: false, dismissAnalysisToast: null },
       xgame: {
         gameId: null,
         parentGameId: null,
@@ -1018,7 +1057,7 @@ export const playPerspective = {
     // Closing the AI window mid-turn = same effect as clicking
     // toolbar Stop: snapshot view state, stop analysis, close all
     // dock panels. stopAnalysisFromUi is defined further down.
-    setOnUserCloseAi(() => { stopAnalysisFromUi(); });
+    setOnUserCloseAi(() => { stopAnalysisFromUi(state); });
     // Snapshot of TC fields used at the start of the current game; lets
     // us tell the user "applies on next game" if they edit TC mid-play.
     let gameTcInitial = null;
@@ -1096,28 +1135,11 @@ export const playPerspective = {
     let humanWhite = true;
     let turn = "white";
     let paused = false;
-    // AI mode only: flips true when an AI turn terminates naturally
-    // (not cancelled/error). Server stays in ANALYSIS so the board is
-    // locked, but the ribbon stops shouting "stopping..." and the
-    // toast disappears. Reset on next analyze start.
-    const aiShared = { turnFinished: false, dismissAnalysisToast: null };
-    // Single sync point: every analyzing write goes through this setter so
-    // the module-scope mirror (_analyzing) used by isAnalyzing() stays
-    // current. Direct `analyzing = ...` writes will drift -- always call
-    // setAnalyzing instead.
-    function setAnalyzing(v) {
-      state.analyzing = !!v;
-      _analyzing = state.analyzing;
-      // Server flipped out of ANALYSIS -- clear the AI-finished latch
-      // so the ribbon can re-enable when the game is paused again.
-      if (!state.analyzing) aiShared.turnFinished = false;
-      document.body.classList.toggle(XGAME_LOCK_CLASS, state.analyzing);
-    }
     // A finished AI-analysis turn in play mode: the board is frozen in
     // ANALYZING and reads as paused, so the ribbon shows Resume (one click
     // exits analysis and resumes play). Reads live state -- call, don't cache.
     function aiAnalysisDone() {
-      return state.analyzing && aiShared.turnFinished && aiEnabled;
+      return state.analyzing && state.aiShared.turnFinished && aiEnabled;
     }
     // View mode state (set from board_update.view payload).
     let viewTotalPlies = 0;
@@ -1194,7 +1216,7 @@ export const playPerspective = {
         // Engines tab so the user knows the next step.
         // AI turn finished but server still ANALYZING: show ribbon as
         // normal ("Analysis mode") even though `analyzing` is true.
-        const viewShowAsActive = state.analyzing && !aiShared.turnFinished;
+        const viewShowAsActive = state.analyzing && !state.aiShared.turnFinished;
         configureBtn(viewAnalyzeBtn, {
           disabled: noEngine && !viewShowAsActive,
           active: viewShowAsActive,
@@ -1230,8 +1252,8 @@ export const playPerspective = {
       // ("Analysis mode", magnifying-glass, enabled) -- the rest of
       // the reachability gates (gameOver / no engine / not paused)
       // still apply.
-      const showAsActive = state.analyzing && !aiShared.turnFinished;
-      const analyzeReachable = !gameOver && resignAvailable && (paused || aiShared.turnFinished);
+      const showAsActive = state.analyzing && !state.aiShared.turnFinished;
+      const analyzeReachable = !gameOver && resignAvailable && (paused || state.aiShared.turnFinished);
       configureBtn(analyzeBtn, {
         disabled: !showAsActive && !analyzeReachable,
         active: showAsActive,
@@ -1249,7 +1271,7 @@ export const playPerspective = {
 
     // Private replay-buffer state + the deps the AI dispatch needs.
     const ai = { rehydrating: true, liveBuffer: [], maxSeq: 0 };
-    const aiCtx = { view, api: ctx.api, refreshButtons, aiShared };
+    const aiCtx = { view, api: ctx.api, refreshButtons, aiShared: state.aiShared };
     rehydrateAiPanel(ai, aiCtx);
 
     // --- Hook events for control-bar state changes (board state changes
@@ -1298,7 +1320,7 @@ export const playPerspective = {
           // Read analyzing early: syncCommentsVisibility (called below) gates
           // view/goto on !analyzing; the main analyzing block runs later in
           // the same event but would be too late.
-          if (typeof evt.payload.analyzing === "boolean") setAnalyzing(evt.payload.analyzing);
+          if (typeof evt.payload.analyzing === "boolean") setAnalyzing(state, evt.payload.analyzing);
           if (state.viewing) {
             if (!wasViewing || state.viewingGameId !== prevGameId) {
               viewGameOverAlertShown = false;
@@ -1372,17 +1394,17 @@ export const playPerspective = {
           }
           if (evt.payload.turn) turn = evt.payload.turn;
           if (typeof evt.payload.analyzing === "boolean") {
-            setAnalyzing(evt.payload.analyzing);
+            setAnalyzing(state, evt.payload.analyzing);
             // Don't re-enable interactivity in view mode regardless of
             // analysis state.
             if (!state.viewing) view.setEnabled(!state.analyzing && !paused);
             syncPausedUi();
             pushNavToUi();
             if (!state.analyzing) {
-              aiShared.dismissAnalysisToast?.();
-              aiShared.dismissAnalysisToast = null;
+              state.aiShared.dismissAnalysisToast?.();
+              state.aiShared.dismissAnalysisToast = null;
               if (state.viewing) { if (isAiOpen()) closeAi(); closeAnalysisOpenedWindows(); }
-            } else if (!aiShared.dismissAnalysisToast) {
+            } else if (!state.aiShared.dismissAnalysisToast) {
               // Server reports analysis active but no toast exists -- we
               // were re-mounted (e.g. user navigated to another
               // perspective and came back). Restore the toast so the
@@ -1399,9 +1421,9 @@ export const playPerspective = {
         case "game_result":
           gameOver = true;
           paused = false;
-          setAnalyzing(false);
-          aiShared.dismissAnalysisToast?.();
-          aiShared.dismissAnalysisToast = null;
+          setAnalyzing(state, false);
+          state.aiShared.dismissAnalysisToast?.();
+          state.aiShared.dismissAnalysisToast = null;
           if (state.viewing) { if (isAiOpen()) closeAi(); closeAnalysisOpenedWindows(); }
           resignAvailable = false;
           setDisabled(newGameBtn, false);
@@ -1595,7 +1617,7 @@ export const playPerspective = {
       // game. stopAnalysisFromUi tears down the AI window and replay buffer.
       if (aiAnalysisDone()) {
         try {
-          await stopAnalysisFromUi();
+          await stopAnalysisFromUi(state);
           await ctx.api("POST", "/game/resume", {});
         } catch (e) {
           reportError(ctx, MSG.RESUME_FAILED, e);
@@ -1848,7 +1870,7 @@ export const playPerspective = {
     // and back) and the server re-emits analyzing: true.
 
     function showAnalysisToast() {
-      aiShared.dismissAnalysisToast?.();
+      state.aiShared.dismissAnalysisToast?.();
       const msg = document.createElement("span");
       msg.className = "toast-sort-msg";
       const label = document.createElement("span");
@@ -1860,31 +1882,10 @@ export const playPerspective = {
       const stopBtn = makeToastIconBtn(ANALYZE_ICON_STOP, MSG.STOP_ANALYSIS, onAnalyze);
       stopBtn.classList.add("is-active");
       msg.append(stopBtn);
-      aiShared.dismissAnalysisToast = toast(msg, {
+      state.aiShared.dismissAnalysisToast = toast(msg, {
         variant: "neutral",
         duration: 0,
       });
-    }
-
-    // Stop side of the analyze toggle, extracted so the AI-window
-    // close handler can trigger the same flow (snapshot + endpoint +
-    // toast + panels) as the toolbar Stop button.
-    async function stopAnalysisFromUi() {
-      if (!state.analyzing) return;
-      snapshotViewAnalysisState();
-      try {
-        await ctx.api("POST", "/game/analysis/stop", {});
-      } catch (e) {
-        reportError(ctx, MSG.STOP_ANALYSIS_FAILED, e);
-        return;
-      }
-      aiShared.turnFinished = false;
-      aiShared.dismissAnalysisToast?.();
-      aiShared.dismissAnalysisToast = null;
-      // The AI window's lifecycle is tied to the analysis session, so it
-      // always closes on stop. PV/UCI close only if analysis opened them.
-      if (isAiOpen()) closeAi();
-      closeAnalysisOpenedWindows();
     }
 
     // POST start + restore panels + toast + open/reset AI panel. Shared
@@ -1898,7 +1899,7 @@ export const playPerspective = {
       if (!aiEnabled && isAiOpen()) closeAi();
       await ctx.api("POST", "/game/analysis/start", {});
       restoreViewAnalysisWindows(ctx.events);
-      aiShared.turnFinished = false;
+      state.aiShared.turnFinished = false;
       showAnalysisToast();
       if (aiEnabled) {
         // Pin the title to the model that is actually about to run.
@@ -1915,12 +1916,12 @@ export const playPerspective = {
       // session, then start engine analysis -- a plain Stop would just
       // tear down and leave nothing running. While the AI run is still in
       // progress (!aiShared.turnFinished), the ribbon is a plain Stop.
-      if (state.analyzing && aiShared.turnFinished && !aiEnabled && isAiOpen()) {
+      if (state.analyzing && state.aiShared.turnFinished && !aiEnabled && isAiOpen()) {
         await onReanalyze();
         return;
       }
       if (state.analyzing) {
-        await stopAnalysisFromUi();
+        await stopAnalysisFromUi(state);
         return;
       }
       try {
@@ -2061,8 +2062,8 @@ export const playPerspective = {
         setAiInlineHost(null);
         setOnUserCloseAi(null);
         setOnReanalyzeAi(null);
-        aiShared.dismissAnalysisToast?.();
-        aiShared.dismissAnalysisToast = null;
+        state.aiShared.dismissAnalysisToast?.();
+        state.aiShared.dismissAnalysisToast = null;
         dismissGameOverToast?.();
         dismissGameOverToast = null;
         pausedBadge?.classList.add("hidden");
