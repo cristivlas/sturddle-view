@@ -179,6 +179,25 @@ function foldDiacritics(s) {
   return (s || "").normalize("NFD").replace(COMBINING_MARKS_RE, "").toLowerCase();
 }
 
+// The opening list is static for the app's lifetime, so fetch it once per
+// client and share it across every dialog open. Caches the in-flight promise
+// (not just the result) so concurrent opens don't fire parallel requests.
+let _openingsPromise = null;
+function loadOpeningsOnce(api) {
+  if (!_openingsPromise) {
+    _openingsPromise = api("GET", "/openings")
+      .then((r) => {
+        const rows = r.results || [];
+        // Precompute a diacritic-folded name per row so the per-keystroke
+        // filter doesn't re-normalize the whole list.
+        for (const row of rows) row._fold = foldDiacritics(row.name);
+        return rows;
+      })
+      .catch((e) => { _openingsPromise = null; throw e; });  // allow retry
+  }
+  return _openingsPromise;
+}
+
 // Build the Openings tab: a resizable-column table (ECO / Name / Moves)
 // loaded once, filtered locally, with a toggle-overlay search bar that
 // mirrors the Engines list. Selecting a row exposes its PGN via
@@ -402,18 +421,11 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
     });
   }
 
-  let loaded = false;
   async function load() {
-    if (loaded) return;
-    loaded = true;
     try {
-      const r = await api("GET", "/openings");
-      rows = r.results || [];
-      // Precompute a diacritic-folded name per row so the per-keystroke
-      // filter doesn't re-normalize the whole list.
-      for (const row of rows) row._fold = foldDiacritics(row.name);
+      rows = await loadOpeningsOnce(api);
     } catch {
-      loaded = false;
+      rows = [];
     }
     renderList();
   }
