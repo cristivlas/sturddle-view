@@ -11,6 +11,7 @@ import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize } from "./col-resize.js";
 import { loadJson, saveJson } from "./storage.js";
+import { mqNarrowDialog } from "./breakpoints.js";
 
 // Format a summary dict {white, black, result, side_to_move, fen} into a
 // display string. `short: true` returns a compact form for tight UI (e.g.
@@ -36,6 +37,11 @@ const ANALYSIS_WARNING = "Analysis will be closed.";
 const CONFIRM_TRUNC_MAX = 46;
 const RECENT_TRUNC_MAX = 40;
 const ELLIPSIS = "...";
+// Base content width (PGN/FEN panels). On desktop the dialog is widened by
+// the tab rail so this content width is preserved; narrow viewports keep the
+// base width and put the tabs on top.
+const DIALOG_WIDTH_NARROW = "560px";
+const DIALOG_WIDTH_WIDE = "min(690px, 94vw)";
 
 // Shorten a string by keeping the head + tail with an ellipsis in the
 // middle. Preserves both ends, which matters for FENs (back rank info
@@ -161,8 +167,8 @@ const PLACEHOLDERS = {
   pgn: 'Paste PGN, e.g.\n[Event "?"]\n[White "..."]\n[Black "..."]\n\n1. e4 e5 2. Nf3 Nc6 ...',
 };
 const EMPTY_PROMPT = {
-  fen: "Paste a FEN to begin.",
-  pgn: "Paste a PGN to begin.",
+  fen: "Paste a FEN",
+  pgn: "Paste a PGN",
 };
 const TEXTAREA_ROWS = 8;
 
@@ -494,7 +500,7 @@ function detectFormatFromName(name) {
 export function showImportPositionDialog({ api }) {
   return showDialog({
     label: "Import",
-    width: "560px",
+    width: mqNarrowDialog.matches ? DIALOG_WIDTH_NARROW : DIALOG_WIDTH_WIDE,
     body: (resolve, dialog) => {
       let format = "pgn";
       let submitting = false;
@@ -504,7 +510,10 @@ export function showImportPositionDialog({ api }) {
 
       const tabs = document.createElement("wa-tab-group");
       tabs.className = "import-pos-tabs";
-      tabs.placement = "top";
+      tabs.classList.add("dialog-side-tabs");
+      // Side tabs on desktop, top tabs on narrow viewports (the rail eats
+      // too much horizontal space on phones). Mirrors the Settings dialog.
+      tabs.placement = mqNarrowDialog.matches ? "top" : "start";
       tabs.innerHTML = `
         <wa-tab slot="nav" panel="pgn">PGN</wa-tab>
         <wa-tab slot="nav" panel="fen">FEN</wa-tab>
@@ -523,6 +532,7 @@ export function showImportPositionDialog({ api }) {
       tabs.querySelector('wa-tab-panel[name="openings"]').appendChild(openings.el);
 
       const textareas = {};
+      const panelBodies = {};
       for (const name of ["pgn", "fen"]) {
         const ta = document.createElement("wa-textarea");
         ta.size = "small";
@@ -535,7 +545,14 @@ export function showImportPositionDialog({ api }) {
           if (format !== name) return;
           syncSubmitEnabled();
         });
-        tabs.querySelector(`wa-tab-panel[name="${name}"]`).appendChild(ta);
+        // Each text panel holds its content in a flex column so the shared
+        // toolbar + status (reparented here by selectTab) sit directly below
+        // the textarea, left-aligned with it, beside the tab rail.
+        const panelBody = document.createElement("div");
+        panelBody.className = "import-pos-panel-body";
+        panelBody.appendChild(ta);
+        tabs.querySelector(`wa-tab-panel[name="${name}"]`).appendChild(panelBody);
+        panelBodies[name] = panelBody;
         textareas[name] = ta;
       }
 
@@ -686,12 +703,14 @@ export function showImportPositionDialog({ api }) {
       })();
       toolbar.appendChild(recentSel);
 
-      wrap.appendChild(toolbar);
-
+      // Shared toolbar + status: reparented into the active text panel by
+      // selectTab so they live in the tab body column (beside the rail),
+      // left-aligned under the textarea. Openings has no toolbar/status.
       const status = document.createElement("div");
       status.className = "import-pos-status muted";
       status.textContent = EMPTY_PROMPT.pgn;
-      wrap.appendChild(status);
+      // Initial home: the default active tab (pgn). selectTab reparents on switch.
+      panelBodies.pgn.append(toolbar, status);
 
       dialog.appendChild(wrap);
 
@@ -713,11 +732,11 @@ export function showImportPositionDialog({ api }) {
       function selectTab(name) {
         if (typeof tabs.show === "function") tabs.show(name);
         format = name;
-        // Toolbar (file/recents) and the status line are meaningless on the
-        // Openings tab; remove them there. The Opening panel grows to fill
-        // the reclaimed space (CSS) so the dialog height stays constant.
-        toolbar.style.display = name === "openings" ? "none" : "";
-        status.style.display = name === "openings" ? "none" : "";
+        // Move the shared toolbar + status into the active text panel so they
+        // render in that panel's column. Openings has no toolbar/status.
+        if (name !== "openings") {
+          panelBodies[name].append(toolbar, status);
+        }
         if (name === "openings") {
           openings.load();
           requestAnimationFrame(openings.measureRibbon);

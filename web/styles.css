@@ -62,6 +62,11 @@
   --bp-mobile-h:      30rem;  /* 480px @ default font; height analog */
   --bp-mobile-h-play: 42.5rem; /* 680px; play side-rail short-height gate */
   --bp-wide:          93.75rem; /* 1500px @ default font */
+
+  /* Import dialog: a single panel height shared by all 3 tabs so switching
+     never resizes the dialog. Sized to the tallest content (the openings
+     list); PGN/FEN textareas flex to fill it. */
+  --import-panel-h: 24rem; /* 384px @ default font */
 }
 
 /* Clamp the root font-size so the layout stays usable under extreme
@@ -924,23 +929,44 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 
 .import-pos-form { display: flex; flex-direction: column; gap: 12px; }
 .import-pos-form.drag-over { outline: 2px dashed var(--wa-color-brand-50); outline-offset: -4px; }
-/* Pin the Opening panel to the PGN/FEN panel's natural height (8-row
-   textarea) so switching tabs never resizes the dialog. Retune if
-   TEXTAREA_ROWS changes. */
-.import-pos-tabs wa-tab-panel[name="openings"] { height: 332px; }
-.import-pos-tabs wa-tab-panel[name="openings"]::part(base) {
+/* All panels share one fixed height so switching tabs never resizes the
+   dialog; the panel base fills it. */
+.import-pos-tabs wa-tab-panel { height: var(--import-panel-h); }
+.import-pos-tabs wa-tab-panel::part(base) {
   height: 100%;
   padding: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
 }
+/* Only the openings list/ribbon needs clipping; text panels stay visible so
+   input/button focus rings are not cut off at the panel edge. */
+.import-pos-tabs wa-tab-panel[name="openings"]::part(base) { overflow: hidden; }
+/* Breathing room between the tab rail and the panel content. Right padding
+   stays 0 so the content's right edge lines up with the footer's Open button
+   (both align to the dialog body's right padding). Keyed to .dialog-side-tabs
+   because wa-tab-group does not reflect `placement` to an attribute. */
+.import-pos-tabs.dialog-side-tabs::part(body) { padding: 3px 3px 0 12px; overflow: visible; }
+/* PGN/FEN panel content: textarea grows to fill, shared toolbar/status pinned
+   below it with the form's gap so the side-tab rail sits beside all of it. */
+.import-pos-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  /* Clearance from the dialog footer (dialog body padding-bottom is 0 so the
+     openings ribbon can sit flush; text panels need their own breathing room). */
+  padding-bottom: 12px;
+  box-sizing: border-box;
+}
+.import-pos-panel-body wa-textarea { flex: 1 1 auto; min-height: 0; }
+.import-pos-panel-body wa-textarea::part(base),
+.import-pos-panel-body wa-textarea::part(textarea) { height: 100%; }
 wa-dialog:has(.import-pos-form)::part(body) {
   overflow: hidden !important;
   padding-bottom: 0 !important;
 }
 .import-pos-toolbar { display: flex; align-items: center; gap: 8px; }
-.import-pos-toolbar wa-select { flex: 1; max-width: 360px; }
+.import-pos-toolbar wa-select { flex: 1; }
 .import-pos-status {
   font-size: 0.9rem;
   min-height: 1.2em;
@@ -982,8 +1008,8 @@ wa-dialog:has(.import-pos-form)::part(body) {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  /* border-bottom: 2px solid var(--accent-line); */
-  border-bottom: 2px solid var(--wa-color-border-loud);
+  border-bottom: 2px solid var(--accent-line);
+  /* border-bottom: 2px solid var(--wa-color-border-loud); */
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -2265,7 +2291,8 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
 .engines-list-item:hover { background: linear-gradient(to right, var(--row-bg-hover), var(--bg) 75%); }
 .engines-list-item.focused { background: linear-gradient(to right, var(--row-bg-selected), var(--bg) 75%); }
 .engines-list-item.focused td:first-child {
-  box-shadow: inset 3px 0 0 #5a6070;
+  /* box-shadow: inset 3px 0 0 #5a6070; */
+  box-shadow: inset 3px 0 0 var(--accent-line);
 }
 .engines-list-item.active .engines-list-name { font-weight: 600; }
 .engines-list-name-text {
