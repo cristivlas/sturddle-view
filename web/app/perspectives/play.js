@@ -1338,6 +1338,94 @@ function showEngineCrashToast() {
   dismissCrashToast = toast(node, { variant: "danger", duration: 0 });
 }
 
+// Commentary-dock visibility + server-authoritative edit-mode transitions.
+
+function syncCommentsVisibility(state) {
+  if (!state.el.commentsHost) return;
+  const shouldShow = state.viewing && state.showPgnComments && !isMobileLayout()
+    && !state.suppressCommentsForEditTransition;
+  const open = isCommentaryOpen();
+  if (shouldShow) {
+    if (!open) openCommentary();
+    setCommentaryText(state.lastViewComment);
+    // Re-open rebuilds the body with nav buttons disabled; re-push the
+    // still-current targets (they survive a hide -- view-mode state).
+    pushNavToUi(state);
+  } else if (open) {
+    closeCommentary();
+  }
+}
+
+// Server is authoritative for edit state. We start editing by POSTing
+// /game/edit/start; the resulting board_update flips `editing` true, and we
+// then enable the client-side board editor extension.
+function _onServerEditingStart(state) {
+  const seed = _seedFromFen(state.view.getFen());
+  state.view.enterEditMode(() => refreshButtons(state), seed);
+  state.pendingAnnotation = null;
+  pushNavToUi(state);
+  refreshButtons(state);
+}
+
+function _clearEditTransitionSuppression(state) {
+  if (!state.suppressCommentsForEditTransition) return;
+  state.suppressCommentsForEditTransition = false;
+  syncCommentsVisibility(state);
+}
+
+function _onServerEditingStop(state) {
+  state.view.exitEditMode();
+  _clearEditTransitionSuppression(state);
+  state.pendingAnnotation = null;
+  pushNavToUi(state);
+  refreshButtons(state);
+}
+
+async function _enterEditFromCurrentMode(state) {
+  // Server requires view mode before edit. From play mode, flip into
+  // view via /game/view/start (no recents write); /game/import would
+  // pollute the recents history with the current play position.
+  if (!state.viewing) {
+    if (!await _confirmDiscardActiveGame({
+      message: MSG.CONFIRM_EDIT_FROM_PLAY,
+      okLabel: MSG.EDIT_POSITION,
+    })) return;
+    // Suppress the commentary dock for the duration of the transient
+    // play->view->edit flip. Without this, syncCommentsVisibility
+    // races view_last() and resets the cursor to 0.
+    state.suppressCommentsForEditTransition = true;
+    try {
+      closeAi();
+      const r = await state.ctx.api("POST", "/game/view/start", {});
+      state.view.setGameId(r.game_id);
+      await state.ctx.api("POST", "/game/sync", {});
+    } catch (e) {
+      _clearEditTransitionSuppression(state);
+      reportError(state.ctx, MSG.EDIT_POSITION_FAILED, e);
+      return;
+    }
+  }
+  if (state.analyzing) {
+    const ok = await confirm({
+      message: MSG.CONFIRM_EDIT_STOP_ANALYSIS,
+      okLabel: MSG.EDIT_POSITION,
+      cancelLabel: MSG.KEEP_ANALYZING,
+      destructive: true,
+    });
+    if (!ok) {
+      _clearEditTransitionSuppression(state);
+      return;
+    }
+  }
+  try {
+    closeAi();
+    await state.ctx.api("POST", "/game/edit/start", {});
+  } catch (e) {
+    _clearEditTransitionSuppression(state);
+    reportError(state.ctx, MSG.EDIT_POSITION_FAILED, e);
+  }
+}
+
 export const playPerspective = {
   id: "play",
   label: "Play",
@@ -1561,6 +1649,7 @@ export const playPerspective = {
     // viewCursor=0, clobbering the live-position cursor the server lands
     // at via view_last(). Cleared in _onServerEditingStop.
     const commentsHost = root.querySelector(".play-comments-host");
+    state.el.commentsHost = commentsHost;
     setCommentaryDockContainer(commentsHost);
     setAiInlineHost(root.querySelector(".play-ai-inline"));
     // X on the commentary window (dock slot or float) -> clear setting.
@@ -1569,38 +1658,12 @@ export const playPerspective = {
       ctx.api("PUT", "/settings", { view_show_pgn_comments: false })
         .catch((e) => reportError(ctx, MSG.SETTING_SAVE_FAILED, e));
     });
-    function syncCommentsVisibility() {
-      if (!commentsHost) return;
-      const shouldShow = state.viewing && state.showPgnComments && !isMobileLayout()
-        && !state.suppressCommentsForEditTransition;
-      const open = isCommentaryOpen();
-      if (shouldShow) {
-        if (!open) openCommentary();
-        setCommentaryText(state.lastViewComment);
-        // Re-open rebuilds the body with nav buttons disabled; re-push the
-        // still-current targets (they survive a hide -- view-mode state).
-        pushNavToUi(state);
-      } else if (open) {
-        closeCommentary();
-      }
-    }
-    const onCommentsResize = () => { syncCommentsVisibility(); };
+    const onCommentsResize = () => { syncCommentsVisibility(state); };
     window.addEventListener("resize", onCommentsResize);
 
-    // --- AI analysis lifecycle ---
-    // Master toggle from settings; gates the AI panel + the server-side
-    // start_analysis branch. The AI window lives in the main dock
-    // alongside Search Lines + UCI Log.
-    // Closing the AI window mid-turn = same effect as clicking
-    // toolbar Stop: snapshot view state, stop analysis, close all
-    // dock panels. stopAnalysisFromUi is defined further down.
+    // Closing the AI window mid-turn = same effect as clicking toolbar Stop:
+    // snapshot view state, stop analysis, close all dock panels.
     setOnUserCloseAi(() => { stopAnalysisFromUi(state); });
-    // Snapshot of TC fields used at the start of the current game; lets
-    // us tell the user "applies on next game" if they edit TC mid-play.
-    // Latest AI provider/model from settings, captured at analyze-start
-    // time. We do not write to setAiTitle on every settings refresh --
-    // the panel title should reflect what is actually running, not what
-    // is selected in Settings.
     async function refreshSettings({ notifyOnDrift = false } = {}) {
       try {
         const s = await ctx.api("GET", "/settings");
@@ -1608,7 +1671,7 @@ export const playPerspective = {
         state.showPgnComments = s.view_show_pgn_comments !== false;
         state.aiEnabled = !!s.ai_enabled;
         state.aiTitleModel = s.ai_enabled ? (s.ai_model || "") : "";
-        syncCommentsVisibility();
+        syncCommentsVisibility(state);
         if (notifyOnDrift && !state.gameOver && state.resignAvailable) {
           const drift = [];
           // TC: compare against the snapshot taken at game start.
@@ -1727,8 +1790,8 @@ export const playPerspective = {
           // editor extension on/off; the ribbon UI follows `editing`.
           const wasEditing = state.editing;
           state.editing = !!evt.payload.editing;
-          if (state.editing && !wasEditing) _onServerEditingStart();
-          else if (!state.editing && wasEditing) _onServerEditingStop();
+          if (state.editing && !wasEditing) _onServerEditingStart(state);
+          else if (!state.editing && wasEditing) _onServerEditingStop(state);
           // View mode swaps the ribbon and suppresses play-mode signals
           // (resignAvailable, etc.) — the user isn't playing yet.
           const v = evt.payload.view;
@@ -1767,7 +1830,7 @@ export const playPerspective = {
             state.commentNavPrev = v.prev_comment ?? null;
             state.commentNavNext = v.next_comment ?? null;
             pushNavToUi(state);
-            syncCommentsVisibility();
+            syncCommentsVisibility(state);
             if (v.result) showFinishedBadge(resultBadge(v.result));
             if (state.viewGameOver && state.viewCursor === state.viewTotalPlies && v.result && !state.viewGameOverAlertShown) {
               state.viewGameOverAlertShown = true;
@@ -1792,7 +1855,7 @@ export const playPerspective = {
             state.commentNavPrev = null;
             state.commentNavNext = null;
             pushNavToUi(state);
-            syncCommentsVisibility();
+            syncCommentsVisibility(state);
             if (wasViewing) restoreDebugWindows(ctx.events);
             // Leaving view mode -- x-game state is per-viewed-game; drop it.
             if (wasViewing) resetXgame(state);
@@ -1888,78 +1951,8 @@ export const playPerspective = {
     const onSwitchSides = () => onSwitchSidesImpl(state);
     const onPause = () => onPauseImpl(state);
 
-    // Server is authoritative for edit state. We start editing by POSTing
-    // /game/edit/start; the resulting board_update flips `editing` true,
-    // and we then enable the client-side board editor extension.
-    function _onServerEditingStart() {
-      const seed = _seedFromFen(view.getFen());
-      view.enterEditMode(() => refreshButtons(state), seed);
-      state.pendingAnnotation = null;
-      pushNavToUi(state);
-      refreshButtons(state);
-    }
-
-    function _clearEditTransitionSuppression() {
-      if (!state.suppressCommentsForEditTransition) return;
-      state.suppressCommentsForEditTransition = false;
-      syncCommentsVisibility();
-    }
-
-    function _onServerEditingStop() {
-      view.exitEditMode();
-      _clearEditTransitionSuppression();
-      state.pendingAnnotation = null;
-      pushNavToUi(state);
-      refreshButtons(state);
-    }
-
-    async function _enterEditFromCurrentMode() {
-      // Server requires view mode before edit. From play mode, flip into
-      // view via /game/view/start (no recents write); /game/import would
-      // pollute the recents history with the current play position.
-      if (!state.viewing) {
-        if (!await _confirmDiscardActiveGame({
-          message: MSG.CONFIRM_EDIT_FROM_PLAY,
-          okLabel: MSG.EDIT_POSITION,
-        })) return;
-        // Suppress the commentary dock for the duration of the transient
-        // play->view->edit flip. Without this, syncCommentsVisibility
-        // races view_last() and resets the cursor to 0.
-        state.suppressCommentsForEditTransition = true;
-        try {
-          closeAi();
-          const r = await ctx.api("POST", "/game/view/start", {});
-          view.setGameId(r.game_id);
-          await ctx.api("POST", "/game/sync", {});
-        } catch (e) {
-          _clearEditTransitionSuppression();
-          reportError(ctx, MSG.EDIT_POSITION_FAILED, e);
-          return;
-        }
-      }
-      if (state.analyzing) {
-        const ok = await confirm({
-          message: MSG.CONFIRM_EDIT_STOP_ANALYSIS,
-          okLabel: MSG.EDIT_POSITION,
-          cancelLabel: MSG.KEEP_ANALYZING,
-          destructive: true,
-        });
-        if (!ok) {
-          _clearEditTransitionSuppression();
-          return;
-        }
-      }
-      try {
-        closeAi();
-        await ctx.api("POST", "/game/edit/start", {});
-      } catch (e) {
-        _clearEditTransitionSuppression();
-        reportError(ctx, MSG.EDIT_POSITION_FAILED, e);
-      }
-    }
-
-    const onEditPosition = _enterEditFromCurrentMode;
-    const onViewEditPosition = _enterEditFromCurrentMode;
+    const onEditPosition = () => _enterEditFromCurrentMode(state);
+    const onViewEditPosition = () => _enterEditFromCurrentMode(state);
     const onEditSide = (ev) => editSidePopoverToggle(state, ev);
     const onEditSideToggle = () => editSideFlip(state);
     const onEditCastleCb = (right) => () => editCastleToggle(state, right);
