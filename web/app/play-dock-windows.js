@@ -26,6 +26,7 @@ import { attachColumnResize } from "./col-resize.js";
 import { toast } from "./dialogs.js";
 import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
 import { APP_EVT } from "./app-events.js";
+import { KIND } from "./game-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, loadRaw, saveRaw } from "./storage.js";
 import {
@@ -869,7 +870,7 @@ function buildPvTableBody(events, { setOff }) {
   }
 
   setOff(events.on((evt) => {
-    if (evt.kind !== "engine_info") return;
+    if (evt.kind !== KIND.ENGINE_INFO) return;
     const { depth, seldepth, score, nodes, nps, pv } = evt.payload;
     if (depth == null) return;
     // depth === 1 after maxDepth > 1 signals a new search (single-PV assumption;

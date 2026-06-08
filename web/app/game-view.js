@@ -6,6 +6,7 @@ import { toast } from "./dialogs.js";
 import { isMobileLayout } from "./play-dock-windows.js";
 import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 import { APP_EVT } from "./app-events.js";
+import { KIND } from "./game-events.js";
 import { fmtClock, fmtScore, selectContentsOnCtrlA } from "./wb-utils.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -654,25 +655,25 @@ function applyEvent(ctx, evt) {
   if (!evt) return;
   if (ctx.gameId !== null && evt.game_id && evt.game_id !== ctx.gameId) return;
   switch (evt.kind) {
-    case "board_update":
+    case KIND.BOARD_UPDATE:
       applyBoardUpdate(ctx, evt);
       break;
-    case "clock_tick":
+    case KIND.CLOCK_TICK:
       setClock(ctx, evt.payload);
       break;
-    case "engine_search_start":
+    case KIND.ENGINE_SEARCH_START:
       if (ctx.showEngineInfo) clearEngineInfoFields(ctx);
       break;
-    case "engine_info":
+    case KIND.ENGINE_INFO:
       if (ctx.showEngineInfo) applyEngineInfo(ctx, evt);
       break;
-    case "ai_recommendation":
+    case KIND.AI_RECOMMENDATION:
       if (!ctx.editing && evt.payload.uci && evt.payload.uci.length >= 4) {
         const u = evt.payload.uci;
         ctx.board.setRecommendArrow(u.slice(0, 2), u.slice(2, 4));
       }
       break;
-    case "game_result":
+    case KIND.GAME_RESULT:
       if (ctx.interactive && !ctx.editing) ctx.board.enableInput(false);
       if (!ctx.editing) ctx.board.cancelAnimations();
       break;

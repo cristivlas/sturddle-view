@@ -4,6 +4,7 @@
 
 import { mountGameView } from "../game-view.js";
 import { APP_EVT } from "../app-events.js";
+import { KIND, AI_KIND_PREFIX } from "../game-events.js";
 import { STORAGE_KEY } from "../storage-keys.js";
 import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
@@ -267,7 +268,7 @@ function configureBtn(btn, {
 function dispatchAiEvent(aiCtx, evt) {
   const { view, refreshButtons, aiShared } = aiCtx;
   switch (evt.kind) {
-    case "ai_info": {
+    case KIND.AI_INFO: {
       const p = evt.payload || {};
       if (typeof p.delta === "string") appendAiDelta(p.delta, p.round ?? 0, p.thinking_ms ?? null);
       if (p.done) {
@@ -302,13 +303,13 @@ function dispatchAiEvent(aiCtx, evt) {
       }
       return true;
     }
-    case "ai_thinking": {
+    case KIND.AI_THINKING: {
       const p = evt.payload || {};
       if (typeof p.delta === "string") appendAiThinking(p.delta, p.round ?? 0);
       else if (Number.isFinite(p.thinking_ms)) freezeAiThinking(p.round ?? 0, p.thinking_ms);
       return true;
     }
-    case "ai_tool_call": {
+    case KIND.AI_TOOL_CALL: {
       const p = evt.payload || {};
       appendAiToolCall({
         round: p.round ?? 0,
@@ -329,7 +330,7 @@ function dispatchAiEvent(aiCtx, evt) {
       }
       return true;
     }
-    case "ai_tool_call_failed": {
+    case KIND.AI_TOOL_CALL_FAILED: {
       const p = evt.payload || {};
       markAiToolCallFailed({
         toolUseId: p.tool_use_id,
@@ -340,14 +341,14 @@ function dispatchAiEvent(aiCtx, evt) {
       view.restorePosition({ animate: false });
       return true;
     }
-    case "ai_tool_call_complete": {
+    case KIND.AI_TOOL_CALL_COMPLETE: {
       const p = evt.payload || {};
       if (p.name === ANALYZE_TOOL_NAME) view.restorePosition({ animate: false });
       view.clearArrows();
       view.clearEngineInfo();
       return true;
     }
-    case "ai_position_note": {
+    case KIND.AI_POSITION_NOTE: {
       const p = evt.payload || {};
       noteAiPosition({ round: p.round ?? 0, surfaces: p.surfaces || [] });
       return true;
@@ -1470,13 +1471,13 @@ async function _enterEditFromCurrentMode(state) {
 // Control-bar state from server events (board state is GameView's job).
 function handleBusEvent(state, ai, aiCtx, evt) {
   // AI events: buffer until replay completes, then dedupe by seq.
-  if (evt.kind?.startsWith("ai_")) {
+  if (evt.kind?.startsWith(AI_KIND_PREFIX)) {
     if (ai.rehydrating) ai.liveBuffer.push(evt);
     else dispatchAiEventOrdered(ai, aiCtx, evt);
     return;
   }
   switch (evt.kind) {
-    case "engine_search_start": {
+    case KIND.ENGINE_SEARCH_START: {
       // Engine is busy. While the AI window is open this means the
       // agent is in a tool call; flip the status line so the user
       // sees what's taking time. The PV-table window consumes the
@@ -1484,14 +1485,14 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       if (isAiOpen()) setAiStatus("engine");
       break;
     }
-    case "engine_info": {
+    case KIND.ENGINE_INFO: {
       // Engine produced an info chunk -- search is delivering. Drop
       // the "engine searching" hint back to "waiting" so the user
       // knows the agent will narrate next.
       if (isAiOpen()) setAiStatus("waiting");
       break;
     }
-    case "board_update": {
+    case KIND.BOARD_UPDATE: {
       _cachedBoardUpdate = evt;
       state.movesPlayed = evt.payload.moves_san?.length ?? 0;
       state.gameOver = false;
@@ -1607,7 +1608,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
       _playInProgress = state.movesPlayed > 0 && !state.gameOver && !state.viewing;
       break;
     }
-    case "game_result":
+    case KIND.GAME_RESULT:
       state.gameOver = true;
       state.paused = false;
       setAnalyzing(state, false);
@@ -1626,7 +1627,7 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         messageClass: "game-over-message",
       });
       break;
-    case "clock_tick":
+    case KIND.CLOCK_TICK:
       if (typeof evt.payload.paused === "boolean" && evt.payload.paused !== state.paused) {
         state.paused = evt.payload.paused;
         state.view.setEnabled(!state.paused);
