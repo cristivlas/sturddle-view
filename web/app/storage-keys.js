@@ -13,6 +13,7 @@ export const STORAGE_KEY = {
 
   // Import dialog recents cache.
   IMPORT_RECENTS: "sturddle:import:recent",
+  OPENINGS_COL_PCTS: "sturddle:openings:colPcts3",
 
   // Active perspective + per-view flip.
   ACTIVE_PERSPECTIVE: "sturddle:active-perspective",

@@ -373,6 +373,15 @@ def pytest_runtest_makereport(item, call):
     import asyncio
     import json
 
+    # Forensics must run on the SAME loop the page was driven on (the page
+    # object is loop-bound). asyncio.run() would spin up a fresh loop and
+    # every page call would fail. Recover the existing loop; if none is
+    # available the page is unusable anyway.
+    try:
+        loop = asyncio.get_event_loop_policy().get_event_loop()
+    except Exception:
+        loop = None
+
     sections: list[str] = []
     for idx, page in enumerate(pages):
         try:
@@ -389,7 +398,6 @@ def pytest_runtest_makereport(item, call):
         sections.extend(f"    {e}" for e in errors[-50:])
 
         try:
-            loop = asyncio.get_event_loop()
             dump = loop.run_until_complete(page.evaluate(_E2E_DUMP_SCRIPT))
             sections.append("  snapshot: " + json.dumps(dump, indent=2)[:4000])
         except Exception as e:
@@ -400,7 +408,6 @@ def pytest_runtest_makereport(item, call):
             if sys.platform.startswith("win"):
                 import tempfile
                 shot_path = str(Path(tempfile.gettempdir()) / f"sv-e2e-fail-{item.name}-p{idx}.png")
-            loop = asyncio.get_event_loop()
             loop.run_until_complete(page.screenshot(path=shot_path, full_page=True))
             sections.append(f"  screenshot: {shot_path}")
         except Exception as e:

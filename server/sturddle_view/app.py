@@ -22,6 +22,7 @@ from .api import chess_utils as chess_api
 from .api import engines as engines_api
 from .api import fs as fs_api
 from .api import game as game_api
+from .api import openings as openings_api
 from .api import settings as settings_api
 from .api import tournaments as tournaments_api
 from .api import ws as ws_api
@@ -351,6 +352,7 @@ def create_app(
     app.include_router(engines_api.router)
     app.include_router(fs_api.router)
     app.include_router(game_api.router)
+    app.include_router(openings_api.router)
     app.include_router(tournaments_api.router)
     app.include_router(tournaments_api.internal_router)
     app.include_router(ws_api.router)

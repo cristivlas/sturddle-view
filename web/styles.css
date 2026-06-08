@@ -924,6 +924,21 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 
 .import-pos-form { display: flex; flex-direction: column; gap: 12px; }
 .import-pos-form.drag-over { outline: 2px dashed var(--wa-color-brand-50); outline-offset: -4px; }
+/* Pin the Opening panel to the PGN/FEN panel's natural height (8-row
+   textarea) so switching tabs never resizes the dialog. Retune if
+   TEXTAREA_ROWS changes. */
+.import-pos-tabs wa-tab-panel[name="openings"] { height: 332px; }
+.import-pos-tabs wa-tab-panel[name="openings"]::part(base) {
+  height: 100%;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+wa-dialog:has(.import-pos-form)::part(body) {
+  overflow: hidden !important;
+  padding-bottom: 0 !important;
+}
 .import-pos-toolbar { display: flex; align-items: center; gap: 8px; }
 .import-pos-toolbar wa-select { flex: 1; max-width: 360px; }
 .import-pos-status {
@@ -941,6 +956,99 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .import-pos-status.muted { background: transparent; color: var(--muted); }
 .import-pos-playas { display: flex; align-items: center; gap: 12px; }
 .import-pos-playas-label { font-size: 0.9rem; color: var(--wa-color-neutral-700, #555); }
+/* Openings tab: reuses the Engines list look (sticky resizable header,
+   bottom ribbon, slide-up search). Shared .th-grip / .col-drag-line apply. */
+.openings-panel { position: relative; display: flex; flex-direction: column; height: 100%; flex: 1 1 auto; min-height: 0; }
+.openings-table-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  border-top: 1px solid #34373d;
+  font-size: 0.8125rem;
+  padding-left: 5px;
+}
+.openings-list:focus { outline: none; }
+.openings-table { table-layout: fixed; width: 100%; border-collapse: separate; border-spacing: 0; }
+.openings-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
+  padding: 6px 10px;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  border-bottom: 2px solid var(--accent-line);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  user-select: none;
+}
+.openings-table th { position: relative; }
+.openings-table thead th:hover {
+  background: #252830;
+  box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
+}
+.openings-list-item {
+  cursor: pointer; user-select: none;
+  background: linear-gradient(to right, var(--row-bg), var(--bg) 75%);
+}
+.openings-list-item td {
+  padding: 8px 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.openings-list-item:hover { background: linear-gradient(to right, var(--row-bg-hover), var(--bg) 75%); }
+.openings-list-item.selected { background: linear-gradient(to right, var(--row-bg-selected), var(--bg) 75%); }
+.openings-list-item.selected td:first-child { box-shadow: inset 3px 0 0 #5a6070; }
+.openings-list-eco, .openings-list-moves {
+  font-size: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.openings-list-empty { padding: 12px; text-align: center; font-size: 0.75rem; }
+.openings-ribbon {
+  display: flex; flex-direction: row; justify-content: center;
+  align-items: center; gap: 4px;
+  border-top: 1px solid var(--wa-color-border-loud, #353841);
+  padding: 4px 6px;
+}
+.openings-ribbon .ribbon-btn::before {
+  left: 6px; right: 6px; top: 0; bottom: auto;
+  width: auto; height: 2px;
+}
+.openings-search-wrap {
+  position: absolute;
+  left: 0; right: 0; bottom: var(--openings-ribbon-h, 36px);
+  display: block;
+  height: 48px; padding: 6px 10px;
+  opacity: 0; visibility: hidden;
+  pointer-events: none;
+  background: #1e2026;
+  border-top: 1px solid var(--wa-color-border-loud, #353841);
+  box-sizing: border-box;
+  transform: translateY(100%);
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.15s ease-out,
+              visibility 0s 0.2s;
+  z-index: 2;
+}
+.openings-search-wrap.open {
+  opacity: 1; visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.15s ease-out,
+              visibility 0s;
+}
+.openings-search { width: 100%; --wa-focus-ring-width: 0px; }
 /* Trash-x in each recents <wa-option>. Subtle until hovered. */
 button.recent-del {
   appearance: none; background: transparent; border: 0; padding: 0 4px;
@@ -1062,9 +1170,14 @@ body[data-ribbon-float] .tournaments-ribbon {
 }
 .ribbon-btn.is-active { color: var(--wa-color-brand-90); }
 .ribbon-btn.is-active::before { background: var(--wa-color-brand-90); }
-.ribbon-btn.is-active wa-icon { animation: analyze-pulse 1.4s ease-in-out infinite; }
+/* Pulse marks a LIVE action (analysis running), not a toggled state. Scope
+   it to the analyze buttons only -- other ribbon buttons use .is-active
+   merely to mark on/selected state and must not pulse. */
+#analyze.is-active wa-icon, #view-analyze.is-active wa-icon {
+  animation: analyze-pulse 1.4s ease-in-out infinite;
+}
 @media (prefers-reduced-motion: reduce) {
-  .ribbon-btn.is-active wa-icon { animation: none; }
+  #analyze.is-active wa-icon, #view-analyze.is-active wa-icon { animation: none; }
 }
 .ribbon-btn wa-icon { font-size: 1rem; }
 .ribbon-btn--danger:hover:not(:disabled) {
@@ -3479,7 +3592,10 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
     border-right: 0;
     border-left: 1px solid var(--wa-color-border-loud, #353841);
   }
-  body[data-ribbon-side="right"] .ribbon-btn::before {
+  /* Mirror only the board ribbon's vertical edge stripe. Scoping to
+     .board-ribbon keeps the top-edge accent on panel ribbons (engines,
+     tournaments, openings) intact. */
+  body[data-ribbon-side="right"] .board-ribbon .ribbon-btn::before {
     right: auto;
     left: -1px;
   }

@@ -307,6 +307,15 @@ class HumanVsEngine:
     def engine_display_name(self) -> str | None:
         return self._engine_name
 
+    def play_side_names(self, human_white: bool) -> tuple[str, str]:
+        """(white, black) display names for a play game with the given side:
+        configured player name on the human side, engine label on the other.
+        Same convention as the PGN export headers."""
+        engine_label = self._engine_name or Path(self._engine_path).name
+        if human_white:
+            return self._player_name, engine_label
+        return engine_label, self._player_name
+
     def viewed_pgn_result(self) -> str | None:
         """PGN result tag of the game currently being viewed
         ('1-0', '0-1', '1/2-1/2', '*'), or None when not in view mode."""

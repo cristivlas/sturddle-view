@@ -1,6 +1,7 @@
 """Persistence of in-progress human-vs-engine games across server restarts."""
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import chess
@@ -273,8 +274,7 @@ def test_restore_from_imported_position_with_start_fen(tmp_path):
     assert hve._board.move_stack[-1].uci() == "d6d1"
     assert hve._board.turn == chess.WHITE  # human's turn after Qd1+
     # Save round-trips the start_fen.
-    import asyncio
-    asyncio.get_event_loop().run_until_complete(hve._persist())
+    asyncio.run(hve._persist())
     saved = _store.load()
     assert saved.start_fen == start_fen
 

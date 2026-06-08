@@ -711,8 +711,9 @@ async def test_runner_stop_signals_whole_process_group_posix(tmp_path, patched_r
 
     await runner.start(spec, rec)
     # Wait until the fake fastchess has spawned the child.
-    deadline = asyncio.get_event_loop().time() + 5.0
-    while not child_pid_path.exists() and asyncio.get_event_loop().time() < deadline:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 5.0
+    while not child_pid_path.exists() and loop.time() < deadline:
         await asyncio.sleep(0.05)
     assert child_pid_path.exists(), "fake fastchess never spawned its child"
     child_pid = int(child_pid_path.read_text().strip())

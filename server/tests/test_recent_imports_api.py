@@ -395,7 +395,7 @@ def _seed_parent_with_child(tmp_path, app, parent_id="gid-parent",
             parent_game_id=parent_id, fork_ply=fork_ply,
         )
 
-    asyncio.get_event_loop().run_until_complete(seed())
+    asyncio.run(seed())
 
 
 def test_by_id_response_includes_parent_and_children(tmp_path):

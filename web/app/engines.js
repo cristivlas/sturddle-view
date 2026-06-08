@@ -251,6 +251,10 @@ export function mountEngineList(container, api, opts = {}) {
   sortDescBtn.addEventListener("click", () => setSort("desc"));
   syncSortButtons();
 
+  // Tears down the search's document-level listeners; assigned inside the
+  // search block, invoked from the dialog-close cleanup so a row-commit
+  // close (which bypasses closeSearch) can't leak them.
+  let teardownSearch = () => {};
   // Search. The search-wrap is positioned absolutely over the bottom of
   // the panel and slides up from below, so no surrounding layout changes
   // when it opens/closes.
@@ -294,6 +298,11 @@ export function mountEngineList(container, api, opts = {}) {
         e.stopPropagation();
       }
     }
+
+    teardownSearch = () => {
+      document.removeEventListener("pointerdown", onOutsideClick);
+      document.removeEventListener("keydown", onSearchKey, true);
+    };
 
     searchBtn.addEventListener("click", () => {
       const opening = !searchWrap.classList.contains("open");
@@ -529,6 +538,7 @@ export function mountEngineList(container, api, opts = {}) {
       window.removeEventListener("resize", scheduleSizeWrap);
       if (tabGroup) tabGroup.removeEventListener("wa-tab-show", onTabShow);
       if (ro) ro.disconnect();
+      teardownSearch();
       dialog.removeEventListener("wa-after-hide", cleanup);
     });
   }

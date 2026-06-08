@@ -1446,7 +1446,9 @@ export const playPerspective = {
       if (!await _confirmReplaceViewedGame({ incomingHash: result.hash, incomingSummary: result.summary })) return;
       try {
         closeAi();
-        const r = await ctx.api("POST", "/game/import", { format: result.format, text: result.text });
+        const r = await ctx.api("POST", "/game/import", {
+          format: result.format, text: result.text, opening: result.opening || undefined,
+        });
         view.setGameId(r.game_id);
         ctx.api("POST", "/game/sync", {}).catch(() => {});
       } catch (e) {
