@@ -44,6 +44,9 @@ import { getConfiguredPlayerName } from "../settings-dialog.js";
 // board mirrors `input.fen` while a call with this name is in flight.
 const ANALYZE_TOOL_NAME = "analyze";
 
+// Canonical chess result strings as reported by the server.
+const RESULT = { WHITE_WIN: "1-0", BLACK_WIN: "0-1", DRAW: "1/2-1/2" };
+
 // Module-scope mirror of "user has a live human-vs-engine game running"
 // so other modules (e.g. tournament Replay button) can decide whether
 // to confirm before discarding it. Updated from the perspective's
@@ -93,29 +96,29 @@ function _setXgameDismissed(gameId, key, value) {
 // the header badge. resign/timeout don't carry "1-0"/"0-1" in the payload
 // so we derive it from who lost (only human can resign today).
 function resultBadge(result) {
-  return result === "1/2-1/2" ? "½-½" : result;
+  return result === RESULT.DRAW ? "½-½" : result;
 }
 
 function formatResult(payload, humanWhite) {
   const { result, by, loser } = payload;
-  if (result === "1-0" || result === "0-1") return result;
-  if (result === "1/2-1/2") return resultBadge(result);
+  if (result === RESULT.WHITE_WIN || result === RESULT.BLACK_WIN) return result;
+  if (result === RESULT.DRAW) return resultBadge(result);
   if (result === "resign") {
     const humanLost = by === "human";
     const whiteWins = humanLost ? !humanWhite : humanWhite;
-    return whiteWins ? "1-0" : "0-1";
+    return whiteWins ? RESULT.WHITE_WIN : RESULT.BLACK_WIN;
   }
   if (result === "timeout") {
-    return loser === "white" ? "0-1" : "1-0";
+    return loser === "white" ? RESULT.BLACK_WIN : RESULT.WHITE_WIN;
   }
   return "";
 }
 
 function formatViewGameOver({ result, termination }) {
   const reason = terminationLabel(termination);
-  if (result === "1-0") return `${reason} -- White wins.`;
-  if (result === "0-1") return `${reason} -- Black wins.`;
-  if (result === "1/2-1/2") return `${reason} -- Draw.`;
+  if (result === RESULT.WHITE_WIN) return `${reason} -- White wins.`;
+  if (result === RESULT.BLACK_WIN) return `${reason} -- Black wins.`;
+  if (result === RESULT.DRAW) return `${reason} -- Draw.`;
   return reason;
 }
 
@@ -129,8 +132,8 @@ function formatGameOver(payload, humanWhite) {
     return humanLost ? "You lost on time." : "Engine lost on time.";
   }
   const reason = terminationLabel(termination);
-  if (result === "1-0" || result === "0-1") {
-    const humanWon = (result === "1-0") === humanWhite;
+  if (result === RESULT.WHITE_WIN || result === RESULT.BLACK_WIN) {
+    const humanWon = (result === RESULT.WHITE_WIN) === humanWhite;
     return `${reason} -- ${humanWon ? "you win" : "engine wins"}.`;
   }
   return `${reason} -- Draw.`;
