@@ -125,11 +125,11 @@ function formatViewGameOver({ result, termination }) {
 function formatGameOver(payload, humanWhite) {
   const { result, termination, by, loser } = payload;
   if (result === "resign") {
-    return by === "human" ? "You resigned." : "Engine resigned.";
+    return by === "human" ? MSG.YOU_RESIGNED : MSG.ENGINE_RESIGNED;
   }
   if (result === "timeout") {
     const humanLost = (loser === "white") === humanWhite;
-    return humanLost ? "You lost on time." : "Engine lost on time.";
+    return humanLost ? MSG.YOU_LOST_ON_TIME : MSG.ENGINE_LOST_ON_TIME;
   }
   const reason = terminationLabel(termination);
   if (result === RESULT.WHITE_WIN || result === RESULT.BLACK_WIN) {
@@ -143,6 +143,56 @@ const ANALYZE_LABEL_STOP = "Stop analysis";
 const ANALYZE_LABEL_START = "Analysis mode";
 const ANALYZE_ICON_STOP = "magnifying-glass-minus";
 const ANALYZE_ICON_START = "magnifying-glass-plus";
+
+// User-facing copy, grouped for an eventual move to a shared i18n
+// catalog. HTML-template aria-labels stay inline (static markup).
+const MSG = {
+  // Error-report titles + failure toasts.
+  MOVE_REJECTED: "Move rejected",
+  SETTING_SAVE_FAILED: "Failed to save setting",
+  OPEN_GAME_FAILED: "Open game failed",
+  NEW_GAME_FAILED: "New game failed",
+  RESIGN_FAILED: "Resign failed",
+  SAVE_PGN_FAILED: "Save PGN failed",
+  TAKEBACK_FAILED: "Take-back failed",
+  IMPORT_FAILED: "Import failed",
+  SWITCH_SIDES_FAILED: "Switch sides failed",
+  RESUME_FAILED: "Resume failed",
+  PAUSE_FAILED: "Pause failed",
+  EDIT_POSITION_FAILED: "Edit position failed",
+  INVALID_POSITION: "Invalid position",
+  CANCEL_EDIT_FAILED: "Cancel edit failed",
+  NAV_FAILED: "Navigation failed",
+  PLAY_FROM_HERE_FAILED: "Play from here failed",
+  STOP_ANALYSIS_FAILED: "Stop analysis failed",
+  START_ANALYSIS_FAILED: "Start analysis failed",
+  REANALYZE_FAILED: "Re-analyze failed",
+  ENGINE_CRASHED: "Engine crashed unexpectedly.",
+  // Confirm dialogs.
+  CONFIRM_NEW_GAME: "Cancel the game in progress and start a new one?",
+  CONFIRM_RESIGN: "Resign the current game?",
+  CONFIRM_IMPORT: "Cancel the current game and import another?",
+  CONFIRM_EDIT_FROM_PLAY: "Cancel the game in progress and edit the position?",
+  CONFIRM_EDIT_STOP_ANALYSIS: "Stop analysis and edit the position?",
+  CONFIRM_LEAVE_EDIT: "Leaving will cancel your position edit. Continue?",
+  KEEP_PLAYING: "Keep playing",
+  KEEP_ANALYZING: "Keep analyzing",
+  NEW_GAME: "New game",
+  EDIT_POSITION: "Edit position",
+  // Game-over alerts.
+  YOU_RESIGNED: "You resigned.",
+  ENGINE_RESIGNED: "Engine resigned.",
+  YOU_LOST_ON_TIME: "You lost on time.",
+  ENGINE_LOST_ON_TIME: "Engine lost on time.",
+  // Labels / toasts.
+  FORKED_FROM: "Forked from ",
+  SHOW_VARIATIONS: "Show variations",
+  ANALYZE_NEEDS_ENGINE: "Register an engine in Settings to analyze",
+  SEARCH_LINES: "Search lines",
+  UCI_LOG: "UCI log",
+  WHITE_TO_MOVE: "White to move",
+  BLACK_TO_MOVE: "Black to move",
+};
 // Body class set while analysis is on; CSS greys + inert-ifies x-game
 // nav links so the user can't jump games mid-analysis.
 const XGAME_LOCK_CLASS = "xgame-nav-locked";
@@ -542,7 +592,7 @@ export const playPerspective = {
         try {
           await ctx.api("POST", "/game/move", { uci });
         } catch (e) {
-          reportError(ctx, "Move rejected", e);
+          reportError(ctx, MSG.MOVE_REJECTED, e);
         }
       },
       // Click on a move in the list (view mode only) → jump cursor to
@@ -604,7 +654,7 @@ export const playPerspective = {
     setOnUserCloseCommentary(() => {
       showPgnComments = false;
       ctx.api("PUT", "/settings", { view_show_pgn_comments: false })
-        .catch((e) => reportError(ctx, "Failed to save setting", e));
+        .catch((e) => reportError(ctx, MSG.SETTING_SAVE_FAILED, e));
     });
     function syncCommentsVisibility() {
       if (!commentsHost) return;
@@ -822,7 +872,7 @@ export const playPerspective = {
       node.append(icon);
       const text = document.createElement("span");
       text.className = "toast-grow";
-      text.append("Forked from ");
+      text.append(MSG.FORKED_FROM);
       const link = document.createElement("button");
       link.className = "xgame-link";
       link.type = "button";
@@ -884,8 +934,8 @@ export const playPerspective = {
       const arrow = document.createElement("button");
       arrow.className = "xgame-toast-arrow";
       arrow.type = "button";
-      arrow.setAttribute("aria-label", "Show variations");
-      arrow.title = "Show variations";
+      arrow.setAttribute("aria-label", MSG.SHOW_VARIATIONS);
+      arrow.title = MSG.SHOW_VARIATIONS;
       const arrowIcon = document.createElement("wa-icon");
       arrowIcon.setAttribute("name", "chevron-up");
       arrow.append(arrowIcon);
@@ -982,7 +1032,7 @@ export const playPerspective = {
         const r = await ctx.api("POST", "/game/import", importPayload);
         if (r?.game_id) view.setGameId(r.game_id);
       } catch (e) {
-        reportError(ctx, "Open game failed", e);
+        reportError(ctx, MSG.OPEN_GAME_FAILED, e);
       }
     }
     let editing = false;
@@ -1022,7 +1072,7 @@ export const playPerspective = {
         editSideBtn.setAttribute("aria-label", `Side to move: ${isWhite ? "White" : "Black"}`);
         editSideBtn.setAttribute("title", `Side to move: ${isWhite ? "White" : "Black"}`);
         editSideBtn.classList.toggle("is-active", !isWhite);
-        editSideTogglePill.textContent = isWhite ? "White to move" : "Black to move";
+        editSideTogglePill.textContent = isWhite ? MSG.WHITE_TO_MOVE : MSG.BLACK_TO_MOVE;
         editSideTogglePill.classList.toggle("is-black", !isWhite);
         editSideTogglePill.setAttribute("aria-pressed", isWhite ? "false" : "true");
         const rights = view.getCastlingRights();
@@ -1057,7 +1107,7 @@ export const playPerspective = {
           label: viewShowAsActive
             ? ANALYZE_LABEL_STOP
             : noEngine
-              ? "Register an engine in Settings to analyze"
+              ? MSG.ANALYZE_NEEDS_ENGINE
               : ANALYZE_LABEL_START,
           icon: viewShowAsActive ? ANALYZE_ICON_STOP : ANALYZE_ICON_START,
         });
@@ -1302,7 +1352,7 @@ export const playPerspective = {
       return await confirm({
         message,
         okLabel,
-        cancelLabel: "Keep playing",
+        cancelLabel: MSG.KEEP_PLAYING,
         destructive: true,
       });
     }
@@ -1323,8 +1373,8 @@ export const playPerspective = {
     const onNewGame = async () => {
       if (_playInProgress) {
         if (!await _confirmDiscardActiveGame({
-          message: "Cancel the game in progress and start a new one?",
-          okLabel: "New game",
+          message: MSG.CONFIRM_NEW_GAME,
+          okLabel: MSG.NEW_GAME,
         })) return;
       } else {
         const ok = await confirmDiscardViewedGame({
@@ -1355,22 +1405,22 @@ export const playPerspective = {
         }
         refreshButtons();
       } catch (e) {
-        reportError(ctx, "New game failed", e);
+        reportError(ctx, MSG.NEW_GAME_FAILED, e);
       }
     };
 
     const onResign = async () => {
       const ok = await confirm({
-        message: "Resign the current game?",
+        message: MSG.CONFIRM_RESIGN,
         okLabel: "Resign",
-        cancelLabel: "Keep playing",
+        cancelLabel: MSG.KEEP_PLAYING,
         destructive: true,
       });
       if (!ok) return;
       try {
         await ctx.api("POST", "/game/resign", {});
       } catch (e) {
-        reportError(ctx, "Resign failed", e);
+        reportError(ctx, MSG.RESIGN_FAILED, e);
       }
     };
 
@@ -1378,7 +1428,7 @@ export const playPerspective = {
       const needsPause = !viewing && !paused && !gameOver && resignAvailable;
       if (needsPause) {
         try { await ctx.api("POST", "/game/pause", {}); } catch (e) {
-          reportError(ctx, "Save PGN failed", e);
+          reportError(ctx, MSG.SAVE_PGN_FAILED, e);
           return;
         }
       }
@@ -1414,7 +1464,7 @@ export const playPerspective = {
           URL.revokeObjectURL(url);
         }
       } catch (e) {
-        reportError(ctx, "Save PGN failed", e);
+        reportError(ctx, MSG.SAVE_PGN_FAILED, e);
       } finally {
         if (needsPause) {
           try { await ctx.api("POST", "/game/resume", {}); } catch (_) { /* best-effort */ }
@@ -1429,7 +1479,7 @@ export const playPerspective = {
       try {
         await ctx.api("POST", "/game/takeback", {});
       } catch (e) {
-        reportError(ctx, "Take-back failed", e);
+        reportError(ctx, MSG.TAKEBACK_FAILED, e);
       } finally {
         takebackPending = false;
       }
@@ -1437,7 +1487,7 @@ export const playPerspective = {
 
     const onImport = async () => {
       if (!await _confirmDiscardActiveGame({
-        message: "Cancel the current game and import another?",
+        message: MSG.CONFIRM_IMPORT,
         okLabel: "Import",
       })) return;
       // Dialog validates (parse errors surface inline) but does not import.
@@ -1458,7 +1508,7 @@ export const playPerspective = {
         view.setGameId(r.game_id);
         ctx.api("POST", "/game/sync", {}).catch(() => {});
       } catch (e) {
-        reportError(ctx, "Import failed", e);
+        reportError(ctx, MSG.IMPORT_FAILED, e);
       }
     };
 
@@ -1466,7 +1516,7 @@ export const playPerspective = {
       try {
         await ctx.api("POST", "/game/switch-sides", {});
       } catch (e) {
-        reportError(ctx, "Switch sides failed", e);
+        reportError(ctx, MSG.SWITCH_SIDES_FAILED, e);
       }
     };
 
@@ -1479,14 +1529,14 @@ export const playPerspective = {
           await stopAnalysisFromUi();
           await ctx.api("POST", "/game/resume", {});
         } catch (e) {
-          reportError(ctx, "Resume failed", e);
+          reportError(ctx, MSG.RESUME_FAILED, e);
         }
         return;
       }
       try {
         await ctx.api("POST", paused ? "/game/resume" : "/game/pause", {});
       } catch (e) {
-        reportError(ctx, paused ? "Resume failed" : "Pause failed", e);
+        reportError(ctx, paused ? MSG.RESUME_FAILED : MSG.PAUSE_FAILED, e);
       }
     };
 
@@ -1537,8 +1587,8 @@ export const playPerspective = {
       // pollute the recents history with the current play position.
       if (!viewing) {
         if (!await _confirmDiscardActiveGame({
-          message: "Cancel the game in progress and edit the position?",
-          okLabel: "Edit position",
+          message: MSG.CONFIRM_EDIT_FROM_PLAY,
+          okLabel: MSG.EDIT_POSITION,
         })) return;
         // Suppress the commentary dock for the duration of the transient
         // play->view->edit flip. Without this, syncCommentsVisibility
@@ -1551,15 +1601,15 @@ export const playPerspective = {
           await ctx.api("POST", "/game/sync", {});
         } catch (e) {
           _clearEditTransitionSuppression();
-          reportError(ctx, "Edit position failed", e);
+          reportError(ctx, MSG.EDIT_POSITION_FAILED, e);
           return;
         }
       }
       if (analyzing) {
         const ok = await confirm({
-          message: "Stop analysis and edit the position?",
-          okLabel: "Edit position",
-          cancelLabel: "Keep analyzing",
+          message: MSG.CONFIRM_EDIT_STOP_ANALYSIS,
+          okLabel: MSG.EDIT_POSITION,
+          cancelLabel: MSG.KEEP_ANALYZING,
           destructive: true,
         });
         if (!ok) {
@@ -1572,7 +1622,7 @@ export const playPerspective = {
         await ctx.api("POST", "/game/edit/start", {});
       } catch (e) {
         _clearEditTransitionSuppression();
-        reportError(ctx, "Edit position failed", e);
+        reportError(ctx, MSG.EDIT_POSITION_FAILED, e);
       }
     }
 
@@ -1666,7 +1716,7 @@ export const playPerspective = {
         // explicitly so the fork glyph + banner state catch up.
         if (r.game_id) fetchXgameInfo(r.game_id);
       } catch (e) {
-        reportError(ctx, "Invalid position", e);
+        reportError(ctx, MSG.INVALID_POSITION, e);
       }
     };
 
@@ -1675,7 +1725,7 @@ export const playPerspective = {
         const r = await ctx.api("POST", "/game/edit/cancel", {});
         if (r?.game_id) view.setGameId(r.game_id);
       } catch (e) {
-        reportError(ctx, "Cancel edit failed", e);
+        reportError(ctx, MSG.CANCEL_EDIT_FAILED, e);
       }
     };
 
@@ -1703,7 +1753,7 @@ export const playPerspective = {
       try {
         await ctx.api("POST", endpoint, payload);
       } catch (e) {
-        reportError(ctx, "Navigation failed", e);
+        reportError(ctx, MSG.NAV_FAILED, e);
       }
     }
 
@@ -1748,7 +1798,7 @@ export const playPerspective = {
           // ignore
         }
       } catch (e) {
-        reportError(ctx, "Play from here failed", e);
+        reportError(ctx, MSG.PLAY_FROM_HERE_FAILED, e);
       } finally {
         playFromHereInflight = false;
         // Don't re-enable directly; refreshButtons() drives it next time
@@ -1781,8 +1831,8 @@ export const playPerspective = {
       label.className = "toast-grow is-active";
       label.textContent = "Analysis mode";
       msg.append(label);
-      msg.append(makeToastIconBtn("table-list", "Search lines", onPvTable));
-      msg.append(makeToastIconBtn("terminal", "UCI log", onUciLog));
+      msg.append(makeToastIconBtn("table-list", MSG.SEARCH_LINES, onPvTable));
+      msg.append(makeToastIconBtn("terminal", MSG.UCI_LOG, onUciLog));
       const stopBtn = makeToastIconBtn("magnifying-glass-minus", "Stop analysis", onAnalyze);
       stopBtn.classList.add("is-active");
       msg.append(stopBtn);
@@ -1801,7 +1851,7 @@ export const playPerspective = {
       try {
         await ctx.api("POST", "/game/analysis/stop", {});
       } catch (e) {
-        reportError(ctx, "Stop analysis failed", e);
+        reportError(ctx, MSG.STOP_ANALYSIS_FAILED, e);
         return;
       }
       aiShared.turnFinished = false;
@@ -1852,7 +1902,7 @@ export const playPerspective = {
       try {
         await startAnalysisFromUi();
       } catch (e) {
-        reportError(ctx, "Start analysis failed", e);
+        reportError(ctx, MSG.START_ANALYSIS_FAILED, e);
       }
     };
 
@@ -1874,7 +1924,7 @@ export const playPerspective = {
         }
         await startAnalysisFromUi();
       } catch (e) {
-        reportError(ctx, "Re-analyze failed", e);
+        reportError(ctx, MSG.REANALYZE_FAILED, e);
       } finally {
         reanalyzeInFlight = false;
       }
@@ -1941,7 +1991,7 @@ export const playPerspective = {
     function showEngineCrashToast() {
       const msg = document.createElement("span");
       msg.className = "toast-grow";
-      msg.textContent = "Engine crashed unexpectedly.";
+      msg.textContent = MSG.ENGINE_CRASHED;
       const node = document.createElement("span");
       node.className = "toast-sort-msg";
       let dismissCrashToast;
@@ -1963,7 +2013,7 @@ export const playPerspective = {
       async canUnmount() {
         if (!editing) return true;
         return await confirm({
-          message: "Leaving will cancel your position edit. Continue?",
+          message: MSG.CONFIRM_LEAVE_EDIT,
           okLabel: "Leave",
           cancelLabel: "Stay",
           destructive: true,
