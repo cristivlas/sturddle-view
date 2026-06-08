@@ -168,6 +168,17 @@ const TEXTAREA_ROWS = 8;
 const OPENINGS_DEFAULT_PCTS = [12, 50, 38];
 const OPENINGS_COL_MIN_PCT = 8;
 
+// Combining diacritical marks block (U+0300-U+036F). Built via RegExp ctor
+// from hex escapes so the source stays ASCII-only.
+const COMBINING_MARKS_RE = new RegExp("[\\u0300-\\u036f]", "g");
+
+// Lowercase and strip diacritics so "Goring"/"Renee" match "Goring"/"Renee"
+// with their umlaut/accent. NFD splits each accented char into base + mark;
+// we drop the marks.
+function foldDiacritics(s) {
+  return (s || "").normalize("NFD").replace(COMBINING_MARKS_RE, "").toLowerCase();
+}
+
 // Build the Openings tab: a resizable-column table (ECO / Name / Moves)
 // loaded once, filtered locally, with a toggle-overlay search bar that
 // mirrors the Engines list. Selecting a row exposes its PGN via
@@ -218,9 +229,9 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
   const list = el.querySelector(".openings-list");
 
   function filtered() {
-    const needle = filterText.trim().toLowerCase();
+    const needle = foldDiacritics(filterText.trim());
     let out = needle
-      ? rows.filter((r) => r.name.toLowerCase().includes(needle) || r.eco.toLowerCase().includes(needle))
+      ? rows.filter((r) => r._fold.includes(needle) || r.eco.toLowerCase().includes(needle))
       : rows.slice();
     if (sortOrder === "asc" || sortOrder === "desc") {
       const dir = sortOrder === "asc" ? 1 : -1;
@@ -398,6 +409,9 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
     try {
       const r = await api("GET", "/openings");
       rows = r.results || [];
+      // Precompute a diacritic-folded name per row so the per-keystroke
+      // filter doesn't re-normalize the whole list.
+      for (const row of rows) row._fold = foldDiacritics(row.name);
     } catch {
       loaded = false;
     }
