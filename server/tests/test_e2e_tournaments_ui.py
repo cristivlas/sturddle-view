@@ -11,39 +11,42 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from sturddle_view.app import create_app  # noqa: E402
-from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
-from sturddle_view.tournament.fastchess import FastchessRunner  # noqa: E402
+from sturddle_view.tournament.store import TournamentStore  # noqa: E402
 
-from .conftest import run_uvicorn, wait_perspective_ready  # noqa: E402
+from .conftest import run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
+
+
+def _server_env(tmp_path, *, fastchess_path=None):
+    """Seed the engine registry on disk and return SV_* env for an
+    out-of-process server. When fastchess_path is sys.executable it's a
+    real file detect_binary echoes back; fastchess is never spawned."""
+    registry = EngineRegistry(path=tmp_path / "engines.json")
+    registry.add(name="engine-A", path=sys.executable)
+    registry.add(name="engine-B", path=sys.executable)
+    env = {
+        "SV_PGN_DIR": str(tmp_path / "pgn"),
+        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
+        "SV_ENGINE_REGISTRY_PATH": str(tmp_path / "engines.json"),
+        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
+        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
+        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
+    }
+    if fastchess_path:
+        env["SV_TOURNAMENT_FASTCHESS_PATH"] = fastchess_path
+    return env
 
 
 @pytest.fixture
-def server(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        FastchessRunner, "detect_binary",
-        staticmethod(lambda configured: configured),
-    )
-
-    settings = Settings(token="test-token", auth_disabled=True)
-    settings.pgn_dir = tmp_path / "pgn"
-    settings.tournament_root = str(tmp_path / "tournaments")
-    # Start with no fastchess configured → empty state.
-    settings.tournament_fastchess_path = None
-    registry = EngineRegistry(path=tmp_path / "engines.json")
-    # Pre-register two engines so the New Tournament dialog has something
-    # to work with later if we add a clicking-test.
-    registry.add(name="engine-A", path=sys.executable)
-    registry.add(name="engine-B", path=sys.executable)
-    app = create_app(settings=settings, engine_registry=registry)
-    with run_uvicorn(app) as (base, _s):
-        yield base, app
+def server(tmp_path):
+    # No fastchess configured -> empty state.
+    with run_uvicorn_subprocess(env_overrides=_server_env(tmp_path)) as base:
+        yield base
 
 
 @pytest.mark.asyncio
 async def test_tournaments_perspective_smoke(server, make_page):
-    base, app = server
+    base = server
 
     _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
     page_errors: list[str] = []
@@ -74,32 +77,20 @@ async def test_tournaments_perspective_smoke(server, make_page):
 
 
 @pytest.mark.asyncio
-async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkeypatch, make_page):
+async def test_tournaments_perspective_with_existing_tournament(tmp_path, make_page):
     """Boot the server with fastchess configured AND a tournament already
     on disk. The Tournaments tab should render the row with the four
     expected verbs and an 'idle' status badge."""
-    monkeypatch.setattr(
-        FastchessRunner, "detect_binary",
-        staticmethod(lambda configured: configured),
-    )
-
-    settings = Settings(token="test-token", auth_disabled=True)
-    settings.pgn_dir = tmp_path / "pgn"
-    settings.tournament_root = str(tmp_path / "tournaments")
-    settings.tournament_fastchess_path = sys.executable
-    registry = EngineRegistry(path=tmp_path / "engines.json")
-    registry.add(name="engine-A", path=sys.executable)
-    registry.add(name="engine-B", path=sys.executable)
-    app = create_app(settings=settings, engine_registry=registry)
+    env = _server_env(tmp_path, fastchess_path=sys.executable)
 
     # Pre-seed a tournament on disk.
-    app.state.tournament_store.create(
+    TournamentStore(tmp_path / "tournaments").create(
         name="smoke",
         template={"tc": "10+0.1"},
         engines=[{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
     )
 
-    with run_uvicorn(app) as (base, _s):
+    with run_uvicorn_subprocess(env_overrides=env) as base:
         _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
         page_errors: list[str] = []
         page.on("pageerror", lambda exc: page_errors.append(str(exc)))
@@ -178,29 +169,17 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, monkey
 
 
 @pytest.mark.asyncio
-async def test_tournament_workspace_opens_three_windows(tmp_path, monkeypatch, make_page):
-    """Slice 8: clicking 'Open workspace' on an idle tournament spawns
-    two WinBox windows (Standings / Schedule); event log is deferred."""
-    monkeypatch.setattr(
-        FastchessRunner, "detect_binary",
-        staticmethod(lambda configured: configured),
-    )
-
-    settings = Settings(token="test-token", auth_disabled=True)
-    settings.pgn_dir = tmp_path / "pgn"
-    settings.tournament_root = str(tmp_path / "tournaments")
-    settings.tournament_fastchess_path = sys.executable
-    registry = EngineRegistry(path=tmp_path / "engines.json")
-    registry.add(name="engine-A", path=sys.executable)
-    registry.add(name="engine-B", path=sys.executable)
-    app = create_app(settings=settings, engine_registry=registry)
-    app.state.tournament_store.create(
+async def test_tournament_workspace_opens_three_windows(tmp_path, make_page):
+    """Clicking 'Open workspace' on an idle tournament spawns two WinBox
+    windows (Standings / Schedule); event log is deferred."""
+    env = _server_env(tmp_path, fastchess_path=sys.executable)
+    TournamentStore(tmp_path / "tournaments").create(
         name="ws-smoke",
         template={"tc": "10+0.1"},
         engines=[{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
     )
 
-    with run_uvicorn(app) as (base, _s):
+    with run_uvicorn_subprocess(env_overrides=env) as base:
         _ctx, page = await make_page(viewport={"width": 1400, "height": 900})
         page_errors: list[str] = []
         page.on("pageerror", lambda exc: page_errors.append(str(exc)))

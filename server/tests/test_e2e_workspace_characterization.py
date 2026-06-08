@@ -66,6 +66,8 @@ def server(tmp_path):
         "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
         "SV_ENGINE_REGISTRY_PATH": str(tmp_path / "engines.json"),
         "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
+        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
+        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
         "SV_TOURNAMENT_FASTCHESS_PATH": sys.executable,
     }
     with run_uvicorn_subprocess(env_overrides=env) as base:
