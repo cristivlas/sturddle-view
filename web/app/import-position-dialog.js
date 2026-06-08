@@ -166,10 +166,7 @@ const PLACEHOLDERS = {
   fen: "Paste FEN, e.g.\nrnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
   pgn: 'Paste PGN, e.g.\n[Event "?"]\n[White "..."]\n[Black "..."]\n\n1. e4 e5 2. Nf3 Nc6 ...',
 };
-const EMPTY_PROMPT = {
-  fen: "Paste a FEN",
-  pgn: "Paste a PGN",
-};
+
 const TEXTAREA_ROWS = 8;
 
 const OPENINGS_DEFAULT_PCTS = [12, 50, 38];
@@ -556,16 +553,12 @@ export function showImportPositionDialog({ api }) {
         textareas[name] = ta;
       }
 
-      // Toolbar row: From file + Recent dropdown.
-      const toolbar = document.createElement("div");
-      toolbar.className = "import-pos-toolbar";
-
       const fileBtn = document.createElement("wa-button");
       fileBtn.size = "small";
       fileBtn.innerHTML = `<wa-icon slot="start" name="upload"></wa-icon>From file...`;
       const fileInput = document.createElement("input");
       fileInput.type = "file";
-      fileInput.accept = ".fen,.pgn,.epd,text/plain";
+      fileInput.accept = ".pgn,.epd,text/plain";
       fileInput.style.display = "none";
       fileBtn.addEventListener("click", () => fileInput.click());
       fileInput.addEventListener("change", async () => {
@@ -574,7 +567,8 @@ export function showImportPositionDialog({ api }) {
         await ingestFile(f);
         fileInput.value = "";
       });
-      toolbar.append(fileBtn, fileInput);
+      fileBtn.slot = "footer";
+      dialog.append(fileBtn, fileInput);
 
       const recentSel = document.createElement("wa-select");
       recentSel.size = "small";
@@ -701,18 +695,28 @@ export function showImportPositionDialog({ api }) {
           // Offline / unauthenticated: keep the local cache as-is.
         }
       })();
-      toolbar.appendChild(recentSel);
+      const dialogLabel = document.createElement("div");
+      dialogLabel.slot = "label";
+      dialogLabel.className = "import-dialog-label";
+      const labelText = document.createElement("span");
+      labelText.textContent = "Import";
+      dialogLabel.append(labelText, recentSel);
+      dialog.appendChild(dialogLabel);
 
-      // Shared toolbar + status: reparented into the active text panel by
-      // selectTab so they live in the tab body column (beside the rail),
-      // left-aligned under the textarea. Openings has no toolbar/status.
       const status = document.createElement("div");
       status.className = "import-pos-status muted";
-      status.textContent = EMPTY_PROMPT.pgn;
+      status.textContent = "";
       // Initial home: the default active tab (pgn). selectTab reparents on switch.
-      panelBodies.pgn.append(toolbar, status);
+      panelBodies.pgn.append(status);
 
       dialog.appendChild(wrap);
+
+      const alignRecentSel = () => {
+        const panelRect = panelBodies.pgn.getBoundingClientRect();
+        const labelRect = labelText.getBoundingClientRect();
+        recentSel.style.marginInlineStart = `${Math.max(0, panelRect.left - labelRect.right)}px`;
+      };
+      dialog.addEventListener("wa-after-show", () => requestAnimationFrame(alignRecentSel), { once: true });
 
       const start = document.createElement("wa-button");
       start.slot = "footer";
@@ -732,17 +736,16 @@ export function showImportPositionDialog({ api }) {
       function selectTab(name) {
         if (typeof tabs.show === "function") tabs.show(name);
         format = name;
-        // Move the shared toolbar + status into the active text panel so they
-        // render in that panel's column. Openings has no toolbar/status.
         if (name !== "openings") {
-          panelBodies[name].append(toolbar, status);
+          panelBodies[name].append(status);
         }
+        fileBtn.style.display = name === "pgn" ? "" : "none";
         if (name === "openings") {
           openings.load();
           requestAnimationFrame(openings.measureRibbon);
           openings.focus();
         } else if (!textareas[format].value.trim()) {
-          setStatus(EMPTY_PROMPT[format], "muted");
+          setStatus("", "muted");
         }
         syncSubmitEnabled();
       }
