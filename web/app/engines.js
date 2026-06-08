@@ -278,6 +278,9 @@ export function mountEngineList(container, api, opts = {}) {
       searchInput.value = "";
       filterText = "";
       renderList();
+      // Clearing the filter re-renders the full list; keep the picked row
+      // in view so the selection doesn't scroll off-screen (matches openings).
+      tableWrap.querySelector("tr.focused")?.scrollIntoView({ block: "nearest" });
       document.removeEventListener("pointerdown", onOutsideClick);
       document.removeEventListener("keydown", onSearchKey, true);
     }
