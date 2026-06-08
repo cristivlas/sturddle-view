@@ -86,7 +86,7 @@ function buildBody() {
   status.className = "play-ai-status";
   status.hidden = true;
   const spinner = document.createElement("wa-spinner");
-  spinner.size = "medium";
+  spinner.className = "spinner-accent";
   const statusText = document.createElement("span");
   statusText.className = "play-ai-status-text";
   status.append(spinner, statusText);

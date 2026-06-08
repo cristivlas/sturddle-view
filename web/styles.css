@@ -605,10 +605,10 @@ body {
   color: var(--fg);
 }
 wa-spinner.spinner-accent {
-  --indicator-color: #facc15;
-  --track-color: rgba(250, 204, 21, 0.35);
+  --indicator-color: #ffffff;
+  --track-color: rgba(255, 255, 255, 0.35);
   --track-width: 3px;
-  color: #facc15;
+  color: #ffffff;
   font-size: 1.2em;
 }
 
