@@ -13,7 +13,8 @@ import { buildSprtTab } from "./settings-sprt-tab.js";
 import { buildTournamentTab } from "./settings-tournament-tab.js";
 import { buildCommonTab } from "./settings-common-tab.js";
 import { makePathRow } from "./settings-path-row.js";
-import { buildPlayDisplayTabs } from "./settings-play-display-tab.js";
+import { buildPlayTab } from "./settings-play-tab.js";
+import { buildDisplayTab } from "./settings-display-tab.js";
 
 const SETTINGS_ENGINES_COL_PCTS_KEY = STORAGE_KEY.ENGINES_SETTINGS_COL_PCTS;
 export const PLAYER_NAME_KEY = STORAGE_KEY.PLAYER_NAME;
@@ -150,6 +151,15 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
     // Phones get the full vertical share; desktops cap at 580px.
     height: mqNarrowDialog.matches ? "92vh" : "min(580px, 92vh)",
     body: (resolve, dialog) => {
+      // Listeners on long-lived globals (e.g. the mqMobile media query) must
+      // be torn down when the dialog closes, or each open leaks a pair and
+      // pins the detached panel. Builders take this signal and pass it to
+      // addEventListener; aborting on close removes them all at once.
+      const dialogClosed = new AbortController();
+      dialog.addEventListener("wa-after-hide", (ev) => {
+        if (ev.target === dialog) dialogClosed.abort();
+      });
+
       // ---- helper: PUT a partial settings update; toast on failure. ----
       const putSettings = async (patch) => {
         try {
@@ -194,12 +204,19 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         });
       });
 
-      // --- Play (Gameplay) + Display tabs ---
+      // --- Play (Gameplay) tab ---
+      const { tab: playTab, panel: playPanel } = buildPlayTab({
+        initial, putSettings, putSettingsDebounced, makeDurationRow,
+        playerNameDefault: PLAYER_NAME_DEFAULT,
+        playerNameKey: PLAYER_NAME_KEY,
+        playerNameMaxLen: PLAYER_NAME_MAX_LEN,
+      });
+
+      // --- Display tab ---
       // Board-style change must reload on dialog close; the dialog owns that
       // dirty-tracking, so the builder calls back here with the new style.
-      const { playTab, playPanel, displayTab, displayPanel } = buildPlayDisplayTabs({
-        initial, putSettings, putSettingsDebounced, makeDurationRow,
-        initialStyle,
+      const { tab: displayTab, panel: displayPanel } = buildDisplayTab({
+        initial, putSettings, initialStyle, signal: dialogClosed.signal,
         onBoardStyleChange: (styleId) => {
           boardStyleFinal = styleId;
           boardStyleDirty = boardStyleFinal !== initialStyle;
@@ -207,9 +224,6 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
           // close -- fire-and-forget would race location.reload().
           boardStylePending = putSettings({ board_style: boardStyleFinal });
         },
-        playerNameDefault: PLAYER_NAME_DEFAULT,
-        playerNameKey: PLAYER_NAME_KEY,
-        playerNameMaxLen: PLAYER_NAME_MAX_LEN,
       });
 
       // Shared path-row builder, bound to api for the file picker. Used by

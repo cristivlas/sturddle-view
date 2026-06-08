@@ -375,6 +375,10 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   };
 }
 
+// oversized-ok: stateful live-game controller -- a WebSocket feed, clock
+// timers, and board paint all coordinate over shared state (ws, engineColor,
+// currentFen, positionGen, clock fields). Closures return a control API;
+// splitting would scatter the feed/clock/paint coordination.
 export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, right = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, flash = true }) {
   if (DEBUG_WATCH) console.log("[WATCH] openLiveGameWindow", { proxyId, gameId, windowKey, label });
   if (!windowKey) {
