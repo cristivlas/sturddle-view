@@ -9,6 +9,12 @@ export function escapeHtml(s) {
   }[c]));
 }
 
+// Trailing-edge debounce: collapse bursts to one call ms after the last.
+export function debounce(fn, ms) {
+  let timer = null;
+  return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
+}
+
 // Sticky-bottom autoscroll: snapshot pinned BEFORE mutating, restore
 // after, so a user who scrolled up to inspect earlier content is not
 // yanked back down by new content.

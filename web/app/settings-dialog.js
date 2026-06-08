@@ -16,6 +16,7 @@ import { buildCommonTab } from "./settings-common-tab.js";
 import { makePathRow } from "./settings-path-row.js";
 import { buildPlayTab } from "./settings-play-tab.js";
 import { buildDisplayTab } from "./settings-display-tab.js";
+import { debounce } from "./wb-utils.js";
 
 const SETTINGS_ENGINES_COL_PCTS_KEY = STORAGE_KEY.ENGINES_SETTINGS_COL_PCTS;
 export const PLAYER_NAME_KEY = STORAGE_KEY.PLAYER_NAME;
@@ -100,17 +101,6 @@ function makeDurationRow({ label, seconds, minSeconds, onChange }) {
   inputs.append(input, unit);
   row.append(lbl, inputs);
   return row;
-}
-
-function debounce(fn, ms) {
-  let t = null;
-  return (...args) => {
-    if (t) clearTimeout(t);
-    t = setTimeout(() => {
-      t = null;
-      fn(...args);
-    }, ms);
-  };
 }
 
 export async function openSettingsDialog({ api, initialTab, getActivePerspective, reloadPerspective }) {
