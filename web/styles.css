@@ -982,7 +982,8 @@ wa-dialog:has(.import-pos-form)::part(body) {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  border-bottom: 2px solid var(--accent-line);
+  /* border-bottom: 2px solid var(--accent-line); */
+  border-bottom: 2px solid var(--wa-color-border-loud);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -995,7 +996,7 @@ wa-dialog:has(.import-pos-form)::part(body) {
 }
 .openings-list-item {
   cursor: pointer; user-select: none;
-  background: linear-gradient(to right, var(--row-bg), var(--bg) 75%);
+  /* background: linear-gradient(to right, var(--row-bg), var(--bg) 75%); */
 }
 .openings-list-item td {
   padding: 8px 12px;
@@ -1008,7 +1009,8 @@ wa-dialog:has(.import-pos-form)::part(body) {
 }
 .openings-list-item:hover { background: linear-gradient(to right, var(--row-bg-hover), var(--bg) 75%); }
 .openings-list-item.selected { background: linear-gradient(to right, var(--row-bg-selected), var(--bg) 75%); }
-.openings-list-item.selected td:first-child { box-shadow: inset 3px 0 0 #5a6070; }
+/* .openings-list-item.selected td:first-child { box-shadow: inset 3px 0 0 #5a6070; } */
+.openings-list-item.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
 .openings-list-eco, .openings-list-moves {
   font-size: 0.75rem;
   font-family: ui-monospace, SFMono-Regular, monospace;
@@ -2246,7 +2248,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
 }
 .engines-list-item {
   cursor: pointer; user-select: none;
-  background: linear-gradient(to right, var(--row-bg), var(--bg) 75%);
+  /* background: linear-gradient(to right, var(--row-bg), var(--bg) 75%); */
 }
 .engines-list-item td {
   padding: 12px 12px;

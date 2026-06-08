@@ -445,8 +445,8 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
   // Must run when the panel is visible -- measuring at build time (panel
   // still in an inactive tab) yields 0 and the bar misaligns.
   function measureRibbon() {
-    const h = el.querySelector(".openings-ribbon")?.offsetHeight;
-    if (h) el.style.setProperty("--openings-ribbon-h", h + "px");
+    const h = el.querySelector(".openings-ribbon")?.offsetHeight || 0;
+    el.style.setProperty("--openings-ribbon-h", h + "px");
   }
 
   renderList();
@@ -720,7 +720,7 @@ export function showImportPositionDialog({ api }) {
         status.style.display = name === "openings" ? "none" : "";
         if (name === "openings") {
           openings.load();
-          openings.measureRibbon();
+          requestAnimationFrame(openings.measureRibbon);
           openings.focus();
         } else if (!textareas[format].value.trim()) {
           setStatus(EMPTY_PROMPT[format], "muted");
