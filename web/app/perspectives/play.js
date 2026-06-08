@@ -139,8 +139,6 @@ function formatGameOver(payload, humanWhite) {
   return `${reason} -- Draw.`;
 }
 
-const ANALYZE_LABEL_STOP = "Stop analysis";
-const ANALYZE_LABEL_START = "Analysis mode";
 const ANALYZE_ICON_STOP = "magnifying-glass-minus";
 const ANALYZE_ICON_START = "magnifying-glass-plus";
 
@@ -179,12 +177,18 @@ const MSG = {
   KEEP_ANALYZING: "Keep analyzing",
   NEW_GAME: "New game",
   EDIT_POSITION: "Edit position",
+  RESIGN: "Resign",
+  IMPORT: "Import",
+  LEAVE: "Leave",
+  STAY: "Stay",
   // Game-over alerts.
   YOU_RESIGNED: "You resigned.",
   ENGINE_RESIGNED: "Engine resigned.",
   YOU_LOST_ON_TIME: "You lost on time.",
   ENGINE_LOST_ON_TIME: "Engine lost on time.",
   // Labels / toasts.
+  ANALYSIS_MODE: "Analysis mode",
+  STOP_ANALYSIS: "Stop analysis",
   FORKED_FROM: "Forked from ",
   SHOW_VARIATIONS: "Show variations",
   ANALYZE_NEEDS_ENGINE: "Register an engine in Settings to analyze",
@@ -1105,10 +1109,10 @@ export const playPerspective = {
           disabled: noEngine && !viewShowAsActive,
           active: viewShowAsActive,
           label: viewShowAsActive
-            ? ANALYZE_LABEL_STOP
+            ? MSG.STOP_ANALYSIS
             : noEngine
               ? MSG.ANALYZE_NEEDS_ENGINE
-              : ANALYZE_LABEL_START,
+              : MSG.ANALYSIS_MODE,
           icon: viewShowAsActive ? ANALYZE_ICON_STOP : ANALYZE_ICON_START,
         });
         return;
@@ -1141,7 +1145,7 @@ export const playPerspective = {
       configureBtn(analyzeBtn, {
         disabled: !showAsActive && !analyzeReachable,
         active: showAsActive,
-        label: showAsActive ? ANALYZE_LABEL_STOP : ANALYZE_LABEL_START,
+        label: showAsActive ? MSG.STOP_ANALYSIS : MSG.ANALYSIS_MODE,
         icon: showAsActive ? ANALYZE_ICON_STOP : ANALYZE_ICON_START,
       });
     }
@@ -1412,7 +1416,7 @@ export const playPerspective = {
     const onResign = async () => {
       const ok = await confirm({
         message: MSG.CONFIRM_RESIGN,
-        okLabel: "Resign",
+        okLabel: MSG.RESIGN,
         cancelLabel: MSG.KEEP_PLAYING,
         destructive: true,
       });
@@ -1488,7 +1492,7 @@ export const playPerspective = {
     const onImport = async () => {
       if (!await _confirmDiscardActiveGame({
         message: MSG.CONFIRM_IMPORT,
-        okLabel: "Import",
+        okLabel: MSG.IMPORT,
       })) return;
       // Dialog validates (parse errors surface inline) but does not import.
       const result = await showImportPositionDialog({ api: ctx.api });
@@ -1829,11 +1833,11 @@ export const playPerspective = {
       msg.className = "toast-sort-msg";
       const label = document.createElement("span");
       label.className = "toast-grow is-active";
-      label.textContent = "Analysis mode";
+      label.textContent = MSG.ANALYSIS_MODE;
       msg.append(label);
       msg.append(makeToastIconBtn("table-list", MSG.SEARCH_LINES, onPvTable));
       msg.append(makeToastIconBtn("terminal", MSG.UCI_LOG, onUciLog));
-      const stopBtn = makeToastIconBtn("magnifying-glass-minus", "Stop analysis", onAnalyze);
+      const stopBtn = makeToastIconBtn(ANALYZE_ICON_STOP, MSG.STOP_ANALYSIS, onAnalyze);
       stopBtn.classList.add("is-active");
       msg.append(stopBtn);
       aiShared.dismissAnalysisToast = toast(msg, {
@@ -2014,8 +2018,8 @@ export const playPerspective = {
         if (!editing) return true;
         return await confirm({
           message: MSG.CONFIRM_LEAVE_EDIT,
-          okLabel: "Leave",
-          cancelLabel: "Stay",
+          okLabel: MSG.LEAVE,
+          cancelLabel: MSG.STAY,
           destructive: true,
         });
       },
