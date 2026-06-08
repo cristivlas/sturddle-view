@@ -1033,8 +1033,8 @@ wa-dialog:has(.import-pos-form)::part(body) {
   border-top: 1px solid var(--border-subtle);
   border-bottom: 1px solid var(--border-subtle);
 }
-.openings-list-item:hover { background: linear-gradient(to right, var(--row-bg-hover), var(--bg) 75%); }
-.openings-list-item.selected { background: linear-gradient(to right, var(--row-bg-selected), var(--bg) 75%); }
+.openings-list-item:hover { background: var(--row-bg-hover); }
+.openings-list-item.selected { background: var(--row-bg-selected); }
 /* .openings-list-item.selected td:first-child { box-shadow: inset 3px 0 0 #5a6070; } */
 .openings-list-item.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
 .openings-list-eco, .openings-list-moves {
@@ -2288,8 +2288,8 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
 .engines-list-item td:last-child {
   border-right: none;
 }
-.engines-list-item:hover { background: linear-gradient(to right, var(--row-bg-hover), var(--bg) 75%); }
-.engines-list-item.focused { background: linear-gradient(to right, var(--row-bg-selected), var(--bg) 75%); }
+.engines-list-item:hover { background: var(--row-bg-hover); }
+.engines-list-item.focused { background: var(--row-bg-selected); }
 .engines-list-item.focused td:first-child {
   /* box-shadow: inset 3px 0 0 #5a6070; */
   box-shadow: inset 3px 0 0 var(--accent-line);
