@@ -757,6 +757,48 @@ async function openXgameTarget(state, gameId, opts = {}) {
 }
 
 
+// Confirm/import/nav helpers operating on the shared `state`.
+
+// Prompt before discarding an active play game. Returns true if the
+// caller should proceed (no active game, or user confirmed).
+async function _confirmDiscardActiveGame({ message, okLabel }) {
+  if (!_playInProgress) return true;
+  return await confirm({
+    message,
+    okLabel,
+    cancelLabel: MSG.KEEP_PLAYING,
+    destructive: true,
+  });
+}
+
+// Prompt before replacing the currently viewed game. Skips when nothing
+// is being viewed or when the incoming hash matches the current view.
+async function _confirmReplaceViewedGame(state, { incomingHash, incomingSummary }) {
+  if (!state.viewing) return true;
+  return await confirmReplaceViewedGame({
+    currentHash: _viewingHash,
+    currentSummary: _viewingSummary,
+    incomingHash,
+    incomingSummary,
+    analysisRunning: state.analyzing,
+  });
+}
+
+// Tracks how the cursor reached the next ply: "precise" (back / forward /
+// goto / move-list click) vs "jump" (first / last). The parent->child banner
+// only fires on precise landings -- jumping over a fork must NOT pop a prompt.
+async function doViewNav(state, endpoint, payload = {}) {
+  state.lastViewNavKind =
+    endpoint === "/game/view/first" || endpoint === "/game/view/last"
+      ? "jump"
+      : "precise";
+  try {
+    await state.ctx.api("POST", endpoint, payload);
+  } catch (e) {
+    reportError(state.ctx, MSG.NAV_FAILED, e);
+  }
+}
+
 export const playPerspective = {
   id: "play",
   label: "Play",
@@ -890,7 +932,7 @@ export const playPerspective = {
       },
       // Click on a move in the list (view mode only) → jump cursor to
       // the position AFTER that move, i.e. ply = plyIndex + 1.
-      onMoveJump: (plyIndex) => doViewNav("/game/view/goto", { ply: plyIndex + 1 }),
+      onMoveJump: (plyIndex) => doViewNav(state, "/game/view/goto", { ply: plyIndex + 1 }),
       // Fork glyphs. Fresh map per render; both child-here (this game
       // has forks at this ply) and own-fork-ply (this game itself
       // diverged from its parent here) get a glyph.
@@ -927,7 +969,7 @@ export const playPerspective = {
           refreshXgameToasts(state);
           return;
         }
-        doViewNav("/game/view/goto", { ply: plyIndex + 1 });
+        doViewNav(state, "/game/view/goto", { ply: plyIndex + 1 });
       },
     });
     state.view = view;
@@ -1397,31 +1439,6 @@ export const playPerspective = {
       view.applyEvent(_cachedBoardUpdate);
     }
 
-    // Prompt before discarding an active play game. Returns true if the
-    // caller should proceed (no active game, or user confirmed).
-    async function _confirmDiscardActiveGame({ message, okLabel }) {
-      if (!_playInProgress) return true;
-      return await confirm({
-        message,
-        okLabel,
-        cancelLabel: MSG.KEEP_PLAYING,
-        destructive: true,
-      });
-    }
-
-    // Prompt before replacing the currently viewed game. Skips when nothing
-    // is being viewed or when the incoming hash matches the current view.
-    async function _confirmReplaceViewedGame({ incomingHash, incomingSummary }) {
-      if (!state.viewing) return true;
-      return await confirmReplaceViewedGame({
-        currentHash: _viewingHash,
-        currentSummary: _viewingSummary,
-        incomingHash,
-        incomingSummary,
-        analysisRunning: state.analyzing,
-      });
-    }
-
     const onNewGame = async () => {
       if (_playInProgress) {
         if (!await _confirmDiscardActiveGame({
@@ -1551,7 +1568,7 @@ export const playPerspective = {
         return;
       }
       // Different game while viewing -- confirm before replacing.
-      if (!await _confirmReplaceViewedGame({ incomingHash: result.hash, incomingSummary: result.summary })) return;
+      if (!await _confirmReplaceViewedGame(state, { incomingHash: result.hash, incomingSummary: result.summary })) return;
       try {
         closeAi();
         const r = await ctx.api("POST", "/game/import", {
@@ -1776,23 +1793,7 @@ export const playPerspective = {
       setCommentaryNavState(gated ? null : commentNavPrev, gated ? null : commentNavNext);
     };
 
-    // Tracks how the cursor reached the next ply: "precise" (back /
-    // forward / goto / move-list click) vs "jump" (first / last). The
-    // parent->child banner only fires on precise landings -- jumping
-    // over a fork must NOT pop a prompt.
-    async function doViewNav(endpoint, payload = {}) {
-      state.lastViewNavKind =
-        endpoint === "/game/view/first" || endpoint === "/game/view/last"
-          ? "jump"
-          : "precise";
-      try {
-        await ctx.api("POST", endpoint, payload);
-      } catch (e) {
-        reportError(ctx, MSG.NAV_FAILED, e);
-      }
-    }
-
-    const onViewNav = (endpoint) => () => doViewNav(endpoint);
+    const onViewNav = (endpoint) => () => doViewNav(state, endpoint);
     const onViewFlip = () => {
       viewFlipped = !viewFlipped;
       try { localStorage.setItem(VIEW_FLIP_KEY, viewFlipped ? "1" : "0"); } catch { /* */ }
@@ -1805,8 +1806,8 @@ export const playPerspective = {
     const onViewLast = onViewNav("/game/view/last");
 
     setCommentaryNavHandlers(
-      () => { if (commentNavPrev != null) doViewNav("/game/view/goto", { ply: commentNavPrev }); },
-      () => { if (commentNavNext != null) doViewNav("/game/view/goto", { ply: commentNavNext }); },
+      () => { if (commentNavPrev != null) doViewNav(state, "/game/view/goto", { ply: commentNavPrev }); },
+      () => { if (commentNavNext != null) doViewNav(state, "/game/view/goto", { ply: commentNavNext }); },
     );
 
     let playFromHereInflight = false;
