@@ -289,14 +289,10 @@ function dispatchAiEvent(aiCtx, evt) {
             duration: 6000,
           });
         }
-        // Natural completion: hide the "stopping" affordances --
-        // toast and ribbon active look. Server stays in ANALYSIS;
-        // closing the AI window is what exits. Skipped on
-        // cancelled/error to preserve normal cleanup behavior.
-        // Per-turn dismissal is correct because each Analyze click
-        // is a one-shot turn (no rolling session; see
-        // ai-analysis-spec.md §Live session model -- indefinitely
-        // postponed).
+        // Natural completion: hide the "stopping" affordances (toast +
+        // active ribbon). Server stays in ANALYSIS; closing the AI window
+        // exits. Skipped on cancel/error. Per-turn dismissal: each Analyze
+        // click is a one-shot turn (see ai-analysis-spec.md, live session).
         if (!p.cancelled && !p.error) {
           aiShared.turnFinished = true;
           aiShared.dismissAnalysisToast?.();
@@ -712,12 +708,9 @@ function refreshXgameToasts(state) {
   }
 }
 async function openXgameTarget(state, gameId, opts = {}) {
-  // Fetch the target's text from recents, then drive a normal
-  // import (server-side enter_view_mode swap). Mirrors the path
-  // used by the import dialog's "select a recent" affordance.
-  // ``landAtPly``: optional cursor ply to navigate to after the
-  // import lands; used for both directions (land at fork_ply --
-  // see x-game-navigation.md, Q1/Q2 revised 2026-05-22).
+  // Fetch the target's text from recents, then drive a normal import
+  // (server-side enter_view_mode swap). landAtPly: optional cursor ply to
+  // land on after import (fork_ply for both directions; see x-game-navigation.md).
   const landAtPly = opts.landAtPly ?? null;
   // Short-circuit: already viewing this game at the target ply.
   // A re-import would re-animate cm-chessboard to the same
@@ -1013,11 +1006,8 @@ function refreshButtons(state) {
   configureBtn(state.el.savePgnBtn, { disabled: state.analyzing || state.movesPlayed === 0 });
   configureBtn(state.el.switchSidesBtn, { disabled: state.analyzing || state.gameOver || !state.resignAvailable });
   configureBtn(state.el.resignBtn, { disabled: state.paused || state.analyzing || state.gameOver || !state.resignAvailable });
-  // AI turn finished but server is still ANALYZING (user hasn't
-  // closed the AI window yet). Show the ribbon button as normal
-  // ("Analysis mode", magnifying-glass, enabled) -- the rest of
-  // the reachability gates (gameOver / no engine / not paused)
-  // still apply.
+  // AI turn done but server still ANALYZING: show the button as normal
+  // "Analysis mode" (enabled); the reachability gates below still apply.
   const showAsActive = state.analyzing && !state.aiShared.turnFinished;
   const analyzeReachable = !state.gameOver && state.resignAvailable && (state.paused || state.aiShared.turnFinished);
   configureBtn(state.el.analyzeBtn, {
@@ -1528,12 +1518,9 @@ function handleBusEvent(state, ai, aiCtx, evt) {
           state.viewGameOverAlertShown = false;
           state.dismissGameOverToast?.();
           state.dismissGameOverToast = null;
-          // Game switched (or first entry into view). Clear stale
-          // x-game state synchronously and close any live toasts
-          // BEFORE the in-band refreshXgameToasts (called later
-          // in this handler) so it doesn't fire with stale data
-          // from the prior game. fetchXgameInfo then populates
-          // and re-renders.
+          // Game switched: clear stale x-game state + close live toasts BEFORE
+          // the in-band refreshXgameToasts (so it can't fire on prior-game data).
+          // fetchXgameInfo then repopulates and re-renders.
           resetXgame(state);
           fetchXgameInfo(state, state.viewingGameId);
         }
@@ -1674,6 +1661,8 @@ export const playPerspective = {
       gameTcIncrement: null,
       viewGameOverAlertShown: false,
       dismissGameOverToast: null,
+      // Edit-mode staged annotation: null=no change, ""=clear, "text"=set at
+      // entry ply. Reset on each edit entry and on /edit/cancel.
       pendingAnnotation: null,
       viewFlipped: false,
       takebackPending: false,
@@ -1867,11 +1856,6 @@ export const playPerspective = {
     });
     state.view = view;
 
-    // Settings cache (refreshed on settings-changed).
-    // True only while play->view->edit is in flight. Opening the dock
-    // mid-transition fires a seeding /view/goto with the stale (pre-flip)
-    // viewCursor=0, clobbering the live-position cursor the server lands
-    // at via view_last(). Cleared in _onServerEditingStop.
     const commentsHost = root.querySelector(".play-comments-host");
     state.el.commentsHost = commentsHost;
     setCommentaryDockContainer(commentsHost);
@@ -1912,12 +1896,6 @@ export const playPerspective = {
     // Ask server to re-emit current state so the freshly-mounted view syncs.
     ctx.api("POST", "/game/sync", {}).catch(() => {});
 
-    // View mode state (set from board_update.view payload).
-    // Annotation staged by the user via the edit-mode annotation modal.
-    // null  -> no pending change; /edit/commit goes with apply_comment=false.
-    // ""    -> user explicitly cleared; server treats as delete.
-    // "text"-> set/replace at the edit-entry ply.
-    // Reset on every entry to edit mode and on /edit/cancel.
     const pausedBadge = document.getElementById("paused-badge");
     const finishedBadge = document.getElementById("finished-badge");
     state.el.pausedBadge = pausedBadge;
@@ -1943,15 +1921,10 @@ export const playPerspective = {
     // state.view with no null guards, so all of those must be populated above.
     const offEvent = state.ctx.events.on((evt) => handleBusEvent(state, ai, aiCtx, evt));
 
-    // Replay the last seen board_update (from a previous mount of this
-    // perspective) so the view renders synchronously at the cached
-    // position. Sent directly to the board renderer -- NOT through the
-    // bus -- because play.js's bus handler has side effects (e.g.
-    // syncCommentsVisibility issuing /view/goto) that would POST against
-    // the current server game using stale cursor data when an external
-    // import (tournament Replay) changed the active game while this
-    // perspective was unmounted. The /sync POST above still fires and
-    // the fresh board_update overrides if anything changed server-side.
+    // Render the cached board_update straight to the renderer, NOT via the bus:
+    // the bus handler's side effects (syncCommentsVisibility -> /view/goto) would
+    // POST stale cursor data if an external import swapped games while unmounted.
+    // The /sync POST above still overrides with fresh server state.
     if (_cachedBoardUpdate) {
       view.applyEvent(_cachedBoardUpdate);
     }
