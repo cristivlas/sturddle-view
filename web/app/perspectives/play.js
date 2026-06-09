@@ -203,6 +203,10 @@ const MSG = {
 // nav links so the user can't jump games mid-analysis.
 const XGAME_LOCK_CLASS = "xgame-nav-locked";
 
+// One-shot CSS animation class: pulses the Paused badge + Resume button when
+// the user clicks the inert paused board, hinting how to resume.
+const PAUSE_HINT_PULSE_CLASS = "pause-hint-pulse";
+
 // Edit-mode popover (side-to-move / castling) placement when the ribbon
 // floats: the WinBox body clips overflow, so the popover is portaled to
 // <body> and positioned (position: fixed) against the viewport.
@@ -985,6 +989,31 @@ function syncPausedUi(state) {
   const show = state.paused && !state.analyzing;
   state.el.boardHost.classList.toggle("board-paused", show);
   state.el.pausedBadge?.classList.toggle("hidden", !show);
+}
+
+// Restart the one-shot pulse on `el`: drop the class, force reflow, re-add so
+// rapid repeat clicks always replay the animation. Self-removes on end.
+function _pulseOnce(el) {
+  if (!el) return;
+  // No animation under reduced-motion -> animationend never fires; skip so the
+  // class + listener don't leak.
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  el.classList.remove(PAUSE_HINT_PULSE_CLASS);
+  void el.offsetWidth; // reflow so re-adding the class restarts the animation
+  el.classList.add(PAUSE_HINT_PULSE_CLASS);
+  el.addEventListener(
+    "animationend",
+    () => el.classList.remove(PAUSE_HINT_PULSE_CLASS),
+    { once: true },
+  );
+}
+
+// User clicked the inert paused board: pulse the Paused badge + Resume button
+// to point them at how to resume. No-op unless actually paused.
+function hintResumeFromPausedBoard(state) {
+  if (!state.paused || state.analyzing) return;
+  _pulseOnce(state.el.pausedBadge);
+  _pulseOnce(state.el.pauseBtn);
 }
 
 function showFinishedBadge(state, text) {
@@ -2062,6 +2091,8 @@ export const playPerspective = {
     switchSidesBtn.addEventListener("click", onSwitchSides);
     pauseBtn.addEventListener("click", onPause);
     pausedBadge?.addEventListener("click", onPause);
+    const onPausedBoardClick = () => hintResumeFromPausedBoard(state);
+    boardHost.addEventListener("click", onPausedBoardClick);
     analyzeBtn.addEventListener("click", onAnalyze);
     viewNewGameBtn.addEventListener("click", onNewGame);
     viewImportBtn.addEventListener("click", onImport);
@@ -2171,6 +2202,7 @@ export const playPerspective = {
         takebackBtn.removeEventListener("click", onTakeback);
         switchSidesBtn.removeEventListener("click", onSwitchSides);
         pauseBtn.removeEventListener("click", onPause);
+        boardHost.removeEventListener("click", onPausedBoardClick);
         analyzeBtn.removeEventListener("click", onAnalyze);
         viewNewGameBtn.removeEventListener("click", onNewGame);
         viewImportBtn.removeEventListener("click", onImport);
