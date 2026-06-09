@@ -1059,9 +1059,10 @@ function refreshButtons(state) {
   // in-progress runs keep the plain Pause/Resume toggle.
   const aiDone = aiAnalysisDone(state);
   const showResume = state.paused || aiDone;
-  // Pause needs the human's turn; Resume is always allowed.
+  // Needs a live game; Pause then needs the human's turn (Resume is always
+  // allowed once a game exists, which any showResume state implies).
   configureBtn(state.el.pauseBtn, {
-    disabled: state.gameOver || (!aiDone && state.analyzing) || (!showResume && !humanToMove),
+    disabled: !state.resignAvailable || state.gameOver || (!aiDone && state.analyzing) || (!showResume && !humanToMove),
     label: showResume ? "Resume" : "Pause",
     icon: showResume ? "forward-step" : "pause",
   });
