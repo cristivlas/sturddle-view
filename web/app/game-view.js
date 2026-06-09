@@ -8,7 +8,7 @@ import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
 import { SIDE, FEN_STM } from "./chess-consts.js";
-import { fmtClock, fmtScore, selectContentsOnCtrlA } from "./wb-utils.js";
+import { fmtClock, fmtCount, fmtScore, selectContentsOnCtrlA } from "./wb-utils.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -124,12 +124,6 @@ function renderMoveList(el, sanList, {
   } else if (highlightedRow) {
     highlightedRow.scrollIntoView({ block: "nearest" });
   }
-}
-
-function fmtCount(n) {
-  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
-  if (n >= 1e3) return `${Math.round(n / 1e3)}K`;
-  return String(n);
 }
 
 // Unicode ellipsis is intentional: this glyph is rendered into the

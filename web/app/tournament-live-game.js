@@ -9,8 +9,28 @@ import { isPlayInProgress, isViewing, isAnalyzing, getViewingHash, getViewingSum
 import { confirmReplaceViewedGame } from "./import-position-dialog.js";
 import { APP_EVT } from "./app-events.js";
 import { SIDE, FEN_STM } from "./chess-consts.js";
-import { fmtClock, fmtScore, flashWindow } from "./wb-utils.js";
+import { fmtClock, fmtCount, fmtScore, flashWindow } from "./wb-utils.js";
 import { terminationPhrase } from "./format-termination.js";
+
+// Eval-row info strings (shared by own-side and opponent rows). Each blanks
+// when its field is absent. Format: "d:<depth>/<seldepth>", "nps:<count>",
+// "tb:<tbhits>".
+function _fmtDepth(p) {
+  if (p.depth == null) return "";
+  return p.seldepth != null ? `d:${p.depth}/${p.seldepth}` : `d:${p.depth}`;
+}
+function _fmtNps(p) {
+  return p.nps ? `nps:${fmtCount(p.nps)}` : "";
+}
+function _fmtTb(p) {
+  return p.tbhits ? `tb:${p.tbhits}` : "";
+}
+// Write the depth/nps/tbhits trio into one eval row's spans.
+function _applyEvalInfo({ depthEl, npsEl, tbhitsEl }, p) {
+  depthEl.textContent = _fmtDepth(p);
+  npsEl.textContent = _fmtNps(p);
+  tbhitsEl.textContent = _fmtTb(p);
+}
 
 async function replayTournamentGame({ tournamentId, gameN, token, pairId = null }) {
   const headers = { "Content-Type": "application/json" };
@@ -176,6 +196,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     <div class="lg-eval lg-eval-top">
       <span class="lg-eval-score lg-eval-score-top"></span>
       <span class="lg-eval-depth lg-eval-depth-top muted"></span>
+      <span class="lg-eval-nps lg-eval-nps-top muted"></span>
       <span class="lg-eval-tbhits lg-eval-tbhits-top muted"></span>
     </div>
     <div class="clock-row lg-clock-top">
@@ -196,6 +217,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     <div class="lg-eval lg-eval-bottom">
       <span class="lg-eval-score lg-eval-score-bottom"></span>
       <span class="lg-eval-depth lg-eval-depth-bottom muted"></span>
+      <span class="lg-eval-nps lg-eval-nps-bottom muted"></span>
       <span class="lg-eval-tbhits lg-eval-tbhits-bottom muted"></span>
     </div>
     <div class="lg-pv lg-pv-bottom muted"></div>
@@ -210,10 +232,12 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
 
   const evalScoreEl = body.querySelector(".lg-eval-score-bottom");
   const evalDepthEl = body.querySelector(".lg-eval-depth-bottom");
+  const evalNpsEl = body.querySelector(".lg-eval-nps-bottom");
   const evalTbhitsEl = body.querySelector(".lg-eval-tbhits-bottom");
   const pvEl = body.querySelector(".lg-pv-bottom");
   const oppEvalScoreEl = body.querySelector(".lg-eval-score-top");
   const oppEvalDepthEl = body.querySelector(".lg-eval-depth-top");
+  const oppEvalNpsEl = body.querySelector(".lg-eval-nps-top");
   const oppEvalTbhitsEl = body.querySelector(".lg-eval-tbhits-top");
   const oppPvEl = body.querySelector(".lg-pv-top");
   const clockTopEl = body.querySelector(".lg-clock-top");
@@ -359,8 +383,8 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   return {
     wb, body, board, boardHost,
     refs: {
-      evalScoreEl, evalDepthEl, evalTbhitsEl, pvEl,
-      oppEvalScoreEl, oppEvalDepthEl, oppEvalTbhitsEl, oppPvEl,
+      evalScoreEl, evalDepthEl, evalNpsEl, evalTbhitsEl, pvEl,
+      oppEvalScoreEl, oppEvalDepthEl, oppEvalNpsEl, oppEvalTbhitsEl, oppPvEl,
       clockTopEl, clockBottomEl,
       topNameEl, bottomNameEl, topTimeEl, bottomTimeEl,
       resultOverlayEl, resultScoreEl, resultTerminationEl, replayBtnEl,
@@ -402,8 +426,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   });
   const { wb, body, board, refs, showResult, disposeShared } = built;
   const {
-    evalScoreEl, evalDepthEl, evalTbhitsEl, pvEl,
-    oppEvalScoreEl, oppEvalDepthEl, oppEvalTbhitsEl, oppPvEl,
+    evalScoreEl, evalDepthEl, evalNpsEl, evalTbhitsEl, pvEl,
+    oppEvalScoreEl, oppEvalDepthEl, oppEvalNpsEl, oppEvalTbhitsEl, oppPvEl,
     clockTopEl, clockBottomEl,
     topNameEl, bottomNameEl, topTimeEl, bottomTimeEl,
   } = refs;
@@ -669,20 +693,14 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 
   function renderOpponentEval(p) {
     oppEvalScoreEl.textContent = fmtScore(p.score, { empty: "--", matePrefix: "M", signed: true });
-    oppEvalDepthEl.textContent = p.depth != null
-      ? (p.seldepth != null ? `d${p.depth}/${p.seldepth}` : `d${p.depth}`)
-      : "";
-    oppEvalTbhitsEl.textContent = p.tbhits ? `tb ${p.tbhits}` : "";
+    _applyEvalInfo({ depthEl: oppEvalDepthEl, npsEl: oppEvalNpsEl, tbhitsEl: oppEvalTbhitsEl }, p);
     const pv = p.pv_uci;
     if (pv && pv.length) oppPvEl.textContent = pv.slice(0, 12).join(" ");
   }
 
   function renderEval(p) {
     evalScoreEl.textContent = fmtScore(p.score, { empty: "--", matePrefix: "M", signed: true });
-    evalDepthEl.textContent = p.depth != null
-      ? (p.seldepth != null ? `d${p.depth}/${p.seldepth}` : `d${p.depth}`)
-      : "";
-    evalTbhitsEl.textContent = p.tbhits ? `tb ${p.tbhits}` : "";
+    _applyEvalInfo({ depthEl: evalDepthEl, npsEl: evalNpsEl, tbhitsEl: evalTbhitsEl }, p);
     const pv = p.pv_uci;
     if (pv && pv.length) {
       pvEl.textContent = pv.slice(0, 12).join(" ");

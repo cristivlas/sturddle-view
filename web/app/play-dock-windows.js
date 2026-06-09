@@ -31,6 +31,7 @@ import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, loadRaw, saveRaw } from "./storage.js";
 import {
   AUTOSCROLL_SLACK_LINE_PX,
+  fmtCount,
   fmtScore,
   isPinnedToBottom,
   scrollToBottom,
@@ -789,13 +790,6 @@ const PV_WIN_STATE_KEY = STORAGE_KEY.PVTABLE_WIN_STATE;
 const PV_DOCKED_KEY    = STORAGE_KEY.PVTABLE_DOCKED;
 const PV_OPEN_KEY      = STORAGE_KEY.PVTABLE_OPEN;
 
-function fmtK(n) {
-  if (n == null) return "";
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
-  return String(n);
-}
-
 function buildPvTableBody(events, { setOff }) {
   const body = document.createElement("div");
   body.className = "wb-pvtable";
@@ -901,8 +895,8 @@ function buildPvTableBody(events, { setOff }) {
     }
     tr.cells[0].textContent = seldepth != null ? `${depth}/${seldepth}` : depth;
     if (score) tr.cells[1].textContent = fmtScore(score);
-    if (nodes != null) tr.cells[2].textContent = fmtK(nodes);
-    if (nps != null) tr.cells[3].textContent = fmtK(nps);
+    if (nodes != null) tr.cells[2].textContent = fmtCount(nodes);
+    if (nps != null) tr.cells[3].textContent = fmtCount(nps);
     if (pv?.[0]) tr.cells[4].textContent = pv[0];
     fitTableToPvContent();
   }));

@@ -29,6 +29,15 @@ export function fmtScore(score, { empty = "", matePrefix = "#", signed = false }
   return empty;
 }
 
+// Humanize a count (nodes, nps): >=1M as "1.20M", >=1K as "12K", else raw.
+// null/undefined -> "" so callers can blank a missing field.
+export function fmtCount(n) {
+  if (n == null) return "";
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `${Math.round(n / 1e3)}K`;
+  return String(n);
+}
+
 // Format a clock value (seconds) as m:ss, or as tenths below tenthsBelow
 // seconds so bullet/sub-second-increment games stay readable. Negatives
 // clamp to 0; a non-finite value yields `invalid`.
