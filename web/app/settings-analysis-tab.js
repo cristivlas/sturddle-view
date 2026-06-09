@@ -30,314 +30,203 @@ const AI_PROVIDER_OPTIONS = [
   ["gemini", "Gemini"],
   ["ollama", "Ollama"],
 ];
+const KEY_BASED_PROVIDERS = new Set(["anthropic", "gemini"]);
 
-// Builds the Analysis settings tab. Returns { tab, panel } for insertion
-// into the settings dialog's tab list. All server I/O flows through the
-// passed-in helpers so this module stays UI-only.
-//
-// oversized-ok: reactive controller -- provider selection drives derived
-// visibility/lockout/model-routing across every row (applyAiProviderVisibility,
-// applyAiEnabledLockout, refreshModelRow, syncThinkingOptions). The rows aren't
-// independent; splitting would scatter the coordination logic.
-export function buildAnalysisTab({ api, initial, dialog, noEngine, engineList, activeEngineId, putSettings, putSettingsDebounced, debounce }) {
-  // --- AI Analysis tab ---
-  // Flat layout per spec: master toggle + provider + model + key/url.
-  // Tunables (tool-call cap, analyze caps, etc.) surface as flat
-  // fields when each proves necessary.
-  const analysisTab = document.createElement("wa-tab");
-  analysisTab.panel = "analysis";
-  analysisTab.textContent = "Analysis";
-  const analysisPanel = document.createElement("wa-tab-panel");
-  analysisPanel.name = "analysis";
-
-  // Provider drives the whole tab. "Engine only" (ai_enabled=false) disables
-  // every LLM field and repurposes the model dropdown to pick the analysis
-  // engine; a real LLM provider (ai_enabled=true) restores the LLM fields.
-  // The last-used LLM provider is remembered server-side even while "Engine
-  // only" is showing, so flipping back restores it.
-  const aiProviderRow = document.createElement("div");
-  aiProviderRow.className = "settings-row";
-  const aiProviderLabel = document.createElement("label");
-  aiProviderLabel.textContent = "Provider";
-  const aiProvider = document.createElement("wa-select");
-  aiProvider.size = "small";
-  aiProvider.setAttribute("distance", "4");
-  for (const [val, label] of AI_PROVIDER_OPTIONS) {
+// Provider select: drives the whole tab. Displayed value reflects
+// enabled-state (Engine only when AI is off) not just the stored LLM
+// provider. .value is set AFTER options append -- wa-select drops a
+// value with no matching option.
+function buildAiProviderRow(initial) {
+  const row = document.createElement("div");
+  row.className = "settings-row";
+  const label = document.createElement("label");
+  label.textContent = "Provider";
+  const select = document.createElement("wa-select");
+  select.size = "small";
+  select.setAttribute("distance", "4");
+  for (const [val, text] of AI_PROVIDER_OPTIONS) {
     const opt = document.createElement("wa-option");
     opt.value = val;
-    opt.textContent = label;
-    aiProvider.append(opt);
+    opt.textContent = text;
+    select.append(opt);
   }
-  // Displayed provider reflects enabled-state, not just the stored LLM
-  // provider: when AI is off we show "Engine only" regardless of which LLM
-  // is remembered (the server keeps ai_provider untouched in that mode, so
-  // flipping back restores it). .value must be set AFTER options are
-  // appended -- wa-select drops a value with no matching option.
   const storedLlmProvider = initial[AI_PROVIDER_KEY] || "anthropic";
-  aiProvider.value = initial[AI_ENABLED_KEY] ? storedLlmProvider : ENGINE_ONLY;
-  aiProviderRow.append(aiProviderLabel, aiProvider);
-  const isAiOn = () => aiProvider.value !== ENGINE_ONLY;
+  select.value = initial[AI_ENABLED_KEY] ? storedLlmProvider : ENGINE_ONLY;
+  row.append(label, select);
+  const isAiOn = () => select.value !== ENGINE_ONLY;
+  return { row, select, isAiOn };
+}
 
-  // Inline hint when no engine is configured: analysis depends on the same
-  // engine the play / view perspectives use, so it can't function without
-  // one. Surfaced here rather than as a toast so the user can act on it
-  // without leaving the tab.
-  let aiNoEngineHint = null;
-  if (noEngine) {
-    aiNoEngineHint = document.createElement("div");
-    aiNoEngineHint.className = "settings-row settings-row-hint";
-    const hint = document.createElement("small");
-    hint.textContent = "Register an engine in the Engines tab to enable analysis.";
-    aiNoEngineHint.append(hint);
-  }
+// Inline hint when no engine is configured: analysis shares the play/view
+// engine, so it can't function without one. Surfaced in-tab so the user
+// can act without leaving. Returns null when an engine is present.
+function buildAiNoEngineHint(noEngine) {
+  if (!noEngine) return null;
+  const row = document.createElement("div");
+  row.className = "settings-row settings-row-hint";
+  const hint = document.createElement("small");
+  hint.textContent = "Register an engine in the Engines tab to enable analysis.";
+  row.append(hint);
+  return row;
+}
 
-  // Model row, dual-purpose by provider:
-  //  - LLM provider: a dropdown populated from the provider's list_models
-  //    API. If the fetch fails (no key / unreachable / not implemented), the
-  //    free-text input takes over. Hint line below reports the state.
-  //  - "Engine only": relabeled "Engine" and populated from the registered
-  //    engines; selection persists as analysis_engine_id. There is no LLM
-  //    "model" in this mode -- the engine version is the analogue.
-  const aiModelRow = document.createElement("div");
-  aiModelRow.className = "settings-row ai-row";
-  const aiModelLabel = document.createElement("label");
-  aiModelLabel.textContent = "Model";
-  const aiModelSelect = document.createElement("wa-select");
-  aiModelSelect.size = "small";
-  aiModelSelect.setAttribute("distance", "4");
-  const aiModelInput = document.createElement("wa-input");
-  aiModelInput.size = "small";
-  aiModelInput.setAttribute("autocomplete", "off");
-  aiModelInput.value = initial[AI_MODEL_KEY] || "";
-  aiModelInput.addEventListener("input", () => {
-    putSettingsDebounced({ [AI_MODEL_KEY]: aiModelInput.value });
-  });
-  aiModelSelect.addEventListener("change", () => {
-    if (!aiModelSelect.value) return;
-    // In engine-only mode the dropdown holds engine ids; persist as the
-    // analysis-engine pin. Otherwise it holds LLM model ids.
-    if (isAiOn()) putSettings({ [AI_MODEL_KEY]: aiModelSelect.value });
-    else putSettings({ [ANALYSIS_ENGINE_KEY]: aiModelSelect.value });
-  });
-  aiModelRow.append(aiModelLabel, aiModelSelect, aiModelInput);
-
-  const aiModelHint = document.createElement("div");
-  aiModelHint.className = "settings-row settings-row-hint";
-  const aiModelHintText = document.createElement("small");
-  aiModelHint.append(aiModelHintText);
-
-  // Anthropic field: API key (masked when set). Ollama field: base URL.
-  // Toggled by provider selection.
-  const aiKeyRow = document.createElement("div");
-  aiKeyRow.className = "settings-row ai-row";
-  const aiKeyLabel = document.createElement("label");
-  aiKeyLabel.textContent = "API key";
-  const aiKey = document.createElement("wa-input");
-  aiKey.size = "small";
-  // type="text" + CSS mask (text-security: disc) instead of
-  // type="password": browsers don't offer to save a non-password
-  // field. Visual security is identical; both expose the value
-  // via devtools.
-  aiKey.type = "text";
-  aiKey.classList.add("ai-key-masked");
-  aiKey.setAttribute("autocomplete", "off");
-  aiKey.setAttribute("data-lpignore", "true");
-  aiKey.setAttribute("data-form-type", "other");
-  aiKey.setAttribute("spellcheck", "false");
-  // Eye icon slotted into the input's suffix slot so it sits
-  // inside the field's border (matches WA's password-toggle look).
-  const aiKeyToggleIcon = document.createElement("wa-icon");
-  aiKeyToggleIcon.setAttribute("name", "eye");
-  aiKeyToggleIcon.setAttribute("slot", "end");
-  aiKeyToggleIcon.classList.add("ai-key-toggle");
-  aiKeyToggleIcon.setAttribute("role", "button");
-  aiKeyToggleIcon.setAttribute("tabindex", "0");
-  aiKeyToggleIcon.setAttribute("aria-label", "Show/hide API key");
-  let aiKeyRevealed = false;
-  const syncAiKeyMaskUi = () => {
-    // No mask/toggle when the field is empty: the disc font would
-    // swap the placeholder font ("dance") and an eye on an empty
-    // field is meaningless.
-    const hasInput = (aiKey.value || "").trim().length > 0;
-    aiKeyToggleIcon.style.display = hasInput ? "" : "none";
-    const shouldMask = hasInput && !aiKeyRevealed;
-    aiKey.classList.toggle("ai-key-masked", shouldMask);
-    aiKeyToggleIcon.setAttribute("name", shouldMask ? "eye" : "eye-slash");
+// API-key row with a masking eye-toggle + deferred commit. Self-contained:
+// touches only its own elements + injected deps. `onKeyCommitted` is the
+// controller's post-commit hook (re-fetch models). Returns the row, the
+// input, and the two sync helpers the controller drives.
+function buildAiKeyRow({ initial, dialog, putSettings, onKeyCommitted }) {
+  const row = document.createElement("div");
+  row.className = "settings-row ai-row";
+  const label = document.createElement("label");
+  label.textContent = "API key";
+  const input = document.createElement("wa-input");
+  input.size = "small";
+  // type="text" + CSS mask instead of type="password": browsers don't
+  // offer to save a non-password field. Visual security is identical.
+  input.type = "text";
+  input.classList.add("ai-key-masked");
+  input.setAttribute("autocomplete", "off");
+  input.setAttribute("data-lpignore", "true");
+  input.setAttribute("data-form-type", "other");
+  input.setAttribute("spellcheck", "false");
+  const toggleIcon = document.createElement("wa-icon");
+  toggleIcon.setAttribute("name", "eye");
+  toggleIcon.setAttribute("slot", "end");
+  toggleIcon.classList.add("ai-key-toggle");
+  toggleIcon.setAttribute("role", "button");
+  toggleIcon.setAttribute("tabindex", "0");
+  toggleIcon.setAttribute("aria-label", "Show/hide API key");
+  let revealed = false;
+  const syncMask = () => {
+    // No mask/toggle when empty: the disc font would swap the
+    // placeholder font and an eye on an empty field is meaningless.
+    const hasInput = (input.value || "").trim().length > 0;
+    toggleIcon.style.display = hasInput ? "" : "none";
+    const shouldMask = hasInput && !revealed;
+    input.classList.toggle("ai-key-masked", shouldMask);
+    toggleIcon.setAttribute("name", shouldMask ? "eye" : "eye-slash");
   };
-  aiKeyToggleIcon.addEventListener("click", () => {
-    aiKeyRevealed = !aiKeyRevealed;
-    syncAiKeyMaskUi();
-  });
+  toggleIcon.addEventListener("click", () => { revealed = !revealed; syncMask(); });
   const setKeyPlaceholder = () => {
-    // setAttribute on host AND on the shadow input. wa-input mirrors
-    // the host attribute to the internal <input> on connect, but if
-    // we set it before connect, the mirror may not happen; if we set
-    // it after, the internal input has the value pinned. Doing both
-    // covers every order without relying on WA internals.
+    // Set on host AND shadow input: wa-input mirrors the host attr on
+    // connect, but timing varies -- doing both covers every order.
     const text = initial[AI_API_KEY_SET_KEY] ? "Saved -- enter new to replace" : "";
-    if (text) aiKey.setAttribute("placeholder", text);
-    else aiKey.removeAttribute("placeholder");
-    const inner = aiKey.shadowRoot?.querySelector("input");
+    if (text) input.setAttribute("placeholder", text);
+    else input.removeAttribute("placeholder");
+    const inner = input.shadowRoot?.querySelector("input");
     if (inner) {
       if (text) inner.setAttribute("placeholder", text);
       else inner.removeAttribute("placeholder");
     }
   };
   setKeyPlaceholder();
-  // wa-input upgrades async on first connect. Apply once more after
-  // upgrade so the inner <input> picks the value up even when we
-  // set the attribute too early.
   if (customElements.whenDefined) {
     customElements.whenDefined("wa-input").then(() => {
-      requestAnimationFrame(() => {
-        setKeyPlaceholder();
-        syncAiKeyMaskUi();
-      });
+      requestAnimationFrame(() => { setKeyPlaceholder(); syncMask(); });
     });
   }
-  // Commit on blur/Enter only -- mid-typing persists would spam
-  // Anthropic's /v1/models with partial keys (401 storm).
-  let aiKeyDirty = false;
-  const commitAiKey = async () => {
-    if (!aiKeyDirty) return;
-    aiKeyDirty = false;
-    const trimmed = (aiKey.value || "").trim();
+  // Commit on blur/Enter only -- mid-typing persists would spam the
+  // provider's /models with partial keys (401 storm).
+  let dirty = false;
+  const commit = async () => {
+    if (!dirty) return;
+    dirty = false;
+    const trimmed = (input.value || "").trim();
     await putSettings({ [AI_API_KEY_KEY]: trimmed });
-    // Server cleared/set the slot; update local view so the
-    // "Saved -- enter new to replace" placeholder appears the
-    // first time the user supplies a key.
     initial[AI_API_KEY_SET_KEY] = !!trimmed;
     setKeyPlaceholder();
-    refreshAiModels();
+    onKeyCommitted();
   };
-  aiKey.addEventListener("input", () => {
-    aiKeyDirty = true;
-    syncAiKeyMaskUi();
-  });
-  aiKey.addEventListener("blur", commitAiKey);
-  aiKey.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") commitAiKey();
-  });
-  // Esc/X close can fire before blur -- flush any pending edit
-  // so the key isn't silently dropped.
-  dialog.addEventListener("wa-hide", commitAiKey);
-  syncAiKeyMaskUi();
-  aiKey.append(aiKeyToggleIcon);
-  aiKeyRow.append(aiKeyLabel, aiKey);
+  input.addEventListener("input", () => { dirty = true; syncMask(); });
+  input.addEventListener("blur", commit);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") commit(); });
+  // Esc/X close can fire before blur -- flush any pending edit.
+  dialog.addEventListener("wa-hide", commit);
+  syncMask();
+  input.append(toggleIcon);
+  row.append(label, input);
+  return { row, input, setKeyPlaceholder, syncMask };
+}
 
-  const aiUrlRow = document.createElement("div");
-  aiUrlRow.className = "settings-row ai-row";
-  const aiUrlLabel = document.createElement("label");
-  aiUrlLabel.textContent = "Base URL";
-  const aiUrl = document.createElement("wa-input");
-  aiUrl.size = "small";
-  aiUrl.setAttribute("autocomplete", "off");
-  aiUrl.placeholder = "http://localhost:11434";
-  aiUrl.value = initial[AI_BASE_URL_KEY] || "";
-  const persistAiUrlThenRefresh = debounce(async () => {
-    await putSettings({ [AI_BASE_URL_KEY]: aiUrl.value });
-    refreshAiModels();
+// Base-URL row (Ollama). Persists on a debounced input then re-fetches
+// models via the injected hook.
+function buildAiUrlRow({ initial, putSettings, debounce, onUrlCommitted }) {
+  const row = document.createElement("div");
+  row.className = "settings-row ai-row";
+  const label = document.createElement("label");
+  label.textContent = "Base URL";
+  const input = document.createElement("wa-input");
+  input.size = "small";
+  input.setAttribute("autocomplete", "off");
+  input.placeholder = "http://localhost:11434";
+  input.value = initial[AI_BASE_URL_KEY] || "";
+  const persist = debounce(async () => {
+    await putSettings({ [AI_BASE_URL_KEY]: input.value });
+    onUrlCommitted();
   }, 400);
-  aiUrl.addEventListener("input", () => {
-    persistAiUrlThenRefresh();
-  });
-  aiUrlRow.append(aiUrlLabel, aiUrl);
+  input.addEventListener("input", persist);
+  row.append(label, input);
+  return { row, input };
+}
 
-  // Divider separates provider/credentials block from thinking row.
-  // Stays visible for both providers; budget input inside the row
-  // hides for Ollama.
-  const aiThinkingDivider = document.createElement("hr");
-  aiThinkingDivider.className = "settings-divider";
-
-  const aiThinkingRow = document.createElement("div");
-  aiThinkingRow.className = "settings-row ai-row ai-thinking-row";
-
-  // Mode select replaces the old switch + adaptive badge. Values:
-  //   off -> AI_THINKING_ENABLED_KEY=false
-  //   on  -> AI_THINKING_ENABLED_KEY=true (budget shown only for
-  //          Anthropic non-adaptive models)
-  const aiThinkingMode = document.createElement("wa-select");
-  aiThinkingMode.size = "small";
-  aiThinkingMode.setAttribute("label", "Extended thinking");
-  aiThinkingMode.className = "ai-thinking-mode";
-
-  // Persisted via the same AI_THINKING_ENABLED_KEY so the server
-  // contract is unchanged.
-  let thinkingEnabled = !!initial[AI_THINKING_ENABLED_KEY];
-
-  const aiThinkingBudget = document.createElement("wa-input");
-  aiThinkingBudget.type = "number";
-  aiThinkingBudget.size = "small";
-  aiThinkingBudget.setAttribute("label", "Budget (tokens)");
-  aiThinkingBudget.min = String(AI_THINKING_BUDGET_MIN);
-  aiThinkingBudget.step = "1024";
-  aiThinkingBudget.value = String(
-    initial[AI_THINKING_BUDGET_TOKENS_KEY] || AI_THINKING_BUDGET_MIN
-  );
-  aiThinkingBudget.className = "ai-thinking-budget";
-
-  const isAdaptiveModel = () => {
-    if (aiProvider.value !== "anthropic") return false;
-    const live = aiModelSelect.style.display === "none"
-      ? aiModelInput.value
-      : aiModelSelect.value;
-    const model = live || initial[AI_MODEL_KEY] || "";
-    const m = /^claude-opus-(\d+)-(\d+)/.exec(model);
-    if (!m) return false;
-    const major = Number(m[1]), minor = Number(m[2]);
-    return major > 4 || (major === 4 && minor >= 6);
-  };
-
-  // Adaptive is a model capability, not a user choice. When an
-  // adaptive-capable model is selected, "On" auto-uses the model's
-  // budget and the budget input disappears.
+// Extended-thinking row: mode select (Off/On) + budget input. Budget
+// visibility depends on provider + mode + adaptive-model capability, so
+// `getAdaptive` is injected (the model-row interplay lives in the
+// controller). Returns the divider, row, controls, and syncBudgetVisibility.
+function buildAiThinkingRow({ initial, putSettings, debounce, getProvider, getAdaptive }) {
+  const divider = document.createElement("hr");
+  divider.className = "settings-divider";
+  const row = document.createElement("div");
+  row.className = "settings-row ai-row ai-thinking-row";
+  const mode = document.createElement("wa-select");
+  mode.size = "small";
+  mode.setAttribute("label", "Extended thinking");
+  mode.className = "ai-thinking-mode";
+  const budget = document.createElement("wa-input");
+  budget.type = "number";
+  budget.size = "small";
+  budget.setAttribute("label", "Budget (tokens)");
+  budget.min = String(AI_THINKING_BUDGET_MIN);
+  budget.step = "1024";
+  budget.value = String(initial[AI_THINKING_BUDGET_TOKENS_KEY] || AI_THINKING_BUDGET_MIN);
+  budget.className = "ai-thinking-budget";
   // Static options -- never replaced, so wa-select never loses its value.
   for (const [v, label] of [["off", "Off"], ["on", "On"]]) {
     const opt = document.createElement("wa-option");
     opt.value = v;
     opt.textContent = label;
-    aiThinkingMode.append(opt);
+    mode.append(opt);
   }
-  aiThinkingMode.value = thinkingEnabled ? "on" : "off";
-
-  aiThinkingRow.append(aiThinkingMode, aiThinkingBudget);
-
+  mode.value = initial[AI_THINKING_ENABLED_KEY] ? "on" : "off";
+  row.append(mode, budget);
   const syncBudgetVisibility = () => {
-    const on = aiThinkingMode.value === "on";
-    const isAnthropic = aiProvider.value === "anthropic";
-    const adaptive = isAnthropic && isAdaptiveModel();
+    const on = mode.value === "on";
+    const isAnthropic = getProvider() === "anthropic";
+    const adaptive = isAnthropic && getAdaptive();
     // Budget shows for Anthropic-on-non-adaptive only.
     const showBudget = on && isAnthropic && !adaptive;
-    aiThinkingBudget.style.display = showBudget ? "" : "none";
-    aiThinkingBudget.disabled = !showBudget;
-    // Update "On" label to reflect adaptive capability.
-    const onOpt = aiThinkingMode.querySelector("wa-option[value='on']");
+    budget.style.display = showBudget ? "" : "none";
+    budget.disabled = !showBudget;
+    const onOpt = mode.querySelector("wa-option[value='on']");
     if (onOpt) onOpt.textContent = adaptive ? "On (adaptive)" : "On";
   };
-
-  // Called on model/provider change to sync budget visibility + label.
-  const syncThinkingOptions = () => syncBudgetVisibility();
-  syncBudgetVisibility();
-
-  aiThinkingMode.addEventListener("change", () => {
-    thinkingEnabled = aiThinkingMode.value !== "off";
-    putSettings({ [AI_THINKING_ENABLED_KEY]: thinkingEnabled });
+  mode.addEventListener("change", () => {
+    putSettings({ [AI_THINKING_ENABLED_KEY]: mode.value !== "off" });
     syncBudgetVisibility();
   });
-  aiModelSelect.addEventListener("change", syncThinkingOptions);
-  aiModelInput.addEventListener("input", syncThinkingOptions);
-  const persistThinkingBudget = debounce(() => {
-    const n = Number(aiThinkingBudget.value);
+  const persistBudget = debounce(() => {
+    const n = Number(budget.value);
     if (!Number.isFinite(n) || n < AI_THINKING_BUDGET_MIN) return;
     putSettings({ [AI_THINKING_BUDGET_TOKENS_KEY]: n });
   }, 400);
-  aiThinkingBudget.addEventListener("input", persistThinkingBudget);
+  budget.addEventListener("input", persistBudget);
+  return { divider, row, mode, budget, syncBudgetVisibility };
+}
 
-  // Agent-loop round caps. Two independent guardrails: the narrator's
-  // per-turn round budget, and the tighter verifier sub-run budget.
-  const aiRoundsRow = document.createElement("div");
-  aiRoundsRow.className = "settings-row ai-row ai-rounds-row";
-
+// Numeric agent-loop caps: round budgets (rounds row) + search-depth caps
+// (depth row). Fully self-contained -- no forward refs. Returns both rows
+// and the four inputs (for the lockout set).
+function buildAiCapRows({ initial, debounce, putSettings }) {
   const makeIntInput = (key, label, min) => {
     const input = document.createElement("wa-input");
     input.type = "number";
@@ -355,51 +244,131 @@ export function buildAnalysisTab({ api, initial, dialog, noEngine, engineList, a
     input.addEventListener("input", persist);
     return input;
   };
+  const roundsRow = document.createElement("div");
+  roundsRow.className = "settings-row ai-row ai-rounds-row";
+  const maxToolRounds = makeIntInput(AI_MAX_TOOL_ROUNDS_KEY, "Max rounds", AI_ROUNDS_MIN);
+  maxToolRounds.className = "ai-max-tool-rounds";
+  const verifierMaxRounds = makeIntInput(AI_VERIFIER_MAX_ROUNDS_KEY, "Max subagent rounds", AI_ROUNDS_MIN);
+  verifierMaxRounds.className = "ai-verifier-max-rounds";
+  roundsRow.append(maxToolRounds, verifierMaxRounds);
 
-  const aiMaxToolRounds = makeIntInput(
-    AI_MAX_TOOL_ROUNDS_KEY, "Max rounds", AI_ROUNDS_MIN
-  );
-  aiMaxToolRounds.className = "ai-max-tool-rounds";
-  const aiVerifierMaxRounds = makeIntInput(
-    AI_VERIFIER_MAX_ROUNDS_KEY, "Max subagent rounds", AI_ROUNDS_MIN
-  );
-  aiVerifierMaxRounds.className = "ai-verifier-max-rounds";
-  aiRoundsRow.append(aiMaxToolRounds, aiVerifierMaxRounds);
+  const depthRow = document.createElement("div");
+  depthRow.className = "settings-row ai-row ai-depth-row";
+  const analyzeMaxDepth = makeIntInput(AI_ANALYZE_MAX_DEPTH_KEY, "Max search depth", AI_DEPTH_MIN);
+  analyzeMaxDepth.className = "ai-analyze-max-depth";
+  const verificationDepth = makeIntInput(AI_VERIFICATION_DEPTH_KEY, "Min verify depth", AI_DEPTH_MIN);
+  verificationDepth.className = "ai-verification-depth";
+  depthRow.append(analyzeMaxDepth, verificationDepth);
 
-  // Search-depth caps: the analyze/recommend clamp and the end-of-turn
-  // verifier floor. Mirrors the rounds row's structure.
-  const aiDepthRow = document.createElement("div");
-  aiDepthRow.className = "settings-row ai-row ai-depth-row";
-  const aiAnalyzeMaxDepth = makeIntInput(
-    AI_ANALYZE_MAX_DEPTH_KEY, "Max search depth", AI_DEPTH_MIN
-  );
-  aiAnalyzeMaxDepth.className = "ai-analyze-max-depth";
-  const aiVerificationDepth = makeIntInput(
-    AI_VERIFICATION_DEPTH_KEY, "Min verify depth", AI_DEPTH_MIN
-  );
-  aiVerificationDepth.className = "ai-verification-depth";
-  aiDepthRow.append(aiAnalyzeMaxDepth, aiVerificationDepth);
+  return {
+    roundsRow, depthRow,
+    inputs: [maxToolRounds, verifierMaxRounds, analyzeMaxDepth, verificationDepth],
+  };
+}
 
-  // Credential shape per provider: key-based providers show the API key
-  // row; URL-based (Ollama) shows the base URL row. "Engine only" has no
-  // credentials -- hide both. A set keeps adding a provider to a one-line
-  // change here.
-  const KEY_BASED_PROVIDERS = new Set(["anthropic", "gemini"]);
+// Builds the Analysis settings tab. Returns { tab, panel } for insertion
+// into the settings dialog's tab list. All server I/O flows through the
+// passed-in helpers so this module stays UI-only.
+//
+// Rows are built by per-section factories above; this function owns the
+// reactive controller -- provider selection drives derived
+// visibility/lockout/model-routing across rows (applyAiProviderVisibility,
+// applyAiEnabledLockout, refreshModelRow, syncThinkingOptions).
+export function buildAnalysisTab({ api, initial, dialog, noEngine, engineList, activeEngineId, putSettings, putSettingsDebounced, debounce }) {
+  // Flat layout per spec: master toggle + provider + model + key/url, then
+  // thinking + tunables (round/depth caps) as flat fields.
+  const tab = document.createElement("wa-tab");
+  tab.panel = "analysis";
+  tab.textContent = "Analysis";
+  const panel = document.createElement("wa-tab-panel");
+  panel.name = "analysis";
+
+  const { row: aiProviderRow, select: aiProvider, isAiOn } = buildAiProviderRow(initial);
+  const aiNoEngineHint = buildAiNoEngineHint(noEngine);
+
+  // Model row, dual-purpose by provider:
+  //  - LLM provider: a dropdown from the provider's list_models API; the
+  //    free-text input takes over on fetch failure.
+  //  - "Engine only": relabeled "Engine", populated from registered engines;
+  //    selection persists as analysis_engine_id.
+  const aiModelRow = document.createElement("div");
+  aiModelRow.className = "settings-row ai-row";
+  const aiModelLabel = document.createElement("label");
+  aiModelLabel.textContent = "Model";
+  const aiModelSelect = document.createElement("wa-select");
+  aiModelSelect.size = "small";
+  aiModelSelect.setAttribute("distance", "4");
+  const aiModelInput = document.createElement("wa-input");
+  aiModelInput.size = "small";
+  aiModelInput.setAttribute("autocomplete", "off");
+  aiModelInput.value = initial[AI_MODEL_KEY] || "";
+  aiModelInput.addEventListener("input", () => {
+    putSettingsDebounced({ [AI_MODEL_KEY]: aiModelInput.value });
+  });
+  aiModelSelect.addEventListener("change", () => {
+    if (!aiModelSelect.value) return;
+    // Engine-only mode holds engine ids (analysis-engine pin); otherwise
+    // LLM model ids.
+    if (isAiOn()) putSettings({ [AI_MODEL_KEY]: aiModelSelect.value });
+    else putSettings({ [ANALYSIS_ENGINE_KEY]: aiModelSelect.value });
+  });
+  aiModelRow.append(aiModelLabel, aiModelSelect, aiModelInput);
+
+  const aiModelHint = document.createElement("div");
+  aiModelHint.className = "settings-row settings-row-hint";
+  const aiModelHintText = document.createElement("small");
+  aiModelHint.append(aiModelHintText);
+
+  const isAdaptiveModel = () => {
+    if (aiProvider.value !== "anthropic") return false;
+    const live = aiModelSelect.style.display === "none"
+      ? aiModelInput.value
+      : aiModelSelect.value;
+    const model = live || initial[AI_MODEL_KEY] || "";
+    const m = /^claude-opus-(\d+)-(\d+)/.exec(model);
+    if (!m) return false;
+    const major = Number(m[1]), minor = Number(m[2]);
+    return major > 4 || (major === 4 && minor >= 6);
+  };
+
+  // Forward-ref bridges: section builders wire these at construction, but
+  // the controller fns are defined below. Thunks defer resolution.
+  const aiKey = buildAiKeyRow({
+    initial, dialog, putSettings,
+    onKeyCommitted: () => refreshAiModels(),
+  });
+  const aiUrl = buildAiUrlRow({
+    initial, putSettings, debounce,
+    onUrlCommitted: () => refreshAiModels(),
+  });
+  const aiThinking = buildAiThinkingRow({
+    initial, putSettings, debounce,
+    getProvider: () => aiProvider.value,
+    getAdaptive: isAdaptiveModel,
+  });
+  // Called on model/provider change to sync budget visibility + label.
+  const syncThinkingOptions = () => aiThinking.syncBudgetVisibility();
+  aiModelSelect.addEventListener("change", syncThinkingOptions);
+  aiModelInput.addEventListener("input", syncThinkingOptions);
+
+  const aiCaps = buildAiCapRows({ initial, debounce, putSettings });
+
+  // Credential shape per provider: key-based shows the API key row;
+  // URL-based (Ollama) shows the base URL row. "Engine only" hides both.
   function applyAiProviderVisibility() {
     const engineOnly = !isAiOn();
     const usesKey = KEY_BASED_PROVIDERS.has(aiProvider.value);
-    aiKeyRow.style.display = !engineOnly && usesKey ? "" : "none";
-    aiUrlRow.style.display = !engineOnly && !usesKey ? "" : "none";
-    // Budget visibility is owned by syncThinkingOptions (provider +
-    // mode + adaptive-model interplay).
+    aiKey.row.style.display = !engineOnly && usesKey ? "" : "none";
+    aiUrl.row.style.display = !engineOnly && !usesKey ? "" : "none";
+    // Budget visibility is owned by syncThinkingOptions (provider + mode +
+    // adaptive-model interplay).
     syncThinkingOptions();
   }
 
   function showModelInput(reason) {
-    // Fall back to free-text input. Used when the provider can't
-    // be queried or returns nothing usable. Hint slot is always
-    // reserved (CSS min-height); we toggle text only -- so an
-    // appearing/disappearing error never reflows the dialog.
+    // Fall back to free-text input when the provider can't be queried or
+    // returns nothing. Hint slot is always reserved (CSS min-height); we
+    // toggle text only -- no reflow on an appearing/disappearing error.
     aiModelLabel.textContent = "Model";
     aiModelSelect.style.display = "none";
     aiModelInput.style.display = "";
@@ -427,10 +396,8 @@ export function buildAnalysisTab({ api, initial, dialog, noEngine, engineList, a
   }
 
   // Engine-only mode: the model row becomes the analysis-engine picker.
-  // Lists every registered engine; pre-selects the user's pinned engine
-  // (analysis_engine_id) or, if none, the active HvE engine -- the same one
-  // analysis falls back to server-side. No free-text fallback (engines are a
-  // closed, registry-backed set).
+  // Pre-selects the pinned engine (analysis_engine_id) or the active HvE
+  // engine. No free-text fallback (engines are a closed set).
   function showEngineSelect() {
     aiModelLabel.textContent = "Engine";
     aiModelSelect.replaceChildren();
@@ -447,10 +414,8 @@ export function buildAnalysisTab({ api, initial, dialog, noEngine, engineList, a
     aiModelHintText.textContent = "";
   }
 
-  // Lazy fetch: requested on dialog open + on provider/key/url
-  // changes that could affect what the endpoint returns. Failures
-  // collapse to the free-text input with the server's error in
-  // the hint line.
+  // Lazy fetch: on dialog open + provider/key/url changes. Failures
+  // collapse to the free-text input with the server's error in the hint.
   let _modelsFetchSeq = 0;
   async function refreshAiModels() {
     const mySeq = ++_modelsFetchSeq;
@@ -469,20 +434,19 @@ export function buildAnalysisTab({ api, initial, dialog, noEngine, engineList, a
     }
   }
 
-  // Routes the model row by mode: engine picker when "Engine only", else the
-  // provider's LLM model list. The single entry point so every caller
-  // (open, provider change, key/url change) stays mode-correct.
+  // Routes the model row by mode: engine picker when "Engine only", else
+  // the provider's LLM model list. Single entry point so every caller
+  // stays mode-correct.
   function refreshModelRow() {
     if (isAiOn()) refreshAiModels();
     else showEngineSelect();
   }
 
   aiProvider.addEventListener("change", async () => {
-    // Provider selection maps to two server fields: ai_enabled (off iff
-    // "Engine only") and -- for a real provider -- ai_provider. "Engine
-    // only" never overwrites the remembered LLM provider, so flipping back
-    // restores it. After persisting, re-read settings so the model/key
-    // fields reflect the server's restored values for THIS provider.
+    // Provider maps to two server fields: ai_enabled (off iff "Engine
+    // only") and -- for a real provider -- ai_provider. "Engine only"
+    // never overwrites the remembered LLM provider. After persisting,
+    // re-read settings so model/key fields reflect THIS provider.
     if (isAiOn()) {
       await putSettings({ [AI_ENABLED_KEY]: true, [AI_PROVIDER_KEY]: aiProvider.value });
     } else {
@@ -497,38 +461,36 @@ export function buildAnalysisTab({ api, initial, dialog, noEngine, engineList, a
     } catch { /* refreshModelRow still runs */ }
     applyAiProviderVisibility();
     applyAiEnabledLockout();
-    setKeyPlaceholder();
+    aiKey.setKeyPlaceholder();
     refreshModelRow();
   });
   applyAiProviderVisibility();
 
-  // One Map drives BOTH the visual order (insertion order = render
-  // order) and the lockout target set, so adding a row can't drift
-  // between the two lists. Pair each row with the input(s) inside it
-  // that need the disabled attribute when AI is off. The provider select
-  // is the master control and is never in this set. The model row is the
-  // ONLY row that stays live when off -- it becomes the engine picker --
-  // so it carries no lockout inputs.
+  // One Map drives BOTH the visual order (insertion order = render order)
+  // and the lockout target set, so adding a row can't drift between the
+  // two. Pair each row with the input(s) needing disabled when AI is off.
+  // The provider select is the master and is never in this set. The model
+  // row is the ONLY row that stays live when off (it becomes the engine
+  // picker) so it carries no lockout inputs.
   const AI_ROWS = new Map([
-    ["provider",         { row: aiProviderRow,     inputs: [] }],
-    ["model",            { row: aiModelRow,        inputs: [] }],
-    ["model-hint",       { row: aiModelHint,       inputs: [] }],
-    ["api-key",          { row: aiKeyRow,          inputs: [aiKey] }],
-    ["base-url",         { row: aiUrlRow,          inputs: [aiUrl] }],
-    ["thinking",         { row: aiThinkingRow,     inputs: [aiThinkingMode, aiThinkingBudget] }],
-    ["thinking-divider", { row: aiThinkingDivider, inputs: [] }],
-    ["rounds",           { row: aiRoundsRow,       inputs: [aiMaxToolRounds, aiVerifierMaxRounds] }],
-    ["depth",            { row: aiDepthRow,        inputs: [aiAnalyzeMaxDepth, aiVerificationDepth] }],
+    ["provider",         { row: aiProviderRow,         inputs: [] }],
+    ["model",            { row: aiModelRow,            inputs: [] }],
+    ["model-hint",       { row: aiModelHint,           inputs: [] }],
+    ["api-key",          { row: aiKey.row,             inputs: [aiKey.input] }],
+    ["base-url",         { row: aiUrl.row,             inputs: [aiUrl.input] }],
+    ["thinking",         { row: aiThinking.row,        inputs: [aiThinking.mode, aiThinking.budget] }],
+    ["thinking-divider", { row: aiThinking.divider,    inputs: [] }],
+    ["rounds",           { row: aiCaps.roundsRow,      inputs: [aiCaps.inputs[0], aiCaps.inputs[1]] }],
+    ["depth",            { row: aiCaps.depthRow,       inputs: [aiCaps.inputs[2], aiCaps.inputs[3]] }],
   ]);
 
   // LLM-only rows greyed out when provider is "Engine only". The model row
-  // is excluded (it's the engine picker in that mode) and is handled by
-  // refreshModelRow. Values are retained server-side; flipping back to an
-  // LLM provider restores them.
+  // is excluded (engine picker in that mode). Values are retained
+  // server-side; flipping back restores them.
   function applyAiEnabledLockout() {
     const off = !isAiOn();
-    // Pull focus off the control before re-enabling fields so the user
-    // doesn't see a focus ring flash on an unrelated control.
+    // Pull focus off the control before re-enabling so the user doesn't
+    // see a focus-ring flash on an unrelated control.
     if (document.activeElement && typeof document.activeElement.blur === "function") {
       document.activeElement.blur();
     }
@@ -540,15 +502,14 @@ export function buildAnalysisTab({ api, initial, dialog, noEngine, engineList, a
     }
   }
 
-  if (aiNoEngineHint) analysisPanel.append(aiNoEngineHint);
-  for (const { row } of AI_ROWS.values()) analysisPanel.append(row);
+  if (aiNoEngineHint) panel.append(aiNoEngineHint);
+  for (const { row } of AI_ROWS.values()) panel.append(row);
 
-  // Initial state: hide the select until the first fetch/populate tells us
-  // what to show. Lock fields based on the current provider, then route the
-  // model row (engine picker when off, LLM list when on).
+  // Initial state: hide the select until the first fetch/populate. Lock
+  // fields by current provider, then route the model row.
   showModelInput("");
   applyAiEnabledLockout();
   refreshModelRow();
 
-  return { tab: analysisTab, panel: analysisPanel };
+  return { tab, panel };
 }

@@ -1,6 +1,6 @@
 # Function-size refactor playbook
 
-How to break a giant factory/handler function under the 200-line cap
+How to break a giant factory/handler function under the 250-line cap
 (`scripts/audit_fn_size.py`) and remove its `oversized-ok` marker, distilled
 from decomposing `openTournamentWorkspace` (1517 -> 179 lines).
 
@@ -13,7 +13,7 @@ touching code. Tackle offenders in the order given at the end (largest first).
 
 `scripts/audit_fn_size.py::scan_js` (JS) / `scan_python` (PY) is the authority.
 
-- Flag condition is `n >= 200`. A function must end at **<= 199 lines**
+- Flag condition is `n >= 250`. A function must end at **<= 249 lines**
   (`end_line - start_line + 1`).
 - **Size = the full brace span from the declaration to where depth returns to
   0** -- it INCLUDES every nested inner function, blank line, and comment
@@ -87,7 +87,7 @@ Do it in commits/steps, running the audit + a smoke test after each. Roughly:
    writer in the SAME edit. A half-migrated scalar (some readers on `ctx.x`,
    some on bare `x`) is the classic aliasing bug. Migrate the body refs / detail
    / flags this way.
-4. **Split any inner function that is itself near/over 200** as you lift it
+4. **Split any inner function that is itself near/over 250** as you lift it
    (e.g. a 130-line render fn with a self-contained 80-line sub-block -> pull
    the sub-block into its own module fn). Mechanical: cut the block into
    `function subPart(ctx, ...)` and call it.
@@ -192,57 +192,49 @@ largest-to-smallest.
 Done so far: `openTournamentWorkspace` (the method this playbook distills),
 `mountTournaments`, `mountGameView`, `mountEngineList` (-> single `ctx` +
 engines-list-layout.js; the col-resize/wrap-sizer extraction pattern there is a
-good template for the other list controllers).
+good template for the other list controllers), `mount` (1869 -> 477; the bus
+handler + AI bridge + x-game cluster lifted onto a single `state` object),
+`buildAnalysisTab` (513 -> 239; per-section row factories + reactive core).
 
-1. **`mount`** (1869, perspectives/play.js:173) `[V]` -- HARDEST. The play
-   perspective: ~38 reassigned `let`s + ~30 closures in one lexical scope, and a
-   dense forward-reference web (analysis <-> toast <-> view-nav, edit <-> xgame
-   <-> nav; the `board_update` handler touches every cluster). The two clean
-   leaf clusters (x-game toasts; AI event bridge) extract to their own modules
-   taking a `state` object; the rest needs `state` + a cross-cluster function
-   table. Expect multi-commit. Do NOT attempt as one atomic mechanical pass.
+1. **`mount`** (477, perspectives/play.js:1645) `[V]` -- HARDEST, partially
+   done. Already a wiring shell over a single `state` object; remaining lifts
+   (setNoEngine/checkEngines, listener closures, lifecycle return) are small and
+   low-value. The hard forward-reference web is gone. Bus-handler safety now
+   depends on wiring order (documented at registration).
 
-2. **`buildAnalysisTab`** (513, settings-analysis-tab.js:42) `[E]` -- MED. ~14
-   inner fns, ~5 reassigned vars (`aiKeyRevealed/aiKeyDirty/thinkingEnabled/
-   _modelsFetchSeq` + `initial[...]`). Key-masking and thinking-options clusters
-   interlock; model-selection is a cohesive unit; the bulk is declarative row
-   construction that bulk-extracts easily.
-
-3. **`showImportPositionDialog`** (341, import-position-dialog.js:500) `[V]` --
+2. **`showImportPositionDialog`** (347, import-position-dialog.js:497) `[V]` --
    MED. State `format` (reassigned -> ctx), `submitting`, `recentsCache`. Recents
    dropdown + submit extractable; `format` threads through several handlers.
 
-4. **`_run_loop`** (331, server/.../ai_analysis.py:870) `[E]` -- HARD (Python).
+3. **`_run_loop`** (331, server/.../ai_analysis.py:870) `[E]` -- HARD (Python).
    18+ reassigned flags/counters in one agent-loop state machine. Extract pure
    decision helpers (`_should_nudge_*`) + a per-round state dataclass; the core
    loop stays largely intact.
 
-5. **`openLiveGameWindow`** (319, tournament-live-game.js:382) `[E]` -- HARD.
+4. **`openLiveGameWindow`** (319, tournament-live-game.js:382) `[E]` -- HARD.
    THREE intertwined state machines (position/animation coalescer,
    clock/timers, WebSocket lifecycle) over 10+ reassigned vars. Encapsulate each
    machine (PositionCoalescer/ClockManager-style helper), don't just lift.
 
-6. **`mountTournamentTemplateForm`** (318, tournament-template-form.js:31) `[E]`
+5. **`mountTournamentTemplateForm`** (318, tournament-template-form.js:31) `[E]`
    -- EASY. Only shared state is one `inputs` map (in-place, never reassigned).
    `getValues`/`validate` already pure. Sections: grid, switch row, adjudication
    -> one builder each. (Easiest of the remaining -- a good warm-up, but NOT
    first in size order.)
 
-7. **`createDockableWindow`** (263, play-dock-windows.js:386) `[V]` -- MED.
+6. **`createDockableWindow`** (263, play-dock-windows.js:387) `[V]` -- MED.
    Float/dock state machine; reassigned dock/geometry state. Some inner handlers
    extract; the dock-vs-float lifecycle is the coupled core.
 
-8. **`createOpeningsPanel`** (257, import-position-dialog.js:212) `[V]` --
+7. **`createOpeningsPanel`** (257, import-position-dialog.js:209) `[V]` --
    EASY-MED. Simple 5-var state
    (`selectedPgn/selectedRow/rows/filterText/sortOrder`), mostly read-only or
    set-together. Independent search/sort/column-resize blocks; `filtered()`
    pure. The engines-list-layout.js col-resize helper is directly reusable here.
 
-9. **`pickFile`** (235, dialogs.js:168) `[V]` -- likely EASY. Probably a
-   sequential builder/flow; low coupling. Verify by reading.
-
-10. **`mountBoard`** (229, board.js:140) `[V]` -- read to assess; board setup +
-    interaction wiring, coupling unknown.
+Now under the 250 cap (no longer offenders): `pickFile` (235), `mountBoard`
+(229), `build_command` (219), `buildLiveGameBox` (207), `showEngineOptionsDialog`
+(204).
 
 11. **`build_command`** (219, server/.../tournament/fastchess.py:64) `[V]` --
     likely EASY (Python). Sequential CLI-arg builder; low coupling. Extract

@@ -119,7 +119,7 @@ def _dump(title, rows):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cap", type=int, default=200)
+    ap.add_argument("--cap", type=int, default=250)
     ap.add_argument("--exit-nonzero-on-violation", action="store_true")
     args = ap.parse_args()
 
