@@ -202,6 +202,69 @@ function loadOpeningsOnce(api) {
   return _openingsPromise;
 }
 
+// Toggle-overlay search bar for the openings table (mirrors the Engines
+// list): a button reveals a slide-up input; outside-click / Escape close it.
+// Owns the document-level listeners + their teardown on dialog hide. Writes
+// the filter via setFilter; the panel owns filterText + renderList.
+function wireOpeningsSearch(el, { setFilter, renderList, clearSelection, scrollSelectedIntoView }) {
+  const searchBtn = el.querySelector(".openings-search-btn");
+  const searchWrap = el.querySelector(".openings-search-wrap");
+  const searchInput = el.querySelector(".openings-search");
+  const tableWrap = el.querySelector(".openings-table-wrap");
+
+  searchInput.addEventListener("input", () => {
+    const text = searchInput.value || "";
+    setFilter(text);
+    searchBtn.classList.toggle("is-active", !!text);
+    clearSelection();
+    renderList();
+  });
+
+  function closeSearch() {
+    searchWrap.classList.remove("open");
+    searchBtn.classList.remove("is-active");
+    searchInput.value = "";
+    setFilter("");
+    renderList();
+    // Clearing the filter re-renders the full list; keep the picked row in
+    // view so the selection doesn't scroll off-screen.
+    scrollSelectedIntoView();
+    document.removeEventListener("pointerdown", onOutsideClick);
+    document.removeEventListener("keydown", onSearchKey, true);
+  }
+  function onOutsideClick(e) {
+    if (searchWrap.contains(e.target) || searchBtn.contains(e.target) || tableWrap.contains(e.target)) return;
+    closeSearch();
+  }
+  // Capture-phase so Escape closes the search bar, not the whole dialog.
+  function onSearchKey(e) {
+    if (e.key === "Escape") { closeSearch(); e.preventDefault(); e.stopPropagation(); }
+  }
+  searchBtn.addEventListener("click", () => {
+    const opening = !searchWrap.classList.contains("open");
+    if (opening) {
+      searchWrap.classList.add("open");
+      searchBtn.classList.add("is-active");
+      requestAnimationFrame(() => searchInput.focus?.());
+      document.addEventListener("pointerdown", onOutsideClick);
+      document.addEventListener("keydown", onSearchKey, true);
+    } else {
+      closeSearch();
+    }
+  });
+  // Committing a row (dbl-click / Enter) closes the whole dialog without
+  // routing through closeSearch, so tear the document-level listeners down on
+  // dialog hide too -- otherwise they leak across open/close cycles.
+  requestAnimationFrame(() => {
+    const dialog = el.closest("wa-dialog");
+    dialog?.addEventListener("wa-after-hide", (ev) => {
+      if (ev.target !== dialog) return;
+      document.removeEventListener("pointerdown", onOutsideClick);
+      document.removeEventListener("keydown", onSearchKey, true);
+    });
+  });
+}
+
 // Build the Openings tab: a resizable-column table (ECO / Name / Moves)
 // loaded once, filtered locally, with a toggle-overlay search bar that
 // mirrors the Engines list. Selecting a row exposes its PGN via
@@ -326,64 +389,10 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
     if (ev.key === "Enter" && selectedPgn) { ev.preventDefault(); onCommit?.(); }
   });
 
-  // Toggle-overlay search, mirroring the Engines list.
-  {
-    const searchBtn = el.querySelector(".openings-search-btn");
-    const searchWrap = el.querySelector(".openings-search-wrap");
-    const searchInput = el.querySelector(".openings-search");
-    const tableWrap = el.querySelector(".openings-table-wrap");
-
-    searchInput.addEventListener("input", () => {
-      filterText = searchInput.value || "";
-      searchBtn.classList.toggle("is-active", !!filterText);
-      clearSelection();
-      renderList();
-    });
-
-    function closeSearch() {
-      searchWrap.classList.remove("open");
-      searchBtn.classList.remove("is-active");
-      searchInput.value = "";
-      filterText = "";
-      renderList();
-      // Clearing the filter re-renders the full list; keep the picked row
-      // in view so the selection doesn't scroll off-screen.
-      scrollSelectedIntoView();
-      document.removeEventListener("pointerdown", onOutsideClick);
-      document.removeEventListener("keydown", onSearchKey, true);
-    }
-    function onOutsideClick(e) {
-      if (searchWrap.contains(e.target) || searchBtn.contains(e.target) || tableWrap.contains(e.target)) return;
-      closeSearch();
-    }
-    // Capture-phase so Escape closes the search bar, not the whole dialog.
-    function onSearchKey(e) {
-      if (e.key === "Escape") { closeSearch(); e.preventDefault(); e.stopPropagation(); }
-    }
-    searchBtn.addEventListener("click", () => {
-      const opening = !searchWrap.classList.contains("open");
-      if (opening) {
-        searchWrap.classList.add("open");
-        searchBtn.classList.add("is-active");
-        requestAnimationFrame(() => searchInput.focus?.());
-        document.addEventListener("pointerdown", onOutsideClick);
-        document.addEventListener("keydown", onSearchKey, true);
-      } else {
-        closeSearch();
-      }
-    });
-    // Committing a row (dbl-click / Enter) closes the whole dialog without
-    // routing through closeSearch, so tear the document-level listeners down
-    // on dialog hide too -- otherwise they leak across open/close cycles.
-    requestAnimationFrame(() => {
-      const dialog = el.closest("wa-dialog");
-      dialog?.addEventListener("wa-after-hide", (ev) => {
-        if (ev.target !== dialog) return;
-        document.removeEventListener("pointerdown", onOutsideClick);
-        document.removeEventListener("keydown", onSearchKey, true);
-      });
-    });
-  }
+  wireOpeningsSearch(el, {
+    setFilter: (text) => { filterText = text; },
+    renderList, clearSelection, scrollSelectedIntoView,
+  });
 
   // Sort A-Z / Z-A, mirroring the Engines list (third click clears).
   {

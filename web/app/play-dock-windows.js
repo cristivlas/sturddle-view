@@ -384,6 +384,11 @@ function addDockButton(wb, onDock) {
 // Registry of instances so lifecycle helpers can iterate without naming them.
 const instances = [];
 
+// oversized-ok: single window-lifecycle state machine -- 12 closures
+// (dock/undock/float/inline/relayout/close/...) over 8 shared placement flags
+// (wb/slot/inlineSlot/body/saved/docking/navAway). The float<->dock<->inline
+// transitions are mutually recursive and share every flag; splitting just
+// relocates the state web behind a ctx object for no readability gain.
 export function createDockableWindow(config) {
   const {
     title, className, geoKey, winStateKey, dockedKey, openKey,
