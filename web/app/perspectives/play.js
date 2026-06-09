@@ -301,11 +301,10 @@ function dispatchAiEvent(aiCtx, evt) {
             duration: 6000,
           });
         }
-        // Natural completion: hide the "stopping" affordances (toast +
-        // active ribbon). Server stays in ANALYSIS; closing the AI window
-        // exits. Skipped on cancel/error. Per-turn dismissal: each Analyze
-        // click is a one-shot turn (see ai-analysis-spec.md, live session).
-        if (!p.cancelled && !p.error) {
+        // End the AI turn on completion AND error (clears the pulse + toast).
+        // Cancel is excluded: it self-resolves via stopAnalysisFromUi ->
+        // analyzing=false. Without this, an error left the button pulsing.
+        if (!p.cancelled) {
           aiShared.turnFinished = true;
           aiShared.dismissAnalysisToast?.();
           aiShared.dismissAnalysisToast = null;
