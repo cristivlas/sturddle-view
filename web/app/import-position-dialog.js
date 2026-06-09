@@ -490,6 +490,148 @@ function detectFormatFromName(name) {
   return null;
 }
 
+// Recents dropdown: the <wa-select> in the dialog label + its options,
+// delete buttons, and the local-cache/server-refresh logic. Reads/writes
+// `ctx.recentsCache` and reads `ctx.format`; controller hooks
+// (onPick/selectTab/setStatus/applyText) are injected. Returns the select
+// element + a render() the controller can re-invoke. The optimistic
+// delete + 409 (has_children) handling stays here -- it's recents-local.
+function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPickSubmit }) {
+  const recentSel = document.createElement("wa-select");
+  recentSel.size = "small";
+  recentSel.placeholder = "Recent...";
+
+  function makeOption(entry, i) {
+    const opt = document.createElement("wa-option");
+    opt.value = String(i);
+    opt.dataset.hash = entry.hash;
+    const full = formatSummary(entry.summary, { short: true }) || entry.hash.slice(0, 12);
+    const shown = truncateMiddle(full, RECENT_TRUNC_MAX);
+    if (shown !== full) opt.title = full;
+    // textContent on the label (no innerHTML) blocks any HTML-injection
+    // from PGN headers in the summary.
+    const labelEl = document.createElement("span");
+    labelEl.className = "recent-label";
+    labelEl.textContent = shown;
+    opt.append(labelEl);
+    const delBtn = document.createElement("button");
+    delBtn.slot = "end";
+    delBtn.className = "recent-del";
+    delBtn.title = "Remove from history";
+    delBtn.setAttribute("aria-label", "Remove");
+    const delIcon = document.createElement("wa-icon");
+    delIcon.setAttribute("name", "trash");
+    delBtn.append(delIcon);
+    // wa-select listens for `mouseup` on the listbox container and
+    // routes it through handleOptionClick -> hide(). Stop both phases
+    // so the listbox stays open.
+    const stop = (ev) => ev.stopPropagation();
+    delBtn.addEventListener("mousedown", stop);
+    delBtn.addEventListener("mouseup", stop);
+    delBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      ev.preventDefault();
+      // Optimistic: remove from cache + DOM immediately so the
+      // dropdown feels snappy. Roll back on server failure.
+      const removed = entry;
+      ctx.recentsCache = ctx.recentsCache.filter((x) => x.hash !== removed.hash);
+      saveRecentsCache(ctx.recentsCache);
+      opt.remove();
+      if (!ctx.recentsCache.length) recentSel.style.visibility = "hidden";
+      api("DELETE", `/game/recent-imports/${removed.hash}`)
+        .then(async () => {
+          // Notify other perspectives that recents changed so they
+          // can refresh derived state (e.g. play.js x-game info,
+          // for the fork glyph + banner). Bus-style decoupling so
+          // the dialog stays unaware of who is listening.
+          window.dispatchEvent(new CustomEvent(APP_EVT.RECENTS_CHANGED, {
+            detail: { deletedHash: removed.hash },
+          }));
+          if (recentSel.querySelectorAll("wa-option").length >= RECENTS_DISPLAY_CAP) return;
+          try {
+            const r = await api("GET", "/game/recent-imports");
+            const known = new Set(ctx.recentsCache.map((c) => c.hash));
+            const fresh = (r.entries || []).filter(
+              (e) => e.hash !== removed.hash && !known.has(e.hash)
+            );
+            if (!fresh.length) return;
+            ctx.recentsCache = [...ctx.recentsCache, ...fresh].slice(0, RECENTS_DISPLAY_CAP);
+            saveRecentsCache(ctx.recentsCache);
+            render();
+          } catch (err) { /* offline -- keep current cache */ }
+        })
+        .catch((e) => {
+          ctx.recentsCache = [removed, ...ctx.recentsCache];
+          saveRecentsCache(ctx.recentsCache);
+          render();
+          // Friendly toast for the "blocked by live forks" 409 case
+          // (xgame nav). Falls back to the generic error otherwise.
+          const obj = apiErrorObject(e);
+          if (obj?.error === "has_children") {
+            const n = Array.isArray(obj.children) ? obj.children.length : 0;
+            const msg = n === 1
+              ? "Cannot delete: this game has 1 forked variation."
+              : `Cannot delete: this game has ${n} forked variations.`;
+            toast(msg, { variant: "warning" });
+          } else {
+            setStatus(apiErrorDetail(e), "err");
+          }
+        });
+    });
+    return opt;
+  }
+  function render() {
+    const shown = ctx.recentsCache.slice(0, RECENTS_DISPLAY_CAP);
+    recentSel.replaceChildren(...shown.map((e, i) => makeOption(e, i)));
+    recentSel.style.visibility = shown.length ? "" : "hidden";
+  }
+  recentSel.addEventListener("change", async () => {
+    const entry = ctx.recentsCache[Number(recentSel.value)];
+    recentSel.value = "";
+    if (!entry) return;
+    try {
+      const r = await api("GET", `/game/recent-imports/${entry.hash}`);
+      const targetFormat = r.format || entry.format;
+      if (targetFormat !== ctx.format) selectTab(targetFormat);
+      applyText(targetFormat, r.text || "");
+      // An opening saved to recents reloads as a PGN; recover its
+      // {eco, name} from the stored label so the re-import keeps the
+      // opening identity (sides + label) instead of becoming a plain
+      // game with "?" players.
+      const openingOverride = openingFromLabel(
+        (r.summary && r.summary.opening) || entry.summary?.opening,
+      );
+      onPickSubmit(openingOverride);
+    } catch (e) {
+      setStatus(apiErrorDetail(e), "err");
+    }
+  });
+  render();
+  // Fire-and-forget refresh from the server. Renders happen immediately
+  // from the local cache, then again when the server responds so the
+  // user sees the freshest list without delay.
+  (async () => {
+    try {
+      const r = await api("GET", "/game/recent-imports");
+      ctx.recentsCache = (r.entries || []).slice(0, RECENTS_DISPLAY_CAP);
+      saveRecentsCache(ctx.recentsCache);
+      render();
+    } catch {
+      // Offline / unauthenticated: keep the local cache as-is.
+    }
+  })();
+  return { recentSel, render };
+}
+
+// Split a stored "B12 Some Opening: Variation" label back into {eco, name}.
+// ECO is the leading [A-E]NN token; the rest is the name. Returns null when
+// the label has no recognizable ECO prefix.
+function openingFromLabel(label) {
+  if (typeof label !== "string") return null;
+  const m = label.match(/^([A-E]\d{2})\s+(.+)$/);
+  return m ? { eco: m[1], name: m[2] } : null;
+}
+
 /** Show import dialog; resolves to {format, text, hash, summary} on Open,
  *  or null on cancel. The dialog validates via /game/import/validate (parse
  *  errors surface inline) but does NOT import -- the caller owns the import
@@ -499,8 +641,11 @@ export function showImportPositionDialog({ api }) {
     label: "Import",
     width: mqNarrowDialog.matches ? DIALOG_WIDTH_NARROW : DIALOG_WIDTH_WIDE,
     body: (resolve, dialog) => {
-      let format = "pgn";
-      let submitting = false;
+      // Shared mutable state: `format`/`submitting` are reassigned by the
+      // controller AND read by the extracted recents dropdown, so they live
+      // on a ctx object (not locals) -- both sides see writes. recentsCache
+      // is reassigned in both the recents handler and submit().
+      const ctx = { format: "pgn", submitting: false, recentsCache: loadRecentsCache() };
 
       const wrap = document.createElement("div");
       wrap.className = "import-pos-form";
@@ -523,8 +668,8 @@ export function showImportPositionDialog({ api }) {
 
       const openings = createOpeningsPanel({
         api,
-        onChange: () => { if (format === "openings") syncSubmitEnabled(); },
-        onCommit: () => { if (format === "openings") submit(); },
+        onChange: () => { if (ctx.format === "openings") syncSubmitEnabled(); },
+        onCommit: () => { if (ctx.format === "openings") submit(); },
       });
       tabs.querySelector('wa-tab-panel[name="openings"]').appendChild(openings.el);
 
@@ -539,7 +684,7 @@ export function showImportPositionDialog({ api }) {
         ta.style.fontFamily = "var(--mono-font, monospace)";
         ta.style.width = "100%";
         ta.addEventListener("input", () => {
-          if (format !== name) return;
+          if (ctx.format !== name) return;
           syncSubmitEnabled();
         });
         // Each text panel holds its content in a flex column so the shared
@@ -570,131 +715,16 @@ export function showImportPositionDialog({ api }) {
       fileBtn.slot = "footer";
       dialog.append(fileBtn, fileInput);
 
-      const recentSel = document.createElement("wa-select");
-      recentSel.size = "small";
-      recentSel.placeholder = "Recent...";
-      let recentsCache = loadRecentsCache();
-      function makeOption(entry, i) {
-        const opt = document.createElement("wa-option");
-        opt.value = String(i);
-        opt.dataset.hash = entry.hash;
-        const full = formatSummary(entry.summary, { short: true }) || entry.hash.slice(0, 12);
-        const shown = truncateMiddle(full, RECENT_TRUNC_MAX);
-        if (shown !== full) opt.title = full;
-        // textContent on the label (no innerHTML) blocks any HTML-injection
-        // from PGN headers in the summary.
-        const labelEl = document.createElement("span");
-        labelEl.className = "recent-label";
-        labelEl.textContent = shown;
-        opt.append(labelEl);
-        const delBtn = document.createElement("button");
-        delBtn.slot = "end";
-        delBtn.className = "recent-del";
-        delBtn.title = "Remove from history";
-        delBtn.setAttribute("aria-label", "Remove");
-        const delIcon = document.createElement("wa-icon");
-        delIcon.setAttribute("name", "trash");
-        delBtn.append(delIcon);
-        opt.append(delBtn);
-        // wa-select listens for `mouseup` on the listbox container and
-        // routes it through handleOptionClick -> hide(). Stop both phases
-        // so the listbox stays open.
-        const stop = (ev) => ev.stopPropagation();
-        delBtn.addEventListener("mousedown", stop);
-        delBtn.addEventListener("mouseup", stop);
-        delBtn.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          ev.preventDefault();
-          // Optimistic: remove from cache + DOM immediately so the
-          // dropdown feels snappy. Roll back on server failure.
-          const removed = entry;
-          recentsCache = recentsCache.filter((x) => x.hash !== removed.hash);
-          saveRecentsCache(recentsCache);
-          opt.remove();
-          if (!recentsCache.length) recentSel.style.visibility = "hidden";
-          api("DELETE", `/game/recent-imports/${removed.hash}`)
-            .then(async () => {
-              // Notify other perspectives that recents changed so they
-              // can refresh derived state (e.g. play.js x-game info,
-              // for the fork glyph + banner). Bus-style decoupling so
-              // the dialog stays unaware of who is listening.
-              window.dispatchEvent(new CustomEvent(APP_EVT.RECENTS_CHANGED, {
-                detail: { deletedHash: removed.hash },
-              }));
-              if (recentSel.querySelectorAll("wa-option").length >= RECENTS_DISPLAY_CAP) return;
-              try {
-                const r = await api("GET", "/game/recent-imports");
-                const known = new Set(recentsCache.map((c) => c.hash));
-                const fresh = (r.entries || []).filter(
-                  (e) => e.hash !== removed.hash && !known.has(e.hash)
-                );
-                if (!fresh.length) return;
-                recentsCache = [...recentsCache, ...fresh].slice(0, RECENTS_DISPLAY_CAP);
-                saveRecentsCache(recentsCache);
-                renderRecents();
-              } catch (err) { /* offline -- keep current cache */ }
-            })
-            .catch((e) => {
-              recentsCache = [removed, ...recentsCache];
-              saveRecentsCache(recentsCache);
-              renderRecents();
-              // Friendly toast for the "blocked by live forks" 409 case
-              // (xgame nav). Falls back to the generic error otherwise.
-              const obj = apiErrorObject(e);
-              if (obj?.error === "has_children") {
-                const n = Array.isArray(obj.children) ? obj.children.length : 0;
-                const msg = n === 1
-                  ? "Cannot delete: this game has 1 forked variation."
-                  : `Cannot delete: this game has ${n} forked variations.`;
-                toast(msg, { variant: "warning" });
-              } else {
-                setStatus(apiErrorDetail(e), "err");
-              }
-            });
-        });
-        return opt;
-      }
-      function renderRecents() {
-        const shown = recentsCache.slice(0, RECENTS_DISPLAY_CAP);
-        recentSel.replaceChildren(...shown.map((e, i) => makeOption(e, i)));
-        recentSel.style.visibility = shown.length ? "" : "hidden";
-      }
-      recentSel.addEventListener("change", async () => {
-        const entry = recentsCache[Number(recentSel.value)];
-        recentSel.value = "";
-        if (!entry) return;
-        try {
-          const r = await api("GET", `/game/recent-imports/${entry.hash}`);
-          const targetFormat = r.format || entry.format;
-          if (targetFormat !== format) selectTab(targetFormat);
-          textareas[targetFormat].value = r.text || "";
-          syncSubmitEnabled();
-          // An opening saved to recents reloads as a PGN; recover its
-          // {eco, name} from the stored label so the re-import keeps the
-          // opening identity (sides + label) instead of becoming a plain
-          // game with "?" players.
-          const openingOverride = openingFromLabel(
-            (r.summary && r.summary.opening) || entry.summary?.opening,
-          );
-          submit(openingOverride);
-        } catch (e) {
-          setStatus(apiErrorDetail(e), "err");
-        }
+      // Loads a recents pick into the matching tab's textarea. Passed to
+      // the recents dropdown so it stays unaware of the textarea map.
+      const applyText = (fmt, text) => {
+        textareas[fmt].value = text;
+        syncSubmitEnabled();
+      };
+      const { recentSel } = buildRecentsDropdown(ctx, {
+        api, selectTab, applyText, setStatus,
+        onPickSubmit: (override) => submit(override),
       });
-      renderRecents();
-      // Fire-and-forget refresh from the server. Renders happen
-      // immediately from the local cache, then again when the server
-      // responds so the user sees the freshest list without delay.
-      (async () => {
-        try {
-          const r = await api("GET", "/game/recent-imports");
-          recentsCache = (r.entries || []).slice(0, RECENTS_DISPLAY_CAP);
-          saveRecentsCache(recentsCache);
-          renderRecents();
-        } catch {
-          // Offline / unauthenticated: keep the local cache as-is.
-        }
-      })();
       const dialogLabel = document.createElement("div");
       dialogLabel.slot = "label";
       dialogLabel.className = "import-dialog-label";
@@ -735,7 +765,7 @@ export function showImportPositionDialog({ api }) {
 
       function selectTab(name) {
         if (typeof tabs.show === "function") tabs.show(name);
-        format = name;
+        ctx.format = name;
         if (name !== "openings") {
           panelBodies[name].append(status);
         }
@@ -744,7 +774,7 @@ export function showImportPositionDialog({ api }) {
           openings.load();
           requestAnimationFrame(openings.measureRibbon);
           openings.focus();
-        } else if (!textareas[format].value.trim()) {
+        } else if (!textareas[ctx.format].value.trim()) {
           setStatus("", "muted");
         }
         syncSubmitEnabled();
@@ -753,37 +783,28 @@ export function showImportPositionDialog({ api }) {
       // The text the import POST will carry, regardless of source tab.
       // Openings resolve to a PGN; that's the format we send.
       function currentText() {
-        return format === "openings" ? openings.selectedPgn() : (textareas[format].value || "");
+        return ctx.format === "openings" ? openings.selectedPgn() : (textareas[ctx.format].value || "");
       }
       function sendFormat() {
-        return format === "openings" ? "pgn" : format;
+        return ctx.format === "openings" ? "pgn" : ctx.format;
       }
 
       function syncSubmitEnabled() {
         const has = currentText().trim().length > 0;
-        if (has && !submitting) start.removeAttribute("disabled");
+        if (has && !ctx.submitting) start.removeAttribute("disabled");
         else start.setAttribute("disabled", "");
       }
 
-      // Split a stored "B12 Some Opening: Variation" label back into
-      // {eco, name}. ECO is the leading [A-E]NN token; the rest is the name.
-      // Returns null when the label has no recognizable ECO prefix.
-      function openingFromLabel(label) {
-        if (typeof label !== "string") return null;
-        const m = label.match(/^([A-E]\d{2})\s+(.+)$/);
-        return m ? { eco: m[1], name: m[2] } : null;
-      }
-
       async function submit(openingOverride = null) {
-        if (submitting) return;
+        if (ctx.submitting) return;
         const text = currentText();
         if (!text.trim()) return;
-        submitting = true;
+        ctx.submitting = true;
         start.setAttribute("disabled", "");
         setStatus("Checking...", "muted");
         const fmt = sendFormat();
         const opening = openingOverride
-          || (format === "openings" ? openings.selectedOpening() : null);
+          || (ctx.format === "openings" ? openings.selectedOpening() : null);
         try {
           const r = await api("POST", "/game/import/validate", { format: fmt, text });
           // Openings are labeled by ECO + name everywhere (recents, confirm
@@ -792,15 +813,15 @@ export function showImportPositionDialog({ api }) {
             ? { ...(r.summary || {}), opening: `${opening.eco} ${opening.name}`.trim() }
             : r.summary;
           if (r.hash) {
-            recentsCache = [
+            ctx.recentsCache = [
               { hash: r.hash, format: fmt, summary, ts: Date.now() },
-              ...recentsCache.filter((e) => e.hash !== r.hash),
+              ...ctx.recentsCache.filter((e) => e.hash !== r.hash),
             ];
-            saveRecentsCache(recentsCache);
+            saveRecentsCache(ctx.recentsCache);
           }
           resolve({ format: fmt, text, hash: r.hash, summary, opening });
         } catch (e) {
-          submitting = false;
+          ctx.submitting = false;
           setStatus(apiErrorDetail(e), "err");
           syncSubmitEnabled();
         }
@@ -810,8 +831,8 @@ export function showImportPositionDialog({ api }) {
       // pre-validation -- the user clicks Open to find out if it parses.
       async function ingestFile(f) {
         const text = await f.text();
-        const hint = detectFormatFromName(f.name) ?? format;
-        if (hint !== format) selectTab(hint);
+        const hint = detectFormatFromName(f.name) ?? ctx.format;
+        if (hint !== ctx.format) selectTab(hint);
         textareas[hint].value = text;
         syncSubmitEnabled();
         setStatus(`Loaded ${f.name}`, "muted");
