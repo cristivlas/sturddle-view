@@ -7,6 +7,7 @@ import { isMobileLayout } from "./play-dock-windows.js";
 import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
+import { SIDE, FEN_STM } from "./chess-consts.js";
 import { fmtClock, fmtScore, selectContentsOnCtrlA } from "./wb-utils.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -237,7 +238,7 @@ function setNames(ctx, { top, bottom } = {}) {
 
 function setHumanWhite(ctx, value) {
   ctx.humanWhite = !!value;
-  ctx.board.setSide(ctx.humanWhite ? "white" : "black");
+  ctx.board.setSide(ctx.humanWhite ? SIDE.WHITE : SIDE.BLACK);
   // In interactive (Play) mode, bottom = human, top = engine. In view
   // mode, re-swap cached PGN names to match the new orientation.
   if (ctx.interactive && !ctx.viewing) {
@@ -251,7 +252,7 @@ function setHumanWhite(ctx, value) {
   if (ctx.showClocks) {
     applyClockColors(ctx);
     if (ctx.editing) {
-      applyClockActive(ctx, ctx.editStm === "b" ? "black" : "white", true);
+      applyClockActive(ctx, ctx.editStm === FEN_STM.BLACK ? SIDE.BLACK : SIDE.WHITE, true);
     } else {
       applyClockActive(ctx, ctx.lastTurn, ctx.lastClockRunning);
     }
@@ -267,7 +268,7 @@ function bottomIsWhite(ctx) {
 function applyClockActive(ctx, turn, active) {
   const bottomWhite = bottomIsWhite(ctx);
   const bottomToMove =
-    (turn === "white" && bottomWhite) || (turn === "black" && !bottomWhite);
+    (turn === SIDE.WHITE && bottomWhite) || (turn === SIDE.BLACK && !bottomWhite);
   ctx.clockBottomRow?.classList.toggle("active", active && bottomToMove);
   ctx.clockTopRow?.classList.toggle("active", active && !bottomToMove);
 }
@@ -275,14 +276,14 @@ function applyClockActive(ctx, turn, active) {
 function applyClockColors(ctx) {
   if (!ctx.showClocks) return;
   const bottomWhite = bottomIsWhite(ctx);
-  if (ctx.clockBottomRow) ctx.clockBottomRow.dataset.color = bottomWhite ? "white" : "black";
-  if (ctx.clockTopRow) ctx.clockTopRow.dataset.color = bottomWhite ? "black" : "white";
+  if (ctx.clockBottomRow) ctx.clockBottomRow.dataset.color = bottomWhite ? SIDE.WHITE : SIDE.BLACK;
+  if (ctx.clockTopRow) ctx.clockTopRow.dataset.color = bottomWhite ? SIDE.BLACK : SIDE.WHITE;
 }
 
 // `viewing` here is the event's clock flag, distinct from ctx.viewing.
 function setClock(ctx, { white_time, black_time, turn, running, viewing }) {
   if (!ctx.showClocks) return;
-  ctx.lastTurn = turn || "white";
+  ctx.lastTurn = turn || SIDE.WHITE;
   ctx.lastClockRunning = running || !!viewing;
   const bottomWhite = bottomIsWhite(ctx);
   const bottomTime = bottomWhite ? white_time : black_time;
@@ -831,9 +832,9 @@ function buildViewApi(ctx) {
     setEditSide(stm) {
       // Authoritative setter for the in-edit STM. Updates clock-active
       // styling immediately since the server isn't ticking during edit.
-      ctx.editStm = stm === "b" ? "b" : "w";
+      ctx.editStm = stm === FEN_STM.BLACK ? FEN_STM.BLACK : FEN_STM.WHITE;
       if (ctx.showClocks) {
-        applyClockActive(ctx, ctx.editStm === "b" ? "black" : "white", true);
+        applyClockActive(ctx, ctx.editStm === FEN_STM.BLACK ? SIDE.BLACK : SIDE.WHITE, true);
       }
     },
     getEditSide() { return ctx.editStm; },
@@ -841,7 +842,7 @@ function buildViewApi(ctx) {
       ctx.board.exitEditMode();
       // Clear .active so the stale STM highlight doesn't persist past the
       // edit; the next clock_tick from a real board_update re-applies it.
-      if (ctx.showClocks) applyClockActive(ctx, "white", false);
+      if (ctx.showClocks) applyClockActive(ctx, SIDE.WHITE, false);
     },
     toggleCastlingRight(right) { ctx.board.toggleCastlingRight(right); },
     getCastlingRights() { return ctx.board.getCastlingRights(); },
@@ -904,7 +905,7 @@ export function mountGameView(container, opts = {}) {
     gameId: null,
     engineName: "Engine",
     playerName: PLAYER_NAME_DEFAULT,
-    lastTurn: "white",
+    lastTurn: SIDE.WHITE,
     lastClockRunning: false,
     viewing: false,
     editing: false,
@@ -913,7 +914,7 @@ export function mountGameView(container, opts = {}) {
     // reveal the perspective without a render-order flicker.
     firstBoardUpdate: true,
     // Edit-mode side-to-move ("w"|"b"). Authoritative while editing.
-    editStm: "w",
+    editStm: FEN_STM.WHITE,
     // Analysis mode: streams PV from a dedicated engine even while viewing.
     analyzing: false,
     // Cached PGN names so flipping the board in view mode can re-swap

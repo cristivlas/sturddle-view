@@ -20,6 +20,7 @@ from typing import Any, Awaitable, Callable
 import chess
 import chess.engine
 
+from ..chess.results import SIDE_BLACK, SIDE_WHITE
 from ..config import (
     _DEFAULT_AI_ANALYZE_MAX_DEPTH,
     _DEFAULT_AI_VERIFICATION_DEPTH,
@@ -800,7 +801,7 @@ def make_top_moves_tool(
             c.pop("_sort_key", None)
 
         out: dict = {
-            "side_to_move": "white" if stm_is_white else "black",
+            "side_to_move": SIDE_WHITE if stm_is_white else SIDE_BLACK,
             "limits_used": limits_used,
             "candidates": entries,
         }

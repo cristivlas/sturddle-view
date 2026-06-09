@@ -8,6 +8,7 @@ import { confirm, reportError, toast } from "./dialogs.js";
 import { isPlayInProgress, isViewing, isAnalyzing, getViewingHash, getViewingSummary } from "./perspectives/play.js";
 import { confirmReplaceViewedGame } from "./import-position-dialog.js";
 import { APP_EVT } from "./app-events.js";
+import { SIDE, FEN_STM } from "./chess-consts.js";
 import { fmtClock, fmtScore, flashWindow } from "./wb-utils.js";
 import { terminationPhrase } from "./format-termination.js";
 
@@ -538,12 +539,12 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 
   function setEngineColor(color) {
     engineColor = color;
-    const oppColor = color === "white" ? "black" : "white";
-    const eName = engineName || (color === "white" ? "White" : "Black");
+    const oppColor = color === SIDE.WHITE ? SIDE.BLACK : SIDE.WHITE;
+    const eName = engineName || (color === SIDE.WHITE ? "White" : "Black");
     bottomNameEl.textContent = eName;
     bottomNameEl.title = eName;
     if (!opponentName) {
-      const oName = oppColor === "white" ? "White" : "Black";
+      const oName = oppColor === SIDE.WHITE ? "White" : "Black";
       topNameEl.textContent = oName;
       topNameEl.title = oName;
     }
@@ -560,8 +561,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 
   function updateClocks(wtime, btime) {
     if (!engineColor || wtime == null || btime == null) return;
-    bottomTimeEl.textContent = fmtClock((engineColor === "white" ? wtime : btime) / 1000, { tenthsBelow: 60 });
-    topTimeEl.textContent = fmtClock((engineColor === "white" ? btime : wtime) / 1000, { tenthsBelow: 60 });
+    bottomTimeEl.textContent = fmtClock((engineColor === SIDE.WHITE ? wtime : btime) / 1000, { tenthsBelow: 60 });
+    topTimeEl.textContent = fmtClock((engineColor === SIDE.WHITE ? btime : wtime) / 1000, { tenthsBelow: 60 });
   }
 
   async function applyBestMove(uciMove) {
@@ -592,7 +593,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
           positionGen++;
           currentFen = p.fen;
           const turn = p.fen.split(" ")[1];
-          const color = turn === "b" ? "black" : "white";
+          const color = turn === FEN_STM.BLACK ? SIDE.BLACK : SIDE.WHITE;
           if (color !== engineColor) {
             setEngineColor(color);
             board.setSide(color);
@@ -611,7 +612,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
         clockBottomEl.classList.toggle("active", !!engineColor);
         if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
         if (engineColor && p.wtime != null && p.btime != null) {
-          const startMs = engineColor === "white" ? p.wtime : p.btime;
+          const startMs = engineColor === SIDE.WHITE ? p.wtime : p.btime;
           activeDeadline = Date.now() + startMs;
           const tick = () => {
             const remaining = Math.max(0, activeDeadline - Date.now());
@@ -631,7 +632,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
         clockTopEl.classList.toggle("active", !!engineColor);
         if (currentFen && p.move) applyBestMove(p.move);
         if (engineColor && lastWtime != null && lastBtime != null) {
-          const oppMs = engineColor === "white" ? lastBtime : lastWtime;
+          const oppMs = engineColor === SIDE.WHITE ? lastBtime : lastWtime;
           activeDeadline = Date.now() + oppMs;
           const tick = () => {
             const remaining = Math.max(0, activeDeadline - Date.now());
@@ -759,8 +760,8 @@ export function openFrozenGameWindow({
       // Engine that was watched live is the one whose label matched
       // engineName. Fall back to bottom = engineName side.
       const engineIsWhite = engineName && rec.engine_white === engineName;
-      const color = engineIsWhite ? "white" : "black";
-      const oppColor = engineIsWhite ? "black" : "white";
+      const color = engineIsWhite ? SIDE.WHITE : SIDE.BLACK;
+      const oppColor = engineIsWhite ? SIDE.BLACK : SIDE.WHITE;
       board.setSide(color);
       if (fen) board.setPosition(fen, lastMove);
       board.clearArrows();

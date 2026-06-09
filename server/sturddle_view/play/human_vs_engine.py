@@ -23,6 +23,7 @@ from .._atomic import atomic_write_text
 if TYPE_CHECKING:
     from ..recent_imports import RecentImports
 from ..chess.board import board_from, moves_san as _moves_san, side_to_move
+from ..chess.results import SIDE_WHITE
 from ..chess.pgn_build import build_pgn
 from .canonical_hash import canonical_hash
 from ..chess.results import DRAW, loser_result
@@ -1607,7 +1608,7 @@ class HumanVsEngine:
             game_id = self._game_id
             await self._cancel_think()
             # Loser is the side to move when the flag fell.
-            result = loser_result(loser == "white")
+            result = loser_result(loser == SIDE_WHITE)
             self._maybe_save_pgn(result=result, termination="time_forfeit")
             self._stash_recents_payload(result=result, termination="time_forfeit")
         await self._bus.publish(
@@ -2214,7 +2215,7 @@ class HumanVsEngine:
             "white": white,
             "black": black,
             "result": result,
-            "side_to_move": "white" if self._board.turn == chess.WHITE else "black",
+            "side_to_move": side_to_move(self._board),
             "source": "play",
         }
 

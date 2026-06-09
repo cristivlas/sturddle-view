@@ -14,6 +14,7 @@ import {
 } from "../vendor/cm-chessboard/src/extensions/promotion-dialog/PromotionDialog.js";
 import { PositionEditor } from "../vendor/cm-chessboard-position-editor/src/PositionEditor.js";
 import { resolveBoardStyle } from "./board-styles.js";
+import { SIDE } from "./chess-consts.js";
 
 // Pinned cm-chessboard version this patch was verified against. On upgrade,
 // re-verify the queue methods still match the expected shape (see
@@ -152,7 +153,7 @@ export function mountBoard({ element, onMove, styleId }) {
   let inputEnabled = false;
 
   function setSide(side) {
-    const next = side === "black" ? COLOR.black : COLOR.white;
+    const next = side === SIDE.BLACK ? COLOR.black : COLOR.white;
     if (next === myColor) return;
     myColor = next;
     board.setOrientation(myColor);

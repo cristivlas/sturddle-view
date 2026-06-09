@@ -17,7 +17,8 @@ import {
   isLiveWindowOpen, openLiveGameWindow, openFrozenGameWindow,
   LIVE_MIN_WIDTH, LIVE_MIN_HEIGHT, DEBUG_WATCH,
 } from "./tournament-live-game.js";
-import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
+import { EVT, EVT_PREFIX, KIND, STATUS, SPRT } from "./tournament-events.js";
+import { SIDE } from "./chess-consts.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, removeKey } from "./storage.js";
@@ -1128,13 +1129,13 @@ function renderStandings(ctx) {
     .join("");
   if (sprt) {
     const lo = sprt.lower_bound, hi = sprt.upper_bound, llr = sprt.llr;
-    const concluded = sprt.status !== "continue";
-    const colorMod = concluded ? (sprt.status === "H1" ? " wb-sprt--h1" : " wb-sprt--h0") : "";
+    const concluded = sprt.status !== SPRT.CONTINUE;
+    const colorMod = concluded ? (sprt.status === SPRT.H1 ? " wb-sprt--h1" : " wb-sprt--h0") : "";
     const candidate = ctx.detail.engines?.[0]?.name ? escapeHtml(ctx.detail.engines[0].name) : "candidate";
     const pairsText = sprt.pairs != null ? ` * ${sprt.pairs} pair${sprt.pairs === 1 ? "" : "s"}` : "";
-    const statusText = sprt.status === "H1"
+    const statusText = sprt.status === SPRT.H1
       ? `H1 (${candidate} is stronger)`
-      : sprt.status === "H0"
+      : sprt.status === SPRT.H0
         ? `H0 (no significant difference)`
         : sprt.status;
     sprtSlot.innerHTML = `<div class="wb-sprt${colorMod}">` +
@@ -1182,8 +1183,8 @@ function renderSchedule(ctx) {
     shownPairs.add(key);
     const li = document.createElement("li");
     li.className = "wb-sched-live wb-sched-pair";
-    const wLabel = info.sideA === "white" ? info.engineA : info.engineB;
-    const bLabel = info.sideA === "white" ? info.engineB : info.engineA;
+    const wLabel = info.sideA === SIDE.WHITE ? info.engineA : info.engineB;
+    const bLabel = info.sideA === SIDE.WHITE ? info.engineB : info.engineA;
     const pairLabel = `${wLabel} - ${bLabel}`;
     li.innerHTML = `
       <span class="wb-sched-icon">&#9822;</span>

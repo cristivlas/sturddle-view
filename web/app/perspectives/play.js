@@ -5,6 +5,7 @@
 import { mountGameView } from "../game-view.js";
 import { APP_EVT } from "../app-events.js";
 import { KIND, AI_KIND_PREFIX } from "../game-events.js";
+import { SIDE, FEN_STM } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
 import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
@@ -110,7 +111,7 @@ function formatResult(payload, humanWhite) {
     return whiteWins ? RESULT.WHITE_WIN : RESULT.BLACK_WIN;
   }
   if (result === "timeout") {
-    return loser === "white" ? RESULT.BLACK_WIN : RESULT.WHITE_WIN;
+    return loser === SIDE.WHITE ? RESULT.BLACK_WIN : RESULT.WHITE_WIN;
   }
   return "";
 }
@@ -129,7 +130,7 @@ function formatGameOver(payload, humanWhite) {
     return by === "human" ? MSG.YOU_RESIGNED : MSG.ENGINE_RESIGNED;
   }
   if (result === "timeout") {
-    const humanLost = (loser === "white") === humanWhite;
+    const humanLost = (loser === SIDE.WHITE) === humanWhite;
     return humanLost ? MSG.YOU_LOST_ON_TIME : MSG.ENGINE_LOST_ON_TIME;
   }
   const reason = terminationLabel(termination);
@@ -214,7 +215,7 @@ function formatGameLabel(summary) {
 // Parse a FEN's side-to-move letter and {wK,wQ,bK,bQ} castling-rights map.
 function _seedFromFen(fen) {
   const parts = (fen || "").split(" ");
-  const stm = parts[1] === "b" ? "b" : "w";
+  const stm = parts[1] === FEN_STM.BLACK ? FEN_STM.BLACK : FEN_STM.WHITE;
   const rights = parts[2] || "";
   return {
     stm,
@@ -847,7 +848,7 @@ function editSidePopoverToggle(state, ev) {
   }
 }
 function editSideFlip(state) {
-  state.view.setEditSide(state.view.getEditSide() === "w" ? "b" : "w");
+  state.view.setEditSide(state.view.getEditSide() === FEN_STM.WHITE ? FEN_STM.BLACK : FEN_STM.WHITE);
   state.refreshButtons();
 }
 function editCastleToggle(state, right) {
@@ -944,7 +945,7 @@ function refreshButtons(state) {
   state.el.editRibbon.style.display = state.editing ? "" : "none";
   window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_ACTIVE, { detail: { el: activeRibbon } }));
   if (state.editing) {
-    const isWhite = state.view.getEditSide() === "w";
+    const isWhite = state.view.getEditSide() === FEN_STM.WHITE;
     state.el.editSideBtn.setAttribute("aria-label", `Side to move: ${isWhite ? "White" : "Black"}`);
     state.el.editSideBtn.setAttribute("title", `Side to move: ${isWhite ? "White" : "Black"}`);
     state.el.editSideBtn.classList.toggle("is-active", !isWhite);
@@ -989,7 +990,7 @@ function refreshButtons(state) {
     });
     return;
   }
-  const humanToMove = state.humanWhite ? state.turn === "white" : state.turn === "black";
+  const humanToMove = state.humanWhite ? state.turn === SIDE.WHITE : state.turn === SIDE.BLACK;
   // Completed AI analysis in play mode reads as paused to the user; show
   // Resume (see aiAnalysisDone / onPause). Engine-only analysis and
   // in-progress runs keep the plain Pause/Resume toggle.
@@ -1679,7 +1680,7 @@ export const playPerspective = {
       viewTotalPlies: 0,
       viewGameOver: false,
       humanWhite: true,
-      turn: "white",
+      turn: SIDE.WHITE,
       resignAvailable: false,
       gameOver: false,
       paused: false,

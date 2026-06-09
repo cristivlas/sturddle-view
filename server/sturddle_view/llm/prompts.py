@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from typing import Iterable, Literal
 
+from ..chess.results import SIDE_BLACK, SIDE_WHITE
 from .tools import ToolSpec
 
 
@@ -235,8 +236,8 @@ def _side_to_move_from_fen(fen: str) -> str:
     reasonable default, and analyze tools will surface the real error."""
     parts = fen.split()
     if len(parts) >= 2 and parts[1] == "b":
-        return "black"
-    return "white"
+        return SIDE_BLACK
+    return SIDE_WHITE
 
 
 def _position_under_review(fen: str) -> str:

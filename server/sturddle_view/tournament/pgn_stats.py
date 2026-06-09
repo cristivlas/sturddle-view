@@ -98,14 +98,21 @@ class Standings:
         }
 
 
+# SPRT status wire strings. Serialized in the sprt.status field; the
+# client switches on the same values to render the conclusion banner.
+SPRT_H0 = "H0"
+SPRT_H1 = "H1"
+SPRT_CONTINUE = "continue"
+
+
 @dataclass
 class SprtResult:
     """Outcome of a Sequential Probability Ratio Test on the PGN to date.
 
     ``status`` is one of:
-      - ``"H1"``    — accept H1 (engine A is stronger by `elo1` or more)
-      - ``"H0"``    — accept H0 (engine A is no stronger than `elo0`)
-      - ``"continue"`` — neither bound reached; keep playing
+      - ``SPRT_H1``       — accept H1 (engine A is stronger by `elo1` or more)
+      - ``SPRT_H0``       — accept H0 (engine A is no stronger than `elo0`)
+      - ``SPRT_CONTINUE`` — neither bound reached; keep playing
     """
     llr: float
     lower_bound: float
@@ -1017,7 +1024,7 @@ def compute_sprt(
             llr=0.0,
             lower_bound=lower,
             upper_bound=upper,
-            status="continue",
+            status=SPRT_CONTINUE,
             pairs=0,
             elo0=elo0,
             elo1=elo1,
@@ -1033,7 +1040,7 @@ def compute_sprt(
             llr=0.0,
             lower_bound=lower,
             upper_bound=upper,
-            status="continue",
+            status=SPRT_CONTINUE,
             pairs=n,
             elo0=elo0,
             elo1=elo1,
@@ -1051,7 +1058,7 @@ def compute_sprt(
             llr=0.0,
             lower_bound=lower,
             upper_bound=upper,
-            status="continue",
+            status=SPRT_CONTINUE,
             pairs=n,
             elo0=elo0,
             elo1=elo1,
@@ -1073,11 +1080,11 @@ def compute_sprt(
     llr = n * (s1 - s0) * (mu - (s0 + s1) / 2.0) / var
 
     if llr >= upper:
-        status = "H1"
+        status = SPRT_H1
     elif llr <= lower:
-        status = "H0"
+        status = SPRT_H0
     else:
-        status = "continue"
+        status = SPRT_CONTINUE
 
     return SprtResult(
         llr=llr,
@@ -1133,7 +1140,7 @@ def _compute_sprt_logistic(
     if not games:
         return SprtResult(
             llr=0.0, lower_bound=lower, upper_bound=upper,
-            status="continue", pairs=0,
+            status=SPRT_CONTINUE, pairs=0,
             elo0=elo0, elo1=elo1, model="logistic",
         )
 
@@ -1163,7 +1170,7 @@ def _compute_sprt_logistic(
     if n == 0:
         return SprtResult(
             llr=0.0, lower_bound=lower, upper_bound=upper,
-            status="continue", pairs=0,
+            status=SPRT_CONTINUE, pairs=0,
             elo0=elo0, elo1=elo1, model="logistic",
         )
 
@@ -1175,17 +1182,17 @@ def _compute_sprt_logistic(
     if min(pw0, pl0, pw1, pl1) <= 0.0:
         return SprtResult(
             llr=0.0, lower_bound=lower, upper_bound=upper,
-            status="continue", pairs=n,
+            status=SPRT_CONTINUE, pairs=n,
             elo0=elo0, elo1=elo1, model="logistic",
         )
 
     llr = wins * math.log(pw1 / pw0) + losses * math.log(pl1 / pl0)
     if llr >= upper:
-        status = "H1"
+        status = SPRT_H1
     elif llr <= lower:
-        status = "H0"
+        status = SPRT_H0
     else:
-        status = "continue"
+        status = SPRT_CONTINUE
 
     return SprtResult(
         llr=llr, lower_bound=lower, upper_bound=upper,

@@ -29,6 +29,14 @@ export const STATUS = {
   FAILED:  "failed",
 };
 
+// SPRT conclusion carried in sprt.status.
+// Cross-ref: server/sturddle_view/tournament/pgn_stats.py (SPRT_*).
+export const SPRT = {
+  H0:       "H0",
+  H1:       "H1",
+  CONTINUE: "continue",
+};
+
 // Periodic refresh cadence for the selected tournament while running.
 // Catches WS gaps (reconnects, missed payloads) and pulls a fresh
 // games-played count from the server (read from fastchess's config.json
