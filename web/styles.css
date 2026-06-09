@@ -1522,13 +1522,10 @@ body .side-popover.popover-floating {
   pointer-events: none;
   filter: grayscale(0.4);
 }
-/* Game paused (not analyzing): dim board to reinforce the header badge.
-   Suppressed while a wa-dialog is open so the modal backdrop doesn't
-   stack on top of the paused-dim and double-darken the board. */
-body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
-  opacity: 0.6;
+/* Game paused (not analyzing): block board interaction. No visual dim --
+   the header badge alone signals the paused state. */
+.play-board-host.board-paused .board {
   pointer-events: none;
-  filter: grayscale(0.5) brightness(0.85);
 }
 
 /* 800px = --bp-mobile, 680px = --bp-mobile-h-play (media queries can't
