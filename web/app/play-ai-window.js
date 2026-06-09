@@ -118,7 +118,7 @@ function buildBody() {
   // back to the current round's prose paragraph.
   selectContentsOnCtrlA(root, () => {
     const hovered = root._hoveredTarget;
-    const detailPre = hovered?.closest(".play-ai-tool-details-body");
+    const detailPre = hovered?.closest(`.${TOOL_DETAILS_BODY_CLASS}`);
     const errorBlock = hovered?.closest(".play-ai-error");
     const prosePara = hovered?.closest(".play-ai-prose");
     return (detailPre && !detailPre.hidden)
@@ -278,6 +278,11 @@ const MOVE_TOOL_VERBS = {
   delegate:       "Verifying",
 };
 
+const ANALYSIS_WINDOW_TITLE = "Analysis";
+
+const TOOL_DETAILS_BODY_CLASS = "play-ai-tool-details-body";
+const ROUNDCAP_CLASS = "play-ai-roundcap";
+
 function friendlyToolLabel(name, input) {
   const move = input && typeof input.move === "string" ? input.move.trim() : "";
   const verb = MOVE_TOOL_VERBS[name];
@@ -304,7 +309,7 @@ const TITLE_ACTIONS = [
 let inlineEl = null;
 
 const inst = createDockableWindow({
-  title: "AI Analysis",
+  title: ANALYSIS_WINDOW_TITLE,
   className: "sturddle-wb-ai",
   geoKey: GEO_KEY,
   winStateKey: WIN_STATE_KEY,
@@ -339,15 +344,15 @@ export function setOnReanalyzeAi(fn) {
 
 export function setAiTitle(modelName) {
   const name = modelName || "";
-  const t = name ? `AI Analysis (${name})` : "AI Analysis";
+  const t = name ? `${ANALYSIS_WINDOW_TITLE} (${name})` : ANALYSIS_WINDOW_TITLE;
   inst.setTitle(t);
   saveRaw(TITLE_MODEL_KEY, name || null);
 }
 
 // Restore the last-run title on module load so a page reload does not
-// reset the panel to the bare "AI Analysis" label.
+// reset the panel to the bare "Analysis" label.
 const saved = loadRaw(TITLE_MODEL_KEY);
-if (saved) inst.setTitle(`AI Analysis (${saved})`);
+if (saved) inst.setTitle(`${ANALYSIS_WINDOW_TITLE} (${saved})`);
 
 export function openAi() {
   if (inst.wb || inst.slot || inst.inlineSlot) return;
@@ -453,7 +458,7 @@ export function appendAiToolCall({
     toggle.textContent = "▶";
     line.append(toggle);
     const pre = document.createElement("pre");
-    pre.className = "play-ai-tool-details-body";
+    pre.className = TOOL_DETAILS_BODY_CLASS;
     pre.hidden = true;
     pre.textContent = raw;
     line.append(pre);
@@ -490,7 +495,7 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
   if (line.classList.contains(cls)) return;
   line.classList.add(cls);
   const suffix = detail ? `${error}: ${detail}` : error;
-  const pre = line.querySelector(".play-ai-tool-details-body");
+  const pre = line.querySelector(`.${TOOL_DETAILS_BODY_CLASS}`);
   if (pre) {
     pre.textContent = `${pre.textContent}\n${suffix}`;
     // Known error codes get the same inline action (gear -> Settings) the
@@ -694,7 +699,7 @@ export function appendAiDelta(text, roundIndex = 0, thinkingMs = null) {
 // the narrator tool-call cap and the verifier-rounds cap (same tab).
 function _roundCapNote(message) {
   const note = document.createElement("div");
-  note.className = "play-ai-roundcap";
+  note.className = ROUNDCAP_CLASS;
   const text = document.createElement("span");
   text.textContent = message;
   const gear = document.createElement("wa-icon");
@@ -783,14 +788,14 @@ export function markAiDone({
     }
     if (noResponse) {
       const note = document.createElement("div");
-      note.className = "play-ai-roundcap";
+      note.className = ROUNDCAP_CLASS;
       note.textContent = "Model produced no answer. Try a different model -- some stream only chain-of-thought.";
       slot.append(note);
       return;
     }
     if (noRecommendation) {
       const note = document.createElement("div");
-      note.className = "play-ai-roundcap";
+      note.className = ROUNDCAP_CLASS;
       note.textContent = "No move chosen -- the analysis finished without committing to one.";
       slot.append(note);
       return;
