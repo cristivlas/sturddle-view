@@ -16,6 +16,7 @@
   --row-bg-hover: #4a4e58;
   --row-bg-selected: #2a3a4a;
   --border-subtle: #2e3138;
+  --border-faint: #26282e;  /* row separators: fainter than --border-subtle */
 
   /* Status callouts (used by import dialog and similar). Pinned because
      webawesome's --wa-color-{success,danger}-50 tokens are dark-mode
@@ -1030,8 +1031,7 @@ wa-dialog:has(.import-pos-form)::part(body) {
   text-overflow: ellipsis;
   white-space: nowrap;
   background: transparent;
-  border-top: 1px solid var(--border-subtle);
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-faint);
 }
 .openings-list-item:hover { background: var(--row-bg-hover); }
 .openings-list-item.selected { background: var(--row-bg-selected); }
@@ -2301,8 +2301,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   text-overflow: ellipsis;
   white-space: nowrap;
   background: transparent;
-  border-top: 1px solid var(--border-subtle);
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-faint);
 }
 .engines-list-item td:last-child {
   border-right: none;
