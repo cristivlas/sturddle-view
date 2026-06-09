@@ -203,6 +203,12 @@ const MSG = {
 // nav links so the user can't jump games mid-analysis.
 const XGAME_LOCK_CLASS = "xgame-nav-locked";
 
+// Edit-mode popover (side-to-move / castling) placement when the ribbon
+// floats: the WinBox body clips overflow, so the popover is portaled to
+// <body> and positioned (position: fixed) against the viewport.
+const POPOVER_FLOATING_CLASS = "popover-floating";
+const POPOVER_GAP = 8; // px between trigger button and floated popover
+
 // "White vs Black (result)" label for an x-game summary.
 function formatGameLabel(summary) {
   const s = summary || {};
@@ -830,21 +836,76 @@ async function stopAnalysisFromUi(state) {
 
 // Edit-mode side/castling popover handlers. Operate on the shared `state`
 // (state.el DOM refs, state.view, state.refreshButtons, state.editing).
+
+// True when the ribbon is in floating (WinBox) mode -- body[data-ribbon-float]
+// is the source of truth (cleared on mobile where float is suppressed).
+function _ribbonFloating() {
+  return !!document.body.dataset.ribbonFloat;
+}
+
+// Portal `popover` to <body> and position it (position: fixed) beside the
+// floating WinBox. Horizontal anchor is the WHOLE window's edge (not the
+// button) so the popover clears the window instead of overlapping it; vertical
+// anchor tracks the button. Used only in floating mode; docked mode keeps
+// CSS-anchored popovers.
+function _floatPopover(btn, popover) {
+  document.body.appendChild(popover);
+  popover.classList.add(POPOVER_FLOATING_CLASS);
+  popover.style.left = "0px";
+  popover.style.top = "0px";
+  const b = btn.getBoundingClientRect();
+  // Anchor horizontally to the WinBox so the popover sits outside it. Fall
+  // back to the button rect if the window element can't be found.
+  const wbEl = btn.closest(".winbox");
+  const anchor = wbEl ? wbEl.getBoundingClientRect() : b;
+  const pw = popover.offsetWidth;
+  const ph = popover.offsetHeight;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  let left = anchor.right + POPOVER_GAP;
+  if (left + pw > vw) left = anchor.left - POPOVER_GAP - pw; // flip left of window
+  left = Math.max(POPOVER_GAP, Math.min(left, vw - pw - POPOVER_GAP));
+  let top = b.top; // vertical alignment stays with the trigger button
+  if (top + ph > vh) top = b.bottom - ph; // anchor bottom edge instead
+  top = Math.max(POPOVER_GAP, Math.min(top, vh - ph - POPOVER_GAP));
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
+}
+
+// Undo _floatPopover: strip fixed-position styling and return the popover to
+// its wrap so the docked CSS rules apply again.
+function _unfloatPopover(popover, wrap) {
+  popover.classList.remove(POPOVER_FLOATING_CLASS);
+  popover.style.left = "";
+  popover.style.top = "";
+  if (popover.parentNode !== wrap) wrap.appendChild(popover);
+}
+
 function _closeSidePopover(state) {
   state.el.editSidePopover.classList.add("hidden");
   state.el.editSideBtn.setAttribute("aria-expanded", "false");
+  _unfloatPopover(state.el.editSidePopover, state.el.editSidePopoverWrap);
 }
 function _closeCastlePopover(state) {
   state.el.editCastlePopover.classList.add("hidden");
   state.el.editCastleBtn.setAttribute("aria-expanded", "false");
+  _unfloatPopover(state.el.editCastlePopover, state.el.editCastlePopoverWrap);
+}
+// Close both edit-mode popovers (e.g. on viewport resize or WinBox drag,
+// where repositioning a floated popover would be more churn than value).
+function _closeEditPopovers(state) {
+  _closeSidePopover(state);
+  _closeCastlePopover(state);
 }
 function editSidePopoverToggle(state, ev) {
   ev.stopPropagation();
   if (!state.el.editSidePopover.classList.contains("hidden")) {
     _closeSidePopover(state);
   } else {
+    _closeCastlePopover(state); // popovers are mutually exclusive
     state.el.editSidePopover.classList.remove("hidden");
     state.el.editSideBtn.setAttribute("aria-expanded", "true");
+    if (_ribbonFloating()) _floatPopover(state.el.editSideBtn, state.el.editSidePopover);
   }
 }
 function editSideFlip(state) {
@@ -860,8 +921,10 @@ function editCastlePopoverToggle(state, ev) {
   if (!state.el.editCastlePopover.classList.contains("hidden")) {
     _closeCastlePopover(state);
   } else {
+    _closeSidePopover(state); // popovers are mutually exclusive
     state.el.editCastlePopover.classList.remove("hidden");
     state.el.editCastleBtn.setAttribute("aria-expanded", "true");
+    if (_ribbonFloating()) _floatPopover(state.el.editCastleBtn, state.el.editCastlePopover);
   }
 }
 function editDocClickClose(state, ev) {
@@ -1418,6 +1481,7 @@ function _clearEditTransitionSuppression(state) {
 
 function _onServerEditingStop(state) {
   state.view.exitEditMode();
+  _closeEditPopovers(state); // un-float any portaled popover before edit UI hides
   _clearEditTransitionSuppression(state);
   state.pendingAnnotation = null;
   pushNavToUi(state);
@@ -1742,9 +1806,11 @@ export const playPerspective = {
     const editRibbon = root.querySelector("#edit-controls");
     const editSideBtn = root.querySelector("#edit-side");
     const editSidePopover = root.querySelector("#edit-side-popover");
+    const editSidePopoverWrap = editSidePopover.parentElement; // restore target after float
     const editSideTogglePill = root.querySelector("#edit-side-toggle");
     const editCastleBtn = root.querySelector("#edit-castle-btn");
     const editCastlePopover = root.querySelector("#edit-castle-popover");
+    const editCastlePopoverWrap = editCastlePopover.parentElement;
     const editCastleCb = {
       wK: root.querySelector("#edit-castle-cb-wk"),
       wQ: root.querySelector("#edit-castle-cb-wq"),
@@ -1758,7 +1824,8 @@ export const playPerspective = {
     // DOM refs read by lifted module-level handlers (edit popovers,
     // refreshButtons). Mount keeps the bare consts for listener wiring.
     state.el = {
-      editSideBtn, editSidePopover, editCastleBtn, editCastlePopover,
+      editSideBtn, editSidePopover, editSidePopoverWrap,
+      editCastleBtn, editCastlePopover, editCastlePopoverWrap,
       editSideTogglePill, editCastleCb, editRibbon, playRibbon, viewRibbon,
       pauseBtn, takebackBtn, savePgnBtn, switchSidesBtn, resignBtn, analyzeBtn,
       viewFirstBtn, viewBackBtn, viewForwardBtn, viewLastBtn, viewSavePgnBtn,
@@ -2020,6 +2087,12 @@ export const playPerspective = {
     editCastleCb.bK.addEventListener("click", onCastleBK);
     editCastleCb.bQ.addEventListener("click", onCastleBQ);
     document.addEventListener("click", onDocClickClosePopover);
+    const onPopoverDismiss = () => _closeEditPopovers(state);
+    window.addEventListener("resize", onPopoverDismiss);
+    window.addEventListener(APP_EVT.RIBBON_MOVED, onPopoverDismiss);
+    // Closing the float WinBox re-docks the ribbon; un-float and close any
+    // open popover so it doesn't orphan at <body>.
+    window.addEventListener(APP_EVT.RIBBON_FLOAT_CLOSED, onPopoverDismiss);
     editAnnotateBtn.addEventListener("click", onEditAnnotate);
     editConfirmBtn.addEventListener("click", onEditConfirm);
     editCancelBtn.addEventListener("click", onEditCancel);
@@ -2045,6 +2118,10 @@ export const playPerspective = {
         });
       },
       unmount() {
+        // Un-float/close edit popovers first: a floated popover lives at
+        // <body>, and the teardown below removes the dismiss listeners
+        // without firing them -- so it would orphan otherwise.
+        _closeEditPopovers(state);
         if (state.editing) {
           // Fire-and-forget cancel so the server doesn't stay stuck in
           // edit mode if the user navigates away.
@@ -2115,6 +2192,9 @@ export const playPerspective = {
         editCastleCb.bK.removeEventListener("click", onCastleBK);
         editCastleCb.bQ.removeEventListener("click", onCastleBQ);
         document.removeEventListener("click", onDocClickClosePopover);
+        window.removeEventListener("resize", onPopoverDismiss);
+        window.removeEventListener(APP_EVT.RIBBON_MOVED, onPopoverDismiss);
+        window.removeEventListener(APP_EVT.RIBBON_FLOAT_CLOSED, onPopoverDismiss);
         editConfirmBtn.removeEventListener("click", onEditConfirm);
         editCancelBtn.removeEventListener("click", onEditCancel);
       },

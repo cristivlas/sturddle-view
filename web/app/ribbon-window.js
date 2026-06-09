@@ -165,7 +165,10 @@ export function openRibbonWindow(el) {
         window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_FLOAT_CLOSED));
       }
     },
-    onmove() { saveGeo(); },
+    onmove() {
+      saveGeo();
+      window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_MOVED));
+    },
   });
   // Orientation toggle button on the title bar.
   wb.addControl({

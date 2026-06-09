@@ -10,6 +10,8 @@ export const APP_EVT = {
   RIBBON_ACTIVE: "sturddle:ribbon-active",
   // User closed the floating ribbon WinBox; revert to last docked side.
   RIBBON_FLOAT_CLOSED: "sturddle:ribbon-float-closed",
+  // Floating ribbon WinBox was dragged; open edit-mode popovers close.
+  RIBBON_MOVED: "sturddle:ribbon-moved",
   // WS connection up/down; detail.connected.
   CONNECTION: "sturddle:connection",
   // Engine registry changed; play perspective re-reads it.

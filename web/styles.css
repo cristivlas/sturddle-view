@@ -1229,6 +1229,24 @@ body[data-ribbon-float] .tournaments-ribbon {
   box-shadow: 0 6px 16px rgba(0,0,0,0.45);
   display: flex; flex-direction: column; gap: 8px;
 }
+/* Right-docked ribbon hugs the right screen edge: open the popover leftward
+   so it doesn't run off-screen. */
+body[data-ribbon-side="right"] .castle-popover,
+body[data-ribbon-side="right"] .side-popover {
+  left: auto; right: 100%;
+  margin-left: 0; margin-right: 8px;
+}
+/* Floating ribbon lives in a WinBox whose body clips overflow (contain:
+   strict), so the popover can't render inside it. JS portals it to <body>
+   and positions it (position: fixed) against the viewport. body[...] prefix
+   keeps this winning over the right-docked flip rule when float's last-docked
+   side is "right" (both attrs are set on <body> in float mode). */
+body .castle-popover.popover-floating,
+body .side-popover.popover-floating {
+  position: fixed;
+  left: auto; right: auto; top: auto; bottom: auto;
+  margin: 0;
+}
 .castle-popover.hidden,
 .side-popover.hidden { display: none; }
 .castle-row {
@@ -1559,11 +1577,12 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
     margin: 0 4px;
   }
   /* Horizontal ribbon: popovers open above the button (ribbon sits at
-     bottom of the page on mobile). */
-  .castle-popover,
-  .side-popover {
-    left: 0; top: auto; bottom: 100%;
-    margin-left: 0; margin-bottom: 8px;
+     bottom of the page on mobile). body[...] prefix keeps this winning over
+     the global right-docked flip rule, which has the same attribute weight. */
+  body[data-ribbon-side] .castle-popover,
+  body[data-ribbon-side] .side-popover {
+    left: 0; right: auto; top: auto; bottom: 100%;
+    margin-left: 0; margin-right: 0; margin-bottom: 8px;
   }
   /* Display order: ribbon on top, then board, then AI analysis, then side
      panel. The horizontal ribbon's accent line sits at the button bottom
