@@ -298,6 +298,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   wb.svMinWidth = LIVE_MIN_WIDTH;
   wb.svMinHeight = LIVE_MIN_HEIGHT();
   wb.svBoard = board;
+  wb._windowKey = windowKey;
   liveWindows.set(windowKey, wb);
   // Result-banner upgrade on game_reconciled (workspace dispatches).
   // Captured here so the Replay button knows which PGN slice to fetch.
@@ -806,6 +807,15 @@ export function openFrozenGameWindow({
 
 export function getLiveWindows() {
   return [...liveWindows.values()];
+}
+
+// Move a window to the end of the open-order Map so it counts as
+// most-recently-used (LRU eviction reads insertion order).
+export function touchLiveWindow(wb) {
+  const key = wb._windowKey;
+  if (liveWindows.get(key) !== wb) return;
+  liveWindows.delete(key);
+  liveWindows.set(key, wb);
 }
 
 export function isLiveWindowOpen(proxyId) {

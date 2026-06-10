@@ -13,7 +13,7 @@
 //   Periodic GET while running         -> reconcile standings.
 
 import {
-  closeAllLiveGames, getLiveWindows,
+  closeAllLiveGames, getLiveWindows, touchLiveWindow,
   isLiveWindowOpen, openLiveGameWindow, openFrozenGameWindow,
   LIVE_MIN_WIDTH, LIVE_MIN_HEIGHT, DEBUG_WATCH,
 } from "./tournament-live-game.js";
@@ -190,6 +190,12 @@ function setShadow(wb, on) {
   wb.g?.classList.toggle("no-shadow", !on);
 }
 
+// Send a window to the minimize footer: minimize + shadow on.
+function minimizeToDock(wb) {
+  try { wb.minimize(); } catch { /* */ }
+  setShadow(wb, true);
+}
+
 function openWindows(ctx) {
   return [...Object.values(ctx.windows).filter(Boolean), ...getLiveWindows()];
 }
@@ -283,8 +289,7 @@ function tidy(ctx, { preserveMin = false } = {}) {
         wb.resize(r.w, r.h).move(r.x, r.y);
         setShadow(wb, false);
       } else {
-        try { wb.minimize(); } catch { /* */ }
-        setShadow(wb, true);
+        minimizeToDock(wb);
       }
     });
     for (const k of keys) {
@@ -443,6 +448,20 @@ function restoreWindows(wbs) {
 
 // ---- Window construction + reflow/header wiring -------------------------
 
+// Minimize the oldest watcher that actually holds a slot (insertion order =
+// open order) so a restored window can take its cell. Skips `keep`, minimized,
+// maximized, and dragged-out windows whose rect no longer covers any slot.
+// Returns the evicted window, or null if none qualifies.
+function evictOldestSlotted(ctx, keep) {
+  for (const wb of getLiveWindows()) {
+    if (wb === keep || wb.min || wb.max) continue;
+    if (!ctx.slotGrid.occupiesSlot(wb)) continue;
+    minimizeToDock(wb);
+    return wb;
+  }
+  return null;
+}
+
 // Shared onminimize/onrestore handler for all windows. Reads ctx.activeLayout
 // at call time so layout switches never leave stale handlers.
 function onReflow(ctx, wb, isRestore) {
@@ -464,15 +483,23 @@ function onReflow(ctx, wb, isRestore) {
         requestAnimationFrame(() => reapplyLayout(ctx));
         return;
       }
-      const c = ctx.slotGrid.claim(wb);
+      let c = ctx.slotGrid.claim(wb);
+      if (!c) {
+        // Grid is full: evict the oldest slotted watcher to the dock so the
+        // freshly-clicked window cycles in. Without this the restore would
+        // re-minimize and nothing visible would happen.
+        const evicted = evictOldestSlotted(ctx, wb);
+        if (evicted) c = ctx.slotGrid.claim(wb);
+      }
       if (c) {
         wb._justRestored = true;
+        touchLiveWindow(wb);
         wb.resize(c.w, c.h).move(c.x, c.y);
         setShadow(wb, false);
       } else {
-        // No free slot: the grid shrank (e.g. browser resized while this
-        // window was maximized) so stale slot positions no longer fit.
-        // Re-tidy the whole set, re-gridding survivors.
+        // No slot even after eviction: the grid shrank (e.g. browser resized
+        // while this window was maximized) so stale slot positions no longer
+        // fit. Re-tidy the whole set, re-gridding survivors.
         requestAnimationFrame(() => tidy(ctx, { preserveMin: true }));
       }
     }

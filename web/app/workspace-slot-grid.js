@@ -39,12 +39,15 @@ export function createSlotGrid({ top, left, getCellWidth, cellHeight, gap = SLOT
              a.y + a.h <= b.y || b.y + b.h <= a.y);
   }
 
+  function wbRect(wb) {
+    return { x: wb.x, y: wb.y, w: wb.width, h: wb.height };
+  }
+
   function slotIsOccupied(slot, exclude) {
     const r = rectAt(slot);
     for (const wb of getWindows()) {
       if (wb.min || wb === exclude) continue;
-      const wr = { x: wb.x, y: wb.y, w: wb.width, h: wb.height };
-      if (rectsOverlap(r, wr)) return true;
+      if (rectsOverlap(r, wbRect(wb))) return true;
     }
     return false;
   }
@@ -58,5 +61,17 @@ export function createSlotGrid({ top, left, getCellWidth, cellHeight, gap = SLOT
     return null;
   }
 
-  return { claim, capacity, rectAt };
+  // True if wb's rect overlaps any slot cell -- i.e. it currently holds a
+  // grid slot rather than floating dragged-out somewhere off the grid.
+  function occupiesSlot(wb) {
+    if (wb.min) return false;
+    const wr = wbRect(wb);
+    const cap = capacity();
+    for (let i = 0; i < cap; i++) {
+      if (rectsOverlap(rectAt(i), wr)) return true;
+    }
+    return false;
+  }
+
+  return { claim, capacity, rectAt, occupiesSlot };
 }
