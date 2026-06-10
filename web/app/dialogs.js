@@ -209,6 +209,18 @@ function fmtDate(mtime) {
   return new Date(mtime * MS_PER_SEC).toLocaleString();
 }
 
+// Filter matcher: plain substring (today's behavior) until the query
+// contains a wildcard, then a full-name-anchored glob (* = any, ? = one).
+// So `stur` still matches `sturddle.exe`, and `*.exe` filters by extension.
+function makeFilterTest(q) {
+  if (!q) return () => true;
+  if (!/[*?]/.test(q)) return (name) => name.includes(q);
+  const rx = "^" + q.replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*").replace(/\?/g, ".") + "$";
+  const re = new RegExp(rx, "i");
+  return (name) => re.test(name);
+}
+
 /** Modal file/directory picker (browses server FS via /fs).
  *  Resolves to selected path or null. mode: "file" | "directory" | "executable". */
 export function pickFile({
@@ -334,11 +346,12 @@ export function pickFile({
       }
 
       function applyFilter() {
-        const q = (filterInput.value || "").trim().toLowerCase();
+        const q = (filterInput.value || "").trim();
+        const test = makeFilterTest(q.toLowerCase());
         let anyVisible = false;
         for (const li of listing.querySelectorAll(".fs-entry")) {
           const name = li.querySelector(".fs-name")?.textContent?.toLowerCase() || "";
-          const hide = q && !name.includes(q);
+          const hide = q && !test(name);
           li.classList.toggle("fs-hidden", hide);
           if (!hide) anyVisible = true;
         }
