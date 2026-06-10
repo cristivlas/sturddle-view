@@ -3,8 +3,9 @@
 // source of truth -- a typo in a raw key silently splits read from write.
 
 export const STORAGE_KEY = {
-  // File-picker last-directory (prefix; per-purpose suffix appended).
+  // File-picker last-directory and exe-filter state (prefix; per-purpose suffix appended).
   FS_PICKER_LAST_PREFIX: "sturddle:fs-picker:last:",
+  FS_PICKER_EXE_ONLY_PREFIX: "sturddle:fs-picker:exeOnly:",
 
   // Engines list view state.
   ENGINES_COL_PCTS: "sturddle:engines:colPcts3",

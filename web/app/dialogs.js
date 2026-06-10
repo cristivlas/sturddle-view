@@ -177,6 +177,7 @@ export function prompt({
 }
 
 const LAST_DIR_KEY_PREFIX = STORAGE_KEY.FS_PICKER_LAST_PREFIX;
+const EXE_ONLY_KEY_PREFIX = STORAGE_KEY.FS_PICKER_EXE_ONLY_PREFIX;
 
 function recallLastDir(key) {
   return loadRaw(LAST_DIR_KEY_PREFIX + key) || null;
@@ -290,6 +291,34 @@ export function pickFile({
       filterInput.appendChild(filterIcon);
       filterBar.append(filterInput);
 
+      // Exe-only toggle: only shown for executable pickers. Default on (hide
+      // non-executables); the button reveals all files when toggled off.
+      let exeOnly = wantsExec
+        ? (loadRaw(EXE_ONLY_KEY_PREFIX + recallKey) !== "false")
+        : false;
+
+      let exeOnlyBtn = null;
+      if (wantsExec) {
+        exeOnlyBtn = document.createElement("wa-button");
+        exeOnlyBtn.size = "small";
+        exeOnlyBtn.className = "icon-only fs-exe-only-btn";
+        const exeOnlyIcon = document.createElement("wa-icon");
+        exeOnlyBtn.appendChild(exeOnlyIcon);
+        const syncExeBtn = () => {
+          exeOnlyBtn.title = exeOnly ? "Executables only" : "All files";
+          exeOnlyBtn.setAttribute("aria-pressed", String(exeOnly));
+          exeOnlyIcon.setAttribute("name", exeOnly ? "gears" : "file-lines");
+        };
+        syncExeBtn();
+        exeOnlyBtn.addEventListener("click", () => {
+          exeOnly = !exeOnly;
+          saveRaw(EXE_ONLY_KEY_PREFIX + recallKey, String(exeOnly));
+          syncExeBtn();
+          applySort(sortCtrl.current());
+        });
+        filterBar.append(exeOnlyBtn);
+      }
+
       // Real table so the shared column-resize helper (.th-grip / .col-drag-line)
       // can size Name/Date the way the engines and openings tables do.
       const tableWrap = document.createElement("div");
@@ -395,6 +424,8 @@ export function pickFile({
       function renderRows(entries) {
         listing.innerHTML = "";
         for (const entry of entries) {
+          // In exe-only mode, skip non-eligible files entirely (dirs still show).
+          if (exeOnly && !entry.is_dir && !eligible(entry)) continue;
           const li = document.createElement("tr");
           li.className = "fs-entry";
           if (!eligible(entry) && !entry.is_dir) li.classList.add("dim");

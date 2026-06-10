@@ -2670,8 +2670,9 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .fs-picker { display: flex; flex-direction: column; gap: 8px; }
 .fs-picker-pathbar { display: flex; gap: 8px; align-items: center; }
 .fs-picker-pathbar wa-input { flex: 1; }
-.fs-picker-filterbar { display: flex; }
+.fs-picker-filterbar { display: flex; gap: 6px; align-items: center; }
 .fs-picker-filter { flex: 1; }
+.fs-exe-only-btn[aria-pressed="true"] { color: var(--accent); }
 .fs-entry.fs-hidden { display: none; }
 /* Overlay host for the resize drag-lines; also the scroll container. */
 .fs-picker-table-wrap {
