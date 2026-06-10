@@ -863,6 +863,10 @@ class AIAnalysisCoordinator:
                     self._turn_game_id = None
                     self._active_delegate_id = None
 
+    # oversized-ok: cohesive agent state machine -- one round loop over ~15
+    # interdependent flags (nudge gating, position-check escalation, tool
+    # dedup, recommend tracking). The branches are each distinct logic, not
+    # repetition; splitting would scatter the round-exit gating.
     async def _run_loop(
         self, messages: list[Message], config: _LoopConfig,
     ) -> _LoopResult:

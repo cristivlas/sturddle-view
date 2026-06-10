@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import chess
 
+from .results import SIDE_BLACK, SIDE_WHITE
+
 
 def board_from(fen: str | None) -> chess.Board:
     """Return a Board from *fen*, or the standard starting position when None."""
@@ -33,7 +35,7 @@ def replay_uci(board: chess.Board, moves: list[str]) -> chess.Board:
 
 def side_to_move(board: chess.Board) -> str:
     """Return "white" or "black" for the side to move."""
-    return "white" if board.turn == chess.WHITE else "black"
+    return SIDE_WHITE if board.turn == chess.WHITE else SIDE_BLACK
 
 
 def moves_san(board: chess.Board, start_fen: str | None = None) -> list[str]:

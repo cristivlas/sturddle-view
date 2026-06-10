@@ -17,16 +17,16 @@ from typing import TYPE_CHECKING
 
 import chess
 import chess.engine
-import chess.pgn
 
 from .._atomic import atomic_write_text
 
 if TYPE_CHECKING:
     from ..recent_imports import RecentImports
 from ..chess.board import board_from, moves_san as _moves_san, side_to_move
+from ..chess.results import SIDE_WHITE
 from ..chess.pgn_build import build_pgn
 from .canonical_hash import canonical_hash
-from ..chess.results import DRAW, loser_result, winner_result
+from ..chess.results import DRAW, loser_result
 from ..events import (
     EVT_BOARD_UPDATE,
     EVT_CLOCK_TICK,
@@ -307,6 +307,15 @@ class HumanVsEngine:
 
     def engine_display_name(self) -> str | None:
         return self._engine_name
+
+    def play_side_names(self, human_white: bool) -> tuple[str, str]:
+        """(white, black) display names for a play game with the given side:
+        configured player name on the human side, engine label on the other.
+        Same convention as the PGN export headers."""
+        engine_label = self._engine_name or Path(self._engine_path).name
+        if human_white:
+            return self._player_name, engine_label
+        return engine_label, self._player_name
 
     def viewed_pgn_result(self) -> str | None:
         """PGN result tag of the game currently being viewed
@@ -1599,7 +1608,7 @@ class HumanVsEngine:
             game_id = self._game_id
             await self._cancel_think()
             # Loser is the side to move when the flag fell.
-            result = loser_result(loser == "white")
+            result = loser_result(loser == SIDE_WHITE)
             self._maybe_save_pgn(result=result, termination="time_forfeit")
             self._stash_recents_payload(result=result, termination="time_forfeit")
         await self._bus.publish(
@@ -1753,6 +1762,9 @@ class HumanVsEngine:
             with await engine.analysis(board) as analysis:
                 self._analysis = analysis
                 await self._pump_engine_info(analysis, game_id, board, cache_payload=True)
+                best = await analysis.wait()
+                if best.move:
+                    await self._bus.publish(Event(kind=EVT_ENGINE_INFO, game_id=game_id, payload={"pv_uci": [best.move.uci()]}))
         except chess.engine.EngineTerminatedError:
             log.error("engine crashed mid-analysis")
             await self._bus.publish(
@@ -2203,7 +2215,7 @@ class HumanVsEngine:
             "white": white,
             "black": black,
             "result": result,
-            "side_to_move": "white" if self._board.turn == chess.WHITE else "black",
+            "side_to_move": side_to_move(self._board),
             "source": "play",
         }
 

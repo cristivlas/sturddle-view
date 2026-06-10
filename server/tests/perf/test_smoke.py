@@ -5,10 +5,10 @@ import json
 
 import pytest
 
-pytestmark = pytest.mark.perf
-
 from tests.perf._bench import timeit
-from tests.perf.conftest import BASELINES_PATH, UPDATE_FLAG
+from tests.perf.conftest import UPDATE_FLAG
+
+pytestmark = pytest.mark.perf
 
 SMOKE_KEY = "_smoke_bench"
 SMOKE_TOLERANCE = 0.50  # 50% -- smoke bench timing is intentionally loose

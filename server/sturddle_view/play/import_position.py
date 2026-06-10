@@ -337,10 +337,9 @@ def parse_fen(text: str) -> ImportedPosition:
     try:
         board = board_from(fen)
     except ValueError as e:
-        # python-chess embeds the full FEN string in its message; collapse
-        # to just the diagnostic so the UI doesn't render a giant blob.
-        msg = str(e).split(":", 1)[0] if ":" in str(e) else str(e)
-        raise PositionImportError(f"invalid FEN: {msg}") from e
+        # board_from already prefixes "invalid FEN: <diagnostic>"; surface its
+        # message as-is rather than re-prefixing (which doubled the label).
+        raise PositionImportError(str(e)) from e
     if not board.is_valid():
         raise PositionImportError("illegal position (e.g. adjacent kings, too many pieces, pawns on back rank)")
     side = side_to_move(board)

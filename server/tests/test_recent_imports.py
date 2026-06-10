@@ -151,7 +151,7 @@ def test_load_recovers_from_index_on_disk(tmp_path):
 
 def test_load_drops_index_rows_whose_blob_is_missing(tmp_path):
     s1 = RecentImports.load(root=tmp_path / "imports", cap=5)
-    h = _run(s1.save(fmt="pgn", text="1. e4 *", summary="x"))
+    _run(s1.save(fmt="pgn", text="1. e4 *", summary="x"))
     # Delete the blob out of band.
     rel = s1.list()[0]["file"]
     (tmp_path / "imports" / rel).unlink()
@@ -160,7 +160,7 @@ def test_load_drops_index_rows_whose_blob_is_missing(tmp_path):
 
 
 def test_fen_format_uses_fen_extension(store, tmp_path):
-    h = _run(store.save(fmt="fen", text="r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3", summary="italian"))
+    _run(store.save(fmt="fen", text="r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3", summary="italian"))
     rel = store.list()[0]["file"]
     assert rel.endswith(".fen")
     assert (tmp_path / "imports" / rel).exists()
@@ -176,7 +176,7 @@ def test_hash_is_stable(store):
 # ---- Phase 1: game_id, refs, active-session pinning ----
 
 def test_save_round_trips_game_id(store, tmp_path):
-    h = _run(store.save(fmt="pgn", text="1. e4 *", summary="s", game_id="gid-1"))
+    _run(store.save(fmt="pgn", text="1. e4 *", summary="s", game_id="gid-1"))
     [row] = store.list()
     assert row["game_id"] == "gid-1"
     # Round-trip via index.json (load fresh).
@@ -424,7 +424,7 @@ def test_replace_at_refuses_old_hash_bound_to_different_game_id(store):
 def test_replace_at_persists_to_disk(store, tmp_path):
     """After replace_at, reloading the store sees the new state, not the old."""
     h1 = _run(store.save(fmt="pgn", text="1. e4 *", summary="s1", game_id="gid"))
-    h2 = _run(store.replace_at(
+    _run(store.replace_at(
         old_hash=h1, fmt="pgn", text="1. e4 e5 *", summary="s2", game_id="gid",
     ))
     s2 = RecentImports.load(root=tmp_path / "imports", cap=5)

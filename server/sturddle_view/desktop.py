@@ -122,7 +122,7 @@ def show_error(title: str, message: str) -> None:
             "p{text-align:center;font-size:14px;padding:0 24px;line-height:1.5;}"
             "</style></head><body><p>" + safe + "</p></body></html>"
         )
-        w = webview.create_window(title, html=html, width=460, height=160)
+        webview.create_window(title, html=html, width=460, height=160)
         webview.start()
     except Exception:
         pass

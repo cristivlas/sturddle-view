@@ -4,6 +4,8 @@
 
 import { mountGameView } from "../game-view.js";
 import { APP_EVT } from "../app-events.js";
+import { KIND, AI_KIND_PREFIX } from "../game-events.js";
+import { SIDE, FEN_STM } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
 import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
@@ -43,6 +45,9 @@ import { getConfiguredPlayerName } from "../settings-dialog.js";
 // Tool name the AI uses to inspect hypothetical positions; the live
 // board mirrors `input.fen` while a call with this name is in flight.
 const ANALYZE_TOOL_NAME = "analyze";
+
+// Canonical chess result strings as reported by the server.
+const RESULT = { WHITE_WIN: "1-0", BLACK_WIN: "0-1", DRAW: "1/2-1/2" };
 
 // Module-scope mirror of "user has a live human-vs-engine game running"
 // so other modules (e.g. tournament Replay button) can decide whether
@@ -93,56 +98,159 @@ function _setXgameDismissed(gameId, key, value) {
 // the header badge. resign/timeout don't carry "1-0"/"0-1" in the payload
 // so we derive it from who lost (only human can resign today).
 function resultBadge(result) {
-  return result === "1/2-1/2" ? "½-½" : result;
+  return result === RESULT.DRAW ? "½-½" : result;
 }
 
 function formatResult(payload, humanWhite) {
   const { result, by, loser } = payload;
-  if (result === "1-0" || result === "0-1") return result;
-  if (result === "1/2-1/2") return resultBadge(result);
+  if (result === RESULT.WHITE_WIN || result === RESULT.BLACK_WIN) return result;
+  if (result === RESULT.DRAW) return resultBadge(result);
   if (result === "resign") {
     const humanLost = by === "human";
     const whiteWins = humanLost ? !humanWhite : humanWhite;
-    return whiteWins ? "1-0" : "0-1";
+    return whiteWins ? RESULT.WHITE_WIN : RESULT.BLACK_WIN;
   }
   if (result === "timeout") {
-    return loser === "white" ? "0-1" : "1-0";
+    return loser === SIDE.WHITE ? RESULT.BLACK_WIN : RESULT.WHITE_WIN;
   }
   return "";
 }
 
 function formatViewGameOver({ result, termination }) {
   const reason = terminationLabel(termination);
-  if (result === "1-0") return `${reason} -- White wins.`;
-  if (result === "0-1") return `${reason} -- Black wins.`;
-  if (result === "1/2-1/2") return `${reason} -- Draw.`;
+  if (result === RESULT.WHITE_WIN) return `${reason} -- White wins.`;
+  if (result === RESULT.BLACK_WIN) return `${reason} -- Black wins.`;
+  if (result === RESULT.DRAW) return `${reason} -- Draw.`;
   return reason;
 }
 
 function formatGameOver(payload, humanWhite) {
   const { result, termination, by, loser } = payload;
   if (result === "resign") {
-    return by === "human" ? "You resigned." : "Engine resigned.";
+    return by === "human" ? MSG.YOU_RESIGNED : MSG.ENGINE_RESIGNED;
   }
   if (result === "timeout") {
-    const humanLost = (loser === "white") === humanWhite;
-    return humanLost ? "You lost on time." : "Engine lost on time.";
+    const humanLost = (loser === SIDE.WHITE) === humanWhite;
+    return humanLost ? MSG.YOU_LOST_ON_TIME : MSG.ENGINE_LOST_ON_TIME;
   }
   const reason = terminationLabel(termination);
-  if (result === "1-0" || result === "0-1") {
-    const humanWon = (result === "1-0") === humanWhite;
+  if (result === RESULT.WHITE_WIN || result === RESULT.BLACK_WIN) {
+    const humanWon = (result === RESULT.WHITE_WIN) === humanWhite;
     return `${reason} -- ${humanWon ? "you win" : "engine wins"}.`;
   }
   return `${reason} -- Draw.`;
 }
 
-const ANALYZE_LABEL_STOP = "Stop analysis";
-const ANALYZE_LABEL_START = "Analysis mode";
 const ANALYZE_ICON_STOP = "magnifying-glass-minus";
 const ANALYZE_ICON_START = "magnifying-glass-plus";
+
+// User-facing copy, grouped for an eventual move to a shared i18n
+// catalog. HTML-template aria-labels stay inline (static markup).
+const MSG = {
+  // Error-report titles + failure toasts.
+  MOVE_REJECTED: "Move rejected",
+  SETTING_SAVE_FAILED: "Failed to save setting",
+  OPEN_GAME_FAILED: "Open game failed",
+  NEW_GAME_FAILED: "New game failed",
+  RESIGN_FAILED: "Resign failed",
+  SAVE_PGN_FAILED: "Save PGN failed",
+  TAKEBACK_FAILED: "Take-back failed",
+  IMPORT_FAILED: "Import failed",
+  SWITCH_SIDES_FAILED: "Switch sides failed",
+  RESUME_FAILED: "Resume failed",
+  PAUSE_FAILED: "Pause failed",
+  EDIT_POSITION_FAILED: "Edit position failed",
+  INVALID_POSITION: "Invalid position",
+  CANCEL_EDIT_FAILED: "Cancel edit failed",
+  NAV_FAILED: "Navigation failed",
+  PLAY_FROM_HERE_FAILED: "Play from here failed",
+  STOP_ANALYSIS_FAILED: "Stop analysis failed",
+  START_ANALYSIS_FAILED: "Start analysis failed",
+  REANALYZE_FAILED: "Re-analyze failed",
+  ENGINE_CRASHED: "Engine crashed unexpectedly.",
+  // Confirm dialogs.
+  CONFIRM_NEW_GAME: "Cancel the game in progress and start a new one?",
+  CONFIRM_RESIGN: "Resign the current game?",
+  CONFIRM_IMPORT: "Cancel the current game and import another?",
+  CONFIRM_EDIT_FROM_PLAY: "Cancel the game in progress and edit the position?",
+  CONFIRM_EDIT_STOP_ANALYSIS: "Stop analysis and edit the position?",
+  CONFIRM_LEAVE_EDIT: "Leaving will cancel your position edit. Continue?",
+  KEEP_PLAYING: "Keep playing",
+  KEEP_ANALYZING: "Keep analyzing",
+  NEW_GAME: "New game",
+  EDIT_POSITION: "Edit position",
+  RESIGN: "Resign",
+  IMPORT: "Import",
+  LEAVE: "Leave",
+  STAY: "Stay",
+  // Game-over alerts.
+  YOU_RESIGNED: "You resigned.",
+  ENGINE_RESIGNED: "Engine resigned.",
+  YOU_LOST_ON_TIME: "You lost on time.",
+  ENGINE_LOST_ON_TIME: "Engine lost on time.",
+  // Labels / toasts.
+  ANALYSIS_MODE: "Analysis mode",
+  STOP_ANALYSIS: "Stop analysis",
+  FORKED_FROM: "Forked from ",
+  SHOW_VARIATIONS: "Show variations",
+  ANALYZE_NEEDS_ENGINE: "Register an engine in Settings to analyze",
+  SEARCH_LINES: "Search lines",
+  UCI_LOG: "UCI log",
+  WHITE_TO_MOVE: "White to move",
+  BLACK_TO_MOVE: "Black to move",
+};
 // Body class set while analysis is on; CSS greys + inert-ifies x-game
 // nav links so the user can't jump games mid-analysis.
 const XGAME_LOCK_CLASS = "xgame-nav-locked";
+
+// One-shot CSS animation class: pulses the Paused badge + Resume button when
+// the user clicks the inert paused board, hinting how to resume.
+const PAUSE_HINT_PULSE_CLASS = "pause-hint-pulse";
+
+// Edit-mode popover (side-to-move / castling) placement when the ribbon
+// floats: the WinBox body clips overflow, so the popover is portaled to
+// <body> and positioned (position: fixed) against the viewport.
+const POPOVER_FLOATING_CLASS = "popover-floating";
+const POPOVER_GAP = 8; // px between trigger button and floated popover
+
+// "White vs Black (result)" label for an x-game summary.
+function formatGameLabel(summary) {
+  const s = summary || {};
+  const white = s.white || "?";
+  const black = s.black || "?";
+  const result = s.result && s.result !== "*" ? ` (${s.result})` : "";
+  return `${white} vs ${black}${result}`;
+}
+
+// Parse a FEN's side-to-move letter and {wK,wQ,bK,bQ} castling-rights map.
+function _seedFromFen(fen) {
+  const parts = (fen || "").split(" ");
+  const stm = parts[1] === FEN_STM.BLACK ? FEN_STM.BLACK : FEN_STM.WHITE;
+  const rights = parts[2] || "";
+  return {
+    stm,
+    castling: {
+      wK: rights.includes("K"),
+      wQ: rights.includes("Q"),
+      bK: rights.includes("k"),
+      bQ: rights.includes("q"),
+    },
+  };
+}
+
+// Toast button with an icon + accessible label.
+function makeToastIconBtn(iconName, label, onClick) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "toast-icon-btn";
+  btn.setAttribute("aria-label", label);
+  btn.setAttribute("title", label);
+  const ic = document.createElement("wa-icon");
+  ic.setAttribute("name", iconName);
+  btn.appendChild(ic);
+  btn.addEventListener("click", onClick);
+  return btn;
+}
 
 function setDisabled(btn, disabled) {
   if (disabled) btn.setAttribute("disabled", "");
@@ -166,149 +274,1531 @@ function configureBtn(btn, {
   }
 }
 
+// Apply one AI analysis event to the panel/board. `aiCtx` holds view, api,
+// refreshButtons, aiShared. Returns true if the event was an ai_* kind.
+function dispatchAiEvent(aiCtx, evt) {
+  const { view, refreshButtons, aiShared } = aiCtx;
+  switch (evt.kind) {
+    case KIND.AI_INFO: {
+      const p = evt.payload || {};
+      if (typeof p.delta === "string") appendAiDelta(p.delta, p.round ?? 0, p.thinking_ms ?? null);
+      if (p.done) {
+        // Defensive: tool-call lifecycle can drop the restore signal
+        // (cancelled mid-call, round cap, etc.). Always snap back.
+        view.restorePosition({ animate: false });
+        markAiDone({
+          cancelled: !!p.cancelled,
+          error: p.error || null,
+          errorDetail: p.error_detail || null,
+          roundCap: !!p.round_cap,
+          verifierRoundCap: !!p.verifier_round_cap,
+          noResponse: !!p.no_response,
+          noRecommendation: !!p.no_recommendation,
+        });
+        if (p.error) {
+          toast(p.error_detail || p.error, {
+            variant: "danger",
+            duration: 6000,
+          });
+        }
+        // End the AI turn on completion AND error (clears the pulse + toast).
+        // Cancel is excluded: it self-resolves via stopAnalysisFromUi ->
+        // analyzing=false. Without this, an error left the button pulsing.
+        if (!p.cancelled) {
+          aiShared.turnFinished = true;
+          aiShared.dismissAnalysisToast?.();
+          aiShared.dismissAnalysisToast = null;
+          refreshButtons();
+        }
+      }
+      return true;
+    }
+    case KIND.AI_THINKING: {
+      const p = evt.payload || {};
+      if (typeof p.delta === "string") appendAiThinking(p.delta, p.round ?? 0);
+      else if (Number.isFinite(p.thinking_ms)) freezeAiThinking(p.round ?? 0, p.thinking_ms);
+      return true;
+    }
+    case KIND.AI_TOOL_CALL: {
+      const p = evt.payload || {};
+      appendAiToolCall({
+        round: p.round ?? 0,
+        name: p.name,
+        input: p.input,
+        toolUseId: p.tool_use_id,
+        parentToolUseId: p.parent_tool_use_id,
+        thinkingMs: p.thinking_ms ?? null,
+      });
+      // When the model inspects a hypothetical position, mirror
+      // the analyzed FEN on the board so the user can follow the
+      // AI's reasoning. Restored on ai_tool_call_complete.
+      if (p.name === ANALYZE_TOOL_NAME && p.input && typeof p.input.fen === "string") {
+        // No animation: tool calls fire faster than the cm-chessboard
+        // queue drains while the perspective is hidden (rAF throttled
+        // off-screen), producing a "fast replay" on return.
+        view.previewPosition(p.input.fen, { animate: false });
+      }
+      return true;
+    }
+    case KIND.AI_TOOL_CALL_FAILED: {
+      const p = evt.payload || {};
+      markAiToolCallFailed({
+        toolUseId: p.tool_use_id,
+        error: p.error,
+        detail: p.detail,
+      });
+      // Restore in case the failed call was an analyze preview.
+      view.restorePosition({ animate: false });
+      return true;
+    }
+    case KIND.AI_TOOL_CALL_COMPLETE: {
+      const p = evt.payload || {};
+      if (p.name === ANALYZE_TOOL_NAME) view.restorePosition({ animate: false });
+      view.clearArrows();
+      view.clearEngineInfo();
+      return true;
+    }
+    case KIND.AI_POSITION_NOTE: {
+      const p = evt.payload || {};
+      noteAiPosition({ round: p.round ?? 0, surfaces: p.surfaces || [] });
+      return true;
+    }
+  }
+  return false;
+}
+
+// Dedupe by seq. Server resets seq to 1 at the start of each turn, so seq=1
+// unconditionally marks a new turn and resets the high-water mark. Otherwise a
+// single-event turn (e.g. instant error) following a prior turn whose maxSeq is
+// also 1 would be swallowed.
+function dispatchAiEventOrdered(ai, aiCtx, evt) {
+  const seq = evt?.payload?.seq ?? 0;
+  if (seq === 1) ai.maxSeq = 0;
+  else if (seq && seq <= ai.maxSeq) return;
+  if (seq) ai.maxSeq = seq;
+  dispatchAiEvent(aiCtx, evt);
+}
+
+// Buffer live AI events while the replay GET is in flight, then drain in seq
+// order with dedupe. Avoids the GET-then-subscribe race: live events that fire
+// between subscribe and replay arrival are held instead of dispatched
+// out-of-order.
+async function rehydrateAiPanel(ai, aiCtx) {
+  try {
+    const r = await aiCtx.api("GET", "/game/analysis/replay");
+    const events = Array.isArray(r?.events) ? r.events : [];
+    if (events.length > 0) {
+      openAi();
+      resetAi();
+      for (const evt of events) dispatchAiEventOrdered(ai, aiCtx, evt);
+    }
+  } catch { /* */ } finally {
+    ai.rehydrating = false;
+    const buffered = ai.liveBuffer;
+    ai.liveBuffer = [];
+    for (const evt of buffered) dispatchAiEventOrdered(ai, aiCtx, evt);
+  }
+}
+
+const PLAY_PERSPECTIVE_HTML = `
+  <section id="play-perspective">
+    <div class="play-grid">
+      <div class="play-dock-left"></div>
+      <aside class="play-comments-host dock-empty" aria-label="PGN commentary"></aside>
+      <div id="no-engine-banner" class="no-engine-banner hidden" role="status">
+        <span class="no-engine-banner__msg">No engine configured.</span>
+        <button type="button" class="no-engine-banner__btn" aria-label="Open engine settings" title="Open engine settings">
+          <wa-icon name="gear"></wa-icon>
+        </button>
+      </div>
+      <div class="play-board-host"></div>
+      <div class="play-ai-inline inline-empty" aria-label="AI analysis"></div>
+
+      <div id="board-controls" class="board-ribbon">
+        <button id="new-game" class="ribbon-btn" aria-label="New game" title="New game">
+          <wa-icon name="plus"></wa-icon>
+        </button>
+        <button id="import-pos" class="ribbon-btn desktop-only" aria-label="Open position from FEN or PGN" title="Open">
+          <wa-icon name="folder-open"></wa-icon>
+        </button>
+        <button id="edit-pos" class="ribbon-btn" aria-label="Edit position" title="Edit position">
+          <wa-icon name="pencil"></wa-icon>
+        </button>
+        <button id="save-pgn" class="ribbon-btn desktop-only" aria-label="Save game as PGN" title="Save PGN">
+          <wa-icon name="download"></wa-icon>
+        </button>
+        <span class="ribbon-sep" aria-hidden="true"></span>
+        <button id="takeback" class="ribbon-btn" disabled aria-label="Take back" title="Take back">
+          <wa-icon name="rotate-left"></wa-icon>
+        </button>
+        <button id="pause" class="ribbon-btn" disabled aria-label="Pause" title="Pause">
+          <wa-icon name="pause"></wa-icon>
+        </button>
+        <span class="ribbon-sep" aria-hidden="true"></span>
+        <button id="analyze" class="ribbon-btn" disabled aria-label="Analysis mode" title="Analysis mode">
+          <wa-icon name="magnifying-glass-plus"></wa-icon>
+        </button>
+        <button id="switch-sides" class="ribbon-btn" disabled aria-label="Switch sides" title="Switch sides">
+          <wa-icon name="arrows-rotate"></wa-icon>
+        </button>
+        <button id="resign" class="ribbon-btn ribbon-btn--danger" disabled aria-label="Resign" title="Resign">
+          <wa-icon name="flag"></wa-icon>
+        </button>
+        <span class="ribbon-sep ribbon-sep--push desktop-only" aria-hidden="true"></span>
+        <button id="pv-table-btn" class="ribbon-btn desktop-only" aria-label="Search Lines" title="Search Lines">
+          <wa-icon name="table-list"></wa-icon>
+        </button>
+        <button id="uci-log-btn" class="ribbon-btn desktop-only" aria-label="UCI log" title="UCI log">
+          <wa-icon name="terminal"></wa-icon>
+        </button>
+      </div>
+
+      <div id="view-controls" class="board-ribbon" style="display: none">
+        <button id="view-new-game" class="ribbon-btn" aria-label="New game" title="New game">
+          <wa-icon name="plus"></wa-icon>
+        </button>
+        <button id="view-import" class="ribbon-btn desktop-only" aria-label="Open another position" title="Open">
+          <wa-icon name="folder-open"></wa-icon>
+        </button>
+        <button id="view-edit" class="ribbon-btn" aria-label="Edit position" title="Edit position">
+          <wa-icon name="pencil"></wa-icon>
+        </button>
+        <button id="view-save-pgn" class="ribbon-btn desktop-only" aria-label="Save game as PGN" title="Save PGN">
+          <wa-icon name="download"></wa-icon>
+        </button>
+        <span class="ribbon-sep" aria-hidden="true"></span>
+        <button id="view-first" class="ribbon-btn" aria-label="First move" title="First move">
+          <wa-icon name="backward-fast"></wa-icon>
+        </button>
+        <button id="view-back" class="ribbon-btn" aria-label="Previous move" title="Previous move">
+          <wa-icon name="backward-step"></wa-icon>
+        </button>
+        <button id="view-forward" class="ribbon-btn" aria-label="Next move" title="Next move">
+          <wa-icon name="forward-step"></wa-icon>
+        </button>
+        <button id="view-last" class="ribbon-btn" aria-label="Last move" title="Last move">
+          <wa-icon name="forward-fast"></wa-icon>
+        </button>
+        <span class="ribbon-sep" aria-hidden="true"></span>
+        <button id="view-analyze" class="ribbon-btn" aria-label="Analysis mode" title="Analysis mode">
+          <wa-icon name="magnifying-glass-plus"></wa-icon>
+        </button>
+        <button id="view-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
+          <wa-icon name="arrows-rotate"></wa-icon>
+        </button>
+        <button id="view-play-from-here" class="ribbon-btn" aria-label="Play from here" title="Play from here">
+          <wa-icon name="play"></wa-icon>
+        </button>
+      </div>
+
+      <div id="edit-controls" class="board-ribbon" style="display: none">
+        <div class="side-popover-wrap">
+          <button id="edit-side" class="ribbon-btn" aria-label="Side to move" title="Side to move" aria-haspopup="true" aria-expanded="false">
+            <wa-icon name="circle-half-stroke"></wa-icon>
+          </button>
+          <div id="edit-side-popover" class="side-popover hidden" role="dialog" aria-label="Side to move">
+            <button type="button" id="edit-side-toggle" class="castle-pill side-toggle-pill" aria-pressed="true">White to move</button>
+          </div>
+        </div>
+        <span class="ribbon-sep" aria-hidden="true"></span>
+        <div class="castle-popover-wrap">
+          <button id="edit-castle-btn" class="ribbon-btn" aria-label="Castling rights" title="Castling rights" aria-haspopup="true" aria-expanded="false">
+            <wa-icon name="chess-rook"></wa-icon>
+          </button>
+          <div id="edit-castle-popover" class="castle-popover hidden" role="dialog" aria-label="Castling rights">
+            <div class="castle-row" data-color="white">
+              <span class="castle-row-label">White</span>
+              <button type="button" id="edit-castle-cb-wk" class="castle-pill" aria-pressed="false">O-O</button>
+              <button type="button" id="edit-castle-cb-wq" class="castle-pill" aria-pressed="false">O-O-O</button>
+            </div>
+            <div class="castle-row" data-color="black">
+              <span class="castle-row-label">Black</span>
+              <button type="button" id="edit-castle-cb-bk" class="castle-pill" aria-pressed="false">O-O</button>
+              <button type="button" id="edit-castle-cb-bq" class="castle-pill" aria-pressed="false">O-O-O</button>
+            </div>
+          </div>
+        </div>
+        <span class="ribbon-sep" aria-hidden="true"></span>
+        <button id="edit-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
+          <wa-icon name="arrows-rotate"></wa-icon>
+        </button>
+        <button id="edit-annotate" class="ribbon-btn" aria-label="Edit annotation" title="Edit annotation">
+          <wa-icon name="align-left"></wa-icon>
+        </button>
+        <span class="ribbon-sep ribbon-sep--push" aria-hidden="true"></span>
+        <button id="edit-confirm" class="ribbon-btn" aria-label="Confirm position" title="Confirm">
+          <wa-icon name="check"></wa-icon>
+        </button>
+        <button id="edit-cancel" class="ribbon-btn" aria-label="Cancel editing" title="Cancel">
+          <wa-icon name="xmark"></wa-icon>
+        </button>
+      </div>
+
+      <div class="play-side-host"></div>
+    </div>
+  </section>
+`;
+
+// X-game (cross-game fork) navigation toasts. All read/write the shared
+// `state` (scalars + state.xgame + state.view/state.api).
+
+function closeXgameToasts(state) {
+  if (state.xgame.parentToastHandle) { state.xgame.parentToastHandle(); state.xgame.parentToastHandle = null; }
+  if (state.xgame.childrenToastHandle) { state.xgame.childrenToastHandle(); state.xgame.childrenToastHandle = null; }
+}
+function resetXgame(state) {
+  closeXgameToasts(state);
+  state.xgame.gameId = null;
+  state.xgame.parentGameId = null;
+  state.xgame.parentSummary = null;
+  state.xgame.forkPly = null;
+  state.xgame.children = [];
+  state.xgame.parentToastDismissed = false;
+  state.xgame.childrenToastDismissed = false;
+}
+async function fetchXgameInfo(state, gameId) {
+  if (!gameId) {
+    resetXgame(state);
+    refreshXgameToasts(state);
+    return;
+  }
+  try {
+    const r = await state.api(
+      "GET", `/game/recent-imports/by-id/${encodeURIComponent(gameId)}`,
+    );
+    state.xgame.gameId = gameId;
+    state.xgame.parentGameId = r.parent_game_id ?? null;
+    state.xgame.parentSummary = r.parent_summary ?? null;
+    state.xgame.forkPly = r.fork_ply ?? null;
+    state.xgame.children = Array.isArray(r.children) ? r.children : [];
+    // Hydrate per-game don't-nag flags from the module-level map so
+    // an explicit X survives perspective remount within the same
+    // page load.
+    const d = _getXgameDismissed(gameId);
+    state.xgame.parentToastDismissed = d.parent;
+    state.xgame.childrenToastDismissed = d.children;
+    // After data lands, re-render the move list so glyphs appear
+    // without waiting for the next board_update.
+    if (_cachedBoardUpdate) state.view.applyEvent(_cachedBoardUpdate);
+    refreshXgameToasts(state);
+  } catch (_e) {
+    // The current game may not be in recents (e.g. brand-new play
+    // game with no moves yet). That's expected; just clear state.
+    resetXgame(state);
+    refreshXgameToasts(state);
+  }
+}
+function buildParentToast(state) {
+  // "Forked from <parent> at ply N." Single clickable link, X to
+  // dismiss. No collapse -- there is only one parent.
+  const node = document.createElement("div");
+  node.className = "xgame-toast";
+  const icon = document.createElement("wa-icon");
+  icon.setAttribute("name", "code-fork");
+  icon.className = "xgame-toast-icon";
+  node.append(icon);
+  const text = document.createElement("span");
+  text.className = "toast-grow";
+  text.append(MSG.FORKED_FROM);
+  const link = document.createElement("button");
+  link.className = "xgame-link";
+  link.type = "button";
+  link.textContent = state.xgame.parentSummary
+    ? formatGameLabel(state.xgame.parentSummary)
+    : "parent game";
+  link.addEventListener("click", () => {
+    if (state.analyzing) return;
+    if (state.xgame.parentGameId) {
+      openXgameTarget(state, state.xgame.parentGameId, { landAtPly: state.xgame.forkPly });
+    }
+  });
+  text.append(link);
+  text.append(` at ply ${state.xgame.forkPly ?? "?"}.`);
+  node.append(text);
+  node.append(makeToastDismissBtn(() => {
+    state.xgame.parentToastDismissed = true;
+    _setXgameDismissed(state.xgame.gameId, "parent", true);
+    if (state.xgame.parentToastHandle) {
+      state.xgame.parentToastHandle();
+      state.xgame.parentToastHandle = null;
+    }
+  }));
+  return node;
+}
+function buildChildrenToast(state, childrenHere) {
+  // "N variation(s) from this position" header with an expand
+  // arrow + X. Expansion grows upward (toast is bottom-anchored).
+  const node = document.createElement("div");
+  node.className = "xgame-toast xgame-toast-collapsible";
+  // Expansion list (rendered above the header via flex-direction).
+  const list = document.createElement("div");
+  list.className = "xgame-toast-list hidden";
+  for (const c of childrenHere) {
+    const item = document.createElement("button");
+    item.className = "xgame-link xgame-toast-list-item";
+    item.type = "button";
+    item.textContent = formatGameLabel(c.summary);
+    item.addEventListener("click", () => {
+      if (state.analyzing) return;
+      openXgameTarget(state, c.game_id, { landAtPly: c.fork_ply });
+    });
+    list.append(item);
+  }
+  node.append(list);
+  // Header row.
+  const header = document.createElement("div");
+  header.className = "xgame-toast-header";
+  const icon = document.createElement("wa-icon");
+  icon.setAttribute("name", "code-fork");
+  icon.className = "xgame-toast-icon";
+  header.append(icon);
+  const text = document.createElement("span");
+  text.className = "toast-grow";
+  text.textContent = childrenHere.length === 1
+    ? "1 variation from this position"
+    : `${childrenHere.length} variations from this position`;
+  header.append(text);
+  const arrow = document.createElement("button");
+  arrow.className = "xgame-toast-arrow";
+  arrow.type = "button";
+  arrow.setAttribute("aria-label", MSG.SHOW_VARIATIONS);
+  arrow.title = MSG.SHOW_VARIATIONS;
+  const arrowIcon = document.createElement("wa-icon");
+  arrowIcon.setAttribute("name", "chevron-up");
+  arrow.append(arrowIcon);
+  arrow.addEventListener("click", () => {
+    const expanded = !list.classList.toggle("hidden");
+    arrowIcon.setAttribute("name", expanded ? "chevron-down" : "chevron-up");
+  });
+  header.append(arrow);
+  header.append(makeToastDismissBtn(() => {
+    state.xgame.childrenToastDismissed = true;
+    _setXgameDismissed(state.xgame.gameId, "children", true);
+    if (state.xgame.childrenToastHandle) {
+      state.xgame.childrenToastHandle();
+      state.xgame.childrenToastHandle = null;
+    }
+  }));
+  node.append(header);
+  return node;
+}
+function refreshXgameToasts(state) {
+  // Child -> parent: cursor lands precisely on the fork ply of the
+  // current child + the game has a parent. Auto-close on ply
+  // change (does NOT count as a dismiss).
+  const showParent = state.viewing
+    && state.xgame.parentGameId
+    && state.xgame.forkPly != null
+    && state.viewCursor === state.xgame.forkPly
+    && state.lastViewNavKind === "precise"
+    && !state.xgame.parentToastDismissed;
+  if (showParent && !state.xgame.parentToastHandle) {
+    state.xgame.parentToastHandle = toast(buildParentToast(state), {
+      variant: "neutral", duration: 0, stack: "xgame",
+    });
+  } else if (!showParent && state.xgame.parentToastHandle) {
+    state.xgame.parentToastHandle();
+    state.xgame.parentToastHandle = null;
+  }
+  // Parent -> child: cursor lands precisely on a fork ply that has
+  // 1+ children. Same auto-close-on-ply-change rule.
+  const childrenHere = (state.xgame.children || []).filter(
+    c => (c.fork_ply ?? -1) === state.viewCursor,
+  );
+  const showChildren = state.viewing
+    && state.lastViewNavKind === "precise"
+    && childrenHere.length > 0
+    && !state.xgame.childrenToastDismissed;
+  if (showChildren && !state.xgame.childrenToastHandle) {
+    state.xgame.childrenToastHandle = toast(buildChildrenToast(state, childrenHere), {
+      variant: "neutral", duration: 0, stack: "xgame",
+    });
+  } else if (!showChildren && state.xgame.childrenToastHandle) {
+    state.xgame.childrenToastHandle();
+    state.xgame.childrenToastHandle = null;
+  }
+}
+async function openXgameTarget(state, gameId, opts = {}) {
+  // Fetch the target's text from recents, then drive a normal import
+  // (server-side enter_view_mode swap). landAtPly: optional cursor ply to
+  // land on after import (fork_ply for both directions; see x-game-navigation.md).
+  const landAtPly = opts.landAtPly ?? null;
+  // Short-circuit: already viewing this game at the target ply.
+  // A re-import would re-animate cm-chessboard to the same
+  // position (visible flicker for the user).
+  if (
+    state.viewing
+    && state.viewingGameId === gameId
+    && (landAtPly === null || state.viewCursor === landAtPly)
+  ) {
+    return;
+  }
+  try {
+    const target = await state.api(
+      "GET", `/game/recent-imports/by-id/${encodeURIComponent(gameId)}`,
+    );
+    // Pass land_at_ply in the import payload so the server enters
+    // view mode at the target ply in a SINGLE transaction (no
+    // follow-up /view/goto -> no animation flicker).
+    const importPayload = { format: target.format, text: target.text };
+    if (landAtPly !== null && landAtPly > 0) {
+      importPayload.land_at_ply = landAtPly;
+      // Precise landing on the fork ply -> any banner gated on
+      // precise nav can fire on the resulting board_update.
+      state.lastViewNavKind = "precise";
+    }
+    // GameView's applyEvent drops board_updates whose game_id does
+    // NOT match its local gameId. Clear before import so the
+    // server's fresh game_id is accepted; set it to the returned
+    // id so subsequent updates are still scoped.
+    state.view.setGameId(null);
+    closeAi();
+    const r = await state.api("POST", "/game/import", importPayload);
+    if (r?.game_id) state.view.setGameId(r.game_id);
+  } catch (e) {
+    reportError(state.ctx, MSG.OPEN_GAME_FAILED, e);
+  }
+}
+
+// Confirm/import/nav helpers operating on the shared `state`.
+
+// Prompt before discarding an active play game. Returns true if the
+// caller should proceed (no active game, or user confirmed).
+async function _confirmDiscardActiveGame({ message, okLabel }) {
+  if (!_playInProgress) return true;
+  return await confirm({
+    message,
+    okLabel,
+    cancelLabel: MSG.KEEP_PLAYING,
+    destructive: true,
+  });
+}
+
+// Prompt before replacing the currently viewed game. Skips when nothing
+// is being viewed or when the incoming hash matches the current view.
+async function _confirmReplaceViewedGame(state, { incomingHash, incomingSummary }) {
+  if (!state.viewing) return true;
+  return await confirmReplaceViewedGame({
+    currentHash: _viewingHash,
+    currentSummary: _viewingSummary,
+    incomingHash,
+    incomingSummary,
+    analysisRunning: state.analyzing,
+  });
+}
+
+// Tracks how the cursor reached the next ply: "precise" (back / forward /
+// goto / move-list click) vs "jump" (first / last). The parent->child banner
+// only fires on precise landings -- jumping over a fork must NOT pop a prompt.
+async function doViewNav(state, endpoint, payload = {}) {
+  state.lastViewNavKind =
+    endpoint === "/game/view/first" || endpoint === "/game/view/last"
+      ? "jump"
+      : "precise";
+  try {
+    await state.ctx.api("POST", endpoint, payload);
+  } catch (e) {
+    reportError(state.ctx, MSG.NAV_FAILED, e);
+  }
+}
+
+// Analysis state setter + stop flow operating on shared `state`.
+
+// Single sync point: every analyzing write goes through this setter so the
+// module-scope mirror (_analyzing) used by isAnalyzing() stays current.
+// Direct `state.analyzing = ...` writes will drift -- always call setAnalyzing.
+function setAnalyzing(state, v) {
+  state.analyzing = !!v;
+  _analyzing = state.analyzing;
+  // Server flipped out of ANALYSIS -- clear the AI-finished latch
+  // so the ribbon can re-enable when the game is paused again.
+  if (!state.analyzing) state.aiShared.turnFinished = false;
+  document.body.classList.toggle(XGAME_LOCK_CLASS, state.analyzing);
+}
+
+// Stop side of the analyze toggle, shared so the AI-window close handler can
+// trigger the same flow (snapshot + endpoint + toast + panels) as the toolbar
+// Stop button.
+async function stopAnalysisFromUi(state) {
+  if (!state.analyzing) return;
+  snapshotViewAnalysisState();
+  try {
+    await state.ctx.api("POST", "/game/analysis/stop", {});
+  } catch (e) {
+    reportError(state.ctx, MSG.STOP_ANALYSIS_FAILED, e);
+    return;
+  }
+  state.aiShared.turnFinished = false;
+  state.aiShared.dismissAnalysisToast?.();
+  state.aiShared.dismissAnalysisToast = null;
+  // The AI window's lifecycle is tied to the analysis session, so it
+  // always closes on stop. PV/UCI close only if analysis opened them.
+  if (isAiOpen()) closeAi();
+  closeAnalysisOpenedWindows();
+}
+
+// Edit-mode side/castling popover handlers. Operate on the shared `state`
+// (state.el DOM refs, state.view, state.refreshButtons, state.editing).
+
+// True when the ribbon is in floating (WinBox) mode -- body[data-ribbon-float]
+// is the source of truth (cleared on mobile where float is suppressed).
+function _ribbonFloating() {
+  return !!document.body.dataset.ribbonFloat;
+}
+
+// Portal `popover` to <body> and position it (position: fixed) beside the
+// floating WinBox. Horizontal anchor is the WHOLE window's edge (not the
+// button) so the popover clears the window instead of overlapping it; vertical
+// anchor tracks the button. Used only in floating mode; docked mode keeps
+// CSS-anchored popovers.
+function _floatPopover(btn, popover) {
+  document.body.appendChild(popover);
+  popover.classList.add(POPOVER_FLOATING_CLASS);
+  popover.style.left = "0px";
+  popover.style.top = "0px";
+  const b = btn.getBoundingClientRect();
+  // Anchor horizontally to the WinBox so the popover sits outside it. Fall
+  // back to the button rect if the window element can't be found.
+  const wbEl = btn.closest(".winbox");
+  const anchor = wbEl ? wbEl.getBoundingClientRect() : b;
+  const pw = popover.offsetWidth;
+  const ph = popover.offsetHeight;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  let left = anchor.right + POPOVER_GAP;
+  if (left + pw > vw) left = anchor.left - POPOVER_GAP - pw; // flip left of window
+  left = Math.max(POPOVER_GAP, Math.min(left, vw - pw - POPOVER_GAP));
+  let top = b.top; // vertical alignment stays with the trigger button
+  if (top + ph > vh) top = b.bottom - ph; // anchor bottom edge instead
+  top = Math.max(POPOVER_GAP, Math.min(top, vh - ph - POPOVER_GAP));
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
+}
+
+// Undo _floatPopover: strip fixed-position styling and return the popover to
+// its wrap so the docked CSS rules apply again.
+function _unfloatPopover(popover, wrap) {
+  popover.classList.remove(POPOVER_FLOATING_CLASS);
+  popover.style.left = "";
+  popover.style.top = "";
+  if (popover.parentNode !== wrap) wrap.appendChild(popover);
+}
+
+function _closeSidePopover(state) {
+  state.el.editSidePopover.classList.add("hidden");
+  state.el.editSideBtn.setAttribute("aria-expanded", "false");
+  _unfloatPopover(state.el.editSidePopover, state.el.editSidePopoverWrap);
+}
+function _closeCastlePopover(state) {
+  state.el.editCastlePopover.classList.add("hidden");
+  state.el.editCastleBtn.setAttribute("aria-expanded", "false");
+  _unfloatPopover(state.el.editCastlePopover, state.el.editCastlePopoverWrap);
+}
+// Close both edit-mode popovers (e.g. on viewport resize or WinBox drag,
+// where repositioning a floated popover would be more churn than value).
+function _closeEditPopovers(state) {
+  _closeSidePopover(state);
+  _closeCastlePopover(state);
+}
+function editSidePopoverToggle(state, ev) {
+  ev.stopPropagation();
+  if (!state.el.editSidePopover.classList.contains("hidden")) {
+    _closeSidePopover(state);
+  } else {
+    _closeCastlePopover(state); // popovers are mutually exclusive
+    state.el.editSidePopover.classList.remove("hidden");
+    state.el.editSideBtn.setAttribute("aria-expanded", "true");
+    if (_ribbonFloating()) _floatPopover(state.el.editSideBtn, state.el.editSidePopover);
+  }
+}
+function editSideFlip(state) {
+  state.view.setEditSide(state.view.getEditSide() === FEN_STM.WHITE ? FEN_STM.BLACK : FEN_STM.WHITE);
+  state.refreshButtons();
+}
+function editCastleToggle(state, right) {
+  state.view.toggleCastlingRight(right);
+  state.refreshButtons();
+}
+function editCastlePopoverToggle(state, ev) {
+  ev.stopPropagation();
+  if (!state.el.editCastlePopover.classList.contains("hidden")) {
+    _closeCastlePopover(state);
+  } else {
+    _closeSidePopover(state); // popovers are mutually exclusive
+    state.el.editCastlePopover.classList.remove("hidden");
+    state.el.editCastleBtn.setAttribute("aria-expanded", "true");
+    if (_ribbonFloating()) _floatPopover(state.el.editCastleBtn, state.el.editCastlePopover);
+  }
+}
+function editDocClickClose(state, ev) {
+  if (!state.editing) return;
+  const { editCastlePopover, editCastleBtn, editSidePopover, editSideBtn } = state.el;
+  if (!editCastlePopover.classList.contains("hidden") &&
+      !editCastlePopover.contains(ev.target) && !editCastleBtn.contains(ev.target)) {
+    _closeCastlePopover(state);
+  }
+  if (!editSidePopover.classList.contains("hidden") &&
+      !editSidePopover.contains(ev.target) && !editSideBtn.contains(ev.target)) {
+    _closeSidePopover(state);
+  }
+}
+
+// Pull settings into `state`; on notifyOnDrift, toast TC changes that will
+// only apply next game. Refreshes the TC snapshot when no game is active.
+async function refreshSettings(state, { notifyOnDrift = false } = {}) {
+  try {
+    const s = await state.ctx.api("GET", "/settings");
+    state.allowTakeback = s.allow_takeback !== false;
+    state.showPgnComments = s.view_show_pgn_comments !== false;
+    state.aiEnabled = !!s.ai_enabled;
+    state.aiTitleModel = s.ai_enabled ? (s.ai_model || "") : "";
+    syncCommentsVisibility(state);
+    if (notifyOnDrift && !state.gameOver && state.resignAvailable) {
+      const drift = [];
+      // TC: compare against the snapshot taken at game start.
+      if (
+        state.gameTcInitial !== null &&
+        (Number(s.tc_initial_seconds) !== state.gameTcInitial ||
+          Number(s.tc_increment_seconds) !== state.gameTcIncrement)
+      ) {
+        drift.push("time control");
+      }
+      if (drift.length > 0) {
+        toast(
+          `New ${drift.join(" and ")} will apply on the next game.`,
+          { variant: "neutral" },
+        );
+      }
+    }
+    // Always refresh the snapshot from current settings when there is
+    // no active game (so the "next game" comparison is accurate).
+    if (!state.resignAvailable) {
+      state.gameTcInitial = Number(s.tc_initial_seconds);
+      state.gameTcIncrement = Number(s.tc_increment_seconds);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+// Ribbon button state, computed from the shared `state`.
+
+// Paused overlay + badge (hidden while analyzing, which has its own affordance).
+function syncPausedUi(state) {
+  const show = state.paused && !state.analyzing;
+  state.el.boardHost.classList.toggle("board-paused", show);
+  state.el.pausedBadge?.classList.toggle("hidden", !show);
+}
+
+// Restart the one-shot pulse on `el`: drop the class, force reflow, re-add so
+// rapid repeat clicks always replay the animation. Self-removes on end.
+function _pulseOnce(el) {
+  if (!el) return;
+  // No animation under reduced-motion -> animationend never fires; skip so the
+  // class + listener don't leak.
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  el.classList.remove(PAUSE_HINT_PULSE_CLASS);
+  void el.offsetWidth; // reflow so re-adding the class restarts the animation
+  el.classList.add(PAUSE_HINT_PULSE_CLASS);
+  el.addEventListener(
+    "animationend",
+    () => el.classList.remove(PAUSE_HINT_PULSE_CLASS),
+    { once: true },
+  );
+}
+
+// User clicked the inert paused board: pulse the Paused badge + Resume button
+// to point them at how to resume. No-op unless actually paused.
+function hintResumeFromPausedBoard(state) {
+  if (!state.paused || state.analyzing) return;
+  _pulseOnce(state.el.pausedBadge);
+  _pulseOnce(state.el.pauseBtn);
+}
+
+function showFinishedBadge(state, text) {
+  if (!state.el.finishedBadge) return;
+  state.el.finishedBadge.textContent = text;
+  state.el.finishedBadge.classList.toggle("hidden", !text);
+}
+
+// A finished AI-analysis turn in play mode: board frozen in ANALYZING, reads as
+// paused, so the ribbon shows Resume (one click exits analysis + resumes play).
+// Reads live state -- call, don't cache.
+function aiAnalysisDone(state) {
+  return state.analyzing && state.aiShared.turnFinished && state.aiEnabled;
+}
+
+function refreshButtons(state) {
+  // Swap ribbons: edit overrides view, which overrides play.
+  const activeRibbon = state.editing ? state.el.editRibbon : state.viewing ? state.el.viewRibbon : state.el.playRibbon;
+  state.el.playRibbon.style.display = (state.viewing || state.editing) ? "none" : "";
+  state.el.viewRibbon.style.display = (state.viewing && !state.editing) ? "" : "none";
+  state.el.editRibbon.style.display = state.editing ? "" : "none";
+  window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_ACTIVE, { detail: { el: activeRibbon } }));
+  if (state.editing) {
+    const isWhite = state.view.getEditSide() === FEN_STM.WHITE;
+    state.el.editSideBtn.setAttribute("aria-label", `Side to move: ${isWhite ? "White" : "Black"}`);
+    state.el.editSideBtn.setAttribute("title", `Side to move: ${isWhite ? "White" : "Black"}`);
+    state.el.editSideBtn.classList.toggle("is-active", !isWhite);
+    state.el.editSideTogglePill.textContent = isWhite ? MSG.WHITE_TO_MOVE : MSG.BLACK_TO_MOVE;
+    state.el.editSideTogglePill.classList.toggle("is-black", !isWhite);
+    state.el.editSideTogglePill.setAttribute("aria-pressed", isWhite ? "false" : "true");
+    const rights = state.view.getCastlingRights();
+    for (const [k, btn] of Object.entries(state.el.editCastleCb)) {
+      btn.setAttribute("aria-pressed", rights[k] ? "true" : "false");
+      btn.classList.toggle("is-active", rights[k]);
+    }
+    const anyRight = rights.wK || rights.wQ || rights.bK || rights.bQ;
+    state.el.editCastleBtn.classList.toggle("is-active", anyRight);
+    return;
+  }
+  if (state.viewing) {
+    const atStart = state.viewCursor === 0;
+    const atEnd = state.viewCursor === state.viewTotalPlies;
+    configureBtn(state.el.viewFirstBtn, { disabled: state.analyzing || atStart });
+    configureBtn(state.el.viewBackBtn, { disabled: state.analyzing || atStart });
+    configureBtn(state.el.viewForwardBtn, { disabled: state.analyzing || atEnd });
+    configureBtn(state.el.viewLastBtn, { disabled: state.analyzing || atEnd });
+    configureBtn(state.el.viewSavePgnBtn, { disabled: state.analyzing || state.viewTotalPlies === 0 });
+    // Play-from-here is rejected at game-over plies (checkmate /
+    // stalemate / draw). Backed by a backend guard that prevents
+    // half-cleared state if the UI is bypassed.
+    configureBtn(state.el.viewPlayFromHereBtn, { disabled: state.analyzing || state.viewGameOver });
+    // Engine-less view: analyze is unreachable. Tooltip points at
+    // Engines tab so the user knows the next step.
+    // AI turn finished but server still ANALYZING: show ribbon as
+    // normal ("Analysis mode") even though `analyzing` is true.
+    const viewShowAsActive = state.analyzing && !state.aiShared.turnFinished;
+    configureBtn(state.el.viewAnalyzeBtn, {
+      disabled: state.noEngine && !viewShowAsActive,
+      active: viewShowAsActive,
+      label: viewShowAsActive
+        ? MSG.STOP_ANALYSIS
+        : state.noEngine
+          ? MSG.ANALYZE_NEEDS_ENGINE
+          : MSG.ANALYSIS_MODE,
+      icon: viewShowAsActive ? ANALYZE_ICON_STOP : ANALYZE_ICON_START,
+    });
+    return;
+  }
+  const humanToMove = state.humanWhite ? state.turn === SIDE.WHITE : state.turn === SIDE.BLACK;
+  // Completed AI analysis in play mode reads as paused to the user; show
+  // Resume (see aiAnalysisDone / onPause). Engine-only analysis and
+  // in-progress runs keep the plain Pause/Resume toggle.
+  const aiDone = aiAnalysisDone(state);
+  const showResume = state.paused || aiDone;
+  // Needs a live game; Pause then needs the human's turn (Resume is always
+  // allowed once a game exists, which any showResume state implies).
+  configureBtn(state.el.pauseBtn, {
+    disabled: !state.resignAvailable || state.gameOver || (!aiDone && state.analyzing) || (!showResume && !humanToMove),
+    label: showResume ? "Resume" : "Pause",
+    icon: showResume ? "forward-step" : "pause",
+  });
+  configureBtn(state.el.takebackBtn, {
+    disabled: state.analyzing || state.gameOver || !state.allowTakeback || state.movesPlayed === 0,
+  });
+  configureBtn(state.el.savePgnBtn, { disabled: state.analyzing || state.movesPlayed === 0 });
+  configureBtn(state.el.switchSidesBtn, { disabled: state.analyzing || state.gameOver || !state.resignAvailable });
+  configureBtn(state.el.resignBtn, { disabled: state.paused || state.analyzing || state.gameOver || !state.resignAvailable });
+  // AI turn done but server still ANALYZING: show the button as normal
+  // "Analysis mode" (enabled); the reachability gates below still apply.
+  const showAsActive = state.analyzing && !state.aiShared.turnFinished;
+  const analyzeReachable = !state.gameOver && state.resignAvailable && (state.paused || state.aiShared.turnFinished);
+  configureBtn(state.el.analyzeBtn, {
+    disabled: !showAsActive && !analyzeReachable,
+    active: showAsActive,
+    label: showAsActive ? MSG.STOP_ANALYSIS : MSG.ANALYSIS_MODE,
+    icon: showAsActive ? ANALYZE_ICON_STOP : ANALYZE_ICON_START,
+  });
+}
+
+// Play/edit action handlers. Thin mount thunks delegate here with `state`.
+
+async function onResignImpl(state) {
+  const ok = await confirm({
+    message: MSG.CONFIRM_RESIGN,
+    okLabel: MSG.RESIGN,
+    cancelLabel: MSG.KEEP_PLAYING,
+    destructive: true,
+  });
+  if (!ok) return;
+  try {
+    await state.ctx.api("POST", "/game/resign", {});
+  } catch (e) {
+    reportError(state.ctx, MSG.RESIGN_FAILED, e);
+  }
+}
+
+async function onSavePgnImpl(state) {
+  const needsPause = !state.viewing && !state.paused && !state.gameOver && state.resignAvailable;
+  if (needsPause) {
+    try { await state.ctx.api("POST", "/game/pause", {}); } catch (e) {
+      reportError(state.ctx, MSG.SAVE_PGN_FAILED, e);
+      return;
+    }
+  }
+  try {
+    const r = await fetch("/game/pgn");
+    if (!r.ok) {
+      const detail = await r.text();
+      throw new Error(`GET /game/pgn -> ${r.status} ${detail}`);
+    }
+    const cd = r.headers.get("Content-Disposition") || "";
+    const match = cd.match(/filename="([^"]+)"/);
+    const filename = match ? match[1] : "game.pgn";
+    const bridge = window.pywebview && window.pywebview.api && window.pywebview.api.save_pgn;
+    if (bridge) {
+      // Desktop (PyWebView/WebView2): blob downloads don't trigger a
+      // save dialog, so route through the native bridge instead.
+      const text = await r.text();
+      const res = await window.pywebview.api.save_pgn(text, filename);
+      if (res && res.ok) {
+        toast(`Saved to ${res.path}`, { variant: "success" });
+      } else if (res && res.cancelled) {
+        // user dismissed dialog; stay silent
+      } else {
+        throw new Error((res && res.error) || "save failed");
+      }
+    } else {
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  } catch (e) {
+    reportError(state.ctx, MSG.SAVE_PGN_FAILED, e);
+  } finally {
+    if (needsPause) {
+      try { await state.ctx.api("POST", "/game/resume", {}); } catch (_) { /* best-effort */ }
+    }
+  }
+}
+
+async function onTakebackImpl(state) {
+  if (state.takebackPending) return;
+  state.takebackPending = true;
+  try {
+    await state.ctx.api("POST", "/game/takeback", {});
+  } catch (e) {
+    reportError(state.ctx, MSG.TAKEBACK_FAILED, e);
+  } finally {
+    state.takebackPending = false;
+  }
+}
+
+async function onSwitchSidesImpl(state) {
+  try {
+    await state.ctx.api("POST", "/game/switch-sides", {});
+  } catch (e) {
+    reportError(state.ctx, MSG.SWITCH_SIDES_FAILED, e);
+  }
+}
+
+async function onPauseImpl(state) {
+  // Completed AI analysis in play mode: Resume exits analysis (server
+  // lands in PAUSED) then resumes to PLAY, so one click returns to the
+  // game. stopAnalysisFromUi tears down the AI window and replay buffer.
+  if (aiAnalysisDone(state)) {
+    try {
+      await stopAnalysisFromUi(state);
+      await state.ctx.api("POST", "/game/resume", {});
+    } catch (e) {
+      reportError(state.ctx, MSG.RESUME_FAILED, e);
+    }
+    return;
+  }
+  try {
+    await state.ctx.api("POST", state.paused ? "/game/resume" : "/game/pause", {});
+  } catch (e) {
+    reportError(state.ctx, state.paused ? MSG.RESUME_FAILED : MSG.PAUSE_FAILED, e);
+  }
+}
+
+async function onNewGameImpl(state) {
+  if (_playInProgress) {
+    if (!await _confirmDiscardActiveGame({
+      message: MSG.CONFIRM_NEW_GAME,
+      okLabel: MSG.NEW_GAME,
+    })) return;
+  } else {
+    const ok = await confirmDiscardViewedGame({
+      viewing: state.viewing,
+      currentSummary: _viewingSummary,
+      analysisRunning: state.analyzing,
+    });
+    if (!ok) return;
+  }
+  try {
+    const playerName = getConfiguredPlayerName();
+    state.view.setGameId(null);
+    state.view.setPlayerName(playerName);
+    closeAi();
+    const r = await state.ctx.api("POST", "/game/new", { player_name: playerName });
+    state.view.setGameId(r.game_id);
+    state.view.setHumanWhite(!!r.human_white);
+    state.view.reset();
+    state.resignAvailable = true;
+    // Snapshot the TC settings used for THIS game so a later mid-game
+    // edit can detect drift.
+    try {
+      const s = await state.ctx.api("GET", "/settings");
+      state.gameTcInitial = Number(s.tc_initial_seconds);
+      state.gameTcIncrement = Number(s.tc_increment_seconds);
+    } catch {
+      // ignore — drift detection just won't trigger for TC.
+    }
+    state.refreshButtons();
+  } catch (e) {
+    reportError(state.ctx, MSG.NEW_GAME_FAILED, e);
+  }
+}
+
+async function onImportImpl(state) {
+  if (!await _confirmDiscardActiveGame({
+    message: MSG.CONFIRM_IMPORT,
+    okLabel: MSG.IMPORT,
+  })) return;
+  // Dialog validates (parse errors surface inline) but does not import.
+  const result = await showImportPositionDialog({ api: state.ctx.api });
+  if (!result) return;
+  // Same game already in view -- stay put, no re-import needed.
+  if (state.viewing && result.hash && result.hash === _viewingHash) {
+    if (state.viewingGameId) toast(`Viewing ${state.viewingGameId}`);
+    return;
+  }
+  // Different game while viewing -- confirm before replacing.
+  if (!await _confirmReplaceViewedGame(state, { incomingHash: result.hash, incomingSummary: result.summary })) return;
+  try {
+    closeAi();
+    const r = await state.ctx.api("POST", "/game/import", {
+      format: result.format, text: result.text, opening: result.opening || undefined,
+    });
+    state.view.setGameId(r.game_id);
+    state.ctx.api("POST", "/game/sync", {}).catch(() => {});
+  } catch (e) {
+    reportError(state.ctx, MSG.IMPORT_FAILED, e);
+  }
+}
+
+async function onPlayFromHereImpl(state) {
+  if (state.playFromHereInflight) return;  // debounce double-click
+  state.playFromHereInflight = true;
+  setDisabled(state.el.viewPlayFromHereBtn, true);
+  // Reset gameId so the racing board_update from new_game (which fires
+  // BEFORE the API response carrying the new id) isn't dropped by the
+  // game_id filter — that drop loses the human_white/name swap.
+  state.view.setGameId(null);
+  try {
+    const playerName = getConfiguredPlayerName();
+    state.view.setPlayerName(playerName);
+    closeAi();
+    const r = await state.ctx.api("POST", "/game/view/play-from-here", { player_name: playerName });
+    state.view.setGameId(r.game_id);
+    // Snapshot TC for drift detection (mirrors onNewGame).
+    try {
+      const s = await state.ctx.api("GET", "/settings");
+      state.gameTcInitial = Number(s.tc_initial_seconds);
+      state.gameTcIncrement = Number(s.tc_increment_seconds);
+    } catch {
+      // ignore
+    }
+  } catch (e) {
+    reportError(state.ctx, MSG.PLAY_FROM_HERE_FAILED, e);
+  } finally {
+    state.playFromHereInflight = false;
+    // Don't re-enable directly; state.refreshButtons() drives it next time
+    // viewing flips, and by then the button is hidden anyway.
+  }
+}
+
+async function onEditCancelImpl(state) {
+  try {
+    const r = await state.ctx.api("POST", "/game/edit/cancel", {});
+    if (r?.game_id) state.view.setGameId(r.game_id);
+  } catch (e) {
+    reportError(state.ctx, MSG.CANCEL_EDIT_FAILED, e);
+  }
+}
+
+async function onEditConfirmImpl(state) {
+  const fen = state.view.getEditFen();
+  // Server mints a fresh game_id on a real position change. Clear the
+  // filter so the board_update SSE (which races the POST response) isn't
+  // dropped for not matching our stale id.
+  state.view.setGameId(null);
+  const payload = { fen };
+  if (state.pendingAnnotation !== null) {
+    payload.apply_comment = true;
+    payload.comment_text = state.pendingAnnotation;
+  }
+  try {
+    const r = await state.ctx.api("POST", "/game/edit/commit", payload);
+    state.view.setGameId(r.game_id);
+    // Annotation-only commit can promote an unsaved fork child to
+    // recents (xgame nav "lazy commit"). Game_id is unchanged so
+    // the board_update doesn't trigger fetchXgameInfo -- refetch
+    // explicitly so the fork glyph + banner state catch up.
+    if (r.game_id) fetchXgameInfo(state, r.game_id);
+  } catch (e) {
+    reportError(state.ctx, MSG.INVALID_POSITION, e);
+  }
+}
+
+async function onEditAnnotateImpl(state) {
+  // Preload from pendingAnnotation (if user already staged something
+  // this edit session) or fall back to the server's current comment.
+  const preload = state.pendingAnnotation ?? (state.lastViewComment ?? "");
+  const result = await editAnnotation({ currentText: preload });
+  if (result?.apply) {
+    state.pendingAnnotation = result.text;
+    // Optimistically reflect the staged text in the commentary dock
+    // so the user sees their pending change. Lives until edit-commit
+    // (server then makes it real) or edit-cancel (we restore the
+    // pre-edit text from lastViewComment).
+    if (isCommentaryOpen()) {
+      setCommentaryText(state.pendingAnnotation || null);
+    }
+  }
+}
+
+// Analysis toggle cluster. The persistent "Analysis mode" toast wires Search
+// Lines / UCI log / Stop; start/stop/reanalyze drive the server + AI panel.
+function showAnalysisToastImpl(state) {
+  state.aiShared.dismissAnalysisToast?.();
+  const msg = document.createElement("span");
+  msg.className = "toast-sort-msg";
+  const label = document.createElement("span");
+  label.className = "toast-grow is-active";
+  label.textContent = MSG.ANALYSIS_MODE;
+  msg.append(label);
+  msg.append(makeToastIconBtn("table-list", MSG.SEARCH_LINES, () => togglePvTableWindow(state.ctx.events)));
+  msg.append(makeToastIconBtn("terminal", MSG.UCI_LOG, () => toggleUciLogWindow(state.ctx.events)));
+  const stopBtn = makeToastIconBtn(ANALYZE_ICON_STOP, MSG.STOP_ANALYSIS, () => onAnalyzeImpl(state));
+  stopBtn.classList.add("is-active");
+  msg.append(stopBtn);
+  state.aiShared.dismissAnalysisToast = toast(msg, {
+    variant: "neutral",
+    duration: 0,
+  });
+}
+
+// POST start + restore panels + toast + open/reset AI panel. Shared by the
+// analyze toggle and the re-analyze button so the two paths can't drift.
+// openAi() before resetAi(): resetAi sets the spinner and no-ops when null.
+async function startAnalysisFromUiImpl(state) {
+  // Engine-only analysis: close any leftover AI panel from a prior AI run
+  // before starting, so the dock shows engine-only output. Done first so
+  // the close can't race the new analysis state.
+  if (!state.aiEnabled && isAiOpen()) closeAi();
+  await state.ctx.api("POST", "/game/analysis/start", {});
+  restoreViewAnalysisWindows(state.ctx.events);
+  state.aiShared.turnFinished = false;
+  showAnalysisToastImpl(state);
+  if (state.aiEnabled) {
+    // Pin the title to the model actually about to run. Mid-session
+    // provider/model edits do not retitle until the next Analyze click.
+    setAiTitle(state.aiTitleModel);
+    openAi();
+    resetAi();
+  }
+}
+
+async function onAnalyzeImpl(state) {
+  // Switching from a FINISHED AI session to engine-only: stop the AI session,
+  // then start engine analysis -- a plain Stop would tear down and leave
+  // nothing running. While the AI run is in progress the ribbon is a plain Stop.
+  if (state.analyzing && state.aiShared.turnFinished && !state.aiEnabled && isAiOpen()) {
+    await onReanalyzeImpl(state);
+    return;
+  }
+  if (state.analyzing) {
+    await stopAnalysisFromUi(state);
+    return;
+  }
+  try {
+    await startAnalysisFromUiImpl(state);
+  } catch (e) {
+    reportError(state.ctx, MSG.START_ANALYSIS_FAILED, e);
+  }
+}
+
+// Re-analyze: stop the current turn server-side (if any), then start a fresh
+// one, keeping the AI panel open. reanalyzeInFlight guards against rapid
+// double-clicks producing a spurious second start (server -> ModeConflictError).
+async function onReanalyzeImpl(state) {
+  if (state.reanalyzeInFlight) return;
+  state.reanalyzeInFlight = true;
+  try {
+    if (state.analyzing) {
+      snapshotViewAnalysisState();
+      await state.ctx.api("POST", "/game/analysis/stop", {});
+    }
+    await startAnalysisFromUiImpl(state);
+  } catch (e) {
+    reportError(state.ctx, MSG.REANALYZE_FAILED, e);
+  } finally {
+    state.reanalyzeInFlight = false;
+  }
+}
+
+const VIEW_FLIP_KEY = STORAGE_KEY.VIEW_FLIPPED;
+
+// View-mode flip is purely visual (no backend state; the user isn't playing
+// yet so "which side am I" is meaningless). Persisted across remounts.
+function onViewFlipImpl(state) {
+  state.viewFlipped = !state.viewFlipped;
+  try { localStorage.setItem(VIEW_FLIP_KEY, state.viewFlipped ? "1" : "0"); } catch { /* */ }
+  state.view.setHumanWhite(!state.viewFlipped);
+}
+
+// Single push of the gated nav state to the UI. Buttons are forced null while
+// analyzing or editing (view/goto is rejected in those modes, so the targets
+// would be unreachable anyway).
+function pushNavToUi(state) {
+  const gated = state.analyzing || state.editing;
+  setCommentaryNavState(gated ? null : state.commentNavPrev, gated ? null : state.commentNavNext);
+}
+
+function showEngineCrashToast() {
+  const msg = document.createElement("span");
+  msg.className = "toast-grow";
+  msg.textContent = MSG.ENGINE_CRASHED;
+  const node = document.createElement("span");
+  node.className = "toast-sort-msg";
+  let dismissCrashToast;
+  node.append(msg, makeToastDismissBtn(() => dismissCrashToast?.()));
+  dismissCrashToast = toast(node, { variant: "danger", duration: 0 });
+}
+
+// Commentary-dock visibility + server-authoritative edit-mode transitions.
+
+function syncCommentsVisibility(state) {
+  if (!state.el.commentsHost) return;
+  const shouldShow = state.viewing && state.showPgnComments && !isMobileLayout()
+    && !state.suppressCommentsForEditTransition;
+  const open = isCommentaryOpen();
+  if (shouldShow) {
+    if (!open) openCommentary();
+    setCommentaryText(state.lastViewComment);
+    // Re-open rebuilds the body with nav buttons disabled; re-push the
+    // still-current targets (they survive a hide -- view-mode state).
+    pushNavToUi(state);
+  } else if (open) {
+    closeCommentary();
+  }
+}
+
+// Server is authoritative for edit state. We start editing by POSTing
+// /game/edit/start; the resulting board_update flips `editing` true, and we
+// then enable the client-side board editor extension.
+function _onServerEditingStart(state) {
+  const seed = _seedFromFen(state.view.getFen());
+  state.view.enterEditMode(() => refreshButtons(state), seed);
+  state.pendingAnnotation = null;
+  pushNavToUi(state);
+  refreshButtons(state);
+}
+
+function _clearEditTransitionSuppression(state) {
+  if (!state.suppressCommentsForEditTransition) return;
+  state.suppressCommentsForEditTransition = false;
+  syncCommentsVisibility(state);
+}
+
+function _onServerEditingStop(state) {
+  state.view.exitEditMode();
+  _closeEditPopovers(state); // un-float any portaled popover before edit UI hides
+  _clearEditTransitionSuppression(state);
+  state.pendingAnnotation = null;
+  pushNavToUi(state);
+  refreshButtons(state);
+}
+
+async function _enterEditFromCurrentMode(state) {
+  // Server requires view mode before edit. From play mode, flip into
+  // view via /game/view/start (no recents write); /game/import would
+  // pollute the recents history with the current play position.
+  if (!state.viewing) {
+    if (!await _confirmDiscardActiveGame({
+      message: MSG.CONFIRM_EDIT_FROM_PLAY,
+      okLabel: MSG.EDIT_POSITION,
+    })) return;
+    // Suppress the commentary dock for the duration of the transient
+    // play->view->edit flip. Without this, syncCommentsVisibility
+    // races view_last() and resets the cursor to 0.
+    state.suppressCommentsForEditTransition = true;
+    try {
+      closeAi();
+      const r = await state.ctx.api("POST", "/game/view/start", {});
+      state.view.setGameId(r.game_id);
+      await state.ctx.api("POST", "/game/sync", {});
+    } catch (e) {
+      _clearEditTransitionSuppression(state);
+      reportError(state.ctx, MSG.EDIT_POSITION_FAILED, e);
+      return;
+    }
+  }
+  if (state.analyzing) {
+    const ok = await confirm({
+      message: MSG.CONFIRM_EDIT_STOP_ANALYSIS,
+      okLabel: MSG.EDIT_POSITION,
+      cancelLabel: MSG.KEEP_ANALYZING,
+      destructive: true,
+    });
+    if (!ok) {
+      _clearEditTransitionSuppression(state);
+      return;
+    }
+  }
+  try {
+    closeAi();
+    await state.ctx.api("POST", "/game/edit/start", {});
+  } catch (e) {
+    _clearEditTransitionSuppression(state);
+    reportError(state.ctx, MSG.EDIT_POSITION_FAILED, e);
+  }
+}
+
+// Control-bar state from server events (board state is GameView's job).
+function handleBusEvent(state, ai, aiCtx, evt) {
+  // AI events: buffer until replay completes, then dedupe by seq.
+  if (evt.kind?.startsWith(AI_KIND_PREFIX)) {
+    if (ai.rehydrating) ai.liveBuffer.push(evt);
+    else dispatchAiEventOrdered(ai, aiCtx, evt);
+    return;
+  }
+  switch (evt.kind) {
+    case KIND.ENGINE_SEARCH_START: {
+      // Engine is busy. While the AI window is open this means the
+      // agent is in a tool call; flip the status line so the user
+      // sees what's taking time. The PV-table window consumes the
+      // same event for its own reset; no conflict.
+      if (isAiOpen()) setAiStatus("engine");
+      break;
+    }
+    case KIND.ENGINE_INFO: {
+      // Engine produced an info chunk -- search is delivering. Drop
+      // the "engine searching" hint back to "waiting" so the user
+      // knows the agent will narrate next.
+      if (isAiOpen()) setAiStatus("waiting");
+      break;
+    }
+    case KIND.BOARD_UPDATE: {
+      _cachedBoardUpdate = evt;
+      state.movesPlayed = evt.payload.moves_san?.length ?? 0;
+      state.gameOver = false;
+      showFinishedBadge(state, "");
+      // Server-authoritative edit state. Transitions drive the client
+      // editor extension on/off; the ribbon UI follows `editing`.
+      const wasEditing = state.editing;
+      state.editing = !!evt.payload.editing;
+      if (state.editing && !wasEditing) _onServerEditingStart(state);
+      else if (!state.editing && wasEditing) _onServerEditingStop(state);
+      // View mode swaps the ribbon and suppresses play-mode signals
+      // (resignAvailable, etc.) — the user isn't playing yet.
+      const v = evt.payload.view;
+      const wasViewing = state.viewing;
+      const prevGameId = state.viewingGameId;
+      state.viewingGameId = evt.game_id ?? null;
+      state.viewing = !!v;
+      // Read analyzing early: syncCommentsVisibility (called below) gates
+      // view/goto on !analyzing; the main analyzing block runs later in
+      // the same event but would be too late.
+      if (typeof evt.payload.analyzing === "boolean") setAnalyzing(state, evt.payload.analyzing);
+      if (state.viewing) {
+        if (!wasViewing || state.viewingGameId !== prevGameId) {
+          state.viewGameOverAlertShown = false;
+          state.dismissGameOverToast?.();
+          state.dismissGameOverToast = null;
+          // Game switched: clear stale x-game state + close live toasts BEFORE
+          // the in-band refreshXgameToasts (so it can't fire on prior-game data).
+          // fetchXgameInfo then repopulates and re-renders.
+          resetXgame(state);
+          fetchXgameInfo(state, state.viewingGameId);
+        }
+        state.viewCursor = v.cursor ?? 0;
+        state.viewTotalPlies = v.total_plies ?? 0;
+        state.viewGameOver = !!v.game_over;
+        state.lastViewComment = v.comment ?? null;
+        _viewingHash = v.view_hash ?? null;
+        _viewingSummary = v.view_summary ?? null;
+        _viewing = true;
+        // Single source of truth for commentary navigation. The server
+        // ships fresh prev/next with every view payload, so game
+        // switches (import while open) can't leave stale plies behind.
+        state.commentNavPrev = v.prev_comment ?? null;
+        state.commentNavNext = v.next_comment ?? null;
+        pushNavToUi(state);
+        syncCommentsVisibility(state);
+        if (v.result) showFinishedBadge(state, resultBadge(v.result));
+        if (state.viewGameOver && state.viewCursor === state.viewTotalPlies && v.result && !state.viewGameOverAlertShown) {
+          state.viewGameOverAlertShown = true;
+          const node = document.createElement("span");
+          node.className = "toast-sort-msg";
+          const msg = document.createElement("span");
+          msg.className = "toast-grow";
+          msg.textContent = formatViewGameOver(v);
+          node.append(msg, makeToastDismissBtn(() => { state.dismissGameOverToast?.(); state.dismissGameOverToast = null; }));
+          state.dismissGameOverToast = toast(node, { variant: "neutral", duration: 6000 });
+        }
+        state.resignAvailable = false;
+        // Board is read-only in view mode; the user navigates via ribbon.
+        state.view.setEnabled(false);
+        // Restore the user's prior flip preference on entry into view mode.
+        if (!wasViewing) state.view.setHumanWhite(!state.viewFlipped);
+      } else {
+        state.lastViewComment = null;
+        _viewingHash = null;
+        _viewingSummary = null;
+        _viewing = false;
+        state.commentNavPrev = null;
+        state.commentNavNext = null;
+        pushNavToUi(state);
+        syncCommentsVisibility(state);
+        if (wasViewing) restoreDebugWindows(state.ctx.events);
+        // Leaving view mode -- x-game state is per-viewed-game; drop it.
+        if (wasViewing) resetXgame(state);
+        state.resignAvailable = true;
+      }
+      // Cursor or viewing state may have just changed -- re-evaluate
+      // the parent / children toasts. Open/close as needed.
+      refreshXgameToasts(state);
+      // Notify the perspective router so the nav label can swap
+      // Play <-> View when the mode flips.
+      if (wasViewing !== state.viewing) {
+        window.dispatchEvent(new CustomEvent(APP_EVT.VIEWING_CHANGED, {
+          detail: { viewing: state.viewing },
+        }));
+      }
+      if (typeof evt.payload.human_white === "boolean") {
+        state.humanWhite = evt.payload.human_white;
+      }
+      if (evt.payload.turn) state.turn = evt.payload.turn;
+      if (typeof evt.payload.analyzing === "boolean") {
+        setAnalyzing(state, evt.payload.analyzing);
+        // Don't re-enable interactivity in view mode regardless of
+        // analysis state.
+        if (!state.viewing) state.view.setEnabled(!state.analyzing && !state.paused);
+        syncPausedUi(state);
+        pushNavToUi(state);
+        if (!state.analyzing) {
+          state.aiShared.dismissAnalysisToast?.();
+          state.aiShared.dismissAnalysisToast = null;
+          if (state.viewing) { if (isAiOpen()) closeAi(); closeAnalysisOpenedWindows(); }
+        } else if (!state.aiShared.dismissAnalysisToast) {
+          // Server reports analysis active but no toast exists -- we
+          // were re-mounted (e.g. user navigated to another
+          // perspective and came back). Restore the toast so the
+          // user can still see and dismiss it.
+          showAnalysisToastImpl(state);
+        }
+      }
+      state.el.boardHost.classList.remove("board-idle");
+      setDisabled(state.el.newGameBtn, false);
+      refreshButtons(state);
+      _playInProgress = state.movesPlayed > 0 && !state.gameOver && !state.viewing;
+      break;
+    }
+    case KIND.GAME_RESULT:
+      state.gameOver = true;
+      state.paused = false;
+      setAnalyzing(state, false);
+      state.aiShared.dismissAnalysisToast?.();
+      state.aiShared.dismissAnalysisToast = null;
+      if (state.viewing) { if (isAiOpen()) closeAi(); closeAnalysisOpenedWindows(); }
+      state.resignAvailable = false;
+      setDisabled(state.el.newGameBtn, false);
+      state.el.boardHost.classList.add("board-idle");
+      syncPausedUi(state);
+      showFinishedBadge(state, formatResult(evt.payload, state.humanWhite));
+      refreshButtons(state);
+      _playInProgress = false;
+      showAlert({
+        message: formatGameOver(evt.payload, state.humanWhite),
+        messageClass: "game-over-message",
+      });
+      break;
+    case KIND.CLOCK_TICK:
+      if (typeof evt.payload.paused === "boolean" && evt.payload.paused !== state.paused) {
+        state.paused = evt.payload.paused;
+        state.view.setEnabled(!state.paused);
+        syncPausedUi(state);
+        refreshButtons(state);
+      }
+      break;
+  }
+}
+
 export const playPerspective = {
   id: "play",
   label: "Play",
 
   async mount(root, ctx) {
-    root.innerHTML = `
-      <section id="play-perspective">
-        <div class="play-grid">
-          <div class="play-dock-left"></div>
-          <aside class="play-comments-host dock-empty" aria-label="PGN commentary"></aside>
-          <div id="no-engine-banner" class="no-engine-banner hidden" role="status">
-            <span class="no-engine-banner__msg">No engine configured.</span>
-            <button type="button" class="no-engine-banner__btn" aria-label="Open engine settings" title="Open engine settings">
-              <wa-icon name="gear"></wa-icon>
-            </button>
-          </div>
-          <div class="play-board-host"></div>
-          <div class="play-ai-inline inline-empty" aria-label="AI analysis"></div>
+    root.innerHTML = PLAY_PERSPECTIVE_HTML;
 
-          <div id="board-controls" class="board-ribbon">
-            <button id="new-game" class="ribbon-btn" aria-label="New game" title="New game">
-              <wa-icon name="plus"></wa-icon>
-            </button>
-            <button id="import-pos" class="ribbon-btn desktop-only" aria-label="Open position from FEN or PGN" title="Open">
-              <wa-icon name="folder-open"></wa-icon>
-            </button>
-            <button id="edit-pos" class="ribbon-btn" aria-label="Edit position" title="Edit position">
-              <wa-icon name="pencil"></wa-icon>
-            </button>
-            <button id="save-pgn" class="ribbon-btn desktop-only" aria-label="Save game as PGN" title="Save PGN">
-              <wa-icon name="download"></wa-icon>
-            </button>
-            <span class="ribbon-sep" aria-hidden="true"></span>
-            <button id="takeback" class="ribbon-btn" disabled aria-label="Take back" title="Take back">
-              <wa-icon name="rotate-left"></wa-icon>
-            </button>
-            <button id="pause" class="ribbon-btn" disabled aria-label="Pause" title="Pause">
-              <wa-icon name="pause"></wa-icon>
-            </button>
-            <span class="ribbon-sep" aria-hidden="true"></span>
-            <button id="analyze" class="ribbon-btn" disabled aria-label="Analysis mode" title="Analysis mode">
-              <wa-icon name="magnifying-glass-plus"></wa-icon>
-            </button>
-            <button id="switch-sides" class="ribbon-btn" disabled aria-label="Switch sides" title="Switch sides">
-              <wa-icon name="arrows-rotate"></wa-icon>
-            </button>
-            <button id="resign" class="ribbon-btn ribbon-btn--danger" disabled aria-label="Resign" title="Resign">
-              <wa-icon name="flag"></wa-icon>
-            </button>
-            <span class="ribbon-sep ribbon-sep--push desktop-only" aria-hidden="true"></span>
-            <button id="pv-table-btn" class="ribbon-btn desktop-only" aria-label="Search Lines" title="Search Lines">
-              <wa-icon name="table-list"></wa-icon>
-            </button>
-            <button id="uci-log-btn" class="ribbon-btn desktop-only" aria-label="UCI log" title="UCI log">
-              <wa-icon name="terminal"></wa-icon>
-            </button>
-          </div>
-
-          <div id="view-controls" class="board-ribbon" style="display: none">
-            <button id="view-new-game" class="ribbon-btn" aria-label="New game" title="New game">
-              <wa-icon name="plus"></wa-icon>
-            </button>
-            <button id="view-import" class="ribbon-btn desktop-only" aria-label="Open another position" title="Open">
-              <wa-icon name="folder-open"></wa-icon>
-            </button>
-            <button id="view-edit" class="ribbon-btn" aria-label="Edit position" title="Edit position">
-              <wa-icon name="pencil"></wa-icon>
-            </button>
-            <button id="view-save-pgn" class="ribbon-btn desktop-only" aria-label="Save game as PGN" title="Save PGN">
-              <wa-icon name="download"></wa-icon>
-            </button>
-            <span class="ribbon-sep" aria-hidden="true"></span>
-            <button id="view-first" class="ribbon-btn" aria-label="First move" title="First move">
-              <wa-icon name="backward-fast"></wa-icon>
-            </button>
-            <button id="view-back" class="ribbon-btn" aria-label="Previous move" title="Previous move">
-              <wa-icon name="backward-step"></wa-icon>
-            </button>
-            <button id="view-forward" class="ribbon-btn" aria-label="Next move" title="Next move">
-              <wa-icon name="forward-step"></wa-icon>
-            </button>
-            <button id="view-last" class="ribbon-btn" aria-label="Last move" title="Last move">
-              <wa-icon name="forward-fast"></wa-icon>
-            </button>
-            <span class="ribbon-sep" aria-hidden="true"></span>
-            <button id="view-analyze" class="ribbon-btn" aria-label="Analysis mode" title="Analysis mode">
-              <wa-icon name="magnifying-glass-plus"></wa-icon>
-            </button>
-            <button id="view-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
-              <wa-icon name="arrows-rotate"></wa-icon>
-            </button>
-            <button id="view-play-from-here" class="ribbon-btn" aria-label="Play from here" title="Play from here">
-              <wa-icon name="play"></wa-icon>
-            </button>
-          </div>
-
-          <div id="edit-controls" class="board-ribbon" style="display: none">
-            <div class="side-popover-wrap">
-              <button id="edit-side" class="ribbon-btn" aria-label="Side to move" title="Side to move" aria-haspopup="true" aria-expanded="false">
-                <wa-icon name="circle-half-stroke"></wa-icon>
-              </button>
-              <div id="edit-side-popover" class="side-popover hidden" role="dialog" aria-label="Side to move">
-                <button type="button" id="edit-side-toggle" class="castle-pill side-toggle-pill" aria-pressed="true">White to move</button>
-              </div>
-            </div>
-            <span class="ribbon-sep" aria-hidden="true"></span>
-            <div class="castle-popover-wrap">
-              <button id="edit-castle-btn" class="ribbon-btn" aria-label="Castling rights" title="Castling rights" aria-haspopup="true" aria-expanded="false">
-                <wa-icon name="chess-rook"></wa-icon>
-              </button>
-              <div id="edit-castle-popover" class="castle-popover hidden" role="dialog" aria-label="Castling rights">
-                <div class="castle-row" data-color="white">
-                  <span class="castle-row-label">White</span>
-                  <button type="button" id="edit-castle-cb-wk" class="castle-pill" aria-pressed="false">O-O</button>
-                  <button type="button" id="edit-castle-cb-wq" class="castle-pill" aria-pressed="false">O-O-O</button>
-                </div>
-                <div class="castle-row" data-color="black">
-                  <span class="castle-row-label">Black</span>
-                  <button type="button" id="edit-castle-cb-bk" class="castle-pill" aria-pressed="false">O-O</button>
-                  <button type="button" id="edit-castle-cb-bq" class="castle-pill" aria-pressed="false">O-O-O</button>
-                </div>
-              </div>
-            </div>
-            <span class="ribbon-sep" aria-hidden="true"></span>
-            <button id="edit-flip" class="ribbon-btn" aria-label="Flip board" title="Flip board">
-              <wa-icon name="arrows-rotate"></wa-icon>
-            </button>
-            <button id="edit-annotate" class="ribbon-btn" aria-label="Edit annotation" title="Edit annotation">
-              <wa-icon name="align-left"></wa-icon>
-            </button>
-            <span class="ribbon-sep ribbon-sep--push" aria-hidden="true"></span>
-            <button id="edit-confirm" class="ribbon-btn" aria-label="Confirm position" title="Confirm">
-              <wa-icon name="check"></wa-icon>
-            </button>
-            <button id="edit-cancel" class="ribbon-btn" aria-label="Cancel editing" title="Cancel">
-              <wa-icon name="xmark"></wa-icon>
-            </button>
-          </div>
-
-          <div class="play-side-host"></div>
-        </div>
-      </section>
-    `;
+    // Shared mutable view/x-game state, passed by ref to the extracted
+    // x-game helpers so they can read/write the same scalars as mount.
+    // `view` is filled in right after mountGameView returns below.
+    const state = {
+      analyzing: false,
+      viewing: false,
+      viewCursor: 0,
+      viewingGameId: null,
+      lastViewNavKind: "precise",
+      editing: false,
+      showPgnComments: true,
+      suppressCommentsForEditTransition: false,
+      lastViewComment: null,
+      gameTcInitial: null,
+      gameTcIncrement: null,
+      viewGameOverAlertShown: false,
+      dismissGameOverToast: null,
+      // Edit-mode staged annotation: null=no change, ""=clear, "text"=set at
+      // entry ply. Reset on each edit entry and on /edit/cancel.
+      pendingAnnotation: null,
+      viewFlipped: false,
+      takebackPending: false,
+      commentNavPrev: null,
+      commentNavNext: null,
+      playFromHereInflight: false,
+      reanalyzeInFlight: false,
+      aiEnabled: false,
+      aiTitleModel: "",
+      noEngine: false,
+      allowTakeback: true,
+      movesPlayed: 0,
+      viewTotalPlies: 0,
+      viewGameOver: false,
+      humanWhite: true,
+      turn: SIDE.WHITE,
+      resignAvailable: false,
+      gameOver: false,
+      paused: false,
+      ctx,
+      api: ctx.api,
+      view: null,
+      // Edit-mode DOM refs + refreshButtons, filled in below once they exist.
+      el: null,
+      refreshButtons: null,
+      // turnFinished: AI turn ended naturally (server stays in ANALYSIS, board
+      // locked, ribbon stops "stopping"); reset on next analyze start.
+      // dismissAnalysisToast: handle to the persistent "Analysis mode" toast.
+      aiShared: { turnFinished: false, dismissAnalysisToast: null },
+      xgame: {
+        gameId: null,
+        parentGameId: null,
+        parentSummary: null,
+        forkPly: null,
+        children: [],
+        parentToastDismissed: false,
+        childrenToastDismissed: false,
+        parentToastHandle: null,
+        childrenToastHandle: null,
+      },
+    };
 
     const boardHost = root.querySelector(".play-board-host");
     const dockLeft = root.querySelector(".play-dock-left");
@@ -345,9 +1835,11 @@ export const playPerspective = {
     const editRibbon = root.querySelector("#edit-controls");
     const editSideBtn = root.querySelector("#edit-side");
     const editSidePopover = root.querySelector("#edit-side-popover");
+    const editSidePopoverWrap = editSidePopover.parentElement; // restore target after float
     const editSideTogglePill = root.querySelector("#edit-side-toggle");
     const editCastleBtn = root.querySelector("#edit-castle-btn");
     const editCastlePopover = root.querySelector("#edit-castle-popover");
+    const editCastlePopoverWrap = editCastlePopover.parentElement;
     const editCastleCb = {
       wK: root.querySelector("#edit-castle-cb-wk"),
       wQ: root.querySelector("#edit-castle-cb-wq"),
@@ -358,17 +1850,26 @@ export const playPerspective = {
     const editCancelBtn = root.querySelector("#edit-cancel");
     const noEngineBanner = root.querySelector("#no-engine-banner");
     const noEngineBannerBtn = noEngineBanner.querySelector(".no-engine-banner__btn");
+    // DOM refs read by lifted module-level handlers (edit popovers,
+    // refreshButtons). Mount keeps the bare consts for listener wiring.
+    state.el = {
+      editSideBtn, editSidePopover, editSidePopoverWrap,
+      editCastleBtn, editCastlePopover, editCastlePopoverWrap,
+      editSideTogglePill, editCastleCb, editRibbon, playRibbon, viewRibbon,
+      pauseBtn, takebackBtn, savePgnBtn, switchSidesBtn, resignBtn, analyzeBtn,
+      viewFirstBtn, viewBackBtn, viewForwardBtn, viewLastBtn, viewSavePgnBtn,
+      viewPlayFromHereBtn, viewAnalyzeBtn, boardHost, newGameBtn,
+    };
 
     // Tracks "server has zero engines registered." Drives both the
     // CTA banner and per-button gating (view-analyze, AI settings).
-    // Mirrored in JS state so refreshButtons() can read it without an
+    // Mirrored in JS state so refreshButtons(state) can read it without an
     // extra DOM query each call.
-    let noEngine = false;
-    let buttonsReady = false; // refreshButtons reads `editing` etc.; safe only after their let-bindings
+    let buttonsReady = false; // gate setNoEngine's early refreshButtons until state.view is wired
     function setNoEngine(v) {
-      noEngine = !!v;
-      noEngineBanner.classList.toggle("hidden", !noEngine);
-      if (buttonsReady) refreshButtons();
+      state.noEngine = !!v;
+      noEngineBanner.classList.toggle("hidden", !state.noEngine);
+      if (buttonsReady) refreshButtons(state);
     }
     async function checkEngines() {
       try {
@@ -406,18 +1907,18 @@ export const playPerspective = {
         try {
           await ctx.api("POST", "/game/move", { uci });
         } catch (e) {
-          reportError(ctx, "Move rejected", e);
+          reportError(ctx, MSG.MOVE_REJECTED, e);
         }
       },
       // Click on a move in the list (view mode only) → jump cursor to
       // the position AFTER that move, i.e. ply = plyIndex + 1.
-      onMoveJump: (plyIndex) => doViewNav("/game/view/goto", { ply: plyIndex + 1 }),
+      onMoveJump: (plyIndex) => doViewNav(state, "/game/view/goto", { ply: plyIndex + 1 }),
       // Fork glyphs. Fresh map per render; both child-here (this game
       // has forks at this ply) and own-fork-ply (this game itself
       // diverged from its parent here) get a glyph.
       forkInfoFn: () => {
         const m = new Map();
-        for (const c of xgame.children || []) {
+        for (const c of state.xgame.children || []) {
           // fork_ply is 1-based; cell index = fork_ply - 1.
           const idx = (c.fork_ply ?? 0) - 1;
           if (idx < 0) continue;
@@ -425,8 +1926,8 @@ export const playPerspective = {
           cur.childCount += 1;
           m.set(idx, cur);
         }
-        if (xgame.parentGameId && xgame.forkPly != null) {
-          const idx = xgame.forkPly - 1;
+        if (state.xgame.parentGameId && state.xgame.forkPly != null) {
+          const idx = state.xgame.forkPly - 1;
           if (idx >= 0) {
             const cur = m.get(idx) ?? { childCount: 0, isOwnForkPly: false };
             cur.isOwnForkPly = true;
@@ -439,118 +1940,46 @@ export const playPerspective = {
       // flags (live + persisted) so the toasts re-fire at this ply.
       // Skip the server round-trip when we're already there.
       onForkClick: (plyIndex) => {
-        if (analyzing) return;
-        xgame.parentToastDismissed = false;
-        xgame.childrenToastDismissed = false;
-        _setXgameDismissed(xgame.gameId, "parent", false);
-        _setXgameDismissed(xgame.gameId, "children", false);
-        if (viewCursor === plyIndex + 1) {
-          refreshXgameToasts();
+        if (state.analyzing) return;
+        state.xgame.parentToastDismissed = false;
+        state.xgame.childrenToastDismissed = false;
+        _setXgameDismissed(state.xgame.gameId, "parent", false);
+        _setXgameDismissed(state.xgame.gameId, "children", false);
+        if (state.viewCursor === plyIndex + 1) {
+          refreshXgameToasts(state);
           return;
         }
-        doViewNav("/game/view/goto", { ply: plyIndex + 1 });
+        doViewNav(state, "/game/view/goto", { ply: plyIndex + 1 });
       },
     });
+    state.view = view;
 
-    // Settings cache (refreshed on settings-changed).
-    let allowTakeback = true;
-    let showPgnComments = true; // view-mode commentary window
-    // True only while play->view->edit is in flight. Opening the dock
-    // mid-transition fires a seeding /view/goto with the stale (pre-flip)
-    // viewCursor=0, clobbering the live-position cursor the server lands
-    // at via view_last(). Cleared in _onServerEditingStop.
-    let suppressCommentsForEditTransition = false;
     const commentsHost = root.querySelector(".play-comments-host");
+    state.el.commentsHost = commentsHost;
     setCommentaryDockContainer(commentsHost);
     setAiInlineHost(root.querySelector(".play-ai-inline"));
-    let lastViewComment = null;
     // X on the commentary window (dock slot or float) -> clear setting.
     setOnUserCloseCommentary(() => {
-      showPgnComments = false;
+      state.showPgnComments = false;
       ctx.api("PUT", "/settings", { view_show_pgn_comments: false })
-        .catch((e) => reportError(ctx, "Failed to save setting", e));
+        .catch((e) => reportError(ctx, MSG.SETTING_SAVE_FAILED, e));
     });
-    function syncCommentsVisibility() {
-      if (!commentsHost) return;
-      const shouldShow = viewing && showPgnComments && !isMobileLayout()
-        && !suppressCommentsForEditTransition;
-      const open = isCommentaryOpen();
-      if (shouldShow) {
-        if (!open) openCommentary();
-        setCommentaryText(lastViewComment);
-        // Re-open rebuilds the body with nav buttons disabled; re-push the
-        // still-current targets (they survive a hide -- view-mode state).
-        pushNavToUi();
-      } else if (open) {
-        closeCommentary();
-      }
-    }
-    const onCommentsResize = () => { syncCommentsVisibility(); };
+    const onCommentsResize = () => { syncCommentsVisibility(state); };
     window.addEventListener("resize", onCommentsResize);
 
-    // --- AI analysis lifecycle ---
-    // Master toggle from settings; gates the AI panel + the server-side
-    // start_analysis branch. The AI window lives in the main dock
-    // alongside Search Lines + UCI Log.
-    let aiEnabled = false;
-    // Closing the AI window mid-turn = same effect as clicking
-    // toolbar Stop: snapshot view state, stop analysis, close all
-    // dock panels. stopAnalysisFromUi is defined further down.
-    setOnUserCloseAi(() => { stopAnalysisFromUi(); });
-    // Snapshot of TC fields used at the start of the current game; lets
-    // us tell the user "applies on next game" if they edit TC mid-play.
-    let gameTcInitial = null;
-    let gameTcIncrement = null;
-    // Latest AI provider/model from settings, captured at analyze-start
-    // time. We do not write to setAiTitle on every settings refresh --
-    // the panel title should reflect what is actually running, not what
-    // is selected in Settings.
-    let aiTitleModel = "";
-    async function refreshSettings({ notifyOnDrift = false } = {}) {
-      try {
-        const s = await ctx.api("GET", "/settings");
-        allowTakeback = s.allow_takeback !== false;
-        showPgnComments = s.view_show_pgn_comments !== false;
-        aiEnabled = !!s.ai_enabled;
-        aiTitleModel = s.ai_enabled ? (s.ai_model || "") : "";
-        syncCommentsVisibility();
-        if (notifyOnDrift && !gameOver && resignAvailable) {
-          const drift = [];
-          // TC: compare against the snapshot taken at game start.
-          if (
-            gameTcInitial !== null &&
-            (Number(s.tc_initial_seconds) !== gameTcInitial ||
-              Number(s.tc_increment_seconds) !== gameTcIncrement)
-          ) {
-            drift.push("time control");
-          }
-          if (drift.length > 0) {
-            toast(
-              `New ${drift.join(" and ")} will apply on the next game.`,
-              { variant: "neutral" },
-            );
-          }
-        }
-        // Always refresh the snapshot from current settings when there is
-        // no active game (so the "next game" comparison is accurate).
-        if (!resignAvailable) {
-          gameTcInitial = Number(s.tc_initial_seconds);
-          gameTcIncrement = Number(s.tc_increment_seconds);
-        }
-      } catch {
-        // ignore
-      }
-    }
-    await refreshSettings();
+    // Closing the AI window mid-turn = same effect as clicking toolbar Stop:
+    // snapshot view state, stop analysis, close all dock panels.
+    setOnUserCloseAi(() => { stopAnalysisFromUi(state); });
+    await refreshSettings(state);
     const onSettingsChanged = () => {
-      refreshSettings({ notifyOnDrift: true }).then(() => refreshButtons());
+      refreshSettings(state, { notifyOnDrift: true }).then(() => refreshButtons(state));
     };
     window.addEventListener(APP_EVT.SETTINGS_CHANGED, onSettingsChanged);
 
     // sturddle:layout-changed fires when ribbon_float toggled in main.js or
     // when the user closes the ribbon WinBox. Re-run refreshButtons so the
     // active ribbon is mounted in the WinBox (or unhidden from the DOM).
-    const onLayoutChanged = () => { refreshButtons(); };
+    const onLayoutChanged = () => { refreshButtons(state); };
     window.addEventListener(APP_EVT.LAYOUT_CHANGED, onLayoutChanged);
 
     // sturddle:recents-changed fires when another perspective (e.g. the
@@ -558,1319 +1987,80 @@ export const playPerspective = {
     // for the currently-viewed game so the fork glyph + banner reflect
     // the new state (B3: glyph stale after a child was deleted).
     const onRecentsChanged = () => {
-      if (viewing && viewingGameId) fetchXgameInfo(viewingGameId);
+      if (state.viewing && state.viewingGameId) fetchXgameInfo(state, state.viewingGameId);
     };
     window.addEventListener(APP_EVT.RECENTS_CHANGED, onRecentsChanged);
 
     // Ask server to re-emit current state so the freshly-mounted view syncs.
     ctx.api("POST", "/game/sync", {}).catch(() => {});
 
-    // Track whether the current game is in progress (any moves played and
-    // not yet ended). Drives New Game enable + confirm semantics.
-    // TODO: humanWhite + turn are also held inside GameView; consider
-    // exposing getters on `view` and dropping these locals (single source).
-    let movesPlayed = 0;
-    let gameOver = false;
-    let humanWhite = true;
-    let turn = "white";
-    let paused = false;
-    let analyzing = false;
-    // AI mode only: flips true when an AI turn terminates naturally
-    // (not cancelled/error). Server stays in ANALYSIS so the board is
-    // locked, but the ribbon stops shouting "stopping..." and the
-    // toast disappears. Reset on next analyze start.
-    let aiTurnFinished = false;
-    // Single sync point: every analyzing write goes through this setter so
-    // the module-scope mirror (_analyzing) used by isAnalyzing() stays
-    // current. Direct `analyzing = ...` writes will drift -- always call
-    // setAnalyzing instead.
-    function setAnalyzing(v) {
-      analyzing = !!v;
-      _analyzing = analyzing;
-      // Server flipped out of ANALYSIS -- clear the AI-finished latch
-      // so the ribbon can re-enable when the game is paused again.
-      if (!analyzing) aiTurnFinished = false;
-      document.body.classList.toggle(XGAME_LOCK_CLASS, analyzing);
-    }
-    // A finished AI-analysis turn in play mode: the board is frozen in
-    // ANALYZING and reads as paused, so the ribbon shows Resume (one click
-    // exits analysis and resumes play). Reads live state -- call, don't cache.
-    function aiAnalysisDone() {
-      return analyzing && aiTurnFinished && aiEnabled;
-    }
-    // View mode state (set from board_update.view payload).
-    let viewing = false;
-    let viewCursor = 0;
-    let viewTotalPlies = 0;
-    let viewGameOver = false;
-    let viewGameOverAlertShown = false;
-    let dismissGameOverToast = null;
-    let viewingGameId = null;
-    // X-game navigation state. Populated by fetchXgameInfo after every
-    // view-game change; cleared when game_id flips. Toast dismiss flags
-    // are per-game don't-nag (only explicit X resets them; ply-change
-    // auto-close does NOT count). Toast handles are dismiss callbacks
-    // from toast() -- kept so we can close on ply change.
-    let xgame = {
-      gameId: null,
-      parentGameId: null,
-      parentSummary: null,
-      forkPly: null,
-      children: [],
-      parentToastDismissed: false,
-      childrenToastDismissed: false,
-      parentToastHandle: null,
-      childrenToastHandle: null,
-    };
-    function closeXgameToasts() {
-      if (xgame.parentToastHandle) { xgame.parentToastHandle(); xgame.parentToastHandle = null; }
-      if (xgame.childrenToastHandle) { xgame.childrenToastHandle(); xgame.childrenToastHandle = null; }
-    }
-    function resetXgame() {
-      closeXgameToasts();
-      xgame.gameId = null;
-      xgame.parentGameId = null;
-      xgame.parentSummary = null;
-      xgame.forkPly = null;
-      xgame.children = [];
-      xgame.parentToastDismissed = false;
-      xgame.childrenToastDismissed = false;
-    }
-    async function fetchXgameInfo(gameId) {
-      if (!gameId) {
-        resetXgame();
-        refreshXgameToasts();
-        return;
-      }
-      try {
-        const r = await ctx.api(
-          "GET", `/game/recent-imports/by-id/${encodeURIComponent(gameId)}`,
-        );
-        xgame.gameId = gameId;
-        xgame.parentGameId = r.parent_game_id ?? null;
-        xgame.parentSummary = r.parent_summary ?? null;
-        xgame.forkPly = r.fork_ply ?? null;
-        xgame.children = Array.isArray(r.children) ? r.children : [];
-        // Hydrate per-game don't-nag flags from the module-level map so
-        // an explicit X survives perspective remount within the same
-        // page load.
-        const d = _getXgameDismissed(gameId);
-        xgame.parentToastDismissed = d.parent;
-        xgame.childrenToastDismissed = d.children;
-        // After data lands, re-render the move list so glyphs appear
-        // without waiting for the next board_update.
-        if (_cachedBoardUpdate) view.applyEvent(_cachedBoardUpdate);
-        refreshXgameToasts();
-      } catch (_e) {
-        // The current game may not be in recents (e.g. brand-new play
-        // game with no moves yet). That's expected; just clear state.
-        resetXgame();
-        refreshXgameToasts();
-      }
-    }
-    function formatGameLabel(summary) {
-      const s = summary || {};
-      const white = s.white || "?";
-      const black = s.black || "?";
-      const result = s.result && s.result !== "*" ? ` (${s.result})` : "";
-      return `${white} vs ${black}${result}`;
-    }
-    function buildParentToast() {
-      // "Forked from <parent> at ply N." Single clickable link, X to
-      // dismiss. No collapse -- there is only one parent.
-      const node = document.createElement("div");
-      node.className = "xgame-toast";
-      const icon = document.createElement("wa-icon");
-      icon.setAttribute("name", "code-fork");
-      icon.className = "xgame-toast-icon";
-      node.append(icon);
-      const text = document.createElement("span");
-      text.className = "toast-grow";
-      text.append("Forked from ");
-      const link = document.createElement("button");
-      link.className = "xgame-link";
-      link.type = "button";
-      link.textContent = xgame.parentSummary
-        ? formatGameLabel(xgame.parentSummary)
-        : "parent game";
-      link.addEventListener("click", () => {
-        if (analyzing) return;
-        if (xgame.parentGameId) {
-          openXgameTarget(xgame.parentGameId, { landAtPly: xgame.forkPly });
-        }
-      });
-      text.append(link);
-      text.append(` at ply ${xgame.forkPly ?? "?"}.`);
-      node.append(text);
-      node.append(makeToastDismissBtn(() => {
-        xgame.parentToastDismissed = true;
-        _setXgameDismissed(xgame.gameId, "parent", true);
-        if (xgame.parentToastHandle) {
-          xgame.parentToastHandle();
-          xgame.parentToastHandle = null;
-        }
-      }));
-      return node;
-    }
-    function buildChildrenToast(childrenHere) {
-      // "N variation(s) from this position" header with an expand
-      // arrow + X. Expansion grows upward (toast is bottom-anchored).
-      const node = document.createElement("div");
-      node.className = "xgame-toast xgame-toast-collapsible";
-      // Expansion list (rendered above the header via flex-direction).
-      const list = document.createElement("div");
-      list.className = "xgame-toast-list hidden";
-      for (const c of childrenHere) {
-        const item = document.createElement("button");
-        item.className = "xgame-link xgame-toast-list-item";
-        item.type = "button";
-        item.textContent = formatGameLabel(c.summary);
-        item.addEventListener("click", () => {
-          if (analyzing) return;
-          openXgameTarget(c.game_id, { landAtPly: c.fork_ply });
-        });
-        list.append(item);
-      }
-      node.append(list);
-      // Header row.
-      const header = document.createElement("div");
-      header.className = "xgame-toast-header";
-      const icon = document.createElement("wa-icon");
-      icon.setAttribute("name", "code-fork");
-      icon.className = "xgame-toast-icon";
-      header.append(icon);
-      const text = document.createElement("span");
-      text.className = "toast-grow";
-      text.textContent = childrenHere.length === 1
-        ? "1 variation from this position"
-        : `${childrenHere.length} variations from this position`;
-      header.append(text);
-      const arrow = document.createElement("button");
-      arrow.className = "xgame-toast-arrow";
-      arrow.type = "button";
-      arrow.setAttribute("aria-label", "Show variations");
-      arrow.title = "Show variations";
-      const arrowIcon = document.createElement("wa-icon");
-      arrowIcon.setAttribute("name", "chevron-up");
-      arrow.append(arrowIcon);
-      arrow.addEventListener("click", () => {
-        const expanded = !list.classList.toggle("hidden");
-        arrowIcon.setAttribute("name", expanded ? "chevron-down" : "chevron-up");
-      });
-      header.append(arrow);
-      header.append(makeToastDismissBtn(() => {
-        xgame.childrenToastDismissed = true;
-        _setXgameDismissed(xgame.gameId, "children", true);
-        if (xgame.childrenToastHandle) {
-          xgame.childrenToastHandle();
-          xgame.childrenToastHandle = null;
-        }
-      }));
-      node.append(header);
-      return node;
-    }
-    function refreshXgameToasts() {
-      // Child -> parent: cursor lands precisely on the fork ply of the
-      // current child + the game has a parent. Auto-close on ply
-      // change (does NOT count as a dismiss).
-      const showParent = viewing
-        && xgame.parentGameId
-        && xgame.forkPly != null
-        && viewCursor === xgame.forkPly
-        && lastViewNavKind === "precise"
-        && !xgame.parentToastDismissed;
-      if (showParent && !xgame.parentToastHandle) {
-        xgame.parentToastHandle = toast(buildParentToast(), {
-          variant: "neutral", duration: 0, stack: "xgame",
-        });
-      } else if (!showParent && xgame.parentToastHandle) {
-        xgame.parentToastHandle();
-        xgame.parentToastHandle = null;
-      }
-      // Parent -> child: cursor lands precisely on a fork ply that has
-      // 1+ children. Same auto-close-on-ply-change rule.
-      const childrenHere = (xgame.children || []).filter(
-        c => (c.fork_ply ?? -1) === viewCursor,
-      );
-      const showChildren = viewing
-        && lastViewNavKind === "precise"
-        && childrenHere.length > 0
-        && !xgame.childrenToastDismissed;
-      if (showChildren && !xgame.childrenToastHandle) {
-        xgame.childrenToastHandle = toast(buildChildrenToast(childrenHere), {
-          variant: "neutral", duration: 0, stack: "xgame",
-        });
-      } else if (!showChildren && xgame.childrenToastHandle) {
-        xgame.childrenToastHandle();
-        xgame.childrenToastHandle = null;
-      }
-    }
-    async function openXgameTarget(gameId, opts = {}) {
-      // Fetch the target's text from recents, then drive a normal
-      // import (server-side enter_view_mode swap). Mirrors the path
-      // used by the import dialog's "select a recent" affordance.
-      // ``landAtPly``: optional cursor ply to navigate to after the
-      // import lands; used for both directions (land at fork_ply --
-      // see x-game-navigation.md, Q1/Q2 revised 2026-05-22).
-      const landAtPly = opts.landAtPly ?? null;
-      // Short-circuit: already viewing this game at the target ply.
-      // A re-import would re-animate cm-chessboard to the same
-      // position (visible flicker for the user).
-      if (
-        viewing
-        && viewingGameId === gameId
-        && (landAtPly === null || viewCursor === landAtPly)
-      ) {
-        return;
-      }
-      try {
-        const target = await ctx.api(
-          "GET", `/game/recent-imports/by-id/${encodeURIComponent(gameId)}`,
-        );
-        // Pass land_at_ply in the import payload so the server enters
-        // view mode at the target ply in a SINGLE transaction (no
-        // follow-up /view/goto -> no animation flicker).
-        const importPayload = { format: target.format, text: target.text };
-        if (landAtPly !== null && landAtPly > 0) {
-          importPayload.land_at_ply = landAtPly;
-          // Precise landing on the fork ply -> any banner gated on
-          // precise nav can fire on the resulting board_update.
-          lastViewNavKind = "precise";
-        }
-        // GameView's applyEvent drops board_updates whose game_id does
-        // NOT match its local gameId. Clear before import so the
-        // server's fresh game_id is accepted; set it to the returned
-        // id so subsequent updates are still scoped.
-        view.setGameId(null);
-        closeAi();
-        const r = await ctx.api("POST", "/game/import", importPayload);
-        if (r?.game_id) view.setGameId(r.game_id);
-      } catch (e) {
-        reportError(ctx, "Open game failed", e);
-      }
-    }
-    let editing = false;
-    // Annotation staged by the user via the edit-mode annotation modal.
-    // null  -> no pending change; /edit/commit goes with apply_comment=false.
-    // ""    -> user explicitly cleared; server treats as delete.
-    // "text"-> set/replace at the edit-entry ply.
-    // Reset on every entry to edit mode and on /edit/cancel.
-    let pendingAnnotation = null;
     const pausedBadge = document.getElementById("paused-badge");
     const finishedBadge = document.getElementById("finished-badge");
-    function syncPausedUi() {
-      const show = paused && !analyzing;
-      boardHost.classList.toggle("board-paused", show);
-      pausedBadge?.classList.toggle("hidden", !show);
-    }
-    function showFinishedBadge(text) {
-      if (!finishedBadge) return;
-      finishedBadge.textContent = text;
-      finishedBadge.classList.toggle("hidden", !text);
-    }
-    let dismissAnalysisToast = null;
+    state.el.pausedBadge = pausedBadge;
+    state.el.finishedBadge = finishedBadge;
 
     // Resign is enabled whenever there is an active game; cleared on
     // game_result. We track it explicitly so paused-state can additionally
     // gate it without losing the "active game" signal.
-    let resignAvailable = false;
     buttonsReady = true;
-    function refreshButtons() {
-      // Swap ribbons: edit overrides view, which overrides play.
-      const activeRibbon = editing ? editRibbon : viewing ? viewRibbon : playRibbon;
-      playRibbon.style.display = (viewing || editing) ? "none" : "";
-      viewRibbon.style.display = (viewing && !editing) ? "" : "none";
-      editRibbon.style.display = editing ? "" : "none";
-      window.dispatchEvent(new CustomEvent(APP_EVT.RIBBON_ACTIVE, { detail: { el: activeRibbon } }));
-      if (editing) {
-        const isWhite = view.getEditSide() === "w";
-        editSideBtn.setAttribute("aria-label", `Side to move: ${isWhite ? "White" : "Black"}`);
-        editSideBtn.setAttribute("title", `Side to move: ${isWhite ? "White" : "Black"}`);
-        editSideBtn.classList.toggle("is-active", !isWhite);
-        editSideTogglePill.textContent = isWhite ? "White to move" : "Black to move";
-        editSideTogglePill.classList.toggle("is-black", !isWhite);
-        editSideTogglePill.setAttribute("aria-pressed", isWhite ? "false" : "true");
-        const rights = view.getCastlingRights();
-        for (const [k, btn] of Object.entries(editCastleCb)) {
-          btn.setAttribute("aria-pressed", rights[k] ? "true" : "false");
-          btn.classList.toggle("is-active", rights[k]);
-        }
-        const anyRight = rights.wK || rights.wQ || rights.bK || rights.bQ;
-        editCastleBtn.classList.toggle("is-active", anyRight);
-        return;
-      }
-      if (viewing) {
-        const atStart = viewCursor === 0;
-        const atEnd = viewCursor === viewTotalPlies;
-        configureBtn(viewFirstBtn, { disabled: analyzing || atStart });
-        configureBtn(viewBackBtn, { disabled: analyzing || atStart });
-        configureBtn(viewForwardBtn, { disabled: analyzing || atEnd });
-        configureBtn(viewLastBtn, { disabled: analyzing || atEnd });
-        configureBtn(viewSavePgnBtn, { disabled: analyzing || viewTotalPlies === 0 });
-        // Play-from-here is rejected at game-over plies (checkmate /
-        // stalemate / draw). Backed by a backend guard that prevents
-        // half-cleared state if the UI is bypassed.
-        configureBtn(viewPlayFromHereBtn, { disabled: analyzing || viewGameOver });
-        // Engine-less view: analyze is unreachable. Tooltip points at
-        // Engines tab so the user knows the next step.
-        // AI turn finished but server still ANALYZING: show ribbon as
-        // normal ("Analysis mode") even though `analyzing` is true.
-        const viewShowAsActive = analyzing && !aiTurnFinished;
-        configureBtn(viewAnalyzeBtn, {
-          disabled: noEngine && !viewShowAsActive,
-          active: viewShowAsActive,
-          label: viewShowAsActive
-            ? ANALYZE_LABEL_STOP
-            : noEngine
-              ? "Register an engine in Settings to analyze"
-              : ANALYZE_LABEL_START,
-          icon: viewShowAsActive ? ANALYZE_ICON_STOP : ANALYZE_ICON_START,
-        });
-        return;
-      }
-      const humanToMove = humanWhite ? turn === "white" : turn === "black";
-      // Completed AI analysis in play mode reads as paused to the user; show
-      // Resume (see aiAnalysisDone / onPause). Engine-only analysis and
-      // in-progress runs keep the plain Pause/Resume toggle.
-      const aiDone = aiAnalysisDone();
-      const showResume = paused || aiDone;
-      // Pause needs the human's turn; Resume is always allowed.
-      configureBtn(pauseBtn, {
-        disabled: gameOver || (!aiDone && analyzing) || (!showResume && !humanToMove),
-        label: showResume ? "Resume" : "Pause",
-        icon: showResume ? "forward-step" : "pause",
-      });
-      configureBtn(takebackBtn, {
-        disabled: analyzing || gameOver || !allowTakeback || movesPlayed === 0,
-      });
-      configureBtn(savePgnBtn, { disabled: analyzing || movesPlayed === 0 });
-      configureBtn(switchSidesBtn, { disabled: analyzing || gameOver || !resignAvailable });
-      configureBtn(resignBtn, { disabled: paused || analyzing || gameOver || !resignAvailable });
-      // AI turn finished but server is still ANALYZING (user hasn't
-      // closed the AI window yet). Show the ribbon button as normal
-      // ("Analysis mode", magnifying-glass, enabled) -- the rest of
-      // the reachability gates (gameOver / no engine / not paused)
-      // still apply.
-      const showAsActive = analyzing && !aiTurnFinished;
-      const analyzeReachable = !gameOver && resignAvailable && (paused || aiTurnFinished);
-      configureBtn(analyzeBtn, {
-        disabled: !showAsActive && !analyzeReachable,
-        active: showAsActive,
-        label: showAsActive ? ANALYZE_LABEL_STOP : ANALYZE_LABEL_START,
-        icon: showAsActive ? ANALYZE_ICON_STOP : ANALYZE_ICON_START,
-      });
-    }
+    state.refreshButtons = () => refreshButtons(state);
 
-    // View-mode flip is purely visual (no backend state; the user isn't
-    // playing yet so "which side am I" is meaningless). Persisted so it
-    // survives perspective remounts; applied on each entry into view mode.
-    const VIEW_FLIP_KEY = STORAGE_KEY.VIEW_FLIPPED;
-    let viewFlipped = false;
-    try { viewFlipped = localStorage.getItem(VIEW_FLIP_KEY) === "1"; } catch { /* */ }
+    // Hydrate the persisted flip preference (see onViewFlipImpl for rationale).
+    try { state.viewFlipped = localStorage.getItem(VIEW_FLIP_KEY) === "1"; } catch { /* */ }
 
-    // AI event handling extracted so the same dispatch can replay
-    // buffered events on perspective remount (panel rehydration when a
-    // mid-turn reconnect happens).
-    function dispatchAiEvent(evt) {
-      switch (evt.kind) {
-        case "ai_info": {
-          const p = evt.payload || {};
-          if (typeof p.delta === "string") appendAiDelta(p.delta, p.round ?? 0, p.thinking_ms ?? null);
-          if (p.done) {
-            // Defensive: tool-call lifecycle can drop the restore signal
-            // (cancelled mid-call, round cap, etc.). Always snap back.
-            view.restorePosition({ animate: false });
-            markAiDone({
-              cancelled: !!p.cancelled,
-              error: p.error || null,
-              errorDetail: p.error_detail || null,
-              roundCap: !!p.round_cap,
-              verifierRoundCap: !!p.verifier_round_cap,
-              noResponse: !!p.no_response,
-              noRecommendation: !!p.no_recommendation,
-            });
-            if (p.error) {
-              toast(p.error_detail || p.error, {
-                variant: "danger",
-                duration: 6000,
-              });
-            }
-            // Natural completion: hide the "stopping" affordances --
-            // toast and ribbon active look. Server stays in ANALYSIS;
-            // closing the AI window is what exits. Skipped on
-            // cancelled/error to preserve normal cleanup behavior.
-            // Per-turn dismissal is correct because each Analyze click
-            // is a one-shot turn (no rolling session; see
-            // ai-analysis-spec.md §Live session model -- indefinitely
-            // postponed).
-            if (!p.cancelled && !p.error) {
-              aiTurnFinished = true;
-              dismissAnalysisToast?.();
-              dismissAnalysisToast = null;
-              refreshButtons();
-            }
-          }
-          return true;
-        }
-        case "ai_thinking": {
-          const p = evt.payload || {};
-          if (typeof p.delta === "string") appendAiThinking(p.delta, p.round ?? 0);
-          else if (Number.isFinite(p.thinking_ms)) freezeAiThinking(p.round ?? 0, p.thinking_ms);
-          return true;
-        }
-        case "ai_tool_call": {
-          const p = evt.payload || {};
-          appendAiToolCall({
-            round: p.round ?? 0,
-            name: p.name,
-            input: p.input,
-            toolUseId: p.tool_use_id,
-            parentToolUseId: p.parent_tool_use_id,
-            thinkingMs: p.thinking_ms ?? null,
-          });
-          // When the model inspects a hypothetical position, mirror
-          // the analyzed FEN on the board so the user can follow the
-          // AI's reasoning. Restored on ai_tool_call_complete.
-          if (p.name === ANALYZE_TOOL_NAME && p.input && typeof p.input.fen === "string") {
-            // No animation: tool calls fire faster than the cm-chessboard
-            // queue drains while the perspective is hidden (rAF throttled
-            // off-screen), producing a "fast replay" on return.
-            view.previewPosition(p.input.fen, { animate: false });
-          }
-          return true;
-        }
-        case "ai_tool_call_failed": {
-          const p = evt.payload || {};
-          markAiToolCallFailed({
-            toolUseId: p.tool_use_id,
-            error: p.error,
-            detail: p.detail,
-          });
-          // Restore in case the failed call was an analyze preview.
-          view.restorePosition({ animate: false });
-          return true;
-        }
-        case "ai_tool_call_complete": {
-          const p = evt.payload || {};
-          if (p.name === ANALYZE_TOOL_NAME) view.restorePosition({ animate: false });
-          view.clearArrows();
-          view.clearEngineInfo();
-          return true;
-        }
-        case "ai_position_note": {
-          const p = evt.payload || {};
-          noteAiPosition({ round: p.round ?? 0, surfaces: p.surfaces || [] });
-          return true;
-        }
-      }
-      return false;
-    }
-
-    // Buffer live AI events while the replay GET is in flight, then
-    // drain in seq order with dedupe. Avoids the GET-then-subscribe
-    // race: live events that fire between subscribe and replay arrival
-    // are held instead of dispatched out-of-order.
-    let aiRehydrating = true;
-    let aiLiveBuffer = [];
-    let aiMaxSeq = 0;
-    function dispatchAiEventOrdered(evt) {
-      const seq = evt?.payload?.seq ?? 0;
-      // Server resets seq to 1 at the start of each turn, so seq=1
-      // unconditionally marks a new turn and resets the high-water mark.
-      // Otherwise a single-event turn (e.g. instant error) following a
-      // prior turn whose aiMaxSeq is also 1 would be swallowed.
-      if (seq === 1) aiMaxSeq = 0;
-      else if (seq && seq <= aiMaxSeq) return;
-      if (seq) aiMaxSeq = seq;
-      dispatchAiEvent(evt);
-    }
-    async function rehydrateAiPanel() {
-      try {
-        const r = await ctx.api("GET", "/game/analysis/replay");
-        const events = Array.isArray(r?.events) ? r.events : [];
-        if (events.length > 0) {
-          openAi();
-          resetAi();
-          for (const evt of events) dispatchAiEventOrdered(evt);
-        }
-      } catch { /* */ } finally {
-        aiRehydrating = false;
-        const buffered = aiLiveBuffer;
-        aiLiveBuffer = [];
-        for (const evt of buffered) dispatchAiEventOrdered(evt);
-      }
-    }
-    rehydrateAiPanel();
+    // Private replay-buffer state + the deps the AI dispatch needs.
+    const ai = { rehydrating: true, liveBuffer: [], maxSeq: 0 };
+    const aiCtx = { view, api: ctx.api, refreshButtons: () => refreshButtons(state), aiShared: state.aiShared };
+    rehydrateAiPanel(ai, aiCtx);
 
     // --- Hook events for control-bar state changes (board state changes
     //     are GameView's responsibility). ---
-    const offEvent = ctx.events.on((evt) => {
-      // AI events: buffer until replay completes, then dedupe by seq.
-      if (evt.kind?.startsWith("ai_")) {
-        if (aiRehydrating) aiLiveBuffer.push(evt);
-        else dispatchAiEventOrdered(evt);
-        return;
-      }
-      switch (evt.kind) {
-        case "engine_search_start": {
-          // Engine is busy. While the AI window is open this means the
-          // agent is in a tool call; flip the status line so the user
-          // sees what's taking time. The PV-table window consumes the
-          // same event for its own reset; no conflict.
-          if (isAiOpen()) setAiStatus("engine");
-          break;
-        }
-        case "engine_info": {
-          // Engine produced an info chunk -- search is delivering. Drop
-          // the "engine searching" hint back to "waiting" so the user
-          // knows the agent will narrate next.
-          if (isAiOpen()) setAiStatus("waiting");
-          break;
-        }
-        case "board_update": {
-          _cachedBoardUpdate = evt;
-          movesPlayed = evt.payload.moves_san?.length ?? 0;
-          gameOver = false;
-          showFinishedBadge("");
-          // Server-authoritative edit state. Transitions drive the client
-          // editor extension on/off; the ribbon UI follows `editing`.
-          const wasEditing = editing;
-          editing = !!evt.payload.editing;
-          if (editing && !wasEditing) _onServerEditingStart();
-          else if (!editing && wasEditing) _onServerEditingStop();
-          // View mode swaps the ribbon and suppresses play-mode signals
-          // (resignAvailable, etc.) — the user isn't playing yet.
-          const v = evt.payload.view;
-          const wasViewing = viewing;
-          const prevGameId = viewingGameId;
-          viewingGameId = evt.game_id ?? null;
-          viewing = !!v;
-          // Read analyzing early: syncCommentsVisibility (called below) gates
-          // view/goto on !analyzing; the main analyzing block runs later in
-          // the same event but would be too late.
-          if (typeof evt.payload.analyzing === "boolean") setAnalyzing(evt.payload.analyzing);
-          if (viewing) {
-            if (!wasViewing || viewingGameId !== prevGameId) {
-              viewGameOverAlertShown = false;
-              dismissGameOverToast?.();
-              dismissGameOverToast = null;
-              // Game switched (or first entry into view). Clear stale
-              // x-game state synchronously and close any live toasts
-              // BEFORE the in-band refreshXgameToasts (called later
-              // in this handler) so it doesn't fire with stale data
-              // from the prior game. fetchXgameInfo then populates
-              // and re-renders.
-              resetXgame();
-              fetchXgameInfo(viewingGameId);
-            }
-            viewCursor = v.cursor ?? 0;
-            viewTotalPlies = v.total_plies ?? 0;
-            viewGameOver = !!v.game_over;
-            lastViewComment = v.comment ?? null;
-            _viewingHash = v.view_hash ?? null;
-            _viewingSummary = v.view_summary ?? null;
-            _viewing = true;
-            // Single source of truth for commentary navigation. The server
-            // ships fresh prev/next with every view payload, so game
-            // switches (import while open) can't leave stale plies behind.
-            commentNavPrev = v.prev_comment ?? null;
-            commentNavNext = v.next_comment ?? null;
-            pushNavToUi();
-            syncCommentsVisibility();
-            if (v.result) showFinishedBadge(resultBadge(v.result));
-            if (viewGameOver && viewCursor === viewTotalPlies && v.result && !viewGameOverAlertShown) {
-              viewGameOverAlertShown = true;
-              const node = document.createElement("span");
-              node.className = "toast-sort-msg";
-              const msg = document.createElement("span");
-              msg.className = "toast-grow";
-              msg.textContent = formatViewGameOver(v);
-              node.append(msg, makeToastDismissBtn(() => { dismissGameOverToast?.(); dismissGameOverToast = null; }));
-              dismissGameOverToast = toast(node, { variant: "neutral", duration: 6000 });
-            }
-            resignAvailable = false;
-            // Board is read-only in view mode; the user navigates via ribbon.
-            view.setEnabled(false);
-            // Restore the user's prior flip preference on entry into view mode.
-            if (!wasViewing) view.setHumanWhite(!viewFlipped);
-          } else {
-            lastViewComment = null;
-            _viewingHash = null;
-            _viewingSummary = null;
-            _viewing = false;
-            commentNavPrev = null;
-            commentNavNext = null;
-            pushNavToUi();
-            syncCommentsVisibility();
-            if (wasViewing) restoreDebugWindows(ctx.events);
-            // Leaving view mode -- x-game state is per-viewed-game; drop it.
-            if (wasViewing) resetXgame();
-            resignAvailable = true;
-          }
-          // Cursor or viewing state may have just changed -- re-evaluate
-          // the parent / children toasts. Open/close as needed.
-          refreshXgameToasts();
-          // Notify the perspective router so the nav label can swap
-          // Play <-> View when the mode flips.
-          if (wasViewing !== viewing) {
-            window.dispatchEvent(new CustomEvent(APP_EVT.VIEWING_CHANGED, {
-              detail: { viewing },
-            }));
-          }
-          if (typeof evt.payload.human_white === "boolean") {
-            humanWhite = evt.payload.human_white;
-          }
-          if (evt.payload.turn) turn = evt.payload.turn;
-          if (typeof evt.payload.analyzing === "boolean") {
-            setAnalyzing(evt.payload.analyzing);
-            // Don't re-enable interactivity in view mode regardless of
-            // analysis state.
-            if (!viewing) view.setEnabled(!analyzing && !paused);
-            syncPausedUi();
-            pushNavToUi();
-            if (!analyzing) {
-              dismissAnalysisToast?.();
-              dismissAnalysisToast = null;
-              if (viewing) { if (isAiOpen()) closeAi(); closeAnalysisOpenedWindows(); }
-            } else if (!dismissAnalysisToast) {
-              // Server reports analysis active but no toast exists -- we
-              // were re-mounted (e.g. user navigated to another
-              // perspective and came back). Restore the toast so the
-              // user can still see and dismiss it.
-              showAnalysisToast();
-            }
-          }
-          boardHost.classList.remove("board-idle");
-          setDisabled(newGameBtn, false);
-          refreshButtons();
-          _playInProgress = movesPlayed > 0 && !gameOver && !viewing;
-          break;
-        }
-        case "game_result":
-          gameOver = true;
-          paused = false;
-          setAnalyzing(false);
-          dismissAnalysisToast?.();
-          dismissAnalysisToast = null;
-          if (viewing) { if (isAiOpen()) closeAi(); closeAnalysisOpenedWindows(); }
-          resignAvailable = false;
-          setDisabled(newGameBtn, false);
-          boardHost.classList.add("board-idle");
-          syncPausedUi();
-          showFinishedBadge(formatResult(evt.payload, humanWhite));
-          refreshButtons();
-          _playInProgress = false;
-          showAlert({
-            message: formatGameOver(evt.payload, humanWhite),
-            messageClass: "game-over-message",
-          });
-          break;
-        case "clock_tick":
-          if (typeof evt.payload.paused === "boolean" && evt.payload.paused !== paused) {
-            paused = evt.payload.paused;
-            view.setEnabled(!paused);
-            syncPausedUi();
-            refreshButtons();
-          }
-          break;
-      }
-    });
+    // Registered last: handleBusEvent + its lifted helpers read state.el.* and
+    // state.view with no null guards, so all of those must be populated above.
+    const offEvent = state.ctx.events.on((evt) => handleBusEvent(state, ai, aiCtx, evt));
 
-    // Replay the last seen board_update (from a previous mount of this
-    // perspective) so the view renders synchronously at the cached
-    // position. Sent directly to the board renderer -- NOT through the
-    // bus -- because play.js's bus handler has side effects (e.g.
-    // syncCommentsVisibility issuing /view/goto) that would POST against
-    // the current server game using stale cursor data when an external
-    // import (tournament Replay) changed the active game while this
-    // perspective was unmounted. The /sync POST above still fires and
-    // the fresh board_update overrides if anything changed server-side.
+    // Render the cached board_update straight to the renderer, NOT via the bus:
+    // the bus handler's side effects (syncCommentsVisibility -> /view/goto) would
+    // POST stale cursor data if an external import swapped games while unmounted.
+    // The /sync POST above still overrides with fresh server state.
     if (_cachedBoardUpdate) {
       view.applyEvent(_cachedBoardUpdate);
     }
 
-    // Prompt before discarding an active play game. Returns true if the
-    // caller should proceed (no active game, or user confirmed).
-    async function _confirmDiscardActiveGame({ message, okLabel }) {
-      if (!_playInProgress) return true;
-      return await confirm({
-        message,
-        okLabel,
-        cancelLabel: "Keep playing",
-        destructive: true,
-      });
-    }
+    const onNewGame = () => onNewGameImpl(state);
+    const onResign = () => onResignImpl(state);
+    const onSavePgn = () => onSavePgnImpl(state);
+    const onTakeback = () => onTakebackImpl(state);
+    const onImport = () => onImportImpl(state);
+    const onSwitchSides = () => onSwitchSidesImpl(state);
+    const onPause = () => onPauseImpl(state);
 
-    // Prompt before replacing the currently viewed game. Skips when nothing
-    // is being viewed or when the incoming hash matches the current view.
-    async function _confirmReplaceViewedGame({ incomingHash, incomingSummary }) {
-      if (!viewing) return true;
-      return await confirmReplaceViewedGame({
-        currentHash: _viewingHash,
-        currentSummary: _viewingSummary,
-        incomingHash,
-        incomingSummary,
-        analysisRunning: analyzing,
-      });
-    }
-
-    const onNewGame = async () => {
-      if (_playInProgress) {
-        if (!await _confirmDiscardActiveGame({
-          message: "Cancel the game in progress and start a new one?",
-          okLabel: "New game",
-        })) return;
-      } else {
-        const ok = await confirmDiscardViewedGame({
-          viewing,
-          currentSummary: _viewingSummary,
-          analysisRunning: analyzing,
-        });
-        if (!ok) return;
-      }
-      try {
-        const playerName = getConfiguredPlayerName();
-        view.setGameId(null);
-        view.setPlayerName(playerName);
-        closeAi();
-        const r = await ctx.api("POST", "/game/new", { player_name: playerName });
-        view.setGameId(r.game_id);
-        view.setHumanWhite(!!r.human_white);
-        view.reset();
-        resignAvailable = true;
-        // Snapshot the TC settings used for THIS game so a later mid-game
-        // edit can detect drift.
-        try {
-          const s = await ctx.api("GET", "/settings");
-          gameTcInitial = Number(s.tc_initial_seconds);
-          gameTcIncrement = Number(s.tc_increment_seconds);
-        } catch {
-          // ignore — drift detection just won't trigger for TC.
-        }
-        refreshButtons();
-      } catch (e) {
-        reportError(ctx, "New game failed", e);
-      }
-    };
-
-    const onResign = async () => {
-      const ok = await confirm({
-        message: "Resign the current game?",
-        okLabel: "Resign",
-        cancelLabel: "Keep playing",
-        destructive: true,
-      });
-      if (!ok) return;
-      try {
-        await ctx.api("POST", "/game/resign", {});
-      } catch (e) {
-        reportError(ctx, "Resign failed", e);
-      }
-    };
-
-    const onSavePgn = async () => {
-      const needsPause = !viewing && !paused && !gameOver && resignAvailable;
-      if (needsPause) {
-        try { await ctx.api("POST", "/game/pause", {}); } catch (e) {
-          reportError(ctx, "Save PGN failed", e);
-          return;
-        }
-      }
-      try {
-        const r = await fetch("/game/pgn");
-        if (!r.ok) {
-          const detail = await r.text();
-          throw new Error(`GET /game/pgn -> ${r.status} ${detail}`);
-        }
-        const cd = r.headers.get("Content-Disposition") || "";
-        const match = cd.match(/filename="([^"]+)"/);
-        const filename = match ? match[1] : "game.pgn";
-        const bridge = window.pywebview && window.pywebview.api && window.pywebview.api.save_pgn;
-        if (bridge) {
-          // Desktop (PyWebView/WebView2): blob downloads don't trigger a
-          // save dialog, so route through the native bridge instead.
-          const text = await r.text();
-          const res = await window.pywebview.api.save_pgn(text, filename);
-          if (res && res.ok) {
-            toast(`Saved to ${res.path}`, { variant: "success" });
-          } else if (res && res.cancelled) {
-            // user dismissed dialog; stay silent
-          } else {
-            throw new Error((res && res.error) || "save failed");
-          }
-        } else {
-          const blob = await r.blob();
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = filename;
-          a.click();
-          URL.revokeObjectURL(url);
-        }
-      } catch (e) {
-        reportError(ctx, "Save PGN failed", e);
-      } finally {
-        if (needsPause) {
-          try { await ctx.api("POST", "/game/resume", {}); } catch (_) { /* best-effort */ }
-        }
-      }
-    };
-
-    let takebackPending = false;
-    const onTakeback = async () => {
-      if (takebackPending) return;
-      takebackPending = true;
-      try {
-        await ctx.api("POST", "/game/takeback", {});
-      } catch (e) {
-        reportError(ctx, "Take-back failed", e);
-      } finally {
-        takebackPending = false;
-      }
-    };
-
-    const onImport = async () => {
-      if (!await _confirmDiscardActiveGame({
-        message: "Cancel the current game and import another?",
-        okLabel: "Import",
-      })) return;
-      // Dialog validates (parse errors surface inline) but does not import.
-      const result = await showImportPositionDialog({ api: ctx.api });
-      if (!result) return;
-      // Same game already in view -- stay put, no re-import needed.
-      if (viewing && result.hash && result.hash === _viewingHash) {
-        if (viewingGameId) toast(`Viewing ${viewingGameId}`);
-        return;
-      }
-      // Different game while viewing -- confirm before replacing.
-      if (!await _confirmReplaceViewedGame({ incomingHash: result.hash, incomingSummary: result.summary })) return;
-      try {
-        closeAi();
-        const r = await ctx.api("POST", "/game/import", { format: result.format, text: result.text });
-        view.setGameId(r.game_id);
-        ctx.api("POST", "/game/sync", {}).catch(() => {});
-      } catch (e) {
-        reportError(ctx, "Import failed", e);
-      }
-    };
-
-    const onSwitchSides = async () => {
-      try {
-        await ctx.api("POST", "/game/switch-sides", {});
-      } catch (e) {
-        reportError(ctx, "Switch sides failed", e);
-      }
-    };
-
-    const onPause = async () => {
-      // Completed AI analysis in play mode: Resume exits analysis (server
-      // lands in PAUSED) then resumes to PLAY, so one click returns to the
-      // game. stopAnalysisFromUi tears down the AI window and replay buffer.
-      if (aiAnalysisDone()) {
-        try {
-          await stopAnalysisFromUi();
-          await ctx.api("POST", "/game/resume", {});
-        } catch (e) {
-          reportError(ctx, "Resume failed", e);
-        }
-        return;
-      }
-      try {
-        await ctx.api("POST", paused ? "/game/resume" : "/game/pause", {});
-      } catch (e) {
-        reportError(ctx, paused ? "Resume failed" : "Pause failed", e);
-      }
-    };
-
-    // Parse FEN fields: side-to-move letter and a {wK,wQ,bK,bQ} castling map.
-    function _seedFromFen(fen) {
-      const parts = (fen || "").split(" ");
-      const stm = parts[1] === "b" ? "b" : "w";
-      const rights = parts[2] || "";
-      return {
-        stm,
-        castling: {
-          wK: rights.includes("K"),
-          wQ: rights.includes("Q"),
-          bK: rights.includes("k"),
-          bQ: rights.includes("q"),
-        },
-      };
-    }
-
-    // Server is authoritative for edit state. We start editing by POSTing
-    // /game/edit/start; the resulting board_update flips `editing` true,
-    // and we then enable the client-side board editor extension.
-    function _onServerEditingStart() {
-      const seed = _seedFromFen(view.getFen());
-      view.enterEditMode(() => refreshButtons(), seed);
-      pendingAnnotation = null;
-      pushNavToUi();
-      refreshButtons();
-    }
-
-    function _clearEditTransitionSuppression() {
-      if (!suppressCommentsForEditTransition) return;
-      suppressCommentsForEditTransition = false;
-      syncCommentsVisibility();
-    }
-
-    function _onServerEditingStop() {
-      view.exitEditMode();
-      _clearEditTransitionSuppression();
-      pendingAnnotation = null;
-      pushNavToUi();
-      refreshButtons();
-    }
-
-    async function _enterEditFromCurrentMode() {
-      // Server requires view mode before edit. From play mode, flip into
-      // view via /game/view/start (no recents write); /game/import would
-      // pollute the recents history with the current play position.
-      if (!viewing) {
-        if (!await _confirmDiscardActiveGame({
-          message: "Cancel the game in progress and edit the position?",
-          okLabel: "Edit position",
-        })) return;
-        // Suppress the commentary dock for the duration of the transient
-        // play->view->edit flip. Without this, syncCommentsVisibility
-        // races view_last() and resets the cursor to 0.
-        suppressCommentsForEditTransition = true;
-        try {
-          closeAi();
-          const r = await ctx.api("POST", "/game/view/start", {});
-          view.setGameId(r.game_id);
-          await ctx.api("POST", "/game/sync", {});
-        } catch (e) {
-          _clearEditTransitionSuppression();
-          reportError(ctx, "Edit position failed", e);
-          return;
-        }
-      }
-      if (analyzing) {
-        const ok = await confirm({
-          message: "Stop analysis and edit the position?",
-          okLabel: "Edit position",
-          cancelLabel: "Keep analyzing",
-          destructive: true,
-        });
-        if (!ok) {
-          _clearEditTransitionSuppression();
-          return;
-        }
-      }
-      try {
-        closeAi();
-        await ctx.api("POST", "/game/edit/start", {});
-      } catch (e) {
-        _clearEditTransitionSuppression();
-        reportError(ctx, "Edit position failed", e);
-      }
-    }
-
-    const onEditPosition = _enterEditFromCurrentMode;
-    const onViewEditPosition = _enterEditFromCurrentMode;
-
-    function _closeSidePopover() {
-      editSidePopover.classList.add("hidden");
-      editSideBtn.setAttribute("aria-expanded", "false");
-    }
-    const onEditSide = (ev) => {
-      ev.stopPropagation();
-      const isOpen = !editSidePopover.classList.contains("hidden");
-      if (isOpen) {
-        _closeSidePopover();
-      } else {
-        editSidePopover.classList.remove("hidden");
-        editSideBtn.setAttribute("aria-expanded", "true");
-      }
-    };
-    const onEditSideToggle = () => {
-      view.setEditSide(view.getEditSide() === "w" ? "b" : "w");
-      refreshButtons();
-    };
-
-    const onEditCastleCb = (right) => () => {
-      view.toggleCastlingRight(right);
-      refreshButtons();
-    };
-
-    function _closeCastlePopover() {
-      editCastlePopover.classList.add("hidden");
-      editCastleBtn.setAttribute("aria-expanded", "false");
-    }
-    const onEditCastleBtn = (ev) => {
-      ev.stopPropagation();
-      const isOpen = !editCastlePopover.classList.contains("hidden");
-      if (isOpen) {
-        _closeCastlePopover();
-      } else {
-        editCastlePopover.classList.remove("hidden");
-        editCastleBtn.setAttribute("aria-expanded", "true");
-      }
-    };
-    const onDocClickClosePopover = (ev) => {
-      if (!editing) return;
-      if (!editCastlePopover.classList.contains("hidden") &&
-          !editCastlePopover.contains(ev.target) && !editCastleBtn.contains(ev.target)) {
-        _closeCastlePopover();
-      }
-      if (!editSidePopover.classList.contains("hidden") &&
-          !editSidePopover.contains(ev.target) && !editSideBtn.contains(ev.target)) {
-        _closeSidePopover();
-      }
-    };
-
-    const onEditAnnotate = async () => {
-      // Preload from pendingAnnotation (if user already staged something
-      // this edit session) or fall back to the server's current comment.
-      const preload = pendingAnnotation ?? (lastViewComment ?? "");
-      const result = await editAnnotation({ currentText: preload });
-      if (result?.apply) {
-        pendingAnnotation = result.text;
-        // Optimistically reflect the staged text in the commentary dock
-        // so the user sees their pending change. Lives until edit-commit
-        // (server then makes it real) or edit-cancel (we restore the
-        // pre-edit text from lastViewComment).
-        if (isCommentaryOpen()) {
-          setCommentaryText(pendingAnnotation || null);
-        }
-      }
-    };
-
-    const onEditConfirm = async () => {
-      const fen = view.getEditFen();
-      // Server mints a fresh game_id on a real position change. Clear the
-      // filter so the board_update SSE (which races the POST response) isn't
-      // dropped for not matching our stale id.
-      view.setGameId(null);
-      const payload = { fen };
-      if (pendingAnnotation !== null) {
-        payload.apply_comment = true;
-        payload.comment_text = pendingAnnotation;
-      }
-      try {
-        const r = await ctx.api("POST", "/game/edit/commit", payload);
-        view.setGameId(r.game_id);
-        // Annotation-only commit can promote an unsaved fork child to
-        // recents (xgame nav "lazy commit"). Game_id is unchanged so
-        // the board_update doesn't trigger fetchXgameInfo -- refetch
-        // explicitly so the fork glyph + banner state catch up.
-        if (r.game_id) fetchXgameInfo(r.game_id);
-      } catch (e) {
-        reportError(ctx, "Invalid position", e);
-      }
-    };
-
-    const onEditCancel = async () => {
-      try {
-        const r = await ctx.api("POST", "/game/edit/cancel", {});
-        if (r?.game_id) view.setGameId(r.game_id);
-      } catch (e) {
-        reportError(ctx, "Cancel edit failed", e);
-      }
-    };
-
-    let commentNavPrev = null;
-    let commentNavNext = null;
-
-    // Single push of the gated nav state to the UI. Buttons are forced
-    // null while analyzing or editing (view/goto is rejected in those
-    // modes, so the targets would be unreachable anyway).
-    const pushNavToUi = () => {
-      const gated = analyzing || editing;
-      setCommentaryNavState(gated ? null : commentNavPrev, gated ? null : commentNavNext);
-    };
-
-    // Tracks how the cursor reached the next ply: "precise" (back /
-    // forward / goto / move-list click) vs "jump" (first / last). The
-    // parent->child banner only fires on precise landings -- jumping
-    // over a fork must NOT pop a prompt.
-    let lastViewNavKind = "precise";
-    async function doViewNav(endpoint, payload = {}) {
-      lastViewNavKind =
-        endpoint === "/game/view/first" || endpoint === "/game/view/last"
-          ? "jump"
-          : "precise";
-      try {
-        await ctx.api("POST", endpoint, payload);
-      } catch (e) {
-        reportError(ctx, "Navigation failed", e);
-      }
-    }
-
-    const onViewNav = (endpoint) => () => doViewNav(endpoint);
-    const onViewFlip = () => {
-      viewFlipped = !viewFlipped;
-      try { localStorage.setItem(VIEW_FLIP_KEY, viewFlipped ? "1" : "0"); } catch { /* */ }
-      view.setHumanWhite(!viewFlipped);
-    };
-
+    const onEditPosition = () => _enterEditFromCurrentMode(state);
+    const onViewEditPosition = () => _enterEditFromCurrentMode(state);
+    const onEditSide = (ev) => editSidePopoverToggle(state, ev);
+    const onEditSideToggle = () => editSideFlip(state);
+    const onEditCastleCb = (right) => () => editCastleToggle(state, right);
+    const onEditCastleBtn = (ev) => editCastlePopoverToggle(state, ev);
+    const onDocClickClosePopover = (ev) => editDocClickClose(state, ev);
+    const onEditAnnotate = () => onEditAnnotateImpl(state);
+    const onEditConfirm = () => onEditConfirmImpl(state);
+    const onEditCancel = () => onEditCancelImpl(state);
+    const onViewNav = (endpoint) => () => doViewNav(state, endpoint);
+    const onViewFlip = () => onViewFlipImpl(state);
     const onViewFirst = onViewNav("/game/view/first");
     const onViewBack = onViewNav("/game/view/back");
     const onViewForward = onViewNav("/game/view/forward");
     const onViewLast = onViewNav("/game/view/last");
 
     setCommentaryNavHandlers(
-      () => { if (commentNavPrev != null) doViewNav("/game/view/goto", { ply: commentNavPrev }); },
-      () => { if (commentNavNext != null) doViewNav("/game/view/goto", { ply: commentNavNext }); },
+      () => { if (state.commentNavPrev != null) doViewNav(state, "/game/view/goto", { ply: state.commentNavPrev }); },
+      () => { if (state.commentNavNext != null) doViewNav(state, "/game/view/goto", { ply: state.commentNavNext }); },
     );
 
-    let playFromHereInflight = false;
-    const onPlayFromHere = async () => {
-      if (playFromHereInflight) return;  // debounce double-click
-      playFromHereInflight = true;
-      setDisabled(viewPlayFromHereBtn, true);
-      // Reset gameId so the racing board_update from new_game (which fires
-      // BEFORE the API response carrying the new id) isn't dropped by the
-      // game_id filter — that drop loses the human_white/name swap.
-      view.setGameId(null);
-      try {
-        const playerName = getConfiguredPlayerName();
-        view.setPlayerName(playerName);
-        closeAi();
-        const r = await ctx.api("POST", "/game/view/play-from-here", { player_name: playerName });
-        view.setGameId(r.game_id);
-        // Snapshot TC for drift detection (mirrors onNewGame).
-        try {
-          const s = await ctx.api("GET", "/settings");
-          gameTcInitial = Number(s.tc_initial_seconds);
-          gameTcIncrement = Number(s.tc_increment_seconds);
-        } catch {
-          // ignore
-        }
-      } catch (e) {
-        reportError(ctx, "Play from here failed", e);
-      } finally {
-        playFromHereInflight = false;
-        // Don't re-enable directly; refreshButtons() drives it next time
-        // viewing flips, and by then the button is hidden anyway.
-      }
-    };
-
-    // Show the persistent "Analysis mode on" toast. Called both from
-    // onAnalyze (user toggle) and from the board_update handler so the
-    // toast restores itself when the perspective remounts (navigate away
-    // and back) and the server re-emits analyzing: true.
-    function makeToastIconBtn(iconName, label, onClick) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "toast-icon-btn";
-      btn.setAttribute("aria-label", label);
-      btn.setAttribute("title", label);
-      const ic = document.createElement("wa-icon");
-      ic.setAttribute("name", iconName);
-      btn.appendChild(ic);
-      btn.addEventListener("click", onClick);
-      return btn;
-    }
-
-    function showAnalysisToast() {
-      dismissAnalysisToast?.();
-      const msg = document.createElement("span");
-      msg.className = "toast-sort-msg";
-      const label = document.createElement("span");
-      label.className = "toast-grow is-active";
-      label.textContent = "Analysis mode";
-      msg.append(label);
-      msg.append(makeToastIconBtn("table-list", "Search lines", onPvTable));
-      msg.append(makeToastIconBtn("terminal", "UCI log", onUciLog));
-      const stopBtn = makeToastIconBtn("magnifying-glass-minus", "Stop analysis", onAnalyze);
-      stopBtn.classList.add("is-active");
-      msg.append(stopBtn);
-      dismissAnalysisToast = toast(msg, {
-        variant: "neutral",
-        duration: 0,
-      });
-    }
-
-    // Stop side of the analyze toggle, extracted so the AI-window
-    // close handler can trigger the same flow (snapshot + endpoint +
-    // toast + panels) as the toolbar Stop button.
-    async function stopAnalysisFromUi() {
-      if (!analyzing) return;
-      snapshotViewAnalysisState();
-      try {
-        await ctx.api("POST", "/game/analysis/stop", {});
-      } catch (e) {
-        reportError(ctx, "Stop analysis failed", e);
-        return;
-      }
-      aiTurnFinished = false;
-      dismissAnalysisToast?.();
-      dismissAnalysisToast = null;
-      // The AI window's lifecycle is tied to the analysis session, so it
-      // always closes on stop. PV/UCI close only if analysis opened them.
-      if (isAiOpen()) closeAi();
-      closeAnalysisOpenedWindows();
-    }
-
-    // POST start + restore panels + toast + open/reset AI panel. Shared
-    // by the analyze toggle and the re-analyze button so the two paths
-    // can't drift. openAi() before resetAi(): resetAi sets the spinner
-    // and no-ops when the body is null.
-    async function startAnalysisFromUi() {
-      // Engine-only analysis: close any leftover AI panel from a prior
-      // AI run before starting, so the dock shows engine-only output.
-      // Done first so the close can't race the new analysis state.
-      if (!aiEnabled && isAiOpen()) closeAi();
-      await ctx.api("POST", "/game/analysis/start", {});
-      restoreViewAnalysisWindows(ctx.events);
-      aiTurnFinished = false;
-      showAnalysisToast();
-      if (aiEnabled) {
-        // Pin the title to the model that is actually about to run.
-        // Mid-session provider/model edits do not retitle until the
-        // user clicks Analyze (or the re-analyze button) again.
-        setAiTitle(aiTitleModel);
-        openAi();
-        resetAi();
-      }
-    }
-
-    const onAnalyze = async () => {
-      // Switching from a FINISHED AI session to engine-only: stop the AI
-      // session, then start engine analysis -- a plain Stop would just
-      // tear down and leave nothing running. While the AI run is still in
-      // progress (!aiTurnFinished), the ribbon is a plain Stop.
-      if (analyzing && aiTurnFinished && !aiEnabled && isAiOpen()) {
-        await onReanalyze();
-        return;
-      }
-      if (analyzing) {
-        await stopAnalysisFromUi();
-        return;
-      }
-      try {
-        await startAnalysisFromUi();
-      } catch (e) {
-        reportError(ctx, "Start analysis failed", e);
-      }
-    };
-
-    // Re-analyze: stop the current turn server-side (if any), then start
-    // a fresh one. Distinct from the Analyze toggle which closes on a
-    // second click; this path keeps the AI panel open and mirrors the
-    // snapshot/restore dance of stopAnalysisFromUi + onAnalyze so view
-    // mode panels survive the round-trip. `reanalyzeInFlight` guards
-    // against rapid double-clicks producing a spurious second start
-    // that the server would reject with ModeConflictError.
-    let reanalyzeInFlight = false;
-    const onReanalyze = async () => {
-      if (reanalyzeInFlight) return;
-      reanalyzeInFlight = true;
-      try {
-        if (analyzing) {
-          snapshotViewAnalysisState();
-          await ctx.api("POST", "/game/analysis/stop", {});
-        }
-        await startAnalysisFromUi();
-      } catch (e) {
-        reportError(ctx, "Re-analyze failed", e);
-      } finally {
-        reanalyzeInFlight = false;
-      }
-    };
+    const onPlayFromHere = () => onPlayFromHereImpl(state);
+    const showAnalysisToast = () => showAnalysisToastImpl(state);
+    const onAnalyze = () => onAnalyzeImpl(state);
+    const onReanalyze = () => onReanalyzeImpl(state);
     setOnReanalyzeAi(onReanalyze);
 
     // Cmd/Ctrl+O opens the import dialog. Skip when typing in an input or
@@ -1900,6 +2090,8 @@ export const playPerspective = {
     switchSidesBtn.addEventListener("click", onSwitchSides);
     pauseBtn.addEventListener("click", onPause);
     pausedBadge?.addEventListener("click", onPause);
+    const onPausedBoardClick = () => hintResumeFromPausedBoard(state);
+    boardHost.addEventListener("click", onPausedBoardClick);
     analyzeBtn.addEventListener("click", onAnalyze);
     viewNewGameBtn.addEventListener("click", onNewGame);
     viewImportBtn.addEventListener("click", onImport);
@@ -1926,25 +2118,20 @@ export const playPerspective = {
     editCastleCb.bK.addEventListener("click", onCastleBK);
     editCastleCb.bQ.addEventListener("click", onCastleBQ);
     document.addEventListener("click", onDocClickClosePopover);
+    const onPopoverDismiss = () => _closeEditPopovers(state);
+    window.addEventListener("resize", onPopoverDismiss);
+    window.addEventListener(APP_EVT.RIBBON_MOVED, onPopoverDismiss);
+    // Closing the float WinBox re-docks the ribbon; un-float and close any
+    // open popover so it doesn't orphan at <body>.
+    window.addEventListener(APP_EVT.RIBBON_FLOAT_CLOSED, onPopoverDismiss);
     editAnnotateBtn.addEventListener("click", onEditAnnotate);
     editConfirmBtn.addEventListener("click", onEditConfirm);
     editCancelBtn.addEventListener("click", onEditCancel);
 
-    function showEngineCrashToast() {
-      const msg = document.createElement("span");
-      msg.className = "toast-grow";
-      msg.textContent = "Engine crashed unexpectedly.";
-      const node = document.createElement("span");
-      node.className = "toast-sort-msg";
-      let dismissCrashToast;
-      node.append(msg, makeToastDismissBtn(() => dismissCrashToast?.()));
-      dismissCrashToast = toast(node, { variant: "danger", duration: 0 });
-    }
-
     const offCrash = ctx.events.on(async (evt) => {
       if (evt.kind !== "system" || evt.payload?.error !== "engine_terminated") return;
       view.clearArrows();
-      if (analyzing) {
+      if (state.analyzing) {
         await onAnalyze();
       }
       showEngineCrashToast();
@@ -1953,16 +2140,20 @@ export const playPerspective = {
     return {
       ready: Promise.resolve(),
       async canUnmount() {
-        if (!editing) return true;
+        if (!state.editing) return true;
         return await confirm({
-          message: "Leaving will cancel your position edit. Continue?",
-          okLabel: "Leave",
-          cancelLabel: "Stay",
+          message: MSG.CONFIRM_LEAVE_EDIT,
+          okLabel: MSG.LEAVE,
+          cancelLabel: MSG.STAY,
           destructive: true,
         });
       },
       unmount() {
-        if (editing) {
+        // Un-float/close edit popovers first: a floated popover lives at
+        // <body>, and the teardown below removes the dismiss listeners
+        // without firing them -- so it would orphan otherwise.
+        _closeEditPopovers(state);
+        if (state.editing) {
           // Fire-and-forget cancel so the server doesn't stay stuck in
           // edit mode if the user navigates away.
           ctx.api("POST", "/game/edit/cancel", {}).catch(() => {});
@@ -1979,12 +2170,12 @@ export const playPerspective = {
         setAiInlineHost(null);
         setOnUserCloseAi(null);
         setOnReanalyzeAi(null);
-        dismissAnalysisToast?.();
-        dismissAnalysisToast = null;
-        dismissGameOverToast?.();
-        dismissGameOverToast = null;
+        state.aiShared.dismissAnalysisToast?.();
+        state.aiShared.dismissAnalysisToast = null;
+        state.dismissGameOverToast?.();
+        state.dismissGameOverToast = null;
         pausedBadge?.classList.add("hidden");
-        showFinishedBadge("");
+        showFinishedBadge(state, "");
         offCrash();
         offEvent();
         view.unmount();
@@ -1992,7 +2183,7 @@ export const playPerspective = {
         // perspective. Plain close (not via the X handler), so the
         // dismiss flags are NOT set -- if the user returns to the
         // play perspective at the same fork ply, the toast re-fires.
-        closeXgameToasts();
+        closeXgameToasts(state);
         // Lock class lives on <body>; clear it so it can't outlive the
         // perspective if we unmount mid-analysis.
         document.body.classList.remove(XGAME_LOCK_CLASS);
@@ -2010,6 +2201,7 @@ export const playPerspective = {
         takebackBtn.removeEventListener("click", onTakeback);
         switchSidesBtn.removeEventListener("click", onSwitchSides);
         pauseBtn.removeEventListener("click", onPause);
+        boardHost.removeEventListener("click", onPausedBoardClick);
         analyzeBtn.removeEventListener("click", onAnalyze);
         viewNewGameBtn.removeEventListener("click", onNewGame);
         viewImportBtn.removeEventListener("click", onImport);
@@ -2032,6 +2224,9 @@ export const playPerspective = {
         editCastleCb.bK.removeEventListener("click", onCastleBK);
         editCastleCb.bQ.removeEventListener("click", onCastleBQ);
         document.removeEventListener("click", onDocClickClosePopover);
+        window.removeEventListener("resize", onPopoverDismiss);
+        window.removeEventListener(APP_EVT.RIBBON_MOVED, onPopoverDismiss);
+        window.removeEventListener(APP_EVT.RIBBON_FLOAT_CLOSED, onPopoverDismiss);
         editConfirmBtn.removeEventListener("click", onEditConfirm);
         editCancelBtn.removeEventListener("click", onEditCancel);
       },

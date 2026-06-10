@@ -12,7 +12,6 @@ Two layers of tests:
 """
 from __future__ import annotations
 
-import asyncio
 import stat
 import sys
 
@@ -22,7 +21,6 @@ import pytest
 
 from sturddle_view.tournament.orchestrator import (
     Orchestrator,
-    OrchestratorConfig,
 )
 from sturddle_view.tournament.runner import RunSpec
 from sturddle_view.tournament.store import TournamentStore
@@ -344,7 +342,8 @@ def test_recompute_no_orphan_when_proxy_just_moved_fen(orch):
 
     # White moves to a new FEN (different bucket). Old group dissolves
     # but white is still registered somewhere.
-    b = chess.Board(); b.push_uci("e2e4")
+    b = chess.Board()
+    b.push_uci("e2e4")
     fen2 = b.fen()
     _, orphaned = orch._pairing_register("white", fen2, "white")
     assert orphaned == set()
@@ -494,7 +493,7 @@ def test_update_pair_moves_ignores_non_position_kind(orch):
     """parsed['kind'] != 'position' → no update. Kills `!= 'position'`→`== 'position'`
     and `or`→`and` mutations on the kind guard."""
     _setup_confirmed_pair(orch)
-    pa, pb, pair_id = "pa", "pb", orch._pair_ids[frozenset(("pa", "pb"))]
+    pair_id = orch._pair_ids[frozenset(("pa", "pb"))]
     orch._update_pair_moves("pa", {"kind": "bestmove", "moves": ["e2e4"]})
     assert orch._pair_moves[pair_id] == []
 
@@ -502,7 +501,7 @@ def test_update_pair_moves_ignores_non_position_kind(orch):
 def test_update_pair_moves_ignores_none_parsed(orch):
     """parsed is None → return immediately. Kills AddNot on `parsed is None`."""
     _setup_confirmed_pair(orch)
-    pa, pb, pair_id = "pa", "pb", orch._pair_ids[frozenset(("pa", "pb"))]
+    pair_id = orch._pair_ids[frozenset(("pa", "pb"))]
     orch._update_pair_moves("pa", None)
     assert orch._pair_moves[pair_id] == []
 
@@ -716,7 +715,6 @@ async def test_ingest_info_pv_only_updates_snap(orch):
     `or`→`and` mutation on the score-or-pv guard."""
     _seed_proxy(orch, "pa", "A")
     await orch.ingest_proxy_lines("pa", ["position startpos"])
-    snap = orch._proxy_snapshot.get("pa", {})
     await orch.ingest_proxy_lines("pa", ["info depth 5 pv e2e4"])
     assert "info" in orch._proxy_snapshot["pa"]
 
@@ -778,9 +776,9 @@ async def test_subscribe_to_proxy_replays_all_snapshot_keys(orch):
     lines = []
     while not q.empty():
         lines.append(q.get_nowait()["line"])
-    assert any("position" in l for l in lines)
-    assert any("go" in l for l in lines)
-    assert any("info" in l for l in lines)
+    assert any("position" in line for line in lines)
+    assert any("go" in line for line in lines)
+    assert any("info" in line for line in lines)
 
 
 @pytest.mark.asyncio
@@ -795,7 +793,7 @@ async def test_subscribe_to_proxy_skips_missing_snap_key_continues(orch):
     q = orch.subscribe_to_proxy("pa")
     lines = [q.get_nowait()["line"] for _ in range(q._q.qsize())]
     # go must be replayed even though position was None
-    assert any("go" in l for l in lines)
+    assert any("go" in line for line in lines)
 
 
 @pytest.mark.asyncio

@@ -7,7 +7,6 @@ Slice 1 covers move-list capture; slice 3 covers the match queue +
 """
 from __future__ import annotations
 
-import asyncio
 
 import pytest
 

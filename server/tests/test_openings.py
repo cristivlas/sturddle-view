@@ -69,6 +69,40 @@ def test_load_is_process_cached():
     assert a is b
 
 
+# --- all() (full list for client-side filtering) --------------------------
+
+def test_all_sorted_by_eco_then_name():
+    book = OpeningBook.load()
+    rows = book.all()
+    assert rows, "expected a non-empty opening list"
+    keys = [(o.eco, o.name) for o in rows]
+    assert keys == sorted(keys), "all() must be sorted by (eco, name)"
+
+
+def test_all_one_row_per_name():
+    book = OpeningBook.load()
+    names = [o.name for o in book.all()]
+    assert len(names) == len(set(names)), "all() must have one row per name"
+
+
+def test_all_rows_carry_pgn_and_ply():
+    # Assumes the vendored lichess-openings snapshot (Caro-Kann present).
+    book = OpeningBook.load()
+    caro = next(o for o in book.all() if o.name == "Caro-Kann Defense")
+    assert caro.pgn, "row must carry its PGN line"
+    assert caro.ply > 0, "row must carry a positive ply count"
+
+
+def test_all_keeps_shortest_line_per_name():
+    """Each name keeps its fewest-ply (canonical shortest) line.
+    Assumes the vendored lichess-openings snapshot."""
+    book = OpeningBook.load()
+    by_name = {o.name: o for o in book.all()}
+    # The bare "Caro-Kann Defense" is 1.e4 c6 (2 ply); deeper variations
+    # have distinct names, so this row must be the short one.
+    assert by_name["Caro-Kann Defense"].ply == 2
+
+
 # --- Transposition lookup -------------------------------------------------
 #
 # The lichess openings dataset registers each opening at one canonical move

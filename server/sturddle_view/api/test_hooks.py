@@ -107,6 +107,34 @@ async def publish_ai_event(payload: dict, request: Request) -> dict:
     return {"ok": True}
 
 
+@router.post("/recents/seed_fork")
+async def seed_fork(payload: dict, request: Request) -> dict:
+    """Seed a parent + child recents pair with a fork link via the real
+    ``RecentImports.save`` (same path the finalizer uses). Importing the
+    child's text later reuses the stored game_id (first-save-wins), so
+    ``by-id`` serves the fork for a real view-mode game -- no engine.
+
+    Body: ``{"parent": {game_id, text, summary},
+             "child": {game_id, text, summary, fork_ply}}``."""
+    recents = request.app.state.recent_imports
+    parent = payload["parent"]
+    child = payload["child"]
+    await recents.save(
+        fmt="pgn", text=parent["text"], summary=parent["summary"],
+        game_id=parent["game_id"],
+    )
+    await recents.save(
+        fmt="pgn", text=child["text"], summary=child["summary"],
+        game_id=child["game_id"],
+        parent_game_id=parent["game_id"], fork_ply=child["fork_ply"],
+    )
+    return {
+        "parent_game_id": parent["game_id"],
+        "child_game_id": child["game_id"],
+        "fork_ply": child["fork_ply"],
+    }
+
+
 @router.get("/hve/state")
 def hve_state(request: Request) -> dict[str, Any]:
     """Read invariants tests assert on. Returns ``hve is None`` if no HVE."""

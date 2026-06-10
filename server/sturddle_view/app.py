@@ -22,11 +22,12 @@ from .api import chess_utils as chess_api
 from .api import engines as engines_api
 from .api import fs as fs_api
 from .api import game as game_api
+from .api import openings as openings_api
 from .api import settings as settings_api
 from .api import tournaments as tournaments_api
 from .api import ws as ws_api
 from .config import Settings
-from .engines import EngineRegistry, resolve_selected
+from .engines import EngineRegistry, resolve_analysis, resolve_selected
 from .events import Event, EventBus
 from .llm import CannedProvider, LLMProvider, ToolRegistry
 from .llm.anthropic import AnthropicProvider
@@ -343,13 +344,79 @@ def create_app(
     app.state.openings = OpeningBook.load()
     log.info("loaded %d opening lines", len(app.state.openings))
 
+    _setup_ai(app)
+    _setup_tournament(app, settings)
+
+    app.include_router(chess_api.router)
+    app.include_router(settings_api.router)
+    app.include_router(engines_api.router)
+    app.include_router(fs_api.router)
+    app.include_router(game_api.router)
+    app.include_router(openings_api.router)
+    app.include_router(tournaments_api.router)
+    app.include_router(tournaments_api.internal_router)
+    app.include_router(ws_api.router)
+    if settings.test_mode:
+        from .api import test_hooks as test_hooks_api
+        app.include_router(test_hooks_api.router)
+        log.info("test-mode endpoints (/_test/*) mounted")
+
+    @app.get("/healthz", include_in_schema=False)
+    def healthz() -> dict:
+        return {"ok": True}
+
+    @app.get("/", include_in_schema=False)
+    def root() -> RedirectResponse:
+        # Token-less redirect; client carries the cookie set by /auth.
+        return RedirectResponse(url="/ui/")
+
+    @app.get("/auth", include_in_schema=False)
+    def auth_handshake(request: Request, token: str = "") -> RedirectResponse:
+        """One-shot handshake: validate ?token=, set HttpOnly cookie, redirect
+        to a token-less URL so the token never appears in history or Referer.
+        """
+        if not settings.auth_disabled:
+            if not token or not hmac.compare_digest(token, settings.token):
+                return PlainTextResponse("invalid token", status_code=401)
+        resp = RedirectResponse(url="/ui/", status_code=303)
+        if not settings.auth_disabled:
+            secure = request.url.scheme == "https"
+            # SameSite=Lax: still defeats CSRF (cross-site POSTs strip the
+            # cookie) but lets top-level GET navigations (including the 303
+            # from /auth) carry it. Strict breaks the handshake in some
+            # embedded webviews.
+            resp.set_cookie(
+                AUTH_COOKIE,
+                settings.token,
+                httponly=True,
+                samesite="lax",
+                secure=secure,
+                path="/",
+                max_age=60 * 60 * 24 * 7,
+            )
+        return resp
+
+    if settings.web_dir.is_dir():
+        app.mount("/ui", StaticFiles(directory=settings.web_dir, html=True), name="ui")
+    else:
+        log.warning("web_dir %s does not exist; UI will not be served", settings.web_dir)
+
+    app.add_middleware(_NoCacheUIMiddleware)
+    app.add_middleware(_SecurityHeadersMiddleware)
+    app.add_middleware(_OriginMiddleware)
+
+    _print_banner(settings)
+    return app
+
+
+def _setup_ai(app: FastAPI) -> None:
     # AI analysis: registry + coordinator. Provider remains the canned
     # walking-skeleton stand-in until real Anthropic/Ollama providers
     # land. The `analyze` tool resolves the current engine on every
     # call via resolve_selected(), so engine swaps in Settings are
     # honored without rebuilding the coordinator.
     def _ai_engine_launcher() -> EngineSupervisor:
-        launch = resolve_selected(app.state.engines, app.state.settings)
+        launch = resolve_analysis(app.state.engines, app.state.settings)
         sup = EngineSupervisor(launch.path, app.state.event_bus, settings=app.state.settings)
         if launch.options:
             sup.options = launch.options
@@ -522,6 +589,8 @@ def create_app(
         ),
     )
 
+
+def _setup_tournament(app: FastAPI, settings: Settings) -> None:
     # Tournament subsystem: store + runner + orchestrator. Wired even
     # when fastchess isn't installed; the Tournaments UI surfaces an
     # empty-state until a binary is configured.
@@ -545,74 +614,14 @@ def create_app(
 
     app.state.tournament_orch.set_broadcast(_tournament_broadcast)
 
-    # Slice 9b: tell the orchestrator where the proxy should POST.
-    # The proxy runs as a subprocess on this same host; loopback only.
+    # Tell the orchestrator where the proxy should POST. The proxy runs as
+    # a subprocess on this same host; loopback only.
     proxy_scheme = "https" if settings.tls_cert else "http"
     proxy_url = f"{proxy_scheme}://127.0.0.1:{settings.port}/internal/proxy"
     app.state.tournament_orch.set_proxy_broadcast_url(proxy_url)
     # Live settings reference so each tournament start picks up the
     # current Defaults-tab values without needing a restart.
     app.state.tournament_orch.set_settings(settings)
-
-    app.include_router(chess_api.router)
-    app.include_router(settings_api.router)
-    app.include_router(engines_api.router)
-    app.include_router(fs_api.router)
-    app.include_router(game_api.router)
-    app.include_router(tournaments_api.router)
-    app.include_router(tournaments_api.internal_router)
-    app.include_router(ws_api.router)
-    if settings.test_mode:
-        from .api import test_hooks as test_hooks_api
-        app.include_router(test_hooks_api.router)
-        log.info("test-mode endpoints (/_test/*) mounted")
-
-    @app.get("/healthz", include_in_schema=False)
-    def healthz() -> dict:
-        return {"ok": True}
-
-    @app.get("/", include_in_schema=False)
-    def root() -> RedirectResponse:
-        # Token-less redirect; client carries the cookie set by /auth.
-        return RedirectResponse(url="/ui/")
-
-    @app.get("/auth", include_in_schema=False)
-    def auth_handshake(request: Request, token: str = "") -> RedirectResponse:
-        """One-shot handshake: validate ?token=, set HttpOnly cookie, redirect
-        to a token-less URL so the token never appears in history or Referer.
-        """
-        if not settings.auth_disabled:
-            if not token or not hmac.compare_digest(token, settings.token):
-                return PlainTextResponse("invalid token", status_code=401)
-        resp = RedirectResponse(url="/ui/", status_code=303)
-        if not settings.auth_disabled:
-            secure = request.url.scheme == "https"
-            # SameSite=Lax: still defeats CSRF (cross-site POSTs strip the
-            # cookie) but lets top-level GET navigations (including the 303
-            # from /auth) carry it. Strict breaks the handshake in some
-            # embedded webviews.
-            resp.set_cookie(
-                AUTH_COOKIE,
-                settings.token,
-                httponly=True,
-                samesite="lax",
-                secure=secure,
-                path="/",
-                max_age=60 * 60 * 24 * 7,
-            )
-        return resp
-
-    if settings.web_dir.is_dir():
-        app.mount("/ui", StaticFiles(directory=settings.web_dir, html=True), name="ui")
-    else:
-        log.warning("web_dir %s does not exist; UI will not be served", settings.web_dir)
-
-    app.add_middleware(_NoCacheUIMiddleware)
-    app.add_middleware(_SecurityHeadersMiddleware)
-    app.add_middleware(_OriginMiddleware)
-
-    _print_banner(settings)
-    return app
 
 
 def _reachable_hosts(bind: str) -> list[str]:

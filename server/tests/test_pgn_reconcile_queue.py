@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import time
 
-import pytest
 
 from sturddle_view.tournament.pgn_reconcile import (
     MIN_PLIES_FOR_MATCH,

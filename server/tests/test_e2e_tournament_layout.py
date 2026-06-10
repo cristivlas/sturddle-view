@@ -11,39 +11,38 @@ import pytest
 pytest.importorskip("playwright.async_api")
 pytestmark = pytest.mark.e2e
 
-from sturddle_view.app import create_app  # noqa: E402
-from sturddle_view.config import Settings  # noqa: E402
 from sturddle_view.engines import EngineRegistry  # noqa: E402
-from sturddle_view.tournament.fastchess import FastchessRunner  # noqa: E402
+from sturddle_view.tournament.store import TournamentStore  # noqa: E402
 
-from .conftest import run_uvicorn, wait_perspective_ready  # noqa: E402
+from .conftest import run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
 
 
 @pytest.fixture
-def server(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        FastchessRunner, "detect_binary",
-        staticmethod(lambda configured: configured),
-    )
-    settings = Settings(token="test-token", auth_disabled=True)
-    settings.pgn_dir = tmp_path / "pgn"
-    settings.tournament_root = str(tmp_path / "tournaments")
-    settings.tournament_fastchess_path = sys.executable
+def server(tmp_path):
+    # Seed engine registry and two tournaments on disk, then launch an
+    # out-of-process server pointed at those paths (SV_* -> Settings).
+    # tournament_fastchess_path is sys.executable (a real file detect_binary
+    # echoes back); fastchess is never spawned -- the test only drives the UI.
     registry = EngineRegistry(path=tmp_path / "engines.json")
     registry.add(name="engine-A", path=sys.executable)
     registry.add(name="engine-B", path=sys.executable)
-    app = create_app(settings=settings, engine_registry=registry)
-    app.state.tournament_store.create(
-        name="alpha",
-        template={"tc": "10+0.1"},
-        engines=[{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
-    )
-    app.state.tournament_store.create(
-        name="bravo",
-        template={"tc": "10+0.1"},
-        engines=[{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
-    )
-    with run_uvicorn(app) as (base, _s):
+    store = TournamentStore(tmp_path / "tournaments")
+    for name in ("alpha", "bravo"):
+        store.create(
+            name=name,
+            template={"tc": "10+0.1"},
+            engines=[{"name": "A", "cmd": "/bin/A"}, {"name": "B", "cmd": "/bin/B"}],
+        )
+    env = {
+        "SV_PGN_DIR": str(tmp_path / "pgn"),
+        "SV_TOURNAMENT_ROOT": str(tmp_path / "tournaments"),
+        "SV_ENGINE_REGISTRY_PATH": str(tmp_path / "engines.json"),
+        "SV_SETTINGS_FILE": str(tmp_path / "settings.json"),
+        "SV_GAME_STATE_PATH": str(tmp_path / "current_game.json"),
+        "SV_IMPORTS_DIR": str(tmp_path / "imports"),
+        "SV_TOURNAMENT_FASTCHESS_PATH": sys.executable,
+    }
+    with run_uvicorn_subprocess(env_overrides=env) as base:
         yield base
 
 

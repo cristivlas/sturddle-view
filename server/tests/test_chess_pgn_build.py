@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import pathlib
 
-import chess
 import chess.pgn
 import pytest
 

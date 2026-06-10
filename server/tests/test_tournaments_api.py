@@ -6,8 +6,6 @@ fastchess subprocess is replaced by a fake-fastchess script via a
 """
 from __future__ import annotations
 
-import asyncio
-import json
 import sys
 import time
 from collections import deque

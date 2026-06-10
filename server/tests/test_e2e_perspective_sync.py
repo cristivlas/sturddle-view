@@ -5,7 +5,6 @@ isn't available so unit-only test runs aren't blocked.
 """
 from __future__ import annotations
 
-import json
 
 import chess
 import httpx

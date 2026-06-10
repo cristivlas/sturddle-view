@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 
 import chess
 
+from ..chess.results import SIDE_BLACK, SIDE_WHITE
 from ..env_utils import env_int as _env_int
 from ..events import (
     ENVELOPE_KIND,
@@ -77,7 +78,7 @@ _DEBUG_PAIRING   = os.environ.get("SV_DEBUG_PAIRING",   "0") == "1"
 
 
 def _opposite_side(side: str) -> str:
-    return "black" if side == "white" else "white"
+    return SIDE_BLACK if side == SIDE_WHITE else SIDE_WHITE
 
 
 # Result/termination on the `game_finished` event. Pair dissolution is
@@ -658,10 +659,10 @@ class Orchestrator:
                 "pair_id":  self._pair_ids.get(key, ""),
                 "proxy_a":  white_pid,
                 "engine_a": self._proxy_engine_names.get(white_pid),
-                "side_a":   "white",
+                "side_a":   SIDE_WHITE,
                 "proxy_b":  black_pid,
                 "engine_b": self._proxy_engine_names.get(black_pid),
-                "side_b":   "black",
+                "side_b":   SIDE_BLACK,
             })
         return out
 
@@ -817,7 +818,7 @@ class Orchestrator:
                     self._pair_ids[group] = pair_id
                     self._pair_proxies[pair_id] = group
                     self._pair_white[pair_id] = (
-                        pid_a if state_a[1] == "white" else pid_b
+                        pid_a if state_a[1] == SIDE_WHITE else pid_b
                     )
                     self._pair_moves[pair_id] = []
                     new_pairs.add(group)
@@ -826,11 +827,11 @@ class Orchestrator:
                             "pair confirmed tag=%s white=%s(%s) black=%s(%s) pairs=%d",
                             pair_id[:8],
                             self._proxy_engine_names.get(
-                                pid_a if state_a[1] == "white" else pid_b, "?"),
-                            (pid_a if state_a[1] == "white" else pid_b),
+                                pid_a if state_a[1] == SIDE_WHITE else pid_b, "?"),
+                            (pid_a if state_a[1] == SIDE_WHITE else pid_b),
                             self._proxy_engine_names.get(
-                                pid_b if state_a[1] == "white" else pid_a, "?"),
-                            (pid_b if state_a[1] == "white" else pid_a),
+                                pid_b if state_a[1] == SIDE_WHITE else pid_a, "?"),
+                            (pid_b if state_a[1] == SIDE_WHITE else pid_a),
                             len(self._pair_proxies),
                         )
                 elif name_a and name_b and name_a == name_b and _DEBUG_PAIRING:
@@ -929,10 +930,10 @@ class Orchestrator:
                 # nondeterministic so we sort by side explicitly.
                 "proxy_a": white_pid,
                 "engine_a": self._proxy_engine_names.get(white_pid, white_pid),
-                "side_a": "white",
+                "side_a": SIDE_WHITE,
                 "proxy_b": black_pid,
                 "engine_b": self._proxy_engine_names.get(black_pid, black_pid),
-                "side_b": "black",
+                "side_b": SIDE_BLACK,
             })
         # Orphan path is a backstop: ucinewgame and proxy_session_ended
         # dissolve confirmed pairs directly. This catches edge cases
@@ -965,7 +966,7 @@ class Orchestrator:
         if white in (pid_a, pid_b):
             return (white, pid_b if white == pid_a else pid_a)
         side_a = (self._pairing_state.get(pid_a) or ("", "?"))[1]
-        return (pid_a, pid_b) if side_a == "white" else (pid_b, pid_a)
+        return (pid_a, pid_b) if side_a == SIDE_WHITE else (pid_b, pid_a)
 
     async def _on_pgn_record(self, record: PgnGameRecord) -> None:
         """Tailer hook: route into the reconciliation queue and emit

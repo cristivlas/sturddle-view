@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
-import chess
 import chess.pgn
 
 from ..chess.results import DECISIVE_RESULTS

@@ -1,7 +1,6 @@
 """Play-mode capture and view-mode plumbing of per-ply eval_history."""
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock
 
 import chess

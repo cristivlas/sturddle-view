@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -68,20 +69,20 @@ async def _get_hve(request: Request) -> HumanVsEngine:
     return s.hve
 
 
+def _resolve_human_white(side: str) -> bool:
+    """Map a human_side setting ('white'|'black'|'random') to a boolean,
+    coin-flipping 'random'."""
+    if side == "random":
+        return random.random() < 0.5
+    return side != "black"
+
+
 @router.post("/new")
 async def new_game(payload: dict, request: Request) -> dict:
-    import random
-
     hve = await _get_hve(request)
     s = request.app.state.settings
 
-    side = payload.get("human_side", s.human_side)
-    if side == "random":
-        human_white = random.random() < 0.5
-    elif side == "black":
-        human_white = False
-    else:
-        human_white = True
+    human_white = _resolve_human_white(payload.get("human_side", s.human_side))
 
     tc = TimeControl(
         initial_seconds=float(payload.get("initial_seconds", s.tc_initial_seconds)),
@@ -232,6 +233,35 @@ async def import_game(payload: dict, request: Request) -> dict:
     headers = parsed.get("headers") or {}
     raw_text = payload.get("text", "")
     summary = parsed.get("summary") or {}
+    # Opening imports carry {eco, name}: label the game by the opening and
+    # name the sides player-vs-engine per gameplay settings (instead of the
+    # dataset PGN's "?" headers).
+    opening = payload.get("opening")
+    white_name = headers.get("White")
+    black_name = headers.get("Black")
+    if opening is not None:
+        if not isinstance(opening, dict):
+            raise HTTPException(status_code=400, detail="opening must be an object")
+        eco = opening.get("eco", "")
+        name = opening.get("name", "")
+        if not isinstance(eco, str) or not isinstance(name, str):
+            raise HTTPException(status_code=400, detail="opening eco/name must be strings")
+        eco, name = eco.strip(), name.strip()
+        # Only relabel when there's a real opening name; a blank name leaves
+        # the sides as parsed (no spurious player/engine relabel).
+        if name:
+            # Assign the human side now (coin-flipping 'random'); this import
+            # IS this game's side assignment, so the labels match the side
+            # that will be played.
+            s = request.app.state.settings
+            human_white = _resolve_human_white(s.human_side)
+            white_name, black_name = hve.play_side_names(human_white)
+            summary = {
+                **summary,
+                "white": white_name,
+                "black": black_name,
+                "opening": f"{eco} {name}".strip(),
+            }
     view_hash = _hash_parsed(parsed, raw_text)
     recents = request.app.state.recent_imports
     game_id = _resolve_game_id_for_import(recents, payload, view_hash)
@@ -257,8 +287,8 @@ async def import_game(payload: dict, request: Request) -> dict:
                 clock_history=parsed["clock_history"],
                 final_white_time=parsed["final_white_time"],
                 final_black_time=parsed["final_black_time"],
-                white_name=headers.get("White"),
-                black_name=headers.get("Black"),
+                white_name=white_name,
+                black_name=black_name,
                 eval_history=parsed.get("eval_history"),
                 comments=parsed.get("comments"),
                 root_comment=parsed.get("root_comment"),

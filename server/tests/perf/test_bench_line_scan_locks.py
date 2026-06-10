@@ -11,12 +11,12 @@ import pathlib
 
 import pytest
 
-pytestmark = pytest.mark.perf
-
 from sturddle_view.tournament.pgn_stats import (
     _iter_games_keyed,
     _iter_games_uncached,
 )
+
+pytestmark = pytest.mark.perf
 
 FIXTURE = pathlib.Path(__file__).parent.parent / "fixtures" / "perf_1k_games.pgn"
 TOLERANCE = 0.10

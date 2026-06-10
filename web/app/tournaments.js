@@ -1,6 +1,6 @@
 // Tournaments perspective: master list + "New Tournament" verb.
 // Path/defaults configuration lives in the global Settings dialog under
-// the "Tournament" tab — not here.
+// the "Tournament" tab -- not here.
 //
 // Row-targeted verbs (Start/Restart, Stop, Open workspace, Info, Remove)
 // live in a left-side vertical ribbon that mirrors the Play perspective's
@@ -13,17 +13,25 @@ import { openSettingsDialog } from "./settings-dialog.js";
 import { EVT, KIND, POLL_INTERVAL_MS, STATUS } from "./tournament-events.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
+import { loadRaw, saveRaw } from "./storage.js";
 import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
+import { debounce } from "./wb-utils.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
 // Fallback ribbon width when the docked ribbon is unavailable (floating mode);
 // matches the `--ribbon-w` CSS var on .tournaments-body.
 const RIBBON_W_FALLBACK_PX = 36;
+const REVEAL_DEBOUNCE_MS = 500;
+// Unicode ellipsis is intentional: this glyph is rendered into the
+// tournament-id span (user-facing), not a code token. ASCII-only rule
+// does not apply to surfaced UI text.
+const ID_ELLIPSIS = "…";
+const VALID_SORTS = new Set(["name", "status", "created_at", "started_at"]);
+const IS_LOCAL = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 
-export function mountTournaments({ container, api, events, log, token }) {
-  container.innerHTML = `
+const PANEL_HTML = `
     <div class="tournaments-panel">
       <menu class="tournaments-menubar">
         <li class="tmb-menu tmb-sort-menu">
@@ -97,354 +105,1097 @@ export function mountTournaments({ container, api, events, log, token }) {
     </div>
   `;
 
-  const newBtn = container.querySelector(".t-new");
-  const windowMenu = container.querySelector(".tmb-window-menu");
-  const windowMenuBtn = container.querySelector(".tmb-window-btn");
-  const sortMenu = container.querySelector(".tmb-sort-menu");
-  const sortMenuBtn = container.querySelector(".tmb-sort-btn");
-  const listEl = container.querySelector(".tournaments-list");
-  const emptyEl = container.querySelector(".tournaments-empty");
-  const emptyMsg = emptyEl.querySelector(".empty-message");
+// ---- Generic async wrappers ---------------------------------------------
 
-  const ribbonStartBtn = container.querySelector(".t-start");
+// Wraps an async function so concurrent calls are dropped until it resolves.
+function guard(fn) {
+  let inflight = false;
+  return async (...args) => {
+    if (inflight) return;
+    inflight = true;
+    try { await fn(...args); } finally { inflight = false; }
+  };
+}
 
-  const ribbonStopBtn = container.querySelector(".t-stop");
-  const ribbonWorkspaceBtn = container.querySelector(".t-workspace");
-  const ribbonInfoBtn = container.querySelector(".t-info");
-  const ribbonEditBtn = container.querySelector(".t-edit");
-  const ribbonRemoveBtn = container.querySelector(".t-remove");
+// Returns an async function that drops its result if a newer call
+// has been initiated. Always resolves with undefined --
+// await is fire-and-forget; do not read state immediately after.
+// `fetch` returns data; `commit` writes it; `onError` handles fetch errors.
+function lastWriteWins(fetch, commit, onError) {
+  let gen = 0;
+  return async (...args) => {
+    const v = ++gen;
+    let data;
+    try { data = await fetch(...args); } catch (e) { onError(e); return; }
+    if (v !== gen) return;
+    commit(data);
+  };
+}
 
-  const SORT_KEY_LS = STORAGE_KEY.TOURNAMENTS_SORT_BY;
-  const SORT_ASC_LS = STORAGE_KEY.TOURNAMENTS_SORT_ASC;
-  const VALID_SORTS = new Set(["name", "status", "created_at", "started_at"]);
-  let sortBy = VALID_SORTS.has(localStorage.getItem(SORT_KEY_LS))
-    ? localStorage.getItem(SORT_KEY_LS) : "created_at";
-  let sortAsc = localStorage.getItem(SORT_ASC_LS) !== "false";
+// ---- Pure formatters ----------------------------------------------------
 
-  let tournaments = [];
-  let activeId = null;
-  let selectedId = null;
-  let initialLoad = true;
-  let stoppingId = null;
-  let startingId = null;
-  let settings = null; // { fastchess_path, tournaments_root, default_template, fastchess_detected }
+function basename(p) {
+  if (!p) return p;
+  return p.split(/[\\/]/).pop() || p;
+}
 
-  // Wraps an async function so concurrent calls are dropped until it resolves.
-  function guard(fn) {
-    let inflight = false;
-    return async (...args) => {
-      if (inflight) return;
-      inflight = true;
-      try { await fn(...args); } finally { inflight = false; }
+function fitMiddleEllipsis(el, full) {
+  el.textContent = full;
+  if (el.scrollWidth <= el.clientWidth) return;
+  let lo = 1, hi = full.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    const head = Math.ceil(mid / 2);
+    const tail = mid - head;
+    el.textContent = full.slice(0, head) + ID_ELLIPSIS + full.slice(full.length - tail);
+    if (el.scrollWidth <= el.clientWidth) lo = mid;
+    else hi = mid - 1;
+  }
+  const head = Math.ceil(lo / 2);
+  const tail = lo - head;
+  el.textContent = full.slice(0, head) + ID_ELLIPSIS + full.slice(full.length - tail);
+}
+
+function formatType(v) {
+  if (!v) return null;
+  return v === "roundrobin" ? "Round-robin" : v.charAt(0).toUpperCase() + v.slice(1);
+}
+function formatResign(r) {
+  if (!r || r.movecount == null || r.score == null) return "Off";
+  return `after ${r.movecount} moves at ±${r.score} cp`;
+}
+function formatDraw(d) {
+  if (!d || d.movenumber == null) return "Off";
+  return `from move ${d.movenumber}, ${d.movecount} moves within ±${d.score} cp`;
+}
+function formatTime(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleString();
+}
+
+function totalGames(t) {
+  const tpl = t.template || {};
+  const n = (t.engines || []).length;
+  const rounds = Number(tpl.rounds);
+  const gpr = Number(tpl.games_per_round ?? 2);
+  if (!n || !rounds || !gpr) return null;
+  if (tpl.tournament_type === "gauntlet") {
+    const seeds = Number(tpl.seeds);
+    if (!seeds || seeds >= n) return null;
+    return seeds * (n - seeds) * rounds * gpr;
+  }
+  const pairings = (n * (n - 1)) / 2;
+  return pairings * rounds * gpr;
+}
+
+function formatGames(t) {
+  const played = t.standings?.games;
+  const total = totalGames(t);
+  if (played == null && total == null) return null;
+  if (total == null) return String(played ?? 0);
+  return `${played ?? 0} of ${total}`;
+}
+
+function makeIdCell(id) {
+  if (!id) return id;
+  const s = String(id);
+  const span = document.createElement("span");
+  span.className = "tournament-id";
+  span.title = s;
+  span.textContent = s;
+  const fit = () => fitMiddleEllipsis(span, s);
+  requestAnimationFrame(fit);
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(fit).observe(span);
+  }
+  return span;
+}
+
+// Resolve worst-case threading + hash from the picked engines and the
+// global engine_default_* override. Must mirror the rescheck endpoint's
+// formula so it sees the same numbers the user is committing to.
+function resolveResourceParams(template, pickedRegistry, globalDefaults) {
+  function resolvedFor(engine, optName, fallback) {
+    const opt = engine.options && engine.options[optName];
+    if (opt != null && opt !== "") return Number(opt);
+    const schema = engine.option_schema && engine.option_schema[optName];
+    if (schema && schema.default != null) return Number(schema.default);
+    return fallback;
+  }
+  const maxOver = (key, fallback) => {
+    if (!pickedRegistry.length) return fallback;
+    return pickedRegistry.reduce(
+      (acc, e) => Math.max(acc, resolvedFor(e, key, fallback)),
+      0,
+    ) || fallback;
+  };
+  const max_threads = globalDefaults.threads
+    ? Number(globalDefaults.threads)
+    : maxOver("Threads", 1);
+  const max_hash_mb = globalDefaults.hash_mb
+    ? Number(globalDefaults.hash_mb)
+    : maxOver("Hash", 16);
+
+  return {
+    parallel: Number(template.games_in_parallel || 1),
+    max_threads,
+    max_hash_mb,
+    ponder: !!template.ponder,
+    pin_affinity: !!template.pin_affinity,
+    allow_oversubscribe: !!template.allow_oversubscribe,
+  };
+}
+
+// ---- API helpers --------------------------------------------------------
+
+function syncWorkspaceOtherActive(ctx) {
+  const ws = getActiveWorkspace();
+  if (!ws?.setOtherActive) return;
+  if (!ctx.activeId || ctx.activeId === ws.tournamentId) {
+    ws.setOtherActive(null, null);
+    return;
+  }
+  const other = ctx.tournaments.find((x) => x.id === ctx.activeId);
+  ws.setOtherActive(ctx.activeId, other?.name || null);
+}
+
+async function loadGlobalEngineDefaults(ctx) {
+  try {
+    const s = await ctx.api("GET", "/settings");
+    return {
+      threads: s.engine_default_threads,
+      hash_mb: s.engine_default_hash_mb,
     };
+  } catch {
+    return { threads: null, hash_mb: null };
   }
+}
 
-  function debounce(fn, ms) {
-    let timer = null;
-    return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
-  }
+// ---- Rendering ----------------------------------------------------------
 
-  // Returns an async function that drops its result if a newer call
-  // has been initiated. Always resolves with undefined --
-  // await is fire-and-forget; do not read state immediately after.
-  // `fetch` returns data; `commit` writes it; `onError` handles fetch errors.
-  function lastWriteWins(fetch, commit, onError) {
-    let gen = 0;
-    return async (...args) => {
-      const v = ++gen;
-      let data;
-      try { data = await fetch(...args); } catch (e) { onError(e); return; }
-      if (v !== gen) return;
-      commit(data);
-    };
-  }
+function renderList(ctx) {
+  ctx.listEl.innerHTML = "";
 
-  // ---- API helpers --------------------------------------------------------
+  const noFastchess = !ctx.settings || !ctx.settings.fastchess_detected;
+  const noTournaments = ctx.tournaments.length === 0;
 
-  const loadSettings = lastWriteWins(
-    () => api("GET", "/api/tournament-settings"),
-    (data) => { settings = data; renderList(); },
-    (e) => reportError({ log }, "Loading tournament settings failed", e),
-  );
-
-  const loadList = lastWriteWins(
-    () => api("GET", "/api/tournaments"),
-    (body) => {
-      tournaments = body.tournaments;
-      activeId = body.active_id;
-      renderList();
-      syncWorkspaceOtherActive();
-    },
-    (e) => reportError({ log }, "Loading tournaments failed", e),
-  );
-
-  function syncWorkspaceOtherActive() {
-    const ws = getActiveWorkspace();
-    if (!ws?.setOtherActive) return;
-    if (!activeId || activeId === ws.tournamentId) {
-      ws.setOtherActive(null, null);
-      return;
-    }
-    const other = tournaments.find((x) => x.id === activeId);
-    ws.setOtherActive(activeId, other?.name || null);
-  }
-  const debouncedLoadList = debounce(loadList, 150);
-
-  // ---- Rendering ----------------------------------------------------------
-
-  function renderList() {
-    listEl.innerHTML = "";
-
-    const noFastchess = !settings || !settings.fastchess_detected;
-    const noTournaments = tournaments.length === 0;
-
-    if (noFastchess) {
-      emptyEl.classList.remove("hidden");
-      emptyMsg.replaceChildren();
-      emptyMsg.append("fastchess not configured — open ");
-      const link = document.createElement("a");
-      link.href = "#";
-      link.className = "settings-deeplink";
-      link.textContent = "Settings → Tournament";
-      link.addEventListener("click", (e) => {
-        e.preventDefault();
-        openSettingsDialog({ api, initialTab: "tournament" });
-      });
-      emptyMsg.append(link, " to set the binary path.");
-      newBtn.disabled = true;
-      selectedId = null;
-      syncRibbon();
-      return;
-    }
-    newBtn.disabled = false;
-
-    if (noTournaments) {
-      emptyEl.classList.remove("hidden");
-      emptyMsg.replaceChildren();
-      const newLink = document.createElement("button");
-      newLink.type = "button";
-      newLink.className = "toast-icon-btn";
-      newLink.setAttribute("aria-label", "New tournament");
-      newLink.setAttribute("title", "New tournament");
-      const newIc = document.createElement("wa-icon");
-      newIc.setAttribute("name", "plus");
-      newLink.appendChild(newIc);
-      newLink.addEventListener("click", () => openNewTournamentDialog());
-      emptyMsg.append("No tournaments yet — click ", newLink, " to create one.");
-      selectedId = null;
-      syncRibbon();
-      return;
-    }
-    emptyEl.classList.add("hidden");
-
-    const sorted = sortedTournaments();
-    if (!selectedId || !sorted.some((t) => t.id === selectedId)) {
-      selectedId = (activeId && sorted.some((t) => t.id === activeId)) ? activeId : sorted[0].id;
-    }
-    for (const t of sorted) {
-      listEl.appendChild(renderRow(t));
-    }
-    syncRibbon();
-    if (initialLoad) {
-      initialLoad = false;
-      maybeRestoreWorkspace();
-    }
-  }
-
-  function sortedTournaments() {
-    const arr = tournaments.slice();
-    const dir = sortAsc ? 1 : -1;
-    const cmp = (a, b) => {
-      const av = a[sortBy] ?? "";
-      const bv = b[sortBy] ?? "";
-      if (av === bv) return a.created_at.localeCompare(b.created_at);
-      // Empty values sink to the bottom regardless of direction.
-      if (av === "") return 1;
-      if (bv === "") return -1;
-      if (sortBy === "name") return dir * av.localeCompare(bv, undefined, { sensitivity: "base" });
-      return dir * (av < bv ? -1 : 1);
-    };
-    return arr.sort(cmp);
-  }
-
-  function renderRow(t) {
-    const li = document.createElement("li");
-    li.className = "tournament-row" + (t.id === selectedId ? " selected" : "");
-    li.dataset.id = t.id;
-
-    const status = t.status;
-    const isRunning = status === STATUS.RUNNING;
-    const played = t.standings?.games ?? 0;
-    const total = totalGames(t);
-    const pct = total ? Math.min(100, Math.round((played / total) * 100)) : 0;
-
-    let trailing = "";
-    if (isRunning && total) {
-      trailing = `
-        <div class="tournament-progress" role="progressbar"
-             aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${played}">
-          <div class="tournament-progress-fill" style="width: ${pct}%"></div>
-        </div>
-        <span class="tournament-progress-label">${played} / ${total} · ${pct}%</span>
-      `;
-    } else {
-      trailing = `<span class="tournament-engines muted"></span>`;
-    }
-
-    const sprtBadge = t.template?.sprt ? `<span class="tournament-sprt-badge">SPRT</span>` : "";
-    li.innerHTML = `
-      <div class="tournament-row-main">
-        <span class="tournament-status status-${status}">${status}</span>
-        <span class="tournament-name"></span>
-        ${sprtBadge}
-        ${trailing}
-      </div>
-    `;
-
-    li.querySelector(".tournament-name").textContent = t.name;
-    if (!isRunning || !total) {
-      const engineNames = (t.engines || []).map((e) => e.name).join(", ");
-      li.querySelector(".tournament-engines").textContent = engineNames;
-    }
-
-    li.addEventListener("click", () => {
-      listEl.focus({ preventScroll: true });
-      if (selectedId === t.id) return;
-      navigateTo(t.id);
+  if (noFastchess) {
+    ctx.emptyEl.classList.remove("hidden");
+    ctx.emptyMsg.replaceChildren();
+    ctx.emptyMsg.append("fastchess not configured — open ");
+    const link = document.createElement("a");
+    link.href = "#";
+    link.className = "settings-deeplink";
+    link.textContent = "Settings → Tournament";
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      openSettingsDialog({ api: ctx.api, initialTab: "tournament" });
     });
-    li.addEventListener("dblclick", () => openInfoGuarded(t));
+    ctx.emptyMsg.append(link, " to set the binary path.");
+    ctx.newBtn.disabled = true;
+    ctx.selectedId = null;
+    syncRibbon(ctx);
+    return;
+  }
+  ctx.newBtn.disabled = false;
 
-    return li;
+  if (noTournaments) {
+    ctx.emptyEl.classList.remove("hidden");
+    ctx.emptyMsg.replaceChildren();
+    const newLink = document.createElement("button");
+    newLink.type = "button";
+    newLink.className = "toast-icon-btn";
+    newLink.setAttribute("aria-label", "New tournament");
+    newLink.setAttribute("title", "New tournament");
+    const newIc = document.createElement("wa-icon");
+    newIc.setAttribute("name", "plus");
+    newLink.appendChild(newIc);
+    newLink.addEventListener("click", () => openNewTournamentDialog(ctx));
+    ctx.emptyMsg.append("No tournaments yet — click ", newLink, " to create one.");
+    ctx.selectedId = null;
+    syncRibbon(ctx);
+    return;
+  }
+  ctx.emptyEl.classList.add("hidden");
+
+  const sorted = sortedTournaments(ctx);
+  if (!ctx.selectedId || !sorted.some((t) => t.id === ctx.selectedId)) {
+    ctx.selectedId = (ctx.activeId && sorted.some((t) => t.id === ctx.activeId)) ? ctx.activeId : sorted[0].id;
+  }
+  for (const t of sorted) {
+    ctx.listEl.appendChild(renderRow(ctx, t));
+  }
+  syncRibbon(ctx);
+  if (ctx.initialLoad) {
+    ctx.initialLoad = false;
+    maybeRestoreWorkspace(ctx);
+  }
+}
+
+function sortedTournaments(ctx) {
+  const arr = ctx.tournaments.slice();
+  const dir = ctx.sortAsc ? 1 : -1;
+  const cmp = (a, b) => {
+    const av = a[ctx.sortBy] ?? "";
+    const bv = b[ctx.sortBy] ?? "";
+    if (av === bv) return a.created_at.localeCompare(b.created_at);
+    // Empty values sink to the bottom regardless of direction.
+    if (av === "") return 1;
+    if (bv === "") return -1;
+    if (ctx.sortBy === "name") return dir * av.localeCompare(bv, undefined, { sensitivity: "base" });
+    return dir * (av < bv ? -1 : 1);
+  };
+  return arr.sort(cmp);
+}
+
+function renderRow(ctx, t) {
+  const li = document.createElement("li");
+  li.className = "tournament-row" + (t.id === ctx.selectedId ? " selected" : "");
+  li.dataset.id = t.id;
+
+  const status = t.status;
+  const isRunning = status === STATUS.RUNNING;
+  const played = t.standings?.games ?? 0;
+  const total = totalGames(t);
+  const pct = total ? Math.min(100, Math.round((played / total) * 100)) : 0;
+
+  let trailing = "";
+  if (isRunning && total) {
+    trailing = `
+      <div class="tournament-progress" role="progressbar"
+           aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${played}">
+        <div class="tournament-progress-fill" style="width: ${pct}%"></div>
+      </div>
+      <span class="tournament-progress-label">${played} / ${total} · ${pct}%</span>
+    `;
+  } else {
+    trailing = `<span class="tournament-engines muted"></span>`;
   }
 
-  function updateProgressInPlace(t) {
-    const played = t?.standings?.games;
-    if (played == null) return;
-    const row = listEl.querySelector(`li[data-id="${t.id}"]`);
-    if (!row) return;
-    const bar = row.querySelector(".tournament-progress");
-    const fill = row.querySelector(".tournament-progress-fill");
-    const label = row.querySelector(".tournament-progress-label");
-    if (!bar || !fill || !label) return;
-    const total = totalGames(t);
-    if (!total) return;
-    const pct = Math.min(100, Math.round((played / total) * 100));
-    bar.setAttribute("aria-valuenow", String(played));
-    fill.style.width = `${pct}%`;
-    label.textContent = `${played} / ${total} · ${pct}%`;
+  const sprtBadge = t.template?.sprt ? `<span class="tournament-sprt-badge">SPRT</span>` : "";
+  li.innerHTML = `
+    <div class="tournament-row-main">
+      <span class="tournament-status status-${status}">${status}</span>
+      <span class="tournament-name"></span>
+      ${sprtBadge}
+      ${trailing}
+    </div>
+  `;
+
+  li.querySelector(".tournament-name").textContent = t.name;
+  if (!isRunning || !total) {
+    const engineNames = (t.engines || []).map((e) => e.name).join(", ");
+    li.querySelector(".tournament-engines").textContent = engineNames;
   }
 
-  function selectedTournament() {
-    return tournaments.find((t) => t.id === selectedId) || null;
+  li.addEventListener("click", () => {
+    ctx.listEl.focus({ preventScroll: true });
+    if (ctx.selectedId === t.id) return;
+    navigateTo(ctx, t.id);
+  });
+  li.addEventListener("dblclick", () => ctx.openInfoGuarded(t));
+
+  return li;
+}
+
+function updateProgressInPlace(ctx, t) {
+  const played = t?.standings?.games;
+  if (played == null) return;
+  const row = ctx.listEl.querySelector(`li[data-id="${t.id}"]`);
+  if (!row) return;
+  const bar = row.querySelector(".tournament-progress");
+  const fill = row.querySelector(".tournament-progress-fill");
+  const label = row.querySelector(".tournament-progress-label");
+  if (!bar || !fill || !label) return;
+  const total = totalGames(t);
+  if (!total) return;
+  const pct = Math.min(100, Math.round((played / total) * 100));
+  bar.setAttribute("aria-valuenow", String(played));
+  fill.style.width = `${pct}%`;
+  label.textContent = `${played} / ${total} · ${pct}%`;
+}
+
+function selectedTournament(ctx) {
+  return ctx.tournaments.find((t) => t.id === ctx.selectedId) || null;
+}
+
+function syncRibbon(ctx) {
+  syncTidyBtn(ctx);
+  const t = selectedTournament(ctx);
+  if (!t) {
+    ctx.ribbonStartBtn.disabled = true;
+    ctx.ribbonStopBtn.disabled = true;
+    ctx.ribbonWorkspaceBtn.disabled = true;
+    ctx.ribbonInfoBtn.disabled = true;
+    ctx.ribbonEditBtn.disabled = true;
+    ctx.ribbonRemoveBtn.disabled = true;
+    if (!ctx.ribbonStartBtn.querySelector("wa-icon")) ctx.ribbonStartBtn.innerHTML = '<wa-icon class="t-start-icon" name="play"></wa-icon>';
+    else ctx.ribbonStartBtn.querySelector("wa-icon").setAttribute("name", "play");
+    ctx.ribbonStartBtn.setAttribute("aria-label", "Start");
+    ctx.ribbonStartBtn.setAttribute("title", "Start");
+    return;
   }
+  const isActive = t.id === ctx.activeId;
+  const anotherRunning = ctx.activeId !== null && !isActive;
+  const status = t.status;
+  // Stopped/failed -> Start = restart from scratch (Stop is destructive;
+  // fastchess's resume contract is fragile across stop/resume cycles).
+  const isRestart = status === STATUS.STOPPED || status === STATUS.FAILED;
 
-  function dismissSortToastNow() {
-    dismissSortToast?.();
-    dismissSortToast = null;
-    sortToastTextEl = null;
-    sortToastToggleBtn = null;
-    sortToastHiddenWbs = [];
+  // !!ctx.startingId: only one tournament may start at a time (by design).
+  ctx.ribbonStartBtn.disabled = isActive || anotherRunning || status === STATUS.RUNNING || status === STATUS.DONE || !!ctx.startingId;
+  ctx.ribbonStopBtn.disabled = !isActive;
+  ctx.ribbonRemoveBtn.disabled = isActive;
+  ctx.ribbonWorkspaceBtn.disabled = !!getActiveWorkspace();
+  ctx.ribbonInfoBtn.disabled = false;
+  ctx.ribbonEditBtn.disabled = isActive || status === STATUS.DONE;
+
+  const starting = t.id === ctx.startingId;
+  const startIconName = isRestart ? "rotate-right" : "play";
+  if (starting) {
+    ctx.ribbonStartBtn.innerHTML = '<wa-spinner class="spinner-accent"></wa-spinner>';
+  } else if (!ctx.ribbonStartBtn.querySelector("wa-icon")) {
+    ctx.ribbonStartBtn.innerHTML = `<wa-icon class="t-start-icon" name="${startIconName}"></wa-icon>`;
+  } else {
+    ctx.ribbonStartBtn.querySelector("wa-icon").setAttribute("name", startIconName);
   }
-
-  function teardownWorkspace(ws) {
-    dismissSortToastNow();
-    ws.close();
-    // Note: if the user closes all windows individually, finalize() fires
-    // inside tournament-workspace.js with no callback here, so the sort
-    // toast may linger with stale WinBox refs. Harmless (restoreWindows
-    // swallows errors), but not covered by this fix.
+  const startLabel = isRestart ? "Restart" : "Start";
+  ctx.ribbonStartBtn.setAttribute("aria-label", startLabel);
+  ctx.ribbonStartBtn.setAttribute("title", startLabel);
+  const stopping = t.id === ctx.stoppingId;
+  if (stopping) {
+    ctx.ribbonStopBtn.disabled = true;
+    ctx.ribbonStopBtn.innerHTML = '<wa-spinner class="spinner-accent"></wa-spinner>';
+  } else {
+    ctx.ribbonStopBtn.innerHTML = '<wa-icon name="hand"></wa-icon>';
   }
+}
 
-  async function navigateTo(newId) {
-    const ws = getActiveWorkspace();
-    const hadWorkspace = ws && ws.tournamentId !== newId;
-    if (hadWorkspace) {
-      // Live game windows close here but are restored when switching back
-      // (if the tournament is still running), so no confirmation needed.
-      teardownWorkspace(ws);
-    }
-    selectedId = newId;
-    for (const el of listEl.querySelectorAll(".tournament-row.selected")) el.classList.remove("selected");
-    const li = listEl.querySelector(`.tournament-row[data-id="${newId}"]`);
-    if (li) {
-      li.classList.add("selected");
-      li.scrollIntoView({ block: "nearest" });
-    }
-    syncRibbon();
-    const t = selectedTournament();
-    if (t && hasSavedWorkspaceState(t.id)) {
-      // Only auto-open when the tournament has saved workspace state with
-      // open windows. Brand-new or explicitly-dismissed tournaments stay
-      // closed -- the user can open them manually.
-      openWorkspace(t);
-    }
-    // Invariant: an open workspace always reflects the selected tournament.
-    // The list-level poll relies on this to drive workspace.refresh() from
-    // selectedId without having to track the workspace's pinned tid.
-    const wsAfter = getActiveWorkspace();
-    if (wsAfter && wsAfter.tournamentId !== selectedId) {
-      throw new Error(`workspace tid ${wsAfter.tournamentId} != selectedId ${selectedId}`);
-    }
-    return true;
+// ---- Navigation / workspace --------------------------------------------
+
+function dismissSortToastNow(ctx) {
+  ctx.dismissSortToast?.();
+  ctx.dismissSortToast = null;
+  ctx.sortToastTextEl = null;
+  ctx.sortToastToggleBtn = null;
+  ctx.sortToastHiddenWbs = [];
+}
+
+function teardownWorkspace(ctx, ws) {
+  dismissSortToastNow(ctx);
+  ws.close();
+  // Note: if the user closes all windows individually, finalize() fires
+  // inside tournament-workspace.js with no callback here, so the sort
+  // toast may linger with stale WinBox refs. Harmless (restoreWindows
+  // swallows errors), but not covered by this fix.
+}
+
+async function navigateTo(ctx, newId) {
+  const ws = getActiveWorkspace();
+  const hadWorkspace = ws && ws.tournamentId !== newId;
+  if (hadWorkspace) {
+    // Live game windows close here but are restored when switching back
+    // (if the tournament is still running), so no confirmation needed.
+    teardownWorkspace(ctx, ws);
   }
+  ctx.selectedId = newId;
+  for (const el of ctx.listEl.querySelectorAll(".tournament-row.selected")) el.classList.remove("selected");
+  const li = ctx.listEl.querySelector(`.tournament-row[data-id="${newId}"]`);
+  if (li) {
+    li.classList.add("selected");
+    li.scrollIntoView({ block: "nearest" });
+  }
+  syncRibbon(ctx);
+  const t = selectedTournament(ctx);
+  if (t && hasSavedWorkspaceState(t.id)) {
+    // Only auto-open when the tournament has saved workspace state with
+    // open windows. Brand-new or explicitly-dismissed tournaments stay
+    // closed -- the user can open them manually.
+    openWorkspace(ctx, t);
+  }
+  // Invariant: an open workspace always reflects the selected tournament.
+  // The list-level poll relies on this to drive workspace.refresh() from
+  // selectedId without having to track the workspace's pinned tid.
+  const wsAfter = getActiveWorkspace();
+  if (wsAfter && wsAfter.tournamentId !== ctx.selectedId) {
+    throw new Error(`workspace tid ${wsAfter.tournamentId} != selectedId ${ctx.selectedId}`);
+  }
+  return true;
+}
 
-  function syncRibbon() {
-    syncTidyBtn();
-    const t = selectedTournament();
-    if (!t) {
-      ribbonStartBtn.disabled = true;
-      ribbonStopBtn.disabled = true;
-      ribbonWorkspaceBtn.disabled = true;
-      ribbonInfoBtn.disabled = true;
-      ribbonEditBtn.disabled = true;
-      ribbonRemoveBtn.disabled = true;
-      if (!ribbonStartBtn.querySelector("wa-icon")) ribbonStartBtn.innerHTML = '<wa-icon class="t-start-icon" name="play"></wa-icon>';
-      else ribbonStartBtn.querySelector("wa-icon").setAttribute("name", "play");
-      ribbonStartBtn.setAttribute("aria-label", "Start");
-      ribbonStartBtn.setAttribute("title", "Start");
-      return;
-    }
-    const isActive = t.id === activeId;
-    const anotherRunning = activeId !== null && !isActive;
-    const status = t.status;
-    // Stopped/failed -> Start = restart from scratch (Stop is destructive;
-    // fastchess's resume contract is fragile across stop/resume cycles).
-    const isRestart = status === STATUS.STOPPED || status === STATUS.FAILED;
+function openWorkspace(ctx, t) {
+  const menubar = ctx.container.querySelector(".tournaments-menubar");
+  const ribbon = ctx.container.querySelector(".tournaments-ribbon");
+  const rect = menubar.getBoundingClientRect();
+  const ribbonRect = ribbon ? ribbon.getBoundingClientRect() : null;
+  // Reserve the ribbon's width on BOTH edges regardless of which side
+  // it docks to (or whether it's floating). Keeps the workspace symmetric
+  // and ribbon-side-flips don't reshape the available area.
+  let ribbonW = ribbonRect ? Math.round(ribbonRect.width) : 0;
+  if (ribbonW === 0) {
+    // Floating: ribbon is detached. Fall back to the --ribbon-w CSS var,
+    // then to the hardcoded default if the var is unavailable.
+    const body = ctx.container.querySelector(".tournaments-body");
+    const v = body && parseInt(getComputedStyle(body).getPropertyValue("--ribbon-w"));
+    ribbonW = v > 0 ? v : RIBBON_W_FALLBACK_PX;
+  }
+  const top = Math.round(rect.bottom);
+  const left = Math.max(Math.round(rect.left), ribbonW);
+  const getRight = () => window.innerWidth - ribbonW;
+  openTournamentWorkspace({ api: ctx.api, events: ctx.events, log: ctx.log, token: ctx.token, tournament: t, top, left, getRight });
+  // Seed the workspace's view of the other-active tournament so the
+  // banner Restart button reflects busy state on open, not just after
+  // the next loadList tick.
+  syncWorkspaceOtherActive(ctx);
+  syncWindowMenu(ctx);
+  syncRibbon(ctx);
+}
 
-    // !!startingId: only one tournament may start at a time (by design).
-    ribbonStartBtn.disabled = isActive || anotherRunning || status === STATUS.RUNNING || status === STATUS.DONE || !!startingId;
-    ribbonStopBtn.disabled = !isActive;
-    ribbonRemoveBtn.disabled = isActive;
-    ribbonWorkspaceBtn.disabled = !!getActiveWorkspace();
-    ribbonInfoBtn.disabled = false;
-    ribbonEditBtn.disabled = isActive || status === STATUS.DONE;
+// ---- Verbs --------------------------------------------------------------
 
-    const starting = t.id === startingId;
-    const startIconName = isRestart ? "rotate-right" : "play";
-    if (starting) {
-      ribbonStartBtn.innerHTML = '<wa-spinner class="spinner-accent"></wa-spinner>';
-    } else if (!ribbonStartBtn.querySelector("wa-icon")) {
-      ribbonStartBtn.innerHTML = `<wa-icon class="t-start-icon" name="${startIconName}"></wa-icon>`;
+async function startOne(ctx, t) {
+  // Stopped/failed tournaments restart from scratch: wipe the dir then
+  // launch fresh. Confirm before destroying games.
+  const willWipe = t.status === STATUS.STOPPED || t.status === STATUS.FAILED;
+  let qs = "";
+  if (willWipe) {
+    const ok = await confirm(buildRestartConfirm(t.name, t.standings?.games ?? 0));
+    if (!ok) return;
+    qs = `?${CONFIRM_WIPE_QS}`;
+  }
+  try {
+    await ctx.api("POST", `/api/tournaments/${t.id}/start${qs}`);
+  } catch (e) {
+    reportError({ log: ctx.log }, `Starting "${t.name}" failed`, e);
+    return;
+  }
+  await ctx.loadList();
+}
+
+async function stopOne(ctx, t) {
+  // Stop is destructive -- on next Start the tournament is restarted
+  // from scratch. Warn before clicking through.
+  const games = t.standings?.games ?? 0;
+  const message = games > 0
+    ? `Stop "${t.name}"?\nRestarting discards all ${games} recorded games.`
+    : `Stop "${t.name}"?\nOn restart this tournament will start from scratch.`;
+  const ok = await confirm({
+    message,
+    okLabel: "Stop",
+    destructive: true,
+    messageClass: "confirm-message--multiline",
+  });
+  if (!ok) return;
+  try {
+    await ctx.api("POST", `/api/tournaments/${t.id}/stop`);
+  } catch (e) {
+    reportError({ log: ctx.log }, `Stopping "${t.name}" failed`, e);
+  }
+  await ctx.loadList();
+}
+
+async function removeOne(ctx, t) {
+  const ok = await confirm({
+    message: `Remove "${t.name}"?\nAll games and data will be permanently deleted.`,
+    okLabel: "Remove",
+    destructive: true,
+    messageClass: "confirm-message--multiline",
+  });
+  if (!ok) return;
+  try {
+    await ctx.api("DELETE", `/api/tournaments/${t.id}`);
+    if (getActiveWorkspace()?.tournamentId === t.id) getActiveWorkspace().close();
+    clearWorkspaceState(t.id);
+    toast(`Removed tournament "${t.name}"`, { variant: "success" });
+  } catch (e) {
+    reportError({ log: ctx.log }, `Removing "${t.name}" failed`, e);
+    return;
+  }
+  await ctx.loadList();
+}
+
+// ---- Info dialog --------------------------------------------------------
+
+async function openInfoDialog(ctx, t) {
+  let detailed = t;
+  try {
+    detailed = await ctx.api("GET", `/api/tournaments/${t.id}`);
+  } catch (e) {
+    ctx.log?.("Loading tournament details failed:", e);
+  }
+  showDialog({
+    label: detailed.name,
+    width: "520px",
+    body: (resolve, dialog) => {
+      const wrap = document.createElement("div");
+      wrap.className = "tournament-info";
+      wrap.appendChild(buildInfoContent(ctx, detailed));
+      dialog.appendChild(wrap);
+    },
+  });
+}
+
+function buildInfoContent(ctx, t) {
+  const tpl = t.template || {};
+  const dl = document.createElement("dl");
+  dl.className = "tournament-info-grid";
+
+  const row = (label, value) => {
+    if (value == null || value === "") return;
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+    if (value instanceof Node) dd.appendChild(value);
+    else dd.textContent = String(value);
+    dl.append(dt, dd);
+  };
+
+  const idCell = document.createElement("div");
+  idCell.className = "tournament-id-row";
+  const idSpan = makeIdCell(t.id);
+  idCell.appendChild(idSpan);
+  if (ctx.settings?.tournaments_root) {
+    const folder = ctx.settings.tournaments_root.replace(/[\\/]+$/, "") + "/" + t.id;
+    if (IS_LOCAL) {
+      const btn = document.createElement("button");
+      btn.className = "tournament-info-reveal-btn";
+      btn.title = folder;
+      btn.innerHTML = `<wa-icon name="folder-open"></wa-icon>`;
+      btn.addEventListener("click", debounce(async () => {
+        try {
+          await ctx.api("POST", `/api/tournaments/${t.id}/reveal`);
+        } catch (e) {
+          reportError({ log: ctx.log }, "Could not open folder", e);
+        }
+      }, REVEAL_DEBOUNCE_MS));
+      idCell.appendChild(btn);
     } else {
-      ribbonStartBtn.querySelector("wa-icon").setAttribute("name", startIconName);
-    }
-    const startLabel = isRestart ? "Restart" : "Start";
-    ribbonStartBtn.setAttribute("aria-label", startLabel);
-    ribbonStartBtn.setAttribute("title", startLabel);
-    const stopping = t.id === stoppingId;
-    if (stopping) {
-      ribbonStopBtn.disabled = true;
-      ribbonStopBtn.innerHTML = '<wa-spinner class="spinner-accent"></wa-spinner>';
-    } else {
-      ribbonStopBtn.innerHTML = '<wa-icon name="hand"></wa-icon>';
+      idSpan.title = folder;
     }
   }
+  row("ID", idCell);
+  row("Status", t.status);
+  if (t.last_error) {
+    const tail = (t.last_error.stderr_tail || []).slice(-10).join("\n");
+    const pre = document.createElement("pre");
+    pre.className = "tournament-info-error";
+    pre.textContent = tail || `exit code ${t.last_error.rc}`;
+    row(`Last error (rc=${t.last_error.rc})`, pre);
+  }
+  row("Type", formatType(tpl.tournament_type));
+  row("Time control", tpl.tc);
+  if (tpl.sprt) {
+    const s = tpl.sprt;
+    row("Rounds", "unlimited (SPRT)");
+    row("SPRT", `elo0=${s.elo0} elo1=${s.elo1} alpha=${s.alpha} beta=${s.beta} model=${s.model}`);
+  } else {
+    row("Rounds", tpl.rounds);
+  }
+  row("Parallel games", tpl.games_in_parallel);
+  row("Games", formatGames(t));
+  if (tpl.tournament_type === "gauntlet") row("Seeds", tpl.seeds);
+  row("Ponder", tpl.ponder ? "On" : "Off");
+  row("CPU affinity", tpl.pin_affinity ? "Pinned" : "Off");
+  row("Resign", formatResign(tpl.resign));
+  row("Draw adjudication", formatDraw(tpl.draw));
+  const ed = t.engine_defaults || {};
+  const defaultSpan = (text, title) => {
+    const span = document.createElement("span");
+    if (text != null && text !== "") {
+      span.textContent = text;
+      if (title) span.title = title;
+    } else {
+      span.textContent = "engine default";
+      span.className = "tournament-info-default";
+    }
+    return span;
+  };
+  row("Threads", defaultSpan(ed.threads));
+  row("Hash (MB)", defaultSpan(ed.hash_mb));
+  {
+    const span = ed.syzygy_path
+      ? defaultSpan(basename(ed.syzygy_path), ed.syzygy_path)
+      : defaultSpan(null);
+    row("Syzygy", span);
+  }
+  {
+    const span = ed.book_path
+      ? defaultSpan(basename(ed.book_path), ed.book_path)
+      : defaultSpan(null);
+    row("Opening book", span);
+    if (ed.book_path) {
+      row("Book plies", ed.book_plies);
+      row("Book order", ed.book_order);
+    }
+  }
+  row("Created", formatTime(t.created_at));
+  if (t.status === STATUS.RUNNING || t.status === STATUS.FAILED || t.status === STATUS.STOPPED) row("Started", formatTime(t.started_at));
+  if (t.status === STATUS.STOPPED) row("Stopped", formatTime(t.stopped_at));
 
-  listEl.addEventListener("keydown", (ev) => {
+  const enginesList = document.createElement("ul");
+  enginesList.className = "tournament-info-engines";
+  for (const e of t.engines || []) {
+    const li = document.createElement("li");
+    li.textContent = e.name + (e.version ? ` (${e.version})` : "");
+    enginesList.appendChild(li);
+  }
+  if (enginesList.children.length) row("Engines", enginesList);
+
+  return dl;
+}
+
+// ---- New / Edit Tournament dialogs --------------------------------------
+
+// Shared dialog body for both create and edit flows.
+// Returns a Promise that resolves to {name, template, engines} or null.
+async function openTournamentDialog(ctx, { label, actionLabel, initialName, initialEngines, initialTemplate, available, onSubmit }) {
+  const defaults =
+    initialTemplate ||
+    (ctx.settings && ctx.settings.default_template) ||
+    { tc: "10+0.1", rounds: 10, games_in_parallel: 1 };
+
+  return showDialog({
+    label,
+    width: "min(720px, 94vw)",
+    defaultValue: null,
+    body: (resolve, dialog) => {
+      const wrap = document.createElement("div");
+      wrap.className = "new-tournament-form";
+      wrap.innerHTML = `
+        <wa-input class="nt-name" label="Name" size="small" placeholder="my tournament"></wa-input>
+
+        <div class="nt-section">
+          <div class="nt-engine-builder"></div>
+        </div>
+
+        <div class="nt-section">
+          <div class="nt-template-host"></div>
+        </div>
+      `;
+
+      const nameInput = wrap.querySelector(".nt-name");
+      nameInput.value = initialName || "";
+
+      const builderHost = wrap.querySelector(".nt-engine-builder");
+      const builder = mountEngineBuilder({
+        host: builderHost,
+        available,
+        initial: initialEngines || [],
+      });
+
+      const formHost = wrap.querySelector(".nt-template-host");
+      const tplCtl = mountTournamentTemplateForm({
+        container: formHost,
+        initialValues: defaults,
+      });
+
+      const actionBtn = document.createElement("wa-button");
+      actionBtn.slot = "footer";
+      actionBtn.size = "small";
+      actionBtn.variant = "brand";
+      actionBtn.textContent = actionLabel;
+
+      function isValid() {
+        return (nameInput.value || "").trim() !== "" && builder.getEngines().length >= 2;
+      }
+
+      function refreshValidity() {
+        actionBtn.disabled = !isValid();
+      }
+      refreshValidity();
+      tplCtl.setSprtAvailable(builder.getEngines().length === 2);
+      nameInput.addEventListener("input", refreshValidity);
+      builder.onChange(() => {
+        tplCtl.setSprtAvailable(builder.getEngines().length === 2);
+        refreshValidity();
+      });
+
+      actionBtn.addEventListener("click", async () => {
+        if (!isValid()) return;
+        const v = tplCtl.validate({ numEngines: builder.getEngines().length });
+        if (!v.ok) {
+          toast(v.errors[0].message, { variant: "danger", duration: 6000 });
+          return;
+        }
+        let template;
+        try {
+          template = tplCtl.getValues();
+        } catch (e) {
+          toast(e.message, { variant: "danger" });
+          return;
+        }
+
+        const picked = builder.getPickedRegistry();
+        const globalDefaults = await loadGlobalEngineDefaults(ctx);
+        const resolved = resolveResourceParams(template, picked, globalDefaults);
+        actionBtn.loading = true;
+        let rescheckResult;
+        try {
+          rescheckResult = await ctx.api("POST", "/api/tournaments/rescheck", resolved);
+        } catch (e) {
+          const detail = apiErrorDetail(e);
+          const msg = (detail && detail.message) || detail || "Resource check failed";
+          toast(typeof msg === "string" ? msg : String(msg), {
+            variant: "danger", duration: 8000,
+          });
+          actionBtn.loading = false;
+          return;
+        } finally {
+          actionBtn.loading = false;
+        }
+        if (rescheckResult.warnings && rescheckResult.warnings.length) {
+          for (const w of rescheckResult.warnings) {
+            toast(`Warning: ${w.message}`, { variant: "warning", duration: 8000 });
+          }
+        }
+
+        template.max_threads = resolved.max_threads;
+        template.max_hash_mb = resolved.max_hash_mb;
+
+        const data = {
+          name: nameInput.value.trim(),
+          template,
+          engines: builder.getEngines(),
+        };
+        if (onSubmit) {
+          actionBtn.loading = true;
+          try {
+            const submitted = await onSubmit(data);
+            if (submitted !== false) resolve(data);
+          } catch (e) {
+            if (e.isNameCollision) {
+              nameInput.classList.remove("nt-name-error");
+              void nameInput.offsetWidth;
+              nameInput.classList.add("nt-name-error");
+              nameInput.addEventListener("animationend", () => nameInput.classList.remove("nt-name-error"), { once: true });
+            }
+          } finally {
+            actionBtn.loading = false;
+          }
+        } else {
+          resolve(data);
+        }
+      });
+
+      dialog.append(wrap, actionBtn);
+      requestAnimationFrame(() => nameInput.focus());
+    },
+  });
+}
+
+async function openNewTournamentDialog(ctx) {
+  let registry;
+  try {
+    registry = await ctx.api("GET", "/engines");
+  } catch (e) {
+    reportError({ log: ctx.log }, "Loading engine registry failed", e);
+    return;
+  }
+  const available = registry.engines || [];
+  if (available.length < 2) {
+    toast(buildToastWithActions(NEED_TWO_ENGINES_MSG, [OPEN_ENGINES_ACTION]), { variant: "danger" });
+    return;
+  }
+
+  await openTournamentDialog(ctx, {
+    label: "New Tournament",
+    actionLabel: "Create",
+    initialName: "",
+    initialEngines: [],
+    initialTemplate: (ctx.settings && ctx.settings.default_template) || null,
+    available,
+    onSubmit: async (data) => {
+      try {
+        await ctx.api("POST", "/api/tournaments", data);
+        toast(`Created new tournament "${data.name}"`, { variant: "success" });
+      } catch (e) {
+        reportError({ log: ctx.log }, "Creating tournament failed", e);
+        if (/-> 409\b/.test(e.message)) throw Object.assign(e, { isNameCollision: true });
+        return false;
+      }
+      await ctx.loadList();
+    },
+  });
+}
+
+async function openEditTournamentDialog(ctx, t) {
+  // PRE-OPEN gate: warn early so the user can bail without loading the
+  // registry or filling the dialog. Keep this even though there is also a
+  // post-dialog confirm -- the two guards serve different purposes: this one
+  // is a cheap "heads up" before any work; the post-dialog one fires only
+  // when the engine roster actually changed and gives a last chance to abort.
+  const hasGames = (t.standings?.games ?? 0) > 0;
+  if (hasGames) {
+    const proceed = await confirm({
+      message: `"${t.name}" has recorded games. Editing will delete all game results. Continue?`,
+      okLabel: "Continue",
+      destructive: true,
+    });
+    if (!proceed) return;
+  }
+
+  let registry;
+  try {
+    registry = await ctx.api("GET", "/engines");
+  } catch (e) {
+    reportError({ log: ctx.log }, "Loading engine registry failed", e);
+    return;
+  }
+  const available = registry.engines || [];
+  if (available.length < 2) {
+    toast(buildToastWithActions(NEED_TWO_ENGINES_MSG, [OPEN_ENGINES_ACTION]), { variant: "danger" });
+    return;
+  }
+
+  // Resolve the tournament's current engines to registry entries so the
+  // builder can preselect them. Prefer id match; fall back to name then cmd.
+  const byId   = new Map(available.map((e) => [e.id,   e]));
+  const byName = new Map(available.map((e) => [e.name, e]));
+  const byCmd  = new Map(available.map((e) => [e.path, e]));
+  const original = t.engines || [];
+  const initialEngines = [];
+  let droppedCount = 0;
+  for (const e of original) {
+    const match = byId.get(e.id) || byName.get(e.name) || byCmd.get(e.cmd);
+    if (match) initialEngines.push(match);
+    else droppedCount += 1;
+  }
+  if (droppedCount > 0) {
+    toast(
+      `${droppedCount} engine${droppedCount === 1 ? "" : "s"} no longer in the registry — re-add before applying.`,
+      { variant: "warning", duration: 8000 },
+    );
+  }
+
+  await openTournamentDialog(ctx, {
+    label: `Edit "${t.name}"`,
+    actionLabel: "Apply",
+    initialName: t.name,
+    initialEngines,
+    initialTemplate: t.template || null,
+    available,
+    onSubmit: async (data) => {
+      // POST-DIALOG gate: last chance to abort before the destructive PATCH.
+      // Any edit (template, engines, or rename) wipes the PGN server-side
+      // because past games were played under potentially different conditions
+      // and must not mix with future games -- so this fires on hasGames alone.
+      if (hasGames) {
+        const ok = await confirm({
+          message: `Applying changes to "${t.name}" will permanently delete its recorded games. This cannot be undone.`,
+          okLabel: "Apply & Delete Games",
+          destructive: true,
+        });
+        if (!ok) return false;
+      }
+      let failed = false;
+      try {
+        await ctx.api("PATCH", `/api/tournaments/${t.id}`, data);
+        toast(`Updated "${data.name}"`, { variant: "success" });
+      } catch (e) {
+        reportError({ log: ctx.log }, "Updating tournament failed", e);
+        if (/-> 409\b/.test(e.message)) throw Object.assign(e, { isNameCollision: true });
+        failed = true;
+      }
+      // Refresh either way: success applied changes; failure may indicate the
+      // local view drifted (e.g. tournament started elsewhere) and should
+      // re-sync.
+      await ctx.loadList();
+      if (failed) return false;
+    },
+  });
+}
+
+// ---- Window / sort menus ------------------------------------------------
+
+function syncWindowMenu(ctx) {
+  ctx.windowMenuBtn.disabled = !getActiveWorkspace();
+}
+
+function closeMenus(ctx) {
+  ctx.container.querySelectorAll(".tmb-menu.open").forEach(m => m.classList.remove("open"));
+}
+
+function syncSortMenu(ctx) {
+  for (const opt of ctx.container.querySelectorAll(".tmb-sort-opt")) {
+    opt.classList.toggle("is-active", opt.dataset.sort === ctx.sortBy);
+  }
+  for (const opt of ctx.container.querySelectorAll(".tmb-sort-opt")) {
+    const active = opt.dataset.sort === ctx.sortBy;
+    if (active) opt.dataset.dir = ctx.sortAsc ? "asc" : "desc";
+    else delete opt.dataset.dir;
+  }
+}
+
+function applySort(ctx, nextBy, nextAsc) {
+  ctx.sortBy = nextBy;
+  ctx.sortAsc = nextAsc;
+  saveRaw(STORAGE_KEY.TOURNAMENTS_SORT_BY, ctx.sortBy);
+  saveRaw(STORAGE_KEY.TOURNAMENTS_SORT_ASC, String(ctx.sortAsc));
+  syncSortMenu(ctx);
+  renderList(ctx);
+}
+
+// Persistent sort toast -- reuse DOM in place to avoid flicker on re-sort.
+function ensureSortToast(ctx, ws) {
+  if (ctx.dismissSortToast) return;
+  const msg = document.createElement("span");
+  msg.className = "toast-sort-msg";
+  ctx.sortToastTextEl = document.createElement("span");
+  ctx.sortToastToggleBtn = document.createElement("button");
+  ctx.sortToastToggleBtn.className = "toast-action-btn toast-ws-toggle toast-ws-minimize";
+  ctx.sortToastHidden = false;
+  ctx.sortToastHiddenWbs = [];
+  ctx.sortToastToggleBtn.addEventListener("click", () => {
+    if (!ctx.sortToastHidden) {
+      ctx.sortToastHiddenWbs = ws.minimizeAll();
+      ctx.sortToastToggleBtn.classList.replace("toast-ws-minimize", "toast-ws-restore");
+      ctx.sortToastHidden = true;
+    } else {
+      // Restore is the toast's terminal action: once the user has
+      // un-minimized the windows they minimized, the toast has served
+      // its purpose. Dismissing avoids a stale "sorted by..." linger.
+      ws.restoreWindows(ctx.sortToastHiddenWbs);
+      dismissSortToastNow(ctx);
+    }
+  });
+  const closeBtn = makeToastDismissBtn(() => dismissSortToastNow(ctx));
+  msg.append(ctx.sortToastTextEl, ctx.sortToastToggleBtn, closeBtn);
+  ctx.dismissSortToast = toast(msg, { duration: 0 });
+}
+
+function syncTidyBtn(ctx) {
+  const layout = getActiveLayout();
+  ctx.snapBtn.classList.toggle("tmb-active", layout === LAYOUT.SNAP);
+  ctx.tileBtn.classList.toggle("tmb-active", layout === LAYOUT.TILE);
+  ctx.tidyBtn.classList.toggle("tmb-active", layout === LAYOUT.TIDY);
+}
+
+// ---- Live updates from WS -----------------------------------------------
+
+function onWsEvent(ctx, evt) {
+  if (evt.kind !== EVT.STATUS && evt.kind !== EVT.UPDATE) return;
+  // Surface runner crashes as a toast -- the user may not have a
+  // workspace open and would otherwise see the row silently flip
+  // to a terminal state with no explanation.
+  const inner = evt.payload?.kind;
+  if (inner === KIND.RUNNER_CRASH) {
+    const tid = evt.payload?.tournament_id;
+    const t = ctx.tournaments.find((x) => x.id === tid);
+    const name = t ? t.name : "Tournament";
+    const tail = evt.payload?.stderr_tail || [];
+    const firstErr = tail.find((l) => /error|fatal|fail/i.test(l)) || tail[0] || `exit code ${evt.payload?.rc}`;
+    toast(`${name} failed: ${firstErr}`, { variant: "danger", duration: 10000 });
+  }
+  // The /start API doesn't return until orchestrator.start completes
+  // (which can include a multi-second PGN rewrite); the status event
+  // fires earlier. Clear pending flags here, with an optimistic local
+  // status update so syncRibbon reflects the transition immediately.
+  const tid = evt.payload?.tournament_id;
+  const newStatus = evt.payload?.status;
+  const t = tid ? ctx.tournaments.find((x) => x.id === tid) : null;
+  if (t && newStatus) {
+    t.status = newStatus;
+    if (newStatus === STATUS.RUNNING) ctx.activeId = tid;
+    else if (ctx.activeId === tid) ctx.activeId = null;
+  }
+  if (ctx.startingId === tid && newStatus === STATUS.RUNNING) {
+    ctx.startingId = null;
+  }
+  if (
+    ctx.stoppingId === tid &&
+    [STATUS.STOPPED, STATUS.DONE, STATUS.FAILED].includes(newStatus)
+  ) {
+    ctx.stoppingId = null;
+  }
+  // Re-render with the optimistic state; debouncedLoadList canonicalizes.
+  renderList(ctx);
+  syncWorkspaceOtherActive(ctx);
+  ctx.debouncedLoadList();
+}
+
+// Single periodic refresh for the selected tournament when it's running.
+// Hits one endpoint per tick and fans out: list progress bar in place,
+// and the workspace (if open) via applyDetail() so it doesn't re-fetch.
+// navigateTo's invariant guarantees workspace.tournamentId === selectedId
+// when a workspace is open, so we can drive both from selectedId alone.
+async function pollTick(ctx) {
+  const t = selectedTournament(ctx);
+  if (!t || t.status !== STATUS.RUNNING) return;
+  let fresh;
+  try {
+    fresh = await ctx.api("GET", `/api/tournaments/${t.id}`);
+  } catch (e) {
+    ctx.log?.(`tournaments poll failed: ${e.message}`);
+    return;
+  }
+  // Mutate in place so renderList() / sort / etc. see the latest.
+  // Narrow copy: list only consumes status + standings; workspace-only
+  // fields stay out of tournaments[] to avoid stale-field confusion.
+  t.status = fresh.status;
+  t.standings = fresh.standings;
+  updateProgressInPlace(ctx, t);
+  const ws = getActiveWorkspace();
+  if (ws && ws.tournamentId === t.id) ws.applyDetail(fresh);
+}
+
+// ---- Workspace restore --------------------------------------------------
+
+function maybeRestoreWorkspace(ctx) {
+  if (!ctx.tournamentsTabActive || ctx.initialLoad) return;
+  const t = selectedTournament(ctx);
+  if (t && hasSavedWorkspaceState(t.id)) openWorkspace(ctx, t);
+}
+
+function restoreWorkspace(ctx) {
+  ctx.tournamentsTabActive = true;
+  // Defer one frame so the tab panel is laid out before openWorkspace
+  // measures ribbon/menubar geometry via getBoundingClientRect().
+  requestAnimationFrame(() => maybeRestoreWorkspace(ctx));
+}
+
+// ---- Wiring -------------------------------------------------------------
+
+function wireRibbon(ctx) {
+  ctx.ribbonStartBtn.addEventListener("click", async () => {
+    const t = selectedTournament(ctx);
+    if (!t || ctx.ribbonStartBtn.disabled || ctx.startingId) return;
+    ctx.startingId = t.id;
+    syncRibbon(ctx);
+    try { await startOne(ctx, t); } finally { ctx.startingId = null; syncRibbon(ctx); }
+  });
+  ctx.ribbonStopBtn.addEventListener("click", async () => {
+    const t = selectedTournament(ctx);
+    if (!t || ctx.ribbonStopBtn.disabled || ctx.stoppingId) return;
+    ctx.stoppingId = t.id;
+    syncRibbon(ctx);
+    try { await stopOne(ctx, t); } finally { ctx.stoppingId = null; syncRibbon(ctx); }
+  });
+  ctx.ribbonWorkspaceBtn.addEventListener("click", () => {
+    const t = selectedTournament(ctx);
+    if (t) openWorkspace(ctx, t);
+  });
+  ctx.ribbonInfoBtn.addEventListener("click", () => {
+    const t = selectedTournament(ctx);
+    if (t) ctx.openInfoGuarded(t);
+  });
+  ctx.ribbonEditBtn.addEventListener("click", () => {
+    const t = selectedTournament(ctx);
+    if (t && !ctx.ribbonEditBtn.disabled) openEditTournamentDialog(ctx, t);
+  });
+  ctx.ribbonRemoveBtn.addEventListener("click", () => {
+    const t = selectedTournament(ctx);
+    if (t && !ctx.ribbonRemoveBtn.disabled) ctx.removeOneGuarded(t);
+  });
+}
+
+function wireListKeyboard(ctx) {
+  ctx.listEl.addEventListener("keydown", (ev) => {
     if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp" && ev.key !== "Home" && ev.key !== "End") return;
-    const sorted = sortedTournaments();
+    const sorted = sortedTournaments(ctx);
     if (sorted.length === 0) return;
-    const cur = sorted.findIndex((t) => t.id === selectedId);
+    const cur = sorted.findIndex((t) => t.id === ctx.selectedId);
     let next = cur;
     if (ev.key === "ArrowDown") next = cur < 0 ? 0 : Math.min(cur + 1, sorted.length - 1);
     else if (ev.key === "ArrowUp") next = cur < 0 ? sorted.length - 1 : Math.max(cur - 1, 0);
@@ -452,740 +1203,69 @@ export function mountTournaments({ container, api, events, log, token }) {
     else if (ev.key === "End") next = sorted.length - 1;
     if (next === cur) { ev.preventDefault(); return; }
     ev.preventDefault();
-    navigateTo(sorted[next].id);
+    navigateTo(ctx, sorted[next].id);
   });
+}
 
-  const removeOneGuarded = guard(removeOne);
-  const openInfoGuarded  = guard(openInfoDialog);
-
-  ribbonStartBtn.addEventListener("click", async () => {
-    const t = selectedTournament();
-    if (!t || ribbonStartBtn.disabled || startingId) return;
-    startingId = t.id;
-    syncRibbon();
-    try { await startOne(t); } finally { startingId = null; syncRibbon(); }
-  });
-  ribbonStopBtn.addEventListener("click", async () => {
-    const t = selectedTournament();
-    if (!t || ribbonStopBtn.disabled || stoppingId) return;
-    stoppingId = t.id;
-    syncRibbon();
-    try { await stopOne(t); } finally { stoppingId = null; syncRibbon(); }
-  });
-  ribbonWorkspaceBtn.addEventListener("click", () => {
-    const t = selectedTournament();
-    if (t) openWorkspace(t);
-  });
-  ribbonInfoBtn.addEventListener("click", () => {
-    const t = selectedTournament();
-    if (t) openInfoGuarded(t);
-  });
-  ribbonEditBtn.addEventListener("click", () => {
-    const t = selectedTournament();
-    if (t && !ribbonEditBtn.disabled) openEditTournamentDialog(t);
-  });
-  ribbonRemoveBtn.addEventListener("click", () => {
-    const t = selectedTournament();
-    if (t && !ribbonRemoveBtn.disabled) removeOneGuarded(t);
-  });
-
-  // ---- Verbs --------------------------------------------------------------
-
-  async function startOne(t) {
-    // Stopped/failed tournaments restart from scratch: wipe the dir then
-    // launch fresh. Confirm before destroying games.
-    const willWipe = t.status === STATUS.STOPPED || t.status === STATUS.FAILED;
-    let qs = "";
-    if (willWipe) {
-      const ok = await confirm(buildRestartConfirm(t.name, t.standings?.games ?? 0));
-      if (!ok) return;
-      qs = `?${CONFIRM_WIPE_QS}`;
-    }
-    try {
-      await api("POST", `/api/tournaments/${t.id}/start${qs}`);
-    } catch (e) {
-      reportError({ log }, `Starting "${t.name}" failed`, e);
-      return;
-    }
-    await loadList();
-  }
-
-  async function stopOne(t) {
-    // Stop is destructive -- on next Start the tournament is restarted
-    // from scratch. Warn before clicking through.
-    const games = t.standings?.games ?? 0;
-    const message = games > 0
-      ? `Stop "${t.name}"?\nRestarting discards all ${games} recorded games.`
-      : `Stop "${t.name}"?\nOn restart this tournament will start from scratch.`;
-    const ok = await confirm({
-      message,
-      okLabel: "Stop",
-      destructive: true,
-      messageClass: "confirm-message--multiline",
-    });
-    if (!ok) return;
-    try {
-      await api("POST", `/api/tournaments/${t.id}/stop`);
-    } catch (e) {
-      reportError({ log }, `Stopping "${t.name}" failed`, e);
-    }
-    await loadList();
-  }
-
-  async function removeOne(t) {
-    const ok = await confirm({
-      message: `Remove "${t.name}"?\nAll games and data will be permanently deleted.`,
-      okLabel: "Remove",
-      destructive: true,
-      messageClass: "confirm-message--multiline",
-    });
-    if (!ok) return;
-    try {
-      await api("DELETE", `/api/tournaments/${t.id}`);
-      if (getActiveWorkspace()?.tournamentId === t.id) getActiveWorkspace().close();
-      clearWorkspaceState(t.id);
-      toast(`Removed tournament "${t.name}"`, { variant: "success" });
-    } catch (e) {
-      reportError({ log }, `Removing "${t.name}" failed`, e);
-      return;
-    }
-    await loadList();
-  }
-
-  function openWorkspace(t) {
-    const menubar = container.querySelector(".tournaments-menubar");
-    const ribbon = container.querySelector(".tournaments-ribbon");
-    const rect = menubar.getBoundingClientRect();
-    const ribbonRect = ribbon ? ribbon.getBoundingClientRect() : null;
-    // Reserve the ribbon's width on BOTH edges regardless of which side
-    // it docks to (or whether it's floating). Keeps the workspace symmetric
-    // and ribbon-side-flips don't reshape the available area.
-    let ribbonW = ribbonRect ? Math.round(ribbonRect.width) : 0;
-    if (ribbonW === 0) {
-      // Floating: ribbon is detached. Fall back to the --ribbon-w CSS var,
-      // then to the hardcoded default if the var is unavailable.
-      const body = container.querySelector(".tournaments-body");
-      const v = body && parseInt(getComputedStyle(body).getPropertyValue("--ribbon-w"));
-      ribbonW = v > 0 ? v : RIBBON_W_FALLBACK_PX;
-    }
-    const top = Math.round(rect.bottom);
-    const left = Math.max(Math.round(rect.left), ribbonW);
-    const getRight = () => window.innerWidth - ribbonW;
-    openTournamentWorkspace({ api, events, log, token, tournament: t, top, left, getRight });
-    // Seed the workspace's view of the other-active tournament so the
-    // banner Restart button reflects busy state on open, not just after
-    // the next loadList tick.
-    syncWorkspaceOtherActive();
-    syncWindowMenu();
-    syncRibbon();
-  }
-
-  // ---- Info dialog -------------------------------------------------------
-
-  const IS_LOCAL = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
-
-  async function openInfoDialog(t) {
-    let detailed = t;
-    try {
-      detailed = await api("GET", `/api/tournaments/${t.id}`);
-    } catch (e) {
-      log?.("Loading tournament details failed:", e);
-    }
-    showDialog({
-      label: detailed.name,
-      width: "520px",
-      body: (resolve, dialog) => {
-        const wrap = document.createElement("div");
-        wrap.className = "tournament-info";
-        wrap.appendChild(buildInfoContent(detailed));
-        dialog.appendChild(wrap);
-      },
-    });
-  }
-
-  function totalGames(t) {
-    const tpl = t.template || {};
-    const n = (t.engines || []).length;
-    const rounds = Number(tpl.rounds);
-    const gpr = Number(tpl.games_per_round ?? 2);
-    if (!n || !rounds || !gpr) return null;
-    if (tpl.tournament_type === "gauntlet") {
-      const seeds = Number(tpl.seeds);
-      if (!seeds || seeds >= n) return null;
-      return seeds * (n - seeds) * rounds * gpr;
-    }
-    const pairings = (n * (n - 1)) / 2;
-    return pairings * rounds * gpr;
-  }
-
-  function formatGames(t) {
-    const played = t.standings?.games;
-    const total = totalGames(t);
-    if (played == null && total == null) return null;
-    if (total == null) return String(played ?? 0);
-    return `${played ?? 0} of ${total}`;
-  }
-
-  function buildInfoContent(t) {
-    const tpl = t.template || {};
-    const dl = document.createElement("dl");
-    dl.className = "tournament-info-grid";
-
-    const row = (label, value) => {
-      if (value == null || value === "") return;
-      const dt = document.createElement("dt");
-      dt.textContent = label;
-      const dd = document.createElement("dd");
-      if (value instanceof Node) dd.appendChild(value);
-      else dd.textContent = String(value);
-      dl.append(dt, dd);
-    };
-
-    const idCell = document.createElement("div");
-    idCell.className = "tournament-id-row";
-    const idSpan = makeIdCell(t.id);
-    idCell.appendChild(idSpan);
-    if (settings?.tournaments_root) {
-      const folder = settings.tournaments_root.replace(/[\\/]+$/, "") + "/" + t.id;
-      if (IS_LOCAL) {
-        const btn = document.createElement("button");
-        btn.className = "tournament-info-reveal-btn";
-        btn.title = folder;
-        btn.innerHTML = `<wa-icon name="folder-open"></wa-icon>`;
-        btn.addEventListener("click", debounce(async () => {
-          try {
-            await api("POST", `/api/tournaments/${t.id}/reveal`);
-          } catch (e) {
-            reportError({ log }, "Could not open folder", e);
-          }
-        }, 500));
-        idCell.appendChild(btn);
-      } else {
-        idSpan.title = folder;
-      }
-    }
-    row("ID", idCell);
-    row("Status", t.status);
-    if (t.last_error) {
-      const tail = (t.last_error.stderr_tail || []).slice(-10).join("\n");
-      const pre = document.createElement("pre");
-      pre.className = "tournament-info-error";
-      pre.textContent = tail || `exit code ${t.last_error.rc}`;
-      row(`Last error (rc=${t.last_error.rc})`, pre);
-    }
-    row("Type", formatType(tpl.tournament_type));
-    row("Time control", tpl.tc);
-    if (tpl.sprt) {
-      const s = tpl.sprt;
-      row("Rounds", "unlimited (SPRT)");
-      row("SPRT", `elo0=${s.elo0} elo1=${s.elo1} alpha=${s.alpha} beta=${s.beta} model=${s.model}`);
-    } else {
-      row("Rounds", tpl.rounds);
-    }
-    row("Parallel games", tpl.games_in_parallel);
-    row("Games", formatGames(t));
-    if (tpl.tournament_type === "gauntlet") row("Seeds", tpl.seeds);
-    row("Ponder", tpl.ponder ? "On" : "Off");
-    row("CPU affinity", tpl.pin_affinity ? "Pinned" : "Off");
-    row("Resign", formatResign(tpl.resign));
-    row("Draw adjudication", formatDraw(tpl.draw));
-    const ed = t.engine_defaults || {};
-    const defaultSpan = (text, title) => {
-      const span = document.createElement("span");
-      if (text != null && text !== "") {
-        span.textContent = text;
-        if (title) span.title = title;
-      } else {
-        span.textContent = "engine default";
-        span.className = "tournament-info-default";
-      }
-      return span;
-    };
-    row("Threads", defaultSpan(ed.threads));
-    row("Hash (MB)", defaultSpan(ed.hash_mb));
-    {
-      const span = ed.syzygy_path
-        ? defaultSpan(basename(ed.syzygy_path), ed.syzygy_path)
-        : defaultSpan(null);
-      row("Syzygy", span);
-    }
-    {
-      const span = ed.book_path
-        ? defaultSpan(basename(ed.book_path), ed.book_path)
-        : defaultSpan(null);
-      row("Opening book", span);
-      if (ed.book_path) {
-        row("Book plies", ed.book_plies);
-        row("Book order", ed.book_order);
-      }
-    }
-    row("Created", formatTime(t.created_at));
-    if (t.status === STATUS.RUNNING || t.status === STATUS.FAILED || t.status === STATUS.STOPPED) row("Started", formatTime(t.started_at));
-    if (t.status === STATUS.STOPPED) row("Stopped", formatTime(t.stopped_at));
-
-    const enginesList = document.createElement("ul");
-    enginesList.className = "tournament-info-engines";
-    for (const e of t.engines || []) {
-      const li = document.createElement("li");
-      li.textContent = e.name + (e.version ? ` (${e.version})` : "");
-      enginesList.appendChild(li);
-    }
-    if (enginesList.children.length) row("Engines", enginesList);
-
-    return dl;
-  }
-
-  function basename(p) {
-    if (!p) return p;
-    return p.split(/[\\/]/).pop() || p;
-  }
-
-  const ID_ELLIPSIS = "…";
-  function makeIdCell(id) {
-    if (!id) return id;
-    const s = String(id);
-    const span = document.createElement("span");
-    span.className = "tournament-id";
-    span.title = s;
-    span.textContent = s;
-    const fit = () => fitMiddleEllipsis(span, s);
-    requestAnimationFrame(fit);
-    if (typeof ResizeObserver !== "undefined") {
-      new ResizeObserver(fit).observe(span);
-    }
-    return span;
-  }
-
-  function fitMiddleEllipsis(el, full) {
-    el.textContent = full;
-    if (el.scrollWidth <= el.clientWidth) return;
-    let lo = 1, hi = full.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      const head = Math.ceil(mid / 2);
-      const tail = mid - head;
-      el.textContent = full.slice(0, head) + ID_ELLIPSIS + full.slice(full.length - tail);
-      if (el.scrollWidth <= el.clientWidth) lo = mid;
-      else hi = mid - 1;
-    }
-    const head = Math.ceil(lo / 2);
-    const tail = lo - head;
-    el.textContent = full.slice(0, head) + ID_ELLIPSIS + full.slice(full.length - tail);
-  }
-
-  function formatType(v) {
-    if (!v) return null;
-    return v === "roundrobin" ? "Round-robin" : v.charAt(0).toUpperCase() + v.slice(1);
-  }
-  function formatResign(r) {
-    if (!r || r.movecount == null || r.score == null) return "Off";
-    return `after ${r.movecount} moves at ±${r.score} cp`;
-  }
-  function formatDraw(d) {
-    if (!d || d.movenumber == null) return "Off";
-    return `from move ${d.movenumber}, ${d.movecount} moves within ±${d.score} cp`;
-  }
-  function formatTime(iso) {
-    if (!iso) return null;
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return iso;
-    return d.toLocaleString();
-  }
-
-  // ---- New / Edit Tournament dialogs -------------------------------------
-
-  newBtn.addEventListener("click", () => openNewTournamentDialog());
-
-  // Shared dialog body for both create and edit flows.
-  // Returns a Promise that resolves to {name, template, engines} or null.
-  async function openTournamentDialog({ label, actionLabel, initialName, initialEngines, initialTemplate, available, onSubmit }) {
-    const defaults =
-      initialTemplate ||
-      (settings && settings.default_template) ||
-      { tc: "10+0.1", rounds: 10, games_in_parallel: 1 };
-
-    return showDialog({
-      label,
-      width: "min(720px, 94vw)",
-      defaultValue: null,
-      body: (resolve, dialog) => {
-        const wrap = document.createElement("div");
-        wrap.className = "new-tournament-form";
-        wrap.innerHTML = `
-          <wa-input class="nt-name" label="Name" size="small" placeholder="my tournament"></wa-input>
-
-          <div class="nt-section">
-            <div class="nt-engine-builder"></div>
-          </div>
-
-          <div class="nt-section">
-            <div class="nt-template-host"></div>
-          </div>
-        `;
-
-        const nameInput = wrap.querySelector(".nt-name");
-        nameInput.value = initialName || "";
-
-        const builderHost = wrap.querySelector(".nt-engine-builder");
-        const builder = mountEngineBuilder({
-          host: builderHost,
-          available,
-          initial: initialEngines || [],
-        });
-
-        const formHost = wrap.querySelector(".nt-template-host");
-        const tplCtl = mountTournamentTemplateForm({
-          container: formHost,
-          initialValues: defaults,
-        });
-
-        const actionBtn = document.createElement("wa-button");
-        actionBtn.slot = "footer";
-        actionBtn.size = "small";
-        actionBtn.variant = "brand";
-        actionBtn.textContent = actionLabel;
-
-        function isValid() {
-          return (nameInput.value || "").trim() !== "" && builder.getEngines().length >= 2;
-        }
-
-        function refreshValidity() {
-          actionBtn.disabled = !isValid();
-        }
-        refreshValidity();
-        tplCtl.setSprtAvailable(builder.getEngines().length === 2);
-        nameInput.addEventListener("input", refreshValidity);
-        builder.onChange(() => {
-          tplCtl.setSprtAvailable(builder.getEngines().length === 2);
-          refreshValidity();
-        });
-
-        actionBtn.addEventListener("click", async () => {
-          if (!isValid()) return;
-          const v = tplCtl.validate({ numEngines: builder.getEngines().length });
-          if (!v.ok) {
-            toast(v.errors[0].message, { variant: "danger", duration: 6000 });
-            return;
-          }
-          let template;
-          try {
-            template = tplCtl.getValues();
-          } catch (e) {
-            toast(e.message, { variant: "danger" });
-            return;
-          }
-
-          const picked = builder.getPickedRegistry();
-          const globalDefaults = await loadGlobalEngineDefaults();
-          const resolved = resolveResourceParams(template, picked, globalDefaults);
-          actionBtn.loading = true;
-          let rescheckResult;
-          try {
-            rescheckResult = await api("POST", "/api/tournaments/rescheck", resolved);
-          } catch (e) {
-            const detail = apiErrorDetail(e);
-            const msg = (detail && detail.message) || detail || "Resource check failed";
-            toast(typeof msg === "string" ? msg : String(msg), {
-              variant: "danger", duration: 8000,
-            });
-            actionBtn.loading = false;
-            return;
-          } finally {
-            actionBtn.loading = false;
-          }
-          if (rescheckResult.warnings && rescheckResult.warnings.length) {
-            for (const w of rescheckResult.warnings) {
-              toast(`Warning: ${w.message}`, { variant: "warning", duration: 8000 });
-            }
-          }
-
-          template.max_threads = resolved.max_threads;
-          template.max_hash_mb = resolved.max_hash_mb;
-
-          const data = {
-            name: nameInput.value.trim(),
-            template,
-            engines: builder.getEngines(),
-          };
-          if (onSubmit) {
-            actionBtn.loading = true;
-            try {
-              const submitted = await onSubmit(data);
-              if (submitted !== false) resolve(data);
-            } catch (e) {
-              if (e.isNameCollision) {
-                nameInput.classList.remove("nt-name-error");
-                void nameInput.offsetWidth;
-                nameInput.classList.add("nt-name-error");
-                nameInput.addEventListener("animationend", () => nameInput.classList.remove("nt-name-error"), { once: true });
-              }
-            } finally {
-              actionBtn.loading = false;
-            }
-          } else {
-            resolve(data);
-          }
-        });
-
-        dialog.append(wrap, actionBtn);
-        requestAnimationFrame(() => nameInput.focus());
-      },
-    });
-  }
-
-  async function openNewTournamentDialog() {
-    let registry;
-    try {
-      registry = await api("GET", "/engines");
-    } catch (e) {
-      reportError({ log }, "Loading engine registry failed", e);
-      return;
-    }
-    const available = registry.engines || [];
-    if (available.length < 2) {
-      toast(buildToastWithActions(NEED_TWO_ENGINES_MSG, [OPEN_ENGINES_ACTION]), { variant: "danger" });
-      return;
-    }
-
-    await openTournamentDialog({
-      label: "New Tournament",
-      actionLabel: "Create",
-      initialName: "",
-      initialEngines: [],
-      initialTemplate: (settings && settings.default_template) || null,
-      available,
-      onSubmit: async (data) => {
-        try {
-          await api("POST", "/api/tournaments", data);
-          toast(`Created new tournament "${data.name}"`, { variant: "success" });
-        } catch (e) {
-          reportError({ log }, "Creating tournament failed", e);
-          if (/-> 409\b/.test(e.message)) throw Object.assign(e, { isNameCollision: true });
-          return false;
-        }
-        await loadList();
-      },
-    });
-  }
-
-  async function openEditTournamentDialog(t) {
-    // PRE-OPEN gate: warn early so the user can bail without loading the
-    // registry or filling the dialog. Keep this even though there is also a
-    // post-dialog confirm — the two guards serve different purposes: this one
-    // is a cheap "heads up" before any work; the post-dialog one fires only
-    // when the engine roster actually changed and gives a last chance to abort.
-    const hasGames = (t.standings?.games ?? 0) > 0;
-    if (hasGames) {
-      const proceed = await confirm({
-        message: `"${t.name}" has recorded games. Editing will delete all game results. Continue?`,
-        okLabel: "Continue",
-        destructive: true,
-      });
-      if (!proceed) return;
-    }
-
-    let registry;
-    try {
-      registry = await api("GET", "/engines");
-    } catch (e) {
-      reportError({ log }, "Loading engine registry failed", e);
-      return;
-    }
-    const available = registry.engines || [];
-    if (available.length < 2) {
-      toast(buildToastWithActions(NEED_TWO_ENGINES_MSG, [OPEN_ENGINES_ACTION]), { variant: "danger" });
-      return;
-    }
-
-    // Resolve the tournament's current engines to registry entries so the
-    // builder can preselect them. Prefer id match; fall back to name then cmd.
-    const byId   = new Map(available.map((e) => [e.id,   e]));
-    const byName = new Map(available.map((e) => [e.name, e]));
-    const byCmd  = new Map(available.map((e) => [e.path, e]));
-    const original = t.engines || [];
-    const initialEngines = [];
-    let droppedCount = 0;
-    for (const e of original) {
-      const match = byId.get(e.id) || byName.get(e.name) || byCmd.get(e.cmd);
-      if (match) initialEngines.push(match);
-      else droppedCount += 1;
-    }
-    if (droppedCount > 0) {
-      toast(
-        `${droppedCount} engine${droppedCount === 1 ? "" : "s"} no longer in the registry — re-add before applying.`,
-        { variant: "warning", duration: 8000 },
-      );
-    }
-
-    await openTournamentDialog({
-      label: `Edit "${t.name}"`,
-      actionLabel: "Apply",
-      initialName: t.name,
-      initialEngines,
-      initialTemplate: t.template || null,
-      available,
-      onSubmit: async (data) => {
-        // POST-DIALOG gate: last chance to abort before the destructive PATCH.
-        // Any edit (template, engines, or rename) wipes the PGN server-side
-        // because past games were played under potentially different conditions
-        // and must not mix with future games — so this fires on hasGames alone.
-        if (hasGames) {
-          const ok = await confirm({
-            message: `Applying changes to "${t.name}" will permanently delete its recorded games. This cannot be undone.`,
-            okLabel: "Apply & Delete Games",
-            destructive: true,
-          });
-          if (!ok) return false;
-        }
-        let failed = false;
-        try {
-          await api("PATCH", `/api/tournaments/${t.id}`, data);
-          toast(`Updated "${data.name}"`, { variant: "success" });
-        } catch (e) {
-          reportError({ log }, "Updating tournament failed", e);
-          if (/-> 409\b/.test(e.message)) throw Object.assign(e, { isNameCollision: true });
-          failed = true;
-        }
-        // Refresh either way: success applied changes; failure may indicate the
-        // local view drifted (e.g. tournament started elsewhere) and should
-        // re-sync.
-        await loadList();
-        if (failed) return false;
-      },
-    });
-  }
-
-  // ---- Window menu --------------------------------------------------------
-
-  function syncWindowMenu() {
-    windowMenuBtn.disabled = !getActiveWorkspace();
-  }
-
-  function closeMenus() {
-    container.querySelectorAll(".tmb-menu.open").forEach(m => m.classList.remove("open"));
-  }
-
-  function syncSortMenu() {
-    for (const opt of container.querySelectorAll(".tmb-sort-opt")) {
-      opt.classList.toggle("is-active", opt.dataset.sort === sortBy);
-    }
-    for (const opt of container.querySelectorAll(".tmb-sort-opt")) {
-      const active = opt.dataset.sort === sortBy;
-      if (active) opt.dataset.dir = sortAsc ? "asc" : "desc";
-      else delete opt.dataset.dir;
-    }
-  }
-  syncSortMenu();
-
-  sortMenuBtn.addEventListener("click", (e) => {
+function wireMenus(ctx) {
+  ctx.sortMenuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    const isOpen = sortMenu.classList.contains("open");
-    closeMenus();
-    if (!isOpen) sortMenu.classList.add("open");
+    const isOpen = ctx.sortMenu.classList.contains("open");
+    closeMenus(ctx);
+    if (!isOpen) ctx.sortMenu.classList.add("open");
   });
-  function applySort(nextBy, nextAsc) {
-    sortBy = nextBy;
-    sortAsc = nextAsc;
-    localStorage.setItem(SORT_KEY_LS, sortBy);
-    localStorage.setItem(SORT_ASC_LS, String(sortAsc));
-    syncSortMenu();
-    renderList();
-  }
-  // Persistent sort toast -- reuse DOM in place to avoid flicker on re-sort.
-  let dismissSortToast = null;
-  let sortToastTextEl = null;
-  let sortToastToggleBtn = null;
-  let sortToastHidden = false;
-  let sortToastHiddenWbs = [];
-
-  function ensureSortToast(ws) {
-    if (dismissSortToast) return;
-    const msg = document.createElement("span");
-    msg.className = "toast-sort-msg";
-    sortToastTextEl = document.createElement("span");
-    sortToastToggleBtn = document.createElement("button");
-    sortToastToggleBtn.className = "toast-action-btn toast-ws-toggle toast-ws-minimize";
-    sortToastHidden = false;
-    sortToastHiddenWbs = [];
-    sortToastToggleBtn.addEventListener("click", () => {
-      if (!sortToastHidden) {
-        sortToastHiddenWbs = ws.minimizeAll();
-        sortToastToggleBtn.classList.replace("toast-ws-minimize", "toast-ws-restore");
-        sortToastHidden = true;
-      } else {
-        // Restore is the toast's terminal action: once the user has
-        // un-minimized the windows they minimized, the toast has served
-        // its purpose. Dismissing avoids a stale "sorted by..." linger.
-        ws.restoreWindows(sortToastHiddenWbs);
-        dismissSortToastNow();
-      }
-    });
-    const closeBtn = makeToastDismissBtn(dismissSortToastNow);
-    msg.append(sortToastTextEl, sortToastToggleBtn, closeBtn);
-    dismissSortToast = toast(msg, { duration: 0 });
-  }
-
-  for (const opt of container.querySelectorAll(".tmb-sort-opt")) {
+  for (const opt of ctx.container.querySelectorAll(".tmb-sort-opt")) {
     opt.addEventListener("click", () => {
       const next = opt.dataset.sort;
-      if (!VALID_SORTS.has(next)) { closeMenus(); return; }
-      const nextAsc = next === sortBy ? !sortAsc : sortAsc;
-      applySort(next, nextAsc);
+      if (!VALID_SORTS.has(next)) { closeMenus(ctx); return; }
+      const nextAsc = next === ctx.sortBy ? !ctx.sortAsc : ctx.sortAsc;
+      applySort(ctx, next, nextAsc);
       const label = `Tournaments sorted by ${opt.textContent.trim()}, ${nextAsc ? "ascending" : "descending"}`;
       const ws = getActiveWorkspace();
       if (ws) {
-        ensureSortToast(ws);
-        sortToastTextEl.textContent = label;
+        ensureSortToast(ctx, ws);
+        ctx.sortToastTextEl.textContent = label;
       } else {
         toast(label);
       }
-      closeMenus();
+      closeMenus(ctx);
     });
   }
 
-  windowMenuBtn.addEventListener("click", (e) => {
+  ctx.windowMenuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (windowMenuBtn.disabled) return;
-    const isOpen = windowMenu.classList.contains("open");
-    closeMenus();
-    if (!isOpen) windowMenu.classList.add("open");
+    if (ctx.windowMenuBtn.disabled) return;
+    const isOpen = ctx.windowMenu.classList.contains("open");
+    closeMenus(ctx);
+    if (!isOpen) ctx.windowMenu.classList.add("open");
   });
 
-  const snapBtn = container.querySelector(".tmb-snap");
-  const tileBtn = container.querySelector(".tmb-tile");
-  const tidyBtn = container.querySelector(".tmb-tidy");
-  const syncTidyBtn = () => {
-    const layout = getActiveLayout();
-    snapBtn.classList.toggle("tmb-active", layout === LAYOUT.SNAP);
-    tileBtn.classList.toggle("tmb-active", layout === LAYOUT.TILE);
-    tidyBtn.classList.toggle("tmb-active", layout === LAYOUT.TIDY);
-  };
-  snapBtn.addEventListener("click", () => {
-    closeMenus();
+  ctx.snapBtn.addEventListener("click", () => {
+    closeMenus(ctx);
     const ws = getActiveWorkspace();
     if (!ws) return;
     if (getActiveLayout() === LAYOUT.SNAP) ws.untidy(); else ws.snap();
-    syncTidyBtn();
+    syncTidyBtn(ctx);
   });
-  tileBtn.addEventListener("click", () => {
-    closeMenus();
+  ctx.tileBtn.addEventListener("click", () => {
+    closeMenus(ctx);
     const ws = getActiveWorkspace();
     if (!ws) return;
     if (getActiveLayout() === LAYOUT.TILE) ws.untidy(); else ws.tile();
-    syncTidyBtn();
+    syncTidyBtn(ctx);
   });
-  tidyBtn.addEventListener("click", () => {
-    closeMenus();
+  ctx.tidyBtn.addEventListener("click", () => {
+    closeMenus(ctx);
     const ws = getActiveWorkspace();
     if (!ws) return;
     if (getActiveLayout() === LAYOUT.TIDY) ws.untidy(); else ws.tidy();
-    syncTidyBtn();
+    syncTidyBtn(ctx);
   });
-  container.querySelector(".tmb-closeall").addEventListener("click", () => {
-    closeMenus();
+  ctx.container.querySelector(".tmb-closeall").addEventListener("click", () => {
+    closeMenus(ctx);
     const ws = getActiveWorkspace();
-    if (ws) { dismissSortToastNow(); ws.closeAll(); }
-    syncWindowMenu();
+    if (ws) { dismissSortToastNow(ctx); ws.closeAll(); }
+    syncWindowMenu(ctx);
   });
   for (const [cls, key] of [
     [".tmb-sys-standings", "standings"],
@@ -1193,192 +1273,132 @@ export function mountTournaments({ container, api, events, log, token }) {
     [".tmb-sys-engines",   "engines"],
     [".tmb-sys-log",       "log"],
   ]) {
-    container.querySelector(cls).addEventListener("click", () => {
-      closeMenus();
+    ctx.container.querySelector(cls).addEventListener("click", () => {
+      closeMenus(ctx);
       getActiveWorkspace()?.openSystemWindow(key);
     });
   }
+}
 
-  document.addEventListener("click", closeMenus);
+// oversized-ok removed: factory decomposed into module-level helpers below.
+export function mountTournaments({ container, api, events, log, token }) {
+  container.innerHTML = PANEL_HTML;
 
-  async function loadGlobalEngineDefaults() {
-    try {
-      const s = await api("GET", "/settings");
-      return {
-        threads: s.engine_default_threads,
-        hash_mb: s.engine_default_hash_mb,
-      };
-    } catch {
-      return { threads: null, hash_mb: null };
-    }
-  }
+  const ctx = {
+    container, api, events, log, token,
+    newBtn: container.querySelector(".t-new"),
+    windowMenu: container.querySelector(".tmb-window-menu"),
+    windowMenuBtn: container.querySelector(".tmb-window-btn"),
+    sortMenu: container.querySelector(".tmb-sort-menu"),
+    sortMenuBtn: container.querySelector(".tmb-sort-btn"),
+    listEl: container.querySelector(".tournaments-list"),
+    emptyEl: container.querySelector(".tournaments-empty"),
+    emptyMsg: container.querySelector(".tournaments-empty .empty-message"),
+    ribbonStartBtn: container.querySelector(".t-start"),
+    ribbonStopBtn: container.querySelector(".t-stop"),
+    ribbonWorkspaceBtn: container.querySelector(".t-workspace"),
+    ribbonInfoBtn: container.querySelector(".t-info"),
+    ribbonEditBtn: container.querySelector(".t-edit"),
+    ribbonRemoveBtn: container.querySelector(".t-remove"),
+    snapBtn: container.querySelector(".tmb-snap"),
+    tileBtn: container.querySelector(".tmb-tile"),
+    tidyBtn: container.querySelector(".tmb-tidy"),
 
-  // Resolve worst-case threading + hash from the picked engines and the
-  // global engine_default_* override. Must mirror the rescheck endpoint's
-  // formula so it sees the same numbers the user is committing to.
-  function resolveResourceParams(template, pickedRegistry, globalDefaults) {
-    function resolvedFor(engine, optName, fallback) {
-      const opt = engine.options && engine.options[optName];
-      if (opt != null && opt !== "") return Number(opt);
-      const schema = engine.option_schema && engine.option_schema[optName];
-      if (schema && schema.default != null) return Number(schema.default);
-      return fallback;
-    }
-    const maxOver = (key, fallback) => {
-      if (!pickedRegistry.length) return fallback;
-      return pickedRegistry.reduce(
-        (acc, e) => Math.max(acc, resolvedFor(e, key, fallback)),
-        0,
-      ) || fallback;
-    };
-    const max_threads = globalDefaults.threads
-      ? Number(globalDefaults.threads)
-      : maxOver("Threads", 1);
-    const max_hash_mb = globalDefaults.hash_mb
-      ? Number(globalDefaults.hash_mb)
-      : maxOver("Hash", 16);
+    // { fastchess_path, tournaments_root, default_template, fastchess_detected }
+    settings: null,
+    tournaments: [],
+    activeId: null,
+    selectedId: null,
+    initialLoad: true,
+    stoppingId: null,
+    startingId: null,
+    sortBy: VALID_SORTS.has(loadRaw(STORAGE_KEY.TOURNAMENTS_SORT_BY))
+      ? loadRaw(STORAGE_KEY.TOURNAMENTS_SORT_BY) : "created_at",
+    sortAsc: loadRaw(STORAGE_KEY.TOURNAMENTS_SORT_ASC) !== "false",
 
-    return {
-      parallel: Number(template.games_in_parallel || 1),
-      max_threads,
-      max_hash_mb,
-      ponder: !!template.ponder,
-      pin_affinity: !!template.pin_affinity,
-      allow_oversubscribe: !!template.allow_oversubscribe,
-    };
-  }
+    // Persistent sort toast (reused in place to avoid flicker on re-sort).
+    dismissSortToast: null,
+    sortToastTextEl: null,
+    sortToastToggleBtn: null,
+    sortToastHidden: false,
+    sortToastHiddenWbs: [],
 
-  // ---- Live updates from WS ----------------------------------------------
+    tournamentsTabActive: false,
+  };
 
-  const offEvents = events.on((evt) => {
-    if (evt.kind === EVT.STATUS || evt.kind === EVT.UPDATE) {
-      // Surface runner crashes as a toast — the user may not have a
-      // workspace open and would otherwise see the row silently flip
-      // to a terminal state with no explanation.
-      const inner = evt.payload?.kind;
-      if (inner === KIND.RUNNER_CRASH) {
-        const tid = evt.payload?.tournament_id;
-        const t = tournaments.find((x) => x.id === tid);
-        const name = t ? t.name : "Tournament";
-        const tail = evt.payload?.stderr_tail || [];
-        const firstErr = tail.find((l) => /error|fatal|fail/i.test(l)) || tail[0] || `exit code ${evt.payload?.rc}`;
-        toast(`${name} failed: ${firstErr}`, { variant: "danger", duration: 10000 });
-      }
-      // The /start API doesn't return until orchestrator.start completes
-      // (which can include a multi-second PGN rewrite); the status event
-      // fires earlier. Clear pending flags here, with an optimistic local
-      // status update so syncRibbon reflects the transition immediately.
-      const tid = evt.payload?.tournament_id;
-      const newStatus = evt.payload?.status;
-      const t = tid ? tournaments.find((x) => x.id === tid) : null;
-      if (t && newStatus) {
-        t.status = newStatus;
-        if (newStatus === STATUS.RUNNING) activeId = tid;
-        else if (activeId === tid) activeId = null;
-      }
-      if (startingId === tid && newStatus === STATUS.RUNNING) {
-        startingId = null;
-      }
-      if (
-        stoppingId === tid &&
-        [STATUS.STOPPED, STATUS.DONE, STATUS.FAILED].includes(newStatus)
-      ) {
-        stoppingId = null;
-      }
-      // Re-render with the optimistic state; debouncedLoadList canonicalizes.
-      renderList();
-      syncWorkspaceOtherActive();
-      debouncedLoadList();
-    }
-  });
+  ctx.loadSettings = lastWriteWins(
+    () => ctx.api("GET", "/api/tournament-settings"),
+    (data) => { ctx.settings = data; renderList(ctx); },
+    (e) => reportError({ log }, "Loading tournament settings failed", e),
+  );
+  ctx.loadList = lastWriteWins(
+    () => ctx.api("GET", "/api/tournaments"),
+    (body) => {
+      ctx.tournaments = body.tournaments;
+      ctx.activeId = body.active_id;
+      renderList(ctx);
+      syncWorkspaceOtherActive(ctx);
+    },
+    (e) => reportError({ log }, "Loading tournaments failed", e),
+  );
+  ctx.debouncedLoadList = debounce(ctx.loadList, 150);
+  ctx.removeOneGuarded = guard((t) => removeOne(ctx, t));
+  ctx.openInfoGuarded = guard((t) => openInfoDialog(ctx, t));
 
-  // Settings can change in another tab/dialog — pick those up too.
-  function onSettingsChanged() {
-    loadSettings();
-  }
-  window.addEventListener(APP_EVT.SETTINGS_CHANGED, onSettingsChanged);
-  window.addEventListener(APP_EVT.WORKSPACE_CLOSED, () => { syncWindowMenu(); syncRibbon(); });
+  wireRibbon(ctx);
+  wireListKeyboard(ctx);
+  wireMenus(ctx);
+  ctx.newBtn.addEventListener("click", () => openNewTournamentDialog(ctx));
+  syncSortMenu(ctx);
 
-  // Single periodic refresh for the selected tournament when it's running.
-  // Hits one endpoint per tick and fans out: list progress bar in place,
-  // and the workspace (if open) via applyDetail() so it doesn't re-fetch.
-  // navigateTo's invariant guarantees workspace.tournamentId === selectedId
-  // when a workspace is open, so we can drive both from selectedId alone.
-  async function pollTick() {
-    const t = selectedTournament();
-    if (!t || t.status !== STATUS.RUNNING) return;
-    let fresh;
-    try {
-      fresh = await api("GET", `/api/tournaments/${t.id}`);
-    } catch (e) {
-      log?.(`tournaments poll failed: ${e.message}`);
-      return;
-    }
-    // Mutate in place so renderList() / sort / etc. see the latest.
-    // Narrow copy: list only consumes status + standings; workspace-only
-    // fields stay out of tournaments[] to avoid stale-field confusion.
-    t.status = fresh.status;
-    t.standings = fresh.standings;
-    updateProgressInPlace(t);
-    const ws = getActiveWorkspace();
-    if (ws && ws.tournamentId === t.id) ws.applyDetail(fresh);
-  }
-  const pollIntervalId = window.setInterval(pollTick, POLL_INTERVAL_MS);
+  ctx.onMenuDocClick = () => closeMenus(ctx);
+  document.addEventListener("click", ctx.onMenuDocClick);
 
-  // ---- Initial load -------------------------------------------------------
+  ctx.onWsEvent = (evt) => onWsEvent(ctx, evt);
+  const offEvents = ctx.events.on(ctx.onWsEvent);
 
-  syncWindowMenu();
+  // Settings can change in another tab/dialog -- pick those up too.
+  ctx.onSettingsChanged = () => ctx.loadSettings();
+  ctx.onWorkspaceClosed = () => { syncWindowMenu(ctx); syncRibbon(ctx); };
+  window.addEventListener(APP_EVT.SETTINGS_CHANGED, ctx.onSettingsChanged);
+  window.addEventListener(APP_EVT.WORKSPACE_CLOSED, ctx.onWorkspaceClosed);
+
+  const pollIntervalId = window.setInterval(() => pollTick(ctx), POLL_INTERVAL_MS);
+
+  syncWindowMenu(ctx);
   // Visibility is driven by the Engines tab group (see engines.js):
   // the workspace stays hidden unless the Tournaments sub-tab is active.
 
   // Fire-and-forget: lastWriteWins resolves undefined; state is populated
   // asynchronously and rendered via renderList() inside each commit.
-  loadSettings();
+  ctx.loadSettings();
   // After initial population, fire one immediate pollTick so a workspace
   // revealed on perspective re-mount catches up without waiting a full
   // POLL_INTERVAL_MS. No-op when nothing's running.
-  loadList().then(pollTick);
-
-  // true once engines.js confirms the Tournaments tab is active on load.
-  let tournamentsTabActive = false;
+  ctx.loadList().then(() => pollTick(ctx));
 
   // Workspace windows don't fit a mobile viewport in either axis. Width
   // OR height crossing the threshold counts as mobile.
-  const isMobileViewport = () => mqMobile.matches || mqMobileH.matches;
-
-  function maybeRestoreWorkspace() {
-    if (!tournamentsTabActive || initialLoad) return;
-    const t = selectedTournament();
-    if (t && hasSavedWorkspaceState(t.id)) openWorkspace(t);
-  }
-
-  function restoreWorkspace() {
-    tournamentsTabActive = true;
-    // Defer one frame so the tab panel is laid out before openWorkspace
-    // measures ribbon/menubar geometry via getBoundingClientRect().
-    requestAnimationFrame(maybeRestoreWorkspace);
-  }
-
   // Mobile viewport closes the workspace. No auto-reopen on widen --
   // user must manually reopen via the ribbon button.
-  const onViewportChange = () => {
-    if (isMobileViewport()) getActiveWorkspace()?.close();
+  ctx.onViewportChange = () => {
+    if (mqMobile.matches || mqMobileH.matches) getActiveWorkspace()?.close();
   };
-  mqMobile.addEventListener("change", onViewportChange);
-  mqMobileH.addEventListener("change", onViewportChange);
+  mqMobile.addEventListener("change", ctx.onViewportChange);
+  mqMobileH.addEventListener("change", ctx.onViewportChange);
 
   return {
-    dismissSortToast: dismissSortToastNow,
-    restoreWorkspace,
+    dismissSortToast: () => dismissSortToastNow(ctx),
+    restoreWorkspace: () => restoreWorkspace(ctx),
     unmount() {
       offEvents();
       window.clearInterval(pollIntervalId);
-      window.removeEventListener(APP_EVT.SETTINGS_CHANGED, onSettingsChanged);
-      window.removeEventListener(APP_EVT.WORKSPACE_CLOSED, syncWindowMenu);
-      mqMobile.removeEventListener("change", onViewportChange);
-      mqMobileH.removeEventListener("change", onViewportChange);
-      document.removeEventListener("click", closeMenus);
-      dismissSortToastNow();
+      window.removeEventListener(APP_EVT.SETTINGS_CHANGED, ctx.onSettingsChanged);
+      window.removeEventListener(APP_EVT.WORKSPACE_CLOSED, ctx.onWorkspaceClosed);
+      mqMobile.removeEventListener("change", ctx.onViewportChange);
+      mqMobileH.removeEventListener("change", ctx.onViewportChange);
+      document.removeEventListener("click", ctx.onMenuDocClick);
+      dismissSortToastNow(ctx);
       // Hide (don't close) so the workspace survives perspective
       // navigation; it'll be re-shown when the user returns.
       getActiveWorkspace()?.hide();
@@ -1392,7 +1412,7 @@ export function mountTournaments({ container, api, events, log, token }) {
 //
 // Left pane: registry engines not yet picked.
 // Right pane: picked engines, in tournament order. Up/Down arrows reorder;
-//             Add → / ← Remove move engines between panes.
+//             Add -> / <- Remove move engines between panes.
 // ---------------------------------------------------------------------------
 
 function mountEngineBuilder({ host, available, initial = [] }) {
@@ -1587,7 +1607,7 @@ function mountEngineBuilder({ host, available, initial = [] }) {
     },
     getPickedRegistry() {
       // Full registry entries (with options + option_schema) for the
-      // picked engines — used by the rescheck resolver.
+      // picked engines -- used by the rescheck resolver.
       return pickedIds.map((id) => byId.get(id)).filter(Boolean);
     },
     onChange(fn) { listeners.add(fn); },

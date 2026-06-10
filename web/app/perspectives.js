@@ -15,6 +15,7 @@
 //   UI flashing before the real state.
 
 import { STORAGE_KEY } from "./storage-keys.js";
+import { loadRaw, saveRaw } from "./storage.js";
 
 // Parse a CSS time string ("80ms" / "0.08s") to milliseconds. Multi-value
 // lists fall back to the first entry.
@@ -85,11 +86,7 @@ export class PerspectiveRouter {
 
     const persp = this._registry.get(id);
     this._active = id;
-    try {
-      localStorage.setItem(ACTIVE_PERSPECTIVE_KEY, id);
-    } catch {
-      // localStorage may be unavailable; non-fatal.
-    }
+    saveRaw(ACTIVE_PERSPECTIVE_KEY, id);
     this._activeController = (await persp.mount(this._root, this._ctx)) ?? null;
     if (this._activeController?.ready) {
       await this._activeController.ready;
@@ -100,12 +97,7 @@ export class PerspectiveRouter {
 
   /** Activate the last-used perspective if known, else the first registered. */
   async activateInitial() {
-    let id;
-    try {
-      id = localStorage.getItem(ACTIVE_PERSPECTIVE_KEY);
-    } catch {
-      id = null;
-    }
+    let id = loadRaw(ACTIVE_PERSPECTIVE_KEY);
     if (!id || !this._registry.has(id)) {
       id = this._registry.keys().next().value;
     }

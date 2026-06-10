@@ -1,8 +1,6 @@
 """HTTP surface for /game/pause and /game/resume."""
 from __future__ import annotations
 
-import time
-from pathlib import Path
 
 import chess
 import pytest

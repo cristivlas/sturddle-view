@@ -9,6 +9,48 @@ export function escapeHtml(s) {
   }[c]));
 }
 
+// Trailing-edge debounce: collapse bursts to one call ms after the last.
+export function debounce(fn, ms) {
+  let timer = null;
+  return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
+}
+
+// Format an engine score for display. Options cover the per-site variants:
+//   empty       text for a missing score ("" or "--")
+//   matePrefix  glyph before a mate count ("#" or "M")
+//   signed      prepend "+" to non-negative centipawn scores
+export function fmtScore(score, { empty = "", matePrefix = "#", signed = false } = {}) {
+  if (!score) return empty;
+  if (score.mate != null) return `${matePrefix}${score.mate}`;
+  if (score.cp != null) {
+    const sign = signed && score.cp >= 0 ? "+" : "";
+    return `${sign}${(score.cp / 100).toFixed(2)}`;
+  }
+  return empty;
+}
+
+// Humanize a count (nodes, nps): >=1M as "1.20M", >=1K as "12K", else raw.
+// null/undefined -> "" so callers can blank a missing field.
+export function fmtCount(n) {
+  if (n == null) return "";
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `${Math.round(n / 1e3)}K`;
+  return String(n);
+}
+
+// Format a clock value (seconds) as m:ss, or as tenths below tenthsBelow
+// seconds so bullet/sub-second-increment games stay readable. Negatives
+// clamp to 0; a non-finite value yields `invalid`.
+export function fmtClock(seconds, { tenthsBelow = 10, invalid = "—" } = {}) {
+  if (!Number.isFinite(seconds)) return invalid;
+  const t = Math.max(0, seconds);
+  if (t < tenthsBelow) return t.toFixed(1);
+  const s = Math.floor(t);
+  const m = Math.floor(s / 60);
+  const ss = s % 60;
+  return `${m}:${ss.toString().padStart(2, "0")}`;
+}
+
 // Sticky-bottom autoscroll: snapshot pinned BEFORE mutating, restore
 // after, so a user who scrolled up to inspect earlier content is not
 // yanked back down by new content.

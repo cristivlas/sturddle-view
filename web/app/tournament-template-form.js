@@ -2,8 +2,8 @@
 //   1. Global Settings dialog -> "Tournament" tab (defaults for new tournaments).
 //   2. New Tournament dialog -> editable; pre-filled from defaults; save = create.
 //
-// Native fields cover everything Phase 1 needs: time control,
-// games-in-parallel, rounds, tournament type / seeds, ponder, resign, draw.
+// Native fields: time control, games-in-parallel, rounds, tournament type /
+// seeds, ponder, resign, draw.
 // Hash / Threads / SyzygyPath / opening book live in the global Settings
 // "Defaults" tab -- applied uniformly to all engines at launch time.
 
@@ -12,7 +12,22 @@ const TOURNAMENT_TYPES = [
   { value: "gauntlet",   label: "Gauntlet" },
 ];
 
+const PONDER_TITLE = "Engines think on opponent's time.";
+const AFFINITY_TITLE =
+  "Pass -affinity to fastchess so each game-slot is bound to fixed cores. " +
+  "Reduces scheduler noise; recommended for SPRT.";
+const OVERSUBSCRIBE_TITLE =
+  "Allow CPU/RAM use to exceed the host's capacity. Resource checks " +
+  "downgrade from blockers to warnings. Don't use for SPRT.";
+const SPRT_TITLE =
+  "Sequential Probability Ratio Test: terminates when statistical conclusion is reached.";
 
+
+// oversized-ok: form controller -- every section registers fields into a
+// shared `inputs` map that getValues/validate read back, with enable/visibility
+// sync across sections (seeds, SPRT, adjudication). Just over cap after
+// compaction; further shrinking means a config-driven adjudication rewrite that
+// would scatter getValues/validate for no readability gain.
 export function mountTournamentTemplateForm({
   container,
   initialValues = {},
@@ -79,40 +94,22 @@ export function mountTournamentTemplateForm({
   const switchRow = document.createElement("div");
   switchRow.className = "ttf-switch-row";
 
-  const ponderSwitch = document.createElement("wa-switch");
-  ponderSwitch.size = "small";
-  ponderSwitch.dataset.key = "ponder";
-  if (initialValues.ponder) ponderSwitch.setAttribute("checked", "");
-  ponderSwitch.textContent = "Ponder";
-  ponderSwitch.title = "Engines think on opponent's time.";
-  inputs.ponder = ponderSwitch;
+  // Switches are read directly via their const refs (getValues/validate use
+  // .checked), never through the `inputs` map -- so they don't register there.
+  function makeSwitch(key, label, title) {
+    const sw = document.createElement("wa-switch");
+    sw.size = "small";
+    sw.dataset.key = key;
+    if (initialValues[key]) sw.setAttribute("checked", "");
+    sw.textContent = label;
+    sw.title = title;
+    return sw;
+  }
 
-  const affinitySwitch = document.createElement("wa-switch");
-  affinitySwitch.size = "small";
-  affinitySwitch.dataset.key = "pin_affinity";
-  if (initialValues.pin_affinity) affinitySwitch.setAttribute("checked", "");
-  affinitySwitch.textContent = "CPU Affinity";
-  affinitySwitch.title =
-    "Pass -affinity to fastchess so each game-slot is bound to fixed cores. " +
-    "Reduces scheduler noise; recommended for SPRT.";
-  inputs.pin_affinity = affinitySwitch;
-
-  const oversubSwitch = document.createElement("wa-switch");
-  oversubSwitch.size = "small";
-  oversubSwitch.dataset.key = "allow_oversubscribe";
-  if (initialValues.allow_oversubscribe) oversubSwitch.setAttribute("checked", "");
-  oversubSwitch.textContent = "Oversubscribe";
-  oversubSwitch.title =
-    "Allow CPU/RAM use to exceed the host's capacity. Resource checks " +
-    "downgrade from blockers to warnings. Don't use for SPRT.";
-  inputs.allow_oversubscribe = oversubSwitch;
-
-  const sprtSwitch = document.createElement("wa-switch");
-  sprtSwitch.size = "small";
-  sprtSwitch.dataset.key = "sprt";
-  if (initialValues.sprt) sprtSwitch.setAttribute("checked", "");
-  sprtSwitch.textContent = "SPRT";
-  sprtSwitch.title = "Sequential Probability Ratio Test: terminates when statistical conclusion is reached.";
+  const ponderSwitch = makeSwitch("ponder", "Ponder", PONDER_TITLE);
+  const affinitySwitch = makeSwitch("pin_affinity", "CPU Affinity", AFFINITY_TITLE);
+  const oversubSwitch = makeSwitch("allow_oversubscribe", "Oversubscribe", OVERSUBSCRIBE_TITLE);
+  const sprtSwitch = makeSwitch("sprt", "SPRT", SPRT_TITLE);
 
   function syncSprtUI(on) {
     if (on) {

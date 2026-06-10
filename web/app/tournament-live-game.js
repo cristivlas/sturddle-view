@@ -8,8 +8,29 @@ import { confirm, reportError, toast } from "./dialogs.js";
 import { isPlayInProgress, isViewing, isAnalyzing, getViewingHash, getViewingSummary } from "./perspectives/play.js";
 import { confirmReplaceViewedGame } from "./import-position-dialog.js";
 import { APP_EVT } from "./app-events.js";
-import { flashWindow } from "./wb-utils.js";
+import { SIDE, FEN_STM } from "./chess-consts.js";
+import { fmtClock, fmtCount, fmtScore, flashWindow } from "./wb-utils.js";
 import { terminationPhrase } from "./format-termination.js";
+
+// Eval-row info strings (shared by own-side and opponent rows). Each blanks
+// when its field is absent. Format: "d:<depth>/<seldepth>", "nps:<count>",
+// "tb:<tbhits>".
+function _fmtDepth(p) {
+  if (p.depth == null) return "";
+  return p.seldepth != null ? `d:${p.depth}/${p.seldepth}` : `d:${p.depth}`;
+}
+function _fmtNps(p) {
+  return p.nps ? `nps:${fmtCount(p.nps)}` : "";
+}
+function _fmtTb(p) {
+  return p.tbhits ? `tb:${p.tbhits}` : "";
+}
+// Write the depth/nps/tbhits trio into one eval row's spans.
+function _applyEvalInfo({ depthEl, npsEl, tbhitsEl }, p) {
+  depthEl.textContent = _fmtDepth(p);
+  npsEl.textContent = _fmtNps(p);
+  tbhitsEl.textContent = _fmtTb(p);
+}
 
 async function replayTournamentGame({ tournamentId, gameN, token, pairId = null }) {
   const headers = { "Content-Type": "application/json" };
@@ -175,6 +196,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     <div class="lg-eval lg-eval-top">
       <span class="lg-eval-score lg-eval-score-top"></span>
       <span class="lg-eval-depth lg-eval-depth-top muted"></span>
+      <span class="lg-eval-nps lg-eval-nps-top muted"></span>
       <span class="lg-eval-tbhits lg-eval-tbhits-top muted"></span>
     </div>
     <div class="clock-row lg-clock-top">
@@ -195,6 +217,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     <div class="lg-eval lg-eval-bottom">
       <span class="lg-eval-score lg-eval-score-bottom"></span>
       <span class="lg-eval-depth lg-eval-depth-bottom muted"></span>
+      <span class="lg-eval-nps lg-eval-nps-bottom muted"></span>
       <span class="lg-eval-tbhits lg-eval-tbhits-bottom muted"></span>
     </div>
     <div class="lg-pv lg-pv-bottom muted"></div>
@@ -209,10 +232,12 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
 
   const evalScoreEl = body.querySelector(".lg-eval-score-bottom");
   const evalDepthEl = body.querySelector(".lg-eval-depth-bottom");
+  const evalNpsEl = body.querySelector(".lg-eval-nps-bottom");
   const evalTbhitsEl = body.querySelector(".lg-eval-tbhits-bottom");
   const pvEl = body.querySelector(".lg-pv-bottom");
   const oppEvalScoreEl = body.querySelector(".lg-eval-score-top");
   const oppEvalDepthEl = body.querySelector(".lg-eval-depth-top");
+  const oppEvalNpsEl = body.querySelector(".lg-eval-nps-top");
   const oppEvalTbhitsEl = body.querySelector(".lg-eval-tbhits-top");
   const oppPvEl = body.querySelector(".lg-pv-top");
   const clockTopEl = body.querySelector(".lg-clock-top");
@@ -358,8 +383,8 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   return {
     wb, body, board, boardHost,
     refs: {
-      evalScoreEl, evalDepthEl, evalTbhitsEl, pvEl,
-      oppEvalScoreEl, oppEvalDepthEl, oppEvalTbhitsEl, oppPvEl,
+      evalScoreEl, evalDepthEl, evalNpsEl, evalTbhitsEl, pvEl,
+      oppEvalScoreEl, oppEvalDepthEl, oppEvalNpsEl, oppEvalTbhitsEl, oppPvEl,
       clockTopEl, clockBottomEl,
       topNameEl, bottomNameEl, topTimeEl, bottomTimeEl,
       resultOverlayEl, resultScoreEl, resultTerminationEl, replayBtnEl,
@@ -375,6 +400,10 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   };
 }
 
+// oversized-ok: stateful live-game controller -- a WebSocket feed, clock
+// timers, and board paint all coordinate over shared state (ws, engineColor,
+// currentFen, positionGen, clock fields). Closures return a control API;
+// splitting would scatter the feed/clock/paint coordination.
 export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, right = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, flash = true }) {
   if (DEBUG_WATCH) console.log("[WATCH] openLiveGameWindow", { proxyId, gameId, windowKey, label });
   if (!windowKey) {
@@ -397,8 +426,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   });
   const { wb, body, board, refs, showResult, disposeShared } = built;
   const {
-    evalScoreEl, evalDepthEl, evalTbhitsEl, pvEl,
-    oppEvalScoreEl, oppEvalDepthEl, oppEvalTbhitsEl, oppPvEl,
+    evalScoreEl, evalDepthEl, evalNpsEl, evalTbhitsEl, pvEl,
+    oppEvalScoreEl, oppEvalDepthEl, oppEvalNpsEl, oppEvalTbhitsEl, oppPvEl,
     clockTopEl, clockBottomEl,
     topNameEl, bottomNameEl, topTimeEl, bottomTimeEl,
   } = refs;
@@ -534,12 +563,12 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 
   function setEngineColor(color) {
     engineColor = color;
-    const oppColor = color === "white" ? "black" : "white";
-    const eName = engineName || (color === "white" ? "White" : "Black");
+    const oppColor = color === SIDE.WHITE ? SIDE.BLACK : SIDE.WHITE;
+    const eName = engineName || (color === SIDE.WHITE ? "White" : "Black");
     bottomNameEl.textContent = eName;
     bottomNameEl.title = eName;
     if (!opponentName) {
-      const oName = oppColor === "white" ? "White" : "Black";
+      const oName = oppColor === SIDE.WHITE ? "White" : "Black";
       topNameEl.textContent = oName;
       topNameEl.title = oName;
     }
@@ -556,8 +585,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 
   function updateClocks(wtime, btime) {
     if (!engineColor || wtime == null || btime == null) return;
-    bottomTimeEl.textContent = formatMs(engineColor === "white" ? wtime : btime);
-    topTimeEl.textContent = formatMs(engineColor === "white" ? btime : wtime);
+    bottomTimeEl.textContent = fmtClock((engineColor === SIDE.WHITE ? wtime : btime) / 1000, { tenthsBelow: 60 });
+    topTimeEl.textContent = fmtClock((engineColor === SIDE.WHITE ? btime : wtime) / 1000, { tenthsBelow: 60 });
   }
 
   async function applyBestMove(uciMove) {
@@ -588,7 +617,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
           positionGen++;
           currentFen = p.fen;
           const turn = p.fen.split(" ")[1];
-          const color = turn === "b" ? "black" : "white";
+          const color = turn === FEN_STM.BLACK ? SIDE.BLACK : SIDE.WHITE;
           if (color !== engineColor) {
             setEngineColor(color);
             board.setSide(color);
@@ -607,11 +636,11 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
         clockBottomEl.classList.toggle("active", !!engineColor);
         if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
         if (engineColor && p.wtime != null && p.btime != null) {
-          const startMs = engineColor === "white" ? p.wtime : p.btime;
+          const startMs = engineColor === SIDE.WHITE ? p.wtime : p.btime;
           activeDeadline = Date.now() + startMs;
           const tick = () => {
             const remaining = Math.max(0, activeDeadline - Date.now());
-            bottomTimeEl.textContent = formatMs(remaining);
+            bottomTimeEl.textContent = fmtClock(remaining / 1000, { tenthsBelow: 60 });
             if (remaining === 0 && timerInterval) {
               clearInterval(timerInterval);
               timerInterval = null;
@@ -627,11 +656,11 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
         clockTopEl.classList.toggle("active", !!engineColor);
         if (currentFen && p.move) applyBestMove(p.move);
         if (engineColor && lastWtime != null && lastBtime != null) {
-          const oppMs = engineColor === "white" ? lastBtime : lastWtime;
+          const oppMs = engineColor === SIDE.WHITE ? lastBtime : lastWtime;
           activeDeadline = Date.now() + oppMs;
           const tick = () => {
             const remaining = Math.max(0, activeDeadline - Date.now());
-            topTimeEl.textContent = formatMs(remaining);
+            topTimeEl.textContent = fmtClock(remaining / 1000, { tenthsBelow: 60 });
             if (remaining === 0 && timerInterval) {
               clearInterval(timerInterval);
               timerInterval = null;
@@ -662,47 +691,22 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     if (m) board.setOpponentArrow(m.slice(0, 2), m.slice(2, 4));
   }
 
-  function fmtScore(p) {
-    const score = p.score;
-    if (!score) return "--";
-    if (score.cp != null) return (score.cp >= 0 ? "+" : "") + (score.cp / 100).toFixed(2);
-    if (score.mate != null) return `M${score.mate}`;
-    return "--";
-  }
-
   function renderOpponentEval(p) {
-    oppEvalScoreEl.textContent = fmtScore(p);
-    oppEvalDepthEl.textContent = p.depth != null
-      ? (p.seldepth != null ? `d${p.depth}/${p.seldepth}` : `d${p.depth}`)
-      : "";
-    oppEvalTbhitsEl.textContent = p.tbhits ? `tb ${p.tbhits}` : "";
+    oppEvalScoreEl.textContent = fmtScore(p.score, { empty: "--", matePrefix: "M", signed: true });
+    _applyEvalInfo({ depthEl: oppEvalDepthEl, npsEl: oppEvalNpsEl, tbhitsEl: oppEvalTbhitsEl }, p);
     const pv = p.pv_uci;
     if (pv && pv.length) oppPvEl.textContent = pv.slice(0, 12).join(" ");
   }
 
   function renderEval(p) {
-    evalScoreEl.textContent = fmtScore(p);
-    evalDepthEl.textContent = p.depth != null
-      ? (p.seldepth != null ? `d${p.depth}/${p.seldepth}` : `d${p.depth}`)
-      : "";
-    evalTbhitsEl.textContent = p.tbhits ? `tb ${p.tbhits}` : "";
+    evalScoreEl.textContent = fmtScore(p.score, { empty: "--", matePrefix: "M", signed: true });
+    _applyEvalInfo({ depthEl: evalDepthEl, npsEl: evalNpsEl, tbhitsEl: evalTbhitsEl }, p);
     const pv = p.pv_uci;
     if (pv && pv.length) {
       pvEl.textContent = pv.slice(0, 12).join(" ");
       const m = pvArrowMove(p);
       if (m) board.setArrow(m.slice(0, 2), m.slice(2, 4));
     }
-  }
-
-  function formatMs(ms) {
-    if (ms < 0) return "0.0";
-    const s = ms / 1000;
-    if (s >= 60) {
-      const m = Math.floor(s / 60);
-      const r = (s - m * 60).toFixed(0);
-      return `${m}:${r.padStart(2, "0")}`;
-    }
-    return s.toFixed(1);
   }
 
   return {
@@ -774,8 +778,8 @@ export function openFrozenGameWindow({
       // Engine that was watched live is the one whose label matched
       // engineName. Fall back to bottom = engineName side.
       const engineIsWhite = engineName && rec.engine_white === engineName;
-      const color = engineIsWhite ? "white" : "black";
-      const oppColor = engineIsWhite ? "black" : "white";
+      const color = engineIsWhite ? SIDE.WHITE : SIDE.BLACK;
+      const oppColor = engineIsWhite ? SIDE.BLACK : SIDE.WHITE;
       board.setSide(color);
       if (fen) board.setPosition(fen, lastMove);
       board.clearArrows();

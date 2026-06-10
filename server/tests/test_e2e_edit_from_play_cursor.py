@@ -152,7 +152,7 @@ class PageObserver:
         if self._inflight[substr] == 0:
             self._log("wait_quiet-immediate", key=substr)
             return
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         fut = loop.create_future()
         self._quiet_waiters.append((substr, fut))
         self._log("wait_quiet-park", key=substr, inflight=self._inflight[substr])
@@ -166,7 +166,7 @@ class PageObserver:
         if self._last_board is not None and predicate(self._last_board):
             self._log("wait_board_update-immediate", pred=predicate.__name__)
             return self._last_board
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         fut = loop.create_future()
         self._board_waiters.append((predicate, fut))
         self._log("wait_board_update-park", pred=predicate.__name__,

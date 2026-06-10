@@ -16,6 +16,7 @@
   --row-bg-hover: #4a4e58;
   --row-bg-selected: #2a3a4a;
   --border-subtle: #2e3138;
+  --border-faint: #26282e;  /* row separators: fainter than --border-subtle */
 
   /* Status callouts (used by import dialog and similar). Pinned because
      webawesome's --wa-color-{success,danger}-50 tokens are dark-mode
@@ -62,6 +63,11 @@
   --bp-mobile-h:      30rem;  /* 480px @ default font; height analog */
   --bp-mobile-h-play: 42.5rem; /* 680px; play side-rail short-height gate */
   --bp-wide:          93.75rem; /* 1500px @ default font */
+
+  /* Import dialog: a single panel height shared by all 3 tabs so switching
+     never resizes the dialog. Sized to the tallest content (the openings
+     list); PGN/FEN textareas flex to fill it. */
+  --import-panel-h: 24rem; /* 384px @ default font */
 }
 
 /* Clamp the root font-size so the layout stays usable under extreme
@@ -605,10 +611,10 @@ body {
   color: var(--fg);
 }
 wa-spinner.spinner-accent {
-  --indicator-color: #facc15;
-  --track-color: rgba(250, 204, 21, 0.35);
+  --indicator-color: #ffffff;
+  --track-color: rgba(255, 255, 255, 0.35);
   --track-width: 3px;
-  color: #facc15;
+  color: #ffffff;
   font-size: 1.2em;
 }
 
@@ -924,8 +930,44 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 
 .import-pos-form { display: flex; flex-direction: column; gap: 12px; }
 .import-pos-form.drag-over { outline: 2px dashed var(--wa-color-brand-50); outline-offset: -4px; }
-.import-pos-toolbar { display: flex; align-items: center; gap: 8px; }
-.import-pos-toolbar wa-select { flex: 1; max-width: 360px; }
+/* All panels share one fixed height so switching tabs never resizes the
+   dialog; the panel base fills it. */
+.import-pos-tabs wa-tab-panel { height: var(--import-panel-h); }
+.import-pos-tabs wa-tab-panel::part(base) {
+  height: 100%;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Only the openings list/ribbon needs clipping; text panels stay visible so
+   input/button focus rings are not cut off at the panel edge. */
+.import-pos-tabs wa-tab-panel[name="openings"]::part(base) { overflow: hidden; }
+/* Breathing room between the tab rail and the panel content. Right padding
+   stays 0 so the content's right edge lines up with the footer's Open button
+   (both align to the dialog body's right padding). Keyed to .dialog-side-tabs
+   because wa-tab-group does not reflect `placement` to an attribute. */
+.import-pos-tabs.dialog-side-tabs::part(body) { padding: 3px 3px 0 12px; overflow: visible; }
+/* PGN/FEN panel content: textarea grows to fill, shared toolbar/status pinned
+   below it with the form's gap so the side-tab rail sits beside all of it. */
+.import-pos-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  /* Clearance from the dialog footer (dialog body padding-bottom is 0 so the
+     openings ribbon can sit flush; text panels need their own breathing room). */
+  padding-bottom: 12px;
+  box-sizing: border-box;
+}
+.import-pos-panel-body wa-textarea { flex: 1 1 auto; min-height: 0; }
+.import-pos-panel-body wa-textarea::part(base),
+.import-pos-panel-body wa-textarea::part(textarea) { height: 100%; }
+wa-dialog:has(.import-pos-form)::part(body) {
+  overflow: hidden !important;
+  padding-bottom: 0 !important;
+}
+.import-dialog-label { display: flex; align-items: center; }
+.import-dialog-label wa-select { flex: 1; }
 .import-pos-status {
   font-size: 0.9rem;
   min-height: 1.2em;
@@ -941,6 +983,100 @@ main { padding: 16px; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .import-pos-status.muted { background: transparent; color: var(--muted); }
 .import-pos-playas { display: flex; align-items: center; gap: 12px; }
 .import-pos-playas-label { font-size: 0.9rem; color: var(--wa-color-neutral-700, #555); }
+/* Openings tab: reuses the Engines list look (sticky resizable header,
+   bottom ribbon, slide-up search). Shared .th-grip / .col-drag-line apply. */
+.openings-panel { position: relative; display: flex; flex-direction: column; height: 100%; flex: 1 1 auto; min-height: 0; }
+.openings-table-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  border-top: 1px solid #34373d;
+  font-size: 0.8125rem;
+  padding-left: 5px;
+}
+.openings-list:focus { outline: none; }
+.openings-table { table-layout: fixed; width: 100%; border-collapse: separate; border-spacing: 0; }
+.openings-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
+  padding: 6px 10px;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  border-bottom: 2px solid var(--accent-line);
+  /* border-bottom: 2px solid var(--wa-color-border-loud); */
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  user-select: none;
+}
+.openings-table th { position: relative; }
+.openings-table thead th:hover {
+  background: #252830;
+  box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
+}
+.openings-list-item {
+  cursor: pointer; user-select: none;
+  /* background: linear-gradient(to right, var(--row-bg), var(--bg) 75%); */
+}
+.openings-list-item td {
+  padding: 8px 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border-bottom: 1px solid var(--border-faint);
+}
+.openings-list-item:hover { background: var(--row-bg-hover); }
+.openings-list-item.selected { background: var(--row-bg-selected); }
+/* .openings-list-item.selected td:first-child { box-shadow: inset 3px 0 0 #5a6070; } */
+.openings-list-item.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
+.openings-list-eco, .openings-list-moves {
+  font-size: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.openings-list-empty { padding: 12px; text-align: center; font-size: 0.75rem; }
+.openings-ribbon {
+  display: flex; flex-direction: row; justify-content: center;
+  align-items: center; gap: 4px;
+  border-top: 1px solid var(--wa-color-border-loud, #353841);
+  padding: 4px 6px;
+}
+.openings-ribbon .ribbon-btn::before {
+  left: 6px; right: 6px; top: 0; bottom: auto;
+  width: auto; height: 2px;
+}
+.openings-search-wrap {
+  position: absolute;
+  left: 0; right: 0; bottom: var(--openings-ribbon-h, 36px);
+  display: block;
+  height: 48px; padding: 6px 10px;
+  opacity: 0; visibility: hidden;
+  pointer-events: none;
+  background: #1e2026;
+  border-top: 1px solid var(--wa-color-border-loud, #353841);
+  box-sizing: border-box;
+  transform: translateY(100%);
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.15s ease-out,
+              visibility 0s 0.2s;
+  z-index: 2;
+}
+.openings-search-wrap.open {
+  opacity: 1; visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.15s ease-out,
+              visibility 0s;
+}
+.openings-search { width: 100%; --wa-focus-ring-width: 0px; }
 /* Trash-x in each recents <wa-option>. Subtle until hovered. */
 button.recent-del {
   appearance: none; background: transparent; border: 0; padding: 0 4px;
@@ -1062,9 +1198,14 @@ body[data-ribbon-float] .tournaments-ribbon {
 }
 .ribbon-btn.is-active { color: var(--wa-color-brand-90); }
 .ribbon-btn.is-active::before { background: var(--wa-color-brand-90); }
-.ribbon-btn.is-active wa-icon { animation: analyze-pulse 1.4s ease-in-out infinite; }
+/* Pulse marks a LIVE action (analysis running), not a toggled state. Scope
+   it to the analyze buttons only -- other ribbon buttons use .is-active
+   merely to mark on/selected state and must not pulse. */
+#analyze.is-active wa-icon, #view-analyze.is-active wa-icon {
+  animation: analyze-pulse 1.4s ease-in-out infinite;
+}
 @media (prefers-reduced-motion: reduce) {
-  .ribbon-btn.is-active wa-icon { animation: none; }
+  #analyze.is-active wa-icon, #view-analyze.is-active wa-icon { animation: none; }
 }
 .ribbon-btn wa-icon { font-size: 1rem; }
 .ribbon-btn--danger:hover:not(:disabled) {
@@ -1087,6 +1228,24 @@ body[data-ribbon-float] .tournaments-ribbon {
   padding: 10px;
   box-shadow: 0 6px 16px rgba(0,0,0,0.45);
   display: flex; flex-direction: column; gap: 8px;
+}
+/* Right-docked ribbon hugs the right screen edge: open the popover leftward
+   so it doesn't run off-screen. */
+body[data-ribbon-side="right"] .castle-popover,
+body[data-ribbon-side="right"] .side-popover {
+  left: auto; right: 100%;
+  margin-left: 0; margin-right: 8px;
+}
+/* Floating ribbon lives in a WinBox whose body clips overflow (contain:
+   strict), so the popover can't render inside it. JS portals it to <body>
+   and positions it (position: fixed) against the viewport. body[...] prefix
+   keeps this winning over the right-docked flip rule when float's last-docked
+   side is "right" (both attrs are set on <body> in float mode). */
+body .castle-popover.popover-floating,
+body .side-popover.popover-floating {
+  position: fixed;
+  left: auto; right: auto; top: auto; bottom: auto;
+  margin: 0;
 }
 .castle-popover.hidden,
 .side-popover.hidden { display: none; }
@@ -1363,13 +1522,22 @@ body[data-ribbon-float] .tournaments-ribbon {
   pointer-events: none;
   filter: grayscale(0.4);
 }
-/* Game paused (not analyzing): dim board to reinforce the header badge.
-   Suppressed while a wa-dialog is open so the modal backdrop doesn't
-   stack on top of the paused-dim and double-darken the board. */
-body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
-  opacity: 0.6;
+/* Game paused (not analyzing): block board interaction. No visual dim --
+   the header badge alone signals the paused state. */
+.play-board-host.board-paused .board {
   pointer-events: none;
-  filter: grayscale(0.5) brightness(0.85);
+}
+/* One-shot attention pulse: drawn on the Paused badge and Resume button when
+   the user clicks the (inert) paused board, to point them at how to resume.
+   Uses an INSET ring + brightness flash (no outward box-shadow or scale) so it
+   never clips against edge-hugging ribbons or the float WinBox's contain. */
+@keyframes pause-hint-pulse {
+  0%, 100% { box-shadow: inset 0 0 0 0 rgba(var(--accent-rgb), 0); filter: brightness(0.5); }
+  50%      { box-shadow: inset 0 0 0 2px rgba(var(--accent-rgb), 0.85); filter: brightness(1); }
+}
+.pause-hint-pulse { animation: pause-hint-pulse 0.3s ease-in-out 2; }
+@media (prefers-reduced-motion: reduce) {
+  .pause-hint-pulse { animation: none; }
 }
 
 /* 800px = --bp-mobile, 680px = --bp-mobile-h-play (media queries can't
@@ -1418,11 +1586,12 @@ body:not(:has(wa-dialog[open])) .play-board-host.board-paused .board {
     margin: 0 4px;
   }
   /* Horizontal ribbon: popovers open above the button (ribbon sits at
-     bottom of the page on mobile). */
-  .castle-popover,
-  .side-popover {
-    left: 0; top: auto; bottom: 100%;
-    margin-left: 0; margin-bottom: 8px;
+     bottom of the page on mobile). body[...] prefix keeps this winning over
+     the global right-docked flip rule, which has the same attribute weight. */
+  body[data-ribbon-side] .castle-popover,
+  body[data-ribbon-side] .side-popover {
+    left: 0; right: auto; top: auto; bottom: 100%;
+    margin-left: 0; margin-right: 0; margin-bottom: 8px;
   }
   /* Display order: ribbon on top, then board, then AI analysis, then side
      panel. The horizontal ribbon's accent line sits at the button bottom
@@ -2133,7 +2302,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
 }
 .engines-list-item {
   cursor: pointer; user-select: none;
-  background: linear-gradient(to right, var(--row-bg), var(--bg) 75%);
+  /* background: linear-gradient(to right, var(--row-bg), var(--bg) 75%); */
 }
 .engines-list-item td {
   padding: 12px 12px;
@@ -2141,16 +2310,16 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   text-overflow: ellipsis;
   white-space: nowrap;
   background: transparent;
-  border-top: 1px solid var(--border-subtle);
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-faint);
 }
 .engines-list-item td:last-child {
   border-right: none;
 }
-.engines-list-item:hover { background: linear-gradient(to right, var(--row-bg-hover), var(--bg) 75%); }
-.engines-list-item.focused { background: linear-gradient(to right, var(--row-bg-selected), var(--bg) 75%); }
+.engines-list-item:hover { background: var(--row-bg-hover); }
+.engines-list-item.focused { background: var(--row-bg-selected); }
 .engines-list-item.focused td:first-child {
-  box-shadow: inset 3px 0 0 #5a6070;
+  /* box-shadow: inset 3px 0 0 #5a6070; */
+  box-shadow: inset 3px 0 0 var(--accent-line);
 }
 .engines-list-item.active .engines-list-name { font-weight: 600; }
 .engines-list-name-text {
@@ -3479,7 +3648,10 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
     border-right: 0;
     border-left: 1px solid var(--wa-color-border-loud, #353841);
   }
-  body[data-ribbon-side="right"] .ribbon-btn::before {
+  /* Mirror only the board ribbon's vertical edge stripe. Scoping to
+     .board-ribbon keeps the top-edge accent on panel ribbons (engines,
+     tournaments, openings) intact. */
+  body[data-ribbon-side="right"] .board-ribbon .ribbon-btn::before {
     right: auto;
     left: -1px;
   }
