@@ -29,6 +29,7 @@ class Entry:
     is_file: bool
     is_executable: bool
     size: int | None
+    mtime: float | None
     error: str | None = None
 
 
@@ -69,6 +70,7 @@ def _entry_for(p: Path) -> dict:
             "is_file": is_file,
             "is_executable": is_exec,
             "size": size,
+            "mtime": st.st_mtime,
         }
     except OSError as e:
         return {
@@ -78,6 +80,7 @@ def _entry_for(p: Path) -> dict:
             "is_file": False,
             "is_executable": False,
             "size": None,
+            "mtime": None,
             "error": str(e),
         }
 
@@ -110,7 +113,7 @@ def list_dir(
             "is_root": True,
             "entries": [
                 {"name": d, "path": d, "is_dir": True, "is_file": False,
-                 "is_executable": False, "size": None}
+                 "is_executable": False, "size": None, "mtime": None}
                 for d in _windows_drives()
             ],
         }

@@ -2673,14 +2673,9 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .fs-picker-filterbar { display: flex; }
 .fs-picker-filter { flex: 1; }
 .fs-entry.fs-hidden { display: none; }
-.fs-picker-list.fs-empty::after {
-  content: "No matches";
-  display: block; padding: 12px; color: var(--muted); text-align: center;
-}
-.fs-picker-list {
-  list-style: none;
-  margin: 0;
-  padding: 4px;
+/* Overlay host for the resize drag-lines; also the scroll container. */
+.fs-picker-table-wrap {
+  position: relative;
   border: 1px solid #34373d;
   border-radius: 4px;
   background: #15171b;
@@ -2690,21 +2685,64 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 0.8125rem;
 }
-.fs-entry {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
-  border-radius: 3px;
-  cursor: pointer;
+.fs-picker-table-wrap.fs-empty::after {
+  content: "No matches";
+  display: block; padding: 12px; color: var(--muted); text-align: center;
+}
+.fs-picker-table {
+  table-layout: fixed;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.fs-picker-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #1b1e24;
+  padding: 6px 8px;
+  text-align: left;
+  font-family: var(--wa-font-family-body, sans-serif);
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  border-bottom: 1px solid #34373d;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   user-select: none;
 }
-.fs-entry:hover { background: var(--nav-btn-bg); }
+.fs-picker-table thead th:hover {
+  background: #252830;
+  box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
+}
+/* Size header sits over right-aligned values. */
+.fs-picker-table thead th:last-child { text-align: right; }
+.th-sortable { cursor: pointer; }
+.th-sort-arrow {
+  font-size: 0.7rem;
+  margin-left: 4px;
+  vertical-align: middle;
+  color: var(--wa-color-brand-fill-loud);
+}
+.fs-entry { cursor: pointer; user-select: none; }
+.fs-entry > td {
+  padding: 4px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fs-entry:hover > td { background: var(--nav-btn-bg); }
 .fs-entry.dim { color: var(--muted); }
-.fs-entry.selected { background: var(--wa-color-brand-fill-loud); color: #fff; }
-.fs-entry.dim.selected { color: #fff; }
-.fs-entry wa-icon { font-size: 0.875rem; flex: 0 0 auto; }
-.fs-entry .fs-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fs-entry.selected > td { background: var(--wa-color-brand-fill-loud); color: #fff; }
+.fs-entry.dim.selected > td { color: #fff; }
+.fs-entry .fs-name-cell wa-icon { font-size: 0.875rem; vertical-align: middle; margin-right: 8px; }
+.fs-entry .fs-name { vertical-align: middle; }
+.fs-entry .fs-date { color: var(--muted); }
+.fs-entry .fs-size { color: var(--muted); text-align: right; }
+.fs-entry.selected .fs-date, .fs-entry.selected .fs-size { color: #d8d8d8; }
 
 /* ---------- Tournaments panel ---------- */
 .tournaments-panel { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }

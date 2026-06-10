@@ -3,8 +3,33 @@
 // behind this seam so it can be swapped later.
 
 import { APP_EVT } from "./app-events.js";
+import { attachColumnResize } from "./col-resize.js";
+import { attachColumnSort } from "./col-sort.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
+
+const FS_COL_DEFAULT_PCTS = [55, 30, 15];
+const FS_MIN_COL_PCT = 8;
+// Sort keys aligned to the three columns, in header order.
+const FS_COL_NAME = "name";
+const FS_COL_DATE = "mtime";
+const FS_COL_SIZE = "size";
+
+// Folders always group before files; within a group the active column
+// orders, with name as the fixed final tiebreaker (Model A, deterministic).
+function fsCompare(key, dir) {
+  const sign = dir === "asc" ? 1 : -1;
+  const byName = (a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
+  return (a, b) => {
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+    let primary = 0;
+    if (key === FS_COL_NAME) primary = byName(a, b);
+    else if (key === FS_COL_DATE) primary = (a.mtime || 0) - (b.mtime || 0);
+    else if (key === FS_COL_SIZE) primary = (a.size || 0) - (b.size || 0);
+    return primary !== 0 ? sign * primary : byName(a, b);
+  };
+}
 
 function ensureContainer() {
   let c = document.getElementById("dialog-host");
@@ -163,6 +188,27 @@ function rememberLastDir(key, dir) {
 }
 
 
+const ONE_KBYTE = 1024;
+const SIZE_UNITS = ["B", "KB", "MB", "GB", "TB"];
+const MS_PER_SEC = 1000;
+
+function fmtSize(bytes) {
+  if (bytes == null) return "";
+  let n = bytes;
+  let unit = 0;
+  while (n >= ONE_KBYTE && unit < SIZE_UNITS.length - 1) {
+    n /= ONE_KBYTE;
+    unit += 1;
+  }
+  const val = unit === 0 ? n : n.toFixed(1);
+  return `${val} ${SIZE_UNITS[unit]}`;
+}
+
+function fmtDate(mtime) {
+  if (mtime == null) return "";
+  return new Date(mtime * MS_PER_SEC).toLocaleString();
+}
+
 /** Modal file/directory picker (browses server FS via /fs).
  *  Resolves to selected path or null. mode: "file" | "directory" | "executable". */
 export function pickFile({
@@ -232,8 +278,56 @@ export function pickFile({
       filterInput.appendChild(filterIcon);
       filterBar.append(filterInput);
 
-      const listing = document.createElement("ul");
-      listing.className = "fs-picker-list";
+      // Real table so the shared column-resize helper (.th-grip / .col-drag-line)
+      // can size Name/Date the way the engines and openings tables do.
+      const tableWrap = document.createElement("div");
+      tableWrap.className = "fs-picker-table-wrap";
+      const table = document.createElement("table");
+      table.className = "fs-picker-table";
+      const colgroup = document.createElement("colgroup");
+      for (let i = 0; i < 3; i++) colgroup.append(document.createElement("col"));
+      const thead = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      const HEADERS = ["Name", "Date modified", "Size"];
+      HEADERS.forEach((text, i) => {
+        const th = document.createElement("th");
+        th.textContent = text;
+        // No grip on the last (Size) column -- it absorbs the remainder.
+        if (i < HEADERS.length - 1) {
+          const grip = document.createElement("span");
+          grip.className = "th-grip";
+          th.append(grip);
+        }
+        headRow.append(th);
+      });
+      thead.append(headRow);
+      const listing = document.createElement("tbody");
+      table.append(colgroup, thead, listing);
+      tableWrap.append(table);
+
+      const colEls = Array.from(colgroup.querySelectorAll("col"));
+      const fsColPcts = FS_COL_DEFAULT_PCTS.slice();
+      attachColumnResize({
+        table,
+        grips: Array.from(thead.querySelectorAll(".th-grip")),
+        overlayHost: tableWrap,
+        storageKey: STORAGE_KEY.FS_PICKER_COL_PCTS,
+        sizes: fsColPcts,
+        unit: "pct",
+        applySizes(sizes, ctx) {
+          if (ctx) {
+            const { deltaFrac, startSizes, gripIdx } = ctx;
+            const dPct = deltaFrac * 100;
+            let a = startSizes[gripIdx] + dPct;
+            let b = startSizes[gripIdx + 1] - dPct;
+            if (a < FS_MIN_COL_PCT) { b -= FS_MIN_COL_PCT - a; a = FS_MIN_COL_PCT; }
+            if (b < FS_MIN_COL_PCT) { a -= FS_MIN_COL_PCT - b; b = FS_MIN_COL_PCT; }
+            sizes[gripIdx] = a;
+            sizes[gripIdx + 1] = b;
+          }
+          colEls.forEach((c, i) => { c.style.width = sizes[i] + "%"; });
+        },
+      });
 
       function firstVisibleEntry() {
         return listing.querySelector(".fs-entry:not(.fs-hidden)");
@@ -248,7 +342,7 @@ export function pickFile({
           li.classList.toggle("fs-hidden", hide);
           if (!hide) anyVisible = true;
         }
-        listing.classList.toggle("fs-empty", !anyVisible);
+        tableWrap.classList.toggle("fs-empty", !anyVisible);
         // Auto-highlight the first visible match so Enter on the filter
         // (or Tab → Select) acts on something predictable.
         if (q && anyVisible) firstVisibleEntry().click();
@@ -281,44 +375,38 @@ export function pickFile({
         return entry.is_file;
       }
 
-      async function navigate(path, { push = true } = {}) {
-        let body;
-        try {
-          const params = new URLSearchParams({ show_hidden: "true" });
-          if (path) params.set("path", path);
-          const url = `/fs?${params.toString()}`;
-          body = await api("GET", url);
-        } catch (e) {
-          toast(`Cannot list ${path}: ${e.message}`, { variant: "danger" });
-          return false;
-        }
-        pathInput.value = body.path;
-        currentSelection = wantsDir ? body.path : null;
-        selectBtn.disabled = !wantsDir;
-        upBtn.disabled = !body.parent;
-        if (push && history[history.length - 1] !== body.path) {
-          history.push(body.path);
-        }
-        backBtn.disabled = history.length < 2;
-        listing.innerHTML = "";
-        filterInput.value = "";
-        listing.classList.remove("fs-empty");
+      // Entries for the current dir, kept so a sort can re-render without
+      // re-fetching. The server already returns dirs-first, name-sorted.
+      let currentEntries = [];
 
-        for (const entry of body.entries) {
-          const li = document.createElement("li");
+      function renderRows(entries) {
+        listing.innerHTML = "";
+        for (const entry of entries) {
+          const li = document.createElement("tr");
           li.className = "fs-entry";
           if (!eligible(entry) && !entry.is_dir) li.classList.add("dim");
           li.dataset.path = entry.path;
           li.dataset.isDir = String(entry.is_dir);
 
+          const nameCell = document.createElement("td");
+          nameCell.className = "fs-name-cell";
           const icon = document.createElement("wa-icon");
           icon.name = entry.is_dir ? "folder" : entry.is_executable ? "gear" : "file";
-          li.append(icon);
-
           const name = document.createElement("span");
           name.className = "fs-name";
           name.textContent = entry.name;
-          li.append(name);
+          nameCell.append(icon, name);
+          li.append(nameCell);
+
+          const date = document.createElement("td");
+          date.className = "fs-date";
+          date.textContent = fmtDate(entry.mtime);
+          li.append(date);
+
+          const size = document.createElement("td");
+          size.className = "fs-size";
+          size.textContent = entry.is_dir ? "" : fmtSize(entry.size);
+          li.append(size);
 
           li.addEventListener("click", () => {
             for (const sel of listing.querySelectorAll(".selected")) {
@@ -346,6 +434,56 @@ export function pickFile({
 
           listing.append(li);
         }
+      }
+
+      // Re-render currentEntries under the active sort (or server default if
+      // none). Preserves any active selection by path.
+      function applySort(state) {
+        const selected = listing.querySelector(".selected")?.dataset.path;
+        const rows = currentEntries.slice();
+        if (state) rows.sort(fsCompare(state.key, state.dir));
+        renderRows(rows);
+        if (selected) {
+          const row = listing.querySelector(`.fs-entry[data-path="${CSS.escape(selected)}"]`);
+          if (row) row.classList.add("selected");
+        }
+        applyFilter();
+      }
+
+      const sortCtrl = attachColumnSort({
+        table,
+        columns: [
+          { key: FS_COL_NAME, firstDir: "asc" },
+          { key: FS_COL_DATE, firstDir: "desc" },
+          { key: FS_COL_SIZE, firstDir: "desc" },
+        ],
+        storageKey: STORAGE_KEY.FS_PICKER_SORT,
+        onSort: applySort,
+      });
+
+      async function navigate(path, { push = true } = {}) {
+        let body;
+        try {
+          const params = new URLSearchParams({ show_hidden: "true" });
+          if (path) params.set("path", path);
+          const url = `/fs?${params.toString()}`;
+          body = await api("GET", url);
+        } catch (e) {
+          toast(`Cannot list ${path}: ${e.message}`, { variant: "danger" });
+          return false;
+        }
+        pathInput.value = body.path;
+        currentSelection = wantsDir ? body.path : null;
+        selectBtn.disabled = !wantsDir;
+        upBtn.disabled = !body.parent;
+        if (push && history[history.length - 1] !== body.path) {
+          history.push(body.path);
+        }
+        backBtn.disabled = history.length < 2;
+        filterInput.value = "";
+        tableWrap.classList.remove("fs-empty");
+        currentEntries = body.entries;
+        applySort(sortCtrl.current());
         return true;
       }
 
@@ -381,7 +519,7 @@ export function pickFile({
         }
       });
 
-      wrap.append(pathBar, filterBar, listing);
+      wrap.append(pathBar, filterBar, tableWrap);
       dialog.append(wrap, selectBtn);
       // Open at the recalled dir; if it's gone (deleted/renamed since the
       // last pick), silently fall back to home rather than show a toast.
