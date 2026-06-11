@@ -9,7 +9,7 @@ import { isPlayInProgress, isViewing, isAnalyzing, getViewingHash, getViewingSum
 import { confirmReplaceViewedGame } from "./import-position-dialog.js";
 import { APP_EVT } from "./app-events.js";
 import { SIDE, FEN_STM } from "./chess-consts.js";
-import { fmtClock, fmtCount, fmtScore, flashWindow } from "./wb-utils.js";
+import { fmtClock, fmtCount, fmtScore, flashWindow, rafCoalesce } from "./wb-utils.js";
 import { terminationPhrase } from "./format-termination.js";
 
 // Eval-row info strings (shared by own-side and opponent rows). Each blanks
@@ -448,19 +448,13 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   // Latest pending FEN wins; superseded ones never animate. Background
   // tabs accumulate at most one pending paint (browser pauses rAF).
   let pendingPosition = null;
-  let positionRafToken = 0;
-
-  function schedulePositionPaint() {
-    if (positionRafToken) return;
-    positionRafToken = requestAnimationFrame(() => {
-      positionRafToken = 0;
-      const p = pendingPosition;
-      pendingPosition = null;
-      if (!p) return;
-      board.setPosition(p.fen, p.lastMove, p.animated);
-      board.clearArrows();
-    });
-  }
+  const schedulePositionPaint = rafCoalesce(() => {
+    const p = pendingPosition;
+    pendingPosition = null;
+    if (!p) return;
+    board.setPosition(p.fen, p.lastMove, p.animated);
+    board.clearArrows();
+  });
 
   function queuePositionPaint(fen, lastMove) {
     // Skip animation when the tab is hidden -- there is no one to watch
@@ -478,11 +472,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   wb.onclose = () => {
     wbClosed = true;
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-    if (positionRafToken) {
-      cancelAnimationFrame(positionRafToken);
-      positionRafToken = 0;
-      pendingPosition = null;
-    }
+    schedulePositionPaint.cancel();
+    pendingPosition = null;
     if (ws) try { ws.close(); } catch { /* */ }
     disposeShared();
     return false;

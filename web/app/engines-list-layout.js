@@ -3,6 +3,7 @@
 // Split out of mountEngineList so the controller core stays under the cap.
 
 import { attachColumnResize } from "./col-resize.js";
+import { rafCoalesce } from "./wb-utils.js";
 
 const DEFAULT_PCTS = [20, 12, 68];
 const MIN_COL_PCT = 8;
@@ -71,14 +72,7 @@ export function createWrapSizer(container) {
   }
 
   // Coalesce rapid resize bursts into one measurement per frame.
-  let resizeRaf = 0;
-  function scheduleSizeWrap() {
-    if (resizeRaf) return;
-    resizeRaf = requestAnimationFrame(() => {
-      resizeRaf = 0;
-      sizeWrap();
-    });
-  }
+  const scheduleSizeWrap = rafCoalesce(sizeWrap);
 
   const dialog = container.closest("wa-dialog");
   const tabGroup = container.closest("wa-tab-group");
@@ -104,7 +98,7 @@ export function createWrapSizer(container) {
   window.addEventListener("resize", scheduleSizeWrap);
 
   function teardown() {
-    if (resizeRaf) cancelAnimationFrame(resizeRaf);
+    scheduleSizeWrap.cancel();
     window.removeEventListener("resize", scheduleSizeWrap);
     if (tabGroup) tabGroup.removeEventListener("wa-tab-show", onTabShow);
     if (ro) ro.disconnect();

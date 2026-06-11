@@ -8,7 +8,7 @@ import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
 import { SIDE, FEN_STM } from "./chess-consts.js";
-import { fmtClock, fmtCount, fmtScore, selectContentsOnCtrlA } from "./wb-utils.js";
+import { fmtClock, fmtCount, fmtScore, rafCoalesce, selectContentsOnCtrlA } from "./wb-utils.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -484,14 +484,13 @@ function recomputeNow(ctx) {
 }
 
 function recomputeBoardSize(ctx) {
-  if (ctx.recomputeRaf) return;
-  ctx.recomputeRaf = requestAnimationFrame(() => {
-    ctx.recomputeRaf = 0;
+  ctx.scheduleRecompute ??= rafCoalesce(() => {
     recomputeNow(ctx);
     // Run again after the next paint so secondary measurements reflect
     // the new layout (e.g. controls/clocks settled into final positions).
     requestAnimationFrame(() => recomputeNow(ctx));
   });
+  ctx.scheduleRecompute();
 }
 
 // ---- Event handlers -----------------------------------------------------
@@ -855,7 +854,7 @@ function buildViewApi(ctx) {
       window.removeEventListener(APP_EVT.LAYOUT_CHANGED, ctx.onRecompute);
       document.removeEventListener("visibilitychange", ctx.onVisibilityChange);
       window.removeEventListener("focus", ctx.onWindowFocus);
-      if (ctx.recomputeRaf) cancelAnimationFrame(ctx.recomputeRaf);
+      ctx.scheduleRecompute?.cancel();
     },
   };
 }
@@ -919,7 +918,7 @@ export function mountGameView(container, opts = {}) {
     // FEN (typically an AI `analyze` arg) and input is suppressed.
     previewActive: false,
     previewInputWasEnabled: false,
-    recomputeRaf: 0,
+    scheduleRecompute: null,
     off: null,
   };
 
