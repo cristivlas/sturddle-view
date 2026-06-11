@@ -596,8 +596,8 @@ function attachWatch(ctx, btn, attachKey, openOpts) {
   const useSlotsGrid = ctx.activeLayout === LAYOUT.TIDY;
   // Claim a slot BEFORE creating the window so the new window's own
   // default position doesn't shadow the slot it would occupy.
-  // Skip claim for windows restored as minimized -- they dock, not slot.
-  const rawClaim = (useSlotsGrid && !openOpts.min && !isLiveWindowOpen(attachKey)) ? ctx.slotGrid.claim() : null;
+  // Skip claim for windows restored minimized/maximized -- they don't slot.
+  const rawClaim = (useSlotsGrid && !openOpts.min && !openOpts.max && !isLiveWindowOpen(attachKey)) ? ctx.slotGrid.claim() : null;
   // Clamp to viewport so a slot near the right/bottom edge can't
   // push the window off-screen.
   const claim = rawClaim ? {
@@ -618,10 +618,10 @@ function attachWatch(ctx, btn, attachKey, openOpts) {
     return;
   }
   // No slot fit in tidy/none mode -- minimize so the grid stays clean.
-  if (result?.wb && !result.alreadyOpen && useSlotsGrid && !claim) {
+  if (result?.wb && !result.alreadyOpen && useSlotsGrid && !claim && !result.wb.max) {
     try { result.wb.minimize(); } catch { /* */ }
   }
-  if (result?.wb && !result.alreadyOpen && !result.wb.min) requestAnimationFrame(() => reapplyLayout(ctx));
+  if (result?.wb && !result.alreadyOpen && !result.wb.min && !result.wb.max) requestAnimationFrame(() => reapplyLayout(ctx));
   if (result?.wb && !result.alreadyOpen) wireLayoutHandlers(ctx, result.wb);
   const isLive = isLiveWindowOpen(attachKey);
   if (DEBUG_WATCH) console.log("[WATCH] post-open", { attachKey, isLive, slotted: !!claim });
@@ -1080,7 +1080,7 @@ async function initWorkspace(ctx) {
           termination: s.resolved.termination,
           top: ctx.top, left: ctx.left, right: ctx.getRightInset(),
           boardStyle: ctx.boardStyleCached,
-          initialRect: rect, min: !!s.min, flash: false,
+          initialRect: rect, min: !!s.min, max: !!s.max, flash: false,
         });
         if (fres?.wb && !fres.alreadyOpen) wireLayoutHandlers(ctx, fres.wb);
       } else if (running) {
@@ -1095,7 +1095,7 @@ async function initWorkspace(ctx) {
             proxyId: s.proxyId, gameId: s.gameId ?? null,
             label: s.label, engineName: s.engineName,
             initialRect: rect,
-            min: !!s.min, flash: false,
+            min: !!s.min, max: !!s.max, flash: false,
           });
         } else {
           endedWhileAway++;
