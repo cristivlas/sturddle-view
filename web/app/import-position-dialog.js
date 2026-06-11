@@ -587,6 +587,7 @@ function buildRecentsDropdown(ctx, { api, selectTab, applyText, setStatus, onPic
           }
         });
     });
+    opt.append(delBtn);
     return opt;
   }
   function render() {
