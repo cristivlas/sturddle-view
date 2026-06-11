@@ -207,7 +207,7 @@ function fmtSize(bytes) {
 
 function fmtDate(mtime) {
   if (mtime == null) return "";
-  return new Date(mtime * MS_PER_SEC).toLocaleString();
+  return new Date(mtime * MS_PER_SEC).toLocaleString().replace(",", "");
 }
 
 // Filter matcher: plain substring (today's behavior) until the query

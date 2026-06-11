@@ -2729,7 +2729,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   font-size: 0.7rem;
   margin-left: 4px;
   vertical-align: middle;
-  color: var(--wa-color-brand-fill-loud);
+  color: inherit;
 }
 .fs-entry { cursor: pointer; user-select: none; }
 .fs-entry > td {

@@ -14,8 +14,8 @@
 import { loadJson, saveJson } from "./storage.js";
 
 const ARROW_CLASS = "th-sort-arrow";
-const ARROW_DESC = "arrow-down";
-const ARROW_ASC = "arrow-up";
+const ARROW_DESC = "caret-down";
+const ARROW_ASC = "caret-up";
 
 // Click cycle per column: none -> first -> other -> none. firstDir lets a
 // column open ascending (names) or descending (dates/sizes).
