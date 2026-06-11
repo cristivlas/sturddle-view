@@ -428,20 +428,13 @@ _SearchKey = tuple[str, frozenset]
 
 class SearchCache:
     """Per-turn cache of completed engine searches, shared across the
-    engine-backed tools (analyze, top_moves, recommend_move, the
-    recommend-verifier). A position+restriction searched once this turn is
-    not re-searched: the deepest completed result is authoritative, so a
-    cached search at depth >= the request is reused as-is.
+    engine-backed tools. A position+restriction searched once this turn is
+    reused if the cached depth >= the request; the coordinator clears it at
+    turn start (the position is stable within a turn, which keys safely).
 
-    Lifetime is one analysis turn -- the live board mutates between turns,
-    so the coordinator clears this at turn start. Within a turn the position
-    is stable, which is what makes position keying safe.
-
-    A reused result is returned without spawning an engine, so no
-    engine_info events fire for it (the PV panel won't re-animate for a
-    cache hit -- accepted: a redundant-looking re-search would be worse).
-    Cancelled searches are never cached: a partial result must not satisfy
-    a later request."""
+    A cache hit spawns no engine, so no engine_info events fire (the PV panel
+    won't re-animate -- accepted). Cancelled searches are never cached: a
+    partial result must not satisfy a later request."""
 
     def __init__(self) -> None:
         self._entries: dict[_SearchKey, tuple[int, chess.engine.InfoDict]] = {}
@@ -504,21 +497,15 @@ async def _run_one_search(
     settings_provider: SettingsProvider | None = None,
 ) -> tuple[chess.engine.InfoDict, bool]:
     """Spawn a throwaway engine, run one search, return (last_info, cancelled).
-    Raises _SearchError on spawn or mid-search engine death so callers can
-    map kind -> structured error envelope.
+    Raises _SearchError on spawn/mid-search engine death -> error envelope.
 
-    `root_moves`: when set, the engine is restricted to playing one of
-    these moves at the root (UCI `searchmoves`). Used by top_moves to
-    score a specific candidate without push/pop tricks.
+    `root_moves`: restricts the engine to these moves at the root (UCI
+    `searchmoves`); top_moves uses it to score one candidate without push/pop.
+    `settings_provider`: live settings so the engine inherits Threads/Hash/
+    SyzygyPath; None falls back to no overrides (test doubles).
 
-    `settings_provider`: returns the live app settings so the throwaway
-    engine inherits Threads/Hash/SyzygyPath/etc. via the shared
-    engine-analysis helper. None falls back to no overrides (matches
-    test doubles that don't carry settings).
-
-    Publishes engine_info events via pump_engine_info but does NOT emit
-    engine_search_start -- the caller decides when to clear the panel
-    (analyze emits once; top_moves emits once for the whole batch)."""
+    Emits engine_info but NOT engine_search_start -- the caller clears the
+    panel (analyze once; top_moves once for the whole batch)."""
     sup = engine_launcher()
     settings = settings_provider() if settings_provider else None
     try:
@@ -555,26 +542,15 @@ def make_analyze_tool(
     settings_provider: SettingsProvider | None = None,
     search_cache: SearchCache | None = None,
 ) -> AnalyzeTool:
-    """Build the `analyze` async tool. `search_cache` is the cross-tool
-    engine-search cache; an unshared fresh one (always-miss) is used when
-    the caller doesn't pass the shared instance.
+    """Build the `analyze` async tool.
 
-    `engine_launcher()` returns a fresh `EngineSupervisor` per call --
-    decouples the tool from how the production engine is resolved
-    (registry + settings happen in `app.py`).
-
-    `bus` is the same event bus HVE publishes engine_info events to.
-    The tool publishes there too so the PV-table window and the board
-    arrow light up while a tool-call search is running.
-
-    `game_id_provider()` returns the current live game's id at call
-    time. When None or the provider returns None, events are tagged
-    with a fallback id so they still flow through the WS muxing.
-
-    `settings_provider()` returns the app settings so the throwaway
-    engine inherits Threads/Hash/SyzygyPath via the shared spawn
-    helper. None is acceptable (tests).
-    """
+    `search_cache`: cross-tool search cache; defaults to a fresh always-miss
+    one. `engine_launcher()`: fresh EngineSupervisor per call (resolution
+    lives in app.py). `bus`: HVE's engine_info bus -- publishing there lights
+    up the PV window and board arrow during a tool-call search.
+    `game_id_provider()`: live game id (fallback id when None, so events still
+    mux). `settings_provider()`: settings for Threads/Hash/SyzygyPath; None ok
+    (tests)."""
     cache = search_cache or SearchCache()
 
     async def analyze(input_: dict, *, cancel_token: CancelToken) -> dict:
