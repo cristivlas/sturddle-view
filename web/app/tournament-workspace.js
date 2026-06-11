@@ -897,7 +897,14 @@ function onResize(ctx) {
   ctx.resizeTimer = setTimeout(() => {
     const all = openWindows(ctx);
     const anyMax = all.some(wb => wb.max);
-    for (const wb of all) if (wb.max) { wb.restore(); wb.maximize(); }
+    // Refit maximized windows to the new viewport. Suppress onrestore for
+    // the cycle: it's not a user restore, and onReflow would claim/evict
+    // slots against half-updated geometry (spurious minimize).
+    for (const wb of all) if (wb.max) {
+      const onRestore = wb.onrestore;
+      wb.onrestore = null;
+      try { wb.restore(); wb.maximize(); } finally { wb.onrestore = onRestore; }
+    }
     if (ctx.activeLayout === LAYOUT.TIDY) {
       // tidy() skips the maximized window (preserveMin) and re-grids the
       // rest, so survivors track the new viewport even mid-maximize. TILE/

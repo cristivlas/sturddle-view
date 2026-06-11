@@ -317,11 +317,16 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     if (cx !== wb.x || cy !== wb.y) wb.move(cx, cy);
   };
   if (!min && !max) clampToViewport();
+  const scheduleConstrain = rafCoalesce(constrainAndResize);
   // Clamp height so the window can't grow taller than the board needs:
   // a portrait-stretched window wastes space and looks broken.
   wb.onresize = (w, h) => {
     const maxH = w + LIVE_WINBOX_TITLE + liveFixedFull();
     if (h > maxH) wb.resize(w, maxH);
+    // Maximize/restore can land on identical pixel sizes; the
+    // ResizeObserver stays silent then, so re-check the wb.max-gated
+    // side panels. rAF: WinBox sets wb.max after this callback.
+    scheduleConstrain();
   };
   if (avoidRect) avoidOverlap(wb, avoidRect, top, left, idx * 24);
   // WinBox doesn't expose its config minwidth/minheight as instance fields;
@@ -424,6 +429,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   }
 
   function disposeShared() {
+    scheduleConstrain.cancel();
     ro.disconnect();
     board.destroy();
     if (gameId) window.removeEventListener(APP_EVT.RECONCILED, onReconciled);
