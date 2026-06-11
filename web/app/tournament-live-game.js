@@ -259,8 +259,8 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     ?? Math.max(Math.round(window.innerWidth * 0.20), LIVE_MIN_WIDTH);
   const initialHeight = initialRect?.h ?? null;
   const defaultClass = gameId
-    ? "sturddle-wb sturddle-wb-live sturddle-wb-live-game no-full no-shadow"
-    : "sturddle-wb sturddle-wb-live sturddle-wb-live-proxy no-full no-shadow";
+    ? "sturddle-wb sturddle-wb-live sturddle-wb-live-game no-full"
+    : "sturddle-wb sturddle-wb-live sturddle-wb-live-proxy no-full";
   const wb = new WinBox({
     title: titleWithTag,
     width: initialWidth,

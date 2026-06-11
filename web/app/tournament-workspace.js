@@ -515,12 +515,15 @@ function onReflow(ctx, wb, isRestore) {
   }
 }
 
-// Reflow + header wiring so any game window (live or frozen) participates
-// in TIDY/TILE/SNAP layouts and slot-grid placement.
+// Reflow + header wiring so any workspace window (system, live, frozen)
+// participates in TIDY/TILE/SNAP layouts and slot-grid placement.
 function wireLayoutHandlers(ctx, wb) {
   wb.onminimize = () => onReflow(ctx, wb, false);
   wb.onrestore = () => onReflow(ctx, wb, true);
   wireHeader(ctx, wb);
+  // Initial shadow/corner state follows the layout: free-floating (NONE)
+  // means shadow + rounded; managed layouts re-assert no-shadow per reflow.
+  setShadow(wb, ctx.activeLayout === LAYOUT.NONE);
 }
 
 // Wire the drag-unmaximize repositioning on a window's header.
@@ -562,7 +565,7 @@ function makeBox(ctx, key, title, body, { min = false, max = false } = {}) {
   const wb = new WinBox({
     title, mount: body, top: ctx.top, left: ctx.left, right: ctx.getRightInset(), min, max,
     ...(cfg ? { x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height } : {}),
-    class: `sturddle-wb no-full no-shadow${extra}`,
+    class: `sturddle-wb no-full${extra}`,
     ...sizes,
   });
   // Stash so tile()/snap() can read the effective min size from the
@@ -578,9 +581,7 @@ function makeBox(ctx, key, title, body, { min = false, max = false } = {}) {
     else if (ctx.activeLayout !== LAYOUT.TIDY) requestAnimationFrame(() => reapplyLayout(ctx));
     return false;
   };
-  wb.onminimize = () => onReflow(ctx, wb, false);
-  wb.onrestore = () => onReflow(ctx, wb, true);
-  wireHeader(ctx, wb);
+  wireLayoutHandlers(ctx, wb);
   if (ctx.top > 0 && wb.y < ctx.top) wb.move(wb.x, ctx.top);
   if (ctx.left > 0 && wb.x < ctx.left) wb.move(ctx.left, wb.y);
   return wb;
