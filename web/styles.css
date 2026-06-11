@@ -2743,9 +2743,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .fs-entry.dim.selected > td { color: var(--muted); }
 .fs-entry .fs-name-cell wa-icon { font-size: 0.875rem; vertical-align: middle; margin-right: 8px; }
 .fs-entry .fs-name { vertical-align: middle; }
-.fs-entry .fs-date { color: var(--muted); }
-.fs-entry .fs-size { color: var(--muted); text-align: right; }
-.fs-entry.selected .fs-date, .fs-entry.selected .fs-size { color: var(--muted); }
+.fs-entry .fs-date { color: inherit; }
+.fs-entry .fs-size { color: inherit; text-align: right; }
 
 /* ---------- Tournaments panel ---------- */
 .tournaments-panel { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }

@@ -242,7 +242,7 @@ export function pickFile({
 
   return showDialog({
     label: title,
-    width: "min(800px, 90vw)",
+    width: "min(720px, 90vw)",
     defaultValue: null,
     body: (resolve, dialog) => {
       // Layout: path bar at top, listing in the middle, footer with select/cancel.
