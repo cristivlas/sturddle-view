@@ -3185,11 +3185,14 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   flex: 1; overflow-y: auto; min-height: 0;
 }
 .ne-item {
-  padding: 4px 8px; cursor: pointer; border-radius: 3px;
+  padding: 4px 8px; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: none;
 }
 .ne-item:hover { background: var(--nav-btn-bg); }
-.ne-item.selected { background: var(--wa-color-brand-fill-loud); color: #fff; }
+.ne-item.selected {
+  background: var(--row-bg-selected); color: var(--text);
+  box-shadow: inset 3px 0 0 var(--accent-line);
+}
 .ne-controls, .ne-reorder {
   display: flex; flex-direction: column; gap: 4px;
   align-items: center; justify-content: center;
