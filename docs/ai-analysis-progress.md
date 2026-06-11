@@ -75,11 +75,6 @@ Tests:
       auth, "Retry" for rate limit). Park until evidence shows it
       matters.
 
-### Engine-side blockers
-
-- **`compare_moves` not built.** Would use the same `searchmoves`
-  shape as `top_moves`; add when a concrete need appears.
-
 ### Other pending tools
 
 - [ ] `tablebase_probe()` -- wrap `TablebaseProber`; live board only.
@@ -106,17 +101,6 @@ interprets MD. Park until evidence warrants.
   so this boundary is permanent. Worth deciding whether the
   start-of-turn assembly stays at the API boundary or moves into the
   coordinator regardless.
-
-- **`analyze` tool depth floor.** Models occasionally pass low `depth`
-  (8-10), producing noisy bestmoves that surface in coach prose as bad
-  recommendations. Default is now 20; the model can still override
-  downward. Mitigations, smallest to largest:
-  1. Prompt nudge in the `analyze` tool's description or card.
-  2. Server-side floor in `_clamp_limits` (`d = max(MIN_DEPTH, ...)`).
-     Risk: makes `top_moves` slow if it inherits the same floor; want
-     a separate per-tool floor.
-  3. Both.
-  Defer until a concrete failure-mode change is observed.
 
 - **`EngineSupervisor.spawn()` vs `spawn_throwaway()` consolidation.**
   Today they're honestly different (former binds to long-lived

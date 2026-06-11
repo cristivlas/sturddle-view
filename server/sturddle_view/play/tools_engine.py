@@ -59,10 +59,13 @@ _DEFAULT_RECOMMEND_MARGIN_CP = 50
 RECOMMEND_MARGIN_CP = env_int("SV_AI_RECOMMEND_MARGIN", _DEFAULT_RECOMMEND_MARGIN_CP)
 
 # Default search depth when the caller omits one. 20 plies gives reliable
-# tactical resolution; lower values surface noisy bestmoves. Server-side
-# enforcement of this as a floor against model-supplied depth is an open
-# mitigation -- see docs/ai-analysis-progress.md.
+# tactical resolution; lower values surface noisy bestmoves. Model-supplied
+# depth is floored at MIN_DEPTH below.
 _DEFAULT_DEPTH = 20
+
+# Floor on model-supplied depth -- shallower searches rank candidates poorly.
+_DEFAULT_MIN_DEPTH = 10
+MIN_DEPTH = env_int("SV_AI_MIN_DEPTH", _DEFAULT_MIN_DEPTH)
 
 # top_moves: hard cap on the model-supplied candidate list length.
 # Each candidate runs one sequential search; cost scales linearly.
@@ -336,7 +339,7 @@ def _depth_limit(
     raw_depth = input_.get("depth")
     if raw_depth is not None:
         try:
-            depth = max(1, min(int(raw_depth), max_depth))
+            depth = max(min(MIN_DEPTH, max_depth), min(int(raw_depth), max_depth))
         except (TypeError, ValueError):
             depth = default_depth
     else:
