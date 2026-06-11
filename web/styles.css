@@ -1933,6 +1933,24 @@ body .side-popover.popover-floating {
   color: inherit;
   flex-shrink: 0;
 }
+/* Play/view clock cards only (.game-view-board scope keeps the tournament
+   live-game windows untouched): WinBox-matched chrome, faint vertical
+   gradient, steady digits. Cosmetic only -- same elements and states. */
+.game-view-board .clock-row {
+  border-color: var(--wb-outline);
+  border-radius: 0;
+  background: linear-gradient(#40434b, #34373d);
+}
+.game-view-board .clock-row .clock-name { color: var(--muted-bright); }
+.game-view-board .clock-row.active .clock-name { color: inherit; }
+.game-view-board .clock-row .clock-time { font-variant-numeric: tabular-nums; }
+/* On-move accent edge on the left; inset shadow so row size is unchanged.
+   Active invert backgrounds still apply (their selectors outspecify the
+   gradient rule above). */
+.game-view-board .clock-row.active { box-shadow: inset 6px 0 0 var(--accent); }
+/* White-active row: --accent amber doesn't read on #e8e8e8; use the
+   selected-row slate-navy from the shared palette. */
+.game-view-board .clock-row[data-color="white"].active { box-shadow: inset 6px 0 0 var(--row-bg-selected); }
 
 #board-controls {
   display: flex;
