@@ -1371,10 +1371,16 @@ export function mountTournaments({ container, api, events, log, token }) {
 
   // Workspace windows don't fit a mobile viewport in either axis. Width
   // OR height crossing the threshold counts as mobile.
-  // Mobile viewport closes the workspace. No auto-reopen on widen --
-  // user must manually reopen via the ribbon button.
+  // Mobile viewport closes the workspace (snapshot stays restorable);
+  // widening back to desktop reopens it from that snapshot.
   ctx.onViewportChange = () => {
-    if (mqMobile.matches || mqMobileH.matches) getActiveWorkspace()?.close();
+    if (mqMobile.matches || mqMobileH.matches) {
+      getActiveWorkspace()?.close();
+    } else {
+      // rAF: let the desktop layout settle before openWorkspace
+      // measures ribbon/menubar geometry.
+      requestAnimationFrame(() => maybeRestoreWorkspace(ctx));
+    }
   };
   mqMobile.addEventListener("change", ctx.onViewportChange);
   mqMobileH.addEventListener("change", ctx.onViewportChange);
