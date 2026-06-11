@@ -4,6 +4,7 @@
   --muted: #888;
   --muted-bright: #aaa;
   --wb-outline: rgba(136, 136, 136, 0.4);
+  --wb-radius: 8px;
   --accent: #f59e0b;
   --accent-rgb: 245, 158, 11;
   /* TODO: revisit unifying --accent and --accent-line into a single token. */
@@ -3295,7 +3296,21 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   border: none;
   outline: 1px solid var(--wb-outline);
   opacity: 1 !important;
+  border-radius: var(--wb-radius);
 }
+/* Round the header/body corners instead of overflow:hidden on the window,
+   which would clip the edge resize handles that extend outside it. */
+.winbox.sturddle-wb .wb-header { border-radius: var(--wb-radius) var(--wb-radius) 0 0; }
+.winbox.sturddle-wb .wb-body { border-radius: 0 0 var(--wb-radius) var(--wb-radius); }
+.winbox.sturddle-wb.max,
+.winbox.sturddle-wb.max .wb-header,
+.winbox.sturddle-wb.max .wb-body { border-radius: 0; }
+/* Tournament workspace: no-shadow marks layout-managed placement (see
+   setShadow in tournament-workspace.js); square corners while tiled,
+   rounded only when freely dragged (shadow on). */
+.winbox.sturddle-wb.no-shadow,
+.winbox.sturddle-wb.no-shadow .wb-header,
+.winbox.sturddle-wb.no-shadow .wb-body { border-radius: 0; }
 .winbox.sturddle-wb-ribbon {
   border: 1px solid lightgray;
   outline: none;
