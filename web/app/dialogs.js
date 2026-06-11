@@ -7,6 +7,7 @@ import { attachColumnResize } from "./col-resize.js";
 import { attachColumnSort } from "./col-sort.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
+import { rafCoalesce } from "./wb-utils.js";
 
 const FS_COL_DEFAULT_PCTS = [55, 30, 15];
 const FS_MIN_COL_PCT = 8;
@@ -724,6 +725,51 @@ export function makeToastDismissBtn(onClick) {
   return btn;
 }
 
+const TOAST_STACK_ID = "toast-stack";
+const XGAME_TOAST_STACK_ID = "xgame-toast-stack";
+const TOAST_STACK_IDS = [TOAST_STACK_ID, XGAME_TOAST_STACK_ID];
+const TOAST_STACK_LIFTED = "toast-stack-lifted";
+
+// Lift a toast stack above the WinBox minimize dock only on actual overlap:
+// a minimized window intersecting the stack's horizontal extent. Lifting
+// moves the stack vertically only, so the test never oscillates.
+let toastLiftObserver = null;
+
+function updateToastLift() {
+  const mins = [...document.querySelectorAll(".winbox.min")]
+    .map((el) => el.getBoundingClientRect());
+  for (const id of TOAST_STACK_IDS) {
+    const stack = document.getElementById(id);
+    if (!stack) continue;
+    const r = stack.getBoundingClientRect();
+    const hit = stack.childElementCount > 0 &&
+      mins.some((m) => m.left < r.right && m.right > r.left);
+    stack.classList.toggle(TOAST_STACK_LIFTED, hit);
+  }
+}
+
+const scheduleToastLift = rafCoalesce(updateToastLift);
+
+function watchToastLift() {
+  if (toastLiftObserver) return;
+  toastLiftObserver = new MutationObserver(scheduleToastLift);
+  // childList: toasts and WinBoxes enter/leave; class: WinBox .min toggles.
+  toastLiftObserver.observe(document.body, {
+    subtree: true, childList: true, attributes: true, attributeFilter: ["class"],
+  });
+}
+
+// Tear the observer down once no toasts remain, so it isn't watching the
+// whole body subtree for the lifetime of the page.
+function stopToastLiftIfIdle() {
+  const live = TOAST_STACK_IDS
+    .some((id) => (document.getElementById(id)?.childElementCount ?? 0) > 0);
+  if (live || !toastLiftObserver) return;
+  toastLiftObserver.disconnect();
+  toastLiftObserver = null;
+  scheduleToastLift.cancel();
+}
+
 /** Compose a toast message Node from leading text plus action buttons. */
 export function buildToastWithActions(text, actions) {
   const node = document.createElement("span");
@@ -756,7 +802,7 @@ export function reportError(ctx, action, error, opts = {}) {
 export function toast(message, { variant = "neutral", duration = 4000, stack: stackName = "default" } = {}) {
   // Simple toast implementation; Web Awesome's callout supports more styling.
   const host = ensureContainer();
-  const stackId = stackName === "xgame" ? "xgame-toast-stack" : "toast-stack";
+  const stackId = stackName === "xgame" ? XGAME_TOAST_STACK_ID : TOAST_STACK_ID;
   let stack = document.getElementById(stackId);
   if (!stack) {
     stack = document.createElement("div");
@@ -781,12 +827,14 @@ export function toast(message, { variant = "neutral", duration = 4000, stack: st
     t.textContent = message;
   }
   stack.appendChild(t);
+  watchToastLift();
+  updateToastLift();
   let dismissed = false;
   const dismiss = () => {
     if (dismissed) return;
     dismissed = true;
     t.classList.add("toast-hide");
-    setTimeout(() => t.remove(), 200);
+    setTimeout(() => { t.remove(); updateToastLift(); stopToastLiftIfIdle(); }, 200);
   };
   if (duration && Number.isFinite(duration)) {
     setTimeout(dismiss, duration);

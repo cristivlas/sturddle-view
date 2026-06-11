@@ -27,6 +27,7 @@ import { attachColumnResize } from "./col-resize.js";
 import { apiErrorDetail, confirm, toast } from "./dialogs.js";
 import {
   AUTOSCROLL_SLACK_ROW_PX,
+  cssVarPx,
   escapeHtml,
   flashWindow,
   isPinnedToBottom,
@@ -40,7 +41,13 @@ const STANDINGS_DEFAULT_PCTS = [25, 7, 7, 7, 7, 7, 8, 14];
 const EVENT_LOG_LIMIT = 500;
 
 // Reserved strip at the bottom so minimized WinBoxes have a place to dock.
-const MINIMIZE_FOOTER_H = 36;
+// Source of truth is the --wb-min-footer-h CSS token (toast stacks lift
+// above the same strip); read lazily since the stylesheet may not be
+// applied yet at module-eval time.
+const MINIMIZE_FOOTER_FALLBACK = 36;
+function minimizeFooterH() {
+  return cssVarPx("--wb-min-footer-h", MINIMIZE_FOOTER_FALLBACK);
+}
 // Visual gap between tiled/snapped windows; also absorbs WinBox rounding.
 const TILE_MARGIN = 0;
 const TIDY_GAP = 0;
@@ -221,7 +228,7 @@ function tile(ctx, wbsIn, { reserveDock = false, preserveMin = false } = {}) {
   if (preserveMin) wbs = wbs.filter(wb => !wb.min);
   else wbs.forEach(unminimize);
   const availW = ctx.getRight() - left;
-  const availH = window.innerHeight - top - (reserveDock ? MINIMIZE_FOOTER_H : 0);
+  const availH = window.innerHeight - top - (reserveDock ? minimizeFooterH() : 0);
   const maxMinW = Math.max(...wbs.map(wb => wb.svMinWidth ?? 0));
   const maxMinH = Math.max(...wbs.map(wb => wb.svMinHeight ?? 0));
   const n = wbs.length;
@@ -298,7 +305,7 @@ function tidy(ctx, { preserveMin = false } = {}) {
     }
   }
   const availW = ctx.getRight() - left;
-  const availH = window.innerHeight - top - MINIMIZE_FOOTER_H;
+  const availH = window.innerHeight - top - minimizeFooterH();
   const mins = getMinSizes();
   const leftW = Math.max(Math.round(availW * 0.35), mins.engines.minwidth);
   const rightW = availW - leftW - TIDY_GAP;
@@ -349,7 +356,7 @@ function snap(ctx) {
   // Reserve bottom strip for the minimize dock only if any window is
   // currently minimized -- otherwise full viewport.
   const hasMin = allWindows.some(wb => wb.min);
-  const vy1 = window.innerHeight - (hasMin ? MINIMIZE_FOOTER_H : 0);
+  const vy1 = window.innerHeight - (hasMin ? minimizeFooterH() : 0);
 
   const items = wbs.map(wb => ({
     wb,

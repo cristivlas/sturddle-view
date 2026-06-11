@@ -5,6 +5,9 @@
   --muted-bright: #aaa;
   --wb-outline: rgba(136, 136, 136, 0.4);
   --wb-radius: 8px;
+  /* Bottom strip where minimized WinBoxes dock; tournament-workspace.js
+     reads this for layout math (MINIMIZE_FOOTER_H). */
+  --wb-min-footer-h: 36px;
   --accent: #f59e0b;
   --accent-rgb: 245, 158, 11;
   /* TODO: revisit unifying --accent and --accent-line into a single token. */
@@ -824,11 +827,15 @@ svg.cm-chessboard {
 #xgame-toast-stack {
   position: fixed;
   /* Co-located with the ribbon: default is left; right-ribbon override
-     below moves it to the right edge. Inset clears the 36px ribbon plus
-     (optionally) some gutter so toasts don't overlap ribbon buttons.
-     #xgame-toast-stack lives on the opposite (moves-list) side. */
-  /* inset: auto auto 4px 44px; */
-  inset: auto auto 4px 36px;
+     below moves it to the right edge. Side inset clears the 36px ribbon
+     so toasts don't overlap ribbon buttons; #xgame-toast-stack lives on
+     the opposite (moves-list) side. Longhand on purpose: top/right also
+     override the UA popover inset:0, and bottom stays owned by this rule
+     plus .toast-stack-lifted only. */
+  top: auto;
+  right: auto;
+  bottom: 4px;
+  left: 36px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -848,7 +855,14 @@ svg.cm-chessboard {
   max-height: none;
   color: inherit;
 }
-#xgame-toast-stack { inset: auto 36px 4px auto; }
+#xgame-toast-stack { left: auto; right: 36px; }
+/* Lifted above the WinBox minimize dock when a minimized window actually
+   overlaps the stack horizontally; dialogs.js toggles the class. Side
+   placement rules set only left/right so this bottom always wins. */
+#toast-stack.toast-stack-lifted,
+#xgame-toast-stack.toast-stack-lifted {
+  bottom: calc(4px + var(--wb-min-footer-h));
+}
 #toast-stack:popover-open,
 #xgame-toast-stack:popover-open {
   display: flex;
@@ -3311,6 +3325,11 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .winbox.sturddle-wb.no-shadow,
 .winbox.sturddle-wb.no-shadow .wb-header,
 .winbox.sturddle-wb.no-shadow .wb-body { border-radius: 0; }
+/* Minimized: square corners while docked in the bottom strip. Restore
+   removes .min, so the float/tiled rules above decide the shape again. */
+.winbox.sturddle-wb.min,
+.winbox.sturddle-wb.min .wb-header,
+.winbox.sturddle-wb.min .wb-body { border-radius: 0; }
 .winbox.sturddle-wb-ribbon {
   border: 1px solid lightgray;
   outline: none;
@@ -3684,10 +3703,10 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    docks the ribbon horizontally and is unaffected.
    ------------------------------------------------------------------ */
 body[data-ribbon-side="right"] #toast-stack {
-  inset: auto 36px 4px auto;
+  left: auto; right: 36px;
 }
 body[data-ribbon-side="right"] #xgame-toast-stack {
-  inset: auto auto 4px 36px;
+  left: 36px; right: auto;
 }
 @media (max-width: 800px) {
   /* Ribbon is horizontal at top on mobile, so toasts don't need a side
@@ -3696,11 +3715,11 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
      "moves-list side" distinction is desktop-only. */
   #toast-stack,
   #xgame-toast-stack {
-    inset: auto auto 4px 16px;
+    left: 16px; right: auto;
   }
   body[data-ribbon-side="right"] #toast-stack,
   body[data-ribbon-side="right"] #xgame-toast-stack {
-    inset: auto 16px 4px auto;
+    left: auto; right: 16px;
   }
 }
 

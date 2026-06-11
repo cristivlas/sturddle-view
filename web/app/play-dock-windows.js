@@ -34,8 +34,12 @@ import {
   fmtCount,
   fmtScore,
   isPinnedToBottom,
+  rafCoalesce,
+  ribbonWidthPx,
   scrollToBottom,
 } from "./wb-utils.js";
+
+const PLAY_GRID_SEL = ".play-grid";
 
 // Vertical stack order for docked windows. Lower values render higher
 // in the column. Centralized so adding a new window doesn't require
@@ -97,8 +101,7 @@ function applyDockBounds(el) {
   const board = document.querySelector(".play-board-host");
   if (!board) return;
   const rect = board.getBoundingClientRect();
-  const ribbonW = parseInt(getComputedStyle(el.closest(".play-grid") ?? document.documentElement)
-    .getPropertyValue("--ribbon-w")) || 36;
+  const ribbonW = ribbonWidthPx(PLAY_GRID_SEL);
   const ribbonSide = document.body.dataset.ribbonSide === "right" ? "right" : "left";
   if (ribbonSide === "right") {
     el.style.width = (window.innerWidth - Math.round(rect.right) - ribbonW - 9) + "px";
@@ -131,6 +134,10 @@ window.addEventListener(APP_EVT.LAYOUT_CHANGED, () => {
     requestAnimationFrame(updateDockBounds));
 });
 
+// Re-clamp floating windows off the ribbon strips when the viewport shrinks
+// (WinBox doesn't re-enforce left/right on resize). rAF-coalesced.
+window.addEventListener("resize", rafCoalesce(reclampFloats));
+
 // Migrate inline-capable panels across the mobile breakpoint. Each query can
 // fire independently (width vs height), so a single coalesced handler covers
 // both without double-running. relayout() no-ops for instances that aren't
@@ -153,6 +160,7 @@ function rightColumnWidth(fallback = 480) {
 }
 
 function winboxBase(title, className, width, height, x, y) {
+  const ribbonW = ribbonWidthPx(PLAY_GRID_SEL);
   return {
     title,
     class: `sturddle-wb ${className} no-full`,
@@ -163,7 +171,30 @@ function winboxBase(title, className, width, height, x, y) {
     x,
     y,
     top: HEADER_H,
+    left: ribbonW,
+    right: ribbonW,
   };
+}
+
+// Keep a floating window clear of the ribbon strips. WinBox enforces
+// left/right only while dragging, not on a saved/initial position or a
+// viewport resize, so re-clamp explicitly. Shrink an over-wide window to
+// the band between ribbons first, so the left edge can always reach ribbonW.
+function clampFloatX(wb, ribbonW) {
+  if (!wb || wb.min || wb.max) return;
+  const band = window.innerWidth - 2 * ribbonW;
+  // Bail when the band can't fit the window's minwidth: shrinking below
+  // it is worse than letting the window overlap a ribbon.
+  if (band < (wb.minwidth || 1)) return;
+  if (wb.width > band) wb.resize(band, wb.height);
+  const maxX = window.innerWidth - ribbonW - wb.width;
+  const x = Math.max(ribbonW, Math.min(wb.x, maxX));
+  if (x !== wb.x) wb.move(x, wb.y);
+}
+
+function reclampFloats() {
+  const ribbonW = ribbonWidthPx(PLAY_GRID_SEL);
+  for (const inst of instances) clampFloatX(inst.wb, ribbonW);
 }
 
 // Geometry as raw numbers. Distinct from tournament-workspace.js's
@@ -492,6 +523,7 @@ export function createDockableWindow(config) {
       onmove()     { saveGeo(geoKey, wb); },
       onresize()   { saveGeo(geoKey, wb); },
     });
+    clampFloatX(wb, ribbonWidthPx(PLAY_GRID_SEL));
     // WinBox addControl with index:0 PREPENDS into .wb-control, so the
     // LAST call ends up leftmost. Add dock first so it stays rightmost,
     // then actions in declaration order (each new one goes leftmost).

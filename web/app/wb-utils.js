@@ -1,3 +1,32 @@
+// Read a px-valued CSS custom property from the element matching
+// `selector` (default: document root), with a numeric fallback when the
+// var is unset, zero, or unparsable.
+export function cssVarPx(name, fallback, selector) {
+  const el = (selector && document.querySelector(selector)) || document.documentElement;
+  const v = parseFloat(getComputedStyle(el).getPropertyValue(name));
+  return v > 0 ? v : fallback;
+}
+
+// Ribbon strip width; matches the `--ribbon-w` CSS var on the
+// perspective's grid/body. Reserved on both viewport edges so
+// ribbon-side flips don't invalidate bounds.
+const RIBBON_W_FALLBACK_PX = 36;
+export function ribbonWidthPx(selector) {
+  return cssVarPx("--ribbon-w", RIBBON_W_FALLBACK_PX, selector);
+}
+
+// Coalesce repeated calls into one requestAnimationFrame: however many
+// times the returned schedule() fires before the frame, fn runs once.
+// cancel() drops a pending frame.
+export function rafCoalesce(fn) {
+  let id = 0;
+  const schedule = () => {
+    if (!id) id = requestAnimationFrame(() => { id = 0; fn(); });
+  };
+  schedule.cancel = () => { if (id) { cancelAnimationFrame(id); id = 0; } };
+  return schedule;
+}
+
 export function flashWindow(wb) {
   wb.addClass("wb-attention");
   wb.g.addEventListener("animationend", () => wb.removeClass("wb-attention"), { once: true });
