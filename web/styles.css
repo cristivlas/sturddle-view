@@ -2684,7 +2684,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   max-height: 480px;
   overflow: auto;
   font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
 }
 .fs-picker-table-wrap.fs-empty::after {
   content: "No matches";
@@ -2709,7 +2709,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  border-bottom: 2px solid var(--accent-line);
+  box-shadow: inset 0 -2px 0 var(--accent-line);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -2717,7 +2717,10 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 }
 .fs-picker-table thead th:hover {
   background: #252830;
-  box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
+  box-shadow:
+    inset 2px 0 0 var(--wa-color-border-loud, #353841),
+    inset -2px 0 0 var(--wa-color-border-loud, #353841),
+    inset 0 -2px 0 var(--accent-line);
 }
 /* Size header sits over right-aligned values. */
 .fs-picker-table thead th:last-child { text-align: right; }
@@ -2741,7 +2744,8 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
 .fs-entry.selected > td { background: var(--row-bg-selected); color: var(--text); }
 .fs-entry.selected > td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
 .fs-entry.dim.selected > td { color: var(--muted); }
-.fs-entry .fs-name-cell wa-icon { font-size: 0.875rem; vertical-align: middle; margin-right: 8px; }
+.fs-entry .fs-name-cell wa-icon { font-size: 0.875rem; vertical-align: middle; margin-right: 8px; color: var(--wa-color-brand-95); }
+.fs-entry.selected .fs-name-cell wa-icon { color: var(--text); }
 .fs-entry .fs-name { vertical-align: middle; }
 .fs-entry .fs-date { color: inherit; }
 .fs-entry .fs-size { color: inherit; text-align: right; }

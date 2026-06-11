@@ -435,7 +435,7 @@ export function pickFile({
           const nameCell = document.createElement("td");
           nameCell.className = "fs-name-cell";
           const icon = document.createElement("wa-icon");
-          icon.name = entry.is_dir ? "folder" : entry.is_executable ? "gear" : "file";
+          icon.name = entry.is_dir ? "folder" : entry.is_executable ? "gears" : "file-lines";
           const name = document.createElement("span");
           name.className = "fs-name";
           name.textContent = entry.name;
