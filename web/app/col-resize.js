@@ -16,6 +16,7 @@ export function attachColumnResize({
   unit,            // "pct" | "px" -- only used to position drag-lines
   applySizes,
   dragLineHeight,  // optional () => number; defaults to overlayHost.scrollHeight
+  onSave = null,   // optional (sizes) => void; fires after drag-end persist
 }) {
   const persistArity = sizes.length;
 
@@ -71,6 +72,7 @@ export function attachColumnResize({
         rightLine.remove();
         leftLine.remove();
         saveJson(storageKey, sizes.slice(0, persistArity));
+        if (onSave) onSave(sizes.slice(0, persistArity));
         grip.removeEventListener("pointermove", onMove);
         grip.removeEventListener("pointerup", onUp);
         grip.removeEventListener("pointercancel", onUp);

@@ -22,17 +22,15 @@
 // considered but rejected for the UX regressions (broken toggle buttons,
 // no resize-back recovery, divergent localStorage state).
 
-import { attachColumnResize } from "./col-resize.js";
 import { toast } from "./dialogs.js";
 import { mqMobile, mqMobileHPlay } from "./breakpoints.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
+import { createPvTable } from "./pv-table.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, loadRaw, saveRaw } from "./storage.js";
 import {
   AUTOSCROLL_SLACK_LINE_PX,
-  fmtCount,
-  fmtScore,
   isPinnedToBottom,
   rafCoalesce,
   ribbonWidthPx,
@@ -823,130 +821,13 @@ const PV_DOCKED_KEY    = STORAGE_KEY.PVTABLE_DOCKED;
 const PV_OPEN_KEY      = STORAGE_KEY.PVTABLE_OPEN;
 
 function buildPvTableBody(events, { setOff }) {
-  const body = document.createElement("div");
-  body.className = "wb-pvtable";
-  body.innerHTML = `
-    <table class="wb-table wb-pvtable-tbl">
-      <colgroup>
-        <col class="wb-pvtable-col-depth">
-        <col class="wb-pvtable-col-score">
-        <col class="wb-pvtable-col-nodes">
-        <col class="wb-pvtable-col-nps">
-        <col class="wb-pvtable-col-pv">
-      </colgroup>
-      <thead>
-        <tr>
-          <th>Depth<span class="th-grip"></span></th>
-          <th>Eval<span class="th-grip"></span></th>
-          <th>Nodes<span class="th-grip"></span></th>
-          <th>NPS<span class="th-grip"></span></th>
-          <th>PV</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  `;
-
-  const tbody = body.querySelector("tbody");
-  const tableEl = body.querySelector(".wb-pvtable-tbl");
-  const colEls = Array.from(body.querySelectorAll("col"));
-  const COL_WIDTHS_KEY = STORAGE_KEY.PVTABLE_COL_WIDTHS;
-  const DEFAULT_WIDTHS = [50, 50, 55, 45];
-  const minPx = 30;
-  const grips = Array.from(body.querySelectorAll(".th-grip"));
-  const colWidths = DEFAULT_WIDTHS.slice();
-
-  attachColumnResize({
-    table: tableEl,
-    grips,
-    overlayHost: body,
-    storageKey: COL_WIDTHS_KEY,
-    sizes: colWidths,
-    unit: "px",
-    dragLineHeight: () => {
-      const tr = tableEl.getBoundingClientRect();
-      const br = body.getBoundingClientRect();
-      return Math.max(0, tr.bottom - br.top);
-    },
-    applySizes(sizes, ctx) {
-      if (ctx) {
-        const { deltaFrac, tableWidth, startSizes, gripIdx } = ctx;
-        const d = deltaFrac * tableWidth;
-        let a = startSizes[gripIdx] + d;
-        if (a < minPx) a = minPx;
-        sizes[gripIdx] = a;
-        if (gripIdx + 1 < sizes.length) {
-          let b = startSizes[gripIdx + 1] - d;
-          if (b < minPx) b = minPx;
-          sizes[gripIdx + 1] = b;
-        }
-      }
-      // First 4 cols are fixed px; last col (PV) is auto to fill remaining space.
-      colEls.slice(0, 4).forEach((c, i) => { c.style.width = sizes[i] + "px"; });
-      colEls[4].style.width = "auto";
-      const fixedW = sizes.reduce((s, w) => s + w, 0);
-      tableEl.style.width = "100%";
-      tableEl.style.minWidth = fixedW + "px";
-      fitTableToPvContent();
-    },
-  });
-
-  const rowMap = new Map();
-  let maxDepth = 0;
-
-  function clearTable() {
-    tbody.textContent = "";
-    rowMap.clear();
-    maxDepth = 0;
-  }
-
-  setOff(events.on((evt) => {
+  const pvt = createPvTable({ colWidthsKey: STORAGE_KEY.PVTABLE_COL_WIDTHS });
+  const off = events.on((evt) => {
     if (evt.kind !== KIND.ENGINE_INFO) return;
-    const { depth, seldepth, score, nodes, nps, pv } = evt.payload;
-    if (depth == null) return;
-    // depth === 1 after maxDepth > 1 signals a new search (single-PV assumption;
-    // MultiPV > 1 can emit low-depth lines mid-search and would false-trigger).
-    if (depth === 1 && maxDepth > 1) clearTable();
-    if (depth > maxDepth) maxDepth = depth;
-    let tr = rowMap.get(depth);
-    if (!tr) {
-      tr = document.createElement("tr");
-      tr.dataset.depth = String(depth);
-      tr.innerHTML = `<td></td><td></td><td></td><td></td><td class="wb-pvtable-pv"></td>`;
-      rowMap.set(depth, tr);
-      // Insert sorted by depth descending (highest at top).
-      let inserted = false;
-      for (const row of tbody.rows) {
-        if (Number(row.dataset.depth) < depth) {
-          tbody.insertBefore(tr, row);
-          inserted = true;
-          break;
-        }
-      }
-      if (!inserted) tbody.appendChild(tr);
-    }
-    tr.cells[0].textContent = seldepth != null ? `${depth}/${seldepth}` : depth;
-    if (score) tr.cells[1].textContent = fmtScore(score);
-    if (nodes != null) tr.cells[2].textContent = fmtCount(nodes);
-    if (nps != null) tr.cells[3].textContent = fmtCount(nps);
-    if (pv?.[0]) tr.cells[4].textContent = pv[0];
-    fitTableToPvContent();
-  }));
-
-  // PV cell uses overflow:visible so long lines extend past the cell's
-  // logical width. Grow the table to match so row borders and column
-  // dividers extend to the right edge of the visible/scrollable content.
-  function fitTableToPvContent() {
-    let pvMax = 0;
-    for (const row of tbody.rows) {
-      const cell = row.cells[4];
-      if (cell && cell.scrollWidth > pvMax) pvMax = cell.scrollWidth;
-    }
-    const fixedW = colWidths.reduce((s, w) => s + w, 0);
-    tableEl.style.minWidth = (fixedW + pvMax) + "px";
-  }
-
-  return body;
+    pvt.update(evt.payload, evt.payload.pv?.[0]);
+  });
+  setOff(() => { off(); pvt.dispose(); });
+  return pvt.el;
 }
 
 const pvTable = createDockableWindow({

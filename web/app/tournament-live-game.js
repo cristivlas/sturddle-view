@@ -9,6 +9,9 @@ import { isPlayInProgress, isViewing, isAnalyzing, getViewingHash, getViewingSum
 import { confirmReplaceViewedGame } from "./import-position-dialog.js";
 import { APP_EVT } from "./app-events.js";
 import { SIDE, FEN_STM } from "./chess-consts.js";
+import { createEvalGraph } from "./eval-graph.js";
+import { createPvTable } from "./pv-table.js";
+import { STORAGE_KEY } from "./storage-keys.js";
 import { fmtClock, fmtCount, fmtScore, flashWindow, rafCoalesce } from "./wb-utils.js";
 import { terminationPhrase } from "./format-termination.js";
 
@@ -30,6 +33,13 @@ function _applyEvalInfo({ depthEl, npsEl, tbhitsEl }, p) {
   depthEl.textContent = _fmtDepth(p);
   npsEl.textContent = _fmtNps(p);
   tbhitsEl.textContent = _fmtTb(p);
+}
+
+// 0-based ply about to be played in `fen` (fullmove + side to move).
+function fenPly(fen) {
+  const parts = fen.split(" ");
+  const fullmove = parseInt(parts[5], 10) || 1;
+  return (fullmove - 1) * 2 + (parts[1] === FEN_STM.BLACK ? 1 : 0);
 }
 
 async function replayTournamentGame({ tournamentId, gameN, token, pairId = null }) {
@@ -182,13 +192,18 @@ function liveFixedFull() {
 }
 // Below this body height, drop the pv rows (toggled via .lg-compact).
 const LIVE_COMPACT_THRESHOLD = 280;
+// Side PV panels appear when each gutter beside the board is at least
+// this fraction of the board's width.
+const PV_SIDE_MIN_RATIO = 1/3;
+// px between the board and each side PV panel.
+const PV_SIDE_GAP = 8;
 
 // Shared construction for live + frozen windows. Builds DOM, mounts the
 // board, creates the WinBox, wires the result-overlay/replay-button
 // machinery, registers in `liveWindows`. Caller adds WS (live) or
 // final-state painting (frozen) and assigns a real `wb.onclose` that
 // cleans up its own resources after invoking `disposeShared`.
-function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token, tournamentId, top, left, right = 0, boardStyle, avoidRect, initialRect, min, flash, variantClass }) {
+function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token, tournamentId, top, left, right = 0, boardStyle, avoidRect, initialRect, min, flash, variantClass, onPvSides = null }) {
   const body = document.createElement("div");
   body.className = "wb-livegame lg-measuring";
   body.innerHTML = `
@@ -221,6 +236,16 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
       <span class="lg-eval-tbhits lg-eval-tbhits-bottom muted"></span>
     </div>
     <div class="lg-pv lg-pv-bottom muted"></div>
+    <div class="lg-pv-side lg-pv-side-left">
+      <div class="lg-pv-side-name" data-color="black"></div>
+      <div class="lg-pv-side-table lg-pv-side-table-black"></div>
+      <div class="lg-pv-side-name" data-color="white"></div>
+      <div class="lg-pv-side-table lg-pv-side-table-white"></div>
+    </div>
+    <div class="lg-pv-side lg-pv-side-right">
+      <div class="lg-pv-side-name lg-eval-graph-title">Eval</div>
+      <div class="lg-eval-graph-host"></div>
+    </div>
   `;
 
   const boardHost = body.querySelector(".lg-board");
@@ -246,6 +271,11 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   const bottomNameEl = body.querySelector(".lg-bottom-name");
   const topTimeEl = body.querySelector(".lg-top-time");
   const bottomTimeEl = body.querySelector(".lg-bottom-time");
+  const pvTableBlackEl = body.querySelector(".lg-pv-side-table-black");
+  const pvTableWhiteEl = body.querySelector(".lg-pv-side-table-white");
+  const pvNameBlackEl = body.querySelector('.lg-pv-side-name[data-color="black"]');
+  const pvNameWhiteEl = body.querySelector('.lg-pv-side-name[data-color="white"]');
+  const evalGraphHostEl = body.querySelector(".lg-eval-graph-host");
   const resultOverlayEl = body.querySelector(".lg-result-overlay");
   const resultScoreEl = body.querySelector(".lg-result-score");
   const resultTerminationEl = body.querySelector(".lg-result-termination");
@@ -334,6 +364,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   // .lg-board); we only read its measured width to publish to cm-chessboard
   // and to clamp the clock rows below the board. .lg-measuring hides the
   // clocks until the first real measurement lands.
+  let pvSidesOn = false;
   function constrainAndResize() {
     body.classList.toggle("lg-compact", body.clientHeight < LIVE_COMPACT_THRESHOLD);
     // Board slot may be taller than wide (portrait window); cap height to
@@ -344,6 +375,24 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
       boardHost.style.height = `${sz}px`;
       body.style.setProperty("--lg-board-w", `${sz}px`);
       body.classList.remove("lg-measuring");
+    }
+    if (onPvSides && sz > 0) {
+      const sideW = Math.floor((body.clientWidth - sz) / 2);
+      const show = !!wb.max && sideW >= sz * PV_SIDE_MIN_RATIO;
+      if (show) {
+        // Span from the top clock row to the bottom one (not just the
+        // board) -- the gutters are empty there too.
+        const sideTop = clockTopEl.offsetTop;
+        const sideH = clockBottomEl.offsetTop + clockBottomEl.offsetHeight - sideTop;
+        body.style.setProperty("--lg-side-w", `${sideW - PV_SIDE_GAP}px`);
+        body.style.setProperty("--lg-side-top", `${sideTop}px`);
+        body.style.setProperty("--lg-side-h", `${sideH}px`);
+      }
+      if (show !== pvSidesOn) {
+        pvSidesOn = show;
+        body.classList.toggle("lg-pv-sides", show);
+        onPvSides(show);
+      }
     }
     board.forceResize();
   }
@@ -389,6 +438,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
       clockTopEl, clockBottomEl,
       topNameEl, bottomNameEl, topTimeEl, bottomTimeEl,
       resultOverlayEl, resultScoreEl, resultTerminationEl, replayBtnEl,
+      pvTableBlackEl, pvTableWhiteEl, pvNameBlackEl, pvNameWhiteEl, evalGraphHostEl,
     },
     showResult,
     setReplayGameN(n) {
@@ -420,17 +470,37 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     return { wb: existing, alreadyOpen: true };
   }
 
+  // Gutter panels: left stacks the PV tables (black over white, feeds
+  // re-routed when the engine's color changes); right is the eval graph.
+  // Table updates are skipped while hidden (not maximized / narrow) --
+  // zero per-info cost; graph samples accumulate regardless (cheap).
+  const pvSideWhite = createPvTable({ colWidthsKey: STORAGE_KEY.LIVE_PVTABLE_COL_WIDTHS });
+  const pvSideBlack = createPvTable({ colWidthsKey: STORAGE_KEY.LIVE_PVTABLE_COL_WIDTHS });
+  const evalGraph = createEvalGraph();
+  let pvSidesVisible = false;
+
   const built = buildLiveGameBox({
     windowKey, gameId, proxyId, label, engineName, token, tournamentId,
     top, left, right, boardStyle, avoidRect, initialRect, min, flash,
     variantClass: null,
+    onPvSides: (visible) => {
+      pvSidesVisible = visible;
+      evalGraph.setVisible(visible);
+      // Re-run the width fit on reveal: rows updated while hidden
+      // (display:none) measured a scrollWidth of 0.
+      if (visible) { pvSideWhite.fit(); pvSideBlack.fit(); }
+    },
   });
   const { wb, body, board, refs, showResult, disposeShared } = built;
+  refs.pvTableWhiteEl.appendChild(pvSideWhite.el);
+  refs.pvTableBlackEl.appendChild(pvSideBlack.el);
+  refs.evalGraphHostEl.appendChild(evalGraph.el);
   const {
     evalScoreEl, evalDepthEl, evalNpsEl, evalTbhitsEl, pvEl,
     oppEvalScoreEl, oppEvalDepthEl, oppEvalNpsEl, oppEvalTbhitsEl, oppPvEl,
     clockTopEl, clockBottomEl,
     topNameEl, bottomNameEl, topTimeEl, bottomTimeEl,
+    pvNameBlackEl, pvNameWhiteEl,
   } = refs;
 
   let ws = null;
@@ -474,6 +544,9 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
     schedulePositionPaint.cancel();
     pendingPosition = null;
+    pvSideWhite.dispose();
+    pvSideBlack.dispose();
+    evalGraph.dispose();
     if (ws) try { ws.close(); } catch { /* */ }
     disposeShared();
     return false;
@@ -553,6 +626,28 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     handleParsed(parsed);
   });
 
+  // Route own/opponent info feeds to the color-fixed panels. Before the
+  // first position lands (engineColor null) own defaults to white.
+  function pvOwn() { return engineColor === SIDE.BLACK ? pvSideBlack : pvSideWhite; }
+  function pvOpp() { return engineColor === SIDE.BLACK ? pvSideWhite : pvSideBlack; }
+
+  // Eval-graph sampling: each feed's latest info is banked as that
+  // side's final eval at the move boundary (own: bestmove; opponent:
+  // the next own-position, which implies their move completed).
+  let lastOwnInfo = null;
+  let lastOppInfo = null;
+  let pendingOwnPly = null;
+  let lastSampledPly = -1;
+
+  function addEvalSample(ply, info, mover) {
+    if (ply == null || ply < 0 || !info?.score) return;
+    // Ply moving backwards = a new game on a reused proxy window.
+    if (ply < lastSampledPly) { lastSampledPly = -1; evalGraph.clear(); }
+    if (evalGraph.add(ply, info.score, mover === SIDE.WHITE) && ply > lastSampledPly) {
+      lastSampledPly = ply;
+    }
+  }
+
   function setEngineColor(color) {
     engineColor = color;
     const oppColor = color === SIDE.WHITE ? SIDE.BLACK : SIDE.WHITE;
@@ -566,6 +661,18 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     }
     clockBottomEl.dataset.color = color;
     clockTopEl.dataset.color = oppColor;
+    syncPvSideNames();
+  }
+
+  // Panel headers are color-fixed (black over white); write each
+  // player's name into the header matching their color.
+  function syncPvSideNames() {
+    if (!engineColor) return;
+    const oppColor = engineColor === SIDE.WHITE ? SIDE.BLACK : SIDE.WHITE;
+    const eName = engineName || (engineColor === SIDE.WHITE ? "White" : "Black");
+    const oName = opponentName || (oppColor === SIDE.WHITE ? "White" : "Black");
+    pvNameWhiteEl.textContent = engineColor === SIDE.WHITE ? eName : oName;
+    pvNameBlackEl.textContent = engineColor === SIDE.WHITE ? oName : eName;
   }
 
   function setOpponentName(name) {
@@ -573,6 +680,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     opponentName = name;
     topNameEl.textContent = name;
     topNameEl.title = name;
+    syncPvSideNames();
   }
 
   function updateClocks(wtime, btime) {
@@ -614,13 +722,23 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
             setEngineColor(color);
             board.setSide(color);
           }
+          const ply = fenPly(p.fen);
+          // Opponent just completed ply-1; bank their final eval.
+          if (lastOppInfo) {
+            addEvalSample(ply - 1, lastOppInfo, color === SIDE.WHITE ? SIDE.BLACK : SIDE.WHITE);
+            lastOppInfo = null;
+          }
+          pendingOwnPly = ply;
           queuePositionPaint(p.fen, p.last_move || null);
         }
         break;
       case "info":
+        lastOwnInfo = p;
         renderEval(p);
         break;
       case "go":
+        // Own engine starts a new search; drop the previous one's lines.
+        pvOwn().clear();
         lastWtime = p.wtime ?? lastWtime;
         lastBtime = p.btime ?? lastBtime;
         updateClocks(p.wtime, p.btime);
@@ -643,6 +761,14 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
         }
         break;
       case "bestmove":
+        // Opponent thinks next; its panel restarts (heuristic depth-reset
+        // in createPvTable backstops ponder/missed transitions).
+        pvOpp().clear();
+        // Own move done at pendingOwnPly: bank our final eval.
+        if (lastOwnInfo) {
+          addEvalSample(pendingOwnPly, lastOwnInfo, engineColor);
+          lastOwnInfo = null;
+        }
         if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
         clockBottomEl.classList.remove("active");
         clockTopEl.classList.toggle("active", !!engineColor);
@@ -678,7 +804,9 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     // eval/PV/arrow rendering as own-side, into the top (opponent) row.
     if (p.kind !== "info") return;
     if (engineColor && thinkingSide === engineColor) return;
+    lastOppInfo = p;
     renderOpponentEval(p);
+    if (pvSidesVisible) pvOpp().update(p, p.pv_uci?.join(" "));
     const m = pvArrowMove(p);
     if (m) board.setOpponentArrow(m.slice(0, 2), m.slice(2, 4));
   }
@@ -693,6 +821,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   function renderEval(p) {
     evalScoreEl.textContent = fmtScore(p.score, { empty: "--", matePrefix: "M", signed: true });
     _applyEvalInfo({ depthEl: evalDepthEl, npsEl: evalNpsEl, tbhitsEl: evalTbhitsEl }, p);
+    if (pvSidesVisible) pvOwn().update(p, p.pv_uci?.join(" "));
     const pv = p.pv_uci;
     if (pv && pv.length) {
       pvEl.textContent = pv.slice(0, 12).join(" ");
