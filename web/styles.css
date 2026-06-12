@@ -3358,6 +3358,11 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .winbox.sturddle-wb.min,
 .winbox.sturddle-wb.min .wb-header,
 .winbox.sturddle-wb.min .wb-body { border-radius: 0; }
+/* Floating controls window: always straight corners, whatever the
+   shared .sturddle-wb radius rules decide for other windows. */
+.winbox.sturddle-wb-ribbon,
+.winbox.sturddle-wb-ribbon .wb-header,
+.winbox.sturddle-wb-ribbon .wb-body { border-radius: 0; }
 .winbox.sturddle-wb-ribbon {
   border: 1px solid lightgray;
   outline: none;
