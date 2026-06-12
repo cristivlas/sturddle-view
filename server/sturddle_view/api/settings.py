@@ -371,4 +371,7 @@ async def list_ai_models(request: Request) -> dict:
         raise HTTPException(status_code=501, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
-    return {"models": models}
+    # model id -> "adaptive" | "extended" | "none"; {} for providers
+    # without distinct thinking wire shapes. Drives the budget-tokens
+    # field visibility in the Settings dialog.
+    return {"models": models, "thinking": provider.thinking_modes(models)}

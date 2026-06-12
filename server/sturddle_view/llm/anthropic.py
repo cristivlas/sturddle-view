@@ -36,6 +36,8 @@ log = logging.getLogger(__name__)
 
 _ANTHROPIC_BASE = "https://api.anthropic.com"
 _ANTHROPIC_VERSION = "2023-06-01"
+# GET timeout for the non-streaming Models API endpoints.
+_MODELS_TIMEOUT_S = 10.0
 # Spec doesn't constrain max_tokens; pick a generous cap so the model
 # rarely truncates a coaching prose response. Env override for ops.
 _DEFAULT_MAX_TOKENS = 4096
@@ -43,6 +45,50 @@ _DEFAULT_MAX_TOKENS = 4096
 # enabled we add the budget on top of the visible-output cap.
 _ADAPTIVE_THINKING_MIN_MAJOR = 4
 _ADAPTIVE_THINKING_MIN_MINOR = 6
+
+# Thinking wire shapes, resolved from the Models API capability tree
+# (capabilities.thinking.types.{adaptive,enabled}.supported).
+THINKING_ADAPTIVE = "adaptive"   # {"type": "adaptive"}
+THINKING_EXTENDED = "extended"   # {"type": "enabled", "budget_tokens": N}
+THINKING_NONE = "none"           # model takes no thinking config -- omit
+
+# model id -> mode; capabilities are static per id so process-lifetime
+# caching is safe. Seeded by list_models(), extended by stream();
+# fallback guesses are never cached.
+_thinking_mode_cache: dict[str, str] = {}
+
+
+def _thinking_mode_from_capabilities(model_obj: dict) -> str | None:
+    """Resolve a model's thinking mode from a /v1/models item.
+
+    Returns None when the payload carries no capability tree (older
+    API surface) so callers can fall back.
+    """
+    caps = model_obj.get("capabilities")
+    if not isinstance(caps, dict):
+        return None
+    types = (caps.get("thinking") or {}).get("types") or {}
+    if (types.get("adaptive") or {}).get("supported"):
+        return THINKING_ADAPTIVE
+    if (types.get("enabled") or {}).get("supported"):
+        return THINKING_EXTENDED
+    return THINKING_NONE
+
+
+def _thinking_mode_fallback(model: str) -> str:
+    """Heuristic used only when the Models API is unreachable.
+
+    Opus >= 4.6 and the Fable/Mythos families are adaptive-only;
+    everything else takes the extended (budget_tokens) shape.
+    """
+    if re.match(r"claude-(fable|mythos)-", model or ""):
+        return THINKING_ADAPTIVE
+    m = re.match(r"claude-opus-(\d+)-(\d+)", model or "")
+    if m and (int(m.group(1)), int(m.group(2))) >= (
+        _ADAPTIVE_THINKING_MIN_MAJOR, _ADAPTIVE_THINKING_MIN_MINOR
+    ):
+        return THINKING_ADAPTIVE
+    return THINKING_EXTENDED
 
 
 class _ToolUseAccumulator:
@@ -94,26 +140,55 @@ class AnthropicProvider(LLMProvider):
         self._thinking_enabled = thinking_enabled
         self._thinking_budget_tokens = thinking_budget_tokens
 
-    def _use_adaptive_thinking(self) -> bool:
-        # claude-opus-4-6+ requires {"type": "adaptive"}; older Opus and
-        # Sonnet 3.7+ use {"type": "enabled", "budget_tokens": N}.
-        m = re.match(r"claude-opus-(\d+)-(\d+)", self._model or "")
-        if m is None:
-            return False
-        major, minor = int(m.group(1)), int(m.group(2))
-        return (major, minor) >= (_ADAPTIVE_THINKING_MIN_MAJOR, _ADAPTIVE_THINKING_MIN_MINOR)
+    async def _resolve_thinking_mode(self) -> str:
+        """Thinking mode for the configured model, capability-driven.
 
-    def _thinking_param(self) -> dict:
-        if self._use_adaptive_thinking():
+        Cache hit (seeded by list_models() or a prior call) is free;
+        a miss fetches GET /v1/models/{id}. Fetch failure falls back to
+        the name heuristic without caching it.
+        """
+        cached = _thinking_mode_cache.get(self._model)
+        if cached is not None:
+            return cached
+        try:
+            url = f"{_ANTHROPIC_BASE}/v1/models/{self._model}"
+            headers = {
+                "x-api-key": self._api_key,
+                "anthropic-version": _ANTHROPIC_VERSION,
+            }
+            async with httpx.AsyncClient(timeout=_MODELS_TIMEOUT_S) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code != 200:
+                    raise RuntimeError(
+                        f"anthropic /v1/models/{self._model} returned "
+                        f"{resp.status_code}: {extract_error_message(resp.text)}"
+                    )
+                mode = _thinking_mode_from_capabilities(resp.json())
+        except Exception as e:
+            log.warning(
+                "anthropic: capability lookup failed for %s; using name "
+                "heuristic: %s", self._model, e,
+            )
+            return _thinking_mode_fallback(self._model)
+        if mode is None:
+            return _thinking_mode_fallback(self._model)
+        _thinking_mode_cache[self._model] = mode
+        return mode
+
+    def _thinking_param(self, mode: str) -> dict | None:
+        if mode == THINKING_ADAPTIVE:
             return {"type": "adaptive"}
-        return {"type": "enabled", "budget_tokens": self._thinking_budget_tokens}
+        if mode == THINKING_EXTENDED:
+            return {"type": "enabled", "budget_tokens": self._thinking_budget_tokens}
+        return None
 
     async def list_models(self) -> list[str]:
         """List available Anthropic models via GET /v1/models.
 
         Requires the user's API key. Raises RuntimeError on
         auth / network failure so the API layer can surface a useful
-        error to the UI.
+        error to the UI. Side effect: seeds the thinking-mode cache
+        from each item's capability tree for thinking_modes().
         """
         if not self._api_key:
             raise RuntimeError("anthropic: API key not configured")
@@ -122,7 +197,7 @@ class AnthropicProvider(LLMProvider):
             "x-api-key": self._api_key,
             "anthropic-version": _ANTHROPIC_VERSION,
         }
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=_MODELS_TIMEOUT_S) as client:
             resp = await client.get(url, headers=headers)
             if resp.status_code != 200:
                 raise RuntimeError(
@@ -131,8 +206,26 @@ class AnthropicProvider(LLMProvider):
                 )
             body = resp.json()
         data = body.get("data") or []
-        ids = [m.get("id") for m in data if isinstance(m, dict) and m.get("id")]
+        ids = []
+        for m in data:
+            if not (isinstance(m, dict) and m.get("id")):
+                continue
+            ids.append(m["id"])
+            mode = _thinking_mode_from_capabilities(m)
+            if mode is not None:
+                _thinking_mode_cache[m["id"]] = mode
         return sorted(set(ids))
+
+    def thinking_modes(self, models: list[str]) -> dict[str, str]:
+        """Per-model thinking mode for the Settings UI.
+
+        Cache entries come from list_models(); ids the capability tree
+        didn't cover resolve via the name heuristic.
+        """
+        return {
+            m: _thinking_mode_cache.get(m) or _thinking_mode_fallback(m)
+            for m in models
+        }
 
     async def stream(
         self,
@@ -159,11 +252,13 @@ class AnthropicProvider(LLMProvider):
             body["tools"] = tools
         # `thinking=False` forces it off for this call (verifier sub-runs).
         if thinking is not False and self._thinking_enabled:
-            body["thinking"] = self._thinking_param()
-            # Anthropic requires max_tokens > budget_tokens; lift the cap
-            # so visible output isn't squeezed by reasoning.
-            if "budget_tokens" in body["thinking"]:
-                body["max_tokens"] = _DEFAULT_MAX_TOKENS + self._thinking_budget_tokens
+            param = self._thinking_param(await self._resolve_thinking_mode())
+            if param is not None:
+                body["thinking"] = param
+                # Anthropic requires max_tokens > budget_tokens; lift the
+                # cap so visible output isn't squeezed by reasoning.
+                if "budget_tokens" in param:
+                    body["max_tokens"] = _DEFAULT_MAX_TOKENS + self._thinking_budget_tokens
 
         log.info(
             "anthropic stream: model=%s thinking=%s",

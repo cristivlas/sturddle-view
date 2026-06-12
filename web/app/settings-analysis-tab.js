@@ -11,6 +11,8 @@ const AI_API_KEY_SET_KEY = "ai_api_key_set";
 const AI_THINKING_ENABLED_KEY = "ai_thinking_enabled";
 const AI_THINKING_BUDGET_TOKENS_KEY = "ai_thinking_budget_tokens";
 const AI_THINKING_BUDGET_MIN = 1024;
+// Server-resolved thinking wire shape (see /settings/ai/models).
+const THINKING_MODE_ADAPTIVE = "adaptive";
 const AI_MAX_TOOL_ROUNDS_KEY = "ai_max_tool_rounds";
 const AI_VERIFIER_MAX_ROUNDS_KEY = "ai_verifier_max_rounds";
 const AI_ANALYZE_MAX_DEPTH_KEY = "ai_analyze_max_depth";
@@ -319,16 +321,18 @@ export function buildAnalysisTab({ api, initial, dialog, noEngine, engineList, a
   const aiModelHintText = document.createElement("small");
   aiModelHint.append(aiModelHintText);
 
+  // model id -> "adaptive" | "extended" | "none" (/settings/ai/models).
+  // Unknown ids read as non-adaptive; cosmetic only -- the server
+  // re-resolves authoritatively at stream time.
+  let aiModelThinking = {};
+
   const isAdaptiveModel = () => {
     if (aiProvider.value !== "anthropic") return false;
     const live = aiModelSelect.style.display === "none"
       ? aiModelInput.value
       : aiModelSelect.value;
     const model = live || initial[AI_MODEL_KEY] || "";
-    const m = /^claude-opus-(\d+)-(\d+)/.exec(model);
-    if (!m) return false;
-    const major = Number(m[1]), minor = Number(m[2]);
-    return major > 4 || (major === 4 && minor >= 6);
+    return aiModelThinking[model] === THINKING_MODE_ADAPTIVE;
   };
 
   // Forward-ref bridges: section builders wire these at construction, but
@@ -423,6 +427,7 @@ export function buildAnalysisTab({ api, initial, dialog, noEngine, engineList, a
       const r = await api("GET", "/settings/ai/models");
       if (mySeq !== _modelsFetchSeq) return;  // raced
       const models = (r && r.models) || [];
+      aiModelThinking = (r && r.thinking) || {};
       if (!models.length) {
         showModelInput("Provider returned no models -- enter one manually.");
       } else {
@@ -430,6 +435,7 @@ export function buildAnalysisTab({ api, initial, dialog, noEngine, engineList, a
       }
     } catch (e) {
       if (mySeq !== _modelsFetchSeq) return;
+      aiModelThinking = {};
       showModelInput(apiErrorDetail(e) || "Provider unavailable");
     }
   }

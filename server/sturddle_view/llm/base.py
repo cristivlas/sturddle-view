@@ -133,3 +133,13 @@ class LLMProvider(ABC):
         raise NotImplementedError(
             f"{type(self).__name__}.list_models is not implemented"
         )
+
+    def thinking_modes(self, models: list[str]) -> dict[str, str]:
+        """Map model id -> thinking mode ("adaptive" | "extended" | "none").
+
+        Settings UI uses this to decide whether the budget-tokens field
+        applies. Default: empty -- only providers with distinct thinking
+        wire shapes (Anthropic) override. Call after list_models(), which
+        is what populates the underlying capability data.
+        """
+        return {}
