@@ -1856,11 +1856,17 @@ body .side-popover.popover-floating {
   background: #3a3d44;
   color: var(--muted);
   border: 1px solid #333;
-  border-radius: 4px;
+  border-radius: 0;
   font-family: ui-monospace, SFMono-Regular, monospace;
   transition: border-color 0.15s, background 0.15s, color 0.15s;
 }
-.clock-row.active { border-color: transparent; }
+/* On-move: uniform accent ring all around (play and tournament alike).
+   Row height is content-driven, so a wider border would shift the board;
+   the 1px border + 1px inset shadow read as 2px with zero layout change. */
+.clock-row.active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
 .clock-row[data-color="white"].active { background: #e8e8e8; color: #111; }
 .clock-row[data-color="black"].active { background: #111; color: #e8e8e8; }
 .clock-row.clock-disabled { opacity: 0.5; }
@@ -1938,19 +1944,23 @@ body .side-popover.popover-floating {
    gradient, steady digits. Cosmetic only -- same elements and states. */
 .game-view-board .clock-row {
   border-color: var(--wb-outline);
-  border-radius: 0;
   background: linear-gradient(#40434b, #34373d);
 }
 .game-view-board .clock-row .clock-name { color: var(--muted-bright); }
 .game-view-board .clock-row.active .clock-name { color: inherit; }
 .game-view-board .clock-row .clock-time { font-variant-numeric: tabular-nums; }
-/* On-move accent edge on the left; inset shadow so row size is unchanged.
-   Active invert backgrounds still apply (their selectors outspecify the
-   gradient rule above). */
-.game-view-board .clock-row.active { box-shadow: inset 6px 0 0 var(--accent); }
-/* White-active row: --accent amber doesn't read on #e8e8e8; use the
-   selected-row slate-navy from the shared palette. */
-.game-view-board .clock-row[data-color="white"].active { box-shadow: inset 6px 0 0 var(--row-bg-selected); }
+/* On-move accent ring; must follow the border-color override above. */
+.game-view-board .clock-row.active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+/* Black-active rows: the dark #111 fill makes full --accent look brighter
+   by contrast; the softer --accent-line evens out perceived brightness.
+   Placed after the game-view rule so the tie-break covers both scopes. */
+.clock-row[data-color="black"].active {
+  border-color: var(--accent-line);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
 
 #board-controls {
   display: flex;
