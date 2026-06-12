@@ -1112,6 +1112,8 @@ class AIAnalysisCoordinator:
                             "round": round_index,
                             "name": pending_tool.tool_name,
                             "tool_use_id": pending_tool.tool_use_id,
+                            # Surfaced in the panel's tool-call OUT block.
+                            "output": tool_output,
                         },
                     )
                 )

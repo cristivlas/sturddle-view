@@ -29,6 +29,7 @@ import {
   freezeAiThinking,
   appendAiToolCall,
   markAiToolCallFailed,
+  setAiToolCallResult,
   noteAiPosition,
   markAiDone,
   setAiStatus,
@@ -353,6 +354,7 @@ function dispatchAiEvent(aiCtx, evt) {
     }
     case KIND.AI_TOOL_CALL_COMPLETE: {
       const p = evt.payload || {};
+      setAiToolCallResult({ toolUseId: p.tool_use_id, output: p.output });
       if (p.name === ANALYZE_TOOL_NAME) view.restorePosition({ animate: false });
       view.clearArrows();
       view.clearEngineInfo();
@@ -1028,6 +1030,12 @@ function aiAnalysisDone(state) {
   return state.analyzing && state.aiShared.turnFinished && state.aiEnabled;
 }
 
+// An AI analysis turn is actually running. aiEnabled excludes engine-only
+// analysis runs that may happen under a stale-open AI panel.
+function aiTurnInFlight(state) {
+  return state.aiEnabled && state.analyzing && !state.aiShared.turnFinished;
+}
+
 function refreshButtons(state) {
   // Swap ribbons: edit overrides view, which overrides play.
   const activeRibbon = state.editing ? state.el.editRibbon : state.viewing ? state.el.viewRibbon : state.el.playRibbon;
@@ -1572,18 +1580,17 @@ function handleBusEvent(state, ai, aiCtx, evt) {
   }
   switch (evt.kind) {
     case KIND.ENGINE_SEARCH_START: {
-      // Engine is busy. While the AI window is open this means the
-      // agent is in a tool call; flip the status line so the user
-      // sees what's taking time. The PV-table window consumes the
-      // same event for its own reset; no conflict.
-      if (isAiOpen()) setAiStatus("engine");
+      // Engine busy during an in-flight AI turn = agent tool call; flip
+      // the status so the user sees what's taking time. Gated on the turn,
+      // not just the open panel: game-move searches must not touch it.
+      if (isAiOpen() && aiTurnInFlight(state)) setAiStatus("engine");
       break;
     }
     case KIND.ENGINE_INFO: {
       // Engine produced an info chunk -- search is delivering. Drop
       // the "engine searching" hint back to "waiting" so the user
       // knows the agent will narrate next.
-      if (isAiOpen()) setAiStatus("waiting");
+      if (isAiOpen() && aiTurnInFlight(state)) setAiStatus("waiting");
       break;
     }
     case KIND.BOARD_UPDATE: {

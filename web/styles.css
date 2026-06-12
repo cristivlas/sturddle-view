@@ -585,10 +585,47 @@ wa-select::part(listbox) {
   flex: 1 1 100%;
   min-width: 0;  /* let it shrink below content width so overflow-x scrolls */
   margin: 2px 0 0 20px;
-  opacity: 0.7;
-  white-space: pre;
-  overflow-x: auto;
   background-color: black;
+  border: 1px solid #555;
+  padding: 0 6px;
+  overflow-x: auto;  /* single scroller for both rows */
+}
+/* min-width: rows and the IN/OUT separator span the widest row's full
+   scroll width, not just the visible box. */
+.play-ai-tool-io-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: max-content;
+}
+/* The row's display:flex beats the UA [hidden] rule. */
+.play-ai-tool-io[hidden] {
+  display: none;
+}
+.play-ai-tool-io {
+  display: flex;
+  gap: 0;
+  opacity: 0.7; /* dim the content, not the box border */
+}
+.play-ai-tool-io + .play-ai-tool-io {
+  border-top: 1px solid #555;
+}
+.play-ai-tool-io-tag {
+  width: 2.5em;
+  font-size: 0.75rem; /* match the text column (global pre rule) */
+  font-weight: 700;
+  color: var(--muted);
+  position: sticky; /* pinned while the box h-scrolls */
+  left: 0;
+  background-color: black;
+  padding: 4px 0; /* line up with the text pre's 4px padding */
+}
+.play-ai-tool-io-text {
+  padding: 4px;
+  white-space: pre;
+  max-height: none;
+  /* defeat the default pre chrome */
+  background: none;
   border-radius: 0;
 }
 

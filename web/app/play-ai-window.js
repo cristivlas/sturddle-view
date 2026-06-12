@@ -283,6 +283,27 @@ const ANALYSIS_WINDOW_TITLE = "Analysis";
 const TOOL_DETAILS_BODY_CLASS = "play-ai-tool-details-body";
 const ROUNDCAP_CLASS = "play-ai-roundcap";
 
+// Expanded tool-call detail rows: the call under IN, the result under OUT.
+const IO_TAG_IN = "IN";
+const IO_TAG_OUT = "OUT";
+
+function buildIoRow(tag, text) {
+  const row = document.createElement("div");
+  row.className = "play-ai-tool-io";
+  const tagEl = document.createElement("span");
+  tagEl.className = "play-ai-tool-io-tag";
+  tagEl.textContent = tag;
+  const pre = document.createElement("pre");
+  pre.className = "play-ai-tool-io-text";
+  pre.textContent = text;
+  row.append(tagEl, pre);
+  return { row, pre };
+}
+
+function formatToolOutput(output) {
+  return typeof output === "string" ? output : JSON.stringify(output);
+}
+
 function friendlyToolLabel(name, input) {
   const move = input && typeof input.move === "string" ? input.move.trim() : "";
   const verb = MOVE_TOOL_VERBS[name];
@@ -457,14 +478,24 @@ export function appendAiToolCall({
     // caret are identical size (the unicode triangles aren't).
     toggle.textContent = "▶";
     line.append(toggle);
-    const pre = document.createElement("pre");
-    pre.className = TOOL_DETAILS_BODY_CLASS;
-    pre.hidden = true;
-    pre.textContent = raw;
-    line.append(pre);
+    const details = document.createElement("div");
+    details.className = TOOL_DETAILS_BODY_CLASS;
+    details.hidden = true;
+    const stack = document.createElement("div");
+    stack.className = "play-ai-tool-io-stack";
+    stack.append(buildIoRow(IO_TAG_IN, raw).row);
+    const out = buildIoRow(IO_TAG_OUT, "");
+    out.row.hidden = true; // shown when the result (or an error) lands
+    stack.append(out.row);
+    details.append(stack);
+    // Direct refs (not querySelector): nested verifier rows land inside
+    // this line element, so a selector could match a child's blocks.
+    line._outRow = out.row;
+    line._outPre = out.pre;
+    line.append(details);
     toggle.addEventListener("click", () => {
-      const open = pre.hidden;
-      pre.hidden = !open;
+      const open = details.hidden;
+      details.hidden = !open;
       toggle.classList.toggle("is-open", open);
     });
     container.append(line);
@@ -477,6 +508,18 @@ export function appendAiToolCall({
   });
 }
 
+
+// Fill the OUT row with the tool result from ai_tool_call_complete.
+// Idempotent (replay-on-reconnect re-dispatches with the same output).
+export function setAiToolCallResult({ toolUseId, output }) {
+  if (!inst.body || !toolUseId || output === undefined) return;
+  const line = inst.body._toolCallNodes.get(toolUseId);
+  if (!line || !line._outPre) return;
+  withStickyBottom(() => {
+    line._outPre.textContent = formatToolOutput(output);
+    line._outRow.hidden = false;
+  });
+}
 
 // Errors that mean "the tool ran, the loop is steering the model" rather
 // than "the tool failed" -- struck through, but not marked red. Keyed by
@@ -494,16 +537,17 @@ export function markAiToolCallFailed({ toolUseId, error, detail }) {
   // row; appending the suffix/gear twice would stack them.
   if (line.classList.contains(cls)) return;
   line.classList.add(cls);
-  const suffix = detail ? `${error}: ${detail}` : error;
-  const pre = line.querySelector(`.${TOOL_DETAILS_BODY_CLASS}`);
-  if (pre) {
-    pre.textContent = `${pre.textContent}\n${suffix}`;
-    // Known error codes get the same inline action (gear -> Settings) the
-    // toast path uses, appended inside the detail body next to the message.
-    for (const a of errorActionsFor(error)) {
-      pre.append(" ", buildToastActionButton(a));
-    }
+  if (!line._outPre) return;
+  // The complete event precedes failed and already fills OUT with the
+  // error dict; only set the text when it is still empty (old events).
+  if (!line._outPre.textContent) {
+    line._outPre.textContent = detail ? `${error}: ${detail}` : error;
   }
+  // Same inline action (gear -> Settings) the toast path uses.
+  for (const a of errorActionsFor(error)) {
+    line._outPre.append(" ", buildToastActionButton(a));
+  }
+  line._outRow.hidden = false;
 }
 
 // Cap for the joined item list in a multi-item fallback before it is
