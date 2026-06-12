@@ -220,13 +220,16 @@ function zOrder(wbs) {
 }
 
 // wbsIn: explicit list (snap fallback -- skip minimized, don't unminimize).
-function tile(ctx, wbsIn, { reserveDock = false, preserveMin = false } = {}) {
+function tile(ctx, wbsIn, { reserveDock = false, preserveMin = false, preserveMax = false } = {}) {
   setLayout(ctx, LAYOUT.TILE);
   const { left, top } = ctx;
   let wbs = wbsIn ?? openWindows(ctx);
-  if (!wbs.length) return;
+  // From openWindows (not wbs): snap's fallback passes a pre-filtered list.
+  const keepMaxed = preserveMax && openWindows(ctx).some(wb => wb.max);
+  if (preserveMax) wbs = wbs.filter(wb => !wb.max);
   if (preserveMin) wbs = wbs.filter(wb => !wb.min);
   else wbs.forEach(unminimize);
+  if (!wbs.length) return;
   const availW = ctx.getRight() - left;
   const availH = window.innerHeight - top - (reserveDock ? minimizeFooterH() : 0);
   const maxMinW = Math.max(...wbs.map(wb => wb.svMinWidth ?? 0));
@@ -255,7 +258,8 @@ function tile(ctx, wbsIn, { reserveDock = false, preserveMin = false } = {}) {
     wb.resize(ww, hh).move(x, y);
     setShadow(wb, false);
   });
-  zOrder(wbs);
+  // Don't re-stack while a maximized window is preserved on top.
+  if (!keepMaxed) zOrder(wbs);
 }
 
 // 2x2 in the bottom half of the viewport. Auto-opens any of the
@@ -340,7 +344,7 @@ function tidy(ctx, { preserveMin = false } = {}) {
 // viewport at the axis of greatest center-spread; each leaf gets one
 // window. Produces a perfect rectangular tiling -- no gaps, no overlaps,
 // O(N log N), idempotent. Minimized/maximized windows are skipped.
-function snap(ctx) {
+function snap(ctx, { preserveMax = false } = {}) {
   setLayout(ctx, LAYOUT.SNAP);
   const { left, top } = ctx;
   const vx0 = left, vy0 = top;
@@ -348,10 +352,12 @@ function snap(ctx) {
 
   const allWindows = openWindows(ctx);
   // Restore any maximized windows so they participate in the snap layout
-  // (otherwise non-max windows would be tiled invisibly underneath them).
-  // Minimized windows stay minimized and are excluded.
-  for (const wb of allWindows) if (wb.max) wb.restore();
-  const wbs = allWindows.filter(wb => !wb.min);
+  // (otherwise non-max windows would be tiled invisibly underneath them)
+  // -- unless preserved, in which case they stay maximized on top and
+  // the survivors snap around them. Minimized windows stay excluded.
+  if (!preserveMax) for (const wb of allWindows) if (wb.max) wb.restore();
+  const keepMaxed = preserveMax && allWindows.some(wb => wb.max);
+  const wbs = allWindows.filter(wb => !wb.min && !wb.max);
   if (!wbs.length) return;
   // Reserve bottom strip for the minimize dock only if any window is
   // currently minimized -- otherwise full viewport.
@@ -413,7 +419,7 @@ function snap(ctx) {
   // a window may well end up minimized as part of recovery.
   for (const it of items) {
     if (it.rect.w - TILE_MARGIN < it.minW || it.rect.h - TILE_MARGIN < it.minH) {
-      tile(ctx, wbs, { reserveDock: true });
+      tile(ctx, wbs, { reserveDock: true, preserveMax });
       setLayout(ctx, LAYOUT.SNAP);  // restore -- tile() above overwrites it
       return;
     }
@@ -424,7 +430,8 @@ function snap(ctx) {
     it.wb.resize(r.w - TILE_MARGIN, r.h - TILE_MARGIN).move(r.x, r.y);
     setShadow(it.wb, false);
   }
-  zOrder(wbs);
+  // Don't re-stack while a maximized window is preserved on top.
+  if (!keepMaxed) zOrder(wbs);
 }
 
 function untidy(ctx) {
@@ -438,8 +445,8 @@ function reapplyLayout(ctx) {
   // -> windows hit 0 -> resurrected-to-4 race).
   if (ctx.finalized) return;
   if (ctx.activeLayout === LAYOUT.TIDY) tidy(ctx, { preserveMin: true });
-  else if (ctx.activeLayout === LAYOUT.TILE) tile(ctx, null, { preserveMin: true, reserveDock: true });
-  else if (ctx.activeLayout === LAYOUT.SNAP) snap(ctx);
+  else if (ctx.activeLayout === LAYOUT.TILE) tile(ctx, null, { preserveMin: true, preserveMax: true, reserveDock: true });
+  else if (ctx.activeLayout === LAYOUT.SNAP) snap(ctx, { preserveMax: true });
 }
 
 function minimizeAll(ctx) {
@@ -892,28 +899,39 @@ function onLiveGameClosedReapply(ctx) {
   if (ctx.activeLayout !== LAYOUT.TIDY) requestAnimationFrame(() => reapplyLayout(ctx));
 }
 
+// NONE layout: keep free floats reachable after a viewport shrink --
+// clamp into the workspace area, shrinking only when a window exceeds
+// it. WinBox enforces per-window min sizes on resize.
+function clampFloats(ctx) {
+  const right = ctx.getRight();
+  const bottom = window.innerHeight;
+  for (const wb of openWindows(ctx)) {
+    if (wb.min || wb.max) continue;
+    const w = Math.min(wb.width, right - ctx.left);
+    const h = Math.min(wb.height, bottom - ctx.top);
+    const x = Math.max(ctx.left, Math.min(wb.x, right - w));
+    const y = Math.max(ctx.top, Math.min(wb.y, bottom - h));
+    if (w !== wb.width || h !== wb.height) wb.resize(w, h);
+    if (x !== wb.x || y !== wb.y) wb.move(x, y);
+  }
+}
+
 function onResize(ctx) {
   clearTimeout(ctx.resizeTimer);
   ctx.resizeTimer = setTimeout(() => {
-    const all = openWindows(ctx);
-    const anyMax = all.some(wb => wb.max);
     // Refit maximized windows to the new viewport. Suppress onrestore for
     // the cycle: it's not a user restore, and onReflow would claim/evict
     // slots against half-updated geometry (spurious minimize).
-    for (const wb of all) if (wb.max) {
+    for (const wb of openWindows(ctx)) if (wb.max) {
       const onRestore = wb.onrestore;
       wb.onrestore = null;
       try { wb.restore(); wb.maximize(); } finally { wb.onrestore = onRestore; }
     }
-    if (ctx.activeLayout === LAYOUT.TIDY) {
-      // tidy() skips the maximized window (preserveMin) and re-grids the
-      // rest, so survivors track the new viewport even mid-maximize. TILE/
-      // SNAP reflow would unmaximize, so they wait until nothing is maxed.
-      tidy(ctx, { preserveMin: true });
-    } else if (!anyMax) {
-      if (ctx.activeLayout === LAYOUT.TILE) tile(ctx, null, { preserveMin: true, reserveDock: true });
-      else if (ctx.activeLayout === LAYOUT.SNAP) snap(ctx);
-    }
+    // Managed layouts re-grid the survivors around preserved min/max
+    // windows, keeping them inside the workspace area (ribbon/header
+    // insets); free floats just get clamped back into it.
+    if (ctx.activeLayout === LAYOUT.NONE) clampFloats(ctx);
+    else reapplyLayout(ctx);
   }, 150);
 }
 
