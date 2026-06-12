@@ -481,7 +481,7 @@ export function appendAiToolCall({
 // Errors that mean "the tool ran, the loop is steering the model" rather
 // than "the tool failed" -- struck through, but not marked red. Keyed by
 // error code so the rule is the same for every tool that returns one.
-const SUPERSEDED_ERRORS = new Set(["recommendation_rejected", "compare_first"]);
+const SUPERSEDED_ERRORS = new Set(["recommendation_rejected", "red_team_first"]);
 
 export function markAiToolCallFailed({ toolUseId, error, detail }) {
   if (!inst.body || !toolUseId) return;

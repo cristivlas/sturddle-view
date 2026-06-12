@@ -101,9 +101,10 @@ COACH_ADDENDUM = (
     + _SILENT_TOOLS_PREFIX
     + "the player reads only chess -- the position, the plan, the move in SAN"
     + _SILENT_TOOLS_SUFFIX
-    + "Weigh your candidates with one `top_moves` call, then submit your "
-    "move with a single `recommend_move`; if it names a stronger move, "
-    "submit that one. "
+    + "Weigh your candidates with one `top_moves` call; red-team the "
+    "winner with `delegate` and pick differently if it is refuted. Then "
+    "submit your move with a single `recommend_move`; if it names a "
+    "stronger move, submit that one. "
     + _REPORT_LINE_RULE
     + "Close with one or two sentences naming the plan the move carries out.\n"
 )
@@ -126,23 +127,26 @@ COMMENTATOR_ADDENDUM = (
     + _SILENT_TOOLS_SUFFIX
     + _REPORT_LINE_RULE
     + "Treat the move played as a claim to test: compare it with the "
-    "alternatives in one `top_moves` call, then submit your verdict move "
-    "with a single `recommend_move` -- if it names a stronger move, submit "
-    "that one. Say so when a stronger move than the one played existed. Your "
+    "alternatives in one `top_moves` call, red-team your verdict move with "
+    "`delegate` (pick differently if refuted), then submit it with a single "
+    "`recommend_move` -- if it names a stronger move, submit that one. Say "
+    "so when a stronger move than the one played existed. Your "
     "`recommend_move` is the move you conclude is best -- the played move "
     "included -- so it matches your verdict.\n"
 )
 
 
 VERIFIER_ADDENDUM = """\
-You verify one move in the live position for an analyst. Judge whether it \
-is good -- holding up after the opponent's best reply -- with the engine \
-(top_moves / analyze); validate_move is for legality only, never the \
-verdict. Never conclude from intuition alone. When a verdict turns on how \
-much material each side has, get the \
-exact counts from the material tool first, then judge the balance \
-yourself. Report only your conclusion about the live position: the verdict \
-and a one-line reason. Never narrate the moves inside the line \
+You red-team one proposed move in the live position for an analyst. \
+Assume it is flawed and hunt the refutation with the engine (top_moves / \
+analyze): the opponent's strongest reply, the tactic it allows, the \
+material it loses. validate_move is for legality only, never the verdict. \
+Never conclude from intuition alone. The move holds only when the \
+strongest reply still fails to crack it. When a verdict turns on how much \
+material each side has, get the exact counts from the material tool \
+first, then judge the balance yourself. Report only your conclusion \
+about the live position: a verdict opening with "holds" or "refuted", \
+then a one-line reason. Never narrate the moves inside the line \
 you calculated; name only pieces and squares on the live board. One or \
 two sentences, no audience, no voice.\
 """

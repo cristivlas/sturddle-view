@@ -196,6 +196,9 @@ async def test_verifier_inherits_turn_position_context():
     user0 = verifier_call["messages"][0]["content"]
     assert _START_FEN in user0, "verifier lost the position context"
     assert "Is e4 sound?" in user0
+    # The canonical SAN is prefixed so the verifier knows the move under
+    # attack even when the narrator's question doesn't name it.
+    assert "Move under test: e4." in user0
 
 
 @pytest.mark.asyncio
@@ -519,31 +522,47 @@ async def _echo_verifier(move, depth, cancel_token):
     return {"uci": move.uci(), "san": move.uci()}
 
 
-@pytest.mark.asyncio
-async def test_commentator_accept_without_compare_is_held_once():
-    # Commentator must not endorse the reviewed move with zero contrast: the
-    # first accept with no prior top_moves is held with a compare_first error,
-    # one-shot. After a top_moves call the resubmit goes through.
-    async def recommend(_input, *, cancel_token):
-        return {"ok": True, "uci": chess.Board().parse_san(_input["move"]).uci()}
+async def _stub_recommend(_input, *, cancel_token):
+    return {"ok": True, "uci": chess.Board().parse_san(_input["move"]).uci()}
 
-    async def top_moves(_input, *, cancel_token):
-        return {"candidates": [{"move_uci": "e2e4", "move_san": "e4", "score_cp": 20}]}
 
+async def _stub_top_moves(_input, *, cancel_token):
+    return {"candidates": [{"move_uci": "e2e4", "move_san": "e4", "score_cp": 20}]}
+
+
+async def _stub_delegate(_input, *, cancel_token):
+    return {"move_uci": "e2e4", "verdict": "holds."}
+
+
+def _narrator_registry(*extra_tools: str) -> ToolRegistry:
+    """Stub narrator registry: recommend_move always, plus any of
+    'top_moves' / 'delegate' by name. Stubs skip the verifier sub-run --
+    the red-team gate keys on the tool name and result shape only."""
+    fns = {
+        "recommend_move": _stub_recommend,
+        "top_moves": _stub_top_moves,
+        "delegate": _stub_delegate,
+    }
     reg = ToolRegistry()
-    reg.register(
-        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
-        recommend,
-    )
-    reg.register(
-        ToolSpec(name="top_moves", description="rank", input_schema={"type": "object"}),
-        top_moves,
-    )
+    for name in ("recommend_move", *extra_tools):
+        reg.register(
+            ToolSpec(name=name, description=name, input_schema={"type": "object"}),
+            fns[name],
+        )
+    return reg
+
+
+@pytest.mark.asyncio
+async def test_accept_without_red_team_is_held_once():
+    # A pick must survive an adversarial check: the first accept with no
+    # prior delegate verdict is held with a red_team_first error, one-shot.
+    # After a delegate verdict the resubmit goes through.
     provider = _RecordingScriptedProvider(rounds=[
-        [ProviderChunk(kind="tool_use", tool_use_id="r0",     # accept w/o compare -> held
+        [ProviderChunk(kind="tool_use", tool_use_id="r0",     # accept w/o red-team -> held
                        tool_name="recommend_move", tool_input={"move": "e4"})],
-        [ProviderChunk(kind="tool_use", tool_use_id="t0",     # comply: compare
-                       tool_name="top_moves", tool_input={"moves": ["e4", "d4"]})],
+        [ProviderChunk(kind="tool_use", tool_use_id="d0",     # comply: red-team
+                       tool_name="delegate",
+                       tool_input={"move": "e4", "question": "does it hold?"})],
         [ProviderChunk(kind="tool_use", tool_use_id="r1",     # resubmit -> accepted
                        tool_name="recommend_move", tool_input={"move": "e4"})],
         [ProviderChunk(kind="text", text="e4 is best on review.")],  # conclusion
@@ -551,7 +570,8 @@ async def test_commentator_accept_without_compare_is_held_once():
     bus = EventBus()
     queue = await bus.subscribe()
     coord = AIAnalysisCoordinator(
-        bus, provider, registry=reg, board_provider=(lambda: chess.Board()),
+        bus, provider, registry=_narrator_registry("delegate"),
+        board_provider=(lambda: chess.Board()),
         recommend_verifier=_echo_verifier,
     )
 
@@ -560,78 +580,30 @@ async def test_commentator_accept_without_compare_is_held_once():
 
     held = [
         e for e in events if e.kind == "ai_tool_call_failed"
-        and e.payload.get("error") == "compare_first"
+        and e.payload.get("error") == "red_team_first"
     ]
-    assert len(held) == 1, "first uncompared accept should be held once"
+    assert len(held) == 1, "first un-red-teamed accept should be held once"
     recs = [e for e in events if e.kind == "ai_recommendation"]
     assert recs and recs[-1].payload.get("uci") == "e2e4"
 
 
 @pytest.mark.asyncio
-async def test_commentator_accept_after_top_moves_not_held():
-    # A top_moves call before the accept satisfies the compare-first check:
-    # the recommend goes straight through, no compare_first hold.
-    async def recommend(_input, *, cancel_token):
-        return {"ok": True, "uci": chess.Board().parse_san(_input["move"]).uci()}
-
-    async def top_moves(_input, *, cancel_token):
-        return {"candidates": [{"move_uci": "e2e4", "move_san": "e4", "score_cp": 20}]}
-
-    reg = ToolRegistry()
-    reg.register(
-        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
-        recommend,
-    )
-    reg.register(
-        ToolSpec(name="top_moves", description="rank", input_schema={"type": "object"}),
-        top_moves,
-    )
+async def test_accept_after_delegate_not_held():
+    # A delegate verdict before the accept satisfies the red-team check in
+    # both modes: coach's recommend goes straight through, no hold.
     provider = _RecordingScriptedProvider(rounds=[
-        [ProviderChunk(kind="tool_use", tool_use_id="t0",     # compare first
-                       tool_name="top_moves", tool_input={"moves": ["e4", "d4"]})],
+        [ProviderChunk(kind="tool_use", tool_use_id="d0",     # red-team first
+                       tool_name="delegate",
+                       tool_input={"move": "e4", "question": "does it hold?"})],
         [ProviderChunk(kind="tool_use", tool_use_id="r0",     # accept -> not held
                        tool_name="recommend_move", tool_input={"move": "e4"})],
-        [ProviderChunk(kind="text", text="e4 holds up.")],    # conclusion
+        [ProviderChunk(kind="text", text="e4 grabs the center.")],  # conclusion
     ])
     bus = EventBus()
     queue = await bus.subscribe()
     coord = AIAnalysisCoordinator(
-        bus, provider, registry=reg, board_provider=(lambda: chess.Board()),
-        recommend_verifier=_echo_verifier,
-    )
-
-    await coord.run(game_id="g", mode="commentator", user_message=_TURN_CONTEXT + "\n")
-    events = await _drain_until_done(queue)
-
-    assert not [
-        e for e in events if e.kind == "ai_tool_call_failed"
-        and e.payload.get("error") == "compare_first"
-    ], "a prior top_moves should satisfy compare-first"
-    recs = [e for e in events if e.kind == "ai_recommendation"]
-    assert recs and recs[-1].payload.get("uci") == "e2e4"
-
-
-@pytest.mark.asyncio
-async def test_coach_accept_without_compare_not_held():
-    # The compare-first hold is commentator-only: coach (live play) accepts
-    # the first recommend directly, no top_moves required.
-    async def recommend(_input, *, cancel_token):
-        return {"ok": True, "uci": chess.Board().parse_san(_input["move"]).uci()}
-
-    reg = ToolRegistry()
-    reg.register(
-        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
-        recommend,
-    )
-    provider = _RecordingScriptedProvider(rounds=[
-        [ProviderChunk(kind="tool_use", tool_use_id="r0",
-                       tool_name="recommend_move", tool_input={"move": "e4"})],
-        [ProviderChunk(kind="text", text="e4 grabs the center.")],
-    ])
-    bus = EventBus()
-    queue = await bus.subscribe()
-    coord = AIAnalysisCoordinator(
-        bus, provider, registry=reg, board_provider=(lambda: chess.Board()),
+        bus, provider, registry=_narrator_registry("delegate"),
+        board_provider=(lambda: chess.Board()),
         recommend_verifier=_echo_verifier,
     )
 
@@ -640,7 +612,71 @@ async def test_coach_accept_without_compare_not_held():
 
     assert not [
         e for e in events if e.kind == "ai_tool_call_failed"
-        and e.payload.get("error") == "compare_first"
+        and e.payload.get("error") == "red_team_first"
+    ], "a prior delegate verdict should satisfy the red-team hold"
+    recs = [e for e in events if e.kind == "ai_recommendation"]
+    assert recs and recs[-1].payload.get("uci") == "e2e4"
+
+
+@pytest.mark.asyncio
+async def test_top_moves_does_not_satisfy_red_team():
+    # Ranking candidates is not an adversarial check: an accept after only
+    # top_moves is still held until a delegate verdict runs.
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(kind="tool_use", tool_use_id="t0",     # rank candidates
+                       tool_name="top_moves", tool_input={"moves": ["e4", "d4"]})],
+        [ProviderChunk(kind="tool_use", tool_use_id="r0",     # accept -> held
+                       tool_name="recommend_move", tool_input={"move": "e4"})],
+        [ProviderChunk(kind="tool_use", tool_use_id="d0",     # comply: red-team
+                       tool_name="delegate",
+                       tool_input={"move": "e4", "question": "does it hold?"})],
+        [ProviderChunk(kind="tool_use", tool_use_id="r1",     # resubmit -> accepted
+                       tool_name="recommend_move", tool_input={"move": "e4"})],
+        [ProviderChunk(kind="text", text="e4 holds up.")],    # conclusion
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=_narrator_registry("top_moves", "delegate"),
+        board_provider=(lambda: chess.Board()),
+        recommend_verifier=_echo_verifier,
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    held = [
+        e for e in events if e.kind == "ai_tool_call_failed"
+        and e.payload.get("error") == "red_team_first"
+    ]
+    assert len(held) == 1, "top_moves alone should not satisfy the red-team hold"
+    recs = [e for e in events if e.kind == "ai_recommendation"]
+    assert recs and recs[-1].payload.get("uci") == "e2e4"
+
+
+@pytest.mark.asyncio
+async def test_accept_without_delegate_registered_not_held():
+    # No `delegate` in the registry (verifier-less config): the hold is off
+    # and the first accept ships -- the pre-subagent behavior.
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(kind="tool_use", tool_use_id="r0",
+                       tool_name="recommend_move", tool_input={"move": "e4"})],
+        [ProviderChunk(kind="text", text="e4 grabs the center.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=_narrator_registry(),
+        board_provider=(lambda: chess.Board()),
+        recommend_verifier=_echo_verifier,
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    events = await _drain_until_done(queue)
+
+    assert not [
+        e for e in events if e.kind == "ai_tool_call_failed"
+        and e.payload.get("error") == "red_team_first"
     ]
     recs = [e for e in events if e.kind == "ai_recommendation"]
     assert recs and recs[-1].payload.get("uci") == "e2e4"

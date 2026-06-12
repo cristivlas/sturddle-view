@@ -97,13 +97,25 @@ base system prompt differs.
 share one per-turn `search_cache`, so a position searched once isn't
 searched again across them.
 
-**Flow per turn:** the narrator names the critical lines and calls
-`delegate(question)` once per line; each spawns a verifier sub-run
-(`AIAnalysisCoordinator._run_verifier`, verifier prompt + registry, no
-`delegate` -- one level deep). The verifier must call a tool before
-concluding (a no-tool verdict draws one nudge), and returns a one/two
-sentence live-position conclusion that lands as the delegate tool_result.
-The narrator synthesizes and calls `recommend_move`.
+**Flow per turn:** the narrator weighs its candidates, then red-teams
+its pick with `delegate(move, question)`; each call spawns a verifier
+sub-run (`AIAnalysisCoordinator._run_verifier`, verifier prompt +
+registry, no `delegate` -- one level deep). The verifier is an
+adversary: it assumes the move is flawed and hunts the refutation with
+the engine, must call a tool before concluding (a no-tool verdict draws
+one nudge), and returns a one/two sentence holds/refuted conclusion that
+lands as the delegate tool_result. The canonical SAN is prefixed to the
+delegated question ("Move under test: ...") so the verifier knows the
+move under attack regardless of the narrator's phrasing. The narrator
+synthesizes and calls `recommend_move`.
+
+**Red-team hold.** The first accepted `recommend_move` of a turn with no
+prior delegate verdict is held once (`error=red_team_first`) and the
+model is asked to red-team the move first; a stalled model still gets
+its pick on the next attempt. Enforced in the loop, both personas, only
+when `delegate` is registered. This supersedes the earlier
+commentator-only compare-first hold (a `top_moves` ranking does not
+satisfy it -- ranking is not an adversarial check).
 
 **Verifier sub-run is silent except tool calls.** Its `analyze`/`top_moves`
 events forward to the UI (nested under the originating "Verifying line" row
@@ -130,7 +142,8 @@ line-validation is the model's job via `delegate`.
 
 **Settling on a move.** The narrator weighs its candidates with one
 `top_moves` call (all candidates ranked best-first for the side to move),
-then submits with a single `recommend_move`. When the submitted move is
+red-teams the winner via `delegate`, then submits with a single
+`recommend_move`. When the submitted move is
 meaningfully weaker than the best, `recommend_move` rejects it and names
 the stronger move in the reason -- the narrator resubmits *that* move, so
 a rejection resolves in one step rather than open-ended probing. The last

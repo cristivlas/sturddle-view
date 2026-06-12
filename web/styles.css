@@ -554,7 +554,7 @@ wa-select::part(listbox) {
   text-decoration: line-through;
 }
 /* Superseded call: the tool ran fine but the loop steered the model to a
-   better move (e.g. a stronger move named, or a compare-first hold). Struck
+   better move (e.g. a stronger move named, or a red-team hold). Struck
    through to show it was set aside, but the dot keeps the tool's own color --
    it is not a failure. */
 .play-ai-tool-call-superseded .play-ai-tool-label {

@@ -102,7 +102,6 @@ MAX_RECOMMEND_FAILURES = env_int(
     "SV_AI_MAX_RECOMMEND_FAILURES", _DEFAULT_AI_MAX_RECOMMEND_FAILURES
 )
 
-_COMMENTATOR_MODE: PromptMode = "commentator"
 _VERIFIER_MODE: PromptMode = "verifier"
 
 
@@ -169,13 +168,13 @@ _RECOMMEND_FAILURE_NUDGE = (
     + _NO_ACK_CLAUSE
 )
 
-# Commentator-only, one-shot: the model accepted a move without comparing
-# any alternative this turn. The reviewed move is the subject under review,
-# not a tested pick -- rank it against real alternatives before endorsing.
-_COMPARE_FIRST_ERROR = "compare_first"
-_COMPARE_FIRST_NUDGE = (
-    "Before settling, rank the move under review against at least one "
-    "real alternative in a single `top_moves` call, then recommend." + _NO_ACK_CLAUSE
+# One-shot, both narrator modes: the model accepted a move it never
+# red-teamed. Hold the accept and ask for a delegate refutation check;
+# a stalled model still gets its pick on the next attempt.
+_RED_TEAM_FIRST_ERROR = "red_team_first"
+_RED_TEAM_FIRST_NUDGE = (
+    "Before settling, hand this move to `delegate` to red-team it; "
+    "submit again once the verdict holds." + _NO_ACK_CLAUSE
 )
 
 # Verifier completeness nudge: if it issues a verdict without ever
@@ -205,16 +204,22 @@ _DELEGATE_TOOL_NAME = "delegate"
 # removes the thing being acknowledged (same pattern across all cards).
 _DELEGATE_TOOL_CARD = (
     "One move per call. The result echoes the canonical `move_uci` and a "
-    "verdict about the live position, advisory not quotable."
+    "holds/refuted verdict about the live position, advisory not quotable."
 )
+
+
+# Prefixed to the delegated question so the verifier knows the exact
+# move under attack even when the narrator's question doesn't name it.
+_MOVE_UNDER_TEST_PREFIX = "Move under test:"
 
 
 DELEGATE_TOOL_SPEC = ToolSpec(
     name=_DELEGATE_TOOL_NAME,
     description=(
-        "Hand one move to a deep positional check. It searches the live "
-        "position and returns a short verdict (sound/unsound + reason). "
-        "Confirm a line before relying on it."
+        "Red-team a candidate move before committing to it: an adversary "
+        "searches the live position for a refutation -- the opponent's "
+        "strongest reply, the tactic it allows -- and returns a verdict, "
+        "holds or refuted with the reason."
     ),
     input_schema={
         "type": "object",
@@ -222,14 +227,14 @@ DELEGATE_TOOL_SPEC = ToolSpec(
             "move": {
                 "type": "string",
                 "description": (
-                    "The move to check, UCI or SAN (e.g. 'Nf3', 'g1f3')."
+                    "The move to red-team, UCI or SAN (e.g. 'Nf3', 'g1f3')."
                 ),
             },
             "question": {
                 "type": "string",
                 "description": (
-                    "What to check about the move, e.g. "
-                    "'sound, or does it drop material?'."
+                    "What to probe, e.g. "
+                    "'does it drop material to the d5 break?'."
                 ),
             },
         },
@@ -262,7 +267,9 @@ def make_delegate_tool(
         move, kind, detail = parse_move_reporting(board, raw_move)
         if move is None:
             return {"error": kind, "detail": detail, "fen": board.fen()}
-        verdict = await runner(question.strip())
+        verdict = await runner(
+            f"{_MOVE_UNDER_TEST_PREFIX} {board.san(move)}. {question.strip()}"
+        )
         if not verdict:
             return {
                 "error": "no_verdict",
@@ -574,6 +581,9 @@ class _LoopConfig:
     # True only for the narrator loop -- enables recommend_move tracking
     # so the end-of-turn verifier fires on the chosen move.
     track_recommend: bool = False
+    # Hold the first accepted recommend_move until a delegate verdict ran
+    # this turn. Only set when `delegate` is actually registered.
+    enforce_red_team: bool = False
     # Per-call thinking override passed to provider.stream(). None = use
     # the provider's setting (narrator); False = force off (verifier).
     thinking_override: bool | None = None
@@ -756,6 +766,10 @@ class AIAnalysisCoordinator:
                 t.get("name") == RECOMMEND_MOVE_TOOL_NAME
                 for t in (tool_schemas or [])
             )
+            has_delegate = any(
+                t.get("name") == _DELEGATE_TOOL_NAME
+                for t in (tool_schemas or [])
+            )
             done_payload: dict = {"done": True}
             async with open_transcript() as transcript:
                 await transcript.turn_start({
@@ -780,6 +794,7 @@ class AIAnalysisCoordinator:
                         _RECOMMEND_NUDGE_PROMPTS[mode] if has_recommend_move else None
                     ),
                     track_recommend=has_recommend_move,
+                    enforce_red_team=has_recommend_move and has_delegate,
                 )
                 recommended_uci: str | None = None
                 recommended_depth: int | None = None
@@ -899,11 +914,11 @@ class AIAnalysisCoordinator:
         # Reset by an accepted recommend or a top_moves call.
         consecutive_recommend_failures = 0
         recommend_failure_nudge_armed = True
-        # True once the model has compared candidates via top_moves this turn.
-        # Commentator mode uses it to nudge against endorsing the played move
-        # with zero contrast (the old alternative-examined gate's intent).
-        compared_candidates = False
-        compare_nudge_sent = False
+        # True once a delegate call returned a verdict this turn. Gates the
+        # red-team hold: the first accepted recommend_move without one is
+        # held so the pick survives an adversarial check before it ships.
+        red_teamed = False
+        red_team_nudge_sent = False
         # Flips when prose lands after recommend_move is accepted (the
         # closing conclusion); gates the post-recommend nudge.
         prose_after_recommend = False
@@ -1105,7 +1120,15 @@ class AIAnalysisCoordinator:
             if config.track_recommend and pending_tool.tool_name == TOP_MOVES_TOOL_NAME:
                 consecutive_recommend_failures = 0
                 recommend_failure_nudge_armed = True
-                compared_candidates = True
+            # A verdict-bearing delegate marks the pick red-teamed; errors
+            # (bad move, no verdict) don't count.
+            if (
+                config.track_recommend
+                and pending_tool.tool_name == _DELEGATE_TOOL_NAME
+                and isinstance(tool_output, dict)
+                and not tool_output.get("error")
+            ):
+                red_teamed = True
             # An accepted recommend_move is the turn's pick. Safe to read a
             # cached result: the cached uci matches a fresh dispatch's.
             if config.track_recommend and pending_tool.tool_name == RECOMMEND_MOVE_TOOL_NAME:
@@ -1115,23 +1138,23 @@ class AIAnalysisCoordinator:
                     and tool_output.get("ok")
                     and isinstance(tool_output.get("uci"), str)
                 )
-                # Commentator: don't let the reviewed move be endorsed with no
-                # contrast. Hold the first such accept and ask for a top_moves
-                # comparison. One-shot -- a stalled model still gets its pick.
+                # Don't let a pick ship without an adversarial check. Hold
+                # the first un-red-teamed accept and ask for a delegate
+                # verdict. One-shot -- a stalled model still gets its pick.
                 if (
                     accepted
-                    and mode == _COMMENTATOR_MODE
-                    and not compared_candidates
-                    and not compare_nudge_sent
+                    and config.enforce_red_team
+                    and not red_teamed
+                    and not red_team_nudge_sent
                 ):
                     accepted = False
-                    compare_nudge_sent = True
+                    red_team_nudge_sent = True
                     tool_output = {
                         k: v for k, v in tool_output.items() if k != "ok"
                     }
-                    tool_output["error"] = _COMPARE_FIRST_ERROR
-                    tool_output["reason"] = _COMPARE_FIRST_NUDGE
-                    log.info("compare-first nudge (commentator): holding uncompared accept")
+                    tool_output["error"] = _RED_TEAM_FIRST_ERROR
+                    tool_output["reason"] = _RED_TEAM_FIRST_NUDGE
+                    log.info("red-team nudge (%s): holding unchecked accept", mode)
                 if accepted:
                     consecutive_recommend_failures = 0
                     recommended_uci = tool_output["uci"]
@@ -1141,7 +1164,7 @@ class AIAnalysisCoordinator:
                     # is handled at the natural-exit check.
                     if round_had_text:
                         prose_after_recommend = True
-                elif tool_output.get("error") != _COMPARE_FIRST_ERROR:
+                elif tool_output.get("error") != _RED_TEAM_FIRST_ERROR:
                     consecutive_recommend_failures += 1
             await config.transcript.tool_result(
                 round_index, pending_tool.tool_use_id, tool_output
