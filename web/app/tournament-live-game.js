@@ -25,13 +25,18 @@ function _fmtDepth(p) {
 function _fmtNps(p) {
   return p.nps ? `nps:${fmtCount(p.nps)}` : "";
 }
+// hashfull is per-mille (UCI); shown as percent.
+function _fmtHash(p) {
+  return p.hashfull ? `h:${Math.round(p.hashfull / 10)}%` : "";
+}
 function _fmtTb(p) {
   return p.tbhits ? `tb:${p.tbhits}` : "";
 }
-// Write the depth/nps/tbhits trio into one eval row's spans.
-function _applyEvalInfo({ depthEl, npsEl, tbhitsEl }, p) {
+// Write the depth/nps/hashfull/tbhits stats into one eval row's spans.
+function _applyEvalInfo({ depthEl, npsEl, hashEl, tbhitsEl }, p) {
   depthEl.textContent = _fmtDepth(p);
   npsEl.textContent = _fmtNps(p);
+  hashEl.textContent = _fmtHash(p);
   tbhitsEl.textContent = _fmtTb(p);
 }
 
@@ -212,6 +217,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
       <span class="lg-eval-score lg-eval-score-top"></span>
       <span class="lg-eval-depth lg-eval-depth-top muted"></span>
       <span class="lg-eval-nps lg-eval-nps-top muted"></span>
+      <span class="lg-eval-hash lg-eval-hash-top muted"></span>
       <span class="lg-eval-tbhits lg-eval-tbhits-top muted"></span>
     </div>
     <div class="clock-row lg-clock-top">
@@ -233,6 +239,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
       <span class="lg-eval-score lg-eval-score-bottom"></span>
       <span class="lg-eval-depth lg-eval-depth-bottom muted"></span>
       <span class="lg-eval-nps lg-eval-nps-bottom muted"></span>
+      <span class="lg-eval-hash lg-eval-hash-bottom muted"></span>
       <span class="lg-eval-tbhits lg-eval-tbhits-bottom muted"></span>
     </div>
     <div class="lg-pv lg-pv-bottom muted"></div>
@@ -258,11 +265,13 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   const evalScoreEl = body.querySelector(".lg-eval-score-bottom");
   const evalDepthEl = body.querySelector(".lg-eval-depth-bottom");
   const evalNpsEl = body.querySelector(".lg-eval-nps-bottom");
+  const evalHashEl = body.querySelector(".lg-eval-hash-bottom");
   const evalTbhitsEl = body.querySelector(".lg-eval-tbhits-bottom");
   const pvEl = body.querySelector(".lg-pv-bottom");
   const oppEvalScoreEl = body.querySelector(".lg-eval-score-top");
   const oppEvalDepthEl = body.querySelector(".lg-eval-depth-top");
   const oppEvalNpsEl = body.querySelector(".lg-eval-nps-top");
+  const oppEvalHashEl = body.querySelector(".lg-eval-hash-top");
   const oppEvalTbhitsEl = body.querySelector(".lg-eval-tbhits-top");
   const oppPvEl = body.querySelector(".lg-pv-top");
   const clockTopEl = body.querySelector(".lg-clock-top");
@@ -440,8 +449,8 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
   return {
     wb, body, board, boardHost,
     refs: {
-      evalScoreEl, evalDepthEl, evalNpsEl, evalTbhitsEl, pvEl,
-      oppEvalScoreEl, oppEvalDepthEl, oppEvalNpsEl, oppEvalTbhitsEl, oppPvEl,
+      evalScoreEl, evalDepthEl, evalNpsEl, evalHashEl, evalTbhitsEl, pvEl,
+      oppEvalScoreEl, oppEvalDepthEl, oppEvalNpsEl, oppEvalHashEl, oppEvalTbhitsEl, oppPvEl,
       clockTopEl, clockBottomEl,
       topNameEl, bottomNameEl, topTimeEl, bottomTimeEl,
       resultOverlayEl, resultScoreEl, resultTerminationEl, replayBtnEl,
@@ -503,8 +512,8 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   refs.pvTableBlackEl.appendChild(pvSideBlack.el);
   refs.evalGraphHostEl.appendChild(evalGraph.el);
   const {
-    evalScoreEl, evalDepthEl, evalNpsEl, evalTbhitsEl, pvEl,
-    oppEvalScoreEl, oppEvalDepthEl, oppEvalNpsEl, oppEvalTbhitsEl, oppPvEl,
+    evalScoreEl, evalDepthEl, evalNpsEl, evalHashEl, evalTbhitsEl, pvEl,
+    oppEvalScoreEl, oppEvalDepthEl, oppEvalNpsEl, oppEvalHashEl, oppEvalTbhitsEl, oppPvEl,
     clockTopEl, clockBottomEl,
     topNameEl, bottomNameEl, topTimeEl, bottomTimeEl,
     pvNameBlackEl, pvNameWhiteEl,
@@ -820,14 +829,14 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
 
   function renderOpponentEval(p) {
     oppEvalScoreEl.textContent = fmtScore(p.score, { empty: "--", matePrefix: "M", signed: true });
-    _applyEvalInfo({ depthEl: oppEvalDepthEl, npsEl: oppEvalNpsEl, tbhitsEl: oppEvalTbhitsEl }, p);
+    _applyEvalInfo({ depthEl: oppEvalDepthEl, npsEl: oppEvalNpsEl, hashEl: oppEvalHashEl, tbhitsEl: oppEvalTbhitsEl }, p);
     const pv = p.pv_uci;
     if (pv && pv.length) oppPvEl.textContent = pv.slice(0, 12).join(" ");
   }
 
   function renderEval(p) {
     evalScoreEl.textContent = fmtScore(p.score, { empty: "--", matePrefix: "M", signed: true });
-    _applyEvalInfo({ depthEl: evalDepthEl, npsEl: evalNpsEl, tbhitsEl: evalTbhitsEl }, p);
+    _applyEvalInfo({ depthEl: evalDepthEl, npsEl: evalNpsEl, hashEl: evalHashEl, tbhitsEl: evalTbhitsEl }, p);
     if (pvSidesVisible) pvOwn().update(p, p.pv_uci?.join(" "));
     const pv = p.pv_uci;
     if (pv && pv.length) {
