@@ -91,8 +91,10 @@ structural fix for engine over-trust). Applies to both personas; only the
 base system prompt differs.
 
 **Split.** The narrator's registry holds `recommend_move`, `top_moves`
-(rank its own candidate moves in one call), `report_line`, and
-`delegate`. The verifier registry holds the search/inspection tools
+(rank its own candidate moves in one call), `report_line`, `delegate`,
+and the board-read grounding tools `piece_at` / `validate_move` (no
+engine, no eval -- the split keeps raw eval out, not board facts). The
+verifier registry holds the search/inspection tools
 (`analyze`, `top_moves`, `piece_at`, `validate_move`); both registries
 share one per-turn `search_cache`, so a position searched once isn't
 searched again across them.

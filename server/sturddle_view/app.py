@@ -517,6 +517,16 @@ def _setup_ai(app: FastAPI) -> None:
         REPORT_LINE_TOOL_SPEC,
         make_report_line_tool(board_provider=_ai_board_provider),
     )
+    # Board-read grounding (no engine, no eval): the rules block tells the
+    # narrator to settle squares and legality before naming them in prose.
+    ai_registry.register(
+        PIECE_AT_TOOL_SPEC,
+        make_piece_at_tool(board_provider=_ai_board_provider),
+    )
+    ai_registry.register(
+        VALIDATE_MOVE_TOOL_SPEC,
+        make_validate_move_tool(board_provider=_ai_board_provider),
+    )
     app.state.ai_tool_registry = ai_registry
     app.state.ai_verifier_registry = ai_verifier_registry
 
