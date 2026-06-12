@@ -3588,7 +3588,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 /* Header tinted by the side's piece color (same palette as clock rows). */
 .wb-livegame .lg-pv-side-name[data-color="white"] { background: #e8e8e8; color: #111; }
 .wb-livegame .lg-pv-side-name[data-color="black"] { background: #111; color: #e8e8e8; }
-.wb-livegame .lg-eval-graph-title { background: var(--muted-bright); color: #111; }
+.wb-livegame .lg-eval-graph-title { background: var(--row-bg-hover); color: var(--fg); }
 .wb-livegame .lg-pv-side-table { flex: 1 1 0; min-height: 0; overflow: auto; }
 .wb-livegame .lg-pv-side-table + .lg-pv-side-name { border-top: 1px solid var(--border-subtle); }
 .wb-livegame .lg-eval-graph-host { flex: 1 1 0; min-height: 0; }
