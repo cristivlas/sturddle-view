@@ -95,6 +95,22 @@ function _patchAnimationsQueue(board) {
 
 const ASSETS_URL = "./vendor/cm-chessboard/assets/";
 
+// cm-chessboard (assetsCache=true) caches the first-mounted board's piece
+// sprite into this fixed-id body div and never refreshes it on style change,
+// leaving stale duplicate ids (#wp/#bk/..) that shadow our per-board defs.
+const SPRITE_CACHE_DIV_ID = "cm-chessboard-sprite";
+
+// Pre-create the div empty so the library's one-shot cache stays inert and
+// the per-board local defs are the only piece-id source in the document.
+(function _neutralizeGlobalSpriteCache() {
+  if (document.getElementById(SPRITE_CACHE_DIV_ID)) return;
+  const div = document.createElement("div");
+  div.id = SPRITE_CACHE_DIV_ID;
+  div.style.display = "none";
+  div.setAttribute("aria-hidden", "true");
+  document.body.appendChild(div);
+})();
+
 // Why: cm-chessboard's <use href="file.svg#wp"> path triggers a Chromium bug
 // where the parsed-symbol shadow tree is reused across sprite files that share
 // fragment IDs (every set defines wp/bk/..). Switching standard <-> staunty
@@ -122,8 +138,10 @@ function _loadSpriteDefs(piecesFile) {
 
 async function _installLocalSprite(board, piecesFile) {
   const defsHtml = await _loadSpriteDefs(piecesFile);
+  // Detached svg is fine (WinBox mounts attach later); only bail if the
+  // board was destroyed while the sprite fetch was in flight.
   const svg = board.view?.svg;
-  if (!svg || !svg.isConnected) return;
+  if (!svg) return;
   const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
   defs.innerHTML = defsHtml;
   svg.insertBefore(defs, svg.firstChild);
@@ -136,6 +154,9 @@ async function _installLocalSprite(board, piecesFile) {
   }
   // Future drawPiece calls (animations, edit-mode adds) keep using local refs.
   board.view.getSpriteUrl = () => "";
+  // The constructor's initial draw bound <use> nodes before these defs
+  // existed; rebuild them so they resolve against the local sprite.
+  board.view.redrawPieces();
 }
 
 export function mountBoard({ element, onMove, styleId }) {
