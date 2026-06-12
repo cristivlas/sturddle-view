@@ -3566,7 +3566,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   width: var(--lg-side-w, 0);
   height: var(--lg-side-h, 0);
   flex-direction: column;
-  border: 1px solid var(--muted);
+  border: 1px solid #666;
   overflow: hidden;
 }
 .wb-livegame.lg-pv-sides .lg-pv-side { display: flex; }
