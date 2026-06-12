@@ -18,7 +18,7 @@ import {
 } from "./wb-utils.js";
 
 // Bars saturate at this many centipawns; mate scores pin to it.
-const CLAMP_CP = 500;
+const CLAMP_CP = 750;
 const BAR_THICKNESS_PX = 23;
 const BAR_GAP_PX = 1;
 const COLOR_WHITE_BAR = "#e8e8e8";
