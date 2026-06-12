@@ -616,11 +616,11 @@ wa-select::part(listbox) {
 .play-ai-tool-io-tag {
   flex: 0 0 auto;
   width: 2.5em;
-  text-align: right;
+  text-align: left;
   font-size: 0.75rem; /* match the text column (global pre rule) */
   font-weight: 700;
   color: var(--muted);
-  padding: 4px 0; /* line up with the text pre's 4px padding */
+  padding: 4px 0 0 4px; /* line up with the text pre's 4px padding */
 }
 .play-ai-tool-io-text {
   flex: 1 1 auto;
