@@ -537,7 +537,9 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   const schedulePositionPaint = rafCoalesce(() => {
     const p = pendingPosition;
     pendingPosition = null;
-    if (!p) return;
+    // wbClosed: a producer that resumed after close (e.g. applyBestMove's
+    // fetch) must not repaint a destroyed board.
+    if (!p || wbClosed) return;
     board.setPosition(p.fen, p.lastMove, p.animated);
     board.clearArrows();
   });
