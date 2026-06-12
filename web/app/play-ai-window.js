@@ -481,13 +481,10 @@ export function appendAiToolCall({
     const details = document.createElement("div");
     details.className = TOOL_DETAILS_BODY_CLASS;
     details.hidden = true;
-    const stack = document.createElement("div");
-    stack.className = "play-ai-tool-io-stack";
-    stack.append(buildIoRow(IO_TAG_IN, raw).row);
+    details.append(buildIoRow(IO_TAG_IN, raw).row);
     const out = buildIoRow(IO_TAG_OUT, "");
     out.row.hidden = true; // shown when the result (or an error) lands
-    stack.append(out.row);
-    details.append(stack);
+    details.append(out.row);
     // Direct refs (not querySelector): nested verifier rows land inside
     // this line element, so a selector could match a child's blocks.
     line._outRow = out.row;

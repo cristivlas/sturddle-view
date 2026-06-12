@@ -457,6 +457,11 @@ wa-select::part(listbox) {
   margin-bottom: 0;
 }
 .play-ai-tool-call {
+  /* Verifier children indent + detail-box insets, shared by the rules
+     below so the nested box can be realigned to top-level from one source. */
+  --tool-nest-indent: 18px;
+  --tool-box-indent: 20px;
+  --tool-box-inset-right: 8px;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -467,8 +472,6 @@ wa-select::part(listbox) {
   /* Anchor the verifier spine (drawn on the parent row that owns a
      .play-ai-tool-children) to the parent dot, not to the children box. */
   position: relative;
-  /* DEBUG */
-  /* border: 1px solid olivedrab; */
 }
 .play-ai-tool-dot {
   width: 8px;
@@ -498,7 +501,7 @@ wa-select::part(listbox) {
   min-width: 0;  /* allow nested details <pre> to shrink + scroll */
   gap: 2px;
   /* Left indent sets the children apart from the parent row. */
-  margin: 0 0 2px 18px;
+  margin: 0 0 2px var(--tool-nest-indent);
   position: relative;
 }
 /* Vertical spine connecting the parent "Verifying line" dot down to the
@@ -583,49 +586,50 @@ wa-select::part(listbox) {
 }
 .play-ai-tool-details-body {
   flex: 1 1 100%;
-  min-width: 0;  /* let it shrink below content width so overflow-x scrolls */
-  margin: 2px 0 0 20px;
+  min-width: 0;  /* let the text columns shrink so they can scroll */
+  margin: 2px var(--tool-box-inset-right) 0 var(--tool-box-indent);
+  /* basis is 100% of the row; the left indent + right inset must come out
+     of the width or the box (and its scrollbar) overruns the right edge. */
+  max-width: calc(100% - var(--tool-box-indent) - var(--tool-box-inset-right));
   background-color: black;
   border: 1px solid #555;
-  padding: 0 6px;
-  overflow-x: auto;  /* single scroller for both rows */
 }
-/* min-width: rows and the IN/OUT separator span the widest row's full
-   scroll width, not just the visible box. */
-.play-ai-tool-io-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: max-content;
+/* Nested verifier boxes: the children container is inset by the nest indent
+   from the parent. Shift the box left by that and widen it by the same, so
+   both its left and right edges land exactly on a top-level box's. */
+.play-ai-tool-children .play-ai-tool-details-body {
+  position: relative;
+  left: calc(-1 * var(--tool-nest-indent));
+  width: calc(100% + var(--tool-nest-indent));
+  max-width: none;
 }
-/* The row's display:flex beats the UA [hidden] rule. */
 .play-ai-tool-io[hidden] {
   display: none;
 }
 .play-ai-tool-io {
   display: flex;
-  gap: 0;
   opacity: 0.7; /* dim the content, not the box border */
 }
 .play-ai-tool-io + .play-ai-tool-io {
   border-top: 1px solid #555;
 }
 .play-ai-tool-io-tag {
+  flex: 0 0 auto;
   width: 2.5em;
+  text-align: center;
   font-size: 0.75rem; /* match the text column (global pre rule) */
   font-weight: 700;
   color: var(--muted);
-  position: sticky; /* pinned while the box h-scrolls */
-  left: 0;
-  background-color: black;
   padding: 4px 0; /* line up with the text pre's 4px padding */
 }
 .play-ai-tool-io-text {
+  flex: 1 1 auto;
+  min-width: 0;  /* shrink below content width so it scrolls, not the box */
   padding: 4px;
   white-space: pre;
+  overflow-x: auto;  /* only the content scrolls; the tag stays put */
   max-height: none;
-  /* defeat the default pre chrome */
-  background: none;
+  background: none;  /* defeat the default pre chrome */
   border-radius: 0;
 }
 
