@@ -7,7 +7,7 @@
 // look and feel. Clicking a row selects it; ribbon actions target the
 // selected tournament. New / Sort / Window remain in the top menubar.
 
-import { mqMobile, mqMobileH } from "./breakpoints.js";
+import { mqMobile, mqMobileH, mqMobileHPlay } from "./breakpoints.js";
 import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, showDialog, toast } from "./dialogs.js";
 import { openSettingsDialog } from "./settings-dialog.js";
 import { EVT, KIND, POLL_INTERVAL_MS, STATUS } from "./tournament-events.js";
@@ -1134,8 +1134,16 @@ async function pollTick(ctx) {
 
 // ---- Workspace restore --------------------------------------------------
 
+// In-place ribbon goes horizontal/full-width below 800w/680h (styles.css
+// mobile block); openWorkspace would measure it as the side inset and
+// shove every window to the right edge. Floating ribbon never mismeasures.
+function ribbonMobileHorizontal() {
+  return (mqMobile.matches || mqMobileHPlay.matches) && !document.body.dataset.ribbonFloat;
+}
+
 function maybeRestoreWorkspace(ctx) {
   if (!ctx.tournamentsTabActive || ctx.initialLoad) return;
+  if (ribbonMobileHorizontal()) return;
   const t = selectedTournament(ctx);
   if (t && hasSavedWorkspaceState(t.id)) openWorkspace(ctx, t);
 }
@@ -1372,7 +1380,10 @@ export function mountTournaments({ container, api, events, log, token }) {
   // Workspace windows don't fit a mobile viewport in either axis. Width
   // OR height crossing the threshold counts as mobile.
   // Mobile viewport closes the workspace (snapshot stays restorable);
-  // widening back to desktop reopens it from that snapshot.
+  // widening back to desktop reopens it from that snapshot. Restore is
+  // gated on the docked ribbon being vertical again (see
+  // ribbonMobileHorizontal); the mqMobileHPlay listener re-fires the
+  // deferred restore when height crosses that CSS flip.
   ctx.onViewportChange = () => {
     if (mqMobile.matches || mqMobileH.matches) {
       getActiveWorkspace()?.close();
@@ -1384,6 +1395,7 @@ export function mountTournaments({ container, api, events, log, token }) {
   };
   mqMobile.addEventListener("change", ctx.onViewportChange);
   mqMobileH.addEventListener("change", ctx.onViewportChange);
+  mqMobileHPlay.addEventListener("change", ctx.onViewportChange);
 
   return {
     dismissSortToast: () => dismissSortToastNow(ctx),
@@ -1395,6 +1407,7 @@ export function mountTournaments({ container, api, events, log, token }) {
       window.removeEventListener(APP_EVT.WORKSPACE_CLOSED, ctx.onWorkspaceClosed);
       mqMobile.removeEventListener("change", ctx.onViewportChange);
       mqMobileH.removeEventListener("change", ctx.onViewportChange);
+      mqMobileHPlay.removeEventListener("change", ctx.onViewportChange);
       document.removeEventListener("click", ctx.onMenuDocClick);
       dismissSortToastNow(ctx);
       // Hide (don't close) so the workspace survives perspective
