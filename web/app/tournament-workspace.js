@@ -34,11 +34,13 @@ import {
   scrollToBottom,
 } from "./wb-utils.js";
 import { createSlotGrid, SLOT_GAP } from "./workspace-slot-grid.js";
+import {
+  addLogEntry, applyEventKind, createLiveState, seedFromDetail,
+} from "./tournament-live-state.js";
 
 const STORAGE_KEY_PREFIX = STORAGE_KEY.WORKSPACE_PREFIX;
 const STANDINGS_COL_PCTS_KEY = STORAGE_KEY.TOURNAMENTS_STANDINGS_COL_PCTS;
 const STANDINGS_DEFAULT_PCTS = [25, 7, 7, 7, 7, 7, 8, 14];
-const EVENT_LOG_LIMIT = 500;
 
 // Reserved strip at the bottom so minimized WinBoxes have a place to dock.
 // Source of truth is the --wb-min-footer-h CSS token (toast stacks lift
@@ -671,25 +673,7 @@ function setOtherActive(ctx, id, name) {
 
 function applyDetail(ctx, fresh) {
   ctx.detail = fresh;
-  // While RUNNING, API state can lag WS events under fast tc, so
-  // treat API as additive (add missing entries, never remove).
-  // When not RUNNING, replace authoritatively to drop ghosts.
-  const seededProxies = ctx.detail.proxies_active || [];
-  if (ctx.detail.status !== STATUS.RUNNING) ctx.activeProxies.clear();
-  for (const p of seededProxies) {
-    if (p.proxy_id && !ctx.activeProxies.has(p.proxy_id)) {
-      ctx.activeProxies.set(p.proxy_id, { engineName: p.engine_name || null });
-    }
-  }
-  const seededPairings = ctx.detail.pairings_active || [];
-  if (ctx.detail.status !== STATUS.RUNNING) ctx.livePairings.clear();
-  for (const p of seededPairings) {
-    if (ctx.livePairings.has(p.proxy_a) || ctx.livePairings.has(p.proxy_b)) continue;
-    const info = { pairId: p.pair_id, proxyA: p.proxy_a, engineA: p.engine_a, sideA: p.side_a,
-                   proxyB: p.proxy_b, engineB: p.engine_b, sideB: p.side_b };
-    ctx.livePairings.set(p.proxy_a, info);
-    ctx.livePairings.set(p.proxy_b, info);
-  }
+  seedFromDetail(ctx.live, fresh);
   renderStandings(ctx);
   renderSchedule(ctx);
   renderEngines(ctx);
@@ -699,107 +683,6 @@ function applyDetail(ctx, fresh) {
 
 // ---- Event pipeline -----------------------------------------------------
 
-function addLogEntry(ctx, evt) {
-  const seq = evt.payload?._seq;
-  // `game_reconciled` doesn't go into eventLog (it upgrades a prior
-  // game_finished row in pushEvent); duplicates are idempotent there
-  // so we don't need to track its seq at all.
-  if (evt.payload?.kind === KIND.GAME_RECONCILED) return false;
-  if (seq != null) {
-    if (ctx.seenSeqs.has(seq)) return false;
-    ctx.seenSeqs.add(seq);
-  }
-  const tsRaw = evt.payload?._ts;
-  const ts = (tsRaw ? new Date(tsRaw) : new Date())
-    .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-  ctx.eventLog.push({ ts, kind: evt.kind, payload: evt.payload, _seq: seq });
-  // Keep ordered by seq so backfill items slot in before any live
-  // events that arrived during the REST round-trip.
-  ctx.eventLog.sort((a, b) => (a._seq ?? 0) - (b._seq ?? 0));
-  // Cap eventLog and keep seenSeqs in lockstep so it can't outgrow
-  // the visible log -- the dedup only needs to cover items we'd
-  // otherwise re-render.
-  while (ctx.eventLog.length > EVENT_LOG_LIMIT) {
-    const evicted = ctx.eventLog.shift();
-    if (evicted?._seq != null) ctx.seenSeqs.delete(evicted._seq);
-  }
-  return true;
-}
-
-function applyReconciled(ctx, evt) {
-  // Upgrade the prior `game_finished` entry for this pair_id with
-  // the matched result/termination/game_n instead of pushing a
-  // separate row. One game = one log entry.
-  const pid = evt.payload?.pair_id;
-  if (pid) {
-    if (evt.payload.game_n != null) {
-      ctx.resolvedGames.set(pid, {
-        gameN: evt.payload.game_n,
-        result: evt.payload.result,
-        termination: evt.payload.termination,
-      });
-    }
-    for (let i = ctx.eventLog.length - 1; i >= 0; i--) {
-      const ent = ctx.eventLog[i];
-      if (ent.payload?.kind === KIND.GAME_FINISHED && ent.payload?.pair_id === pid) {
-        ent.payload = {
-          ...ent.payload,
-          result: evt.payload.result,
-          termination: evt.payload.termination,
-          game_n: evt.payload.game_n,
-          reconciled: true,
-        };
-        break;
-      }
-    }
-    // Live windows listening for this pair_id will repaint
-    // their banner; no-op if window already closed.
-    window.dispatchEvent(new CustomEvent(APP_EVT.RECONCILED, {
-      detail: {
-        pairId: pid,
-        result: evt.payload.result,
-        termination: evt.payload.termination,
-        gameN: evt.payload.game_n ?? null,
-        tournamentId: ctx.tournament.id,
-      },
-    }));
-  }
-}
-
-function applyEventKind(ctx, evt, inner) {
-  // Track active proxies for Schedule rows.
-  if (inner === KIND.PROXY_STARTED) {
-    const pid = evt.payload.proxy_id;
-    if (pid) {
-      ctx.activeProxies.set(pid, {
-        engineName: evt.payload.engine_name || null,
-      });
-    }
-  } else if (inner === KIND.PROXY_ENDED) {
-    const pid = evt.payload.proxy_id;
-    if (pid) ctx.activeProxies.delete(pid);
-  } else if (inner === KIND.PROXY_PAIRED) {
-    const p = evt.payload;
-    const info = { pairId: p.pair_id, proxyA: p.proxy_a, engineA: p.engine_a, sideA: p.side_a,
-                   proxyB: p.proxy_b, engineB: p.engine_b, sideB: p.side_b };
-    ctx.livePairings.set(p.proxy_a, info);
-    ctx.livePairings.set(p.proxy_b, info);
-  } else if (inner === KIND.GAME_FINISHED) {
-    // Authoritative game-end signal -- drives livePairings cleanup +
-    // Schedule re-render.
-    ctx.livePairings.delete(evt.payload.proxy_a);
-    ctx.livePairings.delete(evt.payload.proxy_b);
-  } else if (inner === KIND.GAME_RECONCILED) {
-    applyReconciled(ctx, evt);
-  } else if (
-    inner === KIND.DONE || inner === KIND.STOPPED ||
-    (evt.kind === EVT.STATUS &&
-     [STATUS.STOPPED, STATUS.DONE, STATUS.FAILED].includes(evt.payload?.status))
-  ) {
-    ctx.activeProxies.clear();
-  }
-}
-
 function pushEvent(ctx, evt) {
   if (!evt) return;
   if (!evt.kind?.startsWith(EVT_PREFIX)) return;
@@ -808,10 +691,10 @@ function pushEvent(ctx, evt) {
   const tid = evt.payload?.tournament_id;
   if (tid && tid !== ctx.tournament.id) return;
 
-  const added = addLogEntry(ctx, evt);
+  const added = addLogEntry(ctx.live, evt);
 
   const inner = evt.payload?.kind;
-  applyEventKind(ctx, evt, inner);
+  applyEventKind(ctx.live, evt, inner, ctx.tournament.id);
 
   if (added) scheduleRender(ctx, "_eventLogPending", renderEventLog);
   if (inner === KIND.PROXY_STARTED || inner === KIND.PROXY_ENDED ||
@@ -868,7 +751,7 @@ async function backfillEvents(ctx) {
     let added = false;
     for (const e of (res.events || [])) {
       if (!e.kind?.startsWith(EVT_PREFIX)) continue;
-      if (addLogEntry(ctx, e)) added = true;
+      if (addLogEntry(ctx.live, e)) added = true;
     }
     if (added) scheduleRender(ctx, "_eventLogPending", renderEventLog);
   } catch (e) {
@@ -1596,20 +1479,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       ? { x: s.x, y: s.y, width: s.width, height: s.height }
       : null;
   }
-  const eventLog = [];
-  // Server-stamped sequence numbers we've already added to eventLog.
-  // Lets us run the WS subscription in parallel with the REST backfill
-  // without showing duplicates around workspace open.
-  const seenSeqs = new Set();
-  // proxy_id -> { engineName }
-  const activeProxies = new Map();
-  // proxy_id -> { pairId, proxyA, engineA, sideA, proxyB, engineB, sideB }
-  // Both proxies in a pair map to the same info object.
-  const livePairings = new Map();
-  // pair_id -> { gameN, result, termination }. Populated from
-  // game_reconciled so snapshotLive() can mark resolved windows for
-  // frozen-rehydration on a later workspace re-open.
-  const resolvedGames = new Map();
+  // Headless live-runner state (proxies, pairings, resolved games, event
+  // log). The render helpers and snapshotLive read these maps by reference;
+  // pushEvent/applyDetail mutate them via the shared store helpers.
+  const live = createLiveState();
 
 
   // Slot grid hands out aligned rects for live-board windows. A slot is
@@ -1636,9 +1509,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // thunks (added/removed by the same reference).
   const ctx = {
     api, events, log, token, tournament, top, left, getRight,
-    savedState, restoreFromSaved, slotGrid,
-    lastGeometry, eventLog, seenSeqs,
-    activeProxies, livePairings, resolvedGames,
+    savedState, restoreFromSaved, slotGrid, lastGeometry,
+    live,
+    eventLog: live.eventLog, seenSeqs: live.seenSeqs,
+    activeProxies: live.activeProxies, livePairings: live.livePairings,
+    resolvedGames: live.resolvedGames,
     windows: { standings: null, schedule: null, engines: null, log: null },
     activeLayout: initialLayout,
     boardStyleCached: null, detail: null,

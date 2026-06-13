@@ -13,10 +13,15 @@ import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, loadRaw, saveJson, saveRaw } from "./storage.js";
 import { renderTournamentRow } from "./tournament-row.js";
 import { reportError } from "./dialogs.js";
-import { debounce } from "./wb-utils.js";
+import { debounce, escapeHtml } from "./wb-utils.js";
+import { EVT_PREFIX } from "./tournament-events.js";
+import { SIDE } from "./chess-consts.js";
+import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
 
 const TOURNAMENTS_ENDPOINT = "/api/tournaments";
 const LOAD_FAIL_MSG = "Loading tournaments failed";
+const NO_ENGINES_MSG = "No active engines.";
+const NO_GAMES_MSG = "No games in play.";
 // Coalesce bursty WS events into one list reload.
 const LIST_RELOAD_DEBOUNCE_MS = 150;
 
@@ -74,8 +79,8 @@ const STUDIO_HTML = `
         <div class="studio-bottom">
           <div class="studio-bottom-left">
             <wa-tab-group class="studio-tabs">
-              <wa-tab panel="engines">Engine Instances</wa-tab>
-              <wa-tab panel="livegames">Live Games</wa-tab>
+              <wa-tab panel="engines">Engines</wa-tab>
+              <wa-tab panel="livegames">Games</wa-tab>
               <wa-tab-panel name="engines"><div class="studio-pane studio-pane-engines"></div></wa-tab-panel>
               <wa-tab-panel name="livegames"><div class="studio-pane studio-pane-livegames"></div></wa-tab-panel>
             </wa-tab-group>
@@ -174,6 +179,7 @@ function studioSelect(ctx, id) {
   for (const li of ctx.tourneysPaneEl.querySelectorAll(".tournament-row")) {
     li.classList.toggle("selected", li.dataset.id === id);
   }
+  syncLive(ctx);
 }
 
 function renderTourneys(ctx) {
@@ -206,6 +212,107 @@ async function studioLoadList(ctx) {
   ctx.tournaments = body.tournaments || [];
   ctx.activeId = body.active_id ?? null;
   renderTourneys(ctx);
+  syncLive(ctx);
+}
+
+// ---- Live runner (Engines / Games panes) ---------------------------------
+// Engines and Games show the *running* tournament's live state. They have
+// content only when the selected tourney is the active one; otherwise the
+// live store is torn down and the panes go empty.
+
+function syncLive(ctx) {
+  const runningSelected = ctx.selectedId && ctx.selectedId === ctx.activeId;
+  if (runningSelected) {
+    if (ctx.liveTid !== ctx.selectedId) startLive(ctx, ctx.selectedId);
+  } else {
+    stopLive(ctx);
+  }
+}
+
+function startLive(ctx, tid) {
+  stopLive(ctx);
+  ctx.live = createLiveState();
+  ctx.liveTid = tid;
+  ctx.liveUnsub = ctx.events.on((evt) => livePushEvent(ctx, evt));
+  const gen = ++ctx.liveGen;
+  ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${tid}`)
+    .then((detail) => {
+      if (gen !== ctx.liveGen || !ctx.live) return;
+      seedFromDetail(ctx.live, detail);
+      renderLivePanes(ctx);
+    })
+    .catch((e) => reportError({ log: ctx.log }, LOAD_FAIL_MSG, e));
+}
+
+function stopLive(ctx) {
+  ctx.liveUnsub?.();
+  ctx.liveUnsub = null;
+  ctx.live = null;
+  ctx.liveTid = null;
+  ctx.liveGen++;
+  renderLivePanes(ctx);
+}
+
+// Maintain the live maps from the WS stream; coalesce pane repaints.
+function livePushEvent(ctx, evt) {
+  if (!evt?.kind?.startsWith(EVT_PREFIX) || !ctx.live) return;
+  const tid = evt.payload?.tournament_id;
+  if (tid && tid !== ctx.liveTid) return;
+  addLogEntry(ctx.live, evt);
+  applyEventKind(ctx.live, evt, evt.payload?.kind, ctx.liveTid);
+  if (ctx._panesPending) return;
+  ctx._panesPending = true;
+  requestAnimationFrame(() => { ctx._panesPending = false; renderLivePanes(ctx); });
+}
+
+function renderLivePanes(ctx) {
+  renderEnginesPane(ctx);
+  renderGamesPane(ctx);
+}
+
+function liveRow(iconHtml, label) {
+  const li = document.createElement("li");
+  li.className = "wb-sched-live";
+  li.innerHTML = `<span class="wb-sched-icon">${iconHtml}</span>` +
+    `<span class="wb-sched-game" title="${escapeHtml(label)}">${escapeHtml(label)}</span>`;
+  return li;
+}
+
+function renderEnginesPane(ctx) {
+  const pane = ctx.enginesPaneEl;
+  if (!pane) return;
+  const proxies = ctx.live?.activeProxies;
+  if (!proxies || proxies.size === 0) {
+    pane.innerHTML = `<div class="wb-empty">${NO_ENGINES_MSG}</div>`;
+    return;
+  }
+  const ul = document.createElement("ul");
+  ul.className = "wb-sched-list";
+  for (const [pid, p] of proxies) ul.appendChild(liveRow("&#9881;", p.engineName || pid));
+  pane.replaceChildren(ul);
+}
+
+function renderGamesPane(ctx) {
+  const pane = ctx.gamesPaneEl;
+  if (!pane) return;
+  const pairings = ctx.live?.livePairings;
+  if (!pairings || pairings.size === 0) {
+    pane.innerHTML = `<div class="wb-empty">${NO_GAMES_MSG}</div>`;
+    return;
+  }
+  // Both proxies map to the same info object; dedupe per pair.
+  const ul = document.createElement("ul");
+  ul.className = "wb-sched-list";
+  const shown = new Set();
+  for (const [, info] of pairings) {
+    const key = [info.proxyA, info.proxyB].sort().join(":");
+    if (shown.has(key)) continue;
+    shown.add(key);
+    const wLabel = info.sideA === SIDE.WHITE ? info.engineA : info.engineB;
+    const bLabel = info.sideA === SIDE.WHITE ? info.engineB : info.engineA;
+    ul.appendChild(liveRow("&#9822;", `${wLabel} - ${bLabel}`));
+  }
+  pane.replaceChildren(ul);
 }
 
 function wireSplitters(ctx) {
@@ -232,9 +339,13 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     gripRowEl: q(".studio-grip-row"),
     gripColEl: q(".studio-grip-col"),
     tourneysPaneEl: q(".studio-pane-tourneys"),
+    enginesPaneEl: q(".studio-pane-engines"),
+    gamesPaneEl: q(".studio-pane-livegames"),
     // Tourneys data + selection (selection restored from last session).
     tournaments: [], activeId: null, listGen: 0,
     selectedId: loadRaw(STORAGE_KEY.STUDIO_SELECTED_ID),
+    // Live runner store for the running tourney (null unless it's selected).
+    live: null, liveTid: null, liveUnsub: null, liveGen: 0, _panesPending: false,
   };
   wireSplitters(ctx);
   announceRibbon(ctx.ribbonEl);
@@ -249,9 +360,12 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
 
 function unmountStudio(ctx) {
   ctx.offEvents?.();
+  ctx.liveUnsub?.();
+  ctx.live = null;
   announceRibbon(null);
   ctx.panel.remove();
   ctx.panel = ctx.ribbonEl = ctx.headerEl = null;
   ctx.boardsEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.bottomRightEl = null;
   ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = null;
+  ctx.enginesPaneEl = ctx.gamesPaneEl = null;
 }
