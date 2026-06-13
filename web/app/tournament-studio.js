@@ -45,7 +45,7 @@ const STUDIO_BOARD_GAP = 1;
 // Inset so boards don't sit flush against the region border (abs-positioned
 // boards ignore container padding, so the offset is applied in placement).
 const STUDIO_BOARD_PAD = 1;
-const STUDIO_BOARD_CLASS = "sturddle-wb-studio no-move";
+const STUDIO_BOARD_CLASS = "sturddle-wb-studio no-move no-resize";
 const BOARD_RESIZE_DEBOUNCE_MS = 120;
 // Default active tab per bottom group (first tab) when none is remembered.
 const STUDIO_TAB_DEFAULT_LEFT = "livegames";
