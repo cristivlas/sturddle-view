@@ -525,6 +525,19 @@ function fillRegion(ctx, wb) {
   wb.resize(ctx.boardsEl.clientWidth, ctx.boardsEl.clientHeight).move(0, 0);
 }
 
+// Scroll the region so a (grid-placed) board is fully in view.
+function scrollBoardIntoView(ctx, wb) {
+  const region = ctx.boardsEl;
+  if (!region || wb.min) return;
+  const viewTop = region.scrollTop;
+  const viewBottom = viewTop + region.clientHeight;
+  if (wb.y < viewTop) {
+    region.scrollTo({ top: wb.y - STUDIO_BOARD_PAD, behavior: "smooth" });
+  } else if (wb.y + wb.height > viewBottom) {
+    region.scrollTo({ top: wb.y + wb.height - region.clientHeight + STUDIO_BOARD_PAD, behavior: "smooth" });
+  }
+}
+
 // Maximize (option b): grow the Boards split to the full main column, lock
 // region scroll, and fill it with this board. The bottom tab row collapses.
 function maximizeBoard(ctx, wb) {
@@ -621,7 +634,8 @@ function openBoard(ctx, openOpts, min) {
 }
 
 function studioWatch(ctx, btn, attachKey, openOpts) {
-  openBoard(ctx, openOpts, false);
+  const res = openBoard(ctx, openOpts, false);
+  if (res?.wb) scrollBoardIntoView(ctx, res.wb);
   btn?.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(attachKey));
 }
 
