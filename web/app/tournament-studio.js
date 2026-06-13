@@ -17,13 +17,24 @@ import { debounce, escapeHtml } from "./wb-utils.js";
 import { EVT_PREFIX } from "./tournament-events.js";
 import { SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
+import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, openLiveGameWindow } from "./tournament-live-game.js";
 
 const TOURNAMENTS_ENDPOINT = "/api/tournaments";
+const SETTINGS_ENDPOINT = "/settings";
 const LOAD_FAIL_MSG = "Loading tournaments failed";
 const NO_ENGINES_MSG = "No active engines.";
 const NO_GAMES_MSG = "No games in play.";
 // Coalesce bursty WS events into one list reload.
 const LIST_RELOAD_DEBOUNCE_MS = 150;
+
+// Boards region grid: fixed cell, up to 4 columns, unlimited scrolling rows.
+// Boards are laid out (no-move) and absolutely positioned inside the region.
+const STUDIO_CELL_W = 300;
+const STUDIO_CELL_H = 470;
+const STUDIO_MAX_COLS = 4;
+const STUDIO_BOARD_GAP = 6;
+const STUDIO_BOARD_CLASS = "sturddle-wb-studio no-move";
+const BOARD_RESIZE_DEBOUNCE_MS = 120;
 
 export const TOURNAMENT_UX = Object.freeze({ ARENA: "arena", STUDIO: "studio" });
 
@@ -74,7 +85,7 @@ const STUDIO_HTML = `
 
       <div class="studio-main">
         <div class="studio-header"></div>
-        <div class="studio-boards"></div>
+        <div class="studio-boards"><div class="studio-boards-canvas"></div></div>
         <div class="studio-grip-row" role="separator" aria-orientation="horizontal"></div>
         <div class="studio-bottom">
           <div class="studio-bottom-left">
@@ -250,6 +261,7 @@ function stopLive(ctx) {
   ctx.live = null;
   ctx.liveTid = null;
   ctx.liveGen++;
+  closeAllLiveGames();
   renderLivePanes(ctx);
 }
 
@@ -278,6 +290,16 @@ function liveRow(iconHtml, label) {
   return li;
 }
 
+function watchBtn(ctx, attachKey, openOpts) {
+  const btn = document.createElement("button");
+  btn.className = "wb-sched-attach-btn";
+  btn.textContent = "watch";
+  btn.title = attachKey;
+  btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(attachKey));
+  btn.addEventListener("click", () => studioWatch(ctx, btn, attachKey, openOpts));
+  return btn;
+}
+
 function renderEnginesPane(ctx) {
   const pane = ctx.enginesPaneEl;
   if (!pane) return;
@@ -288,7 +310,12 @@ function renderEnginesPane(ctx) {
   }
   const ul = document.createElement("ul");
   ul.className = "wb-sched-list";
-  for (const [pid, p] of proxies) ul.appendChild(liveRow("&#9881;", p.engineName || pid));
+  for (const [pid, p] of proxies) {
+    const label = p.engineName || pid;
+    const li = liveRow("&#9881;", label);
+    li.appendChild(watchBtn(ctx, pid, { proxyId: pid, label, engineName: label }));
+    ul.appendChild(li);
+  }
   pane.replaceChildren(ul);
 }
 
@@ -310,14 +337,124 @@ function renderGamesPane(ctx) {
     shown.add(key);
     const wLabel = info.sideA === SIDE.WHITE ? info.engineA : info.engineB;
     const bLabel = info.sideA === SIDE.WHITE ? info.engineB : info.engineA;
-    ul.appendChild(liveRow("&#9822;", `${wLabel} - ${bLabel}`));
+    const li = liveRow("&#9822;", `${wLabel} - ${bLabel}`);
+    const attachKey = info.pairId || key;
+    li.appendChild(watchBtn(ctx, attachKey, {
+      proxyId: info.proxyA, gameId: info.pairId || null,
+      label: `${wLabel} vs ${bLabel}`, engineName: wLabel,
+    }));
+    ul.appendChild(li);
   }
   pane.replaceChildren(ul);
+}
+
+// ---- Boards (live game watch) --------------------------------------------
+// Boards are WinBoxes rooted in the scrollable region, laid out by index in
+// a fixed-cell grid (<=4 cols, unlimited rows). No free drag; re-gridded on
+// open/close/resize.
+
+function studioCols(ctx) {
+  const w = ctx.boardsEl?.clientWidth ?? 0;
+  return Math.max(1, Math.min(STUDIO_MAX_COLS,
+    Math.floor((w + STUDIO_BOARD_GAP) / (STUDIO_CELL_W + STUDIO_BOARD_GAP))));
+}
+
+// Reposition every open board into its slot; size the scroll canvas to the
+// row count. A maximized board is refit to the (expanded) region; minimized
+// windows keep their dock geometry.
+function regridBoards(ctx) {
+  if (!ctx.boardsEl) return;
+  const cols = studioCols(ctx);
+  const wins = getLiveWindows();
+  wins.forEach((wb, i) => {
+    if (wb.max) { fillRegion(ctx, wb); return; }
+    if (wb.min) return;
+    const col = i % cols, row = Math.floor(i / cols);
+    wb.resize(STUDIO_CELL_W, STUDIO_CELL_H)
+      .move(col * (STUDIO_CELL_W + STUDIO_BOARD_GAP), row * (STUDIO_CELL_H + STUDIO_BOARD_GAP));
+  });
+  const rows = Math.ceil(Math.max(1, wins.length) / cols);
+  if (ctx.boardsCanvasEl) {
+    ctx.boardsCanvasEl.style.height = `${rows * (STUDIO_CELL_H + STUDIO_BOARD_GAP)}px`;
+  }
+}
+
+// Size a board to fill the visible region, pinned to its top-left.
+function fillRegion(ctx, wb) {
+  wb.resize(ctx.boardsEl.clientWidth, ctx.boardsEl.clientHeight).move(0, 0);
+}
+
+// Maximize (option b): grow the Boards split to the full main column, lock
+// region scroll, and fill it with this board. The bottom tab row collapses.
+function maximizeBoard(ctx, wb) {
+  if (!ctx._savedSplit) {
+    ctx._savedSplit = { boards: ctx.boardsEl.style.flexGrow, bottom: ctx.bottomEl.style.flexGrow };
+  }
+  ctx.boardsEl.style.flexGrow = "1";
+  ctx.bottomEl.style.flexGrow = "0";
+  ctx.boardsEl.style.overflow = "hidden";
+  ctx.boardsEl.scrollTop = 0;
+  // Split grows on the next layout; fill once the region has its new size.
+  requestAnimationFrame(() => { if (ctx.boardsEl && wb.max) fillRegion(ctx, wb); });
+}
+
+function restoreBoard(ctx) {
+  if (ctx._savedSplit) {
+    ctx.boardsEl.style.flexGrow = ctx._savedSplit.boards;
+    ctx.bottomEl.style.flexGrow = ctx._savedSplit.bottom;
+    ctx._savedSplit = null;
+  }
+  ctx.boardsEl.style.overflow = "";
+  requestAnimationFrame(() => regridBoards(ctx));
+}
+
+function studioSlotRect(ctx, i) {
+  const cols = studioCols(ctx);
+  const col = i % cols, row = Math.floor(i / cols);
+  return {
+    x: col * (STUDIO_CELL_W + STUDIO_BOARD_GAP),
+    y: row * (STUDIO_CELL_H + STUDIO_BOARD_GAP),
+    w: STUDIO_CELL_W, h: STUDIO_CELL_H,
+  };
+}
+
+// Sync every watch button's live state to the open boards. Called when a
+// board closes (X) so the spawning button stops showing as live.
+function refreshWatchButtons(ctx) {
+  for (const pane of [ctx.enginesPaneEl, ctx.gamesPaneEl]) {
+    if (!pane) continue;
+    for (const btn of pane.querySelectorAll(".wb-sched-attach-btn")) {
+      btn.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(btn.title));
+    }
+  }
+}
+
+function studioWatch(ctx, btn, attachKey, openOpts) {
+  // Open directly at the next slot so the board doesn't flash at WinBox's
+  // default geometry before the re-grid.
+  const res = openLiveGameWindow({
+    ...openOpts, token: ctx.token, tournamentId: ctx.liveTid,
+    root: ctx.boardsEl, variantClass: STUDIO_BOARD_CLASS,
+    boardStyle: ctx.boardStyleCached, top: 0, left: 0, right: 0,
+    initialRect: studioSlotRect(ctx, getLiveWindows().length),
+  });
+  if (res?.wb && !res.alreadyOpen) {
+    res.wb.onmaximize = () => maximizeBoard(ctx, res.wb);
+    res.wb.onrestore = () => restoreBoard(ctx);
+  }
+  regridBoards(ctx);
+  btn?.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(attachKey));
 }
 
 function wireSplitters(ctx) {
   restoreSplit(STORAGE_KEY.STUDIO_SPLIT_ROW, ctx.boardsEl, ctx.bottomEl);
   restoreSplit(STORAGE_KEY.STUDIO_SPLIT_COL, ctx.bottomLeftEl, ctx.bottomRightEl);
+  // Resizing the Boards split while a board is maximized un-maximizes it
+  // (reverts the split synchronously) so the drag starts from real
+  // geometry. Capture phase: run before the splitter's own handler.
+  ctx.gripRowEl.addEventListener("pointerdown", () => {
+    getLiveWindows().find((wb) => wb.max)?.restore();
+  }, true);
   attachSplitter(ctx.gripRowEl, ctx.boardsEl, ctx.bottomEl, AXIS.Y, STORAGE_KEY.STUDIO_SPLIT_ROW);
   attachSplitter(ctx.gripColEl, ctx.bottomLeftEl, ctx.bottomRightEl, AXIS.X, STORAGE_KEY.STUDIO_SPLIT_COL);
 }
@@ -333,6 +470,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     ribbonEl: q(".studio-ribbon"),
     headerEl: q(".studio-header"),
     boardsEl: q(".studio-boards"),
+    boardsCanvasEl: q(".studio-boards-canvas"),
     bottomEl: q(".studio-bottom"),
     bottomLeftEl: q(".studio-bottom-left"),
     bottomRightEl: q(".studio-bottom-right"),
@@ -346,9 +484,27 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     selectedId: loadRaw(STORAGE_KEY.STUDIO_SELECTED_ID),
     // Live runner store for the running tourney (null unless it's selected).
     live: null, liveTid: null, liveUnsub: null, liveGen: 0, _panesPending: false,
+    // Board style for live boards (fetched once, like the workspace).
+    boardStyleCached: null,
   };
   wireSplitters(ctx);
   announceRibbon(ctx.ribbonEl);
+
+  ctx.api("GET", SETTINGS_ENDPOINT)
+    .then((s) => { ctx.boardStyleCached = s?.board_style || null; })
+    .catch(() => {});
+
+  // Re-grid boards when one closes or the viewport changes; closing also
+  // resets the spawning watch button. If the closed board was the maximized
+  // one, revert the split (onclose doesn't fire onrestore).
+  ctx.onBoardClosed = () => {
+    if (ctx._savedSplit && !getLiveWindows().some((wb) => wb.max)) restoreBoard(ctx);
+    else regridBoards(ctx);
+    refreshWatchButtons(ctx);
+  };
+  ctx.onBoardResize = debounce(() => regridBoards(ctx), BOARD_RESIZE_DEBOUNCE_MS);
+  window.addEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onBoardClosed);
+  window.addEventListener("resize", ctx.onBoardResize);
 
   // Reload the list on any tournament event (coalesced); initial load now.
   ctx.reload = debounce(() => studioLoadList(ctx), LIST_RELOAD_DEBOUNCE_MS);
@@ -362,10 +518,13 @@ function unmountStudio(ctx) {
   ctx.offEvents?.();
   ctx.liveUnsub?.();
   ctx.live = null;
+  window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onBoardClosed);
+  window.removeEventListener("resize", ctx.onBoardResize);
+  closeAllLiveGames();
   announceRibbon(null);
   ctx.panel.remove();
   ctx.panel = ctx.ribbonEl = ctx.headerEl = null;
-  ctx.boardsEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.bottomRightEl = null;
+  ctx.boardsEl = ctx.boardsCanvasEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.bottomRightEl = null;
   ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = null;
   ctx.enginesPaneEl = ctx.gamesPaneEl = null;
 }

@@ -3074,13 +3074,22 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 /* Selected-tourney header -- fixed height, holds the reused row renderer. */
 .studio-header { flex: 0 0 auto; min-height: 0; }
-/* Boards (top) vs bottom tab row -- the vertical (top/bottom) split. */
+/* Boards (top) vs bottom tab row -- the vertical (top/bottom) split.
+   Boards are WinBoxes rooted here (position:relative); the region scrolls
+   and the canvas spacer gives it the virtual height of the board grid. */
 .studio-boards {
   flex: 1 1 0; min-height: 0;
-  overflow: hidden;
+  position: relative;
+  overflow: auto;
   border: 1px solid var(--border-subtle);
   border-radius: var(--wa-border-radius-m, 4px);
 }
+.studio-boards-canvas { width: 1px; height: 0; pointer-events: none; }
+/* Rooted Studio boards position within the scrolling region (not the
+   viewport) and skip the slide transition so re-grids land instantly.
+   Square corners are enforced near the shared .sturddle-wb radius rules
+   below (source order matters at equal specificity). */
+.winbox.sturddle-wb-studio { position: absolute; transition: none; }
 .studio-bottom { flex: 1 1 0; min-height: 0; display: flex; }
 /* Bottom-right is the wider pane (Tourneys / Standings / Event Log). */
 .studio-bottom-left { flex: 1 1 0; min-width: 0; display: flex; }
@@ -3489,6 +3498,11 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .winbox.sturddle-wb-ribbon,
 .winbox.sturddle-wb-ribbon .wb-header,
 .winbox.sturddle-wb-ribbon .wb-body { border-radius: 0; }
+/* Studio boards: always straight corners (must follow the .sturddle-wb
+   radius rules above to win at equal specificity). */
+.winbox.sturddle-wb-studio,
+.winbox.sturddle-wb-studio .wb-header,
+.winbox.sturddle-wb-studio .wb-body { border-radius: 0; }
 .winbox.sturddle-wb-ribbon {
   border: 1px solid lightgray;
   outline: none;

@@ -208,7 +208,7 @@ const PV_SIDE_GAP = 8;
 // machinery, registers in `liveWindows`. Caller adds WS (live) or
 // final-state painting (frozen) and assigns a real `wb.onclose` that
 // cleans up its own resources after invoking `disposeShared`.
-function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token, tournamentId, top, left, right = 0, boardStyle, avoidRect, initialRect, min, max = false, flash, variantClass, onPvSides = null }) {
+function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token, tournamentId, top, left, right = 0, boardStyle, avoidRect, initialRect, min, max = false, flash, variantClass, root = null, onPvSides = null }) {
   const body = document.createElement("div");
   body.className = "wb-livegame lg-measuring";
   body.innerHTML = `
@@ -314,6 +314,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     min,
     max,
     mount: body,
+    ...(root ? { root } : {}),
     class: variantClass ? `${defaultClass} ${variantClass}` : defaultClass,
   });
   wb._watchOpts = { proxyId, gameId, label, engineName };
@@ -325,7 +326,9 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     const cy = Math.min(Math.max(wb.y, top),  maxY);
     if (cx !== wb.x || cy !== wb.y) wb.move(cx, cy);
   };
-  if (!min && !max) clampToViewport();
+  // Rooted (Studio) boards are grid-placed inside their region, not the
+  // viewport, so the viewport clamp would mis-move them.
+  if (!root && !min && !max) clampToViewport();
   const scheduleConstrain = rafCoalesce(constrainAndResize);
   // Clamp height so the window can't grow taller than the board needs:
   // a portrait-stretched window wastes space and looks broken.
@@ -471,7 +474,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
 // timers, and board paint all coordinate over shared state (ws, engineColor,
 // currentFen, positionGen, clock fields). Closures return a control API;
 // splitting would scatter the feed/clock/paint coordination.
-export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, right = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, max = false, flash = true }) {
+export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, right = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, max = false, flash = true, root = null, variantClass = null }) {
   if (DEBUG_WATCH) console.log("[WATCH] openLiveGameWindow", { proxyId, gameId, windowKey, label });
   if (!windowKey) {
     console.error("[WATCH] no windowKey -- need at least one of proxyId/gameId", { proxyId, gameId });
@@ -498,7 +501,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   const built = buildLiveGameBox({
     windowKey, gameId, proxyId, label, engineName, token, tournamentId,
     top, left, right, boardStyle, avoidRect, initialRect, min, max, flash,
-    variantClass: null,
+    variantClass, root,
     onPvSides: (visible) => {
       pvSidesVisible = visible;
       evalGraph.setVisible(visible);
