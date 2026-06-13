@@ -86,6 +86,7 @@ const STUDIO_HTML = `
       <div class="studio-main">
         <div class="studio-header"></div>
         <div class="studio-boards"><div class="studio-boards-canvas"></div></div>
+        <div class="studio-boards-tray" hidden></div>
         <div class="studio-grip-row" role="separator" aria-orientation="horizontal"></div>
         <div class="studio-bottom">
           <div class="studio-bottom-left">
@@ -365,15 +366,18 @@ function studioCols(ctx) {
 function regridBoards(ctx) {
   if (!ctx.boardsEl) return;
   const cols = studioCols(ctx);
-  const wins = getLiveWindows();
-  wins.forEach((wb, i) => {
-    if (wb.max) { fillRegion(ctx, wb); return; }
-    if (wb.min) return;
-    const col = i % cols, row = Math.floor(i / cols);
+  // Only laid-out boards take slots; minimized (trayed) and maximized boards
+  // are skipped so visible boards pack with no gaps.
+  let slot = 0;
+  for (const wb of getLiveWindows()) {
+    if (wb.min) continue;
+    if (wb.max) { fillRegion(ctx, wb); continue; }
+    const col = slot % cols, row = Math.floor(slot / cols);
     wb.resize(STUDIO_CELL_W, STUDIO_CELL_H)
       .move(col * (STUDIO_CELL_W + STUDIO_BOARD_GAP), row * (STUDIO_CELL_H + STUDIO_BOARD_GAP));
-  });
-  const rows = Math.ceil(Math.max(1, wins.length) / cols);
+    slot++;
+  }
+  const rows = Math.max(1, Math.ceil(slot / cols));
   if (ctx.boardsCanvasEl) {
     ctx.boardsCanvasEl.style.height = `${rows * (STUDIO_CELL_H + STUDIO_BOARD_GAP)}px`;
   }
@@ -387,6 +391,7 @@ function fillRegion(ctx, wb) {
 // Maximize (option b): grow the Boards split to the full main column, lock
 // region scroll, and fill it with this board. The bottom tab row collapses.
 function maximizeBoard(ctx, wb) {
+  ctx._maxWb = wb;
   if (!ctx._savedSplit) {
     ctx._savedSplit = { boards: ctx.boardsEl.style.flexGrow, bottom: ctx.bottomEl.style.flexGrow };
   }
@@ -399,6 +404,7 @@ function maximizeBoard(ctx, wb) {
 }
 
 function restoreBoard(ctx) {
+  ctx._maxWb = null;
   if (ctx._savedSplit) {
     ctx.boardsEl.style.flexGrow = ctx._savedSplit.boards;
     ctx.bottomEl.style.flexGrow = ctx._savedSplit.bottom;
@@ -406,6 +412,24 @@ function restoreBoard(ctx) {
   }
   ctx.boardsEl.style.overflow = "";
   requestAnimationFrame(() => regridBoards(ctx));
+}
+
+// Rebuild the minimize tray from the currently minimized boards. Native
+// minimize is hidden via CSS; each minimized board gets a restore chip.
+function renderTray(ctx) {
+  const tray = ctx.boardsTrayEl;
+  if (!tray) return;
+  const mins = getLiveWindows().filter((wb) => wb.min);
+  tray.replaceChildren();
+  for (const wb of mins) {
+    const chip = document.createElement("button");
+    chip.className = "studio-tray-chip";
+    chip.textContent = wb._watchOpts?.label || "board";
+    chip.title = chip.textContent;
+    chip.addEventListener("click", () => wb.restore());
+    tray.appendChild(chip);
+  }
+  tray.hidden = mins.length === 0;
 }
 
 function studioSlotRect(ctx, i) {
@@ -440,7 +464,18 @@ function studioWatch(ctx, btn, attachKey, openOpts) {
   });
   if (res?.wb && !res.alreadyOpen) {
     res.wb.onmaximize = () => maximizeBoard(ctx, res.wb);
-    res.wb.onrestore = () => restoreBoard(ctx);
+    // Minimizing frees a slot -- reflow survivors and add a tray chip. If
+    // the maximized board is the one minimized, revert the expanded split.
+    res.wb.onminimize = () => {
+      if (res.wb === ctx._maxWb) restoreBoard(ctx); else regridBoards(ctx);
+      renderTray(ctx);
+    };
+    // Restore fires for both un-maximize and un-minimize; only revert the
+    // split when this board is the maximized one.
+    res.wb.onrestore = () => {
+      if (res.wb === ctx._maxWb) restoreBoard(ctx); else regridBoards(ctx);
+      renderTray(ctx);
+    };
   }
   regridBoards(ctx);
   btn?.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(attachKey));
@@ -471,6 +506,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     headerEl: q(".studio-header"),
     boardsEl: q(".studio-boards"),
     boardsCanvasEl: q(".studio-boards-canvas"),
+    boardsTrayEl: q(".studio-boards-tray"),
     bottomEl: q(".studio-bottom"),
     bottomLeftEl: q(".studio-bottom-left"),
     bottomRightEl: q(".studio-bottom-right"),
@@ -500,6 +536,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
   ctx.onBoardClosed = () => {
     if (ctx._savedSplit && !getLiveWindows().some((wb) => wb.max)) restoreBoard(ctx);
     else regridBoards(ctx);
+    renderTray(ctx);
     refreshWatchButtons(ctx);
   };
   ctx.onBoardResize = debounce(() => regridBoards(ctx), BOARD_RESIZE_DEBOUNCE_MS);
@@ -524,7 +561,7 @@ function unmountStudio(ctx) {
   announceRibbon(null);
   ctx.panel.remove();
   ctx.panel = ctx.ribbonEl = ctx.headerEl = null;
-  ctx.boardsEl = ctx.boardsCanvasEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.bottomRightEl = null;
+  ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.bottomRightEl = null;
   ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = null;
   ctx.enginesPaneEl = ctx.gamesPaneEl = null;
 }

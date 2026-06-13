@@ -3085,6 +3085,28 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   border-radius: var(--wa-border-radius-m, 4px);
 }
 .studio-boards-canvas { width: 1px; height: 0; pointer-events: none; }
+/* Minimize tray: a strip just below the Boards region (outside its scroll
+   area) so chips stay at the region's visible bottom regardless of scroll.
+   Native minimize is hidden; each minimized board gets a restore chip. */
+.studio-boards-tray {
+  flex: 0 0 auto;
+  display: flex; flex-wrap: nowrap; gap: 4px;
+  padding: 4px 2px;
+  overflow-x: auto; overflow-y: hidden;
+}
+.studio-boards-tray[hidden] { display: none; }
+.studio-tray-chip {
+  flex: 0 0 auto;
+  max-width: 160px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  background: var(--nav-btn-bg); color: var(--fg);
+  border: 1px solid var(--border-subtle); border-radius: 3px;
+  cursor: pointer;
+}
+.studio-tray-chip:hover { background: var(--nav-btn-bg-active); }
+.winbox.sturddle-wb-studio.min { display: none; }
 /* Rooted Studio boards position within the scrolling region (not the
    viewport) and skip the slide transition so re-grids land instantly.
    Square corners are enforced near the shared .sturddle-wb radius rules
