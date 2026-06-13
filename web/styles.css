@@ -3151,10 +3151,12 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   overflow: hidden;
 }
 .studio-tabs::part(base) { flex: 1 1 0; min-height: 0; height: 100%; }
-/* Bordered content area (the panel below the tab labels). */
+/* Bordered content area (the panel below the tab labels): top + bottom
+   rules only, no left/right. */
 .studio-tabs::part(body) {
   flex: 1 1 0; min-height: 0;
-  border: 1px solid var(--border-subtle); border-top: none;
+  border: none;
+  border-bottom: 1px solid var(--wa-color-border-normal, #33363d);
 }
 .studio-tabs wa-tab-panel { height: 100%; --padding: 0; }
 .studio-tabs wa-tab-panel::part(base) { height: 100%; box-sizing: border-box; }
