@@ -3161,9 +3161,12 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-tabs wa-tab-panel { height: 100%; --padding: 0; }
 .studio-tabs wa-tab-panel::part(base) { height: 100%; box-sizing: border-box; }
 .studio-pane { height: 100%; overflow: auto; }
-/* A little headroom above the event log -- on the panel (outside the scroll
-   pane) so it stays put while the log tails to the bottom. */
-.studio-tabs wa-tab-panel[name="log"]::part(base) { padding-top: 6px; }
+/* A little headroom above the live-list panes (Engines/Games) and the event
+   log -- on the panel (outside the scroll pane) so it stays put as content
+   scrolls/tails. */
+.studio-tabs wa-tab-panel[name="log"]::part(base),
+.studio-tabs wa-tab-panel[name="engines"]::part(base),
+.studio-tabs wa-tab-panel[name="livegames"]::part(base) { padding-top: 8px; }
 /* Keep the watch buttons off the pane's right edge / scrollbar. */
 .studio-pane .wb-sched-attach-btn { margin-right: 8px; }
 /* Studio tourney table: sortable + resizable sticky header, flat rows
