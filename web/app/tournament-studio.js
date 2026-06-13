@@ -18,6 +18,7 @@ import { EVT_PREFIX } from "./tournament-events.js";
 import { SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
 import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openLiveGameWindow } from "./tournament-live-game.js";
+import { mqMobile } from "./breakpoints.js";
 
 const TOURNAMENTS_ENDPOINT = "/api/tournaments";
 const SETTINGS_ENDPOINT = "/settings";
@@ -354,13 +355,19 @@ function renderGamesPane(ctx) {
 // a 4-column grid (see boardCell for sizing). No free drag; re-gridded on
 // open/close/resize.
 
+// 4 columns on desktop, 1 on mobile (fill model -- the region stays bounded).
+function studioCols() {
+  return mqMobile.matches ? 1 : STUDIO_COLS;
+}
+
 // Cell size: width fills the region across the columns (>= the Arena board
 // minimum), height keeps the board square (width + the fixed window chrome).
 function boardCell(ctx) {
+  const cols = studioCols();
   const w = ctx.boardsEl?.clientWidth ?? 0;
   const cw = Math.max(LIVE_MIN_WIDTH,
-    Math.floor((w - STUDIO_BOARD_GAP * (STUDIO_COLS - 1)) / STUDIO_COLS));
-  return { cw, ch: cw + (LIVE_MIN_HEIGHT() - LIVE_MIN_WIDTH) };
+    Math.floor((w - STUDIO_BOARD_GAP * (cols - 1)) / cols));
+  return { cw, ch: cw + (LIVE_MIN_HEIGHT() - LIVE_MIN_WIDTH), cols };
 }
 
 // Reposition every open board into its slot; size the scroll canvas to the
@@ -368,25 +375,29 @@ function boardCell(ctx) {
 // minimized windows keep their dock geometry.
 function regridBoards(ctx) {
   if (!ctx.boardsEl) return;
-  const { cw, ch } = boardCell(ctx);
+  const { cw, ch, cols } = boardCell(ctx);
   // Only laid-out boards take slots; minimized (trayed) and maximized boards
   // are skipped so visible boards pack with no gaps.
   let slot = 0;
   for (const wb of getLiveWindows()) {
     if (wb.min) continue;
     if (wb.max) { fillRegion(ctx, wb); continue; }
-    const col = slot % STUDIO_COLS, row = Math.floor(slot / STUDIO_COLS);
+    const col = slot % cols, row = Math.floor(slot / cols);
     wb.resize(cw, ch).move(col * (cw + STUDIO_BOARD_GAP), row * (ch + STUDIO_BOARD_GAP));
     slot++;
   }
-  sizeCanvas(ctx, slot, cw, ch);
+  sizeCanvas(ctx, slot, cw, ch, cols);
+  // Mobile: pin the board area to one board; the page scrolls for the rest
+  // and the board area scrolls internally for additional boards. Desktop
+  // lets the flex split govern the height.
+  ctx.boardsEl.style.height = mqMobile.matches ? `${ch}px` : "";
 }
 
 // Canvas defines the scrollable extent (both axes) of the board grid.
-function sizeCanvas(ctx, count, cw, ch) {
+function sizeCanvas(ctx, count, cw, ch, gridCols) {
   if (!ctx.boardsCanvasEl) return;
-  const cols = Math.min(STUDIO_COLS, Math.max(1, count));
-  const rows = Math.max(1, Math.ceil(count / STUDIO_COLS));
+  const cols = Math.min(gridCols, Math.max(1, count));
+  const rows = Math.max(1, Math.ceil(count / gridCols));
   ctx.boardsCanvasEl.style.width = `${cols * cw + (cols - 1) * STUDIO_BOARD_GAP}px`;
   ctx.boardsCanvasEl.style.height = `${rows * ch + (rows - 1) * STUDIO_BOARD_GAP}px`;
 }
@@ -441,8 +452,8 @@ function renderTray(ctx) {
 }
 
 function studioSlotRect(ctx, i) {
-  const { cw, ch } = boardCell(ctx);
-  const col = i % STUDIO_COLS, row = Math.floor(i / STUDIO_COLS);
+  const { cw, ch, cols } = boardCell(ctx);
+  const col = i % cols, row = Math.floor(i / cols);
   return {
     x: col * (cw + STUDIO_BOARD_GAP), y: row * (ch + STUDIO_BOARD_GAP),
     w: cw, h: ch,
@@ -549,8 +560,12 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     refreshWatchButtons(ctx);
   };
   ctx.onBoardResize = debounce(() => regridBoards(ctx), BOARD_RESIZE_DEBOUNCE_MS);
+  // Re-pin/re-grid immediately when the mobile breakpoint flips (cols and
+  // board-area height change between desktop and mobile).
+  ctx.onMqMobile = () => regridBoards(ctx);
   window.addEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onBoardClosed);
   window.addEventListener("resize", ctx.onBoardResize);
+  mqMobile.addEventListener("change", ctx.onMqMobile);
 
   // Reload the list on any tournament event (coalesced); initial load now.
   ctx.reload = debounce(() => studioLoadList(ctx), LIST_RELOAD_DEBOUNCE_MS);
@@ -566,6 +581,7 @@ function unmountStudio(ctx) {
   ctx.live = null;
   window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onBoardClosed);
   window.removeEventListener("resize", ctx.onBoardResize);
+  mqMobile.removeEventListener("change", ctx.onMqMobile);
   closeAllLiveGames();
   announceRibbon(null);
   ctx.panel.remove();

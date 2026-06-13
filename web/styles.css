@@ -3213,7 +3213,26 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
     left: 6px; right: 6px; top: auto; bottom: 0;
     width: auto; height: 2px;
   }
-  .studio-main { width: 100%; }
+  /* Mobile Studio uses the document-scroll model (like Play): the page
+     scrolls, the footer stays put, the board area is pinned to one board
+     (JS sets its height), and the tab groups flow at natural height. */
+  body:has(.studio-panel) { height: auto; min-height: 100%; }
+  #perspective-root:has(.studio-panel) { overflow: visible; }
+  #engines-perspective:has(.studio-panel) { flex: 0 0 auto; min-height: 0; }
+  body:has(.studio-panel) #app-footer { position: sticky; bottom: 0; background: var(--bg); }
+  .studio-panel { flex: 0 0 auto; }
+  .studio-main { width: 100%; display: block; }
+  .studio-boards { flex: 0 0 auto; }
+  .studio-grip-row, .studio-grip-col { display: none; }
+  /* Tab groups stacked, each at natural (content) height -- no inner scroll.
+     The desktop body part is flex:1/min-height:0 (collapses to 0 without a
+     bounded parent), so force it to content height here. */
+  .studio-bottom, .studio-bottom-left, .studio-bottom-right, .studio-tabs { display: block; }
+  .studio-tabs::part(base),
+  .studio-tabs wa-tab-panel,
+  .studio-tabs wa-tab-panel::part(base) { height: auto; }
+  .studio-tabs::part(body) { flex: 0 0 auto; min-height: auto; }
+  .studio-pane { height: auto; overflow: visible; }
 }
 .tournament-engines {
   font-size: 0.75rem;
