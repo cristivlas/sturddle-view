@@ -611,16 +611,24 @@ function regridBoards(ctx) {
     slot++;
   }
   sizeCanvas(ctx, slot, cw, ch, cols);
+  // A maximized board still occupies the region even though it takes no slot.
+  const hasBoards = slot > 0 || getLiveWindows().some((wb) => wb.max);
   // Mobile: pin the board area to one board (plus the top/bottom inset so it
-  // fits exactly -- no stray scrollbar); the page scrolls for the rest and
-  // the board area scrolls internally for additional boards. Desktop lets
-  // the flex split govern the height.
-  ctx.boardsEl.style.height = mqMobile.matches ? `${ch + 2 * STUDIO_BOARD_PAD}px` : "";
+  // fits exactly); collapse to nothing when there are no boards rather than
+  // reserve a blank strip. Desktop lets the flex split govern the height.
+  ctx.boardsEl.style.height = mqMobile.matches ? (hasBoards ? `${ch + 2 * STUDIO_BOARD_PAD}px` : "0") : "";
 }
 
-// Canvas defines the scrollable extent (both axes) of the board grid.
+// Canvas defines the scrollable extent (both axes) of the board grid. Zero
+// when there are no laid-out boards so the region reserves nothing (no stray
+// scrollbar / blank strip).
 function sizeCanvas(ctx, count, cw, ch, gridCols) {
   if (!ctx.boardsCanvasEl) return;
+  if (count <= 0) {
+    ctx.boardsCanvasEl.style.width = "0";
+    ctx.boardsCanvasEl.style.height = "0";
+    return;
+  }
   const cols = Math.min(gridCols, Math.max(1, count));
   const rows = Math.max(1, Math.ceil(count / gridCols));
   ctx.boardsCanvasEl.style.width = `${2 * STUDIO_BOARD_PAD + cols * cw + (cols - 1) * STUDIO_BOARD_GAP}px`;
