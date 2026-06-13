@@ -3464,7 +3464,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   flex: 1 1 auto;
   height: 6px;
   min-width: 100px;
-  background: var(--panel);
+  background: rgb(51, 73, 87);
   border: none;
   border-radius: 6px;
   overflow: hidden;
