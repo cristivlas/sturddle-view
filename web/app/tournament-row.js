@@ -1,9 +1,12 @@
-// Shared tournament list-row renderer. Arena's list and Studio's list +
-// selected-tourney header all render the same row: status badge, name,
-// optional SPRT badge, and a running progress bar (or engine names when
-// not running). Pure -- callers wire selection/click behavior via options.
+// Shared tournament list-row renderer + reusable cell snippets. Arena's list
+// and Studio (list + table) all render the same status/SPRT badges and
+// running progress bar, so those are exported as small HTML helpers. Pure --
+// callers wire selection/click behavior via options.
 
 import { STATUS } from "./tournament-events.js";
+import { escapeHtml } from "./wb-utils.js";
+
+const MIDDOT = "\u00B7";
 
 // Total scheduled games for a tournament, or null when the template is
 // underspecified. Gauntlet seeds play every non-seed; round-robin pairs
@@ -23,6 +26,35 @@ export function totalGames(t) {
   return pairings * rounds * gpr;
 }
 
+function pctOf(played, total) {
+  return total ? Math.min(100, Math.round((played / total) * 100)) : 0;
+}
+
+// ---- Reusable cell snippets (shared by Arena and Studio renderers) -------
+
+export function statusBadgeHtml(status) {
+  const s = escapeHtml(status);
+  return `<span class="tournament-status status-${s}">${s}</span>`;
+}
+
+export function sprtBadgeHtml(t) {
+  return t.template?.sprt ? `<span class="tournament-sprt-badge">SPRT</span>` : "";
+}
+
+export function progressBarHtml(played, total) {
+  return `<div class="tournament-progress" role="progressbar" aria-valuemin="0"` +
+    ` aria-valuemax="${total}" aria-valuenow="${played}">` +
+    `<div class="tournament-progress-fill" style="width: ${pctOf(played, total)}%"></div></div>`;
+}
+
+function progressLabelText(played, total) {
+  return `${played} / ${total} ${MIDDOT} ${pctOf(played, total)}%`;
+}
+
+export function progressLabelHtml(played, total) {
+  return `<span class="tournament-progress-label">${progressLabelText(played, total)}</span>`;
+}
+
 // Build the <li> for one tournament. options: { selected, onSelect(t),
 // onInfo(t) }. onSelect fires on click, onInfo on double-click.
 export function renderTournamentRow(t, { selected = false, onSelect, onInfo } = {}) {
@@ -30,31 +62,18 @@ export function renderTournamentRow(t, { selected = false, onSelect, onInfo } = 
   li.className = "tournament-row" + (selected ? " selected" : "");
   li.dataset.id = t.id;
 
-  const status = t.status;
-  const isRunning = status === STATUS.RUNNING;
+  const isRunning = t.status === STATUS.RUNNING;
   const played = t.standings?.games ?? 0;
   const total = totalGames(t);
-  const pct = total ? Math.min(100, Math.round((played / total) * 100)) : 0;
+  const trailing = (isRunning && total)
+    ? progressBarHtml(played, total) + progressLabelHtml(played, total)
+    : `<span class="tournament-engines muted"></span>`;
 
-  let trailing;
-  if (isRunning && total) {
-    trailing = `
-      <div class="tournament-progress" role="progressbar"
-           aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${played}">
-        <div class="tournament-progress-fill" style="width: ${pct}%"></div>
-      </div>
-      <span class="tournament-progress-label">${played} / ${total} · ${pct}%</span>
-    `;
-  } else {
-    trailing = `<span class="tournament-engines muted"></span>`;
-  }
-
-  const sprtBadge = t.template?.sprt ? `<span class="tournament-sprt-badge">SPRT</span>` : "";
   li.innerHTML = `
     <div class="tournament-row-main">
-      <span class="tournament-status status-${status}">${status}</span>
+      ${statusBadgeHtml(t.status)}
       <span class="tournament-name"></span>
-      ${sprtBadge}
+      ${sprtBadgeHtml(t)}
       ${trailing}
     </div>
   `;
@@ -81,8 +100,7 @@ export function updateRowProgress(row, t) {
   if (!bar || !fill || !label) return;
   const total = totalGames(t);
   if (!total) return;
-  const pct = Math.min(100, Math.round((played / total) * 100));
   bar.setAttribute("aria-valuenow", String(played));
-  fill.style.width = `${pct}%`;
-  label.textContent = `${played} / ${total} · ${pct}%`;
+  fill.style.width = `${pctOf(played, total)}%`;
+  label.textContent = progressLabelText(played, total);
 }

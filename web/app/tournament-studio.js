@@ -11,7 +11,7 @@
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, loadRaw, saveJson, saveRaw } from "./storage.js";
-import { totalGames } from "./tournament-row.js";
+import { progressBarHtml, progressLabelHtml, sprtBadgeHtml, statusBadgeHtml, totalGames } from "./tournament-row.js";
 import { attachColumnSort } from "./col-sort.js";
 import { attachColumnResize } from "./col-resize.js";
 import { reportError } from "./dialogs.js";
@@ -290,16 +290,11 @@ function buildTourneyTable(ctx) {
   });
 }
 
-// Games cell: while running, the same progress bar Arena's tourney list
-// shows; otherwise "played / total".
+// Games cell: while running, Arena's progress bar (label then bar); otherwise
+// "played / total".
 function gamesCell(t, played, total) {
   if (t.status === STATUS.RUNNING && total) {
-    const pct = Math.min(100, Math.round((played / total) * 100));
-    return `<div class="studio-progress">` +
-      `<span class="tournament-progress-label">${played} / ${total} &middot; ${pct}%</span>` +
-      `<div class="tournament-progress" role="progressbar" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${played}">` +
-      `<div class="tournament-progress-fill" style="width: ${pct}%"></div></div>` +
-      `</div>`;
+    return `<div class="studio-progress">${progressLabelHtml(played, total)}${progressBarHtml(played, total)}</div>`;
   }
   return total ? `${played} / ${total}` : (played ? String(played) : "");
 }
@@ -310,10 +305,9 @@ function studioTourneyRow(ctx, t) {
   tr.dataset.id = t.id;
   const total = totalGames(t);
   const played = t.standings?.games ?? 0;
-  const sprt = t.template?.sprt ? ` <span class="tournament-sprt-badge">SPRT</span>` : "";
   tr.innerHTML =
-    `<td><span class="tournament-status status-${t.status}">${escapeHtml(t.status)}</span></td>` +
-    `<td class="studio-tourney-name" title="${escapeHtml(t.name)}">${escapeHtml(t.name)}${sprt}</td>` +
+    `<td>${statusBadgeHtml(t.status)}</td>` +
+    `<td class="studio-tourney-name" title="${escapeHtml(t.name)}">${escapeHtml(t.name)} ${sprtBadgeHtml(t)}</td>` +
     `<td class="studio-tourney-games">${gamesCell(t, played, total)}</td>`;
   tr.addEventListener("click", () => studioSelect(ctx, t.id));
   tr.addEventListener("dblclick", () => { studioSelect(ctx, t.id); ctx.actions?.info(t); });
@@ -447,7 +441,7 @@ function startLive(ctx, tid) {
   Promise.all([
     ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${tid}`),
     ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${tid}/events`),
-  ]).then(([detail, ev]) => {
+  ]).then(async ([detail, ev]) => {
     if (gen !== ctx.liveGen || !ctx.live) return;
     seedFromDetail(ctx.live, detail);
     for (const e of (ev.events || [])) if (e.kind?.startsWith(EVT_PREFIX)) addLogEntry(ctx.live, e);
@@ -455,7 +449,10 @@ function startLive(ctx, tid) {
     renderLivePanes(ctx);
     renderStandingsPane(ctx);
     renderLogPane(ctx);
-    restoreBoards(ctx);
+    // Wait for the board style so restored boards aren't styled with the
+    // default; re-check liveness after the await.
+    await ctx.boardStyleReady;
+    if (gen === ctx.liveGen && ctx.live) restoreBoards(ctx);
   }).catch((e) => reportError({ log: ctx.log }, LOAD_FAIL_MSG, e));
 }
 
@@ -465,6 +462,9 @@ function stopLive(ctx) {
   ctx.live = null;
   ctx.liveTid = null;
   ctx.liveGen++;
+  // Force the next loadSelected to re-fetch (e.g. a finished tourney that was
+  // running+selected needs its final REST snapshot).
+  ctx.selLoadedId = null;
   closeAllLiveGames();
   renderLivePanes(ctx);
 }
@@ -869,7 +869,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     // Standings/Event Log bound to the selected tourney (any).
     selDetail: null, selEvents: [], selGen: 0, selLoadedId: null,
     // Board style for live boards (fetched once, like the workspace).
-    boardStyleCached: null,
+    boardStyleCached: null, boardStyleReady: null,
     // Ribbon verbs (shared with Arena) + tournament settings for New/Edit.
     tournSettings: null, ribbonBtns: null, actions: null,
   };
@@ -892,7 +892,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
   wireRibbonActions(ctx);
   announceRibbon(ctx.ribbonEl);
 
-  ctx.api("GET", SETTINGS_ENDPOINT)
+  ctx.boardStyleReady = ctx.api("GET", SETTINGS_ENDPOINT)
     .then((s) => { ctx.boardStyleCached = s?.board_style || null; })
     .catch(() => {});
   ctx.api("GET", TOURNAMENT_SETTINGS_ENDPOINT)
@@ -927,12 +927,14 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
 
 function unmountStudio(ctx) {
   ctx.offEvents?.();
-  ctx.liveUnsub?.();
-  ctx.live = null;
+  // Remove the board-closed listener before stopLive's closeAllLiveGames so
+  // teardown doesn't re-save (and wipe) the board set.
   window.removeEventListener(APP_EVT.LIVEGAME_CLOSED, ctx.onBoardClosed);
   window.removeEventListener("resize", ctx.onBoardResize);
   mqMobile.removeEventListener("change", ctx.onMqMobile);
-  closeAllLiveGames();
+  // stopLive unsubscribes, nulls liveTid (so a pending standings refresh
+  // no-ops), and closes the boards.
+  stopLive(ctx);
   announceRibbon(null);
   ctx.panel.remove();
   ctx.panel = ctx.ribbonEl = null;
