@@ -726,11 +726,15 @@ function maximizeBoard(ctx, wb) {
   requestAnimationFrame(() => { if (ctx.boardsEl && wb.max) fillRegion(ctx, wb); });
 }
 
-function restoreBoard(ctx) {
+// revertSplit=false leaves boards 1 / bottom 0 in place so a grip-initiated
+// restore keeps the grip under the cursor; the in-flight drag owns the split.
+function restoreBoard(ctx, revertSplit = true) {
   ctx._maxWb = null;
   if (ctx._savedSplit) {
-    ctx.boardsEl.style.flexGrow = ctx._savedSplit.boards;
-    ctx.bottomEl.style.flexGrow = ctx._savedSplit.bottom;
+    if (revertSplit) {
+      ctx.boardsEl.style.flexGrow = ctx._savedSplit.boards;
+      ctx.bottomEl.style.flexGrow = ctx._savedSplit.bottom;
+    }
     ctx._savedSplit = null;
   }
   ctx.boardsEl.style.overflow = "";
@@ -781,7 +785,7 @@ function refreshWatchButtons(ctx) {
 function wireBoardHooks(ctx, wb) {
   wb.onmaximize = () => maximizeBoard(ctx, wb);
   const onChange = () => {
-    if (wb === ctx._maxWb) restoreBoard(ctx); else regridBoards(ctx);
+    if (wb === ctx._maxWb) restoreBoard(ctx, !ctx._restoreViaGrip); else regridBoards(ctx);
     renderTray(ctx);
     saveBoards(ctx);
   };
@@ -903,11 +907,15 @@ function wireTabPersistence(ctx) {
 function wireSplitters(ctx) {
   restoreSplit(STORAGE_KEY.STUDIO_SPLIT_ROW, ctx.boardsEl, ctx.bottomEl);
   restoreSplit(STORAGE_KEY.STUDIO_SPLIT_COL, ctx.bottomLeftEl, ctx.bottomRightEl);
-  // Resizing the Boards split while a board is maximized un-maximizes it
-  // (reverts the split synchronously) so the drag starts from real
-  // geometry. Capture phase: run before the splitter's own handler.
+  // Grabbing the grip while a board is maximized un-maximizes it, but keeps
+  // boards 1 / bottom 0 so the grip stays under the cursor; the drag then
+  // owns the new split. Capture phase: run before the splitter's own handler.
   ctx.gripRowEl.addEventListener("pointerdown", () => {
-    getLiveWindows().find((wb) => wb.max)?.restore();
+    const maxed = getLiveWindows().find((wb) => wb.max);
+    if (!maxed) return;
+    ctx._restoreViaGrip = true;
+    maxed.restore();
+    ctx._restoreViaGrip = false;
   }, true);
   attachSplitter(ctx.gripRowEl, ctx.boardsEl, ctx.bottomEl, AXIS.Y, STORAGE_KEY.STUDIO_SPLIT_ROW);
   attachSplitter(ctx.gripColEl, ctx.bottomLeftEl, ctx.bottomRightEl, AXIS.X, STORAGE_KEY.STUDIO_SPLIT_COL);
