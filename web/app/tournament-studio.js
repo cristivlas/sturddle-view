@@ -46,7 +46,7 @@ const STUDIO_BOARD_PAD = 1;
 const STUDIO_BOARD_CLASS = "sturddle-wb-studio no-move";
 const BOARD_RESIZE_DEBOUNCE_MS = 120;
 // Default active tab per bottom group (first tab) when none is remembered.
-const STUDIO_TAB_DEFAULT_LEFT = "engines";
+const STUDIO_TAB_DEFAULT_LEFT = "livegames";
 const STUDIO_TAB_DEFAULT_RIGHT = "tourneys";
 
 export const TOURNAMENT_UX = Object.freeze({ ARENA: "arena", STUDIO: "studio" });
@@ -106,8 +106,8 @@ const STUDIO_HTML = `
         <div class="studio-bottom">
           <div class="studio-bottom-left">
             <wa-tab-group class="studio-tabs">
-              <wa-tab panel="engines">Engines</wa-tab>
               <wa-tab panel="livegames">Games</wa-tab>
+              <wa-tab panel="engines">Engines</wa-tab>
               <wa-tab-panel name="engines"><div class="studio-pane studio-pane-engines"></div></wa-tab-panel>
               <wa-tab-panel name="livegames"><div class="studio-pane studio-pane-livegames"></div></wa-tab-panel>
             </wa-tab-group>
