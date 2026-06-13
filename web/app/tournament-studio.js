@@ -17,7 +17,7 @@ import { debounce, escapeHtml } from "./wb-utils.js";
 import { EVT_PREFIX } from "./tournament-events.js";
 import { SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
-import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, openLiveGameWindow } from "./tournament-live-game.js";
+import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openLiveGameWindow } from "./tournament-live-game.js";
 
 const TOURNAMENTS_ENDPOINT = "/api/tournaments";
 const SETTINGS_ENDPOINT = "/settings";
@@ -27,11 +27,11 @@ const NO_GAMES_MSG = "No games in play.";
 // Coalesce bursty WS events into one list reload.
 const LIST_RELOAD_DEBOUNCE_MS = 150;
 
-// Boards region grid: fixed cell, up to 4 columns, unlimited scrolling rows.
-// Boards are laid out (no-move) and absolutely positioned inside the region.
-const STUDIO_CELL_W = 300;
-const STUDIO_CELL_H = 470;
-const STUDIO_MAX_COLS = 4;
+// Boards region grid: always 4 columns; cells stretch to fill the region
+// width (keeping the board square), clamped to the Arena minimum board
+// width -- below that the row overflows and scrolls. Unlimited rows scroll
+// vertically. Boards are laid out (no-move), absolutely positioned.
+const STUDIO_COLS = 4;
 const STUDIO_BOARD_GAP = 6;
 const STUDIO_BOARD_CLASS = "sturddle-wb-studio no-move";
 const BOARD_RESIZE_DEBOUNCE_MS = 120;
@@ -351,36 +351,44 @@ function renderGamesPane(ctx) {
 
 // ---- Boards (live game watch) --------------------------------------------
 // Boards are WinBoxes rooted in the scrollable region, laid out by index in
-// a fixed-cell grid (<=4 cols, unlimited rows). No free drag; re-gridded on
+// a 4-column grid (see boardCell for sizing). No free drag; re-gridded on
 // open/close/resize.
 
-function studioCols(ctx) {
+// Cell size: width fills the region across the columns (>= the Arena board
+// minimum), height keeps the board square (width + the fixed window chrome).
+function boardCell(ctx) {
   const w = ctx.boardsEl?.clientWidth ?? 0;
-  return Math.max(1, Math.min(STUDIO_MAX_COLS,
-    Math.floor((w + STUDIO_BOARD_GAP) / (STUDIO_CELL_W + STUDIO_BOARD_GAP))));
+  const cw = Math.max(LIVE_MIN_WIDTH,
+    Math.floor((w - STUDIO_BOARD_GAP * (STUDIO_COLS - 1)) / STUDIO_COLS));
+  return { cw, ch: cw + (LIVE_MIN_HEIGHT() - LIVE_MIN_WIDTH) };
 }
 
 // Reposition every open board into its slot; size the scroll canvas to the
-// row count. A maximized board is refit to the (expanded) region; minimized
-// windows keep their dock geometry.
+// grid extent. A maximized board is refit to the (expanded) region;
+// minimized windows keep their dock geometry.
 function regridBoards(ctx) {
   if (!ctx.boardsEl) return;
-  const cols = studioCols(ctx);
+  const { cw, ch } = boardCell(ctx);
   // Only laid-out boards take slots; minimized (trayed) and maximized boards
   // are skipped so visible boards pack with no gaps.
   let slot = 0;
   for (const wb of getLiveWindows()) {
     if (wb.min) continue;
     if (wb.max) { fillRegion(ctx, wb); continue; }
-    const col = slot % cols, row = Math.floor(slot / cols);
-    wb.resize(STUDIO_CELL_W, STUDIO_CELL_H)
-      .move(col * (STUDIO_CELL_W + STUDIO_BOARD_GAP), row * (STUDIO_CELL_H + STUDIO_BOARD_GAP));
+    const col = slot % STUDIO_COLS, row = Math.floor(slot / STUDIO_COLS);
+    wb.resize(cw, ch).move(col * (cw + STUDIO_BOARD_GAP), row * (ch + STUDIO_BOARD_GAP));
     slot++;
   }
-  const rows = Math.max(1, Math.ceil(slot / cols));
-  if (ctx.boardsCanvasEl) {
-    ctx.boardsCanvasEl.style.height = `${rows * (STUDIO_CELL_H + STUDIO_BOARD_GAP)}px`;
-  }
+  sizeCanvas(ctx, slot, cw, ch);
+}
+
+// Canvas defines the scrollable extent (both axes) of the board grid.
+function sizeCanvas(ctx, count, cw, ch) {
+  if (!ctx.boardsCanvasEl) return;
+  const cols = Math.min(STUDIO_COLS, Math.max(1, count));
+  const rows = Math.max(1, Math.ceil(count / STUDIO_COLS));
+  ctx.boardsCanvasEl.style.width = `${cols * cw + (cols - 1) * STUDIO_BOARD_GAP}px`;
+  ctx.boardsCanvasEl.style.height = `${rows * ch + (rows - 1) * STUDIO_BOARD_GAP}px`;
 }
 
 // Size a board to fill the visible region, pinned to its top-left.
@@ -433,12 +441,11 @@ function renderTray(ctx) {
 }
 
 function studioSlotRect(ctx, i) {
-  const cols = studioCols(ctx);
-  const col = i % cols, row = Math.floor(i / cols);
+  const { cw, ch } = boardCell(ctx);
+  const col = i % STUDIO_COLS, row = Math.floor(i / STUDIO_COLS);
   return {
-    x: col * (STUDIO_CELL_W + STUDIO_BOARD_GAP),
-    y: row * (STUDIO_CELL_H + STUDIO_BOARD_GAP),
-    w: STUDIO_CELL_W, h: STUDIO_CELL_H,
+    x: col * (cw + STUDIO_BOARD_GAP), y: row * (ch + STUDIO_BOARD_GAP),
+    w: cw, h: ch,
   };
 }
 
@@ -455,12 +462,14 @@ function refreshWatchButtons(ctx) {
 
 function studioWatch(ctx, btn, attachKey, openOpts) {
   // Open directly at the next slot so the board doesn't flash at WinBox's
-  // default geometry before the re-grid.
+  // default geometry before the re-grid. The slot index is the count of
+  // laid-out boards -- minimized/maximized ones don't occupy slots.
+  const laidOut = getLiveWindows().filter((wb) => !wb.min && !wb.max).length;
   const res = openLiveGameWindow({
     ...openOpts, token: ctx.token, tournamentId: ctx.liveTid,
     root: ctx.boardsEl, variantClass: STUDIO_BOARD_CLASS,
     boardStyle: ctx.boardStyleCached, top: 0, left: 0, right: 0,
-    initialRect: studioSlotRect(ctx, getLiveWindows().length),
+    initialRect: studioSlotRect(ctx, laidOut),
   });
   if (res?.wb && !res.alreadyOpen) {
     res.wb.onmaximize = () => maximizeBoard(ctx, res.wb);
