@@ -36,6 +36,9 @@ const STUDIO_COLS = 4;
 const STUDIO_BOARD_GAP = 6;
 const STUDIO_BOARD_CLASS = "sturddle-wb-studio no-move";
 const BOARD_RESIZE_DEBOUNCE_MS = 120;
+// Default active tab per bottom group (first tab) when none is remembered.
+const STUDIO_TAB_DEFAULT_LEFT = "engines";
+const STUDIO_TAB_DEFAULT_RIGHT = "tourneys";
 
 export const TOURNAMENT_UX = Object.freeze({ ARENA: "arena", STUDIO: "studio" });
 
@@ -253,6 +256,7 @@ function startLive(ctx, tid) {
       if (gen !== ctx.liveGen || !ctx.live) return;
       seedFromDetail(ctx.live, detail);
       renderLivePanes(ctx);
+      restoreBoards(ctx);
     })
     .catch((e) => reportError({ log: ctx.log }, LOAD_FAIL_MSG, e));
 }
@@ -471,34 +475,87 @@ function refreshWatchButtons(ctx) {
   }
 }
 
-function studioWatch(ctx, btn, attachKey, openOpts) {
-  // Open directly at the next slot so the board doesn't flash at WinBox's
-  // default geometry before the re-grid. The slot index is the count of
-  // laid-out boards -- minimized/maximized ones don't occupy slots.
+// Min/restore both reflow the grid (reverting the split if this was the
+// maximized board), repaint the tray, and persist the open-board set.
+function wireBoardHooks(ctx, wb) {
+  wb.onmaximize = () => maximizeBoard(ctx, wb);
+  const onChange = () => {
+    if (wb === ctx._maxWb) restoreBoard(ctx); else regridBoards(ctx);
+    renderTray(ctx);
+    saveBoards(ctx);
+  };
+  wb.onminimize = onChange;
+  wb.onrestore = onChange;
+}
+
+// Open one board into the next laid-out slot (minimized/maximized boards
+// don't occupy slots). initialRect avoids a flash at WinBox's default size.
+function openBoard(ctx, openOpts, min) {
   const laidOut = getLiveWindows().filter((wb) => !wb.min && !wb.max).length;
   const res = openLiveGameWindow({
     ...openOpts, token: ctx.token, tournamentId: ctx.liveTid,
     root: ctx.boardsEl, variantClass: STUDIO_BOARD_CLASS,
-    boardStyle: ctx.boardStyleCached, top: 0, left: 0, right: 0,
+    boardStyle: ctx.boardStyleCached, top: 0, left: 0, right: 0, min,
     initialRect: studioSlotRect(ctx, laidOut),
   });
-  if (res?.wb && !res.alreadyOpen) {
-    res.wb.onmaximize = () => maximizeBoard(ctx, res.wb);
-    // Minimizing frees a slot -- reflow survivors and add a tray chip. If
-    // the maximized board is the one minimized, revert the expanded split.
-    res.wb.onminimize = () => {
-      if (res.wb === ctx._maxWb) restoreBoard(ctx); else regridBoards(ctx);
-      renderTray(ctx);
-    };
-    // Restore fires for both un-maximize and un-minimize; only revert the
-    // split when this board is the maximized one.
-    res.wb.onrestore = () => {
-      if (res.wb === ctx._maxWb) restoreBoard(ctx); else regridBoards(ctx);
-      renderTray(ctx);
-    };
-  }
+  if (res?.wb && !res.alreadyOpen) wireBoardHooks(ctx, res.wb);
   regridBoards(ctx);
+  renderTray(ctx);
+  saveBoards(ctx);
+  return res;
+}
+
+function studioWatch(ctx, btn, attachKey, openOpts) {
+  openBoard(ctx, openOpts, false);
   btn?.classList.toggle("wb-sched-attach-btn--live", isLiveWindowOpen(attachKey));
+}
+
+// ---- Board persistence ---------------------------------------------------
+// Persist the open boards per running tourney so a reload restores them
+// (like Arena). Geometry isn't saved -- boards are grid-placed by order.
+
+function snapshotBoards() {
+  return getLiveWindows().filter((wb) => wb._watchOpts).map((wb) => ({
+    proxyId: wb._watchOpts.proxyId, gameId: wb._watchOpts.gameId ?? null,
+    label: wb._watchOpts.label, engineName: wb._watchOpts.engineName,
+    min: !!wb.min,
+  }));
+}
+
+// No-op while liveTid is null (teardown) so closing boards on stop/switch
+// doesn't wipe the saved set.
+function saveBoards(ctx) {
+  if (!ctx.liveTid) return;
+  saveJson(STORAGE_KEY.STUDIO_BOARDS_PREFIX + ctx.liveTid, snapshotBoards());
+}
+
+// Reopen saved boards that are still live in the seeded maps; drop the rest.
+function restoreBoards(ctx) {
+  const saved = loadJson(STORAGE_KEY.STUDIO_BOARDS_PREFIX + ctx.liveTid);
+  if (!Array.isArray(saved)) return;
+  for (const b of saved) {
+    const live = b.gameId
+      ? ctx.live.livePairings.get(b.proxyId)?.pairId === b.gameId
+      : ctx.live.activeProxies.has(b.proxyId);
+    if (!live) continue;
+    openBoard(ctx, { proxyId: b.proxyId, gameId: b.gameId, label: b.label, engineName: b.engineName }, !!b.min);
+  }
+  refreshWatchButtons(ctx);
+}
+
+// Restore each bottom group's active tab and persist changes.
+function wireTabPersistence(ctx) {
+  const groups = [
+    [ctx.container.querySelector(".studio-bottom-left .studio-tabs"), STORAGE_KEY.STUDIO_TAB_LEFT, STUDIO_TAB_DEFAULT_LEFT],
+    [ctx.container.querySelector(".studio-bottom-right .studio-tabs"), STORAGE_KEY.STUDIO_TAB_RIGHT, STUDIO_TAB_DEFAULT_RIGHT],
+  ];
+  for (const [el, key, def] of groups) {
+    if (!el) continue;
+    el.setAttribute("active", loadRaw(key) || def);
+    el.addEventListener("wa-tab-show", (ev) => {
+      if (ev.detail?.name) saveRaw(key, ev.detail.name);
+    });
+  }
 }
 
 function wireSplitters(ctx) {
@@ -544,6 +601,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     boardStyleCached: null,
   };
   wireSplitters(ctx);
+  wireTabPersistence(ctx);
   announceRibbon(ctx.ribbonEl);
 
   ctx.api("GET", SETTINGS_ENDPOINT)
@@ -558,6 +616,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     else regridBoards(ctx);
     renderTray(ctx);
     refreshWatchButtons(ctx);
+    saveBoards(ctx);
   };
   ctx.onBoardResize = debounce(() => regridBoards(ctx), BOARD_RESIZE_DEBOUNCE_MS);
   // Re-pin/re-grid immediately when the mobile breakpoint flips (cols and
