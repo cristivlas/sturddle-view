@@ -59,6 +59,10 @@ export const STORAGE_KEY = {
   VIEW_PVTABLE_OPEN: "sturddle:view:pvtable:open",
 
   // Tournament workspace + list state.
+  TOURNAMENT_UX: "sturddle:tournament:ux",
+  STUDIO_SPLIT_ROW: "sturddle:studio:splitRow",
+  STUDIO_SPLIT_COL: "sturddle:studio:splitCol",
+  STUDIO_SELECTED_ID: "sturddle:studio:selectedId",
   WORKSPACE_PREFIX: "sturddle:workspace:",
   LIVE_PVTABLE_COL_WIDTHS: "sturddle:live:pvtable:colWidths",
   TOURNAMENTS_STANDINGS_COL_PCTS: "sturddle:tournaments:standingsColPcts",

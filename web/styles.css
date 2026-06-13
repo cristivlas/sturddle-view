@@ -3048,6 +3048,76 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   display: flex;
   flex: 1; min-height: 0;
 }
+/* Tournament Studio frame: same gutter geometry as the Arena perspective --
+   fixed action ribbon in a left gutter, matching right gutter, centered
+   main column. Content styles land here as the Studio UX grows. */
+.studio-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.studio-body {
+  --ribbon-w: 36px;
+  display: flex;
+  flex: 1; min-height: 0;
+}
+.studio-main {
+  width: calc(100vw - 2 * var(--ribbon-w));
+  margin-left: auto; margin-right: auto;
+  display: flex; flex-direction: column;
+  min-height: 0;
+  gap: 8px;
+}
+.studio-ribbon {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 4px; padding: 4px 0;
+  border-right: 1px solid var(--wa-color-border-loud, #353841);
+  position: fixed;
+  left: 0; top: 50%; transform: translateY(-50%);
+  z-index: 10;
+}
+/* Selected-tourney header -- fixed height, holds the reused row renderer. */
+.studio-header { flex: 0 0 auto; min-height: 0; }
+/* Boards (top) vs bottom tab row -- the vertical (top/bottom) split. */
+.studio-boards {
+  flex: 1 1 0; min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--wa-border-radius-m, 4px);
+}
+.studio-bottom { flex: 1 1 0; min-height: 0; display: flex; }
+/* Bottom-right is the wider pane (Tourneys / Standings / Event Log). */
+.studio-bottom-left { flex: 1 1 0; min-width: 0; display: flex; }
+.studio-bottom-right { flex: 1.6 1 0; min-width: 0; display: flex; }
+/* Resizer grips: transparent until hover/drag, sized like the dock grip. */
+.studio-grip-row {
+  flex: 0 0 5px; cursor: row-resize; background: transparent; z-index: 1;
+}
+.studio-grip-col {
+  flex: 0 0 5px; cursor: col-resize; background: transparent; z-index: 1;
+}
+.studio-grip-row:hover, .studio-grip-row.dragging,
+.studio-grip-col:hover, .studio-grip-col.dragging {
+  background: var(--nav-btn-bg-active);
+}
+/* Each tabbed region is a bordered box that fills its pane; the active
+   panel scrolls independently. wa-tab-group is display:block with an
+   unbounded body by default, so bound the full height chain (host ->
+   part(base) -> part(body) -> panel -> pane) for overflow to kick in. */
+.studio-tabs {
+  flex: 1 1 0; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--wa-border-radius-m, 4px);
+  overflow: hidden;
+}
+.studio-tabs::part(base) { flex: 1 1 0; min-height: 0; height: 100%; }
+.studio-tabs::part(body) { flex: 1 1 0; min-height: 0; }
+.studio-tabs wa-tab-panel { height: 100%; --padding: 0; }
+.studio-tabs wa-tab-panel::part(base) { height: 100%; box-sizing: border-box; }
+.studio-pane { height: 100%; overflow: auto; }
+/* Studio packs the tourney list tighter -- no inter-row gaps, faint
+   separators between rows instead. */
+.studio-pane-tourneys .tournaments-list { gap: 0; }
+.studio-pane-tourneys .tournament-row + .tournament-row {
+  border-top: 1px solid var(--border-subtle);
+}
 .tournaments-body-main {
   width: calc(100vw - 2 * var(--ribbon-w));
   margin-left: auto; margin-right: auto;
@@ -3098,6 +3168,21 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
     width: auto; height: 2px;
   }
   .t-workspace, .tmb-window-menu { display: none; }
+
+  /* Studio: same ribbon-to-top switch as Arena; main reclaims full width. */
+  .studio-body { flex-direction: column; }
+  .studio-ribbon {
+    position: static; transform: none;
+    flex-direction: row; justify-content: center;
+    border-right: 0; border-bottom: 1px solid var(--wa-color-border-loud, #353841);
+    padding: 6px 0;
+  }
+  .studio-ribbon .ribbon-sep { width: 1px; height: 18px; margin: 0 4px; }
+  .studio-ribbon .ribbon-btn::before {
+    left: 6px; right: 6px; top: auto; bottom: 0;
+    width: auto; height: 2px;
+  }
+  .studio-main { width: 100%; }
 }
 .tournament-engines {
   font-size: 0.75rem;

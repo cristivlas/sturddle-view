@@ -8,6 +8,7 @@ import { openRibbonWindow, closeRibbonWindow, mountRibbonElement, isRibbonFloati
 import { loadRaw, saveRaw } from "./storage.js";
 import { mqMobile } from "./breakpoints.js";
 import { APP_EVT } from "./app-events.js";
+import { getTournamentUx, tournamentUxLabel } from "./tournament-studio.js";
 
 // Auth is carried by the HttpOnly cookie set during the /auth handshake.
 const token = "";
@@ -170,7 +171,11 @@ function renderNav() {
   for (const p of router.list()) {
     const btn = document.createElement("button");
     btn.dataset.perspective = p.id;
-    btn.textContent = p.id === "play" && inViewMode ? "View" : p.label;
+    // Tournaments tab tracks the UX-mode setting (Arena vs Studio).
+    btn.textContent =
+      p.id === "play" && inViewMode ? "View"
+      : p.id === enginesPerspective.id ? tournamentUxLabel()
+      : p.label;
     btn.addEventListener("click", async () => {
       await router.activate(p.id);
       renderNav();
@@ -182,6 +187,21 @@ function renderNav() {
 window.addEventListener(APP_EVT.VIEWING_CHANGED, (ev) => {
   inViewMode = !!ev.detail?.viewing;
   renderNav();
+});
+// UX-mode setting changed (Display tab) -- refresh the tab label, and if the
+// Tournaments tab is live, remount it so the chosen shell (Arena/Studio)
+// swaps in. Guarded on actual UX change so unrelated display edits don't
+// tear down the workspace. force:true remounts the same id.
+let lastUx = getTournamentUx();
+window.addEventListener(APP_EVT.SETTINGS_CHANGED, async () => {
+  renderNav();
+  const ux = getTournamentUx();
+  if (ux === lastUx) return;
+  lastUx = ux;
+  if (router.activeId() === enginesPerspective.id) {
+    await router.activate(enginesPerspective.id, { force: true });
+    renderNav();
+  }
 });
 
 function setConnected(yes) {
