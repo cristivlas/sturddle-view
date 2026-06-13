@@ -177,8 +177,8 @@ export function buildDisplayTab({ initial, putSettings, initialStyle, onBoardSty
   tournamentUx.setAttribute("distance", "4");
   tournamentUx.value = getTournamentUx();
   for (const [val, label] of [
-    [TOURNAMENT_UX.ARENA, "Arena (workspace)"],
-    [TOURNAMENT_UX.STUDIO, "Studio (minimal)"],
+    [TOURNAMENT_UX.ARENA, "Arena"],
+    [TOURNAMENT_UX.STUDIO, "Studio"],
   ]) {
     const opt = document.createElement("wa-option");
     opt.value = val;
