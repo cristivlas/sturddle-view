@@ -298,6 +298,10 @@ class Orchestrator:
         # WS subscribers keyed by pair_id. Same lifecycle as proxy subscribers
         # but scoped to the game: sentinel sent when the pair is dissolved.
         self._game_subscribers: dict[str, set[CoalescingQueue]] = {}
+        # Last ``want_info`` value signaled back to each proxy on its POST
+        # response. Used to send the flag only when it flips, so steady-state
+        # batch responses stay empty (204). None = never signaled.
+        self._proxy_want_info_signaled: dict[str, bool | None] = {}
         # UCI move list per confirmed pair, longest-prefix-extension
         # wins; handed to the reconciliation queue at dissolution.
         self._pair_moves: dict[str, list[str]] = {}
@@ -342,6 +346,7 @@ class Orchestrator:
         self._pair_proxies.clear()
         self._pair_white.clear()
         self._game_subscribers.clear()
+        self._proxy_want_info_signaled.clear()
         self._pair_moves.clear()
         self._reconcile_queue.clear()
 
@@ -1191,6 +1196,37 @@ class Orchestrator:
                 out.update(subs)
         return out
 
+    def wants_info(self, proxy_id: str) -> bool:
+        """Does any WS consumer currently need this proxy's ``info`` lines?
+
+        Mirrors ``ingest_proxy_lines`` fan-out: own subscribers, paired-PV
+        waiters (via the same ``_pairing_state``/``_paired_subscribers``
+        path, so unconfirmed FEN-sharers aren't blinded), game subscribers
+        on the confirmed pair. All empty -> proxy skips tapping ``info``."""
+        if self._proxy_subscribers.get(proxy_id):
+            return True
+        state = self._pairing_state.get(proxy_id)
+        if state is not None:
+            fen, my_color = state
+            if self._paired_subscribers(proxy_id, fen, my_color):
+                return True
+        peer = self._confirmed_pairs.get(proxy_id)
+        if peer is not None:
+            pair_id = self._pair_ids.get(frozenset((proxy_id, peer)))
+            if pair_id and self._game_subscribers.get(pair_id):
+                return True
+        return False
+
+    def want_info_signal(self, proxy_id: str) -> bool | None:
+        """Return ``want_info`` only when it has flipped since the last
+        signal to this proxy, else ``None`` (caller stays 204). Records
+        the new value so the next call only fires on the following flip."""
+        current = self.wants_info(proxy_id)
+        if self._proxy_want_info_signaled.get(proxy_id) == current:
+            return None
+        self._proxy_want_info_signaled[proxy_id] = current
+        return current
+
     def _pairing_assert_invariants(self) -> None:
         """SV_DEBUG_PAIRING-gated. Only proxy-uniqueness is invariant:
         with concurrency > 1 fastchess runs multiple game-pairs and
@@ -1232,6 +1268,7 @@ class Orchestrator:
         self._pairing_unregister(proxy_id)
         new_pairs, orphaned = self._recompute_groups()
         self._pairing_color.pop(proxy_id, None)
+        self._proxy_want_info_signaled.pop(proxy_id, None)
         subs = self._proxy_subscribers.pop(proxy_id, None)
         if subs:
             for q in subs:

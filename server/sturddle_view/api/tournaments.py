@@ -19,10 +19,12 @@ from fastapi import (
     HTTPException,
     Path as FastApiPath,
     Request,
+    Response,
     WebSocket,
     WebSocketDisconnect,
     status,
 )
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from ..auth import AUTH_COOKIE, check_token_value, origin_ok, require_token
@@ -529,6 +531,11 @@ def update_tournament_settings(payload: TournamentSettingsUpdate, request: Reque
 # ---------------------------------------------------------------------------
 
 
+# Response field carrying the want-info gate back to the proxy. Sent
+# only when the value flips, so steady-state responses stay empty (204).
+WANT_INFO_KEY = "want_info"
+
+
 class ProxyBatch(BaseModel):
     """Batched UCI lines from one proxy. Posted by the proxy script
     every ~50ms or every ~32 lines (whichever first)."""
@@ -541,8 +548,8 @@ class ProxyBatch(BaseModel):
     ended: bool = False
 
 
-@internal_router.post("/internal/proxy", status_code=204)
-async def ingest_proxy(payload: ProxyBatch, request: Request) -> None:
+@internal_router.post("/internal/proxy")
+async def ingest_proxy(payload: ProxyBatch, request: Request) -> Response:
     orch: Orchestrator = _orch(request)
     if not orch.verify_proxy_secret(payload.secret):
         # Stale or unknown proxy posting after tournament ended, or
@@ -558,6 +565,15 @@ async def ingest_proxy(payload: ProxyBatch, request: Request) -> None:
 
     if payload.ended:
         await orch.proxy_session_ended(payload.proxy_id)
+        return Response(status_code=204)
+
+    # Tell the proxy whether to keep tapping ``info`` -- only when the
+    # gate has flipped since we last told it, so the common case (no
+    # change) stays a bodiless 204.
+    signal = orch.want_info_signal(payload.proxy_id)
+    if signal is None:
+        return Response(status_code=204)
+    return JSONResponse({WANT_INFO_KEY: signal})
 
 
 async def _stream_queue_to_websocket(websocket: WebSocket, queue) -> None:

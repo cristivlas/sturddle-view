@@ -52,6 +52,10 @@ _BROADCAST_INFO = os.environ.get("SV_BROADCAST_INFO", "1") != "0"
 
 _POST_TIMEOUT_S = 2
 
+# Response field by which the server tells the proxy whether any watcher
+# needs ``info`` lines. Sent only when it flips; absent body = unchanged.
+_WANT_INFO_KEY = "want_info"
+
 
 class Broadcaster:
     """Buffers proxy lines and POSTs them in batches to the server's
@@ -80,6 +84,10 @@ class Broadcaster:
         self._buf: list[str] = []
         self._last_flush = time.monotonic()
         self._announced = False
+        # Whether any watcher needs ``info``. Fail-open default True.
+        # Written by post worker, read by pump; bool assign is atomic
+        # in CPython, so no lock.
+        self._want_info = True
         self._post_q: queue.Queue = queue.Queue()
         self._post_stopped = threading.Event()
         # One worker thread serializes posts; one connection in the
@@ -104,9 +112,27 @@ class Broadcaster:
 
     def _post_blocking(self, payload: dict) -> None:
         try:
-            self._client.post(self._url, json=payload)
+            resp = self._client.post(self._url, json=payload)
         except httpx.HTTPError as e:
             print(f"proxy broadcast failed: {e}", file=sys.stderr, flush=True)
+            return
+        self._apply_want_info(resp)
+
+    def _apply_want_info(self, resp: "httpx.Response") -> None:
+        """Read the want-info gate off a batch response. Server sends a
+        body only on flip; 204/empty/garbled leaves the flag as-is."""
+        if resp.status_code == 204 or not resp.content:
+            return
+        try:
+            value = resp.json().get(_WANT_INFO_KEY)
+        except (ValueError, AttributeError):
+            return
+        if isinstance(value, bool):
+            self._want_info = value
+
+    @property
+    def want_info(self) -> bool:
+        return self._want_info
 
     def _post(self, payload: dict) -> None:
         self._post_q.put(payload)
@@ -184,7 +210,11 @@ async def _pump(
             pass
         if broadcaster is not None:
             decoded = line.decode("utf-8", errors="replace").rstrip("\r\n")
-            if not _BROADCAST_INFO and decoded.lstrip().startswith("info "):
+            # Gate info: static kill-switch, or no watcher needs it now.
+            # Structural lines (position/bestmove/...) always tap, so a
+            # flip reaches us by the next move boundary (no idle POSTs).
+            is_info = decoded.lstrip().startswith("info ")
+            if is_info and (not _BROADCAST_INFO or not broadcaster.want_info):
                 continue
             if _BROADCAST_FILTER is None or not _BROADCAST_FILTER.match(decoded):
                 try:
