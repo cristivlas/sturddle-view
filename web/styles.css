@@ -3164,6 +3164,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 /* A little headroom above the event log -- on the panel (outside the scroll
    pane) so it stays put while the log tails to the bottom. */
 .studio-tabs wa-tab-panel[name="log"]::part(base) { padding-top: 6px; }
+/* Keep the watch buttons off the pane's right edge / scrollbar. */
+.studio-pane .wb-sched-attach-btn { margin-right: 8px; }
 /* Studio tourney table: sortable + resizable sticky header, flat rows
    (Settings engines look). The wrap is the resize overlay's positioned host
    (mirrors the file picker's tableWrap). */
