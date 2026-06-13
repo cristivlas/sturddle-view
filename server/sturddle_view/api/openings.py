@@ -12,8 +12,5 @@ router = APIRouter(prefix="/openings", tags=["openings"], dependencies=[Depends(
 def list_openings(request: Request) -> dict:
     """Full opening list (one row per name); the client filters locally."""
     return {
-        "results": [
-            {"eco": op.eco, "name": op.name, "pgn": op.pgn, "ply": op.ply}
-            for op in request.app.state.openings.all()
-        ]
+        "results": [op.as_dict() for op in request.app.state.openings.all()]
     }

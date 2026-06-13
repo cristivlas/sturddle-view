@@ -268,6 +268,7 @@ const TOOL_FRIENDLY_LABELS = {
   material:       "Counting material",
   delegate:       "Verifying line",
   report_line:    "Checking line",
+  related_openings: "Comparing openings",
 };
 
 // Tools whose label shows the actual move under consideration ("Considering
