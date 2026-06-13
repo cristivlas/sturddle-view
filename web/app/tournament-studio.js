@@ -20,7 +20,7 @@ import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { tournamentActions } from "./tournaments.js";
 import { SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
-import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openLiveGameWindow } from "./tournament-live-game.js";
+import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow } from "./tournament-live-game.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
 import { renderEventLogList } from "./tournament-eventlog.js";
 import { mqMobile } from "./breakpoints.js";
@@ -323,6 +323,13 @@ function studioTourneyRow(ctx, t) {
 function renderTourneys(ctx) {
   if (!ctx.tourneyTbody) return;
   ensureSelection(ctx);
+  if (ctx.tournaments.length === 0) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td colspan="3" class="studio-tourney-empty">No tournaments yet -- use New to create one.</td>`;
+    ctx.tourneyTbody.replaceChildren(tr);
+    syncRibbon(ctx);
+    return;
+  }
   ctx.tourneyTbody.replaceChildren(...sortedStudioTourneys(ctx).map((t) => studioTourneyRow(ctx, t)));
   syncRibbon(ctx);
 }
@@ -471,6 +478,9 @@ function livePushEvent(ctx, evt) {
   const inner = evt.payload?.kind;
   addLogEntry(ctx.live, evt);
   applyEventKind(ctx.live, evt, inner, ctx.liveTid);
+  // A reconcile resolves a watched game -> persist so reload can rehydrate
+  // it as a frozen board.
+  if (inner === KIND.GAME_RECONCILED) saveBoards(ctx);
   if (evt.kind === EVT.STATUS || inner === KIND.GAME_FINISHED || inner === KIND.DONE || inner === KIND.STOPPED) {
     ctx.refreshStandings();
   }
@@ -713,21 +723,44 @@ function wireBoardHooks(ctx, wb) {
   wb.onrestore = onChange;
 }
 
-// Open one board into the next laid-out slot (minimized/maximized boards
-// don't occupy slots). initialRect avoids a flash at WinBox's default size.
-function openBoard(ctx, openOpts, min) {
-  const laidOut = getLiveWindows().filter((wb) => !wb.min && !wb.max).length;
-  const res = openLiveGameWindow({
-    ...openOpts, token: ctx.token, tournamentId: ctx.liveTid,
-    root: ctx.boardsEl, variantClass: STUDIO_BOARD_CLASS,
-    boardStyle: ctx.boardStyleCached, top: 0, left: 0, right: 0, min,
-    initialRect: studioSlotRect(ctx, laidOut),
-  });
+// Next laid-out slot index (minimized/maximized boards don't occupy slots).
+function nextSlotRect(ctx) {
+  return studioSlotRect(ctx, getLiveWindows().filter((wb) => !wb.min && !wb.max).length);
+}
+
+// Shared post-open: wire hooks, re-grid, repaint tray, persist.
+function placeBoard(ctx, res) {
   if (res?.wb && !res.alreadyOpen) wireBoardHooks(ctx, res.wb);
   regridBoards(ctx);
   renderTray(ctx);
   saveBoards(ctx);
   return res;
+}
+
+// Open a live board into the next slot. initialRect avoids a flash at
+// WinBox's default size.
+function openBoard(ctx, openOpts, min) {
+  return placeBoard(ctx, openLiveGameWindow({
+    ...openOpts, token: ctx.token, tournamentId: ctx.liveTid,
+    root: ctx.boardsEl, variantClass: STUDIO_BOARD_CLASS,
+    boardStyle: ctx.boardStyleCached, top: 0, left: 0, right: 0, min,
+    initialRect: nextSlotRect(ctx),
+  }));
+}
+
+// Reopen a finished game as a frozen board (rehydrated from PGN), like Arena.
+// Re-seed resolvedGames so a later snapshot keeps `resolved` (otherwise the
+// freshly-rebuilt live store loses it and the next reload drops the board).
+function openFrozenBoard(ctx, b) {
+  if (b.gameId && ctx.live) ctx.live.resolvedGames.set(b.gameId, b.resolved);
+  return placeBoard(ctx, openFrozenGameWindow({
+    proxyId: b.proxyId, gameId: b.gameId, label: b.label, engineName: b.engineName,
+    token: ctx.token, tournamentId: ctx.liveTid,
+    gameN: b.resolved.gameN, result: b.resolved.result, termination: b.resolved.termination,
+    root: ctx.boardsEl, variantClass: STUDIO_BOARD_CLASS,
+    boardStyle: ctx.boardStyleCached, top: 0, left: 0, right: 0, min: !!b.min,
+    initialRect: nextSlotRect(ctx),
+  }));
 }
 
 function studioWatch(ctx, btn, attachKey, openOpts) {
@@ -740,31 +773,39 @@ function studioWatch(ctx, btn, attachKey, openOpts) {
 // Persist the open boards per running tourney so a reload restores them
 // (like Arena). Geometry isn't saved -- boards are grid-placed by order.
 
-function snapshotBoards() {
-  return getLiveWindows().filter((wb) => wb._watchOpts).map((wb) => ({
-    proxyId: wb._watchOpts.proxyId, gameId: wb._watchOpts.gameId ?? null,
-    label: wb._watchOpts.label, engineName: wb._watchOpts.engineName,
-    min: !!wb.min,
-  }));
+// A board's snapshot carries `resolved` (gameN/result/termination) once its
+// game has reconciled, so a reload can rehydrate it as a frozen board.
+function snapshotBoards(ctx) {
+  return getLiveWindows().filter((wb) => wb._watchOpts).map((wb) => {
+    const gameId = wb._watchOpts.gameId ?? null;
+    const resolved = gameId ? ctx.live?.resolvedGames.get(gameId) : null;
+    return {
+      proxyId: wb._watchOpts.proxyId, gameId,
+      label: wb._watchOpts.label, engineName: wb._watchOpts.engineName,
+      min: !!wb.min,
+      ...(resolved ? { resolved } : {}),
+    };
+  });
 }
 
 // No-op while liveTid is null (teardown) so closing boards on stop/switch
 // doesn't wipe the saved set.
 function saveBoards(ctx) {
   if (!ctx.liveTid) return;
-  saveJson(STORAGE_KEY.STUDIO_BOARDS_PREFIX + ctx.liveTid, snapshotBoards());
+  saveJson(STORAGE_KEY.STUDIO_BOARDS_PREFIX + ctx.liveTid, snapshotBoards(ctx));
 }
 
-// Reopen saved boards that are still live in the seeded maps; drop the rest.
+// Reopen saved boards: resolved ones as frozen (from PGN), still-live ones
+// live; drop those that ended while away with no resolution.
 function restoreBoards(ctx) {
   const saved = loadJson(STORAGE_KEY.STUDIO_BOARDS_PREFIX + ctx.liveTid);
   if (!Array.isArray(saved)) return;
   for (const b of saved) {
+    if (b.resolved) { openFrozenBoard(ctx, b); continue; }
     const live = b.gameId
       ? ctx.live.livePairings.get(b.proxyId)?.pairId === b.gameId
       : ctx.live.activeProxies.has(b.proxyId);
-    if (!live) continue;
-    openBoard(ctx, { proxyId: b.proxyId, gameId: b.gameId, label: b.label, engineName: b.engineName }, !!b.min);
+    if (live) openBoard(ctx, { proxyId: b.proxyId, gameId: b.gameId, label: b.label, engineName: b.engineName }, !!b.min);
   }
   refreshWatchButtons(ctx);
 }

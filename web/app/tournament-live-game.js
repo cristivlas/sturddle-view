@@ -869,6 +869,7 @@ export function openFrozenGameWindow({
   proxyId, gameId, windowKey = gameId, label, engineName,
   token, tournamentId, gameN, result, termination,
   top = 0, left = 0, right = 0, boardStyle = null, initialRect = null, min = false, max = false, flash = true,
+  root = null, variantClass = null,
 }) {
   if (!windowKey) {
     console.error("[FROZEN] no windowKey", { proxyId, gameId });
@@ -889,7 +890,8 @@ export function openFrozenGameWindow({
   const built = buildLiveGameBox({
     windowKey, gameId, proxyId, label, engineName, token, tournamentId,
     top, left, right, boardStyle, avoidRect: null, initialRect, min, max, flash,
-    variantClass: "sturddle-wb-live-frozen",
+    variantClass: variantClass ? `sturddle-wb-live-frozen ${variantClass}` : "sturddle-wb-live-frozen",
+    root,
   });
   const { wb, board, refs, showResult, setReplayGameN, disposeShared } = built;
   const { topNameEl, bottomNameEl, clockTopEl, clockBottomEl } = refs;

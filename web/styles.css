@@ -3139,7 +3139,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .studio-grip-row:hover, .studio-grip-row.dragging,
 .studio-grip-col:hover, .studio-grip-col.dragging {
-  background: var(--row-bg-selected);
+  background: rgb(6, 87, 124);
 }
 /* Each tabbed region is a bordered box that fills its pane; the active
    panel scrolls independently. wa-tab-group is display:block with an
@@ -3192,6 +3192,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-tourney-row:hover { background: var(--row-bg-hover); }
 .studio-tourney-row.selected { background: var(--row-bg-selected); }
 .studio-tourney-row.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
+.studio-tourney-empty { color: var(--muted); text-align: center; padding: 16px; }
 /* Running tourney's Games cell: Arena's progress bar + inline label. */
 .studio-progress { display: flex; align-items: center; gap: 8px; }
 .tournaments-body-main {
