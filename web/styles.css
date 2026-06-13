@@ -3932,7 +3932,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   display: flex; gap: 8px; white-space: nowrap;
 }
 .wb-log-ts { color: var(--muted); flex: 0 0 60px; }
-.wb-log-kind { color: var(--accent); }
+.wb-log-kind { color: var(--muted-bright); }
 .wb-log-detail { color: var(--muted); }
 .wb-log-runner { color: var(--fg); }
 .wb-log-runner.err { color: var(--wa-color-danger-on-loud); }
