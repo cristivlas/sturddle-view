@@ -696,6 +696,10 @@ class AIAnalysisCoordinator:
         # Lets verifier sub-runs ground their tool calls in the same
         # position the narrator sees. Empty outside a turn.
         self._turn_context: str = ""
+        # True when this turn carries the opening-theory steer: prose may
+        # cite off-board sibling-variation moves, so board-legality checks
+        # are skipped (see _position_check). False outside a turn.
+        self._opening_turn: bool = False
         # tool_use_id of the in-flight delegate call; its verifier's
         # nested tool events stamp this so the client renders them under
         # the right "Verifying line" row. Late-bound. None when idle.
@@ -754,7 +758,8 @@ class AIAnalysisCoordinator:
             # registry lacks) so the sub-run isn't handed a dead instruction.
             # Only opening turns carry it; others pass through untouched.
             turn_context = opening_user_content
-            if OPENING_PHASE_GUIDANCE in turn_context:
+            self._opening_turn = OPENING_PHASE_GUIDANCE in opening_user_content
+            if self._opening_turn:
                 turn_context = (
                     turn_context.replace(OPENING_PHASE_GUIDANCE, "").rstrip() + "\n"
                 )
@@ -885,6 +890,7 @@ class AIAnalysisCoordinator:
                     self._cancel_token = None
                     self._active_provider = None
                     self._turn_context = ""
+                    self._opening_turn = False
                     self._turn_game_id = None
                     self._active_delegate_id = None
 
@@ -1250,6 +1256,11 @@ class AIAnalysisCoordinator:
         # full prose, not the truncated board view, so a leak after a future
         # line still counts.
         tool_mentions = find_tool_mentions(full_text)
+        # Opening turns discuss off-board alternatives (sibling variations,
+        # earlier-ply moves), so the board-legality/claim recognizers misfire.
+        # Keep only the board-independent tool-mention guard.
+        if self._opening_turn:
+            return _PositionCheck(board, [], [], [], tool_mentions)
         # Stop at the first move number past the live ply: beyond it the model
         # is in a hypothetical line, not describing the board.
         text = truncate_at_future_line(full_text, board)
