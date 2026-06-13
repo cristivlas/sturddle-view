@@ -544,6 +544,24 @@ async function removeOne(ctx, t) {
   await ctx.loadList();
 }
 
+// Shared tournament verbs for other UIs (e.g. Studio). The action functions
+// only read {api, log, settings, loadList} off ctx, so a minimal ctx adapter
+// lets a different perspective reuse them with no change to the verbs.
+export function tournamentActions({ api, log, getSettings, reload }) {
+  const ctx = {
+    api, log, loadList: reload,
+    get settings() { return getSettings ? getSettings() : null; },
+  };
+  return {
+    create: () => openNewTournamentDialog(ctx),
+    edit: (t) => openEditTournamentDialog(ctx, t),
+    info: (t) => openInfoDialog(ctx, t),
+    start: (t) => startOne(ctx, t),
+    stop: (t) => stopOne(ctx, t),
+    remove: (t) => removeOne(ctx, t),
+  };
+}
+
 // ---- Info dialog --------------------------------------------------------
 
 async function openInfoDialog(ctx, t) {

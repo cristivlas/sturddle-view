@@ -14,7 +14,8 @@ import { loadJson, loadRaw, saveJson, saveRaw } from "./storage.js";
 import { renderTournamentRow } from "./tournament-row.js";
 import { reportError } from "./dialogs.js";
 import { debounce, escapeHtml } from "./wb-utils.js";
-import { EVT, EVT_PREFIX, KIND } from "./tournament-events.js";
+import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
+import { tournamentActions } from "./tournaments.js";
 import { SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
 import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openLiveGameWindow } from "./tournament-live-game.js";
@@ -23,6 +24,7 @@ import { renderEventLogList } from "./tournament-eventlog.js";
 import { mqMobile } from "./breakpoints.js";
 
 const TOURNAMENTS_ENDPOINT = "/api/tournaments";
+const TOURNAMENT_SETTINGS_ENDPOINT = "/api/tournament-settings";
 const SETTINGS_ENDPOINT = "/settings";
 const LOAD_FAIL_MSG = "Loading tournaments failed";
 const NO_ENGINES_MSG = "No active engines.";
@@ -84,6 +86,9 @@ const STUDIO_HTML = `
         <span class="ribbon-sep" aria-hidden="true"></span>
         <button class="ribbon-btn studio-info" disabled aria-label="Info" title="Info">
           <wa-icon name="circle-info"></wa-icon>
+        </button>
+        <button class="ribbon-btn studio-edit" disabled aria-label="Edit" title="Edit">
+          <wa-icon name="pen-to-square"></wa-icon>
         </button>
         <span class="ribbon-sep" aria-hidden="true"></span>
         <button class="ribbon-btn ribbon-btn--danger studio-remove" disabled aria-label="Remove" title="Remove">
@@ -190,8 +195,8 @@ function setSelected(ctx, id) {
   saveRaw(STORAGE_KEY.STUDIO_SELECTED_ID, id);
 }
 
-// Click handler: repaint selection in place (preserves list scroll).
-// Header / Standings / Event Log rebind to the selection in later steps.
+// Click handler: repaint selection in place (preserves list scroll), then
+// rebind the live store, standings/log panes, and ribbon to the selection.
 function studioSelect(ctx, id) {
   if (ctx.selectedId === id) return;
   setSelected(ctx, id);
@@ -199,6 +204,11 @@ function studioSelect(ctx, id) {
     li.classList.toggle("selected", li.dataset.id === id);
   }
   syncLive(ctx);
+  syncRibbon(ctx);
+}
+
+function selectedTournament(ctx) {
+  return ctx.tournaments.find((t) => t.id === ctx.selectedId) || null;
 }
 
 function renderTourneys(ctx) {
@@ -211,9 +221,58 @@ function renderTourneys(ctx) {
     ul.appendChild(renderTournamentRow(t, {
       selected: t.id === ctx.selectedId,
       onSelect: (t) => studioSelect(ctx, t.id),
+      onInfo: (t) => { studioSelect(ctx, t.id); ctx.actions?.info(t); },
     }));
   }
   ctx.tourneysPaneEl.replaceChildren(ul);
+  syncRibbon(ctx);
+}
+
+// ---- Ribbon actions ------------------------------------------------------
+// Reuse Arena's tournament verbs via the shared adapter; target the selected
+// tourney. New is always enabled; the rest follow status like Arena.
+function wireRibbonActions(ctx) {
+  const q = (sel) => ctx.ribbonEl.querySelector(sel);
+  ctx.ribbonBtns = {
+    create: q(".studio-new"), start: q(".studio-start"), stop: q(".studio-stop"),
+    info: q(".studio-info"), edit: q(".studio-edit"), remove: q(".studio-remove"),
+  };
+  ctx.actions = tournamentActions({
+    api: ctx.api, log: ctx.log,
+    getSettings: () => ctx.tournSettings,
+    reload: () => studioLoadList(ctx),
+  });
+  const onSel = (fn) => () => { const t = selectedTournament(ctx); if (t) fn(t); };
+  ctx.ribbonBtns.create.addEventListener("click", () => ctx.actions.create());
+  ctx.ribbonBtns.start.addEventListener("click", onSel(ctx.actions.start));
+  ctx.ribbonBtns.stop.addEventListener("click", onSel(ctx.actions.stop));
+  ctx.ribbonBtns.info.addEventListener("click", onSel(ctx.actions.info));
+  ctx.ribbonBtns.edit.addEventListener("click", onSel(ctx.actions.edit));
+  ctx.ribbonBtns.remove.addEventListener("click", onSel(ctx.actions.remove));
+}
+
+function syncRibbon(ctx) {
+  const b = ctx.ribbonBtns;
+  if (!b) return;
+  const t = selectedTournament(ctx);
+  if (!t) {
+    for (const k of ["start", "stop", "info", "edit", "remove"]) b[k].disabled = true;
+    return;
+  }
+  const isActive = t.id === ctx.activeId;
+  const anotherRunning = ctx.activeId !== null && !isActive;
+  const status = t.status;
+  const isRestart = status === STATUS.STOPPED || status === STATUS.FAILED;
+  b.start.disabled = isActive || anotherRunning || status === STATUS.RUNNING || status === STATUS.DONE;
+  b.stop.disabled = !isActive;
+  b.remove.disabled = isActive;
+  b.info.disabled = false;
+  b.edit.disabled = isActive || status === STATUS.DONE;
+  const icon = b.start.querySelector("wa-icon");
+  if (icon) icon.setAttribute("name", isRestart ? "rotate-right" : "play");
+  const startLabel = isRestart ? "Restart" : "Start";
+  b.start.setAttribute("aria-label", startLabel);
+  b.start.setAttribute("title", startLabel);
 }
 
 // Fetch the tournament list; a generation guard drops out-of-order
@@ -651,6 +710,8 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     selDetail: null, selEvents: [], selGen: 0, selLoadedId: null,
     // Board style for live boards (fetched once, like the workspace).
     boardStyleCached: null,
+    // Ribbon verbs (shared with Arena) + tournament settings for New/Edit.
+    tournSettings: null, ribbonBtns: null, actions: null,
   };
   // Standings pane reuses the shared resizable-column table; log pane is a
   // plain list the shared renderer fills.
@@ -667,10 +728,14 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
   }, STANDINGS_REFRESH_DEBOUNCE_MS);
   wireSplitters(ctx);
   wireTabPersistence(ctx);
+  wireRibbonActions(ctx);
   announceRibbon(ctx.ribbonEl);
 
   ctx.api("GET", SETTINGS_ENDPOINT)
     .then((s) => { ctx.boardStyleCached = s?.board_style || null; })
+    .catch(() => {});
+  ctx.api("GET", TOURNAMENT_SETTINGS_ENDPOINT)
+    .then((s) => { ctx.tournSettings = s; })
     .catch(() => {});
 
   // Re-grid boards when one closes or the viewport changes; closing also
@@ -714,4 +779,5 @@ function unmountStudio(ctx) {
   ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = null;
   ctx.enginesPaneEl = ctx.gamesPaneEl = null;
   ctx.standingsPaneEl = ctx.standingsBodyEl = ctx.logPaneEl = ctx.logListEl = null;
+  ctx.ribbonBtns = ctx.actions = null;
 }
