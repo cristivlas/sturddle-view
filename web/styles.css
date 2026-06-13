@@ -3203,6 +3203,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-tourney-row.selected { background: var(--row-bg-selected); }
 .studio-tourney-row.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
 .studio-tourney-empty { color: var(--muted); text-align: center; padding: 16px; }
+.studio-tourney-created { color: var(--muted); }
 /* Running tourney's Games cell: Arena's progress bar + inline label. */
 .studio-progress { display: flex; align-items: center; gap: 8px; }
 .tournaments-body-main {

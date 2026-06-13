@@ -50,8 +50,8 @@ const BOARD_RESIZE_DEBOUNCE_MS = 120;
 // Default active tab per bottom group (first tab) when none is remembered.
 const STUDIO_TAB_DEFAULT_LEFT = "livegames";
 const STUDIO_TAB_DEFAULT_RIGHT = "tourneys";
-// Tourney table default column widths (Status, Name, Games) + resize floor.
-const STUDIO_TOURNEY_DEFAULT_PCTS = [20, 52, 28];
+// Tourney table default column widths (Status, Created, Name, Games) + resize floor.
+const STUDIO_TOURNEY_DEFAULT_PCTS = [12, 22, 16, 50];
 const STUDIO_TOURNEY_MIN_PCT = 10;
 
 export const TOURNAMENT_UX = Object.freeze({ ARENA: "arena", STUDIO: "studio" });
@@ -231,6 +231,9 @@ function sortedStudioTourneys(ctx) {
     if (s.key === "name") {
       return dir * (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }) || tie(a, b);
     }
+    if (s.key === "created") {
+      return dir * (a.created_at || "").localeCompare(b.created_at || "") || tie(a, b);
+    }
     const av = a.status || "", bv = b.status || "";
     return av !== bv ? dir * av.localeCompare(bv) : tie(a, b);
   });
@@ -246,9 +249,10 @@ function buildTourneyTable(ctx) {
   wrap.className = "studio-tourney-wrap";
   const table = document.createElement("table");
   table.className = "wb-table studio-tourney-tbl";
-  table.innerHTML = `<colgroup><col><col><col></colgroup>
+  table.innerHTML = `<colgroup><col><col><col><col></colgroup>
     <thead><tr>
       <th data-col="status">Status<span class="th-grip"></span></th>
+      <th data-col="created">Created<span class="th-grip"></span></th>
       <th data-col="name">Name<span class="th-grip"></span></th>
       <th class="studio-tourney-games-col">Games</th>
     </tr></thead><tbody></tbody>`;
@@ -259,6 +263,7 @@ function buildTourneyTable(ctx) {
     table,
     columns: [
       { key: "status", firstDir: "asc" },
+      { key: "created", firstDir: "desc" },
       { key: "name", firstDir: "asc" },
       { key: "games", sortable: false },
     ],
@@ -290,6 +295,14 @@ function buildTourneyTable(ctx) {
   });
 }
 
+// Compact local date+time for the Created column; falls back to the raw
+// string if it isn't a parseable timestamp.
+function formatCreated(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso : d.toLocaleString();
+}
+
 // Games cell: while running, Arena's progress bar (label then bar); otherwise
 // "played / total".
 function gamesCell(t, played, total) {
@@ -307,6 +320,7 @@ function studioTourneyRow(ctx, t) {
   const played = t.standings?.games ?? 0;
   tr.innerHTML =
     `<td>${statusBadgeHtml(t.status)}</td>` +
+    `<td class="studio-tourney-created">${escapeHtml(formatCreated(t.created_at))}</td>` +
     `<td class="studio-tourney-name" title="${escapeHtml(t.name)}">${escapeHtml(t.name)} ${sprtBadgeHtml(t)}</td>` +
     `<td class="studio-tourney-games">${gamesCell(t, played, total)}</td>`;
   tr.addEventListener("click", () => studioSelect(ctx, t.id));
@@ -319,7 +333,7 @@ function renderTourneys(ctx) {
   ensureSelection(ctx);
   if (ctx.tournaments.length === 0) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td colspan="3" class="studio-tourney-empty">No tournaments yet -- use New to create one.</td>`;
+    tr.innerHTML = `<td colspan="4" class="studio-tourney-empty">No tournaments yet -- use New to create one.</td>`;
     ctx.tourneyTbody.replaceChildren(tr);
     syncRibbon(ctx);
     return;
