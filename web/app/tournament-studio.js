@@ -39,7 +39,10 @@ const STANDINGS_REFRESH_DEBOUNCE_MS = 400;
 // width -- below that the row overflows and scrolls. Unlimited rows scroll
 // vertically. Boards are laid out (no-move), absolutely positioned.
 const STUDIO_COLS = 4;
-const STUDIO_BOARD_GAP = 6;
+const STUDIO_BOARD_GAP = 0;
+// Inset so boards don't sit flush against the region border (abs-positioned
+// boards ignore container padding, so the offset is applied in placement).
+const STUDIO_BOARD_PAD = 1;
 const STUDIO_BOARD_CLASS = "sturddle-wb-studio no-move";
 const BOARD_RESIZE_DEBOUNCE_MS = 120;
 // Default active tab per bottom group (first tab) when none is remembered.
@@ -478,7 +481,7 @@ function boardCell(ctx) {
   const cols = studioCols();
   const w = ctx.boardsEl?.clientWidth ?? 0;
   const cw = Math.max(LIVE_MIN_WIDTH,
-    Math.floor((w - STUDIO_BOARD_GAP * (cols - 1)) / cols));
+    Math.floor((w - 2 * STUDIO_BOARD_PAD - STUDIO_BOARD_GAP * (cols - 1)) / cols));
   return { cw, ch: cw + (LIVE_MIN_HEIGHT() - LIVE_MIN_WIDTH), cols };
 }
 
@@ -495,7 +498,10 @@ function regridBoards(ctx) {
     if (wb.min) continue;
     if (wb.max) { fillRegion(ctx, wb); continue; }
     const col = slot % cols, row = Math.floor(slot / cols);
-    wb.resize(cw, ch).move(col * (cw + STUDIO_BOARD_GAP), row * (ch + STUDIO_BOARD_GAP));
+    wb.resize(cw, ch).move(
+      STUDIO_BOARD_PAD + col * (cw + STUDIO_BOARD_GAP),
+      STUDIO_BOARD_PAD + row * (ch + STUDIO_BOARD_GAP),
+    );
     slot++;
   }
   sizeCanvas(ctx, slot, cw, ch, cols);
@@ -510,8 +516,8 @@ function sizeCanvas(ctx, count, cw, ch, gridCols) {
   if (!ctx.boardsCanvasEl) return;
   const cols = Math.min(gridCols, Math.max(1, count));
   const rows = Math.max(1, Math.ceil(count / gridCols));
-  ctx.boardsCanvasEl.style.width = `${cols * cw + (cols - 1) * STUDIO_BOARD_GAP}px`;
-  ctx.boardsCanvasEl.style.height = `${rows * ch + (rows - 1) * STUDIO_BOARD_GAP}px`;
+  ctx.boardsCanvasEl.style.width = `${2 * STUDIO_BOARD_PAD + cols * cw + (cols - 1) * STUDIO_BOARD_GAP}px`;
+  ctx.boardsCanvasEl.style.height = `${2 * STUDIO_BOARD_PAD + rows * ch + (rows - 1) * STUDIO_BOARD_GAP}px`;
 }
 
 // Size a board to fill the visible region, pinned to its top-left.
@@ -567,7 +573,8 @@ function studioSlotRect(ctx, i) {
   const { cw, ch, cols } = boardCell(ctx);
   const col = i % cols, row = Math.floor(i / cols);
   return {
-    x: col * (cw + STUDIO_BOARD_GAP), y: row * (ch + STUDIO_BOARD_GAP),
+    x: STUDIO_BOARD_PAD + col * (cw + STUDIO_BOARD_GAP),
+    y: STUDIO_BOARD_PAD + row * (ch + STUDIO_BOARD_GAP),
     w: cw, h: ch,
   };
 }
