@@ -41,7 +41,7 @@ const STANDINGS_REFRESH_DEBOUNCE_MS = 400;
 // width -- below that the row overflows and scrolls. Unlimited rows scroll
 // vertically. Boards are laid out (no-move), absolutely positioned.
 const STUDIO_COLS = 4;
-const STUDIO_BOARD_GAP = 0;
+const STUDIO_BOARD_GAP = 1;
 // Inset so boards don't sit flush against the region border (abs-positioned
 // boards ignore container padding, so the offset is applied in placement).
 const STUDIO_BOARD_PAD = 1;
@@ -296,9 +296,9 @@ function gamesCell(t, played, total) {
   if (t.status === STATUS.RUNNING && total) {
     const pct = Math.min(100, Math.round((played / total) * 100));
     return `<div class="studio-progress">` +
+      `<span class="tournament-progress-label">${played} / ${total} &middot; ${pct}%</span>` +
       `<div class="tournament-progress" role="progressbar" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${played}">` +
       `<div class="tournament-progress-fill" style="width: ${pct}%"></div></div>` +
-      `<span class="tournament-progress-label">${played} / ${total} &middot; ${pct}%</span>` +
       `</div>`;
   }
   return total ? `${played} / ${total}` : (played ? String(played) : "");
@@ -601,10 +601,11 @@ function regridBoards(ctx) {
     slot++;
   }
   sizeCanvas(ctx, slot, cw, ch, cols);
-  // Mobile: pin the board area to one board; the page scrolls for the rest
-  // and the board area scrolls internally for additional boards. Desktop
-  // lets the flex split govern the height.
-  ctx.boardsEl.style.height = mqMobile.matches ? `${ch}px` : "";
+  // Mobile: pin the board area to one board (plus the top/bottom inset so it
+  // fits exactly -- no stray scrollbar); the page scrolls for the rest and
+  // the board area scrolls internally for additional boards. Desktop lets
+  // the flex split govern the height.
+  ctx.boardsEl.style.height = mqMobile.matches ? `${ch + 2 * STUDIO_BOARD_PAD}px` : "";
 }
 
 // Canvas defines the scrollable extent (both axes) of the board grid.

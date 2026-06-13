@@ -3082,7 +3082,6 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   flex: 1 1 0; min-height: 0;
   position: relative;
   overflow: auto;
-  border: 1px solid var(--border-subtle);
 }
 .studio-boards-canvas { width: 1px; height: 0; pointer-events: none; }
 /* Minimize tray: a strip just below the Boards region (outside its scroll
@@ -3097,13 +3096,16 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-boards-tray[hidden] { display: none; }
 .studio-tray-chip {
   flex: 0 0 auto;
+  /* inline-block (not the button's default centered layout) so text-overflow
+     ellipsis truncates the end instead of clipping both sides. */
+  display: inline-block;
   max-width: 160px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 0.75rem;
   padding: 2px 8px;
   background: var(--nav-btn-bg); color: var(--fg);
-  border: 1px solid var(--border-subtle); border-radius: 3px;
-  cursor: pointer;
+  border: 1px solid var(--accent-line); border-radius: 0;
+  cursor: pointer; text-align: left;
 }
 .studio-tray-chip:hover { background: var(--nav-btn-bg-active); }
 .winbox.sturddle-wb-studio.min { display: none; }
@@ -3118,11 +3120,17 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   box-shadow: none; outline: none;
 }
 .winbox.sturddle-wb-studio .wb-drag { cursor: default; }
-.studio-bottom { flex: 1 1 0; min-height: 0; display: flex; }
+.studio-bottom {
+  flex: 1 1 0; min-height: 0; display: flex; gap: 6px;
+  /* Single rule separating the board area from the bottom tab groups. */
+  border-top: 1px solid var(--border-subtle);
+  box-sizing: border-box;
+}
 /* Bottom-right is the wider pane (Tourneys / Standings / Event Log). */
 .studio-bottom-left { flex: 1 1 0; min-width: 0; display: flex; }
 .studio-bottom-right { flex: 1.6 1 0; min-width: 0; display: flex; }
-/* Resizer grips: transparent until hover/drag, sized like the dock grip. */
+/* Resizer grips: invisible until hovered/dragged, then tinted like a
+   selected row. */
 .studio-grip-row {
   flex: 0 0 5px; cursor: row-resize; background: transparent; z-index: 1;
 }
@@ -3131,7 +3139,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .studio-grip-row:hover, .studio-grip-row.dragging,
 .studio-grip-col:hover, .studio-grip-col.dragging {
-  background: var(--nav-btn-bg-active);
+  background: var(--row-bg-selected);
 }
 /* Each tabbed region is a bordered box that fills its pane; the active
    panel scrolls independently. wa-tab-group is display:block with an
@@ -3140,11 +3148,14 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-tabs {
   flex: 1 1 0; min-width: 0; min-height: 0;
   display: flex; flex-direction: column;
-  border: 1px solid var(--border-subtle);
   overflow: hidden;
 }
 .studio-tabs::part(base) { flex: 1 1 0; min-height: 0; height: 100%; }
-.studio-tabs::part(body) { flex: 1 1 0; min-height: 0; }
+/* Bordered content area (the panel below the tab labels). */
+.studio-tabs::part(body) {
+  flex: 1 1 0; min-height: 0;
+  border: 1px solid var(--border-subtle); border-top: none;
+}
 .studio-tabs wa-tab-panel { height: 100%; --padding: 0; }
 .studio-tabs wa-tab-panel::part(base) { height: 100%; box-sizing: border-box; }
 .studio-pane { height: 100%; overflow: auto; }
