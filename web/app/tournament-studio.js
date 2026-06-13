@@ -13,7 +13,7 @@ import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, loadRaw, saveJson, saveRaw } from "./storage.js";
 import { progressBarHtml, progressLabelHtml, sprtBadgeHtml, statusBadgeHtml, totalGames } from "./tournament-row.js";
 import { attachColumnSort } from "./col-sort.js";
-import { attachColumnResize } from "./col-resize.js";
+import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { reportError } from "./dialogs.js";
 import { debounce, escapeHtml } from "./wb-utils.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
@@ -22,6 +22,7 @@ import { SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
 import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow } from "./tournament-live-game.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
+import { makeH2HBody, renderH2H } from "./tournament-h2h.js";
 import { renderEventLogList } from "./tournament-eventlog.js";
 import { renderInfoWall } from "./tournament-info.js";
 import { mqMobile } from "./breakpoints.js";
@@ -126,9 +127,11 @@ const STUDIO_HTML = `
             <wa-tab-group class="studio-tabs">
               <wa-tab panel="tourneys">Tourneys</wa-tab>
               <wa-tab panel="standings">Standings</wa-tab>
+              <wa-tab panel="h2h">Head-to-Head</wa-tab>
               <wa-tab panel="log">Event Log</wa-tab>
               <wa-tab-panel name="tourneys"><div class="studio-pane studio-pane-tourneys"></div></wa-tab-panel>
               <wa-tab-panel name="standings"><div class="studio-pane studio-pane-standings"></div></wa-tab-panel>
+              <wa-tab-panel name="h2h"><div class="studio-pane studio-pane-h2h"></div></wa-tab-panel>
               <wa-tab-panel name="log"><div class="studio-pane studio-pane-log"></div></wa-tab-panel>
             </wa-tab-group>
           </div>
@@ -284,19 +287,7 @@ function buildTourneyTable(ctx) {
     storageKey: STORAGE_KEY.STUDIO_TOURNEY_COL_PCTS,
     sizes: STUDIO_TOURNEY_DEFAULT_PCTS.slice(),
     unit: "pct",
-    applySizes(sizes, rctx) {
-      if (rctx) {
-        const { deltaFrac, startSizes, gripIdx } = rctx;
-        const dPct = deltaFrac * 100;
-        let a = startSizes[gripIdx] + dPct;
-        let b = startSizes[gripIdx + 1] - dPct;
-        if (a < STUDIO_TOURNEY_MIN_PCT) { b -= STUDIO_TOURNEY_MIN_PCT - a; a = STUDIO_TOURNEY_MIN_PCT; }
-        if (b < STUDIO_TOURNEY_MIN_PCT) { a -= STUDIO_TOURNEY_MIN_PCT - b; b = STUDIO_TOURNEY_MIN_PCT; }
-        sizes[gripIdx] = a;
-        sizes[gripIdx + 1] = b;
-      }
-      colEls.forEach((c, i) => { c.style.width = sizes[i] + "%"; });
-    },
+    applySizes: makePctApplySizes(colEls, STUDIO_TOURNEY_MIN_PCT),
   });
 }
 
@@ -514,6 +505,8 @@ function livePushEvent(ctx, evt) {
 
 function renderStandingsPane(ctx) {
   if (ctx.standingsBodyEl) renderStandings(ctx.standingsBodyEl, ctx.selDetail);
+  // H2H shares standings' data + cadence; repaint it from the same sites.
+  if (ctx.h2hBodyEl) renderH2H(ctx.h2hBodyEl, ctx.selDetail);
 }
 
 function renderLogPane(ctx) {
@@ -927,6 +920,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     enginesPaneEl: q(".studio-pane-engines"),
     gamesPaneEl: q(".studio-pane-livegames"),
     standingsPaneEl: q(".studio-pane-standings"),
+    h2hPaneEl: q(".studio-pane-h2h"),
     logPaneEl: q(".studio-pane-log"),
     // Tourneys data + selection (selection restored from last session).
     tournaments: [], activeId: null, listGen: 0,
@@ -947,6 +941,9 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
   // plain list the shared renderer fills.
   ctx.standingsBodyEl = makeStandingsBody();
   ctx.standingsPaneEl?.appendChild(ctx.standingsBodyEl);
+  // H2H body (build once, resizable columns wired); fill shares standings' cadence.
+  ctx.h2hBodyEl = makeH2HBody();
+  ctx.h2hPaneEl?.appendChild(ctx.h2hBodyEl);
   ctx.logListEl = document.createElement("ul");
   ctx.logListEl.className = "wb-eventlog-list";
   ctx.logPaneEl?.appendChild(ctx.logListEl);
@@ -1022,6 +1019,6 @@ function unmountStudio(ctx) {
   ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsWallEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.bottomRightEl = null;
   ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = ctx.tourneyTbody = null;
   ctx.enginesPaneEl = ctx.gamesPaneEl = null;
-  ctx.standingsPaneEl = ctx.standingsBodyEl = ctx.logPaneEl = ctx.logListEl = null;
+  ctx.standingsPaneEl = ctx.standingsBodyEl = ctx.h2hPaneEl = ctx.h2hBodyEl = ctx.logPaneEl = ctx.logListEl = null;
   ctx.ribbonBtns = ctx.actions = null;
 }

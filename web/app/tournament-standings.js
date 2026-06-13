@@ -4,8 +4,9 @@
 // fills it from a tournament `detail` payload.
 
 import { SPRT, STATUS } from "./tournament-events.js";
+import { MIDDOT } from "./tournament-row.js";
 import { STORAGE_KEY } from "./storage-keys.js";
-import { attachColumnResize } from "./col-resize.js";
+import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { escapeHtml } from "./wb-utils.js";
 
 const STANDINGS_COL_PCTS_KEY = STORAGE_KEY.TOURNAMENTS_STANDINGS_COL_PCTS;
@@ -53,19 +54,7 @@ export function makeStandingsBody() {
     storageKey: STANDINGS_COL_PCTS_KEY,
     sizes: colPcts,
     unit: "pct",
-    applySizes(sizes, rctx) {
-      if (rctx) {
-        const { deltaFrac, startSizes, gripIdx } = rctx;
-        const dPct = deltaFrac * 100;
-        let a = startSizes[gripIdx] + dPct;
-        let b = startSizes[gripIdx + 1] - dPct;
-        if (a < STANDINGS_MIN_PCT) { b -= STANDINGS_MIN_PCT - a; a = STANDINGS_MIN_PCT; }
-        if (b < STANDINGS_MIN_PCT) { a -= STANDINGS_MIN_PCT - b; b = STANDINGS_MIN_PCT; }
-        sizes[gripIdx] = a;
-        sizes[gripIdx + 1] = b;
-      }
-      colEls.forEach((c, i) => { c.style.width = sizes[i] + "%"; });
-    },
+    applySizes: makePctApplySizes(colEls, STANDINGS_MIN_PCT),
   });
   return el;
 }
@@ -119,15 +108,15 @@ export function renderStandings(el, detail) {
     const concluded = sprt.status !== SPRT.CONTINUE;
     const colorMod = concluded ? (sprt.status === SPRT.H1 ? " wb-sprt--h1" : " wb-sprt--h0") : "";
     const candidate = detail.engines?.[0]?.name ? escapeHtml(detail.engines[0].name) : "candidate";
-    const pairsText = sprt.pairs != null ? ` * ${sprt.pairs} pair${sprt.pairs === 1 ? "" : "s"}` : "";
+    const pairsText = sprt.pairs != null ? ` ${MIDDOT} ${sprt.pairs} pair${sprt.pairs === 1 ? "" : "s"}` : "";
     const statusText = sprt.status === SPRT.H1
       ? `H1 (${candidate} is stronger)`
       : sprt.status === SPRT.H0
         ? `H0 (no significant difference)`
         : sprt.status;
     sprtSlot.innerHTML = `<div class="wb-sprt${colorMod}">` +
-      `SPRT ${candidate} [${sprt.elo0}, ${sprt.elo1}] * LLR=${llr.toFixed(2)} [${lo.toFixed(2)}, ${hi.toFixed(2)}]` +
-      `${pairsText} * ${statusText}` +
+      `SPRT ${candidate} [${sprt.elo0}, ${sprt.elo1}] ${MIDDOT} LLR=${llr.toFixed(2)} [${lo.toFixed(2)}, ${hi.toFixed(2)}]` +
+      `${pairsText} ${MIDDOT} ${statusText}` +
       `</div>`;
   } else {
     sprtSlot.innerHTML = "";

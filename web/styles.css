@@ -3289,6 +3289,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    scrolls/tails. */
 .studio-tabs wa-tab-panel[name="log"]::part(base),
 .studio-tabs wa-tab-panel[name="engines"]::part(base),
+.studio-tabs wa-tab-panel[name="h2h"]::part(base),
 .studio-tabs wa-tab-panel[name="livegames"]::part(base) { padding-top: 8px; }
 /* Keep the watch buttons off the pane's right edge / scrollbar. */
 .studio-pane .wb-sched-attach-btn { margin-right: 8px; }
@@ -3865,15 +3866,22 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-standings-table-wrap { position: relative; }
 .wb-standings-tbl { table-layout: fixed; }
 .wb-standings-tbl th { position: relative; }
+/* Pin the column header so it stays put while rows scroll (matches H2H). The
+   th keeps its own border-bottom + a solid bg, so collapsed borders don't
+   detach on scroll. */
+.wb-standings-tbl thead th { position: sticky; top: 0; z-index: 1; background: var(--bg); }
 .wb-standings-tbl td { overflow: hidden; text-overflow: ellipsis; }
-.wb-standings-tbl thead th:hover {
+.wb-standings-tbl thead th:hover,
+.h2h-tbl thead th:hover {
   background: #252830;
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
-.wb-standings-tbl thead th:first-child:hover {
+.wb-standings-tbl thead th:first-child:hover,
+.h2h-tbl thead th:first-child:hover {
   box-shadow: inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
-.wb-standings-tbl thead th:last-child:hover {
+.wb-standings-tbl thead th:last-child:hover,
+.h2h-tbl thead th:last-child:hover {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841);
 }
 .wb-sprt {
@@ -3886,6 +3894,19 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   background: var(--bg); border: 1px solid #4a3d1f; border-radius: 4px;
   padding: 6px 8px; margin-bottom: 8px; font-size: 0.75rem; color: #d4a854;
 }
+/* Studio Head-to-Head pane: a fixed banner (2-engine) + an internally scrolled
+   table so the banner and column header stay put while rows scroll. The wrap is
+   both the scroll container and the resize overlay's positioned host; the
+   sticky thead is positioned, which also anchors the .th-grip handles. */
+.wb-h2h { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.h2h-banner { margin: 0 8px 10px; background: var(--row-bg-selected); }
+.h2h-table-wrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; }
+.h2h-tbl { table-layout: fixed; }
+.h2h-tbl thead th { position: sticky; top: 0; z-index: 1; background: var(--bg); }
+.h2h-tbl td { overflow: hidden; text-overflow: ellipsis; }
+.h2h-tbl .h2h-group td { font-weight: 600; color: var(--fg); }
+.h2h-tbl .h2h-side { color: var(--muted); padding-left: 16px; }
+.h2h-tbl .h2h-wld { color: var(--muted); }
 .wb-sched-list, .wb-eventlog-list { list-style: none; padding: 0; margin: 0; }
 .wb-log-copy-ctrl {
   -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);

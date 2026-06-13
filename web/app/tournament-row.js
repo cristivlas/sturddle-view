@@ -6,7 +6,9 @@
 import { STATUS } from "./tournament-events.js";
 import { escapeHtml } from "./wb-utils.js";
 
-const MIDDOT = "\u00B7";
+// Shared status-strip separator (the tournament progress label, the SPRT
+// line, the H2H banner). Exported so those strips read consistently.
+export const MIDDOT = "\u00B7";
 
 // Total scheduled games for a tournament, or null when the template is
 // underspecified. Gauntlet seeds play every non-seed; round-robin pairs

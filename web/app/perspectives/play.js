@@ -5,7 +5,7 @@
 import { mountGameView } from "../game-view.js";
 import { APP_EVT } from "../app-events.js";
 import { KIND, AI_KIND_PREFIX } from "../game-events.js";
-import { SIDE, FEN_STM } from "../chess-consts.js";
+import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
 import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
@@ -46,9 +46,6 @@ import { getConfiguredPlayerName } from "../settings-dialog.js";
 // Tool name the AI uses to inspect hypothetical positions; the live
 // board mirrors `input.fen` while a call with this name is in flight.
 const ANALYZE_TOOL_NAME = "analyze";
-
-// Canonical chess result strings as reported by the server.
-const RESULT = { WHITE_WIN: "1-0", BLACK_WIN: "0-1", DRAW: "1/2-1/2" };
 
 // Module-scope mirror of "user has a live human-vs-engine game running"
 // so other modules (e.g. tournament Replay button) can decide whether
