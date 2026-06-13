@@ -1215,7 +1215,7 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
   position: fixed;
   left: 0; top: 50%; transform: translateY(-50%);
   z-index: 10;
-  border-right: 1px solid var(--wa-color-border-loud, #353841);
+  border-right: 1px solid var(--border-subtle);
 }
 /* Floating mode: hide ribbons still in their original DOM position. */
 body[data-ribbon-float] .play-grid .board-ribbon,
@@ -1623,7 +1623,7 @@ body .side-popover.popover-floating {
     justify-content: center;
     padding: 6px 0;
     border-right: 0;
-    border-bottom: 1px solid var(--wa-color-border-loud, #353841);
+    border-bottom: 1px solid var(--border-subtle);
   }
   .ribbon-btn { width: 44px; height: 44px; }
   .ribbon-btn wa-icon { font-size: 1.125rem; }
@@ -3070,7 +3070,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-ribbon {
   display: flex; flex-direction: column; align-items: center;
   gap: 4px; padding: 4px 0;
-  border-right: 1px solid var(--wa-color-border-loud, #353841);
+  border-right: 1px solid var(--border-subtle);
   position: fixed;
   left: 0; top: 50%; transform: translateY(-50%);
   z-index: 10;
@@ -3205,7 +3205,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .tournaments-ribbon {
   display: flex; flex-direction: column; align-items: center;
   gap: 4px; padding: 4px 0;
-  border-right: 1px solid var(--wa-color-border-loud, #353841);
+  border-right: 1px solid var(--border-subtle);
   position: fixed;
   left: 0; top: 50%; transform: translateY(-50%);
   z-index: 10;
@@ -3234,7 +3234,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   .tournaments-ribbon {
     position: static; transform: none;
     flex-direction: row; justify-content: center;
-    border-right: 0; border-bottom: 1px solid var(--wa-color-border-loud, #353841);
+    border-right: 0; border-bottom: 1px solid var(--border-subtle);
     padding: 6px 0;
   }
   .tournaments-ribbon .ribbon-sep {
@@ -3253,7 +3253,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   .studio-ribbon {
     position: static; transform: none;
     flex-direction: row; justify-content: center;
-    border-right: 0; border-bottom: 1px solid var(--wa-color-border-loud, #353841);
+    border-right: 0; border-bottom: 1px solid var(--border-subtle);
     padding: 6px 0;
   }
   .studio-ribbon .ribbon-sep { width: 1px; height: 18px; margin: 0 4px; }
@@ -4031,7 +4031,7 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
     left: auto;
     right: 0;
     border-right: 0;
-    border-left: 1px solid var(--wa-color-border-loud, #353841);
+    border-left: 1px solid var(--border-subtle);
   }
   /* Mirror only the board ribbon's vertical edge stripe. Scoping to
      .board-ribbon keeps the top-edge accent on panel ribbons (engines,
@@ -4057,7 +4057,7 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
     left: auto;
     right: 0;
     border-right: 0;
-    border-left: 1px solid var(--wa-color-border-loud, #353841);
+    border-left: 1px solid var(--border-subtle);
   }
   body[data-ribbon-side="right"] .tournaments-ribbon .ribbon-btn::before,
   body[data-ribbon-side="right"] .studio-ribbon .ribbon-btn::before {
