@@ -23,6 +23,7 @@ import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./
 import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow } from "./tournament-live-game.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
 import { renderEventLogList } from "./tournament-eventlog.js";
+import { renderInfoWall } from "./tournament-info.js";
 import { mqMobile } from "./breakpoints.js";
 
 const TOURNAMENTS_ENDPOINT = "/api/tournaments";
@@ -105,7 +106,7 @@ const STUDIO_HTML = `
       </div>
 
       <div class="studio-main">
-        <div class="studio-boards"><div class="studio-boards-canvas"></div></div>
+        <div class="studio-boards"><div class="studio-boards-wall" hidden></div><div class="studio-boards-canvas"></div></div>
         <div class="studio-boards-tray" hidden></div>
         <div class="studio-grip-row" role="separator" aria-orientation="horizontal"></div>
         <div class="studio-bottom">
@@ -213,6 +214,7 @@ function studioSelect(ctx, id) {
   }
   syncLive(ctx);
   syncRibbon(ctx);
+  paintWall(ctx);
 }
 
 function selectedTournament(ctx) {
@@ -340,6 +342,7 @@ function renderTourneys(ctx) {
   }
   ctx.tourneyTbody.replaceChildren(...sortedStudioTourneys(ctx).map((t) => studioTourneyRow(ctx, t)));
   syncRibbon(ctx);
+  paintWall(ctx);
 }
 
 // ---- Ribbon actions ------------------------------------------------------
@@ -431,7 +434,7 @@ function loadSelected(ctx, force = false) {
   const gen = ++ctx.selGen;
   if (!tid) { ctx.selDetail = null; ctx.selEvents = []; renderStandingsPane(ctx); renderLogPane(ctx); return; }
   ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${tid}`)
-    .then((d) => { if (gen === ctx.selGen) { ctx.selDetail = d; renderStandingsPane(ctx); } })
+    .then((d) => { if (gen === ctx.selGen) { ctx.selDetail = d; renderStandingsPane(ctx); paintWall(ctx); } })
     .catch(() => {});
   ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${tid}/events`)
     .then((r) => { if (gen === ctx.selGen) { ctx.selEvents = buildLog(r.events); renderLogPane(ctx); } })
@@ -463,6 +466,7 @@ function startLive(ctx, tid) {
     renderLivePanes(ctx);
     renderStandingsPane(ctx);
     renderLogPane(ctx);
+    paintWall(ctx);
     // Wait for the board style so restored boards aren't styled with the
     // default; re-check liveness after the await.
     await ctx.boardStyleReady;
@@ -625,12 +629,37 @@ function regridBoards(ctx) {
     slot++;
   }
   sizeCanvas(ctx, slot, cw, ch, cols);
-  // A maximized board still occupies the region even though it takes no slot.
-  const hasBoards = slot > 0 || getLiveWindows().some((wb) => wb.max);
+  // Single source of truth for board presence (laid-out or maximized).
+  const hasBoards = anyBoardsShown();
+  // The info wall fills the region when no boards are shown; boards hide it
+  // (paintWall also toggles the .no-boards scroll-clip class).
+  paintWall(ctx, hasBoards);
   // Mobile: pin the board area to one board (plus the top/bottom inset so it
   // fits exactly); collapse to nothing when there are no boards rather than
   // reserve a blank strip. Desktop lets the flex split govern the height.
   ctx.boardsEl.style.height = mqMobile.matches ? (hasBoards ? `${ch + 2 * STUDIO_BOARD_PAD}px` : "0") : "";
+}
+
+// Any board occupying the region (laid-out or maximized; minimized don't count).
+function anyBoardsShown() {
+  return getLiveWindows().some((wb) => !wb.min);
+}
+
+// Repaint the info wall from the selected tourney (prefer REST detail for the
+// fuller template/started_at, fall back to the list row). The wall is a
+// constant low-opacity backdrop on desktop -- behind boards when present.
+// Mobile collapses the region when no boards, so hide it there to avoid a
+// stray strip.
+function paintWall(ctx, hasBoards = anyBoardsShown()) {
+  if (!ctx.boardsWallEl) return;
+  ctx.boardsWallEl.hidden = hasBoards && mqMobile.matches;
+  // No boards -> region is pure (clipped) art: no scrollbar. Toggled here too
+  // (not only in regridBoards) so the idle first paint, which never re-grids,
+  // still clips.
+  ctx.boardsEl?.classList.toggle("no-boards", !hasBoards);
+  const t = ctx.selDetail && ctx.selDetail.id === ctx.selectedId
+    ? ctx.selDetail : selectedTournament(ctx);
+  renderInfoWall(ctx.boardsWallEl, t);
 }
 
 // Canvas defines the scrollable extent (both axes) of the board grid. Zero
@@ -654,17 +683,19 @@ function fillRegion(ctx, wb) {
   wb.resize(ctx.boardsEl.clientWidth, ctx.boardsEl.clientHeight).move(0, 0);
 }
 
-// Scroll the region so a (grid-placed) board is fully in view.
+// Scroll the region so a (grid-placed) board is in view. Already fully visible
+// -> no scroll. Otherwise always anchor the board's TOP to the view top: a
+// consistent anchor avoids the top/bottom flip-flop (which made repeated Watch
+// clicks jump the region up and down, especially for boards taller than the
+// viewport).
 function scrollBoardIntoView(ctx, wb) {
   const region = ctx.boardsEl;
   if (!region || wb.min) return;
   const viewTop = region.scrollTop;
   const viewBottom = viewTop + region.clientHeight;
-  if (wb.y < viewTop) {
-    region.scrollTo({ top: wb.y - STUDIO_BOARD_PAD, behavior: "smooth" });
-  } else if (wb.y + wb.height > viewBottom) {
-    region.scrollTo({ top: wb.y + wb.height - region.clientHeight + STUDIO_BOARD_PAD, behavior: "smooth" });
-  }
+  const fullyVisible = wb.y >= viewTop && wb.y + wb.height <= viewBottom;
+  if (fullyVisible) return;
+  region.scrollTo({ top: wb.y - STUDIO_BOARD_PAD, behavior: "smooth" });
 }
 
 // Maximize (option b): grow the Boards split to the full main column, lock
@@ -871,6 +902,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     ribbonEl: q(".studio-ribbon"),
     boardsEl: q(".studio-boards"),
     boardsCanvasEl: q(".studio-boards-canvas"),
+    boardsWallEl: q(".studio-boards-wall"),
     boardsTrayEl: q(".studio-boards-tray"),
     bottomEl: q(".studio-bottom"),
     bottomLeftEl: q(".studio-bottom-left"),
@@ -905,7 +937,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
   ctx.refreshStandings = debounce(() => {
     if (!ctx.liveTid) return;
     ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${ctx.liveTid}`)
-      .then((d) => { if (ctx.liveTid) { ctx.selDetail = d; renderStandingsPane(ctx); } })
+      .then((d) => { if (ctx.liveTid) { ctx.selDetail = d; renderStandingsPane(ctx); paintWall(ctx); } })
       .catch(() => {});
   }, STANDINGS_REFRESH_DEBOUNCE_MS);
   buildTourneyTable(ctx);
@@ -960,7 +992,7 @@ function unmountStudio(ctx) {
   announceRibbon(null);
   ctx.panel.remove();
   ctx.panel = ctx.ribbonEl = null;
-  ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.bottomRightEl = null;
+  ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsWallEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.bottomRightEl = null;
   ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = ctx.tourneyTbody = null;
   ctx.enginesPaneEl = ctx.gamesPaneEl = null;
   ctx.standingsPaneEl = ctx.standingsBodyEl = ctx.logPaneEl = ctx.logListEl = null;

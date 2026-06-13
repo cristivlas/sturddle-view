@@ -3083,7 +3083,133 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   position: relative;
   overflow: auto;
 }
+/* No boards: the region is just the (clipped) art backdrop -- never scroll,
+   whatever the split height. */
+.studio-boards.no-boards { overflow: hidden; }
 .studio-boards-canvas { width: 1px; height: 0; pointer-events: none; }
+
+/* Info wall: a comic-noir splash painted on the empty Boards region. Muted
+   monochrome ink, thick-outlined stat panels with hard shadows, a slanted
+   status placard, and tag-style engines. Content stretches full width so the
+   composition isn't left-heavy. Recedes behind boards when present. Local
+   ink/paper vars keep it self-contained. */
+.studio-boards-wall {
+  --iw-ink: #4a4e57;          /* very muted ink -- barely-there backdrop */
+  --iw-paper: #14161b;        /* near-black panel fill */
+  --iw-shadow: rgba(0, 0, 0, 0.5);
+  position: absolute; inset: 0; z-index: 0;
+  display: flex; flex-direction: column; justify-content: center; align-items: stretch;
+  gap: clamp(14px, 2.2vw, 26px);
+  padding: clamp(24px, 5vw, 68px);
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--muted-bright);
+  opacity: 0.85;
+}
+/* Each row spans the wall so the splash fills the region. */
+.studio-boards-wall > * { width: 100%; }
+.studio-boards-wall[hidden] { display: none; }
+
+/* Status placard: stark black-on-white, slanted and hand-pasted. */
+.iw-burst {
+  flex: 0 0 auto;
+  transform: rotate(-4deg);
+  background: var(--iw-ink);
+  color: #000;
+  padding: 5px 16px;
+  font-family: var(--wa-font-family-code);
+  font-weight: 800; font-size: clamp(12px, 1.5vw, 17px);
+  letter-spacing: 0.28em; text-transform: uppercase;
+  box-shadow: 5px 5px 0 var(--iw-shadow);
+}
+/* Terminal states get an inverted (white outline on black) placard. */
+.iw-burst--done, .iw-burst--stopped, .iw-burst--failed {
+  background: #000; color: var(--iw-ink); border: 2px solid var(--iw-ink);
+}
+
+/* Headline row spans the wall: title left, status placard hard right. */
+.iw-head {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 12px 20px;
+}
+.iw-name {
+  margin: 0; min-width: 0;
+  /* Italic glyphs overhang their box and the shadow drops below; pad right +
+     bottom so -webkit-line-clamp's overflow:hidden doesn't shave the last
+     slanted character or clip the drop-shadow. */
+  padding-right: 0.18em; padding-bottom: 0.16em;
+  font-style: italic; font-weight: 900;
+  font-size: clamp(28px, 6vw, 96px);
+  letter-spacing: -0.03em; line-height: 1;
+  color: var(--iw-ink);
+  text-shadow: 4px 5px 0 var(--iw-shadow);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+/* Stat panels: thick-outlined cells, hard black shadow. Stretch edge-to-edge
+   (equal share) so the row fills the wall instead of clustering left. */
+.iw-stats { display: flex; flex-wrap: wrap; gap: clamp(12px, 1.8vw, 22px); }
+.iw-panel {
+  flex: 1 1 0; min-width: 130px; max-width: 100%;
+  background: var(--iw-paper);
+  border: 3px solid var(--iw-ink);
+  box-shadow: 5px 5px 0 var(--iw-shadow);
+  padding: clamp(8px, 1vw, 18px) clamp(16px, 1.6vw, 28px) clamp(10px, 1.2vw, 20px);
+}
+.iw-panel-label {
+  font-family: var(--wa-font-family-code);
+  font-size: clamp(10px, 0.8vw, 13px); letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--muted);
+}
+.iw-panel-value {
+  margin-top: clamp(3px, 0.5vw, 8px);
+  font-weight: 800; font-size: clamp(18px, 2.6vw, 42px);
+  color: var(--iw-ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Quiet setup line: muted label:value facts, secondary to the panels. Spread
+   across the width so it doesn't cluster left. */
+.iw-setup {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 24px;
+  font-size: clamp(13px, 1vw, 18px); color: var(--muted-bright);
+}
+.iw-fact-key {
+  font-family: var(--wa-font-family-code);
+  text-transform: uppercase; letter-spacing: 0.12em;
+  font-size: 10px; color: var(--muted);
+  margin-right: 4px;
+}
+
+/* Engines: tag stickers, slightly skewed, hard outline. Sized to content. */
+.iw-roster { display: flex; flex-wrap: wrap; gap: 8px 10px; }
+.iw-engine {
+  font-weight: 700; font-size: 13px;
+  padding: 3px 12px;
+  background: var(--iw-paper);
+  border: 2px solid var(--iw-ink);
+  color: var(--iw-ink);
+  box-shadow: 3px 3px 0 var(--iw-shadow);
+  transform: skewX(-8deg);
+}
+.iw-engine > * { display: inline-block; transform: skewX(8deg); }
+.iw-engine-ver { margin-left: 6px; color: var(--muted); font-weight: 600; }
+.iw-engine--more { flex: 0 0 auto; color: var(--muted); font-weight: 600; }
+
+/* Footer spans the wall: progress/tally left, created stamp hard right. */
+.iw-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 12px;
+  margin-top: 2px;
+}
+.iw-progress { display: flex; align-items: center; gap: 12px; flex: 1 1 280px; max-width: 75%; }
+.iw-progress .tournament-progress { flex: 1 1 auto; }
+.iw-tally {
+  font-family: var(--wa-font-family-code); font-weight: 700;
+  font-size: 14px; color: var(--muted-bright);
+}
+.iw-created { font-size: 12px; color: var(--muted); }
 /* Minimize tray: a strip just below the Boards region (outside its scroll
    area) so chips stay at the region's visible bottom regardless of scroll.
    Native minimize is hidden; each minimized board gets a restore chip. */
@@ -3139,7 +3265,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .studio-grip-row:hover, .studio-grip-row.dragging,
 .studio-grip-col:hover, .studio-grip-col.dragging {
-  background: rgb(6, 87, 124);
+  background: color-mix(in srgb, var(--accent-line) 80%, transparent);
 }
 /* Each tabbed region is a bordered box that fills its pane; the active
    panel scrolls independently. wa-tab-group is display:block with an
