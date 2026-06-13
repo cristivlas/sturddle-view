@@ -21,6 +21,9 @@ import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament
 import { debounce, ribbonWidthPx } from "./wb-utils.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
+const NEW_TOURNAMENT_LABEL = "New tournament";
+const EMPTY_CTA_PREFIX = "No tournaments yet -- click ";
+const EMPTY_CTA_SUFFIX = " to create one.";
 const REVEAL_DEBOUNCE_MS = 500;
 // Unicode ellipsis is intentional: this glyph is rendered into the
 // tournament-id span (user-facing), not a code token. ASCII-only rule
@@ -286,17 +289,7 @@ function renderList(ctx) {
 
   if (noTournaments) {
     ctx.emptyEl.classList.remove("hidden");
-    ctx.emptyMsg.replaceChildren();
-    const newLink = document.createElement("button");
-    newLink.type = "button";
-    newLink.className = "toast-icon-btn";
-    newLink.setAttribute("aria-label", "New tournament");
-    newLink.setAttribute("title", "New tournament");
-    const newIc = document.createElement("wa-icon");
-    newIc.setAttribute("name", "plus");
-    newLink.appendChild(newIc);
-    newLink.addEventListener("click", () => openNewTournamentDialog(ctx));
-    ctx.emptyMsg.append("No tournaments yet — click ", newLink, " to create one.");
+    ctx.emptyMsg.replaceChildren(...newTournamentCta(() => openNewTournamentDialog(ctx)));
     ctx.selectedId = null;
     syncRibbon(ctx);
     return;
@@ -560,6 +553,22 @@ export function tournamentActions({ api, log, getSettings, reload }) {
     stop: (t) => stopOne(ctx, t),
     remove: (t) => removeOne(ctx, t),
   };
+}
+
+// Empty-list call to action shared by Arena and Studio: prose wrapping an
+// inline "+" button that fires New. Returns the nodes to append into a host
+// (text, button, text) so each perspective drops them into its own container.
+export function newTournamentCta(onCreate) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "toast-icon-btn";
+  btn.setAttribute("aria-label", NEW_TOURNAMENT_LABEL);
+  btn.setAttribute("title", NEW_TOURNAMENT_LABEL);
+  const ic = document.createElement("wa-icon");
+  ic.setAttribute("name", "plus");
+  btn.appendChild(ic);
+  btn.addEventListener("click", () => onCreate());
+  return [EMPTY_CTA_PREFIX, btn, EMPTY_CTA_SUFFIX];
 }
 
 // ---- Info dialog --------------------------------------------------------

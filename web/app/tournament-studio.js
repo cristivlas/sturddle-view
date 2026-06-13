@@ -17,7 +17,7 @@ import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { reportError } from "./dialogs.js";
 import { debounce, escapeHtml } from "./wb-utils.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
-import { tournamentActions } from "./tournaments.js";
+import { newTournamentCta, tournamentActions } from "./tournaments.js";
 import { SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
 import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow } from "./tournament-live-game.js";
@@ -328,10 +328,10 @@ function renderTourneys(ctx) {
   if (!ctx.tourneyTbody) return;
   ensureSelection(ctx);
   if (ctx.tournaments.length === 0) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td colspan="4" class="studio-tourney-empty">No tournaments yet -- use New to create one.</td>`;
-    ctx.tourneyTbody.replaceChildren(tr);
+    // Empty state lives on the Boards wall (paintWall), not in this table.
+    ctx.tourneyTbody.replaceChildren();
     syncRibbon(ctx);
+    paintWall(ctx);
     return;
   }
   ctx.tourneyTbody.replaceChildren(...sortedStudioTourneys(ctx).map((t) => studioTourneyRow(ctx, t)));
@@ -655,9 +655,24 @@ function paintWall(ctx, hasBoards = anyBoardsShown()) {
   // (not only in regridBoards) so the idle first paint, which never re-grids,
   // still clips.
   ctx.boardsEl?.classList.toggle("no-boards", !hasBoards);
+  // No tourneys at all: the wall hosts the New-tournament CTA, not poster art.
+  ctx.boardsWallEl.classList.toggle("is-empty", ctx.tournaments.length === 0);
+  if (ctx.tournaments.length === 0) {
+    renderEmptyWall(ctx);
+    return;
+  }
   const t = ctx.selDetail && ctx.selDetail.id === ctx.selectedId
     ? ctx.selDetail : selectedTournament(ctx);
   renderInfoWall(ctx.boardsWallEl, t);
+}
+
+// Empty-state CTA on the Boards wall: Arena's shared "+" prose, fired through
+// the ribbon's create verb.
+function renderEmptyWall(ctx) {
+  const msg = document.createElement("p");
+  msg.className = "studio-empty";
+  msg.append(...newTournamentCta(() => ctx.actions?.create()));
+  ctx.boardsWallEl.replaceChildren(msg);
 }
 
 // Canvas defines the scrollable extent (both axes) of the board grid. Zero

@@ -3106,6 +3106,13 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 /* Each row spans the wall so the splash fills the region. */
 .studio-boards-wall > * { width: 100%; }
 .studio-boards-wall[hidden] { display: none; }
+/* Empty state: the wall hosts a clickable New-tournament CTA (poster art is
+   suppressed), so undo the backdrop fade and re-enable pointer events. */
+.studio-boards-wall.is-empty { opacity: 1; pointer-events: auto; }
+.studio-empty {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  color: var(--muted); text-align: center;
+}
 
 /* Status placard: stark black-on-white, slanted and hand-pasted. */
 .iw-burst {
@@ -3136,7 +3143,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
      slanted character or clip the drop-shadow. */
   padding-right: 0.18em; padding-bottom: 0.16em;
   font-style: italic; font-weight: 900;
-  font-size: clamp(28px, 6vw, 96px);
+  font-size: clamp(28px, 6vw, var(--iw-name-max, 96px));
   letter-spacing: -0.03em; line-height: 1;
   color: var(--iw-ink);
   text-shadow: 4px 5px 0 var(--iw-shadow);
@@ -3328,7 +3335,6 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-tourney-row:hover { background: var(--row-bg-hover); }
 .studio-tourney-row.selected { background: var(--row-bg-selected); }
 .studio-tourney-row.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
-.studio-tourney-empty { color: var(--muted); text-align: center; padding: 16px; }
 .studio-tourney-created { color: var(--muted); }
 /* Running tourney's Games cell: Arena's progress bar + inline label. */
 .studio-progress { display: flex; align-items: center; gap: 8px; }

@@ -12,6 +12,17 @@ const TYPE_LABEL = Object.freeze({ roundrobin: "Round-robin", gauntlet: "Gauntle
 const UNLIMITED_SPRT = "unlimited (SPRT)";
 // Max engine chips on the wall before collapsing the rest into "+K more".
 const ROSTER_CAP = 8;
+// Hero name font ceiling (px): shrinks linearly with name length at
+// IW_NAME_PX_PER_CHAR px/char, capped to [IW_NAME_MIN_PX, IW_NAME_MAX_PX].
+// Drives the --iw-name-max CSS clamp var.
+const IW_NAME_MAX_PX = 96;
+const IW_NAME_MIN_PX = 38;
+const IW_NAME_PX_PER_CHAR = 1.3;
+
+function nameSizeCeiling(name) {
+  const px = IW_NAME_MAX_PX - IW_NAME_PX_PER_CHAR * (name || "").length;
+  return Math.round(Math.max(IW_NAME_MIN_PX, Math.min(IW_NAME_MAX_PX, px)));
+}
 
 function formatType(v) {
   if (!v) return null;
@@ -128,6 +139,7 @@ export function renderInfoWall(el, t) {
   if (!el) return;
   if (!t) { el.replaceChildren(); return; }
   const status = escapeHtml(t.status || "");
+  el.style.setProperty("--iw-name-max", `${nameSizeCeiling(t.name)}px`);
   el.innerHTML =
     `<div class="iw-head">` +
       `<h2 class="iw-name">${escapeHtml(t.name || "")}${sprtBadgeHtml(t)}</h2>` +
