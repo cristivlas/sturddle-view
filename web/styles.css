@@ -1219,7 +1219,8 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
 }
 /* Floating mode: hide ribbons still in their original DOM position. */
 body[data-ribbon-float] .play-grid .board-ribbon,
-body[data-ribbon-float] .tournaments-ribbon {
+body[data-ribbon-float] .tournaments-ribbon,
+body[data-ribbon-float] .studio-ribbon {
   display: none !important;
 }
 .ribbon-btn {
@@ -3072,8 +3073,6 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   left: 0; top: 50%; transform: translateY(-50%);
   z-index: 10;
 }
-/* Selected-tourney header -- fixed height, holds the reused row renderer. */
-.studio-header { flex: 0 0 auto; min-height: 0; }
 /* Boards (top) vs bottom tab row -- the vertical (top/bottom) split.
    Boards are WinBoxes rooted here (position:relative); the region scrolls
    and the canvas spacer gives it the virtual height of the board grid. */
@@ -3576,7 +3575,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    container (that would constrain ribbon scrollWidth during orientation
    toggles, breaking fitToContent). */
 .winbox.sturddle-wb-ribbon .wb-body > .board-ribbon,
-.winbox.sturddle-wb-ribbon .wb-body > .tournaments-ribbon {
+.winbox.sturddle-wb-ribbon .wb-body > .tournaments-ribbon,
+.winbox.sturddle-wb-ribbon .wb-body > .studio-ribbon {
   margin: 0 auto;
 }
 /* Ribbon inside WinBox: static positioning, no edge border.
@@ -3584,7 +3584,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    flex-direction + width are set inline by ribbon-window.js so they can
    switch between horizontal and vertical orientations. */
 .winbox.sturddle-wb-ribbon .wb-body .board-ribbon,
-.winbox.sturddle-wb-ribbon .wb-body .tournaments-ribbon {
+.winbox.sturddle-wb-ribbon .wb-body .tournaments-ribbon,
+.winbox.sturddle-wb-ribbon .wb-body .studio-ribbon {
   display: flex !important;
   position: static;
   transform: none;
@@ -4002,13 +4003,15 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
     left: auto;
     right: calc(var(--ribbon-w) + 1px);
   }
-  body[data-ribbon-side="right"] .tournaments-ribbon {
+  body[data-ribbon-side="right"] .tournaments-ribbon,
+  body[data-ribbon-side="right"] .studio-ribbon {
     left: auto;
     right: 0;
     border-right: 0;
     border-left: 1px solid var(--wa-color-border-loud, #353841);
   }
-  body[data-ribbon-side="right"] .tournaments-ribbon .ribbon-btn::before {
+  body[data-ribbon-side="right"] .tournaments-ribbon .ribbon-btn::before,
+  body[data-ribbon-side="right"] .studio-ribbon .ribbon-btn::before {
     right: auto;
     left: -1px;
   }
