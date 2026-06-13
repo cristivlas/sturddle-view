@@ -14,10 +14,12 @@ import { loadJson, loadRaw, saveJson, saveRaw } from "./storage.js";
 import { renderTournamentRow } from "./tournament-row.js";
 import { reportError } from "./dialogs.js";
 import { debounce, escapeHtml } from "./wb-utils.js";
-import { EVT_PREFIX } from "./tournament-events.js";
+import { EVT, EVT_PREFIX, KIND } from "./tournament-events.js";
 import { SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
 import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openLiveGameWindow } from "./tournament-live-game.js";
+import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
+import { renderEventLogList } from "./tournament-eventlog.js";
 import { mqMobile } from "./breakpoints.js";
 
 const TOURNAMENTS_ENDPOINT = "/api/tournaments";
@@ -27,6 +29,8 @@ const NO_ENGINES_MSG = "No active engines.";
 const NO_GAMES_MSG = "No games in play.";
 // Coalesce bursty WS events into one list reload.
 const LIST_RELOAD_DEBOUNCE_MS = 150;
+// Coalesce standings re-fetches while the selected tourney is running.
+const STANDINGS_REFRESH_DEBOUNCE_MS = 400;
 
 // Boards region grid: always 4 columns; cells stretch to fill the region
 // width (keeping the board square), clamped to the Arena minimum board
@@ -88,7 +92,6 @@ const STUDIO_HTML = `
       </div>
 
       <div class="studio-main">
-        <div class="studio-header"></div>
         <div class="studio-boards"><div class="studio-boards-canvas"></div></div>
         <div class="studio-boards-tray" hidden></div>
         <div class="studio-grip-row" role="separator" aria-orientation="horizontal"></div>
@@ -231,10 +234,10 @@ async function studioLoadList(ctx) {
   syncLive(ctx);
 }
 
-// ---- Live runner (Engines / Games panes) ---------------------------------
-// Engines and Games show the *running* tournament's live state. They have
-// content only when the selected tourney is the active one; otherwise the
-// live store is torn down and the panes go empty.
+// ---- Selection binding ---------------------------------------------------
+// Engines/Games/Boards show the *running* tourney's live state (empty unless
+// it's selected). Standings/Event Log bind to the selected tourney (any):
+// the running one is kept fresh by the live store; others load a snapshot.
 
 function syncLive(ctx) {
   const runningSelected = ctx.selectedId && ctx.selectedId === ctx.activeId;
@@ -242,7 +245,31 @@ function syncLive(ctx) {
     if (ctx.liveTid !== ctx.selectedId) startLive(ctx, ctx.selectedId);
   } else {
     stopLive(ctx);
+    loadSelected(ctx);
   }
+}
+
+// Snapshot standings + event log for a non-running selected tourney. Guarded
+// so repeated list reloads don't re-fetch the same selection.
+function loadSelected(ctx, force = false) {
+  if (!force && ctx.selLoadedId === ctx.selectedId) return;
+  ctx.selLoadedId = ctx.selectedId;
+  const tid = ctx.selectedId;
+  const gen = ++ctx.selGen;
+  if (!tid) { ctx.selDetail = null; ctx.selEvents = []; renderStandingsPane(ctx); renderLogPane(ctx); return; }
+  ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${tid}`)
+    .then((d) => { if (gen === ctx.selGen) { ctx.selDetail = d; renderStandingsPane(ctx); } })
+    .catch(() => {});
+  ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${tid}/events`)
+    .then((r) => { if (gen === ctx.selGen) { ctx.selEvents = buildLog(r.events); renderLogPane(ctx); } })
+    .catch(() => {});
+}
+
+// Replay raw /events through the log pipeline so entries match live shape.
+function buildLog(events) {
+  const s = createLiveState();
+  for (const e of (events || [])) if (e.kind?.startsWith(EVT_PREFIX)) addLogEntry(s, e);
+  return s.eventLog;
 }
 
 function startLive(ctx, tid) {
@@ -251,14 +278,20 @@ function startLive(ctx, tid) {
   ctx.liveTid = tid;
   ctx.liveUnsub = ctx.events.on((evt) => livePushEvent(ctx, evt));
   const gen = ++ctx.liveGen;
-  ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${tid}`)
-    .then((detail) => {
-      if (gen !== ctx.liveGen || !ctx.live) return;
-      seedFromDetail(ctx.live, detail);
-      renderLivePanes(ctx);
-      restoreBoards(ctx);
-    })
-    .catch((e) => reportError({ log: ctx.log }, LOAD_FAIL_MSG, e));
+  ctx.selGen++; // supersede any pending snapshot load
+  Promise.all([
+    ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${tid}`),
+    ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${tid}/events`),
+  ]).then(([detail, ev]) => {
+    if (gen !== ctx.liveGen || !ctx.live) return;
+    seedFromDetail(ctx.live, detail);
+    for (const e of (ev.events || [])) if (e.kind?.startsWith(EVT_PREFIX)) addLogEntry(ctx.live, e);
+    ctx.selDetail = detail;
+    renderLivePanes(ctx);
+    renderStandingsPane(ctx);
+    renderLogPane(ctx);
+    restoreBoards(ctx);
+  }).catch((e) => reportError({ log: ctx.log }, LOAD_FAIL_MSG, e));
 }
 
 function stopLive(ctx) {
@@ -271,16 +304,32 @@ function stopLive(ctx) {
   renderLivePanes(ctx);
 }
 
-// Maintain the live maps from the WS stream; coalesce pane repaints.
+// Maintain the live maps from the WS stream; coalesce pane repaints and keep
+// standings fresh (re-fetch on game/status changes).
 function livePushEvent(ctx, evt) {
   if (!evt?.kind?.startsWith(EVT_PREFIX) || !ctx.live) return;
   const tid = evt.payload?.tournament_id;
   if (tid && tid !== ctx.liveTid) return;
+  const inner = evt.payload?.kind;
   addLogEntry(ctx.live, evt);
-  applyEventKind(ctx.live, evt, evt.payload?.kind, ctx.liveTid);
+  applyEventKind(ctx.live, evt, inner, ctx.liveTid);
+  if (evt.kind === EVT.STATUS || inner === KIND.GAME_FINISHED || inner === KIND.DONE || inner === KIND.STOPPED) {
+    ctx.refreshStandings();
+  }
   if (ctx._panesPending) return;
   ctx._panesPending = true;
-  requestAnimationFrame(() => { ctx._panesPending = false; renderLivePanes(ctx); });
+  requestAnimationFrame(() => { ctx._panesPending = false; renderLivePanes(ctx); renderLogPane(ctx); });
+}
+
+function renderStandingsPane(ctx) {
+  if (ctx.standingsBodyEl) renderStandings(ctx.standingsBodyEl, ctx.selDetail);
+}
+
+function renderLogPane(ctx) {
+  if (!ctx.logListEl) return;
+  const running = ctx.selectedId && ctx.selectedId === ctx.activeId;
+  const events = (running && ctx.live) ? ctx.live.eventLog : (ctx.selEvents || []);
+  renderEventLogList(ctx.logListEl, events, ctx.logPaneEl);
 }
 
 function renderLivePanes(ctx) {
@@ -580,7 +629,6 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     api, events, log, token, container,
     panel: q(".studio-panel"),
     ribbonEl: q(".studio-ribbon"),
-    headerEl: q(".studio-header"),
     boardsEl: q(".studio-boards"),
     boardsCanvasEl: q(".studio-boards-canvas"),
     boardsTrayEl: q(".studio-boards-tray"),
@@ -592,14 +640,31 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     tourneysPaneEl: q(".studio-pane-tourneys"),
     enginesPaneEl: q(".studio-pane-engines"),
     gamesPaneEl: q(".studio-pane-livegames"),
+    standingsPaneEl: q(".studio-pane-standings"),
+    logPaneEl: q(".studio-pane-log"),
     // Tourneys data + selection (selection restored from last session).
     tournaments: [], activeId: null, listGen: 0,
     selectedId: loadRaw(STORAGE_KEY.STUDIO_SELECTED_ID),
     // Live runner store for the running tourney (null unless it's selected).
     live: null, liveTid: null, liveUnsub: null, liveGen: 0, _panesPending: false,
+    // Standings/Event Log bound to the selected tourney (any).
+    selDetail: null, selEvents: [], selGen: 0, selLoadedId: null,
     // Board style for live boards (fetched once, like the workspace).
     boardStyleCached: null,
   };
+  // Standings pane reuses the shared resizable-column table; log pane is a
+  // plain list the shared renderer fills.
+  ctx.standingsBodyEl = makeStandingsBody();
+  ctx.standingsPaneEl?.appendChild(ctx.standingsBodyEl);
+  ctx.logListEl = document.createElement("ul");
+  ctx.logListEl.className = "wb-eventlog-list";
+  ctx.logPaneEl?.appendChild(ctx.logListEl);
+  ctx.refreshStandings = debounce(() => {
+    if (!ctx.liveTid) return;
+    ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${ctx.liveTid}`)
+      .then((d) => { if (ctx.liveTid) { ctx.selDetail = d; renderStandingsPane(ctx); } })
+      .catch(() => {});
+  }, STANDINGS_REFRESH_DEBOUNCE_MS);
   wireSplitters(ctx);
   wireTabPersistence(ctx);
   announceRibbon(ctx.ribbonEl);
@@ -644,8 +709,9 @@ function unmountStudio(ctx) {
   closeAllLiveGames();
   announceRibbon(null);
   ctx.panel.remove();
-  ctx.panel = ctx.ribbonEl = ctx.headerEl = null;
+  ctx.panel = ctx.ribbonEl = null;
   ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.bottomRightEl = null;
   ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = null;
   ctx.enginesPaneEl = ctx.gamesPaneEl = null;
+  ctx.standingsPaneEl = ctx.standingsBodyEl = ctx.logPaneEl = ctx.logListEl = null;
 }
