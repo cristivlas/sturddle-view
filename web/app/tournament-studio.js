@@ -36,6 +36,9 @@ const NO_GAMES_MSG = "No games in play.";
 const LIST_RELOAD_DEBOUNCE_MS = 150;
 // Coalesce standings re-fetches while the selected tourney is running.
 const STANDINGS_REFRESH_DEBOUNCE_MS = 400;
+// Safety cap on the perspective reveal gate: reveal anyway if the list/boards
+// haven't signalled ready by now (a stuck fetch must not hide the UI forever).
+const READY_TIMEOUT_MS = 4000;
 
 // Boards region grid: always 4 columns; cells stretch to fill the region
 // width (keeping the board square), clamped to the Arena minimum board
@@ -455,7 +458,9 @@ function startLive(ctx, tid) {
   ctx.liveUnsub = ctx.events.on((evt) => livePushEvent(ctx, evt));
   const gen = ++ctx.liveGen;
   ctx.selGen++; // supersede any pending snapshot load
-  Promise.all([
+  // Resolves once this start's boards are restored and fully drawn; the
+  // initial perspective reveal (ready) awaits it so no empty slots flash.
+  ctx.boardsRestored = Promise.all([
     ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${tid}`),
     ctx.api("GET", `${TOURNAMENTS_ENDPOINT}/${tid}/events`),
   ]).then(async ([detail, ev]) => {
@@ -470,7 +475,7 @@ function startLive(ctx, tid) {
     // Wait for the board style so restored boards aren't styled with the
     // default; re-check liveness after the await.
     await ctx.boardStyleReady;
-    if (gen === ctx.liveGen && ctx.live) restoreBoards(ctx);
+    if (gen === ctx.liveGen && ctx.live) await restoreBoards(ctx);
   }).catch((e) => reportError({ log: ctx.log }, LOAD_FAIL_MSG, e));
 }
 
@@ -791,12 +796,13 @@ function placeBoard(ctx, res) {
 }
 
 // Open a live board into the next slot. initialRect avoids a flash at
-// WinBox's default size.
-function openBoard(ctx, openOpts, min) {
+// WinBox's default size. flash=true is the amber attention flash, wanted only
+// for a genuine Watch click -- restore passes false (silent reopen).
+function openBoard(ctx, openOpts, min, flash = true) {
   return placeBoard(ctx, openLiveGameWindow({
     ...openOpts, token: ctx.token, tournamentId: ctx.liveTid,
     root: ctx.boardsEl, variantClass: STUDIO_BOARD_CLASS,
-    boardStyle: ctx.boardStyleCached, top: 0, left: 0, right: 0, min,
+    boardStyle: ctx.boardStyleCached, top: 0, left: 0, right: 0, min, flash,
     initialRect: nextSlotRect(ctx),
   }));
 }
@@ -804,14 +810,14 @@ function openBoard(ctx, openOpts, min) {
 // Reopen a finished game as a frozen board (rehydrated from PGN), like Arena.
 // Re-seed resolvedGames so a later snapshot keeps `resolved` (otherwise the
 // freshly-rebuilt live store loses it and the next reload drops the board).
-function openFrozenBoard(ctx, b) {
+function openFrozenBoard(ctx, b, flash = true) {
   if (b.gameId && ctx.live) ctx.live.resolvedGames.set(b.gameId, b.resolved);
   return placeBoard(ctx, openFrozenGameWindow({
     proxyId: b.proxyId, gameId: b.gameId, label: b.label, engineName: b.engineName,
     token: ctx.token, tournamentId: ctx.liveTid,
     gameN: b.resolved.gameN, result: b.resolved.result, termination: b.resolved.termination,
     root: ctx.boardsEl, variantClass: STUDIO_BOARD_CLASS,
-    boardStyle: ctx.boardStyleCached, top: 0, left: 0, right: 0, min: !!b.min,
+    boardStyle: ctx.boardStyleCached, top: 0, left: 0, right: 0, min: !!b.min, flash,
     initialRect: nextSlotRect(ctx),
   }));
 }
@@ -849,18 +855,26 @@ function saveBoards(ctx) {
 }
 
 // Reopen saved boards: resolved ones as frozen (from PGN), still-live ones
-// live; drop those that ended while away with no resolution.
+// live; drop those that ended while away with no resolution. Resolves once
+// every reopened board is fully drawn, so the caller can gate a reveal.
 function restoreBoards(ctx) {
   const saved = loadJson(STORAGE_KEY.STUDIO_BOARDS_PREFIX + ctx.liveTid);
-  if (!Array.isArray(saved)) return;
+  if (!Array.isArray(saved)) return Promise.resolve();
+  const opened = [];
   for (const b of saved) {
-    if (b.resolved) { openFrozenBoard(ctx, b); continue; }
-    const live = b.gameId
-      ? ctx.live.livePairings.get(b.proxyId)?.pairId === b.gameId
-      : ctx.live.activeProxies.has(b.proxyId);
-    if (live) openBoard(ctx, { proxyId: b.proxyId, gameId: b.gameId, label: b.label, engineName: b.engineName }, !!b.min);
+    let res;
+    if (b.resolved) {
+      res = openFrozenBoard(ctx, b, false);
+    } else {
+      const live = b.gameId
+        ? ctx.live.livePairings.get(b.proxyId)?.pairId === b.gameId
+        : ctx.live.activeProxies.has(b.proxyId);
+      if (live) res = openBoard(ctx, { proxyId: b.proxyId, gameId: b.gameId, label: b.label, engineName: b.engineName }, !!b.min, false);
+    }
+    if (res?.wb?._ready) opened.push(res.wb._ready);
   }
   refreshWatchButtons(ctx);
+  return Promise.all(opened);
 }
 
 // Restore each bottom group's active tab and persist changes.
@@ -920,6 +934,8 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     tourneyTbody: null, tourneySort: null,
     // Live runner store for the running tourney (null unless it's selected).
     live: null, liveTid: null, liveUnsub: null, liveGen: 0, _panesPending: false,
+    // Resolves when a running tourney's boards finish restoring (gates reveal).
+    boardsRestored: null,
     // Standings/Event Log bound to the selected tourney (any).
     selDetail: null, selEvents: [], selGen: 0, selLoadedId: null,
     // Board style for live boards (fetched once, like the workspace).
@@ -974,9 +990,20 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
   // Reload the list on any tournament event (coalesced); initial load now.
   ctx.reload = debounce(() => studioLoadList(ctx), LIST_RELOAD_DEBOUNCE_MS);
   ctx.offEvents = ctx.events.on(ctx.reload);
-  studioLoadList(ctx);
 
-  return { unmount: () => unmountStudio(ctx) };
+  // `ready` gates the router's reveal until built: first list load (table +
+  // wall), then any restored boards drawn (boardsRestored), then a flushed
+  // frame. Raced against a timeout so a stuck fetch can't hide the UI forever.
+  const built = studioLoadList(ctx)
+    .then(() => ctx.boardsRestored)
+    .catch(() => {})
+    .then(() => new Promise((r) => requestAnimationFrame(() => r())));
+  const ready = Promise.race([
+    built,
+    new Promise((r) => setTimeout(r, READY_TIMEOUT_MS)),
+  ]);
+
+  return { ready, unmount: () => unmountStudio(ctx) };
 }
 
 function unmountStudio(ctx) {

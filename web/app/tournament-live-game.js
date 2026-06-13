@@ -261,6 +261,9 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     styleId: boardStyle,
     onMove: () => {}, // read-only -- moves come from the server.
   });
+  // Hide the window body until the board is fully drawn (revealed via wb._ready
+  // below) so it appears complete in one shot, not assembling piece by piece.
+  body.style.visibility = "hidden";
 
   const evalScoreEl = body.querySelector(".lg-eval-score-bottom");
   const evalDepthEl = body.querySelector(".lg-eval-depth-bottom");
@@ -318,6 +321,9 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     class: variantClass ? `${defaultClass} ${variantClass}` : defaultClass,
   });
   wb._watchOpts = { proxyId, gameId, label, engineName };
+  // Reveals this window's body once drawn; surfaced so the opener can gate a
+  // perspective-wide reveal until every restored board is ready.
+  wb._ready = board.ready.then(() => { body.style.visibility = ""; });
 
   const clampToViewport = () => {
     const maxX = Math.max(left, window.innerWidth  - wb.width);
@@ -537,13 +543,19 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   // Latest pending FEN wins; superseded ones never animate. Background
   // tabs accumulate at most one pending paint (browser pauses rAF).
   let pendingPosition = null;
+  let shownPly = null; // ply currently painted on the board (null until first)
   const schedulePositionPaint = rafCoalesce(() => {
     const p = pendingPosition;
     pendingPosition = null;
     // wbClosed: a producer that resumed after close (e.g. applyBestMove's
     // fetch) must not repaint a destroyed board.
     if (!p || wbClosed) return;
-    board.setPosition(p.fen, p.lastMove, p.animated);
+    // Animate only a single forward ply (a move being watched); first paint
+    // and multi-ply backlog jumps snap so pieces don't glide catching up.
+    const toPly = fenPly(p.fen);
+    const animated = p.animated && shownPly !== null && toPly - shownPly === 1;
+    shownPly = toPly;
+    board.setPosition(p.fen, p.lastMove, animated);
     board.clearArrows();
   });
 
