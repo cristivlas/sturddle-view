@@ -3148,17 +3148,41 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-tabs wa-tab-panel { height: 100%; --padding: 0; }
 .studio-tabs wa-tab-panel::part(base) { height: 100%; box-sizing: border-box; }
 .studio-pane { height: 100%; overflow: auto; }
-/* Studio tourney list: flat rows matching the Settings engines list -- no
-   gradient, faint bottom separators, fill on hover/selected (the selected
-   accent inset comes from the shared .tournament-row.selected rule). */
-.studio-pane-tourneys .tournaments-list { gap: 0; }
-.studio-pane-tourneys .tournament-row {
-  background: none;
-  border: none;
-  border-bottom: 1px solid var(--border-faint);
+/* Studio tourney table: sortable + resizable sticky header, flat rows
+   (Settings engines look). The wrap is the resize overlay's positioned host
+   (mirrors the file picker's tableWrap). */
+.studio-tourney-wrap { position: relative; }
+.studio-tourney-tbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.studio-tourney-tbl thead th {
+  position: sticky; top: 0; z-index: 1;
+  text-align: left; font-weight: 600; font-size: 0.75rem; color: var(--muted);
+  padding: 6px 8px; background: var(--bg);
+  border-bottom: 1px solid var(--border-subtle);
+  user-select: none; white-space: nowrap;
+  /* Keep the resize grip from being covered by the next sticky cell, so its
+     hover indicator shows (matches the file picker header). */
+  overflow: hidden;
 }
-.studio-pane-tourneys .tournament-row:hover { background: var(--row-bg-hover); }
-.studio-pane-tourneys .tournament-row.selected { background: var(--row-bg-selected); }
+/* Hover affordance on the sortable headers: highlight the cell and outline
+   its extent (the column-size hint), like the file picker. */
+.studio-tourney-tbl thead th.th-sortable:hover {
+  background: var(--row-bg-hover);
+  box-shadow:
+    inset 2px 0 0 var(--wa-color-border-loud, #353841),
+    inset -2px 0 0 var(--wa-color-border-loud, #353841),
+    inset 0 -2px 0 var(--accent-line);
+}
+.studio-tourney-tbl tbody td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.studio-tourney-row { cursor: pointer; }
+.studio-tourney-row:hover { background: var(--row-bg-hover); }
+.studio-tourney-row.selected { background: var(--row-bg-selected); }
+.studio-tourney-row.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
+/* Running tourney's Games cell: Arena's progress bar + inline label. */
+.studio-progress { display: flex; align-items: center; gap: 8px; }
 .tournaments-body-main {
   width: calc(100vw - 2 * var(--ribbon-w));
   margin-left: auto; margin-right: auto;

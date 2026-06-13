@@ -11,7 +11,9 @@
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, loadRaw, saveJson, saveRaw } from "./storage.js";
-import { renderTournamentRow } from "./tournament-row.js";
+import { totalGames } from "./tournament-row.js";
+import { attachColumnSort } from "./col-sort.js";
+import { attachColumnResize } from "./col-resize.js";
 import { reportError } from "./dialogs.js";
 import { debounce, escapeHtml } from "./wb-utils.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
@@ -48,6 +50,9 @@ const BOARD_RESIZE_DEBOUNCE_MS = 120;
 // Default active tab per bottom group (first tab) when none is remembered.
 const STUDIO_TAB_DEFAULT_LEFT = "livegames";
 const STUDIO_TAB_DEFAULT_RIGHT = "tourneys";
+// Tourney table default column widths (Status, Name, Games) + resize floor.
+const STUDIO_TOURNEY_DEFAULT_PCTS = [20, 52, 28];
+const STUDIO_TOURNEY_MIN_PCT = 10;
 
 export const TOURNAMENT_UX = Object.freeze({ ARENA: "arena", STUDIO: "studio" });
 
@@ -198,13 +203,13 @@ function setSelected(ctx, id) {
   saveRaw(STORAGE_KEY.STUDIO_SELECTED_ID, id);
 }
 
-// Click handler: repaint selection in place (preserves list scroll), then
-// rebind the live store, standings/log panes, and ribbon to the selection.
+// Click handler: repaint selection in place (preserves scroll), then rebind
+// the live store, standings/log panes, and ribbon to the selection.
 function studioSelect(ctx, id) {
   if (ctx.selectedId === id) return;
   setSelected(ctx, id);
-  for (const li of ctx.tourneysPaneEl.querySelectorAll(".tournament-row")) {
-    li.classList.toggle("selected", li.dataset.id === id);
+  for (const tr of ctx.tourneysPaneEl.querySelectorAll(".studio-tourney-row")) {
+    tr.classList.toggle("selected", tr.dataset.id === id);
   }
   syncLive(ctx);
   syncRibbon(ctx);
@@ -214,20 +219,111 @@ function selectedTournament(ctx) {
   return ctx.tournaments.find((t) => t.id === ctx.selectedId) || null;
 }
 
-function renderTourneys(ctx) {
-  if (!ctx.tourneysPaneEl) return;
-  ensureSelection(ctx);
-  const ul = document.createElement("ul");
-  ul.className = "tournaments-list";
-  ul.setAttribute("role", "listbox");
-  for (const t of ctx.tournaments) {
-    ul.appendChild(renderTournamentRow(t, {
-      selected: t.id === ctx.selectedId,
-      onSelect: (t) => studioSelect(ctx, t.id),
-      onInfo: (t) => { studioSelect(ctx, t.id); ctx.actions?.info(t); },
-    }));
+// Sort the list by the active column (Status or Name); created_at breaks ties
+// so order is stable. No active sort keeps the server order.
+function sortedStudioTourneys(ctx) {
+  const arr = ctx.tournaments.slice();
+  const s = ctx.tourneySort;
+  if (!s) return arr;
+  const dir = s.dir === "asc" ? 1 : -1;
+  const tie = (a, b) => (a.created_at || "").localeCompare(b.created_at || "");
+  arr.sort((a, b) => {
+    if (s.key === "name") {
+      return dir * (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }) || tie(a, b);
+    }
+    const av = a.status || "", bv = b.status || "";
+    return av !== bv ? dir * av.localeCompare(bv) : tie(a, b);
+  });
+  return arr;
+}
+
+// Build the tourney table once: a sticky sortable header + a tbody the row
+// renderer fills. Sort cycling/arrows/persistence come from attachColumnSort.
+function buildTourneyTable(ctx) {
+  const pane = ctx.tourneysPaneEl;
+  if (!pane) return;
+  const wrap = document.createElement("div");
+  wrap.className = "studio-tourney-wrap";
+  const table = document.createElement("table");
+  table.className = "wb-table studio-tourney-tbl";
+  table.innerHTML = `<colgroup><col><col><col></colgroup>
+    <thead><tr>
+      <th data-col="status">Status<span class="th-grip"></span></th>
+      <th data-col="name">Name<span class="th-grip"></span></th>
+      <th class="studio-tourney-games-col">Games</th>
+    </tr></thead><tbody></tbody>`;
+  wrap.appendChild(table);
+  pane.replaceChildren(wrap);
+  ctx.tourneyTbody = table.querySelector("tbody");
+  const sortCtrl = attachColumnSort({
+    table,
+    columns: [
+      { key: "status", firstDir: "asc" },
+      { key: "name", firstDir: "asc" },
+      { key: "games", sortable: false },
+    ],
+    storageKey: STORAGE_KEY.STUDIO_TOURNEY_SORT,
+    onSort: (state) => { ctx.tourneySort = state; renderTourneys(ctx); },
+  });
+  ctx.tourneySort = sortCtrl.current();
+  const colEls = Array.from(table.querySelectorAll("col"));
+  attachColumnResize({
+    table,
+    grips: Array.from(table.querySelectorAll(".th-grip")),
+    overlayHost: wrap,
+    storageKey: STORAGE_KEY.STUDIO_TOURNEY_COL_PCTS,
+    sizes: STUDIO_TOURNEY_DEFAULT_PCTS.slice(),
+    unit: "pct",
+    applySizes(sizes, rctx) {
+      if (rctx) {
+        const { deltaFrac, startSizes, gripIdx } = rctx;
+        const dPct = deltaFrac * 100;
+        let a = startSizes[gripIdx] + dPct;
+        let b = startSizes[gripIdx + 1] - dPct;
+        if (a < STUDIO_TOURNEY_MIN_PCT) { b -= STUDIO_TOURNEY_MIN_PCT - a; a = STUDIO_TOURNEY_MIN_PCT; }
+        if (b < STUDIO_TOURNEY_MIN_PCT) { a -= STUDIO_TOURNEY_MIN_PCT - b; b = STUDIO_TOURNEY_MIN_PCT; }
+        sizes[gripIdx] = a;
+        sizes[gripIdx + 1] = b;
+      }
+      colEls.forEach((c, i) => { c.style.width = sizes[i] + "%"; });
+    },
+  });
+}
+
+// Games cell: while running, the same progress bar Arena's tourney list
+// shows; otherwise "played / total".
+function gamesCell(t, played, total) {
+  if (t.status === STATUS.RUNNING && total) {
+    const pct = Math.min(100, Math.round((played / total) * 100));
+    return `<div class="studio-progress">` +
+      `<div class="tournament-progress" role="progressbar" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${played}">` +
+      `<div class="tournament-progress-fill" style="width: ${pct}%"></div></div>` +
+      `<span class="tournament-progress-label">${played} / ${total} &middot; ${pct}%</span>` +
+      `</div>`;
   }
-  ctx.tourneysPaneEl.replaceChildren(ul);
+  return total ? `${played} / ${total}` : (played ? String(played) : "");
+}
+
+function studioTourneyRow(ctx, t) {
+  const tr = document.createElement("tr");
+  tr.className = "studio-tourney-row" + (t.id === ctx.selectedId ? " selected" : "");
+  tr.dataset.id = t.id;
+  const total = totalGames(t);
+  const played = t.standings?.games ?? 0;
+  const sprt = t.template?.sprt ? ` <span class="tournament-sprt-badge">SPRT</span>` : "";
+  tr.innerHTML =
+    `<td><span class="tournament-status status-${t.status}">${escapeHtml(t.status)}</span></td>` +
+    `<td class="studio-tourney-name" title="${escapeHtml(t.name)}">${escapeHtml(t.name)}${sprt}</td>` +
+    `<td class="studio-tourney-games">${gamesCell(t, played, total)}</td>`;
+  tr.addEventListener("click", () => studioSelect(ctx, t.id));
+  tr.addEventListener("dblclick", () => { studioSelect(ctx, t.id); ctx.actions?.info(t); });
+  return tr;
+}
+
+function renderTourneys(ctx) {
+  if (!ctx.tourneyTbody) return;
+  ensureSelection(ctx);
+  ctx.tourneyTbody.replaceChildren(...sortedStudioTourneys(ctx).map((t) => studioTourneyRow(ctx, t)));
   syncRibbon(ctx);
 }
 
@@ -725,6 +821,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     // Tourneys data + selection (selection restored from last session).
     tournaments: [], activeId: null, listGen: 0,
     selectedId: loadRaw(STORAGE_KEY.STUDIO_SELECTED_ID),
+    tourneyTbody: null, tourneySort: null,
     // Live runner store for the running tourney (null unless it's selected).
     live: null, liveTid: null, liveUnsub: null, liveGen: 0, _panesPending: false,
     // Standings/Event Log bound to the selected tourney (any).
@@ -747,6 +844,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
       .then((d) => { if (ctx.liveTid) { ctx.selDetail = d; renderStandingsPane(ctx); } })
       .catch(() => {});
   }, STANDINGS_REFRESH_DEBOUNCE_MS);
+  buildTourneyTable(ctx);
   wireSplitters(ctx);
   wireTabPersistence(ctx);
   wireRibbonActions(ctx);
@@ -797,7 +895,7 @@ function unmountStudio(ctx) {
   ctx.panel.remove();
   ctx.panel = ctx.ribbonEl = null;
   ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.bottomRightEl = null;
-  ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = null;
+  ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = ctx.tourneyTbody = null;
   ctx.enginesPaneEl = ctx.gamesPaneEl = null;
   ctx.standingsPaneEl = ctx.standingsBodyEl = ctx.logPaneEl = ctx.logListEl = null;
   ctx.ribbonBtns = ctx.actions = null;

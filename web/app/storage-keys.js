@@ -66,6 +66,8 @@ export const STORAGE_KEY = {
   STUDIO_BOARDS_PREFIX: "sturddle:studio:boards:",
   STUDIO_TAB_LEFT: "sturddle:studio:tabLeft",
   STUDIO_TAB_RIGHT: "sturddle:studio:tabRight",
+  STUDIO_TOURNEY_SORT: "sturddle:studio:tourneySort",
+  STUDIO_TOURNEY_COL_PCTS: "sturddle:studio:tourneyColPcts",
   WORKSPACE_PREFIX: "sturddle:workspace:",
   LIVE_PVTABLE_COL_WIDTHS: "sturddle:live:pvtable:colWidths",
   TOURNAMENTS_STANDINGS_COL_PCTS: "sturddle:tournaments:standingsColPcts",
