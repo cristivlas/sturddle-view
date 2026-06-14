@@ -3264,8 +3264,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    below (source order matters at equal specificity). */
 .winbox.sturddle-wb-studio {
   position: absolute; transition: none;
-  /* Grid-placed, never free-floating: no drop-shadow/outline halo, and the
-     header isn't a drag handle so it keeps the default cursor. */
+  /* Grid-placed: no drag-shadow; header isn't a drag handle. Edge is a
+     border (set below), not an outline -- outline sits in the clipped pad. */
   box-shadow: none; outline: none;
 }
 .winbox.sturddle-wb-studio .wb-drag { cursor: default; }
@@ -3752,6 +3752,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .winbox.sturddle-wb-studio,
 .winbox.sturddle-wb-studio .wb-header,
 .winbox.sturddle-wb-studio .wb-body { border-radius: 0; }
+/* Inside-the-box edge; here to beat .sturddle-wb { border: none }. */
+.winbox.sturddle-wb-studio { border: 1px solid var(--wb-outline); box-sizing: border-box; }
 .winbox.sturddle-wb-ribbon {
   border: 1px solid lightgray;
   outline: none;
