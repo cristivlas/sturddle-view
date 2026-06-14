@@ -92,32 +92,43 @@ Files named `test_e2e_*.py`. Spawn a real uvicorn server on a random port,
 drive a headless Chromium via Playwright, assert on DOM state and (when
 needed) on `localStorage` / page-evaluate hooks.
 
-Current e2e coverage:
+Current e2e coverage (representative; see `test_e2e_*.py` for the full
+set of ~two dozen):
 
-- `test_e2e_workspace_persistence.py` (largest): WinBox lifecycle inside
-  the tournaments Arena perspective -- save/restore, close-all,
-  navigation, status-driven defaults, frozen-window rehydration.
+- `test_e2e_workspace_characterization.py`: tournament workspace layout
+  geometry (tile/tidy/snap) invariants -- no overlap, in-bounds, perfect
+  tiling + idempotency.
+- `test_e2e_tournaments_ui.py` / `test_e2e_sprt_ui.py`: tournament list /
+  ribbon / template form, and the SPRT row + status rendering.
+- `test_e2e_studio_h2h.py`: Studio head-to-head board flow.
 - `test_e2e_tournament_live_game.py`: live game window WS attach + render.
-- `test_e2e_tournaments_ui.py`: tournament list / ribbon / template form.
-- `test_e2e_sprt_ui.py`: SPRT row + status rendering.
 - `test_e2e_perspective_sync.py`: cross-perspective state sync.
-- `test_e2e_view_mode_names.py`: view-mode UCI name handling.
-- `test_e2e_dock_windows.py`: minimize-dock layout behavior.
+- `test_e2e_play_from_here.py` / `test_e2e_xgame_toasts.py`: fork-a-game
+  flow and its toasts.
+- `test_e2e_ai_done_ribbon.py` / `test_e2e_ai_thinking_replay.py`: AI
+  analysis done-ribbon + thinking replay.
 
-Skip behavior: each test calls `pytest.skip("chromium not installed")` if
-the shared `browser` fixture (from `conftest.py`) yields `None`. So CI
-without Playwright still passes, just with e2e tests reported as skipped.
+Skip behavior: every file calls `pytest.importorskip("playwright.async_api")`
+at module load, so a checkout without Playwright skips the whole e2e suite
+at import. The files also carry `pytestmark = pytest.mark.e2e`, so
+`-m e2e` / `-m "not e2e"` selects or excludes them.
 
 Patterns to reuse from existing files:
 
-- Spawning the server: `_spawn_server(...)` in
-  `test_e2e_workspace_persistence.py`. Stubs `FastchessRunner.detect_binary`
-  so tests don't need a real fastchess binary.
-- Publishing onto the live event bus from a test thread:
-  `asyncio.run_coroutine_threadsafe(app.state.event_bus.publish(...), loop)`
-  (the loop is captured by a one-shot middleware in `_spawn_server`).
-- Seeding a PGN file at the right path:
-  `app.state.tournament_store.pgn_path(tid)`.
+- Spawning the server: `run_uvicorn_subprocess(...)` in `conftest.py` runs
+  uvicorn as a real subprocess on a free port; the OS owns its lifecycle
+  (kill on teardown, no proactor-cleanup races). Per-test isolation flows
+  through `SV_*` env overrides (`SV_PGN_DIR`, `SV_TOURNAMENT_ROOT`,
+  `SV_IMPORTS_DIR`, `SV_SETTINGS_FILE`, ...).
+- Seeding state into that subprocess: test-only `/_test/...` HTTP hooks
+  (e.g. `/_test/ai/publish_event`, `/_test/ai/seed_replay`,
+  `/_test/hve/install`, `/_test/recents/seed_fork`) -- the test can't reach
+  in-process `app.state`.
+- Faking fastchess: point `SV_TOURNAMENT_FASTCHESS_PATH` at a stub binary
+  whose `detect_binary` probe echoes back, so no real fastchess is spawned.
+- A few older tests still drive the app in-process and reach `app.state`
+  directly (e.g. `test_e2e_tournament_live_game.py`); prefer the subprocess
+  pattern for new tests.
 - Driving the browser without depending on hover state: prefer
   `page.evaluate("() => button.click()")` over `page.click(selector)` for
   elements gated behind CSS hover.

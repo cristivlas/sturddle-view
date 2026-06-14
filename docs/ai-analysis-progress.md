@@ -9,15 +9,18 @@ Shipped: walking skeleton, agent loop, inline tool-call recovery
 (call-syntax and fenced JSON), single-slot dedup, Anthropic + Ollama
 providers with extended thinking, Harmony marker stripping, tool
 registry (`analyze`, `validate_move`, `piece_at`, `top_moves`,
-`recommend_move` with centipawn dominance check) with lazy tool cards,
-live `play` path end-to-end, dockable AI panel with round-interleaved
+`recommend_move` with centipawn dominance check, `report_line`,
+`related_openings`, and a narrator/verifier `delegate` split) with lazy
+tool cards, live `play` path end-to-end, dockable AI panel with round-interleaved
 timeline, Settings UI with OS-keyring API-key storage and per-provider
 model memory. The round-end prose validators + corrective rounds and
 the revision banner were removed in favor of prompt + tool grounding
 (see `git log main..HEAD`).
-Remaining big items: token caps, path 3 (post-game PGN annotations),
-path 2 (live `view` mode) -- see §Open work. Past decisions that
-proved load-bearing have been lifted into `ai-analysis-spec.md`.
+Remaining big items: token caps, and path 3 (post-game PGN annotations).
+Path 2 (live `view` mode) ships -- commentator persona + full move context
+in the initial user message; the open gap there is the per-ply eval array
+(evals reach the model only via `analyze`). See §Open work. Past decisions
+that proved load-bearing have been lifted into `ai-analysis-spec.md`.
 
 ## Status legend
 
@@ -80,7 +83,8 @@ Tests:
 - [ ] `tablebase_probe()` -- wrap `TablebaseProber`; live board only.
       Register conditionally on `engine_default_syzygy_path` being set
       (no tool listed = no missing-syzygy error envelope to model).
-- [ ] `opening_lookup()` -- wrap `OpeningBook.lookup()`; live board only.
+- [x] `opening_lookup()` -- shipped as `related_openings` (narrator-only
+      dataset lookup; live board defaults to the position's opening).
 - [ ] `get_position(ply)` / `get_pgn_range(from_ply, to_ply)` -- low
       priority: full PGN already in initial user message.
 

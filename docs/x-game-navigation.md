@@ -1,6 +1,7 @@
 # X-Game Navigation — Design Sketch
 
-Status: design, not implemented. Tracks decisions across chat sessions.
+Status: implemented. Parent/child fork links persist on `recent_imports`
+(`parent_game_id`, `fork_ply`, `children`) and surface in view-mode navigation.
 
 ## Problem
 
