@@ -749,11 +749,17 @@ function renderTray(ctx) {
   const mins = getLiveWindows().filter((wb) => wb.min);
   tray.replaceChildren();
   for (const wb of mins) {
-    const chip = document.createElement("button");
+    // Mini winbox title bar: title restores, the native X closes. Mirror the
+    // board's own header color so the chip reads as that minimized window.
+    const chip = document.createElement("div");
     chip.className = "studio-tray-chip";
-    chip.textContent = wb._watchOpts?.label || "board";
-    chip.title = chip.textContent;
-    chip.addEventListener("click", () => wb.restore());
+    const header = wb.g?.querySelector(".wb-header");
+    if (header) chip.style.setProperty("--chip-bg", getComputedStyle(header).backgroundColor);
+    chip.innerHTML = `<span class="studio-tray-chip-title"></span><span class="wb-close"></span>`;
+    const [title, closeEl] = chip.children;
+    title.textContent = title.title = wb._watchOpts?.label || "board";
+    title.onclick = () => wb.restore();
+    closeEl.onclick = () => wb.close();
     tray.appendChild(chip);
   }
   tray.hidden = mins.length === 0;

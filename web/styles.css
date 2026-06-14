@@ -3222,25 +3222,38 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    Native minimize is hidden; each minimized board gets a restore chip. */
 .studio-boards-tray {
   flex: 0 0 auto;
-  display: flex; flex-wrap: nowrap; gap: 4px;
+  display: flex; flex-wrap: nowrap;
   padding: 4px 2px;
   overflow-x: auto; overflow-y: hidden;
 }
 .studio-boards-tray[hidden] { display: none; }
+/* Each chip is a standalone minimized window's title bar: its board's own
+   header color (set inline) + the window outline, winbox's X reused. Packed
+   tight, adjacent borders collapsed into a single seam. */
 .studio-tray-chip {
   flex: 0 0 auto;
-  /* inline-block (not the button's default centered layout) so text-overflow
-     ellipsis truncates the end instead of clipping both sides. */
-  display: inline-block;
-  max-width: 160px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 0.75rem;
-  padding: 2px 8px;
-  background: var(--nav-btn-bg); color: var(--fg);
-  border: 1px solid var(--accent-line); border-radius: 0;
-  cursor: pointer; text-align: left;
+  display: flex; align-items: stretch;
+  box-sizing: border-box;
+  height: 28px; max-width: 220px;
+  background: var(--chip-bg, var(--nav-btn-bg)); color: var(--fg);
+  border: 1px solid var(--wb-outline);
 }
-.studio-tray-chip:hover { background: var(--nav-btn-bg-active); }
+.studio-tray-chip + .studio-tray-chip { margin-left: -1px; }
+.studio-tray-chip-title {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 0 10px; text-align: left;
+  font: 14px/26px Arial, sans-serif; color: inherit;
+  cursor: pointer;
+}
+/* Reuse winbox's own X asset; just size and center it for the chip. */
+.studio-tray-chip .wb-close {
+  flex: 0 0 auto; width: 24px;
+  background-color: transparent; background-repeat: no-repeat;
+  background-size: 14px auto; background-position: center;
+  cursor: pointer; opacity: 0.9;
+}
+.studio-tray-chip .wb-close:hover { opacity: 1; }
 .winbox.sturddle-wb-studio.min { display: none; }
 /* Rooted Studio boards position within the scrolling region (not the
    viewport) and skip the slide transition so re-grids land instantly.
