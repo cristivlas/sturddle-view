@@ -1493,6 +1493,17 @@ class AIAnalysisCoordinator:
         # the old list stays consistent.
         self._replay_buffer = []
 
+    def seed_replay(self, events: list[dict]) -> None:
+        # Test-support: prime the buffer so a page load rehydrates the panel
+        # exactly as a client reconnecting post-turn would. Normalizes to the
+        # same envelope shape _emit() produces.
+        for ev in events:
+            self._replay_buffer.append({
+                ENVELOPE_KIND: ev[ENVELOPE_KIND],
+                ENVELOPE_PAYLOAD: dict(ev.get(ENVELOPE_PAYLOAD) or {}),
+                ENVELOPE_GAME_ID: ev.get(ENVELOPE_GAME_ID),
+            })
+
     def _inject_card_once(
         self, tool_name: str, injected: set[str], *, registry: ToolRegistry,
     ) -> str | None:

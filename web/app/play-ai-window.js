@@ -723,12 +723,15 @@ export function appendAiDelta(text, roundIndex = 0, thinkingMs = null) {
   if (!inst.body || !text) return;
   withStickyBottom(() => {
     const entry = ensureRoundPanel(inst.body, roundIndex);
+    // Freeze before stripping: thinking_ms rides the first prose delta,
+    // which may be whitespace-only. Dropping it with the whitespace loses
+    // the server duration, collapsing the label to "1s" on replay.
+    if (!entry.hasProse) freezeThinkingLabel(entry, thinkingMs);
     // Drop leading whitespace until the first non-ws char arrives;
     // prevents an empty-looking bordered box on rounds whose prose
     // starts with stray newlines from the model.
     const out = entry.hasProse ? text : text.replace(/^\s+/, "");
     if (!out) return;
-    if (!entry.hasProse) freezeThinkingLabel(entry, thinkingMs);
     entry.hasProse = true;
     entry.para.append(document.createTextNode(out));
     // Strip a leaked "Understood."-style ack opener once enough text has
