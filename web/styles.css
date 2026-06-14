@@ -3234,7 +3234,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   flex: 0 0 auto;
   display: flex; align-items: stretch;
   box-sizing: border-box;
-  height: 28px; max-width: 220px;
+  height: var(--wb-min-footer-h); max-width: 220px;
   background: var(--chip-bg, var(--nav-btn-bg)); color: var(--fg);
   border: 1px solid var(--wb-outline);
 }
@@ -3243,8 +3243,12 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   flex: 1 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   padding: 0 10px; text-align: left;
-  font: 14px/26px Arial, sans-serif; color: inherit;
-  cursor: pointer;
+  /* line-height = chip height minus its 1px top+bottom border, so the leading
+     stays even and the title sits dead-centre. Default cursor like a native
+     minimized title bar -- only the X (a control) shows the pointer. */
+  font-size: 14px; line-height: calc(var(--wb-min-footer-h) - 2px);
+  font-family: Arial, sans-serif; color: inherit;
+  cursor: default;
 }
 /* Reuse winbox's own X asset; just size and center it for the chip. */
 .studio-tray-chip .wb-close {
