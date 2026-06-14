@@ -2792,7 +2792,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  box-shadow: inset 0 -2px 0 var(--accent-line);
+  border-bottom: 3px solid var(--accent-line);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -2802,8 +2802,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   background: #252830;
   box-shadow:
     inset 2px 0 0 var(--wa-color-border-loud, #353841),
-    inset -2px 0 0 var(--wa-color-border-loud, #353841),
-    inset 0 -2px 0 var(--accent-line);
+    inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
 /* Size header sits over right-aligned values. */
 .fs-picker-table thead th:last-child { text-align: right; }
