@@ -204,6 +204,46 @@ async def test_tool_raising_returns_structured_error_and_loop_continues():
 
 
 @pytest.mark.asyncio
+async def test_malformed_tool_args_feed_back_error_without_invoking_tool():
+    # A tool_use whose arguments failed to parse (carried on
+    # tool_input_error) must NOT reach the tool -- the runner feeds the
+    # model a structured error so it re-emits one clean call.
+    calls = 0
+
+    async def fake_tool(_input, *, cancel_token):
+        nonlocal calls
+        calls += 1
+        return {"ok": True}
+
+    reg = _make_registry({"top_moves": fake_tool})
+    raw = '{"family": "Sicilian"}{"depth": 15, "moves": ["cxd4"]}'
+    provider = ScriptedProvider(rounds=[
+        [ProviderChunk(
+            kind="tool_use",
+            tool_use_id="tu_m",
+            tool_name="top_moves",
+            tool_input={},
+            tool_input_error=f"could not parse; raw={raw!r}",
+        )],
+        [ProviderChunk(kind="text", text="ok, one call.")],
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(bus, provider, registry=reg)
+
+    await coord.run(game_id="g")
+    events = await _drain_until_done(queue)
+
+    assert calls == 0  # tool never invoked with garbage input
+    assert provider.stream_calls == 2
+    tr = provider.last_call["messages"][-1]["content"][0]
+    assert tr["type"] == "tool_result"
+    assert tr["tool_use_id"] == "tu_m"
+    assert "malformed_tool_arguments" in tr["content"]
+    assert _payload_subset(events[-1].payload, {"done": True})
+
+
+@pytest.mark.asyncio
 async def test_cancel_mid_tool_propagates_and_emits_cancelled_done():
     tool_started = asyncio.Event()
 

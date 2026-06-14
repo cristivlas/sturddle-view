@@ -139,50 +139,52 @@ def messages_anthropic_to_openai(messages: list[Message]) -> list[dict]:
     return out
 
 
-class MalformedToolArgumentsError(RuntimeError):
-    """The model's accumulated tool_call.arguments is not valid JSON.
-
-    Carries the raw string so callers / transcripts can surface what the
-    model actually produced. This is the seam where a future JSON-repair
-    pass would hook in.
-    """
-    def __init__(self, tool_name: str, raw_arguments: str, parse_error: str) -> None:
-        super().__init__(
-            f"openai-compat: tool {tool_name!r} arguments are not valid JSON "
-            f"({parse_error}); raw={raw_arguments!r}"
-        )
-        self.tool_name = tool_name
-        self.raw_arguments = raw_arguments
-        self.parse_error = parse_error
+def malformed_tool_args_detail(
+    tool_name: str, raw_arguments: str, parse_error: str,
+) -> str:
+    """Format the reason a tool_call.arguments string is not valid JSON,
+    embedding the raw bytes so the model (and the transcript) can see what
+    it actually produced. Carried on the chunk's `tool_input_error` and fed
+    back as a tool_result -- the model re-emits one clean call."""
+    return (
+        f"openai-compat: tool {tool_name!r} arguments are not valid JSON "
+        f"({parse_error}); raw={raw_arguments!r}"
+    )
 
 
 def openai_tool_call_to_provider_chunk(tool_call: dict) -> ProviderChunk:
     """Accumulated OpenAI tool_call (from streamed deltas) -> Anthropic
     tool_use ProviderChunk.
 
-    Raises `MalformedToolArgumentsError` on bad JSON rather than silently
-    coercing to `{}` -- a model that emits broken JSON is a real problem,
-    and silently passing `{}` to the tool just hides it. The transcript
-    will have already captured the raw byte trail.
+    Bad JSON does not raise (that aborts the whole turn). Instead the
+    chunk flows with empty `tool_input` and the failure on
+    `tool_input_error`; the coordinator turns that into a structured
+    error tool_result the model recovers from -- the same path an illegal
+    move takes. We do NOT repair/merge at the parser: a model emitting two
+    concatenated JSON objects is the only thing that knows which call it
+    meant, so it re-emits one clean call. The transcript already captured
+    the raw byte trail; the error string carries it too.
     """
     fn = tool_call.get("function", {}) or {}
     tool_name = fn.get("name", "") or ""
     args_raw = fn.get("arguments", "")
+    args: dict = {}
+    tool_input_error: str | None = None
     if args_raw:
         try:
             args = json.loads(args_raw)
         except json.JSONDecodeError as exc:
-            raise MalformedToolArgumentsError(
-                tool_name=tool_name, raw_arguments=args_raw, parse_error=str(exc),
-            ) from exc
-    else:
-        args = {}
+            tool_input_error = malformed_tool_args_detail(
+                tool_name=tool_name, raw_arguments=args_raw,
+                parse_error=str(exc),
+            )
     return ProviderChunk(
         kind="tool_use",
         tool_use_id=tool_call.get("id", "") or "",
         tool_name=tool_name,
         tool_input=args,
         tool_signature=_read_gemini_signature(tool_call),
+        tool_input_error=tool_input_error,
     )
 
 

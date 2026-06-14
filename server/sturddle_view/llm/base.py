@@ -35,6 +35,11 @@ class ProviderChunk:
     `tool_signature` is opaque provider-side state attached to a tool_use
     that must be echoed back verbatim on the next round (Gemini's encrypted
     `thought_signature`). Empty for providers that don't use it.
+
+    `tool_input_error` carries why a tool_use's arguments could not be
+    parsed (e.g. concatenated JSON objects). When set, the coordinator skips
+    dispatch and feeds back a structured error instead of aborting the turn.
+    None on a well-formed call.
     """
     kind: ChunkKind
     text: str = ""
@@ -42,6 +47,7 @@ class ProviderChunk:
     tool_name: str = ""
     tool_input: dict[str, Any] = field(default_factory=dict)
     tool_signature: str = ""
+    tool_input_error: str | None = None
 
 
 Message = dict[str, Any]

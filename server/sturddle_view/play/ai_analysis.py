@@ -1133,9 +1133,15 @@ class AIAnalysisCoordinator:
                         },
                     )
                 )
-            # A top_moves call is the model doing the right thing -- reset the
-            # failure streak and re-arm the nudge for any later relapse.
-            if config.track_recommend and pending_tool.tool_name == TOP_MOVES_TOOL_NAME:
+            # A *successful* top_moves call resets the failure streak and
+            # re-arms the nudge. An errored call (malformed args, empty list)
+            # doesn't count, or repeated bad calls would never escalate.
+            if (
+                config.track_recommend
+                and pending_tool.tool_name == TOP_MOVES_TOOL_NAME
+                and isinstance(tool_output, dict)
+                and not tool_output.get("error")
+            ):
                 consecutive_recommend_failures = 0
                 recommend_failure_nudge_armed = True
             # A verdict-bearing delegate marks the pick red-teamed; errors
@@ -1535,9 +1541,19 @@ class AIAnalysisCoordinator:
     async def _dispatch_tool(
         self, call: ProviderChunk, *, registry: ToolRegistry,
     ) -> dict:
-        """Look up + invoke a tool. Unknown name or tool-raised exceptions
-        produce structured error results instead of breaking the loop --
-        the model can read the error and recover (or give up gracefully)."""
+        """Look up + invoke a tool. Unparseable arguments, unknown name, or
+        tool-raised exceptions produce structured error results instead of
+        breaking the loop -- the model reads the error and recovers (or
+        gives up gracefully)."""
+        if call.tool_input_error is not None:
+            # The provider couldn't parse this call's arguments (e.g. two
+            # concatenated JSON objects). Don't invoke the tool with empty
+            # input; hand the model the failure so it re-emits one clean call.
+            return {
+                "error": "malformed_tool_arguments",
+                "name": call.tool_name,
+                "detail": call.tool_input_error,
+            }
         try:
             fn = registry.get(call.tool_name)
         except UnknownToolError:

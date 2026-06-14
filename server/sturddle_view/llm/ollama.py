@@ -24,8 +24,8 @@ from .base import LLMProvider, Message, ProviderChunk, ToolWireSpec
 from .harmony_strip import flush_harmony_carry, strip_harmony_text
 from .inline_recovery import recover_inline_tool_calls
 from .openai_compat import (
-    MalformedToolArgumentsError,
     inline_recovery_args,
+    malformed_tool_args_detail,
     messages_anthropic_to_openai,
     openai_tool_call_to_provider_chunk,
     stream_openai_compat,
@@ -40,8 +40,8 @@ log = logging.getLogger(__name__)
 # ollama module. The implementations now live in openai_compat.
 __all__ = [
     "DEFAULT_BASE_URL",
-    "MalformedToolArgumentsError",
     "OllamaProvider",
+    "malformed_tool_args_detail",
     "messages_anthropic_to_openai",
     "openai_tool_call_to_provider_chunk",
     "tools_anthropic_to_openai",
