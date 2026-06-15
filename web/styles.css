@@ -3110,7 +3110,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   --iw-shadow: rgba(0, 0, 0, 0.5);
   position: absolute; inset: 0; z-index: 0;
   display: flex; flex-direction: column; justify-content: center; align-items: stretch;
-  gap: clamp(14px, 2.2vw, 26px);
+  gap: clamp(12px, 1.8vw, 22px);
   padding: clamp(24px, 5vw, 68px);
   overflow: hidden;
   pointer-events: none;
@@ -3146,6 +3146,15 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .iw-burst--done, .iw-burst--stopped, .iw-burst--failed {
   background: #000; color: var(--iw-ink); border: 2px solid var(--iw-ink);
 }
+/* SPRT: a stamped placard in the same family, outlined (a mode tag, not a
+   status), tilted the other way so the two stamps read as hand-pasted. */
+.iw-burst--sprt {
+  background: var(--iw-paper); color: var(--iw-ink);
+  border: 2px solid var(--iw-ink);
+  transform: rotate(3deg);
+}
+/* Stamp group: SPRT + status placards clustered hard right of the headline. */
+.iw-stamps { display: flex; align-items: center; gap: clamp(8px, 1vw, 16px); flex: 0 0 auto; }
 
 /* Headline row spans the wall: title left, status placard hard right. */
 .iw-head {
@@ -3167,30 +3176,67 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   overflow: hidden;
 }
 
-/* Stat panels: thick-outlined cells, hard black shadow. Stretch edge-to-edge
-   (equal share) so the row fills the wall instead of clustering left. */
-.iw-stats { display: flex; flex-wrap: wrap; gap: clamp(12px, 1.8vw, 22px); }
-.iw-panel {
-  flex: 1 1 0; min-width: 130px; max-width: 100%;
+/* The bill body: tale of the tape (left) and the contenders (right), each a
+   framed block. They share the wall width and wrap on narrow regions. */
+.iw-bill {
+  display: flex; flex-wrap: wrap; align-items: flex-start;
+  gap: clamp(14px, 2vw, 26px);
+}
+.iw-tape { flex: 1 1 340px; }
+.iw-card { flex: 1 1 260px; }
+.iw-tape, .iw-card {
   background: var(--iw-paper);
   border: 3px solid var(--iw-ink);
-  box-shadow: 5px 5px 0 var(--iw-shadow);
-  padding: clamp(8px, 1vw, 18px) clamp(16px, 1.6vw, 28px) clamp(10px, 1.2vw, 20px);
+  box-shadow: 6px 6px 0 var(--iw-shadow);
+  padding: clamp(12px, 1.4vw, 22px) clamp(16px, 1.8vw, 28px) clamp(14px, 1.6vw, 24px);
 }
-.iw-panel-label {
+/* Section nameplate atop each framed block. */
+.iw-tape-title {
   font-family: var(--wa-font-family-code);
-  font-size: clamp(10px, 0.8vw, 13px); letter-spacing: 0.18em; text-transform: uppercase;
+  font-size: clamp(10px, 0.8vw, 13px); font-weight: 800;
+  letter-spacing: 0.28em; text-transform: uppercase;
   color: var(--muted);
-}
-.iw-panel-value {
-  margin-top: clamp(3px, 0.5vw, 8px);
-  font-weight: 800; font-size: clamp(18px, 2.6vw, 42px);
-  color: var(--iw-ink);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding-bottom: clamp(6px, 0.8vw, 12px);
+  margin-bottom: clamp(6px, 0.8vw, 12px);
+  border-bottom: 2px solid var(--iw-ink);
 }
 
-/* Quiet setup line: muted label:value facts, secondary to the panels. Spread
-   across the width so it doesn't cluster left. */
+/* Tale-of-the-tape ledger row: label, leader dots that eat the slack, big
+   numeral hard right. The dots fill the width so no value ever floats. */
+.iw-tape-row {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: clamp(3px, 0.5vw, 7px) 0;
+}
+.iw-tape-label {
+  flex: 0 0 auto;
+  font-family: var(--wa-font-family-code);
+  font-size: clamp(11px, 0.95vw, 15px); letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--muted-bright);
+}
+.iw-tape-dots {
+  flex: 1 1 auto; min-width: 18px;
+  border-bottom: 3px dotted var(--iw-ink);
+  transform: translateY(-5px);
+}
+.iw-tape-value {
+  flex: 0 0 auto;
+  font-weight: 900; font-size: clamp(22px, 2.6vw, 40px); line-height: 0.9;
+  color: var(--iw-ink);
+}
+
+/* Contenders billing: seed(s) vs field, or a two-engine A vs B. */
+.iw-versus {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+  gap: clamp(8px, 1.2vw, 18px);
+}
+.iw-vs {
+  font-style: italic; font-weight: 900;
+  font-size: clamp(20px, 2.4vw, 38px);
+  letter-spacing: -0.02em; color: var(--muted);
+  text-shadow: 3px 3px 0 var(--iw-shadow);
+}
+
+/* Fine print: sanctioning-body small print at the foot of the bill. */
 .iw-setup {
   display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 24px;
   font-size: clamp(13px, 1vw, 18px); color: var(--muted-bright);
@@ -3216,15 +3262,45 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .iw-engine > * { display: inline-block; transform: skewX(8deg); }
 .iw-engine-ver { margin-left: 6px; color: var(--muted); font-weight: 600; }
 .iw-engine--more { flex: 0 0 auto; color: var(--muted); font-weight: 600; }
+/* Gauntlet seed: louder plate so the runner reads as the headliner. */
+.iw-engine--seed {
+  background: var(--iw-ink); color: var(--iw-paper);
+  border-width: 3px; box-shadow: 4px 4px 0 var(--iw-shadow);
+}
+.iw-engine--seed .iw-engine-ver { color: var(--iw-paper); opacity: 0.7; }
 
 /* Footer spans the wall: progress/tally left, created stamp hard right. */
 .iw-footer {
   display: flex; align-items: center; justify-content: space-between;
   flex-wrap: wrap; gap: 12px;
-  margin-top: 2px;
+  margin-top: clamp(20px, 3vw, 40px);
 }
 .iw-progress { display: flex; align-items: center; gap: 12px; flex: 1 1 280px; max-width: 75%; }
 .iw-progress .tournament-progress { flex: 1 1 auto; }
+
+/* SPRT LLR meter: H0 ---[marker]--- H1, the verdict gauge. */
+.iw-llr {
+  display: flex; align-items: center; gap: 10px;
+  flex: 1 1 320px; max-width: 75%;
+  font-family: var(--wa-font-family-code); font-weight: 700;
+  font-size: 12px; letter-spacing: 0.12em; color: var(--muted);
+}
+.iw-llr-track {
+  position: relative; flex: 1 1 auto; height: 10px;
+  background: var(--iw-paper);
+  border: 2px solid var(--iw-ink);
+}
+.iw-llr-mark {
+  position: absolute; top: 50%; width: 4px; height: 16px;
+  background: var(--iw-ink);
+  transform: translate(-50%, -50%);
+}
+.iw-llr-val { color: var(--muted-bright); }
+/* Concluded verdicts tint the marker + value (H1 affirms, H0 mutes). */
+.iw-llr--h1 .iw-llr-mark { background: #7fb37f; }
+.iw-llr--h1 .iw-llr-val { color: #7fb37f; }
+.iw-llr--h0 .iw-llr-mark { background: var(--muted); }
+.iw-llr--h0 .iw-llr-val { color: var(--muted); }
 .iw-tally {
   font-family: var(--wa-font-family-code); font-weight: 700;
   font-size: 14px; color: var(--muted-bright);
@@ -3371,6 +3447,9 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-tourney-row.selected { background: var(--row-bg-selected); }
 .studio-tourney-row.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
 .studio-tourney-created { color: var(--muted); }
+/* Status cell holds status + optional SPRT pill; clip (no ellipsis) rather
+   than widen the column. */
+.studio-tourney-tbl tbody td.studio-tourney-status { text-overflow: clip; }
 /* Running tourney's Games cell: Arena's progress bar + inline label. */
 .studio-progress { display: flex; align-items: center; gap: 8px; }
 .tournaments-body-main {
@@ -3474,14 +3553,6 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tournament-sprt-badge {
-  flex: 0 0 auto;
-  font-size: 0.625rem; font-weight: 700; letter-spacing: 0.05em;
-  padding: 0.0625em 0.3125em; border-radius: 0.1875em;
-  background: rgba(var(--accent-rgb), 0.15);
-  border: 1px solid rgba(var(--accent-rgb), 0.4);
-  color: var(--accent);
-}
 .tournament-status {
   flex: 0 0 auto;
   display: inline-block;
@@ -3501,6 +3572,17 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   background: #2a3550;
   border-color: #3d4d6e;
   color: #c8d4ee;
+}
+/* SPRT pill: inherits .tournament-status geometry; auto width (not the 6em
+   status column) and accent-tinted so it reads as a mode marker next to the
+   status badge. Declared after the base so equal-specificity wins hold. */
+.tournament-status--sprt {
+  width: auto;
+  padding-left: 0.5em; padding-right: 0.5em;
+  margin-left: 0.4em;
+  background: rgba(var(--accent-rgb), 0.15);
+  border-color: rgba(var(--accent-rgb), 0.4);
+  color: var(--accent);
 }
 .tournament-progress {
   position: relative;

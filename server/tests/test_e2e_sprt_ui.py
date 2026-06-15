@@ -143,7 +143,7 @@ async def test_sprt_badge_shown_in_tournament_list(tmp_path, make_page):
 
         has_badge = await page.evaluate("""() => {
             const row = document.querySelector('.tournament-row');
-            return !!row.querySelector('.tournament-sprt-badge');
+            return !!row.querySelector('.tournament-status--sprt');
         }""")
         assert has_badge is True
 

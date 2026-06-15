@@ -3,7 +3,7 @@
 // makeStandingsBody builds the DOM (and wires column resize); renderStandings
 // fills it from a tournament `detail` payload.
 
-import { SPRT, STATUS } from "./tournament-events.js";
+import { SPRT, STATUS, sprtVerdict } from "./tournament-events.js";
 import { MIDDOT } from "./tournament-row.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
@@ -104,9 +104,8 @@ export function renderStandings(el, detail) {
     })
     .join("");
   if (sprt) {
-    const lo = sprt.lower_bound, hi = sprt.upper_bound, llr = sprt.llr;
-    const concluded = sprt.status !== SPRT.CONTINUE;
-    const colorMod = concluded ? (sprt.status === SPRT.H1 ? " wb-sprt--h1" : " wb-sprt--h0") : "";
+    const { lo, hi, llr, concluded, isH1 } = sprtVerdict(sprt);
+    const colorMod = concluded ? (isH1 ? " wb-sprt--h1" : " wb-sprt--h0") : "";
     const candidate = detail.engines?.[0]?.name ? escapeHtml(detail.engines[0].name) : "candidate";
     const pairsText = sprt.pairs != null ? ` ${MIDDOT} ${sprt.pairs} pair${sprt.pairs === 1 ? "" : "s"}` : "";
     const statusText = sprt.status === SPRT.H1

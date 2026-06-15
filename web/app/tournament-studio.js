@@ -315,9 +315,9 @@ function studioTourneyRow(ctx, t) {
   const total = totalGames(t);
   const played = t.standings?.games ?? 0;
   tr.innerHTML =
-    `<td>${statusBadgeHtml(t.status)}</td>` +
+    `<td class="studio-tourney-status">${statusBadgeHtml(t.status)}${sprtBadgeHtml(t)}</td>` +
     `<td class="studio-tourney-created">${escapeHtml(formatCreated(t.created_at))}</td>` +
-    `<td class="studio-tourney-name" title="${escapeHtml(t.name)}">${escapeHtml(t.name)} ${sprtBadgeHtml(t)}</td>` +
+    `<td class="studio-tourney-name" title="${escapeHtml(t.name)}">${escapeHtml(t.name)}</td>` +
     `<td class="studio-tourney-games">${gamesCell(t, played, total)}</td>`;
   tr.addEventListener("click", () => studioSelect(ctx, t.id));
   tr.addEventListener("dblclick", () => { studioSelect(ctx, t.id); ctx.actions?.info(t); });

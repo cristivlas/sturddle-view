@@ -39,8 +39,11 @@ export function statusBadgeHtml(status) {
   return `<span class="tournament-status status-${s}">${s}</span>`;
 }
 
+// SPRT marker as a status-style pill (shares .tournament-status rendering),
+// sat alongside the status badge.
 export function sprtBadgeHtml(t) {
-  return t.template?.sprt ? `<span class="tournament-sprt-badge">SPRT</span>` : "";
+  return t.template?.sprt
+    ? `<span class="tournament-status tournament-status--sprt">SPRT</span>` : "";
 }
 
 export function progressBarHtml(played, total) {
@@ -74,8 +77,8 @@ export function renderTournamentRow(t, { selected = false, onSelect, onInfo } = 
   li.innerHTML = `
     <div class="tournament-row-main">
       ${statusBadgeHtml(t.status)}
-      <span class="tournament-name"></span>
       ${sprtBadgeHtml(t)}
+      <span class="tournament-name"></span>
       ${trailing}
     </div>
   `;
