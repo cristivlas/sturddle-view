@@ -1673,6 +1673,9 @@ body .side-popover.popover-floating {
      scrollbar -- no nested second one. */
   .game-view-side { height: auto; }
   .game-view-moves { flex: 0 0 auto; }
+  /* Desktop-only widget: it's fixed-positioned off the board geometry,
+     which the mobile document-flow layout doesn't provide. */
+  .game-view-eval-bar { display: none; }
   .game-view-moves .move-list {
     flex: 0 0 auto;
     max-height: none;
@@ -1744,6 +1747,17 @@ body .side-popover.popover-floating {
   height: auto;
   max-height: none;
 }
+/* Horizontal eval strip under the moves box. Fixed-positioned (left/top/
+   width/height set by positionSideRail) so it occupies the gap between the
+   board bottom and the clock bottom without touching the moves-list flow. */
+.game-view-eval-bar {
+  position: fixed;
+  box-sizing: border-box;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.game-view-eval-bar canvas { display: block; height: 100%; }
 .clock-row {
   flex: 0 0 auto;
   width: var(--board-max-px, 100%);

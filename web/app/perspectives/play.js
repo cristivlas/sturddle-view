@@ -3,6 +3,7 @@
 // Resign).
 
 import { mountGameView } from "../game-view.js";
+import { createEvalBar } from "../eval-graph.js";
 import { APP_EVT } from "../app-events.js";
 import { KIND, AI_KIND_PREFIX } from "../game-events.js";
 import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
@@ -97,6 +98,27 @@ function _setXgameDismissed(gameId, key, value) {
 // so we derive it from who lost (only human can resign today).
 function resultBadge(result) {
   return result === RESULT.DRAW ? "½-½" : result;
+}
+
+// eval_history entries are white POV {cp|mate}; flip for a black engine.
+function evalToEnginePov(ev, engineWhite) {
+  if (engineWhite) return ev;
+  if (ev.mate != null) return { mate: -ev.mate };
+  if (ev.cp != null) return { cp: -ev.cp };
+  return ev;
+}
+
+// Rebuild the eval strip from the authoritative per-ply history: engine
+// plies only (human slots are null), in engine POV. Null history (view
+// mode / no game) clears it.
+function feedEvalBar(state, evalHistory) {
+  const bar = state.evalBar;
+  if (!bar) return;
+  const engineWhite = !state.humanWhite;
+  const scores = Array.isArray(evalHistory)
+    ? evalHistory.filter((ev) => ev != null).map((ev) => evalToEnginePov(ev, engineWhite))
+    : [];
+  bar.setSamples(scores, engineWhite);
 }
 
 function formatResult(payload, humanWhite) {
@@ -1681,6 +1703,8 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         state.humanWhite = evt.payload.human_white;
       }
       if (evt.payload.turn) state.turn = evt.payload.turn;
+      // humanWhite is settled above; rebuild the eval strip in engine POV.
+      feedEvalBar(state, evt.payload.eval_history);
       if (typeof evt.payload.analyzing === "boolean") {
         setAnalyzing(state, evt.payload.analyzing);
         // Don't re-enable interactivity in view mode regardless of
@@ -1958,6 +1982,16 @@ export const playPerspective = {
     });
     state.view = view;
 
+    // Horizontal eval strip under the moves list: one bar per engine ply,
+    // engine POV, fed from the server's per-ply eval_history on board_update.
+    const evalBar = createEvalBar();
+    const sideRail = sideHost.querySelector(".game-view-side");
+    const movesSection = sideRail?.querySelector(".game-view-moves");
+    if (movesSection) movesSection.after(evalBar.el);
+    else sideRail?.appendChild(evalBar.el);
+    evalBar.setVisible(true);
+    state.evalBar = evalBar;
+
     const commentsHost = root.querySelector(".play-comments-host");
     state.el.commentsHost = commentsHost;
     setCommentaryDockContainer(commentsHost);
@@ -2182,6 +2216,7 @@ export const playPerspective = {
         showFinishedBadge(state, "");
         offCrash();
         offEvent();
+        state.evalBar?.dispose();
         view.unmount();
         // Close any live x-game toasts so they don't outlive the
         // perspective. Plain close (not via the X handler), so the

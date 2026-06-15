@@ -100,6 +100,16 @@ export function scrollToBottom(scroller) {
   scroller.scrollTop = scroller.scrollHeight;
 }
 
+export function isPinnedToRight(scroller, slack) {
+  if (!scroller) return false;
+  return scroller.scrollWidth - scroller.scrollLeft - scroller.clientWidth <= slack;
+}
+
+export function scrollToRight(scroller) {
+  if (!scroller) return;
+  scroller.scrollLeft = scroller.scrollWidth;
+}
+
 // Make Ctrl/Cmd+A inside `el` select just one node's contents instead
 // of the whole page. `targetFn(ev)` returns the node to select (default
 // `el`); returning falsy leaves the selection untouched.

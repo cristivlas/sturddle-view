@@ -13,8 +13,10 @@ import {
   AUTOSCROLL_SLACK_ROW_PX,
   fmtScore,
   isPinnedToBottom,
+  isPinnedToRight,
   rafCoalesce,
   scrollToBottom,
+  scrollToRight,
 } from "./wb-utils.js";
 
 // Bars saturate at this many centipawns; mate scores pin to it.
@@ -33,21 +35,77 @@ const COLOR_LABEL_ON_BLACK = "#e8e8e8";
 const LABEL_FONT_PX = 14;
 const LABEL_PAD_PX = 4;
 
-export function createEvalGraph() {
-  const el = document.createElement("div");
-  el.className = "lg-eval-graph";
-  const canvas = document.createElement("canvas");
-  el.appendChild(canvas);
-  const ctx = canvas.getContext("2d");
-
-  let samples = []; // index = ply, value = {cp (mover POV), w: moverIsWhite, label} (sparse)
-  let firstPly = null;
-  let visible = false;
-  let stickToBottom = false; // force-scroll to newest on next draw (reveal)
+// Monospace label font + the off-bar (accent) color, read from CSS vars.
+function readLabelStyle() {
   const rootStyle = getComputedStyle(document.documentElement);
   const labelFont = `${LABEL_FONT_PX}px ${
     rootStyle.getPropertyValue("--wa-font-family-code") || "monospace"}`;
   const offBarLabelColor = rootStyle.getPropertyValue("--accent").trim() || COLOR_LABEL;
+  return { labelFont, offBarLabelColor };
+}
+
+// {cp|mate} (any POV) -> centipawns clamped to +/-CLAMP_CP, or null when
+// the score carries nothing plottable. Mate pins to the saturation value.
+function scoreToClampedCp(score) {
+  if (score?.mate != null) return score.mate >= 0 ? CLAMP_CP : -CLAMP_CP;
+  if (score?.cp != null) return score.cp;
+  return null;
+}
+
+// Size the canvas backing store to CSS-pixels * devicePixelRatio and map
+// the 2D context back to CSS units, so drawing code works in CSS pixels.
+function resizeCanvasForDpr(canvas, ctx, w, h) {
+  const dpr = window.devicePixelRatio || 1;
+  const pw = Math.round(w * dpr);
+  const ph = Math.round(h * dpr);
+  if (canvas.width !== pw || canvas.height !== ph) {
+    canvas.width = pw;
+    canvas.height = ph;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+// Shared rig for a DPR-aware canvas widget that only paints while visible:
+// owns the element/canvas/context, the visibility flag, and the
+// ResizeObserver -> redraw wiring. Callers supply the draw fn via setDraw
+// and an optional onReveal hook (fired just before the reveal repaint).
+function createCanvasWidget(className, { onReveal } = {}) {
+  const el = document.createElement("div");
+  el.className = className;
+  const canvas = document.createElement("canvas");
+  el.appendChild(canvas);
+  const ctx = canvas.getContext("2d");
+  let visible = false;
+  let draw = () => {};
+  const ro = new ResizeObserver(() => { if (visible) draw(); });
+  ro.observe(el);
+  return {
+    el,
+    canvas,
+    ctx,
+    isVisible: () => visible,
+    setDraw: (fn) => { draw = fn; },
+    setVisible(v) {
+      visible = !!v;
+      if (visible) {
+        onReveal?.();
+        draw();
+      }
+    },
+    dispose() {
+      draw.cancel?.();
+      ro.disconnect();
+    },
+  };
+}
+
+export function createEvalGraph() {
+  let samples = []; // index = ply, value = {cp (mover POV), w: moverIsWhite, label} (sparse)
+  let firstPly = null;
+  let stickToBottom = false; // force-scroll to newest on next draw (reveal)
+  const rig = createCanvasWidget("lg-eval-graph", { onReveal: () => { stickToBottom = true; } });
+  const { el, canvas, ctx } = rig;
+  const { labelFont, offBarLabelColor } = readLabelStyle();
 
   const draw = rafCoalesce(() => {
     const w = el.clientWidth;
@@ -55,15 +113,8 @@ export function createEvalGraph() {
     const count = firstPly == null ? 0 : samples.length - firstPly;
     const h = Math.max(el.clientHeight, count * BAR_THICKNESS_PX);
     const pinned = isPinnedToBottom(el, AUTOSCROLL_SLACK_ROW_PX);
-    const dpr = window.devicePixelRatio || 1;
-    const pw = Math.round(w * dpr);
-    const ph = Math.round(h * dpr);
-    if (canvas.width !== pw || canvas.height !== ph) {
-      canvas.width = pw;
-      canvas.height = ph;
-    }
+    resizeCanvasForDpr(canvas, ctx, w, h);
     canvas.style.height = `${h}px`;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
     const mid = w / 2;
     ctx.fillStyle = COLOR_MIDLINE;
@@ -102,41 +153,101 @@ export function createEvalGraph() {
       scrollToBottom(el);
     }
   });
-
-  const ro = new ResizeObserver(() => { if (visible) draw(); });
-  ro.observe(el);
+  rig.setDraw(draw);
 
   // `score` is the unified {cp|mate} shape, mover (STM) POV. Returns
   // false when it carries nothing plottable.
   function add(ply, score, moverIsWhite) {
-    let cp;
-    if (score?.mate != null) cp = score.mate >= 0 ? CLAMP_CP : -CLAMP_CP;
-    else if (score?.cp != null) cp = score.cp;
-    else return false;
+    const cp = scoreToClampedCp(score);
+    if (cp == null) return false;
     if (firstPly == null || ply < firstPly) firstPly = ply;
     samples[ply] = { cp, w: !!moverIsWhite, label: fmtScore(score, { signed: true }) };
-    if (visible) draw();
+    if (rig.isVisible()) draw();
     return true;
   }
 
   function clear() {
     samples = [];
     firstPly = null;
-    if (visible) draw();
+    if (rig.isVisible()) draw();
   }
 
-  function setVisible(v) {
-    visible = !!v;
-    if (visible) {
-      stickToBottom = true;
-      draw();
+  return { el, add, clear, setVisible: rig.setVisible, dispose: rig.dispose };
+}
+
+// Horizontal eval strip for the Play perspective: one vertical bar per
+// engine ply, running left to right, engine-POV centipawns against a
+// horizontal zero midline -- a bar grows up when the engine judged
+// itself ahead, down when behind, scaled to the strip's current height
+// (so it tracks layout reflow). Only the engine's plies get bars; the
+// human's are skipped. Fill marks the engine's color: light = white,
+// dark outlined = black. Bars have fixed width; when the game outgrows
+// the strip it scrolls, sticking to the newest ply unless scrolled away.
+export function createEvalBar() {
+  let samples = []; // [{cp (engine POV), w: engineIsWhite, label}]
+  let stickToRight = false; // force-scroll to newest on next draw (reveal)
+  const rig = createCanvasWidget("game-view-eval-bar", { onReveal: () => { stickToRight = true; } });
+  const { el, canvas, ctx } = rig;
+
+  // Hovered bar's score as a native tooltip. offsetX is in canvas CSS
+  // pixels (= draw space), so it's scroll-independent.
+  canvas.addEventListener("mousemove", (e) => {
+    canvas.title = samples[Math.floor(e.offsetX / BAR_THICKNESS_PX)]?.label ?? "";
+  });
+
+  const draw = rafCoalesce(() => {
+    const h = el.clientHeight;
+    if (!h) return;
+    const w = Math.max(el.clientWidth, samples.length * BAR_THICKNESS_PX);
+    const pinned = isPinnedToRight(el, AUTOSCROLL_SLACK_ROW_PX);
+    resizeCanvasForDpr(canvas, ctx, w, h);
+    canvas.style.width = `${w}px`;
+    ctx.clearRect(0, 0, w, h);
+    const mid = h / 2;
+    ctx.fillStyle = COLOR_MIDLINE;
+    ctx.fillRect(0, Math.round(mid) - 0.5, w, 1);
+    const bw = BAR_THICKNESS_PX - BAR_GAP_PX;
+    for (let i = 0; i < samples.length; i++) {
+      const s = samples[i];
+      const frac = Math.max(-1, Math.min(1, s.cp / CLAMP_CP));
+      const bl = Math.max(1, Math.abs(frac) * (mid - 1));
+      const x = i * BAR_THICKNESS_PX;
+      const y = frac >= 0 ? mid - bl : mid; // grow up when engine is ahead
+      ctx.fillStyle = s.w ? COLOR_WHITE_BAR : COLOR_BLACK_BAR;
+      ctx.fillRect(x, y, bw, bl);
+      if (!s.w) {
+        ctx.strokeStyle = COLOR_BLACK_BAR_EDGE;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x + 0.5, y + 0.5, Math.max(1, bw - 1), Math.max(1, bl - 1));
+      }
     }
+    if (pinned || stickToRight) {
+      stickToRight = false;
+      scrollToRight(el);
+    }
+  });
+  rig.setDraw(draw);
+
+  // `scores` is the engine's plies in order, each a unified {cp|mate} in
+  // engine POV; entries that carry nothing plottable are dropped.
+  // `engineIsWhite` fixes every bar's fill (the engine's color is constant).
+  function setSamples(scores, engineIsWhite) {
+    const next = [];
+    for (const score of scores) {
+      const cp = scoreToClampedCp(score);
+      if (cp == null) continue;
+      next.push({ cp, w: !!engineIsWhite, label: fmtScore(score, { signed: true }) });
+    }
+    const grew = next.length > samples.length;
+    samples = next;
+    if (grew) stickToRight = true;
+    if (rig.isVisible()) draw();
   }
 
-  function dispose() {
-    draw.cancel();
-    ro.disconnect();
+  function clear() {
+    samples = [];
+    if (rig.isVisible()) draw();
   }
 
-  return { el, add, clear, setVisible, dispose };
+  return { el, setSamples, clear, setVisible: rig.setVisible, dispose: rig.dispose };
 }

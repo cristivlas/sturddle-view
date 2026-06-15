@@ -1881,9 +1881,13 @@ class HumanVsEngine:
         if self._viewing:
             moves_san = self._view_moves_san()
             view_payload = self._view_payload()
+            eval_history = None  # view mode ships eval per-cursor in view_payload
         else:
             moves_san = _moves_san(self._board, self._start_fen)
             view_payload = None
+            # Per-ply engine eval (white POV, None on human plies). Drives the
+            # Play eval strip; the client maps to engine POV.
+            eval_history = list(self._eval_history)
         return Event(
             kind=EVT_BOARD_UPDATE,
             game_id=self._game_id,
@@ -1906,6 +1910,7 @@ class HumanVsEngine:
                 "analyzing": self._analysis_mode,
                 "editing": self._editing,
                 "view": view_payload,
+                "eval_history": eval_history,
             },
         )
 
