@@ -3317,7 +3317,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 /* All-caps tab labels in the Studio perspective. */
 .studio-tabs wa-tab::part(base) { text-transform: uppercase; font-size: 0.875em; }
 /* A little breathing room between adjacent tabs. */
-.studio-tabs wa-tab { margin-inline-end: 2%; }
+.studio-tabs wa-tab { margin-inline-end: 2em; }
 /* Bordered content area (the panel below the tab labels): top + bottom
    rules only, no left/right. */
 .studio-tabs::part(body) {

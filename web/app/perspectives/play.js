@@ -114,6 +114,8 @@ function evalToEnginePov(ev, engineWhite) {
 function feedEvalBar(state, evalHistory) {
   const bar = state.evalBar;
   if (!bar) return;
+  // Engine evals are a play-mode concept; hide the strip while viewing.
+  bar.el.style.display = state.viewing ? "none" : "";
   const engineWhite = !state.humanWhite;
   const scores = Array.isArray(evalHistory)
     ? evalHistory.filter((ev) => ev != null).map((ev) => evalToEnginePov(ev, engineWhite))
