@@ -4,7 +4,7 @@
 // fills it from a tournament `detail` payload.
 
 import { SPRT, STATUS, sprtVerdict } from "./tournament-events.js";
-import { MIDDOT } from "./tournament-row.js";
+import { MIDDOT, NO_GAMES_MSG } from "./tournament-row.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { escapeHtml } from "./wb-utils.js";
@@ -69,7 +69,7 @@ export function renderStandings(el, detail) {
   const tbody = el.querySelector(".wb-standings-tbl tbody");
   const standings = detail?.standings;
   if (!standings || standings.engines.length === 0) {
-    emptyEl.textContent = "No games played yet.";
+    emptyEl.textContent = NO_GAMES_MSG;
     emptyEl.hidden = false;
     wrapEl.hidden = true;
     sprtSlot.innerHTML = "";

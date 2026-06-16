@@ -10,6 +10,9 @@ import { escapeHtml } from "./wb-utils.js";
 // line, the H2H banner). Exported so those strips read consistently.
 export const MIDDOT = "\u00B7";
 
+// Empty-state message shared by the standings and H2H surfaces.
+export const NO_GAMES_MSG = "No completed games yet.";
+
 // Total scheduled games for a tournament, or null when the template is
 // underspecified. Gauntlet seeds play every non-seed; round-robin pairs
 // every engine once per (rounds * games_per_round).

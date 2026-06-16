@@ -9,12 +9,11 @@
 // on each live repaint.
 
 import { RESULT } from "./chess-consts.js";
-import { MIDDOT } from "./tournament-row.js";
+import { MIDDOT, NO_GAMES_MSG } from "./tournament-row.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { escapeHtml } from "./wb-utils.js";
 
-const NO_GAMES_MSG = "No completed games yet.";
 const NA = "--";
 // Banner segment separator, matching the SPRT line and progress label.
 const SEP = ` ${MIDDOT} `;
