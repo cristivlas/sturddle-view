@@ -452,15 +452,24 @@ async def export_pgn(request: Request) -> Response:
 
 
 @router.post("/view/start")
-async def view_start(request: Request) -> dict:
+async def view_start(payload: dict, request: Request) -> dict:
     """Enter view mode at the current play-mode position.
 
     State flip only: no parsing, no recents write. Intended as the
     play -> view transition for clients that want to reach view mode
-    (e.g. as a precondition to edit mode) without going through
-    `/game/import`, which has the side effect of saving to the
-    recent-imports store.
+    (e.g. as a precondition to edit mode, or to scrub past moves) without
+    going through `/game/import`, which saves to the recent-imports store.
+
+    With ``suspend: true`` the live play game is held in memory so the client
+    can resume the SAME game (no fork) via `/view/resume-play` -- used by the
+    scrub-back feature. The edit precondition omits it (no resume, unchanged
+    POV). Optional ``land_at_ply`` lands the cursor directly at a past ply
+    (flicker-free) instead of the default last ply.
     """
+    land_at_ply = payload.get("land_at_ply")
+    if land_at_ply is not None and (isinstance(land_at_ply, bool) or not isinstance(land_at_ply, int)):
+        raise HTTPException(status_code=400, detail="'land_at_ply' must be an integer")
+    suspend = bool(payload.get("suspend", False))
     hve = await _get_hve(request)
     (
         start_fen,
@@ -493,8 +502,13 @@ async def view_start(request: Request) -> dict:
                 root_comment=root_comment,
             ),
             fork_link=fork_link,
+            land_at_ply=land_at_ply,
+            suspend_play=suspend,
         )
-        await hve.view_last()
+        # enter_view_mode already lands (and publishes) at land_at_ply when
+        # given; only jump to the last ply for the default (no target) entry.
+        if land_at_ply is None:
+            await hve.view_last()
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return {"game_id": game_id, "viewing": True}
@@ -571,6 +585,19 @@ async def view_play_from_here(payload: dict, request: Request) -> dict:
         )
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=f"engine not found: {e}") from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"game_id": game_id, "viewing": False}
+
+
+@router.post("/view/resume-play")
+async def view_resume_play(request: Request) -> dict:
+    """Exit view mode back into the SAME play game suspended by /view/start
+    (no fork). 400 when there is no suspended game to resume."""
+    hve = await _get_hve(request)
+    await _cancel_ai_analysis(request)
+    try:
+        game_id = await hve.resume_play()
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return {"game_id": game_id, "viewing": False}

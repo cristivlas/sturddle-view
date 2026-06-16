@@ -117,10 +117,15 @@ function feedEvalBar(state, evalHistory) {
   // Engine evals are a play-mode concept; hide the strip while viewing.
   bar.el.style.display = state.viewing ? "none" : "";
   const engineWhite = !state.humanWhite;
-  const scores = Array.isArray(evalHistory)
-    ? evalHistory.filter((ev) => ev != null).map((ev) => evalToEnginePov(ev, engineWhite))
-    : [];
-  bar.setSamples(scores, engineWhite);
+  // Carry each entry's ply (0-based move index) so a bar click can navigate
+  // there; human plies are null and produce no bar.
+  const items = [];
+  if (Array.isArray(evalHistory)) {
+    evalHistory.forEach((ev, ply) => {
+      if (ev != null) items.push({ score: evalToEnginePov(ev, engineWhite), ply });
+    });
+  }
+  bar.setSamples(items, engineWhite);
 }
 
 function formatResult(payload, humanWhite) {
@@ -1312,6 +1317,48 @@ async function onImportImpl(state) {
   }
 }
 
+// Play -> view: flip the live play game into server view mode landing at a
+// past ply. The live game is suspended server-side (no fork) so scrubbing to
+// the last ply can resume it (see resumeLivePlay). Ignores clicks on the
+// live last move (already there) and during analysis.
+async function enterViewAtPly(state, plyIndex) {
+  if (state.analyzing || state.viewing) return;
+  if (state.enterViewInflight) return;  // debounce double-click (esp. eval bar)
+  if (plyIndex + 1 >= state.movesPlayed) return;  // last move = live position
+  state.enterViewInflight = true;
+  try {
+    closeAi();
+    // Clear gameId so the view-mode board_update (fresh game_id) isn't
+    // dropped by GameView's game_id filter; restore from the response.
+    state.view.setGameId(null);
+    // suspend:true holds the live game for a no-fork resume at the last ply.
+    const r = await state.ctx.api(
+      "POST", "/game/view/start", { land_at_ply: plyIndex + 1, suspend: true },
+    );
+    if (r?.game_id) state.view.setGameId(r.game_id);
+  } catch (e) {
+    reportError(state.ctx, MSG.OPEN_GAME_FAILED, e);
+  } finally {
+    state.enterViewInflight = false;
+  }
+}
+
+// View -> play: resume the SAME suspended play game (no fork). Fired when a
+// resumable view session scrubs to its last ply (see handleBusEvent).
+async function resumeLivePlay(state) {
+  if (state.resumeInflight) return;  // debounce racing board_updates
+  state.resumeInflight = true;
+  try {
+    state.view.setGameId(null);
+    const r = await state.ctx.api("POST", "/game/view/resume-play", {});
+    if (r?.game_id) state.view.setGameId(r.game_id);
+  } catch (e) {
+    reportError(state.ctx, MSG.RESUME_FAILED, e);
+  } finally {
+    state.resumeInflight = false;
+  }
+}
+
 async function onPlayFromHereImpl(state) {
   if (state.playFromHereInflight) return;  // debounce double-click
   state.playFromHereInflight = true;
@@ -1646,10 +1693,23 @@ function handleBusEvent(state, ai, aiCtx, evt) {
           // fetchXgameInfo then repopulates and re-renders.
           resetXgame(state);
           fetchXgameInfo(state, state.viewingGameId);
+          // New view session: require visiting an earlier ply before the
+          // last-ply auto-resume can fire (the landing event itself must not
+          // self-trigger).
+          state.viewReachedNonLast = false;
         }
         state.viewCursor = v.cursor ?? 0;
         state.viewTotalPlies = v.total_plies ?? 0;
         state.viewGameOver = !!v.game_over;
+        // Auto-return to the SAME play game (no fork) when a resumable
+        // session (entered via /view/start on the live game) scrubs to the
+        // last ply. The viewReachedNonLast gate (set only when cursor was
+        // earlier than the end) keeps the landing event from self-firing.
+        if (state.viewCursor < state.viewTotalPlies) state.viewReachedNonLast = true;
+        if (v.resumable && state.viewReachedNonLast
+            && state.viewCursor === state.viewTotalPlies) {
+          resumeLivePlay(state);
+        }
         state.lastViewComment = v.comment ?? null;
         _viewingHash = v.view_hash ?? null;
         _viewingSummary = v.view_summary ?? null;
@@ -1675,8 +1735,12 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         state.resignAvailable = false;
         // Board is read-only in view mode; the user navigates via ribbon.
         state.view.setEnabled(false);
-        // Restore the user's prior flip preference on entry into view mode.
-        if (!wasViewing) state.view.setHumanWhite(!state.viewFlipped);
+        // On entry: a resumable scrub of the live play game keeps the
+        // player's own POV (don't rotate a black player to white's side);
+        // an imported game has no "human", so use the view flip preference.
+        if (!wasViewing) {
+          state.view.setHumanWhite(v.resumable ? state.humanWhite : !state.viewFlipped);
+        }
       } else {
         state.lastViewComment = null;
         _viewingHash = null;
@@ -1794,6 +1858,9 @@ export const playPerspective = {
       commentNavPrev: null,
       commentNavNext: null,
       playFromHereInflight: false,
+      resumeInflight: false,
+      enterViewInflight: false,
+      viewReachedNonLast: false,
       reanalyzeInFlight: false,
       aiEnabled: false,
       aiTitleModel: "",
@@ -1943,6 +2010,9 @@ export const playPerspective = {
       // Click on a move in the list (view mode only) → jump cursor to
       // the position AFTER that move, i.e. ply = plyIndex + 1.
       onMoveJump: (plyIndex) => doViewNav(state, "/game/view/goto", { ply: plyIndex + 1 }),
+      // Click a past move in PLAY mode → flip into server view mode at that
+      // ply. Scrubbing to the live game's last ply auto-returns to play.
+      onPlayMoveClick: (plyIndex) => enterViewAtPly(state, plyIndex),
       // Fork glyphs. Fresh map per render; both child-here (this game
       // has forks at this ply) and own-fork-ply (this game itself
       // diverged from its parent here) get a glyph.
@@ -1986,7 +2056,9 @@ export const playPerspective = {
 
     // Horizontal eval strip under the moves list: one bar per engine ply,
     // engine POV, fed from the server's per-ply eval_history on board_update.
-    const evalBar = createEvalBar();
+    // Click an eval bar -> enter view mode at that ply (same as clicking the
+    // move in the list); the handler ignores clicks on the live last move.
+    const evalBar = createEvalBar({ onBarClick: (ply) => enterViewAtPly(state, ply) });
     const sideRail = sideHost.querySelector(".game-view-side");
     const movesSection = sideRail?.querySelector(".game-view-moves");
     if (movesSection) movesSection.after(evalBar.el);

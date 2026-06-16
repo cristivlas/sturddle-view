@@ -590,6 +590,10 @@ function applyBoardUpdate(ctx, evt) {
       currentIdx = (evt.payload.view.cursor ?? 0) - 1;
       // No ply-jump (and no clickable cursor) while analyzing.
       if (!ctx.analyzing) clickHandler = ctx.onMoveJump;
+    } else if (!ctx.editing && !ctx.analyzing && ctx.onPlayMoveClick) {
+      // Play mode: clicking a past move flips into server view mode at
+      // that ply (the handler ignores clicks on the live last move).
+      clickHandler = ctx.onPlayMoveClick;
     }
     // Fork glyphs only in view mode; snapshot at render time.
     const forkInfo = (evt.payload.view && !ctx.editing && ctx.forkInfoFn)
@@ -887,6 +891,7 @@ export function mountGameView(container, opts = {}) {
     events,
     onMove,
     onMoveJump = null, // view-mode click on a move; (plyIndex) => void
+    onPlayMoveClick = null, // play-mode click on a past move; (plyIndex) => void
     forkInfoFn = null, // () => Map<plyIdx, {childCount, isOwnForkPly}>
     onForkClick = null, // (plyIdx) => void when glyph itself is clicked
     show = {},
@@ -912,7 +917,7 @@ export function mountGameView(container, opts = {}) {
   const ready = new Promise((r) => { resolveReady = r; });
 
   const ctx = {
-    onMoveJump, forkInfoFn, onForkClick,
+    onMoveJump, onPlayMoveClick, forkInfoFn, onForkClick,
     interactive, showClocks, showMoves, showEngineInfo,
     ready, resolveReady,
 

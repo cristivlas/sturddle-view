@@ -60,6 +60,24 @@ def test_view_start_enters_view_without_recents_write(client):
     assert listed == []
 
 
+def test_view_start_rejects_bool_land_at_ply(client):
+    # bool is an int subclass; the scrub-back ply must not silently coerce.
+    r = client.post("/game/view/start", json={"land_at_ply": True})
+    assert r.status_code == 400, r.text
+
+
+def test_view_start_rejects_non_int_land_at_ply(client):
+    r = client.post("/game/view/start", json={"land_at_ply": "3"})
+    assert r.status_code == 400, r.text
+
+
+def test_resume_play_without_suspend_is_400(client):
+    # Plain /view/start (no suspend) leaves nothing to resume.
+    client.post("/game/view/start", json={}).raise_for_status()
+    r = client.post("/game/view/resume-play", json={})
+    assert r.status_code == 400, r.text
+
+
 def test_edit_commit_records_recent(client):
     client.post("/game/view/start", json={}).raise_for_status()
     client.post("/game/edit/start", json={}).raise_for_status()
