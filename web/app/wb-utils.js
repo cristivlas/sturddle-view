@@ -8,8 +8,7 @@ export function cssVarPx(name, fallback, selector) {
 }
 
 // Ribbon strip width; matches the `--ribbon-w` CSS var on the
-// perspective's grid/body. Reserved on both viewport edges so
-// ribbon-side flips don't invalidate bounds.
+// perspective's grid/body. Callers decide which edge(s) to reserve.
 const RIBBON_W_FALLBACK_PX = 36;
 export function ribbonWidthPx(selector) {
   return cssVarPx("--ribbon-w", RIBBON_W_FALLBACK_PX, selector);

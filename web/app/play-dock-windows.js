@@ -129,7 +129,7 @@ function updateDockBounds() {
 // recompute has settled the board's new left edge before we re-measure.
 window.addEventListener(APP_EVT.LAYOUT_CHANGED, () => {
   requestAnimationFrame(() =>
-    requestAnimationFrame(updateDockBounds));
+    requestAnimationFrame(() => { updateDockBounds(); reclampFloats(); }));
 });
 
 // Re-clamp floating windows off the ribbon strips when the viewport shrinks
@@ -157,8 +157,19 @@ function rightColumnWidth(fallback = 480) {
   return Math.max(320, Math.min(avail, fallback));
 }
 
+// Strip reserved per viewport edge for the docked ribbon. Floating mode
+// overlays content and reserves nothing; docked reserves only its own side
+// so the opposite edge is fully usable. Side flips re-clamp existing floats.
+function ribbonReserve() {
+  if (document.body.dataset.ribbonFloat) return { left: 0, right: 0 };
+  const w = ribbonWidthPx(PLAY_GRID_SEL);
+  return document.body.dataset.ribbonSide === "right"
+    ? { left: 0, right: w }
+    : { left: w, right: 0 };
+}
+
 function winboxBase(title, className, width, height, x, y) {
-  const ribbonW = ribbonWidthPx(PLAY_GRID_SEL);
+  const { left, right } = ribbonReserve();
   return {
     title,
     class: `sturddle-wb ${className} no-full`,
@@ -169,30 +180,52 @@ function winboxBase(title, className, width, height, x, y) {
     x,
     y,
     top: HEADER_H,
-    left: ribbonW,
-    right: ribbonW,
+    left,
+    right,
   };
 }
 
-// Keep a floating window clear of the ribbon strips. WinBox enforces
+// Keep a floating window clear of the docked ribbon strip. WinBox enforces
 // left/right only while dragging, not on a saved/initial position or a
-// viewport resize, so re-clamp explicitly. Shrink an over-wide window to
-// the band between ribbons first, so the left edge can always reach ribbonW.
-function clampFloatX(wb, ribbonW) {
-  if (!wb || wb.min || wb.max) return;
-  const band = window.innerWidth - 2 * ribbonW;
+// viewport/ribbon-side change, so re-clamp explicitly. Shrink an over-wide
+// window to the usable band first, so its left edge can always reach `left`.
+function clampFloatX(wb, { left, right }) {
+  if (!wb) return;
+  // Refresh WinBox's stored margins in every state: it clamps drag/move
+  // against wb.left/wb.right and sizes maximized windows from them, and
+  // these are otherwise frozen at creation time.
+  wb.left = left;
+  wb.right = right;
+  const vw = window.innerWidth;
+  const clampX = (x, w) => Math.max(left, Math.min(x, vw - right - w));
+  if (wb.max) {
+    // Re-fit a maximized window to the new band. Pass skip=true so the
+    // stored restore geometry isn't clobbered.
+    wb.resize(vw - left - right, window.innerHeight - wb.top - wb.bottom, true)
+      .move(left, wb.top, true);
+    return;
+  }
+  if (wb.min) {
+    // A minimized bar's geometry lives in the DOM, not wb.x/wb.width; nudge
+    // the rendered bar out of the strip without touching its restore size.
+    const r = wb.g.getBoundingClientRect();
+    const curX = Math.round(r.left);
+    const x = clampX(curX, Math.round(r.width));
+    if (x !== curX) wb.move(x, Math.round(r.top), true);
+    return;
+  }
+  const band = vw - left - right;
   // Bail when the band can't fit the window's minwidth: shrinking below
   // it is worse than letting the window overlap a ribbon.
   if (band < (wb.minwidth || 1)) return;
   if (wb.width > band) wb.resize(band, wb.height);
-  const maxX = window.innerWidth - ribbonW - wb.width;
-  const x = Math.max(ribbonW, Math.min(wb.x, maxX));
+  const x = clampX(wb.x, wb.width);
   if (x !== wb.x) wb.move(x, wb.y);
 }
 
 function reclampFloats() {
-  const ribbonW = ribbonWidthPx(PLAY_GRID_SEL);
-  for (const inst of instances) clampFloatX(inst.wb, ribbonW);
+  const reserve = ribbonReserve();
+  for (const inst of instances) clampFloatX(inst.wb, reserve);
 }
 
 // Geometry as raw numbers. Distinct from tournament-workspace.js's
@@ -521,7 +554,7 @@ export function createDockableWindow(config) {
       onmove()     { saveGeo(geoKey, wb); },
       onresize()   { saveGeo(geoKey, wb); },
     });
-    clampFloatX(wb, ribbonWidthPx(PLAY_GRID_SEL));
+    clampFloatX(wb, ribbonReserve());
     // WinBox addControl with index:0 PREPENDS into .wb-control, so the
     // LAST call ends up leftmost. Add dock first so it stays rightmost,
     // then actions in declaration order (each new one goes leftmost).
