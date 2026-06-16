@@ -183,7 +183,7 @@ export function createEvalGraph() {
 // human's are skipped. Fill marks the engine's color: light = white,
 // dark outlined = black. Bars have fixed width; when the game outgrows
 // the strip it scrolls, sticking to the newest ply unless scrolled away.
-export function createEvalBar({ onBarClick = null } = {}) {
+export function createEvalBar({ onBarClick = null, isBarNavigable = null } = {}) {
   let samples = []; // [{cp (engine POV), w: engineIsWhite, label, ply}]
   let stickToRight = false; // force-scroll to newest on next draw (reveal)
   const rig = createCanvasWidget("game-view-eval-bar", { onReveal: () => { stickToRight = true; } });
@@ -194,13 +194,14 @@ export function createEvalBar({ onBarClick = null } = {}) {
   // Hovered bar's score as a native tooltip. offsetX is in canvas CSS
   // pixels (= draw space), so it's scroll-independent.
   canvas.addEventListener("mousemove", (e) => {
-    canvas.title = barAt(e.offsetX)?.label ?? "";
+    const s = barAt(e.offsetX);
+    canvas.title = s?.label ?? "";
+    if (onBarClick) canvas.style.cursor = (s && (!isBarNavigable || isBarNavigable(s.ply))) ? "pointer" : "";
   });
 
   // Click a bar -> navigate to that ply (same as clicking the move). The
   // stored ply is the engine move's 0-based index (human plies have no bar).
   if (onBarClick) {
-    canvas.style.cursor = "pointer";
     canvas.addEventListener("click", (e) => {
       const s = barAt(e.offsetX);
       if (s) onBarClick(s.ply);

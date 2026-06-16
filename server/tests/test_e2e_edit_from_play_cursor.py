@@ -17,12 +17,8 @@ needed -- so no leaked listeners) and await the request lifecycles that
 deterministically bound when the cursor would have been mutated."""
 from __future__ import annotations
 
-import asyncio
-import json as _json
 import stat
 import sys
-import tempfile
-import time
 from pathlib import Path
 
 import httpx
@@ -33,147 +29,7 @@ pytestmark = pytest.mark.e2e
 
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 
-from .conftest import run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
-
-
-class PageObserver:
-    """Tracks HTTP request lifecycles and WS board_update frames for a
-    Playwright page. All observation happens on the Playwright (CDP) side
-    -- no JS injection, so nothing to clean up in the page itself.
-
-    Helpers (all timeout-free):
-      * ``wait_quiet(substr)`` -- await zero in-flight requests whose
-        URL contains ``substr``. Pre-registers the substring so a later
-        request can be counted.
-      * ``wait_board_update(predicate)`` -- await the next board_update
-        whose payload satisfies ``predicate(payload)``. Re-checks the
-        last observed payload first, so a state already reached resolves
-        immediately.
-    """
-
-    # Eager forensic log: every event is written and flushed immediately
-    # so a Ctrl+C of a hanging test still leaves us a usable trace at
-    # %TEMP%/sturddle-test-pageobs-<pid>-<ts>.log. The path is also
-    # printed once at construction so the user can find it.
-    def __init__(self, page):
-        self._page = page
-        self._inflight: dict[str, int] = {}
-        self._quiet_waiters: list[tuple[str, asyncio.Future]] = []
-        self._last_board: dict | None = None
-        self._board_waiters: list[tuple[callable, asyncio.Future]] = []
-        log_path = Path(tempfile.gettempdir()) / (
-            f"sturddle-test-pageobs-{Path(sys.argv[0]).stem}-"
-            f"{int(time.time() * 1000)}.log"
-        )
-        self._log_fh = open(log_path, "w", encoding="utf-8")
-        self.log_path = log_path
-        print(f"[PageObserver] eager log: {log_path}", flush=True)
-        self._log("init")
-        page.on("request", self._on_request)
-        page.on("requestfinished", self._on_finished)
-        page.on("requestfailed", self._on_finished)
-        page.on("websocket", self._on_websocket)
-
-    def _log(self, event: str, **fields) -> None:
-        ts = time.strftime("%H:%M:%S") + f".{int(time.time() * 1000) % 1000:03d}"
-        parts = [ts, event]
-        for k, v in fields.items():
-            parts.append(f"{k}={v}")
-        self._log_fh.write(" ".join(parts) + "\n")
-        self._log_fh.flush()
-
-    def _on_request(self, req):
-        for key in self._inflight:
-            if key in req.url:
-                self._inflight[key] += 1
-                self._log("req-start", key=key, method=req.method, url=req.url)
-
-    def _on_finished(self, req):
-        for key in list(self._inflight):
-            if key in req.url:
-                self._inflight[key] = max(0, self._inflight[key] - 1)
-                self._log("req-end", key=key, method=req.method, url=req.url,
-                          inflight=self._inflight[key])
-                if self._inflight[key] == 0:
-                    still = []
-                    for k, f in self._quiet_waiters:
-                        if k == key and not f.done():
-                            f.set_result(None)
-                        else:
-                            still.append((k, f))
-                    self._quiet_waiters = still
-
-    def _on_websocket(self, ws):
-        self._log("ws-open", url=ws.url)
-        ws.on("framereceived", self._on_frame)
-        ws.on("close", lambda: self._log("ws-close", url=ws.url))
-
-    def _on_frame(self, frame):
-        try:
-            ev = _json.loads(frame)
-        except Exception:
-            self._log("frame-unparseable", n_bytes=len(frame) if frame else 0)
-            return
-        kind = ev.get("kind")
-        if kind != "board_update":
-            self._log("frame-other", kind=kind)
-            return
-        payload = ev.get("payload") or {}
-        self._last_board = payload
-        view = payload.get("view") or {}
-        self._log(
-            "board_update",
-            moves=len(payload.get("moves_san") or []),
-            editing=payload.get("editing"),
-            viewing=bool(view),
-            cursor=view.get("cursor"),
-            n_waiters=len(self._board_waiters),
-        )
-        still = []
-        for pred, fut in self._board_waiters:
-            if not fut.done() and pred(payload):
-                fut.set_result(payload)
-                self._log("predicate-matched", pred=pred.__name__)
-            else:
-                still.append((pred, fut))
-        self._board_waiters = still
-
-    def __del__(self):
-        try:
-            self._log_fh.close()
-        except Exception:
-            pass
-
-    def track(self, substr: str) -> None:
-        self._inflight.setdefault(substr, 0)
-
-    async def wait_quiet(self, substr: str) -> None:
-        self.track(substr)
-        if self._inflight[substr] == 0:
-            self._log("wait_quiet-immediate", key=substr)
-            return
-        loop = asyncio.get_running_loop()
-        fut = loop.create_future()
-        self._quiet_waiters.append((substr, fut))
-        self._log("wait_quiet-park", key=substr, inflight=self._inflight[substr])
-        await fut
-        self._log("wait_quiet-resume", key=substr)
-
-    async def wait_board_update(self, predicate):
-        """Resolve to the first board_update payload matching predicate.
-
-        Checks the last observed payload first so callers don't race."""
-        if self._last_board is not None and predicate(self._last_board):
-            self._log("wait_board_update-immediate", pred=predicate.__name__)
-            return self._last_board
-        loop = asyncio.get_running_loop()
-        fut = loop.create_future()
-        self._board_waiters.append((predicate, fut))
-        self._log("wait_board_update-park", pred=predicate.__name__,
-                  has_last=self._last_board is not None)
-        await fut
-        self._log("wait_board_update-resume", pred=predicate.__name__)
-        return fut.result()
+from .conftest import PageObserver, run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
 
 
 def _make_fake_uci(root: Path, name: str) -> str:

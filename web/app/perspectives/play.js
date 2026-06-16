@@ -1317,14 +1317,17 @@ async function onImportImpl(state) {
   }
 }
 
+function canEnterViewAtPly(state, ply) {
+  return !state.analyzing && !state.viewing && ply + 1 < state.movesPlayed;
+}
+
 // Play -> view: flip the live play game into server view mode landing at a
 // past ply. The live game is suspended server-side (no fork) so scrubbing to
 // the last ply can resume it (see resumeLivePlay). Ignores clicks on the
 // live last move (already there) and during analysis.
 async function enterViewAtPly(state, plyIndex) {
-  if (state.analyzing || state.viewing) return;
+  if (!canEnterViewAtPly(state, plyIndex)) return;
   if (state.enterViewInflight) return;  // debounce double-click (esp. eval bar)
-  if (plyIndex + 1 >= state.movesPlayed) return;  // last move = live position
   state.enterViewInflight = true;
   try {
     closeAi();
@@ -2058,7 +2061,10 @@ export const playPerspective = {
     // engine POV, fed from the server's per-ply eval_history on board_update.
     // Click an eval bar -> enter view mode at that ply (same as clicking the
     // move in the list); the handler ignores clicks on the live last move.
-    const evalBar = createEvalBar({ onBarClick: (ply) => enterViewAtPly(state, ply) });
+    const evalBar = createEvalBar({
+      onBarClick: (ply) => enterViewAtPly(state, ply),
+      isBarNavigable: (ply) => canEnterViewAtPly(state, ply),
+    });
     const sideRail = sideHost.querySelector(".game-view-side");
     const movesSection = sideRail?.querySelector(".game-view-moves");
     if (movesSection) movesSection.after(evalBar.el);
