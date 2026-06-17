@@ -74,10 +74,10 @@ export function tournamentUxLabel() {
   return UX_LABEL[getTournamentUx()];
 }
 
-// Read the persisted UX mode; anything unrecognized falls back to Arena.
+// Read the persisted UX mode; anything unrecognized falls back to Studio.
 export function getTournamentUx() {
   const v = loadRaw(STORAGE_KEY.TOURNAMENT_UX);
-  return v === TOURNAMENT_UX.STUDIO ? TOURNAMENT_UX.STUDIO : TOURNAMENT_UX.ARENA;
+  return v === TOURNAMENT_UX.ARENA ? TOURNAMENT_UX.ARENA : TOURNAMENT_UX.STUDIO;
 }
 
 // ---- Studio shell --------------------------------------------------------
