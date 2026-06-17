@@ -11,6 +11,7 @@
 
 import {
   AUTOSCROLL_SLACK_ROW_PX,
+  fmtMoveNo,
   fmtScore,
   isPinnedToBottom,
   isPinnedToRight,
@@ -195,7 +196,7 @@ export function createEvalBar({ onBarClick = null, isBarNavigable = null } = {})
   // pixels (= draw space), so it's scroll-independent.
   canvas.addEventListener("mousemove", (e) => {
     const s = barAt(e.offsetX);
-    canvas.title = s?.label ?? "";
+    canvas.title = s ? `${fmtMoveNo(s.ply, s.w)} ${s.label}` : "";
     if (onBarClick) canvas.style.cursor = (s && (!isBarNavigable || isBarNavigable(s.ply))) ? "pointer" : "";
   });
 

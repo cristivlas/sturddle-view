@@ -57,6 +57,11 @@ export function fmtScore(score, { empty = "", matePrefix = "#", signed = false }
   return empty;
 }
 
+// Move-number prefix for a 0-based ply: "12." for white, "12..." for black.
+export function fmtMoveNo(ply, isWhite) {
+  return `${Math.floor(ply / 2) + 1}${isWhite ? "." : "..."}`;
+}
+
 // Humanize a count (nodes, nps): >=1M as "1.20M", >=1K as "12K", else raw.
 // null/undefined -> "" so callers can blank a missing field.
 export function fmtCount(n) {

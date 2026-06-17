@@ -8,7 +8,7 @@ import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
 import { SIDE, FEN_STM } from "./chess-consts.js";
-import { fmtClock, fmtCount, fmtScore, rafCoalesce, selectContentsOnCtrlA } from "./wb-utils.js";
+import { fmtClock, fmtCount, fmtMoveNo, fmtScore, rafCoalesce, selectContentsOnCtrlA } from "./wb-utils.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -98,7 +98,7 @@ function renderMoveList(el, sanList, {
 
     const num = document.createElement("span");
     num.className = "move-num";
-    num.textContent = `${Math.floor(i / 2) + 1}.`;
+    num.textContent = fmtMoveNo(i, true);
     row.append(num);
 
     const white = makeCell(sanList[i], i);
