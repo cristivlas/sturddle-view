@@ -789,14 +789,29 @@ function refreshWatchButtons(ctx) {
 // Min/restore both reflow the grid (reverting the split if this was the
 // maximized board), repaint the tray, and persist the open-board set.
 function wireBoardHooks(ctx, wb) {
-  wb.onmaximize = () => maximizeBoard(ctx, wb);
-  const onChange = () => {
-    if (wb === ctx._maxWb) restoreBoard(ctx, !ctx._restoreViaGrip); else regridBoards(ctx);
-    renderTray(ctx);
-    saveBoards(ctx);
+  // No tray change on maximize, so persist without the renderTray repaint.
+  wb.onmaximize = () => { maximizeBoard(ctx, wb); saveBoards(ctx); };
+  const repaint = () => { renderTray(ctx); saveBoards(ctx); };
+  // Minimizing a maximized board stashes the intent (WinBox clears wb.max) and
+  // reverts the split; the chip then restores it straight back to maximized.
+  wb.onminimize = () => {
+    if (wb === ctx._maxWb) { wb._wasMax = true; restoreBoard(ctx); } else regridBoards(ctx);
+    repaint();
   };
-  wb.onminimize = onChange;
-  wb.onrestore = onChange;
+  wb.onrestore = () => {
+    if (wb._wasMax) { wb._wasMax = false; remaximize(wb); }
+    else if (wb === ctx._maxWb) restoreBoard(ctx, !ctx._restoreViaGrip);
+    else regridBoards(ctx);
+    repaint();
+  };
+}
+
+// Maximize a board out of band: from onrestore, a synchronous maximize() is
+// undone by WinBox restore()'s own re-check of this.max; on reload, later board
+// opens would steal focus. The microtask (pre-paint, so no grid flash) sidesteps
+// both. focus() raises it to the foreground.
+function remaximize(wb) {
+  queueMicrotask(() => { if (wb.g) wb.maximize().focus(); });
 }
 
 // Next laid-out slot index (minimized/maximized boards don't occupy slots).
@@ -859,7 +874,7 @@ function snapshotBoards(ctx) {
     return {
       proxyId: wb._watchOpts.proxyId, gameId,
       label: wb._watchOpts.label, engineName: wb._watchOpts.engineName,
-      min: !!wb.min,
+      min: !!wb.min, max: !!(wb.max || wb._wasMax),
       ...(resolved ? { resolved } : {}),
     };
   });
@@ -888,6 +903,10 @@ function restoreBoards(ctx) {
         ? ctx.live.livePairings.get(b.proxyId)?.pairId === b.gameId
         : ctx.live.activeProxies.has(b.proxyId);
       if (live) res = openBoard(ctx, { proxyId: b.proxyId, gameId: b.gameId, label: b.label, engineName: b.engineName }, !!b.min, false);
+    }
+    if (res?.wb && b.max) {
+      // Trayed-while-maximized: chip restores to max. Visible: maximize now.
+      if (b.min) res.wb._wasMax = true; else remaximize(res.wb);
     }
     if (res?.wb?._ready) opened.push(res.wb._ready);
   }
