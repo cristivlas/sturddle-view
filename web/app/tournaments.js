@@ -584,6 +584,7 @@ async function openInfoDialog(ctx, t) {
     label: detailed.name,
     width: "520px",
     body: (resolve, dialog) => {
+      dialog.classList.add("tournament-info-dialog");
       const wrap = document.createElement("div");
       wrap.className = "tournament-info";
       wrap.appendChild(buildInfoContent(ctx, detailed));
