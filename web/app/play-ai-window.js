@@ -464,13 +464,18 @@ export function appendAiToolCall({
       freezeThinkingLabel(entry, thinkingMs);
       container = entry.tools;
     }
+    // Dot/label/arrow live in a nowrap head that scrolls horizontally,
+    // so a long label never wraps the arrow onto its own line.
+    const head = document.createElement("div");
+    head.className = "play-ai-tool-head";
+    line.append(head);
     const dot = document.createElement("span");
     dot.className = `play-ai-tool-dot play-ai-tool-dot-${name}`;
-    line.append(dot);
+    head.append(dot);
     const label = document.createElement("span");
     label.className = "play-ai-tool-label";
     label.textContent = friendlyToolLabel(name, input);
-    line.append(label);
+    head.append(label);
     const args = formatToolArgs(input);
     const raw = args ? `${name}(${args})` : `${name}()`;
     const toggle = document.createElement("span");
@@ -478,7 +483,7 @@ export function appendAiToolCall({
     // One glyph, rotated via CSS when open -- guarantees the open/closed
     // caret are identical size (the unicode triangles aren't).
     toggle.textContent = "▶";
-    line.append(toggle);
+    head.append(toggle);
     const details = document.createElement("div");
     details.className = TOOL_DETAILS_BODY_CLASS;
     details.hidden = true;

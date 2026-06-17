@@ -473,6 +473,18 @@ wa-select::part(listbox) {
      .play-ai-tool-children) to the parent dot, not to the children box. */
   position: relative;
 }
+/* Dot + label + arrow stay on one line and scroll horizontally rather than
+   wrapping the arrow below a long label. Full-width so details/children
+   (flex-basis 100%) still break onto their own lines beneath it. */
+.play-ai-tool-head {
+  flex: 1 1 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
 .play-ai-tool-dot {
   width: 8px;
   height: 8px;
@@ -529,22 +541,18 @@ wa-select::part(listbox) {
   min-width: 0;  /* allow the details <pre> to shrink + scroll */
   font-size: 1em;
 }
-/* Short horizontal elbow from the spine into each child dot. Anchored to
-   the DOT's vertical center (50% of the fixed-size dot), not the row's --
-   so an expanded details <pre> growing the row height can't drop it. */
-.play-ai-tool-children .play-ai-tool-dot {
-  position: relative;
-}
-.play-ai-tool-children .play-ai-tool-dot::before {
+/* Short horizontal elbow from the spine into each child dot. Drawn on the
+   child ROW (not the dot) so it sits outside the head's overflow-x clip;
+   anchored to top:8px (dot center) so an expanded details <pre> growing the
+   row height can't drop it. Spans from the spine to the dot's left edge.
+   Uses ::after so a nested delegate row's spine (::before) can't collide. */
+.play-ai-tool-children .play-ai-tool-call::after {
   content: "";
   position: absolute;
-  /* Elbow from the spine (at row x=3px, i.e. 15px left of the child dot's
-     left edge) into each child dot center. */
-  right: 100%;
-  top: 50%;
+  top: 8px;       /* child dot center, matches the spine convention */
+  left: calc(3px - var(--tool-nest-indent));  /* spine x minus the nest indent */
   width: 15px;
   height: 2px;
-  transform: translateY(-50%);
   background: var(--wa-color-cyan-60, #0ea5b5);
   opacity: 0.6;
 }
@@ -566,7 +574,7 @@ wa-select::part(listbox) {
   text-decoration: line-through;
 }
 .play-ai-tool-label {
-  /* Stay on one line; the row scrolls horizontally if needed. */
+  /* Stay on one line; the head scrolls horizontally if needed. */
   white-space: nowrap;
 }
 .play-ai-tool-toggle {
