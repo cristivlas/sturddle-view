@@ -4164,7 +4164,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-livegame .lg-result-termination {
   font-size: 0.875em;
   margin-top: 0.25em;
-  min-height: 1.2em;   /* reserve one line so empty banner matches filled */
+  min-height: 1.4em;   /* one inherited line (body line-height 1.4) so empty == filled */
   color: var(--muted);
   text-transform: lowercase;
 }
