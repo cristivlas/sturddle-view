@@ -3357,6 +3357,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   height: var(--wb-min-footer-h); max-width: 220px;
   background: var(--chip-bg, var(--nav-btn-bg)); color: var(--fg);
   border: 1px solid var(--wb-outline);
+  user-select: none;
 }
 .studio-tray-chip + .studio-tray-chip { margin-left: -1px; }
 .studio-tray-chip-title {
