@@ -100,6 +100,10 @@ function resultBadge(result) {
   return result === RESULT.DRAW ? "½-½" : result;
 }
 
+// Title on the eval strip's panel header (dock-panel style) + its tooltip.
+const EVAL_PANEL_TITLE = "Engine Eval";
+const EVAL_PANEL_TOOLTIP = "Evaluation from the engine's point of view";
+
 // eval_history entries are white POV {cp|mate}; flip for a black engine.
 function evalToEnginePov(ev, engineWhite) {
   if (engineWhite) return ev;
@@ -114,8 +118,8 @@ function evalToEnginePov(ev, engineWhite) {
 function feedEvalBar(state, evalHistory) {
   const bar = state.evalBar;
   if (!bar) return;
-  // Engine evals are a play-mode concept; hide the strip while viewing.
-  bar.el.style.display = state.viewing ? "none" : "";
+  // Engine evals are a play-mode concept; hide the panel while viewing.
+  state.evalPanel.style.display = state.viewing ? "none" : "";
   const engineWhite = !state.humanWhite;
   // Carry each entry's ply (0-based move index) so a bar click can navigate
   // there; human plies are null and produce no bar.
@@ -2089,12 +2093,22 @@ export const playPerspective = {
       onBarClick: (ply) => enterViewAtPly(state, ply),
       isBarNavigable: (ply) => canEnterViewAtPly(state, ply),
     });
+    // Wrap in a dock-panel-style titled panel; positionSideRail places the
+    // panel and the bar fills the area below its header.
+    const evalPanel = document.createElement("div");
+    evalPanel.className = "game-view-eval-panel";
+    const evalTitle = document.createElement("div");
+    evalTitle.className = "game-view-eval-title";
+    evalTitle.textContent = EVAL_PANEL_TITLE;
+    evalTitle.title = EVAL_PANEL_TOOLTIP;
+    evalPanel.append(evalTitle, evalBar.el);
     const sideRail = sideHost.querySelector(".game-view-side");
     const movesSection = sideRail?.querySelector(".game-view-moves");
-    if (movesSection) movesSection.after(evalBar.el);
-    else sideRail?.appendChild(evalBar.el);
+    if (movesSection) movesSection.after(evalPanel);
+    else sideRail?.appendChild(evalPanel);
     evalBar.setVisible(true);
     state.evalBar = evalBar;
+    state.evalPanel = evalPanel;
 
     const commentsHost = root.querySelector(".play-comments-host");
     state.el.commentsHost = commentsHost;

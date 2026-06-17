@@ -329,18 +329,18 @@ function positionSideRail(ctx, geom) {
   const { grid, gapW, railW, leftEmpty, rem, mobile } = geom;
   const sideHost = grid.querySelector(".play-side-host");
   if (!sideHost) return;
-  const evalBar = sideHost.querySelector(".game-view-eval-bar");
+  const evalPanel = sideHost.querySelector(".game-view-eval-panel");
   if (mobile) {
     sideHost.style.removeProperty("height");
     sideHost.style.removeProperty("margin-top");
     sideHost.style.removeProperty("left");
     sideHost.style.removeProperty("top");
     sideHost.style.removeProperty("width");
-    if (evalBar) {
-      evalBar.style.removeProperty("left");
-      evalBar.style.removeProperty("top");
-      evalBar.style.removeProperty("width");
-      evalBar.style.removeProperty("height");
+    if (evalPanel) {
+      evalPanel.style.removeProperty("left");
+      evalPanel.style.removeProperty("top");
+      evalPanel.style.removeProperty("width");
+      evalPanel.style.removeProperty("height");
     }
     return;
   }
@@ -371,21 +371,21 @@ function positionSideRail(ctx, geom) {
   sideHost.style.width = `${width}px`;
   sideHost.style.height = `${height}px`;
   sideHost.style.removeProperty("margin-top");
-  // Eval strip is purely additive: a fixed band under the moves box (same
+  // Eval panel is purely additive: a fixed band under the moves box (same
   // x as the rail) filling the gap from the board bottom down to the clock
   // bottom. It never joins the rail's flex flow, so the moves list keeps
   // its exact geometry.
-  if (evalBar) {
+  if (evalPanel) {
     const boardBottom = Math.floor(boardRect.bottom);
     const clockRow = ctx.clockBottomRow;
     const barBottom = clockRow && clockRow.offsetParent !== null
       ? Math.floor(clockRow.getBoundingClientRect().bottom)
       : boardBottom;
     const barTop = boardBottom + COL_SIBLING_GAP_PX;
-    evalBar.style.left = `${left}px`;
-    evalBar.style.top = `${barTop}px`;
-    evalBar.style.width = `${width}px`;
-    evalBar.style.height = `${Math.max(0, barBottom - barTop)}px`;
+    evalPanel.style.left = `${left}px`;
+    evalPanel.style.top = `${barTop}px`;
+    evalPanel.style.width = `${width}px`;
+    evalPanel.style.height = `${Math.max(0, barBottom - barTop)}px`;
   }
 }
 
