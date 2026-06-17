@@ -24,6 +24,8 @@ import {
 const CLAMP_CP = 750;
 const BAR_THICKNESS_PX = 23;
 const BAR_GAP_PX = 1;
+// Play strip only: floor on bar length so near-zero evals still show a nub.
+const BAR_MIN_LEN_PX = 3;
 const COLOR_WHITE_BAR = "#e8e8e8";
 const COLOR_BLACK_BAR = "#111";
 const COLOR_BLACK_BAR_EDGE = "#777"; // outline so black bars read on dark bg
@@ -189,6 +191,10 @@ export function createEvalBar({ onBarClick = null, isBarNavigable = null } = {})
   let stickToRight = false; // force-scroll to newest on next draw (reveal)
   const rig = createCanvasWidget("game-view-eval-bar", { onReveal: () => { stickToRight = true; } });
   const { el, canvas, ctx } = rig;
+  // One fill for every bar: the engine's side is constant per game (and
+  // shown on the board), so color is spent on contrast, not on side.
+  const barFill = getComputedStyle(document.documentElement)
+    .getPropertyValue("--accent-line").trim() || COLOR_WHITE_BAR;
 
   const barAt = (offsetX) => samples[Math.floor(offsetX / BAR_THICKNESS_PX)];
 
@@ -224,16 +230,11 @@ export function createEvalBar({ onBarClick = null, isBarNavigable = null } = {})
     for (let i = 0; i < samples.length; i++) {
       const s = samples[i];
       const frac = Math.max(-1, Math.min(1, s.cp / CLAMP_CP));
-      const bl = Math.max(1, Math.abs(frac) * (mid - 1));
+      const bl = Math.max(BAR_MIN_LEN_PX, Math.abs(frac) * (mid - 1));
       const x = i * BAR_THICKNESS_PX;
       const y = frac >= 0 ? mid - bl : mid; // grow up when engine is ahead
-      ctx.fillStyle = s.w ? COLOR_WHITE_BAR : COLOR_BLACK_BAR;
+      ctx.fillStyle = barFill;
       ctx.fillRect(x, y, bw, bl);
-      if (!s.w) {
-        ctx.strokeStyle = COLOR_BLACK_BAR_EDGE;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x + 0.5, y + 0.5, Math.max(1, bw - 1), Math.max(1, bl - 1));
-      }
     }
     if (pinned || stickToRight) {
       stickToRight = false;
