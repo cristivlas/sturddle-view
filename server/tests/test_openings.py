@@ -171,6 +171,120 @@ def test_lookup_stops_at_malformed_uci_returning_best_so_far():
     assert "Caro-Kann" in hit.name
 
 
+# --- family_of / by_family ------------------------------------------------
+
+
+def test_family_of_splits_at_colon():
+    assert OpeningBook.family_of("Sicilian Defense: Najdorf Variation") == "Sicilian Defense"
+    # Sub-variation after the colon keeps the family before it.
+    assert (
+        OpeningBook.family_of("Slav Defense: Exchange Variation, Trifunovic Variation")
+        == "Slav Defense"
+    )
+
+
+def test_family_of_no_colon_is_own_family():
+    assert OpeningBook.family_of("Caro-Kann Defense") == "Caro-Kann Defense"
+
+
+def test_family_of_strips_whitespace():
+    assert OpeningBook.family_of("  Sicilian Defense :  Najdorf  ") == "Sicilian Defense"
+
+
+def test_by_family_groups_variations():
+    book = OpeningBook.load()
+    rows = book.by_family("Caro-Kann Defense")
+    assert rows, "expected Caro-Kann variations in the vendored dataset"
+    # Every row shares the family, and the bare line is among them.
+    assert all(OpeningBook.family_of(o.name) == "Caro-Kann Defense" for o in rows)
+    assert any(o.name == "Caro-Kann Defense" for o in rows)
+    # The family has named sub-variations, not just the bare line.
+    assert any(":" in o.name for o in rows)
+
+
+def test_by_family_accepts_full_variation_name():
+    """A full 'Family: Variation' name selects the whole family, same as
+    passing the family alone."""
+    book = OpeningBook.load()
+    by_family = {o.name for o in book.by_family("Caro-Kann Defense")}
+    by_variation = {
+        o.name for o in book.by_family("Caro-Kann Defense: Advance Variation")
+    }
+    assert by_family == by_variation
+
+
+def test_by_family_is_case_insensitive():
+    book = OpeningBook.load()
+    lower = {o.name for o in book.by_family("caro-kann defense")}
+    canonical = {o.name for o in book.by_family("Caro-Kann Defense")}
+    assert lower == canonical and lower
+
+
+def test_by_family_limit_caps_results():
+    book = OpeningBook.load()
+    # Sicilian is large; a small limit must cap the row count.
+    capped = book.by_family("Sicilian Defense", limit=3)
+    assert len(capped) == 3
+    full = book.by_family("Sicilian Defense")
+    assert len(full) > 3, "expected the Sicilian family to exceed the cap"
+
+
+def test_by_family_preserves_all_order():
+    """by_family is a filter over all(), so it keeps the (eco, name) order."""
+    book = OpeningBook.load()
+    rows = book.by_family("Sicilian Defense")
+    keys = [(o.eco, o.name) for o in rows]
+    assert keys == sorted(keys)
+
+
+def test_by_family_unknown_returns_empty():
+    book = OpeningBook.load()
+    assert book.by_family("Not A Real Opening Family") == []
+
+
+# --- nearest (move-tree proximity ranking) --------------------------------
+
+
+def test_nearest_surfaces_relevant_lines_over_sidelines():
+    """For 1.e4 c5 2.Nf3 d6 every result is a genuine neighbor of the played
+    line (shares the 1.e4 c5 2.Nf3 stem) -- the immediate move-3 branches.
+    The 2.x sidelines (Bowdler/Amazon, sharing only 2 plies) must not crowd
+    them out -- the alphabetical-slice bug this ranking replaced."""
+    book = OpeningBook.load()
+    line = ["e2e4", "c7c5", "g1f3", "d7d6"]
+    rows = book.nearest(line, limit=8)
+    names = [o.name for o in rows]
+    assert not any(("Bowdler" in n or "Amazon" in n) for n in names), names
+    assert all(o.moves[:3] == tuple(line[:3]) for o in rows), names
+
+
+def test_nearest_top_shares_the_full_line():
+    """The closest opening starts with the played moves (shared prefix =
+    the whole current line)."""
+    book = OpeningBook.load()
+    line = ["e2e4", "c7c5", "g1f3", "d7d6"]
+    rows = book.nearest(line, limit=8)
+    assert rows
+    assert rows[0].moves[: len(line)] == tuple(line)
+
+
+def test_nearest_family_filter_restricts_pool():
+    book = OpeningBook.load()
+    line = ["e2e4", "c7c5", "g1f3", "d7d6"]  # a Sicilian line
+    rows = book.nearest(line, family="Caro-Kann Defense", limit=5)
+    assert rows
+    assert all(OpeningBook.family_of(o.name) == "Caro-Kann Defense" for o in rows)
+
+
+def test_nearest_empty_line_falls_back_to_shortest():
+    book = OpeningBook.load()
+    rows = book.nearest([], limit=3)
+    assert len(rows) == 3
+    # No proximity signal -> fundamental-first (non-decreasing ply).
+    plies = [o.ply for o in rows]
+    assert plies == sorted(plies)
+
+
 def test_real_game_pgn_identifies_correct_opening_via_transposition():
     """Witness fixture: a real game played 2026-05-22 reached the D14
     Slav Exchange Trifunovic position via an Indian Defense move order

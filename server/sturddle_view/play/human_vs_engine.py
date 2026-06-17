@@ -224,6 +224,11 @@ class HumanVsEngine:
         # so plain "new game" and import-on-top never carry a stale link
         # forward; play_from_here re-stashes after new_game returns.
         self._fork_link: tuple[str, int] | None = None
+        # Live play game suspended by /view/start, kept in memory so the
+        # client can resume the SAME game (no fork) when it scrubs back to
+        # the last ply. Set only by view/start; cleared by enter_view_mode
+        # (so import/edit-commit don't offer a stale resume) and on resume.
+        self._suspended_play: GameState | None = None
         self._tb: TablebaseProber | None = None
         self._lock = asyncio.Lock()
 
@@ -514,6 +519,9 @@ class HumanVsEngine:
             # re-stashes after new_game returns; all other paths
             # (plain new game, import-on-top) start link-free.
             self._fork_link = None
+            # A fresh game replaces whatever /view/start suspended; drop it
+            # so a later view entry can't resume a game that no longer exists.
+            self._suspended_play = None
             self._ensure_tablebase()
             engine = await self._ensure_engine()
             engine.send_line("ucinewgame")
@@ -920,13 +928,16 @@ class HumanVsEngine:
         game_id: str | None = None,
         fork_link: tuple[str, int] | None = None,
         land_at_ply: int | None = None,
+        suspend_play: bool = False,
     ) -> str:
         """Load a PGN-imported game into view mode at the LAST ply.
 
         Replaces any active live game (the autosave file preserves it for
         future load-from-history). No clocks tick, no engine thinks, no
         autosave fires. Navigation is via view_first/back/forward/last.
-        Exit via play_from_here, which seeds a fresh play game.
+        Exit via play_from_here (seeds a fresh play game), or -- when
+        ``suspend_play`` stashed the live game -- resume_play (same game,
+        no fork).
 
         ``game_id`` is an opaque server-side identity for the loaded
         content. When the caller has one (e.g. import path found the
@@ -954,6 +965,15 @@ class HumanVsEngine:
             # so play -> view -> edit -> annotate can record it on
             # commit.
             self._fork_link = fork_link
+            # Suspend the live play game for a no-fork resume (view/start
+            # only); every other entry (import, edit-commit) drops any stale
+            # suspend so it can't offer a bogus resume. Captured here while
+            # self._board still holds the live play position (replaced below).
+            self._suspended_play = (
+                self._game_state_snapshot(live_clocks=True)
+                if suspend_play and self._board is not None and not self._viewing
+                else None
+            )
             try:
                 start_board = board_from(params.start_fen)
             except ValueError as e:
@@ -1368,6 +1388,31 @@ class HumanVsEngine:
             self._fork_link = (parent_game_id, fork_ply)
         return new_id
 
+    async def resume_play(self) -> str:
+        """Exit view mode back into the SAME play game suspended by
+        /view/start -- no fork, original game_id/clocks/engine restored.
+
+        Raises RuntimeError when there is nothing to resume (not viewing,
+        or the view session didn't originate from /view/start)."""
+        async with self._lock:
+            if not (self._mode & Op.PLAY_FROM_HERE._mask):
+                raise ModeConflictError(self._mode, Op.PLAY_FROM_HERE)
+            state = self._suspended_play
+            if state is None:
+                raise RuntimeError("no suspended play game to resume")
+            self._suspended_play = None
+            await self._cancel_analysis()
+            await self._cancel_think()
+            await self._cancel_tick()
+            self._reset_view_state()
+            # restore_from sets the mode (PLAY, or PAUSED if it was paused on
+            # entry), rebuilds the live board/clock, and leaves the tick
+            # stopped; republish_state (below) starts ticking + kicks the
+            # engine if it's its turn -- mirrors the server-boot resume path.
+            self.restore_from(state)
+        await self.republish_state()
+        return self._game_id
+
     async def apply_engine_settings_live(self) -> None:
         """Force the play engine to respawn so the latest options/args/env
         and global defaults take effect on the next move.
@@ -1428,6 +1473,37 @@ class HumanVsEngine:
 
     # ----- persistence -----
 
+    def _game_state_snapshot(self, *, live_clocks: bool = False) -> GameState:
+        """Build a GameState from the live play game. Call under self._lock
+        with a live (non-view) game set up. Shared by _persist (disk) and
+        view/start (in-memory suspend for no-fork resume).
+
+        ``live_clocks``: debit the in-progress turn's elapsed time so the
+        captured clocks are the live remaining, not the banked total. Used by
+        the suspend path -- otherwise scrubbing back mid-turn would refund the
+        time already spent on the move. _persist banks at move boundaries so
+        it keeps the default (banked) reading."""
+        wt, bt = self._clock.white_time, self._clock.black_time
+        if live_clocks:
+            stm, over = self._board.turn, self._board.is_game_over()
+            wt = self._clock.remaining(chess.WHITE, stm=stm, game_over=over)
+            bt = self._clock.remaining(chess.BLACK, stm=stm, game_over=over)
+        return GameState(
+            game_id=self._game_id,
+            human_white=self._human_white,
+            tc_initial_seconds=self._clock.tc.initial_seconds,
+            tc_increment_seconds=self._clock.tc.increment_seconds,
+            white_time=wt,
+            black_time=bt,
+            paused=self._paused,
+            moves_uci=[m.uci() for m in self._board.move_stack],
+            clock_history=[[w, b] for (w, b) in self._clock.history],
+            eval_history=list(self._eval_history),
+            start_fen=self._start_fen,
+            game_started_wall=self._game_started_wall,
+            player_name=self._player_name,
+        )
+
     async def _persist(self) -> None:
         """Snapshot the active game to disk. Call under self._lock.
 
@@ -1440,21 +1516,7 @@ class HumanVsEngine:
             return
         if self._viewing:
             return  # view sessions aren't persisted; the source PGN is on disk
-        state = GameState(
-            game_id=self._game_id,
-            human_white=self._human_white,
-            tc_initial_seconds=self._clock.tc.initial_seconds,
-            tc_increment_seconds=self._clock.tc.increment_seconds,
-            white_time=self._clock.white_time,
-            black_time=self._clock.black_time,
-            paused=self._paused,
-            moves_uci=[m.uci() for m in self._board.move_stack],
-            clock_history=[[w, b] for (w, b) in self._clock.history],
-            eval_history=list(self._eval_history),
-            start_fen=self._start_fen,
-            game_started_wall=self._game_started_wall,
-            player_name=self._player_name,
-        )
+        state = self._game_state_snapshot()
         try:
             await asyncio.to_thread(self._store.save, state)
         except Exception:
@@ -1870,6 +1932,10 @@ class HumanVsEngine:
             "comment": comment_at_cursor,
             "has_comment": has_any_comment,
             "game_over": game_over,
+            # True when this view session can flip back to the SAME play game
+            # (entered via /view/start). Drives the client's auto-resume at
+            # the last ply (no play-from-here fork).
+            "resumable": self._suspended_play is not None,
             "view_hash": self._view_hash,
             "view_summary": self._view_summary,
             **self._comment_nav(self._view_cursor),
@@ -1881,9 +1947,13 @@ class HumanVsEngine:
         if self._viewing:
             moves_san = self._view_moves_san()
             view_payload = self._view_payload()
+            eval_history = None  # view mode ships eval per-cursor in view_payload
         else:
             moves_san = _moves_san(self._board, self._start_fen)
             view_payload = None
+            # Per-ply engine eval (white POV, None on human plies). Drives the
+            # Play eval strip; the client maps to engine POV.
+            eval_history = list(self._eval_history)
         return Event(
             kind=EVT_BOARD_UPDATE,
             game_id=self._game_id,
@@ -1906,6 +1976,7 @@ class HumanVsEngine:
                 "analyzing": self._analysis_mode,
                 "editing": self._editing,
                 "view": view_payload,
+                "eval_history": eval_history,
             },
         )
 

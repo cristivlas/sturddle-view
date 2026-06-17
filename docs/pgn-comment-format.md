@@ -18,7 +18,8 @@ Sicilian..."`. On the `f4` ply there is no `eval/depth` prefix, so the
 trailing `3.2s` is *not* matched by that regex; the bare-time regex
 (`_CUTECHESS_TIME_ONLY_RE`) is anchored to require the whole comment
 to be a time token, so it also doesn't fire. The `3.2s` leaks into
-the user-visible string: `"Good move! 3.2s"`.
+the user-visible string: `"Good move! 3.2s"`. (Now mitigated on import --
+see "Shipped band-aid" below; the emit-side rewrite remains tabled.)
 
 ## Why heuristic detection on import is fragile
 
@@ -133,10 +134,15 @@ Half a day's focused work if decisions above are pre-made. 1-2 days
 if surprises in `canonical_hash`, the tournament pipeline, or the
 view-mode clock reconstruction need real attention.
 
-## Until we do this
+## Shipped band-aid (import side only)
 
-The bare-time leak in `{ Good move! 3.2s }`-style comments stays
-visible. Users see machine tokens at the tail of some imported
-comments. Cosmetic, not data-losing -- the eval extraction path is
-unaffected (it reads `[%eval]` bracket tags and the `eval/depth`
-cutechess token, not the bare time).
+The bare-time leak in `{ Good move! 3.2s }`-style comments is now stripped
+on import by `_TRAILING_MACHINE_TIME_RE` (import_position.py): it removes a
+trailing `<decimal>s` / `<integer>ms` machine token while leaving casual
+human mentions like `took 7s` intact (humans write whole seconds without a
+decimal; the cutechess writer always emits one). This is a band-aid, not
+the rewrite -- emit still uses positional cutechess tokens, so a cutechess
+run configured to write bare-integer seconds can still leak, and the proper
+`[%clk]`/`[%eval]` emit fix above remains tabled. Eval extraction is
+unaffected (it reads `[%eval]` bracket tags and the `eval/depth` cutechess
+token, not the bare time).

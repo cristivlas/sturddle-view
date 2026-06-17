@@ -167,7 +167,7 @@ export function mountBoard({ element, onMove, styleId }) {
     style: { cssClass: s.cssClass, showCoordinates: true, pieces: { file: s.piecesFile } },
     extensions: [{ class: Markers }, { class: Arrows }, { class: PromotionDialog }],
   });
-  _installLocalSprite(board, s.piecesFile);
+  const spriteReady = _installLocalSprite(board, s.piecesFile);
   _patchAnimationsQueue(board);
 
   let myColor = COLOR.white;
@@ -185,8 +185,19 @@ export function mountBoard({ element, onMove, styleId }) {
     }
   }
 
+  // `ready` resolves once the board is fully drawn (first position snapped +
+  // sprite in). Callers gate a reveal on it so nothing shows half-built.
+  let settled = false;
+  let resolveReady;
+  const ready = new Promise((r) => { resolveReady = r; });
+  function reveal() { if (!settled) { settled = true; resolveReady(); } }
   function setPosition(fen, lastMoveUci, animate = true) {
-    board.setPosition(fen, animate);
+    const wasFirst = !settled;
+    const done = board.setPosition(fen, animate && !wasFirst);
+    if (wasFirst) {
+      settled = true;
+      Promise.all([Promise.resolve(done), spriteReady]).catch(() => {}).then(() => resolveReady());
+    }
     board.removeMarkers();
     if (lastMoveUci && lastMoveUci.length >= 4) {
       const from = lastMoveUci.slice(0, 2);
@@ -301,6 +312,7 @@ export function mountBoard({ element, onMove, styleId }) {
 
   function enterEditMode(onPositionChange, seed) {
     if (editMode) return;
+    reveal();
     editMode = true;
     editPositionChangeCb = onPositionChange ?? null;
     if (seed && seed.castling) {
@@ -383,6 +395,7 @@ export function mountBoard({ element, onMove, styleId }) {
   function isInputEnabled() { return inputEnabled; }
 
   return {
+    ready,
     setSide, setPosition, enableInput, isInputEnabled, forceResize, cancelAnimations, destroy,
     setArrow, setOpponentArrow, setRecommendArrow, clearArrows,
     enterEditMode, exitEditMode, toggleCastlingRight, getCastlingRights, getPiecePlacement,

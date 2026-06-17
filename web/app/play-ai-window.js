@@ -268,6 +268,7 @@ const TOOL_FRIENDLY_LABELS = {
   material:       "Counting material",
   delegate:       "Verifying line",
   report_line:    "Checking line",
+  related_openings: "Comparing openings",
 };
 
 // Tools whose label shows the actual move under consideration ("Considering
@@ -463,13 +464,18 @@ export function appendAiToolCall({
       freezeThinkingLabel(entry, thinkingMs);
       container = entry.tools;
     }
+    // Dot/label/arrow live in a nowrap head that scrolls horizontally,
+    // so a long label never wraps the arrow onto its own line.
+    const head = document.createElement("div");
+    head.className = "play-ai-tool-head";
+    line.append(head);
     const dot = document.createElement("span");
     dot.className = `play-ai-tool-dot play-ai-tool-dot-${name}`;
-    line.append(dot);
+    head.append(dot);
     const label = document.createElement("span");
     label.className = "play-ai-tool-label";
     label.textContent = friendlyToolLabel(name, input);
-    line.append(label);
+    head.append(label);
     const args = formatToolArgs(input);
     const raw = args ? `${name}(${args})` : `${name}()`;
     const toggle = document.createElement("span");
@@ -477,7 +483,7 @@ export function appendAiToolCall({
     // One glyph, rotated via CSS when open -- guarantees the open/closed
     // caret are identical size (the unicode triangles aren't).
     toggle.textContent = "▶";
-    line.append(toggle);
+    head.append(toggle);
     const details = document.createElement("div");
     details.className = TOOL_DETAILS_BODY_CLASS;
     details.hidden = true;
@@ -722,12 +728,15 @@ export function appendAiDelta(text, roundIndex = 0, thinkingMs = null) {
   if (!inst.body || !text) return;
   withStickyBottom(() => {
     const entry = ensureRoundPanel(inst.body, roundIndex);
+    // Freeze before stripping: thinking_ms rides the first prose delta,
+    // which may be whitespace-only. Dropping it with the whitespace loses
+    // the server duration, collapsing the label to "1s" on replay.
+    if (!entry.hasProse) freezeThinkingLabel(entry, thinkingMs);
     // Drop leading whitespace until the first non-ws char arrives;
     // prevents an empty-looking bordered box on rounds whose prose
     // starts with stray newlines from the model.
     const out = entry.hasProse ? text : text.replace(/^\s+/, "");
     if (!out) return;
-    if (!entry.hasProse) freezeThinkingLabel(entry, thinkingMs);
     entry.hasProse = true;
     entry.para.append(document.createTextNode(out));
     // Strip a leaked "Understood."-style ack opener once enough text has

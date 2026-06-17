@@ -3,13 +3,14 @@
 // Resign).
 
 import { mountGameView } from "../game-view.js";
+import { createEvalBar } from "../eval-graph.js";
 import { APP_EVT } from "../app-events.js";
 import { KIND, AI_KIND_PREFIX } from "../game-events.js";
-import { SIDE, FEN_STM } from "../chess-consts.js";
+import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
 import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
-import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, isMobileLayout } from "../play-dock-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setUciLogEngine, isMobileLayout } from "../play-dock-windows.js";
 import {
   setCommentaryDockContainer,
   setOnUserCloseCommentary,
@@ -46,9 +47,6 @@ import { getConfiguredPlayerName } from "../settings-dialog.js";
 // Tool name the AI uses to inspect hypothetical positions; the live
 // board mirrors `input.fen` while a call with this name is in flight.
 const ANALYZE_TOOL_NAME = "analyze";
-
-// Canonical chess result strings as reported by the server.
-const RESULT = { WHITE_WIN: "1-0", BLACK_WIN: "0-1", DRAW: "1/2-1/2" };
 
 // Module-scope mirror of "user has a live human-vs-engine game running"
 // so other modules (e.g. tournament Replay button) can decide whether
@@ -100,6 +98,38 @@ function _setXgameDismissed(gameId, key, value) {
 // so we derive it from who lost (only human can resign today).
 function resultBadge(result) {
   return result === RESULT.DRAW ? "½-½" : result;
+}
+
+// Title on the eval strip's panel header (dock-panel style) + its tooltip.
+const EVAL_PANEL_TITLE = "Engine Eval";
+const EVAL_PANEL_TOOLTIP = "Evaluation from the engine's point of view";
+
+// eval_history entries are white POV {cp|mate}; flip for a black engine.
+function evalToEnginePov(ev, engineWhite) {
+  if (engineWhite) return ev;
+  if (ev.mate != null) return { mate: -ev.mate };
+  if (ev.cp != null) return { cp: -ev.cp };
+  return ev;
+}
+
+// Rebuild the eval strip from the authoritative per-ply history: engine
+// plies only (human slots are null), in engine POV. Null history (view
+// mode / no game) clears it.
+function feedEvalBar(state, evalHistory) {
+  const bar = state.evalBar;
+  if (!bar) return;
+  // Engine evals are a play-mode concept; hide the panel while viewing.
+  state.evalPanel.style.display = state.viewing ? "none" : "";
+  const engineWhite = !state.humanWhite;
+  // Carry each entry's ply (0-based move index) so a bar click can navigate
+  // there; human plies are null and produce no bar.
+  const items = [];
+  if (Array.isArray(evalHistory)) {
+    evalHistory.forEach((ev, ply) => {
+      if (ev != null) items.push({ score: evalToEnginePov(ev, engineWhite), ply });
+    });
+  }
+  bar.setSamples(items, engineWhite);
 }
 
 function formatResult(payload, humanWhite) {
@@ -1291,6 +1321,51 @@ async function onImportImpl(state) {
   }
 }
 
+function canEnterViewAtPly(state, ply) {
+  return !state.analyzing && !state.viewing && ply + 1 < state.movesPlayed;
+}
+
+// Play -> view: flip the live play game into server view mode landing at a
+// past ply. The live game is suspended server-side (no fork) so scrubbing to
+// the last ply can resume it (see resumeLivePlay). Ignores clicks on the
+// live last move (already there) and during analysis.
+async function enterViewAtPly(state, plyIndex) {
+  if (!canEnterViewAtPly(state, plyIndex)) return;
+  if (state.enterViewInflight) return;  // debounce double-click (esp. eval bar)
+  state.enterViewInflight = true;
+  try {
+    closeAi();
+    // Clear gameId so the view-mode board_update (fresh game_id) isn't
+    // dropped by GameView's game_id filter; restore from the response.
+    state.view.setGameId(null);
+    // suspend:true holds the live game for a no-fork resume at the last ply.
+    const r = await state.ctx.api(
+      "POST", "/game/view/start", { land_at_ply: plyIndex + 1, suspend: true },
+    );
+    if (r?.game_id) state.view.setGameId(r.game_id);
+  } catch (e) {
+    reportError(state.ctx, MSG.OPEN_GAME_FAILED, e);
+  } finally {
+    state.enterViewInflight = false;
+  }
+}
+
+// View -> play: resume the SAME suspended play game (no fork). Fired when a
+// resumable view session scrubs to its last ply (see handleBusEvent).
+async function resumeLivePlay(state) {
+  if (state.resumeInflight) return;  // debounce racing board_updates
+  state.resumeInflight = true;
+  try {
+    state.view.setGameId(null);
+    const r = await state.ctx.api("POST", "/game/view/resume-play", {});
+    if (r?.game_id) state.view.setGameId(r.game_id);
+  } catch (e) {
+    reportError(state.ctx, MSG.RESUME_FAILED, e);
+  } finally {
+    state.resumeInflight = false;
+  }
+}
+
 async function onPlayFromHereImpl(state) {
   if (state.playFromHereInflight) return;  // debounce double-click
   state.playFromHereInflight = true;
@@ -1396,12 +1471,32 @@ function showAnalysisToastImpl(state) {
 // POST start + restore panels + toast + open/reset AI panel. Shared by the
 // analyze toggle and the re-analyze button so the two paths can't drift.
 // openAi() before resetAi(): resetAi sets the spinner and no-ops when null.
+// Resolve the analysis engine's display name, mirroring the server's
+// resolve_analysis: the pinned analysis_engine_id, else the active engine.
+async function resolveAnalysisEngineName(state) {
+  const [s, e] = await Promise.all([
+    state.ctx.api("GET", "/settings"),
+    state.ctx.api("GET", "/engines"),
+  ]);
+  const engines = e.engines || [];
+  const id = s.analysis_engine_id || e.selected_id;
+  // Server falls back to the selected engine when the pinned id is gone.
+  const eng = engines.find((x) => x.id === id)
+    || engines.find((x) => x.id === e.selected_id);
+  return eng?.name || "";
+}
+
 async function startAnalysisFromUiImpl(state) {
   // Engine-only analysis: close any leftover AI panel from a prior AI run
   // before starting, so the dock shows engine-only output. Done first so
   // the close can't race the new analysis state.
   if (!state.aiEnabled && isAiOpen()) closeAi();
   await state.ctx.api("POST", "/game/analysis/start", {});
+  // Name the UCI Log after the analysis engine (may differ from the play
+  // engine). Async + best-effort so it can't delay or fail the start.
+  resolveAnalysisEngineName(state)
+    .then((n) => { if (state.analyzing) setUciLogEngine(n); })
+    .catch(() => {});
   restoreViewAnalysisWindows(state.ctx.events);
   state.aiShared.turnFinished = false;
   showAnalysisToastImpl(state);
@@ -1625,10 +1720,23 @@ function handleBusEvent(state, ai, aiCtx, evt) {
           // fetchXgameInfo then repopulates and re-renders.
           resetXgame(state);
           fetchXgameInfo(state, state.viewingGameId);
+          // New view session: require visiting an earlier ply before the
+          // last-ply auto-resume can fire (the landing event itself must not
+          // self-trigger).
+          state.viewReachedNonLast = false;
         }
         state.viewCursor = v.cursor ?? 0;
         state.viewTotalPlies = v.total_plies ?? 0;
         state.viewGameOver = !!v.game_over;
+        // Auto-return to the SAME play game (no fork) when a resumable
+        // session (entered via /view/start on the live game) scrubs to the
+        // last ply. The viewReachedNonLast gate (set only when cursor was
+        // earlier than the end) keeps the landing event from self-firing.
+        if (state.viewCursor < state.viewTotalPlies) state.viewReachedNonLast = true;
+        if (v.resumable && state.viewReachedNonLast
+            && state.viewCursor === state.viewTotalPlies) {
+          resumeLivePlay(state);
+        }
         state.lastViewComment = v.comment ?? null;
         _viewingHash = v.view_hash ?? null;
         _viewingSummary = v.view_summary ?? null;
@@ -1654,8 +1762,12 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         state.resignAvailable = false;
         // Board is read-only in view mode; the user navigates via ribbon.
         state.view.setEnabled(false);
-        // Restore the user's prior flip preference on entry into view mode.
-        if (!wasViewing) state.view.setHumanWhite(!state.viewFlipped);
+        // On entry: a resumable scrub of the live play game keeps the
+        // player's own POV (don't rotate a black player to white's side);
+        // an imported game has no "human", so use the view flip preference.
+        if (!wasViewing) {
+          state.view.setHumanWhite(v.resumable ? state.humanWhite : !state.viewFlipped);
+        }
       } else {
         state.lastViewComment = null;
         _viewingHash = null;
@@ -1684,6 +1796,8 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         state.humanWhite = evt.payload.human_white;
       }
       if (evt.payload.turn) state.turn = evt.payload.turn;
+      // humanWhite is settled above; rebuild the eval strip in engine POV.
+      feedEvalBar(state, evt.payload.eval_history);
       if (typeof evt.payload.analyzing === "boolean") {
         setAnalyzing(state, evt.payload.analyzing);
         // Don't re-enable interactivity in view mode regardless of
@@ -1703,6 +1817,10 @@ function handleBusEvent(state, ai, aiCtx, evt) {
           showAnalysisToastImpl(state);
         }
       }
+      // Title the UCI Log with the engine whose traffic it shows. The
+      // analysis engine is named at analysis start; here we cover the play
+      // engine (or bare when none, e.g. viewing an imported game).
+      if (!state.analyzing) setUciLogEngine(evt.payload.engine_name || "");
       state.el.boardHost.classList.remove("board-idle");
       setDisabled(state.el.newGameBtn, false);
       refreshButtons(state);
@@ -1771,6 +1889,9 @@ export const playPerspective = {
       commentNavPrev: null,
       commentNavNext: null,
       playFromHereInflight: false,
+      resumeInflight: false,
+      enterViewInflight: false,
+      viewReachedNonLast: false,
       reanalyzeInFlight: false,
       aiEnabled: false,
       aiTitleModel: "",
@@ -1920,6 +2041,9 @@ export const playPerspective = {
       // Click on a move in the list (view mode only) → jump cursor to
       // the position AFTER that move, i.e. ply = plyIndex + 1.
       onMoveJump: (plyIndex) => doViewNav(state, "/game/view/goto", { ply: plyIndex + 1 }),
+      // Click a past move in PLAY mode → flip into server view mode at that
+      // ply. Scrubbing to the live game's last ply auto-returns to play.
+      onPlayMoveClick: (plyIndex) => enterViewAtPly(state, plyIndex),
       // Fork glyphs. Fresh map per render; both child-here (this game
       // has forks at this ply) and own-fork-ply (this game itself
       // diverged from its parent here) get a glyph.
@@ -1960,6 +2084,31 @@ export const playPerspective = {
       },
     });
     state.view = view;
+
+    // Horizontal eval strip under the moves list: one bar per engine ply,
+    // engine POV, fed from the server's per-ply eval_history on board_update.
+    // Click an eval bar -> enter view mode at that ply (same as clicking the
+    // move in the list); the handler ignores clicks on the live last move.
+    const evalBar = createEvalBar({
+      onBarClick: (ply) => enterViewAtPly(state, ply),
+      isBarNavigable: (ply) => canEnterViewAtPly(state, ply),
+    });
+    // Wrap in a dock-panel-style titled panel; positionSideRail places the
+    // panel and the bar fills the area below its header.
+    const evalPanel = document.createElement("div");
+    evalPanel.className = "game-view-eval-panel";
+    const evalTitle = document.createElement("div");
+    evalTitle.className = "game-view-eval-title";
+    evalTitle.textContent = EVAL_PANEL_TITLE;
+    evalTitle.title = EVAL_PANEL_TOOLTIP;
+    evalPanel.append(evalTitle, evalBar.el);
+    const sideRail = sideHost.querySelector(".game-view-side");
+    const movesSection = sideRail?.querySelector(".game-view-moves");
+    if (movesSection) movesSection.after(evalPanel);
+    else sideRail?.appendChild(evalPanel);
+    evalBar.setVisible(true);
+    state.evalBar = evalBar;
+    state.evalPanel = evalPanel;
 
     const commentsHost = root.querySelector(".play-comments-host");
     state.el.commentsHost = commentsHost;
@@ -2185,6 +2334,7 @@ export const playPerspective = {
         showFinishedBadge(state, "");
         offCrash();
         offEvent();
+        state.evalBar?.dispose();
         view.unmount();
         // Close any live x-game toasts so they don't outlive the
         // perspective. Plain close (not via the X handler), so the

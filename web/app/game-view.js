@@ -8,7 +8,7 @@ import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
 import { SIDE, FEN_STM } from "./chess-consts.js";
-import { fmtClock, fmtCount, fmtScore, rafCoalesce, selectContentsOnCtrlA } from "./wb-utils.js";
+import { fmtClock, fmtCount, fmtMoveNo, fmtScore, rafCoalesce, selectContentsOnCtrlA } from "./wb-utils.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -98,7 +98,7 @@ function renderMoveList(el, sanList, {
 
     const num = document.createElement("span");
     num.className = "move-num";
-    num.textContent = `${Math.floor(i / 2) + 1}.`;
+    num.textContent = fmtMoveNo(i, true);
     row.append(num);
 
     const white = makeCell(sanList[i], i);
@@ -329,12 +329,19 @@ function positionSideRail(ctx, geom) {
   const { grid, gapW, railW, leftEmpty, rem, mobile } = geom;
   const sideHost = grid.querySelector(".play-side-host");
   if (!sideHost) return;
+  const evalPanel = sideHost.querySelector(".game-view-eval-panel");
   if (mobile) {
     sideHost.style.removeProperty("height");
     sideHost.style.removeProperty("margin-top");
     sideHost.style.removeProperty("left");
     sideHost.style.removeProperty("top");
     sideHost.style.removeProperty("width");
+    if (evalPanel) {
+      evalPanel.style.removeProperty("left");
+      evalPanel.style.removeProperty("top");
+      evalPanel.style.removeProperty("width");
+      evalPanel.style.removeProperty("height");
+    }
     return;
   }
   const boardRect = ctx.boardEl.getBoundingClientRect();
@@ -364,6 +371,22 @@ function positionSideRail(ctx, geom) {
   sideHost.style.width = `${width}px`;
   sideHost.style.height = `${height}px`;
   sideHost.style.removeProperty("margin-top");
+  // Eval panel is purely additive: a fixed band under the moves box (same
+  // x as the rail) filling the gap from the board bottom down to the clock
+  // bottom. It never joins the rail's flex flow, so the moves list keeps
+  // its exact geometry.
+  if (evalPanel) {
+    const boardBottom = Math.floor(boardRect.bottom);
+    const clockRow = ctx.clockBottomRow;
+    const barBottom = clockRow && clockRow.offsetParent !== null
+      ? Math.floor(clockRow.getBoundingClientRect().bottom)
+      : boardBottom;
+    const barTop = boardBottom + COL_SIBLING_GAP_PX;
+    evalPanel.style.left = `${left}px`;
+    evalPanel.style.top = `${barTop}px`;
+    evalPanel.style.width = `${width}px`;
+    evalPanel.style.height = `${Math.max(0, barBottom - barTop)}px`;
+  }
 }
 
 function recomputeNow(ctx) {
@@ -567,6 +590,10 @@ function applyBoardUpdate(ctx, evt) {
       currentIdx = (evt.payload.view.cursor ?? 0) - 1;
       // No ply-jump (and no clickable cursor) while analyzing.
       if (!ctx.analyzing) clickHandler = ctx.onMoveJump;
+    } else if (!ctx.editing && !ctx.analyzing && ctx.onPlayMoveClick) {
+      // Play mode: clicking a past move flips into server view mode at
+      // that ply (the handler ignores clicks on the live last move).
+      clickHandler = ctx.onPlayMoveClick;
     }
     // Fork glyphs only in view mode; snapshot at render time.
     const forkInfo = (evt.payload.view && !ctx.editing && ctx.forkInfoFn)
@@ -864,6 +891,7 @@ export function mountGameView(container, opts = {}) {
     events,
     onMove,
     onMoveJump = null, // view-mode click on a move; (plyIndex) => void
+    onPlayMoveClick = null, // play-mode click on a past move; (plyIndex) => void
     forkInfoFn = null, // () => Map<plyIdx, {childCount, isOwnForkPly}>
     onForkClick = null, // (plyIdx) => void when glyph itself is clicked
     show = {},
@@ -889,7 +917,7 @@ export function mountGameView(container, opts = {}) {
   const ready = new Promise((r) => { resolveReady = r; });
 
   const ctx = {
-    onMoveJump, forkInfoFn, onForkClick,
+    onMoveJump, onPlayMoveClick, forkInfoFn, onForkClick,
     interactive, showClocks, showMoves, showEngineInfo,
     ready, resolveReady,
 

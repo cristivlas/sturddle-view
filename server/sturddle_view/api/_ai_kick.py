@@ -19,6 +19,7 @@ import os
 from fastapi import HTTPException, Request
 
 from ..chess.board import moves_san
+from ..env_utils import env_int
 from ..llm import PromptMode, build_initial_user_message
 from ..llm.ollama import DEFAULT_BASE_URL as _DEFAULT_OLLAMA_BASE_URL, OllamaProvider
 from ..play.mode import Mode
@@ -34,6 +35,13 @@ _PER_COMMENT_MAX_ENV = "SV_AI_ANNOTATION_PER_COMMENT_MAX"
 _TOTAL_COMMENT_MAX_ENV = "SV_AI_ANNOTATION_TOTAL_MAX"
 # Marker appended to a comment that was truncated mid-string.
 _TRUNCATION_MARKER = "..."
+
+# Plies past the matched opening line that still count as "in the opening"
+# for the opening-theory directive; beyond it the game has left book and the
+# steer is suppressed. Raise via env for slower book-to-middlegame handoffs;
+# 0 means "only while exactly on the named line".
+_OPENING_PHASE_SLACK_DEFAULT = 12
+_OPENING_PHASE_SLACK_ENV = "SV_AI_OPENING_PHASE_SLACK_PLIES"
 
 
 def _int_env(name: str, default: int) -> int:
@@ -149,18 +157,26 @@ def _build_turn_inputs(hve) -> str | None:
     # review (view mode); None in play mode where there is no future.
     ply = len(board.move_stack)
     move_played = san_history[ply] if ply < len(san_history) else None
+    mode = _prompt_mode_for(hve)
     annotations: list[str | None] | None = None
     root_annotation: str | None = None
     # Gate on the prompt persona, not Mode.VIEWING: keeps annotation
     # plumbing aligned with the commentator addendum that tells the
     # model how to weigh them.
-    if _prompt_mode_for(hve) == _COMMENTATOR_MODE:
+    if mode == _COMMENTATOR_MODE:
         raw_comments, raw_root = hve.view_game_comments()
         per_max = _int_env(_PER_COMMENT_MAX_ENV, _PER_COMMENT_MAX_DEFAULT)
         total_max = _int_env(_TOTAL_COMMENT_MAX_ENV, _TOTAL_COMMENT_MAX_DEFAULT)
         annotations, root_annotation = _cap_annotations(
             raw_comments, raw_root, per_max, total_max,
         )
+    # Both personas: when the position is still in (or just past) the named
+    # opening line, trigger the opening-theory directive (a related_openings
+    # call + one grounded sentence). Coach teaches the plan as it is played;
+    # commentator contrasts variations after the fact.
+    in_opening = opening is not None and ply <= opening.ply + env_int(
+        _OPENING_PHASE_SLACK_ENV, _OPENING_PHASE_SLACK_DEFAULT
+    )
     message = build_initial_user_message(
         fen=board.fen(),
         san_history=san_history,
@@ -171,6 +187,7 @@ def _build_turn_inputs(hve) -> str | None:
         move_played=move_played,
         annotations=annotations,
         root_annotation=root_annotation,
+        in_opening=in_opening,
     )
     return message
 

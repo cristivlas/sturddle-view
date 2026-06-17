@@ -4,7 +4,7 @@ Covers behavior the live-daemon test cannot pin deterministically:
 - request body is captured to the transcript before sending
 - every raw SSE line is captured to the transcript, malformed included
 - malformed JSON raises a clean RuntimeError (no silent skip)
-- malformed tool_call.arguments raises MalformedToolArgumentsError
+- malformed tool_call.arguments flow back as a recoverable error chunk
 
 Mocks httpx.AsyncClient at the module level (Ollama imports `httpx` by
 name and calls `httpx.AsyncClient(...)`), which is the smallest surface
@@ -20,7 +20,6 @@ from sturddle_view.llm import Transcript
 from sturddle_view.llm import ollama as ollama_mod
 from sturddle_view.llm import openai_compat as openai_compat_mod
 from sturddle_view.llm.ollama import (
-    MalformedToolArgumentsError,
     OllamaProvider,
     openai_tool_call_to_provider_chunk,
 )
@@ -193,21 +192,41 @@ async def test_http_error_captured_then_raises(install_fake_httpx, tmp_path):
 # ---------- Tool-call argument JSON ----------------------------------
 
 
-def test_malformed_tool_arguments_raises():
+def test_malformed_tool_arguments_flow_as_error_chunk():
+    # Bad JSON must NOT abort the turn. The chunk still flows as a
+    # tool_use carrying the parse failure on `tool_input_error`, so the
+    # coordinator hands the model a structured error to self-correct from.
     tc = {
         "id": "tu_x",
         "type": "function",
         "function": {"name": "analyze", "arguments": '{"fen": "rnb}'},
     }
-    with pytest.raises(MalformedToolArgumentsError) as ei:
-        openai_tool_call_to_provider_chunk(tc)
-    err = ei.value
-    assert err.tool_name == "analyze"
-    assert err.raw_arguments == '{"fen": "rnb}'
-    # parse_error carries json.JSONDecodeError's message verbatim; we
-    # don't pin the exact wording (it's a stdlib implementation detail),
-    # only that some explanation made it through.
-    assert err.parse_error
+    chunk = openai_tool_call_to_provider_chunk(tc)
+    assert chunk.kind == "tool_use"
+    assert chunk.tool_name == "analyze"
+    assert chunk.tool_input == {}
+    # Detail carries both the stdlib reason and the raw byte trail.
+    assert chunk.tool_input_error
+    assert '{"fen": "rnb}' in chunk.tool_input_error
+
+
+def test_concatenated_tool_arguments_flow_as_error_chunk():
+    # Real capture: model glued two top-level JSON objects onto one
+    # tool_call.arguments. json.loads chokes on "Extra data"; we feed that
+    # back instead of merging at the parser, so the model re-emits one call.
+    raw = '{"family": "Sicilian"}{"depth": 15, "moves": ["cxd4"]}'
+    tc = {
+        "id": "tu_x",
+        "type": "function",
+        "function": {"name": "top_moves", "arguments": raw},
+    }
+    chunk = openai_tool_call_to_provider_chunk(tc)
+    assert chunk.kind == "tool_use"
+    assert chunk.tool_name == "top_moves"
+    assert chunk.tool_input == {}
+    assert chunk.tool_input_error
+    assert "Extra data" in chunk.tool_input_error
+    assert raw in chunk.tool_input_error
 
 
 def test_valid_tool_arguments_still_parse():

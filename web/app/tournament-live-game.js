@@ -208,7 +208,7 @@ const PV_SIDE_GAP = 8;
 // machinery, registers in `liveWindows`. Caller adds WS (live) or
 // final-state painting (frozen) and assigns a real `wb.onclose` that
 // cleans up its own resources after invoking `disposeShared`.
-function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token, tournamentId, top, left, right = 0, boardStyle, avoidRect, initialRect, min, max = false, flash, variantClass, onPvSides = null }) {
+function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token, tournamentId, top, left, right = 0, boardStyle, avoidRect, initialRect, min, max = false, flash, variantClass, root = null, onPvSides = null }) {
   const body = document.createElement("div");
   body.className = "wb-livegame lg-measuring";
   body.innerHTML = `
@@ -261,6 +261,9 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     styleId: boardStyle,
     onMove: () => {}, // read-only -- moves come from the server.
   });
+  // Hide the window body until the board is fully drawn (revealed via wb._ready
+  // below) so it appears complete in one shot, not assembling piece by piece.
+  body.style.visibility = "hidden";
 
   const evalScoreEl = body.querySelector(".lg-eval-score-bottom");
   const evalDepthEl = body.querySelector(".lg-eval-depth-bottom");
@@ -314,9 +317,13 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     min,
     max,
     mount: body,
+    ...(root ? { root } : {}),
     class: variantClass ? `${defaultClass} ${variantClass}` : defaultClass,
   });
   wb._watchOpts = { proxyId, gameId, label, engineName };
+  // Reveals this window's body once drawn; surfaced so the opener can gate a
+  // perspective-wide reveal until every restored board is ready.
+  wb._ready = board.ready.then(() => { body.style.visibility = ""; });
 
   const clampToViewport = () => {
     const maxX = Math.max(left, window.innerWidth  - wb.width);
@@ -325,7 +332,9 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
     const cy = Math.min(Math.max(wb.y, top),  maxY);
     if (cx !== wb.x || cy !== wb.y) wb.move(cx, cy);
   };
-  if (!min && !max) clampToViewport();
+  // Rooted (Studio) boards are grid-placed inside their region, not the
+  // viewport, so the viewport clamp would mis-move them.
+  if (!root && !min && !max) clampToViewport();
   const scheduleConstrain = rafCoalesce(constrainAndResize);
   // Clamp height so the window can't grow taller than the board needs:
   // a portrait-stretched window wastes space and looks broken.
@@ -471,7 +480,7 @@ function buildLiveGameBox({ windowKey, gameId, proxyId, label, engineName, token
 // timers, and board paint all coordinate over shared state (ws, engineColor,
 // currentFen, positionGen, clock fields). Closures return a control API;
 // splitting would scatter the feed/clock/paint coordination.
-export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, right = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, max = false, flash = true }) {
+export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId ?? proxyId, label, engineName, token, tournamentId = null, top = 0, left = 0, right = 0, boardStyle = null, avoidRect = null, initialRect = null, min = false, max = false, flash = true, root = null, variantClass = null }) {
   if (DEBUG_WATCH) console.log("[WATCH] openLiveGameWindow", { proxyId, gameId, windowKey, label });
   if (!windowKey) {
     console.error("[WATCH] no windowKey -- need at least one of proxyId/gameId", { proxyId, gameId });
@@ -498,7 +507,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   const built = buildLiveGameBox({
     windowKey, gameId, proxyId, label, engineName, token, tournamentId,
     top, left, right, boardStyle, avoidRect, initialRect, min, max, flash,
-    variantClass: null,
+    variantClass, root,
     onPvSides: (visible) => {
       pvSidesVisible = visible;
       evalGraph.setVisible(visible);
@@ -534,13 +543,19 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
   // Latest pending FEN wins; superseded ones never animate. Background
   // tabs accumulate at most one pending paint (browser pauses rAF).
   let pendingPosition = null;
+  let shownPly = null; // ply currently painted on the board (null until first)
   const schedulePositionPaint = rafCoalesce(() => {
     const p = pendingPosition;
     pendingPosition = null;
     // wbClosed: a producer that resumed after close (e.g. applyBestMove's
     // fetch) must not repaint a destroyed board.
     if (!p || wbClosed) return;
-    board.setPosition(p.fen, p.lastMove, p.animated);
+    // Animate only a single forward ply (a move being watched); first paint
+    // and multi-ply backlog jumps snap so pieces don't glide catching up.
+    const toPly = fenPly(p.fen);
+    const animated = p.animated && shownPly !== null && toPly - shownPly === 1;
+    shownPly = toPly;
+    board.setPosition(p.fen, p.lastMove, animated);
     board.clearArrows();
   });
 
@@ -866,6 +881,7 @@ export function openFrozenGameWindow({
   proxyId, gameId, windowKey = gameId, label, engineName,
   token, tournamentId, gameN, result, termination,
   top = 0, left = 0, right = 0, boardStyle = null, initialRect = null, min = false, max = false, flash = true,
+  root = null, variantClass = null,
 }) {
   if (!windowKey) {
     console.error("[FROZEN] no windowKey", { proxyId, gameId });
@@ -886,7 +902,8 @@ export function openFrozenGameWindow({
   const built = buildLiveGameBox({
     windowKey, gameId, proxyId, label, engineName, token, tournamentId,
     top, left, right, boardStyle, avoidRect: null, initialRect, min, max, flash,
-    variantClass: "sturddle-wb-live-frozen",
+    variantClass: variantClass ? `sturddle-wb-live-frozen ${variantClass}` : "sturddle-wb-live-frozen",
+    root,
   });
   const { wb, board, refs, showResult, setReplayGameN, disposeShared } = built;
   const { topNameEl, bottomNameEl, clockTopEl, clockBottomEl } = refs;

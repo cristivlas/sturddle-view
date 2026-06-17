@@ -1,7 +1,7 @@
-# sturddle-view
+# SturddleView
 
 Browser-based chess GUI for human vs engine play and live observation of headless
-engine tournaments. See [docs/spec.md](docs/spec.md) for the full design.
+engine tournaments.
 
 ## Getting started
 
@@ -56,8 +56,7 @@ startup URL (e.g. `http://127.0.0.1:8765/auth?token=...`). Open it once;
 the server sets an `HttpOnly` cookie and redirects to `/ui/`. To expose
 the server on the LAN/tailnet, pass `--host 0.0.0.0` (token still
 required, or add `--no-auth` if you trust the network). To serve over
-TLS, supply `--cert PATH --key PATH`. See
-[docs/spec.md#security](docs/spec.md#security) for the full model.
+TLS, supply `--cert PATH --key PATH`.
 
 ## Command-line flags
 
@@ -114,17 +113,30 @@ All knobs use the `SV_` prefix; any CLI flag above has an `SV_*` equivalent
 (e.g. `SV_HOST`, `SV_PORT`, `SV_AUTH_DISABLED`). AI, tournament, and debug
 tunables are documented in full in [docs/env-vars.md](docs/env-vars.md).
 
+## Screenshots
+
+| | |
+|---|---|
+| [![Play/analysis with engine lines and AI panel](screenshots/arena-analysis-1.webp)](screenshots/arena-analysis-1.webp) | [![Play/analysis, alternate position](screenshots/arena-analysis-2.webp)](screenshots/arena-analysis-2.webp) |
+| [![Play/analysis, alternate position](screenshots/arena-analysis-3.webp)](screenshots/arena-analysis-3.webp) | [![Play/analysis, alternate position](screenshots/arena-analysis-4.webp)](screenshots/arena-analysis-4.webp) |
+| [![Review: import by PGN, FEN, or opening](screenshots/import-pgn.webp)](screenshots/import-pgn.webp) | [![Review: game with eval bar](screenshots/studio-game-analysis.webp)](screenshots/studio-game-analysis.webp) |
+| [![Studio: live tournament boards](screenshots/studio-watch-live-games.webp)](screenshots/studio-watch-live-games.webp) | [![Studio: dashboard, standings, head-to-head](screenshots/studio-tournament-overview.webp)](screenshots/studio-tournament-overview.webp) |
+| [![Arena: dockable board panels](screenshots/arena-panels-menu.webp)](screenshots/arena-panels-menu.webp) | [![Studio: discard in-progress game](screenshots/studio-discard-prompt.webp)](screenshots/studio-discard-prompt.webp) |
+| [![AI commentary over the engine's PV](screenshots/ai-commentary.webp)](screenshots/ai-commentary.webp) | [![AI: live reasoning trace](screenshots/ai-thinking.webp)](screenshots/ai-thinking.webp) |
+| [![AI: completed analysis](screenshots/ai-analysis-done.webp)](screenshots/ai-analysis-done.webp) | [![Settings: tournament / fastchess](screenshots/settings-tournament.webp)](screenshots/settings-tournament.webp) |
+| [![Settings: AI provider](screenshots/settings-ai-provider.webp)](screenshots/settings-ai-provider.webp) | [![Settings: Ollama model](screenshots/settings-ai-model.webp)](screenshots/settings-ai-model.webp) |
+
 ## Features
 
-- Human-vs-engine play with engine eval/PV display and adjustable time control.
-- Engine roster: register UCI engines, edit per-engine options, set defaults (Hash, Threads, SyzygyPath, opening book).
-- Tournaments: round-robin or gauntlet via [fastchess](https://github.com/Disservin/fastchess); per-row Info, Start/Stop/Restart, sortable list, live game observation in floating windows.
-- Tournament settings (engine defaults, opening book) are snapshotted into the tournament's `state.json` at create time, so every run is reproducible. Stop wipes and the next Start runs from scratch (there is no resume).
-- AI analysis & commentary: prose over the engine's eval/PV via Anthropic, Google Gemini, or local Ollama. Off by default; the engine stays the source of truth. Hosted providers need an API key (entered in Settings -> Analysis, stored in the OS keyring); Ollama runs locally with no key. See [docs/ai-analysis-spec.md](docs/ai-analysis-spec.md).
+- **Play** -- human vs UCI engine with live eval/PV display, adjustable time control, and play from any position.
+- **Review** -- step through any game (import by PGN, FEN, or opening name); engine eval plus opening identification. The Play tab becomes View while reviewing.
+- **Edit & comment** -- set up arbitrary positions in the FEN/position editor; add move annotations and comments that save to PGN.
+- **Tournaments** -- round-robin or gauntlet via [fastchess](https://github.com/Disservin/fastchess), with engine defaults and opening book snapshotted per run for reproducibility, plus live game observation in floating windows. Two UX perspectives: **Arena** (classic sortable list with per-row Info / Start / Stop / Restart) and **Studio** (dashboard with standings and head-to-head).
+- **Engine roster** -- register UCI engines, edit per-engine options, set defaults (Hash, Threads, SyzygyPath, opening book).
+- **AI Analysis (experimental)** -- natural-language commentary over the engine's eval/PV via Anthropic, Google Gemini, or local Ollama. Off by default; the engine stays the source of truth. Hosted providers need an API key (Settings -> Analysis, stored in the OS keyring); Ollama runs locally with no key. See [docs/ai-analysis-spec.md](docs/ai-analysis-spec.md).
+- **Native desktop window** -- run with `--desktop` to open in a PyWebView window instead of a browser tab (install the `desktop` extra: `pip install -e '.[dev,desktop]'`).
 
-- Native desktop window: run with `--desktop` to open in a PyWebView window instead of a browser tab (install the `desktop` extra: `pip install -e '.[dev,desktop]'`).
-
-See [docs/spec.md](docs/spec.md) and [docs/tournament-spec.md](docs/tournament-spec.md) for design details.
+See [docs/tournament-spec.md](docs/tournament-spec.md) for design details.
 
 ## Standalone desktop build
 

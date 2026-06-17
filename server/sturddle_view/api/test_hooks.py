@@ -107,6 +107,23 @@ async def publish_ai_event(payload: dict, request: Request) -> dict:
     return {"ok": True}
 
 
+@router.post("/ai/seed_replay")
+async def seed_ai_replay(payload: dict, request: Request) -> dict:
+    """Prime the AI coordinator's replay buffer with envelope-shaped events.
+
+    A subsequent page load rehydrates the AI panel from these exactly as a
+    client reconnecting after a turn would (GET /game/analysis/replay). Lets
+    e2e tests exercise the replay-render path without a real LLM turn.
+
+    Body: ``{"events": [{"kind", "payload", "game_id"}]}``."""
+    coord = getattr(request.app.state, "ai_coordinator", None)
+    if coord is None:
+        raise HTTPException(status_code=400, detail="no ai coordinator")
+    events = payload.get("events") or []
+    coord.seed_replay(events)
+    return {"ok": True, "count": len(events)}
+
+
 @router.post("/recents/seed_fork")
 async def seed_fork(payload: dict, request: Request) -> dict:
     """Seed a parent + child recents pair with a fork link via the real

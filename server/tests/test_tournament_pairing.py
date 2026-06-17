@@ -228,6 +228,39 @@ async def test_info_does_not_fan_out_when_no_pair(orch):
 
 
 # ---------------------------------------------------------------------------
+# wants_info -- the info-tap gate must mirror the actual fan-out targets
+# ---------------------------------------------------------------------------
+
+
+def test_wants_info_false_with_no_subscribers(orch):
+    """A registered proxy with no watcher anywhere gates info off."""
+    orch._pairing_register("white", chess.Board().fen(), "white")
+    assert orch.wants_info("white") is False
+
+
+def test_wants_info_true_for_own_subscriber(orch):
+    orch.subscribe_to_proxy("white")
+    assert orch.wants_info("white") is True
+
+
+def test_wants_info_true_for_unconfirmed_fen_sharing_peer(orch):
+    """The blind-window guard: two opposite-color proxies share a FEN but
+    the pair is NOT confirmed (same engine name -> phantom rejection), so
+    ``_confirmed_pairs`` is empty. The peer's subscriber still receives
+    white's paired ``info``, so ``wants_info`` must report True. Keying off
+    ``_confirmed_pairs`` here would wrongly gate the info off."""
+    fen = chess.Board().fen()
+    _seed_proxy(orch, "white", "SameEngine")
+    _seed_proxy(orch, "black", "SameEngine")
+    orch._pairing_register("white", fen, "white")
+    orch._pairing_register("black", fen, "black")
+    assert orch._confirmed_pairs == {}        # phantom guard rejected it
+    orch.subscribe_to_proxy("black")          # peer has a watcher
+    assert orch._paired_subscribers("white", fen, "white")  # fan-out target
+    assert orch.wants_info("white") is True
+
+
+# ---------------------------------------------------------------------------
 # _recompute_groups -- direct unit tests on bucket -> pair confirmation
 # ---------------------------------------------------------------------------
 

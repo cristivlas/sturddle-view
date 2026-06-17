@@ -12,6 +12,8 @@ import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-st
 import { mqMobile } from "./breakpoints.js";
 import { makeDivider } from "./settings-ui-helpers.js";
 import { loadRaw, saveRaw } from "./storage.js";
+import { STORAGE_KEY } from "./storage-keys.js";
+import { getTournamentUx, TOURNAMENT_UX } from "./tournament-studio.js";
 
 export function buildDisplayTab({ initial, putSettings, initialStyle, onBoardStyleChange, signal }) {
   const displayTab = document.createElement("wa-tab");
@@ -67,7 +69,7 @@ export function buildDisplayTab({ initial, putSettings, initialStyle, onBoardSty
     putSettings({ play_eval_pov: evalPov.value });
   });
   const evalPovRow = document.createElement("div");
-  evalPovRow.className = "settings-row";
+  evalPovRow.className = "settings-row settings-row-spaced";
   const evalPovLabel = document.createElement("label");
   evalPovLabel.textContent = "Eval display";
   evalPovRow.append(evalPovLabel, evalPov);
@@ -168,6 +170,31 @@ export function buildDisplayTab({ initial, putSettings, initialStyle, onBoardSty
   });
   boardStyleRow.append(boardStyleLabel, boardStyleSelect, previewWrap);
 
+  // Tournament UX mode is client-only (no server PUT), like the floating
+  // ribbon side -- save raw + dispatch so open views can react.
+  const tournamentUx = document.createElement("wa-select");
+  tournamentUx.size = "small";
+  tournamentUx.setAttribute("distance", "4");
+  tournamentUx.value = getTournamentUx();
+  for (const [val, label] of [
+    [TOURNAMENT_UX.ARENA, "Arena"],
+    [TOURNAMENT_UX.STUDIO, "Studio"],
+  ]) {
+    const opt = document.createElement("wa-option");
+    opt.value = val;
+    opt.textContent = label;
+    tournamentUx.append(opt);
+  }
+  tournamentUx.addEventListener("change", () => {
+    saveRaw(STORAGE_KEY.TOURNAMENT_UX, tournamentUx.value);
+    window.dispatchEvent(new CustomEvent(APP_EVT.SETTINGS_CHANGED));
+  });
+  const tournamentUxRow = document.createElement("div");
+  tournamentUxRow.className = "settings-row settings-row-spaced";
+  const tournamentUxLabel = document.createElement("label");
+  tournamentUxLabel.textContent = "Tournaments";
+  tournamentUxRow.append(tournamentUxLabel, tournamentUx);
+
   const showCommentsDisplayRow = document.createElement("div");
   // PGN comments render in the left column, which is hidden on mobile;
   // hide the toggle there too (desktop-only).
@@ -176,12 +203,9 @@ export function buildDisplayTab({ initial, putSettings, initialStyle, onBoardSty
 
   const displayCol = document.createElement("div");
   displayCol.className = "settings-panel-col";
-  const ribbonSideDivider = makeDivider();
-  ribbonSideDivider.hidden = mqMobile.matches;
-  mqMobile.addEventListener("change", e => { ribbonSideDivider.hidden = e.matches; }, { signal });
   displayCol.append(
     ribbonSideRow,
-    ribbonSideDivider,
+    tournamentUxRow,
     evalPovRow, boardStyleRow,
     makeDivider(),
     showCommentsDisplayRow,

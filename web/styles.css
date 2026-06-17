@@ -473,6 +473,18 @@ wa-select::part(listbox) {
      .play-ai-tool-children) to the parent dot, not to the children box. */
   position: relative;
 }
+/* Dot + label + arrow stay on one line and scroll horizontally rather than
+   wrapping the arrow below a long label. Full-width so details/children
+   (flex-basis 100%) still break onto their own lines beneath it. */
+.play-ai-tool-head {
+  flex: 1 1 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
 .play-ai-tool-dot {
   width: 8px;
   height: 8px;
@@ -490,6 +502,7 @@ wa-select::part(listbox) {
 .play-ai-tool-dot-material       { background: forestgreen; }
 .play-ai-tool-dot-delegate       { background: var(--wa-color-cyan-60, #0ea5b5); }
 .play-ai-tool-dot-report_line    { background: var(--wa-color-teal-60, #14b8a6); }
+.play-ai-tool-dot-related_openings { background: var(--wa-color-indigo-60, #6366f1); }
 /* Verifier sub-run's tool calls, nested under their "Verifying line"
    row. Full-width break (flex-wrap). A vertical spine runs through the
    child dot centers (dot is 8px wide -> center at x=4px), tying the
@@ -528,22 +541,18 @@ wa-select::part(listbox) {
   min-width: 0;  /* allow the details <pre> to shrink + scroll */
   font-size: 1em;
 }
-/* Short horizontal elbow from the spine into each child dot. Anchored to
-   the DOT's vertical center (50% of the fixed-size dot), not the row's --
-   so an expanded details <pre> growing the row height can't drop it. */
-.play-ai-tool-children .play-ai-tool-dot {
-  position: relative;
-}
-.play-ai-tool-children .play-ai-tool-dot::before {
+/* Short horizontal elbow from the spine into each child dot. Drawn on the
+   child ROW (not the dot) so it sits outside the head's overflow-x clip;
+   anchored to top:8px (dot center) so an expanded details <pre> growing the
+   row height can't drop it. Spans from the spine to the dot's left edge.
+   Uses ::after so a nested delegate row's spine (::before) can't collide. */
+.play-ai-tool-children .play-ai-tool-call::after {
   content: "";
   position: absolute;
-  /* Elbow from the spine (at row x=3px, i.e. 15px left of the child dot's
-     left edge) into each child dot center. */
-  right: 100%;
-  top: 50%;
+  top: 8px;       /* child dot center, matches the spine convention */
+  left: calc(3px - var(--tool-nest-indent));  /* spine x minus the nest indent */
   width: 15px;
   height: 2px;
-  transform: translateY(-50%);
   background: var(--wa-color-cyan-60, #0ea5b5);
   opacity: 0.6;
 }
@@ -565,7 +574,7 @@ wa-select::part(listbox) {
   text-decoration: line-through;
 }
 .play-ai-tool-label {
-  /* Stay on one line; the row scrolls horizontally if needed. */
+  /* Stay on one line; the head scrolls horizontally if needed. */
   white-space: nowrap;
 }
 .play-ai-tool-toggle {
@@ -1215,11 +1224,12 @@ wa-select wa-option:has(.recent-label) { display: flex; align-items: center; }
   position: fixed;
   left: 0; top: 50%; transform: translateY(-50%);
   z-index: 10;
-  border-right: 1px solid var(--wa-color-border-loud, #353841);
+  border-right: 1px solid var(--border-subtle);
 }
 /* Floating mode: hide ribbons still in their original DOM position. */
 body[data-ribbon-float] .play-grid .board-ribbon,
-body[data-ribbon-float] .tournaments-ribbon {
+body[data-ribbon-float] .tournaments-ribbon,
+body[data-ribbon-float] .studio-ribbon {
   display: none !important;
 }
 .ribbon-btn {
@@ -1622,7 +1632,7 @@ body .side-popover.popover-floating {
     justify-content: center;
     padding: 6px 0;
     border-right: 0;
-    border-bottom: 1px solid var(--wa-color-border-loud, #353841);
+    border-bottom: 1px solid var(--border-subtle);
   }
   .ribbon-btn { width: 44px; height: 44px; }
   .ribbon-btn wa-icon { font-size: 1.125rem; }
@@ -1671,6 +1681,9 @@ body .side-popover.popover-floating {
      scrollbar -- no nested second one. */
   .game-view-side { height: auto; }
   .game-view-moves { flex: 0 0 auto; }
+  /* Desktop-only widget: it's fixed-positioned off the board geometry,
+     which the mobile document-flow layout doesn't provide. */
+  .game-view-eval-panel { display: none; }
   .game-view-moves .move-list {
     flex: 0 0 auto;
     max-height: none;
@@ -1742,6 +1755,40 @@ body .side-popover.popover-floating {
   height: auto;
   max-height: none;
 }
+/* Eval panel under the moves box. Fixed-positioned (left/top/width/height
+   set by positionSideRail) so it occupies the gap between the board bottom
+   and the clock bottom without touching the moves-list flow. A dock-style
+   title header sits above the horizontal eval strip. */
+.game-view-eval-panel {
+  position: fixed;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  overflow: hidden;
+}
+.game-view-eval-title {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  background: var(--nav-btn-bg);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.75rem;
+  color: var(--muted);
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.game-view-eval-bar {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.game-view-eval-bar canvas { display: block; height: 100%; }
 .clock-row {
   flex: 0 0 auto;
   width: var(--board-max-px, 100%);
@@ -1750,9 +1797,6 @@ body .side-popover.popover-floating {
 .game-view-meta {
   width: var(--board-max-px, 100%);
   align-self: center;
-}
-#perspective-root {
-  transition: opacity 80ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 #perspective-root.is-pending {
   opacity: 0;
@@ -2793,7 +2837,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  box-shadow: inset 0 -2px 0 var(--accent-line);
+  border-bottom: 3px solid var(--accent-line);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -2803,8 +2847,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   background: #252830;
   box-shadow:
     inset 2px 0 0 var(--wa-color-border-loud, #353841),
-    inset -2px 0 0 var(--wa-color-border-loud, #353841),
-    inset 0 -2px 0 var(--accent-line);
+    inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
 /* Size header sits over right-aligned values. */
 .fs-picker-table thead th:last-child { text-align: right; }
@@ -3048,6 +3091,399 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   display: flex;
   flex: 1; min-height: 0;
 }
+/* Tournament Studio frame: same gutter geometry as the Arena perspective --
+   fixed action ribbon in a left gutter, matching right gutter, centered
+   main column. Content styles land here as the Studio UX grows. */
+.studio-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.studio-body {
+  --ribbon-w: 36px;
+  display: flex;
+  flex: 1; min-height: 0;
+}
+.studio-main {
+  width: calc(100vw - 2 * var(--ribbon-w));
+  margin-left: auto; margin-right: auto;
+  display: flex; flex-direction: column;
+  min-height: 0;
+  /* No extra gap -- the resizer grip itself is the only separation between
+     the board area and the bottom row. */
+  gap: 0;
+}
+.studio-ribbon {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 4px; padding: 4px 0;
+  border-right: 1px solid var(--border-subtle);
+  position: fixed;
+  left: 0; top: 50%; transform: translateY(-50%);
+  z-index: 10;
+}
+/* Boards (top) vs bottom tab row -- the vertical (top/bottom) split.
+   Boards are WinBoxes rooted here (position:relative); the region scrolls
+   and the canvas spacer gives it the virtual height of the board grid. */
+.studio-boards {
+  flex: 1 1 0; min-height: 0;
+  position: relative;
+  overflow: auto;
+}
+/* No boards: the region is just the (clipped) art backdrop -- never scroll,
+   whatever the split height. */
+.studio-boards.no-boards { overflow: hidden; }
+.studio-boards-canvas { width: 1px; height: 0; pointer-events: none; }
+
+/* Info wall: a comic-noir splash painted on the empty Boards region. Muted
+   monochrome ink, thick-outlined stat panels with hard shadows, a slanted
+   status placard, and tag-style engines. Content stretches full width so the
+   composition isn't left-heavy. Recedes behind boards when present. Local
+   ink/paper vars keep it self-contained. */
+.studio-boards-wall {
+  --iw-ink: #4a4e57;          /* very muted ink -- barely-there backdrop */
+  --iw-paper: #14161b;        /* near-black panel fill */
+  --iw-shadow: rgba(0, 0, 0, 0.5);
+  position: absolute; inset: 0; z-index: 0;
+  display: flex; flex-direction: column; justify-content: center; align-items: stretch;
+  gap: clamp(12px, 1.8vw, 22px);
+  padding: clamp(24px, 5vw, 68px);
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--muted-bright);
+  opacity: 0.85;
+}
+/* Each row spans the wall so the splash fills the region. */
+.studio-boards-wall > * { width: 100%; }
+.studio-boards-wall[hidden] { display: none; }
+/* Empty state: the wall hosts a clickable New-tournament CTA (poster art is
+   suppressed), so undo the backdrop fade and re-enable pointer events. */
+.studio-boards-wall.is-empty { opacity: 1; pointer-events: auto; }
+.studio-empty {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  color: var(--muted); text-align: center;
+}
+
+/* Status placard: stark black-on-white, slanted and hand-pasted. */
+.iw-burst {
+  flex: 0 0 auto;
+  transform: rotate(-4deg);
+  background: var(--iw-ink);
+  color: #000;
+  padding: 5px 16px;
+  font-family: var(--wa-font-family-code);
+  font-weight: 800; font-size: clamp(12px, 1.5vw, 17px);
+  letter-spacing: 0.28em; text-transform: uppercase;
+  box-shadow: 5px 5px 0 var(--iw-shadow);
+}
+/* Running pops a touch louder: a lighter placard fill (vs the muted ink). */
+.iw-burst--running { background: #828791; }
+/* Terminal states get an inverted (white outline on black) placard. */
+.iw-burst--done, .iw-burst--stopped, .iw-burst--failed {
+  background: #000; color: var(--iw-ink); border: 2px solid var(--iw-ink);
+}
+/* SPRT: a stamped placard in the same family, outlined (a mode tag, not a
+   status), tilted the other way so the two stamps read as hand-pasted. */
+.iw-burst--sprt {
+  background: var(--iw-paper); color: var(--iw-ink);
+  border: 2px solid var(--iw-ink);
+  transform: rotate(3deg);
+}
+/* Stamp group: SPRT + status placards clustered hard right of the headline. */
+.iw-stamps { display: flex; align-items: center; gap: clamp(8px, 1vw, 16px); flex: 0 0 auto; }
+
+/* Headline row spans the wall: title left, status placard hard right. */
+.iw-head {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 12px 20px;
+}
+.iw-name {
+  margin: 0; min-width: 0;
+  /* Italic glyphs overhang their box and the shadow drops below; pad right +
+     bottom so -webkit-line-clamp's overflow:hidden doesn't shave the last
+     slanted character or clip the drop-shadow. */
+  padding-right: 0.18em; padding-bottom: 0.16em;
+  font-style: italic; font-weight: 900;
+  font-size: clamp(28px, 6vw, var(--iw-name-max, 96px));
+  letter-spacing: -0.03em; line-height: 1;
+  color: var(--iw-ink);
+  text-shadow: 4px 5px 0 var(--iw-shadow);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+/* The bill body: tale of the tape (left) and the contenders (right), each a
+   framed block. They share the wall width and wrap on narrow regions. */
+.iw-bill {
+  display: flex; flex-wrap: wrap; align-items: flex-start;
+  gap: clamp(14px, 2vw, 26px);
+}
+.iw-tape { flex: 1 1 340px; }
+.iw-card { flex: 1 1 260px; }
+.iw-tape, .iw-card {
+  background: var(--iw-paper);
+  border: 3px solid var(--iw-ink);
+  box-shadow: 6px 6px 0 var(--iw-shadow);
+  padding: clamp(12px, 1.4vw, 22px) clamp(16px, 1.8vw, 28px) clamp(14px, 1.6vw, 24px);
+}
+/* Section nameplate atop each framed block. */
+.iw-tape-title {
+  font-family: var(--wa-font-family-code);
+  font-size: clamp(10px, 0.8vw, 13px); font-weight: 800;
+  letter-spacing: 0.28em; text-transform: uppercase;
+  color: var(--muted);
+  padding-bottom: clamp(6px, 0.8vw, 12px);
+  margin-bottom: clamp(6px, 0.8vw, 12px);
+  border-bottom: 2px solid var(--iw-ink);
+}
+
+/* Tale-of-the-tape ledger row: label, leader dots that eat the slack, big
+   numeral hard right. The dots fill the width so no value ever floats. */
+.iw-tape-row {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: clamp(3px, 0.5vw, 7px) 0;
+}
+.iw-tape-label {
+  flex: 0 0 auto;
+  font-family: var(--wa-font-family-code);
+  font-size: clamp(11px, 0.95vw, 15px); letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--muted-bright);
+}
+.iw-tape-dots {
+  flex: 1 1 auto; min-width: 18px;
+  border-bottom: 3px dotted var(--iw-ink);
+  transform: translateY(-5px);
+}
+.iw-tape-value {
+  flex: 0 0 auto;
+  font-weight: 900; font-size: clamp(22px, 2.6vw, 40px); line-height: 0.9;
+  color: var(--iw-ink);
+}
+
+/* Contenders billing: seed(s) vs field, or a two-engine A vs B. */
+.iw-versus {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+  gap: clamp(8px, 1.2vw, 18px);
+}
+.iw-vs {
+  font-style: italic; font-weight: 900;
+  font-size: clamp(20px, 2.4vw, 38px);
+  letter-spacing: -0.02em; color: var(--muted);
+  text-shadow: 3px 3px 0 var(--iw-shadow);
+}
+
+/* Fine print: sanctioning-body small print at the foot of the bill. */
+.iw-setup {
+  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 24px;
+  font-size: clamp(13px, 1vw, 18px); color: var(--muted-bright);
+}
+.iw-fact-key {
+  font-family: var(--wa-font-family-code);
+  text-transform: uppercase; letter-spacing: 0.12em;
+  font-size: 10px; color: var(--muted);
+  margin-right: 4px;
+}
+
+/* Engines: tag stickers, slightly skewed, hard outline. Sized to content. */
+.iw-roster { display: flex; flex-wrap: wrap; gap: 8px 10px; }
+.iw-engine {
+  font-weight: 700; font-size: 13px;
+  padding: 3px 12px;
+  background: var(--iw-paper);
+  border: 2px solid var(--iw-ink);
+  color: var(--iw-ink);
+  box-shadow: 3px 3px 0 var(--iw-shadow);
+  transform: skewX(-8deg);
+}
+.iw-engine > * { display: inline-block; transform: skewX(8deg); }
+.iw-engine-ver { margin-left: 6px; color: var(--muted); font-weight: 600; }
+.iw-engine--more { flex: 0 0 auto; color: var(--muted); font-weight: 600; }
+/* Gauntlet seed: louder plate so the runner reads as the headliner. */
+.iw-engine--seed {
+  background: var(--iw-ink); color: var(--iw-paper);
+  border-width: 3px; box-shadow: 4px 4px 0 var(--iw-shadow);
+}
+.iw-engine--seed .iw-engine-ver { color: var(--iw-paper); opacity: 0.7; }
+
+/* Footer spans the wall: progress/tally left, created stamp hard right. */
+.iw-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 12px;
+  margin-top: clamp(20px, 3vw, 40px);
+}
+.iw-progress { display: flex; align-items: center; gap: 12px; flex: 1 1 280px; max-width: 75%; }
+.iw-progress .tournament-progress { flex: 1 1 auto; }
+
+/* SPRT LLR meter: H0 ---[marker]--- H1, the verdict gauge. */
+.iw-llr {
+  display: flex; align-items: center; gap: 10px;
+  flex: 1 1 320px; max-width: 75%;
+  font-family: var(--wa-font-family-code); font-weight: 700;
+  font-size: 12px; letter-spacing: 0.12em; color: var(--muted);
+}
+.iw-llr-track {
+  position: relative; flex: 1 1 auto; height: 10px;
+  background: var(--iw-paper);
+  border: 2px solid var(--iw-ink);
+}
+.iw-llr-mark {
+  position: absolute; top: 50%; width: 4px; height: 16px;
+  background: var(--iw-ink);
+  transform: translate(-50%, -50%);
+}
+.iw-llr-val { color: var(--muted-bright); }
+/* Concluded verdicts tint the marker + value (H1 affirms, H0 mutes). */
+.iw-llr--h1 .iw-llr-mark { background: #7fb37f; }
+.iw-llr--h1 .iw-llr-val { color: #7fb37f; }
+.iw-llr--h0 .iw-llr-mark { background: var(--muted); }
+.iw-llr--h0 .iw-llr-val { color: var(--muted); }
+.iw-tally {
+  font-family: var(--wa-font-family-code); font-weight: 700;
+  font-size: 14px; color: var(--muted-bright);
+}
+.iw-created { font-size: 12px; color: var(--muted); }
+/* Minimize tray: a strip just below the Boards region (outside its scroll
+   area) so chips stay at the region's visible bottom regardless of scroll.
+   Native minimize is hidden; each minimized board gets a restore chip. */
+.studio-boards-tray {
+  flex: 0 0 auto;
+  display: flex; flex-wrap: nowrap;
+  padding: 4px 2px;
+  overflow-x: auto; overflow-y: hidden;
+}
+.studio-boards-tray[hidden] { display: none; }
+/* Each chip is a standalone minimized window's title bar: its board's own
+   header color (set inline) + the window outline, winbox's X reused. Packed
+   tight, adjacent borders collapsed into a single seam. */
+.studio-tray-chip {
+  flex: 0 0 auto;
+  display: flex; align-items: stretch;
+  box-sizing: border-box;
+  height: var(--wb-min-footer-h); max-width: 220px;
+  background: var(--chip-bg, var(--nav-btn-bg)); color: var(--fg);
+  border: 1px solid var(--wb-outline);
+  user-select: none;
+}
+.studio-tray-chip + .studio-tray-chip { margin-left: -1px; }
+.studio-tray-chip-title {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 0 10px; text-align: left;
+  /* line-height = chip height minus its 1px top+bottom border, so the leading
+     stays even and the title sits dead-centre. Default cursor like a native
+     minimized title bar -- only the X (a control) shows the pointer. */
+  font-size: 14px; line-height: calc(var(--wb-min-footer-h) - 2px);
+  font-family: Arial, sans-serif; color: inherit;
+  cursor: default;
+}
+/* Reuse winbox's own X asset; just size and center it for the chip. */
+.studio-tray-chip .wb-close {
+  flex: 0 0 auto; width: 24px;
+  background-color: transparent; background-repeat: no-repeat;
+  background-size: 14px auto; background-position: center;
+  cursor: pointer; opacity: 0.9;
+}
+.studio-tray-chip .wb-close:hover { opacity: 1; }
+.winbox.sturddle-wb-studio.min { display: none; }
+/* Rooted Studio boards position within the scrolling region (not the
+   viewport) and skip the slide transition so re-grids land instantly.
+   Square corners are enforced near the shared .sturddle-wb radius rules
+   below (source order matters at equal specificity). */
+.winbox.sturddle-wb-studio {
+  position: absolute; transition: none;
+  /* Grid-placed: no drag-shadow; header isn't a drag handle. Edge is a
+     border (set below), not an outline -- outline sits in the clipped pad. */
+  box-shadow: none; outline: none;
+}
+.winbox.sturddle-wb-studio .wb-drag { cursor: default; }
+.studio-bottom {
+  flex: 1 1 0; min-height: 0; display: flex; gap: 6px;
+  /* Single rule separating the board area from the bottom tab groups. */
+  border-top: 1px solid var(--border-subtle);
+  box-sizing: border-box;
+}
+/* Bottom-right is the wider pane (Tourneys / Standings / Event Log). */
+.studio-bottom-left { flex: 1 1 0; min-width: 0; display: flex; }
+.studio-bottom-right { flex: 1.6 1 0; min-width: 0; display: flex; }
+/* Resizer grips: invisible until hovered/dragged, then tinted like a
+   selected row. */
+.studio-grip-row {
+  flex: 0 0 5px; cursor: row-resize; background: transparent; z-index: 1;
+}
+.studio-grip-col {
+  flex: 0 0 5px; cursor: col-resize; background: transparent; z-index: 1;
+}
+.studio-grip-row:hover, .studio-grip-row.dragging,
+.studio-grip-col:hover, .studio-grip-col.dragging {
+  background: color-mix(in srgb, var(--accent-line) 80%, transparent);
+}
+/* Each tabbed region is a bordered box that fills its pane; the active
+   panel scrolls independently. wa-tab-group is display:block with an
+   unbounded body by default, so bound the full height chain (host ->
+   part(base) -> part(body) -> panel -> pane) for overflow to kick in. */
+.studio-tabs {
+  flex: 1 1 0; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.studio-tabs::part(base) { flex: 1 1 0; min-height: 0; height: 100%; }
+/* All-caps tab labels in the Studio perspective. */
+.studio-tabs wa-tab::part(base) { text-transform: uppercase; font-size: 0.875em; }
+/* A little breathing room between adjacent tabs. */
+.studio-tabs wa-tab { margin-inline-end: 2em; }
+/* Bordered content area (the panel below the tab labels): top + bottom
+   rules only, no left/right. */
+.studio-tabs::part(body) {
+  flex: 1 1 0; min-height: 0;
+  border: none;
+  border-bottom: 1px solid var(--wa-color-border-normal, #33363d);
+}
+.studio-tabs wa-tab-panel { height: 100%; --padding: 0; }
+.studio-tabs wa-tab-panel::part(base) { height: 100%; box-sizing: border-box; }
+.studio-pane { height: 100%; overflow: auto; }
+/* A little headroom above the live-list panes (Engines/Games) and the event
+   log -- on the panel (outside the scroll pane) so it stays put as content
+   scrolls/tails. */
+.studio-tabs wa-tab-panel[name="log"]::part(base),
+.studio-tabs wa-tab-panel[name="engines"]::part(base),
+.studio-tabs wa-tab-panel[name="h2h"]::part(base),
+.studio-tabs wa-tab-panel[name="livegames"]::part(base) { padding-top: 8px; }
+/* Keep the watch buttons off the pane's right edge / scrollbar. */
+.studio-pane .wb-sched-attach-btn { margin-right: 8px; }
+/* Studio tourney table: sortable + resizable sticky header, flat rows
+   (Settings engines look). The wrap is the resize overlay's positioned host
+   (mirrors the file picker's tableWrap). */
+.studio-tourney-wrap { position: relative; }
+.studio-tourney-tbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.studio-tourney-tbl thead th {
+  position: sticky; top: 0; z-index: 1;
+  text-align: left; font-weight: 600; font-size: 0.75rem; color: var(--muted);
+  padding: 6px 8px; background: var(--bg);
+  border-bottom: 1px solid var(--border-subtle);
+  user-select: none; white-space: nowrap;
+  /* Keep the resize grip from being covered by the next sticky cell, so its
+     hover indicator shows (matches the file picker header). */
+  overflow: hidden;
+}
+/* Hover affordance on the sortable headers: highlight the cell and outline
+   its extent (the column-size hint), like the file picker. */
+.studio-tourney-tbl thead th.th-sortable:hover {
+  background: var(--row-bg-hover);
+  box-shadow:
+    inset 2px 0 0 var(--wa-color-border-loud, #353841),
+    inset -2px 0 0 var(--wa-color-border-loud, #353841),
+    inset 0 -2px 0 var(--accent-line);
+}
+.studio-tourney-tbl tbody td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.studio-tourney-row { cursor: pointer; user-select: none; }
+.studio-tourney-row:hover { background: var(--row-bg-hover); }
+.studio-tourney-row.selected { background: var(--row-bg-selected); }
+.studio-tourney-row.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
+.studio-tourney-created { color: var(--muted); }
+/* Status cell holds status + optional SPRT pill; clip (no ellipsis) rather
+   than widen the column. */
+.studio-tourney-tbl tbody td.studio-tourney-status { text-overflow: clip; }
+/* Running tourney's Games cell: Arena's progress bar + inline label. */
+.studio-progress { display: flex; align-items: center; gap: 8px; }
 .tournaments-body-main {
   width: calc(100vw - 2 * var(--ribbon-w));
   margin-left: auto; margin-right: auto;
@@ -3056,7 +3492,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .tournaments-ribbon {
   display: flex; flex-direction: column; align-items: center;
   gap: 4px; padding: 4px 0;
-  border-right: 1px solid var(--wa-color-border-loud, #353841);
+  border-right: 1px solid var(--border-subtle);
   position: fixed;
   left: 0; top: 50%; transform: translateY(-50%);
   z-index: 10;
@@ -3071,6 +3507,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   margin: 0;
   cursor: pointer;
   min-width: 0;
+  user-select: none;
 }
 .tournament-row:hover { background: linear-gradient(to right, var(--row-bg-hover), var(--bg) 75%); }
 .tournament-row.selected {
@@ -3085,7 +3522,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   .tournaments-ribbon {
     position: static; transform: none;
     flex-direction: row; justify-content: center;
-    border-right: 0; border-bottom: 1px solid var(--wa-color-border-loud, #353841);
+    border-right: 0; border-bottom: 1px solid var(--border-subtle);
     padding: 6px 0;
   }
   .tournaments-ribbon .ribbon-sep {
@@ -3098,6 +3535,40 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
     width: auto; height: 2px;
   }
   .t-workspace, .tmb-window-menu { display: none; }
+
+  /* Studio: same ribbon-to-top switch as Arena; main reclaims full width. */
+  .studio-body { flex-direction: column; }
+  .studio-ribbon {
+    position: static; transform: none;
+    flex-direction: row; justify-content: center;
+    border-right: 0; border-bottom: 1px solid var(--border-subtle);
+    padding: 6px 0;
+  }
+  .studio-ribbon .ribbon-sep { width: 1px; height: 18px; margin: 0 4px; }
+  .studio-ribbon .ribbon-btn::before {
+    left: 6px; right: 6px; top: auto; bottom: 0;
+    width: auto; height: 2px;
+  }
+  /* Mobile Studio uses the document-scroll model (like Play): the page
+     scrolls, the footer stays put, the board area is pinned to one board
+     (JS sets its height), and the tab groups flow at natural height. */
+  body:has(.studio-panel) { height: auto; min-height: 100%; }
+  #perspective-root:has(.studio-panel) { overflow: visible; }
+  #engines-perspective:has(.studio-panel) { flex: 0 0 auto; min-height: 0; }
+  body:has(.studio-panel) #app-footer { position: sticky; bottom: 0; background: var(--bg); }
+  .studio-panel { flex: 0 0 auto; }
+  .studio-main { width: 100%; display: block; }
+  .studio-boards { flex: 0 0 auto; }
+  .studio-grip-row, .studio-grip-col { display: none; }
+  /* Tab groups stacked, each at natural (content) height -- no inner scroll.
+     The desktop body part is flex:1/min-height:0 (collapses to 0 without a
+     bounded parent), so force it to content height here. */
+  .studio-bottom, .studio-bottom-left, .studio-bottom-right, .studio-tabs { display: block; }
+  .studio-tabs::part(base),
+  .studio-tabs wa-tab-panel,
+  .studio-tabs wa-tab-panel::part(base) { height: auto; }
+  .studio-tabs::part(body) { flex: 0 0 auto; min-height: auto; }
+  .studio-pane { height: auto; overflow: visible; }
 }
 .tournament-engines {
   font-size: 0.75rem;
@@ -3114,14 +3585,6 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.tournament-sprt-badge {
-  flex: 0 0 auto;
-  font-size: 0.625rem; font-weight: 700; letter-spacing: 0.05em;
-  padding: 0.0625em 0.3125em; border-radius: 0.1875em;
-  background: rgba(var(--accent-rgb), 0.15);
-  border: 1px solid rgba(var(--accent-rgb), 0.4);
-  color: var(--accent);
 }
 .tournament-status {
   flex: 0 0 auto;
@@ -3143,12 +3606,23 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   border-color: #3d4d6e;
   color: #c8d4ee;
 }
+/* SPRT pill: inherits .tournament-status geometry; auto width (not the 6em
+   status column) and accent-tinted so it reads as a mode marker next to the
+   status badge. Declared after the base so equal-specificity wins hold. */
+.tournament-status--sprt {
+  width: auto;
+  padding-left: 0.5em; padding-right: 0.5em;
+  margin-left: 0.4em;
+  background: rgba(var(--accent-rgb), 0.15);
+  border-color: rgba(var(--accent-rgb), 0.4);
+  color: var(--accent);
+}
 .tournament-progress {
   position: relative;
   flex: 1 1 auto;
   height: 6px;
   min-width: 100px;
-  background: var(--panel);
+  background: rgb(51, 73, 87);
   border: none;
   border-radius: 6px;
   overflow: hidden;
@@ -3173,7 +3647,9 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .tournament-info {
   border-top: 1px solid var(--accent);
   padding-top: 10px;
+  user-select: none;
 }
+.tournament-info-dialog::part(title) { user-select: none; }
 .tournament-info-grid {
   display: grid;
   grid-template-columns: max-content 1fr;
@@ -3404,6 +3880,13 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .winbox.sturddle-wb-ribbon,
 .winbox.sturddle-wb-ribbon .wb-header,
 .winbox.sturddle-wb-ribbon .wb-body { border-radius: 0; }
+/* Studio boards: always straight corners (must follow the .sturddle-wb
+   radius rules above to win at equal specificity). */
+.winbox.sturddle-wb-studio,
+.winbox.sturddle-wb-studio .wb-header,
+.winbox.sturddle-wb-studio .wb-body { border-radius: 0; }
+/* Inside-the-box edge; here to beat .sturddle-wb { border: none }. */
+.winbox.sturddle-wb-studio { border: 1px solid var(--wb-outline); box-sizing: border-box; }
 .winbox.sturddle-wb-ribbon {
   border: 1px solid lightgray;
   outline: none;
@@ -3436,7 +3919,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    container (that would constrain ribbon scrollWidth during orientation
    toggles, breaking fitToContent). */
 .winbox.sturddle-wb-ribbon .wb-body > .board-ribbon,
-.winbox.sturddle-wb-ribbon .wb-body > .tournaments-ribbon {
+.winbox.sturddle-wb-ribbon .wb-body > .tournaments-ribbon,
+.winbox.sturddle-wb-ribbon .wb-body > .studio-ribbon {
   margin: 0 auto;
 }
 /* Ribbon inside WinBox: static positioning, no edge border.
@@ -3444,7 +3928,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    flex-direction + width are set inline by ribbon-window.js so they can
    switch between horizontal and vertical orientations. */
 .winbox.sturddle-wb-ribbon .wb-body .board-ribbon,
-.winbox.sturddle-wb-ribbon .wb-body .tournaments-ribbon {
+.winbox.sturddle-wb-ribbon .wb-body .tournaments-ribbon,
+.winbox.sturddle-wb-ribbon .wb-body .studio-ribbon {
   display: flex !important;
   position: static;
   transform: none;
@@ -3543,15 +4028,22 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-standings-table-wrap { position: relative; }
 .wb-standings-tbl { table-layout: fixed; }
 .wb-standings-tbl th { position: relative; }
+/* Pin the column header so it stays put while rows scroll (matches H2H). The
+   th keeps its own border-bottom + a solid bg, so collapsed borders don't
+   detach on scroll. */
+.wb-standings-tbl thead th { position: sticky; top: 0; z-index: 1; background: var(--bg); }
 .wb-standings-tbl td { overflow: hidden; text-overflow: ellipsis; }
-.wb-standings-tbl thead th:hover {
+.wb-standings-tbl thead th:hover,
+.h2h-tbl thead th:hover {
   background: #252830;
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
-.wb-standings-tbl thead th:first-child:hover {
+.wb-standings-tbl thead th:first-child:hover,
+.h2h-tbl thead th:first-child:hover {
   box-shadow: inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
-.wb-standings-tbl thead th:last-child:hover {
+.wb-standings-tbl thead th:last-child:hover,
+.h2h-tbl thead th:last-child:hover {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841);
 }
 .wb-sprt {
@@ -3564,6 +4056,19 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   background: var(--bg); border: 1px solid #4a3d1f; border-radius: 4px;
   padding: 6px 8px; margin-bottom: 8px; font-size: 0.75rem; color: #d4a854;
 }
+/* Studio Head-to-Head pane: a fixed banner (2-engine) + an internally scrolled
+   table so the banner and column header stay put while rows scroll. The wrap is
+   both the scroll container and the resize overlay's positioned host; the
+   sticky thead is positioned, which also anchors the .th-grip handles. */
+.wb-h2h { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.h2h-banner { margin: 0 8px 10px; background: var(--row-bg-selected); }
+.h2h-table-wrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; }
+.h2h-tbl { table-layout: fixed; }
+.h2h-tbl thead th { position: sticky; top: 0; z-index: 1; background: var(--bg); }
+.h2h-tbl td { overflow: hidden; text-overflow: ellipsis; }
+.h2h-tbl .h2h-group td { font-weight: 600; color: var(--fg); }
+.h2h-tbl .h2h-side { color: var(--muted); padding-left: 16px; }
+.h2h-tbl .h2h-wld { color: var(--muted); }
 .wb-sched-list, .wb-eventlog-list { list-style: none; padding: 0; margin: 0; }
 .wb-log-copy-ctrl {
   -webkit-mask-image: url(/ui/vendor/fontawesome-free/svgs/solid/copy.svg);
@@ -3587,7 +4092,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   display: flex; gap: 8px; white-space: nowrap;
 }
 .wb-log-ts { color: var(--muted); flex: 0 0 60px; }
-.wb-log-kind { color: var(--accent); }
+.wb-log-kind { color: var(--muted-bright); }
 .wb-log-detail { color: var(--muted); }
 .wb-log-runner { color: var(--fg); }
 .wb-log-runner.err { color: var(--wa-color-danger-on-loud); }
@@ -3694,6 +4199,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .wb-livegame .lg-result-termination {
   font-size: 0.875em;
   margin-top: 0.25em;
+  min-height: 1.4em;   /* one inherited line (body line-height 1.4) so empty == filled */
   color: var(--muted);
   text-transform: lowercase;
 }
@@ -3841,7 +4347,7 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
     left: auto;
     right: 0;
     border-right: 0;
-    border-left: 1px solid var(--wa-color-border-loud, #353841);
+    border-left: 1px solid var(--border-subtle);
   }
   /* Mirror only the board ribbon's vertical edge stripe. Scoping to
      .board-ribbon keeps the top-edge accent on panel ribbons (engines,
@@ -3862,13 +4368,15 @@ body[data-ribbon-side="right"] #xgame-toast-stack {
     left: auto;
     right: calc(var(--ribbon-w) + 1px);
   }
-  body[data-ribbon-side="right"] .tournaments-ribbon {
+  body[data-ribbon-side="right"] .tournaments-ribbon,
+  body[data-ribbon-side="right"] .studio-ribbon {
     left: auto;
     right: 0;
     border-right: 0;
-    border-left: 1px solid var(--wa-color-border-loud, #353841);
+    border-left: 1px solid var(--border-subtle);
   }
-  body[data-ribbon-side="right"] .tournaments-ribbon .ribbon-btn::before {
+  body[data-ribbon-side="right"] .tournaments-ribbon .ribbon-btn::before,
+  body[data-ribbon-side="right"] .studio-ribbon .ribbon-btn::before {
     right: auto;
     left: -1px;
   }

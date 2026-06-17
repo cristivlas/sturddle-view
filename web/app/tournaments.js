@@ -17,9 +17,13 @@ import { loadRaw, saveRaw } from "./storage.js";
 import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
+import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
 import { debounce, ribbonWidthPx } from "./wb-utils.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
+const NEW_TOURNAMENT_LABEL = "New tournament";
+const EMPTY_CTA_PREFIX = "No tournaments yet -- click ";
+const EMPTY_CTA_SUFFIX = " to create one.";
 const REVEAL_DEBOUNCE_MS = 500;
 // Unicode ellipsis is intentional: this glyph is rendered into the
 // tournament-id span (user-facing), not a code token. ASCII-only rule
@@ -172,21 +176,6 @@ function formatTime(iso) {
   return d.toLocaleString();
 }
 
-function totalGames(t) {
-  const tpl = t.template || {};
-  const n = (t.engines || []).length;
-  const rounds = Number(tpl.rounds);
-  const gpr = Number(tpl.games_per_round ?? 2);
-  if (!n || !rounds || !gpr) return null;
-  if (tpl.tournament_type === "gauntlet") {
-    const seeds = Number(tpl.seeds);
-    if (!seeds || seeds >= n) return null;
-    return seeds * (n - seeds) * rounds * gpr;
-  }
-  const pairings = (n * (n - 1)) / 2;
-  return pairings * rounds * gpr;
-}
-
 function formatGames(t) {
   const played = t.standings?.games;
   const total = totalGames(t);
@@ -300,17 +289,7 @@ function renderList(ctx) {
 
   if (noTournaments) {
     ctx.emptyEl.classList.remove("hidden");
-    ctx.emptyMsg.replaceChildren();
-    const newLink = document.createElement("button");
-    newLink.type = "button";
-    newLink.className = "toast-icon-btn";
-    newLink.setAttribute("aria-label", "New tournament");
-    newLink.setAttribute("title", "New tournament");
-    const newIc = document.createElement("wa-icon");
-    newIc.setAttribute("name", "plus");
-    newLink.appendChild(newIc);
-    newLink.addEventListener("click", () => openNewTournamentDialog(ctx));
-    ctx.emptyMsg.append("No tournaments yet — click ", newLink, " to create one.");
+    ctx.emptyMsg.replaceChildren(...newTournamentCta(() => openNewTournamentDialog(ctx)));
     ctx.selectedId = null;
     syncRibbon(ctx);
     return;
@@ -348,70 +327,20 @@ function sortedTournaments(ctx) {
 }
 
 function renderRow(ctx, t) {
-  const li = document.createElement("li");
-  li.className = "tournament-row" + (t.id === ctx.selectedId ? " selected" : "");
-  li.dataset.id = t.id;
-
-  const status = t.status;
-  const isRunning = status === STATUS.RUNNING;
-  const played = t.standings?.games ?? 0;
-  const total = totalGames(t);
-  const pct = total ? Math.min(100, Math.round((played / total) * 100)) : 0;
-
-  let trailing = "";
-  if (isRunning && total) {
-    trailing = `
-      <div class="tournament-progress" role="progressbar"
-           aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${played}">
-        <div class="tournament-progress-fill" style="width: ${pct}%"></div>
-      </div>
-      <span class="tournament-progress-label">${played} / ${total} · ${pct}%</span>
-    `;
-  } else {
-    trailing = `<span class="tournament-engines muted"></span>`;
-  }
-
-  const sprtBadge = t.template?.sprt ? `<span class="tournament-sprt-badge">SPRT</span>` : "";
-  li.innerHTML = `
-    <div class="tournament-row-main">
-      <span class="tournament-status status-${status}">${status}</span>
-      <span class="tournament-name"></span>
-      ${sprtBadge}
-      ${trailing}
-    </div>
-  `;
-
-  li.querySelector(".tournament-name").textContent = t.name;
-  if (!isRunning || !total) {
-    const engineNames = (t.engines || []).map((e) => e.name).join(", ");
-    li.querySelector(".tournament-engines").textContent = engineNames;
-  }
-
-  li.addEventListener("click", () => {
-    ctx.listEl.focus({ preventScroll: true });
-    if (ctx.selectedId === t.id) return;
-    navigateTo(ctx, t.id);
+  return renderTournamentRow(t, {
+    selected: t.id === ctx.selectedId,
+    onSelect: (t) => {
+      ctx.listEl.focus({ preventScroll: true });
+      if (ctx.selectedId === t.id) return;
+      navigateTo(ctx, t.id);
+    },
+    onInfo: (t) => ctx.openInfoGuarded(t),
   });
-  li.addEventListener("dblclick", () => ctx.openInfoGuarded(t));
-
-  return li;
 }
 
 function updateProgressInPlace(ctx, t) {
-  const played = t?.standings?.games;
-  if (played == null) return;
-  const row = ctx.listEl.querySelector(`li[data-id="${t.id}"]`);
-  if (!row) return;
-  const bar = row.querySelector(".tournament-progress");
-  const fill = row.querySelector(".tournament-progress-fill");
-  const label = row.querySelector(".tournament-progress-label");
-  if (!bar || !fill || !label) return;
-  const total = totalGames(t);
-  if (!total) return;
-  const pct = Math.min(100, Math.round((played / total) * 100));
-  bar.setAttribute("aria-valuenow", String(played));
-  fill.style.width = `${pct}%`;
-  label.textContent = `${played} / ${total} · ${pct}%`;
+  if (t?.standings?.games == null) return;
+  updateRowProgress(ctx.listEl.querySelector(`li[data-id="${t.id}"]`), t);
 }
 
 function selectedTournament(ctx) {
@@ -608,6 +537,40 @@ async function removeOne(ctx, t) {
   await ctx.loadList();
 }
 
+// Shared tournament verbs for other UIs (e.g. Studio). The action functions
+// only read {api, log, settings, loadList} off ctx, so a minimal ctx adapter
+// lets a different perspective reuse them with no change to the verbs.
+export function tournamentActions({ api, log, getSettings, reload }) {
+  const ctx = {
+    api, log, loadList: reload,
+    get settings() { return getSettings ? getSettings() : null; },
+  };
+  return {
+    create: () => openNewTournamentDialog(ctx),
+    edit: (t) => openEditTournamentDialog(ctx, t),
+    info: (t) => openInfoDialog(ctx, t),
+    start: (t) => startOne(ctx, t),
+    stop: (t) => stopOne(ctx, t),
+    remove: (t) => removeOne(ctx, t),
+  };
+}
+
+// Empty-list call to action shared by Arena and Studio: prose wrapping an
+// inline "+" button that fires New. Returns the nodes to append into a host
+// (text, button, text) so each perspective drops them into its own container.
+export function newTournamentCta(onCreate) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "toast-icon-btn";
+  btn.setAttribute("aria-label", NEW_TOURNAMENT_LABEL);
+  btn.setAttribute("title", NEW_TOURNAMENT_LABEL);
+  const ic = document.createElement("wa-icon");
+  ic.setAttribute("name", "plus");
+  btn.appendChild(ic);
+  btn.addEventListener("click", () => onCreate());
+  return [EMPTY_CTA_PREFIX, btn, EMPTY_CTA_SUFFIX];
+}
+
 // ---- Info dialog --------------------------------------------------------
 
 async function openInfoDialog(ctx, t) {
@@ -621,6 +584,7 @@ async function openInfoDialog(ctx, t) {
     label: detailed.name,
     width: "520px",
     body: (resolve, dialog) => {
+      dialog.classList.add("tournament-info-dialog");
       const wrap = document.createElement("div");
       wrap.className = "tournament-info";
       wrap.appendChild(buildInfoContent(ctx, detailed));

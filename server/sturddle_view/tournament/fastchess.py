@@ -58,6 +58,11 @@ def _quote_arg(arg: str) -> str:
     return arg
 
 
+# When a common opening book feeds the tournament, disable each engine's
+# built-in book so it doesn't override/double the shared openings.
+_OWNBOOK_OFF = "option.OwnBook=false"
+
+
 log = logging.getLogger(__name__)
 
 
@@ -174,6 +179,8 @@ def build_command(spec: RunSpec) -> list[str]:
         each.append(f"option.Ponder={'true' if t['ponder'] else 'false'}")
     if spec.engine_default_syzygy_path:
         each.append(f"option.SyzygyPath={spec.engine_default_syzygy_path}")
+    if spec.engine_default_book_path:
+        each.append(_OWNBOOK_OFF)
     if each:
         cmd.append("-each")
         cmd.extend(each)

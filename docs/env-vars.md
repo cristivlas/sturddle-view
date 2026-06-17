@@ -33,6 +33,7 @@ isolated instances). Each falls back to the platform default when unset.
 | `SV_ENGINE_REGISTRY_PATH` | platform config dir | Path to the persisted engine registry JSON. |
 | `SV_GAME_STATE_PATH` | platform data dir | Path to the live game-state snapshot. |
 | `SV_IMPORTS_DIR` | platform data dir | Directory for the imported PGN/FEN history store. |
+| `SV_INSTANCE_LOCK_PATH` | platform data dir | Override the single-instance lock-file location (chiefly tests and isolated instances). |
 | `SV_ENGINE_PROBE_TIMEOUT_SEC` | `3.0` | Timeout for the engine UCI handshake probe (floored at `0.05`). |
 | `SV_MAX_IMPORT_BYTES` | `2097152` | Cap on `/game/import` payload size (2 MiB). |
 | `SV_MAX_ANNOTATION_LENGTH` | `10000` | Cap on individual move-annotation text length. |
@@ -98,6 +99,8 @@ source; check the file when a precise value matters.
 | `SV_AI_VERIFICATION_DEPTH` | `25` | Floor depth for the end-of-turn recommendation check; searches at least this deep (deeper if the model asked for more). | `server/sturddle_view/play/tools_engine.py` |
 | `SV_AI_TOP_MOVES_MAX_N` | `5` | Hard cap on `top_moves` candidate count; over-large `n` clamped. | `server/sturddle_view/play/tools_engine.py` |
 | `SV_AI_REPORT_LINE_MAX_PLIES` | `40` | Hard cap on `report_line` continuation length; bounds payload size (no engine search). | `server/sturddle_view/play/tools_engine.py` |
+| `SV_AI_RELATED_OPENINGS_MAX_N` | `8` | Cap on sibling variations returned per `related_openings` call; a broad family would otherwise flood context. | `server/sturddle_view/play/tools_openings.py` |
+| `SV_AI_OPENING_PHASE_SLACK_PLIES` | `12` | Plies of slack past the book line before the commentary opening-theory directive (mandating a `related_openings` call) switches off. | `server/sturddle_view/api/_ai_kick.py` |
 | `SV_AI_ANNOTATION_PER_COMMENT_MAX` | `200` | Max characters per PGN annotation before truncation. | `server/sturddle_view/api/_ai_kick.py` |
 | `SV_AI_ANNOTATION_TOTAL_MAX` | `1500` | Max total characters across annotations before trailing entries are dropped. | `server/sturddle_view/api/_ai_kick.py` |
 | `SV_AI_INLINE_TOOL_ID_LEN` | module const | Synthetic `tool_use_id` length for inline-tool-call recovery. | `server/sturddle_view/llm/inline_tool_calls.py` |

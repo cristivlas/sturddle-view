@@ -99,3 +99,23 @@ export function attachColumnResize({
     },
   };
 }
+
+// Build the `applySizes` callback for percentage-width columns: on a drag it
+// clamps the dragged boundary to `minPct` (stealing the deficit from the
+// neighbor), then writes every column's width. Shared by the standings,
+// tourney, and head-to-head tables so the clamp math lives in one place.
+export function makePctApplySizes(colEls, minPct) {
+  return function applySizes(sizes, rctx) {
+    if (rctx) {
+      const { deltaFrac, startSizes, gripIdx } = rctx;
+      const dPct = deltaFrac * 100;
+      let a = startSizes[gripIdx] + dPct;
+      let b = startSizes[gripIdx + 1] - dPct;
+      if (a < minPct) { b -= minPct - a; a = minPct; }
+      if (b < minPct) { a -= minPct - b; b = minPct; }
+      sizes[gripIdx] = a;
+      sizes[gripIdx + 1] = b;
+    }
+    colEls.forEach((c, i) => { c.style.width = sizes[i] + "%"; });
+  };
+}

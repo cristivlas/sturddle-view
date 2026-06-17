@@ -169,10 +169,17 @@ arrow (via the end-of-turn `ai_recommendation` verifier search).
   MultiPV). Operates on the live board via `board_provider` (no FEN
   input). Uses UCI `searchmoves` (python-chess `root_moves` kwarg).
   SHIPPED.
+- `report_line(moves)` - pure legality replay of a SAN/UCI continuation
+  (no engine); grounds any line the narrator names before naming it.
+  Capped at `SV_AI_REPORT_LINE_MAX_PLIES`. SHIPPED.
+- `related_openings(family=None)` - pure lookup over the vendored opening
+  dataset: returns a family's sibling variations with canonical SAN lines,
+  grounding variation contrast in real lines instead of model memory.
+  Narrator-only, capped at `SV_AI_RELATED_OPENINGS_MAX_N`. SHIPPED.
+  (Supersedes the originally planned `opening_lookup()`.)
 - `tablebase_probe()` - wraps existing `TablebaseProber` (Syzygy WDL/DTZ);
   pending. Register conditionally on `engine_default_syzygy_path` being
   set so the tool never appears for users without tablebases.
-- `opening_lookup()` - wraps existing `OpeningBook.lookup()`; pending.
 - `compare_moves(fen, [moves])` - same `searchmoves` blocker as
   `top_moves`; pending until engine supports it.
 - `get_position(ply)` / `get_pgn_range(from_ply, to_ply)` - low

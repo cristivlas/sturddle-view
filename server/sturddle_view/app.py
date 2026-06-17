@@ -62,6 +62,10 @@ from .play.tools_engine import (
     make_top_moves_tool,
     make_validate_move_tool,
 )
+from .play.tools_openings import (
+    RELATED_OPENINGS_TOOL_SPEC,
+    make_related_openings_tool,
+)
 from .recent_imports import RecentImports
 from .tournament.fastchess import FastchessRunner
 from .tournament.orchestrator import Orchestrator, wrap_event_for_bus
@@ -434,6 +438,9 @@ def _setup_ai(app: FastAPI) -> None:
         hve = getattr(app.state, "hve", None)
         return getattr(hve, "_board", None) if hve else None
 
+    def _ai_book_provider():
+        return getattr(app.state, "openings", None)
+
     def _ai_settings_provider():
         return app.state.settings
 
@@ -526,6 +533,16 @@ def _setup_ai(app: FastAPI) -> None:
     ai_registry.register(
         VALIDATE_MOVE_TOOL_SPEC,
         make_validate_move_tool(board_provider=_ai_board_provider),
+    )
+    # Opening-context grounding (no engine, no eval): real sibling lines from
+    # the vendored dataset so a variation contrast cites the book, not memory.
+    # Narrator-only -- the verifier red-teams moves, not opening theory.
+    ai_registry.register(
+        RELATED_OPENINGS_TOOL_SPEC,
+        make_related_openings_tool(
+            book_provider=_ai_book_provider,
+            board_provider=_ai_board_provider,
+        ),
     )
     app.state.ai_tool_registry = ai_registry
     app.state.ai_verifier_registry = ai_verifier_registry

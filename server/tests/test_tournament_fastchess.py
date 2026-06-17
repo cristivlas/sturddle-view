@@ -334,6 +334,29 @@ def test_build_command_book(tmp_path):
     assert cmd[idx + 3] == "plies=8"
 
 
+def test_build_command_book_disables_ownbook(tmp_path):
+    # A common book must turn off each engine's built-in book.
+    spec = _make_spec(
+        tmp_path,
+        template={},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+        engine_default_book_path="/books/8moves.epd",
+    )
+    cmd = build_command(spec)
+    assert "option.OwnBook=false" in cmd
+
+
+def test_build_command_no_book_keeps_ownbook_default(tmp_path):
+    # Without a common book, OwnBook is left to the engine's own default.
+    spec = _make_spec(
+        tmp_path,
+        template={},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    cmd = build_command(spec)
+    assert all("OwnBook" not in s for s in cmd)
+
+
 def test_build_command_book_includes_order_when_set(tmp_path):
     spec = _make_spec(
         tmp_path,

@@ -16,6 +16,17 @@ from sturddle_view.tournament import fastchess as fc_mod
 from sturddle_view.tournament.fastchess import FastchessRunner
 
 
+WANT_INFO_KEY = "want_info"
+
+
+def assert_first_post_gates_off(r):
+    """A proxy's first POST has no subscribers yet, so the server flips
+    want_info None->False and returns it as a 200 body. Subsequent
+    unchanged posts stay 204."""
+    assert r.status_code == 200
+    assert r.json() == {WANT_INFO_KEY: False}
+
+
 FAKE_FASTCHESS = r"""
 import sys, time
 i = 1
@@ -82,7 +93,7 @@ def test_internal_proxy_accepts_valid_secret(running_app):
         "engine_name": "EngineA",
         "lines": [],
     })
-    assert r.status_code == 204
+    assert_first_post_gates_off(r)
 
 
 def test_internal_proxy_session_started_records_engine_name(running_app):
@@ -96,7 +107,7 @@ def test_internal_proxy_session_started_records_engine_name(running_app):
         "engine_name": "EngineX",
         "lines": [],
     })
-    assert r.status_code == 204
+    assert_first_post_gates_off(r)
     orch = app.state.tournament_orch
     assert orch.engine_name_for("p1") == "EngineX"
     active = orch.active_proxies()
@@ -121,7 +132,7 @@ def test_snapshot_replayed_on_late_subscribe(running_app):
             "info depth 12 score cp 25 pv g1f3 b8c6",
         ],
     })
-    assert r.status_code == 204
+    assert_first_post_gates_off(r)
 
     # Now connect: the snapshot should arrive on the very first
     # messages without any new lines being posted.
@@ -186,6 +197,35 @@ def test_proxy_ws_subscriber_gets_ended_on_session_end(running_app):
         })
         msg = ws.receive_json(mode="text")
         assert msg.get("ended") is True
+
+
+def test_want_info_signaled_only_on_flip(running_app):
+    """The endpoint returns a want_info body only when the gate flips:
+    first post (no subs) -> 200 false, repeat -> 204, subscriber attaches
+    -> next post 200 true, repeat -> 204."""
+    client, app = running_app
+    secret = app.state.tournament_orch.proxy_secret()
+
+    def post():
+        return client.post("/internal/proxy", json={
+            "proxy_id": "g1", "secret": secret,
+            "lines": ["position startpos"],
+        })
+
+    assert_first_post_gates_off(post())          # None -> False
+    assert post().status_code == 204             # unchanged
+
+    with client.websocket_connect("/ws/tournament/proxy/g1?token=") as ws:
+        ws.receive_json(mode="text")             # drain snapshot replay
+        r = post()
+        assert r.status_code == 200               # False -> True
+        assert r.json() == {WANT_INFO_KEY: True}
+        assert post().status_code == 204          # unchanged
+
+    # Subscriber gone -> next post flips back to False.
+    r = post()
+    assert r.status_code == 200
+    assert r.json() == {WANT_INFO_KEY: False}
 
 
 def test_orchestrator_clears_secret_on_stop(tmp_path, monkeypatch):

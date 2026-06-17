@@ -17,13 +17,12 @@ import {
   isLiveWindowOpen, openLiveGameWindow, openFrozenGameWindow,
   LIVE_MIN_WIDTH, LIVE_MIN_HEIGHT, DEBUG_WATCH,
 } from "./tournament-live-game.js";
-import { EVT, EVT_PREFIX, KIND, STATUS, SPRT } from "./tournament-events.js";
+import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { SIDE } from "./chess-consts.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, removeKey } from "./storage.js";
 import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
-import { attachColumnResize } from "./col-resize.js";
 import { apiErrorDetail, confirm, toast } from "./dialogs.js";
 import {
   AUTOSCROLL_SLACK_ROW_PX,
@@ -34,11 +33,13 @@ import {
   scrollToBottom,
 } from "./wb-utils.js";
 import { createSlotGrid, SLOT_GAP } from "./workspace-slot-grid.js";
+import {
+  addLogEntry, applyEventKind, createLiveState, seedFromDetail,
+} from "./tournament-live-state.js";
+import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
+import { renderEventLogList } from "./tournament-eventlog.js";
 
 const STORAGE_KEY_PREFIX = STORAGE_KEY.WORKSPACE_PREFIX;
-const STANDINGS_COL_PCTS_KEY = STORAGE_KEY.TOURNAMENTS_STANDINGS_COL_PCTS;
-const STANDINGS_DEFAULT_PCTS = [25, 7, 7, 7, 7, 7, 8, 14];
-const EVENT_LOG_LIMIT = 500;
 
 // Reserved strip at the bottom so minimized WinBoxes have a place to dock.
 // Source of truth is the --wb-min-footer-h CSS token (toast stacks lift
@@ -54,64 +55,6 @@ const TIDY_GAP = 0;
 
 // ---- Window body builders (pure DOM; no workspace state) ----------------
 
-function makeStandingsBody() {
-  const el = document.createElement("div");
-  el.className = "wb-standings";
-  el.innerHTML = `
-    <div class="wb-sprt-slot"></div>
-    <div class="wb-partial-slot"></div>
-    <div class="wb-empty wb-standings-empty">Loading...</div>
-    <div class="wb-standings-table-wrap" hidden>
-      <table class="wb-table wb-standings-tbl">
-        <colgroup>
-          <col><col><col><col><col><col><col><col>
-        </colgroup>
-        <thead>
-          <tr>
-            <th>Engine<span class="th-grip"></span></th>
-            <th>G<span class="th-grip"></span></th>
-            <th>W<span class="th-grip"></span></th>
-            <th>L<span class="th-grip"></span></th>
-            <th>D<span class="th-grip"></span></th>
-            <th>Pts<span class="th-grip"></span></th>
-            <th>%<span class="th-grip"></span></th>
-            <th>Elo<span class="th-grip"></span></th>
-            <th>Ordo</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  `;
-  const wrapEl = el.querySelector(".wb-standings-table-wrap");
-  const tableEl = el.querySelector(".wb-standings-tbl");
-  const colEls = Array.from(el.querySelectorAll(".wb-standings-tbl col"));
-  const grips = Array.from(el.querySelectorAll(".wb-standings-tbl .th-grip"));
-  const colPcts = STANDINGS_DEFAULT_PCTS.slice();
-  const minPct = 4;
-  attachColumnResize({
-    table: tableEl,
-    grips,
-    overlayHost: wrapEl,
-    storageKey: STANDINGS_COL_PCTS_KEY,
-    sizes: colPcts,
-    unit: "pct",
-    applySizes(sizes, rctx) {
-      if (rctx) {
-        const { deltaFrac, startSizes, gripIdx } = rctx;
-        const dPct = deltaFrac * 100;
-        let a = startSizes[gripIdx] + dPct;
-        let b = startSizes[gripIdx + 1] - dPct;
-        if (a < minPct) { b -= minPct - a; a = minPct; }
-        if (b < minPct) { a -= minPct - b; b = minPct; }
-        sizes[gripIdx] = a;
-        sizes[gripIdx + 1] = b;
-      }
-      colEls.forEach((c, i) => { c.style.width = sizes[i] + "%"; });
-    },
-  });
-  return el;
-}
 
 function makeScheduleBody() {
   const el = document.createElement("div");
@@ -671,26 +614,8 @@ function setOtherActive(ctx, id, name) {
 
 function applyDetail(ctx, fresh) {
   ctx.detail = fresh;
-  // While RUNNING, API state can lag WS events under fast tc, so
-  // treat API as additive (add missing entries, never remove).
-  // When not RUNNING, replace authoritatively to drop ghosts.
-  const seededProxies = ctx.detail.proxies_active || [];
-  if (ctx.detail.status !== STATUS.RUNNING) ctx.activeProxies.clear();
-  for (const p of seededProxies) {
-    if (p.proxy_id && !ctx.activeProxies.has(p.proxy_id)) {
-      ctx.activeProxies.set(p.proxy_id, { engineName: p.engine_name || null });
-    }
-  }
-  const seededPairings = ctx.detail.pairings_active || [];
-  if (ctx.detail.status !== STATUS.RUNNING) ctx.livePairings.clear();
-  for (const p of seededPairings) {
-    if (ctx.livePairings.has(p.proxy_a) || ctx.livePairings.has(p.proxy_b)) continue;
-    const info = { pairId: p.pair_id, proxyA: p.proxy_a, engineA: p.engine_a, sideA: p.side_a,
-                   proxyB: p.proxy_b, engineB: p.engine_b, sideB: p.side_b };
-    ctx.livePairings.set(p.proxy_a, info);
-    ctx.livePairings.set(p.proxy_b, info);
-  }
-  renderStandings(ctx);
+  seedFromDetail(ctx.live, fresh);
+  renderStandings(ctx.standingsBody, ctx.detail);
   renderSchedule(ctx);
   renderEngines(ctx);
   renderEventLog(ctx);
@@ -698,107 +623,6 @@ function applyDetail(ctx, fresh) {
 
 
 // ---- Event pipeline -----------------------------------------------------
-
-function addLogEntry(ctx, evt) {
-  const seq = evt.payload?._seq;
-  // `game_reconciled` doesn't go into eventLog (it upgrades a prior
-  // game_finished row in pushEvent); duplicates are idempotent there
-  // so we don't need to track its seq at all.
-  if (evt.payload?.kind === KIND.GAME_RECONCILED) return false;
-  if (seq != null) {
-    if (ctx.seenSeqs.has(seq)) return false;
-    ctx.seenSeqs.add(seq);
-  }
-  const tsRaw = evt.payload?._ts;
-  const ts = (tsRaw ? new Date(tsRaw) : new Date())
-    .toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-  ctx.eventLog.push({ ts, kind: evt.kind, payload: evt.payload, _seq: seq });
-  // Keep ordered by seq so backfill items slot in before any live
-  // events that arrived during the REST round-trip.
-  ctx.eventLog.sort((a, b) => (a._seq ?? 0) - (b._seq ?? 0));
-  // Cap eventLog and keep seenSeqs in lockstep so it can't outgrow
-  // the visible log -- the dedup only needs to cover items we'd
-  // otherwise re-render.
-  while (ctx.eventLog.length > EVENT_LOG_LIMIT) {
-    const evicted = ctx.eventLog.shift();
-    if (evicted?._seq != null) ctx.seenSeqs.delete(evicted._seq);
-  }
-  return true;
-}
-
-function applyReconciled(ctx, evt) {
-  // Upgrade the prior `game_finished` entry for this pair_id with
-  // the matched result/termination/game_n instead of pushing a
-  // separate row. One game = one log entry.
-  const pid = evt.payload?.pair_id;
-  if (pid) {
-    if (evt.payload.game_n != null) {
-      ctx.resolvedGames.set(pid, {
-        gameN: evt.payload.game_n,
-        result: evt.payload.result,
-        termination: evt.payload.termination,
-      });
-    }
-    for (let i = ctx.eventLog.length - 1; i >= 0; i--) {
-      const ent = ctx.eventLog[i];
-      if (ent.payload?.kind === KIND.GAME_FINISHED && ent.payload?.pair_id === pid) {
-        ent.payload = {
-          ...ent.payload,
-          result: evt.payload.result,
-          termination: evt.payload.termination,
-          game_n: evt.payload.game_n,
-          reconciled: true,
-        };
-        break;
-      }
-    }
-    // Live windows listening for this pair_id will repaint
-    // their banner; no-op if window already closed.
-    window.dispatchEvent(new CustomEvent(APP_EVT.RECONCILED, {
-      detail: {
-        pairId: pid,
-        result: evt.payload.result,
-        termination: evt.payload.termination,
-        gameN: evt.payload.game_n ?? null,
-        tournamentId: ctx.tournament.id,
-      },
-    }));
-  }
-}
-
-function applyEventKind(ctx, evt, inner) {
-  // Track active proxies for Schedule rows.
-  if (inner === KIND.PROXY_STARTED) {
-    const pid = evt.payload.proxy_id;
-    if (pid) {
-      ctx.activeProxies.set(pid, {
-        engineName: evt.payload.engine_name || null,
-      });
-    }
-  } else if (inner === KIND.PROXY_ENDED) {
-    const pid = evt.payload.proxy_id;
-    if (pid) ctx.activeProxies.delete(pid);
-  } else if (inner === KIND.PROXY_PAIRED) {
-    const p = evt.payload;
-    const info = { pairId: p.pair_id, proxyA: p.proxy_a, engineA: p.engine_a, sideA: p.side_a,
-                   proxyB: p.proxy_b, engineB: p.engine_b, sideB: p.side_b };
-    ctx.livePairings.set(p.proxy_a, info);
-    ctx.livePairings.set(p.proxy_b, info);
-  } else if (inner === KIND.GAME_FINISHED) {
-    // Authoritative game-end signal -- drives livePairings cleanup +
-    // Schedule re-render.
-    ctx.livePairings.delete(evt.payload.proxy_a);
-    ctx.livePairings.delete(evt.payload.proxy_b);
-  } else if (inner === KIND.GAME_RECONCILED) {
-    applyReconciled(ctx, evt);
-  } else if (
-    inner === KIND.DONE || inner === KIND.STOPPED ||
-    (evt.kind === EVT.STATUS &&
-     [STATUS.STOPPED, STATUS.DONE, STATUS.FAILED].includes(evt.payload?.status))
-  ) {
-    ctx.activeProxies.clear();
-  }
-}
 
 function pushEvent(ctx, evt) {
   if (!evt) return;
@@ -808,10 +632,10 @@ function pushEvent(ctx, evt) {
   const tid = evt.payload?.tournament_id;
   if (tid && tid !== ctx.tournament.id) return;
 
-  const added = addLogEntry(ctx, evt);
+  const added = addLogEntry(ctx.live, evt);
 
   const inner = evt.payload?.kind;
-  applyEventKind(ctx, evt, inner);
+  applyEventKind(ctx.live, evt, inner, ctx.tournament.id);
 
   if (added) scheduleRender(ctx, "_eventLogPending", renderEventLog);
   if (inner === KIND.PROXY_STARTED || inner === KIND.PROXY_ENDED ||
@@ -868,7 +692,7 @@ async function backfillEvents(ctx) {
     let added = false;
     for (const e of (res.events || [])) {
       if (!e.kind?.startsWith(EVT_PREFIX)) continue;
-      if (addLogEntry(ctx, e)) added = true;
+      if (addLogEntry(ctx.live, e)) added = true;
     }
     if (added) scheduleRender(ctx, "_eventLogPending", renderEventLog);
   } catch (e) {
@@ -1145,77 +969,6 @@ async function initWorkspace(ctx) {
 
 // ---- Rendering ----------------------------------------------------------
 
-function renderStandings(ctx) {
-  const sprtSlot = ctx.standingsBody.querySelector(".wb-sprt-slot");
-  const partialSlot = ctx.standingsBody.querySelector(".wb-partial-slot");
-  const emptyEl = ctx.standingsBody.querySelector(".wb-standings-empty");
-  const wrapEl = ctx.standingsBody.querySelector(".wb-standings-table-wrap");
-  const tbody = ctx.standingsBody.querySelector(".wb-standings-tbl tbody");
-  const standings = ctx.detail?.standings;
-  if (!standings || standings.engines.length === 0) {
-    emptyEl.textContent = "No games played yet.";
-    emptyEl.hidden = false;
-    wrapEl.hidden = true;
-    sprtSlot.innerHTML = "";
-    partialSlot.innerHTML = "";
-    return;
-  }
-  emptyEl.hidden = true;
-  wrapEl.hidden = false;
-  const sprt = ctx.detail.sprt;
-  tbody.innerHTML = standings.engines
-    .map((e) => {
-      const eloCell = e.elo == null
-        ? "--"
-        : (e.elo >= 0 ? "+" : "") + e.elo.toFixed(1) +
-          (e.elo_margin_95 == null ? "" : ` +/- ${e.elo_margin_95.toFixed(1)}`);
-      const ordoCell = e.elo_ordo == null
-        ? "--"
-        : (e.elo_ordo >= 0 ? "+" : "") + e.elo_ordo.toFixed(1) +
-          (e.elo_ordo_margin_95 == null ? "" : ` +/- ${e.elo_ordo_margin_95.toFixed(1)}`);
-      return `
-      <tr>
-        <td class="wb-eng-name" title="${escapeHtml(e.name)}">${escapeHtml(e.name)}</td>
-        <td>${e.games}</td>
-        <td>${e.wins}</td>
-        <td>${e.losses}</td>
-        <td>${e.draws}</td>
-        <td>${e.points}</td>
-        <td>${(e.score_pct * 100).toFixed(1)}%</td>
-        <td>${eloCell}</td>
-        <td>${ordoCell}</td>
-      </tr>`;
-    })
-    .join("");
-  if (sprt) {
-    const lo = sprt.lower_bound, hi = sprt.upper_bound, llr = sprt.llr;
-    const concluded = sprt.status !== SPRT.CONTINUE;
-    const colorMod = concluded ? (sprt.status === SPRT.H1 ? " wb-sprt--h1" : " wb-sprt--h0") : "";
-    const candidate = ctx.detail.engines?.[0]?.name ? escapeHtml(ctx.detail.engines[0].name) : "candidate";
-    const pairsText = sprt.pairs != null ? ` * ${sprt.pairs} pair${sprt.pairs === 1 ? "" : "s"}` : "";
-    const statusText = sprt.status === SPRT.H1
-      ? `H1 (${candidate} is stronger)`
-      : sprt.status === SPRT.H0
-        ? `H0 (no significant difference)`
-        : sprt.status;
-    sprtSlot.innerHTML = `<div class="wb-sprt${colorMod}">` +
-      `SPRT ${candidate} [${sprt.elo0}, ${sprt.elo1}] * LLR=${llr.toFixed(2)} [${lo.toFixed(2)}, ${hi.toFixed(2)}]` +
-      `${pairsText} * ${statusText}` +
-      `</div>`;
-  } else {
-    sprtSlot.innerHTML = "";
-  }
-  const partialPairs = ctx.detail.partial_pairs ?? 0;
-  // Hide during RUNNING -- a fresh game-1 always sits alone in the
-  // PGN until game-2 of the pair finishes; that's normal, not data loss.
-  const showPartial = partialPairs > 0 && ctx.detail.status !== STATUS.RUNNING;
-  partialSlot.innerHTML = showPartial
-    ? `<div class="wb-partial-pairs">${partialPairs} incomplete pair${partialPairs === 1 ? "" : "s"} ` +
-      `(one game missing)</div>`
-    : "";
-}
-
-
 function renderSchedule(ctx) {
   if (ctx.livePairings.size === 0) {
     // Pair confirmation can lag game start by seconds at fast tc;
@@ -1398,62 +1151,13 @@ function renderErrorBanner(ctx) {
   }
 }
 
-function renderEventLogList(ctx) {
-  const list = ctx.logBody.querySelector(".wb-eventlog-list");
-  if (!list) return;
-  const scroller = ctx.logBody.parentElement;
-  const atBottom = !scroller || isPinnedToBottom(scroller, AUTOSCROLL_SLACK_ROW_PX);
-  list.innerHTML = ctx.eventLog.filter(e => e.payload?.kind !== KIND.PROXY_UNPAIRED).map((e) => {
-    const ts = e.ts || "";
-    const inner = e.payload?.kind;
-    // runner_log: surface the actual fastchess stdout/stderr line.
-    if (inner === KIND.RUNNER_LOG && e.payload?.line) {
-      const stream = e.payload.stream === "err" ? " err" : "";
-      return `<li><span class="wb-log-ts">${ts}</span>` +
-        `<span class="wb-log-runner${stream}">${escapeHtml(e.payload.line)}</span></li>`;
-    }
-    // Muted ctx.detail parts appended after the primary kind label.
-    const parts = [];
-    if (e.kind === EVT.STATUS && e.payload?.status)
-      parts.push(e.payload.status);
-    else if (inner === KIND.GAME_FINISHED) {
-      const a = e.payload?.engine_a || "?";
-      const b = e.payload?.engine_b || "?";
-      const result = e.payload?.result;
-      const termination = e.payload?.termination;
-      const tail = (result && termination && termination !== "unknown")
-        ? `${result} ${termination}` : (result || "");
-      const gn = e.payload?.game_n;
-      const head = (gn != null) ? `${inner} #${gn}` : inner;
-      parts.push(head, `${a} vs ${b}`, ...(tail ? [tail] : []));
-    } else if (inner === KIND.PROXY_PAIRED) {
-      const a = e.payload?.engine_a || "?";
-      const b = e.payload?.engine_b || "?";
-      const pa = e.payload?.proxy_a || "";
-      const pb = e.payload?.proxy_b || "";
-      parts.push(inner, `${a}(${pa}) vs ${b}(${pb})`);
-    } else if (inner === KIND.PROXY_UNPAIRED) {
-      const pa = e.payload?.proxy_id || "";
-      const pb = e.payload?.peer_id  || "";
-      parts.push(inner, pa, pb);
-    } else if (inner === KIND.PROXY_STARTED) {
-      parts.push(inner);
-      if (e.payload?.engine_name) parts.push(e.payload.engine_name);
-    } else if (inner === KIND.RUNNER_CRASH) {
-      parts.push(inner);
-      if (e.payload?.rc != null) parts.push(`rc=${e.payload.rc}`);
-    } else if (inner) {
-      parts.push(inner);
-    }
-    const detailHtml = parts.map(p => ` <span class="wb-log-detail">${escapeHtml(p)}</span>`).join("");
-    return `<li><span class="wb-log-ts">${ts}</span> <span class="wb-log-kind">${escapeHtml(e.kind)}</span>${detailHtml}</li>`;
-  }).join("");
-  if (atBottom) scrollToBottom(scroller);
-}
-
 function renderEventLog(ctx) {
   renderErrorBanner(ctx);
-  renderEventLogList(ctx);
+  renderEventLogList(
+    ctx.logBody.querySelector(".wb-eventlog-list"),
+    ctx.eventLog,
+    ctx.logBody.parentElement,
+  );
 }
 
 
@@ -1465,7 +1169,7 @@ function buildWindowSpecs(ctx) {
       title: "Standings",
       makeBody: makeStandingsBody,
       setBody: (b) => { ctx.standingsBody = b; },
-      render: () => renderStandings(ctx),
+      render: () => renderStandings(ctx.standingsBody, ctx.detail),
     },
     schedule: {
       title: "Live Games",
@@ -1596,20 +1300,10 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
       ? { x: s.x, y: s.y, width: s.width, height: s.height }
       : null;
   }
-  const eventLog = [];
-  // Server-stamped sequence numbers we've already added to eventLog.
-  // Lets us run the WS subscription in parallel with the REST backfill
-  // without showing duplicates around workspace open.
-  const seenSeqs = new Set();
-  // proxy_id -> { engineName }
-  const activeProxies = new Map();
-  // proxy_id -> { pairId, proxyA, engineA, sideA, proxyB, engineB, sideB }
-  // Both proxies in a pair map to the same info object.
-  const livePairings = new Map();
-  // pair_id -> { gameN, result, termination }. Populated from
-  // game_reconciled so snapshotLive() can mark resolved windows for
-  // frozen-rehydration on a later workspace re-open.
-  const resolvedGames = new Map();
+  // Headless live-runner state (proxies, pairings, resolved games, event
+  // log). The render helpers and snapshotLive read these maps by reference;
+  // pushEvent/applyDetail mutate them via the shared store helpers.
+  const live = createLiveState();
 
 
   // Slot grid hands out aligned rects for live-board windows. A slot is
@@ -1636,9 +1330,11 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   // thunks (added/removed by the same reference).
   const ctx = {
     api, events, log, token, tournament, top, left, getRight,
-    savedState, restoreFromSaved, slotGrid,
-    lastGeometry, eventLog, seenSeqs,
-    activeProxies, livePairings, resolvedGames,
+    savedState, restoreFromSaved, slotGrid, lastGeometry,
+    live,
+    eventLog: live.eventLog, seenSeqs: live.seenSeqs,
+    activeProxies: live.activeProxies, livePairings: live.livePairings,
+    resolvedGames: live.resolvedGames,
     windows: { standings: null, schedule: null, engines: null, log: null },
     activeLayout: initialLayout,
     boardStyleCached: null, detail: null,

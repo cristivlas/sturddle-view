@@ -253,6 +253,21 @@ def _position_under_review(fen: str) -> str:
     return f"move {fullmove} ({side.capitalize()} to move)"
 
 
+# Appended to the user message when the position under review is still in
+# the opening (caller's gate). A directive, not an invitation: a soft "you
+# may" was reliably ignored once the turn's rounds went to the move-picking
+# tools. It mandates one `related_openings` call (real dataset lines, not
+# memory) plus one grounded sentence, held to a single sentence so it never
+# crowds out the position itself.
+OPENING_PHASE_GUIDANCE = (
+    "This position is still in the opening. Call `related_openings` for the "
+    "neighboring variations, then add one sentence that contrasts a sibling "
+    "line with the current position or names the structural theme it sets up "
+    "-- drawn from those lines, never recalled from memory. Hold it to that "
+    "single sentence."
+)
+
+
 def build_initial_user_message(
     *,
     fen: str,
@@ -264,6 +279,7 @@ def build_initial_user_message(
     move_played: str | None = None,
     annotations: list[str | None] | None = None,
     root_annotation: str | None = None,
+    in_opening: bool = False,
 ) -> str:
     """Build the user message that opens an agent turn. Carries the FEN,
     the explicit side-to-move (so the model does not re-derive it), the
@@ -289,6 +305,10 @@ def build_initial_user_message(
     the model to read them critically, not parrot. Rendered on their
     own lines so `Game moves:` keeps its place.
 
+    `in_opening` appends a one-line steer toward a brief, tool-grounded
+    opening-theory aside (caller gates it on the position still being in
+    book). Off by default.
+
     Optional fields are omitted entirely when not provided."""
     lines: list[str] = []
     if engine_name:
@@ -309,6 +329,8 @@ def build_initial_user_message(
     annotations_line = _render_annotations(san_history, annotations)
     if annotations_line:
         lines.append(annotations_line)
+    if in_opening:
+        lines.append(OPENING_PHASE_GUIDANCE)
     return "\n".join(lines) + "\n"
 
 

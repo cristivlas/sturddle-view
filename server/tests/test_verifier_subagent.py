@@ -858,6 +858,61 @@ async def test_top_moves_call_rearms_the_failure_nudge():
 
 
 @pytest.mark.asyncio
+async def test_errored_top_moves_does_not_rearm_the_failure_nudge():
+    # Regression: an errored (malformed) top_moves call must NOT reset the
+    # recommend-failure streak -- else two real failures never trip the
+    # nudge. The success tool below would reset if the short-circuit ran it.
+    from sturddle_view.play.ai_analysis import _RECOMMEND_FAILURE_NUDGE
+
+    async def recommend(_input, *, cancel_token):
+        if _input["move"] in ("Nd7", "Ne7"):
+            return {"error": "illegal_move", "detail": "illegal", "legal_moves": ["Nf3"]}
+        return {"ok": True, "uci": chess.Board().parse_san(_input["move"]).uci()}
+
+    async def top_moves(_input, *, cancel_token):
+        return {"candidates": [{"move_uci": "g1f3", "move_san": "Nf3", "score_cp": 20}]}
+
+    reg = ToolRegistry()
+    reg.register(
+        ToolSpec(name="recommend_move", description="rec", input_schema={"type": "object"}),
+        recommend,
+    )
+    reg.register(
+        ToolSpec(name="top_moves", description="rank", input_schema={"type": "object"}),
+        top_moves,
+    )
+    provider = _RecordingScriptedProvider(rounds=[
+        [ProviderChunk(kind="tool_use", tool_use_id="r0",     # failure 1
+                       tool_name="recommend_move", tool_input={"move": "Nd7"})],
+        [ProviderChunk(kind="tool_use", tool_use_id="t0",     # malformed top_moves -> errored
+                       tool_name="top_moves", tool_input={},
+                       tool_input_error="could not parse; raw='{}{...}'")],
+        [ProviderChunk(kind="tool_use", tool_use_id="r1",     # failure 2 -> cap reached, nudge
+                       tool_name="recommend_move", tool_input={"move": "Ne7"})],
+        [ProviderChunk(kind="tool_use", tool_use_id="r2",     # accept after nudge, end turn
+                       tool_name="recommend_move", tool_input={"move": "Nf3"})],
+        [ProviderChunk(kind="text", text="Develops the knight.")],  # conclusion, clean exit
+    ])
+    bus = EventBus()
+    queue = await bus.subscribe()
+    coord = AIAnalysisCoordinator(
+        bus, provider, registry=reg, board_provider=(lambda: chess.Board()),
+    )
+
+    await coord.run(game_id="g", mode="coach", user_message=_TURN_CONTEXT + "\n")
+    await _drain_until_done(queue)
+
+    # The errored top_moves didn't reset the streak, so failures 1 + 2 reach
+    # the cap and the nudge fires.
+    all_user_content = [
+        m.get("content")
+        for c in provider.calls for m in c["messages"]
+        if m.get("role") == "user"
+    ]
+    assert _RECOMMEND_FAILURE_NUDGE in all_user_content
+
+
+@pytest.mark.asyncio
 async def test_verifier_concluding_without_tool_gets_one_nudge():
     # The verifier must check before concluding. A verdict-from-intuition
     # (no tool call) draws exactly one tool nudge, then it complies.

@@ -37,6 +37,16 @@ export const SPRT = {
   CONTINUE: "continue",
 };
 
+// Normalize the live SPRT payload's bounds + verdict for the standings line and
+// the info-wall meter (both read the same shape).
+export function sprtVerdict(sprt) {
+  return {
+    lo: sprt.lower_bound, hi: sprt.upper_bound, llr: sprt.llr,
+    concluded: sprt.status != null && sprt.status !== SPRT.CONTINUE,
+    isH1: sprt.status === SPRT.H1,
+  };
+}
+
 // Periodic refresh cadence for the selected tournament while running.
 // Catches WS gaps (reconnects, missed payloads) and pulls a fresh
 // games-played count from the server (read from fastchess's config.json
