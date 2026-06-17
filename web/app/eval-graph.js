@@ -38,12 +38,12 @@ const COLOR_LABEL_ON_BLACK = "#e8e8e8";
 const LABEL_FONT_PX = 14;
 const LABEL_PAD_PX = 4;
 
-// Monospace label font + the off-bar (accent) color, read from CSS vars.
+// Monospace label font + the off-bar label color, read from CSS vars.
 function readLabelStyle() {
   const rootStyle = getComputedStyle(document.documentElement);
   const labelFont = `${LABEL_FONT_PX}px ${
     rootStyle.getPropertyValue("--wa-font-family-code") || "monospace"}`;
-  const offBarLabelColor = rootStyle.getPropertyValue("--accent").trim() || COLOR_LABEL;
+  const offBarLabelColor = rootStyle.getPropertyValue("--muted-bright").trim() || COLOR_LABEL;
   return { labelFont, offBarLabelColor };
 }
 
