@@ -3474,7 +3474,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   border-bottom: 1px solid var(--border-faint);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.studio-tourney-row { cursor: pointer; }
+.studio-tourney-row { cursor: pointer; user-select: none; }
 .studio-tourney-row:hover { background: var(--row-bg-hover); }
 .studio-tourney-row.selected { background: var(--row-bg-selected); }
 .studio-tourney-row.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
@@ -3507,6 +3507,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   margin: 0;
   cursor: pointer;
   min-width: 0;
+  user-select: none;
 }
 .tournament-row:hover { background: linear-gradient(to right, var(--row-bg-hover), var(--bg) 75%); }
 .tournament-row.selected {
