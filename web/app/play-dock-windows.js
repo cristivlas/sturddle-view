@@ -767,6 +767,7 @@ export function registerExtraDock(el) {
 
 // -- UCI log body ------------------------------------------------------------
 
+const UCI_LOG_TITLE     = "UCI Log";
 const UCI_GEO_KEY       = STORAGE_KEY.UCILOG_GEO;
 const UCI_WIN_STATE_KEY = STORAGE_KEY.UCILOG_WIN_STATE;
 const UCI_DOCKED_KEY    = STORAGE_KEY.UCILOG_DOCKED;
@@ -828,7 +829,7 @@ function buildUciLogBody(events, { setOff }) {
 }
 
 const uciLog = createDockableWindow({
-  title: "UCI Log",
+  title: UCI_LOG_TITLE,
   className: "sturddle-wb-uci-log",
   geoKey: UCI_GEO_KEY,
   winStateKey: UCI_WIN_STATE_KEY,
@@ -888,6 +889,13 @@ const VIEW_PV_OPEN_KEY  = STORAGE_KEY.VIEW_PVTABLE_OPEN;
 // (restore() across nav reuses inst.toggle directly and must NOT clear.)
 export function toggleUciLogWindow(events) { uciLog.openedByAnalysis = false; uciLog.toggle(events); }
 export function togglePvTableWindow(events) { pvTable.openedByAnalysis = false; pvTable.toggle(events); }
+
+// Name the engine whose UCI traffic the log is showing; CSS ellipsis-truncates.
+// Caller resolves the right engine (analysis engine while analyzing, play engine
+// otherwise). Empty/falsy reverts to the bare title.
+export function setUciLogEngine(name) {
+  uciLog.setTitle(name ? `${UCI_LOG_TITLE} (${name})` : UCI_LOG_TITLE);
+}
 
 export function closeDebugWindows() {
   instances.forEach(i => { if (i.usesMainDock) i.closeForNav(); });

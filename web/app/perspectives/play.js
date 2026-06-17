@@ -10,7 +10,7 @@ import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
 import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
-import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, isMobileLayout } from "../play-dock-windows.js";
+import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setUciLogEngine, isMobileLayout } from "../play-dock-windows.js";
 import {
   setCommentaryDockContainer,
   setOnUserCloseCommentary,
@@ -1467,12 +1467,32 @@ function showAnalysisToastImpl(state) {
 // POST start + restore panels + toast + open/reset AI panel. Shared by the
 // analyze toggle and the re-analyze button so the two paths can't drift.
 // openAi() before resetAi(): resetAi sets the spinner and no-ops when null.
+// Resolve the analysis engine's display name, mirroring the server's
+// resolve_analysis: the pinned analysis_engine_id, else the active engine.
+async function resolveAnalysisEngineName(state) {
+  const [s, e] = await Promise.all([
+    state.ctx.api("GET", "/settings"),
+    state.ctx.api("GET", "/engines"),
+  ]);
+  const engines = e.engines || [];
+  const id = s.analysis_engine_id || e.selected_id;
+  // Server falls back to the selected engine when the pinned id is gone.
+  const eng = engines.find((x) => x.id === id)
+    || engines.find((x) => x.id === e.selected_id);
+  return eng?.name || "";
+}
+
 async function startAnalysisFromUiImpl(state) {
   // Engine-only analysis: close any leftover AI panel from a prior AI run
   // before starting, so the dock shows engine-only output. Done first so
   // the close can't race the new analysis state.
   if (!state.aiEnabled && isAiOpen()) closeAi();
   await state.ctx.api("POST", "/game/analysis/start", {});
+  // Name the UCI Log after the analysis engine (may differ from the play
+  // engine). Async + best-effort so it can't delay or fail the start.
+  resolveAnalysisEngineName(state)
+    .then((n) => { if (state.analyzing) setUciLogEngine(n); })
+    .catch(() => {});
   restoreViewAnalysisWindows(state.ctx.events);
   state.aiShared.turnFinished = false;
   showAnalysisToastImpl(state);
@@ -1793,6 +1813,10 @@ function handleBusEvent(state, ai, aiCtx, evt) {
           showAnalysisToastImpl(state);
         }
       }
+      // Title the UCI Log with the engine whose traffic it shows. The
+      // analysis engine is named at analysis start; here we cover the play
+      // engine (or bare when none, e.g. viewing an imported game).
+      if (!state.analyzing) setUciLogEngine(evt.payload.engine_name || "");
       state.el.boardHost.classList.remove("board-idle");
       setDisabled(state.el.newGameBtn, false);
       refreshButtons(state);
