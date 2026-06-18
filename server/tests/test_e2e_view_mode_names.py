@@ -87,6 +87,11 @@ async def test_view_mode_clock_names_after_hard_reload(server, page):
             bottom: document.querySelector('.clock-name[data-side="bottom"]')?.textContent ?? null,
         })"""
     )
+    # Production placeholder const, so a rename can't silently weaken the
+    # negative assertion below.
+    player_default = await page.evaluate(
+        "async () => (await import('/ui/app/settings-dialog.js')).PLAYER_NAME_DEFAULT"
+    )
     # Bottom defaults to white when not flipped; top is black.
     assert names["bottom"] == WHITE_NAME, (
         f"bottom clock name should be PGN white ({WHITE_NAME!r}), got {names['bottom']!r}"
@@ -95,5 +100,5 @@ async def test_view_mode_clock_names_after_hard_reload(server, page):
         f"top clock name should be PGN black ({BLACK_NAME!r}), got {names['top']!r}"
     )
     # And explicitly NOT the play-mode placeholders.
-    assert names["bottom"] != "Human"
+    assert names["bottom"] != player_default
     assert names["top"] != ENGINE_NAME

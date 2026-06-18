@@ -689,6 +689,21 @@ async def wait_perspective_ready(page) -> None:
     )
 
 
+# localStorage key + value that pin the Arena (classic) Tournaments UX;
+# the default is Studio, whose DOM the Arena-era e2e tests don't drive.
+TOURNAMENT_UX_KEY = "sturddle:tournament:ux"
+TOURNAMENT_UX_ARENA = "arena"
+
+
+async def pin_arena_tournament_ux(page) -> None:
+    """Seed localStorage so the Arena Tournaments UX mounts. Must be called
+    before the page.goto that loads the app, as add_init_script runs on each
+    document load."""
+    await page.add_init_script(
+        f"localStorage.setItem('{TOURNAMENT_UX_KEY}', '{TOURNAMENT_UX_ARENA}')"
+    )
+
+
 @pytest.fixture(autouse=True)
 def _isolate_user_config(tmp_path, monkeypatch):
     """Redirect default user-config paths to per-test tmp locations.

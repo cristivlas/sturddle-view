@@ -24,7 +24,12 @@ from sturddle_view.engines import EngineRegistry  # noqa: E402
 from sturddle_view.tournament import fastchess as fc_mod  # noqa: E402
 from sturddle_view.tournament.fastchess import FastchessRunner  # noqa: E402
 
-from .conftest import free_port, run_uvicorn, wait_perspective_ready  # noqa: E402
+from .conftest import (  # noqa: E402
+    free_port,
+    pin_arena_tournament_ux,
+    run_uvicorn,
+    wait_perspective_ready,
+)
 
 
 # Minimal fake fastchess: stays alive so the tournament stays "running".
@@ -91,9 +96,11 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
                     "engine_name": "Engine A",
                     "lines": [],
                 })
-                assert r.status_code == 204
+                # 200 (want-info gate signaled) or 204 (steady-state); both
+                # mean proxy_session_started ran and the proxy is registered.
+                assert r.is_success, f"proxy register failed: {r.status_code} {r.text}"
 
-            # The 204 above means proxy_session_started ran in the uvicorn
+            # The success above means proxy_session_started ran in the uvicorn
             # loop; the proxy is registered before we touch the browser.
             assert orch.engine_name_for("proxy-white") == "Engine A"
 
@@ -104,6 +111,7 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
                 f"console.{msg.type}: {msg.text}"
             ) if msg.type == "error" else None)
 
+            await pin_arena_tournament_ux(page)
             await page.goto(f"{base}/")
             await page.wait_for_selector("#play-perspective")
             await wait_perspective_ready(page)
@@ -144,7 +152,11 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
             await page.click(
                 ".wb-engines .wb-sched-list .wb-sched-live .wb-sched-attach-btn"
             )
-            await page.wait_for_selector(".wb-livegame .lg-board")
+            # Window opens on watch click. The body is revealed only once the
+            # board's first position lands (paint-before-reveal gating), so
+            # assert the board is attached here and check visibility after the
+            # position stream below.
+            await page.wait_for_selector(".wb-livegame .lg-board", state="attached")
 
             # Drive the proxy stream:
             #   1. position → engine learns it's playing Black (FEN
@@ -161,7 +173,10 @@ async def test_live_game_window_attaches_during_run(tmp_path, monkeypatch, make_
                         "info depth 12 score cp 35 pv e7e5",
                     ],
                 })
-                assert r.status_code == 204, f"proxy post failed: {r.text}"
+                assert r.is_success, f"proxy post failed: {r.status_code} {r.text}"
+
+            # The first position resolves board.ready, which reveals the body.
+            await page.wait_for_selector(".wb-livegame .lg-board", state="visible")
 
             await page.wait_for_function(
                 """() => {

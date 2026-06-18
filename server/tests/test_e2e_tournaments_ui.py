@@ -14,7 +14,11 @@ pytestmark = pytest.mark.e2e
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 from sturddle_view.tournament.store import TournamentStore  # noqa: E402
 
-from .conftest import run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
+from .conftest import (  # noqa: E402
+    pin_arena_tournament_ux,
+    run_uvicorn_subprocess,
+    wait_perspective_ready,
+)
 
 
 def _server_env(tmp_path, *, fastchess_path=None):
@@ -53,6 +57,7 @@ async def test_tournaments_perspective_smoke(server, make_page):
     page.on("pageerror", lambda exc: page_errors.append(str(exc)))
     page.on("console", lambda msg: page_errors.append(f"console.{msg.type}: {msg.text}")
             if msg.type == "error" else None)
+    await pin_arena_tournament_ux(page)
     await page.goto(base + "/")
     await page.wait_for_selector("#play-perspective")
     await wait_perspective_ready(page)
@@ -97,6 +102,7 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, make_p
         page.on("console", lambda msg: page_errors.append(
             f"console.{msg.type}: {msg.text}"
         ) if msg.type == "error" else None)
+        await pin_arena_tournament_ux(page)
         await page.goto(base + "/")
         await page.wait_for_selector("#play-perspective")
         await wait_perspective_ready(page)
@@ -186,6 +192,7 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, make_page):
         page.on("console", lambda msg: page_errors.append(
             f"console.{msg.type}: {msg.text}"
         ) if msg.type == "error" else None)
+        await pin_arena_tournament_ux(page)
         await page.goto(base + "/")
         await page.wait_for_selector("#play-perspective")
         await wait_perspective_ready(page)
@@ -206,10 +213,14 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, make_page):
         )
         assert any("Standings" in t for t in titles)
 
+        # Assert against the production NO_GAMES_MSG const rather than a
+        # hardcoded copy, so a wording change can't silently drift the test.
         await page.wait_for_function(
-            """() => /No games/.test(
-                document.querySelector('.wb-standings .wb-empty')?.textContent || ''
-            )""",
+            """async () => {
+                const { NO_GAMES_MSG } = await import('/ui/app/tournament-row.js');
+                const el = document.querySelector('.wb-standings .wb-empty');
+                return el?.textContent === NO_GAMES_MSG;
+            }""",
         )
 
         await page.evaluate(

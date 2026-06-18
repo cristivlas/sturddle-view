@@ -19,7 +19,11 @@ pytestmark = pytest.mark.e2e
 
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 
-from .conftest import run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
+from .conftest import (  # noqa: E402
+    pin_arena_tournament_ux,
+    run_uvicorn_subprocess,
+    wait_perspective_ready,
+)
 
 
 ENGINE_NAMES = ["alpha", "beta", "gamma", "delta", "epsilon"]
@@ -68,6 +72,7 @@ def server(tmp_path):
 
 
 async def _open_new_tournament(page, base):
+    await pin_arena_tournament_ux(page)
     await page.goto(base + "/")
     await page.wait_for_selector("#play-perspective")
     await wait_perspective_ready(page)

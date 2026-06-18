@@ -26,7 +26,11 @@ pytestmark = pytest.mark.e2e
 from sturddle_view.engines import EngineRegistry  # noqa: E402
 from sturddle_view.tournament.store import TournamentStore  # noqa: E402
 
-from .conftest import run_uvicorn_subprocess, wait_perspective_ready  # noqa: E402
+from .conftest import (  # noqa: E402
+    pin_arena_tournament_ux,
+    run_uvicorn_subprocess,
+    wait_perspective_ready,
+)
 
 # Title text WinBox renders for each system window; the only stable way
 # to map a .winbox element back to its workspace key from the DOM.
@@ -75,6 +79,7 @@ def server(tmp_path):
 
 
 async def _goto_and_open(page, base):
+    await pin_arena_tournament_ux(page)
     await page.goto(base + "/")
     await page.wait_for_selector("#play-perspective")
     await wait_perspective_ready(page)
