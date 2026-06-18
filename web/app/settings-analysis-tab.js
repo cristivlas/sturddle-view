@@ -411,8 +411,13 @@ export function buildAnalysisTab({ api, initial, dialog, noEngine, engineList, a
       opt.textContent = e.name;
       aiModelSelect.append(opt);
     }
-    const pinned = initial[ANALYSIS_ENGINE_KEY] || "";
-    aiModelSelect.value = pinned || activeEngineId || (engineList[0]?.id || "");
+    // Pinned id may name a deleted engine; ignore it unless it still
+    // exists or wa-select drops the value and renders blank.
+    const has = (id) => engineList.some((e) => e.id === id);
+    const pinnedId = initial[ANALYSIS_ENGINE_KEY] || "";
+    aiModelSelect.value = (has(pinnedId) && pinnedId)
+      || (has(activeEngineId) && activeEngineId)
+      || (engineList[0]?.id || "");
     aiModelSelect.style.display = "";
     aiModelInput.style.display = "none";
     aiModelHintText.textContent = "";
