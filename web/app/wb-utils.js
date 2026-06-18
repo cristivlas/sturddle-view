@@ -131,3 +131,35 @@ export function selectContentsOnCtrlA(el, targetFn = () => el) {
     sel.addRange(range);
   });
 }
+
+// Collapse one flex/grid row to a single text line: join its child elements'
+// text with a space, skipping interactive (button) and decorative
+// (aria-hidden) children. Each child sits on one visual line but blockifies to
+// its own line in the default copy serialization; this undoes that.
+function rowToLine(row) {
+  return Array.from(row.children)
+    .filter((c) => c.tagName !== "BUTTON" && c.getAttribute("aria-hidden") !== "true")
+    .map((c) => c.textContent.trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
+// Companion to selectContentsOnCtrlA: when copying a selection inside `el`,
+// serialize each row element (rowSelector) as one line via rowToLine,
+// overriding the browser's per-flex/grid-child line breaks. (Real <table>s
+// copy one-row-per-line natively, so they need no help.) No rows -> default.
+// Only innermost matches are serialized so a nested list can't duplicate its
+// parent row; blank rows are dropped.
+export function copyRowsAsLines(el, rowSelector = "li") {
+  el.addEventListener("copy", (ev) => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+    if (!el.contains(sel.anchorNode) || !el.contains(sel.focusNode)) return;
+    const rows = Array.from(sel.getRangeAt(0).cloneContents().querySelectorAll(rowSelector))
+      .filter((r) => !r.querySelector(rowSelector));
+    if (!rows.length) return;
+    const text = rows.map(rowToLine).filter(Boolean).join("\n");
+    ev.clipboardData.setData("text/plain", text);
+    ev.preventDefault();
+  });
+}

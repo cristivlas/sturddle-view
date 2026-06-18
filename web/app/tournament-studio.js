@@ -15,7 +15,7 @@ import { progressBarHtml, progressLabelHtml, sprtBadgeHtml, statusBadgeHtml, tot
 import { attachColumnSort } from "./col-sort.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { reportError } from "./dialogs.js";
-import { debounce, escapeHtml } from "./wb-utils.js";
+import { copyRowsAsLines, debounce, escapeHtml, selectContentsOnCtrlA } from "./wb-utils.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { newTournamentCta, tournamentActions } from "./tournaments.js";
 import { SIDE } from "./chess-consts.js";
@@ -650,7 +650,7 @@ function renderLivePanes(ctx) {
 function liveRow(iconHtml, label) {
   const li = document.createElement("li");
   li.className = "wb-sched-live";
-  li.innerHTML = `<span class="wb-sched-icon">${iconHtml}</span>` +
+  li.innerHTML = `<span class="wb-sched-icon" aria-hidden="true">${iconHtml}</span>` +
     `<span class="wb-sched-game" title="${escapeHtml(label)}">${escapeHtml(label)}</span>`;
   return li;
 }
@@ -1055,6 +1055,16 @@ function wireTabPersistence(ctx) {
   }
 }
 
+// Ctrl/Cmd+A inside a bottom tab-group selects just the active tab's
+// contents (the visible panel); Ctrl+C then copies it with each row on one
+// line (flex rows otherwise split across lines).
+function wireTabClipboard(ctx) {
+  for (const group of ctx.container.querySelectorAll(".studio-tabs")) {
+    selectContentsOnCtrlA(group, () => group.querySelector("wa-tab-panel[active]"));
+    copyRowsAsLines(group);
+  }
+}
+
 function wireSplitters(ctx) {
   restoreSplit(STORAGE_KEY.STUDIO_SPLIT_ROW, ctx.boardsEl, ctx.bottomEl);
   restoreSplit(STORAGE_KEY.STUDIO_SPLIT_COL, ctx.bottomLeftEl, ctx.bottomRightEl);
@@ -1133,6 +1143,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
   buildHistoryTable(ctx);
   wireSplitters(ctx);
   wireTabPersistence(ctx);
+  wireTabClipboard(ctx);
   wireRibbonActions(ctx);
   announceRibbon(ctx.ribbonEl);
 
