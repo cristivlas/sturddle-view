@@ -47,7 +47,7 @@ function fenPly(fen) {
   return (fullmove - 1) * 2 + (parts[1] === FEN_STM.BLACK ? 1 : 0);
 }
 
-async function replayTournamentGame({ tournamentId, gameN, token, pairId = null }) {
+export async function replayTournamentGame({ tournamentId, gameN, token, pairId = null }) {
   const headers = { "Content-Type": "application/json" };
   let pgn, pgnHash, pgnSummary;
   try {

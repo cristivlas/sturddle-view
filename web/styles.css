@@ -3448,9 +3448,9 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 /* Studio tourney table: sortable + resizable sticky header, flat rows
    (Settings engines look). The wrap is the resize overlay's positioned host
    (mirrors the file picker's tableWrap). */
-.studio-tourney-wrap { position: relative; }
-.studio-tourney-tbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
-.studio-tourney-tbl thead th {
+.studio-tourney-wrap, .studio-history-wrap { position: relative; }
+.studio-tourney-tbl, .studio-history-tbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.studio-tourney-tbl thead th, .studio-history-tbl thead th {
   position: sticky; top: 0; z-index: 1;
   text-align: left; font-weight: 600; font-size: 0.75rem; color: var(--muted);
   padding: 6px 8px; background: var(--bg);
@@ -3462,22 +3462,25 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 /* Hover affordance on the sortable headers: highlight the cell and outline
    its extent (the column-size hint), like the file picker. */
-.studio-tourney-tbl thead th.th-sortable:hover {
+.studio-tourney-tbl thead th.th-sortable:hover, .studio-history-tbl thead th.th-sortable:hover {
   background: var(--row-bg-hover);
   box-shadow:
     inset 2px 0 0 var(--wa-color-border-loud, #353841),
     inset -2px 0 0 var(--wa-color-border-loud, #353841),
     inset 0 -2px 0 var(--accent-line);
 }
-.studio-tourney-tbl tbody td {
+.studio-tourney-tbl tbody td, .studio-history-tbl tbody td {
   padding: 6px 8px;
   border-bottom: 1px solid var(--border-faint);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.studio-tourney-row { cursor: pointer; user-select: none; }
-.studio-tourney-row:hover { background: var(--row-bg-hover); }
+.studio-tourney-row, .studio-history-row { cursor: pointer; user-select: none; }
+.studio-tourney-row:hover, .studio-history-row:hover { background: var(--row-bg-hover); }
+.studio-history-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .studio-tourney-row.selected { background: var(--row-bg-selected); }
 .studio-tourney-row.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent-line); }
+.studio-history-num, .studio-history-result { color: var(--muted); }
+.studio-history-result { font-family: var(--wa-font-family-code); }
 .studio-tourney-created { color: var(--muted); }
 /* Status cell holds status + optional SPRT pill; clip (no ellipsis) rather
    than widen the column. */

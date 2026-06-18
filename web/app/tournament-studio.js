@@ -20,7 +20,7 @@ import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { newTournamentCta, tournamentActions } from "./tournaments.js";
 import { SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
-import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow } from "./tournament-live-game.js";
+import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow, replayTournamentGame } from "./tournament-live-game.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
 import { makeH2HBody, renderH2H } from "./tournament-h2h.js";
 import { renderEventLogList } from "./tournament-eventlog.js";
@@ -33,6 +33,7 @@ const SETTINGS_ENDPOINT = "/settings";
 const LOAD_FAIL_MSG = "Loading tournaments failed";
 const NO_ENGINES_MSG = "No active engines.";
 const NO_GAMES_MSG = "No games in play.";
+const REVIEW_FAIL_MSG = "Review failed";
 // Coalesce bursty WS events into one list reload.
 const LIST_RELOAD_DEBOUNCE_MS = 150;
 // Coalesce standings re-fetches while the selected tourney is running.
@@ -58,6 +59,9 @@ const STUDIO_TAB_DEFAULT_RIGHT = "tourneys";
 // Tourney table default column widths (Status, Created, Name, Games) + resize floor.
 const STUDIO_TOURNEY_DEFAULT_PCTS = [12, 22, 16, 50];
 const STUDIO_TOURNEY_MIN_PCT = 10;
+// History table default column widths (#, White, Black, Result) + resize floor.
+const STUDIO_HISTORY_DEFAULT_PCTS = [12, 34, 34, 20];
+const STUDIO_HISTORY_MIN_PCT = 8;
 
 export const TOURNAMENT_UX = Object.freeze({ ARENA: "arena", STUDIO: "studio" });
 
@@ -116,7 +120,7 @@ const STUDIO_HTML = `
         <div class="studio-bottom">
           <div class="studio-bottom-left">
             <wa-tab-group class="studio-tabs">
-              <wa-tab panel="livegames">Games</wa-tab>
+              <wa-tab panel="livegames">Playing</wa-tab>
               <wa-tab panel="engines">Engines</wa-tab>
               <wa-tab-panel name="engines"><div class="studio-pane studio-pane-engines"></div></wa-tab-panel>
               <wa-tab-panel name="livegames"><div class="studio-pane studio-pane-livegames"></div></wa-tab-panel>
@@ -128,10 +132,12 @@ const STUDIO_HTML = `
               <wa-tab panel="tourneys">Tourneys</wa-tab>
               <wa-tab panel="standings">Standings</wa-tab>
               <wa-tab panel="h2h">Head-to-Head</wa-tab>
+              <wa-tab panel="history">Games</wa-tab>
               <wa-tab panel="log">Event Log</wa-tab>
               <wa-tab-panel name="tourneys"><div class="studio-pane studio-pane-tourneys"></div></wa-tab-panel>
               <wa-tab-panel name="standings"><div class="studio-pane studio-pane-standings"></div></wa-tab-panel>
               <wa-tab-panel name="h2h"><div class="studio-pane studio-pane-h2h"></div></wa-tab-panel>
+              <wa-tab-panel name="history"><div class="studio-pane studio-pane-history"></div></wa-tab-panel>
               <wa-tab-panel name="log"><div class="studio-pane studio-pane-log"></div></wa-tab-panel>
             </wa-tab-group>
           </div>
@@ -505,8 +511,128 @@ function livePushEvent(ctx, evt) {
 
 function renderStandingsPane(ctx) {
   if (ctx.standingsBodyEl) renderStandings(ctx.standingsBodyEl, ctx.selDetail);
-  // H2H shares standings' data + cadence; repaint it from the same sites.
+  // H2H and History share standings' data (selDetail) + cadence; repaint
+  // them from the same sites.
   if (ctx.h2hBodyEl) renderH2H(ctx.h2hBodyEl, ctx.selDetail);
+  renderHistory(ctx);
+}
+
+// Build the History table once: sticky sortable header + a tbody the row
+// renderer fills (mirrors buildTourneyTable). Result is the last column so it
+// carries no resize grip; it is still sortable.
+function buildHistoryTable(ctx) {
+  const pane = ctx.historyPaneEl;
+  if (!pane) return;
+  const wrap = document.createElement("div");
+  wrap.className = "studio-history-wrap";
+  const table = document.createElement("table");
+  table.className = "wb-table studio-history-tbl";
+  table.innerHTML = `<colgroup><col><col><col><col></colgroup>
+    <thead><tr>
+      <th data-col="num">#<span class="th-grip"></span></th>
+      <th data-col="white">White<span class="th-grip"></span></th>
+      <th data-col="black">Black<span class="th-grip"></span></th>
+      <th data-col="result">Result</th>
+    </tr></thead><tbody></tbody>`;
+  wrap.appendChild(table);
+  pane.replaceChildren(wrap);
+  ctx.historyTbody = table.querySelector("tbody");
+  const sortCtrl = attachColumnSort({
+    table,
+    columns: [
+      { key: "num", firstDir: "asc" },
+      { key: "white", firstDir: "asc" },
+      { key: "black", firstDir: "asc" },
+      { key: "result", firstDir: "asc" },
+    ],
+    storageKey: STORAGE_KEY.STUDIO_HISTORY_SORT,
+    onSort: (state) => {
+      ctx.historyStack = promoteSort(ctx.historyStack, state);
+      saveJson(STORAGE_KEY.STUDIO_HISTORY_STACK, ctx.historyStack);
+      renderHistory(ctx);
+    },
+  });
+  // Restore the full sort stack (col-sort persists only its top entry, which
+  // drives the header arrow); fall back to that single entry if absent.
+  const savedStack = loadJson(STORAGE_KEY.STUDIO_HISTORY_STACK);
+  const cur = sortCtrl.current();
+  ctx.historyStack = Array.isArray(savedStack) && savedStack.length
+    ? savedStack : (cur ? [{ key: cur.key, dir: cur.dir }] : []);
+  const colEls = Array.from(table.querySelectorAll("col"));
+  attachColumnResize({
+    table,
+    grips: Array.from(table.querySelectorAll(".th-grip")),
+    overlayHost: wrap,
+    storageKey: STORAGE_KEY.STUDIO_HISTORY_COL_PCTS,
+    sizes: STUDIO_HISTORY_DEFAULT_PCTS.slice(),
+    unit: "pct",
+    applySizes: makePctApplySizes(colEls, STUDIO_HISTORY_MIN_PCT),
+  });
+}
+
+// MRU stack of {key, dir}, most-recent first. Each header click promotes its
+// column to the front (with the new dir), so every earlier sort survives as a
+// deeper tiebreak. A null state (col-sort's 3rd click) clears the stack ->
+// play order.
+function promoteSort(stack, state) {
+  if (!state) return [];
+  const s = { key: state.key, dir: state.dir };
+  return [s, ...stack.filter((e) => e.key !== s.key)];
+}
+
+// Signed compare for one sort state (0 when equal); num is numeric, the rest
+// are case-insensitive strings.
+function cmpHistory(a, b, s) {
+  const dir = s.dir === "desc" ? -1 : 1;
+  if (s.key === "num") return dir * (a.num - b.num);
+  return dir * (a[s.key] || "").localeCompare(b[s.key] || "", undefined, { sensitivity: "base" });
+}
+
+// Stable in-place sort: walk the MRU stack, first differing column wins; game
+// number is the final tiebreak. Empty stack = PGN/play order (natural order).
+function sortHistoryRows(rows, stack) {
+  if (!stack.length) return;
+  rows.sort((a, b) => {
+    for (const s of stack) { const c = cmpHistory(a, b, s); if (c) return c; }
+    return a.num - b.num;
+  });
+}
+
+function historyRow(ctx, tid, r) {
+  const tr = document.createElement("tr");
+  tr.className = "studio-history-row";
+  tr.tabIndex = 0;
+  tr.setAttribute("role", "button");
+  tr.title = `Review game ${r.num}`;
+  tr.innerHTML =
+    `<td class="studio-history-num">${r.num}</td>` +
+    `<td title="${escapeHtml(r.white)}">${escapeHtml(r.white)}</td>` +
+    `<td title="${escapeHtml(r.black)}">${escapeHtml(r.black)}</td>` +
+    `<td class="studio-history-result">${escapeHtml(r.result)}</td>`;
+  const open = () => replayTournamentGame({ tournamentId: tid, gameN: r.num, token: ctx.token })
+    .catch((e) => reportError({ log: ctx.log }, REVIEW_FAIL_MSG, e));
+  tr.addEventListener("click", open);
+  tr.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+  });
+  return tr;
+}
+
+// Completed games for the selected tourney. The 1-based row number is the
+// game number the replay endpoint expects (same DECISIVE_RESULTS filter, no
+// dedup), so a click resolves to the same PGN slice regardless of sort.
+function renderHistory(ctx) {
+  const tb = ctx.historyTbody;
+  if (!tb) return;
+  const tid = ctx.selDetail?.id;
+  const games = ctx.selDetail?.games;
+  if (!tid || !games || games.length === 0) {
+    tb.replaceChildren();
+    return;
+  }
+  const rows = games.map((g, i) => ({ num: i + 1, white: g.white, black: g.black, result: g.result }));
+  sortHistoryRows(rows, ctx.historyStack);
+  tb.replaceChildren(...rows.map((r) => historyRow(ctx, tid, r)));
 }
 
 function renderLogPane(ctx) {
@@ -969,11 +1095,13 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     gamesPaneEl: q(".studio-pane-livegames"),
     standingsPaneEl: q(".studio-pane-standings"),
     h2hPaneEl: q(".studio-pane-h2h"),
+    historyPaneEl: q(".studio-pane-history"),
     logPaneEl: q(".studio-pane-log"),
     // Tourneys data + selection (selection restored from last session).
     tournaments: [], activeId: null, listGen: 0,
     selectedId: loadRaw(STORAGE_KEY.STUDIO_SELECTED_ID),
     tourneyTbody: null, tourneySort: null,
+    historyTbody: null, historyStack: [],
     // Live runner store for the running tourney (null unless it's selected).
     live: null, liveTid: null, liveUnsub: null, liveGen: 0, _panesPending: false,
     // Resolves when a running tourney's boards finish restoring (gates reveal).
@@ -1002,6 +1130,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
       .catch(() => {});
   }, STANDINGS_REFRESH_DEBOUNCE_MS);
   buildTourneyTable(ctx);
+  buildHistoryTable(ctx);
   wireSplitters(ctx);
   wireTabPersistence(ctx);
   wireRibbonActions(ctx);
@@ -1067,6 +1196,6 @@ function unmountStudio(ctx) {
   ctx.boardsEl = ctx.boardsCanvasEl = ctx.boardsWallEl = ctx.boardsTrayEl = ctx.bottomEl = ctx.bottomLeftEl = ctx.bottomRightEl = null;
   ctx.gripRowEl = ctx.gripColEl = ctx.tourneysPaneEl = ctx.tourneyTbody = null;
   ctx.enginesPaneEl = ctx.gamesPaneEl = null;
-  ctx.standingsPaneEl = ctx.standingsBodyEl = ctx.h2hPaneEl = ctx.h2hBodyEl = ctx.logPaneEl = ctx.logListEl = null;
+  ctx.standingsPaneEl = ctx.standingsBodyEl = ctx.h2hPaneEl = ctx.h2hBodyEl = ctx.historyPaneEl = ctx.historyTbody = ctx.logPaneEl = ctx.logListEl = null;
   ctx.ribbonBtns = ctx.actions = null;
 }
