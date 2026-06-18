@@ -39,7 +39,16 @@ def _server_env(tmp_path, *, sprt_defaults=None):
     return env
 
 
+# localStorage key + value that pin the Arena (classic) Tournaments UX;
+# the default is Studio, whose DOM these tests don't drive.
+_TOURNAMENT_UX_KEY = "sturddle:tournament:ux"
+_TOURNAMENT_UX_ARENA = "arena"
+
+
 async def _nav_to_tournaments(page, base):
+    await page.add_init_script(
+        f"localStorage.setItem('{_TOURNAMENT_UX_KEY}', '{_TOURNAMENT_UX_ARENA}')"
+    )
     await page.goto(base + "/")
     await page.wait_for_selector("#play-perspective")
     await wait_perspective_ready(page)
