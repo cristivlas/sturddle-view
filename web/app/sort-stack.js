@@ -9,16 +9,22 @@ import { loadJson, saveJson } from "./storage.js";
 import { attachColumnSort, SORT_DIR } from "./col-sort.js";
 
 // Dir-agnostic comparator derived from a column descriptor and memoized on it.
-// `field` names the data property (defaults to the column key); numeric columns
-// subtract, the rest compare case-insensitively. Missing values sort as empty.
+// `field` names the data property (defaults to the column key). A `rank` map
+// orders by meaning (value -> rank; unknown/missing sort last); numeric columns
+// subtract; the rest compare case-insensitively as text.
 // NOTE: numeric coerces missing/non-numeric to 0 -- fine where 0 isn't a real
 // value (e.g. the 1-based num); revisit if numeric ever wraps such a column.
 function columnCmp(col) {
   if (col._cmp) return col._cmp;
   const field = col.field || col.key;
-  col._cmp = col.numeric
-    ? (a, b) => (Number(a[field]) || 0) - (Number(b[field]) || 0)
-    : (a, b) => (a[field] || "").localeCompare(b[field] || "", undefined, { sensitivity: "base" });
+  if (col.rank) {
+    const rankOf = (v) => col.rank[v] ?? Number.MAX_SAFE_INTEGER;
+    col._cmp = (a, b) => rankOf(a[field]) - rankOf(b[field]);
+  } else if (col.numeric) {
+    col._cmp = (a, b) => (Number(a[field]) || 0) - (Number(b[field]) || 0);
+  } else {
+    col._cmp = (a, b) => (a[field] || "").localeCompare(b[field] || "", undefined, { sensitivity: "base" });
+  }
   return col._cmp;
 }
 

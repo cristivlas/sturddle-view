@@ -19,7 +19,7 @@ import { reportError } from "./dialogs.js";
 import { copyRowsAsLines, debounce, escapeHtml, selectContentsOnCtrlA } from "./wb-utils.js";
 import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { newTournamentCta, tournamentActions } from "./tournaments.js";
-import { SIDE } from "./chess-consts.js";
+import { RESULT, SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
 import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow, replayTournamentGame } from "./tournament-live-game.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
@@ -512,13 +512,21 @@ function renderStandingsPane(ctx) {
 // synthetic 1-based game order.
 const HK = Object.freeze({ NUM: "num", RESULT: "result", OPENING: "opening" });
 
+// Result sorts by meaning, not text: White win -> draw -> Black win, with
+// unfinished/unknown last (ascending); num breaks ties.
+const RESULT_RANK = Object.freeze({
+  [RESULT.WHITE_WIN]: 0,
+  [RESULT.DRAW]: 1,
+  [RESULT.BLACK_WIN]: 2,
+});
+
 // History table columns: num is the numeric game order and the stable
-// tiebreak; the rest sort as case-insensitive text.
+// tiebreak; white/black/opening sort as text, result by RESULT_RANK.
 const HISTORY_SORT_COLS = [
   { key: HK.NUM, firstDir: SORT_DIR.ASC, numeric: true, tiebreak: true },
   { key: SIDE.WHITE, firstDir: SORT_DIR.ASC },
   { key: SIDE.BLACK, firstDir: SORT_DIR.ASC },
-  { key: HK.RESULT, firstDir: SORT_DIR.ASC },
+  { key: HK.RESULT, firstDir: SORT_DIR.ASC, rank: RESULT_RANK },
   { key: HK.OPENING, firstDir: SORT_DIR.ASC },
 ];
 
