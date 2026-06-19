@@ -11,7 +11,7 @@ import datetime
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,6 +19,7 @@ import chess
 import chess.engine
 
 from .._atomic import atomic_write_text
+from ..config import DEFAULT_TC_INCREMENT_SECONDS, DEFAULT_TC_INITIAL_SECONDS
 
 if TYPE_CHECKING:
     from ..recent_imports import RecentImports
@@ -103,6 +104,75 @@ class ViewModeParams:
     view_original_text: str | None = None
 
 
+@dataclass(eq=False)
+class GameBundle:
+    """The coherent 'current game': `mode` plus the position and the
+    mode-specific payload that must stay consistent with it.
+
+    Held as HumanVsEngine._game, the single unit grouping `mode` with its
+    payload so the two cannot describe different games. Today it is mutated
+    field-by-field via the _bundle_prop delegators.
+
+    eq=False: identity equality only -- the generated __eq__ would deep-compare
+    Board/ChessClock (and null __hash__). Defaults are the idle/no-game state."""
+    mode: Mode = Mode.PLAY
+    board: chess.Board | None = None
+    # FEN before any moves on board.move_stack -- None for startpos games.
+    # In view mode the board is rebuilt from view_full_moves[:view_cursor].
+    start_fen: str | None = None
+    game_id: str | None = None
+    # Wall-clock start, for stable PGN filenames across autosaves.
+    game_started_wall: float | None = None
+    human_white: bool = True
+    player_name: str = DEFAULT_PLAYER_NAME
+    clock: ChessClock = field(
+        default_factory=lambda: ChessClock(
+            TimeControl(DEFAULT_TC_INITIAL_SECONDS, DEFAULT_TC_INCREMENT_SECONDS),
+        )
+    )
+    # play payload (PLAY/PAUSED). eval_history matches move_stack length, one
+    # entry per pushed move (None for human plies); popped on take-back.
+    eval_history: list[dict | None] = field(default_factory=list)
+    # Populated only when the play game was forked from a view position
+    # (play_from_here) carrying commentary, so it survives into exports.
+    play_comments: list[str | None] | None = None
+    play_root_comment: str | None = None
+    # view payload (VIEWING/EDITING)
+    view_cursor: int = 0  # 0..len(view_full_moves) inclusive
+    view_full_moves: list[chess.Move] = field(default_factory=list)
+    view_clock_history: list[tuple[float | None, float | None]] = field(default_factory=list)
+    view_final_white: float | None = None
+    view_final_black: float | None = None
+    view_white_name: str | None = None
+    view_black_name: str | None = None
+    view_eval_history: list[dict | None] | None = None
+    view_comments: list[str | None] | None = None
+    view_root_comment: str | None = None
+    view_pgn_result: str | None = None
+    view_pgn_termination: str | None = None
+    view_hash: str | None = None
+    view_summary: dict | None = None
+    # Verbatim imported bytes, set once in enter_view_mode; served by
+    # get_pgn_text when state hasn't diverged.
+    view_original_text: str | None = None
+    view_edited: bool = False  # True once diverged from view_original_text
+    # edit payload (EDITING)
+    edit_pre_fen: str | None = None
+    edit_view_snapshot: _ViewSnapshot | None = None
+    # mode to restore when leaving ANALYZING
+    pre_analysis_mode: Mode = Mode.PLAY
+
+
+def _bundle_prop(name: str) -> property:
+    """Delegate a `self._<name>` attribute to the self._game bundle, so call
+    sites read/write fields unchanged while the bundle stays the single unit
+    grouping mode with its payload."""
+    return property(
+        lambda self: getattr(self._game, name),
+        lambda self, value: setattr(self._game, name, value),
+    )
+
+
 class HumanVsEngine:
     """Single-game driver. Holds one active game at a time."""
 
@@ -129,25 +199,17 @@ class HumanVsEngine:
         self._supervisor = EngineSupervisor(
             engine_path=engine_path, bus=bus, settings=settings,
         )
-        self._board: chess.Board | None = None
-        # FEN of the board *before* any moves on _board.move_stack — None for
-        # games that began at startpos. Persisted so restore_from can rebuild
-        # an imported game whose move_stack isn't replayable from startpos.
-        self._start_fen: str | None = None
-        self._game_id: str | None = None
-        # Wall-clock time the current game started, used for stable PGN
-        # filenames across per-move autosaves and end-of-game finalization.
-        self._game_started_wall: float | None = None
-        self._human_white: bool = True
-        self._player_name: str = DEFAULT_PLAYER_NAME
-        self._clock: ChessClock = ChessClock(TimeControl(300.0, 0.0))
+        # The coherent 'current game': groups mode with its payload so the two
+        # cannot describe different games. Mutated field-by-field today.
+        # View mode is a cursor-based playback whose board is rebuilt from
+        # view_full_moves[:view_cursor]; edit mode is entered from view only.
+        # Per-field reads/writes (self._board, self._mode, self._view_*, ...)
+        # delegate here via _bundle_prop.
+        self._game = GameBundle()
         self._think_task: asyncio.Task | None = None
         self._analysis = None  # active chess.engine.AnalysisResult, if any
         self._think_gen: int = 0  # search generation; bumped on cancel
         self._tick_task: asyncio.Task | None = None
-        self._mode: Mode = Mode.PLAY
-        # Mode before entering ANALYZING; restored by stop_analysis().
-        self._pre_analysis_mode: Mode = Mode.PLAY
         self._analysis_task: asyncio.Task | None = None
         # Most recent engine_info payload published during analysis. Kept
         # so /game/sync can re-emit it after a client remount (e.g. user
@@ -155,63 +217,6 @@ class HumanVsEngine:
         # gone until the engine ships its next info line, which can take
         # seconds at higher depths.
         self._last_analysis_info: dict | None = None
-        # View mode: cursor-based playback of an imported / loaded game.
-        # _board is rebuilt from _view_full_moves[:_view_cursor] on every
-        # navigation, so analyze sees the right position automatically.
-        # Autosave, submit_move, engine thinking, and clocks are all gated
-        # off while viewing. Exits via play_from_here.
-        #
-        # Edit mode: entered from view only; commit/cancel return to VIEWING.
-        self._edit_pre_fen: str | None = None
-        self._edit_view_snapshot: _ViewSnapshot | None = None
-        self._view_cursor: int = 0  # 0..len(_view_full_moves) inclusive
-        self._view_full_moves: list[chess.Move] = []
-        # Per-ply pre-move (white, black) snapshots from the imported PGN's
-        # [%clk] (None entries when not derivable). Sliced on play_from_here.
-        self._view_clock_history: list[tuple[float | None, float | None]] = []
-        # Live (white, black) clocks AFTER the imported PGN's final ply. Used
-        # by play_from_here when cursor lands at the last ply (no pre-move
-        # snapshot beyond the last entry to derive post-move clocks from).
-        self._view_final_white: float | None = None
-        self._view_final_black: float | None = None
-        # Player names from the imported PGN's [White]/[Black] headers,
-        # surfaced in clock-row labels while viewing.
-        self._view_white_name: str | None = None
-        self._view_black_name: str | None = None
-        # Per-ply post-move eval (white POV) parsed from PGN comments.
-        # None when the PGN had no recognizable eval annotations.
-        self._view_eval_history: list[dict | None] | None = None
-        # Per-ply sanitized PGN comments (machine annotations stripped).
-        # None when the PGN had no commentary at all.
-        self._view_comments: list[str | None] | None = None
-        # Pre-game / Annotator commentary, sanitized. Shown at cursor==0.
-        self._view_root_comment: str | None = None
-        # PGN [Result]/[Termination] from the imported game (None when
-        # not in view mode). Read by _board_event's view payload.
-        self._view_pgn_result: str | None = None
-        self._view_pgn_termination: str | None = None
-        # SHA-256 hash and human-readable summary of the viewed game's source
-        # text (PGN or FEN). None for play-mode games and view/start transitions.
-        self._view_hash: str | None = None
-        self._view_summary: dict | None = None
-        # Original bytes the user pasted, set once in enter_view_mode and never
-        # updated. Served verbatim by get_pgn_text when state hasn't diverged;
-        # also enables a future revert-to-original.
-        self._view_original_text: str | None = None
-        # True when view state has diverged from _view_original_text (e.g. after
-        # an annotation edit). Forces get_pgn_text to re-serialize.
-        self._view_edited: bool = False
-        # Per-ply engine eval (white POV), one entry per pushed move. None
-        # entries for plies with no engine search (human moves). Matches
-        # move_stack length; pop alongside on take-back. Reset on new game.
-        self._eval_history: list[dict | None] = []
-        # Play-side PGN comments. Populated only when the play game was
-        # seeded from a view-mode position (play_from_here) that carried
-        # commentary -- otherwise None. Used by _build_play_game_pgn so
-        # imported annotations survive the view -> play fork into recents
-        # and exports. Live play does not mutate these today.
-        self._play_comments: list[str | None] | None = None
-        self._play_root_comment: str | None = None
         # Set inside the game-end lock by _stash_recents_payload(); drained
         # after the lock by _flush_recents_save(). Carries (text, summary,
         # game_id) for the recent-imports save so the async write happens
@@ -231,6 +236,40 @@ class HumanVsEngine:
         self._suspended_play: GameState | None = None
         self._tb: TablebaseProber | None = None
         self._lock = asyncio.Lock()
+
+    # Coherent-game fields delegate to the self._game bundle, so call sites
+    # read/write self._<field> unchanged while the bundle stays the single
+    # unit grouping mode with its payload.
+    _mode = _bundle_prop("mode")
+    _board = _bundle_prop("board")
+    _start_fen = _bundle_prop("start_fen")
+    _game_id = _bundle_prop("game_id")
+    _game_started_wall = _bundle_prop("game_started_wall")
+    _human_white = _bundle_prop("human_white")
+    _player_name = _bundle_prop("player_name")
+    _clock = _bundle_prop("clock")
+    _eval_history = _bundle_prop("eval_history")
+    _play_comments = _bundle_prop("play_comments")
+    _play_root_comment = _bundle_prop("play_root_comment")
+    _view_cursor = _bundle_prop("view_cursor")
+    _view_full_moves = _bundle_prop("view_full_moves")
+    _view_clock_history = _bundle_prop("view_clock_history")
+    _view_final_white = _bundle_prop("view_final_white")
+    _view_final_black = _bundle_prop("view_final_black")
+    _view_white_name = _bundle_prop("view_white_name")
+    _view_black_name = _bundle_prop("view_black_name")
+    _view_eval_history = _bundle_prop("view_eval_history")
+    _view_comments = _bundle_prop("view_comments")
+    _view_root_comment = _bundle_prop("view_root_comment")
+    _view_pgn_result = _bundle_prop("view_pgn_result")
+    _view_pgn_termination = _bundle_prop("view_pgn_termination")
+    _view_hash = _bundle_prop("view_hash")
+    _view_summary = _bundle_prop("view_summary")
+    _view_original_text = _bundle_prop("view_original_text")
+    _view_edited = _bundle_prop("view_edited")
+    _edit_pre_fen = _bundle_prop("edit_pre_fen")
+    _edit_view_snapshot = _bundle_prop("edit_view_snapshot")
+    _pre_analysis_mode = _bundle_prop("pre_analysis_mode")
 
     @property
     def engine_path(self) -> str:
