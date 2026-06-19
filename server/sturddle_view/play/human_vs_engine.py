@@ -549,21 +549,14 @@ class HumanVsEngine:
         async with self._lock:
             if not (self._mode & Op.NEW_GAME._mask):
                 raise ModeConflictError(self._mode, Op.NEW_GAME)
+            self._ensure_tablebase()
+            # prepare: everything that can raise runs before the bundle swap,
+            # so a failure (bad FEN, illegal seed, engine spawn) leaves _game
+            # untouched. Cancelling the prior search/tick is coherence-safe.
             await self._cancel_analysis()
             await self._cancel_think()
             await self._cancel_tick()
-            self._reset_view_state()
-            # Universal reset point: any stale fork link from a prior
-            # session must not leak into the new game. play_from_here
-            # re-stashes after new_game returns; all other paths
-            # (plain new game, import-on-top) start link-free.
-            self._fork_link = None
-            # A fresh game replaces whatever /view/start suspended; drop it
-            # so a later view entry can't resume a game that no longer exists.
-            self._suspended_play = None
-            self._ensure_tablebase()
             engine = await self._ensure_engine()
-            engine.send_line("ucinewgame")
             try:
                 board = board_from(start_fen)
             except ValueError as e:
@@ -578,33 +571,42 @@ class HumanVsEngine:
                 board.push(move)
             if board.is_game_over():
                 raise RuntimeError("seeded position is already over")
-            self._board = board
-            self._start_fen = start_fen  # None for startpos games
-            self._human_white = human_white
-            self._player_name = player_name or DEFAULT_PLAYER_NAME
-            self._clock = ChessClock(tc)
-            self._clock.reseed_from_pgn(
-                n_plies=len(board.move_stack),
+            n_plies = len(board.move_stack)
+            clock = ChessClock(tc)
+            clock.reseed_from_pgn(
+                n_plies=n_plies,
                 seed_history=seed_clock_history,
                 final_w=seed_final_white_time,
                 final_b=seed_final_black_time,
             )
-            self._eval_history = [None] * len(board.move_stack)
+            clock.start_turn()
             # Seed play-side comments from a forking caller (play_from_here).
-            # Truncate/pad the seed to match move_stack length so subsequent
-            # take-back can shrink alongside it.
-            n_plies = len(board.move_stack)
+            # Truncate/pad to move_stack length so take-back can shrink alongside.
+            play_comments = None
             if seed_comments is not None:
                 seeded = list(seed_comments[:n_plies])
                 seeded.extend([None] * (n_plies - len(seeded)))
-                self._play_comments = seeded if any(c is not None for c in seeded) else None
-            else:
-                self._play_comments = None
-            self._play_root_comment = seed_root_comment or None
-            self._clock.start_turn()
-            self._mode = Mode.PLAY
-            self._game_id = str(uuid.uuid4())
-            self._game_started_wall = time.time()
+                play_comments = seeded if any(c is not None for c in seeded) else None
+            next_game = GameBundle(
+                mode=Mode.PLAY,
+                board=board,
+                start_fen=start_fen,  # None for startpos games
+                game_id=str(uuid.uuid4()),
+                game_started_wall=time.time(),
+                human_white=human_white,
+                player_name=player_name or DEFAULT_PLAYER_NAME,
+                clock=clock,
+                eval_history=[None] * n_plies,
+                play_comments=play_comments,
+                play_root_comment=seed_root_comment or None,
+            )
+            # commit: nothing below may raise. A fresh game drops any stale
+            # fork link (play_from_here re-stashes after this returns) and any
+            # /view/start suspend (so a later view entry can't resume it).
+            self._fork_link = None
+            self._suspended_play = None
+            engine.send_line("ucinewgame")
+            self._game = next_game
             await self._persist()
             await self._publish_board()
             await self._publish_clock()
@@ -1095,10 +1097,12 @@ class HumanVsEngine:
             n = len(self._view_full_moves)
             if ply < 0 or ply > n:
                 raise RuntimeError(f"ply out of range: {ply} (0..{n})")
-            self._view_cursor = ply
+            # Build into a local first; assign cursor+board together so a
+            # replay failure can't leave the cursor pointing past the board.
             board = board_from(self._start_fen)
             for m in self._view_full_moves[:ply]:
                 board.push(m)
+            self._view_cursor = ply
             self._board = board
             await self._publish_board()
             await self._publish_clock()
@@ -1379,7 +1383,7 @@ class HumanVsEngine:
                 elif cursor < len(self._view_clock_history):
                     nw, nb = self._view_clock_history[cursor]
                     seed_final_w, seed_final_b = nw, nb
-            # Snapshot view-mode commentary slice before _reset_view_state wipes it.
+            # Snapshot the view-mode commentary slice to seed the play game.
             seed_comments = (
                 list(self._view_comments[:cursor])
                 if self._view_comments is not None
@@ -1391,23 +1395,19 @@ class HumanVsEngine:
             board = board_from(start_fen)
             for m in self._view_full_moves[:cursor]:
                 board.push(m)
-            # Refuse if the cursor lands on a finished position — would
-            # otherwise raise inside new_game AFTER viewer state is cleared,
-            # stranding the user in neither view nor play. Caller should
-            # nav back first (UI disables the button at game-over plies).
+            # Reject a finished cursor position up front: a clear, specific
+            # error instead of new_game's generic "seeded position is over".
             if board.is_game_over():
                 raise RuntimeError("game is over at this ply; back up first")
             human_white = (board.turn == chess.WHITE)
-            # Capture fork link before new_game wipes it. The parent's
-            # game_id is the *current* self._game_id (we are still in
-            # view mode pointing at it). fork_ply==0 is a degenerate
-            # fork -- treated as a plain new game with no link.
+            # Capture the fork link before new_game runs. The parent's game_id
+            # is the *current* self._game_id (still in view mode pointing at
+            # it). fork_ply==0 is a degenerate fork -- a plain new game.
             parent_game_id = self._game_id
             fork_ply = cursor
-            # Exit view mode before the new_game call (which re-acquires
-            # the lock). Clear viewer state so new_game starts clean.
-            self._mode = Mode.PLAY
-            self._reset_view_state()
+            # Stay in VIEWING across the lock release: new_game (legal from
+            # VIEWING) swaps in the play bundle atomically, so a failed engine
+            # spawn leaves us cleanly in view mode instead of stranded.
         new_id = await self.new_game(
             human_white=human_white,
             tc=tc,

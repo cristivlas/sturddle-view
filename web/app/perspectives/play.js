@@ -1391,11 +1391,13 @@ async function onPlayFromHereImpl(state) {
       // ignore
     }
   } catch (e) {
+    // Server keeps view mode on failure -- restore the gameId filter and
+    // re-enable the button so the user can retry from the same position.
+    state.view.setGameId(state.viewingGameId);
+    setDisabled(state.el.viewPlayFromHereBtn, false);
     reportError(state.ctx, MSG.PLAY_FROM_HERE_FAILED, e);
   } finally {
     state.playFromHereInflight = false;
-    // Don't re-enable directly; state.refreshButtons() drives it next time
-    // viewing flips, and by then the button is hidden anyway.
   }
 }
 
