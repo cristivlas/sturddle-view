@@ -138,6 +138,15 @@ class EngineSupervisor:
     # lifecycle
     # ------------------------------------------------------------------
 
+    async def _open_uci(self):
+        command: str | list[str] = (
+            [self._engine_path, *self._args] if self._args else self._engine_path
+        )
+        try:
+            return await self._popen_uci(command, **_popen_kwargs(self._env))
+        except FileNotFoundError as e:
+            raise FileNotFoundError(self._engine_path) from e
+
     async def spawn(
         self,
         overrides: dict | None = None,
@@ -148,10 +157,7 @@ class EngineSupervisor:
         Override precedence (later wins): per-engine options -> global_defaults
         -> overrides. Unknown / managed options are skipped, not raised.
         """
-        command: str | list[str] = (
-            [self._engine_path, *self._args] if self._args else self._engine_path
-        )
-        transport, engine = await self._popen_uci(command, **_popen_kwargs(self._env))
+        transport, engine = await self._open_uci()
         self._transport = transport
         rc_future = getattr(engine, "returncode", None)
         if rc_future is not None:
@@ -198,10 +204,7 @@ class EngineSupervisor:
         calling it leaks the asyncio subprocess transport (Windows GC
         then fires ResourceWarning).
         """
-        command: str | list[str] = (
-            [self._engine_path, *self._args] if self._args else self._engine_path
-        )
-        transport, engine = await self._popen_uci(command, **_popen_kwargs(self._env))
+        transport, engine = await self._open_uci()
         rc_future = getattr(engine, "returncode", None)
         if rc_future is not None:
             rc_future.add_done_callback(lambda f: f.exception())
