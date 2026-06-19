@@ -327,10 +327,12 @@ function dispatchAiEvent(aiCtx, evt) {
           noRecommendation: !!p.no_recommendation,
         });
         if (p.error) {
-          toast(p.error_detail || p.error, {
-            variant: "danger",
-            duration: 6000,
-          });
+          // Provider errors can be many lines with URLs; show just the first
+          // sentence. Full text still renders in the AI window.
+          const full = (p.error_detail || p.error).replace(/\s+/g, " ").trim();
+          // Match on punctuation + space so URLs stay intact; trim the result.
+          const msg = (full.match(/.+?[.!?]+(?=\s|$)/) || [full])[0].trim() || full;
+          toast(msg, { variant: "danger", duration: 6000 });
         }
         // End the AI turn on completion AND error (clears the pulse + toast).
         // Cancel is excluded: it self-resolves via stopAnalysisFromUi ->
