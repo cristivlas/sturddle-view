@@ -13,6 +13,10 @@
 
 import { loadJson, saveJson } from "./storage.js";
 
+// Sort direction vocabulary, shared with sort-stack.js and table callers
+// (column firstDir). NONE is the cleared/no-sort sentinel.
+export const SORT_DIR = Object.freeze({ ASC: "asc", DESC: "desc", NONE: "none" });
+
 const ARROW_CLASS = "th-sort-arrow";
 const ARROW_DESC = "caret-down";
 const ARROW_ASC = "caret-up";
@@ -20,15 +24,15 @@ const ARROW_ASC = "caret-up";
 // Click cycle per column: none -> first -> other -> none. firstDir lets a
 // column open ascending (names) or descending (dates/sizes).
 function nextDir(current, firstDir) {
-  const other = firstDir === "asc" ? "desc" : "asc";
+  const other = firstDir === SORT_DIR.ASC ? SORT_DIR.DESC : SORT_DIR.ASC;
   if (current === firstDir) return other;
-  if (current === other) return "none";
+  if (current === other) return SORT_DIR.NONE;
   return firstDir;
 }
 
 export function attachColumnSort({
   table,
-  columns,        // [{ key, firstDir?: "asc"|"desc", sortable?: bool }] in th order
+  columns,        // [{ key, firstDir?, sortable? }]; mapped to <thead> th by position (index), not by any attribute
   storageKey,     // optional; persists { key, dir }
   onSort,         // (state|null) => void; state = { key, dir, column }
 }) {
@@ -36,7 +40,7 @@ export function attachColumnSort({
   let active = null; // { key, dir }
 
   const saved = storageKey ? loadJson(storageKey) : null;
-  if (saved && saved.key && (saved.dir === "asc" || saved.dir === "desc")) {
+  if (saved && saved.key && (saved.dir === SORT_DIR.ASC || saved.dir === SORT_DIR.DESC)) {
     const col = columns.find((c) => c.key === saved.key && c.sortable !== false);
     if (col) active = { key: saved.key, dir: saved.dir };
   }
@@ -54,13 +58,13 @@ export function attachColumnSort({
     ths.forEach((th, i) => {
       const col = columns[i];
       th.querySelector(`.${ARROW_CLASS}`)?.remove();
-      const dir = active && active.key === col?.key ? active.dir : "none";
+      const dir = active && active.key === col?.key ? active.dir : SORT_DIR.NONE;
       th.setAttribute("aria-sort",
-        dir === "asc" ? "ascending" : dir === "desc" ? "descending" : "none");
-      if (dir === "none") return;
+        dir === SORT_DIR.ASC ? "ascending" : dir === SORT_DIR.DESC ? "descending" : "none");
+      if (dir === SORT_DIR.NONE) return;
       const arrow = document.createElement("wa-icon");
       arrow.className = ARROW_CLASS;
-      arrow.setAttribute("name", dir === "asc" ? ARROW_ASC : ARROW_DESC);
+      arrow.setAttribute("name", dir === SORT_DIR.ASC ? ARROW_ASC : ARROW_DESC);
       th.append(arrow);
     });
   }
@@ -72,10 +76,10 @@ export function attachColumnSort({
     th.addEventListener("click", (ev) => {
       // Don't sort when the click was on the resize grip.
       if (ev.target.closest(".th-grip")) return;
-      const firstDir = col.firstDir || "asc";
-      const current = active && active.key === col.key ? active.dir : "none";
+      const firstDir = col.firstDir || SORT_DIR.ASC;
+      const current = active && active.key === col.key ? active.dir : SORT_DIR.NONE;
       const dir = nextDir(current, firstDir);
-      active = dir === "none" ? null : { key: col.key, dir };
+      active = dir === SORT_DIR.NONE ? null : { key: col.key, dir };
       syncIndicators();
       emit();
     });

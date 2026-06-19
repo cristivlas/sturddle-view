@@ -5,6 +5,7 @@ import { inlineSvgIcon } from "./dialogs.js";
 import { CHESS_CLOCK_SVG_INNER, CHESS_CLOCK_VIEW_BOX } from "./icons.js";
 import { makeDivider, makeSection } from "./settings-ui-helpers.js";
 import { loadRaw, saveRaw } from "./storage.js";
+import { SIDE } from "./chess-consts.js";
 
 export function buildPlayTab({
   initial, putSettings, putSettingsDebounced, makeDurationRow,
@@ -32,8 +33,8 @@ export function buildPlayTab({
   const humanSide = document.createElement("wa-select");
   humanSide.size = "small";
   humanSide.setAttribute("distance", "4");
-  humanSide.value = initial.human_side ?? "white";
-  for (const [val, label] of [["white", "White"], ["black", "Black"], ["random", "Random"]]) {
+  humanSide.value = initial.human_side ?? SIDE.WHITE;
+  for (const [val, label] of [[SIDE.WHITE, "White"], [SIDE.BLACK, "Black"], ["random", "Random"]]) {
     const opt = document.createElement("wa-option");
     opt.value = val;
     opt.textContent = label;

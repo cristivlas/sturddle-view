@@ -8,6 +8,7 @@
 
 import { RIBBON_SIDE_KEY } from "./ribbon-window.js";
 import { APP_EVT } from "./app-events.js";
+import { SIDE } from "./chess-consts.js";
 import { BOARD_STYLES, DEFAULT_BOARD_STYLE, resolveBoardStyle } from "./board-styles.js";
 import { mqMobile } from "./breakpoints.js";
 import { makeDivider } from "./settings-ui-helpers.js";
@@ -54,9 +55,9 @@ export function buildDisplayTab({ initial, putSettings, initialStyle, onBoardSty
   const evalPov = document.createElement("wa-select");
   evalPov.size = "small";
   evalPov.setAttribute("distance", "4");
-  evalPov.value = initial.play_eval_pov ?? "white";
+  evalPov.value = initial.play_eval_pov ?? SIDE.WHITE;
   for (const [val, label] of [
-    ["white", "White's POV"],
+    [SIDE.WHITE, "White's POV"],
     ["engine", "Engine's POV (raw UCI)"],
     ["human", "Human's POV"],
   ]) {
