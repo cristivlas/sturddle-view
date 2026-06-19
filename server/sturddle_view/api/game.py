@@ -59,6 +59,7 @@ async def _get_hve(request: Request) -> HumanVsEngine:
             settings=s.settings,
             store=getattr(s, "game_store", None),
             recents=getattr(s, "recent_imports", None),
+            engines=s.engines,
         )
     # Refresh display name + UCI options on every fetch so registry edits
     # take effect on the next engine launch without restarting the server.

@@ -29,7 +29,11 @@ from ..env_utils import env_int
 from ..events import EVT_ENGINE_SEARCH_START, Event, EventBus
 from ..llm import ToolSpec
 from ..llm.cancel import CancelToken
-from .engine_analysis import resolve_eval_pov_white_or_stm, spawn_analysis_engine
+from .engine_analysis import (
+    log_spawn_failure,
+    resolve_eval_pov_white_or_stm,
+    spawn_analysis_engine,
+)
 from .engine_info_pump import pump_engine_info
 from .engine_supervisor import EngineSupervisor
 
@@ -514,7 +518,7 @@ async def _run_one_search(
     try:
         engine, cleanup = await spawn_analysis_engine(sup, settings)
     except Exception as exc:
-        log.error("search: engine spawn failed", exc_info=True)
+        log_spawn_failure(exc, "search")
         raise _SearchError("engine_spawn_failed", str(exc)) from exc
     try:
         analysis_kwargs: dict = {"limit": limit}

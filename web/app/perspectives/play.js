@@ -199,6 +199,7 @@ const MSG = {
   START_ANALYSIS_FAILED: "Start analysis failed",
   REANALYZE_FAILED: "Re-analyze failed",
   ENGINE_CRASHED: "Engine crashed unexpectedly.",
+  ANALYSIS_ENGINE_FAILED: "Analysis engine failed to start.",
   // Confirm dialogs.
   CONFIRM_NEW_GAME: "Cancel the game in progress and start a new one?",
   CONFIRM_RESIGN: "Resign the current game?",
@@ -2289,12 +2290,19 @@ export const playPerspective = {
     editCancelBtn.addEventListener("click", onEditCancel);
 
     const offCrash = ctx.events.on(async (evt) => {
-      if (evt.kind !== "system" || evt.payload?.error !== "engine_terminated") return;
-      view.clearArrows();
-      if (state.analyzing) {
-        await onAnalyze();
+      if (evt.kind !== "system") return;
+      const err = evt.payload?.error;
+      if (err === "engine_terminated") {
+        view.clearArrows();
+        if (state.analyzing) {
+          await onAnalyze();
+        }
+        showEngineCrashToast();
+      } else if (err === "analysis_engine_failed") {
+        // Server already reverted out of ANALYZING (board_update); just say why.
+        view.clearArrows();
+        toast(MSG.ANALYSIS_ENGINE_FAILED, { variant: "danger" });
       }
-      showEngineCrashToast();
     });
 
     return {

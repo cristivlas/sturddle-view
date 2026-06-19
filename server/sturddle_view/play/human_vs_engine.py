@@ -43,6 +43,8 @@ from .engine_analysis import (
     EVAL_POV_HUMAN,
     EVAL_POV_WHITE,
     global_engine_defaults,
+    log_spawn_failure,
+    make_analysis_supervisor,
     resolve_eval_pov_white_or_stm,
     spawn_analysis_engine,
 )
@@ -173,11 +175,16 @@ class HumanVsEngine:
         settings=None,
         store: GameStore | None = None,
         recents: "RecentImports | None" = None,
+        engines=None,
     ) -> None:
         self._bus = bus
         self._openings = openings  # Optional[OpeningBook]
         self._settings = settings  # Optional[Settings]
         self._store = store
+        # Optional EngineRegistry. Lets engine-only analysis resolve the
+        # configured analysis engine (resolve_analysis); None -> fall back to
+        # the play supervisor (test doubles that don't wire a registry).
+        self._engines = engines
         # Optional RecentImports. When set, finished games are saved into
         # the imports store on game-end so they survive reloads and appear
         # in the recents dropdown. Tagged with summary["source"]="play".
@@ -1789,6 +1796,23 @@ class HumanVsEngine:
             )
             await self._flush_recents_save()
 
+    async def _fail_analysis_start(self, game_id: str) -> None:
+        """Analysis engine failed to spawn: leave ANALYZING so the client
+        doesn't hang in the analysis UI, and surface the failure over the bus
+        instead of silently no-opping. Guarded so a concurrent stop wins."""
+        async with self._lock:
+            if self._mode is Mode.ANALYZING:
+                self._mode = self._pre_analysis_mode
+                await self._publish_board()
+                await self._publish_clock()
+                await self._bus.publish(
+                    Event(
+                        kind=EVT_SYSTEM,
+                        game_id=game_id,
+                        payload={"error": "analysis_engine_failed"},
+                    )
+                )
+
     async def _run_analysis(self, game_id: str, board: chess.Board) -> None:
         """Drive analysis on a dedicated engine instance.
 
@@ -1797,12 +1821,17 @@ class HumanVsEngine:
         Spawn + settings-derived options are owned by the shared
         engine-analysis helper so this stays in sync with the AI tool.
         """
+        # Engine-only analysis runs on the *analysis* engine (resolve_analysis),
+        # not the play engine. No registry wired (test doubles) -> play engine.
+        sup = (
+            make_analysis_supervisor(self._engines, self._settings, self._bus)
+            if self._engines is not None else self._supervisor
+        )
         try:
-            engine, cleanup = await spawn_analysis_engine(
-                self._supervisor, self._settings,
-            )
-        except Exception:
-            log.error("could not start engine for analysis", exc_info=True)
+            engine, cleanup = await spawn_analysis_engine(sup, self._settings)
+        except Exception as exc:
+            log_spawn_failure(exc, "analysis")
+            await self._fail_analysis_start(game_id)
             return
         await self._bus.publish(
             Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={})
