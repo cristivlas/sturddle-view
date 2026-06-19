@@ -20,12 +20,18 @@ from .engine_supervisor import EngineSupervisor
 log = logging.getLogger(__name__)
 
 
+class NoAnalysisEngine(RuntimeError):
+    """No analysis engine is configured/resolvable -- a config gap, not a crash."""
+
+
 def log_spawn_failure(exc: Exception, context: str) -> None:
-    """Log an analysis-engine spawn failure. A missing binary (stale engine
-    path) is expected and user-fixable -- log it concisely; anything else is a
+    """Log an analysis-engine spawn failure. A missing binary or unconfigured
+    engine is expected and user-fixable -- log it concisely; anything else is a
     real surprise, so keep the full traceback."""
     if isinstance(exc, FileNotFoundError):
         log.warning("%s: engine not found: %s", context, exc)
+    elif isinstance(exc, NoAnalysisEngine):
+        log.warning("%s: %s", context, exc)
     else:
         log.error("%s: engine spawn failed", context, exc_info=True)
 
@@ -93,7 +99,9 @@ def make_analysis_supervisor(registry, settings: Any | None, bus) -> EngineSuper
     honors analysis_engine_id (falling back to the active engine only when the
     pinned entry is gone). Shared by HVE engine-only analysis and the AI tool
     so neither drifts onto the wrong engine."""
-    launch = resolve_analysis(registry, settings)
+    launch = resolve_analysis(registry, settings) if registry is not None else None
+    if launch is None or launch.path is None:
+        raise NoAnalysisEngine("no analysis engine configured")
     sup = EngineSupervisor(launch.path, bus, settings=settings)
     if launch.options:
         sup.options = launch.options

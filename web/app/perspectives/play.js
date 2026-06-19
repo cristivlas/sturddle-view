@@ -104,6 +104,9 @@ function resultBadge(result) {
 const EVAL_PANEL_TITLE = "Engine Eval";
 const EVAL_PANEL_TOOLTIP = "Evaluation from the engine's point of view";
 
+// Cap server-supplied error detail (engine path / exception text) in toasts.
+const MAX_TOAST_DETAIL = 200;
+
 // eval_history entries are white POV {cp|mate}; flip for a black engine.
 function evalToEnginePov(ev, engineWhite) {
   if (engineWhite) return ev;
@@ -2301,7 +2304,11 @@ export const playPerspective = {
       } else if (err === "analysis_engine_failed") {
         // Server already reverted out of ANALYZING (board_update); just say why.
         view.clearArrows();
-        toast(MSG.ANALYSIS_ENGINE_FAILED, { variant: "danger" });
+        const detail = (evt.payload?.detail || "").slice(0, MAX_TOAST_DETAIL);
+        const text = detail
+          ? `${MSG.ANALYSIS_ENGINE_FAILED} ${detail}`
+          : MSG.ANALYSIS_ENGINE_FAILED;
+        toast(text, { variant: "danger" });
       }
     });
 

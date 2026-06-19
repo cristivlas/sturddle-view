@@ -513,9 +513,12 @@ async def _run_one_search(
 
     Emits engine_info but NOT engine_search_start -- the caller clears the
     panel (analyze once; top_moves once for the whole batch)."""
-    sup = engine_launcher()
     settings = settings_provider() if settings_provider else None
     try:
+        # Build inside the try: the launcher (make_analysis_supervisor) can
+        # raise NoAnalysisEngine before spawn -- it must come out as a clean
+        # _SearchError envelope, not escape the tool uncaught.
+        sup = engine_launcher()
         engine, cleanup = await spawn_analysis_engine(sup, settings)
     except Exception as exc:
         log_spawn_failure(exc, "search")

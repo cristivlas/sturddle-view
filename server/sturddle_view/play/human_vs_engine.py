@@ -429,6 +429,9 @@ class HumanVsEngine:
     def _engine_env(self, value: dict[str, str]) -> None:
         self._supervisor.env = value
 
+    def set_engines(self, engines) -> None:
+        self._engines = engines
+
     def set_engine_options(self, options: dict | None) -> None:
         """Set the UCI options to apply on the next engine launch.
 
@@ -1796,10 +1799,11 @@ class HumanVsEngine:
             )
             await self._flush_recents_save()
 
-    async def _fail_analysis_start(self, game_id: str) -> None:
-        """Analysis engine failed to spawn: leave ANALYZING so the client
-        doesn't hang in the analysis UI, and surface the failure over the bus
-        instead of silently no-opping. Guarded so a concurrent stop wins."""
+    async def _fail_analysis_start(self, game_id: str, detail: str) -> None:
+        """Analysis engine failed to start: leave ANALYZING so the client
+        doesn't hang, and surface a descriptive failure over the bus instead
+        of silently no-opping. All gated on still being in ANALYZING so a
+        concurrent stop wins (no spurious toast)."""
         async with self._lock:
             if self._mode is Mode.ANALYZING:
                 self._mode = self._pre_analysis_mode
@@ -1809,7 +1813,7 @@ class HumanVsEngine:
                     Event(
                         kind=EVT_SYSTEM,
                         game_id=game_id,
-                        payload={"error": "analysis_engine_failed"},
+                        payload={"error": "analysis_engine_failed", "detail": detail},
                     )
                 )
 
@@ -1821,17 +1825,15 @@ class HumanVsEngine:
         Spawn + settings-derived options are owned by the shared
         engine-analysis helper so this stays in sync with the AI tool.
         """
-        # Engine-only analysis runs on the *analysis* engine (resolve_analysis),
-        # not the play engine. No registry wired (test doubles) -> play engine.
-        sup = (
-            make_analysis_supervisor(self._engines, self._settings, self._bus)
-            if self._engines is not None else self._supervisor
-        )
         try:
+            # Engine-only analysis runs on the configured analysis engine
+            # (resolve_analysis), never the play engine -- a missing registry
+            # surfaces as a failure below rather than quietly using the wrong one.
+            sup = make_analysis_supervisor(self._engines, self._settings, self._bus)
             engine, cleanup = await spawn_analysis_engine(sup, self._settings)
         except Exception as exc:
             log_spawn_failure(exc, "analysis")
-            await self._fail_analysis_start(game_id)
+            await self._fail_analysis_start(game_id, str(exc))
             return
         await self._bus.publish(
             Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={})
