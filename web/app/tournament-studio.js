@@ -59,9 +59,9 @@ const STUDIO_TAB_DEFAULT_RIGHT = "tourneys";
 // Tourney table default column widths (Status, Created, Name, Games) + resize floor.
 const STUDIO_TOURNEY_DEFAULT_PCTS = [12, 22, 16, 50];
 const STUDIO_TOURNEY_MIN_PCT = 10;
-// History table default column widths (#, White, Black, Result) + resize floor.
-const STUDIO_HISTORY_DEFAULT_PCTS = [12, 34, 34, 20];
-const STUDIO_HISTORY_MIN_PCT = 8;
+// History table default column widths (#, White, Black, Result, Opening) + resize floor.
+const STUDIO_HISTORY_DEFAULT_PCTS = [5, 20, 20, 15, 40];
+const STUDIO_HISTORY_MIN_PCT = 5;
 
 export const TOURNAMENT_UX = Object.freeze({ ARENA: "arena", STUDIO: "studio" });
 
@@ -527,12 +527,13 @@ function buildHistoryTable(ctx) {
   wrap.className = "studio-history-wrap";
   const table = document.createElement("table");
   table.className = "wb-table studio-history-tbl";
-  table.innerHTML = `<colgroup><col><col><col><col></colgroup>
+  table.innerHTML = `<colgroup><col><col><col><col><col></colgroup>
     <thead><tr>
       <th data-col="num">#<span class="th-grip"></span></th>
       <th data-col="white">White<span class="th-grip"></span></th>
       <th data-col="black">Black<span class="th-grip"></span></th>
-      <th data-col="result">Result</th>
+      <th data-col="result">Result<span class="th-grip"></span></th>
+      <th data-col="opening">Opening</th>
     </tr></thead><tbody></tbody>`;
   wrap.appendChild(table);
   pane.replaceChildren(wrap);
@@ -544,6 +545,7 @@ function buildHistoryTable(ctx) {
       { key: "white", firstDir: "asc" },
       { key: "black", firstDir: "asc" },
       { key: "result", firstDir: "asc" },
+      { key: "opening", firstDir: "asc" },
     ],
     storageKey: STORAGE_KEY.STUDIO_HISTORY_SORT,
     onSort: (state) => {
@@ -608,7 +610,8 @@ function historyRow(ctx, tid, r) {
     `<td class="studio-history-num">${r.num}</td>` +
     `<td title="${escapeHtml(r.white)}">${escapeHtml(r.white)}</td>` +
     `<td title="${escapeHtml(r.black)}">${escapeHtml(r.black)}</td>` +
-    `<td class="studio-history-result">${escapeHtml(r.result)}</td>`;
+    `<td class="studio-history-result">${escapeHtml(r.result)}</td>` +
+    `<td title="${escapeHtml(r.opening)}">${escapeHtml(r.opening)}</td>`;
   const open = () => replayTournamentGame({ tournamentId: tid, gameN: r.num, token: ctx.token })
     .catch((e) => reportError({ log: ctx.log }, REVIEW_FAIL_MSG, e));
   tr.addEventListener("click", open);
@@ -630,7 +633,7 @@ function renderHistory(ctx) {
     tb.replaceChildren();
     return;
   }
-  const rows = games.map((g, i) => ({ num: i + 1, white: g.white, black: g.black, result: g.result }));
+  const rows = games.map((g, i) => ({ num: i + 1, white: g.white, black: g.black, result: g.result, opening: g.opening || "" }));
   sortHistoryRows(rows, ctx.historyStack);
   tb.replaceChildren(...rows.map((r) => historyRow(ctx, tid, r)));
 }

@@ -19,6 +19,7 @@ import platformdirs
 
 from .. import app_dir_name
 from .._atomic import atomic_write_json
+from . import pgn_stats
 
 
 # Allowed status values. `failed` is distinct from `stopped`: the
@@ -312,13 +313,19 @@ class TournamentStore:
         if not d.exists():
             return
         state_name = self._state_path(tournament_id).name
-        for child in d.iterdir():
-            if child.name == state_name:
-                continue
-            if child.is_dir() and not child.is_symlink():
-                shutil.rmtree(child)
-            else:
-                child.unlink()
+        try:
+            for child in d.iterdir():
+                if child.name == state_name:
+                    continue
+                if child.is_dir() and not child.is_symlink():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+        finally:
+            # Drop pgn_stats caches even on a partial wipe (e.g. AV-locked
+            # file): the PGN may already be gone, so a stale memo must not
+            # survive a deletion that started.
+            pgn_stats.forget(self.pgn_path(tournament_id))
 
     def find_by_status(self, status: str) -> list[Tournament]:
         """All tournaments currently in the given status (helper for orchestrator

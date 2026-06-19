@@ -202,10 +202,7 @@ def _serialize(
             )
         except FileNotFoundError:
             out["partial_pairs"] = 0
-        try:
-            out["games"] = compute_games_list(store.pgn_path(t.id))
-        except FileNotFoundError:
-            out["games"] = []
+        out["games"] = compute_games_list(store.pgn_path(t.id))
         # Surface the orchestrator's currently-active proxies so the
         # workspace's Schedule can seed its rows on mount, not just from
         # forward-going `proxy_started` events. Only meaningful when this

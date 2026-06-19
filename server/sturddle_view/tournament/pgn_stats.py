@@ -10,16 +10,22 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import chess
+import chess.pgn
+
 from ..play.canonical_hash import canonical_hash_from_game
+from ..chess.pgn_walk import walk_mainline
 from ..chess.results import (
     BLACK_WIN as _BLACK_WIN,
     DECISIVE_RESULTS,
     WHITE_WIN as _WHITE_WIN,
 )
+from ..openings import OpeningBook
 
 log = logging.getLogger(__name__)
 
@@ -30,8 +36,26 @@ _DECISIVE_RESULTS = DECISIVE_RESULTS
 _TAG_RE = re.compile(r'\[(\w+)\s+"(.*?)"\]\s*$')
 _TAG_RE_BLOCK = re.compile(r'^\[(\w+)\s+"(.*?)"\]', re.MULTILINE)
 
+# PGN header tag names.
+_TAG_WHITE = "White"
+_TAG_BLACK = "Black"
+_TAG_RESULT = "Result"
+_TAG_ROUND = "Round"
+_TAG_TERMINATION = "Termination"
+
 # Tags we actually use; ignore the rest to skip a dict write per line.
-_WANTED_TAGS = frozenset({"White", "Black", "Result", "Round"})
+_WANTED_TAGS = frozenset({_TAG_WHITE, _TAG_BLACK, _TAG_RESULT, _TAG_ROUND})
+
+# Placeholder for a missing tag value (White/Black/Round).
+_UNKNOWN = "?"
+# The non-decisive Result tag (ongoing game); never passes the decisive filter.
+_NONDECISIVE = "*"
+
+# games-list / summary wire keys.
+_KEY_WHITE = "white"
+_KEY_BLACK = "black"
+_KEY_RESULT = "result"
+_KEY_OPENING = "opening"
 
 
 @dataclass
@@ -150,6 +174,19 @@ _iter_games_cache: dict[
 # _iter_games_cache. Lets read_game_record seek directly to game N.
 _game_offsets_cache: dict[Path, tuple[int, int, list[int]]] = {}
 
+# pgn_path -> (mtime_ns, size, games). O(1) fast path for unchanged polls.
+_games_list_cache: dict[Path, tuple[int, int, list[dict]]] = {}
+
+# (pgn_path, byte_offset) -> finished-game record. The PGN is append-only
+# within a run, so an offset's game never changes; a rebuild re-parses only
+# the just-finished game. Stop/restart wipes the file -- the orchestrator
+# calls forget() at that point, the only event that invalidates this.
+_opening_memo: dict[tuple[Path, int], dict] = {}
+
+# Plies replayed per game to identify its opening. ECO lines rarely exceed
+# ~12 moves, so 24 plies covers them while bounding replay cost on big PGNs.
+_OPENING_PLIES = int(os.environ.get("SV_OPENING_PLIES", "24"))
+
 
 def _iter_games_keyed(pgn_path: Path):
     """Yield ``(round, white, black, result)`` 4-tuples for each game.
@@ -201,11 +238,11 @@ def _iter_games_uncached(pgn_path: Path):
     def emit():
         if not cur:
             return None
-        result = cur.get("Result", "*")
+        result = cur.get(_TAG_RESULT, _NONDECISIVE)
         if result in _DECISIVE_RESULTS:
-            white = cur.get("White", "?")
-            black = cur.get("Black", "?")
-            round_tag = cur.get("Round", "")
+            white = cur.get(_TAG_WHITE, _UNKNOWN)
+            black = cur.get(_TAG_BLACK, _UNKNOWN)
+            round_tag = cur.get(_TAG_ROUND, "")
             value = (round_tag, white, black, result)
             cur.clear()
             return value
@@ -268,7 +305,7 @@ def _form_pairs(
     buckets: dict[tuple[str, frozenset[str]], list[int]] = {}
     no_round: list[int] = []
     for i, (round_tag, white, black, _result) in enumerate(keyed):
-        if not round_tag or round_tag == "?":
+        if not round_tag or round_tag == _UNKNOWN:
             no_round.append(i)
             continue
         key = (round_tag, frozenset((white, black)))
@@ -322,7 +359,6 @@ def read_game_pgn(pgn_path: Path, game_n: int) -> str | None:
 
 def _build_game_offsets(pgn_path: Path, f) -> list[int]:
     """Scan open text file and return byte offsets of decisive games."""
-    import chess.pgn
     offsets: list[int] = []
     f.seek(0)
     while True:
@@ -330,7 +366,7 @@ def _build_game_offsets(pgn_path: Path, f) -> list[int]:
         headers = chess.pgn.read_headers(f)
         if headers is None:
             break
-        if headers.get("Result", "*") in _DECISIVE_RESULTS:
+        if headers.get(_TAG_RESULT, _NONDECISIVE) in _DECISIVE_RESULTS:
             offsets.append(offset)
     return offsets
 
@@ -345,6 +381,11 @@ def _get_game_offsets(pgn_path: Path, st) -> list[int]:
     return offsets
 
 
+def _read_game_at_offset(f, offset: int):
+    f.seek(offset)
+    return chess.pgn.read_game(f)
+
+
 def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
     """Return PGN + final-position metadata for the Nth completed game.
 
@@ -356,8 +397,6 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
     """
     if game_n < 1:
         return None
-    import chess.pgn
-    from ..chess.pgn_walk import walk_mainline
     try:
         st = pgn_path.stat()
     except FileNotFoundError:
@@ -366,8 +405,7 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
     if game_n > len(offsets):
         return None
     with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
-        f.seek(offsets[game_n - 1])
-        game = chess.pgn.read_game(f)
+        game = _read_game_at_offset(f, offsets[game_n - 1])
     if game is None:
         return None
     last_move_uci: str | None = None
@@ -378,14 +416,14 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
         board = game.board()
     pgn_hash = canonical_hash_from_game(game)
     pgn_text = str(game)
-    white = game.headers.get("White", "?")
-    black = game.headers.get("Black", "?")
+    white = game.headers.get(_TAG_WHITE, _UNKNOWN)
+    black = game.headers.get(_TAG_BLACK, _UNKNOWN)
     # _get_game_offsets only indexes decisive games, so Result is always decisive here.
-    result = game.headers["Result"]
+    result = game.headers[_TAG_RESULT]
     summary = {
-        "white": white if white != "?" else None,
-        "black": black if black != "?" else None,
-        "result": result,
+        _KEY_WHITE: white if white != _UNKNOWN else None,
+        _KEY_BLACK: black if black != _UNKNOWN else None,
+        _KEY_RESULT: result,
         "side_to_move": None,
     }
     return {
@@ -394,10 +432,10 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
         "summary": summary,
         "final_fen": board.fen(),
         "last_move": last_move_uci,
-        "engine_white": game.headers.get("White", ""),
-        "engine_black": game.headers.get("Black", ""),
-        "result": game.headers.get("Result", "*"),
-        "termination": game.headers.get("Termination", ""),
+        "engine_white": game.headers.get(_TAG_WHITE, ""),
+        "engine_black": game.headers.get(_TAG_BLACK, ""),
+        _KEY_RESULT: game.headers.get(_TAG_RESULT, _NONDECISIVE),
+        "termination": game.headers.get(_TAG_TERMINATION, ""),
     }
 
 
@@ -428,17 +466,60 @@ def count_partial_pairs(pgn_path: Path, *, paired: bool = True) -> int:
     return len(orphans)
 
 
-def compute_games_list(pgn_path: Path) -> list[dict]:
-    """Return one dict per completed game in PGN order.
+def _game_record_at_offset(f, offset: int) -> dict | None:
+    game = _read_game_at_offset(f, offset)
+    if game is None:
+        return None
+    uci: list[str] = []
+    for move in game.mainline_moves():
+        uci.append(move.uci())
+        if len(uci) >= _OPENING_PLIES:
+            break
+    opening = OpeningBook.load().lookup(uci)
+    return {
+        _KEY_WHITE: game.headers.get(_TAG_WHITE, _UNKNOWN),
+        _KEY_BLACK: game.headers.get(_TAG_BLACK, _UNKNOWN),
+        # _get_game_offsets only indexes decisive games -> Result always set.
+        _KEY_RESULT: game.headers[_TAG_RESULT],
+        _KEY_OPENING: opening.name if opening is not None else "",
+    }
 
-    Used by the workspace's Schedule window when no live event stream
-    is available. Phase 1 has no proxy broadcast, so this PGN-driven
-    list is the only source of "what games has fastchess finished."
+
+def forget(pgn_path: Path) -> None:
+    """Drop all cached games-list state for ``pgn_path``. The orchestrator
+    calls this when it wipes the PGN for a restart, since the offset-keyed
+    memo's only invariant -- append-only bytes -- breaks across a wipe."""
+    _games_list_cache.pop(pgn_path, None)
+    for k in [k for k in _opening_memo if k[0] == pgn_path]:
+        del _opening_memo[k]
+
+
+def compute_games_list(pgn_path: Path) -> list[dict]:
+    """One dict per completed game (white, black, result, opening) in PGN
+    order. Indexing matches read_game_record -- both driven by
+    _get_game_offsets -- so a row's position is its replay game number.
     """
-    return [
-        {"white": w, "black": b, "result": r}
-        for (w, b, r) in _iter_games(pgn_path)
-    ]
+    try:
+        st = pgn_path.stat()
+    except FileNotFoundError:
+        forget(pgn_path)
+        return []
+    cached = _games_list_cache.get(pgn_path)
+    if cached is not None and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
+        return cached[2]
+    offsets = _get_game_offsets(pgn_path, st)
+    with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
+        games = []
+        for offset in offsets:
+            rec = _opening_memo.get((pgn_path, offset))
+            if rec is None:
+                rec = _game_record_at_offset(f, offset)
+                if rec is None:
+                    continue
+                _opening_memo[(pgn_path, offset)] = rec
+            games.append(rec)
+    _games_list_cache[pgn_path] = (st.st_mtime_ns, st.st_size, games)
+    return games
 
 
 def elo_from_score(score: float) -> float | None:
@@ -932,7 +1013,7 @@ def _iter_pairs(
         log.debug(
             "SPRT %s: round %s has orphan game (expected 2-game color-flipped "
             "pair) -- skipped",
-            pgn_path.name, rd or "?",
+            pgn_path.name, rd or _UNKNOWN,
         )
 
     pairs: list[tuple[str, str, float]] = []
@@ -944,7 +1025,7 @@ def _iter_pairs(
             log.warning(
                 "SPRT %s: round %s skipped (engines %s vs %s, "
                 "expected %s vs %s)",
-                pgn_path.name, _rdi or "?", wi, bi, a_name, b_name,
+                pgn_path.name, _rdi or _UNKNOWN, wi, bi, a_name, b_name,
             )
             continue
         score = 0.0

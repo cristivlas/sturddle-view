@@ -1,4 +1,4 @@
-"""Slice 2: pgn_stats — PGN-driven standings, Elo, and SPRT.
+"""pgn_stats -- PGN-driven standings, Elo, SPRT, and games list.
 
 Fixture PGNs are hand-crafted strings inside the tests; no external
 PGN files. Each test writes to a tmp file because the public API takes
@@ -13,6 +13,7 @@ import pytest
 import json
 
 from sturddle_view.tournament.pgn_stats import (
+    compute_games_list,
     compute_sprt,
     compute_standings,
     count_partial_pairs,
@@ -2259,5 +2260,83 @@ def test_games_played_from_config_non_numeric_field_returns_none(tmp_path):
         "stats": {"A vs B": {"wins": "many", "losses": 0, "draws": 0}}
     }), encoding="utf-8")
     assert games_played_from_config(p) is None
+
+
+_NAJDORF = "1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6"
+_QGD = "1. d4 d5 2. c4 e6"
+
+
+def _game_moves(white: str, black: str, result: str, moves: str) -> str:
+    return (
+        f'[Event "x"]\n[White "{white}"]\n[Black "{black}"]\n'
+        f'[Round "1"]\n[Result "{result}"]\n\n{moves} {result}\n\n'
+    )
+
+
+def test_games_list_attaches_identified_opening(tmp_path):
+    body = _game_moves("A", "B", "1-0", _NAJDORF) + _game_moves("B", "A", "1/2-1/2", _QGD)
+    games = compute_games_list(_write_pgn(tmp_path, body))
+    assert [(g["white"], g["black"], g["result"]) for g in games] == [
+        ("A", "B", "1-0"), ("B", "A", "1/2-1/2")]
+    assert "Najdorf" in games[0]["opening"]
+    assert games[1]["opening"] == "Queen's Gambit Declined"
+
+
+def test_games_list_opening_blank_for_moveless_game(tmp_path):
+    body = '[Event "x"]\n[White "A"]\n[Black "B"]\n[Round "1"]\n[Result "1-0"]\n\n1-0\n\n'
+    games = compute_games_list(_write_pgn(tmp_path, body))
+    assert games[0]["opening"] == ""
+
+
+def test_games_list_missing_file_returns_empty(tmp_path):
+    assert compute_games_list(tmp_path / "absent.pgn") == []
+
+
+def test_games_list_row_index_matches_replay_game_number(tmp_path):
+    body = _game("A", "B", "1-0") + _game("C", "D", "0-1") + _game("E", "F", "1-0")
+    p = _write_pgn(tmp_path, body)
+    games = compute_games_list(p)
+    for i, g in enumerate(games, start=1):
+        rec = read_game_record(p, i)
+        assert (g["white"], g["black"], g["result"]) == (
+            rec["engine_white"], rec["engine_black"], rec["result"])
+
+
+def test_games_list_served_from_cache_when_unchanged(tmp_path):
+    from sturddle_view.tournament import pgn_stats as _mod
+
+    p = _write_pgn(tmp_path, _game_moves("A", "B", "1-0", _NAJDORF))
+    first = compute_games_list(p)
+    assert _mod._games_list_cache[p][2] is first
+    assert compute_games_list(p) is first  # unchanged file -> same object
+
+
+def test_games_list_append_reuses_memo_for_prior_games(tmp_path):
+    # A live tournament grows the PGN each game; the existing game's record
+    # must be reused from _opening_memo (same object), not re-parsed.
+    g1 = _game_moves("A", "B", "1-0", _NAJDORF)
+    p = _write_pgn(tmp_path, g1)
+    r0 = compute_games_list(p)[0]
+    p.write_text(g1 + _game_moves("B", "A", "0-1", _QGD), encoding="utf-8")
+    grown = compute_games_list(p)
+    assert grown[0] is r0  # memoized, not recomputed
+    assert len(grown) == 2
+    assert grown[1]["opening"] == "Queen's Gambit Declined"
+
+
+def test_forget_drops_memo_so_wipe_reparses(tmp_path):
+    # Stop/restart wipes the PGN and reuses offset 0 for a new game. forget()
+    # (called by the wipe path) is the contract that invalidates the memo;
+    # without it the append-only invariant breaks and offset 0 goes stale.
+    from sturddle_view.tournament import pgn_stats as _mod
+
+    p = _write_pgn(tmp_path, _game_moves("A", "B", "1-0", _NAJDORF))
+    assert "Najdorf" in compute_games_list(p)[0]["opening"]
+    _mod.forget(p)
+    assert not any(k[0] == p for k in _mod._opening_memo)
+    p.write_text(_game_moves("C", "D", "0-1", _QGD), encoding="utf-8")
+    after = compute_games_list(p)[0]
+    assert after["white"] == "C"
+    assert after["opening"] == "Queen's Gambit Declined"
 
 
