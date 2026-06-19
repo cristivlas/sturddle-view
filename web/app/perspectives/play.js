@@ -118,8 +118,6 @@ function evalToEnginePov(ev, engineWhite) {
 function feedEvalBar(state, evalHistory) {
   const bar = state.evalBar;
   if (!bar) return;
-  // Engine evals are a play-mode concept; hide the panel while viewing.
-  state.evalPanel.style.display = state.viewing ? "none" : "";
   const engineWhite = !state.humanWhite;
   // Carry each entry's ply (0-based move index) so a bar click can navigate
   // there; human plies are null and produce no bar.
@@ -129,6 +127,8 @@ function feedEvalBar(state, evalHistory) {
       if (ev != null) items.push({ score: evalToEnginePov(ev, engineWhite), ply });
     });
   }
+  // Hide when viewing or when no evals exist yet.
+  state.evalPanel.style.display = state.viewing || !items.length ? "none" : "";
   bar.setSamples(items, engineWhite);
 }
 

@@ -56,7 +56,7 @@ const BOARD_RESIZE_DEBOUNCE_MS = 120;
 // Default active tab per bottom group (first tab) when none is remembered.
 const STUDIO_TAB_DEFAULT_LEFT = "livegames";
 const STUDIO_TAB_DEFAULT_RIGHT = "tourneys";
-// Tourney table default column widths (Status, Created, Name, Games) + resize floor.
+// Tourney table default column widths (Status, Created, Name, Completed) + resize floor.
 const STUDIO_TOURNEY_DEFAULT_PCTS = [12, 22, 16, 50];
 const STUDIO_TOURNEY_MIN_PCT = 10;
 // History table default column widths (#, White, Black, Result, Opening) + resize floor.
@@ -268,7 +268,7 @@ function buildTourneyTable(ctx) {
       <th data-col="status">Status<span class="th-grip"></span></th>
       <th data-col="created">Created<span class="th-grip"></span></th>
       <th data-col="name">Name<span class="th-grip"></span></th>
-      <th class="studio-tourney-games-col">Games</th>
+      <th class="studio-tourney-games-col">Completed</th>
     </tr></thead><tbody></tbody>`;
   wrap.appendChild(table);
   pane.replaceChildren(wrap);
