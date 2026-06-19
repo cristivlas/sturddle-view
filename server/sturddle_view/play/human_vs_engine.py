@@ -11,7 +11,7 @@ import datetime
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -56,30 +56,6 @@ from .tablebase import TablebaseProber
 log = logging.getLogger(__name__)
 
 CLOCK_TICK_INTERVAL = 0.25  # seconds
-
-
-@dataclass
-class _ViewSnapshot:
-    """All view-mode state captured at enter_edit_mode for lossless restore.
-    Adding a view-mode field? Add it here too -- single source of truth."""
-    start_fen: str | None
-    board: chess.Board
-    cursor: int
-    full_moves: list[chess.Move]
-    clock_history: list[tuple[float, float]]
-    final_white: float | None
-    final_black: float | None
-    white_name: str | None
-    black_name: str | None
-    eval_history: list[dict | None] | None
-    comments: list[str | None] | None
-    root_comment: str | None
-    pgn_result: str | None
-    pgn_termination: str | None
-    view_hash: str | None = None
-    view_summary: dict | None = None
-    view_original_text: str | None = None
-    view_edited: bool = False
 
 
 @dataclass
@@ -156,11 +132,24 @@ class GameBundle:
     # get_pgn_text when state hasn't diverged.
     view_original_text: str | None = None
     view_edited: bool = False  # True once diverged from view_original_text
-    # edit payload (EDITING)
-    edit_pre_fen: str | None = None
-    edit_view_snapshot: _ViewSnapshot | None = None
     # mode to restore when leaving ANALYZING
     pre_analysis_mode: Mode = Mode.PLAY
+
+    def copy(self) -> "GameBundle":
+        """Independent copy for edit-mode stash/restore: board and the list
+        fields are duplicated. Shared (safe only because edit treats them as
+        immutable): scalars, the inert view clock, view_summary, and the eval
+        dicts inside the eval lists."""
+        return replace(
+            self,
+            board=self.board.copy() if self.board is not None else None,
+            eval_history=list(self.eval_history),
+            play_comments=None if self.play_comments is None else list(self.play_comments),
+            view_full_moves=list(self.view_full_moves),
+            view_clock_history=list(self.view_clock_history),
+            view_eval_history=None if self.view_eval_history is None else list(self.view_eval_history),
+            view_comments=None if self.view_comments is None else list(self.view_comments),
+        )
 
 
 def _bundle_prop(name: str) -> property:
@@ -234,6 +223,9 @@ class HumanVsEngine:
         # the last ply. Set only by view/start; cleared by enter_view_mode
         # (so import/edit-commit don't offer a stale resume) and on resume.
         self._suspended_play: GameState | None = None
+        # Pre-edit view bundle stashed by enter_edit_mode; restored wholesale
+        # (self._game = it) by cancel_edit and the FEN-unchanged commit_edit.
+        self._edit_saved_view: GameBundle | None = None
         self._tb: TablebaseProber | None = None
         self._lock = asyncio.Lock()
 
@@ -267,8 +259,6 @@ class HumanVsEngine:
     _view_summary = _bundle_prop("view_summary")
     _view_original_text = _bundle_prop("view_original_text")
     _view_edited = _bundle_prop("view_edited")
-    _edit_pre_fen = _bundle_prop("edit_pre_fen")
-    _edit_view_snapshot = _bundle_prop("edit_view_snapshot")
     _pre_analysis_mode = _bundle_prop("pre_analysis_mode")
 
     @property
@@ -1137,54 +1127,15 @@ class HumanVsEngine:
             if need_cancel_analysis:
                 self._mode = Mode.VIEWING
             pre_fen = self._board.fen()
-            self._edit_pre_fen = pre_fen
-            self._edit_view_snapshot = _ViewSnapshot(
-                start_fen=self._start_fen,
-                board=self._board.copy(),
-                cursor=self._view_cursor,
-                full_moves=list(self._view_full_moves),
-                clock_history=list(self._view_clock_history),
-                final_white=self._view_final_white,
-                final_black=self._view_final_black,
-                white_name=self._view_white_name,
-                black_name=self._view_black_name,
-                eval_history=list(self._view_eval_history) if self._view_eval_history is not None else None,
-                comments=list(self._view_comments) if self._view_comments is not None else None,
-                root_comment=self._view_root_comment,
-                pgn_result=self._view_pgn_result,
-                pgn_termination=self._view_pgn_termination,
-                view_hash=self._view_hash,
-                view_summary=self._view_summary,
-                view_original_text=self._view_original_text,
-                view_edited=self._view_edited,
-            )
+            # Stash a copy of the view bundle (mode is VIEWING here) so cancel
+            # / FEN-unchanged commit can restore it by swapping it back in.
+            self._edit_saved_view = self._game.copy()
             self._mode = Mode.EDITING
         if need_cancel_analysis:
             await self._cancel_analysis()
         async with self._lock:
             await self._publish_board()
         return pre_fen
-
-    def _restore_view_snapshot(self, snap: _ViewSnapshot) -> None:
-        """Apply a snapshot taken by enter_edit_mode directly to view state."""
-        self._start_fen = snap.start_fen
-        self._board = snap.board
-        self._view_cursor = snap.cursor
-        self._view_full_moves = snap.full_moves
-        self._view_clock_history = snap.clock_history
-        self._view_final_white = snap.final_white
-        self._view_final_black = snap.final_black
-        self._view_white_name = snap.white_name
-        self._view_black_name = snap.black_name
-        self._view_eval_history = snap.eval_history
-        self._view_comments = snap.comments
-        self._view_root_comment = snap.root_comment
-        self._view_pgn_result = snap.pgn_result
-        self._view_pgn_termination = snap.pgn_termination
-        self._view_hash = snap.view_hash
-        self._view_summary = snap.view_summary
-        self._view_original_text = snap.view_original_text
-        self._view_edited = snap.view_edited
 
     async def commit_edit(
         self,
@@ -1229,21 +1180,20 @@ class HumanVsEngine:
             if not board.is_valid():
                 raise RuntimeError(explain_invalid(board))
             target_fen = board.fen()
-            pre_epd = board_from(self._edit_pre_fen).epd() if self._edit_pre_fen else None
+            saved = self._edit_saved_view
+            pre_epd = saved.board.epd() if saved is not None and saved.board is not None else None
             unchanged = pre_epd is not None and board.epd() == pre_epd
-            snap = self._edit_view_snapshot
             self._mode = Mode.VIEWING
-        if unchanged and snap is not None:
+        if unchanged and saved is not None:
             async with self._lock:
-                self._restore_view_snapshot(snap)
-                self._edit_pre_fen = None
-                self._edit_view_snapshot = None
-                # Annotation branch: apply requested comment at the
-                # entry ply, regen PGN + hash, publish. Reuses the
-                # just-restored snapshot as the base state.
+                # Restore the pre-edit view by swapping the stashed bundle back.
+                self._game = saved
+                self._edit_saved_view = None
+                # Annotation branch: apply requested comment at the entry ply,
+                # regen PGN + hash, publish, on the just-restored base state.
                 if apply_comment:
                     annot = self._apply_view_annotation(
-                        ply=snap.cursor, text=comment_text,
+                        ply=saved.view_cursor, text=comment_text,
                     )
                 else:
                     annot = None
@@ -1275,8 +1225,7 @@ class HumanVsEngine:
                 self._mode = Mode.EDITING
             raise
         async with self._lock:
-            self._edit_pre_fen = None
-            self._edit_view_snapshot = None
+            self._edit_saved_view = None
         return {
             "game_id": game_id,
             "changed": "fen",
@@ -1330,16 +1279,15 @@ class HumanVsEngine:
         return pgn_text, new_hash
 
     async def cancel_edit(self) -> str:
-        """Leave edit mode; restore view state from pre-edit snapshot."""
+        """Leave edit mode; restore the pre-edit view by swapping its bundle
+        back in (its mode is VIEWING, so this also leaves edit mode)."""
         async with self._lock:
             if not (self._mode & Op.CANCEL_EDIT._mask):
                 raise ModeConflictError(self._mode, Op.CANCEL_EDIT)
-            snap = self._edit_view_snapshot
-            assert snap is not None, "enter_edit_mode always sets _edit_view_snapshot"
-            self._mode = Mode.VIEWING
-            self._restore_view_snapshot(snap)
-            self._edit_pre_fen = None
-            self._edit_view_snapshot = None
+            saved = self._edit_saved_view
+            assert saved is not None, "enter_edit_mode always sets _edit_saved_view"
+            self._game = saved
+            self._edit_saved_view = None
             await self._publish_board()
             await self._publish_clock()
         return self._game_id
