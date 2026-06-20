@@ -88,13 +88,7 @@ function taleOfTheTape(t) {
     ["Format", formatType(tpl.tournament_type)],
     ["Time control", tpl.tc],
   ];
-  if (tpl.sprt) {
-    // Template carries the configured bounds (object); available even on list
-    // rows. Live pairs come from the running standings payload (t.sprt).
-    const s = tpl.sprt;
-    if (s?.elo0 != null && s?.elo1 != null)
-      facts.push(["Elo bounds", `[${s.elo0}, ${s.elo1}]`]);
-  } else {
+  if (!tpl.sprt) {
     facts.push(["Rounds", tpl.rounds]);
   }
   facts.push(["Games in parallel", tpl.games_in_parallel]);
