@@ -10,7 +10,7 @@
 import { mqMobile, mqMobileH, mqMobileHPlay } from "./breakpoints.js";
 import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, showDialog, toast } from "./dialogs.js";
 import { openSettingsDialog } from "./settings-dialog.js";
-import { EVT, KIND, POLL_INTERVAL_MS, STATUS } from "./tournament-events.js";
+import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, SPRT_DEFAULTS, sprtParamErrors, STATUS } from "./tournament-events.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
@@ -21,6 +21,9 @@ import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament
 import { debounce, ribbonWidthPx } from "./wb-utils.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
+const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT settings (need alpha+beta<1, elo0<elo1). Fix them in Settings -> SPRT.";
+// Default dwell for error/warning toasts that carry a line worth reading.
+const TOAST_DURATION_MS = 8000;
 const NEW_TOURNAMENT_LABEL = "New tournament";
 const EMPTY_CTA_PREFIX = "No tournaments yet -- click ";
 const EMPTY_CTA_SUFFIX = " to create one.";
@@ -782,6 +785,13 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
           toast(e.message, { variant: "danger" });
           return;
         }
+        // SPRT params come from the saved defaults (empty/partial filled by
+        // the server); block creation only if the effective config is invalid.
+        const sprtCfg = { ...SPRT_DEFAULTS, ...(ctx.settings?.sprt_defaults || {}) };
+        if (template.sprt && sprtParamErrors(sprtCfg).size) {
+          toast(BAD_SPRT_DEFAULTS_MSG, { variant: "danger", duration: TOAST_DURATION_MS });
+          return;
+        }
 
         const picked = builder.getPickedRegistry();
         const globalDefaults = await loadGlobalEngineDefaults(ctx);
@@ -794,7 +804,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
           const detail = apiErrorDetail(e);
           const msg = (detail && detail.message) || detail || "Resource check failed";
           toast(typeof msg === "string" ? msg : String(msg), {
-            variant: "danger", duration: 8000,
+            variant: "danger", duration: TOAST_DURATION_MS,
           });
           actionBtn.loading = false;
           return;
@@ -803,7 +813,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
         }
         if (rescheckResult.warnings && rescheckResult.warnings.length) {
           for (const w of rescheckResult.warnings) {
-            toast(`Warning: ${w.message}`, { variant: "warning", duration: 8000 });
+            toast(`Warning: ${w.message}`, { variant: "warning", duration: TOAST_DURATION_MS });
           }
         }
 
@@ -920,8 +930,8 @@ async function openEditTournamentDialog(ctx, t) {
   }
   if (droppedCount > 0) {
     toast(
-      `${droppedCount} engine${droppedCount === 1 ? "" : "s"} no longer in the registry — re-add before applying.`,
-      { variant: "warning", duration: 8000 },
+      `${droppedCount} engine${droppedCount === 1 ? "" : "s"} no longer in the registry -- re-add before applying.`,
+      { variant: "warning", duration: TOAST_DURATION_MS },
     );
   }
 
@@ -1040,9 +1050,9 @@ function onWsEvent(ctx, evt) {
     const tid = evt.payload?.tournament_id;
     const t = ctx.tournaments.find((x) => x.id === tid);
     const name = t ? t.name : "Tournament";
-    const tail = evt.payload?.stderr_tail || [];
-    const firstErr = tail.find((l) => /error|fatal|fail/i.test(l)) || tail[0] || `exit code ${evt.payload?.rc}`;
-    toast(`${name} failed: ${firstErr}`, { variant: "danger", duration: 10000 });
+    toast(`${name} failed: ${crashErrorLine(evt.payload)}`, {
+      variant: "danger", duration: CRASH_TOAST_DURATION_MS,
+    });
   }
   // The /start API doesn't return until orchestrator.start completes
   // (which can include a multi-second PGN rewrite); the status event

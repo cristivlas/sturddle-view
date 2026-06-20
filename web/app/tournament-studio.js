@@ -15,9 +15,9 @@ import { progressBarHtml, progressLabelHtml, sprtBadgeHtml, statusBadgeHtml, tot
 import { SORT_DIR } from "./col-sort.js";
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
-import { reportError } from "./dialogs.js";
+import { reportError, toast } from "./dialogs.js";
 import { copyRowsAsLines, debounce, escapeHtml, selectContentsOnCtrlA } from "./wb-utils.js";
-import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
+import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { newTournamentCta, tournamentActions } from "./tournaments.js";
 import { RESULT, SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
@@ -477,6 +477,19 @@ function stopLive(ctx) {
   ctx.selLoadedId = null;
   closeAllLiveGames();
   renderLivePanes(ctx);
+}
+
+// Always-on (selection-independent) crash surfacing: a tournament can fail
+// while the user is inspecting a different one, so this fires from the list
+// subscriber, not the per-live-session handler.
+function toastRunnerCrash(ctx, evt) {
+  if (evt.payload?.kind !== KIND.RUNNER_CRASH) return;
+  const tid = evt.payload?.tournament_id;
+  const t = ctx.tournaments.find((x) => x.id === tid);
+  const name = t ? t.name : "Tournament";
+  toast(`${name} failed: ${crashErrorLine(evt.payload)}`, {
+    variant: "danger", duration: CRASH_TOAST_DURATION_MS,
+  });
 }
 
 // Maintain the live maps from the WS stream; coalesce pane repaints and keep
@@ -1149,7 +1162,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
 
   // Reload the list on any tournament event (coalesced); initial load now.
   ctx.reload = debounce(() => studioLoadList(ctx), LIST_RELOAD_DEBOUNCE_MS);
-  ctx.offEvents = ctx.events.on(ctx.reload);
+  ctx.offEvents = ctx.events.on((evt) => { toastRunnerCrash(ctx, evt); ctx.reload(); });
 
   // `ready` gates the router's reveal until built: first list load (table +
   // wall), then any restored boards drawn (boardsRestored), then a flushed

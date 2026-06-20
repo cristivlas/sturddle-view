@@ -3,14 +3,15 @@
 // putTournamentSettings; debounce is passed so the persist cadence matches
 // the rest of the dialog.
 
+import { SPRT_DEFAULTS, sprtParamErrors } from "./tournament-events.js";
+
 // SPRT model wire values -- mirror the server contract (compute_sprt).
-const SPRT_MODEL_NORMALIZED = "normalized";
+const SPRT_MODEL_NORMALIZED = SPRT_DEFAULTS.model;
 const SPRT_MODEL_LOGISTIC = "logistic";
 const SPRT_MODEL_OPTIONS = [
   [SPRT_MODEL_NORMALIZED, "Pentanomial (logistic Elo)"],
   [SPRT_MODEL_LOGISTIC, "Logistic (trinomial)"],
 ];
-const SPRT_FIELD_DEFAULTS = { elo0: 0, elo1: 10, alpha: 0.05, beta: 0.05, model: SPRT_MODEL_NORMALIZED };
 
 export function buildSprtTab({ tournamentInitial, putTournamentSettings, debounce }) {
   const sprtTab = document.createElement("wa-tab");
@@ -31,7 +32,7 @@ export function buildSprtTab({ tournamentInitial, putTournamentSettings, debounc
     el.type = "number";
     el.setAttribute("autocomplete", "off");
     if (step != null) el.setAttribute("step", String(step));
-    const v = sprtInitial[key] != null ? sprtInitial[key] : SPRT_FIELD_DEFAULTS[key];
+    const v = sprtInitial[key] != null ? sprtInitial[key] : SPRT_DEFAULTS[key];
     el.value = String(v);
     el.dataset.key = key;
     row.append(lab, el);
@@ -78,20 +79,10 @@ export function buildSprtTab({ tournamentInitial, putTournamentSettings, debounc
     };
   }
 
-  // Validation mirrors server-side compute_sprt: elo0<elo1, 0<alpha<1,
-  // 0<beta<1, all finite. Invalid fields get .sprt-invalid; persistence
-  // is skipped while any field is invalid (last-valid wins, no block
-  // on dialog close).
+  // Invalid fields get .sprt-invalid; persistence is skipped while any field
+  // is invalid (last-valid wins, no block on dialog close).
   function validateSprtDefaults() {
-    const v = readSprtDefaults();
-    const bad = new Set();
-    if (!Number.isFinite(v.elo0)) bad.add("elo0");
-    if (!Number.isFinite(v.elo1)) bad.add("elo1");
-    if (Number.isFinite(v.elo0) && Number.isFinite(v.elo1) && v.elo0 >= v.elo1) {
-      bad.add("elo0"); bad.add("elo1");
-    }
-    if (!(Number.isFinite(v.alpha) && v.alpha > 0 && v.alpha < 1)) bad.add("alpha");
-    if (!(Number.isFinite(v.beta)  && v.beta  > 0 && v.beta  < 1)) bad.add("beta");
+    const bad = sprtParamErrors(readSprtDefaults());
     for (const [key, el] of [["elo0", sprtElo0], ["elo1", sprtElo1], ["alpha", sprtAlpha], ["beta", sprtBeta]]) {
       el.classList.toggle("sprt-invalid", bad.has(key));
     }
