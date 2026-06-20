@@ -513,7 +513,7 @@ function livePushEvent(ctx, evt) {
 }
 
 function renderStandingsPane(ctx) {
-  if (ctx.standingsBodyEl) renderStandings(ctx.standingsBodyEl, ctx.selDetail);
+  if (ctx.standingsBodyEl) renderStandings(ctx.standingsBodyEl, ctx.selDetail, true);
   // H2H and History share standings' data (selDetail) + cadence; repaint
   // them from the same sites.
   if (ctx.h2hBodyEl) renderH2H(ctx.h2hBodyEl, ctx.selDetail);

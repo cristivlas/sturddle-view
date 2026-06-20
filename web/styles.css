@@ -4050,11 +4050,12 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841);
 }
 .wb-sprt {
-  background: var(--bg); border: 1px solid var(--border-subtle); border-radius: 4px;
+  background: var(--bg); border-radius: 4px;
   padding: 6px 8px; margin-bottom: 0; font-size: 0.75rem;
 }
-.wb-sprt--h1 { border-color: #2d6a3f; }
-.wb-sprt--h0 { border-color: #7a2222; }
+.wb-sprt--h1 { box-shadow: inset 3px 0 0 #2d6a3f; }
+.wb-sprt--h0 { box-shadow: inset 3px 0 0 #7a2222; }
+.wb-sprt--studio { background: var(--row-bg-selected); }
 .wb-partial-pairs {
   background: var(--bg); border: 1px solid #4a3d1f; border-radius: 4px;
   padding: 6px 8px; margin-bottom: 8px; font-size: 0.75rem; color: #d4a854;

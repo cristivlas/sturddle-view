@@ -61,7 +61,7 @@ export function makeStandingsBody() {
 
 // Fill a standings body (from makeStandingsBody) from a tournament detail
 // payload. Tolerates null detail (shows the empty state).
-export function renderStandings(el, detail) {
+export function renderStandings(el, detail, studio = false) {
   const sprtSlot = el.querySelector(".wb-sprt-slot");
   const partialSlot = el.querySelector(".wb-partial-slot");
   const emptyEl = el.querySelector(".wb-standings-empty");
@@ -106,16 +106,17 @@ export function renderStandings(el, detail) {
   if (sprt) {
     const { lo, hi, llr, concluded, isH1 } = sprtVerdict(sprt);
     const colorMod = concluded ? (isH1 ? " wb-sprt--h1" : " wb-sprt--h0") : "";
+    const studioMod = studio ? " wb-sprt--studio" : "";
     const candidate = detail.engines?.[0]?.name ? escapeHtml(detail.engines[0].name) : "candidate";
     const pairsText = sprt.pairs != null ? ` ${MIDDOT} ${sprt.pairs} pair${sprt.pairs === 1 ? "" : "s"}` : "";
     const statusText = sprt.status === SPRT.H1
-      ? `H1 (${candidate} is stronger)`
+      ? ` ${MIDDOT} H1 (${candidate} is stronger)`
       : sprt.status === SPRT.H0
-        ? `H0 (no significant difference)`
-        : sprt.status;
-    sprtSlot.innerHTML = `<div class="wb-sprt${colorMod}">` +
+        ? ` ${MIDDOT} H0 (no significant difference)`
+        : "";
+    sprtSlot.innerHTML = `<div class="wb-sprt${colorMod}${studioMod}">` +
       `SPRT ${candidate} [${sprt.elo0}, ${sprt.elo1}] ${MIDDOT} LLR=${llr.toFixed(2)} [${lo.toFixed(2)}, ${hi.toFixed(2)}]` +
-      `${pairsText} ${MIDDOT} ${statusText}` +
+      `${pairsText}${statusText}` +
       `</div>`;
   } else {
     sprtSlot.innerHTML = "";
