@@ -3442,6 +3442,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-tabs wa-tab-panel[name="log"]::part(base),
 .studio-tabs wa-tab-panel[name="engines"]::part(base),
 .studio-tabs wa-tab-panel[name="h2h"]::part(base),
+.studio-tabs wa-tab-panel[name="standings"]::part(base),
 .studio-tabs wa-tab-panel[name="livegames"]::part(base) { padding-top: 8px; }
 /* Keep the watch buttons off the pane's right edge / scrollbar. */
 .studio-pane .wb-sched-attach-btn { margin-right: 8px; }
@@ -4055,7 +4056,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .wb-sprt--h1 { box-shadow: inset 3px 0 0 #2d6a3f; }
 .wb-sprt--h0 { box-shadow: inset 3px 0 0 #7a2222; }
-.wb-sprt--studio { background: var(--row-bg-selected); }
+.wb-sprt--studio { background: var(--row-bg-selected); margin: 0 8px 10px; }
 .wb-partial-pairs {
   background: var(--bg); border: 1px solid #4a3d1f; border-radius: 4px;
   padding: 6px 8px; margin-bottom: 8px; font-size: 0.75rem; color: #d4a854;
