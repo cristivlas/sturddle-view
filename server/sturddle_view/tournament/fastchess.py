@@ -21,6 +21,7 @@ from collections import deque
 
 from .._runtime import proxy_argv_prefix
 from .._win_job import assign_to_job, close_job, create_job, spawn_in_job
+from .rescheck import ALLOW_OVERSUBSCRIBE_KEY
 from .runner import EventCallback, RunSpec
 
 
@@ -61,6 +62,9 @@ def _quote_arg(arg: str) -> str:
 # When a common opening book feeds the tournament, disable each engine's
 # built-in book so it doesn't override/double the shared openings.
 _OWNBOOK_OFF = "option.OwnBook=false"
+
+# Restart each engine process between games (fastchess restart=on).
+_RESTART_ON = "restart=on"
 
 
 log = logging.getLogger(__name__)
@@ -181,6 +185,8 @@ def build_command(spec: RunSpec) -> list[str]:
         each.append(f"option.SyzygyPath={spec.engine_default_syzygy_path}")
     if spec.engine_default_book_path:
         each.append(_OWNBOOK_OFF)
+    if t.get("restart_engines"):
+        each.append(_RESTART_ON)
     if each:
         cmd.append("-each")
         cmd.extend(each)
@@ -191,7 +197,7 @@ def build_command(spec: RunSpec) -> list[str]:
     # Without this, fastchess refuses concurrency > logical CPUs. Our
     # own rescheck has already either passed or warned the user; the
     # flag tells fastchess to honor the same intent.
-    if t.get("allow_oversubscribe"):
+    if t.get(ALLOW_OVERSUBSCRIBE_KEY):
         cmd.append("-force-concurrency")
     if t.get("pin_affinity"):
         cmd.append("-use-affinity")

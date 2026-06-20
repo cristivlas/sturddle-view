@@ -144,7 +144,7 @@ stacks). Revisit when telemetry justifies it.
 - `pin_affinity AND cpu_load > physical_cores` ->
   `affinity_exceeds_physical`
 
-`allow_oversubscribe = true` downgrades `oversubscribed` and
+`SV_ALLOW_OVERSUBSCRIBE=1` downgrades `oversubscribed` and
 `insufficient_ram` to warnings (toast at create time, no block). The
 affinity check is a correctness gate (hyperthreading siblings can't
 satisfy CPU pinning) and is **never** silenced by the flag.
@@ -321,11 +321,15 @@ Fields the form renders today (Phase 1):
 - **CPU Affinity** on/off (`pin_affinity`). Emits fastchess `-affinity`
   so each game-slot is bound to a fixed pair of cores. Recommended for
   SPRT / rating-list runs.
-- **Oversubscribe** on/off (`allow_oversubscribe`). Permits CPU/RAM use
-  to exceed host capacity; rescheck blockers (see "Resource sanity
-  checks" below) downgrade to warnings. Also passes
-  `-force-concurrency` to fastchess so it doesn't reject `-concurrency
-  > nproc`. Don't use for SPRT.
+- **Restart engines** on/off (`restart_engines`). Passes fastchess
+  `-each restart=on` so each engine process is restarted between games,
+  clearing hash/internal state for a clean start (slower than reusing
+  processes).
+- **Oversubscribe** -- no UI toggle. Set `SV_ALLOW_OVERSUBSCRIBE=1`
+  (off by default) to permit CPU/RAM use beyond host capacity: rescheck
+  blockers (see "Resource sanity checks" below) downgrade to warnings,
+  and fastchess gets `-force-concurrency` so it doesn't reject
+  `-concurrency > nproc`. Don't use for SPRT.
 - **Auto-folded** at create time by the client and stored in the
   template: `max_threads` and `max_hash_mb` (worst-case across the
   selected engines, or the global override if set). Persisted so the

@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +30,7 @@ from typing import Any, Iterator
 import platformdirs
 
 from .. import app_dir_name
+from ..env_utils import env_bool
 from .base import ProviderChunk
 
 
@@ -47,8 +47,7 @@ def default_transcript_path() -> Path:
 
 def transcript_enabled() -> bool:
     """True iff SV_AI_TRANSCRIPT is set to a truthy value."""
-    raw = os.environ.get(TRANSCRIPT_ENV_VAR, "")
-    return raw.strip().lower() in ("1", "true", "yes", "on")
+    return env_bool(TRANSCRIPT_ENV_VAR, False)
 
 
 class Transcript:

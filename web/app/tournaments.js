@@ -714,7 +714,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
 
   return showDialog({
     label,
-    width: "min(720px, 94vw)",
+    width: "min(660px, 94vw)",
     defaultValue: null,
     body: (resolve, dialog) => {
       const wrap = document.createElement("div");
@@ -856,7 +856,7 @@ async function openNewTournamentDialog(ctx) {
   }
 
   await openTournamentDialog(ctx, {
-    label: "New Tournament",
+    label: "New tournament",
     actionLabel: "Create",
     initialName: "",
     initialEngines: [],

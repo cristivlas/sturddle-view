@@ -93,6 +93,25 @@ def test_create_returns_id_and_status_idle(client):
     assert body["id"]
 
 
+def test_create_injects_oversubscribe_from_env(client, monkeypatch):
+    from sturddle_view.api.tournaments import ALLOW_OVERSUBSCRIBE_ENV
+
+    monkeypatch.setenv(ALLOW_OVERSUBSCRIBE_ENV, "1")
+    r = client.post("/api/tournaments", json={
+        "name": "over", "template": {"tc": "10+0.1"}, "engines": _engines_payload(),
+    })
+    assert r.status_code == 201, r.text
+    assert r.json()["template"]["allow_oversubscribe"] is True
+
+
+def test_create_no_oversubscribe_without_env(client):
+    r = client.post("/api/tournaments", json={
+        "name": "plain", "template": {"tc": "10+0.1"}, "engines": _engines_payload(),
+    })
+    assert r.status_code == 201, r.text
+    assert "allow_oversubscribe" not in r.json()["template"]
+
+
 def test_create_rejects_missing_engines(client):
     r = client.post("/api/tournaments", json={"name": "x", "engines": []})
     assert r.status_code == 400

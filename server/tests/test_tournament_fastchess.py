@@ -155,6 +155,22 @@ def test_build_command_each_options(tmp_path):
     assert "option.SyzygyPath=/tb" in each
 
 
+def test_build_command_restart_engines(tmp_path):
+    spec = _make_spec(
+        tmp_path,
+        template={"restart_engines": True},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    assert "restart=on" in build_command(spec)
+
+    spec_off = _make_spec(
+        tmp_path / "off",
+        template={},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    assert "restart=on" not in build_command(spec_off)
+
+
 def test_build_command_legacy_template_hash_threads_ignored(tmp_path):
     """Old tournaments saved before the Defaults tab still load with
     hash/threads/tablebase in their template — those values must NOT

@@ -16,6 +16,9 @@ ENGINE_OVERHEAD_MB = 256
 
 RAM_HEADROOM_FACTOR = 0.75
 
+# Template field gating CPU/RAM oversubscription (set via SV_ALLOW_OVERSUBSCRIBE).
+ALLOW_OVERSUBSCRIBE_KEY = "allow_oversubscribe"
+
 
 @dataclass
 class RescheckError(Exception):
@@ -145,6 +148,6 @@ def check_template(template: dict, *, specs: HostSpecs | None = None) -> list[di
         max_hash_mb=int(template.get("max_hash_mb", 16) or 16),
         ponder=bool(template.get("ponder")),
         pin_affinity=bool(template.get("pin_affinity")),
-        allow_oversubscribe=bool(template.get("allow_oversubscribe")),
+        allow_oversubscribe=bool(template.get(ALLOW_OVERSUBSCRIBE_KEY)),
         specs=specs,
     )

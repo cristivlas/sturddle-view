@@ -28,11 +28,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from ..auth import AUTH_COOKIE, check_token_value, origin_ok, require_token
+from ..env_utils import env_bool
 from ..engines import InvalidLaunchProfileError, validate_launch_profile
 from ..events import ENVELOPE_KIND, ENVELOPE_PAYLOAD
 from ..tournament.fastchess import FastchessRunner
 from ..tournament.orchestrator import Orchestrator, TournamentBusyError, wrap_event_for_bus
-from ..tournament.rescheck import RescheckError, check as rescheck_run
+from ..tournament.rescheck import ALLOW_OVERSUBSCRIBE_KEY, RescheckError, check as rescheck_run
 from ..tournament.uci_parse import parse_uci_line
 from ..tournament.pgn_stats import (
     compute_games_list,
@@ -132,6 +133,22 @@ _WIPE_REQUIRED_DETAIL = {
     "reason": _WIPE_REQUIRED_REASON,
     "message": _WIPE_REQUIRED_MESSAGE,
 }
+
+
+# Oversubscribe is no longer a UI toggle; this env var (off by default) is
+# the only way to opt in. OR'd into the template so the existing rescheck /
+# build_command paths keying off ``allow_oversubscribe`` are unchanged.
+ALLOW_OVERSUBSCRIBE_ENV = "SV_ALLOW_OVERSUBSCRIBE"
+
+
+def _allow_oversubscribe() -> bool:
+    return env_bool(ALLOW_OVERSUBSCRIBE_ENV, False)
+
+
+def _resolve_oversubscribe(template: dict) -> dict:
+    if _allow_oversubscribe():
+        return {**template, ALLOW_OVERSUBSCRIBE_KEY: True}
+    return template
 
 
 def _resolve_sprt(template: dict, settings) -> dict:
@@ -258,7 +275,7 @@ def create_tournament(payload: TournamentCreate, request: Request) -> dict:
     try:
         t = s.create(
             name=name,
-            template=_resolve_sprt(payload.template, settings),
+            template=_resolve_oversubscribe(_resolve_sprt(payload.template, settings)),
             engines=[e.model_dump(exclude_none=True) for e in payload.engines],
             engine_defaults=engine_defaults,
         )
@@ -302,7 +319,7 @@ def edit_tournament(tournament_id: str, payload: TournamentUpdate, request: Requ
         t = s.update(
             tournament_id,
             name=name,
-            template=_resolve_sprt(payload.template, settings),
+            template=_resolve_oversubscribe(_resolve_sprt(payload.template, settings)),
             engines=[e.model_dump(exclude_none=True) for e in payload.engines],
             engine_defaults=engine_defaults,
         )
@@ -437,7 +454,7 @@ def rescheck_tournament(payload: RescheckRequest) -> dict:
             max_hash_mb=payload.max_hash_mb,
             ponder=payload.ponder,
             pin_affinity=payload.pin_affinity,
-            allow_oversubscribe=payload.allow_oversubscribe,
+            allow_oversubscribe=payload.allow_oversubscribe or _allow_oversubscribe(),
         )
     except RescheckError as e:
         raise HTTPException(

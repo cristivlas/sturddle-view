@@ -16,9 +16,9 @@ const PONDER_TITLE = "Engines think on opponent's time.";
 const AFFINITY_TITLE =
   "Pass -affinity to fastchess so each game-slot is bound to fixed cores. " +
   "Reduces scheduler noise; recommended for SPRT.";
-const OVERSUBSCRIBE_TITLE =
-  "Allow CPU/RAM use to exceed the host's capacity. Resource checks " +
-  "downgrade from blockers to warnings. Don't use for SPRT.";
+const RESTART_TITLE =
+  "Restart each engine between games (fastchess restart=on). Clears " +
+  "hash/internal state for a clean start; slower than reusing processes.";
 const SPRT_TITLE =
   "Sequential Probability Ratio Test: terminates when statistical conclusion is reached.";
 
@@ -108,7 +108,7 @@ export function mountTournamentTemplateForm({
 
   const ponderSwitch = makeSwitch("ponder", "Ponder", PONDER_TITLE);
   const affinitySwitch = makeSwitch("pin_affinity", "CPU Affinity", AFFINITY_TITLE);
-  const oversubSwitch = makeSwitch("allow_oversubscribe", "Oversubscribe", OVERSUBSCRIBE_TITLE);
+  const restartSwitch = makeSwitch("restart_engines", "Restart engines", RESTART_TITLE);
   const sprtSwitch = makeSwitch("sprt", "SPRT", SPRT_TITLE);
 
   function syncSprtUI(on) {
@@ -133,10 +133,10 @@ export function mountTournamentTemplateForm({
   // Apply initial state.
   syncSprtUI(!!initialValues.sprt);
 
-  // Order: Affinity + Oversubscribe first (logically paired -- both about
-  // CPU resource policy), Ponder last so when the row wraps on narrow
-  // viewports the related pair stays together on the first line.
-  switchRow.append(affinitySwitch, oversubSwitch, ponderSwitch, sprtSwitch);
+  // Order: engine-behavior switches (Ponder, Restart) paired, Affinity and
+  // SPRT bracketing them. Ponder + Restart stay together on the first line
+  // when the row wraps on narrow viewports.
+  switchRow.append(affinitySwitch, ponderSwitch, restartSwitch, sprtSwitch);
 
   // ---- Adjudication: Resign + Draw --------------------------------------
 
@@ -243,7 +243,7 @@ export function mountTournamentTemplateForm({
     }
     if (ponderSwitch.checked) out.ponder = true;
     if (affinitySwitch.checked) out.pin_affinity = true;
-    if (oversubSwitch.checked) out.allow_oversubscribe = true;
+    if (restartSwitch.checked) out.restart_engines = true;
     if (sprtOn) out.sprt = true;
 
     // Adjudication: only emit a sub-object when the switch is on AND
