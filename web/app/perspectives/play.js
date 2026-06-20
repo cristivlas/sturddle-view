@@ -2110,6 +2110,7 @@ export const playPerspective = {
     evalTitle.textContent = EVAL_PANEL_TITLE;
     evalTitle.title = EVAL_PANEL_TOOLTIP;
     evalPanel.append(evalTitle, evalBar.el);
+    evalPanel.style.display = "none"; // shown by feedEvalBar once evals arrive
     const sideRail = sideHost.querySelector(".game-view-side");
     const movesSection = sideRail?.querySelector(".game-view-moves");
     if (movesSection) movesSection.after(evalPanel);
