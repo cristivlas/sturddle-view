@@ -12,6 +12,7 @@
   --accent-rgb: 245, 158, 11;
   /* TODO: revisit unifying --accent and --accent-line into a single token. */
   --accent-line: rgba(224, 155, 58, 0.75);
+  --progress-track: rgb(51, 73, 87);
   --panel: #25272d;
   --nav-btn-bg: #2a2d33;
   --nav-btn-bg-hover: #32353c;
@@ -3316,14 +3317,23 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   font-family: var(--wa-font-family-code); font-weight: 700;
   font-size: 12px; letter-spacing: 0.12em; color: var(--muted);
 }
+/* Thin rail like the progress bar: muted rounded track, a slim marker walking
+   it, a faint center pip at the H0/H1 pivot. */
 .iw-llr-track {
-  position: relative; flex: 1 1 auto; height: 10px;
-  background: var(--iw-paper);
-  border: 2px solid var(--iw-ink);
+  position: relative; flex: 1 1 auto; height: 6px;
+  background: var(--progress-track);
+  border-radius: 6px;
+}
+/* Center pip at the H0/H1 pivot: same height as the marker, muted + wider. */
+.iw-llr-track::before {
+  content: ""; position: absolute; top: 50%; left: 50%;
+  width: 3px; height: 16px; background: var(--muted); border-radius: 2px;
+  transform: translate(-50%, -50%);
 }
 .iw-llr-mark {
   position: absolute; top: 50%; width: 4px; height: 16px;
-  background: var(--iw-ink);
+  background: var(--wa-color-brand-60); border-radius: 2px;
+  box-shadow: 0 0 4px rgba(var(--accent-rgb), 0.6);
   transform: translate(-50%, -50%);
 }
 .iw-llr-val { color: var(--muted-bright); }
@@ -3626,7 +3636,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   flex: 1 1 auto;
   height: 6px;
   min-width: 100px;
-  background: rgb(51, 73, 87);
+  background: var(--progress-track);
   border: none;
   border-radius: 6px;
   overflow: hidden;
