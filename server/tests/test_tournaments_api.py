@@ -14,11 +14,17 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from sturddle_view.api.tournaments import _snap_terminal_sprt_verdict
 from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.tournament import fastchess as fc_mod
 from sturddle_view.tournament.fastchess import FastchessRunner
-from sturddle_view.tournament.store import TournamentStore
+from sturddle_view.tournament.pgn_stats import SPRT_CONTINUE, SPRT_H0, SPRT_H1
+from sturddle_view.tournament.store import (
+    STATUS_DONE,
+    STATUS_RUNNING,
+    TournamentStore,
+)
 
 
 FAKE_FASTCHESS = r"""
@@ -890,3 +896,40 @@ def test_get_game_pgn_zero_returns_422(client):
     t = _create(client)
     r = client.get(f"/api/tournaments/{t['id']}/games/0/pgn")
     assert r.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Terminal SPRT verdict snapping: a fastchess-concluded SPRT whose recomputed
+# LLR lands a hair short of a bound should report the nearer verdict.
+# ---------------------------------------------------------------------------
+
+
+def _sprt(llr, status=SPRT_CONTINUE, lower=-2.94, upper=2.94):
+    return {"llr": llr, "lower_bound": lower, "upper_bound": upper, "status": status}
+
+
+def test_snap_done_near_upper_becomes_h1():
+    # LLR 2.93 vs bound 2.94 (the real-world drift case) -> H1.
+    out = _snap_terminal_sprt_verdict(_sprt(2.93), STATUS_DONE)
+    assert out["status"] == SPRT_H1
+
+
+def test_snap_done_near_lower_becomes_h0():
+    out = _snap_terminal_sprt_verdict(_sprt(-2.93), STATUS_DONE)
+    assert out["status"] == SPRT_H0
+
+
+def test_snap_done_mid_run_stays_continue():
+    # Far from both bounds: a genuinely inconclusive stop is not invented away.
+    out = _snap_terminal_sprt_verdict(_sprt(0.4), STATUS_DONE)
+    assert out["status"] == SPRT_CONTINUE
+
+
+def test_snap_running_never_snaps():
+    out = _snap_terminal_sprt_verdict(_sprt(2.93), STATUS_RUNNING)
+    assert out["status"] == SPRT_CONTINUE
+
+
+def test_snap_leaves_already_concluded_untouched():
+    out = _snap_terminal_sprt_verdict(_sprt(2.93, status=SPRT_H1), STATUS_DONE)
+    assert out["status"] == SPRT_H1

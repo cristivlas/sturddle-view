@@ -18,6 +18,8 @@ export const NO_GAMES_MSG = "No completed games yet.";
 // every engine once per (rounds * games_per_round).
 export function totalGames(t) {
   const tpl = t.template || {};
+  // SPRT self-terminates -- no fixed total even though rounds is stored.
+  if (tpl.sprt) return null;
   const n = (t.engines || []).length;
   const rounds = Number(tpl.rounds);
   const gpr = Number(tpl.games_per_round ?? 2);

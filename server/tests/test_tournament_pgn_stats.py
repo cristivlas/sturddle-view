@@ -16,7 +16,6 @@ from sturddle_view.tournament.pgn_stats import (
     compute_games_list,
     compute_sprt,
     compute_standings,
-    count_partial_pairs,
     elo_from_score,
     elo_margin_from_wld,
     games_played_from_config,
@@ -1920,80 +1919,16 @@ def test_read_game_pgn_returns_first_game(tmp_path):
     assert '[Result "1-0"]' in text
 
 
-# ---------------------------------------------------------------------------
-# count_partial_pairs
-# ---------------------------------------------------------------------------
-
-
-def test_count_partial_pairs_empty(tmp_path):
-    p = _write_pgn(tmp_path, "")
-    assert count_partial_pairs(p) == 0
-
-
-def test_count_partial_pairs_all_complete(tmp_path):
-    body = (
-        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
-        + _game_round("2", "A", "B", "1/2-1/2") + _game_round("2", "B", "A", "1/2-1/2")
-    )
-    p = _write_pgn(tmp_path, body)
-    assert count_partial_pairs(p) == 0
-
-
-def test_count_partial_pairs_one_partial(tmp_path):
-    # Round 1 complete, round 2 has only the white-A game.
-    body = (
-        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
-        + _game_round("2", "A", "B", "1-0")
-    )
-    p = _write_pgn(tmp_path, body)
-    assert count_partial_pairs(p) == 1
-
-
-def test_count_partial_pairs_resume_dup_is_orphan(tmp_path):
-    # Round 1 has 3 records on the same engine set: two A-as-white and
-    # one B-as-white. The new scheme pairs one (A-as-white, B-as-white)
-    # and reports the surplus A-as-white as an orphan. This is the
-    # honest count -- the third game has no color-flip partner.
-    body = (
-        _game_round("1", "A", "B", "1-0")
-        + _game_round("1", "A", "B", "1-0")  # surplus A-as-white
-        + _game_round("1", "B", "A", "0-1")
-    )
-    p = _write_pgn(tmp_path, body)
-    assert count_partial_pairs(p) == 1
-
-
-def test_count_partial_pairs_multi_engine(tmp_path):
-    # Round 1: A-B and B-A complete; A-C complete; C-A missing.
-    body = (
-        _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
-        + _game_round("1", "A", "C", "1-0")
-    )
-    p = _write_pgn(tmp_path, body)
-    assert count_partial_pairs(p) == 1
-
-
-def test_count_partial_pairs_round_collision_two_complete_pairs(tmp_path):
+def test_standings_counts_round_number_reuse(tmp_path):
     # Round 1 contains TWO complete color-flipped pairs of the same engine
-    # set -- the Round-number-reuse case from a Pause/Resume boundary. The
-    # bucket has 4 games (2 of each color) which all pair, so 0 orphans.
-    # This is the case the old (round, white, black) dedup mis-handled.
+    # set -- the Round-number-reuse case from a Pause/Resume boundary. All
+    # 4 games must count (the old (round, white, black) dedup mis-handled it).
     body = (
         _game_round("1", "A", "B", "1-0") + _game_round("1", "B", "A", "0-1")
         + _game_round("1", "A", "B", "0-1") + _game_round("1", "B", "A", "1-0")
     )
     p = _write_pgn(tmp_path, body)
-    assert count_partial_pairs(p) == 0
-    # And standings should count all 4 games.
     assert compute_standings(p).games == 4
-
-
-def test_count_partial_pairs_paired_false_returns_zero(tmp_path):
-    # Single-game tours (paired=False): no pair concept, no orphans
-    # even if the PGN looks like it has partial pairs.
-    body = _game_round("1", "A", "B", "1-0")
-    p = _write_pgn(tmp_path, body)
-    assert count_partial_pairs(p, paired=False) == 0
 
 
 # ---------------------------------------------------------------------------

@@ -2509,7 +2509,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
  */
 wa-dialog::part(body) { overflow-x: hidden !important; }
 /* Header actions: spacing between buttons. */
-wa-dialog::part(header-actions) { gap: 6px; }
+wa-dialog::part(header-actions) { gap: 6px; align-items: center; }
 
 /* Headerless confirm/alert dialogs: the message is the heading. */
 .confirm-message {
@@ -3724,6 +3724,13 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 /* New Tournament dialog */
 .new-tournament-form { display: flex; flex-direction: column; gap: 12px; }
 .new-tournament-form .nt-section { display: flex; flex-direction: column; gap: 6px; }
+/* Name input + SPRT chip share a row; chip sits at the input baseline. */
+.nt-name-row { display: flex; align-items: end; gap: 10px; }
+.nt-name-row .nt-name { flex: 1 1 auto; }
+.nt-name-row .nt-sprt-host { flex: 0 0 auto; }
+/* SPRT control beside Name: an on/off toggle + a gear that edits params.
+   Both greyed when the roster isn't exactly 2 engines. */
+.sprt-control { display: flex; align-items: center; gap: 8px; padding-bottom: 4px; }
 .new-tournament-form wa-input::part(form-control-label) {
   font-size: 0.75rem;
   font-weight: normal;
@@ -4061,16 +4068,12 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841);
 }
 .wb-sprt {
-  background: var(--bg); border-radius: 4px;
+  background: var(--bg); border-bottom: 1px solid var(--border-subtle);
   padding: 6px 8px; margin-bottom: 0; font-size: 0.75rem;
 }
 .wb-sprt--h1 { box-shadow: inset 3px 0 0 #2d6a3f; }
 .wb-sprt--h0 { box-shadow: inset 3px 0 0 #7a2222; }
 .wb-sprt--studio { background: var(--row-bg-selected); margin: 0 8px 10px; }
-.wb-partial-pairs {
-  background: var(--bg); border: 1px solid #4a3d1f; border-radius: 4px;
-  padding: 6px 8px; margin-bottom: 8px; font-size: 0.75rem; color: #d4a854;
-}
 /* Studio Head-to-Head pane: a fixed banner (2-engine) + an internally scrolled
    table so the banner and column header stay put while rows scroll. The wrap is
    both the scroll container and the resize overlay's positioned host; the

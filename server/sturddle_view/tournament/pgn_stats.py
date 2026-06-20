@@ -439,33 +439,6 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
     }
 
 
-def count_partial_pairs(pgn_path: Path, *, paired: bool = True) -> int:
-    """Number of orphan games -- games in the PGN whose ``(round, engine-set)``
-    bucket has no color-flip partner.
-
-    The historical "partial pair" name persists for API stability; the
-    semantic is now per-orphan, not per-(round, engine-pair). For the
-    common case (one orphan = one missing color in one round) the count
-    matches the old definition. Multi-orphan rounds (e.g. two games of
-    the same color in one bucket) are counted once per orphan, not once
-    per round.
-
-    Typically caused by an interrupted Stop on Windows
-    (KILL_ON_JOB_CLOSE has no grace period) where game 1 made it to
-    disk but game 2 was in flight.
-
-    Single-game tours (``paired=False``) have no pair concept and
-    always return 0.
-    """
-    if not paired:
-        return 0
-    keyed = list(_iter_games_keyed(pgn_path))
-    if not keyed:
-        return 0
-    _pairs, orphans = _form_pairs(keyed, paired=True)
-    return len(orphans)
-
-
 def _game_record_at_offset(f, offset: int) -> dict | None:
     game = _read_game_at_offset(f, offset)
     if game is None:

@@ -10,7 +10,6 @@ import { mountEngineList } from "./engines.js";
 import { DEFAULT_BOARD_STYLE } from "./board-styles.js";
 import { mqNarrowDialog } from "./breakpoints.js";
 import { buildAnalysisTab } from "./settings-analysis-tab.js";
-import { buildSprtTab } from "./settings-sprt-tab.js";
 import { buildTournamentTab } from "./settings-tournament-tab.js";
 import { buildCommonTab } from "./settings-common-tab.js";
 import { makePathRow } from "./settings-path-row.js";
@@ -231,11 +230,6 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         tournamentInitial, putTournamentSettings, pathRow, debounce,
       });
 
-      // --- SPRT tab ---
-      const { tab: sprtTab, panel: sprtPanel } = buildSprtTab({
-        tournamentInitial, putTournamentSettings, debounce,
-      });
-
       // --- AI Analysis tab ---
       const { tab: analysisTab, panel: analysisPanel } = buildAnalysisTab({
         api, initial, dialog, noEngine, engineList, activeEngineId,
@@ -252,7 +246,6 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         ["display",    { tab: displayTab,    panel: displayPanel }],
         ["analysis",   { tab: analysisTab,   panel: analysisPanel }],
         ["tournament", { tab: tournamentTab, panel: tournamentPanel }],
-        ["sprt",       { tab: sprtTab,       panel: sprtPanel }],
       ]);
 
       const startTab = (TABS.get(initialTab) || TABS.get("general")).tab;

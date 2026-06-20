@@ -56,8 +56,8 @@ export const SPRT_DEFAULTS = { elo0: 0, elo1: 10, alpha: 0.05, beta: 0.05, model
 // SPRT param invariants enforced by fastchess at startup (NOT by the
 // server's compute_sprt, which accepts any 0<alpha,beta<1): 0<alpha<1,
 // 0<beta<1, alpha+beta<1, elo0<elo1. Each rule flags the fields it blames;
-// returns the set of bad keys -- empty means valid. Shared by the Settings
-// tab (per-field red) and the create-time guard.
+// returns the set of bad keys -- empty means valid. Shared by the SPRT chip
+// popup (per-field red) and the create-time guard.
 const inUnit = (x) => Number.isFinite(x) && x > 0 && x < 1;
 const SPRT_RULES = [
   (p) => inUnit(p.alpha) || ["alpha"],

@@ -10,18 +10,19 @@
 import { mqMobile, mqMobileH, mqMobileHPlay } from "./breakpoints.js";
 import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, showDialog, toast } from "./dialogs.js";
 import { openSettingsDialog } from "./settings-dialog.js";
-import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, SPRT_DEFAULTS, sprtParamErrors, STATUS } from "./tournament-events.js";
+import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, sprtParamErrors, STATUS } from "./tournament-events.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
+import { mountSprtButton, sprtModelLabel } from "./tournament-sprt-button.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
 import { debounce, ribbonWidthPx } from "./wb-utils.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
-const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT settings (need alpha+beta<1, elo0<elo1). Fix them in Settings -> SPRT.";
+const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT params (need alpha+beta<1, elo0<elo1).";
 // Default dwell for error/warning toasts that carry a line worth reading.
 const TOAST_DURATION_MS = 8000;
 const NEW_TOURNAMENT_LABEL = "New tournament";
@@ -648,7 +649,7 @@ function buildInfoContent(ctx, t) {
   if (tpl.sprt) {
     const s = tpl.sprt;
     row("Rounds", "unlimited (SPRT)");
-    row("SPRT", `elo0=${s.elo0} elo1=${s.elo1} alpha=${s.alpha} beta=${s.beta} model=${s.model}`);
+    row("SPRT", `elo0=${s.elo0} elo1=${s.elo1} alpha=${s.alpha} beta=${s.beta} model=${sprtModelLabel(s.model)}`);
   } else {
     row("Rounds", tpl.rounds);
   }
@@ -723,7 +724,10 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
       const wrap = document.createElement("div");
       wrap.className = "new-tournament-form";
       wrap.innerHTML = `
-        <wa-input class="nt-name" label="Name" size="small" placeholder="my tournament"></wa-input>
+        <div class="nt-name-row">
+          <wa-input class="nt-name" label="Name" size="small" placeholder="my tournament"></wa-input>
+          <div class="nt-sprt-host"></div>
+        </div>
 
         <div class="nt-section">
           <div class="nt-engine-builder"></div>
@@ -750,6 +754,15 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
         initialValues: defaults,
       });
 
+      const sprtCtl = mountSprtButton({
+        host: wrap.querySelector(".nt-sprt-host"),
+        initialSprt: defaults.sprt,
+        sprtDefaults: ctx.settings?.sprt_defaults,
+        onChange: (on) => tplCtl.applySprt(on),
+      });
+      // Reflect an SPRT template (edit flow) into the form's enable state.
+      tplCtl.applySprt(sprtCtl.isOn());
+
       const actionBtn = document.createElement("wa-button");
       actionBtn.slot = "footer";
       actionBtn.size = "small";
@@ -764,10 +777,10 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
         actionBtn.disabled = !isValid();
       }
       refreshValidity();
-      tplCtl.setSprtAvailable(builder.getEngines().length === 2);
+      sprtCtl.setAvailable(builder.getEngines().length === 2);
       nameInput.addEventListener("input", refreshValidity);
       builder.onChange(() => {
-        tplCtl.setSprtAvailable(builder.getEngines().length === 2);
+        sprtCtl.setAvailable(builder.getEngines().length === 2);
         refreshValidity();
       });
 
@@ -785,12 +798,15 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
           toast(e.message, { variant: "danger" });
           return;
         }
-        // SPRT params come from the saved defaults (empty/partial filled by
-        // the server); block creation only if the effective config is invalid.
-        const sprtCfg = { ...SPRT_DEFAULTS, ...(ctx.settings?.sprt_defaults || {}) };
-        if (template.sprt && sprtParamErrors(sprtCfg).size) {
-          toast(BAD_SPRT_DEFAULTS_MSG, { variant: "danger", duration: TOAST_DURATION_MS });
-          return;
+        // SPRT params come from the chip popup (validated there before Done);
+        // re-check defensively before the destructive create/apply.
+        if (sprtCtl.isOn()) {
+          const sprtParams = sprtCtl.getParams();
+          if (sprtParamErrors(sprtParams).size) {
+            toast(BAD_SPRT_DEFAULTS_MSG, { variant: "danger", duration: TOAST_DURATION_MS });
+            return;
+          }
+          template.sprt = sprtParams;
         }
 
         const picked = builder.getPickedRegistry();

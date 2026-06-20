@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -36,15 +37,18 @@ from ..tournament.orchestrator import Orchestrator, TournamentBusyError, wrap_ev
 from ..tournament.rescheck import ALLOW_OVERSUBSCRIBE_KEY, RescheckError, check as rescheck_run
 from ..tournament.uci_parse import parse_uci_line
 from ..tournament.pgn_stats import (
+    SPRT_CONTINUE,
+    SPRT_H0,
+    SPRT_H1,
     compute_games_list,
     compute_sprt,
     compute_standings,
-    count_partial_pairs,
     read_game_record,
 )
 from ..tournament.store import (
     CorruptStateError,
     DuplicateNameError,
+    STATUS_DONE,
     STATUS_FAILED,
     STATUS_STOPPED,
     TournamentNotFoundError,
@@ -104,6 +108,28 @@ class EngineRef(BaseModel):
 
 
 _SPRT_DEFAULTS = {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05, "model": "normalized"}
+
+# Terminal statuses where a fastchess-concluded SPRT can leave our independently
+# recomputed LLR a hair short of the bound (two SPRT implementations drift).
+_SPRT_TERMINAL_STATUSES = (STATUS_DONE, STATUS_STOPPED)
+# LLR distance from a bound within which a terminal tournament's verdict snaps
+# to that bound, so a concluded run shows H0/H1 instead of "continue".
+_SPRT_CONCLUDE_TOL = float(os.environ.get("SV_SPRT_CONCLUDE_TOL", "0.05"))
+
+
+def _snap_terminal_sprt_verdict(sprt: dict, status: str) -> dict:
+    """For a terminal tournament whose recomputed LLR sits within
+    ``_SPRT_CONCLUDE_TOL`` of a bound, report the nearer verdict (H0/H1).
+    fastchess already stopped on its own LLR; ours can land microscopically
+    short. Mid-run LLRs (far from both bounds) are left as "continue"."""
+    if status not in _SPRT_TERMINAL_STATUSES or sprt.get("status") != SPRT_CONTINUE:
+        return sprt
+    llr = sprt["llr"]
+    if llr >= sprt["upper_bound"] - _SPRT_CONCLUDE_TOL:
+        sprt["status"] = SPRT_H1
+    elif llr <= sprt["lower_bound"] + _SPRT_CONCLUDE_TOL:
+        sprt["status"] = SPRT_H0
+    return sprt
 
 # Engine-default keys frozen into a tournament at create/edit time.
 # Mirrors `Settings.engine_default_<key>` fields. Snapshotting all of
@@ -211,14 +237,6 @@ def _serialize(
         standings["tournament_type"] = tournament_type
         out["standings"] = standings
     if with_stats and store is not None:
-        games_per_round = (t.template or {}).get("games_per_round", 2)
-        paired = games_per_round != 1
-        try:
-            out["partial_pairs"] = count_partial_pairs(
-                store.pgn_path(t.id), paired=paired,
-            )
-        except FileNotFoundError:
-            out["partial_pairs"] = 0
         out["games"] = compute_games_list(store.pgn_path(t.id))
         # Surface the orchestrator's currently-active proxies so the
         # workspace's Schedule can seed its rows on mount, not just from
@@ -233,12 +251,13 @@ def _serialize(
         sprt_params = (t.template or {}).get("sprt")
         if sprt_params and len(t.engines) >= 2:
             try:
-                out["sprt"] = compute_sprt(
+                sprt = compute_sprt(
                     store.pgn_path(t.id),
                     sprt_params,
                     engine_a=t.engines[0]["name"],
                     engine_b=t.engines[1]["name"],
                 ).to_dict()
+                out["sprt"] = _snap_terminal_sprt_verdict(sprt, t.status)
             except (NotImplementedError, KeyError, ValueError) as e:
                 log.warning("compute_sprt failed for %s: %s", t.id, e)
                 out["sprt"] = None
