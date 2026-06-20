@@ -23,6 +23,7 @@ from sturddle_view.tournament.pgn_stats import SPRT_CONTINUE, SPRT_H0, SPRT_H1
 from sturddle_view.tournament.store import (
     STATUS_DONE,
     STATUS_RUNNING,
+    STATUS_STOPPED,
     TournamentStore,
 )
 
@@ -547,7 +548,7 @@ def sprt_settings(tmp_path, monkeypatch):
     s = Settings(auth_disabled=True)
     s.tournament_root = str(tmp_path / "tournaments")
     s.tournament_fastchess_path = sys.executable
-    s.tournament_sprt_defaults = {"elo0": 3, "elo1": 15, "alpha": 0.02, "beta": 0.02, "model": "bayesian"}
+    s.tournament_sprt_defaults = {"elo0": 3, "elo1": 15, "alpha": 0.02, "beta": 0.02}
     monkeypatch.setattr(FastchessRunner, "detect_binary", staticmethod(lambda c: c))
     return s
 
@@ -569,7 +570,7 @@ def test_create_sprt_true_merges_defaults(sprt_client):
     assert sprt["elo0"] == 3
     assert sprt["elo1"] == 15
     assert sprt["alpha"] == 0.02
-    assert sprt["model"] == "bayesian"
+    assert sprt["beta"] == 0.02
 
 
 def test_create_sprt_dict_overrides_defaults(sprt_client):
@@ -582,7 +583,7 @@ def test_create_sprt_dict_overrides_defaults(sprt_client):
     assert sprt["elo0"] == 7
     assert sprt["elo1"] == 20
     # Remaining keys fall through from sprt_defaults.
-    assert sprt["model"] == "bayesian"
+    assert sprt["beta"] == 0.02
 
 
 def test_create_no_sprt_passthrough(sprt_client):
@@ -605,7 +606,7 @@ def test_edit_sprt_true_merges_defaults(sprt_client):
     assert r.status_code == 200, r.text
     sprt = r.json()["template"]["sprt"]
     assert sprt["elo0"] == 3
-    assert sprt["model"] == "bayesian"
+    assert sprt["beta"] == 0.02
 
 # ---------------------------------------------------------------------------
 # engine_defaults snapshot at create time
@@ -899,8 +900,9 @@ def test_get_game_pgn_zero_returns_422(client):
 
 
 # ---------------------------------------------------------------------------
-# Terminal SPRT verdict snapping: a fastchess-concluded SPRT whose recomputed
-# LLR lands a hair short of a bound should report the nearer verdict.
+# Terminal SPRT verdict snapping. DONE always concluded (fastchess only ends a
+# SPRT match on an accepted hypothesis), so snap to the nearer bound regardless
+# of drift. STOPPED may be a mid-run abort, so snap only near a bound.
 # ---------------------------------------------------------------------------
 
 
@@ -908,20 +910,31 @@ def _sprt(llr, status=SPRT_CONTINUE, lower=-2.94, upper=2.94):
     return {"llr": llr, "lower_bound": lower, "upper_bound": upper, "status": status}
 
 
-def test_snap_done_near_upper_becomes_h1():
-    # LLR 2.93 vs bound 2.94 (the real-world drift case) -> H1.
+def test_snap_done_positive_llr_becomes_h1():
     out = _snap_terminal_sprt_verdict(_sprt(2.93), STATUS_DONE)
     assert out["status"] == SPRT_H1
 
 
-def test_snap_done_near_lower_becomes_h0():
-    out = _snap_terminal_sprt_verdict(_sprt(-2.93), STATUS_DONE)
+def test_snap_done_negative_llr_becomes_h0():
+    # LLR -2.75, bound -2.94: 0.19 short -- DONE snaps anyway (it concluded).
+    out = _snap_terminal_sprt_verdict(_sprt(-2.75), STATUS_DONE)
     assert out["status"] == SPRT_H0
 
 
-def test_snap_done_mid_run_stays_continue():
-    # Far from both bounds: a genuinely inconclusive stop is not invented away.
-    out = _snap_terminal_sprt_verdict(_sprt(0.4), STATUS_DONE)
+def test_snap_done_snaps_even_near_midpoint():
+    # DONE means concluded; lean decides the side, no tolerance gate.
+    assert _snap_terminal_sprt_verdict(_sprt(0.4), STATUS_DONE)["status"] == SPRT_H1
+    assert _snap_terminal_sprt_verdict(_sprt(-0.4), STATUS_DONE)["status"] == SPRT_H0
+
+
+def test_snap_stopped_near_bound_snaps():
+    out = _snap_terminal_sprt_verdict(_sprt(2.93), STATUS_STOPPED)
+    assert out["status"] == SPRT_H1
+
+
+def test_snap_stopped_mid_run_stays_continue():
+    # A genuine mid-run abort far from both bounds is not invented away.
+    out = _snap_terminal_sprt_verdict(_sprt(0.4), STATUS_STOPPED)
     assert out["status"] == SPRT_CONTINUE
 
 

@@ -437,7 +437,20 @@ def test_build_command_sprt(tmp_path):
     assert "elo1=5" in block
     assert "alpha=0.05" in block
     assert "beta=0.05" in block
-    assert "model=normalized" in block
+    assert "model=normalized" in block  # default when template omits model
+
+
+def test_build_command_sprt_honors_legacy_logistic_model(tmp_path):
+    # A legacy template carrying model=logistic must run fastchess logistic so
+    # its LLR recompute (same model) agrees on restart.
+    spec = _make_spec(
+        tmp_path,
+        template={"sprt": {"elo0": 0, "elo1": 5, "alpha": 0.05, "beta": 0.05, "model": "logistic"}},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    cmd = build_command(spec)
+    idx = cmd.index("-sprt")
+    assert "model=logistic" in cmd[idx + 1 : idx + 6]
 
 
 def test_build_command_sprt_uses_rounds_zero(tmp_path):
@@ -448,17 +461,6 @@ def test_build_command_sprt_uses_rounds_zero(tmp_path):
     )
     cmd = build_command(spec)
     assert cmd[cmd.index("-rounds") + 1] == "0"
-
-
-def test_build_command_sprt_model_pentanomial_alias(tmp_path):
-    spec = _make_spec(
-        tmp_path,
-        template={"sprt": {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05, "model": "pentanomial"}},
-        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
-    )
-    cmd = build_command(spec)
-    idx = cmd.index("-sprt")
-    assert "model=normalized" in cmd[idx + 1 : idx + 6]
 
 
 def test_build_command_no_sprt_uses_template_rounds(tmp_path):

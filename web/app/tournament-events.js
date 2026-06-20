@@ -51,7 +51,7 @@ export function crashErrorLine(payload) {
 
 // Effective SPRT params when a stored default is empty/partial -- mirrors the
 // server's _SPRT_DEFAULTS, applied before a tournament starts.
-export const SPRT_DEFAULTS = { elo0: 0, elo1: 10, alpha: 0.05, beta: 0.05, model: "normalized" };
+export const SPRT_DEFAULTS = { elo0: 0, elo1: 10, alpha: 0.05, beta: 0.05 };
 
 // SPRT param invariants enforced by fastchess at startup (NOT by the
 // server's compute_sprt, which accepts any 0<alpha,beta<1): 0<alpha<1,

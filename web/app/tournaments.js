@@ -16,7 +16,7 @@ import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
-import { mountSprtButton, sprtModelLabel } from "./tournament-sprt-button.js";
+import { mountSprtButton } from "./tournament-sprt-button.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
 import { debounce, ribbonWidthPx } from "./wb-utils.js";
@@ -649,7 +649,7 @@ function buildInfoContent(ctx, t) {
   if (tpl.sprt) {
     const s = tpl.sprt;
     row("Rounds", "unlimited (SPRT)");
-    row("SPRT", `elo0=${s.elo0} elo1=${s.elo1} alpha=${s.alpha} beta=${s.beta} model=${sprtModelLabel(s.model)}`);
+    row("SPRT", `elo0=${s.elo0} elo1=${s.elo1} alpha=${s.alpha} beta=${s.beta}`);
   } else {
     row("Rounds", tpl.rounds);
   }

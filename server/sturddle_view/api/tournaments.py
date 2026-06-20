@@ -107,28 +107,38 @@ class EngineRef(BaseModel):
         return v
 
 
-_SPRT_DEFAULTS = {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05, "model": "normalized"}
+_SPRT_DEFAULTS = {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05}
 
-# Terminal statuses where a fastchess-concluded SPRT can leave our independently
-# recomputed LLR a hair short of the bound (two SPRT implementations drift).
-_SPRT_TERMINAL_STATUSES = (STATUS_DONE, STATUS_STOPPED)
-# LLR distance from a bound within which a terminal tournament's verdict snaps
-# to that bound, so a concluded run shows H0/H1 instead of "continue".
+# LLR distance from a bound within which a STOPPED SPRT's verdict snaps to that
+# bound. A manual stop can land near a bound just as it would conclude; far from
+# both, it stays "continue" (a genuine mid-run abort). DONE needs no tolerance.
 _SPRT_CONCLUDE_TOL = float(os.environ.get("SV_SPRT_CONCLUDE_TOL", "0.05"))
 
 
 def _snap_terminal_sprt_verdict(sprt: dict, status: str) -> dict:
-    """For a terminal tournament whose recomputed LLR sits within
-    ``_SPRT_CONCLUDE_TOL`` of a bound, report the nearer verdict (H0/H1).
-    fastchess already stopped on its own LLR; ours can land microscopically
-    short. Mid-run LLRs (far from both bounds) are left as "continue"."""
-    if status not in _SPRT_TERMINAL_STATUSES or sprt.get("status") != SPRT_CONTINUE:
+    """Reconcile our independently recomputed LLR with how the tournament ended.
+
+    fastchess and our recompute drift slightly, so a concluded run can leave our
+    LLR short of the bound. A SPRT tournament reaching DONE *always* concluded
+    (fastchess only finishes a SPRT match on an accepted hypothesis), so snap to
+    the nearer bound unconditionally. A STOPPED run may be a mid-run abort, so
+    only snap when the LLR is within ``_SPRT_CONCLUDE_TOL`` of a bound.
+
+    INVARIANT: DONE => concluded relies on SPRT running with ``-rounds 0`` (see
+    fastchess.build_command), so a SPRT match never finishes by exhausting a
+    round cap. If a games cap is ever added, DONE no longer implies a verdict
+    and this midpoint snap would manufacture one."""
+    if sprt.get("status") != SPRT_CONTINUE:
         return sprt
     llr = sprt["llr"]
-    if llr >= sprt["upper_bound"] - _SPRT_CONCLUDE_TOL:
-        sprt["status"] = SPRT_H1
-    elif llr <= sprt["lower_bound"] + _SPRT_CONCLUDE_TOL:
-        sprt["status"] = SPRT_H0
+    if status == STATUS_DONE:
+        midpoint = (sprt["lower_bound"] + sprt["upper_bound"]) / 2.0
+        sprt["status"] = SPRT_H1 if llr >= midpoint else SPRT_H0
+    elif status == STATUS_STOPPED:
+        if llr >= sprt["upper_bound"] - _SPRT_CONCLUDE_TOL:
+            sprt["status"] = SPRT_H1
+        elif llr <= sprt["lower_bound"] + _SPRT_CONCLUDE_TOL:
+            sprt["status"] = SPRT_H0
     return sprt
 
 # Engine-default keys frozen into a tournament at create/edit time.
@@ -258,7 +268,7 @@ def _serialize(
                     engine_b=t.engines[1]["name"],
                 ).to_dict()
                 out["sprt"] = _snap_terminal_sprt_verdict(sprt, t.status)
-            except (NotImplementedError, KeyError, ValueError) as e:
+            except (KeyError, ValueError) as e:
                 log.warning("compute_sprt failed for %s: %s", t.id, e)
                 out["sprt"] = None
     return out

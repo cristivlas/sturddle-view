@@ -191,7 +191,7 @@ async def test_sprt_create_omits_rounds_from_template(tmp_path, make_page):
 async def test_sprt_badge_shown_in_tournament_list(tmp_path, make_page):
     """A tournament created with sprt=True in its template shows the
     SPRT badge in the tournament list row."""
-    sprt_defaults = {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05, "model": "normalized"}
+    sprt_defaults = {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05}
     env = _server_env(tmp_path, sprt_defaults=sprt_defaults)
 
     # Pre-seed a tournament with resolved SPRT params (as the API would store).
@@ -223,8 +223,8 @@ async def test_sprt_badge_shown_in_tournament_list(tmp_path, make_page):
 @pytest.mark.asyncio
 async def test_sprt_info_dialog_shows_params(tmp_path, make_page):
     """The Info dialog for an SPRT tournament shows 'unlimited (SPRT)'
-    for Rounds and lists elo0/elo1/alpha/beta/model."""
-    sprt_params = {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05, "model": "normalized"}
+    for Rounds and lists elo0/elo1/alpha/beta."""
+    sprt_params = {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05}
     env = _server_env(tmp_path, sprt_defaults=sprt_params)
 
     TournamentStore(tmp_path / "tournaments").create(
@@ -256,9 +256,8 @@ async def test_sprt_info_dialog_shows_params(tmp_path, make_page):
         assert "elo0=0" in info_text
         assert "elo1=10" in info_text
         assert "alpha=0.05" in info_text
-        # Short model name (no parenthetical), matching the SPRT popup family.
-        assert "model=Pentanomial" in info_text
-        assert "(logistic Elo)" not in info_text
+        # Model choice was removed -- the SPRT line no longer carries it.
+        assert "model=" not in info_text
 
         assert page_errors == [], "JS errors:\n" + "\n".join(page_errors)
 

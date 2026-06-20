@@ -1182,7 +1182,7 @@ def test_iter_games_reparses_when_file_grows(tmp_path, monkeypatch):
 
 
 def _params(**overrides) -> dict:
-    p = {"elo0": 0.0, "elo1": 5.0, "alpha": 0.05, "beta": 0.05, "model": "normalized"}
+    p = {"elo0": 0.0, "elo1": 5.0, "alpha": 0.05, "beta": 0.05}
     p.update(overrides)
     return p
 
@@ -1213,13 +1213,14 @@ def test_sprt_bounds_have_correct_signs():
 
 
 def test_sprt_runaway_a_dominates_accepts_h1(tmp_path):
-    # 99 pairs A wins both + 1 pair drawn. Strong H1. The single drawn
-    # pair seeds nonzero sample variance (real runs always have one).
+    # 99 pairs A wins both + 1 pair drawn. elo1 is in *normalized* Elo
+    # (a stricter scale than logistic), so a large bound is needed for a
+    # 100-pair sample to clear the Wald boundary on total domination.
     rc = _RoundCounter()
     body = "".join(_pair(rc, "A", "B", "1-0", "0-1") for _ in range(99))
     body += _pair(rc, "A", "B", "1/2-1/2", "1/2-1/2")
     p = _write_pgn(tmp_path, body)
-    r = _sprt(p, _params(elo0=0, elo1=5))
+    r = _sprt(p, _params(elo0=0, elo1=50))
     assert r.pairs == 100
     assert r.status == "H1"
     assert r.llr > r.upper_bound
@@ -1231,7 +1232,7 @@ def test_sprt_runaway_b_dominates_accepts_h0(tmp_path):
     body = "".join(_pair(rc, "A", "B", "0-1", "1-0") for _ in range(99))
     body += _pair(rc, "A", "B", "1/2-1/2", "1/2-1/2")
     p = _write_pgn(tmp_path, body)
-    r = _sprt(p, _params(elo0=0, elo1=5))
+    r = _sprt(p, _params(elo0=0, elo1=50))
     assert r.pairs == 100
     assert r.status == "H0"
     assert r.llr < r.lower_bound
@@ -1269,29 +1270,29 @@ def test_sprt_balanced_play_continues(tmp_path):
 
 
 def test_sprt_all_draws_returns_continue(tmp_path):
-    # All pairs score identically (1.0 each) -> sample variance is 0.
-    # The sample carries no information about the hypothesis; LLR should
-    # be 0 and status "continue", consistent with n<2.
+    # All pairs in the DD bin (score 1.0). The regularized pentanomial MLE
+    # extracts essentially no signal -- LLR sits near zero, well inside the
+    # bounds -> continue.
     rc = _RoundCounter()
     body = "".join(_pair(rc, "A", "B", "1/2-1/2", "1/2-1/2") for _ in range(20))
     p = _write_pgn(tmp_path, body)
     r = _sprt(p, _params(elo0=0, elo1=5))
     assert r.pairs == 20
     assert r.status == "continue"
-    assert r.llr == 0.0
+    assert abs(r.llr) < 0.05
 
 
 def test_sprt_all_decisive_same_direction_returns_continue(tmp_path):
-    # Every pair: A wins both games -> per-pair score 2.0 for all pairs.
-    # Variance is 0 even though A is dominating; with no spread the
-    # pentanomial model has no variance estimate.
+    # Every pair: A sweeps both games (score 2.0, all mass in the WW bin).
+    # At the tight normalized elo1=5 bound, 20 pairs don't clear the Wald
+    # boundary -> continue (positive LLR, leaning H1 but not concluded).
     rc = _RoundCounter()
     body = "".join(_pair(rc, "A", "B", "1-0", "0-1") for _ in range(20))
     p = _write_pgn(tmp_path, body)
     r = _sprt(p, _params(elo0=0, elo1=5))
     assert r.pairs == 20
     assert r.status == "continue"
-    assert r.llr == 0.0
+    assert r.llr > 0.0
 
 
 def test_sprt_drops_partial_round(tmp_path, caplog):
@@ -1335,14 +1336,6 @@ def test_sprt_round_collision_counts_both_pairs(tmp_path):
     assert r.pairs == 2
 
 
-def test_sprt_unimplemented_model_raises(tmp_path):
-    p = _write_pgn(tmp_path, "")
-    with pytest.raises(NotImplementedError):
-        _sprt(p, _params(model="bayesian"))
-    with pytest.raises(NotImplementedError):
-        _sprt(p, _params(model="fakemodel"))
-
-
 @pytest.mark.parametrize("overrides", [
     {"elo0": 5.0, "elo1": 5.0},   # hypotheses must differ
     {"elo0": 5.0, "elo1": 0.0},   # elo0 must be < elo1
@@ -1375,38 +1368,23 @@ def test_sprt_alpha_beta_defaults_accept_valid_params(tmp_path):
     assert r.upper_bound == pytest.approx(math.log(0.95 / 0.05))
 
 
-def test_sprt_pentanomial_alias_accepted(tmp_path):
-    """model='pentanomial' is the UI alias for 'normalized' and must be
-    accepted (and reported back as 'normalized'). Kills `==` mutations
-    on the alias-rewrite branch."""
-    rc = _RoundCounter()
-    body = "".join(_pair(rc, "A", "B", "1-0", "0-1") for _ in range(3))
-    p = _write_pgn(tmp_path, body)
-    r_alias = _sprt(p, _params(model="pentanomial"))
-    r_canon = _sprt(p, _params(model="normalized"))
-    assert r_alias.model == "normalized"  # rewritten internally
-    assert r_alias.status == r_canon.status
-    assert r_alias.llr == pytest.approx(r_canon.llr, abs=1e-12)
-
-
-def test_sprt_single_pair_returns_zero_llr(tmp_path):
-    """n=1 pair → variance ill-defined → returns LLR=0 / continue. Kills
-    NumberReplacer on `llr=0.0` in the n<2 branch (mutating to 1.0/-1.0
-    would change the asserted LLR)."""
+def test_sprt_single_pair_computes_llr(tmp_path):
+    """n=1 pair: fastchess computes from the first pair, so we do too (the
+    regularized MLE yields a small finite LLR, not a special-cased zero)."""
     rc = _RoundCounter()
     body = _pair(rc, "A", "B", "1-0", "0-1")
     p = _write_pgn(tmp_path, body)
     r = _sprt(p, _params())
     assert r.pairs == 1
     assert r.status == "continue"
-    assert r.llr == 0.0
+    assert r.llr == pytest.approx(0.020153121, abs=1e-7)
 
 
+# The exact-LLR cases below pin the normalized pentanomial GSPRT (a port of
+# fastchess' sprt.cpp ITP/MLE) against hand-built pair distributions. They
+# guard the MLE machinery from silent numeric drift; the magnitudes are tiny
+# because elo1=5 is a small effect on the normalized scale.
 def test_sprt_exact_llr_two_pairs(tmp_path):
-    """Hand-computed LLR for 2 pairs with scores [1.5, 0.5]. Pins
-    the variance Bessel-correction `/ (n - 1)` for the n=2 boundary:
-    `(n ^ 1)` mutation evaluates to 3 (not 1) at n=2, producing the
-    wrong variance and LLR; equivalent at n=3 (n^1 == n-1)."""
     rc = _RoundCounter()
     body = (
         _pair(rc, "A", "B", "1-0", "1/2-1/2")        # A wins+draw -> score 1.5
@@ -1415,14 +1393,10 @@ def test_sprt_exact_llr_two_pairs(tmp_path):
     p = _write_pgn(tmp_path, body)
     r = _sprt(p, _params(elo0=0.0, elo1=5.0))
     assert r.pairs == 2
-    assert r.llr == pytest.approx(-4.1421079e-4, abs=1e-9)
+    assert r.llr == pytest.approx(-4.1474662e-4, abs=1e-9)
 
 
 def test_sprt_exact_llr_four_pairs(tmp_path):
-    """Hand-computed LLR for 4 pairs. Pins the division in the variance
-    formula against `/` -> `**` mutation: for n=2 and n=3 the values
-    happen to coincide (0.5**1 == 0.5/1; 0.5**2 == 0.5/2), so n>=4 is
-    needed to distinguish."""
     rc = _RoundCounter()
     body = (
         _pair(rc, "A", "B", "1-0", "1/2-1/2")        # score 1.5
@@ -1433,17 +1407,10 @@ def test_sprt_exact_llr_four_pairs(tmp_path):
     p = _write_pgn(tmp_path, body)
     r = _sprt(p, _params(elo0=0.0, elo1=5.0))
     assert r.pairs == 4
-    assert r.llr == pytest.approx(-0.0012426324, abs=1e-9)
+    assert r.llr == pytest.approx(-8.2887165e-4, abs=1e-9)
 
 
 def test_sprt_exact_llr_three_pairs(tmp_path):
-    """Hand-computed LLR for 3 pairs with scores [2.0, 1.0, 0.0]
-    (A wins both / draw / B wins both). Pins:
-      - `s / 2.0` per-pair normalization
-      - `(s - mu) ** 2` variance numerator
-      - `/ (n - 1)` Bessel-corrected denominator
-      - the full Gaussian LLR formula
-    Reference: LLR = 3 * (s1-s0) * (0.5 - (s0+s1)/2) / 0.25 ≈ -3.107e-4."""
     rc = _RoundCounter()
     body = (
         _pair(rc, "A", "B", "1-0", "0-1")          # pair score 2.0 (A swept)
@@ -1453,7 +1420,7 @@ def test_sprt_exact_llr_three_pairs(tmp_path):
     p = _write_pgn(tmp_path, body)
     r = _sprt(p, _params(elo0=0.0, elo1=5.0))
     assert r.pairs == 3
-    assert r.llr == pytest.approx(-3.1065809e-4, abs=1e-9)
+    assert r.llr == pytest.approx(-6.2163390e-4, abs=1e-9)
 
 
 def test_sprt_to_dict_round_trip(tmp_path):
@@ -1461,8 +1428,56 @@ def test_sprt_to_dict_round_trip(tmp_path):
     d = _sprt(p, _params()).to_dict()
     assert set(d.keys()) == {
         "llr", "lower_bound", "upper_bound", "status",
-        "pairs", "elo0", "elo1", "model",
+        "pairs", "elo0", "elo1",
     }
+
+
+# ---------------------------------------------------------------------------
+# Real-run SPRT fixtures: two Sturddle self-play tournaments, movetext stripped
+# (SPRT reads only the W/B/Result/Round headers, so this is byte-for-byte
+# equivalent to the full PGNs at 1/30th the size). Both were RUN by fastchess
+# with model=logistic and concluded (15elo->H1, 20elo->H0). Recomputing with
+# the same model reproduces fastchess' verdict to ~1e-4: our LLR lands just
+# past +-2.94, exactly where fastchess stopped. This is the ground-truth check
+# that the ITP/MLE port matches fastchess.
+#
+# The normalized recompute of the same data sits at +2.52 / -0.57 (continue):
+# correct too, just a stricter Elo scale -- which is why we must recompute with
+# the model the run actually used, not a fixed one.
+# ---------------------------------------------------------------------------
+
+_SPRT_FIXTURE_A = "Sturddle 2.5.2.061926"
+_SPRT_FIXTURE_B = "Sturddle 2.5.0"
+
+
+def test_sprt_fixture_15elo_logistic_accepts_h1():
+    # fastchess ran this logistic and accepted H1; our logistic LLR clears +2.94.
+    p = Path(__file__).parent / "fixtures" / "sprt_run_15elo.pgn"
+    r = compute_sprt(p, {"elo0": 0.0, "elo1": 15.0, "model": "logistic"},
+                     engine_a=_SPRT_FIXTURE_A, engine_b=_SPRT_FIXTURE_B)
+    assert r.pairs == 577
+    assert r.status == "H1"
+    assert r.llr == pytest.approx(2.9711, abs=1e-3)
+
+
+def test_sprt_fixture_20elo_logistic_accepts_h0():
+    # fastchess ran this logistic and accepted H0; our logistic LLR clears -2.94.
+    p = Path(__file__).parent / "fixtures" / "sprt_run_20elo.pgn"
+    r = compute_sprt(p, {"elo0": 0.0, "elo1": 20.0, "model": "logistic"},
+                     engine_a=_SPRT_FIXTURE_A, engine_b=_SPRT_FIXTURE_B)
+    assert r.pairs == 280
+    assert r.status == "H0"
+    assert r.llr == pytest.approx(-3.1443, abs=1e-3)
+
+
+def test_sprt_fixture_model_dispatch_differs():
+    # The same data under normalized stays continue (stricter scale): proves
+    # compute_sprt dispatches on the model rather than hardcoding one.
+    p = Path(__file__).parent / "fixtures" / "sprt_run_15elo.pgn"
+    norm = compute_sprt(p, {"elo0": 0.0, "elo1": 15.0, "model": "normalized"},
+                        engine_a=_SPRT_FIXTURE_A, engine_b=_SPRT_FIXTURE_B)
+    assert norm.status == "continue"
+    assert norm.llr == pytest.approx(2.5186, abs=1e-3)
 
 
 # ---------------------------------------------------------------------------
@@ -1572,309 +1587,6 @@ def test_sprt_engine_identity_independent_of_pgn_file_order(tmp_path):
     assert r1.pairs == r2.pairs == 2
     assert r1.llr == pytest.approx(r2.llr)
     # A dominates the sample; LLR must favor H1 regardless of file order.
-    assert r1.llr > 0
-
-
-# ---------------------------------------------------------------------------
-# Logistic SPRT (per-game W/D/L trinomial)
-# ---------------------------------------------------------------------------
-
-
-def test_sprt_logistic_no_games(tmp_path):
-    p = _write_pgn(tmp_path, "")
-    r = _sprt(p, _params(model="logistic"))
-    assert r.status == "continue"
-    assert r.pairs == 0
-    assert r.llr == 0.0
-    assert r.model == "logistic"
-
-
-def test_sprt_logistic_single_game_continues(tmp_path):
-    p = _write_pgn(tmp_path, _game("A", "B", "1-0"))
-    r = _sprt(p, _params(model="logistic"))
-    # One win can land above upper for very wide alpha/beta; with the
-    # _params() defaults (alpha=beta=0.05) it stays below upper.
-    assert r.pairs == 1
-    assert r.status == "continue"
-
-
-def test_sprt_logistic_runaway_a_dominates_accepts_h1(tmp_path):
-    # Strong A dominance with a wider elo gap so LLR clears the Wald
-    # upper bound within a tractable game count.
-    body = ""
-    for _ in range(160):
-        body += _game("A", "B", "1-0")
-    for _ in range(40):
-        body += _game("A", "B", "1/2-1/2")
-    p = _write_pgn(tmp_path, body)
-    r = _sprt(p, _params(elo0=0, elo1=20, model="logistic"))
-    assert r.pairs == 200
-    assert r.status == "H1"
-    assert r.llr > r.upper_bound
-
-
-def test_sprt_logistic_runaway_b_dominates_accepts_h0(tmp_path):
-    body = ""
-    for _ in range(160):
-        body += _game("A", "B", "0-1")
-    for _ in range(40):
-        body += _game("A", "B", "1/2-1/2")
-    p = _write_pgn(tmp_path, body)
-    r = _sprt(p, _params(elo0=0, elo1=20, model="logistic"))
-    assert r.pairs == 200
-    assert r.status == "H0"
-    assert r.llr < r.lower_bound
-
-
-def test_sprt_logistic_balanced_continues(tmp_path):
-    # 5W / 5L / 10D -> mean score 0.5, no signal in either direction.
-    body = ""
-    for _ in range(5):
-        body += _game("A", "B", "1-0")
-    for _ in range(5):
-        body += _game("A", "B", "0-1")
-    for _ in range(10):
-        body += _game("A", "B", "1/2-1/2")
-    p = _write_pgn(tmp_path, body)
-    r = _sprt(p, _params(elo0=0, elo1=10, model="logistic"))
-    assert r.pairs == 20
-    assert r.status == "continue"
-
-
-def test_sprt_logistic_degenerate_extreme_elo_continues(tmp_path):
-    # No draws + extreme elo bounds force pw/pl<=0 in the trinomial.
-    # Should emit LLR=0, continue, not crash.
-    body = _game("A", "B", "1-0")
-    p = _write_pgn(tmp_path, body)
-    # elo1=10000 pushes score_1 ~ 1.0 -> pl1 = 1 - 1 - 0 = 0 (degenerate).
-    r = _sprt(p, _params(elo0=0, elo1=10000, model="logistic"))
-    assert r.status == "continue"
-    assert r.llr == 0.0
-
-
-def test_sprt_logistic_uses_observed_draw_rate(tmp_path):
-    # Two PGNs with same W/L but different draw rates must give different
-    # LLRs under the logistic model (draw rate enters via d_obs).
-    body_low_draws = _game("A", "B", "1-0") + _game("A", "B", "1-0") + _game("A", "B", "0-1")
-    body_high_draws = (
-        _game("A", "B", "1-0") + _game("A", "B", "1-0") + _game("A", "B", "0-1")
-        + _game("A", "B", "1/2-1/2") * 10
-    )
-    p1 = tmp_path / "low.pgn"
-    p2 = tmp_path / "high.pgn"
-    p1.write_text(body_low_draws, encoding="utf-8")
-    p2.write_text(body_high_draws, encoding="utf-8")
-    r1 = _sprt(p1, _params(elo0=0, elo1=10, model="logistic"))
-    r2 = _sprt(p2, _params(elo0=0, elo1=10, model="logistic"))
-    assert r1.llr != r2.llr
-
-
-def test_sprt_logistic_counts_games_not_pairs(tmp_path):
-    # 5 individual games -> pairs field reports 5 (per-game count).
-    body = _game("A", "B", "1-0") * 3 + _game("A", "B", "0-1") + _game("A", "B", "1/2-1/2")
-    p = _write_pgn(tmp_path, body)
-    r = _sprt(p, _params(model="logistic"))
-    assert r.pairs == 5
-
-
-def test_sprt_logistic_model_reported_in_result(tmp_path):
-    p = _write_pgn(tmp_path, _game("A", "B", "1-0"))
-    r = _sprt(p, _params(model="logistic"))
-    assert r.model == "logistic"
-
-
-def test_sprt_logistic_exact_llr_three_wins_one_loss_one_draw(tmp_path):
-    """Hand-computed logistic LLR for w=3 l=1 d=1, elo0=0, elo1=10. Pins:
-      - `d_obs = d / n` ratio
-      - `s = 1 / (1 + 10**(-elo/400))` Elo-to-score formula
-      - `pw = s - d_obs/2`, `pl = 1 - s - d_obs/2` trinomial probabilities
-      - `LLR = w * log(pw1/pw0) + l * log(pl1/pl0)` summation
-    Reference value (pure Python): 0.06937790251627435."""
-    body = (
-        _game("A", "B", "1-0") * 3       # 3 A-wins (white)
-        + _game("A", "B", "0-1")         # 1 A-loss (B white-win? No, A is white losing)
-        + _game("A", "B", "1/2-1/2")     # 1 draw
-    )
-    p = _write_pgn(tmp_path, body)
-    r = _sprt(p, _params(elo0=0.0, elo1=10.0, model="logistic"))
-    assert r.pairs == 5
-    assert r.llr == pytest.approx(0.0693779, abs=1e-7)
-
-
-def test_sprt_logistic_exact_llr_with_nonzero_elo0(tmp_path):
-    """Same as the elo0=0 exact-LLR test but with elo0 != 0, so the
-    s0 = 1/(1+10^(-elo0/400)) computation depends on the base constant.
-    Kills NumberReplacer mutations on the `10.0` / `400.0` constants
-    in the s0 line (elo0=0 makes base-mutations equivalent because
-    `b^0 == 1` for any b)."""
-    import math as _m
-    wins, losses, draws = 3, 1, 1
-    body = (
-        _game("A", "B", "1-0") * 3
-        + _game("A", "B", "0-1")
-        + _game("A", "B", "1/2-1/2")
-    )
-    p = _write_pgn(tmp_path, body)
-    r = _sprt(p, _params(elo0=-5.0, elo1=10.0, model="logistic"))
-
-    # Reference computation
-    n = wins + losses + draws
-    d_obs = draws / n
-    def _s(elo): return 1.0 / (1.0 + _m.pow(10.0, -elo / 400.0))
-    s0, s1 = _s(-5.0), _s(10.0)
-    pw0, pl0 = s0 - d_obs/2, 1.0 - s0 - d_obs/2
-    pw1, pl1 = s1 - d_obs/2, 1.0 - s1 - d_obs/2
-    expected = wins*_m.log(pw1/pw0) + losses*_m.log(pl1/pl0)
-    assert r.llr == pytest.approx(expected, abs=1e-9)
-
-
-def test_sprt_logistic_color_routing_engine_a_alphabetically_greater(tmp_path):
-    """Use engine_a lexicographically GREATER than engine_b so the
-    `white == a_name` and `black == a_name` checks would route the wrong
-    way under `<=` mutations (where 'a' <= 'b' is True but
-    'a' == 'b' is False). Pins the equality check (vs lexicographic <=)
-    on color routing via an EXACT LLR assertion (a direction-only
-    assertion would let the mutation through since both routings still
-    yield negative LLR for this fixture)."""
-    import math as _m
-    # A wins both games as white; Z's perspective: 0W 2L 0D.
-    body = _game("A", "Z", "1-0") + _game("A", "Z", "1-0")
-    p = _write_pgn(tmp_path, body)
-    r = compute_sprt(p, _params(elo0=0.0, elo1=5.0, model="logistic"),
-                     engine_a="Z", engine_b="A")
-    # Reference: wins=0, losses=2, draws=0 from Z's perspective.
-    wins, losses, draws = 0, 2, 0
-    n = wins + losses + draws
-    d_obs = draws / n
-    def _s(elo): return 1.0 / (1.0 + _m.pow(10.0, -elo / 400.0))
-    s0, s1 = _s(0.0), _s(5.0)
-    pw0, pl0 = s0 - d_obs/2, 1.0 - s0 - d_obs/2
-    pw1, pl1 = s1 - d_obs/2, 1.0 - s1 - d_obs/2
-    expected = wins*_m.log(pw1/pw0) + losses*_m.log(pl1/pl0)
-    assert r.llr == pytest.approx(expected, abs=1e-9)
-
-
-def test_sprt_logistic_color_routing_black_win_path(tmp_path):
-    """Mirror of the white-win color-routing test but exercising the
-    BLACK_WIN path's `if black == a_name` check. Pins it against
-    lexicographic-`<=` and `is` mutations."""
-    import math as _m
-    # A wins twice as BLACK; Z's perspective: 0W 2L 0D.
-    body = _game("Z", "A", "0-1") + _game("Z", "A", "0-1")
-    p = _write_pgn(tmp_path, body)
-    r = compute_sprt(p, _params(elo0=0.0, elo1=5.0, model="logistic"),
-                     engine_a="Z", engine_b="A")
-    wins, losses, draws = 0, 2, 0
-    n = wins + losses + draws
-    d_obs = draws / n
-    def _s(elo): return 1.0 / (1.0 + _m.pow(10.0, -elo / 400.0))
-    s0, s1 = _s(0.0), _s(5.0)
-    pw0, pl0 = s0 - d_obs/2, 1.0 - s0 - d_obs/2
-    pw1, pl1 = s1 - d_obs/2, 1.0 - s1 - d_obs/2
-    expected = wins*_m.log(pw1/pw0) + losses*_m.log(pl1/pl0)
-    assert r.llr == pytest.approx(expected, abs=1e-9)
-
-
-def test_sprt_logistic_only_mismatched_games_returns_zero_llr(tmp_path):
-    """All games involve a 3rd engine → n=0 → returns LLR=0, pairs=0.
-    Kills NumberReplacer on the `llr=0.0` in the n==0 logistic branch."""
-    body = _game("A", "C", "1-0") + _game("C", "B", "1-0")  # neither is A-vs-B
-    p = _write_pgn(tmp_path, body)
-    r = _sprt(p, _params(model="logistic"))
-    assert r.pairs == 0
-    assert r.status == "continue"
-    assert r.llr == 0.0
-
-
-def test_sprt_logistic_white_win_routes_by_color_to_a_or_b(tmp_path):
-    """A wins twice as white → A's w counter += 2; B wins once as white →
-    A's l counter += 1 (B winning means A lost). Pins the `if white ==
-    a_name` slot-routing inside the `result == _WHITE_WIN` branch."""
-    body = (
-        _game("A", "B", "1-0")           # A white, A wins → A.w += 1
-        + _game("A", "B", "1-0")         # A white, A wins → A.w += 1
-        + _game("B", "A", "1-0")         # B white, B wins → A.l += 1
-    )
-    p = _write_pgn(tmp_path, body)
-    r = _sprt(p, _params(elo0=0.0, elo1=10.0, model="logistic"))
-    # w=2, l=1, d=0, n=3, d_obs=0.
-    # s0=0.5, s1=0.5143871841659987
-    # pw0=0.5, pl0=0.5; pw1=0.5143871, pl1=0.4856128
-    # LLR = 2*log(pw1/pw0) + 1*log(pl1/pl0)
-    import math as _m
-    s0, s1 = 0.5, 1.0 / (1.0 + 10.0 ** (-10.0 / 400.0))
-    pw0, pl0 = s0, 1.0 - s0
-    pw1, pl1 = s1, 1.0 - s1
-    expected = 2 * _m.log(pw1 / pw0) + 1 * _m.log(pl1 / pl0)
-    assert r.pairs == 3
-    assert r.llr == pytest.approx(expected, abs=1e-9)
-
-
-def test_sprt_logistic_black_win_routes_by_color_to_a_or_b(tmp_path):
-    """A wins as black; B wins as black. Pins the `if black == a_name`
-    slot-routing inside the `result == _BLACK_WIN` branch."""
-    body = (
-        _game("B", "A", "0-1")           # A black, A wins → A.w += 1
-        + _game("B", "A", "0-1")         # A black, A wins → A.w += 1
-        + _game("A", "B", "0-1")         # B black, B wins → A.l += 1
-    )
-    p = _write_pgn(tmp_path, body)
-    r = _sprt(p, _params(elo0=0.0, elo1=10.0, model="logistic"))
-    # Same W/L/D as the previous test → identical LLR.
-    import math as _m
-    s0, s1 = 0.5, 1.0 / (1.0 + 10.0 ** (-10.0 / 400.0))
-    expected = 2 * _m.log(s1 / s0) + 1 * _m.log((1 - s1) / (1 - s0))
-    assert r.pairs == 3
-    assert r.llr == pytest.approx(expected, abs=1e-9)
-
-
-def test_sprt_logistic_engine_identity_via_long_names(tmp_path):
-    """Use multi-word engine names to rule out CPython short-string
-    interning: `==` comparisons must still distinguish A from B when the
-    strings are not interned. Pins `==`→`is` mutations on the
-    `white == a_name` / `black == a_name` color-routing checks."""
-    long_a, long_b = "engine-alpha-v1", "engine-beta-v2"
-    body = (
-        _game(long_a, long_b, "1-0")     # long_a wins as white
-        + _game(long_b, long_a, "1-0")   # long_b wins as white (long_a loses)
-    )
-    p = _write_pgn(tmp_path, body)
-    r = compute_sprt(p, _params(elo0=0.0, elo1=10.0, model="logistic"),
-                     engine_a=long_a, engine_b=long_b)
-    assert r.pairs == 2
-    # With `==`→`is` mutation and non-interned strings, both games would
-    # be misrouted → w=l=0 instead of w=1,l=1 → LLR=0.
-    assert r.llr != 0.0
-
-
-def test_sprt_logistic_skips_engine_mismatch(tmp_path, caplog):
-    body = (
-        _game("A", "B", "1-0")
-        + _game("A", "C", "1-0")  # mismatch
-        + _game("A", "B", "1-0")
-    )
-    p = _write_pgn(tmp_path, body)
-    with caplog.at_level("WARNING", logger="sturddle_view.tournament.pgn_stats"):
-        r = _sprt(p, _params(model="logistic"))
-    assert r.pairs == 2
-    assert any("game skipped" in m for m in caplog.messages)
-
-
-def test_sprt_logistic_engine_identity_independent_of_pgn_file_order(tmp_path):
-    # Logistic counterpart to the pentanomial identity test: a dominates
-    # the per-game W/D/L tally regardless of which engine had white in
-    # the first PGN entry.
-    a_first = _game("A", "B", "1-0") + _game("B", "A", "0-1") + _game("A", "B", "1-0")
-    b_first = _game("B", "A", "0-1") + _game("A", "B", "1-0") + _game("A", "B", "1-0")
-    p1 = tmp_path / "a_first.pgn"
-    p2 = tmp_path / "b_first.pgn"
-    p1.write_text(a_first, encoding="utf-8")
-    p2.write_text(b_first, encoding="utf-8")
-    r1 = _sprt(p1, _params(elo0=0, elo1=10, model="logistic"))
-    r2 = _sprt(p2, _params(elo0=0, elo1=10, model="logistic"))
-    assert r1.pairs == r2.pairs == 3
-    assert r1.llr == pytest.approx(r2.llr)
-    # A wins all 3 -> LLR positive regardless of file order.
     assert r1.llr > 0
 
 

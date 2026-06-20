@@ -145,7 +145,6 @@ class SprtResult:
     pairs: int
     elo0: float
     elo1: float
-    model: str
 
     def to_dict(self) -> dict:
         return {
@@ -156,7 +155,6 @@ class SprtResult:
             "pairs": self.pairs,
             "elo0": self.elo0,
             "elo1": self.elo1,
-            "model": self.model,
         }
 
 
@@ -912,35 +910,40 @@ def compute_standings(
 
 
 # ---------------------------------------------------------------------------
-# SPRT (Sequential Probability Ratio Test) -- pentanomial variant
+# SPRT (Sequential Probability Ratio Test) -- pentanomial GSPRT
 #
-# Games are paired: engine A plays both colors vs B on the same opening,
-# so each pair scores in {0, 0.5, 1, 1.5, 2} for A. The five-bin pair
-# distribution gives a tighter variance estimate than per-game W/L/D.
+# Games are paired: engine A plays both colors vs B on the same opening, so
+# each pair scores in {0, 0.5, 1, 1.5, 2} for A -> five pentanomial bins
+# (LL, LD, WL+DD, WD, WW) on the per-pair scale {0, .25, .5, .75, 1}.
 #
-# Convention: elo0/elo1 are *logistic Elo* (per-game), the same scale as
-# everywhere else in the UI. Internally we convert each hypothesis to a
-# per-pair mean score offset and run a Gaussian LLR against the observed
-# pair scores using the sample pair-variance.
-#
-# Note: this differs from fastchess's own `-sprt model=normalized`, which
-# parameterizes elo0/elo1 in *normalized Elo* units (mean shift divided
-# by pair stdev). The two tests reach the same accept/reject decision
-# asymptotically, but the LLR magnitudes shown here will not match
-# fastchess's stdout for the same elo bounds.
-#
-# Math summary (per-pair scale, A's per-pair score s_i in [0, 2]):
-#   x_i = s_i / 2                                  (per-game score in [0, 1])
-#   mu  = (1/N) sum x_i
-#   var = (1/(N-1)) sum (x_i - mu)^2               (Bessel-corrected sample var)
-#   For hypothesis Hk: mu_k = 0.5 + elo_k * ln(10) / 1600
-#   LLR = N * (mu_1 - mu_0) * (mu - (mu_0 + mu_1)/2) / var
-#
-# Bounds: log(beta/(1-alpha)) and log((1-beta)/alpha).
-# Reference: fastchess-cli docs and the Bayesian-Elo project notes.
+# The LLR is the generalized log-likelihood ratio fastchess computes: a
+# maximum-likelihood fit of the bin distribution under each hypothesis,
+# solved with the ITP root-finder. Direct port of fastchess' sprt.cpp, so our
+# LLR matches fastchess' stdout to ~1e-4 (not the old closed-form approximation
+# that drifted ~0.2). We compute with the SAME model fastchess ran, so the
+# verdict and meter agree with it:
+#   - normalized (default): t = sqrt(2) * elo / (800 / ln 10), MLE per Van den
+#     Bergh "Comments on normalized Elo".
+#   - logistic: per-game score s = 1/(1 + 10^(-elo/400)), MLE per Van den Bergh
+#     "Comparing the approximations ...".
+# elo0/elo1 are logistic Elo (the UI scale). Bounds: log(beta/(1-alpha)) and
+# log((1-beta)/alpha).
 # ---------------------------------------------------------------------------
 
-_PAIR_BINS = (0.0, 0.5, 1.0, 1.5, 2.0)
+# Per-pair normalized scores for the five pentanomial bins (LL..WW).
+_PENTA_SCORES = (0.0, 0.25, 0.5, 0.75, 1.0)
+# fastchess regularizes empty bins to this so log-likelihoods stay finite.
+_PENTA_REGULARIZE = 1e-3
+# Normalized-Elo -> t conversion constant (800 / ln 10), per fastchess.
+_NELO_DIVISOR = 800.0 / math.log(10.0)
+# ITP root-finder tuning (Oliveira & Takahashi 2020), verbatim from fastchess
+# sprt.cpp -- algorithm constants, not knobs; changing them breaks the match.
+_ITP_K1, _ITP_K2, _ITP_N0 = 0.1, 2.0, 0.99
+# MLE iteration caps / convergence epsilons, also verbatim from fastchess.
+_MLE_MAX_ITERS = 10
+_MLE_THETA_EPS = 1e-7        # normalized inner root-solve tolerance
+_MLE_CONVERGE_EPS = 1e-4     # normalized fixed-point convergence tolerance
+_MLE_LOGISTIC_THETA_EPS = 1e-3
 
 
 def _iter_pairs(
@@ -1018,7 +1021,110 @@ def _sprt_bounds(alpha: float, beta: float) -> tuple[float, float]:
     return math.log(beta / (1.0 - alpha)), math.log((1.0 - beta) / alpha)
 
 
-_SUPPORTED_SPRT_MODELS = frozenset({"normalized", "pentanomial", "logistic"})
+def _itp(f, a, b, f_a, f_b, k1, k2, n0, epsilon):
+    """ITP root-finder (Oliveira & Takahashi 2020), port of fastchess sprt.cpp.
+
+    ``f_a``/``f_b`` are bracket function-value sentinels: fastchess passes
+    +inf/-inf so the first step degenerates to bisection (the regula-falsi
+    term is NaN and falls through to the midpoint), then real values take
+    over. Mirrored here exactly so the LLR matches fastchess."""
+    if f_a > 0:
+        a, b = b, a
+        f_a, f_b = f_b, f_a
+    n_max = math.ceil(math.log2(abs(b - a) / (2.0 * epsilon))) + n0
+    i = 0
+    while abs(b - a) > 2.0 * epsilon:
+        x_half = (a + b) / 2.0
+        r = epsilon * (2.0 ** (n_max - i)) - (b - a) / 2.0
+        delta = k1 * (abs(b - a) ** k2)
+        denom = f_b - f_a
+        x_f = (f_b * a - f_a * b) / denom if denom not in (0.0, math.inf, -math.inf) else x_half
+        diff = x_half - x_f
+        sigma = diff / abs(diff) if diff != 0 else 0.0
+        x_t = x_f + sigma * delta if delta <= abs(diff) else x_half
+        x_itp = x_t if abs(x_t - x_half) <= r else x_half - sigma * r
+        f_itp = f(x_itp)
+        if f_itp == 0.0:
+            a = b = x_itp
+        elif f_itp < 0:
+            a, f_a = x_itp, f_itp
+        else:
+            b, f_b = x_itp, f_itp
+        i += 1
+    return (a + b) / 2.0
+
+
+def _gllr_normalized(total, scores, probs, t0, t1):
+    """Normalized-model generalized LLR over discrete bins (Van den Bergh,
+    "Comments on normalized Elo"); port of fastchess SPRT::getLLR_normalized.
+
+    For each hypothesis it fits the maximum-likelihood bin distribution with
+    the prescribed normalized t-statistic, then returns total * E[log p1/p0]."""
+    n = len(scores)
+
+    def mle(mu_ref, t_star):
+        p = [1.0 / n] * n
+        for _ in range(_MLE_MAX_ITERS):
+            mu = sum(scores[i] * p[i] for i in range(n))
+            var = sum(p[i] * (scores[i] - mu) ** 2 for i in range(n))
+            # Guard: a fitted p that collapses toward one bin drives var->0;
+            # the phi term below divides by sigma. Regularized inputs keep
+            # var>0, but bail rather than emit inf/nan if it ever underflows.
+            if var <= 0.0:
+                break
+            sigma = math.sqrt(var)
+            phi = [
+                scores[i] - mu_ref
+                - 0.5 * t_star * sigma * (1.0 + ((scores[i] - mu) / sigma) ** 2)
+                for i in range(n)
+            ]
+            min_theta = -1.0 / max(phi)
+            max_theta = -1.0 / min(phi)
+
+            def g(x):
+                return sum(probs[i] * phi[i] / (1.0 + x * phi[i]) for i in range(n))
+
+            theta = _itp(g, min_theta, max_theta, math.inf, -math.inf,
+                         _ITP_K1, _ITP_K2, _ITP_N0, _MLE_THETA_EPS)
+            max_diff = 0.0
+            for i in range(n):
+                newp = probs[i] / (1.0 + theta * phi[i])
+                max_diff = max(max_diff, abs(newp - p[i]))
+                p[i] = newp
+            if max_diff < _MLE_CONVERGE_EPS:
+                break
+        return p
+
+    p0 = mle(0.5, t0)
+    p1 = mle(0.5, t1)
+    return total * sum((math.log(p1[i]) - math.log(p0[i])) * probs[i] for i in range(n))
+
+
+def _gllr_logistic(total, scores, probs, s0, s1):
+    """Logistic-model generalized LLR over discrete bins (Van den Bergh,
+    "Comparing the approximations ..."); port of fastchess SPRT::getLLR_logistic.
+
+    Fits the ML bin distribution with the prescribed per-pair score under each
+    hypothesis, then returns total * E[log p1/p0]."""
+    n = len(scores)
+
+    def mle(s):
+        def g(x):
+            return sum(probs[i] * (scores[i] - s) / (1.0 + x * (scores[i] - s)) for i in range(n))
+
+        theta = _itp(g, -1.0 / (scores[n - 1] - s), -1.0 / (scores[0] - s),
+                     math.inf, -math.inf, _ITP_K1, _ITP_K2, _ITP_N0,
+                     _MLE_LOGISTIC_THETA_EPS)
+        return [probs[i] / (1.0 + theta * (scores[i] - s)) for i in range(n)]
+
+    p0 = mle(s0)
+    p1 = mle(s1)
+    return total * sum((math.log(p1[i]) - math.log(p0[i])) * probs[i] for i in range(n))
+
+
+def _lelo_to_score(lelo):
+    """Logistic Elo -> per-game expected score (fastchess SPRT::leloToScore)."""
+    return 1.0 / (1.0 + 10.0 ** (-lelo / 400.0))
 
 
 def compute_sprt(
@@ -1028,31 +1134,23 @@ def compute_sprt(
     engine_a: str,
     engine_b: str,
 ) -> SprtResult:
-    """Compute SPRT LLR + decision over the games in ``pgn_path``.
+    """Compute the pentanomial SPRT LLR + decision over ``pgn_path``.
 
     ``engine_a`` / ``engine_b`` are the candidate and baseline names from
     the tournament config (engine[0] / engine[1] in creation order).
     Required: under concurrency the PGN's first-completed game is not a
     reliable indicator of which engine is the candidate.
 
-    ``params`` keys:
-      - ``elo0``  (float, required)
-      - ``elo1``  (float, required)
-      - ``alpha`` (float, default 0.05)
-      - ``beta``  (float, default 0.05)
-      - ``model`` (str,  default "normalized"; also accepts "pentanomial"
-        as an alias, and "logistic" for the trinomial W/D/L model)
+    ``params`` keys: ``elo0``/``elo1`` (logistic Elo, required), ``alpha``/
+    ``beta`` (default 0.05), ``model`` ("normalized" default; "logistic" for
+    the per-game-score model -- matched to whatever fastchess ran so the LLR
+    agrees). "pentanomial" is an accepted alias for "normalized".
     """
     elo0 = float(params["elo0"])
     elo1 = float(params["elo1"])
     alpha = float(params.get("alpha", 0.05))
     beta = float(params.get("beta", 0.05))
-    model = params.get("model", "normalized")
-    # "pentanomial" is the UI-facing name; "normalized" is the internal alias.
-    if model == "pentanomial":
-        model = "normalized"
-    if model not in _SUPPORTED_SPRT_MODELS:
-        raise NotImplementedError(f"SPRT model {model!r} not implemented")
+    model = params.get("model") or "normalized"
     if elo0 >= elo1:
         raise ValueError(f"SPRT requires elo0 < elo1; got elo0={elo0}, elo1={elo1}")
     if not 0.0 < alpha < 1.0:
@@ -1061,186 +1159,37 @@ def compute_sprt(
         raise ValueError(f"SPRT beta must be in (0, 1); got {beta}")
 
     lower, upper = _sprt_bounds(alpha, beta)
-
-    if model == "logistic":
-        return _compute_sprt_logistic(
-            pgn_path,
-            elo0=elo0, elo1=elo1, lower=lower, upper=upper,
-            engine_a=engine_a, engine_b=engine_b,
-        )
-
     pairs = _iter_pairs(pgn_path, engine_a=engine_a, engine_b=engine_b)
     n = len(pairs)
-
-    # Per-pair score in [0, 1]: pair_total / 2.
     if n == 0:
         return SprtResult(
-            llr=0.0,
-            lower_bound=lower,
-            upper_bound=upper,
-            status=SPRT_CONTINUE,
-            pairs=0,
-            elo0=elo0,
-            elo1=elo1,
-            model=model,
+            llr=0.0, lower_bound=lower, upper_bound=upper,
+            status=SPRT_CONTINUE, pairs=0, elo0=elo0, elo1=elo1,
         )
 
-    scores = [s / 2.0 for _, _, s in pairs]
-    mu = sum(scores) / n
+    # Pentanomial bins LL/LD/(WL+DD)/WD/WW. Pair score s is an exact multiple
+    # of 0.5 (sum of two game scores in {0, 0.5, 1}), so s/0.5 is an exact
+    # integer 0..4; round() just casts it. WL and DD both score 1.0 -> bin 2.
+    counts = [0, 0, 0, 0, 0]
+    for _a, _b, s in pairs:
+        counts[round(s / 0.5)] += 1
+    reg = [c if c != 0 else _PENTA_REGULARIZE for c in counts]
+    total = sum(reg)
+    probs = [c / total for c in reg]
 
-    if n < 2:
-        # Variance ill-defined; emit LLR=0 and keep playing.
-        return SprtResult(
-            llr=0.0,
-            lower_bound=lower,
-            upper_bound=upper,
-            status=SPRT_CONTINUE,
-            pairs=n,
-            elo0=elo0,
-            elo1=elo1,
-            model=model,
-        )
-
-    # Pentanomial variance: sample variance of per-pair score around μ.
-    var = sum((s - mu) ** 2 for s in scores) / (n - 1)
-    if var <= 0.0:
-        # All pairs scored identically -- the sample carries no spread
-        # and so no information about the hypothesis. Returning a
-        # variance-floored LLR would invent significance; treat as the
-        # n<2 case instead.
-        return SprtResult(
-            llr=0.0,
-            lower_bound=lower,
-            upper_bound=upper,
-            status=SPRT_CONTINUE,
-            pairs=n,
-            elo0=elo0,
-            elo1=elo1,
-            model=model,
-        )
-
-    # Logistic-Elo per-game score offset: dscore ~= elo * ln(10) / 1600
-    # (linearization of 1/(1+10^(-elo/400)) at score=0.5). Same offset
-    # applies in per-pair score units, since mu is already per-game.
-    def elo_to_score(elo: float) -> float:
-        return 0.5 + elo * math.log(10.0) / 1600.0
-
-    s0 = elo_to_score(elo0)
-    s1 = elo_to_score(elo1)
-
-    # Gaussian LLR with variance estimated from the sample (conventional
-    # SPRT shortcut, not a strict Wald test):
-    #   LLR = n * (s1 - s0) * (mu - (s0 + s1)/2) / var
-    llr = n * (s1 - s0) * (mu - (s0 + s1) / 2.0) / var
-
-    if llr >= upper:
-        status = SPRT_H1
-    elif llr <= lower:
-        status = SPRT_H0
+    if model == "logistic":
+        llr = _gllr_logistic(
+            total, _PENTA_SCORES, probs, _lelo_to_score(elo0), _lelo_to_score(elo1))
     else:
-        status = SPRT_CONTINUE
+        # Normalized t-statistic from logistic Elo (penta uses the sqrt(2) factor).
+        t0 = math.sqrt(2.0) * elo0 / _NELO_DIVISOR
+        t1 = math.sqrt(2.0) * elo1 / _NELO_DIVISOR
+        llr = _gllr_normalized(total, _PENTA_SCORES, probs, t0, t1)
 
-    return SprtResult(
-        llr=llr,
-        lower_bound=lower,
-        upper_bound=upper,
-        status=status,
-        pairs=n,
-        elo0=elo0,
-        elo1=elo1,
-        model=model,
-    )
+    # A non-finite LLR (degenerate fit) carries no decision -- treat as continue.
+    if not math.isfinite(llr):
+        llr = 0.0
 
-
-# ---------------------------------------------------------------------------
-# Logistic SPRT (per-game W/D/L trinomial)
-#
-# Standard cutechess-cli style: per-game LLR with a trinomial model
-# parameterized by the observed draw rate. For hypothesis Hk:
-#     score_k = 1 / (1 + 10^(-elo_k/400))
-#     Pw_k    = score_k - d_obs/2
-#     Pl_k    = 1 - score_k - d_obs/2
-#     Pd_k    = d_obs
-# LLR = w*log(Pw1/Pw0) + l*log(Pl1/Pl0)   (draw term cancels: Pd1 == Pd0)
-#
-# If either Pw_k or Pl_k is non-positive (extreme elo bounds vs observed
-# draw rate), the trinomial is degenerate and the sample carries no
-# usable information; emit LLR=0 / continue, matching the pentanomial
-# zero-variance handling.
-# ---------------------------------------------------------------------------
-
-
-def _compute_sprt_logistic(
-    pgn_path: Path,
-    *,
-    elo0: float,
-    elo1: float,
-    lower: float,
-    upper: float,
-    engine_a: str,
-    engine_b: str,
-) -> SprtResult:
-    """Compute logistic-model SPRT over individual W/D/L games.
-
-    Game count (not pair count) is what's reported in ``pairs`` here -- the
-    field is reused so the UI doesn't need a model-specific branch. The
-    label "pairs" remains accurate for the pentanomial/normalized path; for
-    logistic it counts decided games, which is the appropriate analogue.
-
-    ``engine_a`` / ``engine_b`` identify the candidate and baseline from
-    tournament config; same reasoning as ``compute_sprt``.
-    """
-    games = list(_iter_games(pgn_path))
-    if not games:
-        return SprtResult(
-            llr=0.0, lower_bound=lower, upper_bound=upper,
-            status=SPRT_CONTINUE, pairs=0,
-            elo0=elo0, elo1=elo1, model="logistic",
-        )
-
-    a_name, b_name = engine_a, engine_b
-    wins = losses = draws = 0
-    for white, black, result in games:
-        if {white, black} != {a_name, b_name}:
-            log.warning(
-                "SPRT %s: game skipped (engines %s vs %s, expected %s vs %s)",
-                pgn_path.name, white, black, a_name, b_name,
-            )
-            continue
-        if result == _WHITE_WIN:
-            if white == a_name:
-                wins += 1
-            else:
-                losses += 1
-        elif result == _BLACK_WIN:
-            if black == a_name:
-                wins += 1
-            else:
-                losses += 1
-        else:
-            draws += 1
-
-    n = wins + losses + draws
-    if n == 0:
-        return SprtResult(
-            llr=0.0, lower_bound=lower, upper_bound=upper,
-            status=SPRT_CONTINUE, pairs=0,
-            elo0=elo0, elo1=elo1, model="logistic",
-        )
-
-    d_obs = draws / n
-    s0 = 1.0 / (1.0 + math.pow(10.0, -elo0 / 400.0))
-    s1 = 1.0 / (1.0 + math.pow(10.0, -elo1 / 400.0))
-    pw0, pl0 = s0 - d_obs / 2.0, 1.0 - s0 - d_obs / 2.0
-    pw1, pl1 = s1 - d_obs / 2.0, 1.0 - s1 - d_obs / 2.0
-    if min(pw0, pl0, pw1, pl1) <= 0.0:
-        return SprtResult(
-            llr=0.0, lower_bound=lower, upper_bound=upper,
-            status=SPRT_CONTINUE, pairs=n,
-            elo0=elo0, elo1=elo1, model="logistic",
-        )
-
-    llr = wins * math.log(pw1 / pw0) + losses * math.log(pl1 / pl0)
     if llr >= upper:
         status = SPRT_H1
     elif llr <= lower:
@@ -1250,6 +1199,7 @@ def _compute_sprt_logistic(
 
     return SprtResult(
         llr=llr, lower_bound=lower, upper_bound=upper,
-        status=status, pairs=n,
-        elo0=elo0, elo1=elo1, model="logistic",
+        status=status, pairs=n, elo0=elo0, elo1=elo1,
     )
+
+

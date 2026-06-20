@@ -9,19 +9,6 @@
 import { showDialog } from "./dialogs.js";
 import { SPRT_DEFAULTS, sprtParamErrors } from "./tournament-events.js";
 
-const SPRT_MODEL_LOGISTIC = "logistic";
-const SPRT_MODEL_OPTIONS = [
-  [SPRT_DEFAULTS.model, "Pentanomial (logistic Elo)"],
-  [SPRT_MODEL_LOGISTIC, "Logistic (trinomial)"],
-];
-// Short model name (no parenthetical) for the info dialog. "pentanomial" is
-// the server-side alias for "normalized"; both map to the pentanomial label.
-// Falls back to the raw value for any unknown model.
-export function sprtModelLabel(model) {
-  const key = model === "pentanomial" ? SPRT_DEFAULTS.model : model;
-  const found = SPRT_MODEL_OPTIONS.find(([val]) => val === key);
-  return found ? found[1].replace(/\s*\(.*\)$/, "") : (model ?? "");
-}
 const PARAM_KEYS = ["elo0", "elo1", "alpha", "beta"];
 const DISABLED_TITLE = "SPRT requires exactly 2 engines.";
 const ENABLED_TITLE = "Sequential Probability Ratio Test: edit params / toggle.";
@@ -59,28 +46,12 @@ function openParamsPopup({ params }) {
         makeField(k, k.charAt(0).toUpperCase() + k.slice(1),
           params[k], k === "alpha" || k === "beta" ? 0.01 : null));
 
-      const modelRow = document.createElement("div");
-      modelRow.className = "settings-row";
-      const modelLabel = document.createElement("label");
-      modelLabel.textContent = "Model";
-      const modelSelect = document.createElement("wa-select");
-      modelSelect.size = "small";
-      modelSelect.setAttribute("distance", "4");
-      for (const [val, lbl] of SPRT_MODEL_OPTIONS) {
-        const o = document.createElement("wa-option");
-        o.value = val;
-        o.textContent = lbl;
-        modelSelect.appendChild(o);
-      }
-      modelSelect.value = params.model || SPRT_DEFAULTS.model;
-      modelRow.append(modelLabel, modelSelect);
-
       const grid = document.createElement("div");
       grid.className = "sprt-settings-grid";
-      grid.append(...fields.map((f) => f.row), modelRow);
+      grid.append(...fields.map((f) => f.row));
 
       function read() {
-        const out = { model: modelSelect.value || SPRT_DEFAULTS.model };
+        const out = {};
         for (const f of fields) out[f.el.dataset.key] = Number(f.el.value);
         return out;
       }
