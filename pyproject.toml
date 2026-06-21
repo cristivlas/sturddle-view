@@ -31,6 +31,8 @@ dev = [
     "pytest-benchmark>=5.0",
     "ruff>=0.4",
     "playwright>=1.40",
+    # Starlette >=1.3 moved its TestClient backend from httpx to httpx2.
+    "httpx2>=2.0",
 ]
 
 [project.scripts]
