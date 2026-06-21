@@ -215,8 +215,9 @@ export function renderInfoWall(el, t) {
   if (!t) { el.replaceChildren(); return; }
   const status = escapeHtml(t.status || "");
   el.style.setProperty("--iw-name-max", `${nameSizeCeiling(t.name)}px`);
+  const sprtLive = t.status === STATUS.RUNNING ? " iw-burst--sprt-live" : "";
   const sprtStamp = t.template?.sprt
-    ? `<div class="iw-burst iw-burst--sprt"><span>${SPRT_LABEL}</span></div>` : "";
+    ? `<div class="iw-burst iw-burst--sprt${sprtLive}"><span>${SPRT_LABEL}</span></div>` : "";
   el.innerHTML =
     `<div class="iw-head">` +
       `<h2 class="iw-name">${escapeHtml(t.name || "")}</h2>` +

@@ -3185,6 +3185,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   border: 2px solid var(--iw-ink);
   transform: rotate(3deg);
 }
+/* Live run: tint the SPRT lettering amber so it reads as "test in progress". */
+.iw-burst--sprt-live { color: var(--accent-line); }
 /* Stamp group: SPRT + status placards clustered hard right of the headline. */
 .iw-stamps { display: flex; align-items: center; gap: clamp(8px, 1vw, 16px); flex: 0 0 auto; }
 
