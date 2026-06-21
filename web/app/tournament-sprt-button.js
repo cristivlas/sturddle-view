@@ -74,7 +74,7 @@ function openParamsPopup({ params }) {
 // Mount the SPRT control: a toggle (on/off) + a gear that edits the params.
 // onChange(on) fires whenever the on-state changes so the host form can force
 // round-robin / drop the Rounds field. Disabled (greyed) unless 2 engines.
-export function mountSprtButton({ host, initialSprt, sprtDefaults, onChange }) {
+export function mountSprtButton({ host, initialSprt, sprtDefaults, onChange, onPersist }) {
   let on = !!initialSprt;
   let params = { ...SPRT_DEFAULTS, ...(sprtDefaults || {}),
     ...(initialSprt && typeof initialSprt === "object" ? initialSprt : {}) };
@@ -114,7 +114,11 @@ export function mountSprtButton({ host, initialSprt, sprtDefaults, onChange }) {
     popupOpen = true;
     try {
       const res = await openParamsPopup({ params });
-      params = res.params;
+      // Persist as the new default (last-used) when the params actually change.
+      if (JSON.stringify(res.params) !== JSON.stringify(params)) {
+        params = res.params;
+        onPersist?.({ ...params });
+      }
     } finally {
       popupOpen = false;
     }

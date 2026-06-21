@@ -716,6 +716,11 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
     (ctx.settings && ctx.settings.default_template) ||
     { tc: "10+0.1", rounds: 10, games_in_parallel: 1 };
 
+  // SPRT defaults live in the server store -- read them fresh here (no
+  // client-side shadow) so the popup always reflects what's persisted.
+  const sprtDefaults =
+    (await ctx.api("GET", "/api/tournament-settings").catch(() => ({}))).sprt_defaults;
+
   return showDialog({
     label,
     width: "min(660px, 94vw)",
@@ -757,8 +762,13 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
       const sprtCtl = mountSprtButton({
         host: wrap.querySelector(".nt-sprt-host"),
         initialSprt: defaults.sprt,
-        sprtDefaults: ctx.settings?.sprt_defaults,
+        sprtDefaults,
         onChange: (on) => tplCtl.applySprt(on),
+        // Write the last-used SPRT params straight to the server store (the
+        // single source of truth); the next dialog open re-reads them.
+        onPersist: (sprt_defaults) =>
+          ctx.api("PUT", "/api/tournament-settings", { sprt_defaults })
+            .catch((e) => reportError({ log: ctx.log }, "Saving SPRT defaults failed", e)),
       });
       // Reflect an SPRT template (edit flow) into the form's enable state.
       tplCtl.applySprt(sprtCtl.isOn());
