@@ -711,15 +711,16 @@ function buildInfoContent(ctx, t) {
 // Shared dialog body for both create and edit flows.
 // Returns a Promise that resolves to {name, template, engines} or null.
 async function openTournamentDialog(ctx, { label, actionLabel, initialName, initialEngines, initialTemplate, available, onSubmit }) {
+  // Read the saved defaults fresh from the server store here, not from a
+  // per-view settings cache: Arena and Studio refresh that cache differently
+  // (Studio not at all), so the shared dialog must own its source of truth.
+  // Edit passes initialTemplate (the frozen template), which still wins.
+  const saved = await ctx.api("GET", "/api/tournament-settings").catch(() => ({}));
   const defaults =
     initialTemplate ||
-    (ctx.settings && ctx.settings.default_template) ||
+    saved.default_template ||
     { tc: "10+0.1", rounds: 10, games_in_parallel: 1 };
-
-  // SPRT defaults live in the server store -- read them fresh here (no
-  // client-side shadow) so the popup always reflects what's persisted.
-  const sprtDefaults =
-    (await ctx.api("GET", "/api/tournament-settings").catch(() => ({}))).sprt_defaults;
+  const sprtDefaults = saved.sprt_defaults;
 
   return showDialog({
     label,
@@ -896,7 +897,11 @@ async function openNewTournamentDialog(ctx) {
     actionLabel: "Create",
     initialName: "",
     initialEngines: [],
-    initialTemplate: (ctx.settings && ctx.settings.default_template) || null,
+    // No initialTemplate: New has no frozen template. The dialog prefills
+    // from the saved default_template it reads fresh from the server, so the
+    // popup never depends on a per-view settings cache (Edit passes the
+    // existing tournament's frozen template, which does win).
+    initialTemplate: null,
     available,
     onSubmit: async (data) => {
       try {
