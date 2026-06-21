@@ -33,6 +33,9 @@ const AI_PROVIDER_OPTIONS = [
   ["ollama", "Ollama"],
 ];
 const KEY_BASED_PROVIDERS = new Set(["anthropic", "gemini"]);
+// Server's no-key suffix (server/sturddle_view/llm/*.py). When list_models
+// fails with this, surface it as the key-input placeholder, not the hint.
+const NO_KEY_DETAIL_SUFFIX = "API key not configured";
 
 // Provider select: drives the whole tab. Displayed value reflects
 // enabled-state (Engine only when AI is off) not just the stored LLM
@@ -109,10 +112,15 @@ function buildAiKeyRow({ initial, dialog, putSettings, onKeyCommitted }) {
     toggleIcon.setAttribute("name", shouldMask ? "eye" : "eye-slash");
   };
   toggleIcon.addEventListener("click", () => { revealed = !revealed; syncMask(); });
+  // Controller sets this when list_models fails for lack of a key, so the
+  // prompt rides the input's placeholder instead of the model hint.
+  let noKeyPrompt = "";
   const setKeyPlaceholder = () => {
     // Set on host AND shadow input: wa-input mirrors the host attr on
     // connect, but timing varies -- doing both covers every order.
-    const text = initial[AI_API_KEY_SET_KEY] ? "Saved -- enter new to replace" : "";
+    const text = initial[AI_API_KEY_SET_KEY]
+      ? "Saved -- enter new to replace"
+      : noKeyPrompt;
     if (text) input.setAttribute("placeholder", text);
     else input.removeAttribute("placeholder");
     const inner = input.shadowRoot?.querySelector("input");
@@ -144,10 +152,11 @@ function buildAiKeyRow({ initial, dialog, putSettings, onKeyCommitted }) {
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") commit(); });
   // Esc/X close can fire before blur -- flush any pending edit.
   dialog.addEventListener("wa-hide", commit);
+  const setNoKeyPrompt = (text) => { noKeyPrompt = text || ""; setKeyPlaceholder(); };
   syncMask();
   input.append(toggleIcon);
   row.append(label, input);
-  return { row, input, setKeyPlaceholder, syncMask };
+  return { row, input, setKeyPlaceholder, setNoKeyPrompt, syncMask };
 }
 
 // Base-URL row (Ollama). Persists on a debounced input then re-fetches
@@ -433,6 +442,7 @@ export function buildAnalysisTab({ api, initial, dialog, noEngine, engineList, a
       if (mySeq !== _modelsFetchSeq) return;  // raced
       const models = (r && r.models) || [];
       aiModelThinking = (r && r.thinking) || {};
+      aiKey.setNoKeyPrompt("");
       if (!models.length) {
         showModelInput("Provider returned no models -- enter one manually.");
       } else {
@@ -441,7 +451,16 @@ export function buildAnalysisTab({ api, initial, dialog, noEngine, engineList, a
     } catch (e) {
       if (mySeq !== _modelsFetchSeq) return;
       aiModelThinking = {};
-      showModelInput(apiErrorDetail(e) || "Provider unavailable");
+      const detail = apiErrorDetail(e) || "Provider unavailable";
+      // No-key failures surface on the key input's placeholder; the model
+      // hint stays blank so the same info isn't shown twice.
+      if (detail.endsWith(NO_KEY_DETAIL_SUFFIX)) {
+        aiKey.setNoKeyPrompt(NO_KEY_DETAIL_SUFFIX);
+        showModelInput("");
+      } else {
+        aiKey.setNoKeyPrompt("");
+        showModelInput(detail);
+      }
     }
   }
 
