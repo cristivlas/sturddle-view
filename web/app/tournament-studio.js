@@ -12,13 +12,14 @@ import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, loadRaw, saveJson, saveRaw } from "./storage.js";
 import { progressBarHtml, progressLabelHtml, sprtBadgeHtml, statusBadgeHtml, totalGames } from "./tournament-row.js";
-import { attachColumnSort } from "./col-sort.js";
+import { SORT_DIR } from "./col-sort.js";
+import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
-import { reportError } from "./dialogs.js";
+import { reportError, toast } from "./dialogs.js";
 import { copyRowsAsLines, debounce, escapeHtml, selectContentsOnCtrlA } from "./wb-utils.js";
-import { EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
+import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { newTournamentCta, tournamentActions } from "./tournaments.js";
-import { SIDE } from "./chess-consts.js";
+import { RESULT, SIDE } from "./chess-consts.js";
 import { addLogEntry, applyEventKind, createLiveState, seedFromDetail } from "./tournament-live-state.js";
 import { closeAllLiveGames, getLiveWindows, isLiveWindowOpen, LIVE_MIN_HEIGHT, LIVE_MIN_WIDTH, openFrozenGameWindow, openLiveGameWindow, replayTournamentGame } from "./tournament-live-game.js";
 import { makeStandingsBody, renderStandings } from "./tournament-standings.js";
@@ -56,12 +57,12 @@ const BOARD_RESIZE_DEBOUNCE_MS = 120;
 // Default active tab per bottom group (first tab) when none is remembered.
 const STUDIO_TAB_DEFAULT_LEFT = "livegames";
 const STUDIO_TAB_DEFAULT_RIGHT = "tourneys";
-// Tourney table default column widths (Status, Created, Name, Games) + resize floor.
+// Tourney table default column widths (Status, Created, Name, Completed) + resize floor.
 const STUDIO_TOURNEY_DEFAULT_PCTS = [12, 22, 16, 50];
 const STUDIO_TOURNEY_MIN_PCT = 10;
-// History table default column widths (#, White, Black, Result) + resize floor.
-const STUDIO_HISTORY_DEFAULT_PCTS = [12, 34, 34, 20];
-const STUDIO_HISTORY_MIN_PCT = 8;
+// History table default column widths (#, White, Black, Result, Opening) + resize floor.
+const STUDIO_HISTORY_DEFAULT_PCTS = [5, 20, 20, 15, 40];
+const STUDIO_HISTORY_MIN_PCT = 5;
 
 export const TOURNAMENT_UX = Object.freeze({ ARENA: "arena", STUDIO: "studio" });
 
@@ -233,29 +234,25 @@ function selectedTournament(ctx) {
   return ctx.tournaments.find((t) => t.id === ctx.selectedId) || null;
 }
 
-// Sort the list by the active column (Status or Name); created_at breaks ties
-// so order is stable. No active sort keeps the server order.
+// Tourney table columns: one descriptor list drives the sort cycle (firstDir)
+// and the stack sorter (field / tiebreak). Games is display-only; created reads
+// created_at, which also breaks ties so order is stable.
+const TOURNEY_SORT_COLS = [
+  { key: "status", firstDir: SORT_DIR.ASC },
+  { key: "created", firstDir: SORT_DIR.DESC, field: "created_at", tiebreak: true },
+  { key: "name", firstDir: SORT_DIR.ASC },
+  { key: "games", sortable: false },
+];
+
+// Sort the list by the MRU sort stack; an empty stack keeps the server order.
 function sortedStudioTourneys(ctx) {
   const arr = ctx.tournaments.slice();
-  const s = ctx.tourneySort;
-  if (!s) return arr;
-  const dir = s.dir === "asc" ? 1 : -1;
-  const tie = (a, b) => (a.created_at || "").localeCompare(b.created_at || "");
-  arr.sort((a, b) => {
-    if (s.key === "name") {
-      return dir * (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" }) || tie(a, b);
-    }
-    if (s.key === "created") {
-      return dir * (a.created_at || "").localeCompare(b.created_at || "") || tie(a, b);
-    }
-    const av = a.status || "", bv = b.status || "";
-    return av !== bv ? dir * av.localeCompare(bv) : tie(a, b);
-  });
+  sortByStack(arr, ctx.tourneyStack(), TOURNEY_SORT_COLS);
   return arr;
 }
 
 // Build the tourney table once: a sticky sortable header + a tbody the row
-// renderer fills. Sort cycling/arrows/persistence come from attachColumnSort.
+// renderer fills. Layered MRU sort + arrows/persistence come from attachLayeredSort.
 function buildTourneyTable(ctx) {
   const pane = ctx.tourneysPaneEl;
   if (!pane) return;
@@ -265,26 +262,19 @@ function buildTourneyTable(ctx) {
   table.className = "wb-table studio-tourney-tbl";
   table.innerHTML = `<colgroup><col><col><col><col></colgroup>
     <thead><tr>
-      <th data-col="status">Status<span class="th-grip"></span></th>
-      <th data-col="created">Created<span class="th-grip"></span></th>
-      <th data-col="name">Name<span class="th-grip"></span></th>
-      <th class="studio-tourney-games-col">Games</th>
+      <th>Status<span class="th-grip"></span></th>
+      <th>Created<span class="th-grip"></span></th>
+      <th>Name<span class="th-grip"></span></th>
+      <th class="studio-tourney-games-col">Completed</th>
     </tr></thead><tbody></tbody>`;
   wrap.appendChild(table);
   pane.replaceChildren(wrap);
   ctx.tourneyTbody = table.querySelector("tbody");
-  const sortCtrl = attachColumnSort({
-    table,
-    columns: [
-      { key: "status", firstDir: "asc" },
-      { key: "created", firstDir: "desc" },
-      { key: "name", firstDir: "asc" },
-      { key: "games", sortable: false },
-    ],
-    storageKey: STORAGE_KEY.STUDIO_TOURNEY_SORT,
-    onSort: (state) => { ctx.tourneySort = state; renderTourneys(ctx); },
-  });
-  ctx.tourneySort = sortCtrl.current();
+  ctx.tourneyStack = attachLayeredSort({
+    table, columns: TOURNEY_SORT_COLS,
+    sortKey: STORAGE_KEY.STUDIO_TOURNEY_SORT, stackKey: STORAGE_KEY.STUDIO_TOURNEY_STACK,
+    onChange: () => renderTourneys(ctx),
+  }).get;
   const colEls = Array.from(table.querySelectorAll("col"));
   attachColumnResize({
     table,
@@ -489,6 +479,19 @@ function stopLive(ctx) {
   renderLivePanes(ctx);
 }
 
+// Always-on (selection-independent) crash surfacing: a tournament can fail
+// while the user is inspecting a different one, so this fires from the list
+// subscriber, not the per-live-session handler.
+function toastRunnerCrash(ctx, evt) {
+  if (evt.payload?.kind !== KIND.RUNNER_CRASH) return;
+  const tid = evt.payload?.tournament_id;
+  const t = ctx.tournaments.find((x) => x.id === tid);
+  const name = t ? t.name : "Tournament";
+  toast(`${name} failed: ${crashErrorLine(evt.payload)}`, {
+    variant: "danger", duration: CRASH_TOAST_DURATION_MS,
+  });
+}
+
 // Maintain the live maps from the WS stream; coalesce pane repaints and keep
 // standings fresh (re-fetch on game/status changes).
 function livePushEvent(ctx, evt) {
@@ -510,12 +513,35 @@ function livePushEvent(ctx, evt) {
 }
 
 function renderStandingsPane(ctx) {
-  if (ctx.standingsBodyEl) renderStandings(ctx.standingsBodyEl, ctx.selDetail);
+  if (ctx.standingsBodyEl) renderStandings(ctx.standingsBodyEl, ctx.selDetail, true);
   // H2H and History share standings' data (selDetail) + cadence; repaint
   // them from the same sites.
   if (ctx.h2hBodyEl) renderH2H(ctx.h2hBodyEl, ctx.selDetail);
   renderHistory(ctx);
 }
+
+// History game-record field keys: the single source for column keys, row
+// properties, and the comparator `field`. white/black reuse SIDE; num is the
+// synthetic 1-based game order.
+const HK = Object.freeze({ NUM: "num", RESULT: "result", OPENING: "opening" });
+
+// Result sorts by meaning, not text: White win -> draw -> Black win, with
+// unfinished/unknown last (ascending); num breaks ties.
+const RESULT_RANK = Object.freeze({
+  [RESULT.WHITE_WIN]: 0,
+  [RESULT.DRAW]: 1,
+  [RESULT.BLACK_WIN]: 2,
+});
+
+// History table columns: num is the numeric game order and the stable
+// tiebreak; white/black/opening sort as text, result by RESULT_RANK.
+const HISTORY_SORT_COLS = [
+  { key: HK.NUM, firstDir: SORT_DIR.ASC, numeric: true, tiebreak: true },
+  { key: SIDE.WHITE, firstDir: SORT_DIR.ASC },
+  { key: SIDE.BLACK, firstDir: SORT_DIR.ASC },
+  { key: HK.RESULT, firstDir: SORT_DIR.ASC, rank: RESULT_RANK },
+  { key: HK.OPENING, firstDir: SORT_DIR.ASC },
+];
 
 // Build the History table once: sticky sortable header + a tbody the row
 // renderer fills (mirrors buildTourneyTable). Result is the last column so it
@@ -527,37 +553,22 @@ function buildHistoryTable(ctx) {
   wrap.className = "studio-history-wrap";
   const table = document.createElement("table");
   table.className = "wb-table studio-history-tbl";
-  table.innerHTML = `<colgroup><col><col><col><col></colgroup>
+  table.innerHTML = `<colgroup><col><col><col><col><col></colgroup>
     <thead><tr>
-      <th data-col="num">#<span class="th-grip"></span></th>
-      <th data-col="white">White<span class="th-grip"></span></th>
-      <th data-col="black">Black<span class="th-grip"></span></th>
-      <th data-col="result">Result</th>
+      <th>#<span class="th-grip"></span></th>
+      <th>White<span class="th-grip"></span></th>
+      <th>Black<span class="th-grip"></span></th>
+      <th>Result<span class="th-grip"></span></th>
+      <th>Opening</th>
     </tr></thead><tbody></tbody>`;
   wrap.appendChild(table);
   pane.replaceChildren(wrap);
   ctx.historyTbody = table.querySelector("tbody");
-  const sortCtrl = attachColumnSort({
-    table,
-    columns: [
-      { key: "num", firstDir: "asc" },
-      { key: "white", firstDir: "asc" },
-      { key: "black", firstDir: "asc" },
-      { key: "result", firstDir: "asc" },
-    ],
-    storageKey: STORAGE_KEY.STUDIO_HISTORY_SORT,
-    onSort: (state) => {
-      ctx.historyStack = promoteSort(ctx.historyStack, state);
-      saveJson(STORAGE_KEY.STUDIO_HISTORY_STACK, ctx.historyStack);
-      renderHistory(ctx);
-    },
-  });
-  // Restore the full sort stack (col-sort persists only its top entry, which
-  // drives the header arrow); fall back to that single entry if absent.
-  const savedStack = loadJson(STORAGE_KEY.STUDIO_HISTORY_STACK);
-  const cur = sortCtrl.current();
-  ctx.historyStack = Array.isArray(savedStack) && savedStack.length
-    ? savedStack : (cur ? [{ key: cur.key, dir: cur.dir }] : []);
+  ctx.historyStack = attachLayeredSort({
+    table, columns: HISTORY_SORT_COLS,
+    sortKey: STORAGE_KEY.STUDIO_HISTORY_SORT, stackKey: STORAGE_KEY.STUDIO_HISTORY_STACK,
+    onChange: () => renderHistory(ctx),
+  }).get;
   const colEls = Array.from(table.querySelectorAll("col"));
   attachColumnResize({
     table,
@@ -567,34 +578,6 @@ function buildHistoryTable(ctx) {
     sizes: STUDIO_HISTORY_DEFAULT_PCTS.slice(),
     unit: "pct",
     applySizes: makePctApplySizes(colEls, STUDIO_HISTORY_MIN_PCT),
-  });
-}
-
-// MRU stack of {key, dir}, most-recent first. Each header click promotes its
-// column to the front (with the new dir), so every earlier sort survives as a
-// deeper tiebreak. A null state (col-sort's 3rd click) clears the stack ->
-// play order.
-function promoteSort(stack, state) {
-  if (!state) return [];
-  const s = { key: state.key, dir: state.dir };
-  return [s, ...stack.filter((e) => e.key !== s.key)];
-}
-
-// Signed compare for one sort state (0 when equal); num is numeric, the rest
-// are case-insensitive strings.
-function cmpHistory(a, b, s) {
-  const dir = s.dir === "desc" ? -1 : 1;
-  if (s.key === "num") return dir * (a.num - b.num);
-  return dir * (a[s.key] || "").localeCompare(b[s.key] || "", undefined, { sensitivity: "base" });
-}
-
-// Stable in-place sort: walk the MRU stack, first differing column wins; game
-// number is the final tiebreak. Empty stack = PGN/play order (natural order).
-function sortHistoryRows(rows, stack) {
-  if (!stack.length) return;
-  rows.sort((a, b) => {
-    for (const s of stack) { const c = cmpHistory(a, b, s); if (c) return c; }
-    return a.num - b.num;
   });
 }
 
@@ -608,7 +591,8 @@ function historyRow(ctx, tid, r) {
     `<td class="studio-history-num">${r.num}</td>` +
     `<td title="${escapeHtml(r.white)}">${escapeHtml(r.white)}</td>` +
     `<td title="${escapeHtml(r.black)}">${escapeHtml(r.black)}</td>` +
-    `<td class="studio-history-result">${escapeHtml(r.result)}</td>`;
+    `<td class="studio-history-result">${escapeHtml(r.result)}</td>` +
+    `<td title="${escapeHtml(r.opening)}">${escapeHtml(r.opening)}</td>`;
   const open = () => replayTournamentGame({ tournamentId: tid, gameN: r.num, token: ctx.token })
     .catch((e) => reportError({ log: ctx.log }, REVIEW_FAIL_MSG, e));
   tr.addEventListener("click", open);
@@ -630,8 +614,11 @@ function renderHistory(ctx) {
     tb.replaceChildren();
     return;
   }
-  const rows = games.map((g, i) => ({ num: i + 1, white: g.white, black: g.black, result: g.result }));
-  sortHistoryRows(rows, ctx.historyStack);
+  const rows = games.map((g, i) => ({
+    [HK.NUM]: i + 1, [SIDE.WHITE]: g.white, [SIDE.BLACK]: g.black,
+    [HK.RESULT]: g.result, [HK.OPENING]: g.opening || "",
+  }));
+  sortByStack(rows, ctx.historyStack(), HISTORY_SORT_COLS);
   tb.replaceChildren(...rows.map((r) => historyRow(ctx, tid, r)));
 }
 
@@ -1110,8 +1097,9 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
     // Tourneys data + selection (selection restored from last session).
     tournaments: [], activeId: null, listGen: 0,
     selectedId: loadRaw(STORAGE_KEY.STUDIO_SELECTED_ID),
-    tourneyTbody: null, tourneySort: null,
-    historyTbody: null, historyStack: [],
+    // Sort stacks are getter fns assigned by build{Tourney,History}Table.
+    tourneyTbody: null, tourneyStack: null,
+    historyTbody: null, historyStack: null,
     // Live runner store for the running tourney (null unless it's selected).
     live: null, liveTid: null, liveUnsub: null, liveGen: 0, _panesPending: false,
     // Resolves when a running tourney's boards finish restoring (gates reveal).
@@ -1174,7 +1162,7 @@ export function mountTournamentStudio({ container, api, events, log, token }) {
 
   // Reload the list on any tournament event (coalesced); initial load now.
   ctx.reload = debounce(() => studioLoadList(ctx), LIST_RELOAD_DEBOUNCE_MS);
-  ctx.offEvents = ctx.events.on(ctx.reload);
+  ctx.offEvents = ctx.events.on((evt) => { toastRunnerCrash(ctx, evt); ctx.reload(); });
 
   // `ready` gates the router's reveal until built: first list load (table +
   // wall), then any restored boards drawn (boardsRestored), then a flushed

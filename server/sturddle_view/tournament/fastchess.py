@@ -21,6 +21,7 @@ from collections import deque
 
 from .._runtime import proxy_argv_prefix
 from .._win_job import assign_to_job, close_job, create_job, spawn_in_job
+from .rescheck import ALLOW_OVERSUBSCRIBE_KEY
 from .runner import EventCallback, RunSpec
 
 
@@ -36,9 +37,17 @@ _LOG_FILTER = re.compile(
 )
 
 
-def _sprt_model(model: str) -> str:
-    """Map UI model name to fastchess CLI model name."""
-    return "normalized" if model == "pentanomial" else model
+# SPRT models. New tournaments default to normalized pentanomial (the UI no
+# longer exposes a choice); a legacy template may carry "logistic", which we
+# honor so fastchess and our LLR recompute use the same model and agree.
+_SPRT_MODEL_DEFAULT = "normalized"
+_SPRT_MODEL_LOGISTIC = "logistic"
+
+
+def _sprt_model(model) -> str:
+    """fastchess CLI model name. Only logistic is honored as an override;
+    anything else (incl. the "pentanomial" alias / unset) -> normalized."""
+    return _SPRT_MODEL_LOGISTIC if model == _SPRT_MODEL_LOGISTIC else _SPRT_MODEL_DEFAULT
 
 
 def _quote_arg(arg: str) -> str:
@@ -62,6 +71,9 @@ def _quote_arg(arg: str) -> str:
 # built-in book so it doesn't override/double the shared openings.
 _OWNBOOK_OFF = "option.OwnBook=false"
 
+# Restart each engine process between games (fastchess restart=on).
+_RESTART_ON = "restart=on"
+
 
 log = logging.getLogger(__name__)
 
@@ -77,7 +89,8 @@ def build_command(spec: RunSpec) -> list[str]:
       - seeds             : int  (gauntlet)
       - rounds            : int
       - games_per_round   : int  (default 2)
-      - sprt              : dict {elo0, elo1, alpha, beta, model}
+      - sprt              : dict {elo0, elo1, alpha, beta, model?}; model
+                            defaults to normalized, legacy "logistic" honored
       - resign            : dict {movecount, score}
       - draw              : dict {movenumber, movecount, score}
 
@@ -181,6 +194,8 @@ def build_command(spec: RunSpec) -> list[str]:
         each.append(f"option.SyzygyPath={spec.engine_default_syzygy_path}")
     if spec.engine_default_book_path:
         each.append(_OWNBOOK_OFF)
+    if t.get("restart_engines"):
+        each.append(_RESTART_ON)
     if each:
         cmd.append("-each")
         cmd.extend(each)
@@ -191,7 +206,7 @@ def build_command(spec: RunSpec) -> list[str]:
     # Without this, fastchess refuses concurrency > logical CPUs. Our
     # own rescheck has already either passed or warned the user; the
     # flag tells fastchess to honor the same intent.
-    if t.get("allow_oversubscribe"):
+    if t.get(ALLOW_OVERSUBSCRIBE_KEY):
         cmd.append("-force-concurrency")
     if t.get("pin_affinity"):
         cmd.append("-use-affinity")
@@ -235,7 +250,8 @@ def build_command(spec: RunSpec) -> list[str]:
             opening.append(f"order={spec.engine_default_book_order}")
         cmd.extend(opening)
 
-    # SPRT
+    # SPRT -- honor the template's model (normalized default) so fastchess and
+    # our LLR recompute agree. New tournaments are always normalized.
     if "sprt" in t and t["sprt"]:
         s = t["sprt"]
         cmd.extend([
@@ -244,7 +260,7 @@ def build_command(spec: RunSpec) -> list[str]:
             f"elo1={s['elo1']}",
             f"alpha={s.get('alpha', 0.05)}",
             f"beta={s.get('beta', 0.05)}",
-            f"model={_sprt_model(s.get('model', 'normalized'))}",
+            f"model={_sprt_model(s.get('model'))}",
         ])
 
     # Adjudication

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -28,22 +29,26 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from ..auth import AUTH_COOKIE, check_token_value, origin_ok, require_token
+from ..env_utils import env_bool
 from ..engines import InvalidLaunchProfileError, validate_launch_profile
 from ..events import ENVELOPE_KIND, ENVELOPE_PAYLOAD
 from ..tournament.fastchess import FastchessRunner
 from ..tournament.orchestrator import Orchestrator, TournamentBusyError, wrap_event_for_bus
-from ..tournament.rescheck import RescheckError, check as rescheck_run
+from ..tournament.rescheck import ALLOW_OVERSUBSCRIBE_KEY, RescheckError, check as rescheck_run
 from ..tournament.uci_parse import parse_uci_line
 from ..tournament.pgn_stats import (
+    SPRT_CONTINUE,
+    SPRT_H0,
+    SPRT_H1,
     compute_games_list,
     compute_sprt,
     compute_standings,
-    count_partial_pairs,
     read_game_record,
 )
 from ..tournament.store import (
     CorruptStateError,
     DuplicateNameError,
+    STATUS_DONE,
     STATUS_FAILED,
     STATUS_STOPPED,
     TournamentNotFoundError,
@@ -102,7 +107,39 @@ class EngineRef(BaseModel):
         return v
 
 
-_SPRT_DEFAULTS = {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05, "model": "normalized"}
+_SPRT_DEFAULTS = {"elo0": 0, "elo1": 10, "alpha": 0.05, "beta": 0.05}
+
+# LLR distance from a bound within which a STOPPED SPRT's verdict snaps to that
+# bound. A manual stop can land near a bound just as it would conclude; far from
+# both, it stays "continue" (a genuine mid-run abort). DONE needs no tolerance.
+_SPRT_CONCLUDE_TOL = float(os.environ.get("SV_SPRT_CONCLUDE_TOL", "0.05"))
+
+
+def _snap_terminal_sprt_verdict(sprt: dict, status: str) -> dict:
+    """Reconcile our independently recomputed LLR with how the tournament ended.
+
+    fastchess and our recompute drift slightly, so a concluded run can leave our
+    LLR short of the bound. A SPRT tournament reaching DONE *always* concluded
+    (fastchess only finishes a SPRT match on an accepted hypothesis), so snap to
+    the nearer bound unconditionally. A STOPPED run may be a mid-run abort, so
+    only snap when the LLR is within ``_SPRT_CONCLUDE_TOL`` of a bound.
+
+    INVARIANT: DONE => concluded relies on SPRT running with ``-rounds 0`` (see
+    fastchess.build_command), so a SPRT match never finishes by exhausting a
+    round cap. If a games cap is ever added, DONE no longer implies a verdict
+    and this midpoint snap would manufacture one."""
+    if sprt.get("status") != SPRT_CONTINUE:
+        return sprt
+    llr = sprt["llr"]
+    if status == STATUS_DONE:
+        midpoint = (sprt["lower_bound"] + sprt["upper_bound"]) / 2.0
+        sprt["status"] = SPRT_H1 if llr >= midpoint else SPRT_H0
+    elif status == STATUS_STOPPED:
+        if llr >= sprt["upper_bound"] - _SPRT_CONCLUDE_TOL:
+            sprt["status"] = SPRT_H1
+        elif llr <= sprt["lower_bound"] + _SPRT_CONCLUDE_TOL:
+            sprt["status"] = SPRT_H0
+    return sprt
 
 # Engine-default keys frozen into a tournament at create/edit time.
 # Mirrors `Settings.engine_default_<key>` fields. Snapshotting all of
@@ -132,6 +169,22 @@ _WIPE_REQUIRED_DETAIL = {
     "reason": _WIPE_REQUIRED_REASON,
     "message": _WIPE_REQUIRED_MESSAGE,
 }
+
+
+# Oversubscribe is no longer a UI toggle; this env var (off by default) is
+# the only way to opt in. OR'd into the template so the existing rescheck /
+# build_command paths keying off ``allow_oversubscribe`` are unchanged.
+ALLOW_OVERSUBSCRIBE_ENV = "SV_ALLOW_OVERSUBSCRIBE"
+
+
+def _allow_oversubscribe() -> bool:
+    return env_bool(ALLOW_OVERSUBSCRIBE_ENV, False)
+
+
+def _resolve_oversubscribe(template: dict) -> dict:
+    if _allow_oversubscribe():
+        return {**template, ALLOW_OVERSUBSCRIBE_KEY: True}
+    return template
 
 
 def _resolve_sprt(template: dict, settings) -> dict:
@@ -194,18 +247,7 @@ def _serialize(
         standings["tournament_type"] = tournament_type
         out["standings"] = standings
     if with_stats and store is not None:
-        games_per_round = (t.template or {}).get("games_per_round", 2)
-        paired = games_per_round != 1
-        try:
-            out["partial_pairs"] = count_partial_pairs(
-                store.pgn_path(t.id), paired=paired,
-            )
-        except FileNotFoundError:
-            out["partial_pairs"] = 0
-        try:
-            out["games"] = compute_games_list(store.pgn_path(t.id))
-        except FileNotFoundError:
-            out["games"] = []
+        out["games"] = compute_games_list(store.pgn_path(t.id))
         # Surface the orchestrator's currently-active proxies so the
         # workspace's Schedule can seed its rows on mount, not just from
         # forward-going `proxy_started` events. Only meaningful when this
@@ -219,13 +261,14 @@ def _serialize(
         sprt_params = (t.template or {}).get("sprt")
         if sprt_params and len(t.engines) >= 2:
             try:
-                out["sprt"] = compute_sprt(
+                sprt = compute_sprt(
                     store.pgn_path(t.id),
                     sprt_params,
                     engine_a=t.engines[0]["name"],
                     engine_b=t.engines[1]["name"],
                 ).to_dict()
-            except (NotImplementedError, KeyError, ValueError) as e:
+                out["sprt"] = _snap_terminal_sprt_verdict(sprt, t.status)
+            except (KeyError, ValueError) as e:
                 log.warning("compute_sprt failed for %s: %s", t.id, e)
                 out["sprt"] = None
     return out
@@ -261,7 +304,7 @@ def create_tournament(payload: TournamentCreate, request: Request) -> dict:
     try:
         t = s.create(
             name=name,
-            template=_resolve_sprt(payload.template, settings),
+            template=_resolve_oversubscribe(_resolve_sprt(payload.template, settings)),
             engines=[e.model_dump(exclude_none=True) for e in payload.engines],
             engine_defaults=engine_defaults,
         )
@@ -305,7 +348,7 @@ def edit_tournament(tournament_id: str, payload: TournamentUpdate, request: Requ
         t = s.update(
             tournament_id,
             name=name,
-            template=_resolve_sprt(payload.template, settings),
+            template=_resolve_oversubscribe(_resolve_sprt(payload.template, settings)),
             engines=[e.model_dump(exclude_none=True) for e in payload.engines],
             engine_defaults=engine_defaults,
         )
@@ -440,7 +483,7 @@ def rescheck_tournament(payload: RescheckRequest) -> dict:
             max_hash_mb=payload.max_hash_mb,
             ponder=payload.ponder,
             pin_affinity=payload.pin_affinity,
-            allow_oversubscribe=payload.allow_oversubscribe,
+            allow_oversubscribe=payload.allow_oversubscribe or _allow_oversubscribe(),
         )
     except RescheckError as e:
         raise HTTPException(

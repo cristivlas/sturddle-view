@@ -540,7 +540,7 @@ function applyBoardUpdate(ctx, evt) {
   }
   if (typeof evt.payload.human_white === "boolean") {
     ctx.humanWhite = evt.payload.human_white;
-    board.setSide(ctx.humanWhite ? "white" : "black");
+    board.setSide(ctx.humanWhite ? SIDE.WHITE : SIDE.BLACK);
     if (ctx.interactive) setNames(ctx, { bottom: ctx.playerName, top: ctx.engineName });
   }
   // View mode: surface the PGN's player names instead of Human/engine.

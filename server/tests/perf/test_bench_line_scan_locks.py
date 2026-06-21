@@ -1,7 +1,7 @@
 """DO NOT TOUCH lock benches for pgn_stats line-scan paths.
 
 These pin the performance of `_iter_games_keyed` and `_iter_games_uncached`
--- both still on the hot path (compute_standings, count_partial_pairs).
+-- both still on the hot path (compute_standings).
 Any PR that replaces these regex/line-scan paths with
 `chess.pgn.read_game` will regress by ~50x and fail here.
 """

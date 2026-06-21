@@ -356,6 +356,53 @@ def test_update_wipes_tournament_dir_contents(store):
     assert reloaded.status == STATUS_IDLE
 
 
+def test_wipe_forgets_pgn_stats_caches(store):
+    """A dir wipe must invalidate pgn_stats' offset-keyed games-list memo,
+    whose only invariant (append-only PGN bytes) breaks across a restart."""
+    from sturddle_view.tournament import pgn_stats
+
+    t = store.create(name="x", template={}, engines=[{"name": "A"}])
+    pgn = store.pgn_path(t.id)
+    pgn.write_text(
+        '[Event "x"]\n[White "A"]\n[Black "B"]\n[Round "1"]\n'
+        '[Result "1-0"]\n\n1. e4 e5 1-0\n\n'
+    )
+    pgn_stats.compute_games_list(pgn)
+    assert any(k[0] == pgn for k in pgn_stats._opening_memo)
+
+    store.wipe_for_restart(t.id)
+    assert not any(k[0] == pgn for k in pgn_stats._opening_memo)
+
+
+def test_wipe_forgets_caches_even_on_partial_failure(store, monkeypatch):
+    """The PGN may be deleted before a later unlink trips (AV lock), so
+    cache invalidation must run regardless -- forget() is in a finally."""
+    from pathlib import Path
+
+    from sturddle_view.tournament import pgn_stats
+
+    t = store.create(name="x", template={}, engines=[{"name": "A"}])
+    pgn = store.pgn_path(t.id)
+    pgn.write_text(
+        '[Event "x"]\n[White "A"]\n[Black "B"]\n[Round "1"]\n'
+        '[Result "1-0"]\n\n1. e4 e5 1-0\n\n'
+    )
+    pgn_stats.compute_games_list(pgn)
+    assert any(k[0] == pgn for k in pgn_stats._opening_memo)
+
+    real_unlink = Path.unlink
+
+    def _boom_unlink(self, *a, **k):
+        if self.suffix == ".pgn":
+            raise OSError("simulated AV lock")
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", _boom_unlink)
+    with pytest.raises(OSError):
+        store.wipe_for_restart(t.id)
+    assert not any(k[0] == pgn for k in pgn_stats._opening_memo)
+
+
 def test_update_keeps_tournament_listable_if_wipe_partial_fails(store, monkeypatch):
     """Vanish-window regression: if `_wipe_dir_contents` trips midway
     (AV scan, dangling handle) the tournament must still be in `list()`

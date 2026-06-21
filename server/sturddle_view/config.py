@@ -41,6 +41,12 @@ _DEFAULT_AI_MAX_RECOMMEND_FAILURES = 2
 _DEFAULT_AI_ANALYZE_MAX_DEPTH = 30
 _DEFAULT_AI_VERIFICATION_DEPTH = 25
 
+# Default time control for new games (and the idle clock placeholder before
+# any game starts). The Settings field defaults and HumanVsEngine share these
+# literals; both bind to SV_TC_INITIAL_SECONDS / SV_TC_INCREMENT_SECONDS.
+DEFAULT_TC_INITIAL_SECONDS = 300.0
+DEFAULT_TC_INCREMENT_SECONDS = 0.0
+
 
 def default_settings_file() -> Path:
     """Path to persisted user settings.
@@ -120,8 +126,8 @@ class Settings(BaseSettings):
     tls_cert: Path | None = None
     tls_key: Path | None = None
 
-    tc_initial_seconds: float = 300.0
-    tc_increment_seconds: float = 0.0
+    tc_initial_seconds: float = DEFAULT_TC_INITIAL_SECONDS
+    tc_increment_seconds: float = DEFAULT_TC_INCREMENT_SECONDS
     human_side: str = "white"
     allow_takeback: bool = True
     auto_claim_draws: bool = True

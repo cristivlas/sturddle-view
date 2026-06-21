@@ -3,7 +3,7 @@
 // makeStandingsBody builds the DOM (and wires column resize); renderStandings
 // fills it from a tournament `detail` payload.
 
-import { SPRT, STATUS, sprtVerdict } from "./tournament-events.js";
+import { SPRT, sprtVerdict } from "./tournament-events.js";
 import { MIDDOT, NO_GAMES_MSG } from "./tournament-row.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
@@ -18,7 +18,6 @@ export function makeStandingsBody() {
   el.className = "wb-standings";
   el.innerHTML = `
     <div class="wb-sprt-slot"></div>
-    <div class="wb-partial-slot"></div>
     <div class="wb-empty wb-standings-empty">Loading...</div>
     <div class="wb-standings-table-wrap" hidden>
       <table class="wb-table wb-standings-tbl">
@@ -61,9 +60,8 @@ export function makeStandingsBody() {
 
 // Fill a standings body (from makeStandingsBody) from a tournament detail
 // payload. Tolerates null detail (shows the empty state).
-export function renderStandings(el, detail) {
+export function renderStandings(el, detail, studio = false) {
   const sprtSlot = el.querySelector(".wb-sprt-slot");
-  const partialSlot = el.querySelector(".wb-partial-slot");
   const emptyEl = el.querySelector(".wb-standings-empty");
   const wrapEl = el.querySelector(".wb-standings-table-wrap");
   const tbody = el.querySelector(".wb-standings-tbl tbody");
@@ -73,7 +71,6 @@ export function renderStandings(el, detail) {
     emptyEl.hidden = false;
     wrapEl.hidden = true;
     sprtSlot.innerHTML = "";
-    partialSlot.innerHTML = "";
     return;
   }
   emptyEl.hidden = true;
@@ -106,26 +103,19 @@ export function renderStandings(el, detail) {
   if (sprt) {
     const { lo, hi, llr, concluded, isH1 } = sprtVerdict(sprt);
     const colorMod = concluded ? (isH1 ? " wb-sprt--h1" : " wb-sprt--h0") : "";
+    const studioMod = studio ? " wb-sprt--studio" : "";
     const candidate = detail.engines?.[0]?.name ? escapeHtml(detail.engines[0].name) : "candidate";
     const pairsText = sprt.pairs != null ? ` ${MIDDOT} ${sprt.pairs} pair${sprt.pairs === 1 ? "" : "s"}` : "";
     const statusText = sprt.status === SPRT.H1
-      ? `H1 (${candidate} is stronger)`
+      ? ` ${MIDDOT} H1`
       : sprt.status === SPRT.H0
-        ? `H0 (no significant difference)`
-        : sprt.status;
-    sprtSlot.innerHTML = `<div class="wb-sprt${colorMod}">` +
+        ? ` ${MIDDOT} H0`
+        : "";
+    sprtSlot.innerHTML = `<div class="wb-sprt${colorMod}${studioMod}">` +
       `SPRT ${candidate} [${sprt.elo0}, ${sprt.elo1}] ${MIDDOT} LLR=${llr.toFixed(2)} [${lo.toFixed(2)}, ${hi.toFixed(2)}]` +
-      `${pairsText} ${MIDDOT} ${statusText}` +
+      `${pairsText}${statusText}` +
       `</div>`;
   } else {
     sprtSlot.innerHTML = "";
   }
-  const partialPairs = detail.partial_pairs ?? 0;
-  // Hide during RUNNING -- a fresh game-1 always sits alone in the PGN until
-  // game-2 of the pair finishes; that's normal, not data loss.
-  const showPartial = partialPairs > 0 && detail.status !== STATUS.RUNNING;
-  partialSlot.innerHTML = showPartial
-    ? `<div class="wb-partial-pairs">${partialPairs} incomplete pair${partialPairs === 1 ? "" : "s"} ` +
-      `(one game missing)</div>`
-    : "";
 }

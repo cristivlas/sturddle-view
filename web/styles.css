@@ -12,6 +12,7 @@
   --accent-rgb: 245, 158, 11;
   /* TODO: revisit unifying --accent and --accent-line into a single token. */
   --accent-line: rgba(224, 155, 58, 0.75);
+  --progress-track: rgb(51, 73, 87);
   --panel: #25272d;
   --nav-btn-bg: #2a2d33;
   --nav-btn-bg-hover: #32353c;
@@ -2508,7 +2509,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
  */
 wa-dialog::part(body) { overflow-x: hidden !important; }
 /* Header actions: spacing between buttons. */
-wa-dialog::part(header-actions) { gap: 6px; }
+wa-dialog::part(header-actions) { gap: 6px; align-items: center; }
 
 /* Headerless confirm/alert dialogs: the message is the heading. */
 .confirm-message {
@@ -3184,6 +3185,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   border: 2px solid var(--iw-ink);
   transform: rotate(3deg);
 }
+/* Live run: tint the SPRT lettering amber so it reads as "test in progress". */
+.iw-burst--sprt-live { color: var(--accent-line); }
 /* Stamp group: SPRT + status placards clustered hard right of the headline. */
 .iw-stamps { display: flex; align-items: center; gap: clamp(8px, 1vw, 16px); flex: 0 0 auto; }
 
@@ -3316,14 +3319,23 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   font-family: var(--wa-font-family-code); font-weight: 700;
   font-size: 12px; letter-spacing: 0.12em; color: var(--muted);
 }
+/* Thin rail like the progress bar: muted rounded track, a slim marker walking
+   it, a faint center pip at the H0/H1 pivot. */
 .iw-llr-track {
-  position: relative; flex: 1 1 auto; height: 10px;
-  background: var(--iw-paper);
-  border: 2px solid var(--iw-ink);
+  position: relative; flex: 1 1 auto; height: 6px;
+  background: var(--progress-track);
+  border-radius: 6px;
+}
+/* Center pip at the H0/H1 pivot: same height as the marker, muted + wider. */
+.iw-llr-track::before {
+  content: ""; position: absolute; top: 50%; left: 50%;
+  width: 3px; height: 16px; background: var(--muted); border-radius: 2px;
+  transform: translate(-50%, -50%);
 }
 .iw-llr-mark {
   position: absolute; top: 50%; width: 4px; height: 16px;
-  background: var(--iw-ink);
+  background: var(--wa-color-brand-60); border-radius: 2px;
+  box-shadow: 0 0 4px rgba(var(--accent-rgb), 0.6);
   transform: translate(-50%, -50%);
 }
 .iw-llr-val { color: var(--muted-bright); }
@@ -3442,6 +3454,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-tabs wa-tab-panel[name="log"]::part(base),
 .studio-tabs wa-tab-panel[name="engines"]::part(base),
 .studio-tabs wa-tab-panel[name="h2h"]::part(base),
+.studio-tabs wa-tab-panel[name="standings"]::part(base),
 .studio-tabs wa-tab-panel[name="livegames"]::part(base) { padding-top: 8px; }
 /* Keep the watch buttons off the pane's right edge / scrollbar. */
 .studio-pane .wb-sched-attach-btn { margin-right: 8px; }
@@ -3625,7 +3638,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   flex: 1 1 auto;
   height: 6px;
   min-width: 100px;
-  background: rgb(51, 73, 87);
+  background: var(--progress-track);
   border: none;
   border-radius: 6px;
   overflow: hidden;
@@ -3713,6 +3726,13 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 /* New Tournament dialog */
 .new-tournament-form { display: flex; flex-direction: column; gap: 12px; }
 .new-tournament-form .nt-section { display: flex; flex-direction: column; gap: 6px; }
+/* Name input + SPRT chip share a row; chip sits at the input baseline. */
+.nt-name-row { display: flex; align-items: end; gap: 10px; }
+.nt-name-row .nt-name { flex: 1 1 auto; }
+.nt-name-row .nt-sprt-host { flex: 0 0 auto; }
+/* SPRT control beside Name: an on/off toggle + a gear that edits params.
+   Both greyed when the roster isn't exactly 2 engines. */
+.sprt-control { display: flex; align-items: center; gap: 8px; padding-bottom: 4px; }
 .new-tournament-form wa-input::part(form-control-label) {
   font-size: 0.75rem;
   font-weight: normal;
@@ -4050,15 +4070,12 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841);
 }
 .wb-sprt {
-  background: var(--bg); border: 1px solid var(--border-subtle); border-radius: 4px;
+  background: var(--bg); border-bottom: 1px solid var(--border-subtle);
   padding: 6px 8px; margin-bottom: 0; font-size: 0.75rem;
 }
-.wb-sprt--h1 { border-color: #2d6a3f; }
-.wb-sprt--h0 { border-color: #7a2222; }
-.wb-partial-pairs {
-  background: var(--bg); border: 1px solid #4a3d1f; border-radius: 4px;
-  padding: 6px 8px; margin-bottom: 8px; font-size: 0.75rem; color: #d4a854;
-}
+.wb-sprt--h1 { box-shadow: inset 3px 0 0 #2d6a3f; }
+.wb-sprt--h0 { box-shadow: inset 3px 0 0 #7a2222; }
+.wb-sprt--studio { background: var(--row-bg-selected); margin: 0 8px 10px; }
 /* Studio Head-to-Head pane: a fixed banner (2-engine) + an internally scrolled
    table so the banner and column header stay put while rows scroll. The wrap is
    both the scroll container and the resize overlay's positioned host; the

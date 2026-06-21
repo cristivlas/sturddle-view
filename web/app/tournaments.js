@@ -10,17 +10,21 @@
 import { mqMobile, mqMobileH, mqMobileHPlay } from "./breakpoints.js";
 import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, showDialog, toast } from "./dialogs.js";
 import { openSettingsDialog } from "./settings-dialog.js";
-import { EVT, KIND, POLL_INTERVAL_MS, STATUS } from "./tournament-events.js";
+import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, sprtParamErrors, STATUS } from "./tournament-events.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
+import { mountSprtButton } from "./tournament-sprt-button.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
 import { debounce, ribbonWidthPx } from "./wb-utils.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
+const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT params (need alpha+beta<1, elo0<elo1).";
+// Default dwell for error/warning toasts that carry a line worth reading.
+const TOAST_DURATION_MS = 8000;
 const NEW_TOURNAMENT_LABEL = "New tournament";
 const EMPTY_CTA_PREFIX = "No tournaments yet -- click ";
 const EMPTY_CTA_SUFFIX = " to create one.";
@@ -645,7 +649,7 @@ function buildInfoContent(ctx, t) {
   if (tpl.sprt) {
     const s = tpl.sprt;
     row("Rounds", "unlimited (SPRT)");
-    row("SPRT", `elo0=${s.elo0} elo1=${s.elo1} alpha=${s.alpha} beta=${s.beta} model=${s.model}`);
+    row("SPRT", `elo0=${s.elo0} elo1=${s.elo1} alpha=${s.alpha} beta=${s.beta}`);
   } else {
     row("Rounds", tpl.rounds);
   }
@@ -712,15 +716,23 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
     (ctx.settings && ctx.settings.default_template) ||
     { tc: "10+0.1", rounds: 10, games_in_parallel: 1 };
 
+  // SPRT defaults live in the server store -- read them fresh here (no
+  // client-side shadow) so the popup always reflects what's persisted.
+  const sprtDefaults =
+    (await ctx.api("GET", "/api/tournament-settings").catch(() => ({}))).sprt_defaults;
+
   return showDialog({
     label,
-    width: "min(720px, 94vw)",
+    width: "min(660px, 94vw)",
     defaultValue: null,
     body: (resolve, dialog) => {
       const wrap = document.createElement("div");
       wrap.className = "new-tournament-form";
       wrap.innerHTML = `
-        <wa-input class="nt-name" label="Name" size="small" placeholder="my tournament"></wa-input>
+        <div class="nt-name-row">
+          <wa-input class="nt-name" label="Name" size="small" placeholder="my tournament"></wa-input>
+          <div class="nt-sprt-host"></div>
+        </div>
 
         <div class="nt-section">
           <div class="nt-engine-builder"></div>
@@ -747,6 +759,20 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
         initialValues: defaults,
       });
 
+      const sprtCtl = mountSprtButton({
+        host: wrap.querySelector(".nt-sprt-host"),
+        initialSprt: defaults.sprt,
+        sprtDefaults,
+        onChange: (on) => tplCtl.applySprt(on),
+        // Write the last-used SPRT params straight to the server store (the
+        // single source of truth); the next dialog open re-reads them.
+        onPersist: (sprt_defaults) =>
+          ctx.api("PUT", "/api/tournament-settings", { sprt_defaults })
+            .catch((e) => reportError({ log: ctx.log }, "Saving SPRT defaults failed", e)),
+      });
+      // Reflect an SPRT template (edit flow) into the form's enable state.
+      tplCtl.applySprt(sprtCtl.isOn());
+
       const actionBtn = document.createElement("wa-button");
       actionBtn.slot = "footer";
       actionBtn.size = "small";
@@ -761,10 +787,10 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
         actionBtn.disabled = !isValid();
       }
       refreshValidity();
-      tplCtl.setSprtAvailable(builder.getEngines().length === 2);
+      sprtCtl.setAvailable(builder.getEngines().length === 2);
       nameInput.addEventListener("input", refreshValidity);
       builder.onChange(() => {
-        tplCtl.setSprtAvailable(builder.getEngines().length === 2);
+        sprtCtl.setAvailable(builder.getEngines().length === 2);
         refreshValidity();
       });
 
@@ -782,6 +808,16 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
           toast(e.message, { variant: "danger" });
           return;
         }
+        // SPRT params come from the chip popup (validated there before Done);
+        // re-check defensively before the destructive create/apply.
+        if (sprtCtl.isOn()) {
+          const sprtParams = sprtCtl.getParams();
+          if (sprtParamErrors(sprtParams).size) {
+            toast(BAD_SPRT_DEFAULTS_MSG, { variant: "danger", duration: TOAST_DURATION_MS });
+            return;
+          }
+          template.sprt = sprtParams;
+        }
 
         const picked = builder.getPickedRegistry();
         const globalDefaults = await loadGlobalEngineDefaults(ctx);
@@ -794,7 +830,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
           const detail = apiErrorDetail(e);
           const msg = (detail && detail.message) || detail || "Resource check failed";
           toast(typeof msg === "string" ? msg : String(msg), {
-            variant: "danger", duration: 8000,
+            variant: "danger", duration: TOAST_DURATION_MS,
           });
           actionBtn.loading = false;
           return;
@@ -803,7 +839,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
         }
         if (rescheckResult.warnings && rescheckResult.warnings.length) {
           for (const w of rescheckResult.warnings) {
-            toast(`Warning: ${w.message}`, { variant: "warning", duration: 8000 });
+            toast(`Warning: ${w.message}`, { variant: "warning", duration: TOAST_DURATION_MS });
           }
         }
 
@@ -856,7 +892,7 @@ async function openNewTournamentDialog(ctx) {
   }
 
   await openTournamentDialog(ctx, {
-    label: "New Tournament",
+    label: "New tournament",
     actionLabel: "Create",
     initialName: "",
     initialEngines: [],
@@ -920,8 +956,8 @@ async function openEditTournamentDialog(ctx, t) {
   }
   if (droppedCount > 0) {
     toast(
-      `${droppedCount} engine${droppedCount === 1 ? "" : "s"} no longer in the registry — re-add before applying.`,
-      { variant: "warning", duration: 8000 },
+      `${droppedCount} engine${droppedCount === 1 ? "" : "s"} no longer in the registry -- re-add before applying.`,
+      { variant: "warning", duration: TOAST_DURATION_MS },
     );
   }
 
@@ -1040,9 +1076,9 @@ function onWsEvent(ctx, evt) {
     const tid = evt.payload?.tournament_id;
     const t = ctx.tournaments.find((x) => x.id === tid);
     const name = t ? t.name : "Tournament";
-    const tail = evt.payload?.stderr_tail || [];
-    const firstErr = tail.find((l) => /error|fatal|fail/i.test(l)) || tail[0] || `exit code ${evt.payload?.rc}`;
-    toast(`${name} failed: ${firstErr}`, { variant: "danger", duration: 10000 });
+    toast(`${name} failed: ${crashErrorLine(evt.payload)}`, {
+      variant: "danger", duration: CRASH_TOAST_DURATION_MS,
+    });
   }
   // The /start API doesn't return until orchestrator.start completes
   // (which can include a multi-second PGN rewrite); the status event

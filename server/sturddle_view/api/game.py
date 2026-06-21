@@ -62,6 +62,9 @@ async def _get_hve(request: Request) -> HumanVsEngine:
         )
     # Refresh display name + UCI options on every fetch so registry edits
     # take effect on the next engine launch without restarting the server.
+    # set_engines here is the single wiring point -- no construction site can
+    # forget the registry and silently leave analysis on the play engine.
+    s.hve.set_engines(s.engines)
     s.hve.set_engine_name(launch.name)
     s.hve.set_engine_options(launch.options)
     s.hve.set_engine_args(launch.args)

@@ -37,6 +37,42 @@ export const SPRT = {
   CONTINUE: "continue",
 };
 
+// Lines worth surfacing first from a runner_crash stderr_tail.
+const CRASH_RE = /error|fatal|fail/i;
+// How long a crash toast stays up -- long enough to read a stderr line.
+export const CRASH_TOAST_DURATION_MS = 10000;
+
+// Pick the most informative line from a runner_crash payload: first
+// error-ish stderr line, else the first line, else the exit code.
+export function crashErrorLine(payload) {
+  const tail = payload?.stderr_tail || [];
+  return tail.find((l) => CRASH_RE.test(l)) || tail[0] || `exit code ${payload?.rc}`;
+}
+
+// Effective SPRT params when a stored default is empty/partial -- mirrors the
+// server's _SPRT_DEFAULTS, applied before a tournament starts.
+export const SPRT_DEFAULTS = { elo0: 0, elo1: 10, alpha: 0.05, beta: 0.05 };
+
+// SPRT param invariants enforced by fastchess at startup (NOT by the
+// server's compute_sprt, which accepts any 0<alpha,beta<1): 0<alpha<1,
+// 0<beta<1, alpha+beta<1, elo0<elo1. Each rule flags the fields it blames;
+// returns the set of bad keys -- empty means valid. Shared by the SPRT chip
+// popup (per-field red) and the create-time guard.
+const inUnit = (x) => Number.isFinite(x) && x > 0 && x < 1;
+const SPRT_RULES = [
+  (p) => inUnit(p.alpha) || ["alpha"],
+  (p) => inUnit(p.beta) || ["beta"],
+  (p) => p.alpha + p.beta < 1 || ["alpha", "beta"],
+  (p) => p.elo0 < p.elo1 || ["elo0", "elo1"],
+];
+
+export function sprtParamErrors(params) {
+  return new Set(SPRT_RULES.flatMap((rule) => {
+    const r = rule(params);
+    return r === true ? [] : r;
+  }));
+}
+
 // Normalize the live SPRT payload's bounds + verdict for the standings line and
 // the info-wall meter (both read the same shape).
 export function sprtVerdict(sprt) {

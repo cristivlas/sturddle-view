@@ -10,16 +10,22 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import chess
+import chess.pgn
+
 from ..play.canonical_hash import canonical_hash_from_game
+from ..chess.pgn_walk import walk_mainline
 from ..chess.results import (
     BLACK_WIN as _BLACK_WIN,
     DECISIVE_RESULTS,
     WHITE_WIN as _WHITE_WIN,
 )
+from ..openings import OpeningBook
 
 log = logging.getLogger(__name__)
 
@@ -30,8 +36,26 @@ _DECISIVE_RESULTS = DECISIVE_RESULTS
 _TAG_RE = re.compile(r'\[(\w+)\s+"(.*?)"\]\s*$')
 _TAG_RE_BLOCK = re.compile(r'^\[(\w+)\s+"(.*?)"\]', re.MULTILINE)
 
+# PGN header tag names.
+_TAG_WHITE = "White"
+_TAG_BLACK = "Black"
+_TAG_RESULT = "Result"
+_TAG_ROUND = "Round"
+_TAG_TERMINATION = "Termination"
+
 # Tags we actually use; ignore the rest to skip a dict write per line.
-_WANTED_TAGS = frozenset({"White", "Black", "Result", "Round"})
+_WANTED_TAGS = frozenset({_TAG_WHITE, _TAG_BLACK, _TAG_RESULT, _TAG_ROUND})
+
+# Placeholder for a missing tag value (White/Black/Round).
+_UNKNOWN = "?"
+# The non-decisive Result tag (ongoing game); never passes the decisive filter.
+_NONDECISIVE = "*"
+
+# games-list / summary wire keys.
+_KEY_WHITE = "white"
+_KEY_BLACK = "black"
+_KEY_RESULT = "result"
+_KEY_OPENING = "opening"
 
 
 @dataclass
@@ -121,7 +145,6 @@ class SprtResult:
     pairs: int
     elo0: float
     elo1: float
-    model: str
 
     def to_dict(self) -> dict:
         return {
@@ -132,7 +155,6 @@ class SprtResult:
             "pairs": self.pairs,
             "elo0": self.elo0,
             "elo1": self.elo1,
-            "model": self.model,
         }
 
 
@@ -149,6 +171,19 @@ _iter_games_cache: dict[
 # (i+1)-th decisive game. Keyed by (mtime_ns, size); same invalidation as
 # _iter_games_cache. Lets read_game_record seek directly to game N.
 _game_offsets_cache: dict[Path, tuple[int, int, list[int]]] = {}
+
+# pgn_path -> (mtime_ns, size, games). O(1) fast path for unchanged polls.
+_games_list_cache: dict[Path, tuple[int, int, list[dict]]] = {}
+
+# (pgn_path, byte_offset) -> finished-game record. The PGN is append-only
+# within a run, so an offset's game never changes; a rebuild re-parses only
+# the just-finished game. Stop/restart wipes the file -- the orchestrator
+# calls forget() at that point, the only event that invalidates this.
+_opening_memo: dict[tuple[Path, int], dict] = {}
+
+# Plies replayed per game to identify its opening. ECO lines rarely exceed
+# ~12 moves, so 24 plies covers them while bounding replay cost on big PGNs.
+_OPENING_PLIES = int(os.environ.get("SV_OPENING_PLIES", "24"))
 
 
 def _iter_games_keyed(pgn_path: Path):
@@ -201,11 +236,11 @@ def _iter_games_uncached(pgn_path: Path):
     def emit():
         if not cur:
             return None
-        result = cur.get("Result", "*")
+        result = cur.get(_TAG_RESULT, _NONDECISIVE)
         if result in _DECISIVE_RESULTS:
-            white = cur.get("White", "?")
-            black = cur.get("Black", "?")
-            round_tag = cur.get("Round", "")
+            white = cur.get(_TAG_WHITE, _UNKNOWN)
+            black = cur.get(_TAG_BLACK, _UNKNOWN)
+            round_tag = cur.get(_TAG_ROUND, "")
             value = (round_tag, white, black, result)
             cur.clear()
             return value
@@ -268,7 +303,7 @@ def _form_pairs(
     buckets: dict[tuple[str, frozenset[str]], list[int]] = {}
     no_round: list[int] = []
     for i, (round_tag, white, black, _result) in enumerate(keyed):
-        if not round_tag or round_tag == "?":
+        if not round_tag or round_tag == _UNKNOWN:
             no_round.append(i)
             continue
         key = (round_tag, frozenset((white, black)))
@@ -322,7 +357,6 @@ def read_game_pgn(pgn_path: Path, game_n: int) -> str | None:
 
 def _build_game_offsets(pgn_path: Path, f) -> list[int]:
     """Scan open text file and return byte offsets of decisive games."""
-    import chess.pgn
     offsets: list[int] = []
     f.seek(0)
     while True:
@@ -330,7 +364,7 @@ def _build_game_offsets(pgn_path: Path, f) -> list[int]:
         headers = chess.pgn.read_headers(f)
         if headers is None:
             break
-        if headers.get("Result", "*") in _DECISIVE_RESULTS:
+        if headers.get(_TAG_RESULT, _NONDECISIVE) in _DECISIVE_RESULTS:
             offsets.append(offset)
     return offsets
 
@@ -345,6 +379,11 @@ def _get_game_offsets(pgn_path: Path, st) -> list[int]:
     return offsets
 
 
+def _read_game_at_offset(f, offset: int):
+    f.seek(offset)
+    return chess.pgn.read_game(f)
+
+
 def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
     """Return PGN + final-position metadata for the Nth completed game.
 
@@ -356,8 +395,6 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
     """
     if game_n < 1:
         return None
-    import chess.pgn
-    from ..chess.pgn_walk import walk_mainline
     try:
         st = pgn_path.stat()
     except FileNotFoundError:
@@ -366,8 +403,7 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
     if game_n > len(offsets):
         return None
     with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
-        f.seek(offsets[game_n - 1])
-        game = chess.pgn.read_game(f)
+        game = _read_game_at_offset(f, offsets[game_n - 1])
     if game is None:
         return None
     last_move_uci: str | None = None
@@ -378,14 +414,14 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
         board = game.board()
     pgn_hash = canonical_hash_from_game(game)
     pgn_text = str(game)
-    white = game.headers.get("White", "?")
-    black = game.headers.get("Black", "?")
+    white = game.headers.get(_TAG_WHITE, _UNKNOWN)
+    black = game.headers.get(_TAG_BLACK, _UNKNOWN)
     # _get_game_offsets only indexes decisive games, so Result is always decisive here.
-    result = game.headers["Result"]
+    result = game.headers[_TAG_RESULT]
     summary = {
-        "white": white if white != "?" else None,
-        "black": black if black != "?" else None,
-        "result": result,
+        _KEY_WHITE: white if white != _UNKNOWN else None,
+        _KEY_BLACK: black if black != _UNKNOWN else None,
+        _KEY_RESULT: result,
         "side_to_move": None,
     }
     return {
@@ -394,51 +430,67 @@ def read_game_record(pgn_path: Path, game_n: int) -> dict | None:
         "summary": summary,
         "final_fen": board.fen(),
         "last_move": last_move_uci,
-        "engine_white": game.headers.get("White", ""),
-        "engine_black": game.headers.get("Black", ""),
-        "result": game.headers.get("Result", "*"),
-        "termination": game.headers.get("Termination", ""),
+        "engine_white": game.headers.get(_TAG_WHITE, ""),
+        "engine_black": game.headers.get(_TAG_BLACK, ""),
+        _KEY_RESULT: game.headers.get(_TAG_RESULT, _NONDECISIVE),
+        "termination": game.headers.get(_TAG_TERMINATION, ""),
     }
 
 
-def count_partial_pairs(pgn_path: Path, *, paired: bool = True) -> int:
-    """Number of orphan games -- games in the PGN whose ``(round, engine-set)``
-    bucket has no color-flip partner.
+def _game_record_at_offset(f, offset: int) -> dict | None:
+    game = _read_game_at_offset(f, offset)
+    if game is None:
+        return None
+    uci: list[str] = []
+    for move in game.mainline_moves():
+        uci.append(move.uci())
+        if len(uci) >= _OPENING_PLIES:
+            break
+    opening = OpeningBook.load().lookup(uci)
+    return {
+        _KEY_WHITE: game.headers.get(_TAG_WHITE, _UNKNOWN),
+        _KEY_BLACK: game.headers.get(_TAG_BLACK, _UNKNOWN),
+        # _get_game_offsets only indexes decisive games -> Result always set.
+        _KEY_RESULT: game.headers[_TAG_RESULT],
+        _KEY_OPENING: opening.name if opening is not None else "",
+    }
 
-    The historical "partial pair" name persists for API stability; the
-    semantic is now per-orphan, not per-(round, engine-pair). For the
-    common case (one orphan = one missing color in one round) the count
-    matches the old definition. Multi-orphan rounds (e.g. two games of
-    the same color in one bucket) are counted once per orphan, not once
-    per round.
 
-    Typically caused by an interrupted Stop on Windows
-    (KILL_ON_JOB_CLOSE has no grace period) where game 1 made it to
-    disk but game 2 was in flight.
-
-    Single-game tours (``paired=False``) have no pair concept and
-    always return 0.
-    """
-    if not paired:
-        return 0
-    keyed = list(_iter_games_keyed(pgn_path))
-    if not keyed:
-        return 0
-    _pairs, orphans = _form_pairs(keyed, paired=True)
-    return len(orphans)
+def forget(pgn_path: Path) -> None:
+    """Drop all cached games-list state for ``pgn_path``. The orchestrator
+    calls this when it wipes the PGN for a restart, since the offset-keyed
+    memo's only invariant -- append-only bytes -- breaks across a wipe."""
+    _games_list_cache.pop(pgn_path, None)
+    for k in [k for k in _opening_memo if k[0] == pgn_path]:
+        del _opening_memo[k]
 
 
 def compute_games_list(pgn_path: Path) -> list[dict]:
-    """Return one dict per completed game in PGN order.
-
-    Used by the workspace's Schedule window when no live event stream
-    is available. Phase 1 has no proxy broadcast, so this PGN-driven
-    list is the only source of "what games has fastchess finished."
+    """One dict per completed game (white, black, result, opening) in PGN
+    order. Indexing matches read_game_record -- both driven by
+    _get_game_offsets -- so a row's position is its replay game number.
     """
-    return [
-        {"white": w, "black": b, "result": r}
-        for (w, b, r) in _iter_games(pgn_path)
-    ]
+    try:
+        st = pgn_path.stat()
+    except FileNotFoundError:
+        forget(pgn_path)
+        return []
+    cached = _games_list_cache.get(pgn_path)
+    if cached is not None and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
+        return cached[2]
+    offsets = _get_game_offsets(pgn_path, st)
+    with pgn_path.open("r", encoding="utf-8", errors="replace") as f:
+        games = []
+        for offset in offsets:
+            rec = _opening_memo.get((pgn_path, offset))
+            if rec is None:
+                rec = _game_record_at_offset(f, offset)
+                if rec is None:
+                    continue
+                _opening_memo[(pgn_path, offset)] = rec
+            games.append(rec)
+    _games_list_cache[pgn_path] = (st.st_mtime_ns, st.st_size, games)
+    return games
 
 
 def elo_from_score(score: float) -> float | None:
@@ -858,35 +910,40 @@ def compute_standings(
 
 
 # ---------------------------------------------------------------------------
-# SPRT (Sequential Probability Ratio Test) -- pentanomial variant
+# SPRT (Sequential Probability Ratio Test) -- pentanomial GSPRT
 #
-# Games are paired: engine A plays both colors vs B on the same opening,
-# so each pair scores in {0, 0.5, 1, 1.5, 2} for A. The five-bin pair
-# distribution gives a tighter variance estimate than per-game W/L/D.
+# Games are paired: engine A plays both colors vs B on the same opening, so
+# each pair scores in {0, 0.5, 1, 1.5, 2} for A -> five pentanomial bins
+# (LL, LD, WL+DD, WD, WW) on the per-pair scale {0, .25, .5, .75, 1}.
 #
-# Convention: elo0/elo1 are *logistic Elo* (per-game), the same scale as
-# everywhere else in the UI. Internally we convert each hypothesis to a
-# per-pair mean score offset and run a Gaussian LLR against the observed
-# pair scores using the sample pair-variance.
-#
-# Note: this differs from fastchess's own `-sprt model=normalized`, which
-# parameterizes elo0/elo1 in *normalized Elo* units (mean shift divided
-# by pair stdev). The two tests reach the same accept/reject decision
-# asymptotically, but the LLR magnitudes shown here will not match
-# fastchess's stdout for the same elo bounds.
-#
-# Math summary (per-pair scale, A's per-pair score s_i in [0, 2]):
-#   x_i = s_i / 2                                  (per-game score in [0, 1])
-#   mu  = (1/N) sum x_i
-#   var = (1/(N-1)) sum (x_i - mu)^2               (Bessel-corrected sample var)
-#   For hypothesis Hk: mu_k = 0.5 + elo_k * ln(10) / 1600
-#   LLR = N * (mu_1 - mu_0) * (mu - (mu_0 + mu_1)/2) / var
-#
-# Bounds: log(beta/(1-alpha)) and log((1-beta)/alpha).
-# Reference: fastchess-cli docs and the Bayesian-Elo project notes.
+# The LLR is the generalized log-likelihood ratio fastchess computes: a
+# maximum-likelihood fit of the bin distribution under each hypothesis,
+# solved with the ITP root-finder. Direct port of fastchess' sprt.cpp, so our
+# LLR matches fastchess' stdout to ~1e-4 (not the old closed-form approximation
+# that drifted ~0.2). We compute with the SAME model fastchess ran, so the
+# verdict and meter agree with it:
+#   - normalized (default): t = sqrt(2) * elo / (800 / ln 10), MLE per Van den
+#     Bergh "Comments on normalized Elo".
+#   - logistic: per-game score s = 1/(1 + 10^(-elo/400)), MLE per Van den Bergh
+#     "Comparing the approximations ...".
+# elo0/elo1 are logistic Elo (the UI scale). Bounds: log(beta/(1-alpha)) and
+# log((1-beta)/alpha).
 # ---------------------------------------------------------------------------
 
-_PAIR_BINS = (0.0, 0.5, 1.0, 1.5, 2.0)
+# Per-pair normalized scores for the five pentanomial bins (LL..WW).
+_PENTA_SCORES = (0.0, 0.25, 0.5, 0.75, 1.0)
+# fastchess regularizes empty bins to this so log-likelihoods stay finite.
+_PENTA_REGULARIZE = 1e-3
+# Normalized-Elo -> t conversion constant (800 / ln 10), per fastchess.
+_NELO_DIVISOR = 800.0 / math.log(10.0)
+# ITP root-finder tuning (Oliveira & Takahashi 2020), verbatim from fastchess
+# sprt.cpp -- algorithm constants, not knobs; changing them breaks the match.
+_ITP_K1, _ITP_K2, _ITP_N0 = 0.1, 2.0, 0.99
+# MLE iteration caps / convergence epsilons, also verbatim from fastchess.
+_MLE_MAX_ITERS = 10
+_MLE_THETA_EPS = 1e-7        # normalized inner root-solve tolerance
+_MLE_CONVERGE_EPS = 1e-4     # normalized fixed-point convergence tolerance
+_MLE_LOGISTIC_THETA_EPS = 1e-3
 
 
 def _iter_pairs(
@@ -932,7 +989,7 @@ def _iter_pairs(
         log.debug(
             "SPRT %s: round %s has orphan game (expected 2-game color-flipped "
             "pair) -- skipped",
-            pgn_path.name, rd or "?",
+            pgn_path.name, rd or _UNKNOWN,
         )
 
     pairs: list[tuple[str, str, float]] = []
@@ -944,7 +1001,7 @@ def _iter_pairs(
             log.warning(
                 "SPRT %s: round %s skipped (engines %s vs %s, "
                 "expected %s vs %s)",
-                pgn_path.name, _rdi or "?", wi, bi, a_name, b_name,
+                pgn_path.name, _rdi or _UNKNOWN, wi, bi, a_name, b_name,
             )
             continue
         score = 0.0
@@ -964,7 +1021,110 @@ def _sprt_bounds(alpha: float, beta: float) -> tuple[float, float]:
     return math.log(beta / (1.0 - alpha)), math.log((1.0 - beta) / alpha)
 
 
-_SUPPORTED_SPRT_MODELS = frozenset({"normalized", "pentanomial", "logistic"})
+def _itp(f, a, b, f_a, f_b, k1, k2, n0, epsilon):
+    """ITP root-finder (Oliveira & Takahashi 2020), port of fastchess sprt.cpp.
+
+    ``f_a``/``f_b`` are bracket function-value sentinels: fastchess passes
+    +inf/-inf so the first step degenerates to bisection (the regula-falsi
+    term is NaN and falls through to the midpoint), then real values take
+    over. Mirrored here exactly so the LLR matches fastchess."""
+    if f_a > 0:
+        a, b = b, a
+        f_a, f_b = f_b, f_a
+    n_max = math.ceil(math.log2(abs(b - a) / (2.0 * epsilon))) + n0
+    i = 0
+    while abs(b - a) > 2.0 * epsilon:
+        x_half = (a + b) / 2.0
+        r = epsilon * (2.0 ** (n_max - i)) - (b - a) / 2.0
+        delta = k1 * (abs(b - a) ** k2)
+        denom = f_b - f_a
+        x_f = (f_b * a - f_a * b) / denom if denom not in (0.0, math.inf, -math.inf) else x_half
+        diff = x_half - x_f
+        sigma = diff / abs(diff) if diff != 0 else 0.0
+        x_t = x_f + sigma * delta if delta <= abs(diff) else x_half
+        x_itp = x_t if abs(x_t - x_half) <= r else x_half - sigma * r
+        f_itp = f(x_itp)
+        if f_itp == 0.0:
+            a = b = x_itp
+        elif f_itp < 0:
+            a, f_a = x_itp, f_itp
+        else:
+            b, f_b = x_itp, f_itp
+        i += 1
+    return (a + b) / 2.0
+
+
+def _gllr_normalized(total, scores, probs, t0, t1):
+    """Normalized-model generalized LLR over discrete bins (Van den Bergh,
+    "Comments on normalized Elo"); port of fastchess SPRT::getLLR_normalized.
+
+    For each hypothesis it fits the maximum-likelihood bin distribution with
+    the prescribed normalized t-statistic, then returns total * E[log p1/p0]."""
+    n = len(scores)
+
+    def mle(mu_ref, t_star):
+        p = [1.0 / n] * n
+        for _ in range(_MLE_MAX_ITERS):
+            mu = sum(scores[i] * p[i] for i in range(n))
+            var = sum(p[i] * (scores[i] - mu) ** 2 for i in range(n))
+            # Guard: a fitted p that collapses toward one bin drives var->0;
+            # the phi term below divides by sigma. Regularized inputs keep
+            # var>0, but bail rather than emit inf/nan if it ever underflows.
+            if var <= 0.0:
+                break
+            sigma = math.sqrt(var)
+            phi = [
+                scores[i] - mu_ref
+                - 0.5 * t_star * sigma * (1.0 + ((scores[i] - mu) / sigma) ** 2)
+                for i in range(n)
+            ]
+            min_theta = -1.0 / max(phi)
+            max_theta = -1.0 / min(phi)
+
+            def g(x):
+                return sum(probs[i] * phi[i] / (1.0 + x * phi[i]) for i in range(n))
+
+            theta = _itp(g, min_theta, max_theta, math.inf, -math.inf,
+                         _ITP_K1, _ITP_K2, _ITP_N0, _MLE_THETA_EPS)
+            max_diff = 0.0
+            for i in range(n):
+                newp = probs[i] / (1.0 + theta * phi[i])
+                max_diff = max(max_diff, abs(newp - p[i]))
+                p[i] = newp
+            if max_diff < _MLE_CONVERGE_EPS:
+                break
+        return p
+
+    p0 = mle(0.5, t0)
+    p1 = mle(0.5, t1)
+    return total * sum((math.log(p1[i]) - math.log(p0[i])) * probs[i] for i in range(n))
+
+
+def _gllr_logistic(total, scores, probs, s0, s1):
+    """Logistic-model generalized LLR over discrete bins (Van den Bergh,
+    "Comparing the approximations ..."); port of fastchess SPRT::getLLR_logistic.
+
+    Fits the ML bin distribution with the prescribed per-pair score under each
+    hypothesis, then returns total * E[log p1/p0]."""
+    n = len(scores)
+
+    def mle(s):
+        def g(x):
+            return sum(probs[i] * (scores[i] - s) / (1.0 + x * (scores[i] - s)) for i in range(n))
+
+        theta = _itp(g, -1.0 / (scores[n - 1] - s), -1.0 / (scores[0] - s),
+                     math.inf, -math.inf, _ITP_K1, _ITP_K2, _ITP_N0,
+                     _MLE_LOGISTIC_THETA_EPS)
+        return [probs[i] / (1.0 + theta * (scores[i] - s)) for i in range(n)]
+
+    p0 = mle(s0)
+    p1 = mle(s1)
+    return total * sum((math.log(p1[i]) - math.log(p0[i])) * probs[i] for i in range(n))
+
+
+def _lelo_to_score(lelo):
+    """Logistic Elo -> per-game expected score (fastchess SPRT::leloToScore)."""
+    return 1.0 / (1.0 + 10.0 ** (-lelo / 400.0))
 
 
 def compute_sprt(
@@ -974,31 +1134,23 @@ def compute_sprt(
     engine_a: str,
     engine_b: str,
 ) -> SprtResult:
-    """Compute SPRT LLR + decision over the games in ``pgn_path``.
+    """Compute the pentanomial SPRT LLR + decision over ``pgn_path``.
 
     ``engine_a`` / ``engine_b`` are the candidate and baseline names from
     the tournament config (engine[0] / engine[1] in creation order).
     Required: under concurrency the PGN's first-completed game is not a
     reliable indicator of which engine is the candidate.
 
-    ``params`` keys:
-      - ``elo0``  (float, required)
-      - ``elo1``  (float, required)
-      - ``alpha`` (float, default 0.05)
-      - ``beta``  (float, default 0.05)
-      - ``model`` (str,  default "normalized"; also accepts "pentanomial"
-        as an alias, and "logistic" for the trinomial W/D/L model)
+    ``params`` keys: ``elo0``/``elo1`` (logistic Elo, required), ``alpha``/
+    ``beta`` (default 0.05), ``model`` ("normalized" default; "logistic" for
+    the per-game-score model -- matched to whatever fastchess ran so the LLR
+    agrees). "pentanomial" is an accepted alias for "normalized".
     """
     elo0 = float(params["elo0"])
     elo1 = float(params["elo1"])
     alpha = float(params.get("alpha", 0.05))
     beta = float(params.get("beta", 0.05))
-    model = params.get("model", "normalized")
-    # "pentanomial" is the UI-facing name; "normalized" is the internal alias.
-    if model == "pentanomial":
-        model = "normalized"
-    if model not in _SUPPORTED_SPRT_MODELS:
-        raise NotImplementedError(f"SPRT model {model!r} not implemented")
+    model = params.get("model") or "normalized"
     if elo0 >= elo1:
         raise ValueError(f"SPRT requires elo0 < elo1; got elo0={elo0}, elo1={elo1}")
     if not 0.0 < alpha < 1.0:
@@ -1007,186 +1159,37 @@ def compute_sprt(
         raise ValueError(f"SPRT beta must be in (0, 1); got {beta}")
 
     lower, upper = _sprt_bounds(alpha, beta)
-
-    if model == "logistic":
-        return _compute_sprt_logistic(
-            pgn_path,
-            elo0=elo0, elo1=elo1, lower=lower, upper=upper,
-            engine_a=engine_a, engine_b=engine_b,
-        )
-
     pairs = _iter_pairs(pgn_path, engine_a=engine_a, engine_b=engine_b)
     n = len(pairs)
-
-    # Per-pair score in [0, 1]: pair_total / 2.
     if n == 0:
         return SprtResult(
-            llr=0.0,
-            lower_bound=lower,
-            upper_bound=upper,
-            status=SPRT_CONTINUE,
-            pairs=0,
-            elo0=elo0,
-            elo1=elo1,
-            model=model,
+            llr=0.0, lower_bound=lower, upper_bound=upper,
+            status=SPRT_CONTINUE, pairs=0, elo0=elo0, elo1=elo1,
         )
 
-    scores = [s / 2.0 for _, _, s in pairs]
-    mu = sum(scores) / n
+    # Pentanomial bins LL/LD/(WL+DD)/WD/WW. Pair score s is an exact multiple
+    # of 0.5 (sum of two game scores in {0, 0.5, 1}), so s/0.5 is an exact
+    # integer 0..4; round() just casts it. WL and DD both score 1.0 -> bin 2.
+    counts = [0, 0, 0, 0, 0]
+    for _a, _b, s in pairs:
+        counts[round(s / 0.5)] += 1
+    reg = [c if c != 0 else _PENTA_REGULARIZE for c in counts]
+    total = sum(reg)
+    probs = [c / total for c in reg]
 
-    if n < 2:
-        # Variance ill-defined; emit LLR=0 and keep playing.
-        return SprtResult(
-            llr=0.0,
-            lower_bound=lower,
-            upper_bound=upper,
-            status=SPRT_CONTINUE,
-            pairs=n,
-            elo0=elo0,
-            elo1=elo1,
-            model=model,
-        )
-
-    # Pentanomial variance: sample variance of per-pair score around μ.
-    var = sum((s - mu) ** 2 for s in scores) / (n - 1)
-    if var <= 0.0:
-        # All pairs scored identically -- the sample carries no spread
-        # and so no information about the hypothesis. Returning a
-        # variance-floored LLR would invent significance; treat as the
-        # n<2 case instead.
-        return SprtResult(
-            llr=0.0,
-            lower_bound=lower,
-            upper_bound=upper,
-            status=SPRT_CONTINUE,
-            pairs=n,
-            elo0=elo0,
-            elo1=elo1,
-            model=model,
-        )
-
-    # Logistic-Elo per-game score offset: dscore ~= elo * ln(10) / 1600
-    # (linearization of 1/(1+10^(-elo/400)) at score=0.5). Same offset
-    # applies in per-pair score units, since mu is already per-game.
-    def elo_to_score(elo: float) -> float:
-        return 0.5 + elo * math.log(10.0) / 1600.0
-
-    s0 = elo_to_score(elo0)
-    s1 = elo_to_score(elo1)
-
-    # Gaussian LLR with variance estimated from the sample (conventional
-    # SPRT shortcut, not a strict Wald test):
-    #   LLR = n * (s1 - s0) * (mu - (s0 + s1)/2) / var
-    llr = n * (s1 - s0) * (mu - (s0 + s1) / 2.0) / var
-
-    if llr >= upper:
-        status = SPRT_H1
-    elif llr <= lower:
-        status = SPRT_H0
+    if model == "logistic":
+        llr = _gllr_logistic(
+            total, _PENTA_SCORES, probs, _lelo_to_score(elo0), _lelo_to_score(elo1))
     else:
-        status = SPRT_CONTINUE
+        # Normalized t-statistic from logistic Elo (penta uses the sqrt(2) factor).
+        t0 = math.sqrt(2.0) * elo0 / _NELO_DIVISOR
+        t1 = math.sqrt(2.0) * elo1 / _NELO_DIVISOR
+        llr = _gllr_normalized(total, _PENTA_SCORES, probs, t0, t1)
 
-    return SprtResult(
-        llr=llr,
-        lower_bound=lower,
-        upper_bound=upper,
-        status=status,
-        pairs=n,
-        elo0=elo0,
-        elo1=elo1,
-        model=model,
-    )
+    # A non-finite LLR (degenerate fit) carries no decision -- treat as continue.
+    if not math.isfinite(llr):
+        llr = 0.0
 
-
-# ---------------------------------------------------------------------------
-# Logistic SPRT (per-game W/D/L trinomial)
-#
-# Standard cutechess-cli style: per-game LLR with a trinomial model
-# parameterized by the observed draw rate. For hypothesis Hk:
-#     score_k = 1 / (1 + 10^(-elo_k/400))
-#     Pw_k    = score_k - d_obs/2
-#     Pl_k    = 1 - score_k - d_obs/2
-#     Pd_k    = d_obs
-# LLR = w*log(Pw1/Pw0) + l*log(Pl1/Pl0)   (draw term cancels: Pd1 == Pd0)
-#
-# If either Pw_k or Pl_k is non-positive (extreme elo bounds vs observed
-# draw rate), the trinomial is degenerate and the sample carries no
-# usable information; emit LLR=0 / continue, matching the pentanomial
-# zero-variance handling.
-# ---------------------------------------------------------------------------
-
-
-def _compute_sprt_logistic(
-    pgn_path: Path,
-    *,
-    elo0: float,
-    elo1: float,
-    lower: float,
-    upper: float,
-    engine_a: str,
-    engine_b: str,
-) -> SprtResult:
-    """Compute logistic-model SPRT over individual W/D/L games.
-
-    Game count (not pair count) is what's reported in ``pairs`` here -- the
-    field is reused so the UI doesn't need a model-specific branch. The
-    label "pairs" remains accurate for the pentanomial/normalized path; for
-    logistic it counts decided games, which is the appropriate analogue.
-
-    ``engine_a`` / ``engine_b`` identify the candidate and baseline from
-    tournament config; same reasoning as ``compute_sprt``.
-    """
-    games = list(_iter_games(pgn_path))
-    if not games:
-        return SprtResult(
-            llr=0.0, lower_bound=lower, upper_bound=upper,
-            status=SPRT_CONTINUE, pairs=0,
-            elo0=elo0, elo1=elo1, model="logistic",
-        )
-
-    a_name, b_name = engine_a, engine_b
-    wins = losses = draws = 0
-    for white, black, result in games:
-        if {white, black} != {a_name, b_name}:
-            log.warning(
-                "SPRT %s: game skipped (engines %s vs %s, expected %s vs %s)",
-                pgn_path.name, white, black, a_name, b_name,
-            )
-            continue
-        if result == _WHITE_WIN:
-            if white == a_name:
-                wins += 1
-            else:
-                losses += 1
-        elif result == _BLACK_WIN:
-            if black == a_name:
-                wins += 1
-            else:
-                losses += 1
-        else:
-            draws += 1
-
-    n = wins + losses + draws
-    if n == 0:
-        return SprtResult(
-            llr=0.0, lower_bound=lower, upper_bound=upper,
-            status=SPRT_CONTINUE, pairs=0,
-            elo0=elo0, elo1=elo1, model="logistic",
-        )
-
-    d_obs = draws / n
-    s0 = 1.0 / (1.0 + math.pow(10.0, -elo0 / 400.0))
-    s1 = 1.0 / (1.0 + math.pow(10.0, -elo1 / 400.0))
-    pw0, pl0 = s0 - d_obs / 2.0, 1.0 - s0 - d_obs / 2.0
-    pw1, pl1 = s1 - d_obs / 2.0, 1.0 - s1 - d_obs / 2.0
-    if min(pw0, pl0, pw1, pl1) <= 0.0:
-        return SprtResult(
-            llr=0.0, lower_bound=lower, upper_bound=upper,
-            status=SPRT_CONTINUE, pairs=n,
-            elo0=elo0, elo1=elo1, model="logistic",
-        )
-
-    llr = wins * math.log(pw1 / pw0) + losses * math.log(pl1 / pl0)
     if llr >= upper:
         status = SPRT_H1
     elif llr <= lower:
@@ -1196,6 +1199,7 @@ def _compute_sprt_logistic(
 
     return SprtResult(
         llr=llr, lower_bound=lower, upper_bound=upper,
-        status=status, pairs=n,
-        elo0=elo0, elo1=elo1, model="logistic",
+        status=status, pairs=n, elo0=elo0, elo1=elo1,
     )
+
+

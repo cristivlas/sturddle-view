@@ -257,6 +257,38 @@ async def test_play_from_here_at_finished_position_keeps_view_mode(hve):
     assert h._view_cursor == 0
 
 
+async def test_play_from_here_engine_spawn_failure_keeps_view_mode(hve):
+    """Bug regression: a failed engine launch must leave the viewer intact,
+    not strand the user in PLAY mode with the view payload wiped (which then
+    rejects view nav with 'VIEW_GOTO not allowed in PLAY mode')."""
+    h, _ = hve
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None,
+        moves_uci=["e2e4", "e7e5", "g1f3", "b8c6"],
+        clock_history=None,
+    ))
+    await h.view_last()
+    await h.view_back()  # cursor mid-game (ply 3)
+    pre_id = h._game_id
+
+    async def boom():
+        raise FileNotFoundError("/nonexistent")
+    h._ensure_engine = boom
+
+    with pytest.raises(FileNotFoundError):
+        await h.play_from_here(tc=TimeControl(60, 0))
+
+    # Coherent rollback: still VIEWING, same game, payload + cursor intact.
+    assert h._viewing is True
+    assert h._mode is Mode.VIEWING
+    assert h._game_id == pre_id
+    assert len(h._view_full_moves) == 4
+    assert h._view_cursor == 3
+    # View nav still works (would raise if stranded in PLAY with view wiped).
+    await h.view_first()
+    assert h._view_cursor == 0
+
+
 async def test_view_nav_rejected_during_analysis(hve):
     h, _ = hve
     await h.enter_view_mode(ViewModeParams(

@@ -29,7 +29,11 @@ from ..env_utils import env_int
 from ..events import EVT_ENGINE_SEARCH_START, Event, EventBus
 from ..llm import ToolSpec
 from ..llm.cancel import CancelToken
-from .engine_analysis import resolve_eval_pov_white_or_stm, spawn_analysis_engine
+from .engine_analysis import (
+    log_spawn_failure,
+    resolve_eval_pov_white_or_stm,
+    spawn_analysis_engine,
+)
 from .engine_info_pump import pump_engine_info
 from .engine_supervisor import EngineSupervisor
 
@@ -509,12 +513,15 @@ async def _run_one_search(
 
     Emits engine_info but NOT engine_search_start -- the caller clears the
     panel (analyze once; top_moves once for the whole batch)."""
-    sup = engine_launcher()
     settings = settings_provider() if settings_provider else None
     try:
+        # Build inside the try: the launcher (make_analysis_supervisor) can
+        # raise NoAnalysisEngine before spawn -- it must come out as a clean
+        # _SearchError envelope, not escape the tool uncaught.
+        sup = engine_launcher()
         engine, cleanup = await spawn_analysis_engine(sup, settings)
     except Exception as exc:
-        log.error("search: engine spawn failed", exc_info=True)
+        log_spawn_failure(exc, "search")
         raise _SearchError("engine_spawn_failed", str(exc)) from exc
     try:
         analysis_kwargs: dict = {"limit": limit}

@@ -16,11 +16,9 @@ const PONDER_TITLE = "Engines think on opponent's time.";
 const AFFINITY_TITLE =
   "Pass -affinity to fastchess so each game-slot is bound to fixed cores. " +
   "Reduces scheduler noise; recommended for SPRT.";
-const OVERSUBSCRIBE_TITLE =
-  "Allow CPU/RAM use to exceed the host's capacity. Resource checks " +
-  "downgrade from blockers to warnings. Don't use for SPRT.";
-const SPRT_TITLE =
-  "Sequential Probability Ratio Test: terminates when statistical conclusion is reached.";
+const RESTART_TITLE =
+  "Restart each engine between games (fastchess restart=on). Clears " +
+  "hash/internal state for a clean start; slower than reusing processes.";
 
 
 // oversized-ok: form controller -- every section registers fields into a
@@ -108,10 +106,14 @@ export function mountTournamentTemplateForm({
 
   const ponderSwitch = makeSwitch("ponder", "Ponder", PONDER_TITLE);
   const affinitySwitch = makeSwitch("pin_affinity", "CPU Affinity", AFFINITY_TITLE);
-  const oversubSwitch = makeSwitch("allow_oversubscribe", "Oversubscribe", OVERSUBSCRIBE_TITLE);
-  const sprtSwitch = makeSwitch("sprt", "SPRT", SPRT_TITLE);
+  const restartSwitch = makeSwitch("restart_engines", "Restart engines", RESTART_TITLE);
 
-  function syncSprtUI(on) {
+  // SPRT on/off is driven externally by the New Tournament dialog's chip via
+  // applySprt(); the form starts off (the Settings defaults tab never enables
+  // it, so Rounds is always emitted there and survives in default_template).
+  let sprtOn = false;
+  function applySprt(on) {
+    sprtOn = on;
     if (on) {
       if (typeSelect.value !== "roundrobin") {
         typeSelect.value = "roundrobin";
@@ -124,19 +126,9 @@ export function mountTournamentTemplateForm({
       inputs.rounds.removeAttribute("disabled");
     }
   }
+  applySprt(sprtOn);
 
-  sprtSwitch.addEventListener("change", () => {
-    syncSprtUI(sprtSwitch.checked);
-    container.dispatchEvent(new Event("change", { bubbles: true }));
-  });
-
-  // Apply initial state.
-  syncSprtUI(!!initialValues.sprt);
-
-  // Order: Affinity + Oversubscribe first (logically paired -- both about
-  // CPU resource policy), Ponder last so when the row wraps on narrow
-  // viewports the related pair stays together on the first line.
-  switchRow.append(affinitySwitch, oversubSwitch, ponderSwitch, sprtSwitch);
+  switchRow.append(affinitySwitch, ponderSwitch, restartSwitch);
 
   // ---- Adjudication: Resign + Draw --------------------------------------
 
@@ -227,9 +219,10 @@ export function mountTournamentTemplateForm({
 
   function getValues() {
     const out = {};
-    const sprtOn = sprtSwitch.checked;
 
-    // Core scalar fields. rounds omitted when SPRT is on (fastchess self-terminates).
+    // rounds omitted when SPRT is on (fastchess self-terminates -- a stored
+    // rounds would be a lie). The Settings defaults tab never enters SPRT
+    // mode, so its default_template always keeps rounds for prefill.
     const scalars = sprtOn ? ["tc", "games_in_parallel"] : ["tc", "games_in_parallel", "rounds"];
     for (const k of scalars) {
       const raw = inputs[k].value;
@@ -243,8 +236,7 @@ export function mountTournamentTemplateForm({
     }
     if (ponderSwitch.checked) out.ponder = true;
     if (affinitySwitch.checked) out.pin_affinity = true;
-    if (oversubSwitch.checked) out.allow_oversubscribe = true;
-    if (sprtOn) out.sprt = true;
+    if (restartSwitch.checked) out.restart_engines = true;
 
     // Adjudication: only emit a sub-object when the switch is on AND
     // the required fields are present.
@@ -277,7 +269,6 @@ export function mountTournamentTemplateForm({
     const tc = (inputs.tc.value || "").trim();
     if (!tc) push("tc", "Time control is required (e.g. 10+0.1).");
 
-    const sprtOn = sprtSwitch.checked;
     if (!sprtOn) {
       const rounds = Number(inputs.rounds.value);
       if (!Number.isFinite(rounds) || rounds < 1) {
@@ -334,15 +325,5 @@ export function mountTournamentTemplateForm({
     return { ok: errors.length === 0, errors };
   }
 
-  function setSprtAvailable(available) {
-    if (!available && sprtSwitch.checked) {
-      sprtSwitch.checked = false;
-      syncSprtUI(false);
-      container.dispatchEvent(new Event("change", { bubbles: true }));
-    }
-    if (available) sprtSwitch.removeAttribute("disabled");
-    else sprtSwitch.setAttribute("disabled", "");
-  }
-
-  return { getValues, validate, setSprtAvailable };
+  return { getValues, validate, applySprt };
 }

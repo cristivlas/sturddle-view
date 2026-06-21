@@ -8,12 +8,32 @@ caller drifts.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Awaitable, Callable
 
 import chess
 import chess.engine
 
+from ..engines import resolve_analysis
 from .engine_supervisor import EngineSupervisor
+
+log = logging.getLogger(__name__)
+
+
+class NoAnalysisEngine(RuntimeError):
+    """No analysis engine is configured/resolvable -- a config gap, not a crash."""
+
+
+def log_spawn_failure(exc: Exception, context: str) -> None:
+    """Log an analysis-engine spawn failure. A missing binary or unconfigured
+    engine is expected and user-fixable -- log it concisely; anything else is a
+    real surprise, so keep the full traceback."""
+    if isinstance(exc, FileNotFoundError):
+        log.warning("%s: engine not found: %s", context, exc)
+    elif isinstance(exc, NoAnalysisEngine):
+        log.warning("%s: %s", context, exc)
+    else:
+        log.error("%s: engine spawn failed", context, exc_info=True)
 
 
 # UCI option keys -- kept as constants to avoid scattered string literals
@@ -72,6 +92,24 @@ def analysis_overrides(settings: Any | None) -> dict:
         return {}
     n = getattr(settings, "engine_default_analysis_threads", None)
     return {_UCI_THREADS: n} if n else {}
+
+
+def make_analysis_supervisor(registry, settings: Any | None, bus) -> EngineSupervisor:
+    """Build a supervisor for the configured analysis engine. resolve_analysis
+    honors analysis_engine_id (falling back to the active engine only when the
+    pinned entry is gone). Shared by HVE engine-only analysis and the AI tool
+    so neither drifts onto the wrong engine."""
+    launch = resolve_analysis(registry, settings) if registry is not None else None
+    if launch is None or launch.path is None:
+        raise NoAnalysisEngine("no analysis engine configured")
+    sup = EngineSupervisor(launch.path, bus, settings=settings)
+    if launch.options:
+        sup.options = launch.options
+    if launch.args:
+        sup.args = list(launch.args)
+    if launch.env:
+        sup.env = dict(launch.env)
+    return sup
 
 
 async def spawn_analysis_engine(

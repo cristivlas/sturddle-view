@@ -57,7 +57,7 @@ async def test_enter_edit_mode_snapshots_current_fen(hve: HumanVsEngine):
     pre = await hve.enter_edit_mode()
     assert hve._editing is True
     assert pre == chess.STARTING_FEN
-    assert hve._edit_pre_fen == chess.STARTING_FEN
+    assert hve._edit_saved_view.board.fen() == chess.STARTING_FEN
 
 
 async def test_commit_edit_with_valid_fen_enters_view_at_fen(hve: HumanVsEngine):
@@ -200,7 +200,7 @@ async def test_enter_edit_mode_snapshots_cursor_fen_not_start(hve: HumanVsEngine
     await hve.view_last()
     pre = await hve.enter_edit_mode()
     assert pre == _AFTER_MOVES_FEN
-    assert hve._edit_pre_fen == _AFTER_MOVES_FEN
+    assert hve._edit_saved_view.board.fen() == _AFTER_MOVES_FEN
 
 
 async def test_view_start_lands_at_last_ply(hve: HumanVsEngine):

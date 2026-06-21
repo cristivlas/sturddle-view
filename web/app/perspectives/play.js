@@ -104,6 +104,9 @@ function resultBadge(result) {
 const EVAL_PANEL_TITLE = "Engine Eval";
 const EVAL_PANEL_TOOLTIP = "Evaluation from the engine's point of view";
 
+// Cap server-supplied error detail (engine path / exception text) in toasts.
+const MAX_TOAST_DETAIL = 200;
+
 // eval_history entries are white POV {cp|mate}; flip for a black engine.
 function evalToEnginePov(ev, engineWhite) {
   if (engineWhite) return ev;
@@ -118,8 +121,6 @@ function evalToEnginePov(ev, engineWhite) {
 function feedEvalBar(state, evalHistory) {
   const bar = state.evalBar;
   if (!bar) return;
-  // Engine evals are a play-mode concept; hide the panel while viewing.
-  state.evalPanel.style.display = state.viewing ? "none" : "";
   const engineWhite = !state.humanWhite;
   // Carry each entry's ply (0-based move index) so a bar click can navigate
   // there; human plies are null and produce no bar.
@@ -129,6 +130,8 @@ function feedEvalBar(state, evalHistory) {
       if (ev != null) items.push({ score: evalToEnginePov(ev, engineWhite), ply });
     });
   }
+  // Hide when viewing or when no evals exist yet.
+  state.evalPanel.style.display = state.viewing || !items.length ? "none" : "";
   bar.setSamples(items, engineWhite);
 }
 
@@ -199,6 +202,7 @@ const MSG = {
   START_ANALYSIS_FAILED: "Start analysis failed",
   REANALYZE_FAILED: "Re-analyze failed",
   ENGINE_CRASHED: "Engine crashed unexpectedly.",
+  ANALYSIS_ENGINE_FAILED: "Analysis engine failed to start.",
   // Confirm dialogs.
   CONFIRM_NEW_GAME: "Cancel the game in progress and start a new one?",
   CONFIRM_RESIGN: "Resign the current game?",
@@ -1391,11 +1395,13 @@ async function onPlayFromHereImpl(state) {
       // ignore
     }
   } catch (e) {
+    // Server keeps view mode on failure -- restore the gameId filter and
+    // re-enable the button so the user can retry from the same position.
+    state.view.setGameId(state.viewingGameId);
+    setDisabled(state.el.viewPlayFromHereBtn, false);
     reportError(state.ctx, MSG.PLAY_FROM_HERE_FAILED, e);
   } finally {
     state.playFromHereInflight = false;
-    // Don't re-enable directly; state.refreshButtons() drives it next time
-    // viewing flips, and by then the button is hidden anyway.
   }
 }
 
@@ -2104,6 +2110,7 @@ export const playPerspective = {
     evalTitle.textContent = EVAL_PANEL_TITLE;
     evalTitle.title = EVAL_PANEL_TOOLTIP;
     evalPanel.append(evalTitle, evalBar.el);
+    evalPanel.style.display = "none"; // shown by feedEvalBar once evals arrive
     const sideRail = sideHost.querySelector(".game-view-side");
     const movesSection = sideRail?.querySelector(".game-view-moves");
     if (movesSection) movesSection.after(evalPanel);
@@ -2287,12 +2294,23 @@ export const playPerspective = {
     editCancelBtn.addEventListener("click", onEditCancel);
 
     const offCrash = ctx.events.on(async (evt) => {
-      if (evt.kind !== "system" || evt.payload?.error !== "engine_terminated") return;
-      view.clearArrows();
-      if (state.analyzing) {
-        await onAnalyze();
+      if (evt.kind !== "system") return;
+      const err = evt.payload?.error;
+      if (err === "engine_terminated") {
+        view.clearArrows();
+        if (state.analyzing) {
+          await onAnalyze();
+        }
+        showEngineCrashToast();
+      } else if (err === "analysis_engine_failed") {
+        // Server already reverted out of ANALYZING (board_update); just say why.
+        view.clearArrows();
+        const detail = (evt.payload?.detail || "").slice(0, MAX_TOAST_DETAIL);
+        const text = detail
+          ? `${MSG.ANALYSIS_ENGINE_FAILED} ${detail}`
+          : MSG.ANALYSIS_ENGINE_FAILED;
+        toast(text, { variant: "danger" });
       }
-      showEngineCrashToast();
     });
 
     return {

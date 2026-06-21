@@ -11,7 +11,7 @@ import datetime
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,6 +19,7 @@ import chess
 import chess.engine
 
 from .._atomic import atomic_write_text
+from ..config import DEFAULT_TC_INCREMENT_SECONDS, DEFAULT_TC_INITIAL_SECONDS
 
 if TYPE_CHECKING:
     from ..recent_imports import RecentImports
@@ -42,6 +43,8 @@ from .engine_analysis import (
     EVAL_POV_HUMAN,
     EVAL_POV_WHITE,
     global_engine_defaults,
+    log_spawn_failure,
+    make_analysis_supervisor,
     resolve_eval_pov_white_or_stm,
     spawn_analysis_engine,
 )
@@ -55,30 +58,6 @@ from .tablebase import TablebaseProber
 log = logging.getLogger(__name__)
 
 CLOCK_TICK_INTERVAL = 0.25  # seconds
-
-
-@dataclass
-class _ViewSnapshot:
-    """All view-mode state captured at enter_edit_mode for lossless restore.
-    Adding a view-mode field? Add it here too -- single source of truth."""
-    start_fen: str | None
-    board: chess.Board
-    cursor: int
-    full_moves: list[chess.Move]
-    clock_history: list[tuple[float, float]]
-    final_white: float | None
-    final_black: float | None
-    white_name: str | None
-    black_name: str | None
-    eval_history: list[dict | None] | None
-    comments: list[str | None] | None
-    root_comment: str | None
-    pgn_result: str | None
-    pgn_termination: str | None
-    view_hash: str | None = None
-    view_summary: dict | None = None
-    view_original_text: str | None = None
-    view_edited: bool = False
 
 
 @dataclass
@@ -103,6 +82,88 @@ class ViewModeParams:
     view_original_text: str | None = None
 
 
+@dataclass(eq=False)
+class GameBundle:
+    """The coherent 'current game': `mode` plus the position and the
+    mode-specific payload that must stay consistent with it.
+
+    Held as HumanVsEngine._game, the single unit grouping `mode` with its
+    payload so the two cannot describe different games. Today it is mutated
+    field-by-field via the _bundle_prop delegators.
+
+    eq=False: identity equality only -- the generated __eq__ would deep-compare
+    Board/ChessClock (and null __hash__). Defaults are the idle/no-game state."""
+    mode: Mode = Mode.PLAY
+    board: chess.Board | None = None
+    # FEN before any moves on board.move_stack -- None for startpos games.
+    # In view mode the board is rebuilt from view_full_moves[:view_cursor].
+    start_fen: str | None = None
+    game_id: str | None = None
+    # Wall-clock start, for stable PGN filenames across autosaves.
+    game_started_wall: float | None = None
+    human_white: bool = True
+    player_name: str = DEFAULT_PLAYER_NAME
+    clock: ChessClock = field(
+        default_factory=lambda: ChessClock(
+            TimeControl(DEFAULT_TC_INITIAL_SECONDS, DEFAULT_TC_INCREMENT_SECONDS),
+        )
+    )
+    # play payload (PLAY/PAUSED). eval_history matches move_stack length, one
+    # entry per pushed move (None for human plies); popped on take-back.
+    eval_history: list[dict | None] = field(default_factory=list)
+    # Populated only when the play game was forked from a view position
+    # (play_from_here) carrying commentary, so it survives into exports.
+    play_comments: list[str | None] | None = None
+    play_root_comment: str | None = None
+    # view payload (VIEWING/EDITING)
+    view_cursor: int = 0  # 0..len(view_full_moves) inclusive
+    view_full_moves: list[chess.Move] = field(default_factory=list)
+    view_clock_history: list[tuple[float | None, float | None]] = field(default_factory=list)
+    view_final_white: float | None = None
+    view_final_black: float | None = None
+    view_white_name: str | None = None
+    view_black_name: str | None = None
+    view_eval_history: list[dict | None] | None = None
+    view_comments: list[str | None] | None = None
+    view_root_comment: str | None = None
+    view_pgn_result: str | None = None
+    view_pgn_termination: str | None = None
+    view_hash: str | None = None
+    view_summary: dict | None = None
+    # Verbatim imported bytes, set once in enter_view_mode; served by
+    # get_pgn_text when state hasn't diverged.
+    view_original_text: str | None = None
+    view_edited: bool = False  # True once diverged from view_original_text
+    # mode to restore when leaving ANALYZING
+    pre_analysis_mode: Mode = Mode.PLAY
+
+    def copy(self) -> "GameBundle":
+        """Independent copy for edit-mode stash/restore: board and the list
+        fields are duplicated. Shared (safe only because edit treats them as
+        immutable): scalars, the inert view clock, view_summary, and the eval
+        dicts inside the eval lists."""
+        return replace(
+            self,
+            board=self.board.copy() if self.board is not None else None,
+            eval_history=list(self.eval_history),
+            play_comments=None if self.play_comments is None else list(self.play_comments),
+            view_full_moves=list(self.view_full_moves),
+            view_clock_history=list(self.view_clock_history),
+            view_eval_history=None if self.view_eval_history is None else list(self.view_eval_history),
+            view_comments=None if self.view_comments is None else list(self.view_comments),
+        )
+
+
+def _bundle_prop(name: str) -> property:
+    """Delegate a `self._<name>` attribute to the self._game bundle, so call
+    sites read/write fields unchanged while the bundle stays the single unit
+    grouping mode with its payload."""
+    return property(
+        lambda self: getattr(self._game, name),
+        lambda self, value: setattr(self._game, name, value),
+    )
+
+
 class HumanVsEngine:
     """Single-game driver. Holds one active game at a time."""
 
@@ -114,11 +175,16 @@ class HumanVsEngine:
         settings=None,
         store: GameStore | None = None,
         recents: "RecentImports | None" = None,
+        engines=None,
     ) -> None:
         self._bus = bus
         self._openings = openings  # Optional[OpeningBook]
         self._settings = settings  # Optional[Settings]
         self._store = store
+        # Optional EngineRegistry. Lets engine-only analysis resolve the
+        # configured analysis engine (resolve_analysis); None -> fall back to
+        # the play supervisor (test doubles that don't wire a registry).
+        self._engines = engines
         # Optional RecentImports. When set, finished games are saved into
         # the imports store on game-end so they survive reloads and appear
         # in the recents dropdown. Tagged with summary["source"]="play".
@@ -129,25 +195,17 @@ class HumanVsEngine:
         self._supervisor = EngineSupervisor(
             engine_path=engine_path, bus=bus, settings=settings,
         )
-        self._board: chess.Board | None = None
-        # FEN of the board *before* any moves on _board.move_stack — None for
-        # games that began at startpos. Persisted so restore_from can rebuild
-        # an imported game whose move_stack isn't replayable from startpos.
-        self._start_fen: str | None = None
-        self._game_id: str | None = None
-        # Wall-clock time the current game started, used for stable PGN
-        # filenames across per-move autosaves and end-of-game finalization.
-        self._game_started_wall: float | None = None
-        self._human_white: bool = True
-        self._player_name: str = DEFAULT_PLAYER_NAME
-        self._clock: ChessClock = ChessClock(TimeControl(300.0, 0.0))
+        # The coherent 'current game': groups mode with its payload so the two
+        # cannot describe different games. Mutated field-by-field today.
+        # View mode is a cursor-based playback whose board is rebuilt from
+        # view_full_moves[:view_cursor]; edit mode is entered from view only.
+        # Per-field reads/writes (self._board, self._mode, self._view_*, ...)
+        # delegate here via _bundle_prop.
+        self._game = GameBundle()
         self._think_task: asyncio.Task | None = None
         self._analysis = None  # active chess.engine.AnalysisResult, if any
         self._think_gen: int = 0  # search generation; bumped on cancel
         self._tick_task: asyncio.Task | None = None
-        self._mode: Mode = Mode.PLAY
-        # Mode before entering ANALYZING; restored by stop_analysis().
-        self._pre_analysis_mode: Mode = Mode.PLAY
         self._analysis_task: asyncio.Task | None = None
         # Most recent engine_info payload published during analysis. Kept
         # so /game/sync can re-emit it after a client remount (e.g. user
@@ -155,63 +213,6 @@ class HumanVsEngine:
         # gone until the engine ships its next info line, which can take
         # seconds at higher depths.
         self._last_analysis_info: dict | None = None
-        # View mode: cursor-based playback of an imported / loaded game.
-        # _board is rebuilt from _view_full_moves[:_view_cursor] on every
-        # navigation, so analyze sees the right position automatically.
-        # Autosave, submit_move, engine thinking, and clocks are all gated
-        # off while viewing. Exits via play_from_here.
-        #
-        # Edit mode: entered from view only; commit/cancel return to VIEWING.
-        self._edit_pre_fen: str | None = None
-        self._edit_view_snapshot: _ViewSnapshot | None = None
-        self._view_cursor: int = 0  # 0..len(_view_full_moves) inclusive
-        self._view_full_moves: list[chess.Move] = []
-        # Per-ply pre-move (white, black) snapshots from the imported PGN's
-        # [%clk] (None entries when not derivable). Sliced on play_from_here.
-        self._view_clock_history: list[tuple[float | None, float | None]] = []
-        # Live (white, black) clocks AFTER the imported PGN's final ply. Used
-        # by play_from_here when cursor lands at the last ply (no pre-move
-        # snapshot beyond the last entry to derive post-move clocks from).
-        self._view_final_white: float | None = None
-        self._view_final_black: float | None = None
-        # Player names from the imported PGN's [White]/[Black] headers,
-        # surfaced in clock-row labels while viewing.
-        self._view_white_name: str | None = None
-        self._view_black_name: str | None = None
-        # Per-ply post-move eval (white POV) parsed from PGN comments.
-        # None when the PGN had no recognizable eval annotations.
-        self._view_eval_history: list[dict | None] | None = None
-        # Per-ply sanitized PGN comments (machine annotations stripped).
-        # None when the PGN had no commentary at all.
-        self._view_comments: list[str | None] | None = None
-        # Pre-game / Annotator commentary, sanitized. Shown at cursor==0.
-        self._view_root_comment: str | None = None
-        # PGN [Result]/[Termination] from the imported game (None when
-        # not in view mode). Read by _board_event's view payload.
-        self._view_pgn_result: str | None = None
-        self._view_pgn_termination: str | None = None
-        # SHA-256 hash and human-readable summary of the viewed game's source
-        # text (PGN or FEN). None for play-mode games and view/start transitions.
-        self._view_hash: str | None = None
-        self._view_summary: dict | None = None
-        # Original bytes the user pasted, set once in enter_view_mode and never
-        # updated. Served verbatim by get_pgn_text when state hasn't diverged;
-        # also enables a future revert-to-original.
-        self._view_original_text: str | None = None
-        # True when view state has diverged from _view_original_text (e.g. after
-        # an annotation edit). Forces get_pgn_text to re-serialize.
-        self._view_edited: bool = False
-        # Per-ply engine eval (white POV), one entry per pushed move. None
-        # entries for plies with no engine search (human moves). Matches
-        # move_stack length; pop alongside on take-back. Reset on new game.
-        self._eval_history: list[dict | None] = []
-        # Play-side PGN comments. Populated only when the play game was
-        # seeded from a view-mode position (play_from_here) that carried
-        # commentary -- otherwise None. Used by _build_play_game_pgn so
-        # imported annotations survive the view -> play fork into recents
-        # and exports. Live play does not mutate these today.
-        self._play_comments: list[str | None] | None = None
-        self._play_root_comment: str | None = None
         # Set inside the game-end lock by _stash_recents_payload(); drained
         # after the lock by _flush_recents_save(). Carries (text, summary,
         # game_id) for the recent-imports save so the async write happens
@@ -229,8 +230,43 @@ class HumanVsEngine:
         # the last ply. Set only by view/start; cleared by enter_view_mode
         # (so import/edit-commit don't offer a stale resume) and on resume.
         self._suspended_play: GameState | None = None
+        # Pre-edit view bundle stashed by enter_edit_mode; restored wholesale
+        # (self._game = it) by cancel_edit and the FEN-unchanged commit_edit.
+        self._edit_saved_view: GameBundle | None = None
         self._tb: TablebaseProber | None = None
         self._lock = asyncio.Lock()
+
+    # Coherent-game fields delegate to the self._game bundle, so call sites
+    # read/write self._<field> unchanged while the bundle stays the single
+    # unit grouping mode with its payload.
+    _mode = _bundle_prop("mode")
+    _board = _bundle_prop("board")
+    _start_fen = _bundle_prop("start_fen")
+    _game_id = _bundle_prop("game_id")
+    _game_started_wall = _bundle_prop("game_started_wall")
+    _human_white = _bundle_prop("human_white")
+    _player_name = _bundle_prop("player_name")
+    _clock = _bundle_prop("clock")
+    _eval_history = _bundle_prop("eval_history")
+    _play_comments = _bundle_prop("play_comments")
+    _play_root_comment = _bundle_prop("play_root_comment")
+    _view_cursor = _bundle_prop("view_cursor")
+    _view_full_moves = _bundle_prop("view_full_moves")
+    _view_clock_history = _bundle_prop("view_clock_history")
+    _view_final_white = _bundle_prop("view_final_white")
+    _view_final_black = _bundle_prop("view_final_black")
+    _view_white_name = _bundle_prop("view_white_name")
+    _view_black_name = _bundle_prop("view_black_name")
+    _view_eval_history = _bundle_prop("view_eval_history")
+    _view_comments = _bundle_prop("view_comments")
+    _view_root_comment = _bundle_prop("view_root_comment")
+    _view_pgn_result = _bundle_prop("view_pgn_result")
+    _view_pgn_termination = _bundle_prop("view_pgn_termination")
+    _view_hash = _bundle_prop("view_hash")
+    _view_summary = _bundle_prop("view_summary")
+    _view_original_text = _bundle_prop("view_original_text")
+    _view_edited = _bundle_prop("view_edited")
+    _pre_analysis_mode = _bundle_prop("pre_analysis_mode")
 
     @property
     def engine_path(self) -> str:
@@ -393,6 +429,9 @@ class HumanVsEngine:
     def _engine_env(self, value: dict[str, str]) -> None:
         self._supervisor.env = value
 
+    def set_engines(self, engines) -> None:
+        self._engines = engines
+
     def set_engine_options(self, options: dict | None) -> None:
         """Set the UCI options to apply on the next engine launch.
 
@@ -510,21 +549,14 @@ class HumanVsEngine:
         async with self._lock:
             if not (self._mode & Op.NEW_GAME._mask):
                 raise ModeConflictError(self._mode, Op.NEW_GAME)
+            self._ensure_tablebase()
+            # prepare: everything that can raise runs before the bundle swap,
+            # so a failure (bad FEN, illegal seed, engine spawn) leaves _game
+            # untouched. Cancelling the prior search/tick is coherence-safe.
             await self._cancel_analysis()
             await self._cancel_think()
             await self._cancel_tick()
-            self._reset_view_state()
-            # Universal reset point: any stale fork link from a prior
-            # session must not leak into the new game. play_from_here
-            # re-stashes after new_game returns; all other paths
-            # (plain new game, import-on-top) start link-free.
-            self._fork_link = None
-            # A fresh game replaces whatever /view/start suspended; drop it
-            # so a later view entry can't resume a game that no longer exists.
-            self._suspended_play = None
-            self._ensure_tablebase()
             engine = await self._ensure_engine()
-            engine.send_line("ucinewgame")
             try:
                 board = board_from(start_fen)
             except ValueError as e:
@@ -539,33 +571,42 @@ class HumanVsEngine:
                 board.push(move)
             if board.is_game_over():
                 raise RuntimeError("seeded position is already over")
-            self._board = board
-            self._start_fen = start_fen  # None for startpos games
-            self._human_white = human_white
-            self._player_name = player_name or DEFAULT_PLAYER_NAME
-            self._clock = ChessClock(tc)
-            self._clock.reseed_from_pgn(
-                n_plies=len(board.move_stack),
+            n_plies = len(board.move_stack)
+            clock = ChessClock(tc)
+            clock.reseed_from_pgn(
+                n_plies=n_plies,
                 seed_history=seed_clock_history,
                 final_w=seed_final_white_time,
                 final_b=seed_final_black_time,
             )
-            self._eval_history = [None] * len(board.move_stack)
+            clock.start_turn()
             # Seed play-side comments from a forking caller (play_from_here).
-            # Truncate/pad the seed to match move_stack length so subsequent
-            # take-back can shrink alongside it.
-            n_plies = len(board.move_stack)
+            # Truncate/pad to move_stack length so take-back can shrink alongside.
+            play_comments = None
             if seed_comments is not None:
                 seeded = list(seed_comments[:n_plies])
                 seeded.extend([None] * (n_plies - len(seeded)))
-                self._play_comments = seeded if any(c is not None for c in seeded) else None
-            else:
-                self._play_comments = None
-            self._play_root_comment = seed_root_comment or None
-            self._clock.start_turn()
-            self._mode = Mode.PLAY
-            self._game_id = str(uuid.uuid4())
-            self._game_started_wall = time.time()
+                play_comments = seeded if any(c is not None for c in seeded) else None
+            next_game = GameBundle(
+                mode=Mode.PLAY,
+                board=board,
+                start_fen=start_fen,  # None for startpos games
+                game_id=str(uuid.uuid4()),
+                game_started_wall=time.time(),
+                human_white=human_white,
+                player_name=player_name or DEFAULT_PLAYER_NAME,
+                clock=clock,
+                eval_history=[None] * n_plies,
+                play_comments=play_comments,
+                play_root_comment=seed_root_comment or None,
+            )
+            # commit: nothing below may raise. A fresh game drops any stale
+            # fork link (play_from_here re-stashes after this returns) and any
+            # /view/start suspend (so a later view entry can't resume it).
+            self._fork_link = None
+            self._suspended_play = None
+            engine.send_line("ucinewgame")
+            self._game = next_game
             await self._persist()
             await self._publish_board()
             await self._publish_clock()
@@ -1056,10 +1097,12 @@ class HumanVsEngine:
             n = len(self._view_full_moves)
             if ply < 0 or ply > n:
                 raise RuntimeError(f"ply out of range: {ply} (0..{n})")
-            self._view_cursor = ply
+            # Build into a local first; assign cursor+board together so a
+            # replay failure can't leave the cursor pointing past the board.
             board = board_from(self._start_fen)
             for m in self._view_full_moves[:ply]:
                 board.push(m)
+            self._view_cursor = ply
             self._board = board
             await self._publish_board()
             await self._publish_clock()
@@ -1094,54 +1137,15 @@ class HumanVsEngine:
             if need_cancel_analysis:
                 self._mode = Mode.VIEWING
             pre_fen = self._board.fen()
-            self._edit_pre_fen = pre_fen
-            self._edit_view_snapshot = _ViewSnapshot(
-                start_fen=self._start_fen,
-                board=self._board.copy(),
-                cursor=self._view_cursor,
-                full_moves=list(self._view_full_moves),
-                clock_history=list(self._view_clock_history),
-                final_white=self._view_final_white,
-                final_black=self._view_final_black,
-                white_name=self._view_white_name,
-                black_name=self._view_black_name,
-                eval_history=list(self._view_eval_history) if self._view_eval_history is not None else None,
-                comments=list(self._view_comments) if self._view_comments is not None else None,
-                root_comment=self._view_root_comment,
-                pgn_result=self._view_pgn_result,
-                pgn_termination=self._view_pgn_termination,
-                view_hash=self._view_hash,
-                view_summary=self._view_summary,
-                view_original_text=self._view_original_text,
-                view_edited=self._view_edited,
-            )
+            # Stash a copy of the view bundle (mode is VIEWING here) so cancel
+            # / FEN-unchanged commit can restore it by swapping it back in.
+            self._edit_saved_view = self._game.copy()
             self._mode = Mode.EDITING
         if need_cancel_analysis:
             await self._cancel_analysis()
         async with self._lock:
             await self._publish_board()
         return pre_fen
-
-    def _restore_view_snapshot(self, snap: _ViewSnapshot) -> None:
-        """Apply a snapshot taken by enter_edit_mode directly to view state."""
-        self._start_fen = snap.start_fen
-        self._board = snap.board
-        self._view_cursor = snap.cursor
-        self._view_full_moves = snap.full_moves
-        self._view_clock_history = snap.clock_history
-        self._view_final_white = snap.final_white
-        self._view_final_black = snap.final_black
-        self._view_white_name = snap.white_name
-        self._view_black_name = snap.black_name
-        self._view_eval_history = snap.eval_history
-        self._view_comments = snap.comments
-        self._view_root_comment = snap.root_comment
-        self._view_pgn_result = snap.pgn_result
-        self._view_pgn_termination = snap.pgn_termination
-        self._view_hash = snap.view_hash
-        self._view_summary = snap.view_summary
-        self._view_original_text = snap.view_original_text
-        self._view_edited = snap.view_edited
 
     async def commit_edit(
         self,
@@ -1186,21 +1190,20 @@ class HumanVsEngine:
             if not board.is_valid():
                 raise RuntimeError(explain_invalid(board))
             target_fen = board.fen()
-            pre_epd = board_from(self._edit_pre_fen).epd() if self._edit_pre_fen else None
+            saved = self._edit_saved_view
+            pre_epd = saved.board.epd() if saved is not None and saved.board is not None else None
             unchanged = pre_epd is not None and board.epd() == pre_epd
-            snap = self._edit_view_snapshot
             self._mode = Mode.VIEWING
-        if unchanged and snap is not None:
+        if unchanged and saved is not None:
             async with self._lock:
-                self._restore_view_snapshot(snap)
-                self._edit_pre_fen = None
-                self._edit_view_snapshot = None
-                # Annotation branch: apply requested comment at the
-                # entry ply, regen PGN + hash, publish. Reuses the
-                # just-restored snapshot as the base state.
+                # Restore the pre-edit view by swapping the stashed bundle back.
+                self._game = saved
+                self._edit_saved_view = None
+                # Annotation branch: apply requested comment at the entry ply,
+                # regen PGN + hash, publish, on the just-restored base state.
                 if apply_comment:
                     annot = self._apply_view_annotation(
-                        ply=snap.cursor, text=comment_text,
+                        ply=saved.view_cursor, text=comment_text,
                     )
                 else:
                     annot = None
@@ -1232,8 +1235,7 @@ class HumanVsEngine:
                 self._mode = Mode.EDITING
             raise
         async with self._lock:
-            self._edit_pre_fen = None
-            self._edit_view_snapshot = None
+            self._edit_saved_view = None
         return {
             "game_id": game_id,
             "changed": "fen",
@@ -1287,16 +1289,15 @@ class HumanVsEngine:
         return pgn_text, new_hash
 
     async def cancel_edit(self) -> str:
-        """Leave edit mode; restore view state from pre-edit snapshot."""
+        """Leave edit mode; restore the pre-edit view by swapping its bundle
+        back in (its mode is VIEWING, so this also leaves edit mode)."""
         async with self._lock:
             if not (self._mode & Op.CANCEL_EDIT._mask):
                 raise ModeConflictError(self._mode, Op.CANCEL_EDIT)
-            snap = self._edit_view_snapshot
-            assert snap is not None, "enter_edit_mode always sets _edit_view_snapshot"
-            self._mode = Mode.VIEWING
-            self._restore_view_snapshot(snap)
-            self._edit_pre_fen = None
-            self._edit_view_snapshot = None
+            saved = self._edit_saved_view
+            assert saved is not None, "enter_edit_mode always sets _edit_saved_view"
+            self._game = saved
+            self._edit_saved_view = None
             await self._publish_board()
             await self._publish_clock()
         return self._game_id
@@ -1340,7 +1341,7 @@ class HumanVsEngine:
                 elif cursor < len(self._view_clock_history):
                     nw, nb = self._view_clock_history[cursor]
                     seed_final_w, seed_final_b = nw, nb
-            # Snapshot view-mode commentary slice before _reset_view_state wipes it.
+            # Snapshot the view-mode commentary slice to seed the play game.
             seed_comments = (
                 list(self._view_comments[:cursor])
                 if self._view_comments is not None
@@ -1352,23 +1353,19 @@ class HumanVsEngine:
             board = board_from(start_fen)
             for m in self._view_full_moves[:cursor]:
                 board.push(m)
-            # Refuse if the cursor lands on a finished position — would
-            # otherwise raise inside new_game AFTER viewer state is cleared,
-            # stranding the user in neither view nor play. Caller should
-            # nav back first (UI disables the button at game-over plies).
+            # Reject a finished cursor position up front: a clear, specific
+            # error instead of new_game's generic "seeded position is over".
             if board.is_game_over():
                 raise RuntimeError("game is over at this ply; back up first")
             human_white = (board.turn == chess.WHITE)
-            # Capture fork link before new_game wipes it. The parent's
-            # game_id is the *current* self._game_id (we are still in
-            # view mode pointing at it). fork_ply==0 is a degenerate
-            # fork -- treated as a plain new game with no link.
+            # Capture the fork link before new_game runs. The parent's game_id
+            # is the *current* self._game_id (still in view mode pointing at
+            # it). fork_ply==0 is a degenerate fork -- a plain new game.
             parent_game_id = self._game_id
             fork_ply = cursor
-            # Exit view mode before the new_game call (which re-acquires
-            # the lock). Clear viewer state so new_game starts clean.
-            self._mode = Mode.PLAY
-            self._reset_view_state()
+            # Stay in VIEWING across the lock release: new_game (legal from
+            # VIEWING) swaps in the play bundle atomically, so a failed engine
+            # spawn leaves us cleanly in view mode instead of stranded.
         new_id = await self.new_game(
             human_white=human_white,
             tc=tc,
@@ -1802,6 +1799,24 @@ class HumanVsEngine:
             )
             await self._flush_recents_save()
 
+    async def _fail_analysis_start(self, game_id: str, detail: str) -> None:
+        """Analysis engine failed to start: leave ANALYZING so the client
+        doesn't hang, and surface a descriptive failure over the bus instead
+        of silently no-opping. All gated on still being in ANALYZING so a
+        concurrent stop wins (no spurious toast)."""
+        async with self._lock:
+            if self._mode is Mode.ANALYZING:
+                self._mode = self._pre_analysis_mode
+                await self._publish_board()
+                await self._publish_clock()
+                await self._bus.publish(
+                    Event(
+                        kind=EVT_SYSTEM,
+                        game_id=game_id,
+                        payload={"error": "analysis_engine_failed", "detail": detail},
+                    )
+                )
+
     async def _run_analysis(self, game_id: str, board: chess.Board) -> None:
         """Drive analysis on a dedicated engine instance.
 
@@ -1811,11 +1826,14 @@ class HumanVsEngine:
         engine-analysis helper so this stays in sync with the AI tool.
         """
         try:
-            engine, cleanup = await spawn_analysis_engine(
-                self._supervisor, self._settings,
-            )
-        except Exception:
-            log.error("could not start engine for analysis", exc_info=True)
+            # Engine-only analysis runs on the configured analysis engine
+            # (resolve_analysis), never the play engine -- a missing registry
+            # surfaces as a failure below rather than quietly using the wrong one.
+            sup = make_analysis_supervisor(self._engines, self._settings, self._bus)
+            engine, cleanup = await spawn_analysis_engine(sup, self._settings)
+        except Exception as exc:
+            log_spawn_failure(exc, "analysis")
+            await self._fail_analysis_start(game_id, str(exc))
             return
         await self._bus.publish(
             Event(kind=EVT_ENGINE_SEARCH_START, game_id=game_id, payload={})

@@ -42,7 +42,7 @@ select to avoid silent failure during recompute.
 ### Switch placement
 
 A `wa-switch` labeled "SPRT" sits in the existing switch row (Affinity /
-Oversubscribe / Ponder / SPRT). No inline SPRT param fields in the form.
+Ponder / Restart engines / SPRT). No inline SPRT param fields in the form.
 
 ### Availability
 
