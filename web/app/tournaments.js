@@ -19,7 +19,7 @@ import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { mountSprtButton } from "./tournament-sprt-button.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
-import { debounce, ribbonWidthPx } from "./wb-utils.js";
+import { debounce, markSelectable, ribbonWidthPx } from "./wb-utils.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
 const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT params (need alpha+beta<1, elo0<elo1).";
@@ -1330,6 +1330,7 @@ export function mountTournaments({ container, api, events, log, token }) {
 
     tournamentsTabActive: false,
   };
+  markSelectable(ctx.listEl, { rows: ".tournament-row" });
 
   ctx.loadSettings = lastWriteWins(
     () => ctx.api("GET", "/api/tournament-settings"),

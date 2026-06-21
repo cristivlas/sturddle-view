@@ -12,6 +12,7 @@ import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import { apiErrorDetail, confirm, pickFile, reportError, toast } from "./dialogs.js";
+import { markSelectable } from "./wb-utils.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 import { attachEngineColResize, createWrapSizer } from "./engines-list-layout.js";
 
@@ -399,6 +400,7 @@ function setupEngineSearch(ctx) {
 export function mountEngineList(container, api, opts = {}) {
   const { colPctsKey = COL_PCTS_KEY } = opts;
   container.innerHTML = ENGINES_LIST_HTML;
+  markSelectable(container.querySelector(".engines-table"));
 
   const ctx = {
     container,

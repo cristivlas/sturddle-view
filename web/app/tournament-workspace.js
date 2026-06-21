@@ -30,6 +30,7 @@ import {
   escapeHtml,
   flashWindow,
   isPinnedToBottom,
+  markSelectable,
   scrollToBottom,
 } from "./wb-utils.js";
 import { createSlotGrid, SLOT_GAP } from "./workspace-slot-grid.js";
@@ -67,6 +68,7 @@ function makeLogBody() {
   const el = document.createElement("div");
   el.className = "wb-eventlog";
   el.innerHTML = `<div class="wb-error-banner" hidden></div><ul class="wb-eventlog-list"></ul>`;
+  markSelectable(el.querySelector(".wb-eventlog-list"), { rows: "li" });
   return el;
 }
 
@@ -1034,6 +1036,7 @@ function renderEngines(ctx) {
   const atBottom = !scroller || isPinnedToBottom(scroller, AUTOSCROLL_SLACK_ROW_PX);
   ctx.enginesBody.innerHTML = `<ul class="wb-sched-list"></ul>`;
   const list = ctx.enginesBody.querySelector(".wb-sched-list");
+  markSelectable(list, { rows: "li" });
   for (const [pid, p] of ctx.activeProxies) {
     const li = document.createElement("li");
     li.className = "wb-sched-live";

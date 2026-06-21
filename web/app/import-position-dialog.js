@@ -12,6 +12,7 @@ import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize } from "./col-resize.js";
 import { loadJson, saveJson } from "./storage.js";
 import { mqNarrowDialog } from "./breakpoints.js";
+import { markSelectable } from "./wb-utils.js";
 
 // Format a summary dict {white, black, result, side_to_move, fen} into a
 // display string. `short: true` returns a compact form for tight UI (e.g.
@@ -313,6 +314,7 @@ function createOpeningsPanel({ api, onChange, onCommit }) {
   `;
 
   const list = el.querySelector(".openings-list");
+  markSelectable(el.querySelector(".openings-table"));
 
   function filtered() {
     const needle = foldDiacritics(filterText.trim());

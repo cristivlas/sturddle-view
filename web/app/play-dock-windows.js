@@ -32,6 +32,7 @@ import { loadJson, saveJson, loadRaw, saveRaw } from "./storage.js";
 import {
   AUTOSCROLL_SLACK_LINE_PX,
   isPinnedToBottom,
+  markSelectable,
   rafCoalesce,
   ribbonWidthPx,
   scrollToBottom,
@@ -786,6 +787,7 @@ function buildUciLogBody(events, { setOff }) {
   `;
 
   const lines = body.querySelector(".wb-uci-log-lines");
+  markSelectable(lines);
   const pauseChk = body.querySelector(".uci-log-pause");
   const copyBtn = body.querySelector(".uci-log-copy");
   const clearBtn = body.querySelector(".uci-log-clear");

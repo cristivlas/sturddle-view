@@ -8,7 +8,7 @@ import { PLAYER_NAME_DEFAULT } from "./settings-dialog.js";
 import { APP_EVT } from "./app-events.js";
 import { KIND } from "./game-events.js";
 import { SIDE, FEN_STM } from "./chess-consts.js";
-import { copyRowsAsLines, fmtClock, fmtCount, fmtMoveNo, fmtScore, rafCoalesce, selectContentsOnCtrlA } from "./wb-utils.js";
+import { fmtClock, fmtCount, fmtMoveNo, fmtScore, markSelectable, rafCoalesce } from "./wb-utils.js";
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
@@ -952,8 +952,7 @@ export function mountGameView(container, opts = {}) {
 
   queryRefs(ctx, container, sideHost);
   if (ctx.moveListEl) {
-    selectContentsOnCtrlA(ctx.moveListEl);
-    copyRowsAsLines(ctx.moveListEl, ".move-row");
+    markSelectable(ctx.moveListEl, { rows: ".move-row" });
   }
   if (ctx.fenText) ctx.fenText.textContent = INITIAL_FEN;
   ctx.fenCopyBtn?.addEventListener("click", () => copyFen(ctx));

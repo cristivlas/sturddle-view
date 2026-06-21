@@ -7,7 +7,7 @@ import { SPRT, sprtVerdict } from "./tournament-events.js";
 import { MIDDOT, NO_GAMES_MSG } from "./tournament-row.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
-import { escapeHtml } from "./wb-utils.js";
+import { escapeHtml, markSelectable } from "./wb-utils.js";
 
 const STANDINGS_COL_PCTS_KEY = STORAGE_KEY.TOURNAMENTS_STANDINGS_COL_PCTS;
 const STANDINGS_DEFAULT_PCTS = [25, 7, 7, 7, 7, 7, 8, 14];
@@ -43,6 +43,7 @@ export function makeStandingsBody() {
   `;
   const wrapEl = el.querySelector(".wb-standings-table-wrap");
   const tableEl = el.querySelector(".wb-standings-tbl");
+  markSelectable(tableEl);
   const colEls = Array.from(el.querySelectorAll(".wb-standings-tbl col"));
   const grips = Array.from(el.querySelectorAll(".wb-standings-tbl .th-grip"));
   const colPcts = STANDINGS_DEFAULT_PCTS.slice();

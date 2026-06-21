@@ -12,8 +12,8 @@ import { createDockableWindow, DOCK_ORDER } from "./play-dock-windows.js";
 import {
   AUTOSCROLL_SLACK_PROSE_PX,
   isPinnedToBottom,
+  markSelectable,
   scrollToBottom,
-  selectContentsOnCtrlA,
 } from "./wb-utils.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
@@ -116,7 +116,7 @@ function buildBody() {
 
   // Select the hovered block (tool detail / error / prose), falling
   // back to the current round's prose paragraph.
-  selectContentsOnCtrlA(root, () => {
+  markSelectable(root, { target: () => {
     const hovered = root._hoveredTarget;
     const detailPre = hovered?.closest(`.${TOOL_DETAILS_BODY_CLASS}`);
     const errorBlock = hovered?.closest(".play-ai-error");
@@ -126,7 +126,7 @@ function buildBody() {
       : errorBlock
       ?? prosePara
       ?? root._roundPanels.get(root._currentRound)?.para;
-  });
+  } });
 
   root._status = status;
   root._statusText = statusText;

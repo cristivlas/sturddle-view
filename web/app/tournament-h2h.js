@@ -12,7 +12,7 @@ import { RESULT } from "./chess-consts.js";
 import { MIDDOT, NO_GAMES_MSG } from "./tournament-row.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
-import { escapeHtml } from "./wb-utils.js";
+import { escapeHtml, markSelectable } from "./wb-utils.js";
 
 const NA = "--";
 // Banner segment separator, matching the SPRT line and progress label.
@@ -191,6 +191,7 @@ export function makeH2HBody() {
     </div>`;
   const wrapEl = el.querySelector(".h2h-table-wrap");
   const tableEl = el.querySelector(".h2h-tbl");
+  markSelectable(tableEl);
   const colEls = Array.from(el.querySelectorAll(".h2h-tbl col"));
   const colPcts = H2H_DEFAULT_PCTS.slice();
   attachColumnResize({

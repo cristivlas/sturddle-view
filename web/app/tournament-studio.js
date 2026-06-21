@@ -16,7 +16,7 @@ import { SORT_DIR } from "./col-sort.js";
 import { attachLayeredSort, sortByStack } from "./sort-stack.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { reportError, toast } from "./dialogs.js";
-import { copyRowsAsLines, debounce, escapeHtml, selectContentsOnCtrlA } from "./wb-utils.js";
+import { debounce, escapeHtml, markSelectable } from "./wb-utils.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, EVT_PREFIX, KIND, STATUS } from "./tournament-events.js";
 import { newTournamentCta, tournamentActions } from "./tournaments.js";
 import { RESULT, SIDE } from "./chess-consts.js";
@@ -1047,8 +1047,7 @@ function wireTabPersistence(ctx) {
 // line (flex rows otherwise split across lines).
 function wireTabClipboard(ctx) {
   for (const group of ctx.container.querySelectorAll(".studio-tabs")) {
-    selectContentsOnCtrlA(group, () => group.querySelector("wa-tab-panel[active]"));
-    copyRowsAsLines(group);
+    markSelectable(group, { rows: "li", target: () => group.querySelector("wa-tab-panel[active]") });
   }
 }
 

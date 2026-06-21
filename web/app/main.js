@@ -9,6 +9,9 @@ import { loadRaw, saveRaw } from "./storage.js";
 import { mqMobile } from "./breakpoints.js";
 import { APP_EVT } from "./app-events.js";
 import { getTournamentUx, tournamentUxLabel } from "./tournament-studio.js";
+import { installSelection } from "./wb-utils.js";
+
+installSelection();
 
 // Auth is carried by the HttpOnly cookie set during the /auth handshake.
 const token = "";

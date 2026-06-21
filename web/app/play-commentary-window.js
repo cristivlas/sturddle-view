@@ -14,6 +14,7 @@
 
 import { createDockableWindow, DOCK_ORDER, registerExtraDock } from "./play-dock-windows.js";
 import { STORAGE_KEY } from "./storage-keys.js";
+import { markSelectable } from "./wb-utils.js";
 
 const GEO_KEY       = STORAGE_KEY.COMMENTARY_GEO;
 const WIN_STATE_KEY = STORAGE_KEY.COMMENTARY_WIN_STATE;
@@ -57,6 +58,7 @@ function buildBody() {
 
   root.append(nav);
   setText(root, null);
+  markSelectable(root);
   return root;
 }
 

@@ -7,7 +7,7 @@
 // caller (SAN in play, joined UCI in tournaments), so it's passed in.
 
 import { attachColumnResize } from "./col-resize.js";
-import { fmtCount, fmtScore, rafCoalesce } from "./wb-utils.js";
+import { fmtCount, fmtScore, markSelectable, rafCoalesce } from "./wb-utils.js";
 
 const COL_MIN_PX = 30;
 const DEFAULT_COL_WIDTHS = [50, 50, 55, 45];
@@ -44,6 +44,7 @@ export function createPvTable({ colWidthsKey }) {
 
   const tbody = el.querySelector("tbody");
   const tableEl = el.querySelector(".wb-pvtable-tbl");
+  markSelectable(tableEl);
   const colEls = Array.from(el.querySelectorAll("col"));
   const grips = Array.from(el.querySelectorAll(".th-grip"));
   const colWidths = DEFAULT_COL_WIDTHS.slice();

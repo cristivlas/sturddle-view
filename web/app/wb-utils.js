@@ -114,23 +114,49 @@ export function scrollToRight(scroller) {
   scroller.scrollLeft = scroller.scrollWidth;
 }
 
-// Make Ctrl/Cmd+A inside `el` select just one node's contents instead
-// of the whole page. `targetFn(ev)` returns the node to select (default
-// `el`); returning falsy leaves the selection untouched.
-export function selectContentsOnCtrlA(el, targetFn = () => el) {
-  el.tabIndex = 0;
-  el.addEventListener("keydown", (ev) => {
-    if (!((ev.ctrlKey || ev.metaKey) && (ev.key === "a" || ev.key === "A"))) return;
-    ev.preventDefault();
-    const target = targetFn(ev);
-    if (!target) return;
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    const range = document.createRange();
-    range.selectNodeContents(target);
-    sel.addRange(range);
-  });
+// Selectable-region opt-in. The app root is `user-select: none` (app feel:
+// Ctrl/Cmd+A on chrome selects nothing), and regions tagged here opt back
+// in. installSelection() (called once) then scopes Ctrl/Cmd+A to the
+// focused region and flattens row markup on copy. `rows` is a row selector
+// for that flattening; `target(ev)` returns the node to select on Ctrl+A
+// (default: the region itself); returning falsy leaves selection untouched.
+const SELECTABLE_ATTR = "data-selectable";
+const ROWS_ATTR = "data-rows";
+const isCtrlA = (ev) => (ev.ctrlKey || ev.metaKey) && (ev.key === "a" || ev.key === "A");
+
+export function markSelectable(el, { rows = null, target = null } = {}) {
+  // Focusable by click/script (so Ctrl+A's keydown targets the region) but
+  // not a Tab stop; respect an explicit tabindex if the element set one.
+  if (!el.hasAttribute("tabindex")) el.tabIndex = -1;
+  el.setAttribute(SELECTABLE_ATTR, "");
+  if (rows) el.setAttribute(ROWS_ATTR, rows);
+  if (target) el._selTarget = target;
 }
+
+const closestRegion = (node) => {
+  const el = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+  return el?.closest(`[${SELECTABLE_ATTR}]`) || null;
+};
+
+// Drop the active region selection unless `keep` lies inside its region
+// (keep == null always drops). Shared by Escape and outside-click.
+const clearOutside = (keep) => {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed) return;
+  const region = closestRegion(sel.anchorNode);
+  if (region && !(keep && region.contains(keep))) sel.removeAllRanges();
+};
+
+// True when `el` (a keydown target) is, or shadow-delegates focus into, a
+// text-entry control whose native Ctrl/Cmd+A must be left alone. WA form
+// controls wrap a native input in shadow DOM and retarget the event to the
+// host, so follow the focused element down through shadow roots.
+const isEditableTarget = (el) => {
+  for (let n = el; n; n = n.shadowRoot?.activeElement) {
+    if (n.isContentEditable || n.tagName === "INPUT" || n.tagName === "TEXTAREA") return true;
+  }
+  return false;
+};
 
 // Collapse one flex/grid row to a single text line: join its child elements'
 // text with a space, skipping interactive (button) and decorative
@@ -144,22 +170,49 @@ function rowToLine(row) {
     .join(" ");
 }
 
-// Companion to selectContentsOnCtrlA: when copying a selection inside `el`,
-// serialize each row element (rowSelector) as one line via rowToLine,
+// Install once. Ctrl/Cmd+A inside a selectable region selects that region's
+// contents (or its target node) instead of the page. On copy, a region with
+// a `rows` selector serializes each row as one line via rowToLine,
 // overriding the browser's per-flex/grid-child line breaks. (Real <table>s
-// copy one-row-per-line natively, so they need no help.) No rows -> default.
-// Only innermost matches are serialized so a nested list can't duplicate its
-// parent row; blank rows are dropped.
-export function copyRowsAsLines(el, rowSelector = "li") {
-  el.addEventListener("copy", (ev) => {
+// copy one-row-per-line natively, so they omit `rows`.) Only innermost row
+// matches are serialized so a nested list can't duplicate its parent row.
+export function installSelection() {
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") { clearOutside(null); return; }
+    if (!isCtrlA(ev)) return;
+    const region = closestRegion(ev.target);
+    if (!region) {
+      // Suppress the native page-wide select-all so nothing ever flashes;
+      // leave a text field's own select-all alone.
+      if (!isEditableTarget(ev.target)) ev.preventDefault();
+      return;
+    }
+    ev.preventDefault();
+    const node = region._selTarget ? region._selTarget(ev) : region;
+    if (!node) return;
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    sel.addRange(range);
+  }, true);
+
+  // A click outside the region (or Escape, above) clears its selection so it
+  // never lingers as a grey inactive highlight. Keyed off mousedown, not
+  // focus: a winbox titlebar mousedown preventDefaults and keeps focus on the
+  // region, so focus-based clearing misses it. Capture beats stopPropagation.
+  document.addEventListener("mousedown", (ev) => clearOutside(ev.target), true);
+
+  document.addEventListener("copy", (ev) => {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
-    if (!el.contains(sel.anchorNode) || !el.contains(sel.focusNode)) return;
+    const region = closestRegion(sel.anchorNode);
+    const rowSelector = region?.getAttribute(ROWS_ATTR);
+    if (!rowSelector || !region.contains(sel.focusNode)) return;
     const rows = Array.from(sel.getRangeAt(0).cloneContents().querySelectorAll(rowSelector))
       .filter((r) => !r.querySelector(rowSelector));
     if (!rows.length) return;
-    const text = rows.map(rowToLine).filter(Boolean).join("\n");
-    ev.clipboardData.setData("text/plain", text);
+    ev.clipboardData.setData("text/plain", rows.map(rowToLine).filter(Boolean).join("\n"));
     ev.preventDefault();
   });
 }

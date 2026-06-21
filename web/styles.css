@@ -92,6 +92,18 @@ wa-input, wa-number-field { --wa-color-brand-fill-quiet: var(--bg); }
 
 * { box-sizing: border-box; }
 
+/* App feel: chrome is not text-selectable, so a mouse drag can't grab the
+   page. markSelectable() lists/tables ([data-selectable]) are selectable; the
+   JS handler (installSelection) suppresses the native page-wide Ctrl/Cmd+A
+   outside lists, scopes it to the focused list, and clears on blur/Escape.
+   Native form controls keep their own selection. */
+body { -webkit-user-select: none; user-select: none; }
+[data-selectable] { -webkit-user-select: text; user-select: text; }
+/* Regions are focusable (tabindex=-1) only so Ctrl/Cmd+A can target them; they
+   are not tab stops, so suppress the focus ring that would otherwise outline
+   the whole list after a click or Ctrl+A. */
+[data-selectable]:focus, [data-selectable]:focus-visible { outline: none; }
+
 /* Thin, macOS-style scrollbars everywhere. Firefox honors scrollbar-width;
    WebKit/Chromium honors the ::-webkit-scrollbar pseudo-elements. The
    thumb is muted by default and brightens on hover. */
@@ -1088,7 +1100,7 @@ wa-dialog:has(.import-pos-form)::part(body) {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
 .openings-list-item {
-  cursor: pointer; user-select: none;
+  cursor: pointer;
   /* background: linear-gradient(to right, var(--row-bg), var(--bg) 75%); */
 }
 .openings-list-item td {
@@ -1478,7 +1490,6 @@ body .side-popover.popover-floating {
   flex: 0 0 auto;
   background: var(--nav-btn-bg);
   border-bottom: 1px solid var(--border-subtle);
-  user-select: none;
 }
 .dock-slot-title {
   flex: 1 1 auto;
@@ -1778,7 +1789,6 @@ body .side-popover.popover-floating {
   border-bottom: 1px solid var(--border-subtle);
   font-size: 0.75rem;
   color: var(--muted);
-  user-select: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2430,7 +2440,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
 .engines-list-item {
-  cursor: pointer; user-select: none;
+  cursor: pointer;
   /* background: linear-gradient(to right, var(--row-bg), var(--bg) 75%); */
 }
 .engines-list-item td {
@@ -2859,7 +2869,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   vertical-align: middle;
   color: inherit;
 }
-.fs-entry { cursor: pointer; user-select: none; }
+.fs-entry { cursor: pointer; }
 .fs-entry > td {
   padding: 4px 8px;
   overflow: hidden;
@@ -3369,7 +3379,6 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   height: var(--wb-min-footer-h); max-width: 220px;
   background: var(--chip-bg, var(--nav-btn-bg)); color: var(--fg);
   border: 1px solid var(--wb-outline);
-  user-select: none;
 }
 .studio-tray-chip + .studio-tray-chip { margin-left: -1px; }
 .studio-tray-chip-title {
@@ -3523,7 +3532,6 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   margin: 0;
   cursor: pointer;
   min-width: 0;
-  user-select: none;
 }
 .tournament-row:hover { background: linear-gradient(to right, var(--row-bg-hover), var(--bg) 75%); }
 .tournament-row.selected {
@@ -3663,7 +3671,6 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .tournament-info {
   border-top: 1px solid var(--accent);
   padding-top: 10px;
-  user-select: none;
 }
 .tournament-info-dialog::part(title) { user-select: none; }
 .tournament-info-grid {
@@ -3773,7 +3780,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .ne-item {
   padding: 4px 8px; margin: 0; cursor: pointer;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ne-list:focus, .ne-list:focus-visible { outline: none; }
 .ne-item:hover { background: var(--nav-btn-bg); }
