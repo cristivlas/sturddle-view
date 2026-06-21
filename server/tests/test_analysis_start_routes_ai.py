@@ -8,17 +8,20 @@ engine task does not (see test_start_analysis_ai_gate).
 """
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import chess
 import pytest
 from fastapi.testclient import TestClient
 
+from sturddle_view.api._ai_kick import _on_turn_done
 from sturddle_view.app import create_app
 from sturddle_view.config import Settings
 from sturddle_view.engines import EngineRegistry
 from sturddle_view.play.chess_clock import ChessClock, TimeControl
 from sturddle_view.play.human_vs_engine import HumanVsEngine, ViewModeParams
+from sturddle_view.play.mode import Mode
 
 
 def _install_hve(app, *, engine_path) -> HumanVsEngine:
@@ -129,6 +132,74 @@ async def test_analysis_start_from_view_passes_commentator_mode(tmp_path):
         await app.state.ai_task
         coord_run.assert_called_once()
         assert coord_run.call_args.kwargs["mode"] == "commentator"
+
+
+async def _drain_turn_and_stop(app):
+    # Await the (errored) turn task, let its done-callback fire, then await
+    # the production-pinned stop task. Awaiting state.ai_stop_task -- not a
+    # blanket task drain -- so the test relies on the same ref prod keeps
+    # (a dropped task would surface here as AttributeError/None, not pass).
+    with pytest.raises(RuntimeError):
+        await app.state.ai_task
+    await asyncio.sleep(0)  # let the done-callback run and schedule the stop
+    await app.state.ai_stop_task
+
+
+@pytest.mark.asyncio
+async def test_failed_ai_turn_exits_analyzing(tmp_path):
+    # A turn that raises must not strand the server in ANALYZING: the
+    # done-callback exits analysis mode so the client spinner can clear.
+    app, client = _build_client(tmp_path, ai_enabled=True)
+    with client:
+        hve = _install_hve(app, engine_path=str(tmp_path / "engine"))
+        await hve.pause()
+
+        async def _boom(**kwargs):
+            raise RuntimeError("provider: API key not configured")
+
+        app.state.ai_coordinator.run = _boom
+
+        r = client.post("/game/analysis/start")
+        assert r.status_code == 200, r.text
+
+        await _drain_turn_and_stop(app)
+        assert hve._mode is not Mode.ANALYZING
+
+
+@pytest.mark.asyncio
+async def test_stale_error_callback_does_not_stop_live_turn(tmp_path):
+    # A superseded turn's done-callback must NOT exit ANALYZING. Pin a
+    # distinct live task as the current turn (B), then fire errored A's
+    # callback: the identity guard keys on app.state.ai_task is B, so A
+    # skips. A None ai_task would pass even an inverted guard -- B must be
+    # a real, different task for this to bite.
+    app, client = _build_client(tmp_path, ai_enabled=True)
+    with client:
+        hve = _install_hve(app, engine_path=str(tmp_path / "engine"))
+        await hve.pause()
+        await hve.start_analysis()  # B's turn: live in ANALYZING
+        assert hve._mode is Mode.ANALYZING
+
+        async def _hang():
+            await asyncio.sleep(3600)
+
+        task_b = asyncio.ensure_future(_hang())
+        app.state.ai_task = task_b  # B is the current turn
+
+        async def _boom():
+            raise RuntimeError("provider: API key not configured")
+
+        task_a = asyncio.ensure_future(_boom())
+        with pytest.raises(RuntimeError):
+            await task_a
+        # A errored but is no longer current (ai_task is B): guard skips it.
+        _on_turn_done(task_a, app.state)
+
+        await asyncio.sleep(0)
+        assert getattr(app.state, "ai_stop_task", None) is None
+        assert hve._mode is Mode.ANALYZING
+
+        task_b.cancel()
 
 
 @pytest.mark.asyncio

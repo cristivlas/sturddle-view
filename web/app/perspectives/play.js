@@ -347,6 +347,10 @@ function dispatchAiEvent(aiCtx, evt) {
           aiShared.dismissAnalysisToast = null;
           refreshButtons();
         }
+        // A failed turn never produced analysis: close the panel locally.
+        // The server exits ANALYZING on its own (its analyzing=false
+        // board_update clears the spinner) -- we don't POST /stop back.
+        if (p.error) teardownAiPanel();
       }
       return true;
     }
@@ -1499,14 +1503,11 @@ async function startAnalysisFromUiImpl(state) {
   // before starting, so the dock shows engine-only output. Done first so
   // the close can't race the new analysis state.
   if (!state.aiEnabled && isAiOpen()) closeAi();
-  await state.ctx.api("POST", "/game/analysis/start", {});
-  // Name the UCI Log after the analysis engine (may differ from the play
-  // engine). Async + best-effort so it can't delay or fail the start.
-  resolveAnalysisEngineName(state)
-    .then((n) => { if (state.analyzing) setUciLogEngine(n); })
-    .catch(() => {});
-  restoreViewAnalysisWindows(state.ctx.events);
   state.aiShared.turnFinished = false;
+  // Build ALL start-state (toast + panel) synchronously BEFORE the POST.
+  // An instant-fail turn's done/error event arrives during the await; with
+  // everything built first it tears it all down cleanly. Setup split across
+  // the await leaves a half-built UI (orphan toast/spinner) on that race.
   showAnalysisToastImpl(state);
   if (state.aiEnabled) {
     // Pin the title to the model actually about to run. Mid-session
@@ -1515,6 +1516,22 @@ async function startAnalysisFromUiImpl(state) {
     openAi();
     resetAi();
   }
+  await state.ctx.api("POST", "/game/analysis/start", {});
+  // Name the UCI Log after the analysis engine (may differ from the play
+  // engine). Async + best-effort so it can't delay or fail the start.
+  resolveAnalysisEngineName(state)
+    .then((n) => { if (state.analyzing) setUciLogEngine(n); })
+    .catch(() => {});
+  restoreViewAnalysisWindows(state.ctx.events);
+}
+
+// Local AI-panel teardown (no server call). Shared by the start-failure
+// catch and the turn-error event, both of which tear down a panel the
+// server has already left (or never entered) -- so they must NOT POST
+// /analysis/stop back.
+function teardownAiPanel() {
+  if (isAiOpen()) closeAi();
+  closeAnalysisOpenedWindows();
 }
 
 async function onAnalyzeImpl(state) {
@@ -1532,6 +1549,7 @@ async function onAnalyzeImpl(state) {
   try {
     await startAnalysisFromUiImpl(state);
   } catch (e) {
+    teardownAiPanel();
     reportError(state.ctx, MSG.START_ANALYSIS_FAILED, e);
   }
 }
@@ -1549,6 +1567,7 @@ async function onReanalyzeImpl(state) {
     }
     await startAnalysisFromUiImpl(state);
   } catch (e) {
+    teardownAiPanel();
     reportError(state.ctx, MSG.REANALYZE_FAILED, e);
   } finally {
     state.reanalyzeInFlight = false;

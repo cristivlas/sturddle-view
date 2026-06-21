@@ -215,14 +215,27 @@ async def _evict_stale_ollama_models(base_url: str, target_model: str) -> None:
             log.warning("ollama: evict_model(%s) failed: %s", name, exc)
 
 
-def _consume_task_exception(task: asyncio.Task) -> None:
+def _on_turn_done(task: asyncio.Task, state) -> None:
     # Read the result so asyncio doesn't warn about an unretrieved
     # exception. The coordinator already logs + publishes a done event
-    # with error/error_detail for any failure it sees; this callback is
-    # just here so the GC doesn't shout.
+    # with error/error_detail for any failure it sees.
     if task.cancelled():
         return
-    task.exception()
+    if task.exception() is None:
+        return
+    # Identity guard: a later turn may have started after this one errored
+    # (user re-Analyzed). Only the still-current task may exit ANALYZING --
+    # else this stale callback tears down the live turn's mode.
+    if task is not getattr(state, "ai_task", None):
+        return
+    hve = getattr(state, "hve", None)
+    if hve is None:
+        return
+    # A turn that died never produced analysis: exit ANALYZING so the
+    # server doesn't sit in a mode with no turn running. The callback is
+    # sync, so schedule it; pin the task on state (same GC hazard as the
+    # turn task -- an unreferenced task can be reaped mid-flight).
+    state.ai_stop_task = asyncio.ensure_future(hve.stop_analysis())
 
 
 async def start_ai_turn(request: Request) -> None:
@@ -272,8 +285,9 @@ async def start_ai_turn(request: Request) -> None:
             verifier_max_rounds=s.ai_verifier_max_rounds,
         )
     )
-    task.add_done_callback(_consume_task_exception)
-    request.app.state.ai_task = task
+    state = request.app.state
+    state.ai_task = task
+    task.add_done_callback(lambda t: _on_turn_done(t, state))
 
 
 async def cancel_ai_turn(request: Request) -> None:
