@@ -3671,6 +3671,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .tournament-info {
   border-top: 1px solid var(--accent);
   padding-top: 10px;
+  user-select: none;
 }
 .tournament-info-dialog::part(title) { user-select: none; }
 .tournament-info-grid {
