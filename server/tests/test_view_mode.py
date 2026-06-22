@@ -1168,6 +1168,21 @@ async def test_resumable_flag_true_only_when_suspended(hve):
     assert h._board_event().payload["view"]["resumable"] is False
 
 
+async def test_view_payload_carries_suspended_player_color(hve):
+    """resume_human_white mirrors the suspended game's human color so the
+    client can restore the board POV on remount (the board event's
+    human_white is null in view mode). None for a non-resumable import."""
+    h, _ = hve
+    h._engine_to_move = AsyncMock()
+    await h.new_game(human_white=False, tc=TimeControl(60, 0))
+    await _suspend_live_play(h)
+    assert h._board_event().payload["view"]["resume_human_white"] is False
+    await h.enter_view_mode(ViewModeParams(
+        start_fen=None, moves_uci=["d2d4"], clock_history=None,
+    ))
+    assert h._board_event().payload["view"]["resume_human_white"] is None
+
+
 async def test_resume_play_raises_without_suspended_game(hve):
     """A view session that didn't suspend (e.g. a plain import) can't resume."""
     h, _ = hve

@@ -1789,11 +1789,17 @@ function handleBusEvent(state, ai, aiCtx, evt) {
         state.resignAvailable = false;
         // Board is read-only in view mode; the user navigates via ribbon.
         state.view.setEnabled(false);
-        // On entry: a resumable scrub of the live play game keeps the
-        // player's own POV (don't rotate a black player to white's side);
-        // an imported game has no "human", so use the view flip preference.
+        // On entry (incl. /game/sync remount, wasViewing false): resumable
+        // takes the player's POV from the payload color -- it survives
+        // remount, unlike state.humanWhite. Both resumable-without-color and
+        // imported fall back to the flip preference.
         if (!wasViewing) {
-          state.view.setHumanWhite(v.resumable ? state.humanWhite : !state.viewFlipped);
+          if (typeof v.resume_human_white === "boolean") {
+            state.humanWhite = v.resume_human_white;
+            state.view.setHumanWhite(state.humanWhite);
+          } else {
+            state.view.setHumanWhite(!state.viewFlipped);
+          }
         }
       } else {
         state.lastViewComment = null;

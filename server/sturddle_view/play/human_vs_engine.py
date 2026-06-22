@@ -1954,6 +1954,12 @@ class HumanVsEngine:
             # (entered via /view/start). Drives the client's auto-resume at
             # the last ply (no play-from-here fork).
             "resumable": self._suspended_play is not None,
+            # The suspended player's color, so the client can restore the
+            # board POV on remount (the board event's human_white is null in
+            # view mode). None for non-resumable (imported) sessions.
+            "resume_human_white": (
+                self._suspended_play.human_white if self._suspended_play else None
+            ),
             "view_hash": self._view_hash,
             "view_summary": self._view_summary,
             **self._comment_nav(self._view_cursor),
