@@ -8,7 +8,7 @@ import { APP_EVT } from "../app-events.js";
 import { KIND, AI_KIND_PREFIX } from "../game-events.js";
 import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
-import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, toast } from "../dialogs.js";
+import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, stickyToast, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setUciLogEngine, isMobileLayout } from "../play-dock-windows.js";
 import {
@@ -336,7 +336,9 @@ function dispatchAiEvent(aiCtx, evt) {
           const full = (p.error_detail || p.error).replace(/\s+/g, " ").trim();
           // Match on punctuation + space so URLs stay intact; trim the result.
           const msg = (full.match(/.+?[.!?]+(?=\s|$)/) || [full])[0].trim() || full;
-          toast(msg, { variant: "danger", duration: 6000 });
+          // Sticky: an AI failure (quota, provider outage) shouldn't
+          // auto-vanish before the user reads it.
+          stickyToast(msg, { variant: "danger" });
         }
         // End the AI turn on completion AND error (clears the pulse + toast).
         // Cancel is excluded: it self-resolves via stopAnalysisFromUi ->
@@ -1550,7 +1552,7 @@ async function onAnalyzeImpl(state) {
     await startAnalysisFromUiImpl(state);
   } catch (e) {
     teardownAiPanel();
-    reportError(state.ctx, MSG.START_ANALYSIS_FAILED, e);
+    reportError(state.ctx, MSG.START_ANALYSIS_FAILED, e, { duration: 0 });
   }
 }
 
@@ -1568,7 +1570,7 @@ async function onReanalyzeImpl(state) {
     await startAnalysisFromUiImpl(state);
   } catch (e) {
     teardownAiPanel();
-    reportError(state.ctx, MSG.REANALYZE_FAILED, e);
+    reportError(state.ctx, MSG.REANALYZE_FAILED, e, { duration: 0 });
   } finally {
     state.reanalyzeInFlight = false;
   }
@@ -1593,14 +1595,7 @@ function pushNavToUi(state) {
 }
 
 function showEngineCrashToast() {
-  const msg = document.createElement("span");
-  msg.className = "toast-grow";
-  msg.textContent = MSG.ENGINE_CRASHED;
-  const node = document.createElement("span");
-  node.className = "toast-sort-msg";
-  let dismissCrashToast;
-  node.append(msg, makeToastDismissBtn(() => dismissCrashToast?.()));
-  dismissCrashToast = toast(node, { variant: "danger", duration: 0 });
+  stickyToast(MSG.ENGINE_CRASHED, { variant: "danger" });
 }
 
 // Commentary-dock visibility + server-authoritative edit-mode transitions.

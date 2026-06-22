@@ -726,6 +726,22 @@ export function makeToastDismissBtn(onClick) {
   return btn;
 }
 
+/** A toast that stays until dismissed, with an X button. `content` is a
+ *  string or a Node (laid out in the grow slot beside the button). For
+ *  errors that must not auto-vanish before the user reads them. */
+export function stickyToast(content, { variant = "neutral", stack } = {}) {
+  let dismiss;
+  const grow = document.createElement("span");
+  grow.className = "toast-grow";
+  if (content instanceof Node) grow.appendChild(content);
+  else grow.textContent = content;
+  const node = document.createElement("span");
+  node.className = "toast-sort-msg";
+  node.append(grow, makeToastDismissBtn(() => dismiss?.()));
+  dismiss = toast(node, { variant, duration: 0, stack });
+  return dismiss;
+}
+
 const TOAST_STACK_ID = "toast-stack";
 const XGAME_TOAST_STACK_ID = "xgame-toast-stack";
 const TOAST_STACK_IDS = [TOAST_STACK_ID, XGAME_TOAST_STACK_ID];
@@ -782,17 +798,25 @@ export function buildToastWithActions(text, actions) {
 /** Report an error: toast + ctx.log(). `action` is a verb phrase.
  *  Optional `opts.actions`: [{label|icon, ariaLabel?, onClick}] adds
  *  inline buttons to the toast. Well-known server error codes (see
- *  ERROR_CODE_ACTIONS) attach their canonical action automatically. */
+ *  ERROR_CODE_ACTIONS) attach their canonical action automatically.
+ *  Optional `opts.duration` overrides the toast lifetime; a non-finite
+ *  duration (0 / Infinity) makes it sticky with a dismiss button. */
 export function reportError(ctx, action, error, opts = {}) {
   const message = (error && error.message) || String(error);
   const detailText = apiErrorDetail(error);
   const detailObj = apiErrorObject(error);
   const codeActions = detailObj?.code ? ERROR_CODE_ACTIONS[detailObj.code] : null;
   const actions = [...(opts.actions || []), ...(codeActions || [])];
-  if (actions.length) {
-    toast(buildToastWithActions(`${action}: ${detailText}`, actions), { variant: "danger" });
+  const body = actions.length
+    ? buildToastWithActions(`${action}: ${detailText}`, actions)
+    : `${action}: ${detailText}`;
+  // A sticky toast (no auto-dismiss timer) gets the dismiss button so the
+  // user can still close it; toast() alone would leave it button-less.
+  const sticky = opts.duration !== undefined && !(opts.duration > 0 && Number.isFinite(opts.duration));
+  if (sticky) {
+    stickyToast(body, { variant: "danger" });
   } else {
-    toast(`${action}: ${detailText}`, { variant: "danger" });
+    toast(body, { variant: "danger", duration: opts.duration });
   }
   ctx?.log?.(`${action}: ${message}`);
 }

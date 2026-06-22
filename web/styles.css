@@ -586,6 +586,24 @@ wa-select::part(listbox) {
   opacity: 0.7;
   text-decoration: line-through;
 }
+/* Verifier verdict on a "Verifying line" (delegate) row: refuted badges a
+   red cross, holds a green check, after the label. The dot keeps the
+   delegate color so the row still reads as a verification step.
+   Direct child (> head > label) so the badge lands on the delegate row's
+   own label, never a nested sub-operation's label inside the same row. */
+.play-ai-tool-call-refuted > .play-ai-tool-head > .play-ai-tool-dot {
+  background: var(--wa-color-danger-60, #d9534f);
+}
+.play-ai-tool-call-refuted > .play-ai-tool-head > .play-ai-tool-label::after {
+  content: " \2717";
+  color: var(--wa-color-danger-60, #d9534f);
+  font-weight: 600;
+}
+.play-ai-tool-call-holds > .play-ai-tool-head > .play-ai-tool-label::after {
+  content: " \2713";
+  color: var(--wa-color-success-60, #28a745);
+  font-weight: 600;
+}
 .play-ai-tool-label {
   /* Stay on one line; the head scrolls horizontally if needed. */
   white-space: nowrap;

@@ -512,6 +512,41 @@ export function appendAiToolCall({
 }
 
 
+// A delegate verdict opens with "holds" or "refuted" (enforced by the
+// verifier prompt). Classify off that first word so the row can flag the
+// outcome at a glance; null when the output isn't a verdict.
+const VERDICT_REFUTED = "refuted";
+const VERDICT_HOLDS = "holds";
+
+function verdictKind(output) {
+  const verdict = output && typeof output === "object" ? output.verdict : null;
+  if (typeof verdict !== "string") return null;
+  const head = verdict.trimStart().toLowerCase();
+  if (head.startsWith(VERDICT_REFUTED)) return VERDICT_REFUTED;
+  if (head.startsWith(VERDICT_HOLDS)) return VERDICT_HOLDS;
+  return null;
+}
+
+// The delegate row's dot carries this class; only that row bears a
+// verdict, so nested sub-operations are never badged even if a future
+// tool happens to return a `verdict` key.
+const DELEGATE_DOT_CLASS = "play-ai-tool-dot-delegate";
+
+// Mark the "Verifying line" row with its verdict (refuted / holds) via a
+// class the CSS badges. Idempotent -- replay re-dispatches the same
+// output, so a second call must not stack badges.
+function markVerdict(line, kind) {
+  if (!kind) return;
+  // Scoped to this row's own head (matching the CSS) so a nested child
+  // delegate dot can't make a non-delegate parent row get badged.
+  // Scoped to this row's own head (matching the CSS) so a nested child
+  // delegate dot can't make a non-delegate parent row get badged.
+  if (!line.querySelector(`:scope > .play-ai-tool-head > .${DELEGATE_DOT_CLASS}`)) return;
+  const cls = `play-ai-tool-call-${kind}`;
+  if (line.classList.contains(cls)) return;
+  line.classList.add(cls);
+}
+
 // Fill the OUT row with the tool result from ai_tool_call_complete.
 // Idempotent (replay-on-reconnect re-dispatches with the same output).
 export function setAiToolCallResult({ toolUseId, output }) {
@@ -521,6 +556,7 @@ export function setAiToolCallResult({ toolUseId, output }) {
   withStickyBottom(() => {
     line._outPre.textContent = formatToolOutput(output);
     line._outRow.hidden = false;
+    markVerdict(line, verdictKind(output));
   });
 }
 
