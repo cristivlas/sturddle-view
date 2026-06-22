@@ -19,7 +19,7 @@ import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { mountSprtButton } from "./tournament-sprt-button.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
-import { debounce, markSelectable, ribbonWidthPx } from "./wb-utils.js";
+import { debounce, isCtrlA, markSelectable, ribbonWidthPx } from "./wb-utils.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
 const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT params (need alpha+beta<1, elo0<elo1).";
@@ -1597,6 +1597,33 @@ function mountEngineBuilder({ host, available, initial = [] }) {
     [pickedIds[idx], pickedIds[target]] = [pickedIds[target], pickedIds[idx]];
     render();
     notify();
+  }
+
+  for (const [list, selected, anchorRef, idsInOrder] of [
+    [availableList, availableSelected, availableAnchor, visibleAvailableIds],
+    [pickedList, pickedSelected, pickedAnchor, () => [...pickedIds]],
+  ]) {
+    // Ctrl/Cmd+A selects the whole pane as a multi-select set (not text).
+    list.addEventListener("keydown", (ev) => {
+      if (!isCtrlA(ev)) return;
+      ev.preventDefault();
+      const ids = idsInOrder();
+      if (!ids.length) return;
+      selected.clear();
+      for (const id of ids) selected.add(id);
+      anchorRef.id = ids[ids.length - 1];
+      render();
+    });
+    // A Shift/Ctrl+click otherwise paints a text selection across the pane on
+    // top of toggling the row. Cancel the text-drag gesture so the click only
+    // drives row selection -- but preventDefault also drops focus, so refocus
+    // the pane explicitly or a following Ctrl+A keydown would never reach it.
+    list.addEventListener("mousedown", (ev) => {
+      if (ev.shiftKey || ev.ctrlKey || ev.metaKey) {
+        ev.preventDefault();
+        list.focus();
+      }
+    });
   }
 
   addBtn.addEventListener("click", () => doAdd([...availableSelected]));

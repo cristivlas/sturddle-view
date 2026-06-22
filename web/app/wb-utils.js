@@ -122,7 +122,7 @@ export function scrollToRight(scroller) {
 // (default: the region itself); returning falsy leaves selection untouched.
 const SELECTABLE_ATTR = "data-selectable";
 const ROWS_ATTR = "data-rows";
-const isCtrlA = (ev) => (ev.ctrlKey || ev.metaKey) && (ev.key === "a" || ev.key === "A");
+export const isCtrlA = (ev) => (ev.ctrlKey || ev.metaKey) && (ev.key === "a" || ev.key === "A");
 
 export function markSelectable(el, { rows = null, target = null } = {}) {
   // Focusable by click/script (so Ctrl+A's keydown targets the region) but
