@@ -105,22 +105,17 @@ function makeDurationRow({ label, seconds, minSeconds, onChange }) {
 export async function openSettingsDialog({ api, initialTab, getActivePerspective, reloadPerspective }) {
   let initial;
   let tournamentInitial;
-  let noEngine = false;
   let engineList = [];
   let activeEngineId = "";
   try {
     initial = await api("GET", "/settings");
     tournamentInitial = await api("GET", "/api/tournament-settings");
-    // AI analysis depends on an engine; gate the master toggle and
-    // surface a hint when none is registered. Failure to read engines
-    // leaves noEngine=false (fail open -- a spurious hint is worse
-    // than a missing one). The engine list also feeds the analysis-engine
-    // dropdown shown when provider is "Engine only".
+    // Engine list feeds the analysis-engine dropdown shown when the
+    // provider is "Engine only".
     try {
       const enginesInfo = await api("GET", "/engines");
       activeEngineId = enginesInfo.selected_id || "";
       engineList = enginesInfo.engines || [];
-      noEngine = !enginesInfo.selected_id;
     } catch { /* ignore */ }
   } catch (e) {
     toast(`Couldn't load settings: ${e.message}`, { variant: "danger" });
@@ -232,7 +227,7 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
 
       // --- AI Analysis tab ---
       const { tab: analysisTab, panel: analysisPanel } = buildAnalysisTab({
-        api, initial, dialog, noEngine, engineList, activeEngineId,
+        api, initial, dialog, engineList, activeEngineId,
         putSettings, putSettingsDebounced, debounce,
       });
       // Map preserves insertion order by spec -- the iteration order here

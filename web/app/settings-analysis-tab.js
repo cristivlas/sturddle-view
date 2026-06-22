@@ -62,19 +62,6 @@ function buildAiProviderRow(initial) {
   return { row, select, isAiOn };
 }
 
-// Inline hint when no engine is configured: analysis shares the play/view
-// engine, so it can't function without one. Surfaced in-tab so the user
-// can act without leaving. Returns null when an engine is present.
-function buildAiNoEngineHint(noEngine) {
-  if (!noEngine) return null;
-  const row = document.createElement("div");
-  row.className = "settings-row settings-row-hint";
-  const hint = document.createElement("small");
-  hint.textContent = "Register an engine in the Engines tab to enable analysis.";
-  row.append(hint);
-  return row;
-}
-
 // API-key row with a masking eye-toggle + deferred commit. Self-contained:
 // touches only its own elements + injected deps. `onKeyCommitted` is the
 // controller's post-commit hook (re-fetch models). Returns the row, the
@@ -285,7 +272,7 @@ function buildAiCapRows({ initial, debounce, putSettings }) {
 // reactive controller -- provider selection drives derived
 // visibility/lockout/model-routing across rows (applyAiProviderVisibility,
 // applyAiEnabledLockout, refreshModelRow, syncThinkingOptions).
-export function buildAnalysisTab({ api, initial, dialog, noEngine, engineList, activeEngineId, putSettings, putSettingsDebounced, debounce }) {
+export function buildAnalysisTab({ api, initial, dialog, engineList, activeEngineId, putSettings, putSettingsDebounced, debounce }) {
   // Flat layout per spec: master toggle + provider + model + key/url, then
   // thinking + tunables (round/depth caps) as flat fields.
   const tab = document.createElement("wa-tab");
@@ -295,7 +282,6 @@ export function buildAnalysisTab({ api, initial, dialog, noEngine, engineList, a
   panel.name = "analysis";
 
   const { row: aiProviderRow, select: aiProvider, isAiOn } = buildAiProviderRow(initial);
-  const aiNoEngineHint = buildAiNoEngineHint(noEngine);
 
   // Model row, dual-purpose by provider:
   //  - LLM provider: a dropdown from the provider's list_models API; the
@@ -532,7 +518,6 @@ export function buildAnalysisTab({ api, initial, dialog, noEngine, engineList, a
     }
   }
 
-  if (aiNoEngineHint) panel.append(aiNoEngineHint);
   for (const { row } of AI_ROWS.values()) panel.append(row);
 
   // Initial state: hide the select until the first fetch/populate. Lock
