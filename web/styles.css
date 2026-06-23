@@ -1329,9 +1329,13 @@ body[data-ribbon-float] .studio-ribbon {
   left: 100%; top: 0;
   margin-left: 8px;
   z-index: 1000;
-  background: color-mix(in oklab, var(--wa-color-surface-raised, #2a2a2a) 70%, white);
+  /* background: color-mix(in oklab, var(--wa-color-surface-raised, #2a2a2a) 70%, white);
   border: 1px solid var(--wa-color-surface-border, #444);
-  border-radius: 6px;
+  border-radius: 6px; */
+  background: var(--wa-color-surface-raised);
+  border: 1px solid rgba(255,255,255,0.85);
+  border-radius: 0;
+
   padding: 10px;
   box-shadow: 0 6px 16px rgba(0,0,0,0.45);
   display: flex; flex-direction: column; gap: 8px;
