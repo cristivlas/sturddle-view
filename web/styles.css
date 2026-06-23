@@ -1128,7 +1128,7 @@ wa-dialog:has(.import-pos-form)::part(body) {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
 .openings-list-item {
-  cursor: pointer;
+  cursor: pointer; user-select: none;
   /* background: linear-gradient(to right, var(--row-bg), var(--bg) 75%); */
 }
 .openings-list-item td {
