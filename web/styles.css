@@ -301,6 +301,16 @@ wa-select::part(listbox) {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* Verbose-error details: a plain alert, but selectable (overriding the
+   global user-select:none) so the user can copy it. */
+.confirm-message.error-detail-text {
+  -webkit-user-select: text;
+  user-select: text;
+  word-break: break-word;
+}
+.confirm-message.error-detail-text a {
+  color: var(--accent);
+}
 .play-ai-roundcap {
   display: flex;
   align-items: center;

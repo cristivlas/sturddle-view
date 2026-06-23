@@ -77,15 +77,18 @@ export function showDialog({ label, body, defaultValue = null, width, height }) 
   });
 }
 
-/** Modal alert; `messageClass` opts into a custom message style. */
-export function alert({ message, okLabel = "OK", messageClass } = {}) {
+/** Modal alert; `messageClass` opts into a custom message style, `width`
+ *  constrains the dialog (defaults to content width). */
+export function alert({ message, okLabel = "OK", messageClass, width } = {}) {
   return showDialog({
     label: "",
+    width,
     body: (resolve, dialog) => {
       dialog.setAttribute("no-header", "");
       const p = document.createElement("p");
       p.className = messageClass ? `confirm-message ${messageClass}` : "confirm-message";
-      p.textContent = message ?? "";
+      if (message instanceof Node) p.appendChild(message);
+      else p.textContent = message ?? "";
       const ok = document.createElement("wa-button");
       ok.size = "small";
       ok.slot = "footer";
@@ -740,6 +743,70 @@ export function stickyToast(content, { variant = "neutral", stack } = {}) {
   node.append(grow, makeToastDismissBtn(() => dismiss?.()));
   dismiss = toast(node, { variant, duration: 0, stack });
   return dismiss;
+}
+
+// Matches a leading sentence: up to the first ./!/? that is followed by
+// whitespace or end-of-string, so URLs (dots mid-token) stay intact.
+const FIRST_SENTENCE_RE = /.+?[.!?]+(?=\s|$)/;
+const DETAILS_ICON = "circle-info";
+const DETAILS_ARIA = "Error details";
+const VERBOSE_ERROR_WIDTH = "min(560px, 92vw)";
+
+/** Collapse whitespace and take the first sentence as a glanceable summary.
+ *  Returns { summary, full, truncated }; `truncated` is true only when the
+ *  summary actually drops text the user might want to read. */
+export function summarizeError(text) {
+  const full = String(text ?? "").replace(/\s+/g, " ").trim();
+  const summary = (full.match(FIRST_SENTENCE_RE) || [full])[0].trim() || full;
+  return { summary, full, truncated: summary.length < full.length };
+}
+
+/** Sticky danger toast for a verbose error: shows the first-sentence
+ *  summary, and -- when more was dropped -- a "Details" action that opens
+ *  the full text in a selectable modal. Returns the toast dismiss fn. */
+export function reportVerboseError(text, { variant = "danger" } = {}) {
+  const { summary, full, truncated } = summarizeError(text);
+  if (!truncated) return stickyToast(summary, { variant });
+  const body = buildToastWithActions(summary, [{
+    icon: DETAILS_ICON,
+    ariaLabel: DETAILS_ARIA,
+    onClick: () => showVerboseErrorDetails(full),
+  }]);
+  return stickyToast(body, { variant });
+}
+
+// http(s) URLs, stopping before trailing punctuation that is more likely
+// sentence boundary than part of the link.
+const URL_RE = /https?:\/\/[^\s]+[^\s.,;:!?)\]}'"]/g;
+
+/** Build a fragment with http(s) URLs as new-tab links and everything else
+ *  as plain text nodes. Never uses innerHTML, so error text can't inject. */
+export function linkifyText(text) {
+  const frag = document.createDocumentFragment();
+  const str = String(text ?? "");
+  let last = 0;
+  for (const m of str.matchAll(URL_RE)) {
+    if (m.index > last) frag.append(str.slice(last, m.index));
+    const a = document.createElement("a");
+    a.href = m[0];
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = m[0];
+    frag.append(a);
+    last = m.index + m[0].length;
+  }
+  if (last < str.length) frag.append(str.slice(last));
+  return frag;
+}
+
+/** Modal showing the full error text, selectable, with any URLs rendered
+ *  as clickable new-tab links. */
+export function showVerboseErrorDetails(full) {
+  return alert({
+    message: linkifyText(full),
+    messageClass: "error-detail-text",
+    width: VERBOSE_ERROR_WIDTH,
+  });
 }
 
 const TOAST_STACK_ID = "toast-stack";

@@ -8,7 +8,7 @@ import { APP_EVT } from "../app-events.js";
 import { KIND, AI_KIND_PREFIX } from "../game-events.js";
 import { SIDE, FEN_STM, RESULT } from "../chess-consts.js";
 import { STORAGE_KEY } from "../storage-keys.js";
-import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, stickyToast, toast } from "../dialogs.js";
+import { alert as showAlert, confirm, makeToastDismissBtn, openSettings, reportError, reportVerboseError, stickyToast, toast } from "../dialogs.js";
 import { showImportPositionDialog, confirmReplaceViewedGame, confirmDiscardViewedGame } from "../import-position-dialog.js";
 import { toggleUciLogWindow, togglePvTableWindow, closeDebugWindows, closeAnalysisOpenedWindows, restoreDebugWindows, snapshotViewAnalysisState, restoreViewAnalysisWindows, setDockContainer, setUciLogEngine, isMobileLayout } from "../play-dock-windows.js";
 import {
@@ -331,14 +331,10 @@ function dispatchAiEvent(aiCtx, evt) {
           noRecommendation: !!p.no_recommendation,
         });
         if (p.error) {
-          // Provider errors can be many lines with URLs; show just the first
-          // sentence. Full text still renders in the AI window.
-          const full = (p.error_detail || p.error).replace(/\s+/g, " ").trim();
-          // Match on punctuation + space so URLs stay intact; trim the result.
-          const msg = (full.match(/.+?[.!?]+(?=\s|$)/) || [full])[0].trim() || full;
-          // Sticky: an AI failure (quota, provider outage) shouldn't
-          // auto-vanish before the user reads it.
-          stickyToast(msg, { variant: "danger" });
+          // Provider errors can be many lines with URLs; the toast shows the
+          // first sentence with a Details affordance for the rest. Sticky so
+          // a quota/outage failure stays until the user reads it.
+          reportVerboseError(p.error_detail || p.error);
         }
         // End the AI turn on completion AND error (clears the pulse + toast).
         // Cancel is excluded: it self-resolves via stopAnalysisFromUi ->
