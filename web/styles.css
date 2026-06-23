@@ -2472,7 +2472,7 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
   box-shadow: inset 2px 0 0 var(--wa-color-border-loud, #353841), inset -2px 0 0 var(--wa-color-border-loud, #353841);
 }
 .engines-list-item {
-  cursor: pointer;
+  cursor: pointer; user-select: none;
   /* background: linear-gradient(to right, var(--row-bg), var(--bg) 75%); */
 }
 .engines-list-item td {
@@ -2901,7 +2901,7 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   vertical-align: middle;
   color: inherit;
 }
-.fs-entry { cursor: pointer; }
+.fs-entry { cursor: pointer; user-select: none; }
 .fs-entry > td {
   padding: 4px 8px;
   overflow: hidden;
@@ -3812,7 +3812,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   flex: 1; overflow-y: auto; min-height: 0;
 }
 .ne-item {
-  padding: 4px 8px; margin: 0; cursor: pointer;
+  padding: 4px 8px; margin: 0; cursor: pointer; user-select: none;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ne-list:focus, .ne-list:focus-visible { outline: none; }
