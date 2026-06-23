@@ -214,17 +214,6 @@ function fmtDate(mtime) {
   return new Date(mtime * MS_PER_SEC).toLocaleString().replace(",", "");
 }
 
-// Filter matcher: plain substring (today's behavior) until the query
-// contains a wildcard, then a full-name-anchored glob (* = any, ? = one).
-// So `stur` still matches `sturddle.exe`, and `*.exe` filters by extension.
-function makeFilterTest(q) {
-  if (!q) return () => true;
-  if (!/[*?]/.test(q)) return (name) => name.includes(q);
-  const rx = "^" + q.replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*/g, ".*").replace(/\?/g, ".") + "$";
-  const re = new RegExp(rx, "i");
-  return (name) => re.test(name);
-}
 
 /** Modal file/directory picker (browses server FS via /fs).
  *  Resolves to selected path or null. mode: "file" | "directory" | "executable". */
@@ -278,23 +267,6 @@ export function pickFile({
 
       pathBar.append(backBtn, upBtn, pathInput);
 
-      const filterBar = document.createElement("div");
-      filterBar.className = "fs-picker-filterbar";
-      const filterInput = document.createElement("wa-input");
-      filterInput.size = "small";
-      filterInput.className = "fs-picker-filter";
-      filterInput.setAttribute("placeholder", "Filter…");
-      filterInput.setAttribute("clearable", "");
-      filterInput.setAttribute("autocomplete", "off");
-      filterInput.setAttribute("autocorrect", "off");
-      filterInput.setAttribute("autocapitalize", "off");
-      filterInput.setAttribute("spellcheck", "false");
-      const filterIcon = document.createElement("wa-icon");
-      filterIcon.setAttribute("name", "magnifying-glass");
-      filterIcon.setAttribute("slot", "start");
-      filterInput.appendChild(filterIcon);
-      filterBar.append(filterInput);
-
       // Exe-only toggle: only shown for executable pickers. Default on (hide
       // non-executables); the button reveals all files when toggled off.
       let exeOnly = wantsExec
@@ -320,7 +292,7 @@ export function pickFile({
           syncExeBtn();
           applySort(sortCtrl.current());
         });
-        filterBar.append(exeOnlyBtn);
+        pathBar.append(exeOnlyBtn);
       }
 
       // Real table so the shared column-resize helper (.th-grip / .col-drag-line)
@@ -329,6 +301,7 @@ export function pickFile({
       tableWrap.className = "fs-picker-table-wrap";
       const table = document.createElement("table");
       table.className = "fs-picker-table";
+      table.tabIndex = 0;
       markSelectable(table);
       const colgroup = document.createElement("colgroup");
       for (let i = 0; i < 3; i++) colgroup.append(document.createElement("col"));
@@ -375,32 +348,46 @@ export function pickFile({
         },
       });
 
-      function firstVisibleEntry() {
-        return listing.querySelector(".fs-entry:not(.fs-hidden)");
-      }
+      // Jump-to-prefix: type chars while the table has focus to select the
+      // next matching row. Repeated same key cycles through matches.
+      const JUMP_RESET_MS = 600;
+      let jumpPrefix = "";
+      let jumpTimer = null;
+      let jumpLastPrefix = "";
+      let jumpCycleIdx = -1;
 
-      function applyFilter() {
-        const q = (filterInput.value || "").trim();
-        const test = makeFilterTest(q.toLowerCase());
-        let anyVisible = false;
-        for (const li of listing.querySelectorAll(".fs-entry")) {
-          const name = li.querySelector(".fs-name")?.textContent?.toLowerCase() || "";
-          const hide = q && !test(name);
-          li.classList.toggle("fs-hidden", hide);
-          if (!hide) anyVisible = true;
+      table.addEventListener("keydown", (ev) => {
+        if (ev.ctrlKey || ev.altKey || ev.metaKey) return;
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          const target = listing.querySelector(".fs-entry.selected") ?? listing.querySelector(".fs-entry");
+          target?.dispatchEvent(new MouseEvent("dblclick"));
+          return;
         }
-        tableWrap.classList.toggle("fs-empty", !anyVisible);
-        // Auto-highlight the first visible match so Enter on the filter
-        // (or Tab → Select) acts on something predictable.
-        if (q && anyVisible) firstVisibleEntry().click();
-      }
-      filterInput.addEventListener("input", applyFilter);
-      filterInput.addEventListener("keydown", (ev) => {
-        if (ev.key !== "Enter") return;
-        const li = firstVisibleEntry();
-        if (!li) return;
+        if (ev.key.length !== 1) return;
         ev.preventDefault();
-        li.dispatchEvent(new MouseEvent("dblclick"));
+        clearTimeout(jumpTimer);
+        jumpPrefix += ev.key.toLowerCase();
+        const entries = Array.from(listing.querySelectorAll(".fs-entry"));
+        const names = entries.map(r => (r.querySelector(".fs-name")?.textContent || "").toLowerCase());
+        const isCycle = jumpPrefix === jumpLastPrefix && jumpPrefix.length === 1;
+        let hitIdx = -1;
+        if (isCycle) {
+          const start = (jumpCycleIdx + 1) % entries.length;
+          for (let i = 0; i < entries.length; i++) {
+            const idx = (start + i) % entries.length;
+            if (names[idx].startsWith(jumpPrefix)) { hitIdx = idx; break; }
+          }
+        } else {
+          hitIdx = names.findIndex(n => n.startsWith(jumpPrefix));
+        }
+        if (hitIdx !== -1) {
+          jumpCycleIdx = hitIdx;
+          entries[hitIdx].click();
+          entries[hitIdx].scrollIntoView({ block: "nearest" });
+        }
+        jumpLastPrefix = jumpPrefix;
+        jumpTimer = setTimeout(() => { jumpPrefix = ""; jumpLastPrefix = ""; jumpCycleIdx = -1; }, JUMP_RESET_MS);
       });
 
       const selectBtn = document.createElement("wa-button");
@@ -462,6 +449,7 @@ export function pickFile({
               sel.classList.remove("selected");
             }
             li.classList.add("selected");
+            table.focus({ preventScroll: true });
             if (entry.is_dir && !wantsDir) {
               // Single click selects the dir for navigation; double click descends.
               currentSelection = null;
@@ -496,7 +484,6 @@ export function pickFile({
           const row = listing.querySelector(`.fs-entry[data-path="${CSS.escape(selected)}"]`);
           if (row) row.classList.add("selected");
         }
-        applyFilter();
       }
 
       const sortCtrl = attachColumnSort({
@@ -529,10 +516,12 @@ export function pickFile({
           history.push(body.path);
         }
         backBtn.disabled = history.length < 2;
-        filterInput.value = "";
-        tableWrap.classList.remove("fs-empty");
+        jumpPrefix = "";
+        jumpLastPrefix = "";
+        jumpCycleIdx = -1;
         currentEntries = body.entries;
         applySort(sortCtrl.current());
+        table.focus({ preventScroll: true });
         return true;
       }
 
@@ -568,7 +557,7 @@ export function pickFile({
         }
       });
 
-      wrap.append(pathBar, filterBar, tableWrap);
+      wrap.append(pathBar, tableWrap);
       dialog.append(wrap, selectBtn);
       // Open at the recalled dir; if it's gone (deleted/renamed since the
       // last pick), silently fall back to home rather than show a toast.
