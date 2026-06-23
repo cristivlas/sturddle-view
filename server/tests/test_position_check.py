@@ -59,6 +59,14 @@ def test_san_label_carve_out_not_flagged():
     assert find_illegal_moves("the Nb1 knight is undeveloped", chess.Board()) == []
 
 
+def test_opponent_piece_san_label_not_flagged():
+    # Black to move; the knight on c3 is White's. 'Nc3' names the opponent's
+    # piece ('pressuring the Nc3') -- a label, not a Black move. Color of the
+    # named piece is irrelevant to the label carve-out.
+    board = _board("r2qr1k1/5ppp/p4n2/1pbP1bB1/8/2Nn1B2/PP1Q1PPP/1N1R1RK1 b - - 3 17")
+    assert find_illegal_moves("the rook pressures the Nc3 directly", board) == []
+
+
 def test_phantom_capture_flagged():
     # 'Nxf3' marks a capture, but f3 is empty at startpos -> false capture.
     assert find_illegal_moves("threatening Nxf3", chess.Board()) == ["Nxf3"]

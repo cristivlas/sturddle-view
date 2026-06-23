@@ -24,7 +24,7 @@ from ..config import (
     _DEFAULT_AI_MAX_TOOL_ROUNDS,
     _DEFAULT_AI_VERIFIER_MAX_ROUNDS,
 )
-from ..env_utils import env_int
+from ..env_utils import env_bool, env_int
 from ..events import (
     ENVELOPE_GAME_ID,
     ENVELOPE_KIND,
@@ -67,6 +67,7 @@ from ..llm.position_check import (
     iter_illegal_square_moves,
     truncate_at_future_line,
 )
+from ..llm.position_judge import clear_false_positives
 from .tools_engine import (
     ANALYZE_TOOL_NAME,
     MATERIAL_TOOL_NAME,
@@ -96,6 +97,11 @@ MAX_TOOL_ROUNDS = env_int("SV_AI_MAX_TOOL_ROUNDS", _DEFAULT_AI_MAX_TOOL_ROUNDS)
 # Verifier sub-runs get a tighter round budget: one move, a tool call or
 # two, a verdict. UI-settable; env is the headless/no-UI default.
 VERIFIER_MAX_ROUNDS = env_int("SV_AI_VERIFIER_MAX_ROUNDS", _DEFAULT_AI_VERIFIER_MAX_ROUNDS)
+
+# LLM judge that clears regex position-check flags the prose meant about a
+# past/hypothetical/alternate position, not the live board. Only drops flags,
+# never adds; off reverts to regex-only. Env: SV_AI_SEMANTIC_CHECK.
+SEMANTIC_CHECK_ENABLED = env_bool("SV_AI_SEMANTIC_CHECK", True)
 
 # Consecutive failed recommend_move calls before the loop force-nudges the
 # model to rank candidates with top_moves instead of guessing one at a time.
@@ -652,6 +658,32 @@ class _PositionCheck:
         )
         return sorted(set(out), key=len, reverse=True)
 
+    @property
+    def board_labels(self) -> list[str]:
+        """Every board-context flag's normalized label (moves, lines, claims,
+        bishops). The judge rules on these; tool mentions are board-independent
+        style violations and are never cleared."""
+        return (
+            self.move_labels
+            + self.line_labels
+            + [label for _surface, label, _square in self.claim_triples]
+            + self.bishop_labels
+        )
+
+    def without_labels(self, cleared: set[str]) -> _PositionCheck:
+        """A copy with every flag whose label is in `cleared` dropped. Tool
+        mentions pass through (never judged). Empty `cleared` is a no-op."""
+        if not cleared:
+            return self
+        return _PositionCheck(
+            self.board,
+            [(s, l) for s, l in self.move_pairs if l not in cleared],
+            [(s, l, sq) for s, l, sq in self.claim_triples if l not in cleared],
+            [(s, l) for s, l in self.line_pairs if l not in cleared],
+            self.tool_mentions,
+            [(s, l, f) for s, l, f in self.bishop_triples if l not in cleared],
+        )
+
 
 class AIAnalysisCoordinator:
     def __init__(
@@ -998,6 +1030,9 @@ class AIAnalysisCoordinator:
             # Single-board prose check, every round. A hit surfaces a self-
             # correction note and (below) injects a fact-anchored corrective.
             pc = self._position_check(round_chunks)
+            # Clear regex false positives (moves/claims the prose meant about
+            # another position) before acting on the hit; only drops flags.
+            pc = await self._apply_semantic_check(pc, round_chunks, config)
             if pc.hit:
                 # Tool-mention-only hits carry no surface to strike; skip the
                 # UI note (it would mark nothing) but still inject the
@@ -1303,6 +1338,26 @@ class AIAnalysisCoordinator:
             tool_mentions,
             list(iter_false_bishop_color_refs(text, board)),
         )
+
+    async def _apply_semantic_check(
+        self,
+        pc: _PositionCheck,
+        chunks: list[ProviderChunk],
+        config: _LoopConfig,
+    ) -> _PositionCheck:
+        """Drop regex flags the model judges to be other-context references.
+        No-op (returns `pc`) when the flag is off, the check is clean, or there
+        are no board-context flags to rule on -- tool mentions are never
+        judged. The judge sees the full round prose for the most context, not
+        the future-line-truncated view the regex ran on."""
+        if not SEMANTIC_CHECK_ENABLED or pc.board is None:
+            return pc
+        labels = pc.board_labels
+        if not labels:
+            return pc
+        prose = "".join(c.text for c in chunks if c.kind == "text" and c.text)
+        cleared = await clear_false_positives(config.provider, pc.board, prose, labels)
+        return pc.without_labels(cleared)
 
     async def _emit_position_note(
         self,

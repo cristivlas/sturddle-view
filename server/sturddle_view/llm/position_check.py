@@ -130,13 +130,20 @@ def _strip_annotation_glyphs(token: str) -> str:
 
 
 _SAN_LABEL_RE = re.compile(r"^([KQRBN])[a-h]?[1-8]?([a-h][1-8])$")
+# SAN piece letter -> piece type, for the [KQRBN] the label regex allows.
+_PIECE_LETTER_TO_TYPE = {
+    "K": chess.KING, "Q": chess.QUEEN, "R": chess.ROOK,
+    "B": chess.BISHOP, "N": chess.KNIGHT,
+}
 
 
 def _is_san_label(bare: str, board: chess.Board) -> bool:
     """True when `bare` is a 'piece(+disambiguator)+square' SAN-shape naming a
-    piece already on that square for the side to move -- 'Qd1' (queen on d1) or
-    the disambiguated 'Ngf3' (knight on f3). Such tokens are labels in prose,
-    not move proposals. The trailing two chars are always the named square."""
+    piece of that type already on that square -- 'Qd1', the disambiguated
+    'Ngf3', or the opponent's 'Nc3' ('pressuring the Nc3'). Labels in prose,
+    not moves. Color is irrelevant: the square is occupied, so no quiet move
+    lands there (a capture is written 'Nxc3'). Trailing two chars are the
+    square."""
     m = _SAN_LABEL_RE.match(bare)
     if m is None:
         return False
@@ -144,11 +151,7 @@ def _is_san_label(bare: str, board: chess.Board) -> bool:
     piece = board.piece_at(square)
     if piece is None:
         return False
-    # group(1) is regex-constrained to [KQRBN]; from_symbol's color is
-    # irrelevant -- we compare piece_type only.
-    if piece.piece_type != chess.Piece.from_symbol(m.group(1)).piece_type:
-        return False
-    return piece.color == board.turn
+    return piece.piece_type == _PIECE_LETTER_TO_TYPE[m.group(1)]
 
 
 def _is_phantom_capture(bare: str, move: chess.Move, board: chess.Board) -> bool:

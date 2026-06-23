@@ -20,6 +20,17 @@ from sturddle_view.play.ai_analysis import (
 )
 
 
+# These tests lock pure regex-loop behavior (note emission, corrective
+# injection, round counts). The semantic judge is a separate layer with its
+# own suite (test_position_judge); disable it here so its extra stream() call
+# doesn't perturb the scripted-provider round budget or the assertions.
+@pytest.fixture(autouse=True)
+def _no_semantic_check(monkeypatch):
+    monkeypatch.setattr(
+        "sturddle_view.play.ai_analysis.SEMANTIC_CHECK_ENABLED", False,
+    )
+
+
 # Black to move; g6 and c1 are empty (false-claim targets).
 _FEN = "r2qr1k1/5ppp/p4n2/1pbP1bB1/8/2Nn1B2/PP1Q1PPP/1N1R1RK1 b - - 3 17"
 
