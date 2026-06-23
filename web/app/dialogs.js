@@ -756,12 +756,19 @@ export function summarizeError(text) {
 export function reportVerboseError(text, { variant = "danger" } = {}) {
   const { summary, full, truncated } = summarizeError(text);
   if (!truncated) return stickyToast(summary, { variant });
+  let dismiss;
+  // Once the full text has been read in the modal the toast has served its
+  // purpose; dismiss it when the modal closes.
   const body = buildToastWithActions(summary, [{
     icon: DETAILS_ICON,
     ariaLabel: DETAILS_ARIA,
-    onClick: () => showVerboseErrorDetails(full),
+    onClick: async () => {
+      await showVerboseErrorDetails(full);
+      dismiss?.();
+    },
   }]);
-  return stickyToast(body, { variant });
+  dismiss = stickyToast(body, { variant });
+  return dismiss;
 }
 
 // http(s) URLs, stopping before trailing punctuation that is more likely
