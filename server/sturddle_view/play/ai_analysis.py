@@ -918,6 +918,11 @@ class AIAnalysisCoordinator:
                             payload=done_payload,
                         )
                     )
+                    # An errored turn tears its panel down client-side; the
+                    # buffered done event would only re-fire its error toast
+                    # on rehydrate. Drop it.
+                    if done_payload.get("error"):
+                        self.clear_replay()
                     self._task = None
                     self._cancel_token = None
                     self._active_provider = None
