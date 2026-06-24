@@ -1,6 +1,6 @@
 import os as _os
 
-__version__ = "0.4.3"
+__version__ = "0.4.4"
 __author__ = "Cristian Vlasceanu"
 __copyright__ = "2026 Cristian Vlasceanu"
 APP_NAME = "sturddle-view"

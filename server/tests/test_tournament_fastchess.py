@@ -489,6 +489,18 @@ def test_build_command_resign_and_draw(tmp_path):
     assert "movecount=3" in r and "score=700" in r
     d = cmd[cmd.index("-draw") + 1 : cmd.index("-draw") + 4]
     assert "movenumber=40" in d and "movecount=8" in d and "score=10" in d
+    assert "twosided=true" not in cmd
+
+
+def test_build_command_resign_twosided(tmp_path):
+    spec = _make_spec(
+        tmp_path,
+        template={"resign": {"movecount": 3, "score": 700, "twosided": True}},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    cmd = build_command(spec)
+    r = cmd[cmd.index("-resign") + 1 : cmd.index("-resign") + 4]
+    assert "movecount=3" in r and "score=700" in r and "twosided=true" in r
 
 
 def test_build_command_wraps_engines_in_proxy_when_configured(tmp_path):

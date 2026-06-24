@@ -91,7 +91,7 @@ def build_command(spec: RunSpec) -> list[str]:
       - games_per_round   : int  (default 2)
       - sprt              : dict {elo0, elo1, alpha, beta, model?}; model
                             defaults to normalized, legacy "logistic" honored
-      - resign            : dict {movecount, score}
+      - resign            : dict {movecount, score, twosided?}
       - draw              : dict {movenumber, movecount, score}
 
     Legacy template fields (``hash``, ``threads``, ``tablebase``,
@@ -267,6 +267,8 @@ def build_command(spec: RunSpec) -> list[str]:
     if "resign" in t and t["resign"]:
         r = t["resign"]
         cmd.extend(["-resign", f"movecount={r['movecount']}", f"score={r['score']}"])
+        if r.get("twosided"):
+            cmd.append("twosided=true")
     if "draw" in t and t["draw"]:
         d = t["draw"]
         cmd.extend([

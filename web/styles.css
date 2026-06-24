@@ -814,7 +814,7 @@ nav button.active { background: var(--nav-btn-bg-active); color: var(--fg); }
 }
 .toast-icon-btn:disabled,
 .toast-action-btn:disabled {
-  opacity: 0.45;
+  opacity: 1;
   cursor: not-allowed;
   pointer-events: auto; /* keep hover so the tooltip still surfaces */
 }
@@ -1628,7 +1628,7 @@ body .side-popover.popover-floating {
 }
 /* No game yet: board is shown but not interactive. */
 .play-board-host.board-idle .board {
-  opacity: 0.45;
+  opacity: 0.6;
   pointer-events: none;
   filter: grayscale(0.4);
 }
@@ -2186,7 +2186,7 @@ body .side-popover.popover-floating {
 /* Analysis on: x-game nav links are greyed and inert (no jumping games
    mid-analysis). The expand arrow stays live so labels remain browsable. */
 body.xgame-nav-locked .xgame-toast .xgame-link {
-  opacity: 0.45;
+  opacity: 0.6;
   pointer-events: none;
   cursor: not-allowed;
   text-decoration: none;
@@ -3883,15 +3883,18 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 }
 .tournament-template-form .ttf-adj-header {
   font-size: 0.75rem;
+  display: flex; align-items: center; gap: 24px;
+}
+/* web-awesome dims disabled controls by setting opacity:0.5 on their inner
+   part="base". Lift it for better contrast in this dense adjudication block. */
+.tournament-template-form .ttf-adj-fields wa-input[disabled]::part(base),
+.tournament-template-form .ttf-adj-subswitch[disabled]::part(base) {
+  opacity: 0.75;
 }
 .tournament-template-form .ttf-adj-fields {
   display: grid; gap: 6px;
   grid-auto-flow: column;
   grid-auto-columns: minmax(0, 1fr);
-  transition: opacity 0.15s;
-}
-.tournament-template-form .ttf-adj-fields.disabled {
-  opacity: 0.45;
 }
 @media (max-width: 600px) {
   .tournament-template-form .ttf-adj-fields {

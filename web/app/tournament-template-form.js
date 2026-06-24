@@ -160,7 +160,7 @@ export function mountTournamentTemplateForm({
     const fields = document.createElement("div");
     fields.className = "ttf-adj-fields";
     group.append(header, fields);
-    return { group, sw, fields };
+    return { group, sw, fields, header };
   }
 
   function adjInput(label, key, { min } = {}) {
@@ -184,6 +184,16 @@ export function mountTournamentTemplateForm({
   resignScore.value = String(resign.score ?? RESIGN_DEFAULTS.score);
   resignBlock.fields.append(resignMoves, resignScore);
 
+  // Two-sided sub-toggle in the resign header: requires both engines to agree
+  // on the resign condition. Meaningless unless resign is on, so it tracks the
+  // resign switch's enabled state.
+  const twosidedSwitch = document.createElement("wa-switch");
+  twosidedSwitch.size = "small";
+  twosidedSwitch.className = "ttf-adj-subswitch";
+  twosidedSwitch.textContent = "Two-sided";
+  if (resign.twosided) twosidedSwitch.setAttribute("checked", "");
+  resignBlock.header.appendChild(twosidedSwitch);
+
   // Draw row
   const drawEnabled = !!(draw.movenumber != null && draw.movecount != null && draw.score != null);
   const drawBlock = makeAdjGroup("Draw after", drawEnabled);
@@ -204,9 +214,8 @@ export function mountTournamentTemplateForm({
       if (on) f.removeAttribute("disabled");
       else f.setAttribute("disabled", "");
     }
-    block.fields.classList.toggle("disabled", !on);
   }
-  const resignFields = [resignMoves, resignScore];
+  const resignFields = [resignMoves, resignScore, twosidedSwitch];
   const drawFields = [drawStart, drawMoves, drawScore];
   syncEnabled(resignBlock, resignFields);
   syncEnabled(drawBlock, drawFields);
@@ -245,6 +254,7 @@ export function mountTournamentTemplateForm({
         movecount: Number(resignMoves.value),
         score:     Number(resignScore.value),
       };
+      if (twosidedSwitch.checked) out.resign.twosided = true;
     }
     if (
       drawBlock.sw.checked &&
