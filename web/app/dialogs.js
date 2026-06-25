@@ -581,15 +581,21 @@ export function pickFile({
  *  field from the kind of Error our api() helper throws. */
 export function apiErrorDetail(error) {
   const message = (error && error.message) || String(error);
-  const m = message.match(/^[A-Z]+\s+\/\S+\s+->\s+\d+\s+(.*)$/s);
+  const m = message.match(/^[A-Z]+\s+\/\S+\s+->\s+(\d+)\s+(.*)$/s);
   if (!m) return message;
+  const [, status, body] = m;
   try {
-    const parsed = JSON.parse(m[1]);
-    const detail = parsed.detail || m[1];
+    const parsed = JSON.parse(body);
+    const detail = parsed.detail;
     if (detail && typeof detail === "object") return detail.message || JSON.stringify(detail);
-    return detail;
+    // Empty/missing detail carries no info -- echoing the raw envelope back
+    // ({"detail":""}) is useless. Surface the parsed body if it has other
+    // keys, else fall back to the HTTP status.
+    if (detail) return detail;
+    const keys = Object.keys(parsed).filter((k) => k !== "detail");
+    return keys.length ? JSON.stringify(parsed) : `HTTP ${status}`;
   } catch {
-    return m[1];
+    return body || `HTTP ${status}`;
   }
 }
 

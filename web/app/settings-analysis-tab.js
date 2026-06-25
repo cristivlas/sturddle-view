@@ -1,4 +1,4 @@
-import { apiErrorDetail } from "./dialogs.js";
+import { apiErrorDetail, toast } from "./dialogs.js";
 
 // AI/analysis wire field-name constants + provider list. Mirror of the
 // server contract in server/sturddle_view/api/settings.py.
@@ -444,8 +444,11 @@ export function buildAnalysisTab({ api, initial, dialog, engineList, activeEngin
         aiKey.setNoKeyPrompt(NO_KEY_DETAIL_SUFFIX);
         showModelInput("");
       } else {
+        // Genuine fetch failure: surface as a toast, not inline under the
+        // Model field. Fall back to free-text entry with a blank hint.
         aiKey.setNoKeyPrompt("");
-        showModelInput(detail);
+        showModelInput("");
+        toast(detail, { variant: "danger" });
       }
     }
   }
