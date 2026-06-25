@@ -67,10 +67,6 @@ export function buildCommonTab({ initial, putSettings, putSettingsDebounced, pat
     row.className = "settings-row settings-panel-aligned";
     const lbl = document.createElement("label");
     lbl.textContent = "Book ply depth";
-    const hint = document.createElement("span");
-    hint.className = "muted settings-row-hint";
-    hint.textContent = " (tournaments only)";
-    lbl.appendChild(hint);
 
     const plies = document.createElement("wa-input");
     plies.size = "small";
@@ -106,8 +102,17 @@ export function buildCommonTab({ initial, putSettings, putSettingsDebounced, pat
     controls.append(plies, order);
 
     row.append(lbl, controls);
-    return row;
+    // Ply depth + order only apply when a book is configured; greyed out
+    // (values retained server-side) until then.
+    const setEnabled = (on) => {
+      plies.disabled = !on;
+      order.disabled = !on;
+    };
+    return { row, setEnabled };
   }
+
+  const { row: bookOptionsRow, setEnabled: setBookOptionsEnabled } = bookPliesAndOrderRow();
+  setBookOptionsEnabled(!!initial.engine_default_book_path);
 
   generalPanel.append(
     makeThreadsHashRow(initial.host?.logical_cores),
@@ -119,14 +124,16 @@ export function buildCommonTab({ initial, putSettings, putSettingsDebounced, pat
       (p) => putSettings({ engine_default_syzygy_path: p }),
     ),
     pathRow(
-      "Opening book",
+      "Tournaments opening book",
       initial.engine_default_book_path || "",
       "file",
       "Pick opening book (.epd / .pgn)",
-      (p) => putSettings({ engine_default_book_path: p }),
-      { hint: "(tournaments only)" },
+      (p) => {
+        putSettings({ engine_default_book_path: p });
+        setBookOptionsEnabled(!!p);
+      },
     ),
-    bookPliesAndOrderRow(),
+    bookOptionsRow,
   );
 
   return { tab: generalTab, panel: generalPanel };
