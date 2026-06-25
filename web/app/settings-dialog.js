@@ -226,9 +226,17 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
       });
 
       // --- AI Analysis tab ---
-      const { tab: analysisTab, panel: analysisPanel } = buildAnalysisTab({
+      const { tab: analysisTab, panel: analysisPanel, mount: mountAnalysis } = buildAnalysisTab({
         api, initial, dialog, engineList, activeEngineId,
         putSettings, putSettingsDebounced, debounce,
+      });
+      // Defer the model row (and its /models fetch) to first activation so
+      // opening Settings on another tab issues no provider call.
+      let analysisMounted = false;
+      tabs.addEventListener("wa-tab-show", (ev) => {
+        if (ev.detail?.name !== "analysis" || analysisMounted) return;
+        analysisMounted = true;
+        mountAnalysis();
       });
       // Map preserves insertion order by spec -- the iteration order here
       // IS the visual tab order. Each entry pairs the tab control with
@@ -259,6 +267,9 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
             colPctsKey: SETTINGS_ENGINES_COL_PCTS_KEY,
           });
         });
+      } else if (startTab === analysisTab) {
+        analysisMounted = true;
+        mountAnalysis();
       }
 
       for (const { tab, panel } of TABS.values()) tabs.append(tab, panel);

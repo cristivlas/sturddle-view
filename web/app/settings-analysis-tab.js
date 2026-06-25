@@ -524,10 +524,11 @@ export function buildAnalysisTab({ api, initial, dialog, engineList, activeEngin
   for (const { row } of AI_ROWS.values()) panel.append(row);
 
   // Initial state: hide the select until the first fetch/populate. Lock
-  // fields by current provider, then route the model row.
+  // fields by current provider. The model row (and its /models fetch when
+  // AI is on) is routed on first tab activation via the returned mount(),
+  // so opening Settings on another tab makes no provider call.
   showModelInput("");
   applyAiEnabledLockout();
-  refreshModelRow();
 
-  return { tab, panel };
+  return { tab, panel, mount: refreshModelRow };
 }
