@@ -3887,6 +3887,13 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .tournament-template-form .ttf-switch-row {
   display: flex; flex-wrap: wrap; gap: 16px 24px; align-items: center;
 }
+/* Fixed width on the first two switches of both switch rows (top row +
+   resign header) so, with equal gaps, the third switch (Restart engines /
+   Tablebase) lines up vertically across rows. The third is left auto-width. */
+.tournament-template-form .ttf-switch-row > wa-switch:nth-child(-n + 2),
+.tournament-template-form .ttf-adj-header > wa-switch:nth-child(-n + 2) {
+  width: 8em;
+}
 /* Validation outline for required/out-of-range inputs (set by validate()). */
 .tournament-template-form .ttf-invalid::part(base),
 .sprt-settings-grid .sprt-invalid::part(base) {

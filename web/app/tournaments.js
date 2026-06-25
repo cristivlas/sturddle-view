@@ -660,6 +660,7 @@ function buildInfoContent(ctx, t) {
   row("CPU affinity", tpl.pin_affinity ? "Pinned" : "Off");
   row("Resign", formatResign(tpl.resign));
   row("Draw adjudication", formatDraw(tpl.draw));
+  row("Tablebase adjudication", tpl.tb_adjudication ? "On" : "Off");
   const ed = t.engine_defaults || {};
   const defaultSpan = (text, title) => {
     const span = document.createElement("span");
@@ -758,6 +759,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
       const tplCtl = mountTournamentTemplateForm({
         container: formHost,
         initialValues: defaults,
+        syzygyPath: saved.engine_default_syzygy_path || "",
       });
 
       const sprtCtl = mountSprtButton({

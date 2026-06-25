@@ -43,6 +43,7 @@ export function buildTournamentTab({ tournamentInitial, putTournamentSettings, p
   const tplCtl = mountTournamentTemplateForm({
     container: tplHost,
     initialValues: tournamentInitial.default_template || {},
+    syzygyPath: tournamentInitial.engine_default_syzygy_path || "",
   });
   tournamentPanel.appendChild(tplHost);
 

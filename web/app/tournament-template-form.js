@@ -29,6 +29,7 @@ const RESTART_TITLE =
 export function mountTournamentTemplateForm({
   container,
   initialValues = {},
+  syzygyPath = "",
 }) {
   container.innerHTML = "";
   container.classList.add("tournament-template-form");
@@ -190,9 +191,23 @@ export function mountTournamentTemplateForm({
   const twosidedSwitch = document.createElement("wa-switch");
   twosidedSwitch.size = "small";
   twosidedSwitch.className = "ttf-adj-subswitch";
+  twosidedSwitch.dataset.key = "resign.twosided";
   twosidedSwitch.textContent = "Two-sided";
   if (resign.twosided) twosidedSwitch.setAttribute("checked", "");
   resignBlock.header.appendChild(twosidedSwitch);
+
+  // Tablebase adjudication sub-toggle, placed beside Two-sided. Unlike
+  // Two-sided it is independent of resign; it is gated solely on a global
+  // SyzygyPath being configured (passed to fastchess as -tb <path>, all
+  // other -tb knobs left at fastchess defaults).
+  const tbSwitch = document.createElement("wa-switch");
+  tbSwitch.size = "small";
+  tbSwitch.className = "ttf-adj-subswitch";
+  tbSwitch.dataset.key = "tb_adjudication";
+  tbSwitch.textContent = "Tablebase adjudication";
+  if (!syzygyPath) tbSwitch.setAttribute("disabled", "");
+  if (syzygyPath && initialValues.tb_adjudication) tbSwitch.setAttribute("checked", "");
+  resignBlock.header.appendChild(tbSwitch);
 
   // Draw row
   const drawEnabled = !!(draw.movenumber != null && draw.movecount != null && draw.score != null);
@@ -256,6 +271,7 @@ export function mountTournamentTemplateForm({
       };
       if (twosidedSwitch.checked) out.resign.twosided = true;
     }
+    if (syzygyPath && tbSwitch.checked) out.tb_adjudication = true;
     if (
       drawBlock.sw.checked &&
       drawStart.value && drawMoves.value && drawScore.value !== ""

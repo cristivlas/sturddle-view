@@ -503,6 +503,36 @@ def test_build_command_resign_twosided(tmp_path):
     assert "movecount=3" in r and "score=700" in r and "twosided=true" in r
 
 
+def test_build_command_tb_adjudication(tmp_path):
+    spec = _make_spec(
+        tmp_path,
+        template={"tb_adjudication": True},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+        engine_default_syzygy_path="/tb",
+    )
+    cmd = build_command(spec)
+    assert cmd[cmd.index("-tb") + 1] == "/tb"
+
+
+def test_build_command_tb_adjudication_omitted_without_path(tmp_path):
+    spec = _make_spec(
+        tmp_path,
+        template={"tb_adjudication": True},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+    )
+    assert "-tb" not in build_command(spec)
+
+
+def test_build_command_tb_adjudication_off(tmp_path):
+    spec = _make_spec(
+        tmp_path,
+        template={},
+        engines=[{"name": "A", "cmd": "/x"}, {"name": "B", "cmd": "/y"}],
+        engine_default_syzygy_path="/tb",
+    )
+    assert "-tb" not in build_command(spec)
+
+
 def test_build_command_wraps_engines_in_proxy_when_configured(tmp_path):
     """Slice 9b: when proxy_broadcast_url + proxy_secret are set on the
     spec, each engine's cmd= becomes the python proxy invocation with

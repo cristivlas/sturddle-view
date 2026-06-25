@@ -406,6 +406,7 @@ def test_get_settings(client):
     assert "tournaments_root" in body
     assert "default_template" in body
     assert "fastchess_detected" in body
+    assert "engine_default_syzygy_path" in body
 
 
 def test_put_settings_updates(client, tmp_path):

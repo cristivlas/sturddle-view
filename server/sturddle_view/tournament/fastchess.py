@@ -277,6 +277,11 @@ def build_command(spec: RunSpec) -> list[str]:
             f"movecount={d['movecount']}",
             f"score={d['score']}",
         ])
+    # Tablebase (Syzygy) adjudication: only -tb <path>, leaving fastchess
+    # at its defaults for piece count / 50-move / result type. Gated on a
+    # configured SyzygyPath (the same one passed as the UCI option above).
+    if t.get("tb_adjudication") and spec.engine_default_syzygy_path:
+        cmd.extend(["-tb", spec.engine_default_syzygy_path])
 
     # Output: PGN append, fastchess output format (we parse PGN ourselves
     # for stats, but fastchess's stdout is still captured to logs).

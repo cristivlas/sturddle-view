@@ -528,6 +528,7 @@ def _serialize_settings(s) -> dict:
         "default_template": dict(s.tournament_default_template or {}),
         "sprt_defaults": dict(s.tournament_sprt_defaults or {}),
         "fastchess_detected": FastchessRunner.detect_binary(s.tournament_fastchess_path),
+        "engine_default_syzygy_path": s.engine_default_syzygy_path,
     }
 
 
