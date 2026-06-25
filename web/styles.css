@@ -3914,7 +3914,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
    part="base". Lift it for better contrast in this dense adjudication block. */
 .tournament-template-form .ttf-adj-fields wa-input[disabled]::part(base),
 .tournament-template-form .ttf-adj-subswitch[disabled]::part(base) {
-  opacity: 0.75;
+  opacity: 0.5;
 }
 .tournament-template-form .ttf-adj-fields {
   display: grid; gap: 6px;
