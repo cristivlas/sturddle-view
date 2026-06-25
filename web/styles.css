@@ -2552,6 +2552,19 @@ wa-dialog .dialog-side-tabs wa-tab::part(base) {
 wa-dialog::part(body) { overflow-x: hidden !important; }
 /* Header actions: spacing between buttons. */
 wa-dialog::part(header-actions) { gap: 6px; align-items: center; }
+/* WA components reset user-select:text in their shadow DOM, overriding the
+   global body none. A multi-click in an open dialog then selects label text.
+   Force none on dialog chrome; [data-selectable] regions re-opt in. */
+wa-dialog, wa-dialog *:not(input):not(textarea),
+wa-dialog::part(title), wa-dialog::part(header),
+wa-dialog::part(body), wa-dialog::part(footer) {
+  user-select: none;
+  -webkit-user-select: none;
+}
+wa-dialog [data-selectable], wa-dialog [data-selectable] * {
+  user-select: text;
+  -webkit-user-select: text;
+}
 
 /* Headerless confirm/alert dialogs: the message is the heading. */
 .confirm-message {
@@ -3704,9 +3717,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .tournament-info {
   border-top: 1px solid var(--accent);
   padding-top: 10px;
-  user-select: none;
 }
-.tournament-info-dialog::part(title) { user-select: none; }
 .tournament-info-grid {
   display: grid;
   grid-template-columns: max-content 1fr;
