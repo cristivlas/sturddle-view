@@ -2644,12 +2644,19 @@ wa-dialog .settings-tabs wa-tab-panel::part(base) {
 wa-dialog .settings-tabs wa-tab-panel > * {
   max-width: 480px;
 }
-/* Per-tab inter-row spacing — each tab's content has a different
+/* Per-tab inter-row spacing -- each tab's content has a different
    natural height, so the gap is tuned per tab to use the available
-   space without overflowing the dialog cap. Gameplay (play) keeps the
-   default 10px because its chess-board preview already fills the cap. */
+   space without overflowing the dialog cap. */
 wa-dialog .settings-tabs wa-tab-panel[name="general"] > * + * {
-  margin-top: 28px;
+  margin-top: 38px;
+}
+/* wa-dialog .settings-tabs wa-tab-panel[name="play"] {
+  --settings-group-gap: 18px;
+} */
+/* Gameplay content is wider than the shared 360px column so the
+   side-by-side name/side row has room to breathe. */
+wa-dialog .settings-tabs wa-tab-panel[name="play"] .settings-panel-col {
+  width: 440px;
 }
 /* Gameplay tab: pair two short selects (e.g. Human plays as + Eval
    display) on the same line. Each takes equal share. */

@@ -1,4 +1,5 @@
-// Gameplay settings tab: time control, side/name, and end-of-game rules.
+// Gameplay settings tab: PGN directory, time control, side/name, and
+// end-of-game rules.
 // Each widget owns its own change -> putSettings; nothing cross-interacts.
 
 import { inlineSvgIcon } from "./dialogs.js";
@@ -8,7 +9,7 @@ import { loadRaw, saveRaw } from "./storage.js";
 import { SIDE } from "./chess-consts.js";
 
 export function buildPlayTab({
-  initial, putSettings, putSettingsDebounced, makeDurationRow,
+  initial, putSettings, putSettingsDebounced, makeDurationRow, pathRow,
   playerNameDefault, playerNameKey, playerNameMaxLen,
 }) {
   const playTab = document.createElement("wa-tab");
@@ -16,6 +17,21 @@ export function buildPlayTab({
   playTab.textContent = "Gameplay";
   const playPanel = document.createElement("wa-tab-panel");
   playPanel.name = "play";
+
+  // PGN autosave is HVE-only: a non-empty pgn_dir enables it, Clear disables
+  // it. Validated server-side, so PUT only on picker-commit/blur (ctx.typing
+  // skips). pgn_autosave is kept in lockstep with the path.
+  const pgnDirRow = pathRow(
+    "PGN directory",
+    initial.pgn_dir ?? "",
+    "directory",
+    "Pick PGN directory",
+    (p, ctx) => {
+      if (ctx?.typing) return;
+      putSettings({ pgn_dir: p, pgn_autosave: !!p });
+    },
+    { editable: true, placeholder: "/path/to/pgn (empty = no autosave)" },
+  );
 
   const tcInitialRow = makeDurationRow({
     label: "Initial time",
@@ -59,10 +75,15 @@ export function buildPlayTab({
     saveRaw(playerNameKey, v || null);
   });
   const playerNameRow = document.createElement("div");
-  playerNameRow.className = "settings-row settings-row-spaced";
+  playerNameRow.className = "settings-row";
   const playerNameLabel = document.createElement("label");
   playerNameLabel.textContent = "Your name";
   playerNameRow.append(playerNameLabel, playerNameInput);
+
+  // Side + name share one row -- two short controls of equal width.
+  const sideNameRow = document.createElement("div");
+  sideNameRow.className = "settings-pair-row";
+  sideNameRow.append(humanSideRow, playerNameRow);
 
   const inheritClocks = document.createElement("wa-switch");
   inheritClocks.size = "small";
@@ -105,12 +126,12 @@ export function buildPlayTab({
   const playCol = document.createElement("div");
   playCol.className = "settings-panel-col";
   playCol.append(
+    pgnDirRow,
     tcSection, inheritClocksRow,
     makeDivider(),
     togglesRow,
     makeDivider(),
-    humanSideRow,
-    playerNameRow,
+    sideNameRow,
   );
   playPanel.append(playCol);
 

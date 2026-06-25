@@ -189,9 +189,13 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
         });
       });
 
+      // Shared path-row builder, bound to api for the file picker. Used by
+      // the Gameplay, Common and Tournament tabs.
+      const pathRow = makePathRow(api);
+
       // --- Play (Gameplay) tab ---
       const { tab: playTab, panel: playPanel } = buildPlayTab({
-        initial, putSettings, putSettingsDebounced, makeDurationRow,
+        initial, putSettings, putSettingsDebounced, makeDurationRow, pathRow,
         playerNameDefault: PLAYER_NAME_DEFAULT,
         playerNameKey: PLAYER_NAME_KEY,
         playerNameMaxLen: PLAYER_NAME_MAX_LEN,
@@ -210,10 +214,6 @@ export async function openSettingsDialog({ api, initialTab, getActivePerspective
           boardStylePending = putSettings({ board_style: boardStyleFinal });
         },
       });
-
-      // Shared path-row builder, bound to api for the file picker. Used by
-      // the Common and Tournament tabs.
-      const pathRow = makePathRow(api);
 
       // --- Common tab ---
       const { tab: generalTab, panel: generalPanel } = buildCommonTab({

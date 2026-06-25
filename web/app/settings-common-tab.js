@@ -1,9 +1,7 @@
 // Common settings tab: global engine defaults (UCI Threads/Hash, Syzygy,
-// opening book) and the PGN directory. PGN autosave is implicit -- a
-// non-empty pgn_dir enables it; Clear disables it (the server keeps a
-// separate pgn_autosave field, but the UI keeps the two in lockstep).
+// opening book). The PGN directory lives on the Gameplay tab (HVE-only).
 //
-// pathRow is shared with the Tournament tab, so it's passed in.
+// pathRow is shared with the Gameplay and Tournament tabs, so it's passed in.
 
 export function buildCommonTab({ initial, putSettings, putSettingsDebounced, pathRow }) {
   const generalTab = document.createElement("wa-tab");
@@ -113,21 +111,6 @@ export function buildCommonTab({ initial, putSettings, putSettingsDebounced, pat
 
   generalPanel.append(
     makeThreadsHashRow(initial.host?.logical_cores),
-    pathRow(
-      "PGN directory",
-      initial.pgn_dir ?? "",
-      "directory",
-      "Pick PGN directory",
-      (p, ctx) => {
-        // Non-empty path implicitly enables autosave; Clear ("" path) disables it.
-        // pgn_dir is validated server-side (must exist + be writable),
-        // so we only PUT on picker-commit / blur -- never on every
-        // keystroke. ctx.typing skips the PUT entirely.
-        if (ctx?.typing) return;
-        putSettings({ pgn_dir: p, pgn_autosave: !!p });
-      },
-      { editable: true, placeholder: "/path/to/pgn (empty = no autosave)" },
-    ),
     pathRow(
       "SyzygyPath",
       initial.engine_default_syzygy_path || "",
