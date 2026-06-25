@@ -47,6 +47,13 @@ _DEFAULT_AI_VERIFICATION_DEPTH = 25
 DEFAULT_TC_INITIAL_SECONDS = 300.0
 DEFAULT_TC_INCREMENT_SECONDS = 0.0
 
+# Opening-book line order. Shared by the settings API (validation), the
+# HVE seed path, and opening_lines (selection). None = fastchess default
+# (sequential).
+BOOK_ORDER_SEQUENTIAL = "sequential"
+BOOK_ORDER_RANDOM = "random"
+VALID_BOOK_ORDERS = {BOOK_ORDER_SEQUENTIAL, BOOK_ORDER_RANDOM}
+
 
 def default_settings_file() -> Path:
     """Path to persisted user settings.
@@ -85,6 +92,8 @@ PERSISTED_FIELDS = (
     "engine_default_book_path",
     "engine_default_book_plies",
     "engine_default_book_order",
+    "engine_default_book_cursor",
+    "hve_use_opening_book",
     "ai_enabled",
     "ai_provider",
     "ai_models",
@@ -168,6 +177,15 @@ class Settings(BaseSettings):
     engine_default_book_plies: int | None = None
     # "sequential" | "random". None = fastchess default (sequential).
     engine_default_book_order: str | None = None
+    # HVE-only: seed new games from the opening book above. Tournaments
+    # always use it; HVE opts in here (off by default -- no surprise
+    # seeded games). When on and a book path is set, each new HVE game
+    # is seeded from a book line.
+    hve_use_opening_book: bool = False
+    # Per-server sequential cursor: advances on each book-seeded HVE game
+    # (order != random), modulo the book's line count, so "sequential"
+    # walks the book across games. Reset to 0 when the book path changes.
+    engine_default_book_cursor: int = 0
 
     # AI analysis & commentary. Master toggle gates the engine+AI behavior
     # off the existing Analyze ribbon buttons; provider/model/base_url are

@@ -234,6 +234,14 @@ class HumanVsEngine:
         # (self._game = it) by cancel_edit and the FEN-unchanged commit_edit.
         self._edit_saved_view: GameBundle | None = None
         self._tb: TablebaseProber | None = None
+        # Active opening-book line (UCI) the engine follows this game. The
+        # engine plays the next book move while the moves played so far are
+        # a prefix of this line; the first human deviation clears it (out of
+        # book). None when no book is active. Reset per new_game; never set
+        # by restore_from, so a rehydrated mid-game is out of book.
+        self._book_line: tuple[str, ...] | None = None
+        # Source file of the active book line, for logging only.
+        self._book_path: str | None = None
         self._lock = asyncio.Lock()
 
     # Coherent-game fields delegate to the self._game bundle, so call sites
@@ -532,6 +540,8 @@ class HumanVsEngine:
         seed_final_black_time: float | None = None,
         seed_comments: list[str | None] | None = None,
         seed_root_comment: str | None = None,
+        book_line: tuple[str, ...] | None = None,
+        book_path: str | None = None,
     ) -> str:
         """Start a fresh game.
 
@@ -605,6 +615,8 @@ class HumanVsEngine:
             # /view/start suspend (so a later view entry can't resume it).
             self._fork_link = None
             self._suspended_play = None
+            self._book_line = book_line or None
+            self._book_path = book_path if self._book_line else None
             engine.send_line("ucinewgame")
             self._game = next_game
             await self._persist()
@@ -1717,6 +1729,38 @@ class HumanVsEngine:
             capture_score=capture_score,
         )  # cancel handled via asyncio task cancellation, not cancel_token
 
+    def _next_book_move(self) -> chess.Move | None:
+        """The engine's book move for the current position, or None if out
+        of book. In book only while the moves played so far are an exact
+        prefix of `_book_line` (startpos lines only). A human deviation, a
+        finished line, or an illegal book move clears `_book_line`."""
+        line = self._book_line
+        if line is None or self._start_fen is not None:
+            return None
+        stack = self._board.move_stack
+        played = len(stack)
+        if played >= len(line) or any(
+            stack[i].uci() != line[i] for i in range(played)
+        ):
+            reason = "line exhausted" if played >= len(line) else "human deviated"
+            log.debug("opening book: out of book (%s) for %s", reason, self._book_path)
+            self._book_line = None
+            return None
+        try:
+            move = chess.Move.from_uci(line[played])
+        except ValueError:
+            log.debug("opening book: out of book (bad UCI %r) for %s", line[played], self._book_path)
+            self._book_line = None
+            return None
+        if move not in self._board.legal_moves:
+            log.debug("opening book: out of book (illegal %s) for %s", line[played], self._book_path)
+            self._book_line = None
+            return None
+        log.debug(
+            "opening book: playing %s (ply %d) from %s", move.uci(), played, self._book_path,
+        )
+        return move
+
     async def _think_and_play(self) -> None:
         async with self._lock:
             if self._board is None or self._game_id is None:
@@ -1724,11 +1768,18 @@ class HumanVsEngine:
             game_id = self._game_id
             board = self._board
             gen = self._think_gen
-            try:
-                engine = await self._ensure_engine()
-            except Exception:
-                log.error("could not start engine for search", exc_info=True)
-                return
+            book_move = self._next_book_move()
+            if book_move is None:
+                try:
+                    engine = await self._ensure_engine()
+                except Exception:
+                    log.error("could not start engine for search", exc_info=True)
+                    return
+        # Book move: skip the search entirely. _commit_engine_move re-acquires
+        # the lock under the same cancel guard as a finished search would.
+        if book_move is not None:
+            await self._commit_engine_move(book_move, {}, game_id, gen)
+            return
         # Use the live remaining time, not the snapshot at turn start.
         white_clock = self._remaining(chess.WHITE)
         black_clock = self._remaining(chess.BLACK)
@@ -1770,6 +1821,14 @@ class HumanVsEngine:
             return
         finally:
             self._analysis = None
+        await self._commit_engine_move(best, captured, game_id, gen)
+
+    async def _commit_engine_move(
+        self, move: chess.Move, captured: dict, game_id: str, gen: int,
+    ) -> None:
+        """Apply the engine's chosen move (book or search) under the lock,
+        with the cancel guard, clock/eval bookkeeping, publish, and end
+        check. Shared by the book branch and the search bestmove path."""
         async with self._lock:
             if (
                 self._board is None
@@ -1780,7 +1839,7 @@ class HumanVsEngine:
                 return
             self._clock.append_snapshot()
             self._consume_turn_time()
-            self._board.push(best)
+            self._board.push(move)
             self._eval_history.append(captured or None)
             if self._play_comments is not None:
                 self._play_comments.append(None)

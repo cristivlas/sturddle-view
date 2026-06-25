@@ -108,6 +108,14 @@ export function buildPlayTab({
   autoClaimDraws.addEventListener("change", () => {
     putSettings({ auto_claim_draws: autoClaimDraws.checked });
   });
+  const useOpeningBook = document.createElement("wa-switch");
+  useOpeningBook.size = "small";
+  useOpeningBook.checked = !!initial.hve_use_opening_book;
+  useOpeningBook.textContent = "Common book";
+  useOpeningBook.title = "Seed each new game from the opening book set on the Common tab";
+  useOpeningBook.addEventListener("change", () => {
+    putSettings({ hve_use_opening_book: useOpeningBook.checked });
+  });
 
   // Inherit PGN clocks is a view->play transition setting; Allow Undo
   // and Claim draws are end-of-game rules stacked together.
@@ -116,7 +124,7 @@ export function buildPlayTab({
   inheritClocksRow.append(inheritClocks);
   const togglesRow = document.createElement("div");
   togglesRow.className = "settings-row settings-toggles-grid settings-row-section-inset";
-  togglesRow.append(allowTakeback, autoClaimDraws);
+  togglesRow.append(allowTakeback, autoClaimDraws, useOpeningBook);
 
   const tcSection = makeSection(
     inlineSvgIcon(CHESS_CLOCK_SVG_INNER, { viewBox: CHESS_CLOCK_VIEW_BOX, ariaLabel: "Time control" }),

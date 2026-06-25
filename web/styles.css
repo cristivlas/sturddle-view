@@ -2710,10 +2710,12 @@ wa-dialog .settings-tabs wa-tab-panel[name="tournament"] > * + * {
   font-family: var(--wa-font-family-body);
   margin-bottom: 4px;
 }
-/* Toggles stack: switches stacked vertically, one per row. */
+/* Toggles row: switches flow horizontally, wrapping to a new line when
+   they exceed the panel width. */
 .settings-toggles-grid {
   display: flex;
-  gap: 24px;
+  flex-wrap: wrap;
+  gap: 12px 24px;
   align-items: center;
   max-width: 460px;
 }

@@ -12,9 +12,9 @@ from typing import Iterable, Optional
 
 import chess
 import chess.pgn
-import io
 
 from ._runtime import app_root
+from .chess.pgn_walk import replay_line
 
 
 DEFAULT_OPENINGS_DIR = app_root() / "web" / "vendor" / "chess-openings"
@@ -31,26 +31,6 @@ class Opening:
     def as_dict(self) -> dict:
         """Public wire shape (eco, name, pgn, ply); `moves` is internal."""
         return {"eco": self.eco, "name": self.name, "pgn": self.pgn, "ply": self.ply}
-
-
-def _replay_pgn(pgn_text: str) -> tuple[Optional[str], tuple[str, ...]]:
-    """Replay a PGN-style line; return (terminal EPD, UCI move tuple).
-    EPD is None and the tuple empty if the line is empty or unparseable.
-
-    EPD = piece placement + side-to-move + castling + en-passant target
-    (no halfmove/fullmove counters), so it identifies a position
-    independent of how it was reached -- the basis for transposition-
-    aware opening lookup. The UCI move list backs proximity ranking
-    (shared-prefix distance between lines)."""
-    game = chess.pgn.read_game(io.StringIO(pgn_text))
-    if game is None:
-        return None, ()
-    board = game.board()
-    moves: list[str] = []
-    for move in game.mainline_moves():
-        moves.append(move.uci())
-        board.push(move)
-    return (board.epd(), tuple(moves)) if moves else (None, ())
 
 
 class OpeningBook:
@@ -72,7 +52,7 @@ class OpeningBook:
         return len(self._by_pos)
 
     def add(self, eco: str, name: str, pgn_text: str) -> None:
-        epd, moves = _replay_pgn(pgn_text)
+        epd, moves = replay_line(pgn_text)
         if epd is None:
             return
         opening = Opening(
