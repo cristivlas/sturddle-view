@@ -10,6 +10,16 @@ export function formatType(v) {
   return TYPE_LABEL[v] || (v.charAt(0).toUpperCase() + v.slice(1));
 }
 
+// Signed Elo with a leading "+" on non-negatives (e.g. "+12.3", "-4.5").
+export function fmtSignedElo(v) {
+  return (v >= 0 ? "+" : "") + v.toFixed(1);
+}
+
+// " +/- m.m" margin suffix, or "" when no 95% interval is available.
+export function fmtMargin(m) {
+  return m == null ? "" : ` ± ${m.toFixed(1)}`;
+}
+
 export function formatResign(r) {
   if (!r || r.movecount == null || r.score == null) return null;
   const base = `after ${r.movecount} moves at ±${r.score} cp`;

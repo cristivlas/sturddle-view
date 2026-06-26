@@ -13,6 +13,7 @@ import { MIDDOT, NO_GAMES_MSG } from "./tournament-row.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { escapeHtml, markSelectable } from "./wb-utils.js";
+import { fmtSignedElo, fmtMargin } from "./tournament-format.js";
 
 const NA = "--";
 // Banner segment separator, matching the SPRT line and progress label.
@@ -99,23 +100,18 @@ function fmtPts(pts) {
   return Number.isInteger(pts) ? String(pts) : pts.toFixed(1);
 }
 
-function fmtSigned(elo) {
-  return (elo >= 0 ? "+" : "") + elo.toFixed(1);
-}
-
 // Elo +/- margin from a W/L/D record (computed locally for per-color splits).
 function fmtElo(wins, losses, draws) {
   const elo = eloFromScore((wins + 0.5 * draws) / (wins + losses + draws || 1));
   if (elo === null) return NA;
-  const margin = eloMargin(wins, losses, draws);
-  return fmtSigned(elo) + (margin == null ? "" : ` +/- ${margin.toFixed(1)}`);
+  return fmtSignedElo(elo) + fmtMargin(eloMargin(wins, losses, draws));
 }
 
 // Elo cell straight from a standings row (keeps the banner in lockstep with the
 // Standings tab's number for the same engine).
 function fmtRowElo(e) {
   if (e.elo == null) return NA;
-  return fmtSigned(e.elo) + (e.elo_margin_95 == null ? "" : ` +/- ${e.elo_margin_95.toFixed(1)}`);
+  return fmtSignedElo(e.elo) + fmtMargin(e.elo_margin_95);
 }
 
 function fmtLos(wins, losses, draws) {
