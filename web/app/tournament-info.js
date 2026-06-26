@@ -37,13 +37,15 @@ function basename(p) {
   return String(p).replace(/[\\/]+$/, "").split(/[\\/]/).pop();
 }
 
-// Combine resign + draw adjudication into one terse value (or null if neither).
+// Combine resign + draw + tablebase adjudication into one terse value (or null
+// if none).
 function formatAdjudication(tpl) {
   const parts = [];
   const r = formatResign(tpl.resign);
   const d = formatDraw(tpl.draw);
   if (r) parts.push(`resign ${r}`);
   if (d) parts.push(`draw ${d}`);
+  if (tpl.tb_adjudication) parts.push("tablebase");
   return parts.length ? parts.join("  /  ") : null;
 }
 
