@@ -3235,7 +3235,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .iw-burst--running { background: var(--iw-buttery); }
 /* Terminal states get an inverted (white outline on black) placard. */
 .iw-burst--done, .iw-burst--stopped, .iw-burst--failed {
-  background: #000; color: var(--iw-ink); border: 2px solid var(--iw-ink);
+  background: #000; color: var(--accent-line); border: 2px solid var(--iw-ink);
 }
 /* SPRT: a stamped placard in the same family, outlined (a mode tag, not a
    status), tilted the other way so the two stamps read as hand-pasted. */
