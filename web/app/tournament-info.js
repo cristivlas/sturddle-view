@@ -7,8 +7,8 @@
 import { progressBarHtml, progressLabelHtml, totalGames } from "./tournament-row.js";
 import { STATUS, sprtVerdict } from "./tournament-events.js";
 import { escapeHtml } from "./wb-utils.js";
+import { formatType, formatResign, formatDraw } from "./tournament-format.js";
 
-const TYPE_LABEL = Object.freeze({ roundrobin: "Round-robin", gauntlet: "Gauntlet" });
 // Max engine chips on the wall before collapsing the rest into "+K more".
 const ROSTER_CAP = 8;
 // Pulp fight-bill fixed copy.
@@ -32,24 +32,9 @@ function nameSizeCeiling(name) {
   return Math.round(Math.max(IW_NAME_MIN_PX, Math.min(IW_NAME_MAX_PX, px)));
 }
 
-function formatType(v) {
-  if (!v) return null;
-  return TYPE_LABEL[v] || (v.charAt(0).toUpperCase() + v.slice(1));
-}
-
 function basename(p) {
   if (!p) return "";
   return String(p).replace(/[\\/]+$/, "").split(/[\\/]/).pop();
-}
-
-function formatResign(r) {
-  if (!r || r.movecount == null || r.score == null) return null;
-  return `${r.movecount} moves @ ${r.score}cp`;
-}
-
-function formatDraw(d) {
-  if (!d || d.movenumber == null) return null;
-  return `move ${d.movenumber}, ${d.movecount} @ ${d.score}cp`;
 }
 
 // Combine resign + draw adjudication into one terse value (or null if neither).
