@@ -3197,6 +3197,7 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
 .studio-boards-wall {
   --iw-ink: #4a4e57;          /* very muted ink -- barely-there backdrop */
   --iw-paper: #14161b;        /* near-black panel fill */
+  --iw-buttery: #c3bba6;      /* aged warm-gray paper for pasted stamps */
   --iw-shadow: rgba(0, 0, 0, 0.5);
   position: absolute; inset: 0; z-index: 0;
   display: flex; flex-direction: column; justify-content: center; align-items: stretch;
@@ -3230,8 +3231,8 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   letter-spacing: 0.28em; text-transform: uppercase;
   box-shadow: 5px 5px 0 var(--iw-shadow);
 }
-/* Running pops a touch louder: a lighter placard fill (vs the muted ink). */
-.iw-burst--running { background: #828791; }
+/* Running pops a touch louder: the buttery pasted-stamp fill (vs the muted ink). */
+.iw-burst--running { background: var(--iw-buttery); }
 /* Terminal states get an inverted (white outline on black) placard. */
 .iw-burst--done, .iw-burst--stopped, .iw-burst--failed {
   background: #000; color: var(--iw-ink); border: 2px solid var(--iw-ink);
@@ -3339,6 +3340,28 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   font-size: 10px; color: var(--muted);
   margin-right: 4px;
 }
+
+/* Adjudication marks: skewed sanctioning stickers, echoing the engine
+   name-plates but smaller and inked on paper. */
+.iw-adj-stamps {
+  display: inline-flex; flex-wrap: wrap; align-items: center;
+  gap: 6px 8px; vertical-align: middle;
+}
+.iw-adj-stamp {
+  --iw-adj-ink: #14110a;     /* near-black */
+  display: inline-flex; align-items: baseline; gap: 6px;
+  padding: 4px 9px;
+  background: var(--iw-buttery);
+  box-shadow: 3px 3px 0 var(--iw-shadow), 4px 4px 8px rgba(0, 0, 0, 0.6);
+  transform: skewX(-8deg);
+}
+.iw-adj-stamp > * { transform: skewX(8deg); }
+.iw-adj-stamp-label {
+  font-family: var(--wa-font-family-code);
+  text-transform: uppercase; letter-spacing: 0.1em;
+  font-size: 11px; font-weight: 700; color: var(--iw-adj-ink);
+}
+.iw-adj-stamp-detail { font-size: 13px; font-weight: 700; color: var(--iw-adj-ink); }
 
 /* Engines: tag stickers, slightly skewed, hard outline. Sized to content. */
 .iw-roster { display: flex; flex-wrap: wrap; gap: 8px 10px; }

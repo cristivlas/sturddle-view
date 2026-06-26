@@ -1,7 +1,7 @@
-// Shared adjudication/type formatters for the tournament info dialog (verbose
-// dt/dd rows) and the Studio fight-bill wall (terse fine print). Same facts,
-// two registers, selected by `verbose`. Resign/draw return null when unset;
-// the dialog supplies its own "Off" sentinel so its row still renders.
+// Shared adjudication/type formatters. Two registers: the verbose dialog rows
+// (formatResign/formatDraw) and the terse Studio fight-bill wall (shortResign/
+// shortDraw). All return null when unset; the dialog supplies its own "Off"
+// sentinel so its row still renders.
 
 const TYPE_LABEL = Object.freeze({ roundrobin: "Round-robin", gauntlet: "Gauntlet" });
 
@@ -10,17 +10,23 @@ export function formatType(v) {
   return TYPE_LABEL[v] || (v.charAt(0).toUpperCase() + v.slice(1));
 }
 
-export function formatResign(r, { verbose = false } = {}) {
+export function formatResign(r) {
   if (!r || r.movecount == null || r.score == null) return null;
-  const base = verbose
-    ? `after ${r.movecount} moves at ±${r.score} cp`
-    : `${r.movecount} moves @ ${r.score}cp`;
+  const base = `after ${r.movecount} moves at ±${r.score} cp`;
   return r.twosided ? `${base} (two-sided)` : base;
 }
 
-export function formatDraw(d, { verbose = false } = {}) {
+export function formatDraw(d) {
   if (!d || d.movenumber == null) return null;
-  return verbose
-    ? `from move ${d.movenumber}, ${d.movecount} moves within ±${d.score} cp`
-    : `move ${d.movenumber}, ${d.movecount} @ ${d.score}cp`;
+  return `from move ${d.movenumber}, ${d.movecount} moves within ±${d.score} cp`;
+}
+
+export function shortResign(r) {
+  if (!r || r.movecount == null || r.score == null) return null;
+  return `${r.movecount}@${r.score}cp`;
+}
+
+export function shortDraw(d) {
+  if (!d || d.movenumber == null) return null;
+  return `${d.movenumber},${d.movecount}@${d.score}cp`;
 }

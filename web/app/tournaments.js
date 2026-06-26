@@ -647,8 +647,8 @@ function buildInfoContent(ctx, t) {
   if (tpl.tournament_type === "gauntlet") row("Seeds", tpl.seeds);
   row("Ponder", tpl.ponder ? "On" : "Off");
   row("CPU affinity", tpl.pin_affinity ? "Pinned" : "Off");
-  row("Resign", formatResign(tpl.resign, { verbose: true }) ?? "Off");
-  row("Draw adjudication", formatDraw(tpl.draw, { verbose: true }) ?? "Off");
+  row("Resign", formatResign(tpl.resign) ?? "Off");
+  row("Draw adjudication", formatDraw(tpl.draw) ?? "Off");
   row("Tablebase adjudication", tpl.tb_adjudication ? "On" : "Off");
   const ed = t.engine_defaults || {};
   const defaultSpan = (text, title) => {
