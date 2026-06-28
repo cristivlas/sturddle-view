@@ -8,6 +8,7 @@ import { MIDDOT, NO_GAMES_MSG } from "./tournament-row.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { attachColumnResize, makePctApplySizes } from "./col-resize.js";
 import { escapeHtml, markSelectable } from "./wb-utils.js";
+import { fmtSignedElo, fmtMargin } from "./tournament-format.js";
 
 const STANDINGS_COL_PCTS_KEY = STORAGE_KEY.TOURNAMENTS_STANDINGS_COL_PCTS;
 const STANDINGS_DEFAULT_PCTS = [25, 7, 7, 7, 7, 7, 8, 14];
@@ -81,12 +82,10 @@ export function renderStandings(el, detail, studio = false) {
     .map((e) => {
       const eloCell = e.elo == null
         ? "--"
-        : (e.elo >= 0 ? "+" : "") + e.elo.toFixed(1) +
-          (e.elo_margin_95 == null ? "" : ` +/- ${e.elo_margin_95.toFixed(1)}`);
+        : fmtSignedElo(e.elo) + fmtMargin(e.elo_margin_95);
       const ordoCell = e.elo_ordo == null
         ? "--"
-        : (e.elo_ordo >= 0 ? "+" : "") + e.elo_ordo.toFixed(1) +
-          (e.elo_ordo_margin_95 == null ? "" : ` +/- ${e.elo_ordo_margin_95.toFixed(1)}`);
+        : fmtSignedElo(e.elo_ordo) + fmtMargin(e.elo_ordo_margin_95);
       return `
       <tr>
         <td class="wb-eng-name" title="${escapeHtml(e.name)}">${escapeHtml(e.name)}</td>

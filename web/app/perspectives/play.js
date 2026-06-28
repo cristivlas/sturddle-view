@@ -1279,13 +1279,20 @@ async function onNewGameImpl(state) {
   }
   try {
     const playerName = getConfiguredPlayerName();
+    // Reset the board BEFORE the POST, then drop the game_id so old-game
+    // events stop applying. An instant engine first move (e.g. an opening
+    // book move, no search delay) can publish its board_update before the
+    // POST response is delivered; resetting afterward would wipe that move
+    // back to the start position (the move appears, then "withdraws"). By
+    // resetting first and never resetting again, the new game's events --
+    // including that early book move -- land on a clean board and persist.
+    state.view.reset();
     state.view.setGameId(null);
     state.view.setPlayerName(playerName);
     closeAi();
     const r = await state.ctx.api("POST", "/game/new", { player_name: playerName });
     state.view.setGameId(r.game_id);
     state.view.setHumanWhite(!!r.human_white);
-    state.view.reset();
     state.resignAvailable = true;
     // Snapshot the TC settings used for THIS game so a later mid-game
     // edit can detect drift.

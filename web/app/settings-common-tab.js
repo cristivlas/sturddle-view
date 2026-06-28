@@ -124,7 +124,7 @@ export function buildCommonTab({ initial, putSettings, putSettingsDebounced, pat
       (p) => putSettings({ engine_default_syzygy_path: p }),
     ),
     pathRow(
-      "Tournaments opening book",
+      "Opening book",
       initial.engine_default_book_path || "",
       "file",
       "Pick opening book (.epd / .pgn)",

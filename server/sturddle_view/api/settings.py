@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from .. import __author__, __copyright__, __version__
 from ..auth import require_token
+from ..config import VALID_BOOK_ORDERS
 from ..engines import EngineNotFoundError
 
 log = logging.getLogger(__name__)
@@ -47,6 +48,8 @@ _ENGINE_SYZYGY_PATH_KEY = "engine_default_syzygy_path"
 _ENGINE_BOOK_PATH_KEY = "engine_default_book_path"
 _ENGINE_BOOK_PLIES_KEY = "engine_default_book_plies"
 _ENGINE_BOOK_ORDER_KEY = "engine_default_book_order"
+_ENGINE_BOOK_CURSOR_KEY = "engine_default_book_cursor"
+_HVE_USE_OPENING_BOOK_KEY = "hve_use_opening_book"
 _AI_ENABLED_KEY = "ai_enabled"
 _AI_PROVIDER_KEY = "ai_provider"
 _AI_MODEL_KEY = "ai_model"
@@ -76,9 +79,6 @@ _VALID_BOARD_STYLES = {
     "black-and-white", "high-contrast",
     "sturddle-staunty", "sturddle-wine",
 }
-_BOOK_ORDER_SEQUENTIAL = "sequential"
-_BOOK_ORDER_RANDOM = "random"
-_VALID_BOOK_ORDERS = {_BOOK_ORDER_SEQUENTIAL, _BOOK_ORDER_RANDOM}
 
 
 def _serialize(s) -> dict:
@@ -107,6 +107,7 @@ def _serialize(s) -> dict:
         _ENGINE_BOOK_PATH_KEY: s.engine_default_book_path,
         _ENGINE_BOOK_PLIES_KEY: s.engine_default_book_plies,
         _ENGINE_BOOK_ORDER_KEY: s.engine_default_book_order,
+        _HVE_USE_OPENING_BOOK_KEY: s.hve_use_opening_book,
         _AI_ENABLED_KEY: s.ai_enabled,
         _AI_PROVIDER_KEY: s.ai_provider,
         _AI_MODEL_KEY: s.ai_model,
@@ -271,6 +272,16 @@ def _apply_ai_api_key(payload, s, request):
         s.ai_api_key = str(raw or "").strip()
 
 
+def _apply_book_path(payload, s, request):
+    # Reset the sequential cursor when the book changes -- a fresh book has
+    # different lines, so the old offset is meaningless.
+    raw = payload[_ENGINE_BOOK_PATH_KEY]
+    new_path = (str(raw).strip() or None) if raw is not None else None
+    if new_path != s.engine_default_book_path:
+        s.engine_default_book_cursor = 0
+    s.engine_default_book_path = new_path
+
+
 def _apply_analysis_engine(payload, s, request):
     # Empty clears the pin (analysis falls back to the active HvE engine).
     # A non-empty id must resolve in the registry, else the pin would
@@ -307,8 +318,9 @@ _APPLIERS = {
     _ENGINE_HASH_MB_KEY: _optional_int_field(_ENGINE_HASH_MB_KEY, min_value=1),
     _ENGINE_BOOK_PLIES_KEY: _optional_int_field(_ENGINE_BOOK_PLIES_KEY, min_value=1),
     _ENGINE_SYZYGY_PATH_KEY: _optional_str_field(_ENGINE_SYZYGY_PATH_KEY),
-    _ENGINE_BOOK_PATH_KEY: _optional_str_field(_ENGINE_BOOK_PATH_KEY),
-    _ENGINE_BOOK_ORDER_KEY: _optional_enum_field(_ENGINE_BOOK_ORDER_KEY, _VALID_BOOK_ORDERS),
+    _ENGINE_BOOK_PATH_KEY: _apply_book_path,
+    _ENGINE_BOOK_ORDER_KEY: _optional_enum_field(_ENGINE_BOOK_ORDER_KEY, VALID_BOOK_ORDERS),
+    _HVE_USE_OPENING_BOOK_KEY: _bool_field(_HVE_USE_OPENING_BOOK_KEY),
     _AI_ENABLED_KEY: _bool_field(_AI_ENABLED_KEY),
     _AI_PROVIDER_KEY: _enum_field(_AI_PROVIDER_KEY, _VALID_AI_PROVIDERS),
     _AI_MODEL_KEY: _str_field(_AI_MODEL_KEY),

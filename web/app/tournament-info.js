@@ -7,8 +7,8 @@
 import { progressBarHtml, progressLabelHtml, totalGames } from "./tournament-row.js";
 import { STATUS, sprtVerdict } from "./tournament-events.js";
 import { escapeHtml } from "./wb-utils.js";
+import { formatType, shortResign, shortDraw } from "./tournament-format.js";
 
-const TYPE_LABEL = Object.freeze({ roundrobin: "Round-robin", gauntlet: "Gauntlet" });
 // Max engine chips on the wall before collapsing the rest into "+K more".
 const ROSTER_CAP = 8;
 // Pulp fight-bill fixed copy.
@@ -32,34 +32,32 @@ function nameSizeCeiling(name) {
   return Math.round(Math.max(IW_NAME_MIN_PX, Math.min(IW_NAME_MAX_PX, px)));
 }
 
-function formatType(v) {
-  if (!v) return null;
-  return TYPE_LABEL[v] || (v.charAt(0).toUpperCase() + v.slice(1));
-}
-
 function basename(p) {
   if (!p) return "";
   return String(p).replace(/[\\/]+$/, "").split(/[\\/]/).pop();
 }
 
-function formatResign(r) {
-  if (!r || r.movecount == null || r.score == null) return null;
-  return `${r.movecount} moves @ ${r.score}cp`;
-}
-
-function formatDraw(d) {
-  if (!d || d.movenumber == null) return null;
-  return `move ${d.movenumber}, ${d.movecount} @ ${d.score}cp`;
-}
-
-// Combine resign + draw adjudication into one terse value (or null if neither).
-function formatAdjudication(tpl) {
+// Structured adjudication marks (label + detail), or [] if none set.
+function adjudicationParts(tpl) {
   const parts = [];
-  const r = formatResign(tpl.resign);
-  const d = formatDraw(tpl.draw);
-  if (r) parts.push(`resign ${r}`);
-  if (d) parts.push(`draw ${d}`);
-  return parts.length ? parts.join("  /  ") : null;
+  const r = shortResign(tpl.resign);
+  const d = shortDraw(tpl.draw);
+  if (r) parts.push({ label: "Resign", detail: r + (tpl.resign.twosided ? " 2-sided" : "") });
+  if (d) parts.push({ label: "Draw", detail: d });
+  if (tpl.tb_adjudication) parts.push({ label: "Tablebase", detail: "" });
+  return parts;
+}
+
+// Wall adjudication markup -- skewed sanctioning stamps, or "" if none set.
+function adjudicationHtml(tpl) {
+  const parts = adjudicationParts(tpl);
+  if (!parts.length) return "";
+  const chips = parts.map((p) =>
+    `<span class="iw-adj-stamp"><span class="iw-adj-stamp-label">${escapeHtml(p.label)}</span>` +
+    (p.detail ? `<span class="iw-adj-stamp-detail">${escapeHtml(p.detail)}</span>` : "") +
+    `</span>`
+  ).join("");
+  return `<span class="iw-adj-stamps">${chips}</span>`;
 }
 
 function formatCreated(iso) {
@@ -105,13 +103,13 @@ function finePrint(t) {
   const tpl = t.template || {};
   const ed = t.engine_defaults || {};
   const items = [
-    ["Book", basename(ed.book_path)],
-    ["Syzygy", basename(ed.syzygy_path)],
-    ["Adjudication", formatAdjudication(tpl)],
+    ["Book", escapeHtml(basename(ed.book_path))],
+    ["Syzygy", escapeHtml(basename(ed.syzygy_path))],
+    ["Adjudication", adjudicationHtml(tpl)],
   ].filter(([, v]) => v);
   if (!items.length) return "";
   const html = items.map(([l, v]) =>
-    `<span class="iw-fact"><span class="iw-fact-key">${escapeHtml(l)}</span> ${escapeHtml(v)}</span>`
+    `<span class="iw-fact"><span class="iw-fact-key">${escapeHtml(l)}</span> ${v}</span>`
   ).join("");
   return `<div class="iw-setup">${html}</div>`;
 }

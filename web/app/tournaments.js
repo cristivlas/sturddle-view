@@ -17,6 +17,7 @@ import { loadRaw, saveRaw } from "./storage.js";
 import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { mountSprtButton } from "./tournament-sprt-button.js";
+import { formatType, formatResign, formatDraw } from "./tournament-format.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
 import { debounce, isCtrlA, markSelectable, ribbonWidthPx } from "./wb-utils.js";
@@ -161,18 +162,6 @@ function fitMiddleEllipsis(el, full) {
   el.textContent = full.slice(0, head) + ID_ELLIPSIS + full.slice(full.length - tail);
 }
 
-function formatType(v) {
-  if (!v) return null;
-  return v === "roundrobin" ? "Round-robin" : v.charAt(0).toUpperCase() + v.slice(1);
-}
-function formatResign(r) {
-  if (!r || r.movecount == null || r.score == null) return "Off";
-  return `after ${r.movecount} moves at ±${r.score} cp`;
-}
-function formatDraw(d) {
-  if (!d || d.movenumber == null) return "Off";
-  return `from move ${d.movenumber}, ${d.movecount} moves within ±${d.score} cp`;
-}
 function formatTime(iso) {
   if (!iso) return null;
   const d = new Date(iso);
@@ -658,8 +647,8 @@ function buildInfoContent(ctx, t) {
   if (tpl.tournament_type === "gauntlet") row("Seeds", tpl.seeds);
   row("Ponder", tpl.ponder ? "On" : "Off");
   row("CPU affinity", tpl.pin_affinity ? "Pinned" : "Off");
-  row("Resign", formatResign(tpl.resign));
-  row("Draw adjudication", formatDraw(tpl.draw));
+  row("Resign", formatResign(tpl.resign) ?? "Off");
+  row("Draw adjudication", formatDraw(tpl.draw) ?? "Off");
   row("Tablebase adjudication", tpl.tb_adjudication ? "On" : "Off");
   const ed = t.engine_defaults || {};
   const defaultSpan = (text, title) => {

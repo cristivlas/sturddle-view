@@ -836,8 +836,11 @@ function buildViewApi(ctx) {
     setEnabled(enabled) { ctx.board.enableInput(ctx.interactive && enabled); },
     reset() {
       // Reset visible game state for a fresh game; the next board_update
-      // from the server will set the new starting position.
-      ctx.board.setPosition(INITIAL_FEN, null);
+      // from the server will set the new starting position. Snap (no
+      // animation): an instant engine first move (opening book) can land
+      // its board_update before this runs, and an animated reset would
+      // then slide the board *backward* off that move ("withdrawing" it).
+      ctx.board.setPosition(INITIAL_FEN, null, false);
       if (ctx.moveListEl) ctx.moveListEl.innerHTML = "";
       clearEngineInfoFields(ctx);
       ctx.engineSection?.classList.add("is-empty");

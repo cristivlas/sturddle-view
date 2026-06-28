@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 import uuid
@@ -13,7 +14,9 @@ from ..env_utils import env_int
 from ._ai_kick import cancel_ai_turn, start_ai_turn
 from ..play.canonical_hash import canonical_hash, canonical_hash_from_game
 from ..play.human_vs_engine import HumanVsEngine, TimeControl, ViewModeParams
+from ..config import BOOK_ORDER_RANDOM, BOOK_ORDER_SEQUENTIAL
 from ..play.import_position import PositionImportError, parse_fen, parse_pgn
+from ..play.opening_lines import OpeningSeed, select_seed
 from ..recent_imports import RemoveStatus
 
 log = logging.getLogger(__name__)
@@ -93,11 +96,60 @@ async def new_game(payload: dict, request: Request) -> dict:
     )
     player_name = (payload.get("player_name") or "").strip() or None
     await _cancel_ai_analysis(request)
+    seed = await _resolve_book_seed(s)
     try:
-        game_id = await hve.new_game(human_white=human_white, tc=tc, player_name=player_name)
+        game_id = await hve.new_game(
+            human_white=human_white,
+            tc=tc,
+            player_name=player_name,
+            start_fen=seed.start_fen if seed else None,
+            book_line=seed.moves_uci if seed else None,
+            book_path=s.engine_default_book_path if seed else None,
+        )
     except FileNotFoundError as e:
         raise HTTPException(status_code=400, detail=f"engine not found: {e}") from e
     return {"game_id": game_id, "human_white": human_white}
+
+
+async def _resolve_book_seed(s) -> OpeningSeed | None:
+    """Pick an opening-book seed for a new HVE game when the toggle is on
+    and a book is configured. Advances the per-server sequential cursor
+    (saved to settings) for the next sequential game; random ignores it.
+
+    The parse + selection runs off the event loop: a large PGN/EPD book
+    takes real time to read and parse on the first game (before the
+    mtime cache is warm), and would otherwise stall the whole server for
+    that duration."""
+    if not s.hve_use_opening_book or not s.engine_default_book_path:
+        return None
+    seed = await asyncio.to_thread(
+        select_seed,
+        s.engine_default_book_path,
+        s.engine_default_book_plies,
+        s.engine_default_book_order,
+        s.engine_default_book_cursor,
+    )
+    if seed is None:
+        return None
+    order = s.engine_default_book_order or BOOK_ORDER_SEQUENTIAL
+    if seed.start_fen is not None:
+        log.debug(
+            "opening book: seeding position from %s (order=%s, cursor=%d): %s",
+            s.engine_default_book_path, order, s.engine_default_book_cursor, seed.start_fen,
+        )
+    else:
+        log.debug(
+            "opening book: following line from %s (order=%s, cursor=%d): %s",
+            s.engine_default_book_path, order, s.engine_default_book_cursor,
+            " ".join(seed.moves_uci),
+        )
+    if s.engine_default_book_order != BOOK_ORDER_RANDOM:
+        s.engine_default_book_cursor += 1
+        try:
+            s.save_persisted()
+        except OSError:
+            log.warning("failed to persist opening-book cursor", exc_info=True)
+    return seed
 
 
 def _parse_import_payload(payload: dict) -> dict:

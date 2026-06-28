@@ -766,6 +766,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
         }
         break;
       case "info":
+        if (p.score == null) break;  // ignore PV lines without an eval
         lastOwnInfo = p;
         renderEval(p);
         break;
@@ -836,6 +837,7 @@ export function openLiveGameWindow({ proxyId, gameId = null, windowKey = gameId 
     // Paired info: opposite-color engine's thinking. Mirror the same
     // eval/PV/arrow rendering as own-side, into the top (opponent) row.
     if (p.kind !== "info") return;
+    if (p.score == null) return;  // ignore PV lines without an eval
     if (engineColor && thinkingSide === engineColor) return;
     lastOppInfo = p;
     renderOpponentEval(p);
