@@ -5,7 +5,7 @@
 import { attachColumnResize } from "./col-resize.js";
 import { rafCoalesce } from "./wb-utils.js";
 
-const DEFAULT_PCTS = [20, 12, 68];
+const DEFAULT_PCTS = [20, 14, 66];
 const MIN_COL_PCT = 8;
 // Floor for the scrollable list height + slack subtracted from the
 // measured body so the last row clears the ribbon.
