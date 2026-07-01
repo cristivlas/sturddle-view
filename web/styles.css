@@ -3600,7 +3600,10 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   border-bottom: 1px solid var(--border-faint);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.studio-tourney-row, .studio-history-row { cursor: pointer; }
+.studio-tourney-row, .studio-history-row {
+  cursor: pointer;
+  user-select: none; -webkit-user-select: none;
+}
 .studio-tourney-row:hover, .studio-history-row:hover { background: var(--row-bg-hover); }
 .studio-history-row:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .studio-tourney-row.selected { background: var(--row-bg-selected); }
