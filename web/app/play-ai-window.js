@@ -554,6 +554,9 @@ function attachVerdictProse(line, output) {
   if (!line.querySelector(`:scope > .play-ai-tool-head > .${DELEGATE_DOT_CLASS}`)) return;
   const verdict = output && typeof output === "object" ? output.verdict : null;
   if (typeof verdict !== "string" || !verdict.trim()) return;
+  // Server flagged the prose as possibly wrong (a non-LLM validator hit): hide
+  // it entirely rather than risk a false claim. The badge and raw OUT stay.
+  if (output.prose_flagged) return;
   if (line.querySelector(`:scope > .${VERDICT_PROSE_CLASS}`)) return;
   const kind = verdictKind(output);
   const details = document.createElement("details");
