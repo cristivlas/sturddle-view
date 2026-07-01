@@ -57,6 +57,7 @@ const BOARD_RESIZE_DEBOUNCE_MS = 120;
 // Default active tab per bottom group (first tab) when none is remembered.
 const STUDIO_TAB_DEFAULT_LEFT = "livegames";
 const STUDIO_TAB_DEFAULT_RIGHT = "tourneys";
+const STUDIO_TAB_STANDINGS = "standings";
 // Tourney table default column widths (Status, Created, Name, Completed) + resize floor.
 const STUDIO_TOURNEY_DEFAULT_PCTS = [12, 22, 16, 50];
 const STUDIO_TOURNEY_MIN_PCT = 10;
@@ -237,6 +238,11 @@ function selectedTournament(ctx) {
   return ctx.tournaments.find((t) => t.id === ctx.selectedId) || null;
 }
 
+// Activate the bottom-right Standings tab; the wa-tab-show listener persists it.
+function showStandingsTab(ctx) {
+  ctx.bottomRightEl?.querySelector(".studio-tabs")?.setAttribute("active", STUDIO_TAB_STANDINGS);
+}
+
 // Tourney table columns: one descriptor list drives the sort cycle (firstDir)
 // and the stack sorter (field / tiebreak). Games is display-only; created reads
 // created_at, which also breaks ties so order is stable.
@@ -352,6 +358,8 @@ function wireRibbonActions(ctx) {
     api: ctx.api, log: ctx.log,
     getSettings: () => ctx.tournSettings,
     reload: () => studioLoadList(ctx),
+    // Info dialog's Status link: select the tourney and reveal Standings.
+    onStatusClick: (t) => { studioSelect(ctx, t.id); showStandingsTab(ctx); },
   });
   const onSel = (fn) => () => { const t = selectedTournament(ctx); if (t) fn(t); };
   ctx.ribbonBtns.create.addEventListener("click", () => ctx.actions.create());

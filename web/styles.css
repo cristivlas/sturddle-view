@@ -3823,6 +3823,11 @@ wa-dialog .settings-tabs wa-tab-panel.settings-engines-panel > * {
   color: #ffd7d7;
 }
 .tournament-info-default { color: var(--accent); }
+.tournament-info-status-link {
+  background: none; border: none; padding: 0; font: inherit;
+  color: var(--accent); cursor: pointer;
+}
+.tournament-info-status-link:hover { text-decoration: underline; }
 .tournament-info-error {
   margin: 0;
   padding: 6px 8px;

@@ -540,9 +540,9 @@ async function removeOne(ctx, t) {
 // Shared tournament verbs for other UIs (e.g. Studio). The action functions
 // only read {api, log, settings, loadList} off ctx, so a minimal ctx adapter
 // lets a different perspective reuse them with no change to the verbs.
-export function tournamentActions({ api, log, getSettings, reload }) {
+export function tournamentActions({ api, log, getSettings, reload, onStatusClick }) {
   const ctx = {
-    api, log, loadList: reload,
+    api, log, loadList: reload, onStatusClick,
     get settings() { return getSettings ? getSettings() : null; },
   };
   return {
@@ -588,13 +588,19 @@ async function openInfoDialog(ctx, t) {
       dialog.classList.add("tournament-info-dialog");
       const wrap = document.createElement("div");
       wrap.className = "tournament-info";
-      wrap.appendChild(buildInfoContent(ctx, detailed));
+      // onStatusClick (Studio only): renders Status as a link that closes the
+      // dialog and jumps to the Standings tab. Absent in Arena, where
+      // Standings is a workspace window with no unambiguous deep-link target.
+      const onStatus = ctx.onStatusClick
+        ? () => { resolve(); ctx.onStatusClick(detailed); }
+        : null;
+      wrap.appendChild(buildInfoContent(ctx, detailed, onStatus));
       dialog.appendChild(wrap);
     },
   });
 }
 
-function buildInfoContent(ctx, t) {
+function buildInfoContent(ctx, t, onStatusClick) {
   const tpl = t.template || {};
   const dl = document.createElement("dl");
   dl.className = "tournament-info-grid";
@@ -633,7 +639,17 @@ function buildInfoContent(ctx, t) {
     }
   }
   row("ID", idCell);
-  row("Status", t.status);
+  if (onStatusClick) {
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "tournament-info-status-link";
+    link.textContent = t.status;
+    link.title = "Show standings";
+    link.addEventListener("click", onStatusClick);
+    row("Status", link);
+  } else {
+    row("Status", t.status);
+  }
   if (t.last_error) {
     const tail = (t.last_error.stderr_tail || []).slice(-10).join("\n");
     const pre = document.createElement("pre");
