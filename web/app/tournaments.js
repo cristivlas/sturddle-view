@@ -27,6 +27,7 @@ const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT params (need alpha+beta<1, elo0<elo1
 // Default dwell for error/warning toasts that carry a line worth reading.
 const TOAST_DURATION_MS = 8000;
 const NEW_TOURNAMENT_LABEL = "New tournament";
+const COPY_SUFFIX = " (copy)";
 const EMPTY_CTA_PREFIX = "No tournaments yet -- click ";
 const EMPTY_CTA_SUFFIX = " to create one.";
 const REVEAL_DEBOUNCE_MS = 500;
@@ -93,6 +94,9 @@ const PANEL_HTML = `
           </button>
           <button class="ribbon-btn t-edit" disabled aria-label="Edit" title="Edit">
             <wa-icon name="pen-to-square"></wa-icon>
+          </button>
+          <button class="ribbon-btn t-duplicate" disabled aria-label="Duplicate" title="Duplicate">
+            <wa-icon name="copy"></wa-icon>
           </button>
           <span class="ribbon-sep" aria-hidden="true"></span>
           <button class="ribbon-btn ribbon-btn--danger t-remove" disabled aria-label="Remove" title="Remove">
@@ -349,6 +353,7 @@ function syncRibbon(ctx) {
     ctx.ribbonWorkspaceBtn.disabled = true;
     ctx.ribbonInfoBtn.disabled = true;
     ctx.ribbonEditBtn.disabled = true;
+    ctx.ribbonDuplicateBtn.disabled = true;
     ctx.ribbonRemoveBtn.disabled = true;
     if (!ctx.ribbonStartBtn.querySelector("wa-icon")) ctx.ribbonStartBtn.innerHTML = '<wa-icon class="t-start-icon" name="play"></wa-icon>';
     else ctx.ribbonStartBtn.querySelector("wa-icon").setAttribute("name", "play");
@@ -370,6 +375,8 @@ function syncRibbon(ctx) {
   ctx.ribbonWorkspaceBtn.disabled = !!getActiveWorkspace();
   ctx.ribbonInfoBtn.disabled = false;
   ctx.ribbonEditBtn.disabled = isActive || status === STATUS.DONE;
+  // Duplicate always safe: it POSTs a fresh copy, never touches the source.
+  ctx.ribbonDuplicateBtn.disabled = false;
 
   const starting = t.id === ctx.startingId;
   const startIconName = isRestart ? "rotate-right" : "play";
@@ -541,6 +548,7 @@ export function tournamentActions({ api, log, getSettings, reload }) {
   return {
     create: () => openNewTournamentDialog(ctx),
     edit: (t) => openEditTournamentDialog(ctx, t),
+    duplicate: (t) => openDuplicateTournamentDialog(ctx, t),
     info: (t) => openInfoDialog(ctx, t),
     start: (t) => startOne(ctx, t),
     stop: (t) => stopOne(ctx, t),
@@ -908,6 +916,37 @@ async function openNewTournamentDialog(ctx) {
   });
 }
 
+// Resolve a tournament's engines to registry entries so the builder can
+// preselect them. Prefer id match; fall back to name then cmd. Toasts a
+// warning for any engine no longer in the registry (verb tailors the copy).
+function resolveInitialEngines(available, engines, verb) {
+  const byId   = new Map(available.map((e) => [e.id,   e]));
+  const byName = new Map(available.map((e) => [e.name, e]));
+  const byCmd  = new Map(available.map((e) => [e.path, e]));
+  const initialEngines = [];
+  let droppedCount = 0;
+  for (const e of engines || []) {
+    const match = byId.get(e.id) || byName.get(e.name) || byCmd.get(e.cmd);
+    if (match) initialEngines.push(match);
+    else droppedCount += 1;
+  }
+  if (droppedCount > 0) {
+    toast(
+      `${droppedCount} engine${droppedCount === 1 ? "" : "s"} no longer in the registry -- re-add before ${verb}.`,
+      { variant: "warning", duration: TOAST_DURATION_MS },
+    );
+  }
+  return { initialEngines, droppedCount };
+}
+
+// Suggest a non-conflicting copy name: "Foo (copy)", then "Foo (copy 2)"...
+function suggestCopyName(base, existingNames) {
+  const taken = new Set(existingNames);
+  let candidate = `${base}${COPY_SUFFIX}`;
+  for (let n = 2; taken.has(candidate); n += 1) candidate = `${base}${COPY_SUFFIX} ${n}`;
+  return candidate;
+}
+
 async function openEditTournamentDialog(ctx, t) {
   // PRE-OPEN gate: warn early so the user can bail without loading the
   // registry or filling the dialog. Keep this even though there is also a
@@ -937,25 +976,7 @@ async function openEditTournamentDialog(ctx, t) {
     return;
   }
 
-  // Resolve the tournament's current engines to registry entries so the
-  // builder can preselect them. Prefer id match; fall back to name then cmd.
-  const byId   = new Map(available.map((e) => [e.id,   e]));
-  const byName = new Map(available.map((e) => [e.name, e]));
-  const byCmd  = new Map(available.map((e) => [e.path, e]));
-  const original = t.engines || [];
-  const initialEngines = [];
-  let droppedCount = 0;
-  for (const e of original) {
-    const match = byId.get(e.id) || byName.get(e.name) || byCmd.get(e.cmd);
-    if (match) initialEngines.push(match);
-    else droppedCount += 1;
-  }
-  if (droppedCount > 0) {
-    toast(
-      `${droppedCount} engine${droppedCount === 1 ? "" : "s"} no longer in the registry -- re-add before applying.`,
-      { variant: "warning", duration: TOAST_DURATION_MS },
-    );
-  }
+  const { initialEngines } = resolveInitialEngines(available, t.engines, "applying");
 
   await openTournamentDialog(ctx, {
     label: `Edit "${t.name}"`,
@@ -991,6 +1012,57 @@ async function openEditTournamentDialog(ctx, t) {
       // re-sync.
       await ctx.loadList();
       if (failed) return false;
+    },
+  });
+}
+
+// Duplicate: prefill the create dialog from an existing tournament (engines +
+// frozen template, SPRT included) under a non-conflicting copy name. Unlike
+// Edit this POSTs a new tournament, so there are no game-deletion gates.
+async function openDuplicateTournamentDialog(ctx, t) {
+  let registry;
+  try {
+    registry = await ctx.api("GET", "/engines");
+  } catch (e) {
+    reportError({ log: ctx.log }, "Loading engine registry failed", e);
+    return;
+  }
+  const available = registry.engines || [];
+  if (available.length < 2) {
+    toast(buildToastWithActions(NEED_TWO_ENGINES_MSG, [OPEN_ENGINES_ACTION]), { variant: "danger" });
+    return;
+  }
+
+  const { initialEngines } = resolveInitialEngines(available, t.engines, "creating the copy");
+
+  // Existing names for a conflict-free default: use the loaded list when
+  // present (Arena), else fetch (Studio's action ctx carries no list). On
+  // fetch failure fall back to [] -- the suggestion may then collide, in
+  // which case the POST's 409 shake is the backstop.
+  let existing = ctx.tournaments;
+  if (!existing) {
+    const list = await ctx.api("GET", "/api/tournaments").catch(() => null);
+    existing = list?.tournaments || [];
+  }
+  const initialName = suggestCopyName(t.name, existing.map((x) => x.name));
+
+  await openTournamentDialog(ctx, {
+    label: "Copy tournament",
+    actionLabel: "Create",
+    initialName,
+    initialEngines,
+    initialTemplate: t.template || null,
+    available,
+    onSubmit: async (data) => {
+      try {
+        await ctx.api("POST", "/api/tournaments", data);
+        toast(`Created new tournament "${data.name}"`, { variant: "success" });
+      } catch (e) {
+        reportError({ log: ctx.log }, "Duplicating tournament failed", e);
+        if (/-> 409\b/.test(e.message)) throw Object.assign(e, { isNameCollision: true });
+        return false;
+      }
+      await ctx.loadList();
     },
   });
 }
@@ -1180,6 +1252,10 @@ function wireRibbon(ctx) {
     const t = selectedTournament(ctx);
     if (t && !ctx.ribbonEditBtn.disabled) openEditTournamentDialog(ctx, t);
   });
+  ctx.ribbonDuplicateBtn.addEventListener("click", () => {
+    const t = selectedTournament(ctx);
+    if (t && !ctx.ribbonDuplicateBtn.disabled) openDuplicateTournamentDialog(ctx, t);
+  });
   ctx.ribbonRemoveBtn.addEventListener("click", () => {
     const t = selectedTournament(ctx);
     if (t && !ctx.ribbonRemoveBtn.disabled) ctx.removeOneGuarded(t);
@@ -1295,6 +1371,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     ribbonWorkspaceBtn: container.querySelector(".t-workspace"),
     ribbonInfoBtn: container.querySelector(".t-info"),
     ribbonEditBtn: container.querySelector(".t-edit"),
+    ribbonDuplicateBtn: container.querySelector(".t-duplicate"),
     ribbonRemoveBtn: container.querySelector(".t-remove"),
     snapBtn: container.querySelector(".tmb-snap"),
     tileBtn: container.querySelector(".tmb-tile"),
