@@ -724,7 +724,7 @@ function buildInfoContent(ctx, t, onStatusClick) {
 
 // Shared dialog body for both create and edit flows.
 // Returns a Promise that resolves to {name, template, engines} or null.
-async function openTournamentDialog(ctx, { label, actionLabel, initialName, initialEngines, initialTemplate, available, onSubmit }) {
+async function openTournamentDialog(ctx, { label, actionLabel, initialName, initialEngines, initialTemplate, available, onSubmit, onOpened }) {
   // Read the saved defaults fresh from the server store here, not from a
   // per-view settings cache: Arena and Studio refresh that cache differently
   // (Studio not at all), so the shared dialog must own its source of truth.
@@ -889,6 +889,17 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
 
       dialog.append(wrap, actionBtn);
       requestAnimationFrame(() => nameInput.focus());
+      // Fire after the dialog is on the top layer so a warning toast layers
+      // above the modal scrim instead of behind it (wa-after-show, not the
+      // body rAF, which runs before showDialog flips dialog.open).
+      if (onOpened) {
+        const onShow = (ev) => {
+          if (ev.target !== dialog) return;
+          dialog.removeEventListener("wa-after-show", onShow);
+          onOpened();
+        };
+        dialog.addEventListener("wa-after-show", onShow);
+      }
     },
   });
 }
@@ -933,9 +944,10 @@ async function openNewTournamentDialog(ctx) {
 }
 
 // Resolve a tournament's engines to registry entries so the builder can
-// preselect them. Prefer id match; fall back to name then cmd. Toasts a
-// warning for any engine no longer in the registry (verb tailors the copy).
-function resolveInitialEngines(available, engines, verb) {
+// preselect them. Prefer id match; fall back to name then cmd. Returns the
+// count of engines no longer in the registry so the caller can warn -- the
+// warning is toasted after the dialog opens so it isn't dimmed by the scrim.
+function resolveInitialEngines(available, engines) {
   const byId   = new Map(available.map((e) => [e.id,   e]));
   const byName = new Map(available.map((e) => [e.name, e]));
   const byCmd  = new Map(available.map((e) => [e.path, e]));
@@ -946,13 +958,17 @@ function resolveInitialEngines(available, engines, verb) {
     if (match) initialEngines.push(match);
     else droppedCount += 1;
   }
-  if (droppedCount > 0) {
-    toast(
-      `${droppedCount} engine${droppedCount === 1 ? "" : "s"} no longer in the registry -- re-add before ${verb}.`,
-      { variant: "warning", duration: TOAST_DURATION_MS },
-    );
-  }
   return { initialEngines, droppedCount };
+}
+
+// Warn about engines dropped during resolve. Fired from inside the dialog
+// body so the toast layers above the modal scrim instead of behind it.
+function warnDroppedEngines(droppedCount, verb) {
+  if (droppedCount <= 0) return;
+  toast(
+    `${droppedCount} engine${droppedCount === 1 ? "" : "s"} no longer in the registry -- re-add before ${verb}.`,
+    { variant: "warning", duration: TOAST_DURATION_MS },
+  );
 }
 
 // Suggest a non-conflicting copy name: "Foo (copy)", then "Foo (copy 2)"...
@@ -992,7 +1008,7 @@ async function openEditTournamentDialog(ctx, t) {
     return;
   }
 
-  const { initialEngines } = resolveInitialEngines(available, t.engines, "applying");
+  const { initialEngines, droppedCount } = resolveInitialEngines(available, t.engines);
 
   await openTournamentDialog(ctx, {
     label: `Edit "${t.name}"`,
@@ -1001,6 +1017,7 @@ async function openEditTournamentDialog(ctx, t) {
     initialEngines,
     initialTemplate: t.template || null,
     available,
+    onOpened: () => warnDroppedEngines(droppedCount, "applying"),
     onSubmit: async (data) => {
       // POST-DIALOG gate: last chance to abort before the destructive PATCH.
       // Any edit (template, engines, or rename) wipes the PGN server-side
@@ -1049,7 +1066,7 @@ async function openDuplicateTournamentDialog(ctx, t) {
     return;
   }
 
-  const { initialEngines } = resolveInitialEngines(available, t.engines, "creating the copy");
+  const { initialEngines, droppedCount } = resolveInitialEngines(available, t.engines);
 
   // Existing names for a conflict-free default: use the loaded list when
   // present (Arena), else fetch (Studio's action ctx carries no list). On
@@ -1069,6 +1086,7 @@ async function openDuplicateTournamentDialog(ctx, t) {
     initialEngines,
     initialTemplate: t.template || null,
     available,
+    onOpened: () => warnDroppedEngines(droppedCount, "creating the copy"),
     onSubmit: async (data) => {
       try {
         await ctx.api("POST", "/api/tournaments", data);
