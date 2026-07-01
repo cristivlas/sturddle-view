@@ -485,11 +485,14 @@ wa-select::part(listbox) {
   --tool-nest-indent: 18px;
   --tool-box-indent: 20px;
   --tool-box-inset-right: 8px;
+  /* The row's own shrink factor, exposed so a child (the verdict prose) can
+     divide it back out and recover the panel's true base font-size. */
+  --tool-row-scale: 0.85;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  font-size: 0.85em;
+  font-size: calc(var(--tool-row-scale) * 1em);
   opacity: 0.85;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   /* Anchor the verifier spine (drawn on the parent row that owns a
@@ -613,6 +616,36 @@ wa-select::part(listbox) {
   content: " \2713";
   color: var(--wa-color-success-60, #28a745);
   font-weight: 600;
+}
+/* Verifier verdict prose: reuses .play-ai-revision visuals verbatim (warm
+   panel, border-left, fonts). It lives inside the delegate row, which shrinks
+   font to --tool-row-scale and forces a monospace family -- both would leak
+   into the prose. Divide the row's scale back out (recovering the panel's
+   true base) and restore the body family, so the em-based revision rules
+   compute off the SAME base as a top-level correction and the fonts are
+   identical. Layout: break to its own line, indent to the detail-box column.
+   The single-level divide is exact because a delegate row is always top-level
+   (verifier sub-runs can't nest another delegate). */
+.play-ai-verdict {
+  flex: 1 1 100%;
+  min-width: 0;
+  /* Hug the folded row: kill the revision's vertical padding + margin so
+     "Refuted" sits tight against its border-left. */
+  margin: 0 var(--tool-box-inset-right) 0 var(--tool-box-indent);
+  padding: 0 8px;
+  font-size: calc(1em / var(--tool-row-scale));
+  font-family: var(--wa-font-family-body);
+}
+/* A little breathing room below the prose only when expanded. */
+.play-ai-verdict[open] {
+  padding: 0 8px 4px;
+}
+/* Verdict summary: upright static label; tight line so the folded row is
+   only as tall as the text. A hair smaller than the prose. */
+.play-ai-verdict > .play-ai-revision-summary {
+  font-style: normal;
+  font-size: 0.95em;
+  line-height: 1.2;
 }
 .play-ai-tool-label {
   /* Stay on one line; the head scrolls horizontally if needed. */

@@ -532,13 +532,52 @@ function verdictKind(output) {
 // tool happens to return a `verdict` key.
 const DELEGATE_DOT_CLASS = "play-ai-tool-dot-delegate";
 
+// Strip the leading holds/refuted token plus its trailing punctuation and
+// space, so the prose reads as analysis once the word moves to the summary:
+// "Refuted. After 11...O-O" -> "After 11...O-O".
+const VERDICT_LEAD_RE = new RegExp(`^\\s*(?:${VERDICT_REFUTED}|${VERDICT_HOLDS})\\b[.,:;\\s-]*`, "i");
+function stripVerdictLead(verdict) {
+  return verdict.replace(VERDICT_LEAD_RE, "").trim();
+}
+
+// Verdict prose block: the verifier's reply shown with the same visuals as a
+// self-correction (revision) -- accent border-left, accent summary caret,
+// warm draft panel -- under its "Verifying line" row instead of buried as
+// raw JSON in OUT. Foldable, collapsed by default. Idempotent: replay
+// re-dispatches the same output. Summary is the verdict word (Holds/
+// Refuted); the folded body is the prose with that word stripped.
+const VERDICT_PROSE_CLASS = "play-ai-verdict";
+
+function attachVerdictProse(line, output) {
+  // Delegate rows only -- same scope as the verdict badge, so a future tool
+  // that happens to return a `verdict` key never grows a prose panel.
+  if (!line.querySelector(`:scope > .play-ai-tool-head > .${DELEGATE_DOT_CLASS}`)) return;
+  const verdict = output && typeof output === "object" ? output.verdict : null;
+  if (typeof verdict !== "string" || !verdict.trim()) return;
+  if (line.querySelector(`:scope > .${VERDICT_PROSE_CLASS}`)) return;
+  const kind = verdictKind(output);
+  const details = document.createElement("details");
+  details.className = `play-ai-revision ${VERDICT_PROSE_CLASS}`;
+  const summary = document.createElement("summary");
+  summary.className = "play-ai-revision-summary";
+  summary.textContent = kind ? capLead(kind) : "Verdict";
+  const body = document.createElement("div");
+  body.className = "play-ai-revision-body";
+  const para = document.createElement("p");
+  para.className = "play-ai-prose";
+  // Drop the leading verdict word (now the summary) so the prose isn't
+  // redundant: "Refuted. After 11...O-O" -> "After 11...O-O".
+  para.textContent = kind ? stripVerdictLead(verdict) : verdict.trim();
+  body.append(para);
+  details.append(summary, body);
+  line.append(details);
+}
+
 // Mark the "Verifying line" row with its verdict (refuted / holds) via a
 // class the CSS badges. Idempotent -- replay re-dispatches the same
 // output, so a second call must not stack badges.
 function markVerdict(line, kind) {
   if (!kind) return;
-  // Scoped to this row's own head (matching the CSS) so a nested child
-  // delegate dot can't make a non-delegate parent row get badged.
   // Scoped to this row's own head (matching the CSS) so a nested child
   // delegate dot can't make a non-delegate parent row get badged.
   if (!line.querySelector(`:scope > .play-ai-tool-head > .${DELEGATE_DOT_CLASS}`)) return;
@@ -557,6 +596,7 @@ export function setAiToolCallResult({ toolUseId, output }) {
     line._outPre.textContent = formatToolOutput(output);
     line._outRow.hidden = false;
     markVerdict(line, verdictKind(output));
+    attachVerdictProse(line, output);
   });
 }
 
