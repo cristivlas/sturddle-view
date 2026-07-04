@@ -263,20 +263,23 @@ async function openOptionsForSelected(ctx) {
   try { engine = await getEngineFresh(ctx, ctx.selectedDetailId); } catch (err) { reportError(null, "edit", err); return; }
   const locked = engine.locked?.length ? engine.locked.map((t) => `${t.name} (${t.status})`).join(", ") : null;
   if (locked) { toast(`Cannot edit ${engine.name}: in use by ${locked}`, { variant: "warning" }); return; }
-  // Auto re-probe on first open if UCI options are empty -- heals transient
-  // spawn errors from add-time so the user doesn't see an empty dialog.
+  // Auto re-probe on first open if UCI options are empty (heals transient
+  // add-time spawn errors) or uci_name was never captured (entries that
+  // predate uci_name persistence -- backfills it for Reset).
   let probeError = null;
-  if (engine && !Object.keys(engine.option_schema || {}).length) {
+  const hadSchema = !!Object.keys(engine.option_schema || {}).length;
+  if (!hadSchema || engine.uci_name == null) {
     try {
       engine = await ctx.api("POST", `/engines/${engine.id}/refresh-schema`, {});
     } catch (e) {
       probeError = apiErrorDetail(e);
     }
   }
-  // Probe still failing -> the Options form has nothing useful to show
-  // (broken executable, moved binary, etc). Offer to remove the entry
-  // rather than open a torn-up dialog the user can't meaningfully edit.
-  if (probeError) {
+  // Probe failing with no cached schema -> the Options form has nothing
+  // useful to show (broken executable, moved binary, etc). Offer to remove
+  // the entry rather than open a torn-up dialog the user can't edit. With
+  // a cached schema the dialog still opens, showing the probe-error banner.
+  if (probeError && !hadSchema) {
     const ok = await confirm({
       message: `Engine "${engine.name}" cannot be launched: ${probeError} Remove it from your engines?`,
       okLabel: "Remove",
@@ -293,15 +296,25 @@ async function openOptionsForSelected(ctx) {
     }
     return;
   }
+  // Other engines' names (lowercased) so Reset can dedup the restored
+  // UCI name client-side; the server PATCH stays the authoritative check.
+  const takenNames = new Set(
+    ctx.engines.filter((x) => x.id !== engine.id).map((x) => x.name.toLowerCase()),
+  );
+  let presetName = null;
+  let presetDerived = false;
   while (engine) {
-    const result = await showEngineOptionsDialog({ engine, api: ctx.api, probeError });
+    const result = await showEngineOptionsDialog({
+      engine, api: ctx.api, probeError, presetName, presetDerived, takenNames,
+    });
     if (result === null) break;
     if (result?.__refresh || result?.__reopen) {
       engine = result.engine;
-      // Re-open carries forward the probe outcome: __refresh sets
-      // result.probeError when the in-dialog probe failed; __reopen
-      // (post-save) has no probe and should clear any prior note.
+      // Reopens (Refresh probe / Reset) carry forward the probe outcome
+      // and the in-flight name edit.
       probeError = result.probeError ?? null;
+      presetName = result.presetName ?? null;
+      presetDerived = result.presetDerived ?? false;
       continue;
     }
     refresh(ctx);

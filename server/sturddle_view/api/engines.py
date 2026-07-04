@@ -63,6 +63,12 @@ class EngineUpdate(BaseModel):
     name: str | None = None
     path: str | None = None
     options: dict[str, Any] | None = None
+    # Dialog Save sends these so a Refresh-probed schema/uci_name (captured
+    # with in-progress args/env) is persisted with the rest of the edits.
+    option_schema: dict[str, Any] | None = None
+    uci_name: str | None = None
+    # True when `name` was derived (Reset restore): collide -> suffix, not 409.
+    auto_suffix: bool = False
     args: list[str] | None = None
     env: dict[str, str] | None = None
 
@@ -124,21 +130,21 @@ def _serialize(e: Engine) -> dict:
 
 
 async def _ensure_schema(reg: EngineRegistry, e: Engine) -> Engine:
-    """Lazily capture the option schema if missing.
+    """Lazily capture option schema + uci_name for entries that predate them.
 
-    Engines registered before schema capture was added have an empty
-    `option_schema`. We capture and persist on first encounter so the
-    UI never has to show "no options" for an engine that actually has
-    them. Best-effort: a failed capture leaves the schema empty and is
-    retried next call.
+    Skips engines already probed (non-empty schema, or uci_name set --
+    optionless engines would otherwise re-spawn on every GET). Best-effort:
+    a failed probe changes nothing and is retried next call.
     """
-    if e.option_schema:
+    if e.option_schema or e.uci_name is not None:
         return e
-    _uci_name, schema, _err = await probe_engine(e.path)
-    if not schema:
+    uci_name, schema, err = await probe_engine(
+        e.path, args=list(e.args or []), env=dict(e.env or {}),
+    )
+    if err:
         return e
     try:
-        return reg.update(e.id, option_schema=schema)
+        return reg.update(e.id, option_schema=schema, uci_name=uci_name)
     except EngineNotFoundError:
         return e
 
@@ -179,6 +185,7 @@ async def add_engine(payload: EngineCreate, request: Request) -> dict:
             args=list(payload.args),
             env=dict(payload.env),
             auto_suffix=not user_supplied,
+            uci_name=uci_name,
         )
     except DuplicateEngineError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -215,6 +222,9 @@ async def update_engine(engine_id: str, payload: EngineUpdate, request: Request)
             name=payload.name,
             path=new_path,
             options=payload.options,
+            option_schema=payload.option_schema,
+            uci_name=payload.uci_name,
+            auto_suffix=payload.auto_suffix,
             args=payload.args,
             env=payload.env,
         )
@@ -280,16 +290,16 @@ async def refresh_engine_schema(engine_id: str, request: Request) -> dict:
         e = reg.get(engine_id)
     except EngineNotFoundError as exc:
         raise HTTPException(status_code=404, detail="engine not found") from exc
-    _uci_name, schema, probe_error = await probe_engine(
+    uci_name, schema, probe_error = await probe_engine(
         e.path, args=list(e.args or []), env=dict(e.env or {}),
     )
-    if not schema:
-        detail = "could not capture options from engine"
-        if probe_error:
-            detail = f"{detail}: {probe_error['message']}"
+    if probe_error:
+        detail = f"could not capture options from engine: {probe_error['message']}"
         raise HTTPException(status_code=502, detail=detail)
+    # An empty schema on a clean probe is legitimate (optionless engine):
+    # persist it plus uci_name so the entry stops re-probing.
     try:
-        e = reg.update(engine_id, option_schema=schema)
+        e = reg.update(engine_id, option_schema=schema, uci_name=uci_name)
     except EngineNotFoundError as exc:
         raise HTTPException(status_code=404, detail="engine not found") from exc
     return _serialize(e)

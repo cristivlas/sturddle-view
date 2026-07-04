@@ -108,7 +108,8 @@ async def probe_engine(
 
     `option_schema` is a {name: {type, default, min?, max?, vars?}} dict,
     skipping engine-managed options (multipv, ponder, etc.). `uci_id_name`
-    is what the engine announces via UCI `id name`, or None if unavailable.
+    is what the engine announces via UCI `id name`; "" when the handshake
+    succeeded but the engine announced no name, None only on probe failure.
     `error` is None on success, or a structured ``{code, message}`` dict
     with a short user-facing reason -- callers surface ``message`` to the
     UI directly. Classification is by exception type, not platform text.
@@ -142,7 +143,7 @@ async def probe_engine(
             log.warning("probe failed for %s: %s", engine_path, err["message"])
         return None, {}, err
     try:
-        uci_name = engine.id.get("name") or None
+        uci_name = engine.id.get("name") or ""
         schema: dict[str, dict] = {}
         for name, opt in engine.options.items():
             if name.lower() in _HIDDEN_OPTIONS:
@@ -169,6 +170,9 @@ class Engine:
     id: str
     name: str
     path: str
+    # UCI `id name` captured at last successful probe; "" if the engine
+    # announced none, None if never probed. Backs the dialog's Reset.
+    uci_name: str | None = None
     # User-overridden UCI options. Only entries that differ from the engine's
     # advertised default are stored, so the per-engine dialog's "Defaults"
     # button can be honored unambiguously.
@@ -192,11 +196,13 @@ class Engine:
         option_schema: dict | None = None,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
+        uci_name: str | None = None,
     ) -> "Engine":
         return Engine(
             id=uuid.uuid4().hex[:12],
             name=name,
             path=path,
+            uci_name=uci_name,
             options=options or {},
             option_schema=option_schema or {},
             args=list(args or []),
@@ -317,6 +323,7 @@ class EngineRegistry:
                 id=entry["id"],
                 name=unique,
                 path=entry["path"],
+                uci_name=entry.get("uci_name"),
                 options=entry.get("options", {}),
                 option_schema=entry.get("option_schema", {}),
                 args=args,
@@ -383,6 +390,7 @@ class EngineRegistry:
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
         auto_suffix: bool = False,
+        uci_name: str | None = None,
     ) -> Engine:
         self._ensure_loaded()
         validate_launch_profile(args, env)
@@ -400,6 +408,7 @@ class EngineRegistry:
             option_schema=option_schema,
             args=args,
             env=env,
+            uci_name=uci_name,
         )
         self._engines[engine.id] = engine
         self._save()
@@ -415,15 +424,23 @@ class EngineRegistry:
         option_schema: dict | None = None,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
+        uci_name: str | None = None,
+        auto_suffix: bool = False,
     ) -> Engine:
         self._ensure_loaded()
         validate_launch_profile(args, env)
         engine = self.get(engine_id)
         if name is not None:
             if name != engine.name and self._name_in_use(name, exclude_id=engine_id):
-                raise DuplicateEngineError(f"engine name already in use: {name}")
+                if not auto_suffix:
+                    raise DuplicateEngineError(f"engine name already in use: {name}")
+                name = self._unique_name(name, exclude_id=engine_id)
             engine.name = name
         if path is not None:
+            if path != engine.path and uci_name is None:
+                # New binary: the cached UCI identity is stale; None makes
+                # the client re-probe on next dialog open.
+                engine.uci_name = None
             engine.path = path
         if options is not None:
             engine.options = options
@@ -433,6 +450,8 @@ class EngineRegistry:
             engine.args = list(args)
         if env is not None:
             engine.env = dict(env)
+        if uci_name is not None:
+            engine.uci_name = uci_name
         self._save()
         return engine
 

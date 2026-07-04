@@ -17,6 +17,16 @@ function isPathOption(name) {
   return PATH_NAME_RE.test(name);
 }
 
+// Preview of the server's _dedup_name suffixing (" (2)", " (3)", ...).
+// Best-effort only (toLowerCase vs casefold); Save sends auto_suffix so
+// the server resolves collisions authoritatively.
+function dedupName(desired, taken) {
+  if (!taken.has(desired.toLowerCase())) return desired;
+  let n = 2;
+  while (taken.has(`${desired} (${n})`.toLowerCase())) n += 1;
+  return `${desired} (${n})`;
+}
+
 function diffFromDefaults(values, schema) {
   const out = {};
   for (const [name, entry] of Object.entries(schema)) {
@@ -315,9 +325,13 @@ function buildLaunchTab(engine, launchState) {
   return wrap;
 }
 
-/** Open the Engine Settings dialog; resolves to the saved engine, or null
- *  on cancel. `probeError`: shown in place of the generic "no options" note. */
-export function showEngineOptionsDialog({ engine, api, probeError = null }) {
+/** Open the Engine Settings dialog; resolves to the saved engine, or null on
+ *  cancel. `presetName`/`presetDerived`: name carried across reopens (+ was it
+ *  Reset-derived); `takenNames`: other engines' lowercased names for dedup. */
+export function showEngineOptionsDialog({
+  engine, api, probeError = null, presetName = null, presetDerived = false,
+  takenNames = null,
+}) {
   const schema = engine.option_schema || {};
   const startValues = {};
   for (const [name, entry] of Object.entries(schema)) {
@@ -377,7 +391,10 @@ export function showEngineOptionsDialog({ engine, api, probeError = null }) {
       // (or the binary basename if the probe failed). Editable; this is the
       // label shown in clocks, PGN headers, and tournaments.
       const startName = engine.name || "";
-      let currentName = startName;
+      let currentName = presetName ?? startName;
+      // True while the name is an untouched Reset restore -- Save then asks
+      // the server to auto-suffix on collision instead of 409ing.
+      let nameDerived = presetDerived && presetName != null;
       const nameRow = document.createElement("div");
       nameRow.className = "engine-opt-row";
       const nameLabel = document.createElement("label");
@@ -386,9 +403,10 @@ export function showEngineOptionsDialog({ engine, api, probeError = null }) {
       const nameInput = document.createElement("wa-input");
       nameInput.size = "small";
       nameInput.classList.add("engine-opt-input");
-      nameInput.value = startName;
+      nameInput.value = currentName;
       nameInput.addEventListener("input", () => {
         currentName = nameInput.value;
+        nameDerived = false;
       });
       nameRow.append(nameLabel, nameInput);
       form.appendChild(nameRow);
@@ -452,9 +470,16 @@ export function showEngineOptionsDialog({ engine, api, probeError = null }) {
             engine: {
               ...engine,
               option_schema: newSchema,
+              // Trust a clean probe outright ("" = announced no name);
+              // keep the stale value only when the probe failed.
+              uci_name: probed.probe_error ? engine.uci_name : probed.uci_name,
+              // Carry in-flight option edits (as diff) into the reopen.
+              options: diffFromDefaults(ctx.values, schema),
               args: launchState.args,
               env: launchState.env,
             },
+            presetName: currentName.trim() ? currentName : null,
+            presetDerived: nameDerived,
             probeError: probed.probe_error ? probed.probe_error.message : null,
           });
         } catch (e) {
@@ -467,9 +492,10 @@ export function showEngineOptionsDialog({ engine, api, probeError = null }) {
       defaultsBtn.size = "small";
       defaultsBtn.textContent = RESET_BTN_LABEL;
       defaultsBtn.addEventListener("click", () => {
-        // Reopen with a synthetic engine that has options cleared so the
-        // initial render uses every field's advertised default. Args/env
-        // edits in the Launch tab carry over.
+        // Reopen with options cleared (fields render advertised defaults)
+        // and the name restored to the UCI id name, collision-suffixed.
+        // Args/env edits and any probe-failure banner carry over.
+        const restored = !!engine.uci_name;
         resolve({
           __reopen: true,
           engine: {
@@ -478,6 +504,11 @@ export function showEngineOptionsDialog({ engine, api, probeError = null }) {
             args: launchState.args,
             env: launchState.env,
           },
+          presetName: restored
+            ? dedupName(engine.uci_name, takenNames || new Set())
+            : (currentName.trim() ? currentName : null),
+          presetDerived: restored || nameDerived,
+          probeError,
         });
       });
 
@@ -491,11 +522,18 @@ export function showEngineOptionsDialog({ engine, api, probeError = null }) {
         const trimmed = (currentName || "").trim();
         const body = {
           options: diff,
+          // Persist the rendered schema and uci_name -- after a Refresh
+          // these are fresher than what the registry holds.
+          option_schema: schema,
           args: launchState.args,
           env: launchState.env,
         };
+        if (engine.uci_name != null) {
+          body.uci_name = engine.uci_name;
+        }
         if (trimmed && trimmed !== startName) {
           body.name = trimmed;
+          if (nameDerived) body.auto_suffix = true;
         }
         try {
           const updated = await api("PATCH", `/engines/${engine.id}`, body);
