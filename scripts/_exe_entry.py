@@ -1,13 +1,9 @@
 """PyInstaller entry point for the standalone desktop exe.
 
-Forces --desktop so the exe always opens in the native PyWebView window.
+Plain dispatch to the package CLI. Frozen-specific behavior (--desktop
+default, "proxy" subcommand) lives in sturddle_view.__main__ / _runtime.
 Not part of the installed package -- used only by the build script.
 """
-import sys
-
 from sturddle_view.__main__ import main
-
-if "--desktop" not in sys.argv:
-    sys.argv.append("--desktop")
 
 main()

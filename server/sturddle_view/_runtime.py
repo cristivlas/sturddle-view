@@ -12,6 +12,17 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+# Subcommand the frozen exe dispatches to the stdio proxy (see __main__).
+PROXY_SUBCOMMAND = "proxy"
+
+# CLI flag for PyWebView native-window mode; defaults on when frozen.
+DESKTOP_FLAG = "--desktop"
+
+
+def is_frozen() -> bool:
+    """True when running from a PyInstaller bundle."""
+    return bool(getattr(sys, "frozen", False))
+
 
 def app_root() -> Path:
     """Absolute path to the application root directory.
@@ -21,7 +32,7 @@ def app_root() -> Path:
     Dev checkout: the repository root (two levels above this file's
     package directory: server/sturddle_view/ -> server/ -> repo root).
     """
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    if is_frozen() and hasattr(sys, "_MEIPASS"):
         return Path(sys._MEIPASS)
     return Path(__file__).resolve().parents[2]
 
@@ -36,6 +47,6 @@ def proxy_argv_prefix() -> list[str]:
     sturddle_view.tournament.proxy.main() -- see __main__.py.
     The caller appends the remaining proxy flags after this prefix.
     """
-    if getattr(sys, "frozen", False):
-        return [sys.executable, "proxy"]
+    if is_frozen():
+        return [sys.executable, PROXY_SUBCOMMAND]
     return [sys.executable, "-m", "sturddle_view.tournament.proxy"]
