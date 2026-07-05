@@ -30,7 +30,11 @@ from pydantic import BaseModel, Field, field_validator
 
 from ..auth import AUTH_COOKIE, check_token_value, origin_ok, require_token
 from ..env_utils import env_bool
-from ..engines import InvalidLaunchProfileError, validate_launch_profile
+from ..engines import (
+    EngineNotFoundError,
+    InvalidLaunchProfileError,
+    validate_launch_profile,
+)
 from ..events import ENVELOPE_KIND, ENVELOPE_PAYLOAD
 from ..tournament.fastchess import FastchessRunner
 from ..tournament.orchestrator import Orchestrator, TournamentBusyError, wrap_event_for_bus
@@ -89,6 +93,10 @@ class EngineRef(BaseModel):
     args: list[str] | str | None = None
     env: dict[str, str] = Field(default_factory=dict)
     dir: str | None = None
+    # Frozen UCI options snapshot. Server-populated from the registry at
+    # create/edit; accepted on input so a direct API edit can round-trip
+    # a snapshot whose engine was since deleted from the registry.
+    options: dict[str, Any] | None = None
 
     @field_validator("args", "env")
     @classmethod
@@ -156,6 +164,27 @@ def _freeze_engine_defaults(settings) -> dict:
         k: getattr(settings, f"engine_default_{k}", None)
         for k in _ENGINE_DEFAULT_KEYS
     }
+
+
+def _freeze_engines(payload_engines, request: Request) -> list[dict]:
+    """Snapshot the picked engines into the tournament: the client-sent
+    ref (id/name/cmd/args/env) plus each engine's current registry UCI
+    options. An engine missing from the registry keeps whatever options
+    the caller round-tripped (edit after the engine was deleted). The
+    key is omitted when there are no options either way."""
+    reg = getattr(request.app.state, "engines", None)
+    out = []
+    for e in payload_engines:
+        ref = e.model_dump(exclude_none=True)
+        if reg is not None:
+            try:
+                ref["options"] = dict(reg.get(ref["id"]).options or {})
+            except EngineNotFoundError:
+                pass
+        if not ref.get("options"):
+            ref.pop("options", None)
+        out.append(ref)
+    return out
 
 
 # 409 payload for /start when a stop/fail tournament restart needs the
@@ -305,7 +334,7 @@ def create_tournament(payload: TournamentCreate, request: Request) -> dict:
         t = s.create(
             name=name,
             template=_resolve_oversubscribe(_resolve_sprt(payload.template, settings)),
-            engines=[e.model_dump(exclude_none=True) for e in payload.engines],
+            engines=_freeze_engines(payload.engines, request),
             engine_defaults=engine_defaults,
         )
     except DuplicateNameError:
@@ -349,7 +378,7 @@ def edit_tournament(tournament_id: str, payload: TournamentUpdate, request: Requ
             tournament_id,
             name=name,
             template=_resolve_oversubscribe(_resolve_sprt(payload.template, settings)),
-            engines=[e.model_dump(exclude_none=True) for e in payload.engines],
+            engines=_freeze_engines(payload.engines, request),
             engine_defaults=engine_defaults,
         )
     except TournamentNotFoundError as e:

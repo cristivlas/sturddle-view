@@ -71,6 +71,33 @@ def _quote_arg(arg: str) -> str:
 # built-in book so it doesn't override/double the shared openings.
 _OWNBOOK_OFF = "option.OwnBook=false"
 
+
+def _uci_option_value(v) -> str:
+    """fastchess option.K=V value text; JSON bools become true/false."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    return str(v)
+
+
+def _managed_option_keys(spec: RunSpec) -> set[str]:
+    """Casefolded UCI option names the tournament itself defines (emitted
+    via ``-each`` below). Per-engine snapshot values for these are skipped
+    so the tournament stays the single source of truth; anything the
+    tournament leaves unset falls back to the engine's own setting."""
+    t = spec.tournament.template
+    managed: set[str] = set()
+    if spec.engine_default_hash_mb is not None:
+        managed.add("hash")
+    if spec.engine_default_threads is not None:
+        managed.add("threads")
+    if spec.engine_default_syzygy_path:
+        managed.add("syzygypath")
+    if "ponder" in t:
+        managed.add("ponder")
+    if spec.engine_default_book_path:
+        managed.add("ownbook")
+    return managed
+
 # Restart each engine process between games (fastchess restart=on).
 _RESTART_ON = "restart=on"
 
@@ -101,10 +128,13 @@ def build_command(spec: RunSpec) -> list[str]:
 
     Engines come from ``spec.tournament.engines`` — each entry is a
     dict with at minimum ``name`` and ``cmd`` (engine binary path).
-    Optional: ``args``, ``dir``.
+    Optional: ``args``, ``dir``, ``options`` (per-engine UCI options
+    snapshotted from the registry at create/edit time; keys the
+    tournament defines itself are skipped, see _managed_option_keys).
     """
     t = spec.tournament.template
     engines = spec.tournament.engines
+    managed_options = _managed_option_keys(spec)
 
     cmd: list[str] = [spec.binary_path]
 
@@ -174,6 +204,10 @@ def build_command(spec: RunSpec) -> list[str]:
         e.append(f"name={engine_name}")
         if eng.get("dir"):
             e.append(f"dir={eng['dir']}")
+        for k, v in (eng.get("options") or {}).items():
+            if k.casefold() in managed_options:
+                continue
+            e.append(f"option.{k}={_uci_option_value(v)}")
         if "tc" in t:
             e.append(f"tc={t['tc']}")
         cmd.extend(e)

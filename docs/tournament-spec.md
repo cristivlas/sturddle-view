@@ -359,10 +359,13 @@ Spec'd but **not** in the v0 form (added in their own slices later):
 
 - The template applies to **standard, runner-controlled UCI options**
   (`Threads`, `Hash`, `Ponder`, `SyzygyPath`). For these, the template
-  value wins over whatever the registered engine has stored.
+  value wins over whatever the registered engine has stored; when the
+  tournament leaves one unset, the engine's own stored value applies.
 - The template does **not** override engine-specific options (eval
-  weights, history pruning, search-internal knobs); those continue to
-  come from the engine's per-engine UCI options registry entry.
+  weights, history pruning, search-internal knobs); those come from the
+  engine's per-engine UCI options registry entry. Like everything else,
+  they are snapshotted into `state.json` at create/edit time — later
+  registry edits do not affect existing tournaments.
 - The opening book is tournament-level (picks start positions for both
   sides), not an engine UCI option.
 

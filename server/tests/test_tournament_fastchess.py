@@ -155,6 +155,71 @@ def test_build_command_each_options(tmp_path):
     assert "option.SyzygyPath=/tb" in each
 
 
+def test_build_command_per_engine_options(tmp_path):
+    # Snapshotted engine-specific options land inside that engine's own
+    # -engine block; the other engine is untouched. Bools render as
+    # fastchess true/false.
+    spec = _make_spec(
+        tmp_path,
+        template={"tc": "10+0.1"},
+        engines=[
+            {"name": "A", "cmd": "/x",
+             "options": {"WeightsFile": "/w/a.binx", "BestBookMove": False}},
+            {"name": "B", "cmd": "/y"},
+        ],
+    )
+    cmd = build_command(spec)
+    a_block_start = cmd.index("-engine")
+    b_block_start = cmd.index("-engine", a_block_start + 1)
+    weights_idx = cmd.index("option.WeightsFile=/w/a.binx")
+    assert a_block_start < weights_idx < b_block_start
+    assert a_block_start < cmd.index("option.BestBookMove=false") < b_block_start
+
+
+def test_build_command_engine_options_tournament_wins(tmp_path):
+    # Keys the tournament defines are dropped from per-engine snapshots
+    # (case-insensitively); unmanaged keys still flow through.
+    spec = _make_spec(
+        tmp_path,
+        template={"ponder": True},
+        engines=[
+            {"name": "A", "cmd": "/x",
+             "options": {"Hash": 999, "Threads": 8, "Ponder": False,
+                         "SyzygyPath": "/engine/tb", "OwnBook": True,
+                         "WeightsFile": "/w.binx"}},
+            {"name": "B", "cmd": "/y"},
+        ],
+        engine_default_hash_mb=256,
+        engine_default_threads=1,
+        engine_default_syzygy_path="/tb",
+        engine_default_book_path="/book.pgn",
+    )
+    cmd = build_command(spec)
+    assert "option.Hash=999" not in cmd
+    assert "option.Threads=8" not in cmd
+    assert "option.Ponder=false" not in cmd
+    assert "option.SyzygyPath=/engine/tb" not in cmd
+    assert "option.OwnBook=true" not in cmd
+    assert "option.WeightsFile=/w.binx" in cmd
+
+
+def test_build_command_engine_options_fallback_when_tournament_unset(tmp_path):
+    # The tournament defines no Hash/OwnBook -> the engine's own stored
+    # values apply per engine.
+    spec = _make_spec(
+        tmp_path,
+        template={},
+        engines=[
+            {"name": "A", "cmd": "/x", "options": {"Hash": 128, "OwnBook": False}},
+            {"name": "B", "cmd": "/y"},
+        ],
+    )
+    cmd = build_command(spec)
+    assert "option.Hash=128" in cmd
+    assert "option.OwnBook=false" in cmd
+    assert "-each" not in cmd
+
+
 def test_build_command_restart_engines(tmp_path):
     spec = _make_spec(
         tmp_path,
