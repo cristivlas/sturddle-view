@@ -92,6 +92,21 @@ def test_create_preserves_caller_supplied_seed(store):
     assert t.template["seed"] == 42
 
 
+def test_update_pins_seed_when_template_omits_it(store):
+    # The Edit dialog rebuilds the template from form fields (no seed);
+    # update must re-pin one or the tournament runs fastchess unseeded.
+    t = store.create(name="x", template={}, engines=[])
+    updated = store.update(t.id, name="x", template={}, engines=[])
+    assert "seed" in updated.template
+    assert isinstance(updated.template["seed"], int)
+
+
+def test_update_preserves_caller_supplied_seed(store):
+    t = store.create(name="x", template={"seed": 42}, engines=[])
+    updated = store.update(t.id, name="x", template={"seed": 42}, engines=[])
+    assert updated.template["seed"] == 42
+
+
 def test_path_helpers(store):
     t = store.create(name="x", template={}, engines=[])
     assert store.pgn_path(t.id).name == "games.pgn"

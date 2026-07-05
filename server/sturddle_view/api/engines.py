@@ -150,11 +150,15 @@ async def _ensure_schema(reg: EngineRegistry, e: Engine) -> Engine:
 
 
 @router.get("")
-async def list_engines(request: Request) -> dict:
+async def list_engines(request: Request, probe: bool = True) -> dict:
+    """``probe=false`` skips the lazy schema probe -- read-only consumers
+    (e.g. the start-time drift check) must not pay an engine-spawn per
+    unprobed/broken registry entry."""
     reg = _registry(request)
     out = []
     for e in reg.list():
-        e = await _ensure_schema(reg, e)
+        if probe:
+            e = await _ensure_schema(reg, e)
         out.append(_serialize(e))
     return {
         "engines": out,

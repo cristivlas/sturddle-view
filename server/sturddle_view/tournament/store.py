@@ -84,6 +84,15 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
+def _frozen_template(template: dict) -> dict:
+    """Copy + pin a seed for fastchess (-srand) so opening-book shuffle is
+    reproducible for the tournament's lifetime. Caller-supplied seed wins
+    (deterministic tests, round-tripped edits)."""
+    frozen = dict(template)
+    frozen.setdefault("seed", secrets.randbits(63))
+    return frozen
+
+
 def _validate_state(payload: dict) -> None:
     required = {"id", "name", "status", "created_at"}
     missing = required - payload.keys()
@@ -153,19 +162,12 @@ class TournamentStore:
             d.mkdir(parents=True, exist_ok=False)
             (d / "logs").mkdir(parents=True, exist_ok=True)
 
-            # Pin a seed for fastchess so opening-book shuffle (and
-            # anything else fastchess seeds from -srand) is reproducible
-            # for the lifetime of this tournament. Caller-supplied seed
-            # wins so tests/fixtures can be deterministic.
-            frozen_template = dict(template)
-            frozen_template.setdefault("seed", secrets.randbits(63))
-
             t = Tournament(
                 id=tournament_id,
                 name=name,
                 status=STATUS_IDLE,
                 created_at=_now(),
-                template=frozen_template,
+                template=_frozen_template(template),
                 engines=list(engines),
                 engine_defaults=dict(engine_defaults or {}),
             )
@@ -270,7 +272,7 @@ class TournamentStore:
                 raise DuplicateNameError(name)
 
             t.name = name
-            t.template = dict(template)
+            t.template = _frozen_template(template)
             t.engines = list(engines)
             if engine_defaults is not None:
                 t.engine_defaults = dict(engine_defaults)

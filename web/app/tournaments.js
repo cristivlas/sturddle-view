@@ -8,13 +8,19 @@
 // selected tournament. New / Sort / Window remain in the top menubar.
 
 import { mqMobile, mqMobileH, mqMobileHPlay } from "./breakpoints.js";
-import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, showDialog, toast } from "./dialogs.js";
+import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, showDialog, toast, TOAST_DURATION_MS } from "./dialogs.js";
 import { openSettingsDialog } from "./settings-dialog.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, sprtParamErrors, STATUS } from "./tournament-events.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
-import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
+import {
+  buildEngineMatcher,
+  engineRefFromRegistry,
+  gatedStart,
+  loadGlobalEngineDefaults,
+  resolveResourceParams,
+} from "./tournament-restart.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { mountSprtButton } from "./tournament-sprt-button.js";
 import { formatType, formatResign, formatDraw } from "./tournament-format.js";
@@ -24,8 +30,6 @@ import { debounce, guard, isCtrlA, markSelectable, ribbonWidthPx } from "./wb-ut
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
 const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT params (need alpha+beta<1, elo0<elo1).";
-// Default dwell for error/warning toasts that carry a line worth reading.
-const TOAST_DURATION_MS = 8000;
 const NEW_TOURNAMENT_LABEL = "New tournament";
 const COPY_SUFFIX = " (copy)";
 const EMPTY_CTA_PREFIX = "No tournaments yet -- click ";
@@ -185,41 +189,6 @@ function makeIdCell(id) {
   return span;
 }
 
-// Resolve worst-case threading + hash from the picked engines and the
-// global engine_default_* override. Must mirror the rescheck endpoint's
-// formula so it sees the same numbers the user is committing to.
-function resolveResourceParams(template, pickedRegistry, globalDefaults) {
-  function resolvedFor(engine, optName, fallback) {
-    const opt = engine.options && engine.options[optName];
-    if (opt != null && opt !== "") return Number(opt);
-    const schema = engine.option_schema && engine.option_schema[optName];
-    if (schema && schema.default != null) return Number(schema.default);
-    return fallback;
-  }
-  const maxOver = (key, fallback) => {
-    if (!pickedRegistry.length) return fallback;
-    return pickedRegistry.reduce(
-      (acc, e) => Math.max(acc, resolvedFor(e, key, fallback)),
-      0,
-    ) || fallback;
-  };
-  const max_threads = globalDefaults.threads
-    ? Number(globalDefaults.threads)
-    : maxOver("Threads", 1);
-  const max_hash_mb = globalDefaults.hash_mb
-    ? Number(globalDefaults.hash_mb)
-    : maxOver("Hash", 16);
-
-  return {
-    parallel: Number(template.games_in_parallel || 1),
-    max_threads,
-    max_hash_mb,
-    ponder: !!template.ponder,
-    pin_affinity: !!template.pin_affinity,
-    allow_oversubscribe: !!template.allow_oversubscribe,
-  };
-}
-
 // ---- API helpers --------------------------------------------------------
 
 function syncWorkspaceOtherActive(ctx) {
@@ -231,18 +200,6 @@ function syncWorkspaceOtherActive(ctx) {
   }
   const other = ctx.tournaments.find((x) => x.id === ctx.activeId);
   ws.setOtherActive(ctx.activeId, other?.name || null);
-}
-
-async function loadGlobalEngineDefaults(ctx) {
-  try {
-    const s = await ctx.api("GET", "/settings");
-    return {
-      threads: s.engine_default_threads,
-      hash_mb: s.engine_default_hash_mb,
-    };
-  } catch {
-    return { threads: null, hash_mb: null };
-  }
 }
 
 // ---- Rendering ----------------------------------------------------------
@@ -466,21 +423,19 @@ function openWorkspace(ctx, t) {
 // ---- Verbs --------------------------------------------------------------
 
 async function startOne(ctx, t) {
-  // Stopped/failed tournaments restart from scratch: wipe the dir then
-  // launch fresh. Confirm before destroying games.
-  const willWipe = t.status === STATUS.STOPPED || t.status === STATUS.FAILED;
-  let qs = "";
-  if (willWipe) {
-    const ok = await confirm(buildRestartConfirm(t.name, t.standings?.games ?? 0));
-    if (!ok) return;
-    qs = `?${CONFIRM_WIPE_QS}`;
-  }
+  // The gate owns the confirms: wipe confirm for stopped/failed, or the
+  // engine-drift dialog when Settings > Engines changed since the freeze.
+  let started = false;
   try {
-    await ctx.api("POST", `/api/tournaments/${t.id}/start${qs}`);
+    started = await gatedStart({ api: ctx.api, log: ctx.log }, t);
   } catch (e) {
     reportError({ log: ctx.log }, `Starting "${t.name}" failed`, e);
+    // Resync even on failure: Update & start may have PATCHed (reset to
+    // idle, games wiped) before the start POST failed.
+    await ctx.loadList();
     return;
   }
+  if (!started) return;
   await ctx.loadList();
 }
 
@@ -832,7 +787,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
         }
 
         const picked = builder.getPickedRegistry();
-        const globalDefaults = await loadGlobalEngineDefaults(ctx);
+        const globalDefaults = await loadGlobalEngineDefaults(ctx.api);
         const resolved = resolveResourceParams(template, picked, globalDefaults);
         actionBtn.loading = true;
         let rescheckResult;
@@ -944,14 +899,12 @@ async function openNewTournamentDialog(ctx) {
 // count of engines no longer in the registry so the caller can warn -- the
 // warning is toasted after the dialog opens so it isn't dimmed by the scrim.
 function resolveInitialEngines(available, engines) {
-  const byId   = new Map(available.map((e) => [e.id,   e]));
-  const byName = new Map(available.map((e) => [e.name, e]));
-  const byCmd  = new Map(available.map((e) => [e.path, e]));
+  const match = buildEngineMatcher(available);
   const initialEngines = [];
   let droppedCount = 0;
   for (const e of engines || []) {
-    const match = byId.get(e.id) || byName.get(e.name) || byCmd.get(e.cmd);
-    if (match) initialEngines.push(match);
+    const entry = match(e);
+    if (entry) initialEngines.push(entry);
     else droppedCount += 1;
   }
   return { initialEngines, droppedCount };
@@ -1736,15 +1689,7 @@ function mountEngineBuilder({ host, available, initial = [] }) {
 
   return {
     getEngines() {
-      return pickedIds.map((id) => {
-        const e = byId.get(id);
-        const ref = { id, name: e.name, cmd: e.path };
-        if (Array.isArray(e.args) && e.args.length) ref.args = e.args.slice();
-        if (e.env && typeof e.env === "object" && Object.keys(e.env).length) {
-          ref.env = { ...e.env };
-        }
-        return ref;
-      });
+      return pickedIds.map((id) => engineRefFromRegistry(byId.get(id)));
     },
     getPickedRegistry() {
       // Full registry entries (with options + option_schema) for the

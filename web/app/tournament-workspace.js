@@ -22,8 +22,8 @@ import { SIDE } from "./chess-consts.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, removeKey } from "./storage.js";
-import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
-import { apiErrorDetail, confirm, toast } from "./dialogs.js";
+import { gatedStart } from "./tournament-restart.js";
+import { apiErrorDetail, toast } from "./dialogs.js";
 import {
   AUTOSCROLL_SLACK_ROW_PX,
   cssVarPx,
@@ -1082,12 +1082,16 @@ async function restartFromBanner(ctx) {
     toast(`${lbl} is currently running. Stop it first.`, { variant: "warning" });
     return;
   }
-  const ok = await confirm(buildRestartConfirm(ctx.tournament.name, ctx.detail?.standings?.games ?? 0));
-  if (!ok) return;
+  // The gate owns the confirms (wipe confirm or engine-drift dialog).
+  // ctx.detail carries the fields the gate reads (status, engines,
+  // engine_defaults, standings); the list row is the pre-load fallback.
   try {
-    await ctx.api("POST", `/api/tournaments/${ctx.tournament.id}/start?${CONFIRM_WIPE_QS}`);
+    await gatedStart({ api: ctx.api, log: ctx.log }, ctx.detail ?? ctx.tournament);
   } catch (e) {
     toast(`Restart failed: ${apiErrorDetail(e)}`, { variant: "danger" });
+    // Resync even on failure: Update & start may have PATCHed (reset to
+    // idle, games wiped) before the start POST failed.
+    await refresh(ctx);
   }
 }
 

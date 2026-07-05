@@ -316,6 +316,27 @@ def test_list_does_not_reprobe_probed_optionless_engine(client, monkeypatch, exe
     assert calls == []
 
 
+def test_list_probe_false_skips_lazy_schema_capture(client, monkeypatch, exe_a):
+    """?probe=false must not spawn engines -- read-only consumers (the
+    start-time drift check) pay no probe per unprobed registry entry."""
+    async def probe_nothing(_path, args=None, env=None):
+        return None, {}, None
+
+    monkeypatch.setattr("sturddle_view.api.engines.probe_engine", probe_nothing)
+    client.post("/engines", json={"name": "A", "path": exe_a})
+
+    calls = []
+
+    async def counting_probe(*_a, **_kw):
+        calls.append(1)
+        return "EngineA", {}, None
+
+    monkeypatch.setattr("sturddle_view.api.engines.probe_engine", counting_probe)
+    listed = client.get("/engines?probe=false").json()["engines"]
+    assert calls == []
+    assert listed[0]["name"] == "A"
+
+
 def test_patch_auto_suffix_resolves_collision(client, exe_a, exe_b):
     """auto_suffix (Reset-derived name) suffixes instead of 409ing."""
     client.post("/engines", json={"name": "A", "path": exe_a})
