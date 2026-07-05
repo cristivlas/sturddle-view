@@ -20,7 +20,7 @@ import { mountSprtButton } from "./tournament-sprt-button.js";
 import { formatType, formatResign, formatDraw } from "./tournament-format.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
-import { debounce, isCtrlA, markSelectable, ribbonWidthPx } from "./wb-utils.js";
+import { debounce, guard, isCtrlA, markSelectable, ribbonWidthPx } from "./wb-utils.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
 const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT params (need alpha+beta<1, elo0<elo1).";
@@ -30,7 +30,6 @@ const NEW_TOURNAMENT_LABEL = "New tournament";
 const COPY_SUFFIX = " (copy)";
 const EMPTY_CTA_PREFIX = "No tournaments yet -- click ";
 const EMPTY_CTA_SUFFIX = " to create one.";
-const REVEAL_DEBOUNCE_MS = 500;
 // Unicode ellipsis is intentional: this glyph is rendered into the
 // tournament-id span (user-facing), not a code token. ASCII-only rule
 // does not apply to surfaced UI text.
@@ -116,16 +115,6 @@ const PANEL_HTML = `
   `;
 
 // ---- Generic async wrappers ---------------------------------------------
-
-// Wraps an async function so concurrent calls are dropped until it resolves.
-function guard(fn) {
-  let inflight = false;
-  return async (...args) => {
-    if (inflight) return;
-    inflight = true;
-    try { await fn(...args); } finally { inflight = false; }
-  };
-}
 
 // Returns an async function that drops its result if a newer call
 // has been initiated. Always resolves with undefined --
@@ -286,7 +275,7 @@ function renderList(ctx) {
 
   if (noTournaments) {
     ctx.emptyEl.classList.remove("hidden");
-    ctx.emptyMsg.replaceChildren(...newTournamentCta(() => openNewTournamentDialog(ctx)));
+    ctx.emptyMsg.replaceChildren(...newTournamentCta(() => ctx.actions.create()));
     ctx.selectedId = null;
     syncRibbon(ctx);
     return;
@@ -331,7 +320,7 @@ function renderRow(ctx, t) {
       if (ctx.selectedId === t.id) return;
       navigateTo(ctx, t.id);
     },
-    onInfo: (t) => ctx.openInfoGuarded(t),
+    onInfo: (t) => ctx.actions.info(t),
   });
 }
 
@@ -545,14 +534,21 @@ export function tournamentActions({ api, log, getSettings, reload, onStatusClick
     api, log, loadList: reload, onStatusClick,
     get settings() { return getSettings ? getSettings() : null; },
   };
+  return guardedVerbs(ctx);
+}
+
+// One guard()ed wrapper per tournament verb. Every verb awaits network or a
+// confirm before acting, so an unguarded double-click stacks dialogs or
+// doubles POSTs. Shared by Arena's ribbon and the Studio adapter above.
+function guardedVerbs(ctx) {
   return {
-    create: () => openNewTournamentDialog(ctx),
-    edit: (t) => openEditTournamentDialog(ctx, t),
-    duplicate: (t) => openDuplicateTournamentDialog(ctx, t),
-    info: (t) => openInfoDialog(ctx, t),
-    start: (t) => startOne(ctx, t),
-    stop: (t) => stopOne(ctx, t),
-    remove: (t) => removeOne(ctx, t),
+    create: guard(() => openNewTournamentDialog(ctx)),
+    edit: guard((t) => openEditTournamentDialog(ctx, t)),
+    duplicate: guard((t) => openDuplicateTournamentDialog(ctx, t)),
+    info: guard((t) => openInfoDialog(ctx, t)),
+    start: guard((t) => startOne(ctx, t)),
+    stop: guard((t) => stopOne(ctx, t)),
+    remove: guard((t) => removeOne(ctx, t)),
   };
 }
 
@@ -626,13 +622,13 @@ function buildInfoContent(ctx, t, onStatusClick) {
       btn.className = "tournament-info-reveal-btn";
       btn.title = folder;
       btn.innerHTML = `<wa-icon name="folder-open"></wa-icon>`;
-      btn.addEventListener("click", debounce(async () => {
+      btn.addEventListener("click", guard(async () => {
         try {
           await ctx.api("POST", `/api/tournaments/${t.id}/reveal`);
         } catch (e) {
           reportError({ log: ctx.log }, "Could not open folder", e);
         }
-      }, REVEAL_DEBOUNCE_MS));
+      }));
       idCell.appendChild(btn);
     } else {
       idSpan.title = folder;
@@ -810,7 +806,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
         refreshValidity();
       });
 
-      actionBtn.addEventListener("click", async () => {
+      actionBtn.addEventListener("click", guard(async () => {
         if (!isValid()) return;
         const v = tplCtl.validate({ numEngines: builder.getEngines().length });
         if (!v.ok) {
@@ -885,7 +881,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
         } else {
           resolve(data);
         }
-      });
+      }));
 
       dialog.append(wrap, actionBtn);
       requestAnimationFrame(() => nameInput.focus());
@@ -1280,19 +1276,19 @@ function wireRibbon(ctx) {
   });
   ctx.ribbonInfoBtn.addEventListener("click", () => {
     const t = selectedTournament(ctx);
-    if (t) ctx.openInfoGuarded(t);
+    if (t) ctx.actions.info(t);
   });
   ctx.ribbonEditBtn.addEventListener("click", () => {
     const t = selectedTournament(ctx);
-    if (t && !ctx.ribbonEditBtn.disabled) openEditTournamentDialog(ctx, t);
+    if (t && !ctx.ribbonEditBtn.disabled) ctx.actions.edit(t);
   });
   ctx.ribbonDuplicateBtn.addEventListener("click", () => {
     const t = selectedTournament(ctx);
-    if (t && !ctx.ribbonDuplicateBtn.disabled) openDuplicateTournamentDialog(ctx, t);
+    if (t && !ctx.ribbonDuplicateBtn.disabled) ctx.actions.duplicate(t);
   });
   ctx.ribbonRemoveBtn.addEventListener("click", () => {
     const t = selectedTournament(ctx);
-    if (t && !ctx.ribbonRemoveBtn.disabled) ctx.removeOneGuarded(t);
+    if (t && !ctx.ribbonRemoveBtn.disabled) ctx.actions.remove(t);
   });
 }
 
@@ -1450,13 +1446,12 @@ export function mountTournaments({ container, api, events, log, token }) {
     (e) => reportError({ log }, "Loading tournaments failed", e),
   );
   ctx.debouncedLoadList = debounce(ctx.loadList, 150);
-  ctx.removeOneGuarded = guard((t) => removeOne(ctx, t));
-  ctx.openInfoGuarded = guard((t) => openInfoDialog(ctx, t));
+  ctx.actions = guardedVerbs(ctx);
 
   wireRibbon(ctx);
   wireListKeyboard(ctx);
   wireMenus(ctx);
-  ctx.newBtn.addEventListener("click", () => openNewTournamentDialog(ctx));
+  ctx.newBtn.addEventListener("click", () => ctx.actions.create());
   syncSortMenu(ctx);
 
   ctx.onMenuDocClick = () => closeMenus(ctx);

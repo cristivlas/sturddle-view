@@ -12,7 +12,7 @@ import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
 import { apiErrorDetail, confirm, pickFile, reportError, toast } from "./dialogs.js";
-import { markSelectable } from "./wb-utils.js";
+import { guard, markSelectable } from "./wb-utils.js";
 import { showEngineOptionsDialog } from "./engine-options-dialog.js";
 import { attachEngineColResize, createWrapSizer } from "./engines-list-layout.js";
 
@@ -196,7 +196,7 @@ function renderList(ctx) {
     tr.addEventListener("dblclick", () => {
       ctx.selectedDetailId = e.id;
       renderAll(ctx);
-      openOptionsForSelected(ctx);
+      ctx.openOptionsGuarded();
     });
     list.appendChild(tr);
   }
@@ -441,6 +441,12 @@ export function mountEngineList(container, api, opts = {}) {
     sortAscBtn: container.querySelector(".engines-sort-asc"),
     sortDescBtn: container.querySelector(".engines-sort-desc"),
   };
+  // Every action awaits (API / confirm / picker) before acting; guard each
+  // once so ribbon clicks, row dblclick, and Space share one in-flight gate.
+  ctx.activateGuarded = guard(() => activateSelected(ctx));
+  ctx.removeGuarded = guard(() => removeSelected(ctx));
+  ctx.openOptionsGuarded = guard(() => openOptionsForSelected(ctx));
+  ctx.addGuarded = guard(() => addEngine(ctx));
 
   ctx.sortAscBtn.addEventListener("click", () => setSort(ctx, "asc"));
   ctx.sortDescBtn.addEventListener("click", () => setSort(ctx, "desc"));
@@ -448,7 +454,7 @@ export function mountEngineList(container, api, opts = {}) {
 
   const teardownSearch = setupEngineSearch(ctx);
 
-  ctx.detailUseBtn.addEventListener("click", () => activateSelected(ctx));
+  ctx.detailUseBtn.addEventListener("click", ctx.activateGuarded);
   // The table is data-selectable (Ctrl+A copy), so a double/triple-click
   // otherwise paints a word/paragraph selection over the row. Cancel the
   // multi-click gesture; click/dblclick and drag-select still work.
@@ -458,11 +464,11 @@ export function mountEngineList(container, api, opts = {}) {
   ctx.list.addEventListener("keydown", (ev) => {
     if (ev.key !== " ") return;
     ev.preventDefault();
-    activateSelected(ctx);
+    ctx.activateGuarded();
   });
-  ctx.detailRemoveBtn.addEventListener("click", () => removeSelected(ctx));
-  ctx.detailOptionsBtn.addEventListener("click", () => openOptionsForSelected(ctx));
-  ctx.addBtn.addEventListener("click", () => addEngine(ctx));
+  ctx.detailRemoveBtn.addEventListener("click", ctx.removeGuarded);
+  ctx.detailOptionsBtn.addEventListener("click", ctx.openOptionsGuarded);
+  ctx.addBtn.addEventListener("click", ctx.addGuarded);
 
   attachEngineColResize(container, colPctsKey);
 

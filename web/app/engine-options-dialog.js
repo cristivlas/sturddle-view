@@ -6,6 +6,7 @@
 // profile) so the user sees what the new launch profile actually exposes.
 
 import { showDialog, pickFile, toast, reportError } from "./dialogs.js";
+import { guard } from "./wb-utils.js";
 import { mqNarrowDialog } from "./breakpoints.js";
 
 const PATH_NAME_RE = /(Path|File|Dir)$/i;
@@ -105,7 +106,7 @@ function buildField(name, entry, current, ctx) {
         const browseIcon = document.createElement("wa-icon");
         browseIcon.setAttribute("name", "folder-open");
         browse.appendChild(browseIcon);
-        browse.addEventListener("click", async () => {
+        browse.addEventListener("click", guard(async () => {
           const picked = await pickFile({
             api: ctx.api,
             title: `Pick ${name}`,
@@ -115,7 +116,7 @@ function buildField(name, entry, current, ctx) {
             text.value = picked;
             ctx.values[name] = picked;
           }
-        });
+        }));
         input.append(text, browse);
       } else {
         input = document.createElement("wa-input");
@@ -448,7 +449,7 @@ export function showEngineOptionsDialog({
       refresh.slot = "footer";
       refresh.size = "small";
       refresh.textContent = REFRESH_BTN_LABEL;
-      refresh.addEventListener("click", async () => {
+      refresh.addEventListener("click", guard(async () => {
         // Probe with the *in-progress* launch profile so the user sees
         // options gated by their newly-typed args/env. Server doesn't
         // touch the registry; we merge the result into a synthetic engine
@@ -485,7 +486,7 @@ export function showEngineOptionsDialog({
         } catch (e) {
           reportError(null, "Refresh failed", e);
         }
-      });
+      }));
 
       const defaultsBtn = document.createElement("wa-button");
       defaultsBtn.slot = "footer";
@@ -517,7 +518,7 @@ export function showEngineOptionsDialog({
       save.size = "small";
       save.variant = "brand";
       save.textContent = SAVE_BTN_LABEL;
-      save.addEventListener("click", async () => {
+      save.addEventListener("click", guard(async () => {
         const diff = diffFromDefaults(ctx.values, schema);
         const trimmed = (currentName || "").trim();
         const body = {
@@ -541,7 +542,7 @@ export function showEngineOptionsDialog({
         } catch (e) {
           reportError(null, "Save failed", e);
         }
-      });
+      }));
 
       dialog.append(refresh, defaultsBtn, save);
 

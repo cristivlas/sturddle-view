@@ -43,6 +43,17 @@ export function debounce(fn, ms) {
   return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
 }
 
+// Wraps an async function so concurrent calls are dropped until it resolves.
+// The re-entrancy guard for click/dblclick handlers that await before acting.
+export function guard(fn) {
+  let inflight = false;
+  return async (...args) => {
+    if (inflight) return;
+    inflight = true;
+    try { await fn(...args); } finally { inflight = false; }
+  };
+}
+
 // Format an engine score for display. Options cover the per-site variants:
 //   empty       text for a missing score ("" or "--")
 //   matePrefix  glyph before a mate count ("#" or "M")
