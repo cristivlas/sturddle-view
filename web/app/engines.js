@@ -449,6 +449,12 @@ export function mountEngineList(container, api, opts = {}) {
   const teardownSearch = setupEngineSearch(ctx);
 
   ctx.detailUseBtn.addEventListener("click", () => activateSelected(ctx));
+  // The table is data-selectable (Ctrl+A copy), so a double/triple-click
+  // otherwise paints a word/paragraph selection over the row. Cancel the
+  // multi-click gesture; click/dblclick and drag-select still work.
+  ctx.list.addEventListener("mousedown", (ev) => {
+    if (ev.detail > 1) ev.preventDefault();
+  });
   ctx.list.addEventListener("keydown", (ev) => {
     if (ev.key !== " ") return;
     ev.preventDefault();
