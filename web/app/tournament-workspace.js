@@ -22,13 +22,14 @@ import { SIDE } from "./chess-consts.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadJson, saveJson, removeKey } from "./storage.js";
-import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
-import { apiErrorDetail, confirm, toast } from "./dialogs.js";
+import { gatedStart } from "./tournament-restart.js";
+import { apiErrorDetail, toast } from "./dialogs.js";
 import {
   AUTOSCROLL_SLACK_ROW_PX,
   cssVarPx,
   escapeHtml,
   flashWindow,
+  guard,
   isPinnedToBottom,
   markSelectable,
   scrollToBottom,
@@ -1070,6 +1071,30 @@ function scheduleRender(ctx, flagKey, renderFn) {
   requestAnimationFrame(() => { ctx[flagKey] = false; renderFn(ctx); });
 }
 
+// Restart action behind the error-banner button. Guarded once per workspace
+// (ctx.restartGuarded) -- the banner re-renders on stream events, and a
+// per-render guard would mint a fresh gate mid-restart.
+async function restartFromBanner(ctx) {
+  // Re-read ctx.otherActiveId at click time. btn.disabled is
+  // latched at render and can lag a setOtherActive update.
+  if (ctx.otherActiveId != null) {
+    const lbl = ctx.otherActiveName ? `"${ctx.otherActiveName}"` : "another tournament";
+    toast(`${lbl} is currently running. Stop it first.`, { variant: "warning" });
+    return;
+  }
+  // The gate owns the confirms (wipe confirm or engine-drift dialog).
+  // ctx.detail carries the fields the gate reads (status, engines,
+  // engine_defaults, standings); the list row is the pre-load fallback.
+  try {
+    await gatedStart({ api: ctx.api, log: ctx.log }, ctx.detail ?? ctx.tournament);
+  } catch (e) {
+    toast(`Restart failed: ${apiErrorDetail(e)}`, { variant: "danger" });
+    // Resync even on failure: Update & start may have PATCHed (reset to
+    // idle, games wiped) before the start POST failed.
+    await refresh(ctx);
+  }
+}
+
 function renderErrorBanner(ctx) {
   const banner = ctx.logBody.querySelector(".wb-error-banner");
   if (banner) {
@@ -1127,22 +1152,7 @@ function renderErrorBanner(ctx) {
         const ic = document.createElement("wa-icon");
         ic.setAttribute("name", "rotate-right");
         btn.appendChild(ic);
-        btn.addEventListener("click", async () => {
-          // Re-read ctx.otherActiveId at click time. btn.disabled is
-          // latched at render and can lag a setOtherActive update.
-          if (ctx.otherActiveId != null) {
-            const lbl = ctx.otherActiveName ? `"${ctx.otherActiveName}"` : "another tournament";
-            toast(`${lbl} is currently running. Stop it first.`, { variant: "warning" });
-            return;
-          }
-          const ok = await confirm(buildRestartConfirm(ctx.tournament.name, ctx.detail?.standings?.games ?? 0));
-          if (!ok) return;
-          try {
-            await ctx.api("POST", `/api/tournaments/${ctx.tournament.id}/start?${CONFIRM_WIPE_QS}`);
-          } catch (e) {
-            toast(`Restart failed: ${apiErrorDetail(e)}`, { variant: "danger" });
-          }
-        });
+        btn.addEventListener("click", ctx.restartGuarded);
         pre.appendChild(btn);
         pre.append(trailing);
       }
@@ -1361,6 +1371,7 @@ export function openTournamentWorkspace({ api, events, log, token, tournament, t
   ctx.scheduleBody = makeScheduleBody();
   ctx.logBody = makeLogBody();
   ctx.enginesBody = makeEnginesBody();
+  ctx.restartGuarded = guard(() => restartFromBanner(ctx));
 
   // Board style is fetched once per workspace open and reused for every
   // watch click. Avoids a /settings round-trip on each click and keeps

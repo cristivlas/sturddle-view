@@ -8,28 +8,32 @@
 // selected tournament. New / Sort / Window remain in the top menubar.
 
 import { mqMobile, mqMobileH, mqMobileHPlay } from "./breakpoints.js";
-import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, showDialog, toast } from "./dialogs.js";
+import { apiErrorDetail, buildToastWithActions, confirm, makeToastDismissBtn, OPEN_ENGINES_ACTION, reportError, showDialog, toast, TOAST_DURATION_MS } from "./dialogs.js";
 import { openSettingsDialog } from "./settings-dialog.js";
 import { crashErrorLine, CRASH_TOAST_DURATION_MS, EVT, KIND, POLL_INTERVAL_MS, sprtParamErrors, STATUS } from "./tournament-events.js";
 import { APP_EVT } from "./app-events.js";
 import { STORAGE_KEY } from "./storage-keys.js";
 import { loadRaw, saveRaw } from "./storage.js";
-import { CONFIRM_WIPE_QS, buildRestartConfirm } from "./tournament-restart.js";
+import {
+  buildEngineMatcher,
+  engineRefFromRegistry,
+  gatedStart,
+  loadGlobalEngineDefaults,
+  resolveResourceParams,
+} from "./tournament-restart.js";
 import { mountTournamentTemplateForm } from "./tournament-template-form.js";
 import { mountSprtButton } from "./tournament-sprt-button.js";
 import { formatType, formatResign, formatDraw } from "./tournament-format.js";
 import { clearWorkspaceState, getActiveLayout, getActiveWorkspace, hasSavedWorkspaceState, LAYOUT, openTournamentWorkspace } from "./tournament-workspace.js";
 import { renderTournamentRow, totalGames, updateRowProgress } from "./tournament-row.js";
-import { debounce, isCtrlA, markSelectable, ribbonWidthPx } from "./wb-utils.js";
+import { debounce, guard, isCtrlA, markSelectable, ribbonWidthPx } from "./wb-utils.js";
 
 const NEED_TWO_ENGINES_MSG = "Register at least 2 engines first.";
 const BAD_SPRT_DEFAULTS_MSG = "Invalid SPRT params (need alpha+beta<1, elo0<elo1).";
-// Default dwell for error/warning toasts that carry a line worth reading.
-const TOAST_DURATION_MS = 8000;
 const NEW_TOURNAMENT_LABEL = "New tournament";
+const COPY_SUFFIX = " (copy)";
 const EMPTY_CTA_PREFIX = "No tournaments yet -- click ";
 const EMPTY_CTA_SUFFIX = " to create one.";
-const REVEAL_DEBOUNCE_MS = 500;
 // Unicode ellipsis is intentional: this glyph is rendered into the
 // tournament-id span (user-facing), not a code token. ASCII-only rule
 // does not apply to surfaced UI text.
@@ -94,6 +98,9 @@ const PANEL_HTML = `
           <button class="ribbon-btn t-edit" disabled aria-label="Edit" title="Edit">
             <wa-icon name="pen-to-square"></wa-icon>
           </button>
+          <button class="ribbon-btn t-duplicate" disabled aria-label="Duplicate" title="Duplicate">
+            <wa-icon name="copy"></wa-icon>
+          </button>
           <span class="ribbon-sep" aria-hidden="true"></span>
           <button class="ribbon-btn ribbon-btn--danger t-remove" disabled aria-label="Remove" title="Remove">
             <wa-icon name="trash"></wa-icon>
@@ -112,16 +119,6 @@ const PANEL_HTML = `
   `;
 
 // ---- Generic async wrappers ---------------------------------------------
-
-// Wraps an async function so concurrent calls are dropped until it resolves.
-function guard(fn) {
-  let inflight = false;
-  return async (...args) => {
-    if (inflight) return;
-    inflight = true;
-    try { await fn(...args); } finally { inflight = false; }
-  };
-}
 
 // Returns an async function that drops its result if a newer call
 // has been initiated. Always resolves with undefined --
@@ -192,41 +189,6 @@ function makeIdCell(id) {
   return span;
 }
 
-// Resolve worst-case threading + hash from the picked engines and the
-// global engine_default_* override. Must mirror the rescheck endpoint's
-// formula so it sees the same numbers the user is committing to.
-function resolveResourceParams(template, pickedRegistry, globalDefaults) {
-  function resolvedFor(engine, optName, fallback) {
-    const opt = engine.options && engine.options[optName];
-    if (opt != null && opt !== "") return Number(opt);
-    const schema = engine.option_schema && engine.option_schema[optName];
-    if (schema && schema.default != null) return Number(schema.default);
-    return fallback;
-  }
-  const maxOver = (key, fallback) => {
-    if (!pickedRegistry.length) return fallback;
-    return pickedRegistry.reduce(
-      (acc, e) => Math.max(acc, resolvedFor(e, key, fallback)),
-      0,
-    ) || fallback;
-  };
-  const max_threads = globalDefaults.threads
-    ? Number(globalDefaults.threads)
-    : maxOver("Threads", 1);
-  const max_hash_mb = globalDefaults.hash_mb
-    ? Number(globalDefaults.hash_mb)
-    : maxOver("Hash", 16);
-
-  return {
-    parallel: Number(template.games_in_parallel || 1),
-    max_threads,
-    max_hash_mb,
-    ponder: !!template.ponder,
-    pin_affinity: !!template.pin_affinity,
-    allow_oversubscribe: !!template.allow_oversubscribe,
-  };
-}
-
 // ---- API helpers --------------------------------------------------------
 
 function syncWorkspaceOtherActive(ctx) {
@@ -238,18 +200,6 @@ function syncWorkspaceOtherActive(ctx) {
   }
   const other = ctx.tournaments.find((x) => x.id === ctx.activeId);
   ws.setOtherActive(ctx.activeId, other?.name || null);
-}
-
-async function loadGlobalEngineDefaults(ctx) {
-  try {
-    const s = await ctx.api("GET", "/settings");
-    return {
-      threads: s.engine_default_threads,
-      hash_mb: s.engine_default_hash_mb,
-    };
-  } catch {
-    return { threads: null, hash_mb: null };
-  }
 }
 
 // ---- Rendering ----------------------------------------------------------
@@ -282,7 +232,7 @@ function renderList(ctx) {
 
   if (noTournaments) {
     ctx.emptyEl.classList.remove("hidden");
-    ctx.emptyMsg.replaceChildren(...newTournamentCta(() => openNewTournamentDialog(ctx)));
+    ctx.emptyMsg.replaceChildren(...newTournamentCta(() => ctx.actions.create()));
     ctx.selectedId = null;
     syncRibbon(ctx);
     return;
@@ -327,7 +277,7 @@ function renderRow(ctx, t) {
       if (ctx.selectedId === t.id) return;
       navigateTo(ctx, t.id);
     },
-    onInfo: (t) => ctx.openInfoGuarded(t),
+    onInfo: (t) => ctx.actions.info(t),
   });
 }
 
@@ -349,6 +299,7 @@ function syncRibbon(ctx) {
     ctx.ribbonWorkspaceBtn.disabled = true;
     ctx.ribbonInfoBtn.disabled = true;
     ctx.ribbonEditBtn.disabled = true;
+    ctx.ribbonDuplicateBtn.disabled = true;
     ctx.ribbonRemoveBtn.disabled = true;
     if (!ctx.ribbonStartBtn.querySelector("wa-icon")) ctx.ribbonStartBtn.innerHTML = '<wa-icon class="t-start-icon" name="play"></wa-icon>';
     else ctx.ribbonStartBtn.querySelector("wa-icon").setAttribute("name", "play");
@@ -370,6 +321,8 @@ function syncRibbon(ctx) {
   ctx.ribbonWorkspaceBtn.disabled = !!getActiveWorkspace();
   ctx.ribbonInfoBtn.disabled = false;
   ctx.ribbonEditBtn.disabled = isActive || status === STATUS.DONE;
+  // Duplicate always safe: it POSTs a fresh copy, never touches the source.
+  ctx.ribbonDuplicateBtn.disabled = false;
 
   const starting = t.id === ctx.startingId;
   const startIconName = isRestart ? "rotate-right" : "play";
@@ -470,21 +423,19 @@ function openWorkspace(ctx, t) {
 // ---- Verbs --------------------------------------------------------------
 
 async function startOne(ctx, t) {
-  // Stopped/failed tournaments restart from scratch: wipe the dir then
-  // launch fresh. Confirm before destroying games.
-  const willWipe = t.status === STATUS.STOPPED || t.status === STATUS.FAILED;
-  let qs = "";
-  if (willWipe) {
-    const ok = await confirm(buildRestartConfirm(t.name, t.standings?.games ?? 0));
-    if (!ok) return;
-    qs = `?${CONFIRM_WIPE_QS}`;
-  }
+  // The gate owns the confirms: wipe confirm for stopped/failed, or the
+  // engine-drift dialog when Settings > Engines changed since the freeze.
+  let started = false;
   try {
-    await ctx.api("POST", `/api/tournaments/${t.id}/start${qs}`);
+    started = await gatedStart({ api: ctx.api, log: ctx.log }, t);
   } catch (e) {
     reportError({ log: ctx.log }, `Starting "${t.name}" failed`, e);
+    // Resync even on failure: Update & start may have PATCHed (reset to
+    // idle, games wiped) before the start POST failed.
+    await ctx.loadList();
     return;
   }
+  if (!started) return;
   await ctx.loadList();
 }
 
@@ -533,18 +484,26 @@ async function removeOne(ctx, t) {
 // Shared tournament verbs for other UIs (e.g. Studio). The action functions
 // only read {api, log, settings, loadList} off ctx, so a minimal ctx adapter
 // lets a different perspective reuse them with no change to the verbs.
-export function tournamentActions({ api, log, getSettings, reload }) {
+export function tournamentActions({ api, log, getSettings, reload, onStatusClick }) {
   const ctx = {
-    api, log, loadList: reload,
+    api, log, loadList: reload, onStatusClick,
     get settings() { return getSettings ? getSettings() : null; },
   };
+  return guardedVerbs(ctx);
+}
+
+// One guard()ed wrapper per tournament verb. Every verb awaits network or a
+// confirm before acting, so an unguarded double-click stacks dialogs or
+// doubles POSTs. Shared by Arena's ribbon and the Studio adapter above.
+function guardedVerbs(ctx) {
   return {
-    create: () => openNewTournamentDialog(ctx),
-    edit: (t) => openEditTournamentDialog(ctx, t),
-    info: (t) => openInfoDialog(ctx, t),
-    start: (t) => startOne(ctx, t),
-    stop: (t) => stopOne(ctx, t),
-    remove: (t) => removeOne(ctx, t),
+    create: guard(() => openNewTournamentDialog(ctx)),
+    edit: guard((t) => openEditTournamentDialog(ctx, t)),
+    duplicate: guard((t) => openDuplicateTournamentDialog(ctx, t)),
+    info: guard((t) => openInfoDialog(ctx, t)),
+    start: guard((t) => startOne(ctx, t)),
+    stop: guard((t) => stopOne(ctx, t)),
+    remove: guard((t) => removeOne(ctx, t)),
   };
 }
 
@@ -580,13 +539,19 @@ async function openInfoDialog(ctx, t) {
       dialog.classList.add("tournament-info-dialog");
       const wrap = document.createElement("div");
       wrap.className = "tournament-info";
-      wrap.appendChild(buildInfoContent(ctx, detailed));
+      // onStatusClick (Studio only): renders Status as a link that closes the
+      // dialog and jumps to the Standings tab. Absent in Arena, where
+      // Standings is a workspace window with no unambiguous deep-link target.
+      const onStatus = ctx.onStatusClick
+        ? () => { resolve(); ctx.onStatusClick(detailed); }
+        : null;
+      wrap.appendChild(buildInfoContent(ctx, detailed, onStatus));
       dialog.appendChild(wrap);
     },
   });
 }
 
-function buildInfoContent(ctx, t) {
+function buildInfoContent(ctx, t, onStatusClick) {
   const tpl = t.template || {};
   const dl = document.createElement("dl");
   dl.className = "tournament-info-grid";
@@ -612,20 +577,30 @@ function buildInfoContent(ctx, t) {
       btn.className = "tournament-info-reveal-btn";
       btn.title = folder;
       btn.innerHTML = `<wa-icon name="folder-open"></wa-icon>`;
-      btn.addEventListener("click", debounce(async () => {
+      btn.addEventListener("click", guard(async () => {
         try {
           await ctx.api("POST", `/api/tournaments/${t.id}/reveal`);
         } catch (e) {
           reportError({ log: ctx.log }, "Could not open folder", e);
         }
-      }, REVEAL_DEBOUNCE_MS));
+      }));
       idCell.appendChild(btn);
     } else {
       idSpan.title = folder;
     }
   }
   row("ID", idCell);
-  row("Status", t.status);
+  if (onStatusClick) {
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "tournament-info-status-link";
+    link.textContent = t.status;
+    link.title = "Show standings";
+    link.addEventListener("click", onStatusClick);
+    row("Status", link);
+  } else {
+    row("Status", t.status);
+  }
   if (t.last_error) {
     const tail = (t.last_error.stderr_tail || []).slice(-10).join("\n");
     const pre = document.createElement("pre");
@@ -700,7 +675,7 @@ function buildInfoContent(ctx, t) {
 
 // Shared dialog body for both create and edit flows.
 // Returns a Promise that resolves to {name, template, engines} or null.
-async function openTournamentDialog(ctx, { label, actionLabel, initialName, initialEngines, initialTemplate, available, onSubmit }) {
+async function openTournamentDialog(ctx, { label, actionLabel, initialName, initialEngines, initialTemplate, available, onSubmit, onOpened }) {
   // Read the saved defaults fresh from the server store here, not from a
   // per-view settings cache: Arena and Studio refresh that cache differently
   // (Studio not at all), so the shared dialog must own its source of truth.
@@ -786,7 +761,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
         refreshValidity();
       });
 
-      actionBtn.addEventListener("click", async () => {
+      actionBtn.addEventListener("click", guard(async () => {
         if (!isValid()) return;
         const v = tplCtl.validate({ numEngines: builder.getEngines().length });
         if (!v.ok) {
@@ -812,7 +787,7 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
         }
 
         const picked = builder.getPickedRegistry();
-        const globalDefaults = await loadGlobalEngineDefaults(ctx);
+        const globalDefaults = await loadGlobalEngineDefaults(ctx.api);
         const resolved = resolveResourceParams(template, picked, globalDefaults);
         actionBtn.loading = true;
         let rescheckResult;
@@ -861,10 +836,21 @@ async function openTournamentDialog(ctx, { label, actionLabel, initialName, init
         } else {
           resolve(data);
         }
-      });
+      }));
 
       dialog.append(wrap, actionBtn);
       requestAnimationFrame(() => nameInput.focus());
+      // Fire after the dialog is on the top layer so a warning toast layers
+      // above the modal scrim instead of behind it (wa-after-show, not the
+      // body rAF, which runs before showDialog flips dialog.open).
+      if (onOpened) {
+        const onShow = (ev) => {
+          if (ev.target !== dialog) return;
+          dialog.removeEventListener("wa-after-show", onShow);
+          onOpened();
+        };
+        dialog.addEventListener("wa-after-show", onShow);
+      }
     },
   });
 }
@@ -908,6 +894,40 @@ async function openNewTournamentDialog(ctx) {
   });
 }
 
+// Resolve a tournament's engines to registry entries so the builder can
+// preselect them. Prefer id match; fall back to name then cmd. Returns the
+// count of engines no longer in the registry so the caller can warn -- the
+// warning is toasted after the dialog opens so it isn't dimmed by the scrim.
+function resolveInitialEngines(available, engines) {
+  const match = buildEngineMatcher(available);
+  const initialEngines = [];
+  let droppedCount = 0;
+  for (const e of engines || []) {
+    const entry = match(e);
+    if (entry) initialEngines.push(entry);
+    else droppedCount += 1;
+  }
+  return { initialEngines, droppedCount };
+}
+
+// Warn about engines dropped during resolve. Fired from inside the dialog
+// body so the toast layers above the modal scrim instead of behind it.
+function warnDroppedEngines(droppedCount, verb) {
+  if (droppedCount <= 0) return;
+  toast(
+    `${droppedCount} engine${droppedCount === 1 ? "" : "s"} no longer in the registry -- re-add before ${verb}.`,
+    { variant: "warning", duration: TOAST_DURATION_MS },
+  );
+}
+
+// Suggest a non-conflicting copy name: "Foo (copy)", then "Foo (copy 2)"...
+function suggestCopyName(base, existingNames) {
+  const taken = new Set(existingNames);
+  let candidate = `${base}${COPY_SUFFIX}`;
+  for (let n = 2; taken.has(candidate); n += 1) candidate = `${base}${COPY_SUFFIX} ${n}`;
+  return candidate;
+}
+
 async function openEditTournamentDialog(ctx, t) {
   // PRE-OPEN gate: warn early so the user can bail without loading the
   // registry or filling the dialog. Keep this even though there is also a
@@ -937,25 +957,7 @@ async function openEditTournamentDialog(ctx, t) {
     return;
   }
 
-  // Resolve the tournament's current engines to registry entries so the
-  // builder can preselect them. Prefer id match; fall back to name then cmd.
-  const byId   = new Map(available.map((e) => [e.id,   e]));
-  const byName = new Map(available.map((e) => [e.name, e]));
-  const byCmd  = new Map(available.map((e) => [e.path, e]));
-  const original = t.engines || [];
-  const initialEngines = [];
-  let droppedCount = 0;
-  for (const e of original) {
-    const match = byId.get(e.id) || byName.get(e.name) || byCmd.get(e.cmd);
-    if (match) initialEngines.push(match);
-    else droppedCount += 1;
-  }
-  if (droppedCount > 0) {
-    toast(
-      `${droppedCount} engine${droppedCount === 1 ? "" : "s"} no longer in the registry -- re-add before applying.`,
-      { variant: "warning", duration: TOAST_DURATION_MS },
-    );
-  }
+  const { initialEngines, droppedCount } = resolveInitialEngines(available, t.engines);
 
   await openTournamentDialog(ctx, {
     label: `Edit "${t.name}"`,
@@ -964,6 +966,7 @@ async function openEditTournamentDialog(ctx, t) {
     initialEngines,
     initialTemplate: t.template || null,
     available,
+    onOpened: () => warnDroppedEngines(droppedCount, "applying"),
     onSubmit: async (data) => {
       // POST-DIALOG gate: last chance to abort before the destructive PATCH.
       // Any edit (template, engines, or rename) wipes the PGN server-side
@@ -991,6 +994,58 @@ async function openEditTournamentDialog(ctx, t) {
       // re-sync.
       await ctx.loadList();
       if (failed) return false;
+    },
+  });
+}
+
+// Duplicate: prefill the create dialog from an existing tournament (engines +
+// frozen template, SPRT included) under a non-conflicting copy name. Unlike
+// Edit this POSTs a new tournament, so there are no game-deletion gates.
+async function openDuplicateTournamentDialog(ctx, t) {
+  let registry;
+  try {
+    registry = await ctx.api("GET", "/engines");
+  } catch (e) {
+    reportError({ log: ctx.log }, "Loading engine registry failed", e);
+    return;
+  }
+  const available = registry.engines || [];
+  if (available.length < 2) {
+    toast(buildToastWithActions(NEED_TWO_ENGINES_MSG, [OPEN_ENGINES_ACTION]), { variant: "danger" });
+    return;
+  }
+
+  const { initialEngines, droppedCount } = resolveInitialEngines(available, t.engines);
+
+  // Existing names for a conflict-free default: use the loaded list when
+  // present (Arena), else fetch (Studio's action ctx carries no list). On
+  // fetch failure fall back to [] -- the suggestion may then collide, in
+  // which case the POST's 409 shake is the backstop.
+  let existing = ctx.tournaments;
+  if (!existing) {
+    const list = await ctx.api("GET", "/api/tournaments").catch(() => null);
+    existing = list?.tournaments || [];
+  }
+  const initialName = suggestCopyName(t.name, existing.map((x) => x.name));
+
+  await openTournamentDialog(ctx, {
+    label: "Copy tournament",
+    actionLabel: "Create",
+    initialName,
+    initialEngines,
+    initialTemplate: t.template || null,
+    available,
+    onOpened: () => warnDroppedEngines(droppedCount, "creating the copy"),
+    onSubmit: async (data) => {
+      try {
+        await ctx.api("POST", "/api/tournaments", data);
+        toast(`Created new tournament "${data.name}"`, { variant: "success" });
+      } catch (e) {
+        reportError({ log: ctx.log }, "Duplicating tournament failed", e);
+        if (/-> 409\b/.test(e.message)) throw Object.assign(e, { isNameCollision: true });
+        return false;
+      }
+      await ctx.loadList();
     },
   });
 }
@@ -1174,15 +1229,19 @@ function wireRibbon(ctx) {
   });
   ctx.ribbonInfoBtn.addEventListener("click", () => {
     const t = selectedTournament(ctx);
-    if (t) ctx.openInfoGuarded(t);
+    if (t) ctx.actions.info(t);
   });
   ctx.ribbonEditBtn.addEventListener("click", () => {
     const t = selectedTournament(ctx);
-    if (t && !ctx.ribbonEditBtn.disabled) openEditTournamentDialog(ctx, t);
+    if (t && !ctx.ribbonEditBtn.disabled) ctx.actions.edit(t);
+  });
+  ctx.ribbonDuplicateBtn.addEventListener("click", () => {
+    const t = selectedTournament(ctx);
+    if (t && !ctx.ribbonDuplicateBtn.disabled) ctx.actions.duplicate(t);
   });
   ctx.ribbonRemoveBtn.addEventListener("click", () => {
     const t = selectedTournament(ctx);
-    if (t && !ctx.ribbonRemoveBtn.disabled) ctx.removeOneGuarded(t);
+    if (t && !ctx.ribbonRemoveBtn.disabled) ctx.actions.remove(t);
   });
 }
 
@@ -1295,6 +1354,7 @@ export function mountTournaments({ container, api, events, log, token }) {
     ribbonWorkspaceBtn: container.querySelector(".t-workspace"),
     ribbonInfoBtn: container.querySelector(".t-info"),
     ribbonEditBtn: container.querySelector(".t-edit"),
+    ribbonDuplicateBtn: container.querySelector(".t-duplicate"),
     ribbonRemoveBtn: container.querySelector(".t-remove"),
     snapBtn: container.querySelector(".tmb-snap"),
     tileBtn: container.querySelector(".tmb-tile"),
@@ -1339,13 +1399,12 @@ export function mountTournaments({ container, api, events, log, token }) {
     (e) => reportError({ log }, "Loading tournaments failed", e),
   );
   ctx.debouncedLoadList = debounce(ctx.loadList, 150);
-  ctx.removeOneGuarded = guard((t) => removeOne(ctx, t));
-  ctx.openInfoGuarded = guard((t) => openInfoDialog(ctx, t));
+  ctx.actions = guardedVerbs(ctx);
 
   wireRibbon(ctx);
   wireListKeyboard(ctx);
   wireMenus(ctx);
-  ctx.newBtn.addEventListener("click", () => openNewTournamentDialog(ctx));
+  ctx.newBtn.addEventListener("click", () => ctx.actions.create());
   syncSortMenu(ctx);
 
   ctx.onMenuDocClick = () => closeMenus(ctx);
@@ -1630,15 +1689,7 @@ function mountEngineBuilder({ host, available, initial = [] }) {
 
   return {
     getEngines() {
-      return pickedIds.map((id) => {
-        const e = byId.get(id);
-        const ref = { id, name: e.name, cmd: e.path };
-        if (Array.isArray(e.args) && e.args.length) ref.args = e.args.slice();
-        if (e.env && typeof e.env === "object" && Object.keys(e.env).length) {
-          ref.env = { ...e.env };
-        }
-        return ref;
-      });
+      return pickedIds.map((id) => engineRefFromRegistry(byId.get(id)));
     },
     getPickedRegistry() {
       // Full registry entries (with options + option_schema) for the

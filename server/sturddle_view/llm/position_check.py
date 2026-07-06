@@ -887,3 +887,41 @@ def find_tool_mentions(text: str) -> list[str]:
             seen.add(phrase)
             out.append(phrase)
     return out
+
+
+def _flagged_surfaces(text: str, board: chess.Board) -> set[str]:
+    """Exact prose spans a non-LLM board recognizer flags on `board`: illegal
+    moves/lines, false piece and bishop-color claims. Tool mentions are
+    board-independent and excluded here (see has_position_flags). Strict --
+    the whole text, no future-line truncation or opening carve-out. One shared
+    dedup set across the move recognizers, as the striking path uses."""
+    handled_spans = handled_continuation_spans(text, board)
+    seen_moves: set[str] = set()
+    out: set[str] = set()
+    for surface, _label in iter_illegal_moves(text, board, seen_moves, handled_spans):
+        out.add(surface)
+    for surface, _label in iter_illegal_piece_moves(text, board, seen_moves):
+        out.add(surface)
+    for surface, _label in iter_illegal_square_moves(text, board, seen_moves):
+        out.add(surface)
+    for surface, _label in iter_illegal_pawn_moves(text, board, seen_moves):
+        out.add(surface)
+    for surface, _label, _span in iter_illegal_continuations(text, board):
+        out.add(surface)
+    for surface, _label, _square in iter_false_claim_squares(text, board):
+        out.add(surface)
+    for surface, _label, _fact in iter_false_bishop_color_refs(text, board):
+        out.add(surface)
+    return out
+
+
+def has_position_flags(text: str, before: chess.Board, after: chess.Board) -> bool:
+    """True if `text` names a genuine error, validating across the move
+    boundary. A verifier verdict restates the move it evaluated (legal on
+    `before`) and its replies (legal on `after`); a single board misfires on
+    whichever side it isn't. So a board claim flags only when it holds on
+    NEITHER board -- a real illegality/falsehood, not a boundary artifact.
+    Tool mentions are board-independent, so they flag regardless."""
+    if find_tool_mentions(text):
+        return True
+    return bool(_flagged_surfaces(text, before) & _flagged_surfaces(text, after))

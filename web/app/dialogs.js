@@ -99,6 +99,13 @@ export function alert({ message, okLabel = "OK", messageClass, width } = {}) {
   });
 }
 
+// Standard width for confirm-style dialogs; shared so kin dialogs
+// (e.g. the engine-drift chooser) pin the same footprint.
+export const CONFIRM_DIALOG_WIDTH = "min(440px, 92vw)";
+
+// Default dwell for error/warning toasts that carry a line worth reading.
+export const TOAST_DURATION_MS = 8000;
+
 /** Modal confirm. Resolves true on confirm, false otherwise.
  *  No title by design — the message itself carries the question, the
  *  destructive button label is the verb. (iOS-style.) */
@@ -107,7 +114,7 @@ export function confirm({
   okLabel = "OK",
   cancelLabel = "Cancel",
   destructive = false,
-  width = "min(440px, 92vw)",
+  width = CONFIRM_DIALOG_WIDTH,
   messageClass = "",
 } = {}) {
   return showDialog({

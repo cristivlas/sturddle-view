@@ -7,6 +7,7 @@
 // SPRT on forces round-robin and self-termination via the host form (onChange).
 
 import { showDialog } from "./dialogs.js";
+import { guard } from "./wb-utils.js";
 import { SPRT_DEFAULTS, sprtParamErrors } from "./tournament-events.js";
 
 const PARAM_KEYS = ["elo0", "elo1", "alpha", "beta"];
@@ -107,22 +108,16 @@ export function mountSprtButton({ host, initialSprt, sprtDefaults, onChange, onP
     if (changed) onChange?.(on);
   }
 
-  let popupOpen = false;
   toggle.addEventListener("change", () => setOn(toggle.checked));
-  gearBtn.addEventListener("click", async () => {
-    if (!available || popupOpen) return;
-    popupOpen = true;
-    try {
-      const res = await openParamsPopup({ params });
-      // Persist as the new default (last-used) when the params actually change.
-      if (JSON.stringify(res.params) !== JSON.stringify(params)) {
-        params = res.params;
-        onPersist?.({ ...params });
-      }
-    } finally {
-      popupOpen = false;
+  gearBtn.addEventListener("click", guard(async () => {
+    if (!available) return;
+    const res = await openParamsPopup({ params });
+    // Persist as the new default (last-used) when the params actually change.
+    if (JSON.stringify(res.params) !== JSON.stringify(params)) {
+      params = res.params;
+      onPersist?.({ ...params });
     }
-  });
+  }));
 
   host.append(toggle, gearBtn);
   render();

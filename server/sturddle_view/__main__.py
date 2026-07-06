@@ -12,24 +12,18 @@ from platformdirs import user_config_dir
 
 from . import APP_NAME, app_dir_name
 from ._instance_lock import acquire as _acquire_lock
+from ._runtime import DESKTOP_FLAG, PROXY_SUBCOMMAND, is_frozen
 from .config import Settings
 from .logging_setup import configure_logging
+from .tournament.proxy import main as _proxy_main
 
 
-def main() -> None:
-    # "proxy" subcommand: the frozen exe re-invokes itself to run the stdio
-    # proxy (see _runtime.proxy_argv_prefix). Strip the subcommand token so
-    # proxy.main() receives a clean argv.
-    if sys.argv[1:2] == ["proxy"]:
-        sys.argv = [sys.argv[0]] + sys.argv[2:]
-        from .tournament.proxy import main as _proxy_main
-        _proxy_main()
-        return
-
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sturddle-view")
     parser.add_argument("--host", default=None)
     parser.add_argument("--port", type=int, default=None)
-    parser.add_argument("--desktop", action="store_true", help="Open in PyWebView native window")
+    parser.add_argument(DESKTOP_FLAG, action="store_true", default=is_frozen(),
+                        help="Open in PyWebView native window (default in the frozen exe)")
     parser.add_argument("--width", type=int, default=1280, help="Desktop window width (default 1280)")
     parser.add_argument("--height", type=int, default=1000, help="Desktop window height (default 1000)")
     parser.add_argument("--reload", action="store_true", help="Dev mode: auto-reload on changes")
@@ -51,7 +45,20 @@ def main() -> None:
                         help="Verbose (DEBUG) logging for the app (sturddle_view)")
     parser.add_argument("--server-debug", action="store_true",
                         help="Verbose (DEBUG) logging for uvicorn (independent of --debug)")
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    # "proxy" subcommand: the frozen exe re-invokes itself to run the stdio
+    # proxy (see _runtime.proxy_argv_prefix). Strip the subcommand token so
+    # proxy.main() receives a clean argv. Dispatched before any parsing so
+    # server-only flags (e.g. --desktop) can never leak into the proxy chain.
+    if sys.argv[1:2] == [PROXY_SUBCOMMAND]:
+        sys.argv = [sys.argv[0]] + sys.argv[2:]
+        _proxy_main()
+        return
+
+    args = _build_parser().parse_args()
 
     # Validate CLI combos before any side effects (logging dir, lockfile,
     # env mutations). Bad flags should exit cleanly without touching state.

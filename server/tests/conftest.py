@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import itertools
 import json
 import os
 import socket
@@ -687,6 +688,38 @@ async def wait_perspective_ready(page) -> None:
     await page.wait_for_function(
         "() => !document.querySelector('#perspective-root')?.classList.contains('is-pending')",
     )
+
+
+# Monotonic suffix for wait_for_async_predicate's window slots -- one
+# page can host several concurrent/sequential waits without collisions.
+_ASYNC_WAIT_SEQ = itertools.count()
+
+
+async def wait_for_async_predicate(page, body: str, *, poll_ms: int = 100) -> None:
+    """``wait_for_function`` for ASYNC JS predicates.
+
+    Playwright never awaits an async predicate: the returned Promise is
+    truthy, so a plain ``wait_for_function("async () => ...")`` passes
+    instantly, whatever the condition (a latent no-op in several older
+    tests). Instead, run the predicate on a page-side interval, mirror
+    its first truthy result onto a window slot, and sync-poll the slot.
+    A throwing predicate simply retries next tick; if it never turns
+    truthy, the sync wait times out with Playwright's usual error."""
+    key = f"__sv_async_wait_{next(_ASYNC_WAIT_SEQ)}"
+    await page.evaluate(
+        f"""() => {{
+            const pred = {body};
+            const timer = setInterval(async () => {{
+                try {{
+                    if (await pred()) {{
+                        window["{key}"] = true;
+                        clearInterval(timer);
+                    }}
+                }} catch {{}}
+            }}, {poll_ms});
+        }}"""
+    )
+    await page.wait_for_function(f"() => window['{key}'] === true")
 
 
 # localStorage key + value that pin the Arena (classic) Tournaments UX;

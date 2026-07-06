@@ -57,6 +57,7 @@ from ..llm.cancel import CancelToken
 from ..llm.position_check import (
     describe_square,
     find_tool_mentions,
+    has_position_flags,
     iter_false_bishop_color_refs,
     iter_false_claim_squares,
     handled_continuation_spans,
@@ -282,7 +283,22 @@ def make_delegate_tool(
                 "error": "no_verdict",
                 "detail": 'no conclusion. Try increasing "Max subagent rounds"',
             }
-        return {"move_uci": move.uci(), "verdict": verdict}
+        # Strict non-LLM validation of the verdict prose. The verdict restates
+        # the move under test (legal pre-move) and reasons about its replies
+        # (legal post-move), so it straddles the move boundary; validate against
+        # both boards and flag only a claim wrong on NEITHER -- a real illegal
+        # move/false claim, not a boundary artifact. A hit hides the prose
+        # client-side; the holds/refuted badge still stands on the engine
+        # verdict. Full stack on the copy so numbered history refs keep their
+        # replay free-pass.
+        after = board.copy()
+        after.push(move)
+        prose_flagged = has_position_flags(verdict, board, after)
+        return {
+            "move_uci": move.uci(),
+            "verdict": verdict,
+            "prose_flagged": prose_flagged,
+        }
 
     return delegate
 

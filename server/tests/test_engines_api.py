@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import stat
 import sys
 
@@ -66,13 +67,15 @@ def _make_echo_uci(path):
 
 
 def _make_fake_uci(path, id_name):
-    """Minimal UCI responder: announces `id name <id_name>` then quits cleanly.
+    """Minimal UCI responder: announces `id name <id_name>` (skipped when
+    empty) then quits cleanly.
 
     Implementation is a Python script for portability. On POSIX we rely on
     the ``#!`` shebang + exec bit; on Windows we drop a tiny ``.cmd``
     wrapper next to it and return the wrapper's path so it looks like a
     single-binary engine to ``_validate_engine_path`` and ``popen_uci``.
     """
+    announce = f"id name {id_name}\\n" if id_name else ""
     py = path.with_suffix(".py")
     py.write_text(
         "#!/usr/bin/env python3\n"
@@ -86,7 +89,7 @@ def _make_fake_uci(path, id_name):
         "        break\n"
         "    line = line.strip()\n"
         "    if line == 'uci':\n"
-        f"        sys.stdout.write('id name {id_name}\\nuciok\\n')\n"
+        f"        sys.stdout.write('{announce}uciok\\n')\n"
         "        sys.stdout.flush()\n"
         "    elif line == 'isready':\n"
         "        sys.stdout.write('readyok\\n'); sys.stdout.flush()\n"
@@ -239,6 +242,139 @@ def test_explicit_name_overrides_uci_id(client, tmp_path):
     r = client.post("/engines", json={"name": "My Custom Name", "path": exe})
     assert r.status_code == 201
     assert r.json()["name"] == "My Custom Name"
+
+
+def test_add_persists_uci_name(client, exe_a):
+    """The probed UCI `id name` is stored alongside the display name."""
+    r = client.post("/engines", json={"name": "A", "path": exe_a})
+    assert r.status_code == 201
+    assert r.json()["uci_name"] == "EngineA"
+
+
+def test_add_stores_empty_uci_name_when_unannounced(client, tmp_path):
+    """'' (not null) marks "probed, no id name" so clients skip re-probing."""
+    exe = _make_fake_uci(tmp_path / "mute", "")
+    r = client.post("/engines", json={"name": "A", "path": exe})
+    assert r.status_code == 201
+    assert r.json()["uci_name"] == ""
+
+
+def test_refresh_schema_backfills_uci_name(client, monkeypatch, exe_a):
+    """Entries that predate uci_name capture get it on refresh-schema."""
+    eid = client.post("/engines", json={"name": "A", "path": exe_a}).json()["id"]
+    # Simulate a legacy entry registered before uci_name persistence.
+    client.app.state.engines.get(eid).uci_name = None
+
+    async def fake_probe(_path, args=None, env=None):
+        return "EngineA", {"Hash": {"type": "spin", "default": 16}}, None
+
+    monkeypatch.setattr("sturddle_view.api.engines.probe_engine", fake_probe)
+    r = client.post(f"/engines/{eid}/refresh-schema")
+    assert r.status_code == 200
+    assert r.json()["uci_name"] == "EngineA"
+
+
+def test_list_lazy_schema_capture_also_stores_uci_name(client, monkeypatch, exe_a):
+    """GET /engines' lazy schema capture persists uci_name in the same update."""
+    async def probe_nothing(_path, args=None, env=None):
+        return None, {}, None
+
+    monkeypatch.setattr("sturddle_view.api.engines.probe_engine", probe_nothing)
+    client.post("/engines", json={"name": "A", "path": exe_a})
+
+    async def probe_full(_path, args=None, env=None):
+        return "EngineA", {"Hash": {"type": "spin", "default": 16}}, None
+
+    monkeypatch.setattr("sturddle_view.api.engines.probe_engine", probe_full)
+    listed = client.get("/engines").json()["engines"][0]
+    assert listed["uci_name"] == "EngineA"
+
+
+def test_refresh_schema_ok_for_optionless_engine(client, exe_a):
+    """A clean probe with zero options is a 200, not a 502, and persists
+    uci_name so the entry stops re-probing."""
+    eid = client.post("/engines", json={"name": "A", "path": exe_a}).json()["id"]
+    client.app.state.engines.get(eid).uci_name = None
+    r = client.post(f"/engines/{eid}/refresh-schema")
+    assert r.status_code == 200
+    assert r.json()["uci_name"] == "EngineA"
+    assert r.json()["option_schema"] == {}
+
+
+def test_list_does_not_reprobe_probed_optionless_engine(client, monkeypatch, exe_a):
+    """Once uci_name is captured, an empty schema alone must not re-spawn on GET."""
+    client.post("/engines", json={"name": "A", "path": exe_a})
+
+    calls = []
+
+    async def counting_probe(*_a, **_kw):
+        calls.append(1)
+        return "EngineA", {}, None
+
+    monkeypatch.setattr("sturddle_view.api.engines.probe_engine", counting_probe)
+    client.get("/engines")
+    assert calls == []
+
+
+def test_list_probe_false_skips_lazy_schema_capture(client, monkeypatch, exe_a):
+    """?probe=false must not spawn engines -- read-only consumers (the
+    start-time drift check) pay no probe per unprobed registry entry."""
+    async def probe_nothing(_path, args=None, env=None):
+        return None, {}, None
+
+    monkeypatch.setattr("sturddle_view.api.engines.probe_engine", probe_nothing)
+    client.post("/engines", json={"name": "A", "path": exe_a})
+
+    calls = []
+
+    async def counting_probe(*_a, **_kw):
+        calls.append(1)
+        return "EngineA", {}, None
+
+    monkeypatch.setattr("sturddle_view.api.engines.probe_engine", counting_probe)
+    listed = client.get("/engines?probe=false").json()["engines"]
+    assert calls == []
+    assert listed[0]["name"] == "A"
+
+
+def test_patch_auto_suffix_resolves_collision(client, exe_a, exe_b):
+    """auto_suffix (Reset-derived name) suffixes instead of 409ing."""
+    client.post("/engines", json={"name": "A", "path": exe_a})
+    bid = client.post("/engines", json={"name": "B", "path": exe_b}).json()["id"]
+    r = client.patch(f"/engines/{bid}", json={"name": "A", "auto_suffix": True})
+    assert r.status_code == 200
+    assert r.json()["name"] == "A (2)"
+
+
+def test_patch_persists_option_schema_and_uci_name(client, exe_a):
+    """Save after an in-dialog Refresh pushes the fresher schema and uci_name."""
+    eid = client.post("/engines", json={"name": "A", "path": exe_a}).json()["id"]
+    schema = {"Hash": {"type": "spin", "default": 16}}
+    r = client.patch(f"/engines/{eid}", json={"option_schema": schema, "uci_name": "EngineA 2.0"})
+    assert r.status_code == 200
+    listed = client.get("/engines").json()["engines"][0]
+    assert listed["option_schema"] == schema
+    assert listed["uci_name"] == "EngineA 2.0"
+
+
+def test_patch_path_change_invalidates_uci_name(client, exe_a, exe_b):
+    """Swapping the binary clears the cached UCI identity for re-probe."""
+    eid = client.post("/engines", json={"name": "A", "path": exe_a}).json()["id"]
+    assert client.get(f"/engines/{eid}").json()["uci_name"] == "EngineA"
+    r = client.patch(f"/engines/{eid}", json={"path": exe_b})
+    assert r.status_code == 200
+    assert r.json()["uci_name"] is None
+
+
+def test_registry_loads_legacy_entry_without_uci_name(tmp_path):
+    """Pre-uci_name registry files load with uci_name=None (client backfills)."""
+    p = tmp_path / "engines.json"
+    p.write_text(json.dumps({
+        "engines": [{"id": "abc", "name": "A", "path": "/x"}],
+        "selected_id": None,
+    }), encoding="utf-8")
+    reg = EngineRegistry(path=p)
+    assert reg.get("abc").uci_name is None
 
 
 def test_first_add_auto_selects(client, exe_a, exe_b):
@@ -605,10 +741,11 @@ def test_refresh_schema_uses_saved_args_and_env(client, tmp_path):
         "args": ["--saved"],
         "env": {"SV_TEST_ENV": "from-disk"},
     }).json()["id"]
-    # The echo engine has no UCI options so refresh-schema returns 502
-    # (couldn't capture options). That's expected; the contract we want
-    # to verify is that refresh-schema does respect saved args/env, which
-    # we cover separately by reading the engine row.
+    # The echo engine round-trips its argv via `id name`, so the persisted
+    # uci_name proves the re-probe spawned with the saved profile.
+    r = client.post(f"/engines/{eid}/refresh-schema")
+    assert r.status_code == 200
+    assert r.json()["uci_name"] == "argv:--saved"
     listed = client.get("/engines").json()["engines"][0]
     assert listed["id"] == eid
     assert listed["args"] == ["--saved"]

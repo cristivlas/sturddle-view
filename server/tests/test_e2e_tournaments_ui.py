@@ -17,6 +17,7 @@ from sturddle_view.tournament.store import TournamentStore  # noqa: E402
 from .conftest import (  # noqa: E402
     pin_arena_tournament_ux,
     run_uvicorn_subprocess,
+    wait_for_async_predicate,
     wait_perspective_ready,
 )
 
@@ -163,7 +164,8 @@ async def test_tournaments_perspective_with_existing_tournament(tmp_path, make_p
                 setVal('games_in_parallel', '4');
             }"""
         )
-        await page.wait_for_function(
+        await wait_for_async_predicate(
+            page,
             """async () => {
                 const r = await fetch('/api/tournament-settings');
                 const tpl = (await r.json()).default_template || {};
@@ -215,7 +217,8 @@ async def test_tournament_workspace_opens_three_windows(tmp_path, make_page):
 
         # Assert against the production NO_GAMES_MSG const rather than a
         # hardcoded copy, so a wording change can't silently drift the test.
-        await page.wait_for_function(
+        await wait_for_async_predicate(
+            page,
             """async () => {
                 const { NO_GAMES_MSG } = await import('/ui/app/tournament-row.js');
                 const el = document.querySelector('.wb-standings .wb-empty');

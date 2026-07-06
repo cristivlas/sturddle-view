@@ -9,6 +9,7 @@
 // bound to the dialog's api (for the file picker).
 
 import { pickFile } from "./dialogs.js";
+import { guard } from "./wb-utils.js";
 
 export function makePathRow(api) {
   return function pathRow(labelText, value, mode, pickerTitle, onPick, opts = {}) {
@@ -69,13 +70,13 @@ export function makePathRow(api) {
       field.setAttribute("readonly", "");
       field.placeholder = "(not set)";
     }
-    browse.addEventListener("click", async () => {
+    browse.addEventListener("click", guard(async () => {
       const path = await pickFile({ api, mode, title: pickerTitle });
       if (!path) return;
       field.value = path;
       syncClear();
       onPick(path);
-    });
+    }));
     clear.addEventListener("click", () => {
       field.value = "";
       syncClear();

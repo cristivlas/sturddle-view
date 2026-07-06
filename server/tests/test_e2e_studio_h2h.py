@@ -120,7 +120,8 @@ def _expect_elo(rec):
     return elo_from_score((w + 0.5 * d) / (w + l + d)), elo_margin_from_wld(w, l, d)
 
 
-_ELO_RE = re.compile(r"\s*([+-]?\d+(?:\.\d+)?)(?:\s*\+/-\s*(\d+(?:\.\d+)?))?")
+# Margin glyph is U+00B1 since 18065e8; keep +/- accepted for safety.
+_ELO_RE = re.compile(r"\s*([+-]?\d+(?:\.\d+)?)(?:\s*(?:\+/-|\u00b1)\s*(\d+(?:\.\d+)?))?")
 
 
 def _parse_elo(text):

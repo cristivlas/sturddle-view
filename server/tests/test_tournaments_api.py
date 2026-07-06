@@ -649,6 +649,38 @@ def test_create_freezes_unset_engine_defaults_as_none(client, settings):
     }
 
 
+def test_create_snapshots_engine_options_from_registry(client):
+    reg = client.app.state.engines
+    a = reg.add(
+        name="A", path="/bin/A",
+        options={"WeightsFile": "/w/a.binx", "OwnBook": False},
+    )
+    body = client.post("/api/tournaments", json={
+        "name": "opts", "engines": [
+            {"id": a.id, "name": "A", "cmd": "/bin/A"},
+            {"id": "id-B", "name": "B", "cmd": "/bin/B"},
+        ],
+    }).json()
+    by_name = {e["name"]: e for e in body["engines"]}
+    assert by_name["A"]["options"] == {"WeightsFile": "/w/a.binx", "OwnBook": False}
+    # Engine not in the registry (direct API use) -> no options snapshot.
+    assert "options" not in by_name["B"]
+
+
+def test_create_omits_empty_options_snapshot(client):
+    # Registered engine with no option overrides: key absent, same as an
+    # unregistered engine -- {} vs missing must not encode registry state.
+    reg = client.app.state.engines
+    a = reg.add(name="A", path="/bin/A")
+    body = client.post("/api/tournaments", json={
+        "name": "noopts", "engines": [
+            {"id": a.id, "name": "A", "cmd": "/bin/A"},
+            {"id": "id-B", "name": "B", "cmd": "/bin/B"},
+        ],
+    }).json()
+    assert all("options" not in e for e in body["engines"])
+
+
 # ---------------------------------------------------------------------------
 # PATCH /api/tournaments/{id}  (edit)
 # ---------------------------------------------------------------------------
@@ -658,6 +690,42 @@ def _create(client, name="x") -> dict:
     return client.post("/api/tournaments", json={
         "name": name, "engines": _engines_payload(),
     }).json()
+
+
+def test_patch_resnapshots_engine_options(client):
+    reg = client.app.state.engines
+    a = reg.add(name="A", path="/bin/A", options={"WeightsFile": "/w/v1.binx"})
+    payload = {
+        "name": "resnap", "engines": [
+            {"id": a.id, "name": "A", "cmd": "/bin/A"},
+            {"id": "id-B", "name": "B", "cmd": "/bin/B"},
+        ],
+    }
+    t = client.post("/api/tournaments", json=payload).json()
+    reg.update(a.id, options={"WeightsFile": "/w/v2.binx"})
+    body = client.patch(f"/api/tournaments/{t['id']}", json=payload).json()
+    by_name = {e["name"]: e for e in body["engines"]}
+    assert by_name["A"]["options"] == {"WeightsFile": "/w/v2.binx"}
+
+
+def test_patch_preserves_options_when_engine_deleted(client):
+    # Engine removed from the registry after create: an edit that
+    # round-trips the stored refs must keep the frozen snapshot rather
+    # than silently dropping it.
+    reg = client.app.state.engines
+    a = reg.add(name="A", path="/bin/A", options={"WeightsFile": "/w.binx"})
+    t = client.post("/api/tournaments", json={
+        "name": "keep", "engines": [
+            {"id": a.id, "name": "A", "cmd": "/bin/A"},
+            {"id": "id-B", "name": "B", "cmd": "/bin/B"},
+        ],
+    }).json()
+    reg.remove(a.id)
+    body = client.patch(f"/api/tournaments/{t['id']}", json={
+        "name": "keep", "engines": t["engines"],
+    }).json()
+    by_name = {e["name"]: e for e in body["engines"]}
+    assert by_name["A"]["options"] == {"WeightsFile": "/w.binx"}
 
 
 def test_patch_updates_name_template_engines(client):
